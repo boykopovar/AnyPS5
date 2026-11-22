@@ -381,6 +381,7 @@ void FreePubkey(LibreSsl3X509Pubkey* pubkey) {
     if (!pubkey) return;
     FreeAlgor(pubkey->algor);
     FreeString(reinterpret_cast<Asn1String*>(pubkey->publicKey));
+    EVP_PKEY_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3EvpPkey*>(pubkey->pkey));
     free_nid_postfix(pubkey);
 }
 

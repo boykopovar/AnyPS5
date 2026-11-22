@@ -39,6 +39,12 @@ build-fuzz/tests/relinker_conversion_fuzzer build-fuzz/fuzz-corpus -fork=2 -max_
 git submodule update --init --recursive
 ```
 
+### Self-hosted Linux checkout recovery
+
+The self-hosted Linux `Build` job in [`.github/workflows/build.yml`](../../.github/workflows/build.yml) is designed to recover from an interrupted recursive checkout. Before checkout it removes stale Git lock files. If `actions/checkout` fails, it removes only submodules that have a worktree but no valid `HEAD` (and their matching `.git/modules` directories), then retries the recursive checkout. If no specific broken submodule can be identified safely, it empties the workspace and retries instead.
+
+That retry is a repair path, not a substitute for a healthy runner seed. If the same runner repeatedly spends most of its job timeout fetching recorded submodule commits, or repeatedly returns with half-cloned submodules, take it out of rotation and reseed its AnyPS5 workspace with a complete recursive checkout at the recorded commits before returning it to service. This avoids carrying one interrupted checkout into every later job while preserving the shared compiler and shader caches outside `GITHUB_WORKSPACE`.
+
 ## Selective test builds
 
 [`tools/select_tests.py`](../../tools/select_tests.py) selects the tests whose build inputs a change touches, so a pull request can build and run only those tests. Configure and build a full tree with `-DBUILD_TESTING=ON` (`dump` needs the header dependencies that only exist once the objects are built), then:
@@ -47,7 +53,11 @@ git submodule update --init --recursive
 git diff --name-only -z --output=changed.txt origin/main...HEAD
 python3 tools/select_tests.py dump build test-graph.json
 python3 tools/select_tests.py select build test-graph.json changed.txt
-ninja -C build -f select.ninja selected
+if [ -f build/select.ninja ]; then
+  ninja -C build -f select.ninja selected
+else
+  cmake --build build
+fi
 python3 tools/select_tests.py ctest build --output-on-failure
 ```
 
@@ -76,9 +86,9 @@ The Release workflow builds the web converter and the Linux and Windows librarie
 
 Pages downloads the converter and both library archives from one release selected through GitHub's latest-release API. `release.json` records the same tag and commit. Missing, corrupt or mismatched assets fail the Pages job before deployment. Releases made before the web asset was added need a new release; Pages does not combine them with a converter built from `main`.
 
-Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-wasm --release`; `--libraries` is an alias for this mode.
+Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-web-release --release`. Release staging replaces the selected build directory's `web/` directory. `--libraries` is an alias for `--release`.
 
-`tools/prepare_release_notes.py --input <notes> --body <body> --full <full>` prepares GitHub release notes that fit GitHub's release-body size limit (`BODY_LIMIT` bytes in the script): the short body goes to `--body` and the full notes to `--full`. With `--check` it writes nothing and exits with status 1 when either output is missing or stale.
+`tools/prepare_release_notes.py --input <notes> --body <body> --full <full>` prepares GitHub release notes that fit the release-body limit (`BODY_LIMIT` characters in the script): the short body goes to `--body` and the full notes to `--full`. With `--check` it writes nothing and exits with status 1 when either output is missing or stale.
 
 ## Commands
 
@@ -204,14 +214,14 @@ The Linux HTTP URI locale regression needs an ISO-8859-1 locale. With tests enab
 
 ## ThreadSanitizer
 
-A ThreadSanitizer build runs its tests with `TSAN_OPTIONS=suppressions=$PWD/tools/tsan-suppressions.txt`, which silences reports from Mesa's lavapipe, the LLVM it compiles shaders with, and PulseAudio: those system libraries are not instrumented, so ThreadSanitizer cannot see their locking. Guest memory written by the emulated GPU while a guest thread polls it, such as labels and fences, is shared without C++ atomics on purpose, as on the console, so ThreadSanitizer also reports those accesses.
+A ThreadSanitizer build runs its tests with `TSAN_OPTIONS=suppressions=$PWD/tools/tsan-suppressions.txt`, which silences reports from Mesa's lavapipe, the LLVM it compiles shaders with, and PulseAudio: those system libraries are not instrumented, so ThreadSanitizer cannot see their locking. The driver polls labels and fences with acquire loads, but guest memory is still written with plain stores, such as copies and replay restores, as on the console, so ThreadSanitizer also reports those stores against the polls.
 
 ## Quick syntax checks
 
 After configuring a build directory, use `tools/check_compile.py` to check the given source files. The tool reads their compile commands from `compile_commands.json` or Ninja, preserving compilation options while dropping object and dependency output options. It handles `-MF`, `-MT`, `-MQ` and `-MJ` with separate or attached values so that unused output options do not cause false failures under `-Werror`.
 
 ```sh
-python3 tools/check_compile.py --build build-relinker core/relinker/main.cpp
+python3 tools/check_compile.py --build build-relinker core/relinker/cli/src/CliArgs.cpp
 ```
 
 Real compile errors still fail. Syntax checks do not replace a full build and test run.

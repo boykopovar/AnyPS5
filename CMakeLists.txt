@@ -460,6 +460,7 @@ if(BUILD_TESTING)
         set_tests_properties(build_mingw_host_only_tests_script PROPERTIES TIMEOUT 60)
         add_test(NAME export_gap COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
+        set_tests_properties(isa_profiles PROPERTIES TIMEOUT 60)
         set_tests_properties(export_gap PROPERTIES TIMEOUT 30)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
@@ -588,9 +589,16 @@ if(BUILD_TESTING)
         set_tests_properties(pr_intake_reopen PROPERTIES TIMEOUT 60)
         add_test(NAME tools_pe_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_pe_symbol_inventory.py)
         set_tests_properties(tools_pe_inventory PROPERTIES TIMEOUT 20)
-        add_test(NAME rebase_verify COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py)
-        set_tests_properties(rebase_verify PROPERTIES TIMEOUT 60)
+        foreach(shard RANGE 0 2)
+            if(shard EQUAL 0)
+                set(rebase_verify_test_name rebase_verify)
+            else()
+                set(rebase_verify_test_name rebase_verify_shard_${shard})
+            endif()
+            add_test(NAME ${rebase_verify_test_name} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py --shard ${shard}/3)
+            set_tests_properties(${rebase_verify_test_name} PROPERTIES TIMEOUT 60)
+        endforeach()
         add_test(NAME check_test_registration_script COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_test_registration.py)
         set_tests_properties(check_test_registration_script PROPERTIES TIMEOUT 60)
@@ -768,6 +776,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_nid_names.py)
         add_test(NAME release_package COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_release.py)
+        add_test(NAME package_headers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_headers.py)
         add_test(NAME web_release COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_web_release.py)
         set_tests_properties(web_release PROPERTIES TIMEOUT 120)

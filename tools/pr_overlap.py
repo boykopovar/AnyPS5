@@ -23,6 +23,9 @@ EXPORT = re.compile(r"^[+-].*\bAPS5_VABI\s+(\w+)\s*\(")
 NID_DISAMBIG = re.compile(r"_nid_disambig[0-9]+$")
 DEPENDS = re.compile(r'Depends on:[ \t]*((?:#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*|none\b)?(?:\r?\n[ \t]*[-*][ \t]*#\d+\b[^\r\n]*)*)')
 PLAIN_DEPENDS = re.compile(r'Depends on[ \t]+(#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*)')
+CLOSING = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
+CLOSES = re.compile(rf"(?<![\w-]){CLOSING}:?[ \t]+#(\d+)\b", re.IGNORECASE)
+FIXES = re.compile(rf"(?<![\w-])Fixes:[ \t]*((?:{CLOSING}[ \t]+)?#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)(?:{CLOSING}[ \t]+)?#\d+\b)*)", re.IGNORECASE)
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))?", re.M)
 MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
@@ -159,6 +162,19 @@ def depends_on(body):
     match = next((match for match in DEPENDS.finditer(body) if match.group(1).strip()), None) or PLAIN_DEPENDS.search(body)
     return {int(n) for n in re.findall(r"#(\d+)", match.group(1))} if match else set()
 
+
+def fixes(body):
+    body = re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
+    repo = re.escape(globals().get("REPO", "boykopovar/AnyPS5"))
+    repo_pattern = rf"(?:{repo}|boykopovar/AnyPS5)"
+    body = re.sub(rf"\[([^\]]*)\]\(https?://(?:www\.)?github\.com/{repo_pattern}/issues/(\d+)(?:[#/?][^)\s]*)?\)", r"#\2", body, flags=re.IGNORECASE)
+    body = re.sub(rf"https?://(?:www\.)?github\.com/{repo_pattern}/issues/(\d+)\b(?:[#/?][^\s]*)?", r"#\1", body, flags=re.IGNORECASE)
+    found = {int(n) for n in CLOSES.findall(body)}
+    for match in FIXES.finditer(body):
+        found.update(int(n) for n in re.findall(r"#(\d+)", match.group(1)))
+    return found
+
+
 def progress(message):
     print(f"pr_overlap: {message}", file=sys.stderr, flush=True)
 
@@ -265,6 +281,7 @@ def open_prs(base):
             "author": pr["user"]["login"],
             "title": pr.get("title") or "",
             "depends": depends_on(pr["body"]),
+            "fixes": fixes(pr["body"]),
         }
     progress(f"{len(prs)} open pull requests against {base}")
     return prs
@@ -633,6 +650,8 @@ def overlaps(prs, a, b):
             same_exports.update(pa["added_exports"][key])
             same_exports.update(pb["added_exports"][key])
         found["exports"] = same_exports
+        if same_issues := pa.get("fixes", set()) & pb.get("fixes", set()):
+            found["issues"] = same_issues
         if not (pa["tree"] and pb["tree"]):
             uncompared = pa.get("files", set()) & pb.get("files", set())
             if uncompared:
@@ -671,6 +690,10 @@ def pull(blob, number):
     return f'[PR {number}]({blob.split("/blob/", 1)[0].replace("https://github.com/", "https://www.github.com/", 1)}/pull/{number})'
 
 
+def issue(blob, number):
+    return f'[issue {number}]({blob.split("/blob/", 1)[0].replace("https://github.com/", "https://www.github.com/", 1)}/issues/{number})'
+
+
 def report(rows, blob, main_exports=None):
     if not rows:
         if not main_exports:
@@ -678,6 +701,7 @@ def report(rows, blob, main_exports=None):
     confirmed = {number: found for number, found in rows.items()
                  if found.get("conflicts") or found.get("exports") or found["added"]}
     uncompared = {number: found["uncompared"] for number, found in rows.items() if found.get("uncompared")}
+    issues = {number: found["issues"] for number, found in rows.items() if found.get("issues")}
     lines = [MARKER]
     if confirmed:
         lines.extend([
@@ -689,8 +713,15 @@ def report(rows, blob, main_exports=None):
         ])
         for number, found in sorted(confirmed.items()):
             lines.append(f'| {pull(blob, number)} | {spans(found.get("conflicts"), blob)} | {cell(found.get("exports"))} | {cell(found["added"])} |')
-    if main_exports:
+    if issues:
         if confirmed:
+            lines.append("")
+        lines.append("Other open pull requests say they fix the same issue, so they may implement the same thing:")
+        lines.append("")
+        for number, numbers in sorted(issues.items()):
+            lines.append(f"- {pull(blob, number)}: " + ", ".join(issue(blob, n) for n in sorted(numbers)))
+    if main_exports:
+        if confirmed or issues:
             lines.append("")
         lines.append("Exports with a name or library/NID already present in `main`:")
         lines.append("")
@@ -703,7 +734,7 @@ def report(rows, blob, main_exports=None):
             if other_libraries:
                 lines.append(f"- {code_span(name)} (also exported by another library in `main`: {cell(other_libraries)}; may be intentional)")
     if uncompared:
-        if confirmed or main_exports:
+        if confirmed or issues or main_exports:
             lines.append("")
         lines.extend([
             "Some comparisons could not be completed because a pull request conflicts with the base branch. "
@@ -945,9 +976,12 @@ def main(argv=None):
                         help="before writing code, show whether each function is implemented on the base and which open pull requests add it or edit its body")
     parser.add_argument("--repo", help="owner/name; defaults to the upstream of the current checkout")
     parser.add_argument("--jobs", type=int, default=8, help="number of pull request comparisons to run at once")
+    parser.add_argument("--head-repo", help="head repository owner/name for --branch with the same branch name; must be the correct fork because its matching pull request is excluded")
     args = parser.parse_args(argv)
     if sum(map(bool, (args.out, args.branch, args.names))) != 1:
         parser.error("pass exactly one of --out, --branch or --names")
+    if args.head_repo is not None and (not args.branch or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+", args.head_repo) or args.head_repo.split("/", 1)[1] in (".", "..")):
+        parser.error("--head-repo needs --branch and a GitHub owner/name")
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
     global REPO
@@ -965,7 +999,7 @@ def main(argv=None):
             return 0
         if args.branch:
             sha = branch_sha
-            head_branch, head_repo = push_head(args.branch)
+            head_branch, head_repo = (args.branch, args.head_repo) if args.head_repo else push_head(args.branch)
             prs = without_own_pull_request(own(prs, sha), head_branch, head_repo)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)

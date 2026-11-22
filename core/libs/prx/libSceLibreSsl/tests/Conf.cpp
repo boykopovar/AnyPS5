@@ -25,6 +25,7 @@ constexpr std::uint64_t Error(std::uint64_t library, std::uint64_t reason) {
 
 constexpr std::uint64_t SystemNoSuchFile = Error(2, 2);
 constexpr std::uint64_t SystemNotDirectory = Error(2, 20);
+constexpr std::uint64_t SystemNameTooLong = Error(2, 63);
 constexpr std::uint64_t BioNoSuchFile = Error(32, 128);
 constexpr std::uint64_t BioSystem = Error(32, 2);
 constexpr std::uint64_t ConfNoSuchFile = Error(14, 114);
@@ -36,6 +37,7 @@ using Codes = std::vector<std::uint64_t>;
 
 const Codes MissingFileErrors{SystemNoSuchFile, BioNoSuchFile, ConfNoSuchFile};
 const Codes NotDirectoryErrors{SystemNotDirectory, BioSystem, ConfSystem};
+const Codes NameTooLongErrors{SystemNameTooLong, BioSystem, ConfSystem};
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -287,6 +289,16 @@ void Allocator(const HostDirectory& host) {
     RemovePathAlias_nid_no_patch("/etc/ssl");
 }
 
+void NameTooLong() {
+    ERR_clear_error_nid_postfix();
+    const std::string longPath(1024, 'a');
+    Require(CONF_modules_load_file_nid_postfix(longPath.c_str(), nullptr, IgnoreMissingFile) == 0,
+        "CONF_modules_load_file fails on ENAMETOOLONG even with IgnoreMissingFile");
+    Require(GuestErrno() == 63, "fopen leaves ENAMETOOLONG in guest errno");
+    Require(Drain() == NameTooLongErrors,
+        "CONF_modules_load_file queues guest ENAMETOOLONG and system errors");
+}
+
 } // namespace
 
 int main(int argc, char**) {
@@ -300,4 +312,5 @@ int main(int argc, char**) {
     MissingFile(host);
     PathThroughAFile(host);
     DefaultFile(host);
+    NameTooLong();
 }

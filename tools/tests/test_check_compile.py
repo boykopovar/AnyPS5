@@ -87,6 +87,16 @@ class CheckCompileTests(CheckCompileFixture):
         self.assertIn("1 translation units compile", result.stdout)
 
 
+class CheckCompileDatabaseNulTests(unittest.TestCase):
+    def test_rejects_embedded_nul_in_command_fields(self):
+        import check_compile
+        for record in ({"directory": "build", "file": "unit.c", "command": "cc\0 unit.c"},
+                       {"directory": "build", "file": "unit.c", "arguments": ["cc", "unit\0.c"]}):
+            with self.subTest(record=record):
+                with self.assertRaisesRegex(ValueError, "NUL"):
+                    check_compile.compilation_database(json.dumps([record]), "compile_commands.json")
+
+
 class CheckCompileRecordedCommandTests(CheckCompileFixture):
     def test_the_command_is_rewritten_to_syntax_only_without_object_or_dependency_files(self):
         source = self.source("unit.cpp")
