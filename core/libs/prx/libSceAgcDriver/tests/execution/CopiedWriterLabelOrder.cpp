@@ -45,10 +45,15 @@ alignas(256) constexpr std::array<std::uint32_t, 6> StoreCode{
     0x7e000281u, 0x7e020288u, 0xe0701000u, 0x80000001u, 0xbf810000u, 0xbf810000u,
 };
 
+struct GuestBlockOptions {
+    bool isolated = false;
+    bool wholeAllocation = true;
+};
+
 class GuestBlock {
 public:
-    explicit GuestBlock(bool isolated = false) {
-        const std::size_t blocks = isolated ? 3 : 1;
+    explicit GuestBlock(GuestBlockOptions options = {}) : registrationPadding(options.wholeAllocation ? 0u : 1u) {
+        const std::size_t blocks = options.isolated ? 3 : 1;
 #ifdef _WIN32
         base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes * blocks, MEM_RESERVE, PAGE_NOACCESS));
         block = base == nullptr ? nullptr : static_cast<std::uint8_t*>(VirtualAlloc(base + BlockBytes * (blocks / 2), BlockBytes, MEM_COMMIT, PAGE_READWRITE));
@@ -58,11 +63,11 @@ public:
 #endif
         Require(block != nullptr, "copied writer label order: cannot allocate a guest block");
         std::memset(block, 0, BlockBytes);
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
+        GuestAllocations::Mutation().Add(block + registrationPadding, BlockBytes - registrationPadding * 2, true, true, true);
     }
 
     ~GuestBlock() {
-        GuestAllocations::Mutation().Remove(block);
+        GuestAllocations::Mutation().Remove(block + registrationPadding);
 #ifdef _WIN32
         VirtualFree(base, 0, MEM_RELEASE);
 #else
@@ -79,6 +84,7 @@ public:
 private:
     std::uint8_t* base = nullptr;
     std::uint8_t* block = nullptr;
+    std::size_t registrationPadding = 0;
 };
 
 std::string Hex(std::uint32_t value) {
@@ -109,10 +115,6 @@ bool Drains() {
     return std::getenv("APS5_DRAIN_COMPLETION_LABELS") != nullptr;
 }
 
-VkDeviceSize StorageAlignment(AgcDriver::VulkanDevice& device) {
-    return device.graphicsContext().limits.minStorageBufferOffsetAlignment;
-}
-
 std::array<std::byte, 4> LabelBytes(std::uint32_t value) {
     std::array<std::byte, 4> bytes{};
     std::memcpy(bytes.data(), &value, sizeof(value));
@@ -136,11 +138,6 @@ int LabelPass(AgcDriver::VulkanDevice& device, const GuestBlock& records, std::s
     *label = 0;
     RecordDispatch(device, records.Address() + recordOffset);
     const auto pending = Recorder::PendingWriteBackCompletions();
-    if (writeBacks != 0 && pending == 0 && recordOffset % StorageAlignment(device) == 0) {
-        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-        device.WaitIdle();
-        return VulkanTestSkipped;
-    }
     Require(pending == writeBacks, what + ": " + std::to_string(pending) + " write-back completions are pending after the dispatch, expected " + std::to_string(writeBacks));
     const auto bytes = LabelBytes(LabelValue);
     int reason = 0;
@@ -250,10 +247,10 @@ int main() {
         setenv("APS5_CPU_COPIES", "1", 1);
         setenv("APS5_NO_OPPORTUNISTIC_REAP", "1", 1);
 #endif
-        const GuestBlock copied;
+        const GuestBlock copied(GuestBlockOptions{.wholeAllocation = false});
         const GuestBlock direct;
         const GuestBlock labels;
-        const GuestBlock unimportedLabels(true);
+        const GuestBlock unimportedLabels(GuestBlockOptions{.isolated = true});
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (AgcDriver::Graphics::HostImportFor(device->graphicsContext(), labels.Address(), BlockBytes) == nullptr) {
@@ -261,11 +258,6 @@ int main() {
             return VulkanTestSkipped;
         }
         const int copiedPass = LabelPass(*device, copied, CopiedRecordOffset, labels, 0x2000, 1, 1, Drains() ? 2 : 5, "copied writer");
-        if (copiedPass == VulkanTestSkipped) {
-            std::printf("skipped, the device reports a minStorageBufferOffsetAlignment of %llu, so the dispatch binds its record at +0x%zx in place and nothing is written back; the test needs an alignment above 4\n",
-                static_cast<unsigned long long>(StorageAlignment(*device)), CopiedRecordOffset);
-            return VulkanTestSkipped;
-        }
         if (copiedPass != 0 || LabelPass(*device, direct, DirectRecordOffset, labels, 0x3000, 2, 0, 0, "direct writer") != 0) {
             std::puts("skipped, the device imports no host memory");
             return VulkanTestSkipped;
