@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports2.hpp"
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -126,6 +127,34 @@ void CheckDeletegloballocale() {
     Require(Throws([] { _Deletegloballocale_nid_postfix(nullptr); }), "a null pointer to the reference is rejected");
 }
 
+void CheckGlobalLocale() {
+    Require(_Getgloballocale_nid_postfix() == nullptr, "the global locale starts null");
+
+    GuestLocale::Implementation first{};
+    first.base.vtable = &countingVtable;
+    first.base.references = 3;
+    GuestLocale::Implementation second{};
+    second.base.vtable = &countingVtable;
+    second.base.references = 1;
+
+    _Setgloballocale_nid_postfix(&first);
+    Require(_Getgloballocale_nid_postfix() == &first, "setting the global locale stores the pointer");
+    Require(first.base.references == 3, "setting the global locale does not alter reference counts");
+
+    _Setgloballocale_nid_postfix(&second);
+    Require(_Getgloballocale_nid_postfix() == &second, "replacing the global locale updates the stored pointer");
+    Require(first.base.references == 3 && second.base.references == 1, "replacing does not release or retain either locale");
+
+    deletedFacet = nullptr;
+    deleteCalls = 0;
+    auto* stored = static_cast<GuestLocale::Implementation*>(_Getgloballocale_nid_postfix());
+    _Deletegloballocale_nid_postfix(&stored);
+    Require(second.base.references == 0 && deleteCalls == 1 && deletedFacet == &second.base, "the stored pointer works with _Deletegloballocale");
+
+    _Setgloballocale_nid_postfix(nullptr);
+    Require(_Getgloballocale_nid_postfix() == nullptr, "clearing the global locale stores null");
+}
+
 }
 
 int main() {
@@ -139,7 +168,8 @@ int main() {
     CheckLocinfo();
     CheckLocimpCopy();
     CheckDeletegloballocale();
+    CheckGlobalLocale();
 
-    std::puts("libc internal _Locinfo, _Locimp base-object and _Deletegloballocale checks passed");
+    std::puts("libc internal _Locinfo, _Locimp base-object and global locale checks passed");
     return 0;
 }
