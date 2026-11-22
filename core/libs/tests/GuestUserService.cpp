@@ -128,6 +128,8 @@ int main() {
     Require(sceUserServiceGetTraditionalChineseInputType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, 32) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceGetAccessibilityVibration(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetAccessibilityKeyremapEnable(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetAccessibilityZoom(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     const UserServiceInitParam init_param{USER_SERVICE_THREAD_PRIORITY_MIN};
     Require(sceUserServiceInitialize(&init_param) == USER_SERVICE_OK);
 
@@ -393,18 +395,18 @@ int main() {
     SetLanguage(nullptr);
 
     const int absent_users[] = {0, USER_SERVICE_USER_ID_INVALID, 0xff, 0x12345678};
-    using UnmeasuredSetting = int (APS5_VABI *)(std::int32_t, std::int32_t*);
-    const UnmeasuredSetting unmeasuredSettings[] = {
+    using StandaloneSetting = int (APS5_VABI *)(std::int32_t, std::int32_t*);
+    const StandaloneSetting standaloneSettings[] = {
         sceUserServiceGetAccessibilityKeyremapEnable,
         sceUserServiceGetAccessibilityZoom,
     };
-    for (const UnmeasuredSetting& get : unmeasuredSettings) {
+    for (const StandaloneSetting& get : standaloneSettings) {
         std::int32_t value = 0x5a5a5a5a;
         Require(get(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
         for (int user_id : absent_users) {
             Require(get(user_id, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
             Require(value == 0x5a5a5a5a);
-            Require(get(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+            Require(get(user_id, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
         }
         bool threw = false;
         try {
