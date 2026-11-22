@@ -242,11 +242,19 @@ int main() {
     CHECK(encoder->setSize(encoder, Width, Height) == 0);
 
     auto* boundaryPixels = reinterpret_cast<std::uint8_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - 64);
+    auto* smallStridePixels = reinterpret_cast<std::uint8_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - 40);
     CHECK_THROWS_AS(std::runtime_error, encoder->writePixels(encoder, Height, nullptr, Stride));
     CHECK_THROWS_AS(std::runtime_error, encoder->writePixels(encoder, Height, static_cast<std::uint8_t*>(pages.unmapped), 0));
+    CHECK_THROWS_AS(std::runtime_error, encoder->writePixels(encoder, Height, smallStridePixels, 1));
     CHECK_THROWS_AS(std::runtime_error, encoder->writePixels(encoder, Height, static_cast<std::uint8_t*>(pages.unmapped), Stride));
     CHECK_THROWS_AS(std::runtime_error, encoder->writePixels(encoder, Height, boundaryPixels, Stride));
-    CHECK(encoder->writePixels(encoder, Height, sourcePixels.data(), Stride) == 0);
+    constexpr std::uint32_t PaddedStride = Stride + 16;
+    constexpr std::size_t ExactPaddedSpan = static_cast<std::size_t>(Height - 1) * PaddedStride + Stride;
+    CHECK(pages.pageSize >= ExactPaddedSpan);
+    auto* unpaddedLastRowSrc = reinterpret_cast<std::uint8_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - ExactPaddedSpan);
+    for (std::uint32_t row = 0; row < Height; ++row)
+        std::memcpy(unpaddedLastRowSrc + static_cast<std::size_t>(row) * PaddedStride, sourcePixels.data() + static_cast<std::size_t>(row) * Stride, Stride);
+    CHECK(encoder->writePixels(encoder, Height, unpaddedLastRowSrc, PaddedStride) == 0);
     std::size_t encodedBytes = 0;
     CHECK(encodeStream->getPosition(encodeStream, &encodedBytes) == 0 && encodedBytes > 0);
     CHECK(encoder->terminate(encoder) == 0);
@@ -274,6 +282,7 @@ int main() {
     CHECK(bandedEncoder->writePixelsBandedBegin(bandedEncoder, nullptr) == 0);
     CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, nullptr, Stride, 0));
     CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, static_cast<std::uint8_t*>(pages.unmapped), 0, 0));
+    CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, smallStridePixels, 1, 0));
     CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, static_cast<std::uint8_t*>(pages.unmapped), Stride, 0));
     CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, boundaryPixels, Stride, 0));
     CHECK(bandedEncoder->release(&bandedEncoder) == 0 && bandedEncoder == nullptr);
@@ -317,10 +326,28 @@ int main() {
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, boundaryRect, decodedPixels.data(), Stride));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, nullptr, Stride));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, static_cast<std::uint8_t*>(pages.unmapped), 0));
+    CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, smallStridePixels, 1));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, static_cast<std::uint8_t*>(pages.unmapped), Stride));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, static_cast<std::uint8_t*>(pages.readOnly), Stride));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, boundaryPixels, Stride));
-    CHECK(decoder->copy(decoder, &validRect, decodedPixels.data(), Stride) == 0);
+    auto* unpaddedLastRowDst = reinterpret_cast<std::uint8_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - ExactPaddedSpan);
+    CHECK(decoder->copy(decoder, &validRect, unpaddedLastRowDst, PaddedStride) == 0);
+    for (std::uint32_t row = 0; row < Height; ++row)
+        std::memcpy(decodedPixels.data() + static_cast<std::size_t>(row) * Stride,
+                    unpaddedLastRowDst + static_cast<std::size_t>(row) * PaddedStride, Stride);
+    CHECK(decodedPixels == sourcePixels);
+
+    auto* tightDecodeStream = CreateMemoryStream(encoded);
+    void* tightDecoderRaw = nullptr;
+    CHECK(PKImageDecode_Create_WMP_nid_postfix(&tightDecoderRaw) == 0 && tightDecoderRaw != nullptr);
+    auto* tightDecoder = static_cast<Decoder*>(tightDecoderRaw);
+    CHECK(tightDecoder->initialize(tightDecoder, tightDecodeStream) == 0);
+    JxrWmpReferenceConfigureDecoder(tightDecoder);
+    std::vector<std::uint8_t> tightDecodedPixels(Height * Stride);
+    CHECK(tightDecoder->copy(tightDecoder, &validRect, tightDecodedPixels.data(), Stride) == 0);
+    CHECK(tightDecodedPixels == sourcePixels);
+    CHECK(tightDecoder->release(&tightDecoder) == 0 && tightDecoder == nullptr);
+    CHECK(tightDecodeStream->close(&tightDecodeStream) == 0 && tightDecodeStream == nullptr);
 
     CHECK_THROWS_AS(std::runtime_error, decoder->release(reinterpret_cast<Decoder**>(badDecoderOut)));
     SetPageProtection(pages.readOnly, pages.pageSize, true, true);
