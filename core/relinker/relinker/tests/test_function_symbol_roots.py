@@ -340,6 +340,14 @@ def rejected_cases(relinker, work):
             assert not artifact.exists(), artifact
 
 
+def crossing_cases(relinker, work):
+    body = b"\xe9" + struct.pack("<i", 0x1200 - 0x1245)
+    image = make_image("register", "symbol", extent=0x42, body=body)
+    for target in TARGETS:
+        run, artifact = convert(relinker, work, "terminator-crossing", target, image, roots=False)
+        succeeded(run, artifact, target)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     group = sys.argv[2]
@@ -348,6 +356,7 @@ def main():
         work = Path(directory)
         if group == "executable":
             executable_cases(relinker, work, baseline)
+            crossing_cases(relinker, work)
         elif group == "module":
             module_cases(relinker, work, baseline)
             if not baseline:

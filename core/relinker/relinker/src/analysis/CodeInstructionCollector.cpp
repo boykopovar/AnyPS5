@@ -261,6 +261,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     std::set<std::uint64_t> roots;
     std::set<std::uint64_t> functionEntries;
     std::map<std::uint64_t, std::uint64_t> functions;
+    std::map<std::uint64_t, std::uint64_t> unwindRanges;
     std::map<std::uint64_t, std::uint64_t> tables;
     const auto inTable = [&](std::uint64_t address) { const auto after = tables.upper_bound(address); return after != tables.begin() && address < std::prev(after)->second; };
     const auto addRoot = [&](std::uint64_t address) { if (isCode(address) && !inTable(address)) roots.insert(address); };
@@ -546,6 +547,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     }
     for (const auto& function : UnusedNidFilter::ReadExceptionFunctions(bytes, headers, pointers.Values, importSlots)) {
         if (function.End <= function.Begin) throw Domain::RelinkerException("Code analysis: invalid unwind function range", function.Begin);
+        unwindRanges.emplace(function.Begin, function.End);
         addFunction(function.Begin, function.End - function.Begin, false);
         for (const auto target : function.ExtraTargets) addRoot(target);
     }
@@ -573,12 +575,26 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     for (const auto& [begin, end] : functions) functionBytes += end - begin;
     std::uint64_t decodedBytes = 0;
     report(1000);
+    const auto codeEnd = [&](std::uint64_t address) {
+        for (const auto& header : headers) {
+            if (header.Type != 1 || (header.Flags & 1) == 0) continue;
+            if (address < header.MappedAddress || address - header.MappedAddress >= header.FileSize) continue;
+            return header.MappedAddress + header.FileSize;
+        }
+        return address;
+    };
     for (const auto& [begin, end] : functions) {
         const auto offset = fileOffset(begin, end - begin);
+        const auto nextUnwind = unwindRanges.upper_bound(begin);
+        bool sawTerminator = false;
         for (auto address = begin; address < end;) {
+            const auto availableEnd = codeEnd(address);
+            if (availableEnd <= address)
+                throw Domain::RelinkerException("Code analysis: function is not file-backed", address);
             Codegen::DecodedInstructionInfo info;
+            bool crossing = false;
             try {
-                info = decoder.DecodeInstruction(bytes.data() + offset + address - begin, end - address);
+                info = decoder.DecodeInstruction(bytes.data() + offset + address - begin, availableEnd - address);
             } catch (const Codegen::CodegenException& error) {
                 const auto tailBytes = end - address;
                 bool tailHasFsPrefix = false;
@@ -595,11 +611,36 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                 }
                 if (tailBytes > 15 || tailHasFsPrefix)
                     throw Domain::RelinkerException(std::string("Code analysis: ") + error.what(), address);
+                if (message) {
+                    std::ostringstream text;
+                    text << "Code analysis: skipped an undecodable tail at 0x" << std::hex << address;
+                    message(text.str());
+                }
                 skipped.emplace_back(address, end);
                 break;
             }
-            if (info.Length == 0 || info.Length > end - address)
-                throw Domain::RelinkerException("Code analysis: instruction crosses function boundary", address);
+            if (info.Length == 0 || address + info.Length > availableEnd)
+                throw Domain::RelinkerException("Code analysis: instruction crosses the executable segment", address);
+            crossing = address + info.Length > end;
+            const bool terminator = info.FlowKind == Codegen::ControlFlowKind::UnconditionalJump ||
+                                    info.FlowKind == Codegen::ControlFlowKind::IndirectJump ||
+                                    info.FlowKind == Codegen::ControlFlowKind::Return ||
+                                    info.FlowKind == Codegen::ControlFlowKind::Trap;
+            if (crossing) {
+                const bool tls = info.HasMemoryOperand && (info.SegmentPrefix == 0x64 || info.SegmentPrefix == 0x65);
+                const bool intoNext = nextUnwind != unwindRanges.end() && address + info.Length > nextUnwind->first;
+                if (!terminator || tls || intoNext) {
+                    if (tls && (address == begin || sawTerminator))
+                        throw Domain::RelinkerException("Code analysis: instruction crosses function boundary", address);
+                    if (message) {
+                        std::ostringstream text;
+                        text << "Code analysis: skipped a range that ends inside an instruction at 0x" << std::hex << address;
+                        message(text.str());
+                    }
+                    skipped.emplace_back(address, end);
+                    break;
+                }
+            }
             instructionList.push_back(address);
             addAddressTakenRoot(address, bytes.data() + offset + address - begin, info);
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
@@ -609,7 +650,9 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
             }
             address += info.Length;
             decodedBytes += info.Length;
-            if (progress && (decodedBytes & 65535) < info.Length) report(1000 + 2500 * decodedBytes / functionBytes);
+            sawTerminator = sawTerminator || terminator;
+            if (crossing) break;
+            if (progress && (decodedBytes & 65535) < info.Length) report(1000 + 2500 * std::min(decodedBytes, functionBytes) / functionBytes);
         }
     }
     report(3500);

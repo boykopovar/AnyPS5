@@ -336,6 +336,10 @@ void frameSegment(
     const std::vector<std::uint8_t> seg(fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset), fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset + segSize));
     const auto scanner = MakeInstructionScanner();
     const X64InstructionDecoder decoder;
+    std::vector<std::uint64_t> functionBegins;
+    functionBegins.reserve(functions.size());
+    for (const auto& function : functions) functionBegins.push_back(function.Begin);
+    std::sort(functionBegins.begin(), functionBegins.end());
 
     std::set<std::size_t> targets;
     for (const auto& match : scanner->ScanCodeSection(seg, 0, seg.size())) {
@@ -361,14 +365,34 @@ void frameSegment(
         if (function.Begin < ph.MappedAddress || function.End <= function.Begin || function.End - ph.MappedAddress > segSize) continue;
         const auto start = static_cast<std::size_t>(function.Begin - ph.MappedAddress);
         const auto limit = static_cast<std::size_t>(function.End - ph.MappedAddress);
+        const auto nextSpan = std::upper_bound(functionBegins.begin(), functionBegins.end(), function.Begin);
+        const auto nextBegin = nextSpan == functionBegins.end() ? std::numeric_limits<std::uint64_t>::max() : *nextSpan;
         ++report.Functions;
         const auto skip = [&](const char* reason) { ++report.Skipped[reason]; };
 
-        const std::vector<std::uint8_t> code(seg.begin() + static_cast<std::ptrdiff_t>(start), seg.begin() + static_cast<std::ptrdiff_t>(limit));
+        const auto codeEnd = std::min<std::size_t>(segSize, limit + 15);
+        std::vector<std::uint8_t> code(seg.begin() + static_cast<std::ptrdiff_t>(start), seg.begin() + static_cast<std::ptrdiff_t>(codeEnd));
+        code.resize(code.size() + 15, 0xcc);
         std::vector<Insn> body;
         for (const auto& match : scanner->ScanCodeSection(code, 0, code.size())) {
+            const auto address = start + static_cast<std::size_t>(match.Offset);
+            if (address >= limit) break;
             if (code[match.Offset] == 0xcc && match.Length == 1) break;
-            body.push_back({start + static_cast<std::size_t>(match.Offset), match.Length, decoder.DecodeInstruction(code.data() + match.Offset, match.Length)});
+            const auto info = decoder.DecodeInstruction(code.data() + match.Offset, match.Length);
+            const bool crossing = address + match.Length > limit;
+            if (crossing) {
+                const bool terminator = info.FlowKind == ControlFlowKind::UnconditionalJump ||
+                                        info.FlowKind == ControlFlowKind::IndirectJump ||
+                                        info.FlowKind == ControlFlowKind::Return ||
+                                        info.FlowKind == ControlFlowKind::Trap;
+                const bool tls = info.HasMemoryOperand && (info.SegmentPrefix == 0x64 || info.SegmentPrefix == 0x65);
+                if (!terminator || tls || address + match.Length > nextBegin) {
+                    skip("instruction crosses the range end");
+                    continue;
+                }
+            }
+            body.push_back({address, match.Length, info});
+            if (crossing) break;
         }
         if (body.size() < 3) continue;
         const auto at = [&](const std::size_t k) { return seg.data() + body[k].Offset; };

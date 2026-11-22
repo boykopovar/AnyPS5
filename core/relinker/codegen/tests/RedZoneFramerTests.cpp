@@ -785,6 +785,23 @@ void treatsATailCallPastTheFdeEndAsLeaving() {
     require(report.Framed == 1 && sites.size() == 2 && sites[0].Address == Base + 0x60, "the tail-called function was not framed from its own FDE start");
 }
 
+void stopsAtAShortFdeWithoutLosingTheNextFunction() {
+    std::vector<std::uint8_t> called = FramelessPrologue;
+    append(called, StoreBelowRsp);
+    append(called, {0x85, 0xff, 0x75, 0x06});
+    append(called, FramelessExit);
+    append(called, {0x41, 0x5f, 0x41, 0x5e, 0x5b, 0xe9});
+    const auto disp = static_cast<std::uint32_t>(0x60 - static_cast<std::int32_t>(0x40 + called.size() + 4));
+    for (int index = 0; index < 4; ++index) called.push_back(static_cast<std::uint8_t>(disp >> (index * 8)));
+    auto input = calledThenUncalled(called, framelessLeaf(FramelessPrologue, StoreBelowRsp, FramelessExit));
+    input.functions[0].End -= 3;
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.Functions == 2 && report.Framed == 1 && sites.size() == 2, "an FDE that ends inside its tail jmp was decoded past its bytes or lost the next function");
+    require(report.Skipped.size() == 1 && report.Skipped.begin()->first == "branch leaves the function", "the FDE whose tail jmp leaves its range was not skipped as a branch out");
+}
+
 void framesALeafAfterAJumpWithoutInt3FromItsOwnFde() {
     std::vector<std::uint8_t> first = FramelessPrologue;
     append(first, StoreBelowRsp);
@@ -1033,6 +1050,7 @@ int main() {
         framesOpcodeEncodedNonStackRegisters();
         framesEachFunctionFromItsOwnFde();
         treatsATailCallPastTheFdeEndAsLeaving();
+        stopsAtAShortFdeWithoutLosingTheNextFunction();
         framesALeafAfterAJumpWithoutInt3FromItsOwnFde();
         keepsColdBlocksAfterARetInsideTheFde();
         keepsLoopsAlignedAfterAJump();
