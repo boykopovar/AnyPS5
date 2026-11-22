@@ -282,8 +282,11 @@ void TestProcessNameStorage(const std::filesystem::path& root) {
 void TestCanonicalPaths(const std::filesystem::path& root) {
     const std::string name = "relative-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt";
     WriteFile(root, name, "processName == \"gamma\" { }\n");
-    const auto saved = std::filesystem::current_path();
-    Require(chdir_nid_postfix(reinterpret_cast<const char*>(root.u8string().c_str())) == 0);
+    const auto hostDirectory = std::filesystem::current_path();
+    char saved[ConfigFilePathMax + 1] = {0};
+    Require(getcwd_nid_postfix(saved, sizeof saved) != nullptr);
+    Require(chdir_nid_postfix(guestRoot) == 0);
+    Require(std::filesystem::current_path() == hostDirectory);
 
     ConfigFile configFile = EmptyObject();
     Construct(&configFile, name.c_str());
@@ -294,7 +297,11 @@ void TestCanonicalPaths(const std::filesystem::path& root) {
     Require(Field(configFile.filename) == Field(directory) + "/" + name);
     Require(Field(configFile.configDirectory) == Field(directory));
 
-    std::filesystem::current_path(saved);
+    Require(chdir_nid_postfix(saved) == 0);
+    char restored[ConfigFilePathMax + 1] = {0};
+    Require(getcwd_nid_postfix(restored, sizeof restored) != nullptr);
+    Require(Field(restored) == Field(saved));
+    Require(std::filesystem::current_path() == hostDirectory);
 }
 
 }
