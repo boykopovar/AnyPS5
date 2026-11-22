@@ -17,6 +17,12 @@
 
 using namespace VorbisDec;
 
+extern "C" {
+int anyps5_ov_test_open64(OggVorbis_File* vf, ogg_int64_t (*tell64)(void*));
+ogg_int64_t anyps5_ov_bitrate64(OggVorbis_File* vf, int link);
+ogg_int64_t anyps5_ov_bitrate_instant64(OggVorbis_File* vf);
+}
+
 static_assert(sizeof(vorbis_comment) == sizeof(GuestComment));
 static_assert(offsetof(vorbis_comment, user_comments) == offsetof(GuestComment, user_comments));
 static_assert(offsetof(vorbis_comment, comment_lengths) == offsetof(GuestComment, comment_lengths));
@@ -31,7 +37,6 @@ struct Handle {
     void* datasource = nullptr;
     GuestCallbacks callbacks{};
     std::vector<GuestInfo> infos;
-    bool tellOutOfRange = false;
 
     ~Handle() {
         file.datasource = nullptr;
@@ -110,14 +115,9 @@ int CloseSource(void* source) {
     return handle->callbacks.close_func(handle->datasource);
 }
 
-long TellSource(void* source) {
-    auto* handle = static_cast<Handle*>(source);
-    const std::int64_t position = handle->callbacks.tell_func(handle->datasource);
-    if (position < std::numeric_limits<long>::min() || position > std::numeric_limits<long>::max()) {
-        handle->tellOutOfRange = true;
-        return -1;
-    }
-    return static_cast<long>(position);
+ogg_int64_t TellSource(void* source) {
+    const auto* handle = static_cast<const Handle*>(source);
+    return handle->callbacks.tell_func(handle->datasource);
 }
 
 struct FilterContext {
@@ -147,12 +147,11 @@ int APS5_VABI sceVorbisDecOpenCallbacks(void* datasource, void* vf, const char* 
         callbacks.read_func ? ReadSource : nullptr,
         callbacks.seek_func ? SeekSource : nullptr,
         callbacks.close_func ? CloseSource : nullptr,
-        callbacks.tell_func ? TellSource : nullptr,
+        nullptr,
     };
-    const int result = ov_open_callbacks(datasource ? handle.get() : nullptr, &handle->file, initial, initial ? static_cast<long>(ibytes) : 0, host);
-    if (handle->tellOutOfRange) {
-        throw std::runtime_error(std::string(__func__) + ": a stream length outside the host long range is not implemented");
-    }
+    const int headers = ov_test_callbacks(datasource ? handle.get() : nullptr, &handle->file, initial, initial ? static_cast<long>(ibytes) : 0, host);
+    if (headers != 0) return headers;
+    const int result = anyps5_ov_test_open64(&handle->file, callbacks.tell_func ? TellSource : nullptr);
     if (result != 0) return result;
     handle->infos.resize(static_cast<std::size_t>(handle->file.links));
     SyncInfos(*handle);
@@ -174,11 +173,11 @@ int APS5_VABI sceVorbisDecClear(void* vf) {
 }
 
 std::int64_t APS5_VABI sceVorbisDecBitrate(void* vf, int link) {
-    return WithHandle(vf, __func__, [&](Handle& handle) -> std::int64_t { return ov_bitrate(&handle.file, link); });
+    return WithHandle(vf, __func__, [&](Handle& handle) -> std::int64_t { return anyps5_ov_bitrate64(&handle.file, link); });
 }
 
 std::int64_t APS5_VABI sceVorbisDecBitrateInstant(void* vf) {
-    return WithHandle(vf, __func__, [](Handle& handle) -> std::int64_t { return ov_bitrate_instant(&handle.file); });
+    return WithHandle(vf, __func__, [](Handle& handle) -> std::int64_t { return anyps5_ov_bitrate_instant64(&handle.file); });
 }
 
 GuestComment* APS5_VABI sceVorbisDecComment(void* vf, int link) {

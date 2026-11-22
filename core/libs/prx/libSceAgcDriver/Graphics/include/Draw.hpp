@@ -107,8 +107,12 @@ struct MeshArgumentRules {
     std::uint32_t maxGroups;
     std::uint32_t maxInstances;
     std::uint32_t maxTotal;
+    std::uint32_t firstIgnored;
 };
 MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount);
+MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, const Pm4::DrawParameters& draw);
+MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, const Pm4::DrawParameters& draw, bool asCompute);
+MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount, bool asCompute);
 struct MeshGrid {
     std::uint32_t groups;
     std::uint32_t instances;
@@ -117,7 +121,7 @@ struct MeshGrid {
 };
 std::optional<MeshGrid> MeshGridFor(const Context& context, std::uint32_t groups, std::uint32_t instances);
 std::optional<MeshGrid> MeshComputeGridFor(const Context& context, std::uint32_t groups, std::uint32_t instances);
-MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount, bool asCompute);
+MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, const Pm4::DrawParameters& draw, bool asCompute);
 MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshArgumentRules& rules);
 
 // Why DrawWithRecipe did not record from the recipe (the caller then runs Draw): the draw is not

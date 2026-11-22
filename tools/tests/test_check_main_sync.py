@@ -1,6 +1,7 @@
 from pathlib import Path
 import contextlib
 import io
+import json
 import os
 import re
 import subprocess
@@ -268,6 +269,24 @@ class CheckMainSyncPathTests(CheckMainSyncFixture):
         self.assertIn(f"  {name}\n", result.stdout.replace("\r", ""))
         self.assertIn("#9", result.stdout)
 
+    @unittest.skipIf(sys.platform == "win32", "Windows filenames cannot contain carriage returns")
+    def test_carriage_return_in_path_is_preserved_in_json(self):
+        name = "line\rbreak.txt"
+        self.repo.write(name, "original\n")
+        self.repo.commit("add file")
+        self.branch("feature")
+        self.repo.write(name, "feature\n")
+        self.repo.commit("feature edit")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.write(name, "upstream\n")
+        self.repo.commit("upstream edit (#77)")
+
+        result = run_tool(self.repo.path, "--head", "feature", "--json")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["conflicts"], [name])
+        self.assertEqual(report["shared"], [name])
+        self.assertEqual(set(report["pulls"]), {"77"})
 
     def test_merged_pull_history_treats_shared_names_as_literal_paths(self):
         import importlib.util
