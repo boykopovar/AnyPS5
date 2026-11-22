@@ -436,6 +436,8 @@ void PatchChainedImports(std::vector<std::uint8_t>& binary, const Image& image, 
     }
     if (!fixups || fixups->DataSize == 0) return;
     RequireRange(binary, fixups->DataOffset, fixups->DataSize);
+    if (fixups->DataSize < sizeof(ChainedFixupsHeader))
+        throw std::runtime_error("chained fixups header out of bounds");
     const auto base = std::size_t{fixups->DataOffset};
     const auto header = Read<ChainedFixupsHeader>(binary, base);
     if (header.Version != 0) throw std::runtime_error("unsupported chained fixups version");

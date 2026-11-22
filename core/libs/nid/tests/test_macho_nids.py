@@ -264,12 +264,24 @@ def check_refusals(patcher, directory):
     growing = [("_ab", 0, 0x100), ("_cd", 0, 0x108)]
     result, _ = patch(patcher, directory, "signed.dylib", build_dylib(growing, [], signed=True))
     assert result.returncode != 0 and "signed Mach-O images cannot grow linkedit data" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    check_short_chained_fixups_data(patcher, directory)
     result, _ = patch(patcher, directory, "opcodes.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [], bind_opcodes=True))
     assert result.returncode != 0 and "bind opcodes are not supported" in result.stdout + result.stderr, (result.stdout, result.stderr)
     result, _ = patch(patcher, directory, "signed-short.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [("_sceXy", 1)], signed=True))
     assert result.returncode != 0 and "signed Mach-O images cannot grow linkedit data" in result.stdout + result.stderr, (result.stdout, result.stderr)
 
 
+def check_short_chained_fixups_data(patcher, directory):
+    image = bytearray(build_dylib([("_puts_nid_postfix", 0, 0x100)], []))
+    fixups = command_fields(image)[LC_DYLD_CHAINED_FIXUPS][0]
+    data_offset, data_size = struct.unpack_from("<II", image, fixups + 8)
+    assert data_size >= 28
+    struct.pack_into("<7I", image, data_offset, 0, 0, 0, 0, 0, 1, 0)
+    struct.pack_into("<I", image, fixups + 12, 16)
+    original = bytes(image)
+    result, path = patch(patcher, directory, "short-fixups-data.dylib", original)
+    assert result.returncode != 0 and "chained fixups header out of bounds" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert path.read_bytes() == original
 def chain_trie(depth):
     def fixed_uleb(value):
         return bytes([((value >> (7 * index)) & 0x7F) | 0x80 for index in range(4)] + [(value >> 28) & 0x7F])
