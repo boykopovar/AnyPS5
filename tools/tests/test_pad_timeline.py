@@ -388,7 +388,9 @@ class TimelineTests(unittest.TestCase):
             except (OSError, UnicodeError):
                 self.skipTest("the file system cannot name a file with a lone surrogate")
             env = dict(os.environ, PYTHONIOENCODING="utf-8:backslashreplace")
-            executable = getattr(sys, "_base_executable", None) or sys.executable
+            executable = sys.executable
+            if os.name == "nt":
+                executable = getattr(sys, "_base_executable", None) or executable
             result = subprocess.run([executable, str(Path(pad_timeline.__file__)), str(timeline), str(output)],
                                     capture_output=True, text=True, timeout=5, env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
