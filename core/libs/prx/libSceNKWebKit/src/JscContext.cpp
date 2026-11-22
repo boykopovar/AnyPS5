@@ -70,7 +70,8 @@ struct ConstraintMarker : JSMarker {
 
 bool APS5_VABI MarkerIsMarked(JSMarker* baseMarker, JSObjectRef object) {
     auto* marker = static_cast<ConstraintMarker*>(baseMarker);
-    if (!marker || !object || !object->alive) return false;
+    if (!object) return true;
+    if (!marker || !object->alive) return false;
     if (object->protectCount > 0) return true;
     if (marker->group->activeCallbackPins.count(object) > 0) return true;
     for (auto* ctx : marker->group->contexts) {
@@ -722,10 +723,7 @@ void APS5_VABI JSContextGroupClearExecutionTimeLimit(JSContextGroupRef group) {
 void APS5_VABI JSContextGroupAddHeapFinalizer(JSContextGroupRef group, JSHeapFinalizer finalizer, void* userData) {
     if (!group || !finalizer) return;
     auto* mutGroup = const_cast<OpaqueJSContextGroup*>(group);
-    const std::pair<JSHeapFinalizer, void*> entry{finalizer, userData};
-    if (std::find(mutGroup->heapFinalizers.begin(), mutGroup->heapFinalizers.end(), entry) == mutGroup->heapFinalizers.end()) {
-        mutGroup->heapFinalizers.push_back(entry);
-    }
+    mutGroup->heapFinalizers.emplace_back(finalizer, userData);
 }
 
 void APS5_VABI JSContextGroupRemoveHeapFinalizer(JSContextGroupRef group, JSHeapFinalizer finalizer, void* userData) {
@@ -1079,8 +1077,8 @@ JSObjectRef APS5_VABI JSWeakGetObject(JSWeakRef weak) {
 }
 
 void APS5_VABI JSWeakObjectMapSet(JSContextRef ctx, JSWeakObjectMapRef map, void* key, JSObjectRef object) {
-    if (!ctx || !map) return;
-    if (!object || !object->alive) {
+    if (!ctx || !map || !object) return;
+    if (!object->alive) {
         map->entries.erase(key);
         return;
     }
