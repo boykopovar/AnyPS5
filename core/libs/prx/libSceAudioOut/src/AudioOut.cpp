@@ -445,7 +445,7 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
                 port.volume[c] = DEFAULT_VOLUME;
             }
             if (type != PORT_TYPE_VIBRATION && type != PORT_TYPE_EX && type != PORT_TYPE_SYS) {
-                openDevice(port);
+                if (!openDevice(port)) port.nextDeviceRetry = sceKernelGetProcessTime() + DEVICE_RETRY_US;
             }
             static const bool trace = std::getenv("APS5_TRACE_AUDIOOUT") != nullptr;
             if (trace) std::fprintf(stderr, "[audioout] port %d: type %d, %u samples at %u Hz, format %d, device %u\n", i + 1, type, len, freq, static_cast<int>(format), static_cast<unsigned>(port.device));
