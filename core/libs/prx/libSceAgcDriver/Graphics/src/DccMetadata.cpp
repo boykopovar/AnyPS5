@@ -484,6 +484,17 @@ std::size_t DccKeyCount(const GuestTextureResource& surface, std::uint64_t surfa
     return DccKeyCount(surface.tileMode, BytesPerElement(surface.format), surface.width, surface.height, surfaceBytes);
 }
 
+std::size_t DccMipKeySlice(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes) {
+    constexpr std::uint32_t MetaBlockEdge = 512;
+    constexpr std::size_t MetaBlockKeys = 4096;
+    // A metadata block is 4096 keys covering 1 MiB of texels, so its texel extent is
+    // 512 x (1 MiB / 512 / element bytes); 512x512 for 4-byte elements, 512x256 for 8-byte.
+    const auto MetaBlockHeight = 1048576u / MetaBlockEdge / elementBytes;
+    const auto pitch = (width + MetaBlockEdge - 1u) / MetaBlockEdge;
+    const auto rows = (height + MetaBlockHeight - 1u) / MetaBlockHeight;
+    return static_cast<std::size_t>(pitch) * rows * MetaBlockKeys;
+}
+
 namespace {
 
 // ReadDccKeys, saying in `memoized` whether the answer came from the pending-store memo rather

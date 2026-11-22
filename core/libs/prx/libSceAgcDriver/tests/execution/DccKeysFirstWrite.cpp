@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -96,62 +97,62 @@ std::uint64_t AddressOf(const void* data) {
 
 class GuestBlock {
 public:
-    explicit GuestBlock(bool watch, bool shared = false) : watched(watch) {
+    explicit GuestBlock(bool watch, bool shared = false, std::size_t bytes = BlockBytes) : watched(watch), bytes(bytes) {
 #ifdef _WIN32
         if (watched) {
-            block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
+            block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
             if (shared) {
                 Require(block != nullptr, "cannot reserve shared test memory");
-                const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, BlockBytes, nullptr);
+                const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
                 Require(section != nullptr, "cannot create shared test memory");
-                GuestArena::GuestArenaMap_nid_postfix(block, BlockBytes, section, 0, PAGE_READWRITE);
-                twin = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
+                GuestArena::GuestArenaMap_nid_postfix(block, bytes, section, 0, PAGE_READWRITE);
+                twin = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
                 Require(twin != nullptr, "cannot reserve the second mapping of shared test memory");
-                GuestArena::GuestArenaMap_nid_postfix(twin, BlockBytes, section, 0, PAGE_READWRITE);
+                GuestArena::GuestArenaMap_nid_postfix(twin, bytes, section, 0, PAGE_READWRITE);
                 CloseHandle(section);
-            } else if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+            } else if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
         } else {
-            block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
         }
 #else
         Require(!shared, "shared test memory requires Windows");
         if (watched) {
             constexpr std::uintptr_t alignment = 65536;
-            void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            void* mapped = mmap(nullptr, bytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             if (mapped != MAP_FAILED) {
                 const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
                 const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
                 if (aligned != begin) munmap(mapped, aligned - begin);
-                if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
+                if (aligned + bytes != begin + bytes + alignment) munmap(reinterpret_cast<void*>(aligned + bytes), begin + alignment - aligned);
                 block = reinterpret_cast<std::uint8_t*>(aligned);
-                GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
+                GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
             }
         } else {
-            block = static_cast<std::uint8_t*>(std::aligned_alloc(65536, BlockBytes));
+            block = static_cast<std::uint8_t*>(std::aligned_alloc(65536, bytes));
         }
 #endif
         Require(block != nullptr, "DCC keys first write: cannot allocate the guest block");
-        Require(!watched || AgcDriver::GuestMemory::Watched(AddressOf(block), BlockBytes), "DCC keys first write: the watched guest block is not write-watched");
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
+        Require(!watched || AgcDriver::GuestMemory::Watched(AddressOf(block), bytes), "DCC keys first write: the watched guest block is not write-watched");
+        GuestAllocations::Mutation().Add(block, bytes, true, true, true);
     }
 
     ~GuestBlock() {
         GuestAllocations::Mutation().Remove(block);
 #ifdef _WIN32
         if (twin != nullptr) {
-            GuestArena::GuestArenaReset_nid_postfix(twin, BlockBytes);
-            GuestArena::GuestArenaRelease_nid_postfix(twin, BlockBytes);
+            GuestArena::GuestArenaReset_nid_postfix(twin, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(twin, bytes);
         }
         if (watched) {
-            GuestArena::GuestArenaReset_nid_postfix(block, BlockBytes);
-            GuestArena::GuestArenaRelease_nid_postfix(block, BlockBytes);
+            GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
         } else {
             VirtualFree(block, 0, MEM_RELEASE);
         }
 #else
         if (watched) {
-            munmap(block, BlockBytes);
-            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
+            munmap(block, bytes);
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, bytes);
         } else {
             std::free(block);
         }
@@ -165,6 +166,7 @@ public:
 
 private:
     bool watched;
+    std::size_t bytes;
     std::uint8_t* block = nullptr;
     std::uint8_t* twin = nullptr;
 };
@@ -976,6 +978,166 @@ void RunSharedImport(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
 
 }
 
+// Blended draw into a mipmapped fast-cleared target: the starting content is the clear code's
+// colour, not the stale texels, and the viewed mip's keys end uncompressed.
+constexpr std::uint32_t MipDrawSide = 128;
+constexpr std::uint32_t MipDrawLevels = 8;
+constexpr std::uint32_t MipDrawScissor = 64;
+// A 128x128 RGBA8 surface fills one 64 KiB pipe block exactly, so the viewed mip 0 is a full
+// block (the game's case), not a tail. AMD addrlib chain layout for the keys: every mip
+// (128x128 and smaller, 4-byte elements) is one 4096-key metadata block; the small mips come
+// first, mip 0 last.
+constexpr std::size_t MipDrawMip0OffsetKeys = std::size_t{MipDrawLevels - 1u} * 4096u;
+constexpr std::size_t MipDrawMip0Keys = 4096;
+// The chain (mip 0's full block plus the tail mips' block) sits in the first two blocks; the
+// keys after it.
+constexpr std::size_t MipDrawKeysOffset = 2 * 65536;
+// The guest allocation for the chain test: the chain's two blocks plus the 8 x 4096 keys,
+// rounded up to whole blocks. (BlockBytes stays two blocks for the older tests.)
+constexpr std::size_t MipDrawBlockBytes = 3 * 65536;
+
+alignas(256) constexpr std::array<std::uint32_t, 6> MipDrawVertexCode{
+    0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
+};
+
+constexpr std::array<std::array<float, 4>, 3> MipDrawTriangle{{
+    {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
+}};
+
+// Premultiplied (0.5, 0.5, 0.5, 0.5): ONE / ONE_MINUS_SRC_COLOR leaves 50% of the starting
+// content in the result, so the starting content is observable through the blend.
+alignas(256) constexpr std::array<std::uint32_t, 11> MipDrawPixelCode{
+    0x7e0002ffu | (4u << 17u), 0x3f000000u,
+    0x7e0002ffu | (5u << 17u), 0x3f000000u,
+    0x7e0002ffu | (6u << 17u), 0x3f000000u,
+    0x7e0002ffu | (7u << 17u), 0x3f000000u,
+    0xf800180fu, 0x07060504u, 0xbf810000u,
+};
+
+std::array<std::uint32_t, 4> MipDrawBufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
+    const auto address = AddressOf(data);
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (static_cast<std::uint32_t>(stride) << 16u), count, 0x01016facu};
+}
+
+void MipDrawBlended(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color) {
+    const auto target = device.Target();
+    constexpr std::uint32_t waveSize = 64;
+    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    const auto vertexBuffer = MipDrawBufferDescriptor(MipDrawTriangle.data(), 16u, static_cast<std::uint32_t>(MipDrawTriangle.size()));
+    std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
+    const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(MipDrawVertexCode.data()), std::as_bytes(std::span(MipDrawVertexCode))}}};
+    ShaderRecompiler::RecompileRequest vertex{
+        {ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(MipDrawVertexCode.data()), MipDrawVertexCode, 0, {}},
+        {waveSize, 0, vertexUserData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, vertexMemory},
+        target,
+        {0, 0, 0, 64}
+    };
+    vertex.useCache = false;
+    const auto vertexResult = ShaderRecompiler::Recompile(vertex);
+    const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
+
+    AgcDriver::Graphics::State state{};
+    state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, waveSize, waveSize, std::nullopt, std::nullopt};
+    state.colors = {color};
+    state.color = state.colors.front();
+    state.hasColorTarget = true;
+    state.renderExtent = {MipDrawSide, MipDrawSide};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.viewport = {0, static_cast<float>(MipDrawSide), static_cast<float>(MipDrawSide), -static_cast<float>(MipDrawSide), 0, 1};
+    state.negativeOneToOne = false;
+    state.scissor = {{0, 0}, {MipDrawScissor, MipDrawSide}};
+    state.cullMode = VK_CULL_MODE_NONE;
+    state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    VkPipelineColorBlendAttachmentState blend{};
+    blend.blendEnable = VK_TRUE;
+    blend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+    blend.colorBlendOp = VK_BLEND_OP_ADD;
+    blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+    blend.alphaBlendOp = VK_BLEND_OP_ADD;
+    blend.colorWriteMask = 0xf;
+    state.blends = {blend};
+    state.blend = blend;
+    state.blendConstants = {};
+
+    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(MipDrawPixelCode.data()), std::as_bytes(std::span(MipDrawPixelCode))}}};
+    const AgcDriver::Registers pixelContext{{0x1b6, 0x8000}, {0x1b3, 0}, {0x1b4, 0}, {0x203, 0}, {0x1c5, 9}};
+    ShaderRecompiler::RecompileRequest fragment{
+        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(MipDrawPixelCode.data()), MipDrawPixelCode, 0, {}},
+        {waveSize, 0, {}, std::nullopt, AgcDriver::Graphics::DecodePixelStageInfo(pixelContext, {}), std::nullopt, pixelMemory},
+        target,
+        PixelPushLayout(vertexPush, target)
+    };
+    fragment.useCache = false;
+    fragment.context.pixel = AgcDriver::Graphics::DecodePixelStageInfo(pixelContext, AgcDriver::Graphics::ExportMappings(state));
+    const auto pixelResult = ShaderRecompiler::Recompile(fragment);
+    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
+        {ShaderStage::Vertex, &vertexResult, 0},
+        {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
+    }};
+    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(MipDrawTriangle.size()), 0, 1, 0, false};
+    device.Draw(state, draw, shaders);
+}
+
+void RunMipmappedClearDraw(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+#ifndef _WIN32
+    auto* texels = block;
+    auto* keys = block + MipDrawKeysOffset;
+    const auto meta = AddressOf(keys);
+    // Stale texels everywhere; the small mips uncompressed; the viewed mip's key slice a 0000
+    // clear code (AMD addrlib layout: small mips first, mip 0 last).
+    std::memset(texels, 0x55, 2 * 65536);
+    std::memset(keys, 0xff, std::size_t{MipDrawLevels} * 4096u);
+    std::memset(keys + MipDrawMip0OffsetKeys, 0x00, MipDrawMip0Keys);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(AddressOf(texels) >> 8u);
+    cx[0x390] = static_cast<std::uint32_t>(AddressOf(texels) >> 40u);
+    cx[0x31b] = 0;
+    cx[0x31c] = 0x10028028u;
+    cx[0x31d] = 0;
+    cx[0x3b0] = ((MipDrawLevels - 1u) << 28u) | ((MipDrawSide - 1u) << 14u) | (MipDrawSide - 1u);
+    cx[0x3b8] = 0x9000000u | (TileRenderTarget64KB << 14u) | (1u << 30u);
+    cx[0x325] = static_cast<std::uint32_t>(meta >> 8u);
+    cx[0x3a8] = static_cast<std::uint32_t>(meta >> 40u);
+    const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    Require(color.mipCount == MipDrawLevels && color.dccAddress == meta + MipDrawMip0OffsetKeys,
+            "the viewed mip of a mipmapped DCC target takes its key slice at the AMD addrlib offset");
+    Require(AgcDriver::Graphics::SurfaceForTarget(color).dccAddress == meta, "the resident surface of a mipmapped DCC target lost the chain's key base");
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    MipDrawBlended(device, color);
+    device.WaitIdle();
+    AgcDriver::Graphics::StorageTexture::FlushPending(color.address, color.bytes, nullptr, "mipmapped clear draw read-back");
+    device.WaitIdle();
+    const auto layout = AgcDriver::Graphics::ColorTargetLayout(MipDrawSide, MipDrawSide, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+    Require(layout.Bytes() == color.bytes, "the viewed mip's layout differs from the target's bytes");
+    std::vector<std::byte> stored(color.bytes);
+    AgcDriver::GuestMemory::Read(color.address, stored, 4);
+    for (std::uint32_t y = 0; y < MipDrawSide; ++y) {
+        for (std::uint32_t x = 0; x < MipDrawSide; ++x) {
+            const auto offset = layout.Offset(x, y);
+            const bool inside = x < MipDrawScissor;
+            // 0.5 premultiplied over the starting content: 128 inside the scissor, the starting
+            // content itself outside. A 0000 clear makes the starting content 0x00 -- the stale
+            // 0x55 texels would give 170 inside and 0x55 outside instead.
+            const int expected = inside ? 128 : 0;
+            for (std::size_t channel = 0; channel < 4; ++channel) {
+                const int actual = static_cast<int>(stored[offset + channel]);
+                Require(std::abs(actual - expected) <= 1, "mipmapped fast clear: " + (inside ? std::string("inside") : std::string("outside")) + " the scissor at (" + std::to_string(x) + ", " + std::to_string(y) + ") holds " + std::to_string(actual) + ", expected " + std::to_string(expected) + " (a 0.5 premultiplied draw over the 0000 clear, not the stale 0x55 texels)");
+            }
+        }
+    }
+    std::vector<std::byte> keyBytes(MipDrawMip0Keys);
+    AgcDriver::GuestMemory::Read(meta + MipDrawMip0OffsetKeys, keyBytes, 1);
+    Require(std::ranges::all_of(keyBytes, [](std::byte key) { return key == std::byte{0xff}; }),
+            "the drawn mip of a mipmapped DCC target kept its clear code in the viewed mip's keys");
+#else
+    static_cast<void>(device);
+    static_cast<void>(block);
+#endif
+}
+
 void RunMipmappedTarget(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
 #ifndef _WIN32
     constexpr std::uint32_t ChainSide = 64;
@@ -999,7 +1161,7 @@ void RunMipmappedTarget(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     cx[0x3a8] = static_cast<std::uint32_t>(meta >> 40u);
     const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
     const auto resource = AgcDriver::Graphics::SurfaceForTarget(color);
-    Require(color.mipCount == ChainLevels && color.dccAddress == 0 && resource.dccAddress == meta, "the resident surface of a mipmapped DCC color target has no keys");
+    Require(color.mipCount == ChainLevels && color.dccAddress != 0 && resource.dccAddress == meta, "the viewed mip of a mipmapped DCC color target takes its own key range and the resident surface keeps its keys");
     const auto bytes = AgcDriver::Graphics::DescribeSurface(resource).guestBytes;
     Require(bytes <= SurfaceBytes, "the mip chain does not fit the test surface");
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -1072,6 +1234,9 @@ int main(int argc, char** argv) {
         std::optional<GuestBlock> chain;
         chain.emplace(false);
         RunMipmappedTarget(*device, chain->Data());
+        std::optional<GuestBlock> clearChain;
+        clearChain.emplace(false, false, MipDrawBlockBytes);
+        RunMipmappedClearDraw(*device, clearChain->Data());
 #ifdef _WIN32
         shared.emplace(true, true);
         RunSharedImport(*device, shared->Data());

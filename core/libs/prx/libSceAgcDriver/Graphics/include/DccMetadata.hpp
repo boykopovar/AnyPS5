@@ -25,6 +25,11 @@ const char* DccKeysName(DccKeys keys);
 std::size_t DccKeyBytes(std::uint64_t surfaceBytes);
 std::size_t DccKeyCount(TextureTileMode tileMode, std::uint32_t elementBytes, std::uint32_t width, std::uint32_t height, std::uint64_t surfaceBytes);
 std::size_t DccKeyCount(const GuestTextureResource& surface, std::uint64_t surfaceBytes);
+// The DCC key slice of one mip of a 2D SW_64KB_R_X mip chain, per AMD addrlib Gfx10Lib::HwlComputeDccInfo:
+// a metadata block is always 4096 keys covering 1 MiB of texels (texel extent 512 x 1 MiB/512/element bytes),
+// so a mip's slice is (ceil(width/512) x ceil(height/block height) x 4096) keys. Mip chains place the small
+// mips first, each a whole number of blocks, mip 0 last.
+std::size_t DccMipKeySlice(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes);
 
 template<typename ReadFollowed, typename ReadNamed>
 bool KeysServeSurface(std::uint64_t followedDcc, DccKeys uploaded, DccKeys filled, std::uint64_t namedDcc, ReadFollowed&& readFollowed, ReadNamed&& readNamed) {

@@ -465,8 +465,14 @@ std::optional<std::uint8_t> overwrittenStencil(const State& state) {
 }
 
 std::size_t colorKeyCount(const ColorTarget& color, std::size_t bytes) {
-    if (color.mipCount != 1 || color.depth != 1 || !color.dccPipeAligned) return DccKeyBytes(bytes);
-    return DccKeyCount(ColorTextureTileMode(color.tileMode), color.elementBytes, color.extent.width, color.extent.height, bytes);
+    if (color.mipCount == 1 && color.depth == 1 && color.dccPipeAligned) return DccKeyCount(ColorTextureTileMode(color.tileMode), color.elementBytes, color.extent.width, color.extent.height, bytes);
+    // A 2D mipmapped pipe-aligned R64KBX chain (see DecodeColorBuffer): the viewed mip's key array
+    // spans its own padded console extent (AMD addrlib HwlComputeDccInfo), not the guestBytes/256 of
+    // its texels. Marks and overlap checks over the viewed mip's keys use this; key reads keep the
+    // historical per-256-bytes count, and other targets (non-pipe-aligned, non-R64KBX, mipCount 0)
+    // keep their old counts.
+    if (color.mipCount > 1 && color.depth == 1 && color.dccPipeAligned && ColorTextureTileMode(color.tileMode) == TextureTileMode::kR64KBX) return DccMipKeySlice(color.extent.width, color.extent.height, color.elementBytes);
+    return DccKeyBytes(bytes);
 }
 
 std::array<std::byte, 16> clearTexel(const ColorTarget& color, DccKeys keys) {
@@ -2202,10 +2208,26 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
 // over the target's pages, the DCC key scan of TextureClearKeys, then UnchangedSince), with the
 // [draws] target-lookup accounting. `lookup` makes (or finds) the image; DrawWithRecipe refreshes
 // the stored object instead.
+// A mipmapped DCC target's viewed mip can be fast-cleared by its own key slice while the chain
+// image the draw reads from still holds the stored texels (the chain's keys are not one clear
+// code, so the upload keeps them): the draw would start from the stale bytes instead of the
+// console's fast clear. Settle the target's range to the clear colour and mark its keys stored;
+// the lookup's generation check re-uploads the image over that range, so the draw starts from
+// the clear. Single-level targets already get this from the image being uploaded under the
+// clear, and ClearSingle expands stored texels, which the target's own write-back owns.
+void settleMipmappedTargetClear(const Context& context, const ColorTarget& color) {
+    if (color.dccAddress == 0 || color.mipCount <= 1) return;
+    const auto keyCount = std::max<std::size_t>(colorKeyCount(color, color.bytes), 1u);
+    const auto keys = CurrentDccKeys(color.dccAddress, color.bytes, keyCount);
+    if (!IsDccClear(keys) || keys == DccKeys::ClearSingle || (keys == DccKeys::ClearRegister && color.elementBytes > 8u)) return;
+    storeClearTexels(context, color, clearTexel(color, keys));
+}
+
 template<typename TLookup>
 std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, const State& state, const ColorTarget& color, DrawOutcome& outcome, bool profile, const TLookup& lookup) {
     const auto lookupStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto walkedBefore = profile ? GuestMemory::ThreadCollectedBytes() : 0;
+    settleMipmappedTargetClear(context, color);
     std::shared_ptr<StorageTexture> resident;
     try {
         resident = lookup();
