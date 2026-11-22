@@ -55,12 +55,14 @@ class ComputedEnvironmentTests(unittest.TestCase):
             code = env_reference.check(found, doc, BOTH, out)
             return code, out.getvalue()
 
-    def test_a_name_built_from_literals_and_to_string_is_a_read_pattern(self):
-        root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
-                            'if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n')
+    def test_a_name_built_from_literals_and_to_string_is_read_for_every_slot(self):
+        root = self.fixture('for (std::size_t slot = 0; slot < 2; ++slot) {\n'
+                            '    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
+                            '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                            '}\n')
         found = env_reference.reads([root / "core"], BOTH)
-        self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_*_SERIAL"})
-        self.assertEqual(found["ANYPS5_PAD_PLAYER_*_SERIAL"][0][1], 2)
+        self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL"})
+        self.assertEqual(found["ANYPS5_PAD_PLAYER_1_SERIAL"][0][1], 3)
 
     def test_a_computed_name_no_reader_uses_is_not_a_read(self):
         root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n')
@@ -71,18 +73,68 @@ class ComputedEnvironmentTests(unittest.TestCase):
                             'if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n')
         self.assertEqual(env_reference.reads([root / "core"], BOTH), {})
 
-    def test_check_accepts_documented_rows_that_a_pattern_covers(self):
-        found = {"ANYPS5_PAD_PLAYER_*_SERIAL": [("core/Sample.cpp", 2, "string", "")]}
-        code, text = self.check(found, ["ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL"])
-        self.assertEqual((code, text), (0, "1 name(s), all documented\n"))
+    def test_a_loop_bound_through_a_constant_array_size_resolves_every_slot(self):
+        root = self.fixture('inline constexpr std::size_t Slots = 4;\n'
+                            'using Serials = std::array<std::string, Slots>;\n'
+                            'Serials serials;\n'
+                            'for (std::size_t slot = 0; slot < serials.size(); ++slot) {\n'
+                            '    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
+                            '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                            '}\n')
+        found = env_reference.reads([root / "core"], BOTH)
+        self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL",
+                                      "ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"})
+        self.assertEqual(found["ANYPS5_PAD_PLAYER_4_SERIAL"][0][1], 6)
 
-    def test_check_reports_a_pattern_no_documented_row_matches(self):
-        found = {"ANYPS5_PAD_PLAYER_*_SERIAL": [("core/Sample.cpp", 2, "string", "")]}
+    def test_a_computed_name_without_a_loop_is_an_undetermined_read(self):
+        root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
+                            'if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n')
+        found = env_reference.reads([root / "core"], BOTH)
+        self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_*_SERIAL"})
+        code, text = self.check(found, ["ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL",
+                                        "ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"])
+        self.assertEqual(code, 1)
+        self.assertIn("ANYPS5_PAD_PLAYER_*_SERIAL is read at ", text)
+        self.assertIn("the names it can take are not known", text)
+        self.assertNotIn("has a row in", text)
+        self.assertIn("0 name(s) undocumented, 0 stale, 1 undetermined", text)
+
+    def test_a_loop_bound_the_scanner_cannot_read_is_an_undetermined_read(self):
+        root = self.fixture('std::size_t Count();\n'
+                            'for (std::size_t slot = 0; slot < Count(); ++slot) {\n'
+                            '    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
+                            '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                            '}\n')
+        found = env_reference.reads([root / "core"], BOTH)
+        self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_*_SERIAL"})
+
+    def test_check_accepts_documented_rows_for_every_expanded_name(self):
+        found = {name: [("core/Sample.cpp", 3, "string", "")]
+                 for name in ("ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL")}
+        code, text = self.check(found, ["ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL"])
+        self.assertEqual((code, text), (0, "2 name(s), all documented\n"))
+
+    def test_check_reports_expanded_names_without_rows(self):
+        found = {name: [("core/Sample.cpp", 3, "string", "")]
+                 for name in ("ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL")}
         code, text = self.check(found, ["ANYPS5_OTHER_SERIAL"])
         self.assertEqual(code, 1)
-        self.assertIn("ANYPS5_PAD_PLAYER_*_SERIAL is read at core/Sample.cpp:2 but has no row", text)
+        self.assertIn("ANYPS5_PAD_PLAYER_1_SERIAL is read at core/Sample.cpp:3 but has no row", text)
+        self.assertIn("ANYPS5_PAD_PLAYER_2_SERIAL is read at core/Sample.cpp:3 but has no row", text)
         self.assertIn("ANYPS5_OTHER_SERIAL has a row", text)
-        self.assertIn("1 name(s) undocumented, 1 stale", text)
+        self.assertIn("2 name(s) undocumented, 1 stale", text)
+
+    def test_check_reports_names_of_a_pattern_whose_documentation_is_partial(self):
+        found = {name: [("core/Sample.cpp", 3, "string", "")]
+                 for name in ("ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL",
+                              "ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL")}
+        code, text = self.check(found, ["ANYPS5_PAD_PLAYER_1_SERIAL"])
+        self.assertEqual(code, 1)
+        self.assertIn("ANYPS5_PAD_PLAYER_2_SERIAL is read at core/Sample.cpp:3 but has no row", text)
+        self.assertIn("ANYPS5_PAD_PLAYER_3_SERIAL is read at core/Sample.cpp:3 but has no row", text)
+        self.assertIn("ANYPS5_PAD_PLAYER_4_SERIAL is read at core/Sample.cpp:3 but has no row", text)
+        self.assertNotIn("ANYPS5_PAD_PLAYER_1_SERIAL has a row", text)
+        self.assertIn("3 name(s) undocumented, 0 stale", text)
 
 
 class EnvReferenceTests(unittest.TestCase):
