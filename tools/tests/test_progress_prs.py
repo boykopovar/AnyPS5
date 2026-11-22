@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime, timezone
 import subprocess
 import tempfile
 import unittest
@@ -220,6 +221,74 @@ class DependencyProbeFailureTests(unittest.TestCase):
         self.assertFalse(result["available"])
         self.assertEqual(result["reason"], "fatal: fixture read failed")
         self.assertEqual(measure.call_count, 1)
+
+
+class DependencyBlockTests(unittest.TestCase):
+    def test_dependencies_blocked_when_a_dependency_is_excluded(self):
+        self.assertTrue(progress_prs.dependencies_blocked({"depends": {1, 2}}, {2: "dependency_excluded"}))
+
+    def test_dependencies_not_blocked_by_unrelated_or_no_exclusions(self):
+        self.assertFalse(progress_prs.dependencies_blocked({"depends": {1}}, {3: "dependency_excluded"}))
+        self.assertFalse(progress_prs.dependencies_blocked({"depends": set()}, {3: "dependency_excluded"}))
+
+
+
+class ClosedDependencyStatusTests(unittest.TestCase):
+    def answer(self, returncode=0, stdout=""):
+        return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="boom")
+
+    def test_unmerged_dependency_has_no_merge_commit(self):
+        with patch.object(progress_prs.subprocess, "run", return_value=self.answer(stdout='{"merged_at": null}')):
+            self.assertIsNone(progress_prs.closed_dependency_status("owner/repo", 7))
+
+    def test_merged_dependency_returns_its_merge_commit(self):
+        merged = '{"merged_at": "2026-01-01T00:00:00Z", "merge_commit_sha": "abc123"}'
+        with patch.object(progress_prs.subprocess, "run", return_value=self.answer(stdout=merged)):
+            self.assertEqual(progress_prs.closed_dependency_status("owner/repo", 7), "abc123")
+
+    def test_failed_or_invalid_answers_are_errors(self):
+        with patch.object(progress_prs.subprocess, "run", return_value=self.answer(returncode=1)):
+            with self.assertRaisesRegex(RuntimeError, "could not inspect"):
+                progress_prs.closed_dependency_status("owner/repo", 7)
+        with patch.object(progress_prs.subprocess, "run", return_value=self.answer(stdout="not json")):
+            with self.assertRaisesRegex(RuntimeError, "invalid data"):
+                progress_prs.closed_dependency_status("owner/repo", 7)
+        with patch.object(progress_prs.subprocess, "run",
+                          return_value=self.answer(stdout='{"merged_at": "2026-01-01T00:00:00Z"}')):
+            with self.assertRaisesRegex(RuntimeError, "omitted the merge commit"):
+                progress_prs.closed_dependency_status("owner/repo", 7)
+
+
+
+class MakeCommitTests(unittest.TestCase):
+    def test_make_commit_records_both_parents_and_the_estimate_message(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = ["-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(root), *env, "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+            base = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True,
+                                  check=True).stdout.strip()
+            tree = subprocess.run(["git", "-C", str(root), "show", "-s", "--format=%T", "HEAD"], capture_output=True, text=True,
+                                  check=True).stdout.strip()
+            subprocess.run(["git", "-C", str(root), *env, "commit", "-q", "--allow-empty", "-m", "head"], check=True)
+            head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True,
+                                  check=True).stdout.strip()
+            commit = progress_prs.make_commit(root, tree, base, head)
+            body = subprocess.run(["git", "-C", str(root), "cat-file", "-p", commit], capture_output=True, text=True,
+                                  check=True).stdout
+            parents = [line.split()[1] for line in body.splitlines() if line.startswith("parent ")]
+            self.assertEqual(parents, [base, head])
+            self.assertIn("open PR progress estimate", body)
+class TimestampTests(unittest.TestCase):
+    def test_timestamp_formats_utc_time_with_a_z_suffix(self):
+        fixed = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        with patch.object(progress_prs, "datetime") as clock:
+            clock.now.return_value = fixed
+            self.assertEqual(progress_prs.timestamp(), "2026-01-02T03:04:05Z")
+    def test_timestamp_on_the_live_clock_has_no_offset_suffix(self):
+        self.assertRegex(progress_prs.timestamp(), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
 
 if __name__ == "__main__":
     unittest.main()

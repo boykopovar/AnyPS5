@@ -1,0 +1,5 @@
+# libkernel_sys
+
+## change sceKernelLwfsAllocateBlock, sceKernelLwfsLseek, sceKernelLwfsSetAttribute, sceKernelLwfsWrite and sceKernelSetCompressionAttribute
+
+- [sceKernelLwfsAllocateBlock, sceKernelLwfsLseek, sceKernelLwfsSetAttribute, sceKernelLwfsWrite and sceKernelSetCompressionAttribute](../../../core/libs/prx/libkernel_sys/Lwfs.cpp) (libkernel_sys) - success on an LWFS descriptor is unmeasured and unimplemented; no LWFS mount exists here. Measured on a PS5 payload process (firmware 13.590.001) and on a PS5 Pro (13.60): closed descriptors return EBADF, regular files, directories, `/dev/null`, pipes and kqueues ENOTTY, and TCP sockets errno 49; all set errno. `sceKernelSetCompressionAttribute` rejects attributes other than 0 or 1 with EINVAL before the descriptor check and leaves errno alone. An unconnected `AF_INET` stream socket answers errno 49 on both, so that is measured. A bad nonempty write buffer returns EFAULT before descriptor validation as a host-safety fallback; pointer errors and their precedence are unmeasured. `sceKernelLwfsTrimBlock` was not measured and still throws. Parameter lists come from OpenOrbis only.

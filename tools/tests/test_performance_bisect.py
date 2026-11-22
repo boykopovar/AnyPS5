@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import math
+import os
 import subprocess
 import sys
 import tempfile
@@ -201,7 +202,7 @@ class CommandTests(unittest.TestCase):
     def test_build_commands_expand_paths_without_a_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source"
+            source = root / "source {commit}"
             source.mkdir()
             subprocess.run(["git", "init", "-q", str(source)], check=True)
             subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
@@ -209,9 +210,9 @@ class CommandTests(unittest.TestCase):
             (source / "source.cpp").write_text("source", encoding="utf-8")
             subprocess.run(["git", "-C", str(source), "add", "source.cpp"], check=True)
             subprocess.run(["git", "-C", str(source), "commit", "-qm", "test: source"], check=True)
-            build_dir = root / "source" / "build"
+            build_dir = source / "build"
             recipe = {"build_dir": "build", "build_commands": [[sys.executable, "-c",
-                       "from pathlib import Path; Path(r'{build_dir}').mkdir(parents=True)"]]}
+                       "from pathlib import Path; import sys; Path(sys.argv[1]).mkdir(parents=True)", "{build_dir}"]]}
             actual = performance_bisect.run_build_commands(source, recipe, GOOD, root / "results")
             self.assertEqual(actual, build_dir)
             self.assertTrue(build_dir.is_dir())
@@ -365,8 +366,10 @@ target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'mach
                       "{build_dir}", "{result_dir}", "{commit}"]]}
         output = root / "report.json"
         original_worktrees = performance_bisect.git(self.repo, "worktree", "list", "--porcelain")
+        self.addCleanup(os.chdir, Path.cwd())
+        os.chdir(root)
         with patch.object(performance_bisect, "TOOLS_DIR", tools):
-            report = performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, output, root)
+            report = performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, output, Path("."))
         self.assertEqual(report["first_bad"]["commit"], self.commits[4])
         self.assertEqual(report["previous_good"]["commit"], self.commits[3])
         self.assertEqual(report["tested_commits"], 5)
@@ -739,6 +742,23 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing machine"):
                 performance_bisect.sample_summary(path, "PPSA00000", GOOD)
 
+    def test_sample_requires_content_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            summary = self.sample_fixture()
+            title = summary["titles"]["PPSA00000"]
+            path = self.write_summary(root, summary)
+            sample = performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+            self.assertEqual(sample["identity"]["content_version"], "01.00")
+
+            del title["version"]
+            for fields in ({}, {"version": ""}, {"version": " \t"}, {"version": None}, {"version": 1}):
+                with self.subTest(fields=fields):
+                    summary["titles"]["PPSA00000"] = dict(title, **fields)
+                    path = self.write_summary(root, summary)
+                    with self.assertRaisesRegex(ValueError, "missing a valid content version"):
+                        performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
 
     def test_summary_uses_middle_pair_for_even_sample_count(self):
         samples = [{"fps": value, "identity": IDENTITY} for value in (60.0, 62.0)]
@@ -853,7 +873,7 @@ class FocusedInputEdgeTests(unittest.TestCase):
 
 class GitFailureAndExitTests(unittest.TestCase):
     def test_git_failure_raises_with_stderr_or_command_fallback(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LC_ALL": "C"}):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LC_ALL": "C", "GIT_CEILING_DIRECTORIES": str(Path(directory).parent)}):
             with self.assertRaisesRegex(RuntimeError, "not a git repository"):
                 performance_bisect.git(directory, "status")
             failed = subprocess.CompletedProcess([], 1, stdout="", stderr="")
@@ -875,6 +895,29 @@ class GitFailureAndExitTests(unittest.TestCase):
                                          "--recipe", str(Path(directory) / "missing.json")])
         self.assertEqual(error.exception.code, 2)
         self.assertTrue(stderr.getvalue().strip())
+
+
+class UniqueRecipeFieldsTests(unittest.TestCase):
+    def test_pairs_become_a_dict_in_order(self):
+        fields = performance_bisect.unique_recipe_fields([("b", 1), ("a", [2])])
+        self.assertEqual(list(fields.items()), [("b", 1), ("a", [2])])
+
+    def test_duplicate_field_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "recipe has a duplicate field: a"):
+            performance_bisect.unique_recipe_fields([("a", 1), ("b", 2), ("a", 3)])
+
+    def test_works_as_a_json_object_hook(self):
+        self.assertEqual(json.loads('{"a": 1}', object_pairs_hook=performance_bisect.unique_recipe_fields), {"a": 1})
+        with self.assertRaises(ValueError):
+            json.loads('{"a": 1, "a": 2}', object_pairs_hook=performance_bisect.unique_recipe_fields)
+
+class RecipeFieldTests(unittest.TestCase):
+    def test_unique_recipe_fields_keeps_distinct_names(self):
+        self.assertEqual(performance_bisect.unique_recipe_fields([('a', 1), ('b', 2)]), {'a': 1, 'b': 2})
+
+    def test_unique_recipe_fields_refuses_a_duplicate_name(self):
+        with self.assertRaisesRegex(ValueError, 'has a duplicate field'):
+            performance_bisect.unique_recipe_fields([('a', 1), ('a', 2)])
 
 
 if __name__ == "__main__":
