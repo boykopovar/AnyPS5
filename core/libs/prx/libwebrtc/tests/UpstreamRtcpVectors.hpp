@@ -1,3 +1,17 @@
+/* Adapted for AnyPS5 from webrtc 8d78f5de6c27b2c793039989ea381f1428fb0100
+ * modules/rtp_rtcp/source/rtcp_packet/transport_feedback_unittest.cc
+ * (https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet/transport_feedback_unittest.cc).
+ */
+/*
+ *  Copyright (c) 2015 The WebRTC project authors. All Rights Reserved.
+ *
+ *  Use of this source code is governed by a BSD-style license
+ *  that can be found in the LICENSE file in the root of the source
+ *  tree. An additional intellectual property rights grant can be found
+ *  in the file PATENTS.  All contributing project authors may
+ *  be found in the AUTHORS file in the root of the source tree.
+ */
+
 #pragma once
 
 #include <array>
