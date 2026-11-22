@@ -306,9 +306,9 @@ test("a late rejected release request does not affect an active replacement work
   } });
   get("file").files = [{ name: "old.zip" }];
   get("file").onchange();
-  await inspect(workers[0], 1);
-  get("cancel").onclick();
-  await setImmediate();
+  assert.equal(get("cancel").hidden, false);
+  await get("cancel").onclick();
+  assert.equal(workers[0].terminated, true);
   get("file").files = [{ name: "new.zip" }];
   get("file").onchange();
   const current = workers[1];
@@ -336,9 +336,9 @@ test("a late successful release request cannot hide a replacement request failur
   } });
   get("file").files = [{ name: "old.zip" }];
   get("file").onchange();
-  await inspect(workers[0], 1);
-  get("cancel").onclick();
-  await setImmediate();
+  assert.equal(get("cancel").hidden, false);
+  await get("cancel").onclick();
+  assert.equal(workers[0].terminated, true);
   get("file").files = [{ name: "new.zip" }];
   get("file").onchange();
   replacement.reject(new TypeError("replacement failure"));
@@ -443,7 +443,11 @@ for (const type of ["write", "close-file", "complete"]) {
       get("save").listeners.get("change")();
       await get("convert").onclick();
       const request = old.onmessage({ data: { type, bytes: new Uint8Array([1]), mode: "zip", outputName: "old.elf", size: 1 } });
-      await get("cancel").onclick();
+      if (type === "complete") await old.onerror({ message: "old worker stopped" });
+      else {
+        assert.equal(get("cancel").hidden, false);
+        await get("cancel").onclick();
+      }
       get("file").files = [{ name: "replacement.zip" }];
       get("file").onchange();
       const replacement = workers.at(-1);
@@ -456,6 +460,33 @@ for (const type of ["write", "close-file", "complete"]) {
       assert.equal(get("convert").disabled, true);
     });
   }
+}
+
+for (const outcome of ["saved", "failed"]) {
+  test(`final ZIP close reports ${outcome} even if a late Cancel click arrives`, async t => {
+    const pending = deferred();
+    const sink = new WritableStream({ close: () => pending.promise }).getWriter();
+    const { get, workers } = await setup(t, `final-zip-close-${outcome}`, {
+      showSaveFilePicker: async () => ({ createWritable: async () => sink })
+    });
+    const current = await selected(get, workers, "app.zip");
+    await get("convert").onclick();
+    assert.equal(get("cancel").hidden, false);
+    const complete = current.onmessage({ data: {
+      type: "complete", mode: "zip", outputName: "app.elf", size: 1, apps: 1, release: "v1-test"
+    } });
+    await setImmediate();
+    const cancelWasHidden = get("cancel").hidden;
+    const cancel = get("cancel").onclick();
+    if (outcome === "failed") pending.reject(new Error("Cannot commit ZIP"));
+    else pending.resolve();
+    await Promise.all([complete, cancel]);
+
+    assert.equal(get("done").hidden, outcome === "failed");
+    assert.equal(get("error").hidden, outcome === "saved");
+    if (outcome === "failed") assert.equal(get("error").children[0].textContent, "Cannot commit ZIP");
+    assert.equal(cancelWasHidden, true);
+  });
 }
 
 for (const stage of ["picker", "writable", "root"]) {

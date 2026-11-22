@@ -278,6 +278,7 @@ async function onMessage({ data }, currentWorker) {
       await sink.write(data.bytes);
       if (currentWorker === worker) currentWorker.postMessage({ type: "written" });
     } else if (data.type === "complete") {
+      $("cancel").hidden = true;
       if (sink) {
         await sink.close();
         if (currentWorker !== worker) return;
@@ -286,7 +287,6 @@ async function onMessage({ data }, currentWorker) {
       working = false;
       $("done").hidden = false;
       $("status").hidden = true;
-      $("cancel").hidden = true;
       const unit = data.mode === "disk" ? translate(locale, "resultUnitFiles") : "ZIP";
       $("result-info").textContent = data.apps > 1
         ? translate(locale, "resultInfoBatch", { apps: data.apps, size: bytes(data.size), unit, release: data.release })
@@ -396,7 +396,9 @@ $("drop").ondrop = event => {
   selectInputs([...event.dataTransfer.files].map(file => ({ name: file.name, file })));
 };
 for (const id of ["save", "target", "acknowledge"]) $(id).addEventListener("change", update);
-$("cancel").onclick = () => fail(() => translate(locale, "cancelled"));
+$("cancel").onclick = () => {
+  if (!$("cancel").hidden) return fail(() => translate(locale, "cancelled"));
+};
 async function createZipSink(name, current) {
   try {
     const handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: "ZIP archive", accept: { "application/zip": [".zip"] } }] });
