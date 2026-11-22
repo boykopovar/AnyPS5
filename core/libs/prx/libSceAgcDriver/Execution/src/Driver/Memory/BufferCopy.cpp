@@ -104,6 +104,7 @@ std::optional<StreamCopy> WideTableCopyRange(const std::array<std::uint32_t, 8>&
     if (elements == 0 || elements > table[2]) return std::nullopt;
     const StreamCopy copy{base(0), base(4), static_cast<std::size_t>(elements) * 16u};
     if (copy.bytes > (16u << 20u) || copy.source % 4 != 0 || copy.destination % 4 != 0) return std::nullopt;
+    if (copy.source + copy.bytes < copy.source || copy.destination + copy.bytes < copy.destination) return std::nullopt;
     return copy;
 }
 
