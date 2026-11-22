@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/LibcxxPlainMutexForwards.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
 #include <atomic>
@@ -12,6 +13,30 @@ namespace {
 void Require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
+
+template <typename Fn>
+bool ThrowsRuntimeError(Fn&& fn) {
+    try {
+        fn();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+struct PlainMutexForwardsGuard {
+    static inline const LibcxxPlainMutexForwards_nid_no_patch validForwards{
+        pthread_mutex_destroy_nid_postfix,
+        pthread_mutex_lock_nid_postfix,
+        pthread_mutex_trylock_nid_postfix,
+        pthread_mutex_unlock_nid_postfix,
+    };
+
+    PlainMutexForwardsGuard() = default;
+    ~PlainMutexForwardsGuard() { RegisterLibcxxPlainMutexForwards_nid_no_patch(&validForwards); }
+    PlainMutexForwardsGuard(const PlainMutexForwardsGuard&) = delete;
+    PlainMutexForwardsGuard& operator=(const PlainMutexForwardsGuard&) = delete;
+};
 
 }
 
@@ -81,5 +106,35 @@ int main() {
         rejected = true;
     }
     Require(rejected, "libc++ mutex accepted an unaligned guest address");
+
+    {
+        static const LibcxxPlainMutexForwards_nid_no_patch partialForwards{
+            pthread_mutex_destroy_nid_postfix,
+            nullptr,
+            nullptr,
+            pthread_mutex_unlock_nid_postfix,
+        };
+        PlainMutexForwardsGuard guard;
+        RegisterLibcxxPlainMutexForwards_nid_no_patch(&partialForwards);
+
+        PthreadMutex partialMutex = nullptr;
+        Require(ThrowsRuntimeError([&] { _ZNSt3__15mutex4lockEv_nid_postfix(&partialMutex); }),
+                "libc++ mutex lock accepted a partial forward table");
+        Require(ThrowsRuntimeError([&] { static_cast<void>(_ZNSt3__15mutex8try_lockEv_nid_postfix(&partialMutex)); }),
+                "libc++ mutex try_lock accepted a partial forward table");
+        Require(ThrowsRuntimeError([&] { _ZNSt3__15mutex6unlockEv_nid_postfix(&partialMutex); }),
+                "libc++ mutex unlock accepted a partial forward table");
+        Require(ThrowsRuntimeError([&] { _ZNSt3__15mutexD1Ev_nid_postfix(&partialMutex); }),
+                "libc++ mutex destructor accepted a partial forward table");
+    }
+
+    PthreadMutex restoredMutex = nullptr;
+    _ZNSt3__15mutex4lockEv_nid_postfix(&restoredMutex);
+    Require(restoredMutex != nullptr, "libc++ mutex lock failed after forward restoration");
+    _ZNSt3__15mutex6unlockEv_nid_postfix(&restoredMutex);
+    Require(_ZNSt3__15mutex8try_lockEv_nid_postfix(&restoredMutex),
+            "libc++ mutex try_lock failed after forward restoration");
+    _ZNSt3__15mutex6unlockEv_nid_postfix(&restoredMutex);
+    _ZNSt3__15mutexD1Ev_nid_postfix(&restoredMutex);
     return 0;
 }

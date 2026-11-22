@@ -249,17 +249,7 @@ void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(GuestGlyphRec* glyph, std::uint32_t
 void APS5_VABI FT_Done_Glyph_nid_postfix(GuestGlyphRec* glyph) {
     if (!glyph) return;
     std::lock_guard lock(glyphMutex);
-    auto& owner = Find(glyph, __func__);
-    if (owner.isBitmap) {
-        if (owner.bitmap.bitmap.buffer != reinterpret_cast<FT_BitmapGlyph>(owner.host.get())->bitmap.buffer) NotImplemented_nid_no_patch(__func__);
-    } else {
-        const auto& outline = owner.outline.outline;
-        const auto& native = reinterpret_cast<FT_OutlineGlyph>(owner.host.get())->outline;
-        if (outline.points != (owner.points.empty() ? nullptr : owner.points.data()) ||
-            static_cast<const void*>(outline.tags) != static_cast<const void*>(native.tags) ||
-            static_cast<const void*>(outline.contours) != static_cast<const void*>(native.contours) ||
-            (outline.flags & FT_OUTLINE_OWNER) != (native.flags & FT_OUTLINE_OWNER)) NotImplemented_nid_no_patch(__func__);
-    }
+    Find(glyph, __func__);
     glyphs.erase(glyph);
 }
 
