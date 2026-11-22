@@ -10,17 +10,7 @@
 #include <string>
 
 namespace LibcException {
-struct TypeRecord { const void* const* vtable; const char* name; const TypeRecord* base; };
-
 struct ClassTypeRecord { const void* const* vtable; const char* name; };
-
-struct ExceptionVtable {
-    std::ptrdiff_t offset;
-    const TypeRecord* type;
-    void (APS5_VABI *destroy)(ExceptionObject*);
-    void (APS5_VABI *deleteObject)(ExceptionObject*);
-    const char* (APS5_VABI *what)(const ExceptionObject*);
-};
 
 struct FutureErrorVtable {
     std::ptrdiff_t offset;
@@ -109,7 +99,7 @@ const char* PlainWhat(const ExceptionObject* object) {
     if (std::strcmp(name, "St9bad_alloc") == 0) return "bad allocation";
     if (std::strcmp(name, "St20bad_array_new_length") == 0) return "bad allocation";
     if (std::strcmp(name, "St17bad_function_call") == 0) return "bad function call";
-    if (std::strcmp(name, "St12bad_weak_ptr") == 0) return "bad_weak_ptr";
+    if (std::strcmp(name, "St12bad_weak_ptr") == 0 || std::strcmp(name, "NSt3__112bad_weak_ptrE") == 0) return "bad_weak_ptr";
     if (std::strcmp(name, "St18bad_variant_access") == 0) return "bad_variant_access";
     if (std::strcmp(name, "St19bad_optional_access") == 0) return "bad_optional_access";
     return name;
@@ -501,6 +491,18 @@ void APS5_VABI _ZNSt12bad_weak_ptrD1Ev_nid_postfix(LibcException::ExceptionObjec
 void APS5_VABI _ZNSt12bad_weak_ptrD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt12bad_weak_ptrD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeletePlain(self); }
 const char* APS5_VABI _ZNKSt12bad_weak_ptr4whatEv_nid_postfix(const LibcException::ExceptionObject* self) { return LibcException::PlainWhat(self); }
+
+void APS5_VABI _ZNSt3__112bad_weak_ptrD1Ev_nid_postfix(LibcException::ExceptionObject* self) noexcept {
+    LibcException::DestroyPlain(self);
+}
+
+constinit const LibcException::TypeRecord _ZTINSt3__112bad_weak_ptrE_nid_postfix {
+    LibcException::SingleTypeVtable + 2, "NSt3__112bad_weak_ptrE", &_ZTISt9exception_nid_postfix,
+};
+constinit const LibcException::ExceptionVtable _ZTVNSt3__112bad_weak_ptrE_nid_postfix {
+    0, &_ZTINSt3__112bad_weak_ptrE_nid_postfix, _ZNSt3__112bad_weak_ptrD1Ev_nid_postfix,
+    LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch,
+};
 
 LibcException::TypeRecord _ZTISt18bad_variant_access_nid_postfix {LibcException::SingleTypeVtable + 2, "St18bad_variant_access", &_ZTISt9exception_nid_postfix};
 LibcException::ExceptionVtable _ZTVSt18bad_variant_access_nid_postfix {0, &_ZTISt18bad_variant_access_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};

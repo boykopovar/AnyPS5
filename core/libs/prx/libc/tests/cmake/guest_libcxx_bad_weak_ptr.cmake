@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_libcxx_bad_weak_ptr_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxBadWeakPtr.cpp)
+    target_include_directories(guest_libcxx_bad_weak_ptr_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libcxx_bad_weak_ptr_tests PRIVATE libc)
+    add_test(NAME guest_libcxx_bad_weak_ptr COMMAND guest_libcxx_bad_weak_ptr_tests)
+    if(WIN32)
+        set_tests_properties(guest_libcxx_bad_weak_ptr PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
