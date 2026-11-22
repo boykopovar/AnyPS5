@@ -176,6 +176,8 @@ void TestUnsupported() {
     Require(space[0] == UINT64_MAX && space[1] == UINT64_MAX && space[2] == UINT64_MAX && space[3] == 4, "statvfs reports unknown space and writes three fields");
     Require(_ZNSt8__sce_v210filesystem13_Current_set2EPKc_nid_postfix("/") == 0, "the root stays the current directory");
     for (const char* path : {"", ".", "d", "//", "/d", "f/"}) Require(_ZNSt8__sce_v210filesystem13_Current_set2EPKc_nid_postfix(path) == NotSupported, "any other current directory is not supported");
+    Require(_ZNSt8__sce_v210filesystem8_StatvfsEPKcRNS0_10space_infoE_nid_postfix("f", reinterpret_cast<std::uint64_t*>(0x10)) == 14, "an unwritable space output is a bad address");
+    Require(_ZNSt8__sce_v210filesystem13_Current_set2EPKc_nid_postfix(reinterpret_cast<const char*>(0x10)) == 14, "an unreadable current directory is a bad address");
 }
 
 }

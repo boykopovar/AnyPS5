@@ -245,7 +245,7 @@ ConservativeZExport readConservativeZExport(Reader& reader) {
 
 ColorExportPacking readColorExportPacking(Reader& reader) {
     const auto value = reader.ReadU8();
-    if (value > static_cast<std::uint8_t>(ColorExportPacking::UintClamp16)) {
+    if (value > static_cast<std::uint8_t>(ColorExportPacking::UintMask10_10_10_2)) {
         throw std::runtime_error("RequestSerializer: invalid ColorExportPacking value");
     }
     return static_cast<ColorExportPacking>(value);
@@ -352,7 +352,16 @@ void writePixelInfo(Writer& writer, const ShaderPixelStageInfo& info) {
     writer.WriteBool(info.stencilRefExportEnable);
     writer.WriteU8(static_cast<std::uint8_t>(info.rasterPrimitive));
     writer.WriteBool(info.layerExported);
-    writer.WriteU8(info.ditheredAlphaToCoverage ? (info.ditheredAlphaSamples == 2u ? 2u : 1u) : 0u);
+    std::uint8_t dither = info.ditheredAlphaToCoverage ? (info.ditheredAlphaSamples == 2u ? 2u : 1u) : 0u;
+    if (info.singleSampleDither != SingleSampleDither::None) {
+        if (!info.alphaToCoverage || !info.ditheredAlphaToCoverage || info.ditheredAlphaSamples != 1u) throw std::runtime_error("RequestSerializer: invalid single-sample alpha-to-coverage");
+        if (info.singleSampleDither == SingleSampleDither::E701) dither = 3u;
+        else if (info.singleSampleDither == SingleSampleDither::Rounded18701) dither = 4u;
+        else throw std::runtime_error("RequestSerializer: invalid single-sample dither mode");
+    } else if (info.ditheredAlphaToCoverage && info.ditheredAlphaSamples != 2u && info.ditheredAlphaSamples != 8u) {
+        throw std::runtime_error("RequestSerializer: invalid dithered alpha-to-coverage sample count");
+    }
+    writer.WriteU8(dither);
     writer.WriteBool(info.frontFaceAllBits);
     writer.WriteU8(info.quadPixelMask);
     for (const std::uint16_t mask : info.quadSampleMask) writer.WriteU32(mask);
@@ -448,9 +457,10 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
     if (version >= 23u) info.layerExported = reader.ReadBool();
     if (version >= 25u) {
         const auto dither = reader.ReadU8();
-        if (dither > (version >= 47u ? 2u : 1u)) throw std::runtime_error("RequestSerializer: invalid alpha-to-coverage dither value");
+        if (dither > (version >= 63u ? 4u : version >= 47u ? 2u : 1u)) throw std::runtime_error("RequestSerializer: invalid alpha-to-coverage dither value");
         info.ditheredAlphaToCoverage = dither != 0u;
-        info.ditheredAlphaSamples = dither == 2u ? 2u : 8u;
+        info.ditheredAlphaSamples = dither >= 3u ? 1u : dither == 2u ? 2u : 8u;
+        info.singleSampleDither = dither == 3u ? SingleSampleDither::E701 : dither == 4u ? SingleSampleDither::Rounded18701 : SingleSampleDither::None;
     }
     if (version >= 27u) info.frontFaceAllBits = reader.ReadBool();
     if (version >= 28u) info.quadPixelMask = reader.ReadU8();
@@ -913,10 +923,11 @@ GraphicsCompileContext readGraphicsCompileContext(Reader& reader, DeserializedGr
 }
 
 std::string RequestSerializer::Serialize(const RecompileRequest& request) const {
+    if (!request.context.splitState.empty()) throw std::invalid_argument("RequestSerializer: a request that splits its state is built by the driver from another request and is not serialized");
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(57u);
+    writer.WriteU32(63u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -969,6 +980,8 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     }
     writer.WriteU32(request.target.maxImageArrayLayers);
     writer.WriteBool(request.target.fixedPushSlots);
+    writer.WriteBool(request.target.spannedAnySubgroup);
+    if (request.graphics.has_value() && request.graphics->emulateBarycentrics) writer.WriteBool(true);
     return base64Encode(buffer);
 }
 
@@ -977,7 +990,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 57u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 63u || version == 50u || (version >= 58u && version <= 61u)) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -1051,6 +1064,12 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     if (version >= 57u) {
         result.request.target.maxImageArrayLayers = reader.ReadU32();
         result.request.target.fixedPushSlots = reader.ReadBool();
+    }
+    if (version >= 62u) result.request.target.spannedAnySubgroup = reader.ReadBool();
+    if (version >= 63u && reader.Remaining() != 0u) {
+        if (!reader.ReadBool()) throw std::runtime_error("RequestSerializer: a written emulated barycentrics flag is clear");
+        if (!result.request.graphics.has_value()) throw std::runtime_error("RequestSerializer: emulated barycentrics without a graphics context");
+        result.request.graphics->emulateBarycentrics = true;
     }
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;

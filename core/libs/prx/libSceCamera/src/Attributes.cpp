@@ -50,6 +50,16 @@ bool ValidTarget(const CameraAutoExposureGainTarget* option) {
     }
 }
 
+template <typename T>
+bool ValidGuestInput(const T* pointer) {
+    if (!pointer) return false;
+    T local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, pointer, sizeof(local));
+    errno = savedErrno;
+    return copied;
+}
+
 template <typename TValue>
 int Report(std::int32_t handle, std::uint32_t channel, TValue* out, const void* option, TValue value) {
     if (const int error = CheckGet(handle, channel, out, option)) return error;
@@ -215,15 +225,15 @@ int APS5_VABI sceCameraSetHue(std::int32_t handle, std::uint32_t channel, std::i
 }
 
 int APS5_VABI sceCameraSetExposureGain(std::int32_t handle, std::uint32_t channel, const CameraExposureGain* exposureGain, const void* option) {
-    return RefuseSet(handle, channel, exposureGain && !option);
+    return RefuseSet(handle, channel, ValidGuestInput(exposureGain) && !option);
 }
 
 int APS5_VABI sceCameraSetWhiteBalance(std::int32_t handle, std::uint32_t channel, const CameraWhiteBalance* whiteBalance, const void* option) {
-    return RefuseSet(handle, channel, whiteBalance && !option);
+    return RefuseSet(handle, channel, ValidGuestInput(whiteBalance) && !option);
 }
 
 int APS5_VABI sceCameraSetGamma(std::int32_t handle, std::uint32_t channel, const CameraGamma* gamma, const void* option) {
-    return RefuseSet(handle, channel, gamma && !option);
+    return RefuseSet(handle, channel, ValidGuestInput(gamma) && !option);
 }
 
 }

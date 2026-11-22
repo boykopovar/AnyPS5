@@ -415,7 +415,7 @@ int APS5_VABI sceNgs2SystemCreateWithAllocator(const Ngs2SystemOption* option, c
 
 int APS5_VABI sceNgs2SystemDestroy(uintptr_t system_handle, Ngs2ContextBufferInfo* buffer_info) {
     const Ngs2Lock lock;
-    if (buffer_info != nullptr) *buffer_info = {};
+    if (buffer_info != nullptr && !WriteGuest(buffer_info, Ngs2ContextBufferInfo{})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     auto* system = Ngs2FindSystem(system_handle);
     while (system != nullptr && Ngs2ExclusiveElsewhere()) {
         Ngs2WaitOnce();

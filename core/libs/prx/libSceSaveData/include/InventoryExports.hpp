@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -22,6 +23,6 @@ int APS5_VABI libSceSaveDataUnknown_KOSXhQAd7Co_nid_no_patch();
 int APS5_VABI libSceSaveDataUnknown_VSIY1inHm0U_nid_no_patch();
 int APS5_VABI libSceSaveDataUnknown_dBdQn_minus_whUig_nid_no_patch();
 int APS5_VABI libSceSaveDataUnknown_ohfDGZ8EKis_nid_no_patch();
-int APS5_VABI sceSaveDataGetRequiredBlocksForCdlg();
+int APS5_VABI sceSaveDataGetRequiredBlocksForCdlg(std::uint64_t* requiredBlocks);
 
 }

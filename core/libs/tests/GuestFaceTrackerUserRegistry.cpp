@@ -105,5 +105,14 @@ int main() {
 
     Require(sceFaceTrackerUnregisterUser(7, context.data()) == kErrNotFound);
     Require(sceFaceTrackerRegisterUser(7, feature.data(), 16, context.data()) == 0);
+
+    void* featureOut = nullptr;
+    int featureSize = -1;
+    Require(sceFaceTrackerGetUserFeature(99, &featureOut, &featureSize, context.data()) == kErrNotFound);
+    Require(featureOut == nullptr && featureSize == -1);
+    Require(sceFaceTrackerGetUserFeature(7, &featureOut, &featureSize, context.data()) == 0);
+    Require(featureOut == static_cast<void*>(features.data()));
+    Require(featureSize == 0x4100);
+    Require(std::memcmp(features.data(), feature.data(), 16) == 0);
     return 0;
 }

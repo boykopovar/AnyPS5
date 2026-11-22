@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cstddef>
 #include <cstdio>
 #include <exception>
 #include <limits>
@@ -14,6 +15,7 @@ struct Object {
     const unsigned char* data;
     int flags;
 };
+static_assert(sizeof(Object) == 40 && offsetof(Object, length) == 20 && offsetof(Object, data) == 24);
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -65,6 +67,16 @@ int main() {
         }
         return false;
     };
+    auto overflows = [](const void* left, const void* right) {
+        try {
+            static_cast<void>(OBJ_cmp_nid_postfix(left, right));
+        } catch (const std::overflow_error&) {
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+        return false;
+    };
     Require(throws(nullptr, &a) && throws(&a, nullptr), "null objects are rejected");
     const Object missing{nullptr, nullptr, 0, 3, nullptr, 0};
     const Object negative{nullptr, nullptr, 0, -1, short1, 0};
@@ -72,7 +84,10 @@ int main() {
     const Object minimum{nullptr, nullptr, 0, std::numeric_limits<int>::min(), nullptr, 0};
     const Object one{nullptr, nullptr, 0, 1, short1, 0};
     Require(throws(&missing, &missing) && throws(&a, &missing) && throws(&missing, &a), "missing encoded data is rejected symmetrically");
-    Require(throws(&negative, &negative) && throws(&negative, &empty) && throws(&empty, &negative), "negative lengths are rejected on either side");
-    Require(throws(&minimum, &one), "extreme negative lengths are rejected without overflowing");
+    const Object two{nullptr, nullptr, 0, 2, short1, 0};
+    Require(throws(&negative, &negative), "equal negative lengths are rejected");
+    Require(!throws(&negative, &empty) && OBJ_cmp_nid_postfix(&negative, &empty) == -1 && OBJ_cmp_nid_postfix(&empty, &negative) == 1, "unequal negative lengths return the length difference");
+    Require(!throws(&negative, &two) && OBJ_cmp_nid_postfix(&negative, &two) == -3 && OBJ_cmp_nid_postfix(&two, &negative) == 3, "a negative length subtracts from a positive one before any data is read");
+    Require(overflows(&minimum, &one), "a length difference that overflows int is rejected");
     return 0;
 }

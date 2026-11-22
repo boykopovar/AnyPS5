@@ -116,6 +116,7 @@ int APS5_VABI sceNpCmpNpIdInOrder(const NpIdFull* npId1, const NpIdFull* npId2, 
     const bool copied2 = GuestCopyIn_nid_no_patch(&localId2, npId2, sizeof(localId2));
     errno = savedErrno;
     if (!copied1 || !copied2) return NP_ERROR_INVALID_ARGUMENT;
+    if (localId1.reserved[0] != 1 || localId2.reserved[0] != 1) return NP_UTIL_ERROR_INVALID_NP_ID;
     int compare = std::strncmp(localId1.handle.data, localId2.handle.data, ONLINE_ID_MAX_LENGTH);
     if (compare == 0) compare = compareBytes(localId1.opt, localId2.opt, sizeof(localId1.opt));
     if (compare == 0) compare = compareBytes(localId1.reserved, localId2.reserved, sizeof(localId1.reserved));
@@ -129,7 +130,12 @@ int APS5_VABI sceNpCmpNpIdInOrder(const NpIdFull* npId1, const NpIdFull* npId2, 
 
 int APS5_VABI sceNpGetPlatformType(const NpIdFull* npId) {
     if (!npId) return NP_ERROR_INVALID_ARGUMENT;
-    return platformTypeOf(*npId);
+    NpIdFull localId{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localId, npId, sizeof(localId));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
+    return platformTypeOf(localId);
 }
 
 int APS5_VABI sceNpIntGetPlatformType(const NpIdFull* npId) {
@@ -272,18 +278,23 @@ int APS5_VABI sceNpGetSystemClockUsec(std::int64_t* usec) {
 }
 
 void APS5_VABI sceNpGetSdkVersion(char* version) {
-    std::memset(version, 0, 8);
     SceKernelSystemSwVersion swVersion{};
     swVersion.size = sizeof(swVersion);
     sceKernelGetSystemSwVersion_nid_postfix(&swVersion);
 
     const std::uint32_t hex = swVersion.version;
-    std::snprintf(version, 8, "%u.%02u", ((hex >> 24) & 0xF) + (hex >> 28) * 10, ((hex >> 16) & 0xF) + ((hex >> 20) & 0xF) * 10);
+    char text[8] = {};
+    std::snprintf(text, sizeof(text), "%u.%02u", ((hex >> 24) & 0xF) + (hex >> 28) * 10, ((hex >> 16) & 0xF) + ((hex >> 20) & 0xF) * 10);
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(version, text, sizeof(text));
+    errno = savedErrno;
 }
 
 void APS5_VABI sceNpGetNavSdkVersion(char* version) {
     constexpr char NAV_SDK_VERSION[8] = "00.82";
-    std::memcpy(version, NAV_SDK_VERSION, sizeof(NAV_SDK_VERSION));
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(version, NAV_SDK_VERSION, sizeof(NAV_SDK_VERSION));
+    errno = savedErrno;
 }
 
 }
