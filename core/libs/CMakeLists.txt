@@ -468,25 +468,6 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
 
-    add_test_executable(guest_kernel_process_property_tests tests/GuestKernelProcessProperty.cpp)
-    target_include_directories(guest_kernel_process_property_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_kernel_process_property_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_kernel_process_property_tests)
-    add_test(NAME guest_kernel_process_property COMMAND guest_kernel_process_property_tests)
-    if(WIN32)
-        set_tests_properties(guest_kernel_process_property PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-
-    add_test_executable(guest_kernel_sys_process_property_tests tests/GuestKernelProcessProperty.cpp)
-    target_include_directories(guest_kernel_sys_process_property_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_kernel_sys_process_property_tests PRIVATE libkernel_sys libkernel libc)
-    configure_windows_unwind(guest_kernel_sys_process_property_tests)
-    add_test(NAME guest_kernel_sys_process_property COMMAND guest_kernel_sys_process_property_tests)
-    if(WIN32)
-        set_tests_properties(guest_kernel_sys_process_property PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
-    endif()
 
     add_test_executable(guest_kernel_sys_constant_unknowns_tests tests/GuestKernelSysConstantUnknowns.cpp)
     target_include_directories(guest_kernel_sys_constant_unknowns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -498,6 +479,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_sys_constant_unknowns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
+    add_test_executable(guest_kernel_sys_process_property_tests tests/GuestKernelProcessProperty.cpp)
+    target_include_directories(guest_kernel_sys_process_property_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_process_property_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_process_property_tests)
+    add_test(NAME guest_kernel_sys_process_property COMMAND guest_kernel_sys_process_property_tests)
+    set_tests_properties(guest_kernel_sys_process_property PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_process_property PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(guest_kernel_sys_named_object_tests tests/GuestKernelSysNamedObject.cpp)
     target_include_directories(guest_kernel_sys_named_object_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_named_object_tests PRIVATE libkernel_sys libkernel libc)
