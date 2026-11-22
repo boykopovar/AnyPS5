@@ -56,8 +56,8 @@ private:
         return std::isfinite(value) ? value : 0.0f;
     }
 
-    static std::int8_t sample(float value) {
-        return static_cast<std::int8_t>(std::lround(std::clamp(value, -1.0f, 1.0f) * 127.0f));
+    static std::int8_t sample(double value) {
+        return static_cast<std::int8_t>(std::lround(std::clamp(value, -1.0, 1.0) * 127.0));
     }
 
     void append(std::array<std::int8_t, 2> stereo) {
@@ -72,7 +72,7 @@ private:
     std::array<std::array<std::int8_t, 2>, MaxFrames> frames{};
     std::size_t head = 0;
     std::size_t size = 0;
-    std::array<float, 2> sum{};
+    std::array<double, 2> sum{};
     std::uint32_t summed = 0;
     std::uint32_t phase = 0;
 };

@@ -196,7 +196,6 @@
 #include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libc/include/GuestPtr.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -206,7 +205,6 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
-#include <vector>
 
 namespace {
 
@@ -374,18 +372,13 @@ EcGroup* NamedCurveGroup(std::span<const unsigned char> object) {
     return nullptr;
 }
 
-EcGroup* DecodeGroup(const unsigned char*& in, std::int64_t length) {
-    std::vector<unsigned char> bytes;
-    if (length > 0) {
-        bytes.resize(static_cast<std::size_t>(length));
-        if (!GuestBytes(in).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;
-    }
-    const std::optional<Parameters> parameters = length < 0 ? std::nullopt : DecodeParameters({bytes.data(), bytes.size()});
+EcGroup* DecodeGroup(const unsigned char** in, std::int64_t length) {
+    const std::optional<Parameters> parameters = length < 0 ? std::nullopt : DecodeParameters({*in, static_cast<std::size_t>(length)});
     if (!parameters) {
         PutError(D2iEcpkParametersFailure);
         return nullptr;
     }
-    in += parameters->consumed;
+    *in += parameters->consumed;
     EcGroup* group = nullptr;
     if (parameters->namedCurve) {
         if ((group = NamedCurveGroup(parameters->object)) == nullptr) PutError(GroupNewByNameFailure);
@@ -400,53 +393,42 @@ EcGroup* DecodeGroup(const unsigned char*& in, std::int64_t length) {
 extern "C" {
 
 EcKey* APS5_VABI d2i_ECParameters_nid_postfix(EcKey** key, const unsigned char** in, std::int64_t length) {
-    const unsigned char* cursor = nullptr;
-    if (in == nullptr || !GuestPtr<const unsigned char*>(in).CopyIn(cursor) || cursor == nullptr) {
+    if (in == nullptr || *in == nullptr) {
         PutError(PassedNullParameter);
         return nullptr;
     }
-    EcKey* current = nullptr;
-    if (key != nullptr && !GuestPtr<EcKey*>(key).CopyIn(current)) APS5_INVALID_ARG_EX;
     std::unique_ptr<EcKey, KeyDeleter> created;
-    if (current == nullptr) created.reset(EC_KEY_new_nid_postfix());
-    EcKey* result = created ? created.get() : current;
-    EcGroup* group = DecodeGroup(cursor, length);
+    if (key == nullptr || *key == nullptr) created.reset(EC_KEY_new_nid_postfix());
+    EcKey* result = created ? created.get() : *key;
+    EcGroup* group = DecodeGroup(in, length);
     if (group == nullptr) {
         PutError(EcLibrary);
         return nullptr;
     }
     EC_GROUP_free_nid_postfix(result->group);
     result->group = group;
-    if (!GuestPtr<const unsigned char*>(in).CopyOut(cursor) || (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(result))) APS5_INVALID_ARG_EX;
     created.release();
+    if (key != nullptr) *key = result;
     return result;
 }
 
 EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** in, std::int64_t length) {
-    EcKey* result = nullptr;
-    if (key == nullptr || !GuestPtr<EcKey*>(key).CopyIn(result) || result == nullptr || result->group == nullptr) {
+    if (key == nullptr || *key == nullptr || (*key)->group == nullptr) {
         PutError(PassedNullParameter);
         return nullptr;
     }
     if (in == nullptr) APS5_INVALID_ARG_EX;
-    const unsigned char* cursor = nullptr;
-    if (!GuestPtr<const unsigned char*>(in).CopyIn(cursor)) APS5_INVALID_ARG_EX;
+    EcKey* result = *key;
     if (result->publicKey == nullptr && (result->publicKey = EC_POINT_new_nid_postfix(result->group)) == nullptr) {
         PutError(MallocFailure);
         return nullptr;
     }
-    std::vector<unsigned char> bytes;
-    if (length > 0) {
-        bytes.resize(static_cast<std::size_t>(length));
-        if (!GuestBytes(cursor).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;
-    }
-    if (!EC_POINT_oct2point_nid_postfix(result->group, result->publicKey, length > 0 ? bytes.data() : cursor, static_cast<std::size_t>(length), nullptr)) {
+    if (!EC_POINT_oct2point_nid_postfix(result->group, result->publicKey, *in, static_cast<std::size_t>(length), nullptr)) {
         PutError(EcLibrary);
         return nullptr;
     }
-    result->conversionForm = bytes[0] & ~1;
-    cursor += length;
-    if (!GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
+    result->conversionForm = (*in)[0] & ~1;
+    *in += length;
     return result;
 }
 

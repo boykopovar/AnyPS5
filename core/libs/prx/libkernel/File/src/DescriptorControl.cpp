@@ -7,6 +7,7 @@
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/FileLock.hpp"
@@ -100,6 +101,7 @@ constexpr std::uint32_t NonblockingRequest = 0x8004667e;
 constexpr std::uint32_t AsynchronousRequest = 0x8004667d;
 constexpr std::uint32_t SetOwnerRequest = 0x8004667c;
 constexpr std::uint32_t GetOwnerRequest = 0x4004667b;
+constexpr std::uint32_t DeviceTypeRequest = 0x4004667a;
 constexpr std::uint32_t ReadableRequest = 0x4004667f;
 constexpr std::uint32_t RequestIn = 0x80000000u;
 constexpr std::uint32_t RequestOut = 0x40000000u;
@@ -600,6 +602,11 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         if (!GuestCopyOut_nid_no_patch(argument, &available, sizeof(available))) return Fail(GuestEfault);
         return 0;
     }
+    if (command == DeviceTypeRequest && *kind == Kind::Device && !IsKsemDescriptor(fd)) {
+        const int type = 0;
+        if (!GuestCopyOut_nid_no_patch(argument, &type, sizeof(type))) return Fail(GuestEfault);
+        return 0;
+    }
     if (((command >> 8) & 0xff) == TerminalGroup) return Fail(GuestEnotty);
     if (*kind == Kind::Pipe && fd > 2 && command != SetOwnerRequest && command != GetOwnerRequest) {
         if ((command & RequestIn) && copied != 0) {
@@ -702,7 +709,7 @@ bool IsVnode(int fd) {
 }
 
 extern "C" bool DescriptorHasNoVnode_nid_no_patch(int fd) {
-    return IsKqueueDescriptor_nid_no_patch(fd) || (!File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd));
+    return IsKqueueDescriptor_nid_no_patch(fd) || IsKsemDescriptor(fd) || (!File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd));
 }
 
 extern "C" std::uint64_t FileSynchronousWritesForTest_nid_no_patch() {

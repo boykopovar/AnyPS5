@@ -91,7 +91,7 @@ void CheckWideScalar(const std::uint8_t* profile, std::uint8_t byte, std::uint32
     const int status = undefined ? Unassigned : 0;
     std::uint16_t ucs2[2] = {0xA5A5, 0xA5A5};
     Require(sceCesSbcToUcs2(profile, byte, ucs2) == status);
-    Require(ucs2[0] == (undefined ? 0xA5A5 : code) && ucs2[1] == 0xA5A5);
+    Require(ucs2[0] == (undefined ? 0 : code) && ucs2[1] == 0xA5A5);
     const decltype(&sceCesSbcToUtf16) to16[] = {sceCesSbcToUtf16, sceCesSbcToUtf16be, sceCesSbcToUtf16le};
     const decltype(&sceCesSbcToUtf32) to32[] = {sceCesSbcToUtf32, sceCesSbcToUtf32be, sceCesSbcToUtf32le};
     for (std::size_t i = 0; i < 3; ++i) {
@@ -100,16 +100,16 @@ void CheckWideScalar(const std::uint8_t* profile, std::uint8_t byte, std::uint32
         ucs2[0] = 0xA5A5;
         std::uint32_t length = Untouched;
         Require(to16[i](profile, byte, ucs2, 1, &length) == status);
-        Require(ucs2[0] == (undefined ? 0xA5A5 : expected16) && ucs2[1] == 0xA5A5);
-        Require(length == (undefined ? Untouched : 1));
+        Require(ucs2[0] == (undefined ? 0 : expected16) && ucs2[1] == 0xA5A5);
+        Require(length == (undefined ? 0 : 1));
         Require(to16[i](profile, byte, ucs2, 1, nullptr) == status);
         ucs2[0] = 0xA5A5;
         length = Untouched;
         Require(to16[i](profile, byte, ucs2, 0, &length) == (undefined ? Unassigned : ShortOutput));
-        Require(ucs2[0] == 0xA5A5 && ucs2[1] == 0xA5A5 && length == Untouched);
+        Require(ucs2[0] == 0xA5A5 && ucs2[1] == 0xA5A5 && length == (undefined ? 0 : 1));
         std::uint32_t utf32[2] = {0xA5A5A5A5, 0xA5A5A5A5};
         Require(to32[i](profile, byte, utf32) == status);
-        Require(utf32[0] == (undefined ? 0xA5A5A5A5 : expected32) && utf32[1] == 0xA5A5A5A5);
+        Require(utf32[0] == (undefined ? 0 : expected32) && utf32[1] == 0xA5A5A5A5);
     }
 }
 

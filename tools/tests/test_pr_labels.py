@@ -466,6 +466,19 @@ class MainTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         sleep_mock.assert_called_once_with(0.01)
 
+    def test_gh_retries_broken_responses_and_windows_connection_timeouts(self):
+        for message in ("stream error: stream ID 1; CANCEL; received from peer", "unexpected EOF",
+                        "connectex: A connection attempt failed because the connected party "
+                        "did not properly respond after a period of time"):
+            with self.subTest(message=message):
+                failed = subprocess.CompletedProcess([], 1, stdout="", stderr=message)
+                success = subprocess.CompletedProcess([], 0, stdout="success\n", stderr="")
+                with patch.object(pr_labels.subprocess, "run", side_effect=[failed, success]) as run, \
+                        patch.object(pr_labels.time, "sleep") as sleep_mock:
+                    self.assertEqual(pr_labels.gh("api", "repos/owner/repo/pulls", delay=0.01), "success\n")
+                self.assertEqual(run.call_count, 2)
+                sleep_mock.assert_called_once_with(0.01)
+
     def test_gh_fails_immediately_on_non_transient_error(self):
         calls = []
 
@@ -516,6 +529,24 @@ class AmbiguousSummaryTests(unittest.TestCase):
         self.assertFalse(pr_labels.has_numbers(summary("a") + "\n" + summary("a")))
         ambiguous = summary("c").replace('"p50": 20.0', '"p50": 999.0, "p50": 20.0')
         self.assertTrue(pr_labels.has_numbers(summary("a") + "\n" + ambiguous + "\n" + summary("b")))
+
+
+class CommentAndScopeTests(unittest.TestCase):
+    def test_strip_comments_removes_html_comments_and_keeps_the_rest(self):
+        self.assertEqual(pr_labels.strip_comments('a<!-- x -->b'), 'ab')
+        self.assertEqual(pr_labels.strip_comments(None), '')
+
+    def test_needs_capture_follows_the_performance_scope(self):
+        self.assertTrue(pr_labels.needs_capture('perf(libc): speed up'))
+        self.assertFalse(pr_labels.needs_capture('perf(tools): x'))
+        self.assertFalse(pr_labels.needs_capture('fix: x'))
+class PageDecodeTests(unittest.TestCase):
+    def test_decode_pages_joins_consecutive_pages(self):
+        self.assertEqual(pr_labels.decode_pages('[1]\n[2]'), [1, 2])
+
+    def test_decode_pages_refuses_output_with_no_pages(self):
+        with self.assertRaisesRegex(Exception, 'no JSON pages'):
+            pr_labels.decode_pages('  ')
 
 
 if __name__ == "__main__":
