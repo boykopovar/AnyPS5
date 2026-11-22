@@ -1,12 +1,21 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/AtomicWaitForwards.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <stdexcept>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -63,6 +72,81 @@ void CheckWait(Fn wait, T value, std::uint64_t milliseconds, bool timed, KernelU
     Require(last.name != nullptr && std::strcmp(last.name, "SceLibcV2AtomicWait") == 0, label);
 }
 
+void CheckReadOnlyLibcxxAtomic() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Require(page != nullptr, "allocate read-write page");
+#else
+    const long rawPageSize = sysconf(_SC_PAGESIZE);
+    Require(rawPageSize > 0, "query page size");
+    const std::size_t pageSize = static_cast<std::size_t>(rawPageSize);
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "allocate read-write page");
+#endif
+
+    const auto* roPtr = new (page) std::int64_t(-42);
+
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &previous) != 0, "protect page read-only");
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0, "protect page read-only");
+#endif
+
+    errno = ESRCH;
+    Require(_ZNSt3__123__libcpp_atomic_monitorEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(roPtr) == -42,
+            "libc++ monitor reads read-only page");
+    Require(errno == ESRCH, "libc++ monitor on read-only page preserves errno");
+
+    last = {};
+    _ZNSt3__120__libcpp_atomic_waitEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEEl_nid_postfix(roPtr, -42);
+    Require(last.address == roPtr && last.expected == static_cast<std::uint64_t>(-42) && !last.timed,
+            "libc++ wait accepts read-only page");
+    Require(errno == ESRCH, "libc++ wait on read-only page preserves errno");
+
+    last = {};
+    _ZNSt3__123__cxx_atomic_notify_oneEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(roPtr);
+    Require(last.address == roPtr && last.count == 1,
+            "libc++ notify one accepts read-only page");
+    Require(errno == ESRCH, "libc++ notify one on read-only page preserves errno");
+
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_NOACCESS, &previous) != 0, "protect page no-access");
+#else
+    Require(mprotect(page, pageSize, PROT_NONE) == 0, "protect page no-access");
+#endif
+
+    errno = ESRCH;
+    try {
+        _ZNSt3__123__libcpp_atomic_monitorEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(roPtr);
+        std::abort();
+    } catch (const std::invalid_argument&) {}
+    Require(errno == ESRCH, "libc++ monitor on no-access page preserves errno");
+
+    errno = ESRCH;
+    try {
+        _ZNSt3__120__libcpp_atomic_waitEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEEl_nid_postfix(roPtr, -42);
+        std::abort();
+    } catch (const std::invalid_argument&) {}
+    Require(errno == ESRCH, "libc++ wait on no-access page preserves errno");
+
+    errno = ESRCH;
+    try {
+        _ZNSt3__123__cxx_atomic_notify_oneEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(roPtr);
+        std::abort();
+    } catch (const std::invalid_argument&) {}
+    Require(errno == ESRCH, "libc++ notify one on no-access page preserves errno");
+
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0, "release page");
+#else
+    Require(munmap(page, pageSize) == 0, "release page");
+#endif
+}
+
 }
 
 int main() {
@@ -115,6 +199,8 @@ int main() {
     catch (const std::invalid_argument&) {}
     try { _ZNSt3__123__cxx_atomic_notify_oneEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(nullptr); std::abort(); }
     catch (const std::invalid_argument&) {}
+
+    CheckReadOnlyLibcxxAtomic();
 
     RegisterAtomicWaitForwards_nid_no_patch(nullptr);
     return 0;

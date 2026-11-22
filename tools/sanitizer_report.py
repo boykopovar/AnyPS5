@@ -30,6 +30,8 @@ def results(path):
         if name in found:
             raise ValueError(f"{path}: testcase {name} is listed more than once")
         skipped, status = case.find("skipped"), case.get("status")
+        if status is not None and status not in ("run", "fail", "notrun", "disabled", "None"):
+            raise ValueError(f"{path}: invalid testcase status {status!r} for {name}")
         reason = (skipped.get("message") or "").strip() if skipped is not None else ""
         if case.find("failure") is not None or case.find("error") is not None:
             outcome = "failed"

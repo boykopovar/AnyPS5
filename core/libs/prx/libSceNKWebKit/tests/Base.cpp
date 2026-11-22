@@ -108,6 +108,31 @@ static void TestStrings() {
 
     Require(WKStringGetUTF8CString(s, buf, 0) == 0);
 
+    struct SurrogateCase {
+        std::u16string text;
+        std::size_t strict;
+        std::size_t lenient;
+        unsigned char bytes[5];
+    };
+    for (const SurrogateCase& item : {
+             SurrogateCase{{u'a', char16_t{0xD83D}}, 0, 0, {}},
+             SurrogateCase{{char16_t{0xD83D}}, 0, 0, {}},
+             SurrogateCase{{char16_t{0xD83D}, u'a'}, 0, 5, {0xEF, 0xBF, 0xBD, 0x61, 0x00}},
+             SurrogateCase{{u'a', char16_t{0xDC00}}, 0, 5, {0x61, 0xEF, 0xBF, 0xBD, 0x00}},
+             SurrogateCase{{char16_t{0xDC00}}, 0, 4, {0xEF, 0xBF, 0xBD, 0x00, 0x00}},
+             SurrogateCase{{char16_t{0xD83D}, char16_t{0xDE00}}, 5, 5, {0xF0, 0x9F, 0x98, 0x80, 0x00}},
+         }) {
+        auto owner = NKWebKit::Make<NKWebKit::String>(item.text);
+        const void* reference = NKWebKit::ToRef(owner);
+        char utf8[16];
+        Require(WKStringGetUTF8CString(reference, utf8, sizeof(utf8)) == item.strict);
+        if (item.strict) Require(std::memcmp(utf8, item.bytes, item.strict) == 0);
+        std::memset(utf8, 0x7F, sizeof(utf8));
+        Require(WKStringGetUTF8CStringNonStrict(reference, utf8, sizeof(utf8)) == item.lenient);
+        if (item.lenient) Require(std::memcmp(utf8, item.bytes, item.lenient) == 0);
+        WKRelease(reference);
+    }
+
     auto* s2 = WKStringCreateWithUTF8CString("hello, world!");
     Require(!WKStringIsEqual(s, s2));
     Require(WKStringIsEqualToUTF8CString(s, "Hello, World!"));
@@ -1565,8 +1590,12 @@ static void TestDownload() {
     auto download = NKWebKit::Make<NKWebKit::Download>();
     const void* ref = download.Get();
 
-    Require(!WKDownloadGetWasUserInitiated(ref));
-    Require(WKDownloadCopyRequest(ref) == nullptr);
+    Require(WKDownloadGetWasUserInitiated(ref));
+    auto* initialRequest = WKDownloadCopyRequest(ref);
+    Require(initialRequest != nullptr);
+    Require(WKGetTypeID(initialRequest) == WKURLRequestGetTypeID());
+    Require(WKURLRequestCopyURL(initialRequest) == nullptr);
+    WKRelease(initialRequest);
     Require(WKDownloadGetOriginatingPage(ref) == nullptr);
     Require(WKDownloadGetID(ref) == 0);
     Require(WKDownloadGetResumeData(ref) == nullptr);
@@ -1596,6 +1625,8 @@ static void TestDownload() {
     Require(WKArrayGetSize(chain) == 1);
     WKRelease(chain);
 
+    download->wasUserInitiated = false;
+    Require(!WKDownloadGetWasUserInitiated(ref));
     download->wasUserInitiated = true;
     Require(WKDownloadGetWasUserInitiated(ref));
 
@@ -1915,6 +1946,7 @@ static void TestProtectionSpace() {
     Require(WKProtectionSpaceGetAuthenticationScheme(space) == 2);
     Require(!WKProtectionSpaceGetIsProxy(space));
     Require(WKProtectionSpaceGetReceivesCredentialSecurely(space));
+    Require(WKProtectionSpaceCopyCertificateInfo(space) == nullptr);
     WKRelease(space);
 
     const Server servers[] = {Server::HTTP, Server::HTTPS, Server::FTP, Server::FTPS, Server::ProxyHTTP, Server::ProxyHTTPS, Server::ProxyFTP, Server::ProxySOCKS};
@@ -1956,7 +1988,16 @@ static void TestProtectionSpace() {
     Require(WKProtectionSpaceGetAuthenticationScheme(empty) == 1);
     Require(!WKProtectionSpaceGetIsProxy(empty));
     Require(!WKProtectionSpaceGetReceivesCredentialSecurely(empty));
+    Require(WKProtectionSpaceCopyCertificateInfo(empty) == nullptr);
     WKRelease(empty);
+
+    auto certInfo = NKWebKit::Make<NKWebKit::CertificateInfo>();
+    auto* spaceWithCert = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::ProtectionSpace>(
+        NKWebKit::String::FromUtf8("secure.example.com"), 443, Server::HTTPS, NKWebKit::String::FromUtf8("Secure Realm"), Scheme::ServerTrustEvaluationRequested, certInfo));
+    auto* copiedCert = WKProtectionSpaceCopyCertificateInfo(spaceWithCert);
+    Require(copiedCert == NKWebKit::ToRef(certInfo));
+    WKRelease(copiedCert);
+    WKRelease(spaceWithCert);
 
     auto* notSpace = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not a protection space"));
     bool threw = false;
@@ -1966,11 +2007,27 @@ static void TestProtectionSpace() {
         threw = true;
     }
     Require(threw);
+
+    threw = false;
+    try {
+        WKProtectionSpaceCopyCertificateInfo(notSpace);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
     WKRelease(notSpace);
 
     threw = false;
     try {
         WKProtectionSpaceCopyHost(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKProtectionSpaceCopyCertificateInfo(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -2485,56 +2542,24 @@ static void TestInspector() {
     Require(!WKInspectorIsProfilingPage(ref));
     Require(WKInspectorIsVisible(ref));
 
+    WKInspectorHide(ref);
+    Require(!WKInspectorIsVisible(ref));
+
     WKInspectorAttach(ref);
-    Require(WKInspectorIsAttached(ref));
-    WKInspectorDetach(ref);
     Require(!WKInspectorIsAttached(ref));
-
     WKInspectorConnect(ref);
-    Require(WKInspectorIsConnected(ref));
-
+    Require(!WKInspectorIsConnected(ref));
     WKInspectorShow(ref);
-    Require(WKInspectorIsVisible(ref));
-    Require(WKInspectorIsFront(ref));
-    WKInspectorHide(ref);
-    Require(!WKInspectorIsVisible(ref));
-    Require(!WKInspectorIsFront(ref));
-
     WKInspectorShowConsole(ref);
-    Require(WKInspectorIsVisible(ref));
-    Require(WKInspectorIsFront(ref));
-    WKInspectorHide(ref);
+    WKInspectorShowResources(ref);
     Require(!WKInspectorIsVisible(ref));
     Require(!WKInspectorIsFront(ref));
-
-    WKInspectorShowResources(ref);
-    Require(WKInspectorIsVisible(ref));
-    Require(WKInspectorIsFront(ref));
-
-    Require(!WKInspectorIsElementSelectionActive(ref));
-    WKInspectorToggleElementSelection(ref);
-    Require(WKInspectorIsElementSelectionActive(ref));
     WKInspectorToggleElementSelection(ref);
     Require(!WKInspectorIsElementSelectionActive(ref));
-
-    Require(!WKInspectorIsProfilingPage(ref));
-    WKInspectorTogglePageProfiling(ref);
-    Require(WKInspectorIsProfilingPage(ref));
     WKInspectorTogglePageProfiling(ref);
     Require(!WKInspectorIsProfilingPage(ref));
 
-    WKInspectorAttach(ref);
-    WKInspectorConnect(ref);
-    WKInspectorShow(ref);
-    WKInspectorToggleElementSelection(ref);
-    WKInspectorTogglePageProfiling(ref);
-    Require(WKInspectorIsAttached(ref));
-    Require(WKInspectorIsConnected(ref));
-    Require(WKInspectorIsVisible(ref));
-    Require(WKInspectorIsFront(ref));
-    Require(WKInspectorIsElementSelectionActive(ref));
-    Require(WKInspectorIsProfilingPage(ref));
-
+    WKInspectorDetach(ref);
     WKInspectorClose(ref);
     Require(!WKInspectorIsAttached(ref));
     Require(!WKInspectorIsConnected(ref));
@@ -2641,12 +2666,14 @@ static void TestFrame() {
     Require(!WKFrameIsDisplayingMarkupDocument(ref));
     Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(!WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
 
     frame->isDisplayingMarkupDocument = true;
     Require(WKFrameCanProvideSource(ref));
     Require(WKFrameIsDisplayingMarkupDocument(ref));
     Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(!WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
 
     frame->isDisplayingMarkupDocument = false;
     frame->isDisplayingStandaloneImageDocument = true;
@@ -2654,6 +2681,7 @@ static void TestFrame() {
     Require(!WKFrameIsDisplayingMarkupDocument(ref));
     Require(WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(!WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
 
     frame->isDisplayingStandaloneImageDocument = false;
     frame->isMainFrame = true;
@@ -2661,10 +2689,27 @@ static void TestFrame() {
     Require(!WKFrameIsDisplayingMarkupDocument(ref));
     Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
+
+    frame->isMainFrame = false;
+    frame->isFrameSet = true;
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+    Require(WKFrameIsFrameSet(ref));
 
     bool caught = false;
     try {
         WKFrameIsMainFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        caught = true;
+    }
+    Require(caught);
+
+    caught = false;
+    try {
+        WKFrameIsFrameSet(nullptr);
     } catch (const std::invalid_argument&) {
         caught = true;
     }
@@ -2745,6 +2790,50 @@ static void TestFrame() {
     checkThrows(WKFrameCopyUnreachableURL);
     checkThrows(WKFrameCreateFrameHandle);
     checkThrows(WKFrameGetFrameLoadState);
+
+    auto* htmlMime = WKStringCreateWithUTF8CString("text/html");
+    Require(WKFrameCanShowMIMEType(ref, htmlMime));
+    WKRelease(htmlMime);
+
+    auto* pngMime = WKStringCreateWithUTF8CString("image/png");
+    Require(WKFrameCanShowMIMEType(ref, pngMime));
+    WKRelease(pngMime);
+
+    auto* unsupportedMime = WKStringCreateWithUTF8CString("text/rtf");
+    Require(!WKFrameCanShowMIMEType(ref, unsupportedMime));
+    WKRelease(unsupportedMime);
+
+    auto* emptyMime = WKStringCreateWithUTF8CString("");
+    Require(!WKFrameCanShowMIMEType(ref, emptyMime));
+    WKRelease(emptyMime);
+
+    auto* nullMime = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>());
+    Require(!WKFrameCanShowMIMEType(ref, nullMime));
+    WKRelease(nullMime);
+
+    bool threwMime = false;
+    try {
+        WKFrameCanShowMIMEType(nullptr, ref);
+    } catch (const std::invalid_argument&) {
+        threwMime = true;
+    }
+    Require(threwMime);
+
+    threwMime = false;
+    try {
+        WKFrameCanShowMIMEType(ref, nullptr);
+    } catch (const std::invalid_argument&) {
+        threwMime = true;
+    }
+    Require(threwMime);
+
+    threwMime = false;
+    try {
+        WKFrameCanShowMIMEType(ref, ref);
+    } catch (const std::invalid_argument&) {
+        threwMime = true;
+    }
+    Require(threwMime);
 }
 
 static void TestImage() {
