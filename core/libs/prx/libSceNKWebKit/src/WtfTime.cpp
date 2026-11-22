@@ -376,6 +376,14 @@ WTF::MonotonicTime approximateMonotonicTime(double wall) {
     return WTF::MonotonicTime{wall - WTF::currentWallTimeSeconds() + WTF::currentMonotonicTimeSeconds()};
 }
 
+void requireClockType(const WTF::TimeWithDynamicClockType& time, WTF::ClockType type, const char* message) {
+    if (time.m_type != type) throw std::invalid_argument(message);
+}
+
+void requireSameClockType(const WTF::TimeWithDynamicClockType& time, const WTF::TimeWithDynamicClockType& other, const char* message) {
+    if (time.m_type != other.m_type) throw std::invalid_argument(message);
+}
+
 }  // namespace
 
 extern "C" {
@@ -421,37 +429,47 @@ WTF::TimeWithDynamicClockType APS5_VABI _ZN3WTF24TimeWithDynamicClockType3nowENS
     case WTF::ClockType::Approximate:
         return WTF::TimeWithDynamicClockType{WTF::currentMonotonicTimeSeconds(), WTF::ClockType::Approximate};
     }
-    return WTF::TimeWithDynamicClockType{0.0, WTF::ClockType::Wall};
+    throw std::invalid_argument("TimeWithDynamicClockType::now: unknown clock type");
 }
 
 WTF::MonotonicTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType13monotonicTimeEv(const WTF::TimeWithDynamicClockType* self) {
     WTF::TimeWithDynamicClockType time;
     if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    requireClockType(time, WTF::ClockType::Monotonic, "TimeWithDynamicClockType::monotonicTime: the clock type is not Monotonic");
     return WTF::MonotonicTime{time.m_value};
 }
 
 WTF::WallTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType8wallTimeEv(const WTF::TimeWithDynamicClockType* self) {
     WTF::TimeWithDynamicClockType time;
     if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    requireClockType(time, WTF::ClockType::Wall, "TimeWithDynamicClockType::wallTime: the clock type is not Wall");
     return WTF::WallTime{time.m_value};
 }
 
 WTF::WallTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType19approximateWallTimeEv(const WTF::TimeWithDynamicClockType* self) {
     WTF::TimeWithDynamicClockType time;
     if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    if (time.m_type == WTF::ClockType::Wall) {
+    switch (time.m_type) {
+    case WTF::ClockType::Wall:
         return WTF::WallTime{time.m_value};
+    case WTF::ClockType::Monotonic:
+    case WTF::ClockType::Approximate:
+        return approximateWallTime(time.m_value);
     }
-    return approximateWallTime(time.m_value);
+    throw std::invalid_argument("TimeWithDynamicClockType::approximateWallTime: unknown clock type");
 }
 
 WTF::MonotonicTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType24approximateMonotonicTimeEv(const WTF::TimeWithDynamicClockType* self) {
     WTF::TimeWithDynamicClockType time;
     if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    if (time.m_type == WTF::ClockType::Monotonic || time.m_type == WTF::ClockType::Approximate) {
+    switch (time.m_type) {
+    case WTF::ClockType::Wall:
+        return approximateMonotonicTime(time.m_value);
+    case WTF::ClockType::Monotonic:
+    case WTF::ClockType::Approximate:
         return WTF::MonotonicTime{time.m_value};
     }
-    return approximateMonotonicTime(time.m_value);
+    throw std::invalid_argument("TimeWithDynamicClockType::approximateMonotonicTime: unknown clock type");
 }
 
 WTF::TimeWithDynamicClockType APS5_VABI _ZNK3WTF24TimeWithDynamicClockType16nowWithSameClockEv(const WTF::TimeWithDynamicClockType* self) {
@@ -464,6 +482,7 @@ WTF::Seconds APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypemiERKS0_(const WTF::Tim
     WTF::TimeWithDynamicClockType time;
     WTF::TimeWithDynamicClockType right;
     if (!loadTime(time, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    requireSameClockType(time, right, "TimeWithDynamicClockType::operator-: the clock types differ");
     return WTF::Seconds{time.m_value - right.m_value};
 }
 
@@ -471,6 +490,7 @@ bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypegtERKS0_(const WTF::TimeWithDyn
     WTF::TimeWithDynamicClockType time;
     WTF::TimeWithDynamicClockType right;
     if (!loadTime(time, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    requireSameClockType(time, right, "TimeWithDynamicClockType::operator>: the clock types differ");
     return time.m_value > right.m_value;
 }
 
@@ -478,6 +498,7 @@ bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypegeERKS0_(const WTF::TimeWithDyn
     WTF::TimeWithDynamicClockType time;
     WTF::TimeWithDynamicClockType right;
     if (!loadTime(time, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    requireSameClockType(time, right, "TimeWithDynamicClockType::operator>=: the clock types differ");
     return time.m_value >= right.m_value;
 }
 
@@ -485,6 +506,7 @@ bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypeleERKS0_(const WTF::TimeWithDyn
     WTF::TimeWithDynamicClockType time;
     WTF::TimeWithDynamicClockType right;
     if (!loadTime(time, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    requireSameClockType(time, right, "TimeWithDynamicClockType::operator<=: the clock types differ");
     return time.m_value <= right.m_value;
 }
 

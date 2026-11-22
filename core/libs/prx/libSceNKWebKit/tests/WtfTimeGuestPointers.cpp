@@ -62,7 +62,93 @@ static void UnmapPage(void* page) {
 #endif
 }
 
+template <typename Function>
+static bool RejectsClockType(Function function) {
+    try {
+        static_cast<void>(function());
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+static void TestClockTypeChecks() {
+    const double infinity = std::numeric_limits<double>::infinity();
+    const WTF::ClockType wall = WTF::ClockType::Wall;
+    const WTF::ClockType monotonic = WTF::ClockType::Monotonic;
+    const WTF::ClockType approximate = WTF::ClockType::Approximate;
+    const WTF::ClockType valid[] {wall, monotonic, approximate};
+    const WTF::ClockType unknown[] {static_cast<WTF::ClockType>(3u), static_cast<WTF::ClockType>(0xffffffffu)};
+
+    for (const WTF::ClockType type : valid) {
+        const WTF::TimeWithDynamicClockType time{5.0, type};
+        if (type == wall) Require(_ZNK3WTF24TimeWithDynamicClockType8wallTimeEv(&time).m_value == 5.0);
+        else Require(RejectsClockType([&] { return _ZNK3WTF24TimeWithDynamicClockType8wallTimeEv(&time); }));
+        if (type == monotonic) Require(_ZNK3WTF24TimeWithDynamicClockType13monotonicTimeEv(&time).m_value == 5.0);
+        else Require(RejectsClockType([&] { return _ZNK3WTF24TimeWithDynamicClockType13monotonicTimeEv(&time); }));
+        const WTF::TimeWithDynamicClockType now = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(type);
+        Require(now.m_type == type && std::isfinite(now.m_value));
+        Require(_ZNK3WTF24TimeWithDynamicClockType16nowWithSameClockEv(&time).m_type == type);
+    }
+    const WTF::TimeWithDynamicClockType wallFive{5.0, wall};
+    const WTF::TimeWithDynamicClockType monotonicFive{5.0, monotonic};
+    Require(_ZNK3WTF24TimeWithDynamicClockType19approximateWallTimeEv(&wallFive).m_value == 5.0);
+    Require(_ZNK3WTF24TimeWithDynamicClockType24approximateMonotonicTimeEv(&monotonicFive).m_value == 5.0);
+    Require(_ZNK3WTF24TimeWithDynamicClockType19approximateWallTimeEv(&monotonicFive).m_value > 1000000.0);
+    Require(_ZNK3WTF24TimeWithDynamicClockType24approximateMonotonicTimeEv(&wallFive).m_value < -1000000.0);
+    for (const double value : {infinity, -infinity}) {
+        const WTF::TimeWithDynamicClockType wallInfinite{value, wall};
+        const WTF::TimeWithDynamicClockType monotonicInfinite{value, monotonic};
+        const WTF::TimeWithDynamicClockType approximateInfinite{value, approximate};
+        Require(_ZNK3WTF24TimeWithDynamicClockType19approximateWallTimeEv(&monotonicInfinite).m_value == value);
+        Require(_ZNK3WTF24TimeWithDynamicClockType19approximateWallTimeEv(&approximateInfinite).m_value == value);
+        Require(_ZNK3WTF24TimeWithDynamicClockType24approximateMonotonicTimeEv(&wallInfinite).m_value == value);
+    }
+
+    for (const WTF::ClockType type : unknown) {
+        const WTF::TimeWithDynamicClockType time{5.0, type};
+        const WTF::TimeWithDynamicClockType later{9.0, type};
+        Require(RejectsClockType([&] { return _ZNK3WTF24TimeWithDynamicClockType8wallTimeEv(&time); }));
+        Require(RejectsClockType([&] { return _ZNK3WTF24TimeWithDynamicClockType13monotonicTimeEv(&time); }));
+        Require(RejectsClockType([&] { return _ZNK3WTF24TimeWithDynamicClockType19approximateWallTimeEv(&time); }));
+        Require(RejectsClockType([&] { return _ZNK3WTF24TimeWithDynamicClockType24approximateMonotonicTimeEv(&time); }));
+        Require(RejectsClockType([&] { return _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(type); }));
+        Require(RejectsClockType([&] { return _ZNK3WTF24TimeWithDynamicClockType16nowWithSameClockEv(&time); }));
+        Require(RejectsClockType([&] { return _ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(time); }));
+        Require(RejectsClockType([&] { _ZN3WTF5sleepERKNS_24TimeWithDynamicClockTypeE(time); return 0; }));
+        Require(RejectsClockType([&] { _ZN3WTF5sleepERKNS_24TimeWithDynamicClockTypeE(WTF::TimeWithDynamicClockType{0.0, type}); return 0; }));
+        Require(_ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(WTF::TimeWithDynamicClockType{0.0, type}));
+        Require(_ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(WTF::TimeWithDynamicClockType{-5.0, type}));
+        Require(_ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(WTF::TimeWithDynamicClockType{std::numeric_limits<double>::quiet_NaN(), type}));
+        Require(!_ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(WTF::TimeWithDynamicClockType{infinity, type}));
+        Require(_ZNK3WTF24TimeWithDynamicClockTypemiERKS0_(&later, time).m_value == 4.0);
+        Require(_ZNK3WTF24TimeWithDynamicClockTypegtERKS0_(&later, time) && !_ZNK3WTF24TimeWithDynamicClockTypegtERKS0_(&time, later));
+        Require(_ZNK3WTF24TimeWithDynamicClockTypegeERKS0_(&later, time) && !_ZNK3WTF24TimeWithDynamicClockTypegeERKS0_(&time, later));
+        Require(_ZNK3WTF24TimeWithDynamicClockTypeleERKS0_(&time, later) && !_ZNK3WTF24TimeWithDynamicClockTypeleERKS0_(&later, time));
+    }
+
+    const WTF::ClockType every[] {wall, monotonic, approximate, unknown[0], unknown[1]};
+    for (const WTF::ClockType leftType : every) {
+        for (const WTF::ClockType rightType : every) {
+            const WTF::TimeWithDynamicClockType left{9.0, leftType};
+            const WTF::TimeWithDynamicClockType right{5.0, rightType};
+            if (leftType == rightType) {
+                Require(_ZNK3WTF24TimeWithDynamicClockTypemiERKS0_(&left, right).m_value == 4.0);
+                Require(_ZNK3WTF24TimeWithDynamicClockTypegtERKS0_(&left, right));
+                Require(_ZNK3WTF24TimeWithDynamicClockTypegeERKS0_(&left, right) && _ZNK3WTF24TimeWithDynamicClockTypegeERKS0_(&left, left));
+                Require(!_ZNK3WTF24TimeWithDynamicClockTypeleERKS0_(&left, right) && _ZNK3WTF24TimeWithDynamicClockTypeleERKS0_(&right, right));
+                continue;
+            }
+            Require(RejectsClockType([&] { return _ZNK3WTF24TimeWithDynamicClockTypemiERKS0_(&left, right); }));
+            Require(RejectsClockType([&] { return _ZNK3WTF24TimeWithDynamicClockTypegtERKS0_(&left, right); }));
+            Require(RejectsClockType([&] { return _ZNK3WTF24TimeWithDynamicClockTypegeERKS0_(&left, right); }));
+            Require(RejectsClockType([&] { return _ZNK3WTF24TimeWithDynamicClockTypeleERKS0_(&left, right); }));
+        }
+    }
+}
+
 int main() {
+    TestClockTypeChecks();
     const double infinity = std::numeric_limits<double>::infinity();
     const WTF::MonotonicTime monotonic{infinity};
     const WTF::WallTime wall{-infinity};
@@ -76,8 +162,8 @@ int main() {
 
     Require(_ZNK3WTF13MonotonicTime19approximateWallTimeEv(&monotonic).m_value == infinity);
     Require(_ZNK3WTF8WallTime24approximateMonotonicTimeEv(&wall).m_value == -infinity);
-    Require(_ZNK3WTF24TimeWithDynamicClockType13monotonicTimeEv(&wallClock).m_value == 5.0);
-    Require(_ZNK3WTF24TimeWithDynamicClockType8wallTimeEv(&approximateClock).m_value == 7.0);
+    Require(_ZNK3WTF24TimeWithDynamicClockType13monotonicTimeEv(&monotonicClock).m_value == infinity);
+    Require(_ZNK3WTF24TimeWithDynamicClockType8wallTimeEv(&wallClock).m_value == 5.0);
     Require(_ZNK3WTF24TimeWithDynamicClockType19approximateWallTimeEv(&wallClock).m_value == 5.0);
     Require(_ZNK3WTF24TimeWithDynamicClockType19approximateWallTimeEv(&monotonicClock).m_value == infinity);
     Require(_ZNK3WTF24TimeWithDynamicClockType24approximateMonotonicTimeEv(&approximateClock).m_value == 7.0);
