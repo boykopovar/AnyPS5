@@ -100,9 +100,12 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
         runtimeDirectories.push_back(directory);
     }
     std::vector<std::filesystem::path> paths;
+    std::map<std::filesystem::path, std::filesystem::path> replacements;
+    std::set<std::filesystem::path> consumed;
     std::set<std::string> unmatchedExclusions = excludedModules;
     for (const auto& directory : directories) {
         if (!std::filesystem::is_directory(directory)) throw Domain::RelinkerException("Guest module path is not a directory: " + Io::Utf8Path(directory));
+        std::vector<std::filesystem::path> candidates;
         for (const auto& entry : std::filesystem::directory_iterator(directory)) {
             const auto filename = Io::Utf8Path(entry.path().filename());
             if (filename.ends_with(GuestModuleSuffix) || !entry.is_regular_file()) continue;
@@ -112,11 +115,27 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
             }
             if (Io::SameFile(entry.path(), inputPath)) continue;
             const auto header = ReadCandidateHeader(entry.path());
-            if (header.Elf) paths.push_back(entry.path());
-            else if (header.Self)
+            if (header.Elf) {
+                candidates.push_back(entry.path());
+                continue;
+            }
+            if (!header.Self) continue;
+            const auto backup = entry.path().parent_path() / (filename + ".esbak");
+            std::optional<CandidateHeader> backupHeader;
+            if (std::filesystem::exists(backup)) backupHeader = TryReadCandidateHeader(backup);
+            if (backupHeader && backupHeader->Elf && !excludedModules.contains(filename + ".esbak")) {
+                paths.push_back(entry.path());
+                replacements.emplace(entry.path(), backup);
+                consumed.insert(backup);
+                std::cout << "Using " << backup.lexically_relative(root).generic_string() << " for SELF container "
+                          << entry.path().lexically_relative(root).generic_string() << "\n";
+            } else {
                 std::cout << "Skipping SELF container: " << entry.path().lexically_relative(root).generic_string()
                           << " (unwrap it before relinking)\n";
+            }
         }
+        for (const auto& candidate : candidates)
+            if (!consumed.contains(candidate)) paths.push_back(candidate);
     }
     if (!unmatchedExclusions.empty()) throw Domain::RelinkerException("Excluded guest module file not found: " + *unmatchedExclusions.begin());
     std::sort(paths.begin(), paths.end());
@@ -124,7 +143,11 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
     result.Root = root;
     result.Directories = std::move(directories);
     result.RuntimeDirectories = std::move(runtimeDirectories);
-    for (const auto& path : paths) result.Modules.push_back({path, Io::FileReader().Read(Io::Utf8Path(path))});
+    for (const auto& path : paths) {
+        const auto replacement = replacements.find(path);
+        const auto source = replacement == replacements.end() ? path : replacement->second;
+        result.Modules.push_back({path, Io::FileReader().Read(Io::Utf8Path(source))});
+    }
     for (const auto& [copy, kept, match] : RemoveBackupCopies(result.Modules))
         std::cout << "Skipping backup copy: " << copy.lexically_relative(root).generic_string() << " (" << match << " as "
                   << kept.lexically_relative(root).generic_string() << ")\n";

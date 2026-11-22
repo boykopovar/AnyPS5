@@ -112,6 +112,15 @@ if(BUILD_TESTING)
     add_test(NAME console_progress COMMAND console_progress_tests)
     set_tests_properties(console_progress PROPERTIES TIMEOUT 20)
 
+    add_test_executable(native_modules_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/cli/tests/NativeModulesTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/NativeModules.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp)
+    target_link_libraries(native_modules_tests PRIVATE relinker_core)
+    target_include_directories(native_modules_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cli/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
+    add_test(NAME native_modules COMMAND native_modules_tests)
+    set_tests_properties(native_modules PROPERTIES TIMEOUT 20)
+
     add_test_executable(guest_load_ranges_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GuestLoadRangesTests.cpp)
     target_link_libraries(guest_load_ranges_tests PRIVATE relinker_core)
     add_test(NAME guest_load_ranges COMMAND guest_load_ranges_tests)
