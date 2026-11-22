@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_libcxx_weak_count_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxWeakCount.cpp)
+    target_include_directories(guest_libcxx_weak_count_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libcxx_weak_count_tests PRIVATE libc)
+    configure_windows_unwind(guest_libcxx_weak_count_tests)
+    add_test(NAME guest_libcxx_weak_count COMMAND guest_libcxx_weak_count_tests)
+    set_tests_properties(guest_libcxx_weak_count PROPERTIES TIMEOUT 15)
+    if(WIN32)
+        set_tests_properties(guest_libcxx_weak_count PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
