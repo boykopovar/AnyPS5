@@ -127,6 +127,14 @@ std::string statPackage() {
     return ucp({{"stats_definition.json", StatsDefinition}, {"stats_extraction.json", StatsExtraction}});
 }
 
+void testMetadataDirectories() {
+    std::filesystem::create_directories("app0/sce_sys/trophy2/trophy01.ucp");
+    std::filesystem::create_directories("app0/sce_sys/uds/uds01.ucp");
+    const auto title = NpTrophy2::LoadTitleTrophies(1, "en-US");
+    check(!title.package, "a trophy metadata directory was loaded as a package");
+    check(!title.rules, "a stat metadata directory was loaded as a package");
+}
+
 void testContainer() {
     const auto data = ucp({{"a.json", "{}"}, {"b.bin", std::string("\0\1\2", 3)}, {"a.json", "second"}});
     const auto files = NpTrophy2::ReadUcp(data);
@@ -586,6 +594,7 @@ int main() {
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-package-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(root);
     std::filesystem::current_path(root);
+    testMetadataDirectories();
     testContainer();
     testJson();
     testPackage();
