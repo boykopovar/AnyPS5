@@ -47,7 +47,9 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual(row["unit"], "ms")
         self.assertEqual([float(row[key]) for key in ("baseline", "candidate", "change", "change_pct")], [20, 10, -10, -50])
         report = performance_compare.compare(self.before, self.after)
-        for row in (row for row in rows if row["kind"] == "metric"):
+        metrics = [row for row in rows if row["kind"] == "metric"]
+        self.assertCountEqual([row["name"] for row in metrics], list(report["metrics_ms"]))
+        for row in metrics:
             for field in ("baseline", "candidate", "change", "change_pct"):
                 expected = report["metrics_ms"][row["name"]][field]
                 self.assertEqual(None if row[field] == "" else float(row[field]), expected)
@@ -114,9 +116,9 @@ class PerformanceCsvTests(unittest.TestCase):
         self.before["top_phases_ms_per_frame"] = {"before": 1}
         self.after["top_phases_ms_per_frame"] = {"after": 2}
         rows = self.rows(self.run_csv())
-        for row in (row for row in rows if row["kind"] == "phase"):
-            self.assertEqual((row["change"], row["change_pct"]), ("", ""))
-            self.assertTrue(row["baseline"] == "" or row["candidate"] == "")
+        phases = [(row["name"], row["baseline"], row["candidate"], row["change"], row["change_pct"])
+                  for row in rows if row["kind"] == "phase"]
+        self.assertCountEqual(phases, [("before", "1", "", "", ""), ("after", "", "2", "", "")])
         gpu = next(row for row in rows if row["name"] == "gpu_busy_ms_per_present")
         self.assertEqual(gpu["change_pct"], "")
 

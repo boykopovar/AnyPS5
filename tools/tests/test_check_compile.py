@@ -580,6 +580,16 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
                 self.assertIn("positive integer", result.stderr)
 
 
+class CheckCompileDuplicateCompilationDatabaseKeysTests(unittest.TestCase):
+    def test_rejects_duplicate_keys_in_compilation_records(self):
+        import check_compile
+        for content in ('[{"directory":"a","directory":"b","file":"a.c","command":"cc a.c"}]',
+                        '[{"directory":"a","file":"a.c","command":"cc a.c","command":"cc b.c"}]'):
+            with self.subTest(content=content):
+                with self.assertRaisesRegex(ValueError, "duplicate"):
+                    check_compile.compilation_database(content, "compile_commands.json")
+
+
 class CheckCompileDatabaseTests(CheckCompileFixture):
     def test_invalid_argument_arrays_are_rejected_without_a_traceback(self):
         source = self.source("unit.cpp")
@@ -1114,10 +1124,15 @@ class CheckCompileResponseTests(CheckCompileFixture):
         if compiler is None:
             self.skipTest("Clang is required to compare Windows response-file quoting")
         prefix = "error: no such file or directory: '"
+        empty_error = prefix + "'" in subprocess.run(
+            [compiler, "-###", "--rsp-quoting=windows", "-fsyntax-only", "-x", "c", ""],
+            cwd=self.build, capture_output=True, text=True, encoding="utf-8").stderr
         response = self.build / "flags.rsp"
         for content in (r'a\\"b c"', 'a\\\\\\"b', "x\\ y", '"', '""', '"""', '""""', 'a""b', '"a""b"',
                         'x"y z', 'q\\\\"', '"\\"', "'a b'", "a\tb\r\nc", "a\vb\fc", '"a\nb" c'):
             with self.subTest(content=content):
+                if not empty_error and content in ('"', '""'):
+                    continue
                 response.write_bytes(("-- " + content).encode("utf-8"))
                 result = subprocess.run([compiler, "-###", "--rsp-quoting=windows", "-fsyntax-only", "-x", "c", "@flags.rsp"],
                                         cwd=self.build, capture_output=True, text=True, encoding="utf-8")
