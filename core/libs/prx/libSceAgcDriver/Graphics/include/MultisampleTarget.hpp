@@ -37,6 +37,8 @@ public:
     bool TakeClear();
     DccKeys Keys() const { return keys; }
     const std::string& Refusal() const { return refusal; }
+    std::uint64_t Address() const { return address; }
+    std::uint64_t Bytes() const { return bytes; }
 
 private:
     std::uint64_t address = 0;
@@ -120,12 +122,17 @@ bool MultisampledColorFillAbsorbs(std::uint64_t address, std::size_t bytes, std:
 void NoteColorMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
 std::shared_ptr<Texture> MultisampleTargetFmaskTexture_nid_no_patch(const Context& context, const GuestTextureResource& resource, VkComponentMapping components);
 void ClearMultisampleTargets(VkDevice device);
+bool MultisampleDccUnwatchLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+void SaveMultisampleDccBeforeUnwatch(std::uint64_t address, std::size_t bytes);
+void SetMultisampleDccPublishHookForTest(void (*hook)());
+void SetMultisampleDccCopyHookForTest(void (*hook)());
 std::uint64_t MultisampleTargetRangeGeneration();
 std::uint64_t MultisampleClaimSerial();
 std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTargetRanges(
     VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges, std::uint64_t& generation);
 void InstallResidentImageReadGuard_nid_no_patch();
 void UpdateResidentImageUnmapObserver_nid_no_patch();
+void RetireResidentImagesOver_nid_no_patch(std::uintptr_t address, std::size_t bytes);
 void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes);
 bool MultisampleColorTargetOverlaps(std::uint64_t address, std::uint64_t bytes);
 void ClaimMultisampleTargetStore(std::uint64_t address, std::uint64_t bytes);
@@ -136,6 +143,17 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
 void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& active);
 void RetireMultisampleColorTargetsOnFmaskWrite(std::uint64_t address, std::size_t bytes);
 std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes);
+struct RetiredGpuOwners {
+    std::size_t color = 0;
+    std::size_t depthOwners = 0;
+    std::size_t depthSurfaces = 0;
+    std::size_t depthPlanes = 0;
+};
+RetiredGpuOwners RetireGpuOwnersOver(std::uint64_t address, std::size_t bytes);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> GpuOwnedRanges(std::uint64_t address, std::size_t bytes);
+std::size_t ResidentOwnersOver(std::uint64_t address, std::size_t bytes, bool gpuOnly);
+void OmitGpuOwnersForTest(bool omit);
+std::uint64_t GpuOwnerInventoryWalksForTest();
 
 }
 

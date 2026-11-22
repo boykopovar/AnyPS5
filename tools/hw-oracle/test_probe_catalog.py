@@ -79,27 +79,34 @@ class CatalogLoadingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "id must contain lowercase"):
                 probe_catalog.read_catalog(path)
 
-    def test_instruction_body_must_start_with_the_declared_form(self):
+    def test_instruction_body_must_contain_the_declared_form(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "catalog"
             malformed = copy.deepcopy(self.catalog)
             malformed["probes"][0]["body"] = "v_sub_f32 v10, v4, v5"
             path.write_text(json.dumps(malformed), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "one uncommented declared instruction"):
+            with self.assertRaisesRegex(ValueError, "exactly one uncommented declared instruction"):
                 probe_catalog.read_catalog(path)
             malformed["probes"][0]["instruction"] = "bad mnemonic"
             path.write_text(json.dumps(malformed), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "instruction must be an assembly mnemonic"):
                 probe_catalog.read_catalog(path)
 
-    def test_probe_body_cannot_add_implicit_instructions_or_expected_results(self):
+    def test_probe_body_accepts_explicit_support_instructions_but_not_terminators_or_expected_results(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "catalog"
-            malformed = copy.deepcopy(self.catalog)
-            malformed["probes"][0]["body"] += "\n  s_endpgm"
-            path.write_text(json.dumps(malformed), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "one uncommented declared instruction"):
-                probe_catalog.read_catalog(path)
+            sequence = copy.deepcopy(self.catalog)
+            sequence["probes"][0]["body"] = "v_mov_b32 v9, v4\nv_add_f32 v10, v4, v5\ns_waitcnt vmcnt(0)"
+            path.write_text(json.dumps(sequence), encoding="utf-8")
+            loaded, _ = probe_catalog.read_catalog(path)
+            self.assertEqual(loaded["probes"][0]["body"], sequence["probes"][0]["body"])
+            for suffix in ("\ns_endpgm", "\nv_add_f32 v11, v4, v5", "\n# comment"):
+                with self.subTest(suffix=suffix):
+                    malformed = copy.deepcopy(self.catalog)
+                    malformed["probes"][0]["body"] += suffix
+                    path.write_text(json.dumps(malformed), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "exactly one uncommented declared instruction"):
+                        probe_catalog.read_catalog(path)
             malformed = copy.deepcopy(self.catalog)
             malformed["probes"][0]["expected"] = [0]
             path.write_text(json.dumps(malformed), encoding="utf-8")
@@ -166,6 +173,11 @@ class CatalogLoadingTests(unittest.TestCase):
             path.write_text(json.dumps(malformed), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "mode ieee must be"):
                 probe_catalog.read_catalog(path)
+            malformed = copy.deepcopy(self.catalog)
+            malformed["probes"][0]["default"] = 1
+            path.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "default must be boolean"):
+                probe_catalog.read_catalog(path)
 
 
 class ProbeGenerationTests(unittest.TestCase):
@@ -216,6 +228,12 @@ class ProbeGenerationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "selected more than once"):
             probe_catalog.select_probes(self.catalog["probes"], [identifier, identifier])
 
+    def test_target_specific_probes_require_explicit_selection(self):
+        probe = next(item for item in self.catalog["probes"] if item["id"] == "ds-write-src2-b64-unaligned-positive")
+        self.assertFalse(probe["default"])
+        self.assertNotIn(probe, probe_catalog.select_probes(self.catalog["probes"], None))
+        self.assertEqual(probe_catalog.select_probes(self.catalog["probes"], [probe["id"]]), [probe])
+
     def test_generation_does_not_replace_existing_case_directories(self):
         probe = self.catalog["probes"][0]
         with tempfile.TemporaryDirectory() as temporary:
@@ -249,6 +267,58 @@ class ProbeGenerationTests(unittest.TestCase):
             generated = probe_catalog.generate(probes, self.digest, output)
             self.assertEqual(generated, destinations)
             self.assertTrue(all((path / "probe.json").is_file() for path in destinations))
+
+    def locked_replace(self, failures):
+        original_replace = os.replace
+        calls = []
+
+        def replace(source, destination):
+            calls.append(destination)
+            if len(calls) <= failures:
+                raise PermissionError(13, "Access is denied", str(source))
+            return original_replace(source, destination)
+
+        return replace, calls
+
+    def test_promotion_retries_a_directory_held_open_on_windows(self):
+        probe = self.catalog["probes"][0]
+        replace, calls = self.locked_replace(2)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "generated"
+            with patch.object(probe_catalog, "RETRY_LOCKED_REPLACE", True), \
+                    patch.object(probe_catalog.os, "replace", replace), \
+                    patch.object(probe_catalog.time, "sleep") as sleep:
+                generated = probe_catalog.generate([probe], self.digest, output)
+            self.assertEqual(generated, [output / probe["id"]])
+            self.assertTrue((output / probe["id"] / "probe.json").is_file())
+            self.assertEqual(len(calls), 3)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], list(probe_catalog.LOCKED_REPLACE_DELAYS[:2]))
+
+    def test_promotion_gives_up_on_a_directory_that_stays_locked(self):
+        probe = self.catalog["probes"][0]
+        replace, calls = self.locked_replace(len(probe_catalog.LOCKED_REPLACE_DELAYS) + 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "generated"
+            with patch.object(probe_catalog, "RETRY_LOCKED_REPLACE", True), \
+                    patch.object(probe_catalog.os, "replace", replace), \
+                    patch.object(probe_catalog.time, "sleep"), \
+                    self.assertRaises(PermissionError):
+                probe_catalog.generate([probe], self.digest, output)
+            self.assertEqual(len(calls), len(probe_catalog.LOCKED_REPLACE_DELAYS) + 1)
+            self.assertEqual(list(output.iterdir()), [])
+
+    def test_locked_replace_is_not_retried_off_windows(self):
+        replace, calls = self.locked_replace(1)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.json"
+            with patch.object(probe_catalog, "RETRY_LOCKED_REPLACE", False), \
+                    patch.object(probe_catalog.os, "replace", replace), \
+                    patch.object(probe_catalog.time, "sleep") as sleep, \
+                    self.assertRaises(PermissionError):
+                probe_catalog.write_atomic(path, "{}\n")
+            self.assertEqual(len(calls), 1)
+            sleep.assert_not_called()
+            self.assertEqual(list(Path(temporary).iterdir()), [])
 
 
 class ProbeRunTests(unittest.TestCase):
@@ -322,6 +392,79 @@ class ProbeRunTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "device label must contain"):
                 probe_catalog.run_probes(self.catalog["probes"][:1], self.digest, temporary, "../gpu")
             self.assertEqual(list(Path(temporary).iterdir()), [])
+
+    def test_ps5_run_rejects_other_hardware_before_dispatch(self):
+        identity = {
+            "name": "gfx1013",
+            "vendor": "AMD",
+            "product": "AMD BC-250",
+            "chip_id": 0x13fe,
+            "asic_revision": 1,
+            "compute_units": 24,
+        }
+        cases = (
+            (identity, "gfx1013", "hsa", "Linux", "PCI device 0x13fc"),
+            ({**identity, "chip_id": 0x13fc}, "gfx1030", "hsa", "Linux", "gfx1013 agent"),
+            ({**identity, "chip_id": 0x13fc}, "gfx1013", "hip", "Linux", "HSA runtime"),
+            ({**identity, "chip_id": 0x13fc}, "gfx1013", "hsa", "Darwin", "Linux on the console"),
+        )
+        for observed, target, runtime, system, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                probe_catalog.require_ps5_identity(observed, target, runtime, system)
+        with patch.object(probe_catalog.platform, "system", return_value="Darwin"), \
+                patch.object(probe_catalog.hw_oracle, "oracle", side_effect=AssertionError("oracle built")):
+            with self.assertRaisesRegex(ValueError, "Linux on the console"):
+                probe_catalog.run_ps5_probes(
+                    self.catalog["probes"][:1], self.digest, "/tmp/unused-ps5-run", "ps5-linux")
+        with patch.object(probe_catalog.platform, "system", return_value="Linux"), \
+                patch.dict(os.environ, {"HSA_OVERRIDE_GFX_VERSION": "10.1.3"}), \
+                patch.object(probe_catalog.hw_oracle, "oracle", side_effect=AssertionError("oracle built")):
+            with self.assertRaisesRegex(ValueError, "reject HSA_OVERRIDE_GFX_VERSION"):
+                probe_catalog.run_ps5_probes(
+                    self.catalog["probes"][:1], self.digest, "/tmp/unused-ps5-run", "ps5-linux")
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(probe_catalog.hw_oracle, "runtime", return_value="hsa"), \
+                patch.object(probe_catalog.hw_oracle, "oracle", return_value=Path("oracle")), \
+                patch.object(probe_catalog.hw_oracle, "hsa_identity", return_value=identity), \
+                patch.object(probe_catalog.hw_oracle, "target", return_value="gfx1013"), \
+                patch.object(probe_catalog.hw_oracle, "run") as run, \
+                patch.object(probe_catalog.platform, "system", return_value="Linux"):
+            with self.assertRaisesRegex(ValueError, "PCI device 0x13fc"):
+                probe_catalog.run_ps5_probes(
+                    self.catalog["probes"][:1], self.digest, temporary, "ps5-linux")
+            run.assert_not_called()
+            self.assertEqual(list(Path(temporary).iterdir()), [])
+
+    def test_ps5_run_records_verified_identity(self):
+        probe = self.catalog["probes"][0]
+        identity = {
+            "name": "gfx1013",
+            "vendor": "AMD",
+            "product": "PlayStation 5 GPU",
+            "chip_id": 0x13fc,
+            "asic_revision": 1,
+            "compute_units": 36,
+        }
+        outputs = [(index,) * 16 for index in range(len(probe["rows"]))]
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(probe_catalog.hw_oracle, "runtime", return_value="hsa"), \
+                patch.object(probe_catalog.hw_oracle, "oracle", return_value=Path("oracle")), \
+                patch.object(probe_catalog.hw_oracle, "hsa_identity", return_value=identity), \
+                patch.object(probe_catalog.hw_oracle, "target", return_value="gfx1013"), \
+                patch.object(probe_catalog.hw_oracle, "run", return_value=outputs), \
+                patch.object(probe_catalog.platform, "system", return_value="Linux"), \
+                patch.object(probe_catalog.platform, "release", return_value="7.2.3-ps5"):
+            paths = probe_catalog.run_ps5_probes(
+                [probe], self.digest, temporary, "ps5-linux")
+            report = probe_catalog.compare_results.read_report(paths[0])
+            self.assertEqual(report["runtime"], "hsa")
+            self.assertEqual(report["assembly_target"], "gfx1013")
+            self.assertEqual(report["hardware_identity"], {
+                **identity,
+                "kind": "ps5-linux-hsa",
+                "operating_system": "Linux",
+                "kernel_release": "7.2.3-ps5",
+            })
 
 
 class ProbeCoverageTests(unittest.TestCase):
@@ -466,7 +609,8 @@ class ProbeCatalogCliTests(unittest.TestCase):
             report = json.loads(output.getvalue())
             self.assertEqual(result, 1)
             self.assertEqual(report["measured"], 0)
-            self.assertEqual(report["total"], len(probe_catalog.read_catalog()[0]["probes"]))
+            probes = probe_catalog.read_catalog()[0]["probes"]
+            self.assertEqual(report["total"], len(probe_catalog.select_probes(probes, None)))
             self.assertTrue(all(item["status"] == "missing" for item in report["probes"]))
 
     def test_cli_rejects_unknown_probes_without_running_them(self):
