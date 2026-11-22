@@ -1,8 +1,12 @@
 # libSceNKWebKit
 
+## add Functional
+
+- [WKBundleGetJavaScriptObjectsCount, WKBundleReleaseMemory](../../../core/libs/prx/libSceNKWebKit/src/BundleMemory.cpp) (libSceNKWebKit) - the count reports the live object count of the guest JavaScript heap and the release runs a JavaScript garbage collection on the bundle's context; releasing memory held by the rest of the web process is not modelled.
+
 ## add Silent stubs
 
-- [WKBundle memory and cleanup controls](../../../core/libs/prx/libSceNKWebKit/src/BundleMemory.cpp) (libSceNKWebKit) - `WKBundleGetJavaScriptObjectsCount` queries active JavaScriptCore heap object counts and `WKBundleReleaseMemory` triggers JavaScriptCore garbage collection; history database clearing, full WebProcess subsystem memory release, and network process resource load statistics observers remain unmodeled in the guest environment.
+- [WKBundleClearHistoryForTesting, WKBundleClearResourceLoadStatistics, WKBundleResourceLoadStatisticsNotifyObserver](../../../core/libs/prx/libSceNKWebKit/src/BundleMemory.cpp) (libSceNKWebKit) - record a flag or a counter on the bundle that nothing reads; no history is cleared, no resource load statistics are cleared and no observer is notified.
 
 ## remove `4XbhuyqB6pA`
 
