@@ -1,4 +1,4 @@
-import {actions, actionsForInput, chordButtons, defaults, groups, inputFilename, mouseValues, typesForAction, wheelValues} from './mapping.js';
+import {actions, actionsForInput, chordButtons, defaults, groups, inputFilename, inputTitleId, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {exportableKeys} from './keys.js';
 import {captureKey} from './capture.js';
 import {parseIni, serialize, validate} from './validation.js';
@@ -12,6 +12,7 @@ let controllerRemaps = [];
 const configurationText = () => serialize(entries, settings, controllerRemaps);
 const snapshot = () => JSON.stringify([entries, settings, controllerRemaps]);
 let savedConfiguration = snapshot();
+let replacementRequest = 0;
 let captureTarget;
 let captureButton;
 let selectedGroup = groups[0].name;
@@ -75,7 +76,9 @@ function renderHelp() {
 function renderImportReport() {
     if (!importReport) return;
     const report = byId('import-report');
-    report.replaceChildren(element('h2', t(importReport.errors.length ? 'importRejected' : 'importRead')));
+    const heading = element('h2', t(importReport.errors.length ? 'importRejected' : 'importRead'));
+    heading.id = 'import-report-title';
+    report.replaceChildren(heading);
     const messages = [...importReport.errors, ...importReport.warnings];
     if (messages.length) {
         const list = element('ul');
@@ -123,7 +126,12 @@ async function confirmReplacement() {
     const confirmation = byId('replace-dialog');
     confirmation.returnValue = 'cancel';
     return new Promise(resolve => {
-        confirmation.addEventListener('close', () => resolve(confirmation.returnValue === 'discard'), {once: true});
+        function finish() {
+            if (confirmation.open) return;
+            confirmation.removeEventListener('close', finish);
+            resolve(confirmation.returnValue === 'discard');
+        }
+        confirmation.addEventListener('close', finish);
         confirmation.showModal();
     });
 }
@@ -208,6 +216,7 @@ function renderChordControl(entry, label) {
     });
     control.dir = 'ltr';
     control.append(summary, options);
+    control.addEventListener('toggle', filterActions);
     updateSummary();
     return control;
 }
@@ -263,7 +272,7 @@ function renderBinding(entry, position) {
     return row;
 }
 
-function render() {
+function render(focusEntry) {
     const container = byId('mappings');
     container.replaceChildren();
     for (const group of groups) {
@@ -275,10 +284,9 @@ function render() {
             article.dataset.action = action;
             const heading = element('div', undefined, 'action-heading');
             const add = button(t('add'), t('addLabel', {action}), () => {
-                entries.push({action, type: 'KEY', value: ''});
-                render();
-                const rows = document.querySelectorAll(`[data-action="${action}"] .binding`);
-                rows[rows.length - 1].querySelectorAll('.dropdown-trigger')[1].focus();
+                const entry = {action, type: 'KEY', value: ''};
+                entries.push(entry);
+                render(entry);
             });
             add.className = 'add-binding';
             const title = element('div', undefined, 'action-title');
@@ -300,14 +308,19 @@ function render() {
         }
         container.append(section);
     }
+    bindingControls.get(focusEntry)?.focus();
     updateOutput();
 }
 
 function filterActions() {
     const searchField = byId('search');
     const search = searchField.value.trim().toLowerCase();
-    const focusedAction = document.activeElement?.closest('.action');
+    const focused = document.activeElement;
+    const focusedAction = focused?.closest('.action');
     const inputActions = actionsForInput(search, entries);
+    if (focused?.closest('.binding')?.querySelector('[aria-invalid="true"]') || focused?.closest('.chord-picker')?.open) {
+        inputActions.add(focusedAction.dataset.action);
+    }
     if (activeView === 'controls') byId('group-title').textContent = search ? t('search') : groupLabel(selectedGroup);
     for (const category of byId('categories').children) {
         category.setAttribute('aria-pressed', String(!search && category.dataset.group === selectedGroup));
@@ -402,7 +415,8 @@ window.addEventListener('keydown', event => {
 byId('search').addEventListener('input', filterActions);
 byId('profile-title-id').addEventListener('input', updateOutput);
 byId('reset').addEventListener('click', async () => {
-    if (!await confirmReplacement()) return;
+    const request = ++replacementRequest;
+    if (!await confirmReplacement() || request !== replacementRequest) return;
     entries = [];
     settings = [];
     controllerRemaps = [];
@@ -418,18 +432,25 @@ byId('file').addEventListener('change', async event => {
     const file = event.target.files[0];
     if (!file) return;
     event.target.value = '';
+    const request = ++replacementRequest;
     try {
         if (file.size > 1024 * 1024) throw new Error(t('fileTooLarge'));
-        const text = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer());
+        const bytes = await file.arrayBuffer();
+        if (request !== replacementRequest) return;
+        const text = new TextDecoder('utf-8', {fatal: true}).decode(bytes);
         const result = parseIni(text);
         const report = byId('import-report');
-        importReport = result;
-        renderImportReport();
         if (result.errors.length) {
+            importReport = result;
+            renderImportReport();
             report.focus();
             return;
         }
-        if (!await confirmReplacement()) return;
+        if (!await confirmReplacement() || request !== replacementRequest) return;
+        importReport = result;
+        renderImportReport();
+        const titleId = inputTitleId(file.name);
+        if (titleId !== undefined) byId('profile-title-id').value = titleId;
         entries = result.entries;
         settings = result.settings;
         controllerRemaps = result.controllerRemaps;
@@ -437,6 +458,7 @@ byId('file').addEventListener('change', async event => {
         render();
         setStatus('imported', {name: file.name});
     } catch (error) {
+        if (request !== replacementRequest) return;
         setStatus('importFailed', {message: error instanceof TypeError ? t('invalidUtf8') : diagnostic(locale, error.message)});
     }
 });

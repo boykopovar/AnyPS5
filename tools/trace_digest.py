@@ -267,6 +267,9 @@ def recorded_span(trace, tid, frames, full_at):
     if not kept or tid not in trace.slices:
         return {}
     start, until = frames[0][1], kept[-1][2]
+    span_us = until - start
+    if span_us <= 0:
+        return {}
     gpu = trace.name(tid) == "gpu"
     traced = waited = 0.0
     covered_until = -math.inf
@@ -285,9 +288,9 @@ def recorded_span(trace, tid, frames, full_at):
         if waiting and not nested:
             waited += end - begin
     count = len(kept)
-    return {"frames_before_full": count, "recorded_ms": (until - start) / 1000.0,
+    return {"frames_before_full": count, "recorded_ms": span_us / 1000.0,
             "busy_ms_per_frame": (traced - waited) / 1000.0 / count, "wait_ms_per_frame": waited / 1000.0 / count,
-            "busy_pct": 100.0 * (traced - waited) / (until - start),
+            "busy_pct": 100.0 * (traced - waited) / span_us,
             "top": [{"name": name, "ms_per_frame": us / 1000.0 / count} for name, us in leaders.most_common(2)]}
 
 
@@ -589,7 +592,7 @@ def markdown_intervals(result):
     identity = result["identity"]
     if not rows:
         return "no interval lines (interval_start_s) found\n"
-    lines = [f"**{len(rows)} intervals**, {rows[0]['start_s']:.1f} to {rows[-1]['end_s']:.1f} s, {sum(row['presents'] for row in rows)} presents",
+    lines = [f"**{len(rows)} intervals**, {rows[0]['start_s']:.3f} to {rows[-1]['end_s']:.3f} s, {sum(row['presents'] for row in rows)} presents",
              f"{markdown_text(identity['gpu'])}, {markdown_text(identity['driver'])}, {markdown_text(identity['os'])}, {markdown_text(identity['resolution'])}, commit {markdown_text(identity['commit'])}"
              f"{' (dirty)' if identity.get('dirty') else ''}"]
     if result["identity_changed_at"]:
@@ -599,7 +602,7 @@ def markdown_intervals(result):
         frame = row["frame_ms"]
         worker = f"{row['busiest_worker']['pct']:.0f} %" if row["busiest_worker"] else "-"
         phase = f"{row['top_phase']['name']} {row['top_phase']['ms_per_frame']:.1f}" if row["top_phase"] else "-"
-        lines.append(f"| {index} | {row['start_s']:.0f}-{row['end_s']:.0f}{' (dropped)' if row['trace_dropped'] else ''} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
+        lines.append(f"| {index} | {row['start_s']:.3f}-{row['end_s']:.3f}{' (dropped)' if row['trace_dropped'] else ''} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
                      f"| {frame['p99']:.1f} | {frame['max']:.1f} | {row['gpu_busy_ms_per_present']:.1f} | {worker} | {table_cell(phase)} |")
     count_names = sorted({name for row in rows for name in (row["owned_draw_counts"] or {})})
     if count_names:
