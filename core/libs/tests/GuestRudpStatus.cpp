@@ -58,7 +58,7 @@ int main() {
     Require(mss == 1410);
     Require(sceRudpProcessEvents(0) == 0);
     Require(sceRudpNetFlush() == 0);
-    Require(sceRudpNetReceived(0, nullptr, 0, nullptr, 0) == 0);
+    Require(sceRudpNetReceived(0, nullptr, 0, nullptr, 0) == invalidArgument);
 
     Require(sceRudpGetStatus(nullptr, statusSize) == invalidArgument);
     Require(sceRudpGetStatus(nullptr, 0) == invalidArgument);
