@@ -20,6 +20,8 @@ void APS5_VABI _ZN7WebCore12SharedBufferC1EPKhm(NKWebKit::WebCoreAbi::SharedBuff
 void APS5_VABI _ZN7WebCore12SharedBufferC2EPKhm(NKWebKit::WebCoreAbi::SharedBuffer* self, const unsigned char* data, std::size_t size);
 void APS5_VABI _ZN7WebCore12SharedBufferC1EON3WTF6VectorIcLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(NKWebKit::WebCoreAbi::SharedBuffer* self, NKWebKit::WtfAbi::Vector<char>* vector);
 void APS5_VABI _ZN7WebCore12SharedBufferC2EON3WTF6VectorIcLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(NKWebKit::WebCoreAbi::SharedBuffer* self, NKWebKit::WtfAbi::Vector<char>* vector);
+void APS5_VABI _ZN7WebCore12SharedBufferC1EON3WTF14FileSystemImpl14MappedFileDataE(NKWebKit::WebCoreAbi::SharedBuffer* self, WTF::MappedFileData* data);
+void APS5_VABI _ZN7WebCore12SharedBufferC2EON3WTF14FileSystemImpl14MappedFileDataE(NKWebKit::WebCoreAbi::SharedBuffer* self, WTF::MappedFileData* data);
 void APS5_VABI _ZN7WebCore12SharedBufferD1Ev(NKWebKit::WebCoreAbi::SharedBuffer* self);
 void APS5_VABI _ZN7WebCore12SharedBufferD2Ev(NKWebKit::WebCoreAbi::SharedBuffer* self);
 void APS5_VABI _ZN7WebCore12SharedBuffer6appendERKS0_(NKWebKit::WebCoreAbi::SharedBuffer* self, const NKWebKit::WebCoreAbi::SharedBuffer* data);

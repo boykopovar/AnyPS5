@@ -197,9 +197,27 @@ void AppendSegment(SharedBuffer& buffer, CharVector&& data) {
     buffer.size += length;
 }
 
+DataSegment* CreateMappedSegment(WTF::MappedFileData& data) {
+    auto* segment = new (_ZN3WTF10fastMallocEm(sizeof(DataSegment))) DataSegment;
+    segment->refCount.store(1);
+    new (&segment->storage.mappedFile) WTF::MappedFileData{std::exchange(data.data, nullptr), std::exchange(data.size, 0U)};
+    segment->index = MappedFileIndex;
+    return segment;
+}
+
 void Construct(SharedBuffer* self, CharVector&& data) {
     Initialize(self);
     AppendSegment(*self, std::move(data));
+}
+
+void ConstructFromMapped(SharedBuffer* self, WTF::MappedFileData& data) {
+    auto& buffer = Checked(self, "WebCore::SharedBuffer");
+    const std::size_t size = data.size;
+    DataSegment* segment = CreateMappedSegment(data);
+    Initialize(&buffer);
+    buffer.size = size;
+    buffer.segments.buffer[0] = {0, segment};
+    buffer.segments.size = 1;
 }
 
 SharedBufferRef Create(CharVector&& data) {
@@ -303,6 +321,14 @@ void APS5_VABI _ZN7WebCore12SharedBufferC1EON3WTF6VectorIcLm0ENS1_15CrashOnOverf
 
 void APS5_VABI _ZN7WebCore12SharedBufferC2EON3WTF6VectorIcLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(SharedBuffer* self, CharVector* vector) {
     Construct(self, CharVector(std::move(Checked(vector, "WTF::Vector<char>"))));
+}
+
+void APS5_VABI _ZN7WebCore12SharedBufferC1EON3WTF14FileSystemImpl14MappedFileDataE(SharedBuffer* self, WTF::MappedFileData* data) {
+    ConstructFromMapped(self, Checked(data, "WTF::FileSystemImpl::MappedFileData"));
+}
+
+void APS5_VABI _ZN7WebCore12SharedBufferC2EON3WTF14FileSystemImpl14MappedFileDataE(SharedBuffer* self, WTF::MappedFileData* data) {
+    ConstructFromMapped(self, Checked(data, "WTF::FileSystemImpl::MappedFileData"));
 }
 
 void APS5_VABI _ZN7WebCore12SharedBufferD1Ev(SharedBuffer* self) {

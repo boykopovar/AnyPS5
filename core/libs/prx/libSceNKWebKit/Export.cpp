@@ -15203,14 +15203,6 @@ int APS5_VABI _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSu
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore12SharedBufferC1EON3WTF14FileSystemImpl14MappedFileDataE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore12SharedBufferC2EON3WTF14FileSystemImpl14MappedFileDataE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore12SourceBuffer30setMaximumQueueDepthForTrackIDERKN3WTF10AtomStringEm() {
     NotImplemented_nid_no_patch(__func__);
 }
