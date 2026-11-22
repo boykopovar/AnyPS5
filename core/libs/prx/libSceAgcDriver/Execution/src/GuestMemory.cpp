@@ -55,12 +55,12 @@
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <fcntl.h>
-#include <fstream>
+#include <istream>
 #ifndef __APPLE__
 #include <link.h>
 #endif
 #include <pthread.h>
-#include <sstream>
+#include <streambuf>
 #include <sys/ioctl.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -1045,12 +1045,24 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
             continue;
         }
 #endif
-        std::ifstream maps("/proc/self/maps");
-        if (!maps.is_open()) return false;
-        std::string line;
+        struct MapsPrefixBuffer final : std::streambuf {
+            void reset(char* text) { setg(text, text, text + std::strlen(text)); }
+        };
+        char readBuffer[4096];
+        const std::unique_ptr<std::FILE, int (*)(std::FILE*)> maps(std::fopen("/proc/self/maps", "r"), &std::fclose);
+        if (!maps) return false;
+        std::setvbuf(maps.get(), readBuffer, _IOFBF, sizeof(readBuffer));
+        char prefix[128];
+        MapsPrefixBuffer buffer;
+        std::istream fields(&buffer);
         bool found = false;
-        while (std::getline(maps, line)) {
-            std::istringstream fields(line);
+        bool lineStart = true;
+        while (std::fgets(prefix, sizeof(prefix), maps.get())) {
+            const bool parse = lineStart;
+            lineStart = std::strchr(prefix, '\n') != nullptr;
+            if (!parse) continue;
+            buffer.reset(prefix);
+            fields.clear();
             std::uintptr_t first = 0;
             std::uintptr_t last = 0;
             char separator = 0;
