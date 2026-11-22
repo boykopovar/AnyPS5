@@ -22,7 +22,10 @@ int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* categoryType) 
         *__error_nid_postfix() = 3;
         return SCE_KERNEL_ERROR_ESRCH;
     }
-    if (pid != 0 && pid != getpid_nid_postfix()) NotImplemented_nid_no_patch(__func__);
+    if (pid != 0 && pid != getpid_nid_postfix()) {
+        *__error_nid_postfix() = 3;
+        return SCE_KERNEL_ERROR_ESRCH;
+    }
     std::uint32_t value = 0;
     if (!GetAppCategoryType_nid_no_patch(&value)) NotImplemented_nid_no_patch(__func__);
     if (!GuestCopyOut_nid_no_patch(categoryType, &value, sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
