@@ -258,6 +258,7 @@ bool storeTimeRanges(WebCore::PlatformTimeRanges* destination, const TimeRangeVe
     TimeRangeVector vector{previous.m_buffer, host.capacity, static_cast<unsigned>(host.ranges.size())};
     if (!host.reallocated) {
         return GuestWritable_nid_no_patch(destination, sizeof(vector))
+            && GuestWritable_nid_no_patch(previous.m_buffer, host.ranges.size() * sizeof(TimeRange))
             && (host.ranges.empty() || GuestCopyOut_nid_no_patch(previous.m_buffer, host.ranges.data(), host.ranges.size() * sizeof(TimeRange)))
             && storeTimeRangeVector(destination, vector);
     }

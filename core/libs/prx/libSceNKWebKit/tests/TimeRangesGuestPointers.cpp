@@ -32,15 +32,19 @@ static bool FaultsAsNotImplemented(Function function, const char* name) {
     return false;
 }
 
-static unsigned char* MapPage() {
+static unsigned char* MapPages(std::size_t count) {
 #ifdef _WIN32
-    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    void* page = VirtualAlloc(nullptr, 4096 * count, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     Require(page != nullptr);
 #else
-    void* page = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    void* page = mmap(nullptr, 4096 * count, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
     Require(page != MAP_FAILED);
 #endif
     return static_cast<unsigned char*>(page);
+}
+
+static unsigned char* MapPage() {
+    return MapPages(1);
 }
 
 static void ProtectReadOnly(void* page) {
@@ -52,12 +56,17 @@ static void ProtectReadOnly(void* page) {
 #endif
 }
 
-static void UnmapPage(void* page) {
+static void UnmapPages(void* page, std::size_t count) {
 #ifdef _WIN32
+    static_cast<void>(count);
     Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
 #else
-    Require(munmap(page, 4096) == 0);
+    Require(munmap(page, 4096 * count) == 0);
 #endif
+}
+
+static void UnmapPage(void* page) {
+    UnmapPages(page, 1);
 }
 
 static WTF::MediaTime Seconds(std::int64_t value) {
@@ -108,6 +117,20 @@ int main() {
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(readOnlyInPlace, Seconds(3), Seconds(4)); return 0; },
         "_ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_"));
     Require(std::memcmp(inPlaceBytes, static_cast<const void*>(inPlace), sizeof(inPlaceBytes)) == 0);
+
+    unsigned char* splitPages = MapPages(2);
+    std::memset(splitPages, 0x3c, 8192);
+    auto* splitBuffer = reinterpret_cast<WebCore::PlatformTimeRanges::Range*>(splitPages + 4096 - sizeof(WebCore::PlatformTimeRanges::Range));
+    splitBuffer[0] = WebCore::PlatformTimeRanges::Range{Seconds(10), Seconds(20)};
+    static unsigned char splitBytes[8192];
+    std::memcpy(splitBytes, splitPages, sizeof(splitBytes));
+    ProtectReadOnly(splitPages + 4096);
+    WebCore::PlatformTimeRanges split;
+    split.m_ranges = VectorRange{splitBuffer, 4, 1};
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&split, zero, five); return 0; }, add));
+    Require(std::memcmp(splitPages, splitBytes, sizeof(splitBytes)) == 0);
+    Require(split.m_ranges.m_buffer == splitBuffer && split.m_ranges.m_capacity == 4 && split.m_ranges.m_size == 1);
+    UnmapPages(splitPages, 2);
 
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore18PlatformTimeRangesC1Ev(unreadable); return 0; }, "_ZN7WebCore18PlatformTimeRangesC1Ev"));
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore18PlatformTimeRangesC2Ev(readOnly); return 0; }, "_ZN7WebCore18PlatformTimeRangesC1Ev"));
