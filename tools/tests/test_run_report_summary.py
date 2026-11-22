@@ -68,6 +68,24 @@ class RunReportSummaryTests(unittest.TestCase):
                 self.assertEqual(report["system"]["os"], name)
                 self.assertIn(expected, render(report))
 
+    def test_counts_entries_beyond_the_summary_preview(self):
+        report = self.report("stop-none.json")
+        report["coverage"]["missing"] = True
+        report["coverage"]["unsupported"] = True
+        report["missing"]["functions"] = [
+            {"library": "fixture", "name": f"function_{i}", "calls": 1} for i in range(7)
+        ]
+        report["shaders"]["unsupported"] = [
+            {"encoding": "fixture", "opcode": f"instruction_{i}", "count": 1} for i in range(6)
+        ]
+        report["truncated"]["functions"] = 3
+        summary = render(report)
+        self.assertIn("2 more functions in the full report", summary)
+        self.assertIn("1 more instruction in the full report", summary)
+        self.assertIn("3 additional functions omitted", summary)
+        self.assertNotIn("fixture::function_5", summary)
+        self.assertNotIn("fixture: instruction_5", summary)
+
     def test_summary_marks_uncollected_sections(self):
         report = self.report("stop-missing-function.json")
         report["coverage"]["milestones"] = False
