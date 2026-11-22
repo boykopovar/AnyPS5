@@ -92,6 +92,28 @@ void Allocator() {
     Expect(iterator && status <= 0, "embedded data survives cleanup");
     ubrk_close(iterator);
     u_cleanup_nid_postfix();
+    const auto firstAllocations = memory.allocations;
+    const auto firstFrees = memory.frees;
+    status = 0;
+    iterator = ubrk_open(1, "en", u"no allocator", -1, &status);
+    Expect(iterator && status <= 0, "iterator after cleanup without an allocator");
+    while (ubrk_next(iterator) != -1) {}
+    ubrk_close(iterator);
+    u_cleanup_nid_postfix();
+    Expect(memory.allocations == firstAllocations && memory.frees == firstFrees, "cleanup unregisters the guest allocator");
+    Memory next;
+    status = 0;
+    u_setMemoryFunctions_nid_postfix(&next, Allocate, Reallocate, Release, &status);
+    Expect(status == 0, "reinstall a guest allocator after cleanup");
+    status = 0;
+    iterator = ubrk_open(1, "en", u"second allocator", -1, &status);
+    Expect(iterator && status <= 0, "iterator with second allocator");
+    while (ubrk_next(iterator) != -1) {}
+    ubrk_close(iterator);
+    Expect(next.allocations > 0, "native ICU uses the second allocator");
+    Expect(memory.allocations == firstAllocations && memory.frees == firstFrees, "first allocator unused after reconfiguration");
+    u_cleanup_nid_postfix();
+    Expect(next.live == 0 && next.allocations == next.frees, "cleanup frees every allocation of the second allocator");
     std::printf("guest allocator: %zu allocations, %zu frees, %zu cached after warmup\n", memory.allocations, memory.frees, cached);
 }
 
