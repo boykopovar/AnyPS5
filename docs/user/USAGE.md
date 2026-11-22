@@ -876,13 +876,14 @@ The audit also walks the built libraries' own host dependencies: each `.prx` und
 | `--modules <dir>` | Directory of the title's own modules; repeat for several. |
 | `--source <dir>` | `core/libs/prx` tree that is searched for throwing stubs. Defaults to this repository's. |
 | `--strict-stubs` | Also exit with code `1` when an import has class `stub`, weak imports and the imports of `--modules` files included. `partial` imports do not count. |
+| `--strict-partial` | Also exit with code `1` when an import has class `partial`. Use `--strict-stubs` too to reject both classes. |
 | `--strict-providers` | Also exit with code `1` when an import that names a library is exported only by another library. `module` imports and imports that `libc.prx` exports do not count. |
 | `--names <file>` | NID and name per line, as in `aerolib.csv` from [`tools/nid_names.py`](../../tools/nid_names.py); names the absent imports. Never downloaded; a name that does not hash to its NID is marked. |
 | `--json <file>` | Full result, stamped with the repository's commit and whether its tree was modified. |
 
 Registry `nid` fields may contain either encoded NIDs or ordinary ELF symbol names such as `strcmp`. Imports are matched against literal exports first, then against their computed NIDs when the literal lookup misses. Reports retain the original import name. Export availability does not establish that every platform loader supports that lookup path.
 
-Exit codes: `0` nothing blocks loading, `1` there are `absent` imports, import name mismatches, needed libraries or library host dependencies without a file, or, with `--strict-stubs` or `--strict-providers`, `stub` imports or imports exported only by another library, `2` an input could not be read; the message names the file and the value.
+The audit exits with `0` when it passes. It exits with `1` for `absent` imports, import name mismatches, needed libraries or library host dependencies without a file, or findings rejected by `--strict-stubs`, `--strict-partial` or `--strict-providers`. It exits with `2` for invalid arguments or an input or output error.
 
 A module registry lists `nid`, `library` and `targetOffset` for each relocation against a function that no other bundled module exports, without the `#` suffix of the executable's NIDs.
 
