@@ -184,7 +184,7 @@ bool undefinedImageWords(const DescriptorValue& descriptor) {
     return !nullImageDescriptor(descriptor) && type >= 2u && (type < static_cast<std::uint32_t>(ImageType::Color1D) || !IsDefinedImageFormat(rawImageFormat(descriptor)));
 }
 
-bool validImageDescriptor(const DescriptorValue& descriptor, bool r128) {
+bool validImageDescriptor(const DescriptorValue& descriptor, bool r128, bool dimensionQueryOnly = false) {
     const auto type = rawImageType(descriptor);
     const auto format = rawImageFormat(descriptor);
     if (type < ImageType::Color1D || !IsDefinedImageFormat(format)) {
@@ -197,7 +197,8 @@ bool validImageDescriptor(const DescriptorValue& descriptor, bool r128) {
         const auto baseLevel = (descriptor.dwords[3] >> 12u) & 0xfu;
         const auto fragments = (descriptor.dwords[3] >> 16u) & 0xfu;
         const auto maxMip = (descriptor.dwords[5] >> 4u) & 0xfu;
-        return oneFragmentImage(descriptor) || (baseLevel == 0u && fragments >= 1u && fragments <= 3u && (r128 || maxMip == fragments));
+        const auto fragmentLimit = dimensionQueryOnly ? 4u : 3u;
+        return oneFragmentImage(descriptor) || (baseLevel == 0u && fragments >= 1u && fragments <= fragmentLimit && (r128 || maxMip == fragments));
     }
     return true;
 }
@@ -279,7 +280,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     if (base.resourceClass == ImageResourceClass::None || (base.atomic && base.resourceClass != ImageResourceClass::Storage)) {
         throw std::runtime_error("image resource has an invalid class");
     }
-    if (!validImageDescriptor(descriptor, base.r128)) {
+    if (!validImageDescriptor(descriptor, base.r128, base.dimensionQueryOnly)) {
         return rejectImage(invalidImageReason(descriptor), "image descriptor is invalid");
     }
     const bool queryLayers = base.dimension == RdnaImageDimension::Dim1D && base.dimensionQueryOnly && rawImageType(descriptor) == ImageType::Color2DArray;
@@ -1647,7 +1648,7 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
             descriptor = DescriptorValue{};
             descriptor.dwordCount = 8u;
         }
-        if (!validImageDescriptor(descriptor, image.r128) && !nullImageDescriptor(image, descriptor)) {
+        if (!validImageDescriptor(descriptor, image.r128, image.dimensionQueryOnly) && !nullImageDescriptor(image, descriptor)) {
             if (!image.optionalDescriptor || !undefinedImageWords(descriptor)) {
                 char detail[256];
                 std::snprintf(detail, sizeof(detail), ": image %u first used at pc 0x%x (%s, read %d, written %d, r128 %d), T# %08x %08x %08x %08x %08x %08x %08x %08x", i, image.firstUsePc, image.optionalDescriptor ? "optional" : "required", image.read ? 1 : 0, image.written ? 1 : 0, image.r128 ? 1 : 0, descriptor.dwords[0], descriptor.dwords[1], descriptor.dwords[2], descriptor.dwords[3], descriptor.dwords[4], descriptor.dwords[5], descriptor.dwords[6], descriptor.dwords[7]);
@@ -2404,7 +2405,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             cube.cube = true;
             modes.push_back(cube);
         }
-        if (image.dimensionQueryOnly && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid && image.dimension == RdnaImageDimension::Dim1D) {
+        if (image.dimensionQueryOnly && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid && (image.dimension == RdnaImageDimension::Dim1D || image.dimension == RdnaImageDimension::Dim2D)) {
             auto view = mode;
             view.dimension = RdnaImageDimension::Dim2DMsaa;
             modes.push_back(view);
