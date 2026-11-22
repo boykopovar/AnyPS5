@@ -213,6 +213,14 @@ private:
     int saved = -1;
 };
 
+bool BlocksWriteWatched() {
+#ifdef _WIN32
+    return GuestArena::GuestArenaAvailable_nid_postfix() && GuestArena::GuestArenaWriteWatched_nid_postfix();
+#else
+    return GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
+#endif
+}
+
 struct Block {
     explicit Block(std::size_t bytes, bool watched = false, bool initialise = true) : bytes(bytes), watched(watched) {
 #ifdef _WIN32
@@ -2143,6 +2151,10 @@ int main(int argc, char** argv) {
             const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
             if (!context.storageImageMultisample || (context.limits.framebufferColorSampleCounts & samples) == 0u) {
                 std::printf("cold native FMASK skipped, the device does not render or store %u-sample color\n", samples);
+                return VulkanTestSkipped;
+            }
+            if (!BlocksWriteWatched()) {
+                std::printf("cold native FMASK skipped, host imports are compared, not watched: a zero store over zero pages cannot be told apart\n");
                 return VulkanTestSkipped;
             }
             return ColdNativeFmask(*device, samples);
