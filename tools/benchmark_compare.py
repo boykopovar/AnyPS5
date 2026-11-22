@@ -328,7 +328,8 @@ def benchmark_context(summary):
     metadata = summary["metadata"]
     context = {name: metadata.get(name) for name in
                ("gpu", "driver", "os", *IDENTITY_STRINGS, *IDENTITY_INTEGERS)}
-    context.update({f"env.{name}": value for name, value in metadata["env"].items()})
+    context.update({f"env.{name}": value for name, value in metadata["env"].items()
+                    if name != "APS5_TRACE_DIR"})
     context["selection.ordinals"] = [row["ordinal"] for row in summary["intervals"]]
     context["selection.resolutions"] = [row["resolution"] for row in summary["intervals"]]
     return context
@@ -368,7 +369,8 @@ def compare_benchmark_runs(path, require_matching_context=False):
             identity = source["_identity"]
             if identity in seen_files or source["sha256"] in seen_hashes or source["decoded_sha256"] in seen_decoded:
                 raise ValueError(f"{attempt['id']}: duplicate capture evidence cannot count as another run")
-            seen_files.add(identity)
+            if identity[1]:
+                seen_files.add(identity)
             seen_hashes.add(source["sha256"])
             seen_decoded.add(source["decoded_sha256"])
             total_frames += sum(len(interval["frame_us"]) for interval in loaded["data"]["intervals"])

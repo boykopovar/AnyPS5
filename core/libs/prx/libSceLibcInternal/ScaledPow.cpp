@@ -13,8 +13,7 @@ float APS5_VABI _FPow_nid_postfix(float x, float y, short*) {
 }
 
 long double APS5_VABI _LPow_nid_postfix(long double x, long double y, short* exponent) {
-    if (exponent != nullptr) NotImplemented_nid_no_patch("_LPow: a non-null exponent pointer");
-    return powl_nid_postfix(x, y);
+    return PowerScaled_nid_no_patch(x, y, exponent);
 }
 
 }

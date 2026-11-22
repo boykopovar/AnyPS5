@@ -146,6 +146,14 @@ def package(platform, build, output, version):
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
     licenses.append((ROOT / "3rdparty/mimalloc/LICENSE", "libs/licenses/mimalloc.txt"))
+    if expected & {"libSceAjm.native.prx", "libSceAudiodec.prx", "libSceAvPlayer.prx", "libSceVdecCore.prx", "libSceVideodec2.prx"}:
+        ffmpeg_manifest = build / "release-ffmpeg-notices.txt"
+        if not ffmpeg_manifest.is_file():
+            raise RuntimeError(f"Missing FFmpeg notice manifest: {ffmpeg_manifest}; reconfigure the build")
+        ffmpeg_notices = Path(ffmpeg_manifest.read_text(encoding="utf-8").removesuffix("\n"))
+        if not ffmpeg_notices.is_absolute():
+            raise RuntimeError(f"Invalid FFmpeg notice directory in: {ffmpeg_manifest}")
+        licenses.extend((ffmpeg_notices / name, "libs/licenses/ffmpeg/" + name) for name in ("copyright", "SOURCE.txt"))
     files.extend(native_auxiliary_runtimes(platform, build))
     unpatched = [(build / "core/libs/libs/unpatched" / name, "libs/" + name) for name in sorted(expected)]
     unpatched.extend((file, "libs/" + file.name) for file in files if file.suffix != ".prx")
