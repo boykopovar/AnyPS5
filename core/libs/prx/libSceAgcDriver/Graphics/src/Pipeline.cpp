@@ -364,6 +364,13 @@ void ValidateSampleMask(const Context& context, const State& state, std::span<co
     }
 }
 
+void ValidateLeadingSamples(const State& state, std::span<const CompiledShader> shaders) {
+    if (!state.leadingSamples) return;
+    for (const auto& shader : shaders) {
+        if (shader.stage == ShaderRecompiler::ShaderStage::Fragment) Require(!ShadersWriteMemory(std::span(&shader, 1)), "a draw rasterized at the leading samples of a target with fewer samples than the rasterizer is unsupported when its pixel shader writes memory: pixels covered only by the dropped samples would run no pixel shader");
+    }
+}
+
 namespace {
 
 thread_local bool prebuilding = false;

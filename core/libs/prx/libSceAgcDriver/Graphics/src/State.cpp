@@ -813,14 +813,46 @@ bool rasterizesSampleZeroOnly(const Registers& cx, const State& state) {
     return (inputs & refused) == 0;
 }
 
-void rasterizeSampleZero(State& state) {
-    std::array<std::uint8_t, 32> sampleZero{};
-    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) sampleZero[pixel * 8u] = state.sampleLocations[pixel * 8u];
-    state.samples = 1;
+std::uint8_t standardLocationBits(std::uint32_t samples, std::uint32_t sample) {
+    if (samples == 1) return 0;
+    const auto& standard = samples == 2 ? StandardLocations2[sample] : samples == 4 ? StandardLocations4[sample] : StandardLocations8[sample];
+    return static_cast<std::uint8_t>((standard[0] & 0xf) | ((standard[1] & 0xf) << 4u));
+}
+
+void rasterizeLeadingSamples(State& state, std::uint32_t samples) {
+    std::array<std::uint8_t, 32> leading{};
+    bool custom = false;
+    bool grid = false;
+    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) {
+        for (std::uint32_t sample = 0; sample < samples; ++sample) {
+            const auto bits = state.sampleLocations[pixel * 8u + sample];
+            leading[pixel * 8u + sample] = bits;
+            custom |= bits != standardLocationBits(samples, sample);
+            grid |= bits != state.sampleLocations[sample];
+        }
+    }
+    state.samples = samples;
+    state.leadingSamples = true;
     state.perSampleShading = false;
-    state.sampleLocations = sampleZero;
-    state.customSampleLocations = std::any_of(sampleZero.begin(), sampleZero.end(), [](std::uint8_t bits) { return bits != 0; });
-    state.sampleLocationGrid = sampleZero[8] != sampleZero[0] || sampleZero[16] != sampleZero[0] || sampleZero[24] != sampleZero[0];
+    state.sampleLocations = leading;
+    state.customSampleLocations = custom;
+    state.sampleLocationGrid = grid;
+}
+
+void requireLeadingDepthSamples(const QueueState& queue, const State& state, bool writesColor) {
+    const auto& cx = queue.context;
+    Require(!writesColor, "a depth target with fewer samples than the rasterizer is unsupported for draws that write a color target");
+    Require(!state.alphaToCoverage, "a depth target with fewer samples than the rasterizer is unsupported with alpha-to-coverage");
+    Require(!state.perSampleShading, "a depth target with fewer samples than the rasterizer is unsupported with PS_ITER_SAMPLE");
+    if (!PixelProgramSkipped(queue)) {
+        const auto inputs = read(cx, 0x1b3) & read(cx, 0x1b4);
+        if ((inputs & (SampleZeroRefusedInputs | PixelSampleRateInputs)) != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x1b3, inputs, "a depth target with fewer samples than the rasterizer with a centroid, sample, ancillary or coverage pixel input"));
+        if (const auto control = read(cx, 0x203); (control & 0x101u) != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x203, control, "a depth target with fewer samples than the rasterizer with a depth or sample-mask export"));
+    }
+    const auto eqaaEntry = find(cx, 0x201);
+    const auto eqaa = eqaaEntry == cx.end() ? 0u : eqaaEntry->second;
+    if ((eqaa & 0x0f000000u) != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x201, eqaa, "a depth target with fewer samples than the rasterizer with overrasterization (DB_EQAA)"));
+    if ((eqaa & 0x000c0000u) != 0 && (read(cx, 0x200) & 2u) != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x201, eqaa, "a depth target with fewer samples than the rasterizer with a depth test and Z interpolation (DB_EQAA)"));
 }
 
 bool documentedRop(std::uint32_t rop) {
@@ -1823,7 +1855,11 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     Require(sampleCoverageSupported(queue, result.samples, result.perSampleShading), "SAMPLE_COVERAGE in a multisampled pixel shader that runs per sample, or reads sample-rate or ancillary inputs, is unsupported (the input holds the whole pixel's coverage, gl_SampleMaskIn only the invocation's samples)");
     if (depthKeepsSampleZero && result.samples > 1) {
         Require(rasterizesSampleZeroOnly(cx, result), "the depth target's sample count differs from the rasterizer's");
-        rasterizeSampleZero(result);
+        rasterizeLeadingSamples(result, 1);
+    }
+    if (result.depth && result.depth->samples > 1 && result.depth->samples < result.samples && (read(cx, 0x292) & 1u) != 0) {
+        requireLeadingDepthSamples(queue, result, ColorExportCount(cx, ColorWriteMask(cx), ColorExportSlots(read(cx, 0x8f)).Span()) != 0);
+        rasterizeLeadingSamples(result, result.depth->samples);
     }
     if (result.depth && result.depth->samples > 1 && result.samples == 1) {
         Require(!result.alphaToCoverage, "a single-sample scan into a multisampled depth target with alpha-to-coverage is unsupported");
@@ -1917,7 +1953,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         }
         const bool merged = color.samples == 1u && color.coverageSamples == 1u && !result.depth && !result.perSampleShading && (result.colors.empty() || result.mergedCoverage) && overrasterized(cx, result.samples);
         Require(color.coverageSamples == color.samples || color.coverageSamples == result.samples || (result.samples == 1u && (read(cx, 0x292) & 1u) == 0), "a one-fragment color target's sample count differs from the rasterizer's");
-        if (!merged && color.samples == 1 && result.colors.empty() && !result.depth && rasterizesSampleZeroOnly(cx, result)) rasterizeSampleZero(result);
+        if (!merged && color.samples == 1 && result.colors.empty() && !result.depth && rasterizesSampleZeroOnly(cx, result)) rasterizeLeadingSamples(result, 1);
         const bool truncated = color.samples == 1u && result.samples > 1u && result.depth && result.depth->samples == result.samples && (result.colors.empty() || result.truncatedCoverage) && !overrasterized(cx, result.samples);
         Require((color.samples == result.samples && !result.mergedCoverage && !result.truncatedCoverage) || merged || truncated, "a color target's sample count differs from the rasterizer's");
         Require(color.coverageSamples == color.samples || result.samples == 1u || staticAnchors(cx, result.depth->samples), "a one-fragment color target is supported only with static DB_EQAA anchors at the depth target's sample count");

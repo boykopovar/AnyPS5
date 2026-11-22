@@ -1829,6 +1829,7 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
     for (const auto& viewport : state.extraViewports) ValidateViewport(context, viewport);
     ValidateDepthBounds(context, state);
     ValidateSampleMask(context, state, shaders);
+    ValidateLeadingSamples(state, shaders);
     timer.phase(PhaseValidate);
     const auto layoutStart = timer.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto& attributes = shaders.front().program->vertexAttributes;

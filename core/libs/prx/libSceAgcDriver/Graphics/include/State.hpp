@@ -210,6 +210,7 @@ struct State {
     bool perSampleShading = false;
     bool mergedCoverage = false;
     bool truncatedCoverage = false;
+    bool leadingSamples = false;
     VkConservativeRasterizationModeEXT conservativeRasterization = VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
     VkRect2D scissor;
     VkCullModeFlags cullMode;
