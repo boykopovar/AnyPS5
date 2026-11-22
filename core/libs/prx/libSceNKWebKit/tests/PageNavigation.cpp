@@ -35,7 +35,7 @@ int main() {
     const void* pageRef = NKWebKit::ToRef(page);
     auto item = NKWebKit::Make<NKWebKit::BackForwardListItem>(
         std::string("https://example.com"),
-        NKWebKit::Make<NKWebKit::String>(u"Example"),
+        NKWebKit::Make<NKWebKit::String>(std::u16string(u"Example")),
         std::string("https://example.com/orig"));
     const void* itemRef = NKWebKit::ToRef(item);
     auto frame = NKWebKit::Make<NKWebKit::Frame>();
