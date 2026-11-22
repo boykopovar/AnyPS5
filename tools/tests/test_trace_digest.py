@@ -1457,14 +1457,23 @@ class IntervalDigestTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             self.assertEqual(trace_digest.main([str(self.path)]), 0)
         text = output.getvalue()
-        self.assertIn("**4 intervals**, 0.0 to 120.5 s, 7200 presents", text)
-        self.assertIn("| 2 | 30-60 (dropped) | 1800 | 16.6 | 18.0 | 40.0 | 45.0 | 10.0 | 50 % | Driver.Packet 7.0 |", text)
+        self.assertIn("**4 intervals**, 0.000 to 120.500 s, 7200 presents", text)
+        self.assertIn("| 2 | 30.000-60.500 (dropped) | 1800 | 16.6 | 18.0 | 40.0 | 45.0 | 10.0 | 50 % | Driver.Packet 7.0 |", text)
         self.assertIn("p99 ms  +@.+  0-40.0", text)
         self.assertIn("changed at interval 4", text)
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            trace_digest.main([str(self.path), "--json"])
+            self.assertEqual(trace_digest.main([str(self.path), "--json"]), 0)
         self.assertEqual(len(json.loads(output.getvalue())["intervals"]), 4)
+
+    def test_markdown_preserves_subsecond_interval_bounds(self):
+        line = interval_line(0.123, 0.456, 20.0, 5.0)
+        self.path.write_text(json.dumps(line) + "\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, trace_digest.__file__, str(self.path)],
+                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("0.123 to 0.456 s", result.stdout)
+        self.assertIn("| 1 | 0.123-0.456 |", result.stdout)
 
     def test_file_without_intervals(self):
         self.path.write_text(json.dumps(SUMMARY) + "\n", encoding="utf-8")
@@ -1495,7 +1504,7 @@ class IntervalDigestTests(unittest.TestCase):
                 self.assertEqual(len(rows), 3)
                 self.assertTrue(all(line.count("|") == 11 for line in rows), rows)
                 cells = [cell.strip() for cell in rows[2].split("|")[1:-1]]
-                self.assertEqual(cells, ["1", "0-30", "1800", "16.6", "18.0", "20.0", "25.0", "5.0", "50 %", escaped + " 7.5"])
+                self.assertEqual(cells, ["1", "0.000-30.000", "1800", "16.6", "18.0", "20.0", "25.0", "5.0", "50 %", escaped + " 7.5"])
 
     def test_interval_identity_cannot_create_markdown_sections(self):
         line = interval_line(0.0, 30.0, 20.0, 5.0)

@@ -79,9 +79,12 @@ int main() {
     CheckBeforeInit(_ZNSt8ios_base4InitD1Ev, outPath, errPath, "narrow-pre-out|", "narrow-pre-err|", outExpected, errExpected);
     CheckDualRelease(_ZNSt8ios_base4InitC1Ev, _ZNSt8ios_base4InitD1Ev, _ZNSt8ios_base4InitD1Ev,
         outPath, errPath, "narrow-out|", "narrow-err|", outExpected, errExpected, "narrow-pre-out|", "narrow-pre-err|");
+    CheckBeforeInit(_ZNSt8ios_base4InitD2Ev_nid_postfix, outPath, errPath, "narrow-d2-pre-out|", "narrow-d2-pre-err|", outExpected, errExpected);
     CheckDualRelease(sceLibcInternalUnknown6_080_bTQcNwRc8hE_nid_no_patch, _ZNSt8ios_base4InitD1Ev,
-        _ZNSt8ios_base4InitD1Ev, outPath, errPath, "narrow-c1-c2-out|", "narrow-c1-c2-err|", outExpected, errExpected,
-        "", "", _ZNSt8ios_base4InitC1Ev);
+        _ZNSt8ios_base4InitD2Ev_nid_postfix, outPath, errPath, "narrow-c2-c1-out|", "narrow-c2-c1-err|", outExpected, errExpected,
+        "narrow-d2-pre-out|", "narrow-d2-pre-err|", _ZNSt8ios_base4InitC1Ev);
+    CheckDualRelease(_ZNSt8ios_base4InitC1Ev, _ZNSt8ios_base4InitD2Ev_nid_postfix,
+        _ZNSt8ios_base4InitD1Ev, outPath, errPath, "narrow-d2-d1-out|", "narrow-d2-d1-err|", outExpected, errExpected);
 
     CheckBeforeInit(_ZNSt6_WinitD1Ev_nid_postfix, outPath, errPath, "wide-d1-pre-out|", "wide-d1-pre-err|", outExpected, errExpected);
     CheckDualRelease(_ZNSt6_WinitC1Ev, _ZNSt6_WinitD1Ev_nid_postfix, _ZNSt6_WinitD2Ev_nid_postfix,

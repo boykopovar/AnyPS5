@@ -384,15 +384,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
-        command = ["ctest", "--test-dir", args.build, *args.arguments]
+        command = ["ctest", "--test-dir", args.build]
         try:
             indices = selected.read_text(encoding="utf-8-sig").strip()
         except FileNotFoundError:
-            return subprocess.run(command).returncode
+            return subprocess.run([*command, "--no-tests=error", *args.arguments]).returncode
         except (OSError, UnicodeDecodeError) as error:
             parser.error(f"{selected}: {error}")
         with ctest_index_file(indices) as index_file:
-            return subprocess.run([*command, "-I", index_file]).returncode
+            return subprocess.run([*command, *args.arguments, "-I", index_file]).returncode
     if args.command == "explain":
         try:
             graph = load_graph(args.graph)

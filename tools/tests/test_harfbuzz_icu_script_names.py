@@ -73,5 +73,18 @@ class GeneratorTests(unittest.TestCase):
         self.assertFalse((self.root / "IcuScriptNames.hpp").exists())
 
 
+class SameFileTests(unittest.TestCase):
+    def test_same_input_output_compares_the_real_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            header = root / 'uscript.h'
+            header.write_text('x', encoding='utf-8')
+            other = root / 'other.h'
+            other.write_text('y', encoding='utf-8')
+            self.assertTrue(generator.same_input_output(header, header))
+            self.assertFalse(generator.same_input_output(header, other))
+            self.assertFalse(generator.same_input_output(header, root / 'missing.h'))
+
+
 if __name__ == "__main__":
     unittest.main()

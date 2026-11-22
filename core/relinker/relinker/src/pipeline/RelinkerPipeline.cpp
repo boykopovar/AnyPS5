@@ -340,13 +340,20 @@ RelinkResult RelinkerPipeline::Relink() {
         neededLibraries.push_back(snd);
     }
 
-    std::map<std::uint64_t, std::string> importModules;
+    std::vector<std::uint64_t> moduleImports;
+    std::vector<std::uint64_t> ps4ModuleImports;
     std::set<std::uint64_t> ownModules;
     for (const auto& tag : dynTags) {
         if (tag.Tag == 0x61000043 || tag.Tag == 0x6100000d) ownModules.insert(tag.Value >> 48);
-        if (tag.Tag == 0x61000045 && !importModules.emplace(tag.Value >> 48, readCStr(tag.Value & 0xffffffffu)).second)
-            throw RelinkerException("Duplicate import module ID");
+        else if (tag.Tag == 0x61000045) moduleImports.push_back(tag.Value);
+        else if (tag.Tag == 0x6100000f) ps4ModuleImports.push_back(tag.Value);
     }
+    if (!moduleImports.empty() && !ps4ModuleImports.empty())
+        throw RelinkerException("Executable mixes PS4 and PS5 needed-module tags");
+    std::map<std::uint64_t, std::string> importModules;
+    for (const auto value : moduleImports.empty() ? ps4ModuleImports : moduleImports)
+        if (!importModules.emplace(value >> 48, readCStr(value & 0xffffffffu)).second)
+            throw RelinkerException("Duplicate import module ID");
 
     auto relaEntryPos = [&](const FileByteOffset relaOff, const ByteCount off) -> FileByteOffset {
         if (relaOff > raw.size() || off > raw.size() - relaOff || relaEntSize > raw.size() - relaOff - off)
@@ -477,17 +484,18 @@ RelinkResult RelinkerPipeline::Relink() {
     std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());
     const bool sceImage = std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_SCE_DYNLIBDATA; });
     const bool hasEhFrame = sceImage || std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_GNU_EH_FRAME; });
+    std::vector<UnusedNidFilter::StrictCodeRegion> unwindFunctions;
     if (hasEhFrame) {
-        const auto functions = UnusedNidFilter::ReadExceptionFunctions(raw, programHeaders, {}, {});
-        for (const auto& function : functions) unwindRanges.emplace_back(function.Begin, function.End);
+        unwindFunctions = UnusedNidFilter::ReadExceptionFunctions(raw, programHeaders, {}, {});
+        for (const auto& function : unwindFunctions) unwindRanges.emplace_back(function.Begin, function.End);
         std::sort(unwindRanges.begin(), unwindRanges.end());
         if (sceImage)
             for (std::size_t index = 0; index < executableSegments.size(); ++index) {
                 auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
                 static_cast<void>(segmentFileOffset);
-                if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize))
+                if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, unwindFunctions, gotVAddr, dynJmpRelSize))
                     segment.resize(*codeEnd - segmentVAddr);
-                segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, functions);
+                segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, unwindFunctions);
             }
     }
 
@@ -593,6 +601,9 @@ RelinkResult RelinkerPipeline::Relink() {
             if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC && section != SHN_ABS)
                 exportedFunctions.push_back(value);
         }
+    }
+    for (const auto& function : unwindFunctions) {
+        for (const auto target : function.ExtraTargets) exportedFunctions.push_back(target);
     }
 
     progress.Report({Domain::ProgressStage::Imports, {}, 0, 1});

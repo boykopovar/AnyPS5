@@ -190,6 +190,13 @@ class MainTests(unittest.TestCase):
 
         def fake(*args):
             if args[:2] == ("api", "graphql"):
+                if "--explain" in argv:
+                    number = int(argv[argv.index("--explain") + 1])
+                    self.assertIn("resource(url: $url)", args[3])
+                    self.assertEqual(args[-1], f"url=https://github.com/o/r/pull/{number}")
+                    match = next((pr for pr in prs if pr["number"] == number), None)
+                    resource = {"state": "OPEN", "baseRefName": "main", **match} if match else None
+                    return json.dumps({"data": {"resource": resource}})
                 if any("CLOSED" in arg for arg in args):
                     return json.dumps({"data": {"repository": {"pullRequests": {
                         "pageInfo": {"hasNextPage": False, "endCursor": None},
@@ -285,10 +292,27 @@ class MainTests(unittest.TestCase):
         self.assertEqual(out.strip(), "draft")
         self.assertEqual(calls, [])
 
+    def test_explain_reports_only_the_selected_pr_and_leaves_the_queue_alone(self):
+        calls = []
+        prs = [node(number=1, draft=True), node(number=7, checks=[("conventions", "completed", "failure")],
+                                                changes=["bob"])]
+        code, out, _ = self.run_main(["--explain", "7", "--issue", "3"], prs, calls, closed=[2])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines(), ["failing: conventions", "change request not answered by a re-request: bob"])
+        self.assertEqual(calls, [])
+
     def test_explain_an_unknown_pull_request_fails(self):
         code, _, err = self.run_main(["--explain", "9"], [node(number=7)], [])
         self.assertEqual(code, 2)
         self.assertIn("#9 is not an open pull request", err)
+
+    def test_explain_rejects_a_closed_or_retargeted_pull_request(self):
+        for fields in ({"state": "MERGED"}, {"state": "CLOSED"}, {"baseRefName": "release"}):
+            with self.subTest(fields=fields):
+                calls = []
+                code, _, err = self.run_main(["--explain", "7"], [{**node(), **fields}], calls)
+                self.assertEqual((code, calls), (2, []))
+                self.assertIn("#7 is not an open pull request to main", err)
 
     def test_a_malformed_response_is_an_error(self):
         code, _, err = self.run_main([], [{"number": 7}], [])
