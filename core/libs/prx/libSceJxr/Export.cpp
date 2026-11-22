@@ -424,19 +424,27 @@ std::int64_t APS5_VABI PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix(
 std::int64_t APS5_VABI PKImageEncode_SetXMPMetadata_WMP_nid_postfix(tagPKImageEncode* encoder,
                                                                    const std::uint8_t* metadata, std::uint32_t size) {
     if (!encoder) throw std::invalid_argument("XMP metadata setter requires an encoder");
-    auto* prefix = reinterpret_cast<Jxr::ImageEncodeMetadataPrefix*>(encoder);
-    if (prefix->headerDone != 0) {
-        prefix->xmpMetadataByteCount = 0;
+    const auto headerDoneAddress = Jxr::MetadataGuestField(encoder, offsetof(Jxr::ImageEncodeMetadataPrefix, headerDone), sizeof(std::int32_t), __func__);
+    const auto storedAddress = Jxr::MetadataGuestField(encoder, offsetof(Jxr::ImageEncodeMetadataPrefix, xmpMetadata), sizeof(std::uint8_t*), __func__);
+    const auto storedSizeAddress = Jxr::MetadataGuestField(encoder, offsetof(Jxr::ImageEncodeMetadataPrefix, xmpMetadataByteCount), sizeof(std::uint32_t), __func__);
+    if (Jxr::CopyInGuestField<std::int32_t>(headerDoneAddress, __func__) != 0) {
+        static_cast<void>(Jxr::CopyInGuestField<std::uint32_t>(storedSizeAddress, __func__));
+        const std::uint32_t zeroSize = 0;
+        Jxr::CopyOutGuestField(storedSizeAddress, zeroSize, __func__);
         return Jxr::WmpErrOutOfSequence;
     }
 
-    auto* record = reinterpret_cast<std::byte*>(encoder);
-    auto** stored = reinterpret_cast<std::uint8_t**>(record + offsetof(Jxr::ImageEncodeMetadataPrefix, xmpMetadata));
-    auto* storedSize = reinterpret_cast<std::uint32_t*>(record + offsetof(Jxr::ImageEncodeMetadataPrefix, xmpMetadataByteCount));
-    void* previous = *stored;
+    auto* previousPointer = Jxr::CopyInGuestField<std::uint8_t*>(storedAddress, __func__);
+    static_cast<void>(Jxr::CopyInGuestField<std::uint32_t>(storedSizeAddress, __func__));
+    Jxr::RequireWritableGuestField(storedAddress, sizeof(std::uint8_t*), __func__);
+    Jxr::RequireWritableGuestField(storedSizeAddress, sizeof(std::uint32_t), __func__);
+
+    void* previous = previousPointer;
     PKFree_nid_postfix(&previous);
-    *stored = static_cast<std::uint8_t*>(previous);
-    *storedSize = 0;
+    auto* clearedPointer = static_cast<std::uint8_t*>(previous);
+    const std::uint32_t zeroSize = 0;
+    Jxr::CopyOutGuestField(storedAddress, clearedPointer, __func__);
+    Jxr::CopyOutGuestField(storedSizeAddress, zeroSize, __func__);
 
     constexpr char format[] = "<dc:format>image/vnd.ms-photo</dc:format>";
     constexpr char opening[] = "<dc:format>";
@@ -455,7 +463,10 @@ std::int64_t APS5_VABI PKImageEncode_SetXMPMetadata_WMP_nid_postfix(tagPKImageEn
         throw std::invalid_argument("XMP metadata setter requires input bytes");
     }
     auto* temporary = static_cast<char*>(allocation);
-    if (size != 0) std::memcpy(temporary, metadata, size);
+    if (size != 0 && !Jxr::CopyInGuestBytes(temporary, metadata, size)) {
+        PKFree_nid_postfix(&allocation);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     temporary[size] = '\0';
     const auto inputSize = std::strlen(temporary);
     auto* formatBegin = std::strstr(temporary, opening);
@@ -472,12 +483,29 @@ std::int64_t APS5_VABI PKImageEncode_SetXMPMetadata_WMP_nid_postfix(tagPKImageEn
         const auto endOffset = static_cast<std::size_t>(formatEnd - temporary);
         outputSize = inputSize - (endOffset - beginOffset) + sizeof(format) - 1;
         const auto tailSize = inputSize - endOffset;
-        const auto* originalTail = metadata + endOffset;
-        std::memcpy(formatBegin, format, sizeof(format));
-        std::memcpy(formatBegin + sizeof(format) - 1, originalTail, tailSize);
+        if (tailSize != 0) std::memmove(formatBegin + sizeof(format) - 1, temporary + endOffset, tailSize);
+        std::memcpy(formatBegin, format, tailSize == 0 ? sizeof(format) : sizeof(format) - 1);
     }
-    *stored = static_cast<std::uint8_t*>(allocation);
-    *storedSize = static_cast<std::uint32_t>(outputSize);
+    auto* storedPointer = static_cast<std::uint8_t*>(allocation);
+    const auto storedOutputSize = static_cast<std::uint32_t>(outputSize);
+    const int ptrErrno = errno;
+    const bool ptrOk = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(storedAddress), &storedPointer, sizeof(storedPointer));
+    errno = ptrErrno;
+    if (!ptrOk) {
+        PKFree_nid_postfix(&allocation);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
+    const int sizeErrno = errno;
+    const bool sizeOk = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(storedSizeAddress), &storedOutputSize, sizeof(storedOutputSize));
+    errno = sizeErrno;
+    if (!sizeOk) {
+        PKFree_nid_postfix(&allocation);
+        auto* nullPointer = static_cast<std::uint8_t*>(allocation);
+        const int rollbackErrno = errno;
+        static_cast<void>(GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(storedAddress), &nullPointer, sizeof(nullPointer)));
+        errno = rollbackErrno;
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     return allocationResult;
 }
 
