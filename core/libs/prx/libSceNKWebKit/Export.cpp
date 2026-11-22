@@ -11405,14 +11405,6 @@ int APS5_VABI _ZN3JSC17profiledConstructEPNS_14JSGlobalObjectENS_15ProfilingReas
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC18BytecodeCacheErroraSERKNS0_10WriteErrorE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC18BytecodeCacheErroraSERKNS0_13StandardErrorE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC18BytecodeCacheErroraSERKNS_11ParserErrorE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -25188,10 +25180,6 @@ int APS5_VABI _ZNK3JSC17DebuggerCallFrame9thisValueERNS_2VME() {
 }
 
 int APS5_VABI _ZNK3JSC18BasicBlockLocation8dumpDataEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3JSC18BytecodeCacheError7isValidEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
