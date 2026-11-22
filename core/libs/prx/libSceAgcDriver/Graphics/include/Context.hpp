@@ -153,6 +153,7 @@ struct DeviceFunctions {
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
     PFN_vkCmdDispatchIndirect cmdDispatchIndirect = nullptr;
+    PFN_vkCmdDispatchBase cmdDispatchBase = nullptr;
     PFN_vkCmdBeginRenderPass cmdBeginRenderPass = nullptr;
     PFN_vkCmdEndRenderPass cmdEndRenderPass = nullptr;
     PFN_vkCmdBeginRenderingKHR cmdBeginRendering = nullptr;

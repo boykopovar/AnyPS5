@@ -279,6 +279,7 @@ void FillDeviceFunctions(const Context& context, DeviceFunctions& functions) {
     functions.cmdPushConstants = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
     functions.cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
     functions.cmdDispatchIndirect = context.Function<PFN_vkCmdDispatchIndirect>("vkCmdDispatchIndirect");
+    functions.cmdDispatchBase = context.Function<PFN_vkCmdDispatchBase>("vkCmdDispatchBase");
     functions.cmdBeginRenderPass = context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass");
     functions.cmdEndRenderPass = context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass");
     functions.cmdSetViewport = context.lookup<PFN_vkCmdSetViewport>("vkCmdSetViewport");

@@ -6309,7 +6309,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         if (splitSlice->runs.empty()) {
             if (splitGroups != 0) context.Resolved(&Graphics::DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, splitGroups, 1, 1);
         } else {
-            const auto dispatchBase = context.Function<PFN_vkCmdDispatchBase>("vkCmdDispatchBase");
+            const auto dispatchBase = context.Resolved(&Graphics::DeviceFunctions::cmdDispatchBase, "vkCmdDispatchBase");
             for (const auto& [first, count] : splitSlice->runs) {
                 if (first >= splitGroups) break;
                 dispatchBase(commands, first, 0, 0, std::min(count, splitGroups - first), 1, 1);
