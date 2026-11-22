@@ -146,8 +146,33 @@ static void Invalid() {
         std::array<char, 16> buffer;
         buffer.fill('?');
         const std::size_t prefix = units[0] == 'x' ? 1 : 0;
-        Require(JSStringGetUTF8CString_nid_postfix(string, buffer.data(), buffer.size()) == prefix + 1);
+        Require(JSStringGetUTF8CString_nid_postfix(string, buffer.data(), buffer.size()) == 0);
         Require(buffer[prefix] == '\0' && buffer[prefix + 1] == '?');
+        if (prefix == 1) Require(buffer[0] == 'x');
+        buffer.fill('?');
+        Require(JSStringGetUTF8CString_nid_postfix(string, buffer.data(), prefix + 1) == 0);
+        Require(buffer[prefix] == '\0' && buffer[prefix + 1] == '?');
+        JSStringRelease_nid_postfix(string);
+    }
+    {
+        const std::vector<std::uint16_t> units{'x', 'y', 0xD800};
+        auto* string = JSStringCreateWithCharacters_nid_postfix(units.data(), units.size());
+        std::array<char, 8> buffer;
+        buffer.fill('?');
+        Require(JSStringGetUTF8CString_nid_postfix(string, buffer.data(), 2) == 2);
+        Require(buffer[0] == 'x' && buffer[1] == '\0' && buffer[2] == '?');
+        buffer.fill('?');
+        Require(JSStringGetUTF8CString_nid_postfix(string, buffer.data(), 3) == 0);
+        Require(buffer[0] == 'x' && buffer[1] == 'y' && buffer[2] == '\0' && buffer[3] == '?');
+        JSStringRelease_nid_postfix(string);
+    }
+    {
+        const std::vector<std::uint16_t> units{0xD83D, 0xDE00, 0xDBFF, 0xDFFF, 0xD800, 0xDC00, 'z'};
+        auto* string = JSStringCreateWithCharacters_nid_postfix(units.data(), units.size());
+        std::array<char, 16> buffer;
+        buffer.fill('?');
+        Require(JSStringGetUTF8CString_nid_postfix(string, buffer.data(), buffer.size()) == 14);
+        Require(std::memcmp(buffer.data(), "\xF0\x9F\x98\x80\xF4\x8F\xBF\xBF\xF0\x90\x80\x80z", 14) == 0 && buffer[14] == '?');
         JSStringRelease_nid_postfix(string);
     }
     JSStringRelease_nid_postfix(empty);
