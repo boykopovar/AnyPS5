@@ -23,6 +23,7 @@ NUMBER_FIELDS = (
     "replay_s", "fps", "delta_mib", "pace_wait_s", "skipped_mib", "pixels_identical",
     "load_s", "journal_s",
 )
+HOST_ENVIRONMENT_PREFIXES = ("APS5_", "ANYPS5_", "VK_", "SDL_")
 HOST_KEYS = {
     "system": {"os", "cpu", "cpu_threads", "memory_mib", "cpu_gate"},
     "sdl": {"linked", "compiled"},
@@ -133,9 +134,11 @@ def parse_replay_host_report(stderr, expected_commit=None):
                 if ": " not in line:
                     break
                 key, value = line.split(": ", 1)
+                if section == "environment" and not key.startswith(HOST_ENVIRONMENT_PREFIXES):
+                    break
                 if section in HOST_KEYS and key not in HOST_KEYS[section]:
                     raise ValueError(f"unknown host report {section} field: {key}")
-                if not re.fullmatch(r"[A-Za-z0-9_]+", key) or not value or len(value) > 16384:
+                if not re.fullmatch(r"[A-Za-z0-9_]+", key) or (not value and section != "environment") or len(value) > 16384:
                     break
                 if key in report[section] or "none" in report[section]:
                     raise ValueError(f"duplicate host report field: {section}.{key}")

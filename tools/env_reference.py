@@ -26,6 +26,7 @@ READER_TOKENS = {
     "addWideString": ("addWideString",),
     "MebibytesFromEnvironment": ("MebibytesFromEnvironment",),
     "EnvironmentPath": ("EnvironmentPath",),
+    "CapturedEnvironmentEntry": (".first",),
 }
 ALL_READER_TOKENS = tuple(dict.fromkeys(token for tokens in READER_TOKENS.values() for token in tokens))
 
@@ -73,6 +74,8 @@ def forms(prefixes=PREFIXES):
         ("MebibytesFromEnvironment", re.compile(r'\bMebibytesFromEnvironment\(\s*"(?P<name>' + name + r')"'
                                                 r'\s*,\s*(?P<default>' + INTEGER + r')')),
         ("EnvironmentPath", re.compile(r'\bEnvironmentPath\(\s*L"(?P<name>' + name + r')"\s*,\s*"(?P=name)"\s*\)')),
+        ("CapturedEnvironmentEntry", re.compile(r'[A-Za-z_]\w*(?:\s*\[\s*[^\]]*\s*\])?\s*\.first\s*==\s*'
+                                                r'"(?P<name>' + name + r')"')),
     )
     return tuple((reader, re.compile(form.pattern.replace(r"\(", r"\s*\(", 1), form.flags)) for reader, form in readers)
 

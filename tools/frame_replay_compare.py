@@ -193,6 +193,8 @@ def execute_replay_trial(command, directory, environment, timeout, log_bytes):
     interrupted = False
     started = time.monotonic()
     try:
+        if os.name == "nt":
+            processes.guard()
         process = subprocess.Popen(command, cwd=directory, env=environment, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    **({"creationflags": processes.CREATE_SUSPENDED} if os.name == "nt"
