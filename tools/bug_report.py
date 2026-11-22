@@ -1,7 +1,6 @@
 import argparse
 import codecs
 import getpass
-from io import TextIOWrapper
 import json
 import os
 import platform
@@ -16,6 +15,7 @@ from performance_compare import unique_json_object
 
 IPV4_OCTET = r"(?!25[6-9]|2[6-9][0-9]|[3-9][0-9]{2})\d{1,3}"
 IPV4 = re.compile(rf"\b(?:{IPV4_OCTET}\.){{3}}{IPV4_OCTET}\b")
+RUNTIME_LOG_APPEND = re.compile(rb"\[log\] ANYPS5_LOG_FILE: appending to this file, process [0-9]+\r?\n")
 
 
 def redact(text, *, home, user, host):
@@ -92,6 +92,22 @@ def host_text():
     )
 
 
+def redact_log(path, identity):
+    data = Path(path).read_bytes()
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        append = RUNTIME_LOG_APPEND.search(data)
+        prefix = data[:append.start()] if append else data
+        as_utf8 = prefix.decode("utf-8", errors="replace")
+        if redact(as_utf8, **identity) != as_utf8:
+            raise ValueError("log has ambiguous encoding. Use a fresh ANYPS5_LOG_FILE or omit the log")
+        text = prefix.decode("utf-16", errors="replace")
+        if append:
+            text += data[append.start():].decode("utf-8", errors="replace")
+    else:
+        text = data.decode("utf-8", errors="replace")
+    return redact(text.replace("\r\n", "\n").replace("\r", "\n"), **identity)
+
+
 def make_bundle(report, out, *, home, user, host, log=None, input_config=None, environ=None):
     report = Path(report)
     out = Path(out)
@@ -104,10 +120,7 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None, e
     if profile is not None and profile.is_file():
         members["anyps5-input-profile.ini"] = redact(profile.read_text(encoding="utf-8", errors="replace"), **identity)
     if log is not None and Path(log).is_file():
-        with Path(log).open("rb") as raw:
-            encoding = "utf-16" if raw.peek(2)[:2] in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE) else "utf-8"
-            with TextIOWrapper(raw, encoding=encoding, errors="replace") as source:
-                members["anyps5.log"] = redact(source.read(), **identity)
+        members["anyps5.log"] = redact_log(log, identity)
     if input_config is not None and Path(input_config).is_file():
         members["anyps5-input.ini"] = redact(Path(input_config).read_text(encoding="utf-8", errors="replace"), **identity)
     if environ is not None:

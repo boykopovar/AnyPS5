@@ -155,6 +155,27 @@ class BundleTests(unittest.TestCase):
                 with zipfile.ZipFile(out) as bundle:
                     self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), expected)
 
+    def test_utf8_runtime_append_after_utf16_is_redacted(self):
+        prefix = "PowerShell: résumé /home/ana/games/title.elf\r\n"
+        note = "[log] ANYPS5_LOG_FILE: appending to this file, process 42\n"
+        tail = "[sce] café: ana on serverfestivo from 192.0.2.42\r\n"
+        expected = ("PowerShell: résumé ~/games/title.elf\n" + note
+                    + "[sce] café: <user> on <host> from <ip>\n")
+        for encoding, bom in (("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff")):
+            with self.subTest(encoding=encoding):
+                self.log.write_bytes(bom + prefix.encode(encoding) + (note + tail).encode("utf-8"))
+                out = self.root / f"mixed-{encoding}.zip"
+                bug_report.make_bundle(self.report, out, log=self.log, **self.identity)
+                with zipfile.ZipFile(out) as bundle:
+                    self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), expected)
+
+    def test_ambiguous_utf16_log_leaves_no_bundle(self):
+        self.log.write_bytes("\r\n".encode("utf-16") + b"[sce] opened /home/ana on serverfestivo from 192.0.2.42\n")
+        out = self.root / "ambiguous.zip"
+        with self.assertRaisesRegex(ValueError, "ambiguous encoding"):
+            bug_report.make_bundle(self.report, out, log=self.log, **self.identity)
+        self.assertFalse(out.exists())
+
     def test_escaped_home_paths_are_redacted_in_nested_json(self):
         cases = (
             ("windows", r"C:\Profiles\example", r"\games\title.elf"),
