@@ -77,6 +77,11 @@ class LibraryPublicationTests(unittest.TestCase):
             allocator_license = source / "3rdparty/mimalloc/LICENSE"
             allocator_license.parent.mkdir(parents=True)
             allocator_license.write_bytes(b"allocator license")
+            ffmpeg_notices = root / "prebuilt FFmpeg" / "share/ffmpeg"
+            ffmpeg_notices.mkdir(parents=True)
+            for name in ("copyright", "SOURCE.txt"):
+                (ffmpeg_notices / name).write_bytes(name.encode())
+            (build / "release-ffmpeg-notices.txt").write_text(ffmpeg_notices.as_posix() + "\n", encoding="utf-8")
             runtime = root / "compiler"
             runtime.mkdir()
             for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
@@ -109,6 +114,8 @@ class LibraryPublicationTests(unittest.TestCase):
                         )
                         self.assertEqual(packaged.read("libs/licenses/vgmstream.txt"), b"decoder license")
                         self.assertEqual(packaged.read("libs/licenses/mimalloc.txt"), b"allocator license")
+                        for name in ("copyright", "SOURCE.txt"):
+                            self.assertEqual(packaged.read("libs/licenses/ffmpeg/" + name), name.encode())
                         if platform == "windows":
                             self.assertEqual(packaged.read("libs/libstdc++-6.dll"), b"compiler runtime")
             self.publish(archives["windows"], archives["linux"])
