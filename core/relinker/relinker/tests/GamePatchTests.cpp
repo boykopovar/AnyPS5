@@ -708,6 +708,11 @@ void relocationOverlap() {
     rejects([&] { CheckOverlaps("t", before, {.RelaPltData = table}); }, "RelaPltData");
     CheckOverlaps("t", adjacent, {.RelaData = table, .RelaPltData = table});
     CheckOverlaps("t", {{0x1010, 2, 0x200c}}, {.RelaData = table});
+    std::vector<std::uint8_t> highTable(24);
+    Io::WriteU64(highTable, 0, 0xfffffffffffffffcULL);
+    const std::vector<WriterRange> highTraps{{0xfffffffffffffffcULL, 8, "trap"}};
+    rejects([&] { CheckOverlaps("t", {{0x1010, 1, 0xfffffffffffffffdULL}}, {.RelaData = highTable}); }, "RelaData relocation target");
+    rejects([&] { CheckOverlaps("t", {{0xfffffffffffffffdULL, 1, 0x2000}}, {.Traps = highTraps}); }, "overlaps trap");
 }
 
 void manifestConfig() {

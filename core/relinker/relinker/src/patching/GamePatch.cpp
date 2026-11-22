@@ -308,15 +308,17 @@ struct EntryRange {
     std::string Reason;
 };
 
+bool Overlaps(const std::uint64_t firstOffset, const std::uint64_t firstLength, const std::uint64_t secondOffset, const std::uint64_t secondLength) {
+    if (firstLength == 0 || secondLength == 0) return false;
+    return firstOffset < secondOffset ? secondOffset - firstOffset < firstLength : firstOffset - secondOffset < secondLength;
+}
+
 bool TouchesHeaderArea(const ElfHeader& header, const std::uint64_t offset, const std::uint64_t length) {
-    const auto overlaps = [offset, length](const std::uint64_t start, const std::uint64_t size) {
-        return offset < start + size && start < offset + length;
-    };
-    if (overlaps(0, Elfpatcher::kElfHeaderSize)) return true;
+    if (Overlaps(offset, length, 0, Elfpatcher::kElfHeaderSize)) return true;
     if (header.ProgramHeaderCount == 0 || header.ProgramHeaderEntrySize == 0) return false;
     const std::uint64_t tableSize = static_cast<std::uint64_t>(header.ProgramHeaderCount) * header.ProgramHeaderEntrySize;
     if (tableSize > std::numeric_limits<std::uint64_t>::max() - header.ProgramHeaderOffset) return true;
-    return overlaps(header.ProgramHeaderOffset, tableSize);
+    return Overlaps(offset, length, header.ProgramHeaderOffset, tableSize);
 }
 
 EntryRange ResolveEntry(const std::vector<ProgramHeader>& segments, const std::uint64_t fileSize, const ElfHeader& header, const PatchEntry& entry) {
@@ -343,10 +345,6 @@ std::vector<EntryRange> ResolveEach(const ElfReader& reader, const std::vector<P
         resolved.push_back(ResolveEntry(segments, reader.GetFileSize(), header, entry));
     }
     return resolved;
-}
-
-bool Overlaps(const std::uint64_t firstOffset, const std::uint64_t firstLength, const std::uint64_t secondOffset, const std::uint64_t secondLength) {
-    return firstOffset < secondOffset + secondLength && secondOffset < firstOffset + firstLength;
 }
 
 void RejectEntryOverlaps(const std::vector<PatchEntry>& entries, const std::vector<EntryRange>& resolved) {
