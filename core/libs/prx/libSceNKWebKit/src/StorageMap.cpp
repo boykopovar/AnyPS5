@@ -95,11 +95,16 @@ void RequireWritableGuestValue(T* pointer, const char* function) {
 }
 
 template <typename T>
-void WriteGuestValue(T* pointer, const T& value, const char* function) {
+bool TryWriteGuestValue(T* pointer, const T& value) {
     const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(pointer, &value, sizeof(T));
     errno = savedErrno;
-    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return ok;
+}
+
+template <typename T>
+void WriteGuestValue(T* pointer, const T& value, const char* function) {
+    if (!TryWriteGuestValue(pointer, value)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
 void RequireReadableGuestBytes(const void* pointer, std::size_t bytes, const char* function) {
@@ -152,12 +157,24 @@ void RequireWritableStringSlot(String* string, const char* function) {
     }
 }
 
-void PublishGuestStringSlot(String* target, String value, const char* function) {
-    StringImpl* previous = ReadGuestValue(reinterpret_cast<StringImpl* const*>(target), function);
+bool TryPublishGuestStringSlot(String* target, String& value) {
+    StringImpl* previous = nullptr;
+    const int savedErrno = errno;
+    const bool readOk = GuestCopyIn_nid_no_patch(&previous, reinterpret_cast<StringImpl* const*>(target), sizeof(previous));
+    errno = savedErrno;
+    if (!readOk) return false;
     StringImpl* next = value.impl;
-    WriteGuestValue(reinterpret_cast<StringImpl**>(target), next, function);
+    if (!TryWriteGuestValue(reinterpret_cast<StringImpl**>(target), next)) {
+        static_cast<void>(TryWriteGuestValue(reinterpret_cast<StringImpl**>(target), previous));
+        return false;
+    }
     value.impl = nullptr;
     NKWebKit::WtfAbi::Release(previous);
+    return true;
+}
+
+void PublishGuestStringSlot(String* target, String value, const char* function) {
+    if (!TryPublishGuestStringSlot(target, value)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
 void ValidateGuestStringImpl(StringImpl* impl, bool writableHeader, const char* function) {
@@ -199,16 +216,16 @@ void SetIteratorToIndex(StorageMapImpl& impl, unsigned index) {
     }
 }
 
-void ReplaceWithCopy(StorageMap& map) {
+StorageMapImpl* CloneStorageMapImpl(const StorageMapImpl& source) {
     StorageMapImpl* copy = NKWebKit::WebCoreAbi::CreateStorageMapImpl();
     try {
-        StringHashMapAssign(copy->map, map.impl->map);
+        StringHashMapAssign(copy->map, source.map);
     } catch (...) {
         NKWebKit::WebCoreAbi::DerefStorageMapImpl(copy);
         throw;
     }
-    copy->currentSize = map.impl->currentSize;
-    NKWebKit::WebCoreAbi::DerefStorageMapImpl(std::exchange(map.impl, copy));
+    copy->currentSize = source.currentSize;
+    return copy;
 }
 
 void SetItemImpl(StorageMap* self, const String* key, const String* value, String* oldValue, bool* quotaException,
@@ -218,10 +235,11 @@ void SetItemImpl(StorageMap* self, const String* key, const String* value, Strin
     StringImpl* valueImpl = ReadGuestStringSlot(value, function);
     if (!oldValue || !quotaException) throw std::invalid_argument(std::string(function) + ": null output reference");
     RequireWritableStringSlot(oldValue, function);
+    const bool previousQuota = ReadGuestValue(quotaException, function);
     RequireWritableGuestValue(quotaException, function);
     LoadReadableStorageMapImpl(localMap.impl, function);
-    ValidateGuestStringImpl(keyImpl, false, function);
-    ValidateGuestStringImpl(valueImpl, false, function);
+    ValidateGuestStringImpl(keyImpl, key == oldValue, function);
+    ValidateGuestStringImpl(valueImpl, value == oldValue, function);
 
     CheckedSize newSize{localMap.impl->currentSize, false};
     const StringPair* entry = StringHashMapFind(localMap.impl->map, keyImpl);
@@ -235,8 +253,11 @@ void SetItemImpl(StorageMap* self, const String* key, const String* value, Strin
     newSize.Add(SizeInBytes(valueImpl));
     if (!ignoreQuota && localMap.quotaSize != StorageMapNoQuota &&
         (newSize.overflowed || newSize.value > localMap.quotaSize)) {
-        PublishGuestStringSlot(oldValue, std::move(nextOldValue), function);
-        WriteGuestValue(quotaException, true, function);
+        if (!TryWriteGuestValue(quotaException, true)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        if (!TryPublishGuestStringSlot(oldValue, nextOldValue)) {
+            static_cast<void>(TryWriteGuestValue(quotaException, previousQuota));
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        }
         return;
     }
     if (newSize.overflowed) throw std::overflow_error(std::string(function) + ": the size of the map overflows 32 bits");
@@ -248,11 +269,28 @@ void SetItemImpl(StorageMap* self, const String* key, const String* value, Strin
     if (!entry) ValidateGuestStringImpl(keyImpl, true, function);
     if (valueImpl) ValidateGuestStringImpl(valueImpl, true, function);
 
-    if (copyOnWrite) ReplaceWithCopy(localMap);
-    StringHashMapSet(localMap.impl->map, keyImpl, valueImpl);
-    localMap.impl->currentSize = newSize.value;
-    InvalidateIterator(*localMap.impl);
-    if (copyOnWrite) WriteGuestValue(self, localMap, function);
+    if (copyOnWrite) {
+        StorageMapImpl* copy = CloneStorageMapImpl(*localMap.impl);
+        try {
+            StringHashMapSet(copy->map, keyImpl, valueImpl);
+            copy->currentSize = newSize.value;
+            InvalidateIterator(*copy);
+        } catch (...) {
+            NKWebKit::WebCoreAbi::DerefStorageMapImpl(copy);
+            throw;
+        }
+        StorageMap updated{copy, localMap.quotaSize};
+        if (!TryWriteGuestValue(self, updated)) {
+            static_cast<void>(TryWriteGuestValue(self, localMap));
+            NKWebKit::WebCoreAbi::DerefStorageMapImpl(copy);
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        }
+        NKWebKit::WebCoreAbi::DerefStorageMapImpl(localMap.impl);
+    } else {
+        StringHashMapSet(localMap.impl->map, keyImpl, valueImpl);
+        localMap.impl->currentSize = newSize.value;
+        InvalidateIterator(*localMap.impl);
+    }
 
     PublishGuestStringSlot(oldValue, std::move(nextOldValue), function);
     WriteGuestValue(quotaException, false, function);
@@ -326,7 +364,7 @@ void APS5_VABI _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_(StorageMa
     if (!oldValue) throw std::invalid_argument(std::string(__func__) + ": null output reference");
     RequireWritableStringSlot(oldValue, __func__);
     LoadReadableStorageMapImpl(localMap.impl, __func__);
-    ValidateGuestStringImpl(keyImpl, false, __func__);
+    ValidateGuestStringImpl(keyImpl, key == oldValue, __func__);
 
     StringPair* entry = StringHashMapFind(localMap.impl->map, keyImpl);
     if (!entry) {
@@ -343,15 +381,28 @@ void APS5_VABI _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_(StorageMa
     if (copyOnWrite) RequireWritableGuestValue(self, __func__);
     RequireWritableStorageMapImpl(localMap.impl, __func__);
 
-    if (!copyOnWrite)
+    if (!copyOnWrite) {
         StringHashMapRemove(localMap.impl->map, entry);
-    else {
-        ReplaceWithCopy(localMap);
-        StringHashMapRemove(localMap.impl->map, StringHashMapFind(localMap.impl->map, keyImpl));
-        WriteGuestValue(self, localMap, __func__);
+        localMap.impl->currentSize = newSize.value;
+        InvalidateIterator(*localMap.impl);
+    } else {
+        StorageMapImpl* copy = CloneStorageMapImpl(*localMap.impl);
+        try {
+            StringHashMapRemove(copy->map, StringHashMapFind(copy->map, keyImpl));
+            copy->currentSize = newSize.value;
+            InvalidateIterator(*copy);
+        } catch (...) {
+            NKWebKit::WebCoreAbi::DerefStorageMapImpl(copy);
+            throw;
+        }
+        StorageMap updated{copy, localMap.quotaSize};
+        if (!TryWriteGuestValue(self, updated)) {
+            static_cast<void>(TryWriteGuestValue(self, localMap));
+            NKWebKit::WebCoreAbi::DerefStorageMapImpl(copy);
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        }
+        NKWebKit::WebCoreAbi::DerefStorageMapImpl(localMap.impl);
     }
-    localMap.impl->currentSize = newSize.value;
-    InvalidateIterator(*localMap.impl);
     PublishGuestStringSlot(oldValue, std::move(nextOldValue), __func__);
 }
 

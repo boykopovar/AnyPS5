@@ -980,12 +980,17 @@ void TestGuestPointersAndAliases() {
     roMap->impl = storage.impl;
     roMap->quotaSize = StorageMapNoQuota;
     auto* roKeyImpl = reinterpret_cast<StringImpl*>(static_cast<std::byte*>(pages.readOnly) + 64);
+    auto* roCachedKeyImpl = reinterpret_cast<StringImpl*>(static_cast<std::byte*>(pages.readOnly) + 96);
     auto* roKeyChars = reinterpret_cast<char*>(static_cast<std::byte*>(pages.readOnly) + 128);
     std::memcpy(roKeyChars, "alpha", 5);
     roKeyImpl->refCount = 2U;
     roKeyImpl->length = 5U;
     roKeyImpl->data = roKeyChars;
     roKeyImpl->hashAndFlags = 4U;
+    roCachedKeyImpl->refCount = 2U;
+    roCachedKeyImpl->length = 5U;
+    roCachedKeyImpl->data = roKeyChars;
+    roCachedKeyImpl->hashAndFlags = key.impl->hashAndFlags;
     SetPageProtection(pages.readOnly, pages.pageSize, true, false);
 
     Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &key, &replacement, roString, &quota); }));
@@ -998,6 +1003,42 @@ void TestGuestPointersAndAliases() {
     roKeyStr.impl = roKeyImpl;
     Require(Throws<std::runtime_error>([&] { _ZNK7WebCore10StorageMap8containsERKN3WTF6StringE(&storage, &roKeyStr); }));
     roKeyStr.impl = nullptr;
+
+    String roCachedAlias;
+    roCachedAlias.impl = roCachedKeyImpl;
+    quota = false;
+    Require(_ZNK7WebCore10StorageMap8containsERKN3WTF6StringE(&storage, &roCachedAlias));
+    Require(Throws<std::runtime_error>([&] {
+        _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &roCachedAlias, &replacement, &roCachedAlias, &quota);
+    }));
+    Require(roCachedAlias.impl == roCachedKeyImpl && !quota && Get(storage, key).impl == value.impl);
+    Require(value.impl->refCount == 4 && replacement.impl->refCount == 2);
+    StorageMap tightQuotaMap{storage.impl, storage.impl->currentSize};
+    Require(Throws<std::runtime_error>([&] {
+        _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&tightQuotaMap, &roCachedAlias, &replacement, &roCachedAlias, &quota);
+    }));
+    Require(roCachedAlias.impl == roCachedKeyImpl && !quota && Get(storage, key).impl == value.impl);
+    Require(Throws<std::runtime_error>([&] {
+        _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_(&storage, &roCachedAlias, &roCachedAlias);
+    }));
+    Require(roCachedAlias.impl == roCachedKeyImpl && Get(storage, key).impl == value.impl);
+    Require(value.impl->refCount == 4);
+    roCachedAlias.impl = nullptr;
+
+    SetPageProtection(static_cast<std::byte*>(pages.boundary) + pages.pageSize, pages.pageSize, true, true);
+    auto* splitImpl = reinterpret_cast<StorageMapImpl*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - 16);
+    splitImpl->refCount = 1U;
+    splitImpl->map = storage.impl->map;
+    splitImpl->iterator = NKWebKit::WtfAbi::StringHashMapEnd(splitImpl->map);
+    splitImpl->iteratorIndex = std::numeric_limits<unsigned>::max();
+    splitImpl->currentSize = storage.impl->currentSize;
+    SetPageProtection(static_cast<std::byte*>(pages.boundary) + pages.pageSize, pages.pageSize, true, false);
+    StorageMap splitMap{splitImpl, StorageMapNoQuota};
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap3keyEj(&splitMap, 0); }));
+    Require(splitImpl->refCount == 1U && splitImpl->map.table == storage.impl->map.table);
+    SetPageProtection(static_cast<std::byte*>(pages.boundary) + pages.pageSize, pages.pageSize, true, true);
+    std::memset(splitImpl, 0, sizeof(StorageMapImpl));
+    SetPageProtection(static_cast<std::byte*>(pages.boundary) + pages.pageSize, pages.pageSize, false, false);
 
     storage.impl->refCount = 2U;
     Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(roMap, &key, &replacement, &out, &quota); }));
