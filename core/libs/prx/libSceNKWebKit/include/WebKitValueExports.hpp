@@ -79,6 +79,8 @@ NKWebKit::SizeValue APS5_VABI WKBundleFrameGetScrollOffset(const void* frameRef)
 bool APS5_VABI WKBundleFrameHasHorizontalScrollbar(const void* frameRef);
 bool APS5_VABI WKBundleFrameHasVerticalScrollbar(const void* frameRef);
 std::uint32_t APS5_VABI WKBundleGetTypeID();
+int APS5_VABI WKBundleNumberOfPages(const void* bundleRef, const void* frameRef, double pageWidthInPixels, double pageHeightInPixels);
+bool APS5_VABI WKBundleIsPageBoxVisible(const void* bundleRef, const void* frameRef, int pageIndex);
 std::uint32_t APS5_VABI WKBundleHitTestResultGetTypeID();
 const void* APS5_VABI WKBundleHitTestResultCopyAbsoluteImageURL(const void* hitTestResultRef);
 const void* APS5_VABI WKBundleHitTestResultCopyAbsoluteLinkURL(const void* hitTestResultRef);

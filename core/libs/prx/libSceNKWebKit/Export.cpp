@@ -8927,10 +8927,6 @@ int APS5_VABI WKBundleHitTestResultGetTargetFrame() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleIsPageBoxVisible() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleNodeHandleCopySnapshotWithOptions() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8964,10 +8960,6 @@ int APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable() {
 }
 
 int APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNumberOfPages() {
     NotImplemented_nid_no_patch(__func__);
 }
 
