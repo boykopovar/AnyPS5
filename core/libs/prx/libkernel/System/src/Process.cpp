@@ -692,6 +692,17 @@ int APS5_VABI system_nid_postfix(const char* command) {
     return command == nullptr ? 1 : shellNotExecuted;
 }
 
+void* APS5_VABI popen_nid_postfix(const char* command, const char* mode) {
+    (void)command;
+    (void)mode;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI pclose_nid_postfix(void* stream) {
+    (void)stream;
+    NotImplemented_nid_no_patch(__func__);
+}
+
 #ifdef _WIN32
 static KernelTimeval TimevalFromHundredNanoseconds(std::uint64_t ticks) {
     const std::uint64_t micros = ticks / 10ULL;

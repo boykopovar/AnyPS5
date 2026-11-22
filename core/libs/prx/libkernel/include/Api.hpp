@@ -695,6 +695,8 @@ int APS5_VABI issetugid_nid_postfix(void);
 int APS5_VABI getresuid_nid_postfix(std::uint32_t* ruid, std::uint32_t* euid, std::uint32_t* suid);
 int APS5_VABI getresgid_nid_postfix(std::uint32_t* rgid, std::uint32_t* egid, std::uint32_t* sgid);
 int APS5_VABI system_nid_postfix(const char* command);
+void* APS5_VABI popen_nid_postfix(const char* command, const char* mode);
+int APS5_VABI pclose_nid_postfix(void* stream);
 int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options);
 int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limit);
 int APS5_VABI wait_nid_postfix(int* status);
