@@ -6,6 +6,7 @@ extern "C" {
 
 std::int32_t APS5_VABI sceDiscMapIsRequestOnHDD(const char* path, std::int64_t offset, std::int64_t size, std::int32_t* result);
 std::int32_t APS5_VABI sceDiscMapUnknown_ioKMruft1ek(const char* path, std::int64_t offset, std::int64_t size, std::uint64_t* flags, std::uint64_t* out1, std::uint64_t* out2);
+std::int32_t APS5_VABI sceDiscMapUnknown_fJgP_plus_wqifno(const char* path, std::int64_t offset, std::int64_t size, std::int64_t* location, std::int64_t* lba, std::int64_t* lbaCount);
 int APS5_VABI sceDiscMapGetPackageSize(std::int64_t fflags, std::uint64_t* ret1, std::uint64_t* ret2);
 
 }

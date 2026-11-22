@@ -85,6 +85,16 @@ class BlockerTests(unittest.TestCase):
                                                     ("relinker (ubuntu-latest, g++)", "completed", "success")])))
         self.assertFalse(pr_ready.built(make(checks=[("conventions", "completed", "success"), ("linux", "completed", "skipped")])))
 
+    def test_every_build_workflow_job_counts_as_a_build(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/build.yml").read_text(encoding="utf-8")
+        jobs = workflow.split("\njobs:\n", 1)[1]
+        names = {line[2:].split(":", 1)[0] for line in jobs.split("\n") if line.startswith("  ") and not line.startswith("   ")
+                 and line.rstrip().endswith(":")}
+        self.assertEqual(names - pr_ready.BOT_CHECKS, pr_ready.BUILD_CHECKS)
+        for name in ("pipe-write (macos-15)", "edge-watch (macos-15-intel)"):
+            with self.subTest(name=name):
+                self.assertTrue(pr_ready.built(make(checks=[("conventions", "completed", "success"), (name, "completed", "success")])))
+
     def test_the_newest_run_of_a_check_wins(self):
         data = node(checks=[("conventions", "completed", "success")])
         data["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"] += [
@@ -190,6 +200,13 @@ class MainTests(unittest.TestCase):
 
         def fake(*args):
             if args[:2] == ("api", "graphql"):
+                if "--explain" in argv:
+                    number = int(argv[argv.index("--explain") + 1])
+                    self.assertIn("resource(url: $url)", args[3])
+                    self.assertEqual(args[-1], f"url=https://github.com/o/r/pull/{number}")
+                    match = next((pr for pr in prs if pr["number"] == number), None)
+                    resource = {"state": "OPEN", "baseRefName": "main", **match} if match else None
+                    return json.dumps({"data": {"resource": resource}})
                 if any("CLOSED" in arg for arg in args):
                     return json.dumps({"data": {"repository": {"pullRequests": {
                         "pageInfo": {"hasNextPage": False, "endCursor": None},
@@ -232,6 +249,29 @@ class MainTests(unittest.TestCase):
             self.run_main([], prs, calls)
         self.assertEqual([call[2] for call in calls], ["1", "2"])
 
+    def test_author_explains_each_open_pull_request_of_that_author_and_writes_nothing(self):
+        calls = []
+        prs = [node(number=9, author="Alice", draft=True), node(number=8, author="bob"), node(number=7, author="alice", changes=["carol"])]
+        code, out, _ = self.run_main(["--author", "alice"], prs, calls, closed=[3])
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [])
+        self.assertEqual(out.splitlines(), [f"#7: {'; '.join(pr_ready.blockers(make(number=7, changes=['carol'])))}",
+                                            f"#9: {'; '.join(pr_ready.blockers(make(number=9, draft=True)))}"])
+
+    def test_author_without_open_pull_requests_says_so(self):
+        calls = []
+        code, out, _ = self.run_main(["--author", "dave"], [node(number=7)], calls)
+        self.assertEqual((code, out, calls), (0, "dave has no open pull request to main\n", []))
+
+    def test_author_reports_an_unblocked_pull_request(self):
+        code, out, _ = self.run_main(["--author", "alice"], [node(number=7)], [])
+        self.assertEqual((code, out), (0, "#7: nothing blocks it\n"))
+
+    def test_author_and_explain_cannot_be_combined(self):
+        code, _, err = self.run_main(["--author", "alice", "--explain", "7"], [node(number=7)], [])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot be combined", err)
+
     def test_a_dry_run_writes_nothing(self):
         calls = []
         _, out, _ = self.run_main(["--dry-run", "--issue", "3"], [node(number=7)], calls)
@@ -262,10 +302,27 @@ class MainTests(unittest.TestCase):
         self.assertEqual(out.strip(), "draft")
         self.assertEqual(calls, [])
 
+    def test_explain_reports_only_the_selected_pr_and_leaves_the_queue_alone(self):
+        calls = []
+        prs = [node(number=1, draft=True), node(number=7, checks=[("conventions", "completed", "failure")],
+                                                changes=["bob"])]
+        code, out, _ = self.run_main(["--explain", "7", "--issue", "3"], prs, calls, closed=[2])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines(), ["failing: conventions", "change request not answered by a re-request: bob"])
+        self.assertEqual(calls, [])
+
     def test_explain_an_unknown_pull_request_fails(self):
         code, _, err = self.run_main(["--explain", "9"], [node(number=7)], [])
         self.assertEqual(code, 2)
         self.assertIn("#9 is not an open pull request", err)
+
+    def test_explain_rejects_a_closed_or_retargeted_pull_request(self):
+        for fields in ({"state": "MERGED"}, {"state": "CLOSED"}, {"baseRefName": "release"}):
+            with self.subTest(fields=fields):
+                calls = []
+                code, _, err = self.run_main(["--explain", "7"], [{**node(), **fields}], calls)
+                self.assertEqual((code, calls), (2, []))
+                self.assertIn("#7 is not an open pull request to main", err)
 
     def test_a_malformed_response_is_an_error(self):
         code, _, err = self.run_main([], [{"number": 7}], [])
@@ -349,6 +406,56 @@ class MainTests(unittest.TestCase):
             "pageInfo": {"hasNextPage": True, "endCursor": None}, "nodes": [{"number": 5}]}}}}
         with patch("pr_ready.pr_labels.gh", return_value=json.dumps(page)), self.assertRaisesRegex(ValueError, "no cursor"):
             pr_ready.closed_with_label("o/r")
+
+
+class PaginationTests(unittest.TestCase):
+    def test_pagination_cursor_returns_each_new_cursor_once(self):
+        seen = set()
+        self.assertEqual(pr_ready.pagination_cursor({'pageInfo': {'endCursor': 'c1'}}, seen, 'x'), 'c1')
+        with self.assertRaisesRegex(ValueError, 'did not advance'):
+            pr_ready.pagination_cursor({'pageInfo': {'endCursor': 'c1'}}, seen, 'x')
+        with self.assertRaisesRegex(ValueError, 'has no cursor'):
+            pr_ready.pagination_cursor({'pageInfo': {'endCursor': ''}}, set(), 'x')
+
+    def test_listed_returns_nodes_and_refuses_other_shapes(self):
+        self.assertEqual(pr_ready.listed({'nodes': [1, 2]}), [1, 2])
+        with self.assertRaisesRegex(ValueError, 'expected a connection'):
+            pr_ready.listed([])
+class CheckMappingTests(unittest.TestCase):
+    def test_check_of_maps_commit_status_states(self):
+        pending = pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'PENDING'})
+        self.assertEqual(pending, {'id': 0, 'name': 'ci', 'done': False, 'conclusion': None})
+        self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'SUCCESS'})['conclusion'], 'success')
+        self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'ERROR'})['conclusion'], 'failure')
+
+    def test_check_of_maps_check_runs_and_refuses_non_objects(self):
+        run = pr_ready.check_of({'databaseId': 7, 'name': 'build', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'})
+        self.assertEqual(run, {'id': 7, 'name': 'build', 'done': True, 'conclusion': 'success'})
+        with self.assertRaisesRegex(ValueError, 'check is not an object'):
+            pr_ready.check_of([])
+class LatestCheckTests(unittest.TestCase):
+    def test_latest_checks_keeps_the_newest_run_and_drops_bot_checks(self):
+        checks = [{'name': 'a', 'id': 1}, {'name': 'a', 'id': 3}, {'name': 'b', 'id': 2}, {'name': 'labels', 'id': 9}]
+        self.assertEqual(pr_ready.latest_checks(checks), [{'name': 'a', 'id': 3}, {'name': 'b', 'id': 2}])
+class LabelApplyTests(unittest.TestCase):
+    def test_apply_dry_run_reports_queue_label_changes_without_writing(self):
+        import contextlib, io
+        prs = [{'number': 1, 'labels': []}, {'number': 2, 'labels': [pr_ready.QUEUE_LABEL]}]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            pr_ready.apply('owner/repo', prs, [{'number': 1}], True, closed=(3,))
+        text = out.getvalue()
+        self.assertIn(f'would change #1: +{pr_ready.QUEUE_LABEL}', text)
+        self.assertIn(f'would change #2: -{pr_ready.QUEUE_LABEL}', text)
+        self.assertIn(f'would change #3: -{pr_ready.QUEUE_LABEL}', text)
+
+    def test_apply_edits_the_label_through_gh_when_not_dry_run(self):
+        import contextlib, io
+        from unittest import mock
+        prs = [{'number': 1, 'labels': []}]
+        with mock.patch.object(pr_ready.pr_labels, 'gh') as gh, mock.patch.object(pr_ready.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+            pr_ready.apply('owner/repo', prs, [{'number': 1}], False)
+        gh.assert_called_once_with('pr', 'edit', '1', '-R', 'owner/repo', '--add-label', pr_ready.QUEUE_LABEL)
 
 
 if __name__ == "__main__":

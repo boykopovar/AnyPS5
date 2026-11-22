@@ -1,0 +1,5 @@
+# libSceRegMgr
+
+## change [Registry store]
+
+- [Registry store](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - entries live in an in-memory process-local store without persistence, and the getter prototypes derive from [regmgr.h](https://github.com/ps5-payload-dev/regdump/blob/883524cc48c8497267ba7fc94ff0ac58880c4227/regmgr.h#L3713-L3729); its error codes and the missing-key path taken for keys `0` and `-1` are unverified host assumptions. A zero-length buffer is short, so the getters answer `0x80820004` instead of throwing. The 11.00 wrappers forward `sceRegMgrSetInt`, `sceRegMgrSetStr` and `sceRegMgrSetBin` with operation codes 1, 3 and 5; the host stores with the key's existing type, answers `0x80820006` for another type and `0x80820001` for a null buffer, and creates the key on first write because the console's schema is unavailable. A zero-length setter call throws `std::runtime_error` rather than reporting the export unimplemented, because storing an empty value and rejecting the call are both unmeasured.

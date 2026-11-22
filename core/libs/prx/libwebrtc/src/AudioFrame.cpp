@@ -147,6 +147,37 @@ void APS5_VABI _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11
     }
 }
 
+void APS5_VABI _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(WebRtcAudioFrame* frame, const WebRtcAudioFrame* source) {
+    if (!frame || !source)
+        throw std::invalid_argument("AudioFrame::CopyFrom requires two frames");
+    if (frame == source)
+        return;
+    if (frame->muted && !source->muted)
+        std::memset(frame->data, 0, sizeof(frame->data));
+    frame->timestamp = source->timestamp;
+    frame->elapsedTimeMs = source->elapsedTimeMs;
+    frame->ntpTimeMs = source->ntpTimeMs;
+    auto* packetInfos = static_cast<WebRtcRtpPacketInfosData*>(source->packetInfos);
+    if (packetInfos)
+        packetInfos->refCount.fetch_add(1, std::memory_order_relaxed);
+    ReleaseRtpPacketInfos(static_cast<WebRtcRtpPacketInfosData*>(frame->packetInfos));
+    frame->packetInfos = packetInfos;
+    frame->muted = source->muted;
+    frame->samplesPerChannel = source->samplesPerChannel;
+    frame->sampleRateHz = source->sampleRateHz;
+    frame->speechType = source->speechType;
+    frame->vadActivity = source->vadActivity;
+    frame->numChannels = source->numChannels;
+    frame->channelLayout = source->channelLayout;
+    frame->absoluteCaptureTimestampMs = source->absoluteCaptureTimestampMs;
+    frame->absoluteCaptureTimestampMsEngaged = source->absoluteCaptureTimestampMsEngaged;
+    const std::size_t size = source->numChannels * source->samplesPerChannel;
+    if (size > WebRtcAudioFrameMaxDataSizeSamples)
+        throw std::invalid_argument("AudioFrame::CopyFrom: more samples than the frame holds");
+    if (!frame->muted && size != 0)
+        std::memcpy(frame->data, source->data, sizeof(std::int16_t) * size);
+}
+
 WebRtcInterleavedView APS5_VABI _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(const WebRtcAudioFrame* frame) {
     if (!frame)
         throw std::invalid_argument("AudioFrame::data_view requires a frame");

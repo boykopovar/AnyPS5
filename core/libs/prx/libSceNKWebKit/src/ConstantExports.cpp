@@ -126,14 +126,6 @@ int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled() {
     return 0;
 }
 
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFilled() {
-    return 0;
-}
-
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutofilled() {
-    return 0;
-}
-
 int APS5_VABI WKBundlePageCopyContextMenuAtPointInWindow() {
     return 0;
 }
@@ -214,15 +206,7 @@ int APS5_VABI WKContextResumeDownload() {
     return 0;
 }
 
-int APS5_VABI WKFrameCanShowMIMEType() {
-    return 0;
-}
-
 int APS5_VABI WKFrameCreateFrameInfo() {
-    return 0;
-}
-
-int APS5_VABI WKFrameIsFrameSet() {
     return 0;
 }
 
@@ -271,10 +255,6 @@ int APS5_VABI WKOpenPanelParametersGetMediaCaptureType() {
 }
 
 int APS5_VABI WKPageGetFrameSetLargestFrame() {
-    return 0;
-}
-
-int APS5_VABI WKPageGetPaginationLineGridEnabled() {
     return 0;
 }
 
@@ -342,19 +322,7 @@ int APS5_VABI WKPreferencesGetAccelerated2DCanvasEnabled() {
     return 0;
 }
 
-int APS5_VABI WKPreferencesGetApplicationChromeModeEnabled() {
-    return 0;
-}
-
 int APS5_VABI WKPreferencesGetQTKitEnabled() {
-    return 0;
-}
-
-int APS5_VABI WKPreferencesGetTypeID() {
-    return static_cast<int>(0x00000058u);
-}
-
-int APS5_VABI WKProtectionSpaceCopyCertificateInfo() {
     return 0;
 }
 

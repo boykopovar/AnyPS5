@@ -1,0 +1,5 @@
+# libSceJxr
+
+## change [SimpleBitIO]
+
+- [SimpleBitIO](../../../core/libs/prx/libSceJxr/src/SimpleBitIo.cpp) (`attach_SB`, `getBit32_SB`, `flushToByte_SB`, `getByteRead_SB`, `detach_SB`): console code, prototypes and layouts are unverified; a jxrlib build is inferred from the export names. They follow pinned jxrlib [strcodec.c](https://github.com/4creators/jxrlib/blob/f7521879862b9085318e814c6157490dd9dbbdb4/image/sys/strcodec.c#L604-L662) on the 24-byte LP64 `SimpleBitIO` layout and are compared with native jxrlib in the tests. `getBit32_SB` calls the guest stream's `Read` once per byte and ignores its result, as jxrlib does. Where jxrlib reads through an invalid pointer, shifts by more than 31 or asserts, `std::invalid_argument` is thrown instead: a null or unreadable reader, an unwritable reader, a null or unreadable stream or a null read callback when a byte is needed, more than 8 buffered bits, and buffered bits in `detach_SB`. Closes when: the console's functions are disassembled or measured on a PS5

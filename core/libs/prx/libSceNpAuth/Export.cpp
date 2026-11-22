@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -93,6 +94,13 @@ int APS5_VABI sceNpAuthGetAuthorizedAppCode(std::int32_t requestId, const NpAuth
  if (!copied) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  if (localParameter.size != sizeof(NpAuthAuthorizedAppCodeParameter)) return static_cast<int>(0x80550302u);
  if (localParameter.userId == -1 || localParameter.clientId == nullptr || localParameter.scope == nullptr || localParameter.option > 1) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
+ std::array<char, 136> localClientId{};
+ std::string localScope;
+ const int copyErrno = errno;
+ const bool clientIdCopied = GuestCopyIn_nid_no_patch(localClientId.data(), localParameter.clientId, localClientId.size());
+ const bool scopeCopied = clientIdCopied && CopyGuestString_nid_no_patch(localParameter.scope, 512, localScope) == 0;
+ errno = copyErrno;
+ if (!scopeCopied) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  std::lock_guard lock(g_requestMutex);
  if (!g_requests.contains(requestId)) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
  if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) return SCE_NP_ERROR_SIGNED_OUT;

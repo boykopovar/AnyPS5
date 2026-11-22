@@ -2,6 +2,7 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include "prx/libSceFontFt/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -76,6 +77,9 @@ int main() {
     std::uint32_t total = 0;
     FontTextCharacter* characters = sceFontStringRefersTextCharacters(string, &total);
     Require(characters != nullptr && total == 4);
+    errno = 71;
+    Require(sceFontStringRefersTextCharacters(string, reinterpret_cast<std::uint32_t*>(0x10)) == nullptr);
+    Require(errno == 71);
 
     Require(sceFontStringRefersRenderCharacters(string, nullptr, nullptr, nullptr) == nullptr);
     count = 77;

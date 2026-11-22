@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "tests/GuestUnwindModuleInfoFixture.hpp"
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -28,6 +29,18 @@ struct FixtureCopy {
     UnwindFixture* fixture;
     std::uint64_t address;
 };
+
+static void RequireTerminatedFrames(const ModuleInfoForUnwind& info, std::uint64_t expectedSize) {
+    if (info.eh_frame_size != expectedSize) {
+        std::fprintf(stderr, "unwind table size: expected %llu including terminator, got %llu\n",
+            static_cast<unsigned long long>(expectedSize), static_cast<unsigned long long>(info.eh_frame_size));
+    }
+    Require(info.eh_frame_size == expectedSize);
+    Require(info.eh_frame_size >= sizeof(std::uint32_t));
+    std::uint32_t terminator = 1;
+    std::memcpy(&terminator, reinterpret_cast<const void*>(info.eh_frame_addr + info.eh_frame_size - sizeof(terminator)), sizeof(terminator));
+    Require(terminator == 0);
+}
 
 static std::string FixtureCopyPath() {
     HMODULE linked = nullptr;
@@ -58,15 +71,20 @@ static void LookupOfEditedCopy(const std::string& path, Edit edit, bool throws) 
 }
 
 static void ReloadedModuleIsRead(const std::string& path) {
-    for (int round = 0; round < 2; ++round) {
+    for (int round = 0; round < 3; ++round) {
         const auto copy = LoadFixtureCopy(path);
         if (round == 0) {
             copy.fixture->frames.terminator = 12;
             copy.fixture->frames.spare[0] = 1;
+        } else if (round == 2) {
+            copy.fixture->frames.cieLength = 0;
         }
         ModuleInfoForUnwind info{};
         Require(sceKernelGetModuleInfoForUnwind(copy.address, 0, &info) == 0);
-        Require(info.eh_frame_size == (round == 0 ? 4 + 12 + 4 + 12 : 4 + 12));
+        RequireTerminatedFrames(info, round == 0 ? 4 + 12 + 4 + 12 + 4 : round == 1 ? 4 + 12 + 4 : 4);
+        ModuleInfoForUnwind cached{};
+        Require(sceKernelGetModuleInfoForUnwind(copy.address, 0, &cached) == 0);
+        Require(std::memcmp(&cached, &info, sizeof(info)) == 0);
         Require(dlclose_nid_postfix(copy.handle) == 0);
     }
 }
@@ -85,7 +103,7 @@ int main() {
     Require(info.st_size == sizeof(ModuleInfoForUnwind));
     Require(info.eh_frame_hdr_addr == reinterpret_cast<std::uint64_t>(&fixture->header));
     Require(info.eh_frame_addr == reinterpret_cast<std::uint64_t>(&fixture->frames));
-    Require(info.eh_frame_size == 4 + 12);
+    RequireTerminatedFrames(info, 4 + 12 + 4);
     Require(info.seg0_addr == base);
     const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
     const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);

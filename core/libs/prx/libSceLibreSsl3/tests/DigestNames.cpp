@@ -5,13 +5,22 @@
 
 #include <mbedtls/md.h>
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -232,6 +241,48 @@ void CheckRepeatable() {
     }
 }
 
+char* MapPageBeforeGuard() {
+#ifdef _WIN32
+    auto* pages = static_cast<char*>(VirtualAlloc(nullptr, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(pages + 4096, 4096, PAGE_NOACCESS, &previous) != 0);
+#else
+    void* mapped = mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* pages = static_cast<char*>(mapped);
+    Require(mprotect(pages + 4096, 4096, PROT_NONE) == 0);
+#endif
+    return pages;
+}
+
+void UnmapPages(char* pages) {
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, 8192) == 0);
+#endif
+}
+
+void CheckGuestName() {
+    errno = 71;
+    bool rejected = false;
+    try {
+        EVP_get_digestbyname_nid_postfix(reinterpret_cast<const char*>(std::uintptr_t{0x10}));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected && errno == 71);
+
+    char* pages = MapPageBeforeGuard();
+    char* name = pages + 4096 - sizeof("SHA256");
+    std::memcpy(name, "SHA256", sizeof("SHA256"));
+    Require(name[sizeof("SHA256") - 1] == '\0' && name + sizeof("SHA256") == pages + 4096);
+    errno = 71;
+    Require(EVP_get_digestbyname_nid_postfix(name) == EVP_sha256_nid_postfix() && errno == 71);
+    UnmapPages(pages);
+}
+
 } // namespace
 
 int main() {
@@ -243,6 +294,7 @@ int main() {
     CheckUnknownNames();
     CheckLongName();
     CheckRepeatable();
+    CheckGuestName();
     std::puts("LibreSSL3 digest names: ok");
     return 0;
 }

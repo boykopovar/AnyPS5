@@ -5,6 +5,7 @@
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -558,6 +559,8 @@ int main() {
     int waitThreads = -1;
     Require(sceKernelCancelEventFlag(ef, 0x42, &waitThreads) == SCE_OK);
     Require(waitThreads == 0);
+    errno = 71;
+    Require(sceKernelCancelEventFlag(ef, 0x99, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
     Require(sceKernelPollEventFlag(ef, 0x42, EVF_WAITMODE_AND, &pattern) == SCE_OK);
     Require(pattern == 0x42);
 
@@ -604,6 +607,28 @@ int main() {
     Require(cancelRes1 == SCE_KERNEL_ERROR_ECANCELED && cancelPat1 == 0);
     Require(cancelRes2 == SCE_KERNEL_ERROR_ECANCELED && cancelPat2 == 0);
     Require(sceKernelPollEventFlag(ef, 0x05, EVF_WAITMODE_AND, &pattern) == SCE_OK && pattern == 0x05);
+    Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+
+    Require(sceKernelCreateEventFlag(&ef, "zero_timeout", EVF_ATTR_MULTI, 0x05, nullptr) == SCE_OK);
+    efTimeout = 0;
+    pattern = 0xdeadbeef;
+    Require(sceKernelWaitEventFlag(ef, 0x04, EVF_WAITMODE_AND, &pattern, &efTimeout) == SCE_OK && pattern == 0x05 && efTimeout == 0);
+    efTimeout = 0;
+    pattern = 0xdeadbeef;
+    Require(sceKernelWaitEventFlag(ef, 0x08, EVF_WAITMODE_OR, &pattern, &efTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT && pattern == 0x05 && efTimeout == 0);
+    Require(APS5_Test_GetEventFlagWaiterCount(ef) == 0);
+    std::atomic<int> zeroRes{-1};
+    std::uint64_t zeroPat = 0xdeadbeef;
+    std::thread zeroWaiter([&] {
+        zeroRes = sceKernelWaitEventFlag(ef, 0x08, EVF_WAITMODE_OR, &zeroPat, nullptr);
+    });
+    WaitForEventFlagWaiters(ef, 1);
+    efTimeout = 0;
+    Require(sceKernelWaitEventFlag(ef, 0x10, EVF_WAITMODE_OR, &pattern, &efTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT && efTimeout == 0);
+    Require(APS5_Test_GetEventFlagWaiterCount(ef) == 1);
+    Require(sceKernelSetEventFlag(ef, 0x08) == SCE_OK);
+    zeroWaiter.join();
+    Require(zeroRes == SCE_OK && (zeroPat & 0x08) != 0);
     Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
 
     Require(sceKernelCreateEventFlag(&ef, "imm_sat", EVF_ATTR_MULTI, 0x05, nullptr) == SCE_OK);

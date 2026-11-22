@@ -1,18 +1,21 @@
 import argparse
+import heapq
 import html
 import math
 import sys
 import zlib
+from itertools import chain
 from pathlib import Path
 
 import trace_digest
 
 DESCRIPTION = """Timeline of an APS5_TRACE_FRAMES / APS5_TRACE_SECONDS capture (aps5-trace-*.json.gz) as one standalone
-HTML file: one row per thread, one bar per traced slice, placed on the capture's time axis. Hover a bar for its name and
-duration. Slices are clipped to --from-ms and --to-ms. At most --max-slices bars are drawn, longest first, and the page
-says how many were left out.
+HTML file: one row per thread, one bar per traced slice, placed on the capture's time axis. Hover a bar for its name,
+duration and thread ID. Slices are clipped to --from-ms and --to-ms. At most --max-slices bars are drawn, longest
+first, and the page says how many were left out.
 
-Slices are only what the capture retained; buffer-full losses (see trace_digest.py) leave gaps that look like idle time."""
+The page reports buffer-full losses for the selected threads over the full capture, including losses outside the
+displayed window. Gaps may contain unrecorded work."""
 
 LABEL_WIDTH = 120
 ROW_HEIGHT = 18
@@ -36,13 +39,14 @@ def layout(slices, start_us, end_us, width_px, max_slices=5000):
     span = max(end_us - start_us, 1e-9)
     rows = sorted({(slice_["thread"], slice_["tid"]) for slice_ in slices})
     row_of = {thread: row for row, thread in enumerate(rows)}
-    kept = sorted(slices, key=lambda slice_: -slice_["dur"])[:max_slices]
+    kept = heapq.nlargest(max_slices, slices, key=lambda slice_: slice_["dur"])
     bars = []
     for slice_ in kept:
         x = LABEL_WIDTH + (slice_["ts"] - start_us) / span * width_px
         w = max(slice_["dur"] / span * width_px, 1.0)
-        bars.append({"thread": slice_["thread"], "name": slice_["name"], "ms": slice_["dur"] / 1000.0,
-                     "x": x, "w": w, "y": row_of[(slice_["thread"], slice_["tid"])] * ROW_HEIGHT})
+        bars.append({"thread": slice_["thread"], "tid": slice_["tid"], "name": slice_["name"],
+                     "ms": slice_["dur"] / 1000.0, "x": x, "w": w,
+                     "y": row_of[(slice_["thread"], slice_["tid"])] * ROW_HEIGHT})
     return {"threads": [name for name, _ in rows], "bars": bars, "left_out": len(slices) - len(kept), "width": width_px + LABEL_WIDTH}
 
 
@@ -52,7 +56,7 @@ def svg(laid):
     for row, name in enumerate(laid["threads"]):
         parts.append(f'<text x="2" y="{row * ROW_HEIGHT + 13}" font-size="11">{html.escape(name)}</text>')
     for bar in laid["bars"]:
-        title = html.escape(f'{bar["name"]} ({bar["ms"]:.3f} ms)')
+        title = html.escape(f'{bar["name"]} ({bar["ms"]:.3f} ms), tid {bar["tid"]}')
         parts.append(f'<rect x="{bar["x"]:.2f}" y="{bar["y"] + 2}" width="{bar["w"]:.2f}" height="{ROW_HEIGHT - 4}" fill="#4a7fc1"><title>{title}</title></rect>')
     parts.append("</svg>")
     return "".join(parts)
@@ -85,7 +89,17 @@ def positive_integer(value):
     return number
 
 
+def pixel_width(value):
+    number = positive_integer(value)
+    if number > sys.float_info.max:
+        raise argparse.ArgumentTypeError("width must fit in a finite floating-point number")
+    return number
+
+
 def main(arguments=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("trace", type=Path, help="aps5-trace-*.json.gz or .json")
     parser.add_argument("-o", "--output", type=Path, help="HTML file to write (default: the trace name with .html)")
@@ -93,17 +107,30 @@ def main(arguments=None):
     parser.add_argument("--to-ms", type=nonnegative_number, help="end of the window, in ms (default: the end of the trace)")
     parser.add_argument("--thread", action="append", default=[], metavar="NAME", help="draw only threads with this name; repeat to select several")
     parser.add_argument("--max-slices", type=positive_integer, default=5000, help="bars to draw, longest first (default 5000)")
-    parser.add_argument("--width", type=positive_integer, default=1000, help="width of the time axis in pixels (default 1000)")
+    parser.add_argument("--width", type=pixel_width, default=1000, help="width of the time axis in pixels (default 1000)")
     options = parser.parse_args(arguments)
     trace = trace_digest.load_trace(options.trace)
+    end_of_trace = max(chain(
+        (ts + dur for slices in trace.slices.values() for ts, dur, _, _, _ in slices),
+        (ts for ts, _ in trace.presents),
+        (ts for counters in trace.folded.values() for ts, _ in counters),
+        (ts for _, ts, _ in trace.losses),
+    ), default=0.0)
     if options.thread:
         trace.select_threads(options.thread)
-    end_of_trace = max((ts + dur for slices in trace.slices.values() for ts, dur, _, _, _ in slices), default=0.0)
     start_us = options.from_ms * 1000.0
     end_us = end_of_trace if options.to_ms is None else options.to_ms * 1000.0
+    if end_us < start_us:
+        raise ValueError("window end must be at or after its start")
     slices = window_slices(trace, start_us, end_us, options.thread)
     laid = layout(slices, start_us, end_us, options.width, options.max_slices)
     notes = [f"window {start_us / 1000.0:.3f} to {end_us / 1000.0:.3f} ms, {len(laid['threads'])} threads, {len(laid['bars'])} bars"]
+    if trace.losses:
+        lost = sum(events_lost for _, _, events_lost in trace.losses)
+        notes.append(f"Incomplete trace: {lost} events lost. Gaps may contain unrecorded work.")
+        for tid, ts, events_lost in trace.losses:
+            thread = f"{trace.name(tid)} (tid {tid})" if tid in trace.threads else trace.name(tid)
+            notes.append(f"{thread}: buffer full at {ts / 1000.0:.3f} ms; {events_lost} events lost across the capture.")
     if laid["left_out"]:
         notes.append(f"{laid['left_out']} shorter slices left out by --max-slices")
     output = options.output or options.trace.with_suffix(".html")

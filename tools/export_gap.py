@@ -29,7 +29,7 @@ MODULE_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 
 
 def is_mangled(name):
-    return name.startswith("_Z") and len(name) > 2 and name[2].isdigit()
+    return (name.startswith("_Z") and len(name) > 2 and name[2].isdigit()) or bool(re.match(r"^_ZN[KVrRO]*(?:[0-9]|St[0-9]|S[absiod])", name))
 
 
 def helper_reason(name):
@@ -165,6 +165,8 @@ def strip_disambig(name):
 def source_texts(module_dir):
     texts = []
     for path in sorted(module_dir.rglob("*")):
+        if any(part.lower() in {"test", "tests"} for part in path.relative_to(module_dir).parts[:-1]):
+            continue
         if not path.is_file():
             continue
         if path.suffix.lower() not in (".cpp", ".c", ".cc", ".h", ".hpp", ".hh"):
@@ -219,6 +221,9 @@ def collect_source_exports(texts):
             record_provided(provided, match.group(1))
         for name in nid_names.source_assembly_definitions(text):
             record_provided(provided, name, "defined in assembly")
+        if nid_names.NID_POSTFIX in text:
+            for name in nid_names.source_data_definitions(text):
+                record_provided(provided, name, "defined as data")
         for nid, helper in nid_names.source_aliases(text):
             if nid not in provided:
                 provided[nid] = f"bound with APS5_EXPORT as {helper}"
@@ -332,7 +337,8 @@ def report_module(module, console_nids, provided, db):
         if reason is None:
             lines.append(f"missing {nid} {name}")
         else:
-            lines.append(f"{module}: {name} ({nid}) {reason} and needs a renamed helper bound with APS5_EXPORT, like libSceAmpr")
+            action = "may use a renamed helper bound with APS5_EXPORT" if is_mangled(name) else "needs a renamed helper bound with APS5_EXPORT"
+            lines.append(f"{module}: {name} ({nid}) {reason} and {action}, like libSceAmpr")
     for nid, name, how in already:
         if name is None:
             lines.append(f"already provided {nid} {how}")
@@ -391,9 +397,9 @@ def main(argv=None):
             report.extend(lines)
             for name, nid, rel, line, qual in calls:
                 if qual:
-                    report.append(f"{module}: {name} ({nid}) called at {rel}:{line} {qual}{name} needs a renamed helper bound with APS5_EXPORT, like libSceAmpr")
+                    report.append(f"{module}: {name} ({nid}) called at {rel}:{line} {qual}{name} may need a renamed helper bound with APS5_EXPORT, like libSceAmpr")
                 else:
-                    report.append(f"{module}: {name} ({nid}) called at {rel}:{line} needs a renamed helper bound with APS5_EXPORT, like libSceAmpr")
+                    report.append(f"{module}: {name} ({nid}) called at {rel}:{line} may need a renamed helper bound with APS5_EXPORT, like libSceAmpr")
             for nid, _ in missing:
                 if nid not in seen:
                     seen.add(nid)

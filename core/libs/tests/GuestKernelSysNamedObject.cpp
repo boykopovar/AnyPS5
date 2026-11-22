@@ -51,6 +51,12 @@ int main() {
     Require(__sys_namedobj_delete_nid_postfix(0x10000 | static_cast<std::uint32_t>(first), MutexType) == -1 && Error() == GuestEsrch);
     Require(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(second), RwlockType) == 0);
     Require(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(second), RwlockType) == -1 && Error() == GuestEsrch);
+    const int typed = __sys_namedobj_create_nid_postfix("typed", nullptr, MutexType);
+    Require(typed == 2);
+    Require(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(typed), RwlockType) == -1 && Error() == GuestEsrch);
+    Require(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(typed), 0x10000 | RwlockType) == -1 && Error() == GuestEsrch);
+    Require(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(typed), MutexType | 0x1000) == 0);
+    Require(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(typed), MutexType) == -1 && Error() == GuestEsrch);
 
     std::set<int> live{first};
     while (live.size() < 0xFFFF) {

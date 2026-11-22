@@ -11,6 +11,7 @@ struct SharedExport {
 
 static const SharedExport SharedExports[] = {
     {"RSA_new", "kADEz2eAE7c"},
+    {"RSA_free", "5zpup0URQoc"},
     {"d2i_RSA_PUBKEY", "PFxpQ6lkQP0"},
     {"EVP_PKEY_get1_RSA", "5RBpaKVkWRQ"},
     {"PEM_read_RSAPrivateKey", "psMmvmdPKds"},
