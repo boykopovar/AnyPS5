@@ -74,6 +74,7 @@
 | `sceKernelGetNandInfo` | `W+BEVqLrDXo` |
 | `sceKernelGetPackageInfo` | `4kJiTvD4tsA` |
 | `sceKernelGetResidentFmemCount2` | `zx9n-9bt7IA` |
+| `sceKernelGetToolMemoryRange` | `dkBx0YqFQ+Y` |
 | `sceKernelGetUpdatemode` | `NMf5gHfsrYs` |
 | `sceKernelIccClearEmcCrashReport` | `qq-gRlUwTPk` |
 | `sceKernelIccDisableExtBDDriveOperation` | `pv+JNjlZJgI` |
