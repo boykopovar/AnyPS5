@@ -47,7 +47,7 @@ LibcxxWeakCount* APS5_VABI _ZNSt3__119__shared_weak_count4lockEv_nid_postfix(Lib
 void APS5_VABI _ZNSt3__119__shared_weak_count14__release_weakEv_nid_postfix(LibcxxWeakCount* self) {
     CheckControlBlock(self);
     std::atomic_ref owners(self->weakOwners);
-    if (owners.load(std::memory_order_acquire) != 0 && owners.fetch_sub(1, std::memory_order_acq_rel) != 0) return;
+    if (owners.fetch_sub(1, std::memory_order_acq_rel) != 0) return;
     LibcxxWeakCountVtable vtable{};
     if (!GuestCopyIn_nid_no_patch(&vtable, self->vtable, sizeof(vtable)) || !vtable.onZeroSharedWeak)
         throw std::invalid_argument("libc++ weak reference: invalid cleanup callback");

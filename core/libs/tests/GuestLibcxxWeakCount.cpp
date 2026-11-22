@@ -1,6 +1,7 @@
 #include "prx/libc/include/LibcxxWeakCount.hpp"
 #include <array>
 #include <atomic>
+#include <barrier>
 #include <cstdint>
 #include <cstdio>
 #include <thread>
@@ -14,7 +15,7 @@ struct GuestControl {
     virtual void APS5_VABI OnZeroSharedWeak() { ++cleanups; }
 
     std::uint64_t shared = 0;
-    std::uint64_t weak = 0;
+    std::int64_t weak = 0;
     std::atomic<unsigned> cleanups{0};
     std::atomic<bool> wrongSlot{false};
 };
@@ -38,27 +39,28 @@ bool CountsAndCallback() {
     Release(Guest(control));
     if (control.weak != 0 || control.cleanups != 0) return false;
     Release(Guest(control));
-    return control.cleanups == 1 && !control.wrongSlot && control.weak == 0 && control.shared == UINT64_MAX;
+    return control.cleanups == 1 && !control.wrongSlot && control.weak == -1 && control.shared == UINT64_MAX;
 }
 
+template <std::size_t OwnerCount>
 bool ConcurrentOwners() {
     GuestControl live;
     GuestControl expired;
-    std::array<std::thread, 8> workers;
+    std::array<std::thread, OwnerCount> workers;
     expired.shared = UINT64_MAX;
     expired.weak = workers.size() - 1;
     std::atomic<unsigned> acquired{0};
-    std::atomic<bool> start{false};
+    std::barrier releaseTogether(OwnerCount);
     for (auto& worker : workers) {
         worker = std::thread([&] {
-            while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
             if (Lock(Guest(live)) == Guest(live)) ++acquired;
+            releaseTogether.arrive_and_wait();
             Release(Guest(expired));
         });
     }
-    start.store(true, std::memory_order_release);
     for (auto& worker : workers) worker.join();
-    return acquired == workers.size() && live.shared == workers.size() && expired.cleanups == 1 && !expired.wrongSlot;
+    return acquired == workers.size() && live.shared == workers.size() && expired.weak == -1
+        && expired.cleanups == 1 && !expired.wrongSlot;
 }
 
 }
@@ -68,7 +70,7 @@ int main() {
         std::fputs("weak reference count or cleanup slot mismatch\n", stderr);
         return 1;
     }
-    if (!ConcurrentOwners()) {
+    if (!ConcurrentOwners<2>() || !ConcurrentOwners<8>()) {
         std::fputs("concurrent promotions or final release mismatch\n", stderr);
         return 1;
     }

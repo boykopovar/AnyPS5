@@ -6,7 +6,7 @@
 struct LibcxxWeakCount {
     const void* vtable;
     std::uint64_t sharedOwners;
-    std::uint64_t weakOwners;
+    std::int64_t weakOwners;
 };
 
 extern "C" {
