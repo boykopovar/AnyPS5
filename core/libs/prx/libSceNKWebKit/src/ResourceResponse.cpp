@@ -25,12 +25,15 @@
  */
 
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
+#include <atomic>
 #include <cmath>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -38,16 +41,22 @@
 
 namespace {
 
+using NKWebKit::WebCoreAbi::CertificateInfo;
+using NKWebKit::WebCoreAbi::ResourceResponse;
 using NKWebKit::WebCoreAbi::ResourceResponseBase;
 
 using NKWebKit::HttpAbi::HTTPHeaderName;
 using NKWebKit::WebCoreAbi::ResponseOptionalTime;
+using NKWebKit::WebCoreAbi::StringSlot;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
 
+constexpr unsigned char stateNullBit = 1;
+constexpr unsigned atomStringFlag = 1u << 4;
+
 template<class Response>
-Response& Checked(Response* self) {
-    if (!self) throw std::invalid_argument("null WebCore::ResourceResponseBase");
+Response& Checked(Response* self, const char* name = "WebCore::ResourceResponseBase") {
+    if (!self) throw std::invalid_argument(std::string("null ") + name);
     return *self;
 }
 
@@ -164,6 +173,226 @@ String SanitizeFilename(std::basic_string_view<Char> value) {
     escaped.push_back('"');
     if (escaped.size() > 0x7fffffff) throw std::length_error("content disposition too long");
     return ParseFilename(std::basic_string_view<Char>(escaped));
+}
+
+void Retain(StringImpl* impl) {
+    if (impl) impl->refCount += 2;
+}
+
+std::atomic<unsigned>& MetricsBoxRefCount(void* box) {
+    return *reinterpret_cast<std::atomic<unsigned>*>(box);
+}
+
+bool MetricsBoxHasPayload(void* box) {
+    return *reinterpret_cast<void**>(static_cast<unsigned char*>(box) + 8) != nullptr;
+}
+
+void RetainMetricsBox(void* box) {
+    if (box) ++MetricsBoxRefCount(box);
+}
+
+void ReleaseMetricsBox(void* box) {
+    if (!box) return;
+    if (MetricsBoxRefCount(box).load() == 1 && MetricsBoxHasPayload(box)) NotImplemented_nid_no_patch(__func__);
+    if (--MetricsBoxRefCount(box) == 0) _ZN3WTF8fastFreeEPv(box);
+}
+
+void ConstructDefault(ResourceResponseBase& self) {
+    new (&self) ResourceResponseBase{};
+}
+
+void ConstructFields(ResourceResponseBase& self, const NKWebKit::WtfAbi::URL& url, const String& mimeType, long long expectedContentLength, const String& textEncodingName) {
+    if (mimeType.impl && !(mimeType.impl->hashAndFlags & atomStringFlag)) NotImplemented_nid_no_patch(__func__);
+    if (textEncodingName.impl && !(textEncodingName.impl->hashAndFlags & atomStringFlag)) NotImplemented_nid_no_patch(__func__);
+    ConstructDefault(self);
+    self.url = url;
+    Retain(self.url.impl);
+    self.mimeType.impl = mimeType.impl;
+    Retain(self.mimeType.impl);
+    self.expectedContentLength = expectedContentLength;
+    self.textEncodingName.impl = textEncodingName.impl;
+    Retain(self.textEncodingName.impl);
+    self.certificateInfo.engaged = true;
+    self.stateBits = 0;
+}
+
+template<class TVector>
+void ValidateVector(const TVector& vector) {
+    if (vector.size > vector.capacity) throw std::invalid_argument("invalid response vector size");
+    if (vector.size && !vector.buffer) throw std::invalid_argument("null response vector storage");
+}
+
+template<class TVector>
+void ConstructVector(TVector& dst, const TVector& src) {
+    using Entry = std::remove_reference_t<decltype(*dst.buffer)>;
+    ValidateVector(src);
+    const std::uint64_t bytes = std::uint64_t(src.size) * sizeof(Entry);
+    if (bytes > std::numeric_limits<unsigned>::max()) throw std::length_error("response vector too long");
+    if (!src.size) {
+        dst.buffer = nullptr;
+        dst.capacity = 0;
+        dst.size = 0;
+        return;
+    }
+    dst.buffer = static_cast<Entry*>(_ZN3WTF10fastMallocEm(static_cast<std::size_t>(bytes)));
+    dst.capacity = src.size;
+    dst.size = src.size;
+    for (unsigned i = 0; i < src.size; ++i) new (dst.buffer + i) Entry(src.buffer[i]);
+}
+
+template<class TVector>
+void DestroyVector(TVector& vector) {
+    if (vector.buffer) {
+        std::destroy_n(vector.buffer, vector.size);
+        _ZN3WTF8fastFreeEPv(vector.buffer);
+    }
+}
+
+template<class TVector>
+void AssignVector(TVector& dst, const TVector& src);
+
+template<class Entry>
+void AssignEntry(Entry& dst, const Entry& src) {
+    dst = src;
+}
+
+template<class T>
+void AssignEntry(NKWebKit::WtfAbi::Vector<T>& dst, const NKWebKit::WtfAbi::Vector<T>& src) {
+    AssignVector(dst, src);
+}
+
+template<class TVector>
+void AssignVector(TVector& dst, const TVector& src) {
+    using Entry = std::remove_reference_t<decltype(*dst.buffer)>;
+    if (&dst == &src) return;
+    ValidateVector(dst);
+    ValidateVector(src);
+    if (dst.size > src.size) {
+        std::destroy_n(dst.buffer + src.size, dst.size - src.size);
+        for (unsigned i = 0; i < src.size; ++i) AssignEntry(dst.buffer[i], src.buffer[i]);
+        dst.size = src.size;
+        return;
+    }
+    if (src.size > dst.capacity) {
+        const std::uint64_t bytes = std::uint64_t(src.size) * sizeof(Entry);
+        if (bytes > std::numeric_limits<unsigned>::max()) throw std::length_error("response vector too long");
+        DestroyVector(dst);
+        dst.buffer = static_cast<Entry*>(_ZN3WTF10fastMallocEm(static_cast<std::size_t>(bytes)));
+        dst.capacity = src.size;
+        for (unsigned i = 0; i < src.size; ++i) new (dst.buffer + i) Entry(src.buffer[i]);
+        dst.size = src.size;
+        return;
+    }
+    for (unsigned i = 0; i < dst.size; ++i) AssignEntry(dst.buffer[i], src.buffer[i]);
+    for (unsigned i = dst.size; i < src.size; ++i) new (dst.buffer + i) Entry(src.buffer[i]);
+    dst.size = src.size;
+}
+
+void AssignURL(NKWebKit::WtfAbi::URL& dst, const NKWebKit::WtfAbi::URL& src) {
+    StringImpl* previous = dst.impl;
+    dst = src;
+    Retain(dst.impl);
+    NKWebKit::WtfAbi::Release(previous);
+}
+
+void AssignSlot(StringSlot& dst, const StringSlot& src) {
+    if (src.impl && !(src.impl->hashAndFlags & atomStringFlag)) NotImplemented_nid_no_patch(__func__);
+    StringImpl* previous = dst.impl;
+    dst.impl = src.impl;
+    Retain(dst.impl);
+    NKWebKit::WtfAbi::Release(previous);
+}
+
+void AssignCertificateInfo(NKWebKit::WebCoreAbi::OptionalCertificateInfo& dst, const NKWebKit::WebCoreAbi::OptionalCertificateInfo& src) {
+    if (dst.engaged && src.engaged) {
+        dst.value.verificationError = src.value.verificationError;
+        AssignVector(dst.value.certificateChain, src.value.certificateChain);
+        AssignVector(dst.value.privateKey, src.value.privateKey);
+        dst.value.privateKeyPassword = src.value.privateKeyPassword;
+        return;
+    }
+    if (dst.engaged) {
+        dst.value.~CertificateInfo();
+        dst.engaged = false;
+        return;
+    }
+    if (src.engaged) {
+        new (&dst.value) CertificateInfo(src.value);
+        dst.engaged = true;
+    }
+}
+
+void ConstructCopy(ResourceResponseBase& dst, const ResourceResponseBase& src) {
+    ValidateVector(src.httpHeaderFields.common);
+    ValidateVector(src.httpHeaderFields.uncommon);
+    ConstructDefault(dst);
+    AssignURL(dst.url, src.url);
+    AssignSlot(dst.mimeType, src.mimeType);
+    dst.expectedContentLength = src.expectedContentLength;
+    AssignSlot(dst.textEncodingName, src.textEncodingName);
+    AssignSlot(dst.httpStatusText, src.httpStatusText);
+    AssignSlot(dst.httpVersion, src.httpVersion);
+    ConstructVector(dst.httpHeaderFields.common, src.httpHeaderFields.common);
+    ConstructVector(dst.httpHeaderFields.uncommon, src.httpHeaderFields.uncommon);
+    dst.networkLoadMetrics = src.networkLoadMetrics;
+    RetainMetricsBox(dst.networkLoadMetrics);
+    if (src.certificateInfo.engaged) {
+        dst.certificateInfo.value.~CertificateInfo();
+        new (&dst.certificateInfo.value) CertificateInfo(src.certificateInfo.value);
+        dst.certificateInfo.engaged = true;
+    }
+    dst.httpStatusCode = src.httpStatusCode;
+    dst.stateBits = src.stateBits;
+    dst.age = src.age;
+    dst.date = src.date;
+    dst.expires = src.expires;
+    dst.lastModified = src.lastModified;
+    dst.contentRange = src.contentRange;
+    dst.cacheControlDirectives = src.cacheControlDirectives;
+    dst.parsedBits = src.parsedBits;
+    dst.taintBits = src.taintBits;
+    dst.typeBits = src.typeBits;
+}
+
+ResourceResponseBase& CopyAssign(ResourceResponseBase& dst, const ResourceResponseBase& src) {
+    AssignURL(dst.url, src.url);
+    AssignSlot(dst.mimeType, src.mimeType);
+    dst.expectedContentLength = src.expectedContentLength;
+    AssignSlot(dst.textEncodingName, src.textEncodingName);
+    AssignSlot(dst.httpStatusText, src.httpStatusText);
+    AssignSlot(dst.httpVersion, src.httpVersion);
+    AssignVector(dst.httpHeaderFields.common, src.httpHeaderFields.common);
+    AssignVector(dst.httpHeaderFields.uncommon, src.httpHeaderFields.uncommon);
+    if (dst.networkLoadMetrics != src.networkLoadMetrics) {
+        ReleaseMetricsBox(dst.networkLoadMetrics);
+        RetainMetricsBox(src.networkLoadMetrics);
+        dst.networkLoadMetrics = src.networkLoadMetrics;
+    }
+    AssignCertificateInfo(dst.certificateInfo, src.certificateInfo);
+    dst.httpStatusCode = src.httpStatusCode;
+    dst.stateBits = src.stateBits;
+    dst.age = src.age;
+    dst.date = src.date;
+    dst.expires = src.expires;
+    dst.lastModified = src.lastModified;
+    dst.contentRange = src.contentRange;
+    dst.cacheControlDirectives = src.cacheControlDirectives;
+    dst.parsedBits = src.parsedBits;
+    dst.taintBits = src.taintBits;
+    dst.typeBits = src.typeBits;
+    return dst;
+}
+
+void Destroy(ResourceResponseBase& self) {
+    ReleaseMetricsBox(self.networkLoadMetrics);
+    NKWebKit::WtfAbi::Release(self.url.impl);
+    NKWebKit::WtfAbi::Release(self.mimeType.impl);
+    NKWebKit::WtfAbi::Release(self.textEncodingName.impl);
+    NKWebKit::WtfAbi::Release(self.httpStatusText.impl);
+    NKWebKit::WtfAbi::Release(self.httpVersion.impl);
+    DestroyVector(self.httpHeaderFields.common);
+    DestroyVector(self.httpHeaderFields.uncommon);
+    if (self.certificateInfo.engaged) self.certificateInfo.value.~CertificateInfo();
 }
 
 }
@@ -300,6 +529,74 @@ ResponseOptionalTime APS5_VABI _ZNK7WebCore20ResourceResponseBase3ageEv(const Re
             seconds = _ZN3WTF18charactersToDoubleEPKDsmPb(value.data(), value.size(), &ok);
         return ok ? OptionalTime(seconds) : ResponseOptionalTime{};
     });
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBase11setMimeTypeERKN3WTF6StringE(ResourceResponseBase* self, const String& mimeType) {
+    auto& response = Checked(self);
+    AssignSlot(response.mimeType, StringSlot{mimeType.impl});
+    response.stateBits &= ~stateNullBit;
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBase19setTextEncodingNameERKN3WTF6StringE(ResourceResponseBase* self, const String& textEncodingName) {
+    auto& response = Checked(self);
+    AssignSlot(response.textEncodingName, StringSlot{textEncodingName.impl});
+    response.stateBits &= ~stateNullBit;
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBase17setHTTPStatusTextERKN3WTF6StringE(ResourceResponseBase* self, const String& statusText) {
+    AssignSlot(Checked(self).httpStatusText, StringSlot{statusText.impl});
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBase14setHTTPVersionERKN3WTF6StringE(ResourceResponseBase* self, const String& httpVersion) {
+    AssignSlot(Checked(self).httpVersion, StringSlot{httpVersion.impl});
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBaseC1ERKN3WTF3URLERKNS1_6StringExS7_(ResourceResponseBase* self, const NKWebKit::WtfAbi::URL& url, const String& mimeType, long long expectedContentLength, const String& textEncodingName) {
+    ConstructFields(Checked(self), url, mimeType, expectedContentLength, textEncodingName);
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBaseC2ERKN3WTF3URLERKNS1_6StringExS7_(ResourceResponseBase* self, const NKWebKit::WtfAbi::URL& url, const String& mimeType, long long expectedContentLength, const String& textEncodingName) {
+    ConstructFields(Checked(self), url, mimeType, expectedContentLength, textEncodingName);
+}
+
+void APS5_VABI _ZN7WebCore16ResourceResponseC1Ev(ResourceResponse* self) {
+    ConstructDefault(Checked(self, "WebCore::ResourceResponse"));
+}
+
+void APS5_VABI _ZN7WebCore16ResourceResponseC2Ev(ResourceResponse* self) {
+    ConstructDefault(Checked(self, "WebCore::ResourceResponse"));
+}
+
+void APS5_VABI _ZN7WebCore16ResourceResponseC1ERKN3WTF3URLERKNS1_6StringExS7_(ResourceResponse* self, const NKWebKit::WtfAbi::URL& url, const String& mimeType, long long expectedContentLength, const String& textEncodingName) {
+    ConstructFields(Checked(self, "WebCore::ResourceResponse"), url, mimeType, expectedContentLength, textEncodingName);
+}
+
+void APS5_VABI _ZN7WebCore16ResourceResponseC2ERKN3WTF3URLERKNS1_6StringExS7_(ResourceResponse* self, const NKWebKit::WtfAbi::URL& url, const String& mimeType, long long expectedContentLength, const String& textEncodingName) {
+    ConstructFields(Checked(self, "WebCore::ResourceResponse"), url, mimeType, expectedContentLength, textEncodingName);
+}
+
+void APS5_VABI _ZN7WebCore16ResourceResponseC1ERKS0_(ResourceResponse* self, const ResourceResponse* other) {
+    ConstructCopy(Checked(self, "WebCore::ResourceResponse"), Checked(other, "WebCore::ResourceResponse source"));
+}
+
+void APS5_VABI _ZN7WebCore16ResourceResponseC2ERKS0_(ResourceResponse* self, const ResourceResponse* other) {
+    ConstructCopy(Checked(self, "WebCore::ResourceResponse"), Checked(other, "WebCore::ResourceResponse source"));
+}
+
+ResourceResponse& APS5_VABI _ZN7WebCore16ResourceResponseaSERKS0_(ResourceResponse* self, const ResourceResponse* other) {
+    return static_cast<ResourceResponse&>(CopyAssign(Checked(self, "WebCore::ResourceResponse"), Checked(other, "WebCore::ResourceResponse source")));
+}
+
+void APS5_VABI _ZN7WebCore16ResourceResponseD1Ev(ResourceResponse* self) {
+    Destroy(Checked(self, "WebCore::ResourceResponse"));
+}
+
+void APS5_VABI _ZN7WebCore16ResourceResponseD2Ev(ResourceResponse* self) {
+    Destroy(Checked(self, "WebCore::ResourceResponse"));
+}
+
+NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore16ResourceResponse25platformSuggestedFilenameEv(const ResourceResponse* self) {
+    return Filename(Header(self, HTTPHeaderName::ContentDisposition));
 }
 
 }

@@ -34,5 +34,21 @@ NKWebKit::WebCoreAbi::ResponseOptionalTime APS5_VABI _ZNK7WebCore20ResourceRespo
 NKWebKit::WebCoreAbi::ResponseOptionalTime APS5_VABI _ZNK7WebCore20ResourceResponseBase7expiresEv(const NKWebKit::WebCoreAbi::ResourceResponseBase* self);
 NKWebKit::WebCoreAbi::ResponseOptionalTime APS5_VABI _ZNK7WebCore20ResourceResponseBase12lastModifiedEv(const NKWebKit::WebCoreAbi::ResourceResponseBase* self);
 NKWebKit::WebCoreAbi::ResponseOptionalTime APS5_VABI _ZNK7WebCore20ResourceResponseBase3ageEv(const NKWebKit::WebCoreAbi::ResourceResponseBase* self);
+void APS5_VABI _ZN7WebCore20ResourceResponseBase11setMimeTypeERKN3WTF6StringE(NKWebKit::WebCoreAbi::ResourceResponseBase* self, const NKWebKit::WtfAbi::String& mimeType);
+void APS5_VABI _ZN7WebCore20ResourceResponseBase19setTextEncodingNameERKN3WTF6StringE(NKWebKit::WebCoreAbi::ResourceResponseBase* self, const NKWebKit::WtfAbi::String& textEncodingName);
+void APS5_VABI _ZN7WebCore20ResourceResponseBase17setHTTPStatusTextERKN3WTF6StringE(NKWebKit::WebCoreAbi::ResourceResponseBase* self, const NKWebKit::WtfAbi::String& statusText);
+void APS5_VABI _ZN7WebCore20ResourceResponseBase14setHTTPVersionERKN3WTF6StringE(NKWebKit::WebCoreAbi::ResourceResponseBase* self, const NKWebKit::WtfAbi::String& httpVersion);
+void APS5_VABI _ZN7WebCore20ResourceResponseBaseC1ERKN3WTF3URLERKNS1_6StringExS7_(NKWebKit::WebCoreAbi::ResourceResponseBase* self, const NKWebKit::WtfAbi::URL& url, const NKWebKit::WtfAbi::String& mimeType, long long expectedContentLength, const NKWebKit::WtfAbi::String& textEncodingName);
+void APS5_VABI _ZN7WebCore20ResourceResponseBaseC2ERKN3WTF3URLERKNS1_6StringExS7_(NKWebKit::WebCoreAbi::ResourceResponseBase* self, const NKWebKit::WtfAbi::URL& url, const NKWebKit::WtfAbi::String& mimeType, long long expectedContentLength, const NKWebKit::WtfAbi::String& textEncodingName);
+void APS5_VABI _ZN7WebCore16ResourceResponseC1Ev(NKWebKit::WebCoreAbi::ResourceResponse* self);
+void APS5_VABI _ZN7WebCore16ResourceResponseC2Ev(NKWebKit::WebCoreAbi::ResourceResponse* self);
+void APS5_VABI _ZN7WebCore16ResourceResponseC1ERKN3WTF3URLERKNS1_6StringExS7_(NKWebKit::WebCoreAbi::ResourceResponse* self, const NKWebKit::WtfAbi::URL& url, const NKWebKit::WtfAbi::String& mimeType, long long expectedContentLength, const NKWebKit::WtfAbi::String& textEncodingName);
+void APS5_VABI _ZN7WebCore16ResourceResponseC2ERKN3WTF3URLERKNS1_6StringExS7_(NKWebKit::WebCoreAbi::ResourceResponse* self, const NKWebKit::WtfAbi::URL& url, const NKWebKit::WtfAbi::String& mimeType, long long expectedContentLength, const NKWebKit::WtfAbi::String& textEncodingName);
+void APS5_VABI _ZN7WebCore16ResourceResponseC1ERKS0_(NKWebKit::WebCoreAbi::ResourceResponse* self, const NKWebKit::WebCoreAbi::ResourceResponse* other);
+void APS5_VABI _ZN7WebCore16ResourceResponseC2ERKS0_(NKWebKit::WebCoreAbi::ResourceResponse* self, const NKWebKit::WebCoreAbi::ResourceResponse* other);
+NKWebKit::WebCoreAbi::ResourceResponse& APS5_VABI _ZN7WebCore16ResourceResponseaSERKS0_(NKWebKit::WebCoreAbi::ResourceResponse* self, const NKWebKit::WebCoreAbi::ResourceResponse* other);
+void APS5_VABI _ZN7WebCore16ResourceResponseD1Ev(NKWebKit::WebCoreAbi::ResourceResponse* self);
+void APS5_VABI _ZN7WebCore16ResourceResponseD2Ev(NKWebKit::WebCoreAbi::ResourceResponse* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore16ResourceResponse25platformSuggestedFilenameEv(const NKWebKit::WebCoreAbi::ResourceResponse* self);
 
 }
