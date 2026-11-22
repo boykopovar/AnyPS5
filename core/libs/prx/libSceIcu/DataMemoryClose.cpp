@@ -54,8 +54,12 @@ void APS5_VABI udata_close_nid_postfix(UDataMemory* data) {
     if (local.heapAllocated) {
         uprv_free(data);
     } else {
-        std::memset(data, 0, sizeof(local));
-        data->length = -1;
+        UDataMemory cleared{};
+        cleared.length = -1;
+        const int savedCopyErrno = errno;
+        const bool written = GuestCopyOut_nid_no_patch(data, &cleared, sizeof(cleared));
+        errno = savedCopyErrno;
+        if (!written) throw std::invalid_argument(__func__);
     }
 }
 

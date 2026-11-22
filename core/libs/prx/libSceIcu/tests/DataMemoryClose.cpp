@@ -142,6 +142,35 @@ void Mapping() {
 }
 #endif
 
+void ReadOnlyWriteback() {
+#if defined(_WIN32)
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READONLY, 0, 4096, nullptr);
+    Require(mapping != nullptr);
+    void* view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 4096);
+    Require(view != nullptr);
+    IcuRecoveredTest::RequireThrows([&] { udata_close_nid_postfix(static_cast<UDataMemory*>(view)); });
+    auto* data = static_cast<UDataMemory*>(view);
+    Require(data->heapAllocated == 0);
+    Require(data->length == 0);
+    UnmapViewOfFile(view);
+    CloseHandle(mapping);
+#else
+    const auto pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+    auto* data = static_cast<UDataMemory*>(mapping);
+    std::memset(data, 0, sizeof(*data));
+    data->length = 42;
+    Require(mprotect(mapping, pageSize, PROT_READ) == 0);
+    IcuRecoveredTest::RequireThrows([&] { udata_close_nid_postfix(data); });
+    UDataMemory after{};
+    std::memcpy(&after, data, sizeof(after));
+    Require(after.length == 42);
+    Require(after.heapAllocated == 0);
+    Require(munmap(mapping, pageSize) == 0);
+#endif
+}
+
 void Heap() {
     UErrorCode status = U_ZERO_ERROR;
     UDataMemory* data = UDataMemory_createNewInstance(&status);
@@ -192,6 +221,7 @@ void Run() {
     Stack();
     Parity();
     Mapping();
+    ReadOnlyWriteback();
     Heap();
 }
 
