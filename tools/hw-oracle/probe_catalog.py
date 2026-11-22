@@ -498,6 +498,8 @@ def main(argv=None):
             list_probes(probes)
             return 0
         selected = select_probes(probes, args.probe_ids)
+        if not selected:
+            raise ValueError("catalog has no default probes; select at least one with --probe")
         if args.command == "generate":
             for path in generate(selected, digest, args.output_dir):
                 print(path)

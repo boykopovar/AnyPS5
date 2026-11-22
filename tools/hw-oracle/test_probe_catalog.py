@@ -621,6 +621,43 @@ class ProbeCatalogCliTests(unittest.TestCase):
     def setUp(self):
         require_probe_catalog(self)
 
+    def test_catalog_with_only_opt_in_probes_requires_a_selection(self):
+        catalog, _ = probe_catalog.read_catalog()
+        probe = {**catalog["probes"][0], "default": False}
+        catalog["probes"] = [probe]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "catalog.json"
+            path.write_text(json.dumps(catalog), encoding="utf-8")
+            output = root / "generated"
+            results = root / "results"
+            report_args = ["--results-dir", str(results), "--device-label", "local"]
+            cases = (["generate", "--output-dir", str(output)], ["run", *report_args],
+                     ["run-ps5-linux", *report_args], ["coverage", *report_args],
+                     ["coverage", *report_args, "--json"])
+            with patch.object(probe_catalog.hw_oracle, "runtime") as runtime, \
+                    patch.object(probe_catalog.hw_oracle, "target") as target:
+                for args in cases:
+                    with self.subTest(args=args):
+                        stderr = io.StringIO()
+                        with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                            probe_catalog.main([*args, "--catalog", str(path)])
+                        self.assertEqual(error.exception.code, 2)
+                        self.assertIn("select at least one with --probe", stderr.getvalue())
+                runtime.assert_not_called()
+                target.assert_not_called()
+            self.assertFalse(output.exists())
+            self.assertFalse(results.exists())
+            with contextlib.redirect_stdout(io.StringIO()) as listing:
+                self.assertEqual(probe_catalog.main(["list", "--catalog", str(path)]), 0)
+            self.assertIn(probe["id"], listing.getvalue())
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(probe_catalog.main([
+                    "generate", "--catalog", str(path), "--output-dir", str(output),
+                    "--probe", probe["id"],
+                ]), 0)
+            self.assertTrue((output / probe["id"] / "body.s").is_file())
+
     def test_list_and_generate_commands_run_without_a_gpu(self):
         listing = io.StringIO()
         with contextlib.redirect_stdout(listing):
