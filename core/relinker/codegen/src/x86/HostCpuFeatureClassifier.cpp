@@ -1,5 +1,7 @@
 #include <codegen/x86/HostCpuFeatureClassifier.hpp>
 #include <codegen/x86/VexEncoding.hpp>
+#include <codegen/x86/X64InstructionDecoder.hpp>
+#include <codegen/CodegenException.hpp>
 #include <HostCpuFeatures.hpp>
 
 namespace Codegen {
@@ -13,7 +15,7 @@ bool isLegacyPrefix(const std::uint8_t byte) {
            byte == 0x26 || byte == 0x64 || byte == 0x65 || byte == 0x66 || byte == 0x67;
 }
 
-bool isAvx1Vector256(const std::uint8_t map, const std::uint8_t prefix, const std::uint8_t opcode) {
+bool isAvx1Vector256(const std::uint8_t map, const std::uint8_t prefix, const std::uint8_t opcode, const bool registerForm) {
     if (map == Map0F) {
         if (prefix == 0) {
             if (opcode >= 0x10 && opcode <= 0x17) return true;
@@ -48,7 +50,9 @@ bool isAvx1Vector256(const std::uint8_t map, const std::uint8_t prefix, const st
     if (map == Map0F38 && prefix == Prefix66) {
         switch (opcode) {
         case 0x0C: case 0x0D: case 0x0E: case 0x0F: case 0x17:
-        case 0x18: case 0x19: case 0x1A:
+        case 0x18: case 0x19:
+            return !registerForm;
+        case 0x1A:
         case 0x2C: case 0x2D: case 0x2E: case 0x2F:
         case 0x41:
         case 0xDC: case 0xDD: case 0xDE: case 0xDF:
@@ -75,9 +79,10 @@ bool isAvx1Vector256(const std::uint8_t map, const std::uint8_t prefix, const st
     return false;
 }
 
-bool isAvx2Vector128(const std::uint8_t map, const std::uint8_t prefix, const std::uint8_t opcode) {
+bool isAvx2Vector128(const std::uint8_t map, const std::uint8_t prefix, const std::uint8_t opcode, const bool registerForm) {
     if (prefix != Prefix66) return false;
     if (map == Map0F38) {
+        if (registerForm && (opcode == 0x18 || opcode == 0x19)) return true;
         switch (opcode) {
         case 0x45: case 0x46: case 0x47:
         case 0x58: case 0x59:
@@ -119,11 +124,11 @@ std::uint64_t classifyVex(const Instruction& instruction) {
         return HostCpuFeatureBits::Bmi2;
 
     if (instruction.Vector256) {
-        if (!isAvx1Vector256(instruction.Map, instruction.Prefix, instruction.Opcode))
+        if (!isAvx1Vector256(instruction.Map, instruction.Prefix, instruction.Opcode, !instruction.Memory.has_value()))
             return HostCpuFeatureBits::Avx2;
         return 0;
     }
-    if (isAvx2Vector128(instruction.Map, instruction.Prefix, instruction.Opcode))
+    if (isAvx2Vector128(instruction.Map, instruction.Prefix, instruction.Opcode, !instruction.Memory.has_value()))
         return HostCpuFeatureBits::Avx2;
     return 0;
 }
@@ -136,6 +141,13 @@ std::uint64_t RequiredHostCpuFeatures(const std::uint8_t* data, const std::size_
     if (const auto instruction = Decode(data, length)) {
         if (instruction->End > length) return 0;
         return classifyVex(*instruction);
+    }
+
+    const X64InstructionDecoder decoder;
+    try {
+        if (decoder.Decode(data, length) != length) return 0;
+    } catch (const CodegenException&) {
+        return 0;
     }
 
     std::size_t position = 0;
