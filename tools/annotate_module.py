@@ -40,6 +40,7 @@ STT_GNU_IFUNC = 10
 SHN_COMMON = 0xFFF2
 GHIDRA_MAX_NAME_LENGTH = 2000
 DT_GNU_HASH = 0x6ffffef5
+DT_TLSDESC_PLT = 0x6ffffef6
 DT_FLAGS_1 = 0x6ffffffb
 DF_1_PIE = 0x8000000
 R_X86_64_64 = 1
@@ -52,6 +53,7 @@ R_X86_64_COPY = 5
 R_X86_64_IRELATIVE = 37
 DYNAMIC_VALUE_TAGS = {
     12: "DT_INIT", 13: "DT_FINI",
+    DT_TLSDESC_PLT: "DT_TLSDESC_PLT",
     25: "DT_INIT_ARRAY", 27: "DT_INIT_ARRAYSZ", 26: "DT_FINI_ARRAY", 28: "DT_FINI_ARRAYSZ",
     32: "DT_PREINIT_ARRAY", 33: "DT_PREINIT_ARRAYSZ",
     DT_HASH: "DT_HASH", DT_STRTAB: "DT_STRTAB", DT_SYMTAB: "DT_SYMTAB",
@@ -338,7 +340,7 @@ def ghidra_symbols(module, namer):
                                                      offset + address - start < len(module.data)
                                                      for start, offset, size, flags in module.loads):
             rows.add((address, True, name, name))
-    for tag, name in ((12, "elf_init"), (13, "elf_fini")):
+    for tag, name in ((12, "elf_init"), (13, "elf_fini"), (DT_TLSDESC_PLT, "elf_tlsdesc_plt")):
         address = module.tags.get(tag)
         if address is None or address in exported_functions:
             continue
@@ -385,6 +387,7 @@ def ghidra_symbols(module, namer):
 
 
 OBJDUMP_NAMES = ("objdump", "gobjdump", "x86_64-linux-gnu-objdump", "x86_64-elf-objdump")
+OBJDUMP_REQUIRED = "GNU binutils objdump with x86-64 support is required (tried %s)" % ", ".join(OBJDUMP_NAMES)
 
 
 @functools.cache
@@ -393,23 +396,32 @@ def gnu_objdump():
         path = shutil.which(name)
         if path is None:
             continue
-        result = subprocess.run([path, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if result.returncode == 0 and result.stdout.startswith("GNU objdump"):
-            return path
+        try:
+            result = subprocess.run([path, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if result.returncode != 0 or not result.stdout.startswith("GNU objdump"):
+                continue
+            if run_objdump(path, b"\xc3", 0).returncode == 0:
+                return path
+        except OSError:
+            continue
     return None
 
 
-def disassemble(code, vaddr):
-    objdump = gnu_objdump()
-    if objdump is None:
-        raise ModuleError("GNU binutils objdump was not found as any of %s" % ", ".join(OBJDUMP_NAMES))
+def run_objdump(objdump, code, vaddr):
     objdump = str(Path(objdump).absolute())
     with tempfile.TemporaryDirectory() as directory:
         blob = Path(directory) / "text.bin"
         blob.write_bytes(code)
         command = [objdump, "-D", "--disassemble-zeroes", "-b", "binary", "-m", "i386:x86-64", "--no-show-raw-insn",
                    "--adjust-vma=%d" % vaddr, blob.name]
-        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=directory)
+        return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=directory)
+
+
+def disassemble(code, vaddr):
+    objdump = gnu_objdump()
+    if objdump is None:
+        raise ModuleError(OBJDUMP_REQUIRED)
+    result = run_objdump(objdump, code, vaddr)
     if result.returncode != 0:
         raise ModuleError("objdump failed: %s" % result.stderr.strip())
     return result.stdout.splitlines()
@@ -448,18 +460,18 @@ def find_stubs(listing, slots, namer):
     return stubs
 
 
-def line_note(line, slots, stubs, namer):
+def line_note(line, slots, branch_targets, namer):
     note = ""
     branch = BRANCH.search(line)
-    if branch and int(branch.group(1), 16) in stubs:
-        note = "   ; -> " + stubs[int(branch.group(1), 16)]
+    if branch and int(branch.group(1), 16) in branch_targets:
+        note = "   ; -> " + branch_targets[int(branch.group(1), 16)]
     reference = referenced_address(line)
     if reference in slots:
         note = "   ; GOT " + namer.resolve(slots[reference])
     return note
 
 
-def annotate_listing(listing, slots, exports, stubs, namer, entry=None):
+def annotate_listing(listing, slots, exports, branch_targets, namer, entry=None):
     out = []
     for line in listing:
         head = LINE_ADDRESS.match(line)
@@ -468,7 +480,7 @@ def annotate_listing(listing, slots, exports, stubs, namer, entry=None):
         if head and int(head.group(1), 16) in exports:
             out.append("")
             out.extend("; ===== export " + namer.resolve(name) for name in exports[int(head.group(1), 16)])
-        out.append(line + line_note(line, slots, stubs, namer))
+        out.append(line + line_note(line, slots, branch_targets, namer))
     return out
 
 
@@ -526,7 +538,8 @@ def annotate(module_path, prefix, namer):
     exports, thread_local = module.exports()
     listing = []
     entry = module.entry_point()
-    for vaddr, code in module.code_segments():
+    segments = module.code_segments()
+    for vaddr, code in segments:
         listing.append("; ===== segment %#x" % vaddr)
         if entry is not None and vaddr < entry < vaddr + len(code):
             split = entry - vaddr
@@ -535,9 +548,15 @@ def annotate(module_path, prefix, namer):
             vaddr = entry
         listing.extend(disassemble(code, vaddr))
     stubs = find_stubs(listing, slots, namer)
+    functions = {}
+    for symbol, section, address, kind in module.exported_symbols():
+        if kind == STT_FUNC and section != SHN_COMMON and any(start <= address < start + len(code) for start, code in segments):
+            functions.setdefault(address, set()).add(namer.resolve(symbol))
+    branch_targets = {address: ", ".join(sorted(names)) for address, names in functions.items()}
+    branch_targets.update(stubs)
     write_lines(prefix + ".imports.txt", ["%#x %s %s" % (slot, slots[slot], namer.resolve(slots[slot])) for slot in sorted(slots)])
     write_lines(prefix + ".exports.txt", export_lines(exports, thread_local, namer))
-    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, stubs, namer, entry))
+    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, branch_targets, namer, entry))
     export_count = sum(len(names) for names in exports.values())
     tls_count = sum(len(names) for names in thread_local.values())
     return "%s: %d imports, %d exports, %d tls, %d stubs, %d lines" % (prefix, len(slots), export_count, tls_count, len(stubs), len(listing))
@@ -547,8 +566,8 @@ def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         description="Annotated disassembly of a relinked guest module (no section headers). Writes PREFIX.imports.txt, "
                     "PREFIX.exports.txt and PREFIX.asm, with imports, PLT stubs, GOT references and exports named "
-                    "through the NID database. Disassembly requires GNU binutils objdump (objdump, or gobjdump from "
-                    "Homebrew binutils); offline symbol exports need no objdump.")
+                    "through the NID database. Disassembly requires GNU binutils objdump with x86-64 support. "
+                    "Offline symbol exports need no objdump.")
     parser.add_argument("module", help="relinked guest module, for example libc.prx.guest.prx")
     parser.add_argument("--out", help="output prefix (default: the module path)")
     parser.add_argument("--db", help="NID database CSV (symbol exports read local files only; disassembly downloads to a cache dir by default)")
@@ -570,7 +589,7 @@ def main(argv=None):
     args = parse_arguments(sys.argv[1:] if argv is None else argv)
     symbols_only = args.symbols_json or args.symbols_ghidra
     if not symbols_only and gnu_objdump() is None:
-        sys.exit("GNU binutils objdump is required but none of %s in PATH is GNU objdump" % ", ".join(OBJDUMP_NAMES))
+        sys.exit(OBJDUMP_REQUIRED)
     try:
         db_path = Path(args.db) if args.db else nid_names.DEFAULT_CACHE
         if args.no_names:
