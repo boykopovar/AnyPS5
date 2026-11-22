@@ -30,7 +30,7 @@ bool Contains(const std::string& text, const std::string& part) {
 }
 
 bool IsLibraryLoaded(const std::string& path) {
-    void* const handle = dlopen(path.c_str(), RTLD_NOLOAD);
+    void* const handle = dlopen(path.c_str(), RTLD_LAZY | RTLD_NOLOAD);
     if (handle == nullptr) return false;
     dlclose(handle);
     return true;
