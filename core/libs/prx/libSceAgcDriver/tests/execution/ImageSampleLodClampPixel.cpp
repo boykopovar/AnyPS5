@@ -24,11 +24,14 @@ constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 16;
 constexpr std::uint32_t Size = 16;
 constexpr std::uint32_t Levels = 5;
+constexpr std::uint32_t TiledSize = 256;
+constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::uint32_t MaxLod = 0xfffu;
 constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Type2D = 9;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 alignas(256) std::array<std::uint8_t, 16384> Texels{};
+alignas(65536) std::array<std::uint8_t, 0x60000> TiledTexels{};
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -46,9 +49,12 @@ struct Case {
     std::uint32_t baseLevel;
     float gradientLod;
     float clamp;
+    std::uint32_t lastLevel = Levels - 1u;
+    std::uint32_t maxMip = Levels - 1u;
+    bool tiled = false;
 };
 
-constexpr std::array<Case, 9> Cases{{
+constexpr std::array<Case, 14> Cases{{
     {0x200u, 0u, 2.75f, 1.0f},
     {0x200u, 0u, 3.75f, 0.0f},
     {0x200u, 0u, 0.75f, 0.0f},
@@ -58,6 +64,11 @@ constexpr std::array<Case, 9> Cases{{
     {0x100u, 0u, 0.75f, 0.0f},
     {0u, 0u, 0.75f, 2.0f},
     {0u, 0u, 3.75f, 1.0f},
+    {0x400u, 3u, 0.25f, 0.0f, 4u, 2u, true},
+    {0x300u, 3u, 0.25f, 0.0f, 4u, 2u, true},
+    {0x400u, 0u, 0.25f, 0.0f, 4u, 2u},
+    {0x500u, 1u, 0.25f, 0.0f, 4u, 3u},
+    {0x400u, 0u, 0.25f, 0.0f, 2u, 4u},
 }};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
@@ -65,25 +76,42 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
+std::uint32_t SideOf(const Case& item) {
+    return item.tiled ? TiledSize : Size;
+}
+
 std::array<std::uint32_t, 8> TextureDescriptor(const Case& item) {
-    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Texels.data()));
+    const auto side = SideOf(item);
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(item.tiled ? TiledTexels.data() : Texels.data()));
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (item.minLod << 8u) | (Format8888UNorm << 20u) | (((Size - 1u) & 3u) << 30u),
-        ((Size - 1u) >> 2u) | ((Size - 1u) << 14u),
-        0xfacu | (item.baseLevel << 12u) | ((Levels - 1u) << 16u) | (Type2D << 28u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (item.minLod << 8u) | (Format8888UNorm << 20u) | (((side - 1u) & 3u) << 30u),
+        ((side - 1u) >> 2u) | ((side - 1u) << 14u),
+        0xfacu | (item.baseLevel << 12u) | (item.lastLevel << 16u) | ((item.tiled ? TileR64KBX : 0u) << 20u) | (Type2D << 28u),
         0u,
-        (Levels - 1u) << 4u,
+        item.maxMip << 4u,
         0u,
         0u,
     };
 }
 
-void FillTexture() {
-    const auto mips = AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, Format8888UNorm, Size, Size, Levels);
+constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 3> TailSlots{{{2u, 0x8400u}, {3u, 0x4800u}, {4u, 0x800u}}};
+
+std::uint32_t AllocatedLevels(const Case& item) {
+    return item.baseLevel <= item.maxMip ? item.maxMip + 1u : item.lastLevel + 1u;
+}
+
+void FillTexture(const Case& item) {
+    TiledTexels.fill(0xeeu);
+    for (const auto& [level, offset] : TailSlots) {
+        TiledTexels[offset] = static_cast<std::uint8_t>(level);
+        TiledTexels[offset + 3u] = 255u;
+    }
+    const auto levels = AllocatedLevels(item);
+    const auto mips = AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, Format8888UNorm, Size, Size, levels);
     Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= Texels.size(), "image sample LOD clamp in a pixel shader: the mip chain does not fit the texel storage");
     Texels.fill(0xeeu);
-    for (std::uint32_t level = 0; level < Levels; ++level) {
+    for (std::uint32_t level = 0; level < levels; ++level) {
         const auto& mip = mips[level];
         for (std::uint32_t y = 0; y < mip.height; ++y) {
             for (std::uint32_t x = 0; x < mip.width; ++x) {
@@ -98,13 +126,15 @@ void FillTexture() {
 }
 
 std::uint32_t ExpectedLevel(const Case& item) {
-    const auto last = Levels - 1u - item.baseLevel;
+    const auto viewLast = item.baseLevel <= item.maxMip ? std::min(item.lastLevel, item.maxMip) : item.lastLevel;
+    const auto last = std::max(viewLast, item.baseLevel) - item.baseLevel;
     const auto view = item.minLod > item.baseLevel * 256u ? static_cast<float>(std::min(item.minLod - item.baseLevel * 256u, last * 256u)) / 256.0f : 0.0f;
     const auto lod = std::min(std::max({item.gradientLod, item.clamp, view, 0.0f}), static_cast<float>(MaxLod) / 256.0f);
     return std::min(static_cast<std::uint32_t>(std::ceil(lod + 0.5f)) - 1u, last) + item.baseLevel;
 }
 
 std::uint64_t Draw(AgcDriver::VulkanDevice& device, const Case& item) {
+    FillTexture(item);
     const auto& target = device.Target();
     Pixels.fill(std::byte{0});
 
@@ -131,9 +161,9 @@ std::uint64_t Draw(AgcDriver::VulkanDevice& device, const Case& item) {
     const std::array<std::uint32_t, 4> sampler{0u, MaxLod << 12u, 1u << 26u, 0u};
     std::copy(texture.begin(), texture.end(), pixelUserData.begin() + 4);
     std::copy(sampler.begin(), sampler.end(), pixelUserData.begin() + 12);
-    pixelUserData[16] = std::bit_cast<std::uint32_t>(std::exp2(item.gradientLod) / static_cast<float>(Size >> item.baseLevel));
-    pixelUserData[20] = std::bit_cast<std::uint32_t>(0.5f / static_cast<float>(Size));
-    pixelUserData[21] = std::bit_cast<std::uint32_t>(0.5f / static_cast<float>(Size));
+    pixelUserData[16] = std::bit_cast<std::uint32_t>(std::exp2(item.gradientLod) / static_cast<float>(SideOf(item) >> item.baseLevel));
+    pixelUserData[20] = std::bit_cast<std::uint32_t>(0.5f / static_cast<float>(SideOf(item)));
+    pixelUserData[21] = std::bit_cast<std::uint32_t>(0.5f / static_cast<float>(SideOf(item)));
     pixelUserData[22] = std::bit_cast<std::uint32_t>(item.clamp);
     const std::span<const std::uint32_t> pixelCode(PixelCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}}};
@@ -172,7 +202,7 @@ std::uint64_t Draw(AgcDriver::VulkanDevice& device, const Case& item) {
 }
 
 std::string Describe(const Case& item) {
-    return "image_sample_d_cl at a gradient LOD of " + std::to_string(item.gradientLod) + " and a clamp of " + std::to_string(item.clamp) + " from T# MIN_LOD " + std::to_string(item.minLod) + " over BASE_LEVEL " + std::to_string(item.baseLevel);
+    return "image_sample_d_cl at a gradient LOD of " + std::to_string(item.gradientLod) + " and a clamp of " + std::to_string(item.clamp) + " from T# MIN_LOD " + std::to_string(item.minLod) + " over BASE_LEVEL " + std::to_string(item.baseLevel) + ", LAST_LEVEL " + std::to_string(item.lastLevel) + " and MAX_MIP " + std::to_string(item.maxMip) + (item.tiled ? " on a tiled surface" : "");
 }
 
 void Check(const Case& item) {
@@ -200,7 +230,6 @@ int main(int argc, char** argv) {
             std::puts("skipped, the device does not apply T# minimum LODs in the shader under APS5_NO_IMAGE_VIEW_MIN_LOD");
             return VulkanTestSkipped;
         }
-        FillTexture();
         const auto first = Draw(*device, Cases.front());
         Check(Cases.front());
         for (const auto& item : Cases) {
