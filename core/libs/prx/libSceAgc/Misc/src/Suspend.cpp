@@ -1,10 +1,10 @@
 #include "prx/libSceAgc/Misc/include/Suspend.hpp"
+#include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
-#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
@@ -14,7 +14,7 @@ int APS5_VABI sceAgcSuspendPoint(void) {
 }
 
 int APS5_VABI sceAgcSetSubmitMode(std::uint32_t mode) {
-    if (mode != 0) NotImplemented_nid_no_patch(__func__);
+    Agc::Command::Require(mode == 0, __func__, "invalid submit mode");
     return 0;
 }
 
