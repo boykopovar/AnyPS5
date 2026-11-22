@@ -269,7 +269,12 @@ int APS5_VABI sceHttp2GetResponseContentLength(int req_id, int* result, uint64_t
 
 int APS5_VABI sceHttp2GetStatusCode(int req_id, int* status_code) {
     const auto request = Transport(req_id, false);
-    return request ? request->Status(status_code) : ERROR_INVALID_ID;
+    if (!request) return ERROR_INVALID_ID;
+    if (!status_code) return request->Status(status_code);
+    int status = 0;
+    const int result = request->Status(&status);
+    if (result != 0) return result;
+    return Http2Guest::Store(status_code, status) ? 0 : ERROR_NULL_POINTER;
 }
 
 int APS5_VABI sceHttp2Init(int libnet_mem_id, int libssl_ctx_id, size_t pool_size, int max_concurrent_request) {
