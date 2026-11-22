@@ -50,9 +50,9 @@ int main() {
         WKRelease(relatedArray);
     }
 
-    page->relatedPages.push_back(page);
-    page->relatedPages.push_back(otherPage);
-    page->relatedPages.push_back(closedRelatedPage);
+    page->relatedPages.push_back(NKWebKit::Retained<NKWebKit::Object>::Share(page.Get()));
+    page->relatedPages.push_back(NKWebKit::Retained<NKWebKit::Object>::Share(otherPage.Get()));
+    page->relatedPages.push_back(NKWebKit::Retained<NKWebKit::Object>::Share(closedRelatedPage.Get()));
 
     {
         const void* relatedArray = WKPageCopyRelatedPages(pageRef);
