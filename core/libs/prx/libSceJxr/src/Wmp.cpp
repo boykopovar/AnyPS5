@@ -2,6 +2,7 @@
 #include "prx/libSceJxr/src/EncoderMetadata.hpp"
 #include "prx/libSceJxr/src/WmpBridge.h"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -23,6 +24,33 @@ void Forget(const void* record) {
 
 void Require(bool value, const char* function, const char* what) {
     if (!value) throw std::invalid_argument(std::string(function) + " requires " + what);
+}
+
+template <typename TValue>
+TValue ReadGuestOutputSlot(const TValue* pointer, const char* function) {
+    TValue value{};
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&value, pointer, sizeof(value));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+template <typename TValue>
+void RequireWritableGuestSlot(TValue* pointer, const char* function) {
+    static_cast<void>(ReadGuestOutputSlot(pointer, function));
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(pointer, sizeof(TValue));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+template <typename TValue>
+bool WriteGuestOutputSlot(TValue* pointer, const TValue& value) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(pointer, &value, sizeof(value));
+    errno = savedErrno;
+    return ok;
 }
 
 std::int64_t Checked(std::int64_t result, std::int32_t refusal, const char* function) {
@@ -116,11 +144,19 @@ std::int64_t APS5_VABI EncodeCreateNewFrame(Jxr::ImageEncode* encoder, void* par
 }
 
 std::int64_t APS5_VABI EncodeRelease(Jxr::ImageEncode** encoder) {
-    Require(encoder != nullptr && *encoder != nullptr, "PKImageEncode_Release_WMP", "an encoder");
-    const void* record = *encoder;
+    Require(encoder != nullptr, "PKImageEncode_Release_WMP", "an encoder");
+    auto* current = ReadGuestOutputSlot(encoder, "PKImageEncode_Release_WMP");
+    RequireWritableGuestSlot(encoder, "PKImageEncode_Release_WMP");
+    Require(current != nullptr, "PKImageEncode_Release_WMP", "an encoder");
+    void* local = current;
+    const void* record = local;
     std::int32_t refusal = JXR_WMP_ACCEPTED;
-    const auto result = JxrWmpEncodeRelease_nid_no_patch(reinterpret_cast<void**>(encoder), &refusal);
-    if (refusal == JXR_WMP_ACCEPTED) Forget(record);
+    const auto result = JxrWmpEncodeRelease_nid_no_patch(&local, &refusal);
+    if (refusal == JXR_WMP_ACCEPTED) {
+        Forget(record);
+        auto* updated = static_cast<Jxr::ImageEncode*>(local);
+        if (!WriteGuestOutputSlot(encoder, updated)) NotImplementedAt_nid_no_patch("PKImageEncode_Release_WMP", __FILE__, __LINE__);
+    }
     return Checked(result, refusal, "PKImageEncode_Release_WMP");
 }
 
@@ -132,14 +168,26 @@ std::int64_t APS5_VABI DecodeInitialize(void* decoder, void* stream) {
 std::int64_t APS5_VABI DecodeGetSize(void* decoder, std::int32_t* width, std::int32_t* height) {
     Require(decoder != nullptr && width != nullptr && height != nullptr, "PKImageDecode_GetSize_WMP",
             "a decoder and outputs");
-    return JxrWmpDecodeGetSize_nid_no_patch(decoder, width, height);
+    RequireWritableGuestSlot(width, "PKImageDecode_GetSize_WMP");
+    RequireWritableGuestSlot(height, "PKImageDecode_GetSize_WMP");
+    std::int32_t localWidth = 0;
+    std::int32_t localHeight = 0;
+    const auto result = JxrWmpDecodeGetSize_nid_no_patch(decoder, &localWidth, &localHeight);
+    if (!WriteGuestOutputSlot(width, localWidth) || !WriteGuestOutputSlot(height, localHeight))
+        NotImplementedAt_nid_no_patch("PKImageDecode_GetSize_WMP", __FILE__, __LINE__);
+    return result;
 }
 
 std::int64_t APS5_VABI DecodeGetRawStream(void* decoder, void** stream) {
     Require(decoder != nullptr && stream != nullptr, "PKImageDecode_GetRawStream_WMP", "a decoder and an output");
+    RequireWritableGuestSlot(stream, "PKImageDecode_GetRawStream_WMP");
+    void* localStream = nullptr;
     std::int32_t refusal = JXR_WMP_ACCEPTED;
-    const auto result = JxrWmpDecodeGetRawStream_nid_no_patch(decoder, stream, &refusal);
-    return Checked(result, refusal, "PKImageDecode_GetRawStream_WMP");
+    const auto result = JxrWmpDecodeGetRawStream_nid_no_patch(decoder, &localStream, &refusal);
+    const auto checked = Checked(result, refusal, "PKImageDecode_GetRawStream_WMP");
+    if (!WriteGuestOutputSlot(stream, localStream))
+        NotImplementedAt_nid_no_patch("PKImageDecode_GetRawStream_WMP", __FILE__, __LINE__);
+    return checked;
 }
 
 std::int64_t APS5_VABI DecodeCopy(void* decoder, const void* rectangle, std::uint8_t* pixels, std::uint32_t stride) {
@@ -151,9 +199,20 @@ std::int64_t APS5_VABI DecodeCopy(void* decoder, const void* rectangle, std::uin
 
 std::int64_t APS5_VABI DecodeGetColorContext(void* decoder, std::uint8_t* buffer, std::uint32_t* size) {
     Require(decoder != nullptr && size != nullptr, "PKImageDecode_GetColorContext_WMP", "a decoder and a size");
+    auto localSize = ReadGuestOutputSlot(size, "PKImageDecode_GetColorContext_WMP");
+    RequireWritableGuestSlot(size, "PKImageDecode_GetColorContext_WMP");
+    if (buffer != nullptr && localSize > 0) {
+        const int savedErrno = errno;
+        const bool writable = GuestWritable_nid_no_patch(buffer, localSize);
+        errno = savedErrno;
+        if (!writable) NotImplementedAt_nid_no_patch("PKImageDecode_GetColorContext_WMP", __FILE__, __LINE__);
+    }
     std::int32_t refusal = JXR_WMP_ACCEPTED;
-    const auto result = JxrWmpDecodeGetColorContext_nid_no_patch(decoder, buffer, size, &refusal);
-    return Checked(result, refusal, "PKImageDecode_GetColorContext_WMP");
+    const auto result = JxrWmpDecodeGetColorContext_nid_no_patch(decoder, buffer, &localSize, &refusal);
+    const auto checked = Checked(result, refusal, "PKImageDecode_GetColorContext_WMP");
+    if (!WriteGuestOutputSlot(size, localSize))
+        NotImplementedAt_nid_no_patch("PKImageDecode_GetColorContext_WMP", __FILE__, __LINE__);
+    return checked;
 }
 
 std::int64_t APS5_VABI DecodeGetDescriptiveMetadata(void* decoder, void* metadata) {
@@ -164,11 +223,16 @@ std::int64_t APS5_VABI DecodeGetDescriptiveMetadata(void* decoder, void* metadat
 
 std::int64_t APS5_VABI DecodeRelease(void** decoder) {
     if (decoder == nullptr) return 0;
-    Require(*decoder != nullptr, "PKImageDecode_Release_WMP", "a decoder");
-    const void* record = *decoder;
+    void* local = ReadGuestOutputSlot(decoder, "PKImageDecode_Release_WMP");
+    RequireWritableGuestSlot(decoder, "PKImageDecode_Release_WMP");
+    Require(local != nullptr, "PKImageDecode_Release_WMP", "a decoder");
+    const void* record = local;
     std::int32_t refusal = JXR_WMP_ACCEPTED;
-    const auto result = JxrWmpDecodeRelease_nid_no_patch(decoder, &refusal);
-    if (refusal == JXR_WMP_ACCEPTED) Forget(record);
+    const auto result = JxrWmpDecodeRelease_nid_no_patch(&local, &refusal);
+    if (refusal == JXR_WMP_ACCEPTED) {
+        Forget(record);
+        if (!WriteGuestOutputSlot(decoder, local)) NotImplementedAt_nid_no_patch("PKImageDecode_Release_WMP", __FILE__, __LINE__);
+    }
     return Checked(result, refusal, "PKImageDecode_Release_WMP");
 }
 
@@ -189,9 +253,14 @@ void JxrWmpMissingCallback_nid_no_patch(const char* name) {
 }
 
 std::int64_t APS5_VABI PKImageEncode_Create_WMP_nid_postfix(Jxr::ImageEncode** encoder) {
-    const auto result = PKImageEncode_Create_nid_postfix(encoder);
-    if (result < 0) return result;
-    auto* created = *encoder;
+    if (!encoder) throw std::invalid_argument("PKImageEncode_Create requires an output");
+    RequireWritableGuestSlot(encoder, __func__);
+    Jxr::ImageEncode* created = nullptr;
+    const auto result = PKImageEncode_Create_nid_postfix(&created);
+    if (result < 0) {
+        if (!WriteGuestOutputSlot(encoder, created)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        return result;
+    }
     Forget(created);
     created->initialize = &EncodeInitialize;
     created->terminate = &EncodeTerminate;
@@ -205,6 +274,11 @@ std::int64_t APS5_VABI PKImageEncode_Create_WMP_nid_postfix(Jxr::ImageEncode** e
     created->createNewFrame = &EncodeCreateNewFrame;
     created->release = &EncodeRelease;
     created->wmp = 1;
+    if (!WriteGuestOutputSlot(encoder, created)) {
+        void* released = created;
+        PKFree_nid_postfix(&released);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     return result;
 }
 
@@ -217,10 +291,20 @@ std::int64_t APS5_VABI PKImageDecode_Create_WMP_nid_postfix(void** decoder) {
         DecodeGetColorContext,
         DecodeGetDescriptiveMetadata,
         DecodeRelease};
-    const auto result = PKImageDecode_Create_nid_postfix(decoder);
-    if (result < 0) return result;
-    Forget(*decoder);
-    JxrWmpDecodeInstall_nid_no_patch(*decoder, &slots);
+    if (!decoder) throw std::invalid_argument("PKImageDecode_Create requires an output");
+    RequireWritableGuestSlot(decoder, __func__);
+    void* created = nullptr;
+    const auto result = PKImageDecode_Create_nid_postfix(&created);
+    if (result < 0) {
+        if (!WriteGuestOutputSlot(decoder, created)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        return result;
+    }
+    Forget(created);
+    JxrWmpDecodeInstall_nid_no_patch(created, &slots);
+    if (!WriteGuestOutputSlot(decoder, created)) {
+        PKFree_nid_postfix(&created);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     return result;
 }
 
