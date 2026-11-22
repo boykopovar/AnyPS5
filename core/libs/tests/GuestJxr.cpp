@@ -5,6 +5,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -1270,6 +1271,14 @@ int main() {
     try { PKAlloc_nid_postfix(nullptr, 1); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+    threw = false;
+    errno = 74;
+    const auto callsBeforeUnmapped = callocCalls;
+    const auto freesBeforeUnmapped = frees;
+    try { PKAlloc_nid_postfix(reinterpret_cast<void**>(0x10), 16); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && errno == 74);
+    Require(callocCalls == callsBeforeUnmapped + 1 && frees == freesBeforeUnmapped + 1 && lastFreed == lastAllocated);
     {
     JxrGuestFormatConverter converter{};
     std::memset(&converter, 0x5a, sizeof(converter));

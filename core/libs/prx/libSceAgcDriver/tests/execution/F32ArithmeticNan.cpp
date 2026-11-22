@@ -185,8 +185,8 @@ bool IsNan16(std::uint32_t value) {
     return (value & 0x7fffu) > 0x7c00u;
 }
 
-void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode, std::span<const std::uint32_t> code = Code) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode, std::span<const std::uint32_t> code = Code, std::optional<std::uint32_t> uniformRow = std::nullopt) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(uniformRow.value_or(tid), &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
@@ -209,12 +209,12 @@ void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::
     device.WaitIdle();
 }
 
-void Check(const std::uint32_t (&expected)[32][16], const char* mode) {
+void Check(const std::uint32_t (&expected)[32][16], const char* mode, std::optional<std::uint32_t> uniformRow = std::nullopt) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t i = 0; i < 16; ++i) {
             const std::string name = std::string(mode) + " " + Names[i];
-            Expect(tid, out[i], expected[tid][i], name.c_str());
+            Expect(tid, out[i], expected[uniformRow.value_or(tid)][i], name.c_str());
         }
     }
 }
@@ -234,6 +234,12 @@ int main() {
             Check(ExpectedNoIeee, "IEEE=0");
             Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
             Check(ExpectedIeee, "IEEE=1");
+            for (const std::uint32_t row : {6u, 12u, 26u}) {
+                for (const bool ieee : {false, true}) {
+                    Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, ieee, false}, Code, row);
+                    Check(ieee ? ExpectedIeee : ExpectedNoIeee, "uniform repair region", row);
+                }
+            }
             for (const std::uint32_t factor : {0x40000000u, 0x3f000000u, 0u, 0x7f800000u}) {
                 std::vector<std::uint32_t> code(Code.begin(), Code.end());
                 code[24] = (code[24] & ~0x1ffu) | 0xffu;

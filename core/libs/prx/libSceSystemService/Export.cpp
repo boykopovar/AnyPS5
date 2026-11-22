@@ -97,15 +97,12 @@ ConsoleTimeZone HostTimeZone() {
 std::mutex appSuspendBlockMutex;
 int appSuspendBlocks = 0;
 
-int WriteStatus(bool* status, bool value, const char* function) {
-    if (status == nullptr) NotImplemented_nid_no_patch((std::string(function) + " with a null output").c_str());
-    *status = value;
-    return SYSTEM_SERVICE_OK;
-}
-
 int WriteStatusOrRefuse(bool* status, bool value, int nullOutputError) {
     if (status == nullptr) return nullOutputError;
-    if (!GuestCopyOut_nid_no_patch(status, &value, sizeof(value))) return nullOutputError;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return nullOutputError;
     return SYSTEM_SERVICE_OK;
 }
 
@@ -252,8 +249,10 @@ template<typename TValue>
 int AnswerForRunningApp(const std::string& caller, std::int32_t appId, TValue* destination, std::type_identity_t<TValue> value, int nullOutputResult) {
     if (destination == nullptr) return nullOutputResult;
     if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) throw std::runtime_error(caller + ": application other than the running title");
-    *destination = value;
-    return SYSTEM_SERVICE_OK;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return copied ? SYSTEM_SERVICE_OK : nullOutputResult;
 }
 
 int AnswerRunningAppCategoryType(const char* caller, std::int32_t appId, std::uint32_t* categoryType, int nullOutputResult) {
@@ -269,9 +268,12 @@ int AnswerRunningAppCategoryType(const char* caller, std::int32_t appId, std::ui
     return copied ? SYSTEM_SERVICE_OK : nullOutputResult;
 }
 
+constexpr std::uint32_t BigAppListCapacityLimit = 4;
+
 int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
+    static_cast<void>(caller);
     if (appIds == nullptr || count == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
-    if (capacity == 0) throw std::runtime_error(caller + ": a list with no room for the running title");
+    if (capacity >= BigAppListCapacityLimit) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     std::int32_t currentId = 0;
     std::uint32_t currentCount = 0;
     const int savedErrno = errno;
@@ -282,6 +284,12 @@ int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint
     if (!valid) {
         errno = savedErrno;
         return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    }
+    if (capacity == 0) {
+        const std::uint32_t none = 0;
+        GuestCopyOut_nid_no_patch(count, &none, sizeof(none));
+        errno = savedErrno;
+        return SYSTEM_SERVICE_OK;
     }
     const std::int32_t runningId = SYSTEM_SERVICE_RUNNING_APP_ID;
     const std::uint32_t one = 1;
@@ -540,7 +548,7 @@ bool APS5_VABI sceSystemStateMgrIsShellUIShutdownInProgress() {
 }
 
 int APS5_VABI sceShellCoreUtilGetSocialScreenStatus(bool* active) {
-    return WriteStatus(active, false, __func__);
+    return WriteStatusOrRefuse(active, false, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
 }
 
 int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
@@ -765,7 +773,11 @@ int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
 int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
  if (!WellFormedTitleId(titleId) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
  static_cast<void>(sceSystemServiceGetAppId(titleId));
- *launched = true;
+ const bool localLaunched = true;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(launched, &localLaunched, sizeof(localLaunched));
+ errno = savedErrno;
+ if (!copied) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
  return SYSTEM_SERVICE_OK;
 }
 
@@ -786,6 +798,7 @@ int APS5_VABI sceLncUtilGetAppCategoryType(std::int32_t appId, std::uint32_t* ca
 }
 
 int APS5_VABI sceSystemServiceGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
+ if (categoryType != nullptr && appId != SYSTEM_SERVICE_RUNNING_APP_ID) return LNC_UTIL_ERROR_GAME_PROCESS;
  return AnswerRunningAppCategoryType("sceSystemServiceGetAppCategoryType", appId, categoryType, SYSTEM_SERVICE_ERROR_PARAMETER);
 }
 

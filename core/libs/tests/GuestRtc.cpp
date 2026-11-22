@@ -6,6 +6,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -915,6 +916,16 @@ int main(int argc, char** argv) {
     }
     SetTimeZone("UTC0");
 
+    for (const std::uint64_t value : {unixEpochTick - 1, maxTick, unixEpochTick}) {
+        const RtcTick input{value};
+        RtcTick output{};
+        errno = 71;
+        Require(sceRtcConvertUtcToLocalTime(&input, &output) == 0 && output.tick == value);
+        Require(errno == 71);
+        Require(sceRtcConvertLocalTimeToUtc(&output, &output) == 0 && output.tick == value);
+        Require(errno == 71);
+    }
+
 #ifndef _WIN32
     SetTimeZone("STD0DST,J1/0,J2/0");
     const std::time_t beforeTransition = -1;
@@ -978,7 +989,9 @@ int main(int argc, char** argv) {
         Require(sceRtcFormatRFC3339Precise(precise, &maximum, 0, 6) == 0 && std::strcmp(precise, "9999-12-31T23:59:59.999999Z") == 0);
         Require(sceRtcFormatRFC3339Precise(precise, &nines, 0, 1) == 0 && std::strcmp(precise, "2026-10-02T13:05:09.9Z") == 0);
         std::memset(precise, '#', sizeof(precise));
-        Require(sceRtcFormatRFC3339Precise(precise, &zero, -60, 0) == invalidValue && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &zero, -60, 0) == invalidYear && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &huge, 1, 6) == 0 && std::strcmp(precise, "0001-01-01T00:00:59.999999+00:01") == 0);
+        std::memset(precise, '#', sizeof(precise));
         Require(sceRtcFormatRFC3339Precise(precise, &maximum, 60, 6) == invalidYear && precise[0] == '#');
         Require(sceRtcFormatRFC3339Precise(precise, &pastMaximum, 0, 6) == invalidYear && precise[0] == '#');
         Require(sceRtcFormatRFC3339Precise(precise, &huge, 0, 6) == invalidYear && precise[0] == '#');
@@ -1007,19 +1020,26 @@ int main(int argc, char** argv) {
         const RtcTick networkClock{leapDayTick + 10000000};
         const RtcTick adClock{leapDayTick + 20000000};
         const RtcTick debugClock{leapDayTick + 30000000};
+        const auto start = std::chrono::steady_clock::now();
+        const auto checkClock = [&](auto getter, RtcTick base) {
+            RtcTick sample{};
+            Require(getter(&sample) == 0);
+            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start);
+            Require(sample.tick >= base.tick && sample.tick - base.tick <= static_cast<std::uint64_t>(elapsed.count()));
+        };
         Require(sceRtcSetCurrentTick(&systemClock) == 0);
         Require(sceRtcSetCurrentNetworkTick(&networkClock) == 0);
-        Require(sceRtcGetCurrentAdNetworkTick(&current) == 0 && current.tick >= networkClock.tick && current.tick < networkClock.tick + 1000000);
-        Require(sceRtcGetCurrentDebugNetworkTick(&current) == 0 && current.tick >= networkClock.tick && current.tick < networkClock.tick + 1000000);
+        checkClock(sceRtcGetCurrentAdNetworkTick, networkClock);
+        checkClock(sceRtcGetCurrentDebugNetworkTick, networkClock);
         Require(sceRtcSetCurrentAdNetworkTick(&adClock) == 0);
         Require(sceRtcSetCurrentDebugNetworkTick(&debugClock) == 0);
         Require(sceRtcSetCurrentNetworkTick(&tooEarly) == invalidValue && sceRtcSetCurrentNetworkTick(nullptr) == invalidPointer);
         Require(sceRtcSetCurrentAdNetworkTick(&tooEarly) == invalidValue && sceRtcSetCurrentAdNetworkTick(nullptr) == invalidPointer);
         Require(sceRtcSetCurrentDebugNetworkTick(&tooEarly) == invalidValue && sceRtcSetCurrentDebugNetworkTick(nullptr) == invalidPointer);
-        Require(sceRtcGetCurrentTick(&current) == 0 && current.tick >= systemClock.tick && current.tick < systemClock.tick + 1000000);
-        Require(sceRtcGetCurrentNetworkTick(&current) == 0 && current.tick >= networkClock.tick && current.tick < networkClock.tick + 1000000);
-        Require(sceRtcGetCurrentAdNetworkTick(&current) == 0 && current.tick >= adClock.tick && current.tick < adClock.tick + 1000000);
-        Require(sceRtcGetCurrentDebugNetworkTick(&current) == 0 && current.tick >= debugClock.tick && current.tick < debugClock.tick + 1000000);
+        checkClock(sceRtcGetCurrentTick, systemClock);
+        checkClock(sceRtcGetCurrentNetworkTick, networkClock);
+        checkClock(sceRtcGetCurrentAdNetworkTick, adClock);
+        checkClock(sceRtcGetCurrentDebugNetworkTick, debugClock);
         Require(sceRtcGetCurrentRawNetworkTick(&current) == 0 && current.tick > unixEpochTick);
         Require(sceRtcGetCurrentTick(nullptr) == invalidPointer);
         Require(sceRtcGetCurrentNetworkTick(nullptr) == invalidPointer);
@@ -1027,9 +1047,15 @@ int main(int argc, char** argv) {
         Require(sceRtcGetCurrentAdNetworkTick(nullptr) == invalidPointer);
         Require(sceRtcGetCurrentDebugNetworkTick(nullptr) == invalidPointer);
     }
+    const RtcTick lastTick{UINT64_MAX};
+    char sdkBoundary[40]{};
     SetCompiledSdkVersion(process.data(), 0x02ffffff);
+    Require(sceRtcFormatRFC3339Precise(sdkBoundary, &lastTick, 1, 6) == 0);
+    Require(std::strcmp(sdkBoundary, "0001-01-01T00:00:59.999999+00:01") == 0);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidYear && sceRtcGetDayOfWeek(10000, 1, 1) == 6);
     SetCompiledSdkVersion(process.data(), 0x03000000);
+    Require(sceRtcFormatRFC3339Precise(sdkBoundary, &lastTick, 1, 6) == invalidValue);
+    Require(std::strcmp(sdkBoundary, "0001-01-01T00:00:59.999999+00:01") == 0);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(10000, 1, 1) == invalidYear);
     SetCompiledSdkVersion(process.data(), 0x05050001);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(10000, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(2024, 0, 1) == invalidMonth);

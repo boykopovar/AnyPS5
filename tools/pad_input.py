@@ -1,10 +1,17 @@
 import argparse
+import ctypes
+import io
 import os
 from pathlib import Path
 import re
 import stat
+import sys
 import tempfile
 import time
+
+
+COMMAND_FILE_BYTES = 64 * 1024
+MAX_COMMAND_LINE_BYTES = 126
 
 
 BUTTONS = {
@@ -17,11 +24,20 @@ BUTTONS = {
 }
 
 
+def trim_command_line(line):
+    line = line.removesuffix(b"\n").removesuffix(b"\r")
+    if len(line) > MAX_COMMAND_LINE_BYTES:
+        return None
+    return line.split(b"\0", 1)[0]
+
+
 def timeline_sequence(command, header):
-    if len(header.rstrip(b"\n")) > 127 or (os.name == "nt" and b"\x1a" in header):
+    if os.name == "nt" and b"\x1a" in header:
         return 0
-    header = header.split(b"\0", 1)[0]
-    fields = re.fullmatch(rb"\s*APS5_PAD_TIMELINE\s+(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)\s*", header)
+    header = trim_command_line(header)
+    if header is None:
+        return 0
+    fields = re.fullmatch(rb"\s*APS5_PAD_TIMELINE\s+(\+?[0-9]+)\s+(\+?[0-9]+)\s+(\+?[0-9]+)\s*", header)
     if fields is None:
         return 0
     version, sequence, count = [int(token) for token in fields.groups()]
@@ -30,15 +46,15 @@ def timeline_sequence(command, header):
     previous_end = 0
     for _ in range(count):
         line = command.readline(129)
-        if os.name == "nt":
-            if b"\x1a" in line:
-                line = line.split(b"\x1a", 1)[0]
-                command.seek(0, os.SEEK_END)
-            if line.endswith(b"\r\n"):
-                line = line[:-2] + b"\n"
-        if not line or len(line.rstrip(b"\n")) > 127:
+        if os.name == "nt" and b"\x1a" in line:
+            line = line.split(b"\x1a", 1)[0]
+            command.seek(0, os.SEEK_END)
+        if not line:
             return 0
-        fields = re.fullmatch(rb"\s*(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)((?:(?:\s+|(?=\+))\+?[0-9]+){4})?\s*", line.split(b"\0", 1)[0])
+        line = trim_command_line(line)
+        if line is None:
+            return 0
+        fields = re.fullmatch(rb"\s*(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)((?:(?:\s+|(?=\+))\+?[0-9]+){4})?\s*", line)
         if fields is None:
             return 0
         start, duration, buttons = [int(token) for token in fields.groups()[:3]]
@@ -57,19 +73,24 @@ def timeline_sequence(command, header):
 
 def previous_sequence(path):
     try:
-        with path.open("rb") as command:
-            line = command.readline(129)
-            if os.name == "nt" and line.endswith(b"\r\n"):
-                line = line[:-2] + b"\n"
-            if line.split()[:1] == [b"APS5_PAD_TIMELINE"]:
-                return timeline_sequence(command, line)
+        with path.open("rb") as source:
+            contents = source.read(COMMAND_FILE_BYTES + 1)
     except FileNotFoundError:
         return 0
-    if os.name == "nt":
-        line = line.split(b"\x1a", 1)[0]
-    if len(line.rstrip(b"\n")) > 127:
+    if len(contents) > COMMAND_FILE_BYTES:
         return 0
-    tokens = line.split(b"\0", 1)[0].split()
+    if os.name == "nt":
+        contents = contents.split(b"\x1a", 1)[0]
+    if not contents:
+        return 0
+    command = io.BytesIO(contents)
+    raw = command.readline(129)
+    line = trim_command_line(raw)
+    if line is None:
+        return 0
+    tokens = line.split()
+    if tokens[:1] == [b"APS5_PAD_TIMELINE"]:
+        return timeline_sequence(command, raw)
     if len(tokens) in (4, 8):
         touch = re.fullmatch(rb"touch\((\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+)\)", tokens.pop())
         if touch is None or any(int(value) > limit for value, limit in zip(touch.groups(), (1919, 1079, 127, 1))):
@@ -95,6 +116,20 @@ def next_sequence(path):
     return sequence
 
 
+def replace_command(temporary, path):
+    try:
+        os.replace(temporary, path)
+    except PermissionError as error:
+        if os.name != "nt" or error.winerror not in (5, 32):
+            raise
+        replace = ctypes.WinDLL("kernel32", use_last_error=True).ReplaceFileW
+        replace.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                            ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p]
+        replace.restype = ctypes.c_int
+        if not replace(str(path), str(temporary), None, 0, None, None):
+            raise
+
+
 def button_mask(value):
     names = value.split("+")
     if any(name not in BUTTONS for name in names) or ("release" in names and len(names) > 1) or len(set(names)) != len(names):
@@ -105,7 +140,11 @@ def button_mask(value):
     return mask
 
 
-def main():
+def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Queue a controller pulse for APS5_PAD_INPUT_FILE.")
     parser.add_argument("path", type=Path)
     parser.add_argument("button", help=f"a button name ({', '.join(BUTTONS)}), or several joined by '+' to press them together (for example l1+r1); release must be used alone")
@@ -114,7 +153,7 @@ def main():
     parser.add_argument("--right-stick", type=int, nargs=2, metavar=("X", "Y"))
     parser.add_argument("--touch", type=int, nargs=4, metavar=("X", "Y", "ID", "ACTIVE"),
                         help="touch contact: X 0..1919, Y 0..1079, ID 0..127, ACTIVE 0 or 1; keep ID while moving, use 0 to lift")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         mask = button_mask(args.button)
     except argparse.ArgumentTypeError as error:
@@ -155,12 +194,13 @@ def main():
                     os.fchown(output.fileno(), metadata.st_uid, metadata.st_gid)
                 os.fchmod(output.fileno(), stat.S_IMODE(metadata.st_mode))
             output.write(f"{sequence} {mask} {args.hold_ms}{sticks}{touch}\n")
-        os.replace(temporary, args.path)
+        replace_command(temporary, args.path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
     print(f"Queued {args.button}{' with sticks' + sticks if sticks else ''} for {args.hold_ms} ms in {args.path}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

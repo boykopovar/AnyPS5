@@ -34,17 +34,7 @@ int APS5_VABI EVP_CIPHER_CTX_set_flags_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI OBJ_txt2obj_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI OCSP_cert_to_id_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -61,32 +51,12 @@ const char* APS5_VABI OpenSSL_version_nid_postfix(int type) {
     }
 }
 
-int APS5_VABI PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_add0_chain_cert_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_PKCS7_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_RSAPublicKey_bio_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
