@@ -107,7 +107,7 @@ def integrate_pull_requests(root, pull_requests, base_sha, repo):
     included = set()
     for number in order:
         pr = pull_requests[number]
-        if dependencies_blocked(pr, excluded):
+        if dependencies_blocked(pr, excluded) and not is_ancestor(root, pr["sha"], base_sha):
             excluded[number] = "dependency_excluded"
             continue
         result = git(root, "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only",
