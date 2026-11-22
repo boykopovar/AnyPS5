@@ -1564,6 +1564,7 @@ JSValueRef APS5_VABI JSObjectCallAsFunction(JSContextRef ctx, JSObjectRef object
     for (std::size_t i = 0; i < argumentCount; ++i) {
         args[i] = ArgumentValue(arguments, i);
     }
+    VmEntryScope vmScope(mutCtx->group);
     JSValue res = JS_Call(mutCtx->qctx, object->qval, thisVal, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(res)) {
         CapturePendingException(mutCtx, exception);
@@ -1592,6 +1593,7 @@ JSObjectRef APS5_VABI JSObjectCallAsConstructor(JSContextRef ctx, JSObjectRef ob
     for (std::size_t i = 0; i < argumentCount; ++i) {
         args[i] = ArgumentValue(arguments, i);
     }
+    VmEntryScope vmScope(mutCtx->group);
     JSValue res = JS_CallConstructor(mutCtx->qctx, object->qval, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(res)) {
         CapturePendingException(mutCtx, exception);
