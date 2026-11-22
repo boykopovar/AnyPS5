@@ -4766,10 +4766,6 @@ int APS5_VABI _ZN7WebCore8Document13setVlinkColorERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore14SecurityPolicy22generateReferrerHeaderENS_14ReferrerPolicyERKN3WTF3URLERKNS2_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore18TextureMapperLayer5paintEv() {
     NotImplemented_nid_no_patch(__func__);
 }

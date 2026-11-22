@@ -56,6 +56,7 @@
 #include "prx/libSceNKWebKit/include/SecurityPolicyExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceNKWebKit/src/LegacySecurityOrigin.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -143,6 +144,62 @@ bool SecurityPolicyAllowSubstituteDataAccessToLocal() {
 
 }
 
+namespace {
+
+std::u16string TextOf(const String& string) {
+    std::u16string text;
+    if (!string.impl) return text;
+    const auto view = NKWebKit::WtfAbi::ViewOf(string.impl);
+    text.reserve(view.length);
+    for (unsigned index = 0; index < view.length; ++index) text.push_back(NKWebKit::WtfAbi::CodeUnitAt(view, index));
+    return text;
+}
+
+String MakeString(const std::u16string& text) {
+    std::string narrow;
+    narrow.reserve(text.size());
+    for (const char16_t unit : text) {
+        if (unit > 0xFF) return _ZN3WTF10StringImpl6createEPKDsj(text.data(), static_cast<unsigned>(text.size()));
+        narrow.push_back(static_cast<char>(unit));
+    }
+    return _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(narrow.data()), static_cast<unsigned>(narrow.size()));
+}
+
+bool ProtocolIsInHTTPFamily(const std::u16string& url) {
+    const std::size_t length = url.size();
+    return length >= 5
+        && (url[0] | 0x20) == u'h'
+        && (url[1] | 0x20) == u't'
+        && (url[2] | 0x20) == u't'
+        && (url[3] | 0x20) == u'p'
+        && (url[4] == u':' || ((url[4] | 0x20) == u's' && length >= 6 && url[5] == u':'));
+}
+
+bool CanRequest(const std::u16string& referrer, const NKWebKit::WtfAbi::URL& url) {
+    const NKWebKit::LegacyOrigin::OriginData origin = NKWebKit::LegacyOrigin::OriginFromString(referrer);
+    if (origin.unique) return false;
+    const NKWebKit::LegacyOrigin::OriginData target = NKWebKit::LegacyOrigin::OriginOf(url);
+    if (target.unique) return false;
+    return NKWebKit::LegacyOrigin::IsSameSchemeHostPort(origin, target);
+}
+
+String ReferrerToOriginString(const std::u16string& referrer) {
+    std::u16string originString = NKWebKit::LegacyOrigin::ToString(NKWebKit::LegacyOrigin::OriginFromString(referrer));
+    if (originString == u"null") return String();
+    originString.push_back(u'/');
+    return MakeString(originString);
+}
+
+constexpr std::uint8_t kReferrerPolicyNoReferrer = 1;
+constexpr std::uint8_t kReferrerPolicySameOrigin = 3;
+constexpr std::uint8_t kReferrerPolicyOrigin = 4;
+constexpr std::uint8_t kReferrerPolicyStrictOrigin = 5;
+constexpr std::uint8_t kReferrerPolicyOriginWhenCrossOrigin = 6;
+constexpr std::uint8_t kReferrerPolicyStrictOriginWhenCrossOrigin = 7;
+constexpr std::uint8_t kReferrerPolicyUnsafeUrl = 8;
+
+}  // namespace
+
 extern "C" {
 
 void APS5_VABI _ZN7WebCore14SecurityPolicy18setLocalLoadPolicyENS0_15LocalLoadPolicyE(LocalLoadPolicy policy) {
@@ -158,6 +215,40 @@ bool APS5_VABI _ZN7WebCore14SecurityPolicy18shouldHideReferrerERKN3WTF3URLERKNS1
     if (!referrerIsSecureURL) return false;
     bool urlIsSecureURL = _ZNK3WTF3URL10protocolIsENS_10StringViewE(url, {"https", 5, true});
     return !urlIsSecureURL;
+}
+
+String APS5_VABI _ZN7WebCore14SecurityPolicy22generateReferrerHeaderENS_14ReferrerPolicyERKN3WTF3URLERKNS2_6StringE(std::uint8_t referrerPolicy, const NKWebKit::WtfAbi::URL* url, const String* referrer) {
+    if (!url) throw std::invalid_argument("null WTF::URL reference");
+    if (!referrer) throw std::invalid_argument("null WTF::String reference");
+    const std::u16string text = TextOf(*referrer);
+    if (!ProtocolIsInHTTPFamily(text)) return String();
+    switch (referrerPolicy) {
+    case kReferrerPolicyNoReferrer:
+        return String();
+    case kReferrerPolicySameOrigin:
+        if (!CanRequest(text, *url)) return String();
+        break;
+    case kReferrerPolicyOrigin:
+        return ReferrerToOriginString(text);
+    case kReferrerPolicyStrictOrigin:
+        if (_ZN7WebCore14SecurityPolicy18shouldHideReferrerERKN3WTF3URLERKNS1_6StringE(url, referrer)) return String();
+        return ReferrerToOriginString(text);
+    case kReferrerPolicyOriginWhenCrossOrigin:
+        if (!CanRequest(text, *url)) return ReferrerToOriginString(text);
+        break;
+    case kReferrerPolicyStrictOriginWhenCrossOrigin:
+        if (!CanRequest(text, *url)) {
+            if (_ZN7WebCore14SecurityPolicy18shouldHideReferrerERKN3WTF3URLERKNS1_6StringE(url, referrer)) return String();
+            return ReferrerToOriginString(text);
+        }
+        break;
+    case kReferrerPolicyUnsafeUrl:
+        return String(*referrer);
+    default:
+        break;
+    }
+    if (_ZN7WebCore14SecurityPolicy18shouldHideReferrerERKN3WTF3URLERKNS1_6StringE(url, referrer)) return String();
+    return String(*referrer);
 }
 
 }

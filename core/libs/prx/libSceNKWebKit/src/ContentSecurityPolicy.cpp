@@ -150,7 +150,7 @@
 #include "prx/libSceNKWebKit/src/ContentSecurityPolicyAbi.hpp"
 #include "prx/libSceNKWebKit/src/ContentSecurityPolicyParser.hpp"
 #include "prx/libSceNKWebKit/src/LegacyResourceRequestAbi.hpp"
-#include "prx/libSceNKWebKit/src/SecurityOriginAbi.hpp"
+#include "prx/libSceNKWebKit/src/LegacySecurityOrigin.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -260,13 +260,6 @@ std::u16string Widen(std::string_view ascii) {
     return text;
 }
 
-struct OriginData {
-    bool unique = true;
-    std::u16string protocol;
-    std::u16string host;
-    std::optional<std::uint16_t> port;
-};
-
 URL ParseURL(const URL& base, const std::u16string& relative) {
     const String text = MakeString(relative);
     URL parsed{};
@@ -274,39 +267,8 @@ URL ParseURL(const URL& base, const std::u16string& relative) {
     return parsed;
 }
 
-OriginData OriginOf(const URL& url) {
-    OriginData origin;
-    if (!(url.bits & NKWebKit::WebCoreAbi::kURLValidBit)) return origin;
-    const URL base{};
-    URL inner{};
-    const bool useInnerURL = ProtocolIs(url, "blob");
-    if (useInnerURL) inner = ParseURL(base, Csp::DecodeURLEscapeSequences(Units(_ZNK3WTF3URL4pathEv(&url))));
-    const URL& subject = useInnerURL ? inner : url;
-    const std::u16string protocol = Units(_ZNK3WTF3URL8protocolEv(&subject));
-    const std::u16string host = Units(_ZNK3WTF3URL4hostEv(&subject));
-    const bool schemeRequiresHost = ProtocolIs(subject, "http") || ProtocolIs(subject, "https") || ProtocolIs(subject, "ftp");
-    const String scheme = MakeString(protocol);
-    if (!(schemeRequiresHost && host.empty()) && !NKWebKit::WebCoreAbi::ShouldTreatURLSchemeAsNoAccess(scheme.impl)) {
-        origin.unique = false;
-        origin.protocol = LowerASCII(protocol);
-        origin.host = LowerASCII(host);
-        origin.port = NKWebKit::WtfAbi::PortOf(subject);
-        if (origin.port && Csp::IsDefaultPortForProtocol(*origin.port, origin.protocol)) origin.port.reset();
-    }
-    NKWebKit::WtfAbi::Release(inner.impl);
-    return origin;
-}
-
-std::u16string OriginToString(const OriginData& origin) {
-    if (origin.unique) return Widen("null");
-    if (origin.protocol == u"file") return Widen("file://");
-    std::u16string text = origin.protocol + Widen("://") + origin.host;
-    if (origin.port) text += u':' + Widen(std::to_string(static_cast<unsigned>(*origin.port)));
-    return text;
-}
-
 void UpdateSourceSelf(ContentSecurityPolicy& policy) {
-    const OriginData origin = OriginOf(policy.protectedURL);
+    const NKWebKit::LegacyOrigin::OriginData origin = NKWebKit::LegacyOrigin::OriginOf(policy.protectedURL);
     auto source = std::make_unique<Csp::Source>();
     source->scheme = origin.protocol;
     source->host = origin.host;
@@ -480,20 +442,20 @@ bool SelfCanRequest(const ContentSecurityPolicy& policy, const URL& url) {
     const Csp::Source& self = *policy.selfSource;
     const URL base{};
     URL selfURL = ParseURL(base, self.scheme + Widen("://") + self.host + u'/');
-    OriginData origin = OriginOf(selfURL);
+    NKWebKit::LegacyOrigin::OriginData origin = NKWebKit::LegacyOrigin::OriginOf(selfURL);
     NKWebKit::WtfAbi::Release(selfURL.impl);
     if (self.port && !Csp::IsDefaultPortForProtocol(*self.port, self.scheme)) origin.port = self.port;
     if (origin.unique) return false;
-    const OriginData target = OriginOf(url);
+    const NKWebKit::LegacyOrigin::OriginData target = NKWebKit::LegacyOrigin::OriginOf(url);
     if (target.unique) return false;
-    return origin.protocol == target.protocol && origin.host == target.host && origin.port == target.port;
+    return NKWebKit::LegacyOrigin::IsSameSchemeHostPort(origin, target);
 }
 
 String DeprecatedURLForReporting(const ContentSecurityPolicy& policy, const URL& url) {
     if (!(url.bits & NKWebKit::WebCoreAbi::kURLValidBit)) return String();
     if (!_ZNK3WTF3URL14isHierarchicalEv(&url) || ProtocolIs(url, "file")) return MakeString(Units(_ZNK3WTF3URL8protocolEv(&url)));
     if (SelfCanRequest(policy, url)) return _ZNK3WTF3URL24strippedForUseAsReferrerEv(&url);
-    return MakeString(OriginToString(OriginOf(url)));
+    return MakeString(NKWebKit::LegacyOrigin::ToString(NKWebKit::LegacyOrigin::OriginOf(url)));
 }
 
 void AppendJSONString(std::u16string& output, const std::u16string& text) {
