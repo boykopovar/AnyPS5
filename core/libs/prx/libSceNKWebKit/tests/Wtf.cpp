@@ -353,6 +353,12 @@ static void TestTime() {
     Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.500000000Z", isLocal) == 1577836800500.0);
     Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.5000000000Z", isLocal) == 1577836800500.0);
     Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.250000000000Z", isLocal) == 1577836800250.0);
+    Require(std::abs(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.9223372036854775806Z", isLocal) - 1577836800922.337) < 0.001);
+    Require(std::isnan(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.9223372036854775807Z", isLocal)));
+    Require(std::isnan(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.99999999999999999999Z", isLocal)));
+    Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2000-01-01", isLocal) == 946684800000.0);
+    Require(std::isnan(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("4294969296-01-01", isLocal)));
+    Require(std::isnan(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("-4294965296-01-01", isLocal)));
 
     bool isLocal2 = false;
     double parsedInvalid = _ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("not-a-date", isLocal2);
@@ -1287,6 +1293,15 @@ const unsigned char* U8(const char* data) { return reinterpret_cast<const unsign
 std::string Bytes(const CString& value) {
     return value.buffer ? std::string(reinterpret_cast<const char*>(value.buffer + 1), value.buffer->length) : std::string();
 }
+std::string Bytes(const NKWebKit::WtfAbi::ExpectedCString& result) {
+    Check(result.has);
+    return Bytes(result.value);
+}
+void Fails(const NKWebKit::WtfAbi::ExpectedCString& result, std::uint32_t error) {
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&result);
+    Check(!result.has && bytes[8] == 0);
+    Check(result.error == error && bytes[0] == error);
+}
 void Text(const String& value, const char* expected) {
     Check(value.impl != nullptr);
     Check(Bytes(UTF8(&value, 1)) == expected);
@@ -1438,25 +1453,37 @@ void TestUTFConversions() {
     Throws([&] { UTF8(&malformed, 1); });
     Check(Bytes(Utf8For16(bad, 4, 0)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Check(Bytes(Utf8For16(bad, 4, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
-    Throws([&] { Utf8For16(bad, 4, 1); });
+    Fails(Utf8For16(bad, 4, 1), 2);
     char16_t endsWithLead[] = {'a', 0xD800, 0xDBFF};
     Check(Bytes(Utf8For16(endsWithLead, 3, 0)) == "a\xef\xbf\xbd\xed\xaf\xbf");
     Check(Bytes(Utf8For16(endsWithLead, 3, 2)) == "a\xef\xbf\xbd\xef\xbf\xbd");
     Check(Bytes(Utf8For16(endsWithLead, 2, 0)) == "a\xed\xa0\x80");
-    Throws([&] { Utf8For16(endsWithLead, 2, 1); });
+    Fails(Utf8For16(endsWithLead, 2, 1), 3);
+    Fails(Utf8For16(endsWithLead, 3, 1), 2);
     auto leadAtEnd = Create16(endsWithLead, 2);
     Check(Bytes(UTF8(&leadAtEnd, 0)) == "a\xed\xa0\x80");
     Check(Bytes(UTF8(&leadAtEnd, 2)) == "a\xef\xbf\xbd");
     char16_t endsWithTrail[] = {'a', 0xDC00};
     Check(Bytes(Utf8For16(endsWithTrail, 2, 0)) == "a\xef\xbf\xbd");
+    Fails(Utf8For16(endsWithTrail, 2, 1), 2);
     char16_t paired[] = {'c', 'a', 'f', 0xE9, 0xD83D, 0xDE00};
     Check(Bytes(Utf8For16(paired, 6, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
     Check(Bytes(Utf8For16(paired, 0, 1)).empty() && Bytes(Utf8For16(nullptr, 0, 1)).empty());
     Throws([&] { Utf8For16(nullptr, 1, 1); });
+    {
+        const auto converted = Utf8For16(paired, 6, 1);
+        const auto* bytes = reinterpret_cast<const unsigned char*>(&converted);
+        Check(sizeof(converted) == 16 && converted.has && bytes[8] == 1);
+        Check(std::memcmp(bytes, &converted.value.buffer, 8) == 0 && converted.value.buffer != nullptr);
+    }
+    Fails(Utf8For16(paired, 715827883, 0), 1);
+    Fails(Utf8For16(paired, 0xFFFFFFFFu, 1), 1);
     Check(Bytes(Utf8For8(U8("caf\xe9\x80"), 5)) == "caf\xc3\xa9\xc2\x80");
     Check(Bytes(Utf8For8(U8("a\0b"), 3)) == std::string("a\0b", 3));
     Check(Bytes(Utf8For8(U8("x"), 0)).empty() && Bytes(Utf8For8(nullptr, 0)).empty());
     Throws([&] { Utf8For8(nullptr, 1); });
+    Fails(Utf8For8(U8("x"), 715827883), 1);
+    Check(Utf8For8(U8("x"), 1).has);
     Text(FromCodePoint(0x1F600), "\xf0\x9f\x98\x80");
     Check(!FromCodePoint(-1).impl && !FromCodePoint(0x110000).impl);
     auto surrogate = FromCodePoint(0xD800);
