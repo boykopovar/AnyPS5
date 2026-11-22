@@ -353,19 +353,19 @@ void TestFileErrorQueue() {
     Require(ErrorsAfter(RevocationList, EarlierError, 0, 0).empty());
 
     Require(ErrorsAfter(unclosed, EarlierError, 0, 0) == (Codes{EarlierError, PemBadEndLine, X509Pem}));
-    Require(ErrorsAfter(std::string(CertificateA) + unclosed, EarlierError, 0, 1)
+    Require(ErrorsAfter(std::string(CertificateA) + unclosed, EarlierError, 0, 0)
         == (Codes{EarlierError, PemBadEndLine, X509Pem}));
     Require(ErrorsAfter(badBase64, EarlierError, 0, 0) == (Codes{EarlierError, PemBadBase64, X509Pem}));
-    Require(ErrorsAfter(std::string(CertificateA) + badBase64 + CertificateB, EarlierError, 0, 1)
+    Require(ErrorsAfter(std::string(CertificateA) + badBase64 + CertificateB, EarlierError, 0, 0)
         == (Codes{EarlierError, PemBadBase64, X509Pem}));
 
-    const Codes decode = ErrorsAfter(std::string(CertificateA) + badDer, EarlierError, 0, 1);
+    const Codes decode = ErrorsAfter(std::string(CertificateA) + badDer, EarlierError, 0, 0);
     Require(decode.size() >= 4 && decode.front() == EarlierError);
     Require(decode[decode.size() - 2] == PemAsn1 && decode.back() == X509Pem);
     for (std::size_t index = 1; index + 2 < decode.size(); ++index) Require(decode[index] >> 24 == 13);
 
     Require(ErrorsAfter(emptyRecord, EarlierError, 0, 0) == (Codes{EarlierError, X509Pem}));
-    Require(ErrorsAfter(std::string(CertificateA) + emptyRecord + CertificateB, EarlierError, 0, 1)
+    Require(ErrorsAfter(std::string(CertificateA) + emptyRecord + CertificateB, EarlierError, 0, 0)
         == (Codes{EarlierError, X509Pem}));
     Require(ErrorsAfter(emptyRecord, PemNoStartLine, 0, 0) == Codes{X509NothingFound});
     Require(ErrorsAfter(emptyRecord, Error(20, 108), 0, 0) == Codes{X509NothingFound});
@@ -429,9 +429,9 @@ void TestPemLines() {
     Require(LoadedFrom("libressl3-load-locations-short-begin.pem", std::string("-----BEGIN ----\n-----BEGIN CERTIFICATE---\n") + CertificateA, 1) == 1);
     Require(LoadedFrom("libressl3-load-locations-only-open.pem", "-----BEGIN CERTIFICATE\nMIIB\n", 0) == 0);
     const std::string broken = "-----BEGIN CERTIFICATE-----\nMIIB!!!\n-----END CERTIFICATE-----\n";
-    Require(LoadedFrom("libressl3-load-locations-kept.pem", std::string(CertificateA) + broken, 0) == 1);
-    Require(LoadedFrom("libressl3-load-locations-kept-two.pem", std::string(CertificateA) + CertificateB + broken + CertificateA, 0) == 2);
-    Require(LoadedFrom("libressl3-load-locations-unclosed.pem", std::string(CertificateA) + "-----BEGIN CERTIFICATE-----\nMIIB\n", 0) == 1);
+    Require(LoadedFrom("libressl3-load-locations-dropped.pem", std::string(CertificateA) + broken, 0) == 0);
+    Require(LoadedFrom("libressl3-load-locations-dropped-two.pem", std::string(CertificateA) + CertificateB + broken + CertificateA, 0) == 0);
+    Require(LoadedFrom("libressl3-load-locations-unclosed.pem", std::string(CertificateA) + "-----BEGIN CERTIFICATE-----\nMIIB\n", 0) == 0);
     Require(LoadedFrom("libressl3-load-locations-first-broken.pem", broken + CertificateA, 0) == 0);
     Require(LoadedFrom("libressl3-load-locations-end-label.pem", "-----BEGIN CERTIFICATE-----\nMIIB\n-----END X509 CRL-----\n", 0) == 0);
 }
@@ -503,6 +503,22 @@ void TestHashedDirectory() {
     Require(ObjectCount(store) == 1);
     Require(result.data == StoredObject(store, 0)->data);
     Require(bySubject(lookup, LibreSslX509LookupX509, nullptr, &result) == 0);
+
+    const std::filesystem::path partialDirectory = std::filesystem::temp_directory_path() / "anyps5-libressl3-hashed-ca-partial";
+    std::filesystem::remove_all(partialDirectory, ignored);
+    Require(std::filesystem::create_directories(partialDirectory));
+    AddPathAlias_nid_no_patch("/ca-partial", partialDirectory.string().c_str());
+    WriteFile(std::string("/ca-partial/") + HashedNameA, std::string(CertificateA) + "-----BEGIN CERTIFICATE-----\nMIIB\n");
+    LibreSslX509Store* partial = NewStore();
+    Require(X509_STORE_load_locations_nid_postfix(partial, nullptr, "/ca-partial") == 1);
+    auto* partialLookup = reinterpret_cast<LibreSslX509Lookup*>(static_cast<const LibreSslStack*>(partial->lookupMethods)->data[0]);
+    LibreSslX509Object kept{};
+    Require(bySubject(partialLookup, LibreSslX509LookupX509, &name, &kept) == 1);
+    Require(ObjectCount(partial) == 1 && kept.data == StoredObject(partial, 0)->data);
+    Require(Throws([partial] { X509_STORE_free_nid_postfix(partial); }));
+    RemovePathAlias_nid_no_patch("/ca-partial");
+    std::filesystem::remove_all(partialDirectory, ignored);
+
     unsigned char bmpSubject[] = {0x00, 'T', 0x00, 'E', 0x00, 'S', 0x00, 'T', 0x00, ' ', 0x00, '\t', 0x00, 'C', 0x00, 'a',
         0x00, ' ', 0x00, 'A', 0x00, ' '};
     value = {static_cast<int>(sizeof(bmpSubject)), 30, bmpSubject};

@@ -1224,8 +1224,8 @@ bool IsCertificateLabel(const std::string& label) {
     return label == "CERTIFICATE" || label == "X509 CERTIFICATE" || label == "TRUSTED CERTIFICATE";
 }
 
-std::vector<std::vector<unsigned char>> ReadPemCertificates(const std::string& text, LoadReport& report) {
-    std::vector<std::vector<unsigned char>> certificates;
+template<typename TConsumer>
+void ReadPemCertificates(const std::string& text, LoadReport& report, TConsumer&& consume) {
     std::size_t position = 0;
     std::string line;
     while (NextLine(text, position, line)) {
@@ -1244,22 +1244,21 @@ std::vector<std::vector<unsigned char>> ReadPemCertificates(const std::string& t
         }
         if (!closed) {
             report.failure = LoadFailure::EndLine;
-            return certificates;
+            return;
         }
         if (label == "X509 CRL") report.revocationList = true;
         if (!IsCertificateLabel(label)) continue;
         std::vector<unsigned char> encoded;
         if (!DecodeBase64(body, encoded)) {
             report.failure = LoadFailure::Base64;
-            return certificates;
+            return;
         }
         if (encoded.empty()) {
             if (!report.endsOnEmptyRecord) report.failure = LoadFailure::Empty;
-            return certificates;
+            return;
         }
-        certificates.push_back(std::move(encoded));
+        if (!consume(encoded)) return;
     }
-    return certificates;
 }
 
 bool ReadFile(const char* path, std::string& contents, LoadReport& report) {
@@ -1287,33 +1286,56 @@ bool ReadFile(const char* path, std::string& contents, LoadReport& report) {
     return readable;
 }
 
-int LoadCertificates(LibreSslX509Store* store, const char* path, LoadReport& report) {
+void AddCertificate(LibreSslX509Store* store, CertificateObject* certificate) {
+    int added = 0;
+    try {
+        added = X509_STORE_add_cert_nid_postfix(
+            store, reinterpret_cast<LibreSslX509*>(reinterpret_cast<LibreSsl3X509*>(certificate)));
+    } catch (...) {
+        FreeCertificate(certificate);
+        throw;
+    }
+    if (!added) {
+        FreeCertificate(certificate);
+    } else {
+        std::atomic_ref<std::int32_t>(certificate->references).fetch_sub(1, std::memory_order_relaxed);
+    }
+}
+
+int LoadCertificates(LibreSslX509Store* store, const char* path, LoadReport& report, bool wholeFileFirst) {
     std::string contents;
     if (!ReadFile(path, contents, report)) return 0;
-    const std::vector<std::vector<unsigned char>> certificates = ReadPemCertificates(contents, report);
+    std::vector<CertificateObject*> pending;
     int count = 0;
-    for (const auto& bytes : certificates) {
-        std::span<const unsigned char> input(bytes);
-        CertificateObject* certificate = DecodeCertificate(input);
-        if (!certificate) {
-            report.failure = LoadFailure::Decode;
-            return 0;
+    try {
+        ReadPemCertificates(contents, report, [&](const std::vector<unsigned char>& bytes) {
+            std::span<const unsigned char> input(bytes);
+            CertificateObject* certificate = DecodeCertificate(input);
+            if (!certificate) {
+                report.failure = LoadFailure::Decode;
+                return false;
+            }
+            if (wholeFileFirst) {
+                pending.push_back(certificate);
+            } else {
+                AddCertificate(store, certificate);
+                ++count;
+            }
+            return true;
+        });
+        if (report.failure == LoadFailure::None) {
+            while (!pending.empty()) {
+                CertificateObject* certificate = pending.front();
+                pending.erase(pending.begin());
+                AddCertificate(store, certificate);
+                ++count;
+            }
         }
-        int added = 0;
-        try {
-            added = X509_STORE_add_cert_nid_postfix(
-                store, reinterpret_cast<LibreSslX509*>(reinterpret_cast<LibreSsl3X509*>(certificate)));
-        } catch (...) {
-            FreeCertificate(certificate);
-            throw;
-        }
-        if (!added) {
-            FreeCertificate(certificate);
-        } else {
-            std::atomic_ref<std::int32_t>(certificate->references).fetch_sub(1, std::memory_order_relaxed);
-        }
-        ++count;
+    } catch (...) {
+        for (CertificateObject* certificate : pending) FreeCertificate(certificate);
+        throw;
     }
+    for (CertificateObject* certificate : pending) FreeCertificate(certificate);
     return report.failure != LoadFailure::None ? 0 : count;
 }
 
@@ -1324,7 +1346,7 @@ void PutPemError(int reason) {
 int LoadCertificateFile(LibreSslX509Store* store, const char* path) {
     LoadReport report;
     report.endsOnEmptyRecord = static_cast<int>(ERR_peek_last_error_nid_postfix() & 0xfff) == NoStartLine;
-    const int count = LoadCertificates(store, path, report);
+    const int count = LoadCertificates(store, path, report, true);
     switch (report.failure) {
     case LoadFailure::None:
         break;
@@ -1475,7 +1497,7 @@ int APS5_VABI DirectoryBySubject(LibreSslX509Lookup* lookup, int type, LibreSslX
             if (length < 0 || static_cast<std::size_t>(length) >= sizeof(path))
                 throw std::overflow_error("X509_LOOKUP_hash_dir: hashed file path is too long");
             LoadReport report;
-            if (LoadCertificates(lookup->storeContext, path, report) == 0) break;
+            if (LoadCertificates(lookup->storeContext, path, report, false) == 0) break;
         }
         LibreSslX509Object found{};
         if (FindStoredCertificate(lookup->storeContext, subject, found)) {
