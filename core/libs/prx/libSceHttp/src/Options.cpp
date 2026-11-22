@@ -93,6 +93,14 @@ bool SetHttpCookieEnabled(int id, int enable) {
     return true;
 }
 
+bool SetHttpEpollId(int id, int epollId) {
+    std::lock_guard lock(g_optionsMutex);
+    const auto found = g_objectOptions.find(id);
+    if (found == g_objectOptions.end()) return false;
+    found->second.epollId = epollId;
+    return true;
+}
+
 bool SetHttpContextAcceptEncodingGzip(int contextId, bool enable) {
     std::lock_guard lock(g_optionsMutex);
     const auto found = g_contextAcceptEncodingGzip.find(contextId);

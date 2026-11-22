@@ -127,10 +127,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -762,6 +764,29 @@ int WritePkcs8PrivateKey(LibreSsl::Bio* bio, const LibreSsl3EvpPkey* key) {
     return written > 0 ? 1 : 0;
 }
 
+template<typename T>
+bool CopyGuestInPreservingErrno(T& destination, const T* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+template<typename T>
+bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+bool GuestWritablePreservingErrno(void* destination, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(destination, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
 }
 
 extern "C" {
@@ -800,6 +825,36 @@ LibreSsl3EvpPkey* APS5_VABI PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(Li
     }
     if (ret == nullptr) PutPemError(ErrRAsn1Lib);
     return ret;
+}
+
+LibreSsl3Rsa* APS5_VABI PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(
+    FileStream* stream, LibreSsl3Rsa** rsa, LibreSslPemPasswordCallback passwordCallback, void* userData) {
+    if (stream == nullptr) throw std::invalid_argument("PEM_read_RSAPrivateKey: null stream");
+    std::unique_ptr<LibreSsl::Bio, decltype(&BIO_free_nid_postfix)> bio(
+        BIO_new_fp_nid_postfix(stream, 0), BIO_free_nid_postfix);
+    if (bio.get() == nullptr) {
+        PutPemError(ErrRBufLib);
+        return nullptr;
+    }
+    std::unique_ptr<LibreSsl3EvpPkey, decltype(&EVP_PKEY_free_nid_disambig1_nid_postfix)> key(
+        PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(bio.get(), nullptr, passwordCallback, userData),
+        EVP_PKEY_free_nid_disambig1_nid_postfix);
+    bio.reset();
+    if (key.get() == nullptr) return nullptr;
+    std::unique_ptr<LibreSsl3Rsa, decltype(&RSA_free_nid_disambig1_nid_postfix)> decoded(
+        EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(key.get()), RSA_free_nid_disambig1_nid_postfix);
+    key.reset();
+    if (decoded.get() == nullptr) return nullptr;
+    if (rsa != nullptr) {
+        LibreSsl3Rsa* previous = nullptr;
+        if (!CopyGuestInPreservingErrno(previous, rsa) || !GuestWritablePreservingErrno(rsa, sizeof(previous))) {
+            NotImplemented_nid_no_patch(__func__);
+        }
+        if (previous != nullptr) RSA_free_nid_disambig1_nid_postfix(previous);
+        LibreSsl3Rsa* replacement = decoded.get();
+        if (!CopyGuestOutPreservingErrno(rsa, replacement)) NotImplemented_nid_no_patch(__func__);
+    }
+    return decoded.release();
 }
 
 LibreSsl3EvpPkey* APS5_VABI PEM_read_bio_PUBKEY_nid_postfix(LibreSsl::Bio* bio, LibreSsl3EvpPkey** key,

@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ScanQuadLength.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cctype>
 #include <cerrno>
@@ -127,5 +128,32 @@ int main() {
     errno = 7;
     Require(btowc_nid_postfix(0xc3) == 0xffffffff && btowc_nid_postfix(0xef) == 0xffffffff && btowc_nid_postfix(-1) == 0xffffffff && errno == 7);
     Require(btowc_nid_postfix(0x41) == 'A' && errno == 7);
+
+    const char* const posQuad = "%1$qd";
+    Require(LibcDetail::FindQuadScanDirective(posQuad) == posQuad);
+    const char* const posWidthQuad = "%12$*8qx";
+    Require(LibcDetail::FindQuadScanDirective(posWidthQuad) == posWidthQuad);
+    const char* const groupQuad = "%'qd";
+    Require(LibcDetail::FindQuadScanDirective(groupQuad) == groupQuad);
+    const char* const stackedQuad = "%lqd";
+    Require(LibcDetail::FindQuadScanDirective(stackedQuad) == stackedQuad);
+    const char* const secondPosQuad = "%d %2$qd";
+    Require(LibcDetail::FindQuadScanDirective(secondPosQuad) == secondPosQuad + 3);
+    const char* const scanSetThenQuad = "%1$[^]%q]%2$qd";
+    Require(LibcDetail::FindQuadScanDirective(scanSetThenQuad) == scanSetThenQuad + 9);
+
+    Require(LibcDetail::FindQuadScanDirective("%1$[%q]%2$d") == nullptr);
+    Require(LibcDetail::FindQuadScanDirective("%'[%q]%d") == nullptr);
+    Require(LibcDetail::FindQuadScanDirective("%m[%q]%d") == nullptr);
+    Require(LibcDetail::FindQuadScanDirective("%dq") == nullptr);
+
+    std::int64_t quadOut = 0x1122334455667788LL;
+    Require(sscanf_nid_postfix("42", "%1$qd", &quadOut) == 0);
+    Require(quadOut == 0x1122334455667788LL);
+    Require(sscanf_nid_postfix("42", "%lqd", &quadOut) == 0);
+    Require(quadOut == 0x1122334455667788LL);
+    int firstOut = 0;
+    Require(sscanf_nid_postfix("7 42", "%d %lqd", &firstOut, &quadOut) == 1);
+    Require(firstOut == 7 && quadOut == 0x1122334455667788LL);
     return 0;
 }
