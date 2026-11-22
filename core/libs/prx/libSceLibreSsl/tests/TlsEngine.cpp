@@ -1268,19 +1268,24 @@ int main(int argc, char** argv) {
             AbruptClose();
         }
         if (transport) {
-            NonBlockingRead();
-            WriteBackPressure();
-            BlockingTransport();
-            NonBlockingTransport();
-            ReceiveTimeout();
-            SendTimeout();
-            LargeRecordSendTimeout();
+            const auto run = [](const char* name, void (*test)()) {
+                std::fprintf(stderr, "running TLS transport case %s\n", name);
+                std::fflush(stderr);
+                test();
+            };
+            run("NonBlockingRead", NonBlockingRead);
+            run("WriteBackPressure", WriteBackPressure);
+            run("BlockingTransport", BlockingTransport);
+            run("NonBlockingTransport", NonBlockingTransport);
+            run("ReceiveTimeout", ReceiveTimeout);
+            run("SendTimeout", SendTimeout);
+            run("LargeRecordSendTimeout", LargeRecordSendTimeout);
 #ifndef _WIN32
-            SignalInterruptsBlockingRead();
+            run("SignalInterruptsBlockingRead", SignalInterruptsBlockingRead);
 #endif
-            ConsultsNativeOwnerTransfer();
-            ClosedDescriptor();
-            ReassignedSocket();
+            run("ConsultsNativeOwnerTransfer", ConsultsNativeOwnerTransfer);
+            run("ClosedDescriptor", ClosedDescriptor);
+            run("ReassignedSocket", ReassignedSocket);
         }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "failed: %s\n", error.what());
