@@ -184,9 +184,85 @@ void TestTwoContextsWithAClass() {
     JSClassRelease(globalClass);
 }
 
+void RequirePlainObjects(JSGlobalContextRef survivor) {
+    for (int i = 0; i < 256; ++i) {
+        JSObjectRef plain = JSObjectMake(survivor, nullptr, nullptr);
+        Require(JSObjectGetPrivate(plain) == nullptr);
+        Require(!JSObjectSetPrivate(plain, &finalizeCalls));
+    }
+}
+
+void TestAKeptPrototypeKeepsTheGlobalObject() {
+    JSClassRef globalClass = MakeGlobalClass();
+    JSContextGroupRef group = JSContextGroupCreate();
+    JSGlobalContextRef survivor = JSGlobalContextCreateInGroup(group, nullptr);
+    const std::size_t entriesBefore = survivor->group->callbackDataByPtr.size();
+    JSGlobalContextRef withClass = JSGlobalContextCreateInGroup(group, globalClass);
+    JSObjectRef globalHandle = JSContextGetGlobalObject(withClass);
+    void* globalPointer = globalHandle->objPtr;
+    JSValueRef prototype = Eval(withClass, "Object.getPrototypeOf(this)");
+    Require(JSValueIsObject(withClass, prototype));
+    ScopedJsString name("keptPrototype");
+    JSObjectSetProperty(survivor, JSContextGetGlobalObject(survivor), name, prototype, kJSPropertyAttributeNone, nullptr);
+    const std::size_t entriesWithClass = survivor->group->callbackDataByPtr.size();
+    Require(entriesWithClass >= entriesBefore + 2);
+
+    finalizeCalls = 0;
+    JSGlobalContextRelease(withClass);
+    JSGarbageCollect(survivor);
+    Require(finalizeCalls == 1);
+    Require(survivor->group->FindCallbackDataByPtr(globalPointer) != nullptr);
+    Require(survivor->group->callbackDataByPtr.size() == entriesWithClass);
+    Require(globalHandle->alive);
+    RequirePlainObjects(survivor);
+    Require(EvalBool(survivor, "typeof keptPrototype === 'object' && delete this.keptPrototype"));
+    JSGarbageCollect(survivor);
+    JSGarbageCollect(survivor);
+    Require(survivor->group->FindCallbackDataByPtr(globalPointer) == nullptr);
+    Require(survivor->group->callbackDataByPtr.size() == entriesBefore);
+    RequirePlainObjects(survivor);
+
+    JSGlobalContextRelease(survivor);
+    JSContextGroupRelease(group);
+    Require(finalizeCalls == 1);
+    JSClassRelease(globalClass);
+}
+
+void TestTheGlobalObjectOutlivesItsPrototype() {
+    JSClassRef globalClass = MakeGlobalClass();
+    JSContextGroupRef group = JSContextGroupCreate();
+    JSGlobalContextRef survivor = JSGlobalContextCreateInGroup(group, nullptr);
+    const std::size_t entriesBefore = survivor->group->callbackDataByPtr.size();
+    JSGlobalContextRef withClass = JSGlobalContextCreateInGroup(group, globalClass);
+    FillTheGlobalObject(withClass);
+    JSObjectRef globalHandle = JSContextGetGlobalObject(withClass);
+    void* globalPointer = globalHandle->objPtr;
+    Require(EvalBool(withClass, "Object.setPrototypeOf(this, null) === this"));
+    const std::size_t entriesWithClass = survivor->group->callbackDataByPtr.size();
+
+    finalizeCalls = 0;
+    JSGlobalContextRelease(withClass);
+    Require(finalizeCalls == 1);
+    Require(survivor->group->FindCallbackDataByPtr(globalPointer) != nullptr);
+    Require(survivor->group->callbackDataByPtr.size() == entriesWithClass - 1);
+    Require(globalHandle->alive && globalHandle->ephemeralPinned);
+    RequirePlainObjects(survivor);
+    JSGarbageCollect(survivor);
+    Require(survivor->group->FindCallbackDataByPtr(globalPointer) == nullptr);
+    Require(survivor->group->callbackDataByPtr.size() == entriesBefore);
+    RequirePlainObjects(survivor);
+
+    JSGlobalContextRelease(survivor);
+    JSContextGroupRelease(group);
+    Require(finalizeCalls == 1);
+    JSClassRelease(globalClass);
+}
+
 }  // namespace
 
 int main() {
+    TestAKeptPrototypeKeepsTheGlobalObject();
+    TestTheGlobalObjectOutlivesItsPrototype();
     TestReleaseThenCollect(false, 1);
     TestReleaseThenCollect(true, 1);
     TestReleaseThenCollect(true, 3);
