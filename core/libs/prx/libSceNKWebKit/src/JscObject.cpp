@@ -154,6 +154,13 @@ JSValue CreateStaticFunctionObject(OpaqueJSContext* ctx, const StaticFunctionEnt
     return fnObj;
 }
 
+JSValue NullStaticFunctionGetter(JSContext* qctx, JSValueConst thisVal, int argc, JSValueConst* argv) {
+    (void)thisVal;
+    (void)argc;
+    (void)argv;
+    return JS_ThrowReferenceError(qctx, "Static function property defined with NULL callAsFunction callback.");
+}
+
 int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JSValueConst obj, JSAtom prop) {
     auto* group = static_cast<OpaqueJSContextGroup*>(JS_GetRuntimeOpaque(JS_GetRuntime(qctx)));
     if (!group || group->shuttingDown) return 0;
@@ -306,13 +313,24 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                         return ownRes;
                     }
                 }
-                if (!sf->callAsFunction) {
-                    if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
-                    JS_ThrowReferenceError(qctx, "Static function property defined with NULL callAsFunction callback.");
-                    return -1;
+                const StaticFunctionEntry* callable = nullptr;
+                int enumerable = 0;
+                for (OpaqueJSClass* fnCls = cls; fnCls; fnCls = fnCls->parentClass) {
+                    const StaticFunctionEntry* entry = fnCls->FindStaticFunction(propUtf8);
+                    if (!entry) continue;
+                    if (!(entry->attributes & kJSPropertyAttributeDontEnum)) enumerable = JS_PROP_ENUMERABLE;
+                    if (!callable && entry->callAsFunction) callable = entry;
                 }
-                JSValue fnObj = CreateStaticFunctionObject(ctx, *sf);
-                const int propFlags = ToQuickJsPropFlags(sf->attributes);
+                if (!callable) {
+                    if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
+                    desc->flags = JS_PROP_GETSET | JS_PROP_CONFIGURABLE | enumerable;
+                    desc->value = JS_UNDEFINED;
+                    desc->getter = JS_NewCFunction(qctx, &NullStaticFunctionGetter, sf->name.c_str(), 0);
+                    desc->setter = JS_UNDEFINED;
+                    return 1;
+                }
+                JSValue fnObj = CreateStaticFunctionObject(ctx, *callable);
+                const int propFlags = (ToQuickJsPropFlags(callable->attributes) & ~JS_PROP_ENUMERABLE) | enumerable;
                 if (!JS_IsUndefined(data->propStore)) {
                     JS_DefinePropertyValue(qctx, data->propStore, prop, JS_DupValue(qctx, fnObj), propFlags | JS_PROP_HAS_VALUE | JS_PROP_HAS_WRITABLE | JS_PROP_HAS_ENUMERABLE | JS_PROP_HAS_CONFIGURABLE);
                 }
@@ -1066,6 +1084,40 @@ bool IsObjectCallable(const OpaqueJSContext* ctx, OpaqueJSValue* object) {
     return JS_IsFunction(ctx->qctx, object->qval);
 }
 
+namespace {
+
+bool Compiles(JSContext* qctx, const std::string& code) {
+    JSEvalOptions options{};
+    options.version = JS_EVAL_OPTIONS_VERSION;
+    options.eval_flags = JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY;
+    options.filename = "";
+    options.line_num = 1;
+    JSValue compiled = JS_Eval2(qctx, code.c_str(), code.size(), &options);
+    if (JS_IsException(compiled)) {
+        JS_FreeValue(qctx, JS_GetException(qctx));
+        return false;
+    }
+    JS_FreeValue(qctx, compiled);
+    return true;
+}
+
+const char* SingleFunctionError(JSContext* qctx, const std::string& name, const std::string& parameters, const std::string& body) {
+    const std::string head = "(function " + name + "(";
+    if (!Compiles(qctx, head + parameters + ") {\n" + body + "\n})")) return nullptr;
+    if (!Compiles(qctx, head + parameters + "\n) {})") || !Compiles(qctx, head + ") {\n" + body + "\n})")) {
+        return "Parameters should match arguments offered as parameters in Function constructor.";
+    }
+    std::string probe = "scopeProbe";
+    while ((name + parameters + body).find(probe) != std::string::npos) probe += "0";
+    const std::string tail = ") {\n" + body + "\n;let " + probe + ";\n})";
+    const bool nameIsOneBinding = Compiles(qctx, "var " + name + ";");
+    const bool endsInAFunctionBody = Compiles(qctx, head + parameters + tail);
+    const bool endsInAnotherFunction = Compiles(qctx, head + probe + (parameters.empty() ? "" : ", ") + parameters + tail);
+    return nameIsOneBinding && endsInAFunctionBody && !endsInAnotherFunction ? nullptr : "Parser error";
+}
+
+}  // namespace
+
 }  // namespace NKWebKit
 
 extern "C" {
@@ -1227,16 +1279,20 @@ JSObjectRef APS5_VABI JSObjectMakeFunction(JSContextRef ctx, JSStringRef name, u
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
 
     const std::string fnName = (name && !name->nullString) ? JsStringToUtf8(name) : "anonymous";
-    std::ostringstream src;
-    src << "(function " << fnName << "(";
+    std::string parameters;
     for (unsigned i = 0; i < parameterCount; ++i) {
         if (!parameterNames[i]) return nullptr;
-        if (i > 0) src << ", ";
-        src << JsStringToUtf8(parameterNames[i]);
+        if (i > 0) parameters += ", ";
+        parameters += JsStringToUtf8(parameterNames[i]);
     }
-    src << ") {\n" << JsStringToUtf8(body) << "\n})";
+    const std::string bodyText = JsStringToUtf8(body);
+    if (const char* message = SingleFunctionError(mutCtx->qctx, fnName, parameters, bodyText)) {
+        JS_ThrowSyntaxError(mutCtx->qctx, "%s", message);
+        CapturePendingException(mutCtx, exception);
+        return nullptr;
+    }
 
-    const std::string code = src.str();
+    const std::string code = "(function " + fnName + "(" + parameters + ") {\n" + bodyText + "\n})";
     const std::string url = sourceURL ? JsStringToUtf8(sourceURL) : std::string();
     const int clampedLine = startingLineNumber <= 0 ? 1 : startingLineNumber;
 

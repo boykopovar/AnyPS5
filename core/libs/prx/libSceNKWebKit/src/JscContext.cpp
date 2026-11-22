@@ -1032,7 +1032,7 @@ JSValueRef APS5_VABI JSScriptEvaluate(JSContextRef ctx, JSScriptRef script, JSVa
     if (!ctx || !script) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     if (script->group != mutCtx->group) return nullptr;
-    if (thisValueRef && (!thisValueRef->alive || !thisValueRef->isObjectHandle)) {
+    if (thisValueRef && !thisValueRef->alive) {
         return nullptr;
     }
 
@@ -1046,10 +1046,12 @@ JSValueRef APS5_VABI JSScriptEvaluate(JSContextRef ctx, JSScriptRef script, JSVa
     options.line_num = script->startingLineNumber;
 
     JSValue result;
-    if (thisValueRef && thisValueRef != mutCtx->globalObject) {
-        result = JS_EvalThis2(mutCtx->qctx, thisValueRef->qval, script->source.c_str(), script->source.size(), &options);
-    } else {
+    if (!thisValueRef || thisValueRef == mutCtx->globalObject || JS_IsUndefined(thisValueRef->qval) || JS_IsNull(thisValueRef->qval)) {
         result = JS_Eval2(mutCtx->qctx, script->source.c_str(), script->source.size(), &options);
+    } else {
+        JSValue thisObject = JS_ToObject(mutCtx->qctx, thisValueRef->qval);
+        result = JS_IsException(thisObject) ? JS_EXCEPTION : JS_EvalThis2(mutCtx->qctx, thisObject, script->source.c_str(), script->source.size(), &options);
+        JS_FreeValue(mutCtx->qctx, thisObject);
     }
 
     if (JS_IsException(result)) {
