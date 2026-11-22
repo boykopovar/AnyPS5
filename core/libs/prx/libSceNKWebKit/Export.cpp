@@ -347,10 +347,6 @@ int APS5_VABI _ZNK7WebCore4Node8containsEPKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore6ISOBoxnwEm10NotNullTagPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore10JSDocument6createEPN3JSC9StructureEPNS_17JSDOMGlobalObjectEON3WTF3RefINS_8DocumentENS6_13DumbPtrTraitsIS8_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1070,10 +1066,6 @@ int APS5_VABI _ZN7WebCore23AuthenticationChallengeC1ERKNS_15ProtectionSpaceERKNS
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore6ISOBox4readERN3JSC8DataViewERj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore12TextEncoding6decodeEPKcmbRb() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1643,10 +1635,6 @@ int APS5_VABI _ZN7WebCore23CoordinatedBackingStore10updateTileEjRKNS_7IntRectES3
 }
 
 int APS5_VABI _ZN7WebCore8Settings45setMockCaptureDevicesEnabledInspectorOverrideEN3WTF8OptionalIbEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore6ISOBox5parseERN3JSC8DataViewERj() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -2723,10 +2711,6 @@ int APS5_VABI _ZNK7WebCore5Frame7frameIDEv() {
 }
 
 int APS5_VABI _ZNK7WebCore11RenderStyle21visitedDependentColorENS_13CSSPropertyIDE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10ISOFullBox5parseERN3JSC8DataViewERj() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -4923,10 +4907,6 @@ int APS5_VABI _ZNK7WebCore8Document4viewEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore21ISOTrackEncryptionBoxaSERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore26HTMLTextFormControlElement15setSelectionEndEi() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5434,10 +5414,6 @@ int APS5_VABI _ZN7WebCore15UserInputBridge11reloadFrameEPNS_5FrameEN3WTF9OptionS
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore10ISOFullBoxD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList14DrawingContextC1ERKNS_9FloatSizeEPNS0_8Recorder8ObserverE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5886,10 +5862,6 @@ int APS5_VABI _ZN7WebCore9FrameView14setTransparentEb() {
 }
 
 int APS5_VABI _ZN7WebCore11DisplayList8ReplayerD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore6ISOBox7peekBoxERN3JSC8DataViewEj() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7605,18 +7577,10 @@ int APS5_VABI _ZN7WebCore10StorageMap4copyEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore10ISOFullBoxaSERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_u7d_minus_Shr0LfQ_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("u7d-Shr0LfQ", libSceNKWebKitLegacyUnknown_u7d_minus_Shr0LfQ_nid_no_patch);
-
-int APS5_VABI _ZN7WebCore10ISOFullBoxD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore17FrameLoaderClient28didLoadFromRegistrableDomainEONS_17RegistrableDomainE() {
     NotImplemented_nid_no_patch(__func__);
@@ -8220,10 +8184,6 @@ int APS5_VABI _ZN7WebCore15JSSVGSVGElementC1EPN3JSC9StructureERNS_17JSDOMGlobalO
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore10ISOFullBoxD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore15AsyncFileStream4readEPci() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8683,10 +8643,6 @@ int APS5_VABI _ZN7WebCore4Page15setFooterHeightEi() {
 }
 
 int APS5_VABI _ZN7WebCore8JSDOMURL9toWrappedERN3JSC2VMENS1_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21ISOTrackEncryptionBoxC1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -13644,22 +13600,6 @@ int APS5_VABI _ZN7WebCore10FileHandleaSEOS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore10ISOFullBoxC1ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10ISOFullBoxC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10ISOFullBoxC2ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10ISOFullBoxC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore10JSDocument14getConstructorERN3JSC2VMEPKNS1_14JSGlobalObjectE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -17017,38 +16957,6 @@ int APS5_VABI _ZN7WebCore16HTMLVideoElement6createERNS_8DocumentE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore16ISOSchemeTypeBox5parseERN3JSC8DataViewERj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16ISOSchemeTypeBoxC1ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16ISOSchemeTypeBoxC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16ISOSchemeTypeBoxC2ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16ISOSchemeTypeBoxC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16ISOSchemeTypeBoxD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16ISOSchemeTypeBoxD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16ISOSchemeTypeBoxD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore16JSHTMLCollection9toWrappedERN3JSC2VMENS1_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -18695,42 +18603,6 @@ int APS5_VABI _ZN7WebCore20HTMLTableCellElement8setScopeERKN3WTF10AtomStringE() 
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore20ISOOriginalFormatBox5parseERN3JSC8DataViewERj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore20ISOOriginalFormatBoxC1ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore20ISOOriginalFormatBoxC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore20ISOOriginalFormatBoxC2ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore20ISOOriginalFormatBoxC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore20ISOOriginalFormatBoxD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore20ISOOriginalFormatBoxD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore20ISOOriginalFormatBoxD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore20ISOOriginalFormatBoxaSERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore20LowPowerModeNotifierC1EON3WTF8FunctionIFvbEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -19021,34 +18893,6 @@ int APS5_VABI _ZN7WebCore21HTMLOptionsCollection6removeEi() {
 }
 
 int APS5_VABI _ZN7WebCore21HTMLOptionsCollection9setLengthEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21ISOTrackEncryptionBox5parseERN3JSC8DataViewERj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21ISOTrackEncryptionBoxC1ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21ISOTrackEncryptionBoxC2ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21ISOTrackEncryptionBoxC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21ISOTrackEncryptionBoxD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21ISOTrackEncryptionBoxD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21ISOTrackEncryptionBoxD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -21699,38 +21543,6 @@ int APS5_VABI _ZN7WebCore6Editor7outdentEv() {
 }
 
 int APS5_VABI _ZN7WebCore6Editor9copyImageERKNS_13HitTestResultE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore6ISOBox4readERN3JSC8DataViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore6ISOBoxC1ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore6ISOBoxC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore6ISOBoxC2ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore6ISOBoxC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore6ISOBoxD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore6ISOBoxD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore6ISOBoxD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
