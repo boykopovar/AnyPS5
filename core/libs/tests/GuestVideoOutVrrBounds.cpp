@@ -35,19 +35,10 @@ static bool RejectsUnpeg(int handle) {
     return false;
 }
 
-static bool ThrowsVrrStatusFlagsPrivilege() {
-    try {
-        sceVideoOutAddVrrStatusFlagsPrivilege();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
 int main() {
     VideoOutTestEnvironment environment;
 
-    Require(ThrowsVrrStatusFlagsPrivilege());
+    Require(sceVideoOutAddVrrStatusFlagsPrivilege() == 0);
 
     Require(RejectsPeg(0, 0, 0));
     Require(RejectsPeg(NEVER_OPENED_HANDLE, 0, 0));
