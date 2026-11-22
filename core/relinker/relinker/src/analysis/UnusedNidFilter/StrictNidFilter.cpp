@@ -174,7 +174,6 @@ public:
                         throw RelinkerException("Strict filter: invalid GNU hash bucket", gnuAddress);
                     lastBucket = std::max(lastBucket, static_cast<std::uint64_t>(bucket));
                 }
-                count = firstSymbol;
                 if (lastBucket != 0) {
                     count = lastBucket;
                     for (;;) {
@@ -189,6 +188,8 @@ public:
                             throw RelinkerException("Strict filter: invalid GNU hash chain", gnuAddress);
                         if (chain & 1) break;
                     }
+                } else {
+                    count = reader.ReadDynamicSymbolCount(*symbols, firstSymbol);
                 }
             } else {
                 throw RelinkerException("Strict filter: cannot establish dynamic symbol table bounds");
