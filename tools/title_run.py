@@ -207,13 +207,47 @@ def warning_counts(text):
     return {warning: text.count(warning) for warning in WARNINGS}
 
 
+def summary_protocol_prefix(line):
+    stripped = line.lstrip()
+    if stripped.startswith(("[", '"')):
+        return SUMMARY_JSON.match(line) is not None
+    start = line.find("{")
+    if start < 0:
+        return False
+    remaining = line[start + 1:].lstrip()
+    decoder = json.JSONDecoder()
+    fields, declared_format = set(), None
+    while remaining:
+        try:
+            key, end = decoder.raw_decode(remaining)
+        except ValueError:
+            break
+        remaining = remaining[end:].lstrip()
+        if not isinstance(key, str) or not remaining.startswith(":"):
+            break
+        fields.add(key)
+        remaining = remaining[1:].lstrip()
+        try:
+            value, end = decoder.raw_decode(remaining)
+        except ValueError:
+            break
+        if key == "format":
+            declared_format = value
+        remaining = remaining[end:].lstrip()
+        if not remaining.startswith(","):
+            break
+        remaining = remaining[1:].lstrip()
+    compatible = not isinstance(declared_format, str) or declared_format in ("", "aps5-bench/1")
+    return declared_format == "aps5-bench/1" or bool(compatible and SUMMARY_FIELDS.intersection(fields))
+
+
 def read_summary(path):
     lines, errors = [], {}
     for line in path.read_text(encoding="utf-8", errors="replace").split("\n") if path.is_file() else []:
         try:
             decoded = json.loads(line)
         except ValueError:
-            if SUMMARY_JSON.match(line):
+            if summary_protocol_prefix(line):
                 errors["malformed_rows"] = errors.get("malformed_rows", 0) + 1
             continue
         if isinstance(decoded, dict):
