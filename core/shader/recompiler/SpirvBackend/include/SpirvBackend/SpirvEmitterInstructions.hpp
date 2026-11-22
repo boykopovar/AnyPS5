@@ -150,7 +150,7 @@ std::uint32_t EmitSLessThanEqual32(SpirvEmitterState& state, std::uint32_t arg0,
 std::uint32_t EmitULessThanEqual32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitSGreaterThan32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitUGreaterThan32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
-std::uint32_t EmitINotEqual32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
+std::uint32_t EmitINotEqual32(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitSGreaterThanEqual32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitUGreaterThanEqual32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitLogicalOr(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);

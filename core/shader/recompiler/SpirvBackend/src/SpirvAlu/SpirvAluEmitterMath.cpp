@@ -314,6 +314,27 @@ std::optional<std::array<const IrValue*, 2>> LaneBitWords(const IrValue* bit) {
     return std::array<const IrValue*, 2>{Resolved(word->Argument(1)), Resolved(word->Argument(2))};
 }
 
+bool CanUseGuestMaskLane(const IrValue* word) {
+    if (word != nullptr && word->HasImmediate()) return true;
+    std::vector<const IrValue*> pending{word};
+    std::unordered_set<const IrValue*> seen;
+    while (!pending.empty()) {
+        const auto* value = Resolved(pending.back());
+        pending.pop_back();
+        if (value == nullptr || value->IsEmpty()) return false;
+        if (value->HasImmediate() || !seen.insert(value).second) continue;
+        if (value->Opcode() == IrOpcode::GetUserData) continue;
+        if (value->IsPhi() || value->Opcode() == IrOpcode::Ballot ||
+            value->Opcode() == IrOpcode::LoadVectorWindow || value->Opcode() == IrOpcode::LoadSplitState) return false;
+        if (value->Opcode() == IrOpcode::ReadFirstLane) {
+            pending.push_back(value->Argument(0));
+            continue;
+        }
+        for (const auto* operand : value->Arguments()) pending.push_back(operand);
+    }
+    return true;
+}
+
 bool AllOnesWord(const IrValue* word) {
     if (IsU32(word, 0xffffffffu)) return true;
     return Is(word, IrOpcode::BitwiseOr32) && EitherOrder(word, [](const IrValue* inverted, const IrValue* other) {
@@ -1772,8 +1793,6 @@ std::uint32_t EmitWqmU64(SpirvEmitterState& state, std::uint32_t value) {
 }
 
 std::uint32_t EmitLaneId(SpirvEmitterState& state) {
-    if (state.program.Resources().stage == IrShaderStage::Compute && state.laneCount == 1u && state.hostSubgroupSize < state.program.WaveSize())
-        return Binary(state, spv::OpBitwiseAnd, TypeU32(state), EmitLocalInvocationIndex(state), ConstantU32(state, state.program.WaveSize() - 1u));
     if (state.program.Resources().stage != IrShaderStage::TessellationControl) return EmitSubgroupLocalInvocationId(state);
     const auto variable = InputVariableForKind(state, StageInputKind::InvocationId);
     if (variable == 0) FailEmit("stage input InvocationId was not declared");
@@ -2067,8 +2086,19 @@ std::uint32_t EmitUGreaterThan32(SpirvEmitterState& state, std::uint32_t arg0, s
     return EmitNative<spv::OpUGreaterThan, IrType::U1>(state, arg0, arg1);
 }
 
-std::uint32_t EmitINotEqual32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
-    return EmitNative<spv::OpINotEqual, IrType::U1>(state, arg0, arg1);
+std::uint32_t EmitINotEqual32(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    if (state.program.Resources().stage == IrShaderStage::Compute && state.program.WaveSize() == 32u &&
+        state.laneCount == 1u && state.hostSubgroupSize < 32u) {
+        const auto words = LaneBitWords(&inst);
+        if (words && (*words)[0] == (*words)[1] && CanUseGuestMaskLane((*words)[0])) {
+            const auto u32 = TypeU32(state);
+            const auto lane = Binary(state, spv::OpBitwiseAnd, u32, EmitLocalInvocationIndex(state), ConstantU32(state, 31u));
+            const auto bit = EmitNative<spv::OpBitFieldUExtract, IrType::U32>(state, ctx.Def((*words)[0]), lane, ConstantU32(state, 1u));
+            return EmitNative<spv::OpINotEqual, IrType::U1>(state, bit, ConstantU32(state, 0u));
+        }
+    }
+    return EmitNative<spv::OpINotEqual, IrType::U1>(state, ctx.Arg(inst, 0), ctx.Arg(inst, 1));
 }
 
 std::uint32_t EmitSGreaterThanEqual32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
