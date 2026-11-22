@@ -27,6 +27,13 @@ class RecipeTests(unittest.TestCase):
                 "build_dir": "build", "games": [str(game)], "titles": str(titles), "seconds": 20,
                 "repetitions": 3, "regression_pct": 5, "max_spread_pct": 3}
 
+    def test_loads_bom_prefixed_utf8_recipe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "recipe.json"
+            path.write_text(json.dumps(self.make_recipe(root)), encoding="utf-8-sig")
+            self.assertEqual(performance_bisect.load_recipe(path)["title_id"], "PPSA00000")
+
     def test_loads_valid_recipe_and_normalizes_external_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

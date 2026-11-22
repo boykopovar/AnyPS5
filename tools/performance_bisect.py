@@ -29,7 +29,7 @@ def unique_recipe_fields(pairs):
 
 def load_recipe(path):
     recipe_path = Path(path).resolve()
-    recipe = json.loads(recipe_path.read_text(encoding="utf-8"), object_pairs_hook=unique_recipe_fields)
+    recipe = json.loads(recipe_path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_recipe_fields)
     if not isinstance(recipe, dict):
         raise ValueError("recipe must be a JSON object")
     unknown = set(recipe) - RECIPE_FIELDS
