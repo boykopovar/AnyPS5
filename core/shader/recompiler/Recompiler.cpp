@@ -16,6 +16,8 @@
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "ShaderDiskCache.hpp"
+#include "HostMemory.hpp"
+#include <deque>
 #include <list>
 #include <functional>
 #include <map>
@@ -1857,7 +1859,7 @@ ResultMemoEntry* memoSet(const std::unique_ptr<ResultMemoTable>& table, std::uin
 }
 
 struct ResultMemoCounters {
-    std::atomic<std::uint64_t> hits{0}, patched{0}, misses{0}, evictions{0}, trimmed{0}, populateNanoseconds{0}, patchNanoseconds{0}, mismatches{0};
+    std::atomic<std::uint64_t> hits{0}, patched{0}, misses{0}, evictions{0}, trimmed{0}, populateNanoseconds{0}, patchNanoseconds{0}, mismatches{0}, ghostHits{0}, growths{0};
     std::atomic<std::int64_t> lastReport{0};
     std::atomic<std::uint64_t> clock{0}, heldBytes{0}, heldEntries{0};
 };
@@ -1954,6 +1956,102 @@ std::uint64_t resultMemoBudget() {
     return resultMemoBudgetBytes().load(std::memory_order_relaxed);
 }
 
+std::atomic<std::uint64_t>& resultMemoConfiguredBytes() {
+    static std::atomic<std::uint64_t> configured{resultMemoBudgetBytes().load(std::memory_order_relaxed)};
+    return configured;
+}
+
+std::atomic<bool>& resultMemoGrowthEnabled() {
+    static std::atomic<bool> enabled{std::getenv("APS5_NO_RESULT_MEMO_GROWTH") == nullptr};
+    return enabled;
+}
+
+std::atomic<std::uint64_t>& resultMemoGrowthCapBytes() {
+    static std::atomic<std::uint64_t> cap{0};
+    return cap;
+}
+
+std::uint64_t resultMemoGrowthCap() {
+    const auto configured = resultMemoConfiguredBytes().load(std::memory_order_relaxed);
+    auto cap = resultMemoGrowthCapBytes().load(std::memory_order_relaxed);
+    if (cap == 0) {
+        static const std::uint64_t physical = HostPhysicalMemoryBytes();
+        cap = physical != 0 ? physical / 16u : configured * 8u;
+    }
+    return std::max(cap, configured);
+}
+
+constexpr std::uint64_t ResultMemoGrowthWindow = 32;
+constexpr std::size_t ResultMemoGhostKeys = 16384;
+
+struct ResultMemoGhosts {
+    std::mutex mutex;
+    std::unordered_map<std::uint64_t, std::uint64_t> keys;
+    std::deque<std::pair<std::uint64_t, std::uint64_t>> order;
+    std::uint64_t sequence = 0;
+    std::uint64_t windowMisses = 0;
+    std::uint64_t windowGhosts = 0;
+};
+
+ResultMemoGhosts& resultMemoGhosts() {
+    static ResultMemoGhosts ghosts;
+    return ghosts;
+}
+
+std::uint64_t resultMemoGhostKey(std::uint64_t variantId, std::uint64_t hash, bool masked) {
+    return (variantId * 0x9e3779b97f4a7c15ull) ^ hash ^ (masked ? 0xd6e8feb86659fd93ull : 0u);
+}
+
+void rememberTrimmedResult(std::uint64_t key) {
+    auto& ghosts = resultMemoGhosts();
+    std::lock_guard lock(ghosts.mutex);
+    const auto sequence = ++ghosts.sequence;
+    ghosts.keys[key] = sequence;
+    ghosts.order.emplace_back(key, sequence);
+    while (ghosts.order.size() > ResultMemoGhostKeys) {
+        const auto [oldest, stamp] = ghosts.order.front();
+        ghosts.order.pop_front();
+        if (const auto found = ghosts.keys.find(oldest); found != ghosts.keys.end() && found->second == stamp) ghosts.keys.erase(found);
+    }
+}
+
+void growResultMemoBudget() {
+    auto& budget = resultMemoBudgetBytes();
+    const auto cap = resultMemoGrowthCap();
+    auto current = budget.load(std::memory_order_relaxed);
+    while (current != 0 && current < cap) {
+        const auto next = current > cap / 2u ? cap : current * 2u;
+        if (budget.compare_exchange_weak(current, next, std::memory_order_relaxed)) {
+            resultMemoCounters().growths.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+    }
+}
+
+void noteResultMemoMiss(std::span<const std::uint64_t> keys) {
+    auto& ghosts = resultMemoGhosts();
+    bool ghost = false;
+    bool grow = false;
+    {
+        std::lock_guard lock(ghosts.mutex);
+        for (const auto key : keys) {
+            if (const auto found = ghosts.keys.find(key); found != ghosts.keys.end()) {
+                ghosts.keys.erase(found);
+                ghost = true;
+            }
+        }
+        ++ghosts.windowMisses;
+        if (ghost) ++ghosts.windowGhosts;
+        if (ghosts.windowMisses >= ResultMemoGrowthWindow) {
+            grow = ghosts.windowGhosts * 2u >= ghosts.windowMisses;
+            ghosts.windowMisses = 0;
+            ghosts.windowGhosts = 0;
+        }
+    }
+    if (ghost) resultMemoCounters().ghostHits.fetch_add(1, std::memory_order_relaxed);
+    if (grow && resultMemoGrowthEnabled().load(std::memory_order_relaxed)) growResultMemoBudget();
+}
+
 struct ResultMemoRegistry {
     std::mutex mutex;
     std::vector<std::weak_ptr<SourceEntry>> sources;
@@ -2013,8 +2111,10 @@ void trimResultMemo(std::uint64_t budget) {
             std::lock_guard lock(source->mutex);
             for (auto* table : {source->memo.get(), source->maskedMemo.get()}) {
                 if (table == nullptr) continue;
+                const bool masked = table == source->maskedMemo.get();
                 for (auto& entry : *table) {
                     if (entry.result == nullptr || entry.used > threshold) continue;
+                    rememberTrimmedResult(resultMemoGhostKey(entry.variantId, entry.hash, masked));
                     counters.heldBytes.fetch_sub(entry.bytes, std::memory_order_relaxed);
                     counters.heldEntries.fetch_sub(1, std::memory_order_relaxed);
                     counters.trimmed.fetch_add(1, std::memory_order_relaxed);
@@ -2054,8 +2154,9 @@ void reportResultMemo() {
     const auto populate = counters.populateNanoseconds.exchange(0, std::memory_order_relaxed);
     const auto patching = counters.patchNanoseconds.exchange(0, std::memory_order_relaxed);
     const auto mismatches = counters.mismatches.exchange(0, std::memory_order_relaxed);
+    const auto ghostHits = counters.ghostHits.exchange(0, std::memory_order_relaxed);
     const auto total = static_cast<double>(hits + patched + misses);
-    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu patched, %llu misses (%.1f%% hits, %.1f%% patched), Populate %.1f us per miss / %.1f ms in total, patch %.1f us each / %.1f ms in total, %llu evictions, %llu patch mismatches, %llu trimmed; %llu results held, %.1f MiB\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(patched), static_cast<unsigned long long>(misses), total != 0.0 ? 100.0 * static_cast<double>(hits) / total : 0.0, total != 0.0 ? 100.0 * static_cast<double>(patched) / total : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, patched != 0 ? static_cast<double>(patching) / 1000.0 / static_cast<double>(patched) : 0.0, static_cast<double>(patching) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(mismatches), static_cast<unsigned long long>(trimmed), static_cast<unsigned long long>(counters.heldEntries.load(std::memory_order_relaxed)), static_cast<double>(counters.heldBytes.load(std::memory_order_relaxed)) / 1048576.0);
+    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu patched, %llu misses (%.1f%% hits, %.1f%% patched), Populate %.1f us per miss / %.1f ms in total, patch %.1f us each / %.1f ms in total, %llu evictions, %llu patch mismatches, %llu trimmed, %llu misses of trimmed results; %llu results held, %.1f MiB of a %.1f MiB budget (%llu growths)\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(patched), static_cast<unsigned long long>(misses), total != 0.0 ? 100.0 * static_cast<double>(hits) / total : 0.0, total != 0.0 ? 100.0 * static_cast<double>(patched) / total : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, patched != 0 ? static_cast<double>(patching) / 1000.0 / static_cast<double>(patched) : 0.0, static_cast<double>(patching) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(mismatches), static_cast<unsigned long long>(trimmed), static_cast<unsigned long long>(ghostHits), static_cast<unsigned long long>(counters.heldEntries.load(std::memory_order_relaxed)), static_cast<double>(counters.heldBytes.load(std::memory_order_relaxed)) / 1048576.0, static_cast<double>(resultMemoBudget()) / 1048576.0, static_cast<unsigned long long>(counters.growths.load(std::memory_order_relaxed)));
     auto& plans = resourcePlans();
     const auto interval = TakeResourcePlanInterval();
     std::fprintf(stderr, "[recompile] resource plans (10 s): %llu reloaded, %llu evicted; %llu plans held, %.1f MiB of a %.1f MiB budget\n", static_cast<unsigned long long>(interval.reloads), static_cast<unsigned long long>(interval.evictions), static_cast<unsigned long long>(plans.heldPlans.load(std::memory_order_relaxed)), static_cast<double>(plans.heldBytes.load(std::memory_order_relaxed)) / 1048576.0, static_cast<double>(resourcePlanBudgetBytes().load(std::memory_order_relaxed)) / 1048576.0);
@@ -2273,6 +2374,8 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
         result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot, false, patch.get(), &substitutes));
         if (profile) counters.populateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
         counters.misses.fetch_add(1, std::memory_order_relaxed);
+        const std::array<std::uint64_t, 2> trimmedKeys{resultMemoGhostKey(variantId, hash, false), resultMemoGhostKey(variantId, maskedHash, true)};
+        noteResultMemoMiss(std::span<const std::uint64_t>(trimmedKeys.data(), masking ? 2u : 1u));
     }
     result->cacheHit = cacheHit;
     std::shared_ptr<const RecompileResult> shared = std::move(result);
@@ -2586,7 +2689,14 @@ std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request
 }
 
 void SetResultMemoBudget(std::uint64_t bytes) {
+    resultMemoConfiguredBytes().store(bytes, std::memory_order_relaxed);
     resultMemoBudgetBytes().store(bytes, std::memory_order_relaxed);
+    {
+        auto& ghosts = resultMemoGhosts();
+        std::lock_guard lock(ghosts.mutex);
+        ghosts.windowMisses = 0;
+        ghosts.windowGhosts = 0;
+    }
     if (bytes != 0 && resultMemoCounters().heldBytes.load(std::memory_order_relaxed) > bytes) trimResultMemo(bytes);
 }
 
@@ -2597,6 +2707,18 @@ void SetResultMemoTrimHook(std::function<void()> hook) {
 
 std::uint64_t ResultMemoBytes() {
     return resultMemoCounters().heldBytes.load(std::memory_order_relaxed);
+}
+
+std::uint64_t ResultMemoBudget() {
+    return resultMemoBudget();
+}
+
+void SetResultMemoGrowth(bool enabled) {
+    resultMemoGrowthEnabled().store(enabled, std::memory_order_relaxed);
+}
+
+void SetResultMemoGrowthCap(std::uint64_t bytes) {
+    resultMemoGrowthCapBytes().store(bytes, std::memory_order_relaxed);
 }
 
 void SetResourcePlanBudget(std::uint64_t bytes) {

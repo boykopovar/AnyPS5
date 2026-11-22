@@ -1047,6 +1047,9 @@ struct ResourceCapture;
 [[nodiscard]] std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit = nullptr);
 void SetResultMemoBudget(std::uint64_t bytes);
 [[nodiscard]] std::uint64_t ResultMemoBytes();
+[[nodiscard]] std::uint64_t ResultMemoBudget();
+void SetResultMemoGrowth(bool enabled);
+void SetResultMemoGrowthCap(std::uint64_t bytes);
 void SetResultMemoTrimHook(std::function<void()> hook);
 struct ResourcePlanCounters {
     std::uint64_t heldBytes = 0;

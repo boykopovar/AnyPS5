@@ -639,6 +639,49 @@ void verifyResultMemoMaskedWays() {
     expectPatched(0x10000200u, colliding[0], false, "result memo masked ways: the 17th masked donor in one set did not evict the least recently used entry");
 }
 
+std::uint64_t resultMemoRoundMisses(std::uint32_t first, std::uint32_t count) {
+    std::uint64_t misses = 0;
+    for (std::uint32_t value = first; value < first + count; ++value) {
+        if (!compileResultMemoPixel(value)) ++misses;
+    }
+    return misses;
+}
+
+void verifyResultMemoGrowth(const std::string& mode) {
+    using namespace ShaderRecompiler;
+    const std::string name = "result memo growth (" + mode + ")";
+    require(ResultMemoBytes() == 0u, (name + ": the memo held results before the first compile").c_str());
+    require(!compileResultMemoPixel(1000u) && compileResultMemoPixel(1000u), (name + ": the memo did not keep a result").c_str());
+    const auto one = ResultMemoBytes();
+    require(one != 0u, (name + ": a memo'd result counted no bytes").c_str());
+    SetResultMemoBudget(1u);
+    const auto budget = 3u * one;
+    SetResultMemoBudget(budget);
+    const std::uint32_t working = mode == "cap" ? 6u : 5u;
+    if (mode == "cap") SetResultMemoGrowthCap(4u * one);
+    std::vector<std::uint64_t> misses;
+    for (std::uint32_t round = 0; round < 16u; ++round) misses.push_back(resultMemoRoundMisses(1u, working));
+    const auto rounds = [&] {
+        std::string text;
+        for (const auto count : misses) text += " " + std::to_string(count);
+        return text;
+    };
+    require(misses[1] == working, (name + ": a working set of " + std::to_string(working) + " results over a budget of three did not miss every result of the second round (misses per round:" + rounds() + ")").c_str());
+    if (mode == "on") {
+        require(std::find(misses.begin(), misses.end(), 0u) != misses.end(), (name + ": the budget did not grow until a round hit every result (misses per round:" + rounds() + ", budget " + std::to_string(ResultMemoBudget()) + " of " + std::to_string(budget) + " bytes)").c_str());
+        require(ResultMemoBudget() == 2u * budget, (name + ": the budget is " + std::to_string(ResultMemoBudget()) + " bytes after the working set fit, expected one doubling to " + std::to_string(2u * budget)).c_str());
+        require(misses.back() == 0u, (name + ": the last round still missed (misses per round:" + rounds() + ")").c_str());
+    } else if (mode == "cap") {
+        require(ResultMemoBudget() == 4u * one, (name + ": the budget is " + std::to_string(ResultMemoBudget()) + " bytes, expected the cap of " + std::to_string(4u * one)).c_str());
+        require(misses.back() != 0u, (name + ": a working set of six results stopped missing under a cap of four (misses per round:" + rounds() + ")").c_str());
+    } else {
+        require(ResultMemoBudget() == budget, (name + ": the budget changed to " + std::to_string(ResultMemoBudget()) + " bytes under APS5_NO_RESULT_MEMO_GROWTH").c_str());
+        require(std::find(misses.begin(), misses.end(), 0u) == misses.end(), (name + ": a round hit every result although the budget could not grow (misses per round:" + rounds() + ")").c_str());
+    }
+    SetResultMemoGrowthCap(0u);
+    SetResultMemoBudget(0u);
+}
+
 ShaderRecompiler::RecompileRequest LayoutPairRequest(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, bool registration, std::uint32_t wordLimit) {
     using namespace ShaderRecompiler;
     auto request = FrontendRequest(code, userData);
@@ -13494,6 +13537,12 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget") {
             verifyResultMemoBudget();
             std::cout << "The result memo keeps its most recently used results within its byte budget\n";
+            return 0;
+        }
+        if (argc == 2 && (std::string_view(argv[1]) == "--result-memo-growth" || std::string_view(argv[1]) == "--result-memo-growth-cap" || std::string_view(argv[1]) == "--result-memo-growth-off")) {
+            const std::string_view option(argv[1]);
+            verifyResultMemoGrowth(option == "--result-memo-growth" ? "on" : option == "--result-memo-growth-cap" ? "cap" : "off");
+            std::cout << "The result memo budget grows while dropped results are missed again, within its cap and only when growth is on\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-masked") {
