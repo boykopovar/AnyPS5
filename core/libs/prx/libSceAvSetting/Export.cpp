@@ -129,8 +129,7 @@ int APS5_VABI sceAvControlRemoveCallbacks(void) {
 }
 
 int APS5_VABI sceAvControlCheckCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x802A0011);
 }
 
 int APS5_VABI sceAvControlWaitCallback(void) {
@@ -298,13 +297,11 @@ bool APS5_VABI sceAvControlIsModeSystemDefault(const void* videoOutMode) {
 }
 
 int APS5_VABI sceAvControlIsSuspendedProcessOutputModeAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x802A00FF);
 }
 
 int APS5_VABI sceAvControlIsVideoOutModeSupportedByMonitorInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvControlSet2dVrMode(std::uint32_t mode) {

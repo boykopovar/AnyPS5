@@ -133,6 +133,9 @@ void CheckConsoleMeasuredGetters(void* buffer) {
     Expect(sceAvSettingGetNativeHdmiMonitorInfo(0, buffer), NotInitialized, "SettingGetNativeHdmiMonitorInfo ignores its first argument and reports not initialized");
     Expect(sceAvSettingGetRawHdmiMonitorInfo(nullptr), Error0002, "SettingGetRawHdmiMonitorInfo checks the first argument");
     Expect(sceAvSettingGetRawHdmiMonitorInfo(buffer), NotInitialized, "SettingGetRawHdmiMonitorInfo reports not initialized");
+    Expect(sceAvControlIsSuspendedProcessOutputModeAvailable(), static_cast<int>(0x802A00FFu), "IsSuspendedProcessOutputModeAvailable answers its constant");
+    Expect(sceAvControlCheckCallback(), static_cast<int>(0x802A0011u), "CheckCallback answers its constant");
+    Expect(sceAvControlIsVideoOutModeSupportedByMonitorInfo(), NotInitialized, "IsVideoOutModeSupportedByMonitorInfo reports not initialized for any arguments");
 }
 
 void CheckControlSetters() {
