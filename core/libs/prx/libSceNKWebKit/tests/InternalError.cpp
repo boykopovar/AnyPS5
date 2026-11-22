@@ -119,7 +119,11 @@ void TestInternalError() {
 #else
     void* readOnlyPage = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
 #endif
-    Require(readOnlyPage != nullptr && readOnlyPage != MAP_FAILED);
+#ifdef _WIN32
+    Require(readOnlyPage != nullptr);
+#else
+    Require(readOnlyPage != MAP_FAILED);
+#endif
     std::memcpy(readOnlyPage, &urlImpl, sizeof(StringImpl));
 #ifdef _WIN32
     DWORD previous = 0;
