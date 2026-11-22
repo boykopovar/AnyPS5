@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import math
+import os
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,13 @@ class RecipeTests(unittest.TestCase):
         return {"title_id": "PPSA00000", "build_commands": [["cmake", "--build", "{build_dir}"]],
                 "build_dir": "build", "games": [str(game)], "titles": str(titles), "seconds": 20,
                 "repetitions": 3, "regression_pct": 5, "max_spread_pct": 3}
+
+    def test_loads_bom_prefixed_utf8_recipe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "recipe.json"
+            path.write_text(json.dumps(self.make_recipe(root)), encoding="utf-8-sig")
+            self.assertEqual(performance_bisect.load_recipe(path)["title_id"], "PPSA00000")
 
     def test_loads_valid_recipe_and_normalizes_external_paths(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -52,6 +60,37 @@ class RecipeTests(unittest.TestCase):
                     path.write_text(json.dumps(bad), encoding="utf-8")
                     with self.assertRaises(ValueError):
                         performance_bisect.load_recipe(path)
+
+    def test_rejects_oversized_percentage_integers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            recipe = self.make_recipe(root)
+            path = root / "recipe.json"
+            for name in ("regression_pct", "max_spread_pct"):
+                for value in (10 ** 400, -(10 ** 400), math.inf, -math.inf, math.nan):
+                    with self.subTest(name=name, value=value):
+                        path.write_text(json.dumps(dict(recipe, **{name: value})), encoding="utf-8")
+                        with self.assertRaisesRegex(ValueError, "recipe." + name):
+                            performance_bisect.load_recipe(path)
+
+    def test_cli_reports_oversized_percentages_before_bisection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            recipe = self.make_recipe(root)
+            path = root / "recipe.json"
+            output = root / "report.json"
+            for name in ("regression_pct", "max_spread_pct"):
+                with self.subTest(name=name):
+                    path.write_text(json.dumps(dict(recipe, **{name: 10 ** 400})), encoding="utf-8")
+                    result = subprocess.run([sys.executable, performance_bisect.__file__, "--recipe", str(path),
+                                             "--repo", str(root / "not-a-repository"), "--good", "good", "--bad", "bad",
+                                             "--output", str(output)], capture_output=True, timeout=10)
+                    error = result.stderr.decode("utf-8")
+                    self.assertEqual(result.returncode, 2, error)
+                    self.assertIn("recipe." + name, error)
+                    self.assertNotIn("Traceback", error)
+                    self.assertEqual(result.stdout, b"")
+                    self.assertFalse(output.exists())
 
     def test_resolves_relative_paths_from_the_recipe_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -103,6 +142,16 @@ class RecipeTests(unittest.TestCase):
 
 
 class SummaryValidationTests(unittest.TestCase):
+    def test_sample_rejects_a_non_object_title_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.json"
+            summary = {"build": {"commit": GOOD[:7], "dirty": False}, "machine": IDENTITY}
+            for catalog in (None, [], "PPSA00000", 1):
+                with self.subTest(catalog=catalog):
+                    path.write_text(json.dumps(dict(summary, titles=catalog)), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "missing machine or title data"):
+                        performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
     def test_sample_requires_clean_expected_commit_and_rendering_result(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "summary.json"
@@ -126,7 +175,7 @@ class SummaryValidationTests(unittest.TestCase):
             summary = {"build": {"commit": GOOD[:7], "dirty": False}, "machine": IDENTITY,
                        "titles": {"PPSA00000": {"name": "Example", "version": "01.00",
                                                    "runs": [{"outcome": "stalled", "fps": 60}]}}}
-            for outcome, fps in (("stalled", 60), ("rendering", math.inf), ("rendering", 0)):
+            for outcome, fps in (("stalled", 60), ("rendering", math.inf), ("rendering", 0), ("rendering", 10**309)):
                 summary["titles"]["PPSA00000"]["runs"] = [{"outcome": outcome, "fps": fps}]
                 path.write_text(json.dumps(summary), encoding="utf-8")
                 with self.subTest(outcome=outcome, fps=fps), self.assertRaisesRegex(ValueError, "did not render"):
@@ -149,6 +198,10 @@ class MeasurementStabilityTests(unittest.TestCase):
     def test_regression_requires_the_declared_slowdown_threshold(self):
         self.assertFalse(performance_bisect.is_regression(58, 60, 5))
         self.assertTrue(performance_bisect.is_regression(57, 60, 5))
+
+    def test_regression_counts_a_decimal_value_at_the_threshold(self):
+        self.assertTrue(performance_bisect.is_regression(43.7, 46.0, 5.0))
+        self.assertFalse(performance_bisect.is_regression(43.7000000001, 46.0, 5.0))
 
     def test_candidate_identity_must_match_baseline(self):
         with self.assertRaisesRegex(ValueError, "identity changed"):
@@ -365,8 +418,10 @@ target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'mach
                       "{build_dir}", "{result_dir}", "{commit}"]]}
         output = root / "report.json"
         original_worktrees = performance_bisect.git(self.repo, "worktree", "list", "--porcelain")
+        self.addCleanup(os.chdir, Path.cwd())
+        os.chdir(root)
         with patch.object(performance_bisect, "TOOLS_DIR", tools):
-            report = performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, output, root)
+            report = performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, output, Path("."))
         self.assertEqual(report["first_bad"]["commit"], self.commits[4])
         self.assertEqual(report["previous_good"]["commit"], self.commits[3])
         self.assertEqual(report["tested_commits"], 5)
@@ -738,6 +793,23 @@ class FocusedInputEdgeTests(unittest.TestCase):
             path = self.write_summary(Path(directory), summary)
             with self.assertRaisesRegex(ValueError, "missing machine"):
                 performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
+    def test_sample_requires_content_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            summary = self.sample_fixture()
+            title = summary["titles"]["PPSA00000"]
+            path = self.write_summary(root, summary)
+            sample = performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+            self.assertEqual(sample["identity"]["content_version"], "01.00")
+
+            del title["version"]
+            for fields in ({}, {"version": ""}, {"version": " \t"}, {"version": None}, {"version": 1}):
+                with self.subTest(fields=fields):
+                    summary["titles"]["PPSA00000"] = dict(title, **fields)
+                    path = self.write_summary(root, summary)
+                    with self.assertRaisesRegex(ValueError, "missing a valid content version"):
+                        performance_bisect.sample_summary(path, "PPSA00000", GOOD)
 
 
     def test_summary_uses_middle_pair_for_even_sample_count(self):

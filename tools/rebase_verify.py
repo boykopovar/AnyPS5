@@ -1,4 +1,5 @@
 import argparse
+import codecs
 import collections
 import subprocess
 import sys
@@ -36,19 +37,27 @@ def commits(root, base, tip):
     return len(git(root, "rev-list", "--no-merges", f"{base}..{tip}").split())
 
 
+def patch_path(header, prefix):
+    path = header[4:].removesuffix("\t")
+    if path.startswith('"') and path.endswith('"'):
+        path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", "replace")
+    return path[len(prefix):] if path.startswith(prefix) else None
+
+
 def changed_lines(root, base, tip):
     added = collections.defaultdict(collections.Counter)
     deleted = collections.defaultdict(collections.Counter)
     old_path, new_path, in_hunk = None, None, False
-    lines = git(root, "diff", "-U0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
-                "--src-prefix=a/", "--dst-prefix=b/", base, tip).split("\n")
+    diff = git(root, "diff", "-U0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
+               "--ignore-submodules=none", "--submodule=short", "--src-prefix=a/", "--dst-prefix=b/", base, tip, raw=True)
+    lines = diff.decode("utf-8", "replace").split("\n")
     for index, line in enumerate(lines):
         if line.startswith("diff --git "):
             old_path, new_path, in_hunk = None, None, False
         elif not in_hunk and line.startswith("--- "):
-            old_path = line[6:].removesuffix("\t") if line.startswith("--- a/") else None
+            old_path = patch_path(line, "a/")
         elif not in_hunk and line.startswith("+++ "):
-            new_path = line[6:].removesuffix("\t") if line.startswith("+++ b/") else None
+            new_path = patch_path(line, "b/")
         elif line.startswith("@@"):
             in_hunk = True
         elif in_hunk and line.startswith("+") and new_path is not None:
@@ -80,7 +89,7 @@ def text_only(lines):
 
 def shown(text):
     text, unterminated, _ = text.partition("\n")
-    return text[:100] + (" (no newline at end of file)" if unterminated else "")
+    return text[:100].replace("\r", "\\r") + (" (no newline at end of file)" if unterminated else "")
 
 
 def changed_modes(root, base, tip):

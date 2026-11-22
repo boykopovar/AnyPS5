@@ -120,6 +120,8 @@ inline constexpr Row IberianRows[] = {
     {"es", "", "MX", SpanishLatinAmerica},
     {"es", "", "AR", SpanishLatinAmerica},
     {"es", "", "BO", SpanishLatinAmerica},
+    {"es", "", "BR", SpanishLatinAmerica},
+    {"es", "", "BZ", SpanishLatinAmerica},
     {"es", "", "CL", SpanishLatinAmerica},
     {"es", "", "CO", SpanishLatinAmerica},
     {"es", "", "CR", SpanishLatinAmerica},
