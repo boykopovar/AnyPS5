@@ -121,6 +121,8 @@ struct OpaqueJSContextGroup {
     bool hasTimeLimit = false;
     double timeLimitSeconds = 0.0;
     std::chrono::steady_clock::time_point deadline{};
+    bool deadlineArmed = false;
+    int vmEntryDepth = 0;
     JSShouldTerminateCallback terminateCallback = nullptr;
     void* terminateContext = nullptr;
     OpaqueJSContext* activeContext = nullptr;
@@ -139,6 +141,21 @@ struct OpaqueJSContextGroup {
     void CollectGarbage();
     void DrainMicrotasks(OpaqueJSContext* ctx);
     void RefreshDeadline();
+    void EnterVm();
+    void ExitVm();
+};
+
+struct VmEntryScope {
+    OpaqueJSContextGroup* group;
+
+    explicit VmEntryScope(OpaqueJSContextGroup* grp) : group(grp) {
+        if (group) group->EnterVm();
+    }
+    VmEntryScope(const VmEntryScope&) = delete;
+    VmEntryScope& operator=(const VmEntryScope&) = delete;
+    ~VmEntryScope() {
+        if (group) group->ExitVm();
+    }
 };
 
 struct OpaqueJSContext {
@@ -147,6 +164,9 @@ struct OpaqueJSContext {
     JSContext* qctx = nullptr;
     OpaqueJSValue* globalObject = nullptr;
     JSValue globalExoticInterceptor = JS_UNDEFINED;
+    JSValue dateConstructor = JS_UNDEFINED;
+    JSValue errorConstructor = JS_UNDEFINED;
+    JSValue regExpConstructor = JS_UNDEFINED;
     std::unordered_map<OpaqueJSClass*, OpaqueJSValue*> classPrototypes;
     OpaqueJSValue* unhandledRejectionCallback = nullptr;
     std::vector<std::pair<JSValue, JSValue>> pendingUnhandledRejections;
@@ -235,5 +255,9 @@ void RunClassFinalize(CallbackObjectData* data);
 OpaqueJSValue* GetOrCreateClassPrototype(OpaqueJSContext* ctx, OpaqueJSClass* jsClass);
 OpaqueJSValue* MakeCallbackObject(OpaqueJSContext* ctx, OpaqueJSClass* jsClass, void* data);
 bool IsObjectCallable(const OpaqueJSContext* ctx, OpaqueJSValue* object);
+
+inline JSValueConst ValueOrNull(const OpaqueJSValue* value) {
+    return value ? value->qval : JS_NULL;
+}
 
 }  // namespace NKWebKit

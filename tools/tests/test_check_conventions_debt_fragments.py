@@ -68,6 +68,18 @@ class DebtFragmentTests(unittest.TestCase):
         self.assertEqual([(rule, path, line) for rule, path, line, _ in findings], [("debt-fragment", FRAGMENT, 3)])
         self.assertIn("matches 2 entries", findings[0][3])
 
+    def test_two_changes_to_one_entry_in_a_fragment_are_an_error(self):
+        findings = self.check(f"# libSceExample\n\n## change [sceExampleA]\n\n- [sceExampleA]({LINK}) (libSceExample) - returns 1\n\n"
+                              f"## change [sceExampleA]\n\n- [sceExampleA]({LINK}) (libSceExample) - returns 2\n")
+        self.assertEqual([(rule, path, line) for rule, path, line, _ in findings], [("debt-fragment", FRAGMENT, 3)])
+        self.assertIn("name each entry once per fragment", findings[0][3])
+
+    def test_a_change_and_a_remove_of_one_entry_are_an_error(self):
+        findings = self.check(f"# libSceExample\n\n## change [sceExampleA]\n\n- [sceExampleA]({LINK}) (libSceExample) - returns 1\n\n"
+                              f"## remove [sceExampleA]\n")
+        self.assertEqual([(rule, path, line) for rule, path, line, _ in findings], [("debt-fragment", FRAGMENT, 3)])
+        self.assertIn("both target the same", findings[0][3])
+
     def test_an_entry_for_another_library_is_in_the_wrong_file(self):
         findings = self.check(f"# libSceExample\n\n## add Silent stubs\n\n- [sceOtherA]({OTHER}) (libSceOther) - returns 0\n")
         self.assertEqual(findings, [("debt-file", FRAGMENT, 3, "docs/dev/debt/libSceOther.md")])
