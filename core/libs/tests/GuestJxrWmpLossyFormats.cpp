@@ -236,13 +236,10 @@ int main() {
                             guestFailed = guestDecoder->copy(guestDecoder, &rect, guestDecoded.data(), stride) != 0;
                         }
 
-                        if (nativeDecodeResult != 0) {
-                            Require(guestFailed);
-                        } else {
-                            Require(!guestFailed);
-                            Require(nativeWidth == static_cast<std::int32_t>(width) && nativeHeight == static_cast<std::int32_t>(height));
-                            Require(std::memcmp(guestDecoded.data(), nativeDecoded.data(), stride * height) == 0);
-                        }
+                        Require(nativeDecodeResult == 0);
+                        Require(!guestFailed);
+                        Require(nativeWidth == static_cast<std::int32_t>(width) && nativeHeight == static_cast<std::int32_t>(height));
+                        Require(std::memcmp(guestDecoded.data(), nativeDecoded.data(), stride * height) == 0);
 
                         Require(guestDecoder->release(&guestDecoder) == 0 && guestDecoder == nullptr);
                         Require(guestDecodeStream->close(&guestDecodeStream) == 0 && guestDecodeStream == nullptr);
