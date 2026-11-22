@@ -1143,7 +1143,7 @@ JSObjectRef APS5_VABI JSObjectMakeFunctionWithCallback(JSContextRef ctx, JSStrin
     JS_SetOpaque(handle->qval, cbData);
     mutCtx->group->callbackDataByPtr[ptr] = cbData;
 
-    const std::string fnName = name ? JsStringToUtf8(name) : std::string();
+    const std::string fnName = name ? JsStringToUtf8(name) : std::string("anonymous");
     JS_DefinePropertyValueStr(mutCtx->qctx, cbData->propStore, "name", JS_NewString(mutCtx->qctx, fnName.c_str()), JS_PROP_CONFIGURABLE);
     JS_DefinePropertyValueStr(mutCtx->qctx, cbData->propStore, "length", JS_NewInt32(mutCtx->qctx, 0), JS_PROP_CONFIGURABLE);
     return handle;
@@ -1376,8 +1376,15 @@ void APS5_VABI JSObjectSetProperty(JSContextRef ctx, JSObjectRef object, JSStrin
         return;
     }
     JSValue val = JS_DupValue(mutCtx->qctx, StoredValue(value));
-    if (attributes != kJSPropertyAttributeNone) {
-        const int flags = ToQuickJsPropFlags(attributes) | JS_PROP_HAS_VALUE | JS_PROP_HAS_WRITABLE | JS_PROP_HAS_ENUMERABLE | JS_PROP_HAS_CONFIGURABLE | JS_PROP_THROW;
+    const int present = attributes != kJSPropertyAttributeNone ? JS_HasProperty(mutCtx->qctx, object->qval, atom) : 1;
+    if (present < 0) {
+        JS_FreeValue(mutCtx->qctx, val);
+        JS_FreeAtom(mutCtx->qctx, atom);
+        CapturePendingException(mutCtx, exception);
+        return;
+    }
+    if (!present) {
+        const int flags = ToQuickJsPropFlags(attributes) | JS_PROP_HAS_VALUE | JS_PROP_HAS_WRITABLE | JS_PROP_HAS_ENUMERABLE | JS_PROP_HAS_CONFIGURABLE;
         CallbackObjectData* cbData = mutCtx->group->FindCallbackData(object);
         JSValue target = (cbData && !JS_IsUndefined(cbData->propStore) && object != mutCtx->globalObject) ? cbData->propStore : object->qval;
         const int res = JS_DefinePropertyValue(mutCtx->qctx, target, atom, val, flags);
@@ -1454,8 +1461,15 @@ void APS5_VABI JSObjectSetPropertyForKey(JSContextRef ctx, JSObjectRef object, J
         return;
     }
     JSValue val = JS_DupValue(mutCtx->qctx, StoredValue(value));
-    if (attributes != kJSPropertyAttributeNone) {
-        const int flags = ToQuickJsPropFlags(attributes) | JS_PROP_HAS_VALUE | JS_PROP_HAS_WRITABLE | JS_PROP_HAS_ENUMERABLE | JS_PROP_HAS_CONFIGURABLE | JS_PROP_THROW;
+    const int present = attributes != kJSPropertyAttributeNone ? JS_HasProperty(mutCtx->qctx, object->qval, atom) : 1;
+    if (present < 0) {
+        JS_FreeValue(mutCtx->qctx, val);
+        JS_FreeAtom(mutCtx->qctx, atom);
+        CapturePendingException(mutCtx, exception);
+        return;
+    }
+    if (!present) {
+        const int flags = ToQuickJsPropFlags(attributes) | JS_PROP_HAS_VALUE | JS_PROP_HAS_WRITABLE | JS_PROP_HAS_ENUMERABLE | JS_PROP_HAS_CONFIGURABLE;
         CallbackObjectData* cbData = mutCtx->group->FindCallbackData(object);
         JSValue target = (cbData && !JS_IsUndefined(cbData->propStore) && object != mutCtx->globalObject) ? cbData->propStore : object->qval;
         const int res = JS_DefinePropertyValue(mutCtx->qctx, target, atom, val, flags);
@@ -1587,6 +1601,7 @@ bool APS5_VABI JSObjectIsConstructor(JSContextRef ctx, JSObjectRef object) {
 
 JSObjectRef APS5_VABI JSObjectCallAsConstructor(JSContextRef ctx, JSObjectRef object, std::size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception) {
     if (!ctx || !object || !object->alive) return nullptr;
+    if (!JSObjectIsConstructor(ctx, object)) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     std::vector<JSValueConst> args(argumentCount);
     for (std::size_t i = 0; i < argumentCount; ++i) {
