@@ -1,4 +1,5 @@
 import argparse
+import codecs
 import collections
 import subprocess
 import sys
@@ -36,6 +37,13 @@ def commits(root, base, tip):
     return len(git(root, "rev-list", "--no-merges", f"{base}..{tip}").split())
 
 
+def patch_path(header, prefix):
+    path = header[4:].removesuffix("\t")
+    if path.startswith('"') and path.endswith('"'):
+        path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", "replace")
+    return path[len(prefix):] if path.startswith(prefix) else None
+
+
 def changed_lines(root, base, tip):
     added = collections.defaultdict(collections.Counter)
     deleted = collections.defaultdict(collections.Counter)
@@ -47,9 +55,9 @@ def changed_lines(root, base, tip):
         if line.startswith("diff --git "):
             old_path, new_path, in_hunk = None, None, False
         elif not in_hunk and line.startswith("--- "):
-            old_path = line[6:].removesuffix("\t") if line.startswith("--- a/") else None
+            old_path = patch_path(line, "a/")
         elif not in_hunk and line.startswith("+++ "):
-            new_path = line[6:].removesuffix("\t") if line.startswith("+++ b/") else None
+            new_path = patch_path(line, "b/")
         elif line.startswith("@@"):
             in_hunk = True
         elif in_hunk and line.startswith("+") and new_path is not None:

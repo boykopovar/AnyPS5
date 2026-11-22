@@ -104,6 +104,28 @@ class RebaseVerifyTests(unittest.TestCase):
     def test_a_clean_rebase_keeps_every_line_author_and_commit(self):
         self.assertEqual(self.verify(), [])
 
+    @unittest.skipIf(os.name == "nt", "Windows does not support these filename characters")
+    def test_rebase_checks_added_and_deleted_lines_at_quoted_paths(self):
+        path = 'quoted-"-\\-\t-é.txt'
+        self.git("checkout", "-q", "main")
+        self.write(path, "old line\n")
+        self.git("add", "--", path)
+        self.git("commit", "-qm", "feat(tools): add a quoted path")
+        self.git("checkout", "-q", "-B", "old", "main")
+        self.write(path, "new line\n")
+        self.git("commit", "-qam", "fix(tools): change content at a quoted path")
+        self.git("checkout", "-q", "-B", "new", "main")
+        self.git("cherry-pick", "old")
+        self.assertEqual(self.verify(), [])
+
+        self.write(path, "old line\ndifferent line\n")
+        self.git("commit", "-qa", "--amend", "--no-edit")
+        self.assertEqual(self.verify(), [
+            f"{path}: an added line is missing (1x): new line",
+            f"{path}: a line is added that the branch did not add (1x): different line",
+            f"{path}: a deleted line is missing (1x): old line",
+        ])
+
     def test_rebase_reports_a_crlf_line_changed_to_lf(self):
         path = "windows.txt"
         self.git("checkout", "-q", "old")
