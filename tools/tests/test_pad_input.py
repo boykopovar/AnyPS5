@@ -366,6 +366,16 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 2)
         self.assertIn("is a directory", errors.getvalue())
 
+    def test_non_ascii_path_with_cp1252_stdio_is_reported_as_utf8(self):
+        env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+        target = self.root / "pad-\u2603.txt"
+        result = subprocess.run(
+            [sys.executable, pad_input.__file__, str(target), "cross"],
+            env=env, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+        self.assertTrue(target.is_file())
+        self.assertIn(target.name, result.stdout.decode("utf-8"))
+
 
 class ButtonMaskTests(unittest.TestCase):
     def test_button_mask_ors_joined_button_names(self):
