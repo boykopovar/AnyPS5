@@ -227,6 +227,19 @@ class MainTests(unittest.TestCase):
             code = bug_report.main(argv)
         return code, out.getvalue(), err.getvalue()
 
+    def test_hostname_case_is_redacted_in_network_paths(self):
+        self.log.write_text(
+            "opened //SERVERFESTIVO/share/title.elf via serverfestivo.local\n"
+            "opened //serverfestivo-backup/share/title.elf\n", encoding="utf-8")
+        target = self.root / "bundle.zip"
+        code, _, error = self.run_main(["--report", str(self.report), "--log", str(self.log),
+                                        "--input-config", "", "--out", str(target)])
+        self.assertEqual(code, 0, error)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(bundle.read("anyps5.log").decode("utf-8"),
+                             "opened //<host>/share/title.elf via <host>.local\n"
+                             "opened //serverfestivo-backup/share/title.elf\n")
+
     def test_writes_the_bundle_with_identities_redacted(self):
         target = self.root / "bundle.zip"
         code, out, _ = self.run_main(["--report", str(self.report), "--log", str(self.log), "--input-config", str(self.root / "none.ini"), "--out", str(target)])

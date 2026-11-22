@@ -1075,6 +1075,35 @@
         {"name": "zeros-pnp", "input": ["0x00000000", "0x80000000", "0x00000000", 0]},
         {"name": "zeros-npn", "input": ["0x80000000", "0x00000000", "0x80000000", 0]}
       ]
+    },
+    {
+      "id": "v-cvt-i32-f32-limits",
+      "instruction": "v_cvt_i32_f32",
+      "description": "NaN, infinities, values past the i32 range, halves and negative zero.",
+      "body": "v_cvt_i32_f32 v10, v4",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "nan", "input": ["0x7fc12345", 0, 0, 0]},
+        {"name": "pos-inf", "input": ["0x7f800000", 0, 0, 0]},
+        {"name": "neg-inf", "input": ["0xff800000", 0, 0, 0]},
+        {"name": "two-pow-31", "input": ["0x4f000000", 0, 0, 0]},
+        {"name": "below-min", "input": ["0xcf000001", 0, 0, 0]},
+        {"name": "two-and-half", "input": ["0x40200000", 0, 0, 0]},
+        {"name": "minus-two-and-half", "input": ["0xc0200000", 0, 0, 0]},
+        {"name": "neg-zero", "input": ["0x80000000", 0, 0, 0]}
+      ]
     }
   ]
 }

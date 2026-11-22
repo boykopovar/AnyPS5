@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -1241,6 +1242,20 @@ class BodyEndTests(unittest.TestCase):
         self.assertEqual(progress.body_end(text, 1), 7)
         self.assertEqual(text[progress.body_end(text, 1)], "}")
         self.assertEqual(progress.body_end("x{a", 1), len("x{a"))
+
+
+class CodeTests(unittest.TestCase):
+    def test_code_masks_token_runs_like_single_tokens(self):
+        samples = ["1'000'000 x", r"""u8"a" uR"x(y)x" xu8"q" R"(" 'a' '\'' "open""", "/* open", "a/b//c\n/*x*/d",
+                   """L'x'LR"d(z)d"Ruby u8x""", 'R"abc(no close', ".5e3'x' 'y", "'", '"', "x  \t\n\n  \n y",
+                   "#define A \\\n B \\\r\n C", """a u8"x" b L'y' c R"(z)" d U"w" e u'v' f a/b"""]
+        for text in samples:
+            with self.subTest(text=text):
+                joined = text.replace("\\\n", "").replace("\\\r\n", "")
+                single = re.sub(r"\n(?:[ \t]*\n)+", "\n", progress.CPP_TOKEN.sub(progress.blank, joined))
+                self.assertEqual(progress.code(text), single)
+
+
 class HelperValueTests(unittest.TestCase):
     def test_camel_capitalises_each_underscore_part(self):
         self.assertEqual(progress.camel("a_b_c"), "ABC")

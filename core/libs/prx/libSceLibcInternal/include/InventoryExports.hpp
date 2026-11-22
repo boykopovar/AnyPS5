@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include <streambuf>
@@ -153,10 +154,10 @@ int APS5_VABI libSceLibcInternalInventory_179_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_180_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_181_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_182_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_183_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_184_nid_no_patch();
+void APS5_VABI libSceLibcInternalInventory_183_nid_no_patch(void* self);
+void APS5_VABI libSceLibcInternalInventory_184_nid_no_patch(void* self);
 void APS5_VABI libSceLibcInternalInventory_185_nid_no_patch(void* self);
-int APS5_VABI libSceLibcInternalInventory_192_nid_no_patch();
+void APS5_VABI libSceLibcInternalInventory_192_nid_no_patch(void* self);
 int APS5_VABI libSceLibcInternalInventory_197_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_198_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_199_nid_no_patch();
@@ -201,8 +202,8 @@ int APS5_VABI libSceLibcInternalInventory_236_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_239_nid_no_patch();
 double APS5_VABI libSceLibcInternalInventory_244_nid_no_patch();
 [[noreturn]] void APS5_VABI libSceLibcInternalInventory_245_nid_no_patch(const LibcException::ExceptionObject* error);
-int APS5_VABI libSceLibcInternalInventory_252_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_253_nid_no_patch();
+std::size_t APS5_VABI libSceLibcInternalInventory_252_nid_no_patch(char* first1, char* last1, const char* first2, const char* last2, const void* collvec);
+std::size_t APS5_VABI libSceLibcInternalInventory_253_nid_no_patch(char16_t* first1, char16_t* last1, const char16_t* first2, const char16_t* last2, const void* collvec);
 int APS5_VABI __atomic_compare_exchange_n_nid_postfix();
 int APS5_VABI __atomic_exchange_n_nid_postfix();
 int APS5_VABI __atomic_store_n_nid_postfix();
@@ -216,7 +217,7 @@ int APS5_VABI libSceLibcInternalInventory_271_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_272_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_273_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_274_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_275_nid_no_patch();
+int APS5_VABI libSceLibcInternalInventory_275_nid_no_patch(const void* table);
 void APS5_VABI libSceLibcInternalInventory_277_nid_no_patch(int* locks);
 void APS5_VABI libSceLibcInternalInventory_278_nid_no_patch(const char* format, ...);
 int APS5_VABI libSceLibcInternalInventory_279_nid_no_patch(void);

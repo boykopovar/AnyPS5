@@ -1,11 +1,15 @@
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
+#include <vector>
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/CodecvtUtf.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
+#include "prx/libSceLibcInternal/include/TimeGetFields.hpp"
 #include <mutex>
 
 namespace {
@@ -746,13 +750,14 @@ int APS5_VABI libSceLibcInternalInventory_182_nid_no_patch() {
 }
 APS5_EXPORT("dU8Q2yzFNQg", libSceLibcInternalInventory_182_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_183_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_183_nid_no_patch(void* self) {
+    _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEED2Ev_nid_postfix(static_cast<GuestLocale::Facet*>(self));
+    _ZdlPv_nid_postfix(self);
 }
 APS5_EXPORT("mmq9OwwYx74", libSceLibcInternalInventory_183_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_184_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_184_nid_no_patch(void* self) {
+    _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEED2Ev_nid_postfix(static_cast<GuestLocale::Facet*>(self));
 }
 APS5_EXPORT("Cp9ksNOeun8", libSceLibcInternalInventory_184_nid_no_patch);
 
@@ -761,8 +766,8 @@ void APS5_VABI libSceLibcInternalInventory_185_nid_no_patch(void* self) {
 }
 APS5_EXPORT("ImblNB7fVVU", libSceLibcInternalInventory_185_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_192_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_192_nid_no_patch(void* self) {
+    _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEED2Ev_nid_postfix(static_cast<GuestLocale::Facet*>(self));
 }
 APS5_EXPORT("QTgRx1NTp6o", libSceLibcInternalInventory_192_nid_no_patch);
 
@@ -1000,13 +1005,29 @@ APS5_EXPORT("mDIHE-aaRaI", libSceLibcInternalInventory_244_nid_no_patch);
 }
 APS5_EXPORT("pDFe-IgbTPg", libSceLibcInternalInventory_245_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_252_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::size_t APS5_VABI libSceLibcInternalInventory_252_nid_no_patch(char* first1, char* last1, const char* first2, const char* last2, const void* collvec) {
+    (void)collvec;
+    if ((first1 == nullptr) != (last1 == nullptr) || last1 < first1 || (first2 == nullptr) != (last2 == nullptr) || last2 < first2)
+        throw std::invalid_argument("_LStrxfrm<char>: invalid character range");
+    const auto length = static_cast<std::size_t>(last2 - first2);
+    if (length == 0 || length > static_cast<std::size_t>(last1 - first1)) return length;
+    std::vector<char> copy(length);
+    if (!GuestCopyIn_nid_no_patch(copy.data(), first2, length)) throw std::invalid_argument("_LStrxfrm<char>: unreadable source");
+    if (!GuestCopyOut_nid_no_patch(first1, copy.data(), length)) throw std::invalid_argument("_LStrxfrm<char>: unwritable buffer");
+    return length;
 }
 APS5_EXPORT("V62E2Q8bJVY", libSceLibcInternalInventory_252_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_253_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::size_t APS5_VABI libSceLibcInternalInventory_253_nid_no_patch(char16_t* first1, char16_t* last1, const char16_t* first2, const char16_t* last2, const void* collvec) {
+    (void)collvec;
+    if ((first1 == nullptr) != (last1 == nullptr) || last1 < first1 || (first2 == nullptr) != (last2 == nullptr) || last2 < first2)
+        throw std::invalid_argument("_LStrxfrm<wchar_t>: invalid character range");
+    const auto length = static_cast<std::size_t>(last2 - first2);
+    if (length == 0 || length > static_cast<std::size_t>(last1 - first1)) return length;
+    std::vector<char16_t> copy(length);
+    if (!GuestCopyIn_nid_no_patch(copy.data(), first2, length * sizeof(char16_t))) throw std::invalid_argument("_LStrxfrm<wchar_t>: unreadable source");
+    if (!GuestCopyOut_nid_no_patch(first1, copy.data(), length * sizeof(char16_t))) throw std::invalid_argument("_LStrxfrm<wchar_t>: unwritable buffer");
+    return length;
 }
 APS5_EXPORT("BloPUt1HCH0", libSceLibcInternalInventory_253_nid_no_patch);
 
@@ -1067,8 +1088,8 @@ int APS5_VABI libSceLibcInternalInventory_274_nid_no_patch() {
 }
 APS5_EXPORT("aLYyS4Kx6rQ", libSceLibcInternalInventory_274_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_275_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceLibcInternalInventory_275_nid_no_patch(const void* table) {
+    return CrtNewSetup_nid_no_patch(table);
 }
 APS5_EXPORT("KNNNbyRieqQ", libSceLibcInternalInventory_275_nid_no_patch);
 

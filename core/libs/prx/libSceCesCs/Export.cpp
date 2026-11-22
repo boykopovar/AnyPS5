@@ -1350,12 +1350,13 @@ uint32_t encodeUtf16(uint32_t code, uint16_t* utf16) {
 }
 
 template<typename Source, typename Target, typename Decode, typename Encode>
-int convertString(const void* context, const Source* source, uint32_t sourceMax, uint32_t* sourceLen, Target* target, uint32_t targetMax, uint32_t* targetLen, bool counting, Decode decode, Encode encode) {
+int convertString(const void* context, const Source* source, uint32_t sourceMax, uint32_t* sourceLen, Target* target, uint32_t targetMax, uint32_t* targetLen, bool counting, Decode decode, Encode encode, bool allowEmptyContext = false) {
     if (sourceLen) *sourceLen = 0;
     if (targetLen) *targetLen = 0;
     if (target && targetMax > 0) target[0] = 0;
     if (!context) return CES_ERROR_INVALID_PARAMETER;
     const void* profile = contextProfile(context);
+    if (allowEmptyContext && !profile && source && target && targetMax > 0) return 0;
     if (!isMbcs(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!source) return CES_ERROR_INVALID_SRC_BUFFER;
     if (!counting && !target) return CES_ERROR_INVALID_DST_BUFFER;
@@ -2434,7 +2435,7 @@ int APS5_VABI sceCesUcs2StrGetMbcsLen(void* context, const uint16_t* ucs2, uint3
 }
 
 int APS5_VABI sceCesMbcsStrToUtf8Str(void* context, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t* mbcsLen, uint8_t* utf8, uint32_t utf8max, uint32_t* utf8Len) {
-    return convertString(context, mbcs, mbcsMax, mbcsLen, utf8, utf8max, utf8Len, false, decodeMbcs, unitTarget<encodeUtf8, uint8_t>);
+    return convertString(context, mbcs, mbcsMax, mbcsLen, utf8, utf8max, utf8Len, false, decodeMbcs, unitTarget<encodeUtf8, uint8_t>, true);
 }
 
 int APS5_VABI sceCesMbcsStrGetUtf8Len(void* context, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t* mbcsLen, uint32_t* utf8Len) {
