@@ -65,6 +65,8 @@ double APS5_VABI _Pow_nid_postfix(double x, double y, short* exponent);
 int APS5_VABI _Quad_nid_postfix();
 int APS5_VABI _Quadph_nid_postfix();
 double APS5_VABI _Rint_nid_postfix(double x);
+double APS5_VABI sceLibcInternalSignificand_nid_no_patch(double x);
+float APS5_VABI sceLibcInternalSignificandF_nid_no_patch(float x);
 double APS5_VABI _Xp_getw_nid_postfix(const double* p, int n);
 double* APS5_VABI _Xp_setn_nid_postfix(double* p, int n, std::int64_t x);
 double* APS5_VABI _Xp_setw_nid_postfix(double* p, int n, double x);

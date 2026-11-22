@@ -370,7 +370,7 @@ class ImportRelocationTests(unittest.TestCase):
 
 
 class ObjdumpDiscoveryTests(unittest.TestCase):
-    def discover(self, versions, unsupported=()):
+    def discover(self, versions, unsupported=(), false_success=()):
         def which(name):
             return "/bin/" + name if name in versions else None
 
@@ -379,7 +379,9 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
             if command[1] == "--version":
                 return subprocess.CompletedProcess(command, 0, versions[name], "")
             self.assertIn("i386:x86-64", command)
-            return subprocess.CompletedProcess(command, int(name in unsupported), "", "")
+            instruction = "64-bit address is disabled" if name in false_success else "ret"
+            output = f"   0:\t{instruction}\n"
+            return subprocess.CompletedProcess(command, int(name in unsupported), output, "")
 
         annotate_module.gnu_objdump.cache_clear()
         self.addCleanup(annotate_module.gnu_objdump.cache_clear)
@@ -395,6 +397,11 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
         found = self.discover({"objdump": version, "x86_64-linux-gnu-objdump": version}, unsupported=("objdump",))
         self.assertEqual(found, "/bin/x86_64-linux-gnu-objdump")
         self.assertIsNone(self.discover({"objdump": version}, unsupported=("objdump",)))
+
+    def test_32_bit_objdump_that_exits_successfully_is_skipped(self):
+        version = "GNU objdump (GNU Binutils) 2.28\n"
+        found = self.discover({"objdump": version, "gobjdump": version}, false_success=("objdump",))
+        self.assertEqual(found, "/bin/gobjdump")
 
     def test_only_llvm_objdump_is_refused_by_name(self):
         self.assertIsNone(self.discover({"objdump": "Apple LLVM version 21.0.0\n"}))

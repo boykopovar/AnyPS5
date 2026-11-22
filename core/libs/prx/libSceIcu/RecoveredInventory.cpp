@@ -7,22 +7,6 @@ int APS5_VABI u_strToTitle_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucol_getContractionsAndExpansions_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucol_getKeywordValues_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucol_getKeywordValuesForLocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucol_getRules_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ucol_getStrength_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -32,10 +16,6 @@ int APS5_VABI ucol_setStrength_nid_postfix() {
 }
 
 int APS5_VABI ucol_strcoll_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucol_strcollIter_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

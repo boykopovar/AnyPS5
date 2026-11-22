@@ -9,6 +9,8 @@ import socket
 import sys
 import zipfile
 
+from performance_compare import unique_json_object
+
 
 IPV4_OCTET = r"(?!25[6-9]|2[6-9][0-9]|[3-9][0-9]{2})\d{1,3}"
 IPV4 = re.compile(rf"\b(?:{IPV4_OCTET}\.){{3}}{IPV4_OCTET}\b")
@@ -26,8 +28,10 @@ def redact(text, *, home, user, host):
     if user and len(user) >= 2:
         text = re.sub(r"(?<![\w-])" + re.escape(user) + r"(?![\w-])", "<user>", text,
                       flags=re.IGNORECASE if windows_home else 0)
-    if host and len(host) >= 2:
-        text = re.sub(r"(?<![\w-])" + re.escape(host) + r"(?![\w-])", "<host>", text, flags=re.IGNORECASE)
+    host = (host or "").rstrip(".")
+    for name in dict.fromkeys((host, host.split(".")[0])):
+        if len(name) >= 2:
+            text = re.sub(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", "<host>", text, flags=re.IGNORECASE)
     return IPV4.sub("<ip>", text)
 
 
@@ -93,9 +97,9 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None, e
     out = Path(out)
     if out.exists():
         raise FileExistsError(f"{out} already exists")
-    data = json.loads(report.read_text(encoding="utf-8-sig"))
+    data = json.loads(report.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_object)
     identity = {"home": home, "user": user, "host": host}
-    members = {"anyps5-report.json": json.dumps(redact_report(data, identity), indent=2) + "\n"}
+    members = {"anyps5-report.json": json.dumps(redact_report(data, identity), indent=2, allow_nan=False) + "\n"}
     profile = input_profile_path(data, input_config) if input_config else None
     if profile is not None and profile.is_file():
         members["anyps5-input-profile.ini"] = redact(profile.read_text(encoding="utf-8", errors="replace"), **identity)
@@ -109,7 +113,7 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None, e
     members["README.txt"] = README
     with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name, content in members.items():
-            bundle.writestr(name, content.encode("utf-8"))
+            bundle.writestr(name, content.encode("utf-8", errors="backslashreplace"))
     return sorted(members)
 
 
@@ -118,7 +122,7 @@ def identities():
         user = getpass.getuser()
     except Exception:
         user = ""
-    return {"home": str(Path.home()), "user": user, "host": socket.gethostname().split(".")[0]}
+    return {"home": str(Path.home()), "user": user, "host": socket.gethostname()}
 
 
 def main(argv=None):

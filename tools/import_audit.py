@@ -1133,13 +1133,15 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
             resolved_nid = hashed_nid(nid)
             providers, guest_providers = resolve(resolved_nid, record)
             record["symbol_mismatch"] = bool(library) and library not in modules and bool(providers) and resolved_nid != nid
-        kind = classify(resolved_nid, library, providers, stubs, guest_providers, partial)
+        named_host = system_library(library)
+        selected = [named_host] if named_host in windows_libraries and named_host in providers else providers
+        kind = classify(resolved_nid, library, selected, stubs, guest_providers, partial)
         record["class"] = kind
         record["providers"] = providers
         if kind != "absent":
             record["unsearched_providers"] = []
-        record["library_mismatch"] = kind in ("implemented", "partial", "stub") and bool(library) and system_library(library) not in providers and "libc.prx" not in providers
-        record["name"] = next((stubs[(provider, resolved_nid)] for provider in providers if (provider, resolved_nid) in stubs), None) if kind in ("partial", "stub") else None
+        record["library_mismatch"] = kind in ("implemented", "partial", "stub") and bool(library) and named_host not in providers and "libc.prx" not in providers
+        record["name"] = next((stubs[(provider, resolved_nid)] for provider in selected if (provider, resolved_nid) in stubs), None) if kind in ("partial", "stub") else None
     ordered = sorted(records.values(), key=lambda record: (record["class"], record["library"] or "", record.get("module") or "", record["nid"]))
     check_conservation(len(imports) + sum(len(symbols) for symbols, _ in (module_imports or {}).values()), ordered)
     missing = defaultdict(int)
