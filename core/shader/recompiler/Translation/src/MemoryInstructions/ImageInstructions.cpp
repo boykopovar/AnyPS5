@@ -52,6 +52,8 @@ IrOpcode imageAtomic64Opcode(IrOpcode opcode) {
     case IrOpcode::ImageAtomicAnd32: return IrOpcode::ImageAtomicAnd64;
     case IrOpcode::ImageAtomicOr32: return IrOpcode::ImageAtomicOr64;
     case IrOpcode::ImageAtomicXor32: return IrOpcode::ImageAtomicXor64;
+    case IrOpcode::ImageAtomicInc32: return IrOpcode::ImageAtomicInc64;
+    case IrOpcode::ImageAtomicDec32: return IrOpcode::ImageAtomicDec64;
     case IrOpcode::ImageAtomicCmpSwap32: return IrOpcode::ImageAtomicCmpSwap64;
     default: throw std::runtime_error("64-bit " + std::string(IrOpcodeName(opcode)) + " is not implemented");
     }
