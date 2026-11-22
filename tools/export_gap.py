@@ -302,8 +302,9 @@ def c_linkage_postfix_functions(text):
             if statement in (["extern", '"C"'], ["extern", '"C++"']):
                 scopes.append(statement[1] == '"C"')
             elif statement[:1] == ["namespace"] or statement[:2] == ["inline", "namespace"]:
-                _, hidden = declaration_attributes(statement)
-                scopes.append(None if hidden else scopes[-1])
+                namespace, hidden = declaration_attributes(statement)
+                anonymous = namespace in (["namespace"], ["inline", "namespace"])
+                scopes.append(None if hidden or anonymous else scopes[-1])
             else:
                 name = c_linkage_postfix_function(statement, scopes[-1])
                 if name is not None:

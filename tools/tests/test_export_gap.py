@@ -210,10 +210,9 @@ class ExportGapTests(unittest.TestCase):
             'namespace Runtime { extern "C" int Named_nid_postfix() { return 1; } }',
             'extern "C" { namespace Runtime { int Nested_nid_postfix() { return 1; } } }',
             'extern "C" [[gnu::visibility("default")]] int Visible_nid_postfix() { return 1; }',
-            'extern "C" { namespace { int Anonymous_nid_postfix() { return 1; } } }',
-            'namespace { extern "C" int Explicit_nid_postfix() { return 1; } }',
+            'extern "C" { inline namespace Runtime { int InlineNamed_nid_postfix() { return 1; } } }',
         ]
-        names = ["abort", "__stack_chk_fail", "Named", "Nested", "Visible", "Anonymous", "Explicit"]
+        names = ["abort", "__stack_chk_fail", "Named", "Nested", "Visible", "InlineNamed"]
         for source, name in zip(definitions, names):
             with self.subTest(name=name):
                 self.assertTrue(provides_with(source, nid_of(name)))
@@ -236,6 +235,18 @@ class ExportGapTests(unittest.TestCase):
             'namespace [[gnu::visibility("internal")]] Runtime { extern "C" int Missing_nid_postfix() { return 1; } }',
             'extern "C" { const char* text = R"(int Missing_nid_postfix() { return 1; })"; }',
             '#define DEFINITION extern "C" int Missing_nid_postfix() { return 1; }\n',
+        ]
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertFalse(provides_with(source, nid_of("Missing")))
+
+    def test_anonymous_namespace_definitions_remain_gaps(self):
+        sources = [
+            'extern "C" { namespace { int Missing_nid_postfix() { return 1; } } }',
+            'namespace { extern "C" int Missing_nid_postfix() { return 1; } }',
+            'namespace { namespace Nested { extern "C" int Missing_nid_postfix() { return 1; } } }',
+            'extern "C" { namespace [[deprecated("private")]] { int Missing_nid_postfix() { return 1; } } }',
+            'extern "C" { inline namespace { int Missing_nid_postfix() { return 1; } } }',
         ]
         for source in sources:
             with self.subTest(source=source):
