@@ -566,6 +566,36 @@ void relocationValidation() {
 
 }
 
+void truncatedExecutableSegmentInCodeInstructionCollector() {
+    auto image = fixture();
+    Io::WriteU64(image, 64 + 32, 0x1800);
+    Io::WriteU64(image, 64 + 40, 0x1800);
+    Io::WriteU8(image, 0x2624, 0x12);
+    Io::WriteU16(image, 0x2626, 1);
+    Io::WriteU64(image, 0x2628, 0x1000);
+    Io::WriteU64(image, 0x2630, 1);
+    const auto count = Io::ReadU16(image, 56);
+    std::vector<Domain::ProgramHeader> headers;
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto at = 64 + index * 56;
+        Domain::ProgramHeader header{};
+        header.Type = Io::ReadU32(image, at);
+        header.Flags = Io::ReadU32(image, at + 4);
+        header.Offset = Io::ReadU64(image, at + 8);
+        header.MappedAddress = Io::ReadU64(image, at + 16);
+        header.FileSize = Io::ReadU64(image, at + 32);
+        header.MemorySize = Io::ReadU64(image, at + 40);
+        headers.push_back(header);
+    }
+    image.resize(0x2700);
+    try {
+        Relinker::CodeInstructionCollector().Collect(image, headers);
+        throw std::runtime_error("Collector read past a truncated executable segment");
+    } catch (const Domain::RelinkerException& error) {
+        require(std::string(error.what()).find("file range exceeds image") != std::string::npos, "Wrong error for a truncated executable segment");
+    }
+}
+
 void sysvHashBoundsInCodeInstructionCollector() {
     auto baseImage = fixture();
     const auto parseHeaders = [](const std::vector<std::uint8_t>& bytes) {
@@ -634,6 +664,7 @@ int main() {
         fixedBase();
         scanning();
         branchAcrossSignedBoundary();
+        truncatedExecutableSegmentInCodeInstructionCollector();
         diagnosticContext();
         cancellation();
         baseRelocations();

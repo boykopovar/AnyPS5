@@ -579,6 +579,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         for (const auto& header : headers) {
             if (header.Type != 1 || (header.Flags & 1) == 0) continue;
             if (address < header.MappedAddress || address - header.MappedAddress >= header.FileSize) continue;
+            range(header.Offset, header.FileSize);
             return header.MappedAddress + header.FileSize;
         }
         return address;
@@ -586,7 +587,6 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     for (const auto& [begin, end] : functions) {
         const auto offset = fileOffset(begin, end - begin);
         const auto nextUnwind = unwindRanges.upper_bound(begin);
-        bool sawTerminator = false;
         for (auto address = begin; address < end;) {
             const auto availableEnd = codeEnd(address);
             if (availableEnd <= address)
@@ -630,7 +630,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                 const bool tls = info.HasMemoryOperand && (info.SegmentPrefix == 0x64 || info.SegmentPrefix == 0x65);
                 const bool intoNext = nextUnwind != unwindRanges.end() && address + info.Length > nextUnwind->first;
                 if (!terminator || tls || intoNext) {
-                    if (tls && (address == begin || sawTerminator))
+                    if (tls)
                         throw Domain::RelinkerException("Code analysis: instruction crosses function boundary", address);
                     if (message) {
                         std::ostringstream text;
@@ -650,7 +650,6 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
             }
             address += info.Length;
             decodedBytes += info.Length;
-            sawTerminator = sawTerminator || terminator;
             if (crossing) break;
             if (progress && (decodedBytes & 65535) < info.Length) report(1000 + 2500 * std::min(decodedBytes, functionBytes) / functionBytes);
         }

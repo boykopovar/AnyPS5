@@ -20,6 +20,7 @@ from test_windows_executable_exports import fixture as windows_exported_executab
 RUNNER = Path(__file__).with_name("windows_image_runner.py")
 RUNS_ON_HOST = sys.platform == "linux" and platform.machine() == "x86_64"
 TARGETS = ("linux", "windows", "macos")
+COLLECTOR_TARGETS = ("windows", "macos")
 
 
 def module_image(size, second=False):
@@ -346,6 +347,31 @@ def crossing_cases(relinker, work):
     for target in TARGETS:
         run, artifact = convert(relinker, work, "terminator-crossing", target, image, roots=False)
         succeeded(run, artifact, target)
+
+    image = make_image("register", "unwind", extent=0x42, body=body)
+    struct.pack_into("<I", image, 0x98c, 2)
+    struct.pack_into("<Q", image, 0x9a0, 0x1243)
+    struct.pack_into("<Q", image, 0x9a8, 0x928)
+    struct.pack_into("<IIQQ", image, 0x928, 20, 0x2c, 0x1243, 0x10)
+    struct.pack_into("<Q", image, 0x108, 48)
+    struct.pack_into("<Q", image, 0x110, 48)
+    for target in COLLECTOR_TARGETS:
+        run, artifact = convert(relinker, work, "terminator-crossing-next-fde", target, image, roots=False)
+        assert "skipped a range that ends inside an instruction" in run.stdout, (target, run.stdout, run.stderr)
+        succeeded(run, artifact, target)
+
+    image = make_image("register", "symbol", extent=0x42, body=bytes.fromhex("8b 40 f0"))
+    for target in COLLECTOR_TARGETS:
+        run, artifact = convert(relinker, work, "non-terminator-crossing", target, image, roots=False)
+        assert "skipped a range that ends inside an instruction" in run.stdout, (target, run.stdout, run.stderr)
+        succeeded(run, artifact, target)
+
+    image = make_image("register", "symbol", extent=0x42, body=TLS_LOAD)
+    image[0x1200:0x1240] = b"\x90" * 0x40
+    for target in COLLECTOR_TARGETS:
+        run, artifact = convert(relinker, work, "tls-crossing", target, image, roots=False)
+        assert run.returncode == 2 and "instruction crosses function boundary" in run.stderr, (target, run.returncode, run.stdout, run.stderr)
+        assert not artifact.exists(), artifact
 
 
 def main():
