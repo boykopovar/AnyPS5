@@ -284,7 +284,7 @@ void Fallback() {
     Require(ures_countArrayItems_nid_postfix(
         reinterpret_cast<const UResourceBundle*>(&bundle), "local", &status) == 5,
         "same-entry fallback count");
-    Require(status == -127, "same-entry fallback status");
+    Require(status == 0, "same-entry fallback status");
     Require(ures_countArrayItems_nid_postfix(
         reinterpret_cast<const UResourceBundle*>(&bundle), "missing", &status) == 0,
         "fallback missing count");
@@ -298,6 +298,14 @@ void Fallback() {
         reinterpret_cast<const UResourceBundle*>(&bundle), "parent", &status) == 6,
         "fallback parent count");
     Require(status == -127, "fallback parent status");
+
+    std::array<char, 3> fallbackName{'f', 'r', 0};
+    parent.name = fallbackName.data();
+    status = 0;
+    Require(ures_countArrayItems_nid_postfix(
+        reinterpret_cast<const UResourceBundle*>(&bundle), "parent", &status) == 6,
+        "non-default fallback parent count");
+    Require(status == -128, "non-default fallback parent status");
 
     bundle.hasFallback = 0;
     bundle.data = reinterpret_cast<ResourceEntry*>(1);
