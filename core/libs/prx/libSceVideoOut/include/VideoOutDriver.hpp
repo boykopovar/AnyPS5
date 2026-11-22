@@ -20,6 +20,7 @@
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #ifndef __EMSCRIPTEN__
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
+#include "prx/libSceVideoOut/include/HostDisplayMode.hpp"
 #include "prx/libSceVideoOut/include/HostHdrProbe.hpp"
 #endif
 #include "prx/libSceVideoOut/include/BufferReuseTracker.hpp"
@@ -270,6 +271,7 @@ private:
     std::uint64_t hdrGeneration = 0;
     std::atomic<int> displayRefreshRate{0};
     std::atomic<std::uint32_t> displayResolution{VIDEO_OUT_RESOLUTION_1080P};
+    std::optional<HostDisplayMode> knownDisplayMode;
 
     std::jthread presentThread;
     std::jthread vblankThread;
