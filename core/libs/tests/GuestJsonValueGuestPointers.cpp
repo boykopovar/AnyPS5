@@ -364,5 +364,15 @@ int main() {
     CHECK(_ZN3sce4Json11Initializer9terminateEv(initializer) == 0);
     _ZN3sce4Json11InitializerD1Ev(initializer);
     CHECK(trace.live.empty());
+
+    Value uninitValue{};
+    _ZN3sce4Json5ValueC1Ev(&uninitValue);
+    String validEmptyOut{};
+    CHECK(static_cast<unsigned>(_ZN3sce4Json5Value9serializeERNS0_6StringE(&uninitValue, &validEmptyOut)) == 0x80848110);
+    CHECK_THROWS(_ZN3sce4Json5Value9serializeERNS0_6StringE(&uninitValue, badString));
+    CHECK_THROWS(_ZN3sce4Json5Value9serializeERNS0_6StringE(&uninitValue, roString));
+    CHECK_THROWS(_ZN3sce4Json5Value9serializeERNS0_6StringEPFiS3_PvES4_(&uninitValue, badString, DummySerializeCallback, nullptr));
+    CHECK_THROWS(_ZN3sce4Json5Value9serializeERNS0_6StringEPFiS3_PvES4_(&uninitValue, roString, DummySerializeCallback, nullptr));
+    CHECK(trace.live.empty());
     return 0;
 }

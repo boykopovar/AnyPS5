@@ -2347,17 +2347,17 @@ int APS5_VABI SerializationSucceeded(String&, void*) { return 0; }
 
 int SerializeCallbackValue(Value* value, String* destination, SerializationCallback callback, void* context, bool collect) {
     static_cast<void>(LoadGuest<Value>(value, __func__));
-    {
-        auto& state = State();
-        std::lock_guard lock(state.mutex);
-        if (!state.allocation) return JsonErrorNotInitialized;
-    }
     if (!callback || (collect && !destination)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     if (collect) {
         const auto loadedDestination = ValidateGuestValueOutputString(destination, __func__);
         if (GuestValueRangesOverlap(value, sizeof(Value), destination, sizeof(String)) ||
             (loadedDestination.text && GuestValueRangesOverlap(value, sizeof(Value), loadedDestination.text, sizeof(Text))))
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
+    {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        if (!state.allocation) return JsonErrorNotInitialized;
     }
     ScopedString buffer(std::string_view{});
     CallbackSerializer serializer(buffer.string, destination, callback, context, collect);
@@ -3346,12 +3346,6 @@ int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringEPFiS3_PvES4_(Value* self
     return SerializeCallbackValue(self, output, callback, context, true);
 }
 int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value* self, String* out) {
-    static_cast<void>(LoadGuest<Value>(self, __func__));
-    {
-        auto& state = State();
-        std::lock_guard lock(state.mutex);
-        if (!state.allocation) return JsonErrorNotInitialized;
-    }
     return SerializeCallbackValue(self, out, SerializationSucceeded, nullptr, true);
 }
 void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, String* out) {
