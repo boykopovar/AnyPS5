@@ -64,8 +64,13 @@ def is_perf(title):
 
 
 def needs_capture(title):
+    if not is_perf(title):
+        return False
     scope = PERF_SCOPE.match(title or "")
-    return is_perf(title) and not (scope and scope.group(1).strip().lower() in UNCAPTURED_SCOPES)
+    if not scope:
+        return True
+    parts = [part.strip().lower() for part in scope.group(1).split(",")]
+    return not (parts and all(part in UNCAPTURED_SCOPES for part in parts))
 
 
 def has_numbers(body):
