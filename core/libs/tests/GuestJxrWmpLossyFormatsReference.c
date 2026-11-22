@@ -7,9 +7,9 @@ size_t JxrWmpLossyFormatsReferenceParameterSize(void) {
     return sizeof(CWMIStrCodecParam);
 }
 
-void JxrWmpLossyFormatsReferenceParameters(void* value, int32_t spatial, uint8_t alphaMode,
-                                            uint8_t quality, uint8_t overlap, uint8_t bitstreamFormat,
-                                            uint8_t tileRows, uint8_t tileCols) {
+void JxrWmpLossyFormatsReferenceParameters(void* value, uint8_t alphaMode, uint8_t quality,
+                                            uint8_t overlap, uint8_t bitstreamFormat, uint8_t tileRows,
+                                            uint8_t tileCols) {
     CWMIStrCodecParam* parameters = (CWMIStrCodecParam*)value;
     memset(parameters, 0, sizeof(*parameters));
     parameters->cfColorFormat = YUV_444;
@@ -21,8 +21,14 @@ void JxrWmpLossyFormatsReferenceParameters(void* value, int32_t spatial, uint8_t
     parameters->uAlphaMode = alphaMode;
     parameters->uiDefaultQPIndex = quality;
     parameters->uiDefaultQPIndexAlpha = quality;
-    parameters->cNumOfSliceMinus1V = tileRows;
-    parameters->cNumOfSliceMinus1H = tileCols;
+    parameters->cNumOfSliceMinus1H = tileRows;
+    for (uint8_t i = 0; i <= tileRows; ++i) {
+        parameters->uiTileY[i] = 1;
+    }
+    parameters->cNumOfSliceMinus1V = tileCols;
+    for (uint8_t i = 0; i <= tileCols; ++i) {
+        parameters->uiTileX[i] = 1;
+    }
 }
 
 const void* JxrWmpLossyFormatsReferenceFormat(int32_t format) {

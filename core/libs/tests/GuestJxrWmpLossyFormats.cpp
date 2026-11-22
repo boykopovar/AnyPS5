@@ -14,7 +14,7 @@
 
 extern "C" {
 size_t JxrWmpLossyFormatsReferenceParameterSize();
-void JxrWmpLossyFormatsReferenceParameters(void* value, int32_t spatial, uint8_t alphaMode, uint8_t quality, uint8_t overlap, uint8_t bitstreamFormat, uint8_t tileRows, uint8_t tileCols);
+void JxrWmpLossyFormatsReferenceParameters(void* value, uint8_t alphaMode, uint8_t quality, uint8_t overlap, uint8_t bitstreamFormat, uint8_t tileRows, uint8_t tileCols);
 const void* JxrWmpLossyFormatsReferenceFormat(int32_t format);
 int64_t JxrWmpLossyFormatsReferenceEncode(const void* parameters, int32_t format, uint32_t width, uint32_t height,
                                            const uint8_t* pixels, uint32_t stride, int32_t banded,
@@ -156,17 +156,34 @@ int main() {
         {7, 8, JxrGuest_GUID_PKPixelFormat64bppRGBA_nid_no_patch, 2},
     };
 
-    const int32_t spatialValues[] = {0, 1};
     const uint8_t overlapValues[] = {0, 2};
     const uint8_t qualityValues[] = {10, 25, 55};
 
+    struct Layout {
+        uint8_t bitstreamFormat;
+        uint8_t tileRows;
+        uint8_t tileCols;
+    };
+
+    const Layout layouts[] = {
+        {0, 0, 0},
+        {1, 0, 0},
+        {0, 1, 1},
+        {1, 1, 1},
+    };
+
     for (const auto& f : formats) {
-        for (const auto spatial : spatialValues) {
+        for (const auto& layout : layouts) {
             for (const auto overlap : overlapValues) {
                 for (const auto quality : qualityValues) {
                     for (const auto& size : std::array<std::pair<std::uint32_t, std::uint32_t>, 2>{{{32u, 32u}, {16u, 16u}}}) {
                         const auto width = size.first;
                         const auto height = size.second;
+
+                        if ((layout.tileRows != 0 || layout.tileCols != 0) && (width == 16 && height == 16)) {
+                            continue;
+                        }
+
                         const auto bytesPerPixel = f.bytesPerPixel;
                         const auto stride = width * bytesPerPixel;
                         const auto pixels = MakePixels(width, height, bytesPerPixel);
@@ -178,7 +195,7 @@ int main() {
                         auto* guestStream = MemoryStream(guestOutput, guestOutput.size());
                         auto* guestEncoder = CreateEncoder();
                         std::vector<std::uint8_t> guestParams(JxrWmpLossyFormatsReferenceParameterSize());
-                        JxrWmpLossyFormatsReferenceParameters(guestParams.data(), spatial, alphaMode, quality, overlap, 0, 0, 0);
+                        JxrWmpLossyFormatsReferenceParameters(guestParams.data(), alphaMode, quality, overlap, layout.bitstreamFormat, layout.tileRows, layout.tileCols);
                         Require(guestEncoder->initialize(guestEncoder, guestStream, guestParams.data(), guestParams.size()) == 0);
                         Require(guestEncoder->setPixelFormat(guestEncoder, expectedFormat) == 0);
                         Require(guestEncoder->setSize(guestEncoder, static_cast<std::int32_t>(width), static_cast<std::int32_t>(height)) == 0);
@@ -191,7 +208,7 @@ int main() {
 
                         std::vector<std::uint8_t> refOutput(Capacity);
                         std::vector<std::uint8_t> refParamsVec(JxrWmpLossyFormatsReferenceParameterSize());
-                        JxrWmpLossyFormatsReferenceParameters(refParamsVec.data(), spatial, alphaMode, quality, overlap, 0, 0, 0);
+                        JxrWmpLossyFormatsReferenceParameters(refParamsVec.data(), alphaMode, quality, overlap, layout.bitstreamFormat, layout.tileRows, layout.tileCols);
                         std::size_t refWritten = 0;
                         int64_t err = JxrWmpLossyFormatsReferenceEncode(refParamsVec.data(), f.format, width, height, pixels.data(), stride, false, nullptr, refOutput.data(), refOutput.size(), &refWritten);
                         Require(err == 0);
