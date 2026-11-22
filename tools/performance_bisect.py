@@ -182,12 +182,18 @@ def format_command(command, values):
 
 def reset_build_dir(worktree, build_dir):
     root = worktree.resolve()
-    if not build_dir.resolve().is_relative_to(root):
+    resolved = build_dir.resolve()
+    if not resolved.is_relative_to(root):
         raise ValueError("recipe.build_dir resolves outside the worktree")
     relative = build_dir.relative_to(worktree).as_posix()
-    if git(worktree, "ls-files", "--", relative):
+    is_link = build_dir.is_symlink()
+    paths = [relative]
+    resolved_relative = resolved.relative_to(root).as_posix()
+    if not is_link and resolved_relative != relative:
+        paths.append(resolved_relative)
+    if git(worktree, "--literal-pathspecs", "ls-files", "--", *paths):
         raise ValueError("recipe.build_dir contains tracked source files and cannot be cleared safely")
-    if build_dir.is_symlink():
+    if is_link:
         build_dir.unlink()
     elif build_dir.exists():
         shutil.rmtree(build_dir)
