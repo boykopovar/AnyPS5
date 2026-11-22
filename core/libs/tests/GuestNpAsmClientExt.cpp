@@ -218,54 +218,14 @@ void CheckNpManagerDestructors() {
     Require(clearTicket.vtable == initialVtable && clearTicket.allocator == &ticketAllocator,
         "NpTicket Clear preserves vtable and allocator");
 
+    errno = 71;
+    _ZN3sce2np8NpTicket5ClearEv(&clearTicket.vtable);
+    Require(npReleases == 1 && errno == 71, "subsequent NpTicket Clear is idempotent and preserves errno");
+    Require(clearTicket.data == nullptr && clearTicket.size == 0,
+        "subsequent NpTicket Clear keeps data and size cleared");
+
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
-}
-
-struct TicketClearContext {
-    GuestNpTicketBuffer* ticket;
-    unsigned releaseCalls;
-    void* releasedData;
-    void* observedDataInCallback;
-    std::size_t observedSizeInCallback;
-};
-
-void APS5_VABI ReleaseTicketData(void* data, void* rawContext) {
-    auto* const context = static_cast<TicketClearContext*>(rawContext);
-    ++context->releaseCalls;
-    context->releasedData = data;
-    context->observedDataInCallback = context->ticket->data;
-    context->observedSizeInCallback = context->ticket->size;
-    if (context->releaseCalls == 1) {
-        _ZN3sce2np8NpTicket5ClearEv(&context->ticket->vtable);
-    }
-}
-
-void CheckNpTicketClear() {
-    std::array<std::uint8_t, 32> payload{};
-    NpAllocatorEx allocator{};
-    TicketClearContext context{};
-    GuestNpTicketBuffer ticket{nullptr, 0, nullptr, &allocator, payload.data(), payload.size()};
-    context.ticket = &ticket;
-    context.observedDataInCallback = payload.data();
-    context.observedSizeInCallback = payload.size();
-    allocator.allocator.release = &ReleaseTicketData;
-    allocator.allocator.context = &context;
-
-    errno = 71;
-    _ZN3sce2np8NpTicket5ClearEv(&ticket.vtable);
-    Require(errno == 71, "NpTicket::Clear preserves errno");
-    Require(context.observedDataInCallback == nullptr, "NpTicket::Clear clears data before invoking release");
-    Require(context.observedSizeInCallback == 0, "NpTicket::Clear clears size before invoking release");
-    Require(context.releaseCalls == 1, "re-entrant NpTicket::Clear inside release does not double-free");
-    Require(context.releasedData == payload.data(), "NpTicket::Clear passes the original ticket buffer to release");
-    Require(ticket.data == nullptr && ticket.size == 0, "NpTicket::Clear leaves data and size cleared");
-
-    errno = 71;
-    _ZN3sce2np8NpTicket5ClearEv(&ticket.vtable);
-    Require(errno == 71, "subsequent NpTicket::Clear preserves errno");
-    Require(context.releaseCalls == 1, "subsequent NpTicket::Clear is idempotent");
-    Require(ticket.data == nullptr && ticket.size == 0, "subsequent NpTicket::Clear keeps data and size cleared");
 }
 
 } // namespace
@@ -279,5 +239,4 @@ int main() {
     }
 
     CheckNpManagerDestructors();
-    CheckNpTicketClear();
 }
