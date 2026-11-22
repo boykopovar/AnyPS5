@@ -66,12 +66,15 @@ constexpr int Videodec2ErrorAccessUnitSize = static_cast<int>(0x811D010Du);
 constexpr int Videodec2ErrorAccessUnitPointer = static_cast<int>(0x811D010Eu);
 constexpr int Videodec2ErrorStructureSize = static_cast<int>(0x811D0101u);
 constexpr int Videodec2ErrorArgumentPointer = static_cast<int>(0x811D0102u);
+constexpr int Videodec2ErrorDecoderInstance = static_cast<int>(0x811D0103u);
+constexpr int Videodec2ErrorMemorySize = static_cast<int>(0x811D0104u);
 constexpr int Videodec2ErrorFrameBufferSize = static_cast<int>(0x811D0106u);
 constexpr int Videodec2ErrorFrameBufferPointer = static_cast<int>(0x811D0107u);
 constexpr int Videodec2ErrorFrameBufferAlignment = static_cast<int>(0x811D0108u);
 constexpr int Videodec2ErrorPictureCount = static_cast<int>(0x811D010Fu);
 constexpr int Videodec2ErrorRefusedComputeQueue = static_cast<int>(0x811D0110u);
 
+static_assert(sizeof(DirectMemoryInfo) == 32);
 static_assert(sizeof(Vp9PictureInfo) == 88);
 static_assert(offsetof(Vp9PictureInfo, colorSpace) == 60);
 static_assert(sizeof(OutputInfo) == 0x38 && offsetof(OutputInfo, isDiscardedFrame) == 0xb && offsetof(OutputInfo, codecType) == 0xc && offsetof(OutputInfo, frameBuffer) == 0x20);
@@ -713,6 +716,16 @@ int APS5_VABI sceVideodec2Reset_nid_postfix(std::uint64_t handle) {
     decoder.parameterSets.clear();
     decoder.flushing = false;
     return 0;
+}
+
+int APS5_VABI sceVideodec2MapDirectMemory(void* decoder, const DirectMemoryInfo* memory) {
+    if (!decoder) return Videodec2ErrorDecoderInstance;
+    if (!memory) return Videodec2ErrorArgumentPointer;
+    DirectMemoryInfo localMemory{};
+    if (!CopyInGuest(localMemory, memory)) return Videodec2ErrorArgumentPointer;
+    if (localMemory.thisSize != sizeof(DirectMemoryInfo)) return Videodec2ErrorStructureSize;
+    if (!localMemory.memoryAddr || localMemory.memorySize == 0) return Videodec2ErrorMemorySize;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 static std::uint64_t PictureInfoSize(const void* info) {

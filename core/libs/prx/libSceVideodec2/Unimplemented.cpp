@@ -20,10 +20,6 @@ int APS5_VABI sceVideodec2MapMemory() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideodec2MapDirectMemory(void*, const void*) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceVideodec2PresetDecoderConfigInfo() {
     NotImplemented_nid_no_patch(__func__);
 }

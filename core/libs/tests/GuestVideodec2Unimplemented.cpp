@@ -23,7 +23,10 @@ int main() {
     passed = ReportsNotImplemented("sceVideodec2QueryLibraryInfo", [] { return sceVideodec2QueryLibraryInfo(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2QueryDecoderInfo", [] { return sceVideodec2QueryDecoderInfo(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2MapMemory", [] { return sceVideodec2MapMemory(); }) && passed;
-    passed = ReportsNotImplemented("sceVideodec2MapDirectMemory", [] { return sceVideodec2MapDirectMemory(nullptr, nullptr); }) && passed;
+    int decoder = 0;
+    int address = 0;
+    const SceVideodec2::DirectMemoryInfo directMemory{sizeof(SceVideodec2::DirectMemoryInfo), 0x1000, &address, 0};
+    passed = ReportsNotImplemented("sceVideodec2MapDirectMemory", [&] { return sceVideodec2MapDirectMemory(&decoder, &directMemory); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2PresetDecoderConfigInfo", [] { return sceVideodec2PresetDecoderConfigInfo(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2PresetDecoderConfigInfoAvc", [] { return sceVideodec2PresetDecoderConfigInfoAvc(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2PresetDecoderConfigInfoHevc", [] { return sceVideodec2PresetDecoderConfigInfoHevc(); }) && passed;
