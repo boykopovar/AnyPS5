@@ -143,6 +143,7 @@ struct OpaqueJSContextGroup {
     void RefreshDeadline();
     void EnterVm();
     void ExitVm();
+    void UpdateStackLimit();
 };
 
 struct VmEntryScope {
