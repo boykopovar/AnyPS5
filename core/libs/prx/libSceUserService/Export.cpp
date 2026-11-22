@@ -460,6 +460,9 @@ int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_
 }
 
 int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  if (name == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
@@ -654,14 +657,23 @@ int APS5_VABI sceUserServiceGetKeyboardType(int user_id, int32_t* type) {
 }
 
 int APS5_VABI sceUserServiceGetJapaneseInputType(int user_id, int32_t* type) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  return ReportKeyboardSetting(user_id, type, NoInputVariant);
 }
 
 int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int user_id, int32_t* type) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  return ReportKeyboardSetting(user_id, type, NoInputVariant);
 }
 
 int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  if (account_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }

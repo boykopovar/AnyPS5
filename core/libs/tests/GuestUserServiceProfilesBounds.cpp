@@ -38,8 +38,7 @@ void TestUserIdRangeBounds() {
         Require(color == i);
 
         char name[32]{};
-        Require(sceUserServiceGetUserName(userId, name, sizeof(name)) == USER_SERVICE_OK);
-        Require(std::strcmp(name, USER_SERVICE_USER_NAMES[i]) == 0);
+        Require(sceUserServiceGetUserName(userId, name, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         char homePath[64]{};
         Require(sceUserServiceGetHomeDirectory(userId, homePath, sizeof(homePath)) == USER_SERVICE_OK);
@@ -87,10 +86,10 @@ void TestInvalidUserIdRejection() {
         Require(sceUserServiceGetUserColor(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 
         char name[32]{};
-        Require(sceUserServiceGetUserName(invalidId, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
-        Require(sceUserServiceGetUserName(invalidId, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-        Require(sceUserServiceGetUserName(invalidId, nullptr, 0) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-        Require(sceUserServiceGetUserName(invalidId, name, 5) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetUserName(invalidId, name, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+        Require(sceUserServiceGetUserName(invalidId, nullptr, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+        Require(sceUserServiceGetUserName(invalidId, nullptr, 0) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+        Require(sceUserServiceGetUserName(invalidId, name, 5) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         int32_t ktype = -1;
         Require(sceUserServiceGetKeyboardType(invalidId, &ktype) == USER_SERVICE_ERROR_NOT_INITIALIZED);
@@ -98,14 +97,14 @@ void TestInvalidUserIdRejection() {
         Require(sceUserServiceGetKeyboardType(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         int32_t jpType = -1;
-        Require(sceUserServiceGetJapaneseInputType(invalidId, &jpType) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetJapaneseInputType(invalidId, &jpType) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(jpType == -1);
-        Require(sceUserServiceGetJapaneseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetJapaneseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         int32_t zhType = -1;
-        Require(sceUserServiceGetTraditionalChineseInputType(invalidId, &zhType) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetTraditionalChineseInputType(invalidId, &zhType) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(zhType == -1);
-        Require(sceUserServiceGetTraditionalChineseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetTraditionalChineseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         uint32_t ageLevel = 0x5A5A;
         Require(sceUserServiceGetAgeLevel(invalidId, &ageLevel) == USER_SERVICE_ERROR_NOT_INITIALIZED);
@@ -118,9 +117,9 @@ void TestInvalidUserIdRejection() {
         Require(sceUserServiceGetPlatformPrivacyWs1(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
 
         uint64_t accountId = 0xDEADBEEF;
-        Require(sceUserServiceGetNpAccountId(invalidId, &accountId) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetNpAccountId(invalidId, &accountId) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(accountId == 0xDEADBEEF);
-        Require(sceUserServiceGetNpAccountId(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetNpAccountId(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         UserServiceGamePresets presets{};
         presets.difficulty = 0x5A;
@@ -147,6 +146,7 @@ void TestInvalidUserIdRejection() {
 }
 
 void TestUserNameBufferOverflowGuards() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     for (int i = 0; i < USER_SERVICE_MAX_USERS; ++i) {
         const int userId = USER_SERVICE_INITIAL_USER_ID + i;
         const char* expectedName = USER_SERVICE_USER_NAMES[i];
@@ -177,6 +177,7 @@ void TestUserNameBufferOverflowGuards() {
             Require(MemoryMatches(buffer, size, sizeof(buffer) - size, 'Z'));
         }
     }
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 }
 
 void TestEapHomePathGuestWrite() {

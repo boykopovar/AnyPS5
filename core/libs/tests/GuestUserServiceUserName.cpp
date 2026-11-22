@@ -29,6 +29,7 @@ bool Filled(const char* buffer, std::size_t from, std::size_t to, char value) {
 } // namespace
 
 int main() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     char name[64];
 
     for (int userIndex = 0; userIndex < USER_SERVICE_MAX_USERS; ++userIndex) {
