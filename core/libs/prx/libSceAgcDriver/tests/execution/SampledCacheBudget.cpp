@@ -181,10 +181,32 @@ public:
             while (family < count && (families[family].queueFlags & VK_QUEUE_COMPUTE_BIT) == 0) ++family;
             Require(family < count, "no Vulkan compute queue");
             const float priority = 1;
+            const float priorities[2]{1, 1};
             VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             queue.queueFamilyIndex = family;
             queue.queueCount = 1;
             queue.pQueuePriorities = &priority;
+            VkDeviceQueueCreateInfo settle{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+            settle.queueCount = 1;
+            settle.pQueuePriorities = &priority;
+            constexpr std::uint32_t noSettleFamily = UINT32_MAX;
+            std::uint32_t settleFamily = noSettleFamily;
+#ifdef _WIN32
+            if (families[family].queueCount >= 2) {
+                queue.queueCount = 2;
+                queue.pQueuePriorities = priorities;
+                settleFamily = family;
+            } else {
+                const auto copies = [&](std::uint32_t index) { return index != family && families[index].queueCount != 0 && (families[index].queueFlags & (VK_QUEUE_TRANSFER_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_GRAPHICS_BIT)) != 0; };
+                for (std::uint32_t index = 0; index < families.size() && settleFamily == noSettleFamily; ++index) {
+                    if (copies(index) && (families[index].queueFlags & (VK_QUEUE_COMPUTE_BIT | VK_QUEUE_GRAPHICS_BIT)) == 0) settleFamily = index;
+                }
+                for (std::uint32_t index = 0; index < families.size() && settleFamily == noSettleFamily; ++index) {
+                    if (copies(index)) settleFamily = index;
+                }
+                settle.queueFamilyIndex = settleFamily;
+            }
+#endif
             VkPhysicalDeviceFeatures supported{};
             function<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(context.physical, &supported);
             VkPhysicalDeviceFeatures enabled{};
@@ -203,8 +225,9 @@ public:
                 context.hostImportAlignment = hostProperties.minImportedHostPointerAlignment;
             }
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
-            device.queueCreateInfoCount = 1;
-            device.pQueueCreateInfos = &queue;
+            const std::array<VkDeviceQueueCreateInfo, 2> queueInfos{queue, settle};
+            device.queueCreateInfoCount = settleFamily != noSettleFamily && settleFamily != family ? 2 : 1;
+            device.pQueueCreateInfos = queueInfos.data();
             AgcDriver::Tests::PortabilitySubset subset;
             subset.Enable(context.physical, function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties"),
                 function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), extensionsEnabled, device);
@@ -221,10 +244,20 @@ public:
             context.imageFormatProperties = function<PFN_vkGetPhysicalDeviceImageFormatProperties>("vkGetPhysicalDeviceImageFormatProperties");
             if (hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)) context.memoryProperties2 = function<PFN_vkGetPhysicalDeviceMemoryProperties2>("vkGetPhysicalDeviceMemoryProperties2");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
+            context.queueFamily = family;
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
             pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pool.queueFamilyIndex = family;
             Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.pool), "vkCreateCommandPool");
+#ifdef _WIN32
+            if (settleFamily != noSettleFamily) {
+                context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, settleFamily, settleFamily == family ? 1 : 0, &context.settleQueue);
+                pool.queueFamilyIndex = settleFamily;
+                Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.settlePool), "vkCreateCommandPool settle");
+                context.settleFamily = settleFamily;
+                context.settleQueueMutex = &settleMutex;
+            }
+#endif
         } catch (...) {
             release();
             throw;
@@ -251,6 +284,8 @@ private:
     }
 
     void release() noexcept {
+        if (context.device != VK_NULL_HANDLE) ClearHostImports(context.device);
+        if (context.settlePool != VK_NULL_HANDLE) context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(context.device, context.settlePool, nullptr);
         if (context.pool != VK_NULL_HANDLE) context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(context.device, context.pool, nullptr);
         context.bufferPool.reset();
         if (context.device != VK_NULL_HANDLE) function<PFN_vkDestroyDevice>("vkDestroyDevice")(context.device, nullptr);
@@ -262,6 +297,7 @@ private:
     PFN_vkGetInstanceProcAddr instanceProc = nullptr;
     VkInstance instance = VK_NULL_HANDLE;
     Context context{};
+    std::mutex settleMutex;
 };
 
 class Block {
@@ -726,6 +762,11 @@ bool lookupChangedTests(Context context) {
     return true;
 }
 
+bool demandBudgetForTest() {
+    const char* value = std::getenv("APS5_TEXTURE_BUDGET_DEMAND");
+    return value != nullptr && *value != '\0' && *value != '0';
+}
+
 void reportedBudgetTests(const Context& context) {
     if (context.memoryProperties2 == nullptr) {
         std::puts("VK_EXT_memory_budget unavailable: the sampled texture cache keeps a quarter of the device-local heap");
@@ -735,7 +776,7 @@ void reportedBudgetTests(const Context& context) {
     VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
     properties.pNext = &reported;
     context.memoryProperties2(context.physical, &properties);
-    const auto budget = SampledTextureBudget(context.memory, &reported, 0);
+    const auto budget = SampledTextureBudget(context.memory, &reported, 0, 0, demandBudgetForTest());
     Require(budget >= (2048ull << 20u), "the sampled texture cache budget is below the 2 GiB floor");
     for (std::uint32_t heap = 0; heap < context.memory.memoryHeapCount; ++heap) {
         if ((context.memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) continue;
@@ -930,6 +971,9 @@ void viewEvictionTests(const Context& context) {
     const auto capacity = static_cast<std::size_t>(Budget / snapshotBytes);
     for (std::size_t surface = 1; surface <= capacity; ++surface) Sampled(context, snapshots.Surface(surface));
     Require(!view.expired(), "the sampled texture cache evicted a view of a cached storage image, which frees no memory");
+    const auto held = view.lock();
+    ClearCachedTextures(context.device);
+    Require(held != nullptr && !held->Released(), "a view that accounted for no cache bytes was marked released when its entry left the sampled cache, which frees nothing and rebuilds every descriptor set that holds it");
 }
 
 void frameTests(const Context& context) {
@@ -1162,7 +1206,7 @@ std::uint64_t ExpectedBudget(const Context& context) {
     VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
     ReportBudget(context.physical, &properties);
-    return SampledTextureBudget(context.memory, &reported, SampledTextureMemory() + TextureCacheUsage().storageBytes, TextureCacheUsage().storageBytes);
+    return SampledTextureBudget(context.memory, &reported, SampledTextureMemory() + TextureCacheUsage().storageBytes, TextureCacheUsage().storageBytes, demandBudgetForTest());
 }
 
 std::uint64_t ReadBudget(const Context& context) {
@@ -1214,8 +1258,9 @@ void storageMemoryTests(Context context) {
     Require(ReadStorageBudget(context) == half, "52 GiB free of a 64 GiB budget does not leave the storage image cache half of the heap or of the budget");
     context.memoryProperties2 = &ReportPressure;
     const auto pressed = ReadStorageBudget(context);
-    const auto expected = GiB + TextureCacheUsage().storageBytes;
-    Require(pressed == expected, "55 GiB in use of a 64 GiB budget leaves the storage image cache " + std::to_string(pressed >> 20u) + " MiB, not the " + std::to_string(expected >> 20u) + " MiB left after the use outside the texture caches, the sampled textures and 8 GiB of headroom");
+    const auto headroom = ReportedBudget / (demandBudgetForTest() ? 16u : 8u);
+    const auto expected = ReportedBudget - PressedUsage - headroom + TextureCacheUsage().storageBytes;
+    Require(pressed == expected, "55 GiB in use of a 64 GiB budget leaves the storage image cache " + std::to_string(pressed >> 20u) + " MiB, not the " + std::to_string(expected >> 20u) + " MiB left after the use outside the texture caches, the sampled textures and the selected headroom");
     std::printf("reported heap budget %llu MiB with %llu MiB in use: storage image cache budget %llu MiB\n", static_cast<unsigned long long>(ReportedBudget >> 20u), static_cast<unsigned long long>(PressedUsage >> 20u), static_cast<unsigned long long>(pressed >> 20u));
 }
 
@@ -1442,15 +1487,16 @@ bool pendingFailCountTests(Context context) {
         std::puts("skipped, host imports are unavailable");
         return false;
     }
-    WatchedSurface surface(context);
+    constexpr std::size_t ImportBytes = std::max<std::size_t>(SurfaceBytes, 0x100000);
+    WatchedSurface surface(context, ImportBytes);
     ClearCachedTextures(context.device);
-    if (HostImportFor(context, surface.Address(), SurfaceBytes) == nullptr) {
+    if (HostImportFor(context, surface.Address(), ImportBytes) == nullptr) {
         Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "the host import of the watched surface was refused");
         std::puts("skipped, host imports are unavailable");
         return false;
     }
-    if (!AgcDriver::GuestMemory::Watched(surface.Address(), SurfaceBytes)) {
-        std::puts("skipped, the host import of the surface left the write watch (APS5_WRITE_WATCH_IMPORTS=watch keeps it)");
+    if (!AgcDriver::GuestMemory::Watched(surface.Address(), ImportBytes)) {
+        std::puts("skipped, the host import of the surface left the write watch (on Linux APS5_WRITE_WATCH_IMPORTS=watch keeps it; on Windows the import write-protection probe decides)");
         return false;
     }
     const auto program = SampledProgram(surface.Address());

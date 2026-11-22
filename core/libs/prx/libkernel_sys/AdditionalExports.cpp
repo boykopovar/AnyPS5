@@ -99,8 +99,12 @@ int APS5_VABI __sys_get_proc_type_info_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-std::uint64_t APS5_VABI __sys_is_development_mode_nid_postfix() {
+std::uint64_t GuestIsDevelopmentMode_nid_no_patch() {
     return 0;
+}
+
+std::uint64_t APS5_VABI __sys_is_development_mode_nid_postfix() {
+    return GuestIsDevelopmentMode_nid_no_patch();
 }
 
 int APS5_VABI __sys_kqueueex_nid_postfix() {
@@ -543,8 +547,17 @@ int APS5_VABI libkernel_sysUnknown_2wKjID0iGVM_nid_no_patch() {
 
 APS5_EXPORT("2wKjID0iGVM", libkernel_sysUnknown_2wKjID0iGVM_nid_no_patch);
 
-int APS5_VABI libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch(KernelModule handle, const void* address) {
+    ModuleInfo info{};
+    info.st_size = sizeof(info);
+    if (sceKernelGetModuleInfo(handle, &info) != 0) return 0;
+    const auto value = reinterpret_cast<std::uintptr_t>(address);
+    const ModuleSegmentInfo* code = nullptr;
+    for (std::uint32_t index = 0; index < info.segment_count; ++index) {
+        const auto& segment = info.segments[index];
+        if ((segment.prot & 4) != 0) code = &segment;
+    }
+    return code != nullptr && value >= code->address && value - code->address < code->size ? 1 : 0;
 }
 
 APS5_EXPORT("2xg4JXvaJ6k", libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch);
@@ -1692,16 +1705,6 @@ int APS5_VABI sceKernelGetPackageInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version) {
-    if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
-    const int saved = errno;
-    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    const bool copied = GuestCopyOut_nid_no_patch(version, parameters + 0x14, sizeof(*version));
-    errno = saved;
-    if (!copied) return SCE_KERNEL_ERROR_EFAULT;
-    return 0;
-}
-
 int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid(int pid, std::int32_t* version) {
     if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return SCE_KERNEL_ERROR_ESRCH;
     return sceKernelGetProsperoCompiledSdkVersion(version);
@@ -1723,10 +1726,6 @@ int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid(int pid, std::int32_t* vers
 }
 
 int APS5_VABI sceKernelGetResidentFmemCount2() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceKernelGetToolMemoryRange() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1823,7 +1822,7 @@ int APS5_VABI sceKernelIccSetWlanBtManuTestMode() {
 }
 
 int APS5_VABI sceKernelIsAuthenticTrinity() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceKernelIsCloudDevkit() {
@@ -1831,7 +1830,7 @@ int APS5_VABI sceKernelIsCloudDevkit() {
 }
 
 int APS5_VABI sceKernelIsCloudkit() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceKernelIsCronos() {

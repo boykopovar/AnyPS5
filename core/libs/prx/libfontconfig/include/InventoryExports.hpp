@@ -12,20 +12,20 @@ extern "C" {
 
 void APS5_VABI FcLangSetDestroy(FcLangSet* set);
 FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id);
-FcResult APS5_VABI FcPatternGetInteger(const FcPattern* pattern, const char* object, int id, int* value);
-FcResult APS5_VABI FcPatternGetBool(const FcPattern* pattern, const char* object, int id, FcBool* value);
+FcResult APS5_VABI FcPatternGetInteger_nid_postfix(const FcPattern* pattern, const char* object, int id, int* value);
+FcResult APS5_VABI FcPatternGetBool_nid_postfix(const FcPattern* pattern, const char* object, int id, FcBool* value);
 FcBool APS5_VABI FcPatternAddBool_nid_postfix(FcPattern* pattern, const char* object, FcBool value);
 FcFontSet* APS5_VABI FcFontList(FcConfig* config, FcPattern* pattern, FcObjectSet* objects);
 FcPattern* APS5_VABI FcFontSetMatch(FcConfig* config, FcFontSet** sets, int count, FcPattern* pattern, FcResult* result);
 FcBool APS5_VABI FcConfigSubstitute(FcConfig* config, FcPattern* pattern, int kind);
 FcResult APS5_VABI FcPatternGetMatrix(const FcPattern* pattern, const char* object, int id, FcMatrix** value);
-FcResult APS5_VABI FcPatternGetString(const FcPattern* pattern, const char* object, int id, FcChar8** value);
+FcResult APS5_VABI FcPatternGetString_nid_postfix(const FcPattern* pattern, const char* object, int id, FcChar8** value);
 int APS5_VABI FcFontRenderPrepare();
 FcBool APS5_VABI FcPatternAddDouble(FcPattern* pattern, const char* object, double value);
-FcPattern* APS5_VABI FcPatternDuplicate(const FcPattern* pattern);
+FcPattern* APS5_VABI FcPatternDuplicate_nid_postfix(const FcPattern* pattern);
 FcPattern* APS5_VABI FcFontMatch(FcConfig* config, FcPattern* pattern, FcResult* result);
 FcPattern* APS5_VABI FcPatternFilter(FcPattern* pattern, const FcObjectSet* objects);
-FcResult APS5_VABI FcPatternGetFTFace(const FcPattern* pattern, const char* object, int id, void** face);
+FcResult APS5_VABI FcPatternGetFTFace_nid_postfix(const FcPattern* pattern, const char* object, int id, void** face);
 FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second);
 uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSet* second);
 FcBool APS5_VABI FcPatternAddInteger_nid_postfix(FcPattern* pattern, const char* object, int value);
@@ -43,7 +43,7 @@ FcLangResult APS5_VABI FcLangSetHasLang(const FcLangSet* set, const FcChar8* lan
 FcCharSet* APS5_VABI FcCharSetCreate();
 FcLangSet* APS5_VABI FcLangSetCreate();
 std::uint32_t APS5_VABI FcFreeTypeCharIndex(FreeType::GuestFaceRec* face, std::uint32_t character);
-void APS5_VABI FcPatternDestroy(FcPattern* pattern);
+void APS5_VABI FcPatternDestroy_nid_postfix(FcPattern* pattern);
 int APS5_VABI FcCharSetAddChar(FcCharSet* set, uint32_t character);
 void APS5_VABI FcMatrixMultiply(FcMatrix* result, const FcMatrix* first, const FcMatrix* second);
 FcBool APS5_VABI FcPatternAddCharSet(FcPattern* pattern, const char* object, const FcCharSet* value);
