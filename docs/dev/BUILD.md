@@ -82,6 +82,8 @@ Pages downloads the converter and both library archives from one release selecte
 
 Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-web-release --release`. Release staging replaces the selected build directory's `web/` directory. `--libraries` is an alias for `--release`.
 
+Run this command from a Git checkout that contains the commit recorded in the release's converter ZIP. If a shallow checkout is missing that commit, fetch the matching release tag from the upstream repository first.
+
 `tools/prepare_release_notes.py --input <notes> --body <body> --full <full>` prepares GitHub release notes that fit the release-body limit (`BODY_LIMIT` characters in the script): the short body goes to `--body` and the full notes to `--full`. With `--check` it writes nothing and exits with status 1 when either output is missing or stale.
 
 ## Commands
