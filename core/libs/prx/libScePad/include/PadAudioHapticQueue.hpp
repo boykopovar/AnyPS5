@@ -18,10 +18,16 @@ class PadAudioHapticQueue {
     std::map<int, std::deque<Block>> sources;
 
 public:
+    static constexpr std::size_t MaxBlocksPerSource = 4096;
+
     void Queue(int source, std::uint64_t begin, std::uint64_t end, std::uint8_t large, std::uint8_t small) {
         if (source <= 0 || begin >= end) throw std::invalid_argument("Pad: invalid legacy haptic interval");
-        auto& blocks = sources[source];
-        if (!blocks.empty() && begin < blocks.back().end) throw std::invalid_argument("Pad: overlapping legacy haptic intervals");
+        auto entry = sources.find(source);
+        if (entry != sources.end() && !entry->second.empty() && begin < entry->second.back().end) {
+            throw std::invalid_argument("Pad: overlapping legacy haptic intervals");
+        }
+        auto& blocks = entry != sources.end() ? entry->second : sources[source];
+        if (blocks.size() >= MaxBlocksPerSource) blocks.pop_front();
         blocks.push_back({begin, end, {large, small}});
     }
 

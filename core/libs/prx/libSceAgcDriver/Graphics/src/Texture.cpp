@@ -2674,7 +2674,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     // by a CPU store; scanned once when anything changed.
     std::vector<std::uint64_t> generations;
     std::vector<std::uint8_t> stampedBlocks, cpuBlocks;
-    std::vector<bool> rewatchCompared(trackedLayers, false);
+    std::vector<bool> rewatchCompared;
     std::vector<bool> outside;
     // Units taken from the alias's image instead of guest memory.
     std::vector<bool> borrowed;
@@ -3391,6 +3391,7 @@ void StorageTexture::confirmRewatched(std::uint64_t spanBegin, std::span<std::ui
         if (end <= begin) continue;
         const auto proof = rewatchProof(begin, end, true);
         if (proof == RewatchProof::Changed && comparedUnits != nullptr) {
+            if (comparedUnits->empty()) comparedUnits->assign(trackedLayers, false);
             for (auto unit = static_cast<std::uint32_t>((begin - descriptor.baseAddress) / trackedLayerBytes); unit < trackedLayers && unit < comparedUnits->size() && layerBegin(unit) < end; ++unit) (*comparedUnits)[unit] = true;
         }
         if (proof != RewatchProof::Unchanged) continue;

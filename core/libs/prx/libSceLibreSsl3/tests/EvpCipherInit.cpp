@@ -27,6 +27,53 @@ void Require(bool condition, std::source_location location = std::source_locatio
     std::abort();
 }
 
+void TestRsaSet0ConstTimeFlags() {
+    constexpr int StaticData = 2;
+    constexpr int ConstTime = 4;
+
+    LibreSsl3Bignum n{};
+    n.flags = StaticData;
+    LibreSsl3Bignum e{};
+    e.flags = StaticData;
+    LibreSsl3Bignum d{};
+    d.flags = StaticData;
+    LibreSsl3Bignum p{};
+    p.flags = StaticData;
+    LibreSsl3Bignum q{};
+    q.flags = StaticData;
+    LibreSsl3Bignum dmp1{};
+    dmp1.flags = StaticData;
+    LibreSsl3Bignum dmq1{};
+    dmq1.flags = StaticData;
+    LibreSsl3Bignum iqmp{};
+    iqmp.flags = StaticData;
+
+    LibreSsl3Rsa rsa{};
+    Require(RSA_set0_key_nid_postfix(&rsa, &n, &e, &d) == 1);
+    Require(rsa.n == &n && rsa.e == &e && rsa.d == &d);
+    Require(n.flags == StaticData && e.flags == StaticData);
+    Require(d.flags == (StaticData | ConstTime));
+
+    Require(RSA_set0_factors_nid_postfix(&rsa, &p, &q) == 1);
+    Require(rsa.p == &p && rsa.q == &q);
+    Require(p.flags == (StaticData | ConstTime));
+    Require(q.flags == (StaticData | ConstTime));
+
+    Require(RSA_set0_crt_params_nid_postfix(&rsa, &dmp1, &dmq1, &iqmp) == 1);
+    Require(rsa.dmp1 == &dmp1 && rsa.dmq1 == &dmq1 && rsa.iqmp == &iqmp);
+    Require(dmp1.flags == (StaticData | ConstTime));
+    Require(dmq1.flags == (StaticData | ConstTime));
+    Require(iqmp.flags == (StaticData | ConstTime));
+
+    LibreSsl3Bignum dReplacement{};
+    dReplacement.flags = StaticData;
+    Require(RSA_set0_key_nid_postfix(&rsa, nullptr, nullptr, &dReplacement) == 1);
+    Require(rsa.n == &n && rsa.e == &e && rsa.d == &dReplacement);
+    Require(n.flags == StaticData && e.flags == StaticData);
+    Require(d.flags == 0);
+    Require(dReplacement.flags == (StaticData | ConstTime));
+}
+
 }
 
 int main() {
@@ -111,5 +158,6 @@ int main() {
         threw = true;
     }
     Require(threw);
+    TestRsaSet0ConstTimeFlags();
     std::puts("libSceLibreSsl3 EVP_EncryptInit tests passed");
 }
