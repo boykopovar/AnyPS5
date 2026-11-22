@@ -996,6 +996,23 @@ class AnnotateModuleTests(unittest.TestCase):
 
 
 class InputProtectionTests(unittest.TestCase):
+    def test_directory_output_is_rejected_before_existing_reports_are_truncated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "input.prx"
+            module.write_bytes(build_module())
+            previous = root / "report.imports.txt"
+            previous.write_bytes(b"existing imports")
+            blocked = root / "report.asm"
+            blocked.mkdir()
+            (blocked / "keep").write_bytes(b"untouched")
+            with mock.patch.object(annotate_module, "disassemble", return_value=[]):
+                with self.assertRaisesRegex(annotate_module.ModuleError, "regular file"):
+                    annotate_module.annotate(module, str(root / "report"), annotate_module.Namer({}))
+            self.assertEqual(previous.read_bytes(), b"existing imports")
+            self.assertFalse((root / "report.exports.txt").exists())
+            self.assertEqual((blocked / "keep").read_bytes(), b"untouched")
+
     def test_cli_rejects_alias_without_success_or_partial_reports(self):
         if annotate_module.gnu_objdump() is None:
             self.skipTest("GNU binutils objdump (objdump or gobjdump) is required to run this test")

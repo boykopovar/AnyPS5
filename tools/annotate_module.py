@@ -584,6 +584,8 @@ def annotate(module_path, prefix, namer):
             raise ModuleError(f"annotation output must be separate from the input module: {output}")
         if any(same_file(output, previous) for previous in outputs[:index]):
             raise ModuleError(f"annotation outputs must name different files: {output}")
+        if output.exists() and not output.is_file():
+            raise ModuleError(f"annotation output must be a regular file: {output}")
     module = Module(Path(module_path).read_bytes())
     slots = module.imports()
     exports, thread_local = module.exports()
