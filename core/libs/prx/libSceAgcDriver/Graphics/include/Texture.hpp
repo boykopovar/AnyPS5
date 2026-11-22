@@ -551,6 +551,14 @@ public:
     // False, naming why in `refusal`, when the fill must be stored as before.
     static constexpr std::uint32_t WholeImage = ~0u;
     bool FillClear(std::span<const std::uint32_t, 4> pattern, std::uint32_t layer, const char*& refusal, bool allowRegisterClear = false);
+    // The fast clear of one mip of a mipmapped chain (FillClear's layers are array layers and
+    // cannot name a mip): clear that level on the image with the texel's pattern, no CPU store,
+    // the guest bytes following through the write-back, which stores the filled mip whole
+    // (holdsClearFill). With `verifiedCodeClear` the caller has read a uniform clear code on the
+    // slice and passed its exact texel, so the keys-may-still-hold-a-code guard is lifted (as in
+    // the register-clear flow); a pending key write still refuses. False, naming why in `refusal`,
+    // when the clear must be stored as before.
+    bool ClearMip(const std::array<std::byte, 16>& texel, std::uint32_t level, bool verifiedCodeClear, const char*& refusal);
     // The cached, live image whose surface is exactly [address, address + bytes), if any (the newest
     // of several: see ClassifyFill).
     static std::shared_ptr<StorageTexture> FindLive(std::uint64_t address, std::uint64_t bytes);
@@ -903,6 +911,10 @@ private:
     // DCC keys the image content was uploaded under: a fast-cleared surface starts as its clear value.
     DccKeys uploadedKeys = DccKeys::Uncompressed;
     mutable DccKeys filledKeys = DccKeys::Uncompressed;
+    // A ClearMip fill is pending on the image: while its units are pending the write-back stores
+    // them whole (the undrawn part is the clear, not the guest bytes) instead of only the units
+    // a partial access overlaps.
+    bool holdsClearFill = false;
     mutable DccKeyProof keyProof;
     mutable DccRangeProof targetKeyProof;
     DccSingleProof singleProof;

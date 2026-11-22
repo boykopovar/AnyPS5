@@ -1108,10 +1108,21 @@ void RunMipmappedClearDraw(AgcDriver::VulkanDevice& device, std::uint8_t* block)
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     MipDrawBlended(device, color);
     device.WaitIdle();
-    AgcDriver::Graphics::StorageTexture::FlushPending(color.address, color.bytes, nullptr, "mipmapped clear draw read-back");
-    device.WaitIdle();
     const auto layout = AgcDriver::Graphics::ColorTargetLayout(MipDrawSide, MipDrawSide, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
     Require(layout.Bytes() == color.bytes, "the viewed mip's layout differs from the target's bytes");
+    // The bind and the draw touched the image only: guest memory still holds the stale bytes
+    // everywhere (the CPU settle would have written the clear over the whole mip here), and the
+    // write-back below stores the whole mip, so the undrawn part then reads the clear, not the
+    // stale bytes. Read the raw buffer directly: the GuestMemory access hook would otherwise store
+    // the pending clear first (the write-back is exactly what we are testing happens next), so a
+    // hooked read cannot observe the pre-write-back state.
+    {
+        const auto* before = reinterpret_cast<const std::uint8_t*>(color.address);
+        Require(std::all_of(before, before + color.bytes, [](std::uint8_t b) { return b == 0x55u; }),
+                "the bind of a mipmapped DCC target wrote into guest memory (the clear must land on the image, the bytes through the write-back)");
+    }
+    AgcDriver::Graphics::StorageTexture::FlushPending(color.address, color.bytes, nullptr, "mipmapped clear draw read-back");
+    device.WaitIdle();
     std::vector<std::byte> stored(color.bytes);
     AgcDriver::GuestMemory::Read(color.address, stored, 4);
     for (std::uint32_t y = 0; y < MipDrawSide; ++y) {

@@ -2211,23 +2211,50 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
 // A mipmapped DCC target's viewed mip can be fast-cleared by its own key slice while the chain
 // image the draw reads from still holds the stored texels (the chain's keys are not one clear
 // code, so the upload keeps them): the draw would start from the stale bytes instead of the
-// console's fast clear. Settle the target's range to the clear colour and mark its keys stored;
-// the lookup's generation check re-uploads the image over that range, so the draw starts from
-// the clear. Single-level targets already get this from the image being uploaded under the
-// clear, and ClearSingle expands stored texels, which the target's own write-back owns.
-void settleMipmappedTargetClear(const Context& context, const ColorTarget& color) {
-    if (color.dccAddress == 0 || color.mipCount <= 1) return;
+// console's fast clear. Clear the mip on the resident image -- no CPU store of the mip and no
+// re-upload: the guest bytes follow through the write-back, which stores the filled mip whole
+// (the undrawn part is the clear, not the stored bytes) -- and mark the slice's keys
+// uncompressed, as the CPU path did. Without a resident image, or when it cannot take the clear
+// (a pattern it cannot encode, a tail mip), materialize the clear on the CPU as before; the
+// keys are already uncompressed, so the next upload reads the clear bytes. Returns false when
+// the keys are not one clear code (nothing to do here). Single-level targets already get this
+// from the image being uploaded under the clear, and ClearSingle expands stored texels, which
+// the target's own write-back owns.
+bool materializeMipClear(const Context& context, const ColorTarget& color, std::shared_ptr<StorageTexture>& resident) {
+    if (color.dccAddress == 0 || color.mipCount <= 1 || color.mipTail) return false;
     const auto keyCount = std::max<std::size_t>(colorKeyCount(color, color.bytes), 1u);
     const auto keys = CurrentDccKeys(color.dccAddress, color.bytes, keyCount);
-    if (!IsDccClear(keys) || keys == DccKeys::ClearSingle || (keys == DccKeys::ClearRegister && color.elementBytes > 8u)) return;
-    storeClearTexels(context, color, clearTexel(color, keys));
+    if (!IsDccClear(keys) || keys == DccKeys::ClearSingle || (keys == DccKeys::ClearRegister && color.elementBytes > 8u)) return false;
+    const auto texel = clearTexel(color, keys);
+    // TEMP-PROF: count GPU-clear vs CPU-fallback to see if the GPU path is triggered in-game.
+    static std::atomic<int> gpuClears{0}, cpuFalls{0}, refusals{0};
+    if (resident != nullptr) {
+        // The fill records the exact clear the slice's code names (the verified-code path; a
+        // pending key write still refuses it), and the slice is expanded once the fill is in.
+        const char* refusal = nullptr;
+        if (resident->ClearMip(texel, color.mip, true, refusal)) {
+            const auto n = gpuClears.fetch_add(1, std::memory_order_relaxed);
+            if (n % 200 == 0) std::fprintf(stderr, "[MIPCLEAR-PROF] gpuClears=%d cpuFalls=%d refusals=%d (color 0x%llx mip %u/%u)\n", n + 1, cpuFalls.load(), refusals.load(), static_cast<unsigned long long>(color.address), color.mip, color.mipCount);
+            MarkDccUncompressed(context, color.dccAddress, color.bytes, keyCount);
+            return true;
+        }
+        const auto r = refusals.fetch_add(1, std::memory_order_relaxed);
+        if (r % 200 == 0) std::fprintf(stderr, "[MIPCLEAR-PROF] ClearMip REFUSED (%s) gpuClears=%d cpuFalls=%d\n", refusal, gpuClears.load(), cpuFalls.load());
+        MarkDccUncompressed(context, color.dccAddress, color.bytes, keyCount);
+    }
+    // No resident image, or it refused the clear (a pending key write, an unencodable pattern, a
+    // tail mip): the CPU store; the keys are already uncompressed, so write the captured clear.
+    const auto c = cpuFalls.fetch_add(1, std::memory_order_relaxed);
+    if (c % 200 == 0) std::fprintf(stderr, "[MIPCLEAR-PROF] CPU fallback (resident %p) gpuClears=%d cpuFalls=%d refusals=%d (color 0x%llx mip %u/%u)\n", static_cast<void*>(resident.get()), gpuClears.load(), c + 1, refusals.load(), static_cast<unsigned long long>(color.address), color.mip, color.mipCount);
+    StorageTexture::FlushPending(color.address, color.bytes, nullptr, "fast-clear materialization");
+    writeTexels(color, texel);
+    return true;
 }
 
 template<typename TLookup>
 std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, const State& state, const ColorTarget& color, DrawOutcome& outcome, bool profile, const TLookup& lookup) {
     const auto lookupStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto walkedBefore = profile ? GuestMemory::ThreadCollectedBytes() : 0;
-    settleMipmappedTargetClear(context, color);
     std::shared_ptr<StorageTexture> resident;
     try {
         resident = lookup();
@@ -2240,6 +2267,7 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
         if (reported.insert(color.address).second) std::fprintf(stderr, "[gpu] color target 0x%llx stays non-resident: %s\n", static_cast<unsigned long long>(color.address), error.what());
     }
     if (resident != nullptr) materializeCmaskClear(context, color, resident);
+    if (resident != nullptr) materializeMipClear(context, color, resident);
     if (profile) {
         const auto lookupUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - lookupStart).count();
         ++outcome.targetLookups;
@@ -5310,6 +5338,12 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
                 MarkDccUncompressed(context, color.dccAddress, color.bytes, colorKeyCount(color, color.bytes));
                 continue;
             }
+        }
+        if (color.mipCount > 1 && resident == nullptr) {
+            // A mipmapped target's resident is the chain image (a different byte size, so
+            // metadataPassResident is null): clear the viewed mip on it instead of the CPU store.
+            std::shared_ptr<StorageTexture> chain = CachedStorageSurface(context, SurfaceForTarget(color));
+            if (materializeMipClear(context, color, chain)) continue;
         }
         storeClearTexels(context, color, texel);
     }
