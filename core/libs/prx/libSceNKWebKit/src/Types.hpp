@@ -195,6 +195,8 @@ public:
     bool hasVerticalScrollbar = false;
     int numberOfPages = 1;
     std::vector<bool> pageBoxVisibility;
+    bool containsAnyFormElements = false;
+    bool containsAnyFormControls = false;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {

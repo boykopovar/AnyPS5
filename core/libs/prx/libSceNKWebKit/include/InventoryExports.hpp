@@ -44,8 +44,6 @@ int APS5_VABI WKBundleFileHandleCreateWithPath();
 int APS5_VABI WKBundleFrameAllowsFollowingLink();
 int APS5_VABI WKBundleFrameCallShouldCloseOnWebView();
 int APS5_VABI WKBundleFrameClearOpener();
-int APS5_VABI WKBundleFrameContainsAnyFormControls();
-int APS5_VABI WKBundleFrameContainsAnyFormElements();
 int APS5_VABI WKBundleFrameCopyChildFrames();
 int APS5_VABI WKBundleFrameCopyCounterValue();
 int APS5_VABI WKBundleFrameCopyInnerText();
