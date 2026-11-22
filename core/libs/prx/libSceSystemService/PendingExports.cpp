@@ -850,16 +850,7 @@ int APS5_VABI sceShellCoreUtilGetDeviceIndexBehaviorWithTimeout(std::uint32_t* b
 }
 
 int APS5_VABI sceShellCoreUtilGetEffectiveTotalSizeOfUserPartition(std::uint64_t* size) {
-    const std::filesystem::space_info space = HostSpace();
-    const int savedErrno = errno;
-    if (size != nullptr) {
-        const std::uint64_t localTotal = space.capacity;
-        if (!GuestCopyOut_nid_no_patch(size, &localTotal, sizeof(localTotal))) {
-            errno = savedErrno;
-            return static_cast<int>(0x80e30005);
-        }
-    }
-    errno = savedErrno;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

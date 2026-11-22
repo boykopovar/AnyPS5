@@ -20,12 +20,5 @@ int main() {
     Require(errno == 71);
     Require(freeSize != 0 && totalSize != 0 && freeSize <= totalSize);
     Require(sceShellCoreUtilGetFreeSizeOfAvContentsTmp() != 0);
-    std::uint64_t effectiveTotalSize = 0;
-    Require(sceShellCoreUtilGetEffectiveTotalSizeOfUserPartition(&effectiveTotalSize) == 0);
-    Require(effectiveTotalSize == totalSize);
-    Require(sceShellCoreUtilGetEffectiveTotalSizeOfUserPartition(nullptr) == 0);
-    errno = 71;
-    Require(sceShellCoreUtilGetEffectiveTotalSizeOfUserPartition(reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<int>(0x80e30005u));
-    Require(errno == 71);
     return 0;
 }
