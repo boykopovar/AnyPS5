@@ -354,7 +354,13 @@ test("a late successful release request cannot hide a replacement request failur
 
 for (const [name, bad] of [
   ["HTTP error", { ok: false, status: 503 }],
-  ["invalid manifest", { ok: true, json: async () => ({ tag: "bad" }) }]
+  ["invalid manifest", { ok: true, json: async () => ({ tag: "bad" }) }],
+  ["negative Linux library size", { ok: true, json: async () => ({
+    tag: "v1-test", platforms: { linux: { expandedBytes: -1 }, windows: { expandedBytes: 1024 } }
+  }) }],
+  ["oversized Windows library size", { ok: true, json: async () => ({
+    tag: "v1-test", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 512 * 1024 * 1024 + 1 } }
+  }) }]
 ]) {
   test(`selecting an input retries release information after ${name}`, async t => {
     let calls = 0;

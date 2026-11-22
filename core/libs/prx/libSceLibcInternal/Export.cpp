@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/GuestWords.hpp"
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceLibcInternal/include/PendingExports.hpp"
@@ -268,9 +269,8 @@ int APS5_VABI _ZNSt10moneypunctIcLb0EEC2Em_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNSt10moneypunctIcLb0EED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt10moneypunctIcLb0EED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI sceLibcInternalPending4_138_nid_no_patch() {
@@ -324,9 +324,8 @@ int APS5_VABI _ZNSt10moneypunctIcLb1EEC2Em_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNSt10moneypunctIcLb1EED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt10moneypunctIcLb1EED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI _ZNSt10moneypunctIcLb1EED1Ev_nid_postfix() {
@@ -676,13 +675,18 @@ int APS5_VABI _FTgamma_nid_postfix() {
 
 float APS5_VABI _FXp_getw_nid_postfix(const float* parts, int count) {
     if (count == 0) return 0.0f;
-    if (count == 1 || parts[0] == 0.0f || parts[1] == 0.0f) return parts[0];
-    if (count == 2 || parts[2] == 0.0f) return parts[0] + parts[1];
-    const float head = parts[0] + parts[1];
-    float tail = parts[2];
-    if (count >= 4) tail += parts[3];
-    if (head - parts[0] == parts[1]) return head + tail;
-    return parts[0] + (parts[1] + tail);
+    const float first = ExtendedPrecisionWords::ReadWord(parts, 0, "_FXp_getw");
+    if (count == 1 || first == 0.0f) return first;
+    const float second = ExtendedPrecisionWords::ReadWord(parts, 1, "_FXp_getw");
+    if (second == 0.0f) return first;
+    if (count == 2) return first + second;
+    const float third = ExtendedPrecisionWords::ReadWord(parts, 2, "_FXp_getw");
+    if (third == 0.0f) return first + second;
+    const float head = first + second;
+    float tail = third;
+    if (count >= 4) tail += ExtendedPrecisionWords::ReadWord(parts, 3, "_FXp_getw");
+    if (head - first == second) return head + tail;
+    return first + (second + tail);
 }
 
 int APS5_VABI _Fac_tidy_nid_postfix() {

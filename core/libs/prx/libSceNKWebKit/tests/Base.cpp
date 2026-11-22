@@ -1341,6 +1341,75 @@ static void TestBundleNodeHandle() {
     Require(copiedIframe == iframeContent.Get());
     WKRelease(copiedIframe);
 
+    Require(!WKBundleNodeHandleGetHTMLInputElementAutoFilled(ref));
+    Require(!WKBundleNodeHandleGetHTMLInputElementAutofilled(ref));
+    Require(!WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(ref));
+    Require(!WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(ref));
+    Require(handle->htmlInputElementSpellcheckEnabled);
+    Require(!handle->htmlInputElementAutoFilledAndViewable);
+    Require(handle->htmlInputElementValue.Get() == nullptr);
+
+    WKBundleNodeHandleSetHTMLInputElementAutoFilled(ref, true);
+    Require(WKBundleNodeHandleGetHTMLInputElementAutoFilled(ref));
+    Require(WKBundleNodeHandleGetHTMLInputElementAutofilled(ref));
+    Require(handle->htmlInputElementAutoFilled);
+
+    WKBundleNodeHandleSetHTMLInputElementAutofilled(ref, false);
+    Require(!WKBundleNodeHandleGetHTMLInputElementAutoFilled(ref));
+    Require(!WKBundleNodeHandleGetHTMLInputElementAutofilled(ref));
+    Require(!handle->htmlInputElementAutoFilled);
+
+    WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(ref, true);
+    Require(handle->htmlInputElementAutoFilledAndViewable);
+    WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(ref, false);
+    Require(!handle->htmlInputElementAutoFilledAndViewable);
+
+    WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(ref, false);
+    Require(!handle->htmlInputElementSpellcheckEnabled);
+    WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(ref, true);
+    Require(handle->htmlInputElementSpellcheckEnabled);
+
+    const void* val = WKStringCreateWithUTF8CString("test-user-value");
+    WKBundleNodeHandleSetHTMLInputElementValueForUser(ref, val);
+    Require(WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(ref));
+    Require(handle->htmlInputElementValue.Get() != nullptr);
+    Require(WKStringIsEqualToUTF8CString(handle->htmlInputElementValue.Get(), "test-user-value"));
+    WKRelease(val);
+
+    WKBundleNodeHandleSetHTMLInputElementValueForUser(ref, nullptr);
+    Require(handle->htmlInputElementValue.Get() == nullptr);
+    Require(WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(ref));
+
+    auto requireThrows = [](auto&& fn) {
+        bool threwEx = false;
+        try {
+            fn();
+        } catch (const std::invalid_argument&) {
+            threwEx = true;
+        }
+        Require(threwEx);
+    };
+
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutoFilled(nullptr, true); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutoFilled(docFrame.Get(), true); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementAutoFilled(nullptr); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementAutoFilled(docFrame.Get()); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutofilled(nullptr, true); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutofilled(docFrame.Get(), true); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementAutofilled(nullptr); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementAutofilled(docFrame.Get()); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(nullptr, true); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(docFrame.Get(), true); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(nullptr, false); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(docFrame.Get(), false); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementValueForUser(nullptr, nullptr); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementValueForUser(docFrame.Get(), nullptr); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementValueForUser(ref, docFrame.Get()); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(nullptr); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(docFrame.Get()); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(nullptr); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(docFrame.Get()); });
+
     bool threw = false;
     try {
         WKBundleNodeHandleCopyDocument(nullptr);

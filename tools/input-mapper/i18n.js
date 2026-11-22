@@ -123,6 +123,8 @@ export const locales = [
 
 export const messages = {
     "en": {
+        "controllerButtons": "Controller buttons",
+        "noOverride": "No override",
         "controls": "Controls",
         "configuration": "Configuration",
         "help": "Help",
@@ -206,6 +208,8 @@ export const messages = {
         "noOptions": "No matching options."
     },
     "sv": {
+        "controllerButtons": "Handkontrollens knappar",
+        "noOverride": "Ärv knappmappning",
         "controls": "Kontroller",
         "configuration": "Konfiguration",
         "help": "Hjälp",
@@ -286,6 +290,8 @@ export const messages = {
         "noOptions": "Inga matchande alternativ."
     },
     "ar-EG": {
+        "controllerButtons": "أزرار دراع التحكم",
+        "noOverride": "استخدم التعيين الموروث",
         "controls": "التحكم",
         "configuration": "ملف الإعدادات",
         "help": "المساعدة",
@@ -366,6 +372,8 @@ export const messages = {
         "noOptions": "مفيش اختيار مطابق للبحث."
     },
     "es": {
+        "controllerButtons": "Botones del mando",
+        "noOverride": "Usar asignación heredada",
         "controls": "Controles",
         "configuration": "Configuración",
         "help": "Ayuda",
@@ -406,11 +414,11 @@ export const messages = {
         "keepEditing": "Seguir editando",
         "discard": "Descartar cambios",
         "faq0Question": "¿Cómo asigno una tecla?",
-        "faq0Answer": "Elige un grupo y Añadir entrada. Usa Capturar o la lista. Puedes asignar varias entradas a una acción.",
+        "faq0Answer": "Elige un grupo, selecciona Añadir entrada y luego Capturar, o elige una tecla de la lista. Las entradas de una misma acción son alternativas.",
         "faq1Question": "¿Dónde guardo el archivo INI?",
         "faq1Answer": "Pon anyps5-input.ini junto al ejecutable generado del juego. Para otra ruta, usa ANYPS5_INPUT_CONFIG.",
         "faq2Question": "¿Por qué no se captura una tecla?",
-        "faq2Answer": "El navegador o sistema puede interceptarla. Elígela en la lista. Escape cancela la captura; asígnala desde la lista.",
+        "faq2Answer": "El navegador o el sistema puede interceptarla. Elígela en la lista. Escape cancela la captura; asígnala desde la lista.",
         "faq3Question": "¿Se guardan mis cambios solos?",
         "faq3Answer": "Los cambios están en memoria: cópialos o descárgalos antes de recargar. Solo se guarda el idioma. Las acciones no configuradas conservan sus valores predeterminados.",
         "skip": "Saltar al contenido",
@@ -449,6 +457,8 @@ export const messages = {
         "noOptions": "No hay opciones coincidentes."
     },
     "fr": {
+        "controllerButtons": "Boutons de la manette",
+        "noOverride": "Hériter de l’affectation",
         "controls": "Commandes",
         "configuration": "Configuration",
         "help": "Aide",
@@ -532,6 +542,8 @@ export const messages = {
         "noOptions": "Aucune option trouvée."
     },
     "de": {
+        "controllerButtons": "Controller-Tasten",
+        "noOverride": "Keine eigene Belegung",
         "controls": "Steuerung",
         "configuration": "Konfiguration",
         "help": "Hilfe",
@@ -580,6 +592,8 @@ export const messages = {
         "noOptions": "Keine passenden Optionen."
     },
     "it": {
+        "controllerButtons": "Pulsanti del controller",
+        "noOverride": "Eredita assegnazione",
         "controls": "Controlli",
         "configuration": "Configurazione",
         "help": "Aiuto",
@@ -631,6 +645,8 @@ export const messages = {
         "noOptions": "Nessuna opzione trovata."
     },
     "pt-BR": {
+        "controllerButtons": "Botões do controle",
+        "noOverride": "Herdar mapeamento",
         "controls": "Controles",
         "configuration": "Configuração",
         "help": "Ajuda",
@@ -714,6 +730,8 @@ export const messages = {
         "noOptions": "Nenhuma opção encontrada."
     },
     "ru": {
+        "controllerButtons": "Кнопки контроллера",
+        "noOverride": "Унаследовать назначение",
         "controls": "Управление",
         "configuration": "Конфигурация",
         "help": "Помощь",
@@ -762,6 +780,8 @@ export const messages = {
         "noOptions": "Совпадений нет."
     },
     "tr": {
+        "controllerButtons": "Kontrolcü düğmeleri",
+        "noOverride": "Üst eşlemeyi kullan",
         "controls": "Kontroller",
         "configuration": "Yapılandırma",
         "help": "Yardım",
@@ -810,6 +830,8 @@ export const messages = {
         "noOptions": "Eşleşen seçenek yok."
     },
     "zh-Hans": {
+        "controllerButtons": "手柄按键",
+        "noOverride": "继承映射",
         "controls": "控制",
         "configuration": "配置",
         "help": "帮助",
@@ -858,6 +880,8 @@ export const messages = {
         "noOptions": "没有匹配选项。"
     },
     "ja": {
+        "controllerButtons": "コントローラーのボタン",
+        "noOverride": "割り当てを継承",
         "controls": "操作",
         "configuration": "構成",
         "help": "ヘルプ",
@@ -906,6 +930,8 @@ export const messages = {
         "noOptions": "一致する選択肢がありません。"
     },
     "ko": {
+        "controllerButtons": "컨트롤러 버튼",
+        "noOverride": "매핑 상속",
         "controls": "컨트롤",
         "configuration": "구성",
         "help": "도움말",
@@ -954,6 +980,8 @@ export const messages = {
         "noOptions": "일치하는 옵션이 없습니다."
     },
     "hi": {
+        "controllerButtons": "कंट्रोलर के बटन",
+        "noOverride": "इनहेरिट की गई मैपिंग",
         "controls": "नियंत्रण",
         "configuration": "कॉन्फ़िगरेशन",
         "help": "मदद",
@@ -1002,6 +1030,8 @@ export const messages = {
         "noOptions": "कोई विकल्प नहीं मिला।"
     },
     "bn": {
+        "controllerButtons": "কন্ট্রোলারের বোতাম",
+        "noOverride": "উত্তরাধিকারসূত্রে পাওয়া ম্যাপিং",
         "controls": "নিয়ন্ত্রণ",
         "configuration": "কনফিগারেশন",
         "help": "সাহায্য",
@@ -1050,6 +1080,8 @@ export const messages = {
         "noOptions": "কোনো বিকল্প মেলেনি।"
     },
     "ur": {
+        "controllerButtons": "کنٹرولر کے بٹن",
+        "noOverride": "وراثتی میپنگ استعمال کریں",
         "controls": "کنٹرول",
         "configuration": "ترتیب",
         "help": "مدد",
@@ -1098,6 +1130,8 @@ export const messages = {
         "noOptions": "کوئی اختیار نہیں ملا۔"
     },
     "fa": {
+        "controllerButtons": "دکمه‌های دستهٔ بازی",
+        "noOverride": "استفاده از نگاشت به‌ارث‌رسیده",
         "controls": "کنترل‌ها",
         "configuration": "پیکربندی",
         "help": "راهنما",
@@ -1146,6 +1180,8 @@ export const messages = {
         "noOptions": "گزینه‌ای پیدا نشد."
     },
     "id": {
+        "controllerButtons": "Tombol pengontrol",
+        "noOverride": "Gunakan pemetaan turunan",
         "controls": "Kontrol",
         "configuration": "Konfigurasi",
         "help": "Bantuan",
@@ -1194,6 +1230,8 @@ export const messages = {
         "noOptions": "Tidak ada opsi yang cocok."
     },
     "vi": {
+        "controllerButtons": "Nút tay cầm",
+        "noOverride": "Kế thừa ánh xạ",
         "controls": "Điều khiển",
         "configuration": "Cấu hình",
         "help": "Trợ giúp",
@@ -1242,6 +1280,8 @@ export const messages = {
         "noOptions": "Không có tùy chọn phù hợp."
     },
     "th": {
+        "controllerButtons": "ปุ่มคอนโทรลเลอร์",
+        "noOverride": "สืบทอดการแมป",
         "controls": "การควบคุม",
         "configuration": "การกำหนดค่า",
         "help": "ช่วยเหลือ",
@@ -1290,6 +1330,8 @@ export const messages = {
         "noOptions": "ไม่พบตัวเลือกที่ตรงกัน"
     },
     "sw": {
+        "controllerButtons": "Vitufe vya kidhibiti",
+        "noOverride": "Rithi mpangilio",
         "controls": "Vidhibiti",
         "configuration": "Usanidi",
         "help": "Msaada",
@@ -1338,6 +1380,8 @@ export const messages = {
         "noOptions": "Hakuna chaguo linalolingana."
     },
     "nl": {
+        "controllerButtons": "Controllerknoppen",
+        "noOverride": "Toewijzing overnemen",
         "controls": "Bediening",
         "configuration": "Configuratie",
         "help": "Hulp",
@@ -1386,6 +1430,8 @@ export const messages = {
         "noOptions": "Geen passende opties."
     },
     "pl": {
+        "controllerButtons": "Przyciski kontrolera",
+        "noOverride": "Dziedzicz przypisanie",
         "controls": "Sterowanie",
         "configuration": "Konfiguracja",
         "help": "Pomoc",
@@ -1434,6 +1480,8 @@ export const messages = {
         "noOptions": "Brak pasujących opcji."
     },
     "el": {
+        "controllerButtons": "Κουμπιά χειριστηρίου",
+        "noOverride": "Κληρονόμηση αντιστοίχισης",
         "controls": "Χειρισμοί",
         "configuration": "Διαμόρφωση",
         "help": "Βοήθεια",

@@ -325,7 +325,7 @@ The Windows executable has no `DYNAMIC_BASE` and prefers to load with its lowest
 
 For an executable that assumes its image starts at `0x400000`, as Ruffle (PPSA68091), VLC (PPSA85300) and XPSemu (PPSA97358) do when they read their `app0/imports.txt`, use `relinker --macos --macos-fixed-base 0x400000 source/input.elf app` on macOS. Use this option only when the executable requires a fixed address; without it, macOS output places the lowest ELF load page at `0x140010000`. Linux output places virtual address 0 at `0x400000` without an option, inside the 40-bit window that a title's own `sceLibcMspaceCreate` checks; `--linux-fixed-base` selects another address, and with `--lazy-binding` the executable stays position independent.
 
-The same base is applied to executables selected with `--executable`; bundled PRX modules are not rebased.
+The `--linux-fixed-base` and `--macos-fixed-base` addresses also apply to executables selected with `--executable`; `--windows-fixed-base` applies only to the main executable, and the others keep the preferred base with relocations. Bundled PRX modules are not rebased.
 
 Paths are relative to the output executable:
 
@@ -782,6 +782,7 @@ ANYPS5_LOG_FILE=run.log ./app.elf
 `python3 tools/bug_report.py` gathers what a bug report needs into one zip file: the run report `anyps5-report.json`, the log, and the input mapping, with your personal details redacted. It also writes `host.txt` with the operating system, machine and Python version, and a `README.txt` that says what was redacted.
 
 - By default it reads `./anyps5-report.json`, the log named by `ANYPS5_LOG_FILE` and the input mapping named by `ANYPS5_INPUT_CONFIG` (or `./anyps5-input.ini`), and writes `bug-report.zip`. Use `--report`, `--log`, `--input-config` and `--out` to choose other files.
+- The bundle includes `anyps5-settings.txt` with redacted values for `ANYPS5_*` and `APS5_*` variables set in the environment of the bundling command. Run it with the same settings used to launch the game to record those settings.
 - If the report names a title, the tool looks for `anyps5-input.<TITLEID>.ini` beside the shared mapping, even if the shared file is absent. The bundle includes that title's overrides as `anyps5-input-profile.ini`.
 - Redaction replaces your home directory with `~`, your user and host names with `<user>` and `<host>`, and IPv4 addresses with `<ip>`. It matches whole words only, so a user name inside another word is not changed. It does not know other personal details, such as a name typed into a title, a file name that contains your name, or an IPv6 address; open the bundle and check it before you attach it.
 - A missing log or input mapping is left out of the bundle. The run report must be valid JSON. An existing bundle is never overwritten: the command exits with status 1 and names the file.
@@ -846,7 +847,7 @@ relinker --registry source/input.elf app.elf
 python3 tools/import_audit.py app.registry.json app.libc.prx.guest.prx.registry.json --libs build/core/libs/libs --modules source/sce_module
 ```
 
-`--registry` writes `app.registry.json` for the executable and one `app.<module>.registry.json` for each converted bundled module; pass all of them. A module's imports are counted from its registry when that is passed with the executable's registry, and from its file in `--modules` otherwise, so a module passed both ways is not counted twice; the file still provides the module's exports and the libraries it needs, and imports taken from a registry are not marked with the module's file name in the report. `--libs` is the directory the `libs` target fills ([build instructions](../dev/BUILD.md)); the exports are read from the built `.prx` files, so the result matches what the loader finds. Imports are counted once per NID and library, and every reference lands in exactly one class:
+`--registry` writes `app.registry.json` for the executable and one `app.<module>.registry.json` for each converted bundled module; pass all of them. When a module's registry is passed with the executable's registry, the audit takes the module's imports from that registry and omits the module file name from those records. An ELF module in `--modules` supplies its exports and needed libraries, and supplies its guest imports when its registry is absent. A converted Windows PE `*.guest.prx` supplies exports only. Pass its registry to include its guest imports. `--libs` is the directory the `libs` target fills ([build instructions](../dev/BUILD.md)); the exports are read from the built `.prx` files, so the result matches what the loader finds. Imports are counted once per NID and library, and every reference lands in exactly one class:
 
 | Class | Meaning |
 |-------|---------|
@@ -876,13 +877,14 @@ The audit also walks the built libraries' own host dependencies: each `.prx` und
 | `--modules <dir>` | Directory of the title's own modules; repeat for several. |
 | `--source <dir>` | `core/libs/prx` tree that is searched for throwing stubs. Defaults to this repository's. |
 | `--strict-stubs` | Also exit with code `1` when an import has class `stub`, weak imports and the imports of `--modules` files included. `partial` imports do not count. |
+| `--strict-partial` | Also exit with code `1` when an import has class `partial`. Use `--strict-stubs` too to reject both classes. |
 | `--strict-providers` | Also exit with code `1` when an import that names a library is exported only by another library. `module` imports and imports that `libc.prx` exports do not count. |
 | `--names <file>` | NID and name per line, as in `aerolib.csv` from [`tools/nid_names.py`](../../tools/nid_names.py); names the absent imports. Never downloaded; a name that does not hash to its NID is marked. |
 | `--json <file>` | Full result, stamped with the repository's commit and whether its tree was modified. |
 
 Registry `nid` fields may contain either encoded NIDs or ordinary ELF symbol names such as `strcmp`. Imports are matched against literal exports first, then against their computed NIDs when the literal lookup misses. Reports retain the original import name. Export availability does not establish that every platform loader supports that lookup path.
 
-Exit codes: `0` nothing blocks loading, `1` there are `absent` imports, import name mismatches, needed libraries or library host dependencies without a file, or, with `--strict-stubs` or `--strict-providers`, `stub` imports or imports exported only by another library, `2` an input could not be read; the message names the file and the value.
+The audit exits with `0` when it passes. It exits with `1` for `absent` imports, import name mismatches, needed libraries or library host dependencies without a file, or findings rejected by `--strict-stubs`, `--strict-partial` or `--strict-providers`. It exits with `2` for invalid arguments or an input or output error.
 
 A module registry lists `nid`, `library` and `targetOffset` for each relocation against a function that no other bundled module exports, without the `#` suffix of the executable's NIDs.
 
