@@ -125,8 +125,8 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
     result.Directories = std::move(directories);
     result.RuntimeDirectories = std::move(runtimeDirectories);
     for (const auto& path : paths) result.Modules.push_back({path, Io::FileReader().Read(Io::Utf8Path(path))});
-    for (const auto& [copy, kept] : RemoveBackupCopies(result.Modules))
-        std::cout << "Skipping backup copy: " << copy.lexically_relative(root).generic_string() << " (same SONAME as "
+    for (const auto& [copy, kept, match] : RemoveBackupCopies(result.Modules))
+        std::cout << "Skipping backup copy: " << copy.lexically_relative(root).generic_string() << " (" << match << " as "
                   << kept.lexically_relative(root).generic_string() << ")\n";
     return result;
 }
