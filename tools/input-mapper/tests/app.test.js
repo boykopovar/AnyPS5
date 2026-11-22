@@ -218,6 +218,22 @@ test('cancelling replacement keeps the previous import report hidden and preserv
     assert.equal(app.get('preview').value, '');
 });
 
+test('the import report is named by its translated heading', async t => {
+    const app = await setup(t, 'report-name');
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    const section = /<section\b[^>]*\bid="import-report"[^>]*>/u.exec(html)[0];
+    assert.doesNotMatch(section, /\saria-label=/u);
+    const labelledBy = /\saria-labelledby="([^"]+)"/u.exec(section)?.[1];
+    assert.ok(labelledBy);
+    for (const [text, heading] of [['NotAnAction = KEY:Space\n', 'Import rejected'], ['Cross = KEY:Space\n', 'Import read successfully']]) {
+        await app.importFile('report.ini', text);
+        const title = app.get('import-report').children[0];
+        assert.equal(title.tagName, 'H2');
+        assert.equal(title.textContent, heading);
+        assert.equal(title.id, labelledBy);
+    }
+});
+
 test('cancelling replacement preserves an earlier import report until replacement is confirmed', async t => {
     const app = await setup(t, 'cancel-existing');
     app.get('mappings').querySelector('.add-binding').click();
