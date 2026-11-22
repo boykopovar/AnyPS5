@@ -268,12 +268,11 @@ private:
     }
 
     void apply(Scheduled& event, std::uint64_t position, std::uint64_t cycle, std::uint64_t elapsed, Frame& frame, Report* report) {
-        if (position < event.startUs) return;
+        if (position < event.startUs || position >= event.endUs) return;
         if (event.firedCycle != static_cast<std::int64_t>(cycle)) {
             event.firedCycle = static_cast<std::int64_t>(cycle);
             if (report != nullptr) report->fired.push_back({elapsed / 1000, event.entry.holdMs, event.entry.label});
         }
-        if (position >= event.endUs) return;
         frame.buttons |= event.entry.buttons;
         if (event.entry.stick >= 0) {
             frame.hasSticks = true;
