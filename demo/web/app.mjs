@@ -475,7 +475,10 @@ function loadReleaseInfo() {
   const version = ++releaseVersion;
   releaseRequest = fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw localizedError(() => translate(locale, "cannotLoadReleaseInfo", { status: response.status, hint: response.status === 404 ? translate(locale, "cannotLoadReleaseInfoHint") : "" })); return response.json(); }).then(value => {
     if (version !== releaseVersion) return;
-    if (!value || typeof value !== "object" || typeof value.tag !== "string" || !/^v[0-9A-Za-z][0-9A-Za-z._-]*$/u.test(value.tag) || value.tag.endsWith(".") || !["windows", "linux"].every(target => Number.isSafeInteger(value.platforms?.[target]?.expandedBytes))) throw localizedError(() => translate(locale, "invalidReleaseInfo"));
+    if (!value || typeof value !== "object" || typeof value.tag !== "string" || !/^v[0-9A-Za-z][0-9A-Za-z._-]*$/u.test(value.tag) || value.tag.endsWith(".") || !["windows", "linux"].every(target => {
+      const size = value.platforms?.[target]?.expandedBytes;
+      return Number.isSafeInteger(size) && size >= 0 && size <= 512 * 1024 * 1024;
+    })) throw localizedError(() => translate(locale, "invalidReleaseInfo"));
     release = value;
     update();
   }).catch(error => {
