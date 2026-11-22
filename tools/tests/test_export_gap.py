@@ -536,6 +536,7 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("APS5_EXPORT", report)
             self.assertIn("libSceAmpr", report)
             self.assertIn("Caller.cpp:2", report)
+            self.assertIn("may need a renamed helper bound with APS5_EXPORT", report)
 
     def test_self_call_line_counts_spliced_lines(self):
         nid = nid_names.compute_nid("sceExampleSelfCall")
@@ -829,7 +830,10 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("libSceAmpr", report)
 
     def test_nested_mangled_names_are_reported_without_requiring_a_helper(self):
-        for name in ("_ZN3Foo3barEv", "_ZNK3Foo3barEv", "_ZNSt6vectorIiE3fooEv"):
+        for name in ("_ZN3Foo3barEv", "_ZNK3Foo3barEv", "_ZNSt6vectorIiE3fooEv",
+                     "_ZNSs5eraseEmm", "_ZNSs6appendERKSsmm", "_ZNSbIwSt11char_traitsIwESaIwEE5eraseEmm",
+                     "_ZNKSs5_XlenEv", "_ZNKR3Foo3barEv", "_ZNO3Foo3barEv",
+                     "_ZNSaIcE8allocateEm", "_ZNSi3getEv", "_ZNSo3putEc", "_ZNSd3fooEv"):
             with self.subTest(name=name):
                 nid = nid_names.compute_nid(name)
                 with tempfile.TemporaryDirectory() as directory:
@@ -911,6 +915,9 @@ class ExportGapTests(unittest.TestCase):
         self.assertTrue(export_gap.is_mangled("_Z3foo"))
         self.assertFalse(export_gap.is_mangled("_Zx"))
         self.assertFalse(export_gap.is_mangled("_ZNonsense"))
+        self.assertFalse(export_gap.is_mangled("_ZNSx"))
+        self.assertFalse(export_gap.is_mangled("_ZNS"))
+        self.assertFalse(export_gap.is_mangled("_ZNStq"))
         self.assertFalse(export_gap.is_mangled("foo"))
         self.assertEqual(export_gap.helper_reason("_Z3foo"), "is a C++ mangled name")
         self.assertEqual(export_gap.helper_reason("1abc"), "is not a valid C identifier")
