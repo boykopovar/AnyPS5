@@ -36,6 +36,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -280,7 +281,7 @@ void Invoke(const PathElementFunction& function, const PathElement& element) {
 }
 
 void ApplyCairoPath(const Path& path, const PathElementFunction& function) {
-    CairoPath* copy = CairoCopyPath_nid_no_patch(static_cast<CairoContext*>(path.m_path));
+    std::unique_ptr<CairoPath, void (*)(CairoPath*)> copy(CairoCopyPath_nid_no_patch(static_cast<CairoContext*>(path.m_path)), CairoPathDestroy_nid_no_patch);
     if (!copy) return;
     for (int i = 0; i < copy->num_data; i += copy->data[i].header.length) {
         const CairoPathData& data = copy->data[i];
@@ -308,7 +309,6 @@ void ApplyCairoPath(const Path& path, const PathElementFunction& function) {
         }
         Invoke(function, element);
     }
-    CairoPathDestroy_nid_no_patch(copy);
 }
 
 }  // namespace

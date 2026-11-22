@@ -58,6 +58,12 @@ void APS5_VABI Collect(PathElementFunctionCallableWrapper* wrapper, const PathEl
 
 const PathElementFunctionCallableWrapperVtable CollectorVtable{Destroy, Destroy, Collect};
 
+void APS5_VABI ThrowFromApply(PathElementFunctionCallableWrapper*, const PathElement*) {
+    throw std::runtime_error("WebCore::Path::apply callback");
+}
+
+const PathElementFunctionCallableWrapperVtable ThrowerVtable{Destroy, Destroy, ThrowFromApply};
+
 std::vector<PathElement> ElementsOf(const Path& path) {
     std::vector<PathElement> elements;
     Collector collector{&CollectorVtable, &elements};
@@ -209,6 +215,26 @@ void TestEmptyCopyAndClear() {
     Require(elements[1].type == PathElement::Type::AddLineToPoint);
 }
 
+void TestApplyException() {
+    OwnedPath path;
+    const WebCore::FloatPoint move{1.0f, 2.0f};
+    const WebCore::FloatPoint line{3.0f, 4.0f};
+    _ZN7WebCore4Path6moveToERKNS_10FloatPointE(&path.path, &move);
+    _ZN7WebCore4Path9addLineToERKNS_10FloatPointE(&path.path, &line);
+    struct Thrower {
+        PathElementFunctionCallableWrapperVtable const* vtable;
+    } thrower{&ThrowerVtable};
+    PathElementFunction function{reinterpret_cast<PathElementFunctionCallableWrapper*>(&thrower)};
+    bool threw = false;
+    try {
+        _ZNK7WebCore4Path5applyERKN3WTF8FunctionIFvRKNS_11PathElementEEEE(&path.path, &function);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(_ZNK7WebCore4Path12elementCountEv(&path.path) == 2);
+}
+
 void TestRoundedRects() {
     OwnedPath path;
     const WebCore::FloatRect rect{{0.0f, 0.0f}, {100.0f, 50.0f}};
@@ -242,6 +268,7 @@ int main() {
         TestCopyAndMove();
         TestClear();
         TestEmptyCopyAndClear();
+        TestApplyException();
         TestRoundedRects();
         TestFaults();
     } catch (const std::exception& error) {
