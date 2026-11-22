@@ -190,8 +190,19 @@ export class Archive {
     const files = this.entries.filter(entry => !entry.directory);
     while (files.every(entry => entry.filename.slice(prefix.length).includes("/"))) {
       const first = files[0].filename.slice(prefix.length).split("/")[0];
-      if (["sce_sys", "sce_module", "sce_modules", "prx"].includes(first) || !this.entries.every(entry => (entry.directory && prefix.startsWith(entry.filename)) || entry.filename.startsWith(prefix + first + "/"))) break;
-      prefix += first + "/";
+      const wrapper = prefix + first + "/";
+      if (!this.entries.every(entry => (entry.directory && prefix.startsWith(entry.filename)) || entry.filename.startsWith(wrapper))) break;
+      if (["sce_sys", "sce_module", "sce_modules", "prx"].includes(first)) {
+        if (!files.some(entry => entry.filename.startsWith(wrapper + "sce_sys/"))) break;
+        let executableCount = 0;
+        for (const entry of files) {
+          if (!entry.filename.slice(wrapper.length).includes("/") && isElf(await headerBytes(entry))) {
+            if (++executableCount > 1) break;
+          }
+        }
+        if (executableCount !== 1) break;
+      }
+      prefix = wrapper;
     }
     this.prefix = prefix;
     this.files = this.entries.filter(entry => entry.filename.startsWith(prefix) && entry.filename !== prefix).map(entry => ({ entry, name: entry.filename.slice(prefix.length) }));
