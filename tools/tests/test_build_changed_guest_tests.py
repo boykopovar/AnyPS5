@@ -172,6 +172,26 @@ class GuestTestTargets(unittest.TestCase):
         self.assertEqual(self.selections(build, ["core/libs/prx/libSceNgs2/Export.cpp"]), [])
         self.assertEqual(self.selections(build, ["core/libs/prx/libScePad/Export.cpp"]), ["guest_pad_tests"])
 
+    def test_a_library_source_change_reaches_a_test_through_a_product_library_link(self):
+        guest = self.target("agc_command_tests", source="core/libs/tests/GuestAgcCommand.cpp", fragment="libc.prx libSceAgc.prx")
+        agc = self.target("libSceAgc", target_type="MODULE_LIBRARY", source="core/libs/prx/libSceAgc/Export.cpp")
+        kernel = self.target("libkernel", target_type="MODULE_LIBRARY", source="core/libs/prx/libkernel/SysExports.cpp")
+        guest["dependencies"] = [{"id": agc["id"]}]
+        agc["dependencies"] = [{"id": kernel["id"]}]
+        build = self.fixture([guest, agc, kernel])
+        self.assertEqual(self.selections(build, ["core/libs/prx/libkernel/SysExports.cpp"]), ["agc_command_tests"])
+        self.assertEqual(self.selections(build, ["core/libs/prx/libkernel/Pthread/Thread.cpp"]), [])
+
+    def test_product_libraries_that_link_each_other_do_not_stop_the_walk(self):
+        guest = self.target("guest_mktime_tests", source="core/libs/tests/GuestMktime.cpp", fragment="libc.prx")
+        first = self.target("libScePad", target_type="MODULE_LIBRARY", source="core/libs/prx/libScePad/Export.cpp")
+        second = self.target("libSceAudioOut", target_type="MODULE_LIBRARY", source="core/libs/prx/libSceAudioOut/Export.cpp")
+        guest["dependencies"] = [{"id": second["id"]}]
+        second["dependencies"] = [{"id": first["id"]}]
+        first["dependencies"] = [{"id": second["id"]}]
+        build = self.fixture([guest, first, second])
+        self.assertEqual(self.selections(build, ["core/libs/prx/libScePad/Export.cpp"]), ["guest_mktime_tests"])
+
     def test_an_unrelated_change_selects_nothing(self):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/relinker/codegen/src/Amd64OnlyConverter.cpp"]), [])

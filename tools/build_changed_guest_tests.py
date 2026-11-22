@@ -108,6 +108,7 @@ def loaded_libraries(target, targets, source_root):
         kind = candidate.get("type")
         if kind in {"SHARED_LIBRARY", "MODULE_LIBRARY"} and host_only.is_product_library(candidate, source_root):
             libraries.add(identifier)
+            pending.extend(candidate.get("dependencies", []))
         elif kind in {"OBJECT_LIBRARY", "STATIC_LIBRARY", "INTERFACE_LIBRARY"}:
             pending.extend(candidate.get("dependencies", []))
     return libraries
