@@ -46,9 +46,10 @@ bool ReadWord(const void* source, std::uint32_t& value) {
 
 extern "C" {
 
-int APS5_VABI sceAvControlGetPuTypeByMonitorInfo(void* argument1) {
-    if (argument1 == nullptr) return Error0002;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAvControlGetPuTypeByMonitorInfo(void* argument1, void* type) {
+    if (argument1 == nullptr || type == nullptr) return Error0002;
+    const std::uint32_t source = 0;
+    GuestCopyOut_nid_no_patch(type, &source, sizeof(source));
     return 0;
 }
 
@@ -62,14 +63,15 @@ int APS5_VABI sceAvControlSetDitherModeForDiag(std::uint32_t mode) {
     return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvControlSetLayoutModeForDiag(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvControlSetLayoutModeForDiag(std::uint32_t mode) {
+    if (mode > 2) return Error0002;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvControlSetMonitorFakeMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvControlSetMonitorFakeMode(std::uint32_t mode) {
+    if (mode > 2) return Error0002;
+    if (mode == 0) return 0;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvControlGetCurrentOutputSysMode(void) {
@@ -99,13 +101,12 @@ int APS5_VABI sceAvControlGetRawEdid(std::uint64_t argument1, void* edid) {
 }
 
 int APS5_VABI sceAvControlRemoveProcessOutputMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x802A00FF);
 }
 
-int APS5_VABI sceAvControlUpdateDriverStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvControlUpdateDriverStatus(void* argument1) {
+    if (argument1 == nullptr) return Error0002;
+    return static_cast<int>(0x802A0011);
 }
 
 int APS5_VABI sceAvControlNotifyUmdEvent(void) {
@@ -114,18 +115,17 @@ int APS5_VABI sceAvControlNotifyUmdEvent(void) {
 }
 
 int APS5_VABI sceAvControlAddCallbacksForLnc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Error0001;
 }
 
-int APS5_VABI sceAvControlAddCallbacksForResourceArbitrator(void) {
+int APS5_VABI sceAvControlAddCallbacksForResourceArbitrator(void* argument1) {
+    if (argument1 == nullptr) return Error0001;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceAvControlRemoveCallbacks(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x802A0011);
 }
 
 int APS5_VABI sceAvControlCheckCallback(void) {
@@ -133,8 +133,7 @@ int APS5_VABI sceAvControlCheckCallback(void) {
 }
 
 int APS5_VABI sceAvControlWaitCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x802A0011);
 }
 
 int APS5_VABI sceAvControlSetColorMode(void) {
@@ -153,18 +152,16 @@ int APS5_VABI sceAvControlCheckVideoOutMode(void) {
 }
 
 int APS5_VABI sceAvControlSetCheckoutputMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvControlSetSystemVideoMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvControlSetSystemVideoMode(std::uint32_t mode) {
+    if (mode > 1) return Error0002;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvControlDebugAddCallbacks(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Error0001;
 }
 
 int APS5_VABI sceAvControlInit2() {
@@ -202,14 +199,14 @@ int APS5_VABI sceAvControlGetCurrentDeviceId(std::uint32_t argument1, void* id) 
     return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvControlGetCurrentOutputMode() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvControlGetCurrentOutputMode(std::uint64_t, void*, void*, const void* argument4) {
+    if (argument4 != nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvControlGetCurrentOutputModeWithSync() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvControlGetCurrentOutputModeWithSync(std::uint64_t, void*, void*, const void* argument4) {
+    if (argument4 != nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvControlGetDetailHdcpStatus(std::uint32_t argument1, void* status) {
@@ -319,9 +316,9 @@ int APS5_VABI sceAvControlSetAvOutputMode(std::uint32_t mode, const void* argume
     return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvControlSetColorEffect() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvControlSetColorEffect(std::uint32_t mode) {
+    if (mode > 1) return Error0002;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvControlSetDefaultAudioOutMode() {
@@ -379,13 +376,11 @@ int APS5_VABI sceAvSettingAddCallbacks() {
 }
 
 int APS5_VABI sceAvSettingAddCallbacksForLnc() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Error0001;
 }
 
 int APS5_VABI sceAvSettingAddCallbacksForSocialScreen() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Error0001;
 }
 
 namespace {
@@ -418,23 +413,19 @@ void APS5_VABI sceAvSettingCallbackFuncsInit_(void* callbacks) {
 }
 
 int APS5_VABI sceAvSettingChangeOutputMode() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvSettingChangeOutputMode2() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvSettingChangeOutputMode3() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvSettingChangeOutputModeForDiag() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvSettingChangeProcessAttribute(std::uint32_t attribute, std::uint32_t flag) {
@@ -482,9 +473,9 @@ int APS5_VABI sceAvSettingDriverChangeConnectionStatus() {
     return 0;
 }
 
-int APS5_VABI sceAvSettingDriverUpdateStatus() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingDriverUpdateStatus(void* argument1) {
+    if (argument1 == nullptr) return Error0002;
+    return static_cast<int>(0x802A0011);
 }
 
 int APS5_VABI sceAvSettingEnterAudioMuteForShutdown(std::uint32_t mute) {
@@ -578,14 +569,13 @@ int APS5_VABI sceAvSettingIsSupportedHdcpVersionByHdmiMonitorInfo() {
     return 0;
 }
 
-int APS5_VABI sceAvSettingIsSupportedVideoOutModeByHdmiMonitorInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingIsSupportedVideoOutModeByHdmiMonitorInfo(void* info) {
+    if (info == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvSettingIsSuspendedProcessOutputModeAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x802A00FF);
 }
 
 int APS5_VABI sceAvSettingIsSuspendedProcessOutputModeAvailable2() {
@@ -619,13 +609,11 @@ int APS5_VABI sceAvSettingNotifyVideoOutMode(std::uint32_t, std::uint32_t, std::
 }
 
 int APS5_VABI sceAvSettingRemoveCallbacks() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x802A0011);
 }
 
 int APS5_VABI sceAvSettingRemoveProcessOutputMode() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x802A00FF);
 }
 
 int APS5_VABI sceAvSettingSet2dVrMode(std::uint32_t mode) {
@@ -675,8 +663,7 @@ int APS5_VABI sceAvSettingSetHdcpStatus(std::uint32_t argument1) {
 }
 
 int APS5_VABI sceAvSettingSetHdmiGamutMetadata_() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotInitialized;
 }
 
 void APS5_VABI sceAvSettingSetVideoOutModeAny_(void* out, std::int32_t value) {

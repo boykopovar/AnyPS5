@@ -116,14 +116,11 @@ void CheckConsoleMeasuredGetters(void* buffer) {
     std::uint32_t* native_second = Filled(0x5A5A5A5Au);
     Expect(sceAvControlGetNativeHdmiMonitorInfo(reinterpret_cast<std::uint64_t>(native_output), native_second), NotInitialized, "GetNativeHdmiMonitorInfo reports not initialized with two buffers");
     RequireFirstByteUntouched(native_second, "GetNativeHdmiMonitorInfo does not write with a non-null first argument");
-    Expect(sceAvControlGetPuTypeByMonitorInfo(nullptr), Error0002, "GetPuTypeByMonitorInfo checks its pointer");
-    bool threw = false;
-    try {
-        sceAvControlGetPuTypeByMonitorInfo(buffer);
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw, "GetPuTypeByMonitorInfo still throws for writable pointers");
+    Expect(sceAvControlGetPuTypeByMonitorInfo(nullptr, buffer), Error0002, "GetPuTypeByMonitorInfo checks its first pointer");
+    Expect(sceAvControlGetPuTypeByMonitorInfo(buffer, nullptr), Error0002, "GetPuTypeByMonitorInfo checks its output pointer");
+    std::uint32_t* puType = Word(0x5A5A5A5Au);
+    Expect(sceAvControlGetPuTypeByMonitorInfo(buffer, puType), 0, "GetPuTypeByMonitorInfo succeeds before initialization");
+    Require(*puType == 0u, "GetPuTypeByMonitorInfo writes 0 to the destination");
     Expect(sceAvSettingGetHdmiMonitorInfo(0, nullptr), Error0002, "SettingGetHdmiMonitorInfo checks the second argument");
     Expect(sceAvSettingGetHdmiMonitorInfo(0, buffer), NotInitialized, "SettingGetHdmiMonitorInfo ignores its first argument and reports not initialized");
     Expect(sceAvSettingGetHdmiRawEdid(nullptr), Error0002, "SettingGetHdmiRawEdid checks the first argument");
@@ -136,6 +133,48 @@ void CheckConsoleMeasuredGetters(void* buffer) {
     Expect(sceAvControlIsSuspendedProcessOutputModeAvailable(), static_cast<int>(0x802A00FFu), "IsSuspendedProcessOutputModeAvailable answers its constant");
     Expect(sceAvControlCheckCallback(), static_cast<int>(0x802A0011u), "CheckCallback answers its constant");
     Expect(sceAvControlIsVideoOutModeSupportedByMonitorInfo(), NotInitialized, "IsVideoOutModeSupportedByMonitorInfo reports not initialized for any arguments");
+    Expect(sceAvControlGetCurrentOutputMode(0, nullptr, nullptr, nullptr), NotInitialized, "GetCurrentOutputMode reports not initialized with nulls");
+    Expect(sceAvControlGetCurrentOutputMode(reinterpret_cast<std::uint64_t>(buffer), buffer, buffer, nullptr), NotInitialized, "GetCurrentOutputMode ignores its first three arguments");
+    Expect(sceAvControlGetCurrentOutputMode(0, nullptr, nullptr, buffer), Error0002, "GetCurrentOutputMode rejects a non-null fourth argument before initialization");
+    Expect(sceAvControlGetCurrentOutputMode(0, nullptr, nullptr, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(7))), Error0002, "GetCurrentOutputMode rejects any non-null fourth argument");
+    Expect(sceAvControlGetCurrentOutputModeWithSync(0, nullptr, nullptr, nullptr), NotInitialized, "GetCurrentOutputModeWithSync reports not initialized with nulls");
+    Expect(sceAvControlGetCurrentOutputModeWithSync(reinterpret_cast<std::uint64_t>(buffer), buffer, buffer, nullptr), NotInitialized, "GetCurrentOutputModeWithSync ignores its first three arguments");
+    Expect(sceAvControlGetCurrentOutputModeWithSync(0, buffer, nullptr, nullptr), NotInitialized, "GetCurrentOutputModeWithSync accepts a non-null second argument");
+    Expect(sceAvControlGetCurrentOutputModeWithSync(0, nullptr, buffer, nullptr), NotInitialized, "GetCurrentOutputModeWithSync accepts a non-null third argument");
+    Expect(sceAvControlGetCurrentOutputModeWithSync(0, nullptr, nullptr, buffer), Error0002, "GetCurrentOutputModeWithSync rejects a non-null fourth argument");
+    Expect(sceAvControlSetCheckoutputMode(), NotInitialized, "SetCheckoutputMode reports not initialized for arguments 0 to 3");
+    Expect(sceAvSettingChangeOutputMode(), NotInitialized, "SettingChangeOutputMode reports not initialized");
+    Expect(sceAvSettingChangeOutputMode2(), NotInitialized, "SettingChangeOutputMode2 reports not initialized");
+    Expect(sceAvSettingChangeOutputMode3(), NotInitialized, "SettingChangeOutputMode3 reports not initialized");
+    Expect(sceAvSettingChangeOutputModeForDiag(), NotInitialized, "SettingChangeOutputModeForDiag reports not initialized");
+    Expect(sceAvSettingSetHdmiGamutMetadata_(), NotInitialized, "SettingSetHdmiGamutMetadata_ reports not initialized");
+    Expect(sceAvControlRemoveProcessOutputMode(), static_cast<int>(0x802A00FFu), "ControlRemoveProcessOutputMode answers its constant");
+    Expect(sceAvSettingRemoveProcessOutputMode(), static_cast<int>(0x802A00FFu), "SettingRemoveProcessOutputMode answers its constant");
+    Expect(sceAvSettingIsSuspendedProcessOutputModeAvailable(), static_cast<int>(0x802A00FFu), "SettingIsSuspendedProcessOutputModeAvailable answers its constant");
+    Expect(sceAvControlRemoveCallbacks(), static_cast<int>(0x802A0011u), "ControlRemoveCallbacks answers the no-callback constant");
+    Expect(sceAvSettingRemoveCallbacks(), static_cast<int>(0x802A0011u), "SettingRemoveCallbacks answers the no-callback constant");
+    Expect(sceAvControlWaitCallback(), static_cast<int>(0x802A0011u), "ControlWaitCallback answers the no-callback constant without blocking");
+    Expect(sceAvControlAddCallbacksForLnc(), Error0001, "ControlAddCallbacksForLnc answers its constant");
+    Expect(sceAvSettingAddCallbacksForLnc(), Error0001, "SettingAddCallbacksForLnc answers its constant");
+    Expect(sceAvSettingAddCallbacksForSocialScreen(), Error0001, "SettingAddCallbacksForSocialScreen answers its constant");
+    Expect(sceAvControlDebugAddCallbacks(), Error0001, "ControlDebugAddCallbacks answers its constant");
+    Expect(sceAvControlSetSystemVideoMode(2), Error0002, "SetSystemVideoMode accepts 0 and 1");
+    Expect(sceAvControlSetSystemVideoMode(1), NotInitialized, "SetSystemVideoMode reports not initialized");
+    Expect(sceAvControlSetColorEffect(2), Error0002, "SetColorEffect accepts 0 and 1");
+    Expect(sceAvControlSetColorEffect(0), NotInitialized, "SetColorEffect reports not initialized");
+    Expect(sceAvControlSetColorEffect(1), NotInitialized, "SetColorEffect reports not initialized for the upper accepted value");
+    Expect(sceAvControlSetLayoutModeForDiag(3), Error0002, "SetLayoutModeForDiag accepts modes up to 2");
+    Expect(sceAvControlSetLayoutModeForDiag(2), NotInitialized, "SetLayoutModeForDiag reports not initialized");
+    Expect(sceAvControlSetMonitorFakeMode(3), Error0002, "SetMonitorFakeMode accepts modes up to 2");
+    Expect(sceAvControlSetMonitorFakeMode(1), NotInitialized, "SetMonitorFakeMode reports not initialized for 1 and 2");
+    Expect(sceAvControlSetMonitorFakeMode(2), NotInitialized, "SetMonitorFakeMode reports not initialized for the upper accepted value");
+    Expect(sceAvControlSetMonitorFakeMode(0), 0, "SetMonitorFakeMode succeeds with mode 0 before initialization");
+    Expect(sceAvControlUpdateDriverStatus(nullptr), Error0002, "ControlUpdateDriverStatus checks its pointer");
+    Expect(sceAvControlUpdateDriverStatus(buffer), static_cast<int>(0x802A0011u), "ControlUpdateDriverStatus answers the no-callback constant");
+    Expect(sceAvSettingDriverUpdateStatus(nullptr), Error0002, "SettingDriverUpdateStatus checks its pointer");
+    Expect(sceAvSettingDriverUpdateStatus(buffer), static_cast<int>(0x802A0011u), "SettingDriverUpdateStatus answers the no-callback constant");
+    Expect(sceAvSettingIsSupportedVideoOutModeByHdmiMonitorInfo(nullptr), Error0002, "IsSupportedVideoOutMode checks the monitor-info pointer");
+    Expect(sceAvSettingIsSupportedVideoOutModeByHdmiMonitorInfo(buffer), NotInitialized, "IsSupportedVideoOutMode reports not initialized");
 }
 
 void CheckControlSetters() {
