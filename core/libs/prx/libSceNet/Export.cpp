@@ -2590,10 +2590,11 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
         std::sort(listed.begin(), listed.end());
     }
     if (!info) return s < 0 ? static_cast<int>(listed.size()) : fail(NET_EINVAL);
-    if (n < 1) return fail(NET_EINVAL);
+    if (n < (s >= 0 ? 0 : 1)) return fail(NET_EINVAL);
     NetSockInfo record;
     if (s >= 0) {
         if (const int error = fill_sock_info(s, record)) return fail(error);
+        if (n == 0) return 0;
         return CopySockInfo(info, 0, &record, sizeof(record)) ? 1 : fail(NET_EFAULT);
     }
     int written = 0;

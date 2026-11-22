@@ -2708,7 +2708,7 @@ static void CheckSockInfo() {
     void* const badRecord = reinterpret_cast<void*>(0x10);
     Require(Failed(sceNetGetSockInfo(datagram, badRecord, 1, 0), 14));
     Require(Failed(sceNetGetSockInfo(-1, badRecord, 1, 0), 14));
-    Require(Failed(sceNetGetSockInfo(datagram, record.data(), 0, 0), 22));
+    Require(sceNetGetSockInfo(datagram, record.data(), 0, 0) == 0);
     Require(Failed(sceNetGetSockInfo(-1, record.data(), 0, 0), 22));
     for (const int flags : {1, 0x41, 0x1000}) {
         Require(Failed(sceNetGetSockInfo(datagram, record.data(), 1, flags), 22));
