@@ -584,7 +584,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_TRACE_COPY_BACK` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | logs, per copied-back range, the dwords in which the shader and the CPU changed the same bytes, and whether the CPU's bytes were kept or, with APS5_CHANGED_COPY_ALWAYS, the shader's stored |
 | `APS5_TRACE_COPY_HLE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferCopy.cpp` |  | traces the CPU copy HLE's refusals |
 | `APS5_TRACE_DCC_KEYS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/DisplayBuffer.cpp` |  | traces stores of uncompressed DCC keys |
-| `APS5_TRACE_DIR` | string | `core/libs/prx/libSceAgcDriver/Execution/src/PerformanceTrace.cpp` | . | directory for the trace and summary files |
+| `APS5_TRACE_DIR` | string | `core/libs/prx/libSceAgcDriver/Execution/src/TraceFile.cpp` | . | directory for the trace and summary files |
 | `APS5_TRACE_DISPATCH_CACHE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` |  | reports dispatch-cache entries whose key changed |
 | `APS5_TRACE_DISPATCH_IO` | string | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` |  | prints every dispatch's resources; `2` also lists the small-buffer words |
 | `APS5_TRACE_DRAWS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketExecution.cpp` |  | prints one line per draw with its phases and inputs |
@@ -702,7 +702,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
-| `ANYPS5_ENTITLEMENTS` | string | `core/libs/prx/libSceNpEntitlementAccess/Export.cpp` |  | path of the entitlements ini listing owned add-ons, defaulting to anyps5-entitlements.ini beside the executable |
+| `ANYPS5_ENTITLEMENTS` | string | `core/libs/prx/libSceNpEntitlementAccess/EntitlementsIni.hpp` |  | path of the entitlements ini listing owned add-ons, defaulting to anyps5-entitlements.ini beside the executable |
 
 ### libSceNpTrophy2
 
@@ -778,7 +778,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `ANYPS5_TIME_FORMAT` | string | `core/libs/prx/libc/src/Time.cpp` | `c` | `host` takes the date and time strings of `%c`, `%x` and `%X` from the host's `LC_TIME` locale (glibc only); any other value keeps the C locale strings |
 | `ANYPS5_OVERLAY_PALETTE` | string | `core/libs/prx/libSceAgcDriver/Execution/src/PerformanceOverlay.cpp` |  | `colorblind` replaces the overlay's green and orange with a blue and an orange that stay distinct for common colour-vision deficiencies; any other value keeps the default palette |
 | `ANYPS5_INPUT_WATCH` | integer | `core/libs/prx/libSceVideoOut/src/PadInput.cpp` | 0 | `1` checks the input mapping file and the title's profile about once a second on a background thread and reloads them after a change settles; any other value, including unset, leaves reloading to the `ReloadInputMapping` action (F1) |
-| `ANYPS5_MSG_DIALOG_HOST` | string | `core/libs/prx/libSceMsgDialog/src/HostMessageBox.cpp` | `0` | `1` shows each user message dialog (`sceMsgDialogOpen` with a text and a button type) as a native host message box instead of the in-game dialog; the call waits until the box is answered, then reports the button. Any other value, unset or empty keeps the in-game dialog. Apple builds always keep the in-game dialog. If the box cannot be shown, the in-game dialog is used |
+| `ANYPS5_MSG_DIALOG_HOST` | string | `core/libs/prx/libSceMsgDialog/Export.cpp` | `0` | `1` shows each user message dialog (`sceMsgDialogOpen` with a text and a button type) as a native host message box instead of the in-game dialog; the call waits until the box is answered, then reports the button. Any other value, unset or empty keeps the in-game dialog. Apple builds always keep the in-game dialog. If the box cannot be shown, the in-game dialog is used |
 | `ANYPS5_PAD_PORT0_STATE` | string | `core/libs/prx/libSceVideoOut/include/Port0Presence.hpp` | default | `default` keeps port 0 connected and user 0 logged in as before; `controller` makes port 0 and user 0 follow the controller bound to slot 0, a change committed after 500 ms, and a withdrawn port 0 reads zeroed and disconnected; any other value, including an empty one, stops the game when video output starts with an error naming the variable |
 | `ANYPS5_REQUIRE_DISPLAY` | presence | `core/libs/prx/libSceVideoOut/tests/Flip.cpp` |  | makes video-out tests fail instead of skipping when no display or Vulkan device is available |
 | `ANYPS5_VIDEO_OUT_MAX_HEIGHT` | integer | `core/libs/prx/libSceVideoOut/src/Output.cpp` |  | host display height hint: when set to a positive integer below 2160, an unknown output mode is reported as unsupported so the title can fall back to the host resolution; a malformed or zero value makes output-mode queries throw; buffer attributes are left untouched |
@@ -806,7 +806,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_HANG_DUMP_SECS` | integer | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | on Windows, whole seconds after which a watchdog dumps all threads and aborts; 0 or a value that is not a decimal number is ignored |
 | `APS5_HEAP_CACHE_MIB` | integer | `core/libs/prx/libc/src/GuestHeap.cpp` | 4096 | size in MiB of the cache of freed large blocks before the oldest are decommitted |
 | `APS5_HELPER_AFFINITY_MASK` | integer | `core/libs/prx/libc/include/CpuTopology.hpp` |  | hex core mask that helper threads (deferred release, mirror refresh) are pinned to |
-| `APS5_LOG_TIMESTAMPS` | presence | `core/libs/prx/libc/include/general/LogMacros.hpp` |  | prefixes each log line with `[+S.UUUUUU s]`, the seconds with microsecond digits since the clock started at the first stamped line |
+| `APS5_LOG_TIMESTAMPS` | presence | `core/libs/prx/libc/src/LogFile.cpp` |  | prefixes each log line with `[+S.UUUUUU s]`, the seconds with microsecond digits since the clock started at the first stamped line |
 | `APS5_MAPPINGS_PTHREAD_LOCK` | presence | `core/libs/prx/libc/include/WindowsMappings.hpp` |  | guards the Windows guest mapping tables with a `std::mutex` instead of a slim reader/writer lock taken exclusively; read once, when the tables are created |
 | `APS5_NO_HOST_REGION_INDEX` | presence | `core/libs/prx/libc/src/GuestArena.cpp` |  | tests a range against every host region of the arena interval in turn instead of searching the sorted, merged region index built at startup, on Windows |
 | `APS5_NO_PROCMAP_QUERY` | presence | `core/libs/prx/libc/include/specifics/linux/HostMapping.hpp` |  | skips the /proc/self/maps PROCMAP_QUERY ioctl and scans the maps file instead |
@@ -847,4 +847,4 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_TRACE_SYNC` | presence | `core/libs/prx/libkernel/EventFlag/src/EventFlag.cpp` |  | logs event-flag and semaphore operations |
 | `APS5_TRACE_TIMERS` | presence | `core/libs/prx/libkernel/Time/Time.cpp` |  | on Windows, runs a timed-wait selftest at startup and prints mean, p50 and max latencies |
 | `APS5_TRACE_USLEEP` | presence | `core/libs/prx/libkernel/Time/Time.cpp` |  | reports every 2000 `sceKernelUsleep` calls the call sites that sleep most, including calls through `sceNetUsleep` and the `APS5_TRACE_TIMERS` measurement on Windows; guest `usleep` calls are not counted |
-| `APS5_TRACE_WAITS` | presence | `core/libs/prx/libkernel/Time/Time.cpp` |  | aggregates blocking waits per guest call site and prints the longest-waiting sites every 3 s |
+| `APS5_TRACE_WAITS` | presence | `core/libs/prx/libkernel/Time/include/Time.hpp` |  | aggregates blocking waits per guest call site and prints the longest-waiting sites every 3 s |
