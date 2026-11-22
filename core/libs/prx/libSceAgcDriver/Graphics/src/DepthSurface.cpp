@@ -1156,6 +1156,19 @@ public:
             clearAspects = 0u;
             pendingClear = 0u;
         }
+        if (!GuestMemory::UnchangedSinceAll(sampling.initial) && sampling.refusal.empty()) {
+            auto& metadata = sampling.initial[1];
+            bool planesUnchanged = metadata.bytes != 0u;
+            for (std::size_t index = 0u; index < sampling.initial.size(); ++index) {
+                const auto& plane = sampling.initial[index];
+                if (index != 1u && plane.bytes != 0u && !GuestMemory::UnchangedSince(plane.address, plane.bytes, plane.generation)) planesUnchanged = false;
+            }
+            if (planesUnchanged) {
+                Require(expandedHtilePlane(metadata), "guest writes over native multisample depth are not implemented");
+                metadata.generation = GuestMemory::CollectWritesUncached(metadata.address, metadata.bytes);
+                RebasePublication(1u);
+            }
+        }
         Require(GuestMemory::UnchangedSinceAll(sampling.initial), "guest writes over native multisample depth are not implemented");
     }
 
