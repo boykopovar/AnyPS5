@@ -313,6 +313,67 @@ int main() {
     CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(&probeResult, &valid, &corruptStateIter));
     CHECK(trace.live.size() == afterIters);
 
+    auto* const savedValidItems = valid.items;
+    auto* const savedBeginState = beginIter.state;
+    auto* const savedBeginElement = _ZNK3sce4Json5Array8iteratordeEv(&beginIter);
+    const Value savedVal1 = val1;
+
+    CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(reinterpret_cast<ArrayIterator*>(&valid), &valid, &beginIter, &val1));
+    CHECK(valid.items == savedValidItems && _ZNK3sce4Json5Array4sizeEv(&valid) == 2);
+    CHECK(beginIter.state == savedBeginState && _ZNK3sce4Json5Array8iteratordeEv(&beginIter) == savedBeginElement);
+    CHECK(trace.live.size() == afterIters);
+
+    CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(reinterpret_cast<ArrayIterator*>(&valid), &valid, &beginIter));
+    CHECK(valid.items == savedValidItems && _ZNK3sce4Json5Array4sizeEv(&valid) == 2);
+    CHECK(beginIter.state == savedBeginState && _ZNK3sce4Json5Array8iteratordeEv(&beginIter) == savedBeginElement);
+    CHECK(trace.live.size() == afterIters);
+
+    CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(&beginIter, &valid, &beginIter, &val1));
+    CHECK(valid.items == savedValidItems && _ZNK3sce4Json5Array4sizeEv(&valid) == 2);
+    CHECK(beginIter.state == savedBeginState && _ZNK3sce4Json5Array8iteratordeEv(&beginIter) == savedBeginElement);
+    CHECK(trace.live.size() == afterIters);
+
+    CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(&beginIter, &valid, &beginIter));
+    CHECK(valid.items == savedValidItems && _ZNK3sce4Json5Array4sizeEv(&valid) == 2);
+    CHECK(beginIter.state == savedBeginState && _ZNK3sce4Json5Array8iteratordeEv(&beginIter) == savedBeginElement);
+    CHECK(trace.live.size() == afterIters);
+
+    CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(reinterpret_cast<ArrayIterator*>(beginIter.state), &valid, &beginIter, &val1));
+    CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(reinterpret_cast<ArrayIterator*>(beginIter.state), &valid, &beginIter));
+    CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(reinterpret_cast<ArrayIterator*>(&val1), &valid, &beginIter, &val1));
+    CHECK(std::memcmp(&val1, &savedVal1, sizeof(Value)) == 0);
+    CHECK(valid.items == savedValidItems && _ZNK3sce4Json5Array4sizeEv(&valid) == 2);
+    CHECK(beginIter.state == savedBeginState && _ZNK3sce4Json5Array8iteratordeEv(&beginIter) == savedBeginElement);
+    CHECK(trace.live.size() == afterIters);
+
+    alignas(8) std::byte overlapStorage[sizeof(Array) + sizeof(ArrayIterator)]{};
+    auto* overlapArray = reinterpret_cast<Array*>(overlapStorage + 4);
+    overlapArray->items = valid.items;
+    CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(reinterpret_cast<ArrayIterator*>(overlapStorage), overlapArray, &beginIter, &val1));
+    CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(reinterpret_cast<ArrayIterator*>(overlapStorage), overlapArray, &beginIter));
+    CHECK_THROWS(_ZNK3sce4Json5Array5beginEv(reinterpret_cast<ArrayIterator*>(overlapStorage), overlapArray));
+    CHECK_THROWS(_ZNK3sce4Json5Array3endEv(reinterpret_cast<ArrayIterator*>(overlapStorage), overlapArray));
+    CHECK(overlapArray->items == savedValidItems && _ZNK3sce4Json5Array4sizeEv(&valid) == 2);
+    CHECK(trace.live.size() == afterIters);
+
+    CHECK_THROWS(_ZNK3sce4Json5Array5beginEv(reinterpret_cast<ArrayIterator*>(&valid), &valid));
+    CHECK_THROWS(_ZNK3sce4Json5Array3endEv(reinterpret_cast<ArrayIterator*>(&valid), &valid));
+    CHECK(valid.items == savedValidItems && _ZNK3sce4Json5Array4sizeEv(&valid) == 2);
+    CHECK_THROWS(_ZN3sce4Json5ArrayC1ERKS1_(&valid, &valid));
+    CHECK(valid.items == savedValidItems && _ZNK3sce4Json5Array4sizeEv(&valid) == 2);
+    CHECK_THROWS(_ZN3sce4Json5Array8iteratorC1ERKS2_(&beginIter, &beginIter));
+    CHECK_THROWS(_ZN3sce4Json5Array8iteratorC1ERKS2_(reinterpret_cast<ArrayIterator*>(beginIter.state), &beginIter));
+    CHECK(beginIter.state == savedBeginState && _ZNK3sce4Json5Array8iteratordeEv(&beginIter) == savedBeginElement);
+    CHECK(trace.live.size() == afterIters);
+
+    auto* const sentinelPtr = reinterpret_cast<ArrayIteratorState*>(std::uintptr_t{0x12345678u});
+    ArrayIterator preservedResult{sentinelPtr};
+    CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(&preservedResult, &valid, &corruptStateIter, &val1));
+    CHECK(preservedResult.state == sentinelPtr);
+    CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(&preservedResult, &valid, &corruptStateIter));
+    CHECK(preservedResult.state == sentinelPtr);
+    CHECK(trace.live.size() == afterIters);
+
     Array copy{};
     _ZN3sce4Json5ArrayC1ERKS1_(&copy, &valid);
     CHECK(_ZNK3sce4Json5Array4sizeEv(&copy) == 2);

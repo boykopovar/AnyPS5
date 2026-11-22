@@ -317,6 +317,19 @@ void StoreGuest(void* destination, const Value& value, const char* function) {
     if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
+template <typename Value>
+void RequireGuestWritable(void* destination, const char* function) {
+    if (!destination || !GuestWritable_nid_no_patch(destination, sizeof(Value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+bool GuestRangesOverlap(const void* left, std::size_t leftBytes, const void* right, std::size_t rightBytes) {
+    if (!left || !right || !leftBytes || !rightBytes) return false;
+    const auto leftStart = reinterpret_cast<std::uintptr_t>(left);
+    const auto rightStart = reinterpret_cast<std::uintptr_t>(right);
+    if (leftStart <= rightStart) return rightStart - leftStart < leftBytes;
+    return leftStart - rightStart < rightBytes;
+}
+
 AllocationContext ActiveAllocation() {
     auto& state = State();
     std::lock_guard lock(state.mutex);
@@ -2807,6 +2820,8 @@ void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) {
 }
 void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array* self, const Array* other) {
     const auto source = LoadGuest<Array>(other, __func__);
+    RequireGuestWritable<Array>(self, __func__);
+    if (GuestRangesOverlap(self, sizeof(Array), other, sizeof(Array))) NotImplemented_nid_no_patch(__func__);
     StoreGuest(self, Array{}, __func__);
     if (!source.items) return;
     Array local{};
@@ -2858,11 +2873,12 @@ struct ScopedArrayIteratorState {
 };
 
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(ArrayIterator* result, Array* self, const ArrayIterator* position, const Value* value) {
-    StoreGuest(result, ArrayIterator{}, __func__);
     const auto array = LoadGuest<Array>(self, __func__);
-    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
-    if (out.state) out.state->position = nullptr;
+    RequireGuestWritable<ArrayIterator>(result, __func__);
+    if (GuestRangesOverlap(result, sizeof(ArrayIterator), self, sizeof(Array))) NotImplemented_nid_no_patch(__func__);
     if (!array.items) {
+        ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+        if (out.state) out.state->position = nullptr;
         out.Publish(result, __func__);
         return result;
     }
@@ -2873,6 +2889,13 @@ ArrayIterator* APS5_VABI _ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE
     if (!hasPosState || !posState.position || !array.items->head) NotImplemented_nid_no_patch(__func__);
     Value item{};
     if (!GuestCopyIn_nid_no_patch(&item, value, sizeof(item))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (GuestRangesOverlap(result, sizeof(ArrayIterator), position, sizeof(ArrayIterator)) ||
+        GuestRangesOverlap(result, sizeof(ArrayIterator), pos.state, sizeof(ArrayIteratorState)) ||
+        GuestRangesOverlap(result, sizeof(ArrayIterator), value, sizeof(Value))) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+    if (out.state) out.state->position = nullptr;
     ArrayLink* inserted;
     if (!ModernValues()) inserted = InsertArrayLink(*array.items, posState.position, item, value);
     else {
@@ -2898,8 +2921,9 @@ void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Val
 }
 
 ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, const Array* self) {
-    StoreGuest(result, ArrayIterator{}, __func__);
     const auto array = LoadGuest<Array>(self, __func__);
+    RequireGuestWritable<ArrayIterator>(result, __func__);
+    if (GuestRangesOverlap(result, sizeof(ArrayIterator), self, sizeof(Array))) NotImplemented_nid_no_patch(__func__);
     ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
     if (out.state) out.state->position = array.items && array.items->head ? array.items->head->next : nullptr;
     if (array.items && (!array.items->head || !array.items->head->next)) out.Reset();
@@ -2907,8 +2931,9 @@ ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, cons
     return result;
 }
 ArrayIterator* APS5_VABI _ZNK3sce4Json5Array3endEv(ArrayIterator* result, const Array* self) {
-    StoreGuest(result, ArrayIterator{}, __func__);
     const auto array = LoadGuest<Array>(self, __func__);
+    RequireGuestWritable<ArrayIterator>(result, __func__);
+    if (GuestRangesOverlap(result, sizeof(ArrayIterator), self, sizeof(Array))) NotImplemented_nid_no_patch(__func__);
     ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
     if (out.state) out.state->position = array.items ? array.items->head : nullptr;
     if (array.items && !array.items->head) out.Reset();
@@ -2946,11 +2971,12 @@ void APS5_VABI _ZN3sce4Json5Array8pop_backEv(Array* self) {
 }
 
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array5eraseERKNS1_8iteratorE(ArrayIterator* result, Array* self, const ArrayIterator* position) {
-    StoreGuest(result, ArrayIterator{}, __func__);
     const auto array = LoadGuest<Array>(self, __func__);
-    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
-    if (out.state) out.state->position = nullptr;
+    RequireGuestWritable<ArrayIterator>(result, __func__);
+    if (GuestRangesOverlap(result, sizeof(ArrayIterator), self, sizeof(Array))) NotImplemented_nid_no_patch(__func__);
     if (!array.items) {
+        ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+        if (out.state) out.state->position = nullptr;
         out.Publish(result, __func__);
         return result;
     }
@@ -2959,6 +2985,12 @@ ArrayIterator* APS5_VABI _ZN3sce4Json5Array5eraseERKNS1_8iteratorE(ArrayIterator
     ArrayIteratorState posState{};
     const bool hasPosState = hasPos && pos.state && GuestCopyIn_nid_no_patch(&posState, pos.state, sizeof(posState));
     if (!hasPosState || !posState.position || posState.position == array.items->head) NotImplemented_nid_no_patch(__func__);
+    if (GuestRangesOverlap(result, sizeof(ArrayIterator), position, sizeof(ArrayIterator)) ||
+        GuestRangesOverlap(result, sizeof(ArrayIterator), pos.state, sizeof(ArrayIteratorState))) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+    if (out.state) out.state->position = nullptr;
     auto* link = posState.position;
     auto* next = link->next;
     next->previous = link->previous;
@@ -3020,7 +3052,11 @@ void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(ArrayIterator* self, const Ar
     const auto source = LoadGuest<ArrayIterator>(other, __func__);
     ArrayIteratorState sourceState{};
     if (source.state) sourceState = LoadGuest<ArrayIteratorState>(source.state, __func__);
-    StoreGuest(self, ArrayIterator{}, __func__);
+    RequireGuestWritable<ArrayIterator>(self, __func__);
+    if (GuestRangesOverlap(self, sizeof(ArrayIterator), other, sizeof(ArrayIterator)) ||
+        (source.state && GuestRangesOverlap(self, sizeof(ArrayIterator), source.state, sizeof(ArrayIteratorState)))) {
+        NotImplemented_nid_no_patch(__func__);
+    }
     ScopedArrayIteratorState out{source.state ? static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState))) : nullptr};
     if (out.state) *out.state = sourceState;
     out.Publish(self, __func__);
@@ -3559,7 +3595,7 @@ ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratoraSERKS2_(ArrayIterator* self
 }
 
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1Ev(ArrayIterator* self) {
-    StoreGuest(self, ArrayIterator{}, __func__);
+    RequireGuestWritable<ArrayIterator>(self, __func__);
     ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
     if (out.state) out.state->position = nullptr;
     out.Publish(self, __func__);
