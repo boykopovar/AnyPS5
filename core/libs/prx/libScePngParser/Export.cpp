@@ -210,6 +210,21 @@ std::optional<std::string> FileNameStem(const std::string& path) {
     return path.substr(slash + 1, end - slash - 1);
 }
 
+class DescriptorClose {
+public:
+    explicit DescriptorClose(int descriptor) : m_descriptor(descriptor) {}
+    ~DescriptorClose() {
+        const int savedErrno = errno;
+        static_cast<void>(sceKernelClose(m_descriptor));
+        errno = savedErrno;
+    }
+    DescriptorClose(const DescriptorClose&) = delete;
+    DescriptorClose& operator=(const DescriptorClose&) = delete;
+
+private:
+    int m_descriptor;
+};
+
 std::string ReadWholeFile(const std::string& path) {
     const int savedErrno = errno;
     const int descriptor = sceKernelOpen(path.c_str(), 0, 0);
@@ -217,12 +232,12 @@ std::string ReadWholeFile(const std::string& path) {
         errno = savedErrno;
         NotImplemented_nid_no_patch(kReadName);
     }
+    const DescriptorClose closeOnExit(descriptor);
     std::string file;
     std::vector<char> buffer(0x10000);
     for (;;) {
         const std::int64_t read = sceKernelRead(descriptor, buffer.data(), buffer.size());
         if (read < 0) {
-            static_cast<void>(sceKernelClose(descriptor));
             errno = savedErrno;
             NotImplemented_nid_no_patch(kReadName);
         }
@@ -230,7 +245,6 @@ std::string ReadWholeFile(const std::string& path) {
             break;
         file.append(buffer.data(), static_cast<std::size_t>(read));
     }
-    static_cast<void>(sceKernelClose(descriptor));
     errno = savedErrno;
     return file;
 }
