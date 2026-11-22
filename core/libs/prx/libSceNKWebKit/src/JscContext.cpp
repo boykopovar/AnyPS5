@@ -281,6 +281,9 @@ OpaqueJSContextGroup::OpaqueJSContextGroup() {
 
 OpaqueJSContextGroup::~OpaqueJSContextGroup() {
     shuttingDown = true;
+    for (auto& [ptr, data] : callbackDataByPtr) {
+        if (data) RunClassFinalize(data);
+    }
     for (auto* handle : allHandles) {
         if (!handle) continue;
         if (!JS_IsUndefined(handle->qweak)) {
@@ -295,7 +298,6 @@ OpaqueJSContextGroup::~OpaqueJSContextGroup() {
     }
     for (auto& [ptr, data] : callbackDataByPtr) {
         if (!data) continue;
-        RunClassFinalize(data);
         if (!JS_IsUndefined(data->propStore)) {
             JS_FreeValueRT(rt, data->propStore);
             data->propStore = JS_UNDEFINED;
@@ -558,6 +560,9 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     group->contexts.push_back(this);
 
     JSValue rawGlobal = JS_GetGlobalObject(qctx);
+    dateConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Date");
+    errorConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Error");
+    regExpConstructor = JS_GetPropertyStr(qctx, rawGlobal, "RegExp");
     JSValue objCtor = JS_GetPropertyStr(qctx, rawGlobal, "Object");
     JSValue objProto = JS_GetPropertyStr(qctx, objCtor, "prototype");
     JS_FreeValue(qctx, objCtor);
@@ -630,6 +635,9 @@ OpaqueJSContext::~OpaqueJSContext() {
         group->contexts.erase(it);
     }
     if (qctx) {
+        JS_FreeValue(qctx, dateConstructor);
+        JS_FreeValue(qctx, errorConstructor);
+        JS_FreeValue(qctx, regExpConstructor);
         JS_FreeContext(qctx);
         qctx = nullptr;
     }
@@ -1054,13 +1062,13 @@ JSWeakRef APS5_VABI JSWeakCreate(JSContextGroupRef group, JSObjectRef object) {
     return weak;
 }
 
-void APS5_VABI JSWeakRetain(JSWeakRef weak) {
-    if (!weak) return;
+void APS5_VABI JSWeakRetain(JSContextGroupRef group, JSWeakRef weak) {
+    if (!group || !weak) return;
     weak->refCount.fetch_add(1, std::memory_order_relaxed);
 }
 
-void APS5_VABI JSWeakRelease(JSWeakRef weak) {
-    if (!weak) return;
+void APS5_VABI JSWeakRelease(JSContextGroupRef group, JSWeakRef weak) {
+    if (!group || !weak) return;
     if (weak->refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
         if (weak->group && !weak->group->shuttingDown) {
             auto& vec = weak->group->weakRefs;
