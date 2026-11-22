@@ -1,6 +1,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <algorithm>
@@ -194,13 +195,14 @@ int Queue(GuestAiocb* user, int opcode) {
     if (_fstat_nid_postfix(request.fildes, &status) != 0) return fail(GuestEbadf);
     const auto type = static_cast<std::uint16_t>(status.st_mode & TypeMask);
     if (type == TypeSocket) NotImplemented_nid_no_patch("aio on a socket");
-    const bool vnode = type != 0 && type != TypeFifo;
+    const bool ksem = IsKsemDescriptor_nid_no_patch(request.fildes);
+    const bool vnode = !ksem && type != 0 && type != TypeFifo;
     if (opcode == LioSync && !vnode) return fail(GuestEinval);
     if (opcode != LioSync && request.offset < 0) return fail(GuestEinval);
     if (!Store(user, &GuestAiocb::kernelinfo, reinterpret_cast<void*>(aio.nextId++))) return fail(GuestEinval);
     if (notify != SigevNone) NotImplemented_nid_no_patch("aio completion delivering a signal or a kevent");
     Store(user, &GuestAiocb::error, std::int64_t{GuestEinprogress});
-    if (type != TypeRegular && type != TypeDirectory) return fail(GuestEopnotsupp);
+    if (ksem || (type != TypeRegular && type != TypeDirectory)) return fail(GuestEopnotsupp);
     auto job = std::make_shared<Job>(Job{user, request.fildes, opcode, request.offset, request.buf, request.nbytes});
     aio.all.push_back(job);
     aio.queued.push_back(job);

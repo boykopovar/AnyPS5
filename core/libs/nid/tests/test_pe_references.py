@@ -355,6 +355,18 @@ class ExecutableImportTests(unittest.TestCase):
                         from test_symbol_versions import read_dynsym
                         self.assertIn(("application_export", 9, 0x400100), read_dynsym(path.read_bytes()))
 
+    def test_exec_rejects_import_name_in_virtual_only_tail_without_writing(self):
+        image = bytearray(self.pe())
+        section = 0x58 + 240
+        struct.pack_into("<I", image, section + 16, 0x100)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(image)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("not backed by section file data", result.stderr)
+            self.assertEqual(path.read_bytes(), image)
+
     def test_exec_accepts_macho_without_exports(self):
         from test_macho_nids import LC_DYLD_EXPORTS_TRIE, command_fields
         image = self.macho()

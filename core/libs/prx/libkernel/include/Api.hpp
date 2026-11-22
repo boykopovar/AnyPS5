@@ -141,6 +141,12 @@ struct SceKernelSystemSwVersion {
     std::uint32_t version;
 };
 
+struct KernelTitleWorkaround {
+    std::int32_t version;
+    std::int32_t align;
+    std::uint64_t ids[2];
+};
+
 extern "C" {
 int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, std::uint32_t attr, std::uint64_t initPattern, const void* param);
 int APS5_VABI sceKernelDeleteEventFlag(KernelEventFlag ef);
@@ -619,6 +625,7 @@ int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_
 int APS5_VABI shutdown_nid_postfix(int descriptor, int how);
 int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32_t* length);
 int APS5_VABI getpeername_nid_postfix(int descriptor, void* address, std::uint32_t* length);
+int APS5_VABI sockatmark_nid_postfix(int descriptor);
 int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument);
 int APS5_VABI _ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument);
 std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength);
@@ -841,5 +848,16 @@ int APS5_VABI sysKernelGetUpdVersion_nid_postfix(std::uint32_t* version);
 int APS5_VABI sysKernelGetManufacturingMode_nid_postfix(void);
 int APS5_VABI sysKernelGetIntdevModeForInternalLibc_nid_postfix(void);
 int APS5_VABI sysKernelGetIntdevModeForRcmgr_nid_postfix(void);
+int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version);
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version);
+int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* category);
+int APS5_VABI sceKernelIsNeoMode(void);
+int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled);
+int APS5_VABI sceKernelGetToolMemoryRange(std::int32_t partition, std::int64_t* start, std::int64_t* end);
+int APS5_VABI sceKernelAllocateToolMemory(std::int32_t partition, std::int64_t searchStart, std::int64_t searchEnd, size_t len, size_t alignment, int memoryType, std::int64_t* physAddrOut);
+int APS5_VABI sceKernelAvailableToolMemorySize(std::int64_t searchStart, std::int64_t searchEnd, size_t alignment, std::int64_t* physAddrOut, size_t* sizeOut);
+int APS5_VABI sceKernelMapToolMemory(void** addr, size_t len, int prot, int flags, std::int64_t start, size_t alignment);
+int APS5_VABI sceKernelReleaseToolMemory(std::int64_t start, size_t len);
+int APS5_VABI sceKernelSetProcessProperty(void);
 
 }
