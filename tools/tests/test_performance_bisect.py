@@ -54,6 +54,18 @@ class RecipeTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         performance_bisect.load_recipe(path)
 
+    def test_rejects_oversized_percentage_integers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            recipe = self.make_recipe(root)
+            path = root / "recipe.json"
+            for name in ("regression_pct", "max_spread_pct"):
+                for value in (10 ** 400, -(10 ** 400), math.inf, -math.inf, math.nan):
+                    with self.subTest(name=name, value=value):
+                        path.write_text(json.dumps(dict(recipe, **{name: value})), encoding="utf-8")
+                        with self.assertRaisesRegex(ValueError, "recipe." + name):
+                            performance_bisect.load_recipe(path)
+
     def test_resolves_relative_paths_from_the_recipe_file(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
