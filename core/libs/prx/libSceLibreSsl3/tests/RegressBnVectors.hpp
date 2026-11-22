@@ -1,3 +1,26 @@
+/* Adapted for AnyPS5 from LibreSSL 4.0.0 (openbsd ce488b78e0bd994780569df718596b9776ff681a)
+ * src/regress/lib/libcrypto/bn/bn_convert.c
+ * (https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/regress/lib/libcrypto/bn/bn_convert.c).
+ * Altered: only the hex round-trip table (bn_convert_tests) is kept; the decimal and ASCII cases are
+ * left out because libSceLibreSsl3 does not export BN_bn2dec, BN_dec2bn or BN_asc2bn.
+ */
+/*	$OpenBSD: bn_convert.c,v 1.6 2024/04/17 08:51:11 jsing Exp $ */
+/*
+ * Copyright (c) 2023 Joel Sing <jsing@openbsd.org>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+
 #pragma once
 
 #include <array>
