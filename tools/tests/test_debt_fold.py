@@ -18,6 +18,11 @@ BASE = (f"# libSceExample technical debt\n\n### Silent stubs\n\n"
         f"- On Windows the [example worker]({LINK}) is not joined at exit\n")
 
 
+BASE_TEXT = (f"# libSceExample technical debt\n\n### Silent stubs\n\n"
+             f"- [sceExampleA]({LINK}) (libSceExample) - returns 0\n"
+             f"- [sceExampleB]({LINK}) (libSceExample) - returns 0 without reading its argument\n")
+
+
 class FoldTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -108,7 +113,7 @@ class FoldTests(unittest.TestCase):
         self.fragment("b", "# libSceExample\n\n## remove [sceExampleC]\n")
         code, _, error = self.run_fold()
         self.assertEqual(code, 1)
-        self.assertIn("changes/b.md:3 and docs/dev/debt/changes/a.md:3 both remove the same libSceExample entry", error)
+        self.assertIn("changes/b.md:3 and docs/dev/debt/changes/a.md:3 both target the same libSceExample entry", error)
         self.assertEqual(self.debt(), BASE)
 
     def test_refuses_an_unknown_library(self):
@@ -356,6 +361,65 @@ class FoldTests(unittest.TestCase):
         self.assertEqual((self.root / "README.md").read_text(encoding="utf-8"), readme)
         self.assertEqual((self.root / "docs/dev/TechnicalDebt.md").read_text(encoding="utf-8"), index)
         self.assertEqual((self.root / "docs/dev/debt/changes/mixed.md").read_text(encoding="utf-8"), mixed_frag)
+
+
+class SpaceTests(unittest.TestCase):
+    def test_space_adds_blank_before_entries_after_text(self):
+        import debt_fold
+        self.assertEqual(debt_fold.space(["- a", "- b"]), ["- a", "", "- b"])
+        self.assertEqual(debt_fold.space(["text", "- a"]), ["text", "", "- a"])
+        self.assertEqual(debt_fold.space(["- a", "", "- b"]), ["- a", "", "- b"])
+
+
+class SpacedTests(unittest.TestCase):
+    def test_spaced_is_false_when_two_entries_touch(self):
+        import debt_fold
+        apart = [(0, 1, "- a"), (2, 3, "- b")]
+        touching = [(0, 1, "- a"), (1, 2, "- b")]
+        self.assertTrue(debt_fold.spaced(apart))
+        self.assertFalse(debt_fold.spaced(touching))
+class TargetTests(unittest.TestCase):
+    def test_target_is_none_without_a_target_marker(self):
+        import debt_fold
+        self.assertIsNone(debt_fold.target("- plain entry with no target"))
+
+
+class ParseFragmentTests(unittest.TestCase):
+    def test_parse_refuses_a_library_with_no_debt_file(self):
+        import debt_fold
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fragment = root / "fragment.md"
+            fragment.write_text("# libMissing\n", encoding="utf-8")
+            with self.assertRaisesRegex(debt_fold.FoldError, "no debt file for libMissing"):
+                debt_fold.parse(fragment, root)
+
+class UnitsTests(unittest.TestCase):
+    def test_units_keeps_data_rows_and_skips_header_and_separator(self):
+        text = "| Name | Value |\n| --- | --- |\n| x | y |\n"
+        self.assertEqual(debt_fold.units(text), {3: "| x | y |"})
+
+    def test_units_lists_bullet_entries_by_their_line(self):
+        found = debt_fold.units(BASE_TEXT)
+        self.assertEqual(sorted(found), [5, 6])
+        self.assertTrue(found[5].startswith(f"- [sceExampleA]({LINK})"))
+
+
+
+class FindTests(unittest.TestCase):
+    def operation(self, target):
+        return debt_fold.Operation("fragment.md", 9, "libSceExample", "change", target, "")
+
+    def test_find_returns_the_span_of_the_one_matching_entry(self):
+        self.assertEqual(debt_fold.find(debt_fold.spans(BASE_TEXT)[0], self.operation("sceExampleA")), (4, 5))
+
+    def test_find_refuses_a_target_matching_several_entries(self):
+        with self.assertRaisesRegex(debt_fold.FoldError, "matches 2 entries"):
+            debt_fold.find(debt_fold.spans(BASE_TEXT)[0], self.operation("sceExample"))
+
+    def test_find_refuses_a_target_matching_no_entry(self):
+        with self.assertRaisesRegex(debt_fold.FoldError, "matches 0 entries"):
+            debt_fold.find(debt_fold.spans(BASE_TEXT)[0], self.operation("sceMissing"))
 
 
 if __name__ == "__main__":

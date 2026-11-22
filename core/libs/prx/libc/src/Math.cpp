@@ -582,7 +582,8 @@ float APS5_VABI asinf_nid_postfix(float x) {
         return (x - x) / (x - x);
     }
     if (ix < 0x3f000000) {
-        if (ix < 0x39800000) {
+        const volatile float biased = 1.0e30f + x;
+        if (ix < 0x39800000 && biased > 1.0f) {
             return x;
         }
         return x + x * AsinfRational(x * x);
@@ -917,7 +918,9 @@ float APS5_VABI exp2f_nid_postfix(float x) {
         }
         if (x >= 0x1.0p7f) {
             errno = ERANGE;
-            return huge * huge;
+            volatile float overflow = huge * huge;
+            (void)overflow;
+            return std::numeric_limits<float>::infinity();
         }
         if (x <= -0x1.2cp7f) {
             errno = ERANGE;
@@ -1115,7 +1118,9 @@ double APS5_VABI exp2_nid_postfix(double x) {
         }
         if (x >= 0x1.0p10) {
             errno = ERANGE;
-            return huge * huge;
+            volatile double overflow = huge * huge;
+            (void)overflow;
+            return std::numeric_limits<double>::infinity();
         }
         if (x <= -0x1.0ccp10) {
             errno = ERANGE;
@@ -1571,7 +1576,14 @@ long double APS5_VABI log1pl_nid_postfix(long double x) {
     return _LLog_nid_postfix(u, 0) + correction;
 }
 long double APS5_VABI log2l_nid_postfix(long double x) { return _LLog_nid_postfix(x, -1); }
-long double APS5_VABI lgammal_nid_postfix(long double x) { return std::lgamma(x); }
+long double APS5_VABI lgammal_nid_postfix(long double x) {
+    long double integral = x;
+    if (_LDint_nid_postfix(&integral, 0) == 0 && x <= 0.0L) {
+        _Feraise_nid_postfix(0x04);
+        return std::numeric_limits<long double>::infinity();
+    }
+    return std::lgamma(x);
+}
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
 float APS5_VABI tgammaf_nid_postfix(float x) { return GuestTgammaf(x); }
 double APS5_VABI tgamma_nid_postfix(double x) {
@@ -3872,7 +3884,8 @@ float APS5_VABI atanf_nid_postfix(float x) {
     }
     int id = -1;
     if (ix < 0x3ee00000) {
-        if (ix < 0x39800000) {
+        const volatile float biased = 1.0e30f + x;
+        if (ix < 0x39800000 && biased > 1.0f) {
             return x;
         }
     } else {
@@ -5828,9 +5841,13 @@ long double APS5_VABI exp2l_nid_postfix(long double x) {
 long double APS5_VABI logl_nid_postfix(long double x) { return _LLog_nid_postfix(x, 0); }
 long double APS5_VABI log10l_nid_postfix(long double x) { return _LLog_nid_postfix(x, 1); }
 long double APS5_VABI ldexpl_nid_postfix(long double x, int exp) { return scalbnl_nid_postfix(x, exp); }
-long double APS5_VABI truncl_nid_postfix(long double x) { return std::trunc(x); }
-long double APS5_VABI ceill_nid_postfix(long double x) { return std::ceil(x); }
-long double APS5_VABI floorl_nid_postfix(long double x) { return std::floor(x); }
+static long double RoundedIntegral(long double x, long double result) {
+    if (result != x && result == result) std::feraiseexcept(FE_INEXACT);
+    return result;
+}
+long double APS5_VABI truncl_nid_postfix(long double x) { return RoundedIntegral(x, std::trunc(x)); }
+long double APS5_VABI ceill_nid_postfix(long double x) { return RoundedIntegral(x, std::ceil(x)); }
+long double APS5_VABI floorl_nid_postfix(long double x) { return RoundedIntegral(x, std::floor(x)); }
 double APS5_VABI logb_nid_postfix(double x) {
     const std::uint64_t bits = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
     if (bits == 0) {
