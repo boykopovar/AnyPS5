@@ -269,6 +269,24 @@ class PatchAdvisorTests(unittest.TestCase):
                 run.assert_not_called()
 
     @patch.object(suggest_patches.subprocess, "run")
+    def test_byte_order_mark_is_accepted_in_param_json(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        self.param.write_text('{"titleId": "TEST00001", "contentVersion": "01.000.000"}', encoding="utf-8-sig")
+        self.assertEqual(self.advise(), 0)
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_byte_order_mark_is_accepted_in_catalog_index(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        (self.catalog / "index.json").write_text(json.dumps({"format": 1, "entries": [self.entry]}), encoding="utf-8-sig")
+        self.assertEqual(self.advise(), 0)
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_byte_order_mark_is_accepted_in_patch_file(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        (self.catalog / "patch.toml").write_text('format = 1\n[[patch]]\ntarget = "Media/Modules/module.prx"\nva = 0x1000\nexpected = "00"\nvalue = "01"\n', encoding="utf-8-sig")
+        self.assertEqual(self.advise(), 0)
+
+    @patch.object(suggest_patches.subprocess, "run")
     def test_matching_malformed_patch_is_rejected(self, run):
         self.entry["patch"] = "missing.toml"
         self.write_index()

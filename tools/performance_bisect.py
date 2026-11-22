@@ -8,6 +8,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+from fractions import Fraction
 from pathlib import Path
 
 
@@ -29,7 +30,7 @@ def unique_recipe_fields(pairs):
 
 def load_recipe(path):
     recipe_path = Path(path).resolve()
-    recipe = json.loads(recipe_path.read_text(encoding="utf-8"), object_pairs_hook=unique_recipe_fields)
+    recipe = json.loads(recipe_path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_recipe_fields)
     if not isinstance(recipe, dict):
         raise ValueError("recipe must be a JSON object")
     unknown = set(recipe) - RECIPE_FIELDS
@@ -67,10 +68,10 @@ def load_recipe(path):
     if type(repetitions) is not int or repetitions < 3:
         raise ValueError("recipe.repetitions must be an integer of at least 3")
     regression_pct = recipe.get("regression_pct", 5)
-    if type(regression_pct) not in (int, float) or not math.isfinite(regression_pct) or not 0 < regression_pct < 100:
+    if type(regression_pct) not in (int, float) or not 0 < regression_pct < 100:
         raise ValueError("recipe.regression_pct must be between 0 and 100")
     max_spread_pct = recipe.get("max_spread_pct", 3)
-    if type(max_spread_pct) not in (int, float) or not math.isfinite(max_spread_pct) or not 0 < max_spread_pct < 100:
+    if type(max_spread_pct) not in (int, float) or not 0 < max_spread_pct < 100:
         raise ValueError("recipe.max_spread_pct must be between 0 and 100")
     titles = recipe.get("titles", str(TOOLS_DIR / "titles.json"))
     if not isinstance(titles, str):
@@ -140,7 +141,8 @@ def summarize(samples, max_spread_pct):
 
 
 def is_regression(fps, baseline_fps, threshold_pct):
-    return fps <= baseline_fps * (1 - threshold_pct / 100)
+    baseline = Fraction(str(baseline_fps))
+    return (baseline - Fraction(str(fps))) * 100 >= baseline * Fraction(str(threshold_pct))
 
 
 def require_same_identity(baseline, measured):

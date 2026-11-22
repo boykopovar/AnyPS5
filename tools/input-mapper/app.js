@@ -1,7 +1,7 @@
 import {actions, actionsForInput, chordButtons, defaults, groups, inputFilename, inputTitleId, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {exportableKeys} from './keys.js';
 import {captureKey} from './capture.js';
-import {parseIni, serialize, validate} from './validation.js';
+import {controllerDestinations, parseIni, sdlControllerButtons, serialize, validate} from './validation.js';
 import {diagnostic, initialLocale, locales, translate} from './i18n.js';
 import {createDropdown} from './dropdown.js';
 
@@ -103,6 +103,7 @@ function applyLocale() {
     byId('categories').replaceChildren();
     renderCategories();
     renderHelp();
+    renderControllerRemaps();
     render();
     renderImportReport();
     if (currentStatus) setStatus(currentStatus.key, currentStatus.values);
@@ -272,6 +273,31 @@ function renderBinding(entry, position) {
     return row;
 }
 
+function renderControllerRemaps() {
+    byId('controller-remaps').replaceChildren(...sdlControllerButtons.map(button => {
+        const row = element('label');
+        const source = element('span', `SDLButton:${button}`);
+        source.dir = 'ltr';
+        const select = element('select');
+        for (const destination of ['', ...controllerDestinations]) {
+            const option = element('option', destination || t('noOverride'));
+            option.value = destination;
+            select.append(option);
+        }
+        select.value = controllerRemaps.find(remap => remap.button === button)?.destination || '';
+        select.addEventListener('change', () => {
+            const destination = select.value;
+            const remap = controllerRemaps.find(item => item.button === button);
+            if (!destination) controllerRemaps = controllerRemaps.filter(item => item.button !== button);
+            else if (remap) remap.destination = destination;
+            else controllerRemaps.push({button, destination});
+            updateOutput();
+        });
+        row.append(source, select);
+        return row;
+    }));
+}
+
 function render(focusEntry) {
     const container = byId('mappings');
     container.replaceChildren();
@@ -424,6 +450,7 @@ byId('reset').addEventListener('click', async () => {
     importReport = undefined;
     byId('import-report').hidden = true;
     byId('profile-title-id').value = '';
+    renderControllerRemaps();
     render();
     setStatus('resetDone');
 });
@@ -455,6 +482,7 @@ byId('file').addEventListener('change', async event => {
         settings = result.settings;
         controllerRemaps = result.controllerRemaps;
         savedConfiguration = snapshot();
+        renderControllerRemaps();
         render();
         setStatus('imported', {name: file.name});
     } catch (error) {

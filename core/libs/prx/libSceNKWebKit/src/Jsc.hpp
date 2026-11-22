@@ -109,6 +109,7 @@ struct OpaqueJSContextGroup {
     OpaqueJSValue trueHandle{};
     OpaqueJSValue falseHandle{};
     std::vector<OpaqueJSContext*> contexts;
+    std::vector<OpaqueJSContext*> releasedContexts;
     std::vector<OpaqueJSValue*> allHandles;
     std::unordered_map<void*, OpaqueJSValue*> objectHandles;
     std::unordered_map<void*, CallbackObjectData*> callbackDataByPtr;
@@ -121,6 +122,8 @@ struct OpaqueJSContextGroup {
     bool hasTimeLimit = false;
     double timeLimitSeconds = 0.0;
     std::chrono::steady_clock::time_point deadline{};
+    bool deadlineArmed = false;
+    int vmEntryDepth = 0;
     JSShouldTerminateCallback terminateCallback = nullptr;
     void* terminateContext = nullptr;
     OpaqueJSContext* activeContext = nullptr;
@@ -131,14 +134,31 @@ struct OpaqueJSContextGroup {
     ~OpaqueJSContextGroup();
 
     OpaqueJSContext* DefaultContext() const;
+    void DestroyReleasedContexts();
     OpaqueJSValue* ToHandle(OpaqueJSContext* ctx, JSValue v);
     OpaqueJSValue* BorrowHandle(OpaqueJSContext* ctx, JSValueConst v);
     CallbackObjectData* FindCallbackData(const OpaqueJSValue* handle) const;
     CallbackObjectData* FindCallbackDataByPtr(void* ptr) const;
     void NotifyObjectFinalized(void* ptr, OpaqueJSValue* handle);
     void CollectGarbage();
-    void DrainMicrotasks(OpaqueJSContext* ctx);
+    void DrainMicrotasks();
     void RefreshDeadline();
+    void EnterVm();
+    void ExitVm();
+    void UpdateStackLimit();
+};
+
+struct VmEntryScope {
+    OpaqueJSContextGroup* group;
+
+    explicit VmEntryScope(OpaqueJSContextGroup* grp) : group(grp) {
+        if (group) group->EnterVm();
+    }
+    VmEntryScope(const VmEntryScope&) = delete;
+    VmEntryScope& operator=(const VmEntryScope&) = delete;
+    ~VmEntryScope() {
+        if (group) group->ExitVm();
+    }
 };
 
 struct OpaqueJSContext {
@@ -233,6 +253,7 @@ std::string AtomToUtf8(JSContext* qctx, JSAtom atom);
 void CapturePendingException(OpaqueJSContext* ctx, JSValueRef* exception);
 void SetExceptionValue(OpaqueJSContext* ctx, JSValueRef* exception, JSValue excVal);
 void RegisterCallbackClasses(OpaqueJSContextGroup* group);
+void DefineToPrimitive(OpaqueJSContext* ctx, JSValueConst target, bool forGlobalObject);
 void RunClassInitialize(OpaqueJSContext* ctx, OpaqueJSValue* objHandle, OpaqueJSClass* jsClass);
 void RunClassFinalize(CallbackObjectData* data);
 OpaqueJSValue* GetOrCreateClassPrototype(OpaqueJSContext* ctx, OpaqueJSClass* jsClass);
