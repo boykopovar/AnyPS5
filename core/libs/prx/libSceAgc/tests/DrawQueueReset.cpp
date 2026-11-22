@@ -138,6 +138,41 @@ void Capacity() {
     }
 }
 
+struct SnapshotGrowth {
+    std::uint32_t version;
+    std::uint32_t calls = 0;
+};
+
+bool APS5_VABI InitializeDuringGrowth(CommandBuffer* buffer, std::uint32_t, void* data) {
+    auto& growth = *static_cast<SnapshotGrowth*>(data);
+    ++growth.calls;
+    Check(sceAgcInit(growth.version) == 0, "growth initialization failed");
+    buffer->cursor_down = buffer->top;
+    return true;
+}
+
+void Snapshot(bool initialized, std::size_t capacity) {
+    if (initialized) Check(sceAgcInit(8) == 0, "initial snapshot setup failed");
+    const auto flags = initialized ? 0x83ffu : 0x3ffu;
+    const auto instance = initialized ? 0xffffffffu : 0u;
+    Storage expected;
+    Check(sceAgcDcbResetQueue(&expected.buffer, flags, instance) == expected.words.data(), "reference snapshot reset failed");
+    if (!initialized) {
+        Check(expected.Count() == EmptyReset.size() && std::equal(EmptyReset.begin(), EmptyReset.end(), expected.words.begin()), "empty snapshot reference differs");
+    }
+    Storage actual;
+    actual.buffer.cursor_down = actual.words.data() + capacity;
+    SnapshotGrowth growth{initialized ? 13u : 8u};
+    actual.buffer.callback = InitializeDuringGrowth;
+    actual.buffer.user_data = &growth;
+    Check(sceAgcDcbResetQueue(&actual.buffer, flags, instance) == actual.words.data(), "snapshot reset with growth failed");
+    Check(growth.calls == 1, "snapshot reset did not exercise one initialization callback");
+    Check(actual.Count() == expected.Count() && std::equal(expected.words.begin(), expected.words.begin() + expected.Count(), actual.words.begin()), "growth initialization mixed reset state snapshots");
+    Check(actual.words[actual.Count()] == 0xa5a5a5a5u, "snapshot reset changed its tail guard");
+    Storage active;
+    Check(sceAgcDcbResetQueue(&active.buffer, 0x8000u, 0xffffffffu) == active.words.data() && active.words[4] == growth.version, "growth initialization did not publish the next active context");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -148,6 +183,8 @@ int main(int argc, char** argv) {
         else if (mode == "empty") Empty();
         else if (mode == "preserved") Preserved();
         else if (mode == "capacity") Capacity();
+        else if (mode == "snapshot-initialized") Snapshot(true, 1);
+        else if (mode.starts_with("snapshot-empty-")) Snapshot(false, static_cast<std::size_t>(std::stoul(mode.substr(15))));
         else if (mode.starts_with("initialized-")) Initialized(static_cast<std::uint32_t>(std::stoul(mode.substr(12))));
         else throw std::runtime_error("unknown draw reset mode");
         LibcRunShutdown_nid_postfix();

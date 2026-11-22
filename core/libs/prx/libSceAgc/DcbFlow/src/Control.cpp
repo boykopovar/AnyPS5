@@ -77,21 +77,19 @@ std::uint32_t* APS5_VABI sceAgcDcbResetQueue(CommandBuffer* buf, std::uint32_t f
     Agc::Command::Require(buf != nullptr, __func__, "null command buffer");
     flags &= 0xffffu;
     if ((flags & 0x400u) != 0 || ((flags & 0x8000u) == 0 && instance >= 2)) NotImplemented_nid_no_patch(__func__);
-    const auto initial = Agc::Command::GetQueueResetState(instance, (flags & 0x8000u) != 0);
-    instance = initial.instance;
-    const auto marker = 0xce000000u | (!initial.external ? 0x200000u : 0u) | flags;
+    const auto state = Agc::Command::GetQueueResetState(instance, (flags & 0x8000u) != 0);
+    const auto marker = 0xce000000u | (!state.external ? 0x200000u : 0u) | flags;
     if (!ReserveDrawReset(buf, 1)) return nullptr;
     auto* result = buf->cursor_up;
     *buf->cursor_up++ = 0xffff1000u;
     if (!ReserveDrawReset(buf, sceAgcDriverUserDataGetPacketSize(4), false)) return nullptr;
-    const auto version = Agc::Command::GetQueueResetState(instance, false).version;
+    const auto version = state.version;
     buf->cursor_up += sceAgcDriverUserDataWritePacket(buf->cursor_up, 0, marker, &version, sizeof(version));
     if ((flags & 0x80u) != 0 && !DrawResetPacket(buf, {0xc0004600u, 0x407u})) return nullptr;
     if ((flags & 0x100u) != 0 && !DrawResetPacket(buf, {0xc0004600u, 0x410u})) return nullptr;
-    if ((flags & 1u) != 0 && !DrawResetRegisters(buf, 0xc0039f00u, Agc::Command::GetQueueResetState(instance, false).context)) return nullptr;
-    if ((flags & 2u) != 0 && !DrawResetRegisters(buf, 0xc0036300u, Agc::Command::GetQueueResetState(instance, false).shader)) return nullptr;
+    if ((flags & 1u) != 0 && !DrawResetRegisters(buf, 0xc0039f00u, state.context)) return nullptr;
+    if ((flags & 2u) != 0 && !DrawResetRegisters(buf, 0xc0036300u, state.shader)) return nullptr;
     if ((flags & 0x804u) != 0) {
-        const auto state = Agc::Command::GetQueueResetState(instance, false);
         auto registers = state.userConfig;
         if ((flags & 4u) == 0) registers = registers.last(state.counterRegisters);
         else if ((flags & 0x800u) == 0) registers = registers.first(registers.size() - state.counterRegisters);

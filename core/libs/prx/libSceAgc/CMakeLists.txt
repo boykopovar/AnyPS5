@@ -100,7 +100,8 @@ target_link_libraries(agc_draw_queue_reset_tests PRIVATE libSceAgc libSceAgcDriv
 configure_windows_unwind(agc_draw_queue_reset_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_draw_queue_reset_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
-    foreach(mode IN ITEMS oracle empty preserved capacity initialized-8 initialized-10 initialized-13)
+    foreach(mode IN ITEMS oracle empty preserved capacity initialized-8 initialized-10 initialized-13 snapshot-initialized
+            snapshot-empty-0 snapshot-empty-1 snapshot-empty-5 snapshot-empty-9 snapshot-empty-14 snapshot-empty-19 snapshot-empty-24)
         add_test(NAME agc_draw_queue_reset_${mode} COMMAND agc_draw_queue_reset_tests ${mode})
         if(WIN32)
             set_tests_properties(agc_draw_queue_reset_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
