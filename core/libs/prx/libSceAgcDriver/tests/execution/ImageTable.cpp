@@ -2714,7 +2714,10 @@ void RunIndirectThreadDimensionTests(AgcDriver::VulkanDevice& device) {
     const auto position = [&](auto matches) { return std::ranges::find_if(result.bindings, matches) - result.bindings.begin(); };
     const auto table = position([](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable; });
     const auto data = position([](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData; });
-    Require(table < data && data < static_cast<std::ptrdiff_t>(result.bindings.size()), "image table thread dimensions: the shader does not bind its image table before its shader data");
+    const auto unbound = static_cast<std::ptrdiff_t>(result.bindings.size());
+    Require(data < unbound, "image table thread dimensions: the shader does not bind its shader data");
+    if (result.bindlessHeap) Require(table == unbound, "image table thread dimensions: the heap-lowered shader binds an image table");
+    else Require(table < data, "image table thread dimensions: the shader does not bind its image table before its shader data");
     arguments[0] = Threads;
     arguments[1] = 1u;
     arguments[2] = 1u;
