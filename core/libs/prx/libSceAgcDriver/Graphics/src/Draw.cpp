@@ -3348,6 +3348,17 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             resources.Bind(commands, point, layout);
         }
     };
+    std::array<std::byte, PipelinePushConstantBytes> movedPush;
+    const std::array<std::byte, PipelinePushConstantBytes>* pushBytes = record.pushBytes;
+    VkShaderStageFlags pushStages = record.pushStages;
+    if (ShaderResources::MovedPushPatches(record.moved)) {
+        movedPush = pushBytes != nullptr ? *pushBytes : AssemblePushConstants(shaders);
+        if (pushBytes == nullptr) resources.PatchPushConstants(movedPush);
+        if (resources.PatchMovedPushConstants(movedPush, record.moved)) {
+            if (pushBytes == nullptr) pushStages = PushConstantStages(shaders);
+            pushBytes = &movedPush;
+        }
+    }
     if (prologueDraw) {
         const auto prologue = start.prologue != VK_NULL_HANDLE ? start.prologue : commands;
         const auto bindPrologue = [&](VkPipelineBindPoint point, VkPipelineLayout layout) {
@@ -3360,7 +3371,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
                 resources.Bind(prologue, point, layout);
             }
         };
-        meshOutput = recordMeshCompute(context, prologue, *record.pipeline, state, draw, shaders, resources, inputs, meshIndirect, *meshArguments, bindPrologue, record.pushBytes, record.pushStages);
+        meshOutput = recordMeshCompute(context, prologue, *record.pipeline, state, draw, shaders, resources, inputs, meshIndirect, *meshArguments, bindPrologue, pushBytes, pushStages);
         argumentBuffer = meshOutput->Handle();
         argumentOffset = 0;
         countBarrier(2);
@@ -3396,7 +3407,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentSnapshot, argumentBuffer, argumentOffset, countBarrier);
         }
         if (meshCompute && !prologueDraw) {
-            meshOutput = recordMeshCompute(context, commands, *record.pipeline, state, draw, shaders, resources, inputs, meshIndirect, *meshArguments, bindResources, record.pushBytes, record.pushStages);
+            meshOutput = recordMeshCompute(context, commands, *record.pipeline, state, draw, shaders, resources, inputs, meshIndirect, *meshArguments, bindResources, pushBytes, pushStages);
             argumentBuffer = meshOutput->Handle();
             argumentOffset = 0;
             countBarrier(2);
@@ -3424,17 +3435,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, commands, record.pipeline->Layout());
     if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, record.pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
-    std::array<std::byte, PipelinePushConstantBytes> movedPush;
-    const std::array<std::byte, PipelinePushConstantBytes>* pushBytes = record.pushBytes;
-    VkShaderStageFlags pushStages = record.pushStages;
-    if (ShaderResources::MovedPushPatches(record.moved)) {
-        movedPush = pushBytes != nullptr ? *pushBytes : AssemblePushConstants(shaders);
-        if (pushBytes == nullptr) resources.PatchPushConstants(movedPush);
-        if (resources.PatchMovedPushConstants(movedPush, record.moved)) {
-            if (pushBytes == nullptr) pushStages = PushConstantStages(shaders);
-            pushBytes = &movedPush;
-        }
-    }
     pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, pushBytes, pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     static const bool timeEachDraw = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr;
