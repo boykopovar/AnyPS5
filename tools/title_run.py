@@ -27,7 +27,7 @@ OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable",
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
 TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict, "smoke": bool}
 FILE_ROOTS = ("app0", "data", "download0")
-FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base"}
+FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base", "macos": "--macos-fixed-base"}
 PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
 PAD_AFTER_SECONDS = 5
 REPORT_FILE = "anyps5-report.json"
@@ -121,7 +121,10 @@ def host_is_intel():
     if os.name == "nt":
         return os.environ.get("PROCESSOR_IDENTIFIER", "").strip().lower().startswith("intel")
     if sys.platform == "darwin":
-        return os.uname().machine == "x86_64"
+        if os.uname().machine != "x86_64":
+            return False
+        hardware = subprocess.run(["/usr/sbin/sysctl", "-in", "hw.optional.arm64"], capture_output=True, text=True)
+        return hardware.stdout.strip() != "1"
     try:
         return "GenuineIntel" in Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="ignore")
     except OSError:
@@ -131,8 +134,13 @@ def host_is_intel():
 def relink_args(entry, platform, intel_host=False):
     args = ["--windows"] if platform == "windows" else []
     args += entry.get("relink", [])
-    if intel_host and not any(flag in args for flag in ("--to-intel", "--to-rosetta", "--to-avx")):
-        args.append("--to-intel")
+    if platform == "macos" and "--macos" not in args:
+        args.insert(0, "--macos")
+    if not any(flag in args for flag in ("--to-intel", "--to-rosetta", "--to-avx")):
+        if intel_host:
+            args.append("--to-intel")
+        elif platform == "macos":
+            args.append("--to-rosetta")
     if "fixed_base" in entry:
         if platform not in FIXED_BASE_FLAGS:
             raise ValueError(f"fixed_base is not supported on {platform}")
