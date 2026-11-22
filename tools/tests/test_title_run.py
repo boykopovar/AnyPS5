@@ -362,6 +362,14 @@ class ReportTests(unittest.TestCase):
         now["machine"] = {"os": "", "gpu": "", "driver": "", "cpu": "Ryzen AI 7 350"}
         self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
 
+    def test_render_markdown_keeps_literal_pipes_in_table_cells(self):
+        now = summary({"PPSA85300": {"name": "Game | Deluxe", "version": "1 | preview",
+                                     "runs": [run("crashed", error="shader | unavailable")]}})
+        report = title_run.render_markdown(now, now)
+        self.assertIn(r"| Game \| Deluxe | PPSA85300 | 1 \| preview |", report)
+        self.assertIn(r"| shader \| unavailable | crashed |", report)
+        self.assertIn(r"| Game \| Deluxe | PPSA85300 | FPS |", report)
+
     def test_render_markdown_states_the_run_length_of_the_titles(self):
         for lengths, stated in (((90, 90), "90 s each."), ((30, 120, 45), "30 to 120 s each.")):
             with self.subTest(lengths=lengths):
