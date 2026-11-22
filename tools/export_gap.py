@@ -212,7 +212,57 @@ def record_provided(provided, name, origin=None):
         provided.setdefault(nid, f"{prefix}under {name} for {base}")
 
 
+def declaration_attributes(statement):
+    declaration, hidden, index = [], False, 0
+    parameters_started, parameter_depth = False, 0
+    while index < len(statement):
+        standard = statement[index:index + 2] == ["[", "["]
+        if standard:
+            start, opening, closing = index, "[", "]"
+        elif statement[index] in ("__attribute", "__attribute__") and statement[index + 1:index + 2] == ["("]:
+            start, opening, closing = index + 1, "(", ")"
+        else:
+            token = statement[index]
+            if token == "(":
+                if parameter_depth:
+                    parameter_depth += 1
+                elif declaration and re.fullmatch(r"[A-Za-z_]\w*_nid_postfix", declaration[-1]):
+                    parameters_started, parameter_depth = True, 1
+            elif token == ")" and parameter_depth:
+                parameter_depth -= 1
+            declaration.append(token)
+            index += 1
+            continue
+        depth, end = 0, start
+        while end < len(statement):
+            token = statement[end]
+            depth += (token == opening) - (token == closing)
+            end += 1
+            if depth == 0:
+                break
+        if depth:
+            return [], True
+        attributes = statement[start:end]
+        if not parameter_depth and (not standard or not parameters_started):
+            for offset, token in enumerate(attributes):
+                if token not in ("visibility", "__visibility__") or attributes[offset + 1:offset + 2] != ["("]:
+                    continue
+                argument = attributes[offset + 2:]
+                stop = next((position for position, item in enumerate(argument) if item == ")"), len(argument))
+                literals = argument[:stop]
+                visibility = None
+                if literals and all(re.fullmatch(r'"[^"\\]*"', item) for item in literals):
+                    visibility = "".join(item[1:-1] for item in literals)
+                if visibility not in ("default", "protected"):
+                    hidden = True
+        index = end
+    return declaration, hidden
+
+
 def c_linkage_postfix_function(statement, c_linkage):
+    statement, hidden = declaration_attributes(statement)
+    if hidden:
+        return None
     if statement[:2] == ["extern", '"C++"']:
         return None
     if not c_linkage and statement[:2] != ["extern", '"C"']:
@@ -227,7 +277,7 @@ def c_linkage_postfix_function(statement, c_linkage):
             if index < 2 or re.fullmatch(r"[A-Za-z_]\w*_nid_postfix", statement[index - 1]) is None:
                 return None
             prefix = statement[:index - 1]
-            if any(item in prefix for item in ("static", "inline", "constexpr", "consteval", "=", '"hidden"', "APS5_VABI")) or prefix[-1] == "::":
+            if any(item in prefix for item in ("static", "inline", "constexpr", "consteval", "=", "APS5_VABI")) or prefix[-1] == "::":
                 return None
             return statement[index - 1]
     return None
@@ -252,7 +302,8 @@ def c_linkage_postfix_functions(text):
             if statement in (["extern", '"C"'], ["extern", '"C++"']):
                 scopes.append(statement[1] == '"C"')
             elif statement[:1] == ["namespace"] or statement[:2] == ["inline", "namespace"]:
-                scopes.append(None if '"hidden"' in statement else scopes[-1])
+                _, hidden = declaration_attributes(statement)
+                scopes.append(None if hidden else scopes[-1])
             else:
                 name = c_linkage_postfix_function(statement, scopes[-1])
                 if name is not None:
