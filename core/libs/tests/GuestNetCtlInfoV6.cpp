@@ -13,15 +13,24 @@
 #include <unistd.h>
 #endif
 #include "SceTypes.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <vector>
+
+static bool ClobberWriteErrno(void* destination, const void* source, std::size_t size) {
+    errno = EIO;
+    if (!destination) return false;
+    std::memcpy(destination, source, size);
+    return true;
+}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-constexpr int kErrNotInitialized = static_cast<int>(0x80412101);
 constexpr int kErrInvalidCode = static_cast<int>(0x80412106);
 constexpr int kErrInvalidAddr = static_cast<int>(0x80412107);
 constexpr int kErrNotConnected = static_cast<int>(0x80412108);
@@ -132,19 +141,43 @@ int main() {
     const int first = sceNetCtlGetInfoV6(1, &info);
     Require(first == 0 || first == kErrNotConnected);
     sceNetCtlTerm();
-    int resultCode = 0x5a5a5a5a;
-    Require(sceNetCtlGetResultV6(1, &resultCode) == kErrNotInitialized);
-    Require(resultCode == 0x5a5a5a5a);
-    Require(sceNetCtlGetResultV6(1, nullptr) == kErrNotInitialized);
     std::memset(&info, kFill, sizeof(info));
     const int termed = sceNetCtlGetInfoV6(1, &info);
     Require(termed == first);
     Require(sceNetCtlGetInfoV6(1, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlInit() == 0);
-    Require(sceNetCtlGetResultV6(1, nullptr) == kErrInvalidAddr);
-    resultCode = 0x5a5a5a5a;
-    Require(sceNetCtlGetResultV6(1, &resultCode) == 0);
-    Require(resultCode == 0);
+    {
+        int resultCode = 0x5a5a5a5a;
+        bool threw = false;
+        try {
+            sceNetCtlGetResult(0, &resultCode);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+        Require(resultCode == 0x5a5a5a5a);
+
+        threw = false;
+        try {
+            sceNetCtlGetResultV6(0, &resultCode);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+        Require(resultCode == 0x5a5a5a5a);
+        Require(sceNetCtlGetResultV6(1, nullptr) == kErrInvalidAddr);
+        Require(sceNetCtlGetResultV6(1, &resultCode) == 0);
+        Require(resultCode == 0);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(&ClobberWriteErrno);
+        int stateOut = -1;
+        errno = 71;
+        Require(sceNetCtlGetResult(1, &resultCode) == 0 && resultCode == 0 && errno == 71);
+        errno = 71;
+        Require(sceNetCtlGetState(&stateOut) == 0 && errno == 71);
+        errno = 71;
+        Require(sceNetCtlGetStateV6(&stateOut) == 0 && errno == 71);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    }
     std::memset(&info, kFill, sizeof(info));
     Require(sceNetCtlGetInfoV6(1, &info) == first);
 
