@@ -165,11 +165,16 @@ static void TestAudio3dChainEncoders() {
     Require(sceAcmChain_Audio3dPO1_Activate(&batch, 0, chain) == BadPointer && batch.offset == 0 && commands[0] == std::byte{0xCC});
     std::memcpy(chain + 0x20, &chain20, sizeof(chain20));
     std::memcpy(chain + 0x50, &chain50, sizeof(chain50));
-    batch = {commands, 0, 55};
-    Require(sceAcmChain_Audio3dPO1_Activate(&batch, 0, chain) == BatchFull && batch.offset == 0);
-    Require(commands[0] == std::byte{0xCC});
-    batch = {commands, 0, 23};
-    Require(sceAcmChain_Audio3dPO1_Activate(&batch, 1, chain) == BatchFull && batch.offset == 0);
+    for (const std::size_t shortSize : {std::size_t{16}, std::size_t{24}, std::size_t{48}, std::size_t{55}}) {
+        batch = {commands, 0, shortSize};
+        Require(sceAcmChain_Audio3dPO1_Activate(&batch, 0, chain) == BatchFull && batch.offset == 0);
+        Require(commands[0] == std::byte{0xCC});
+    }
+    for (const std::size_t shortSize : {std::size_t{8}, std::size_t{16}, std::size_t{23}}) {
+        batch = {commands, 0, shortSize};
+        Require(sceAcmChain_Audio3dPO1_Activate(&batch, 1, chain) == BatchFull && batch.offset == 0);
+        Require(commands[0] == std::byte{0xCC});
+    }
     batch = {commands, 0, sizeof(commands)};
     Require(sceAcmChain_Audio3dPO1_Activate(&batch, 0, chain) == 0 && batch.offset == 56);
     Require(qword(commands, 0) == 0x200ull && qword(commands, 8) == 0x510Full);
@@ -815,6 +820,9 @@ int main() {
     Require(sceAcmChain_Audio3dPO1_RenderAmbisonicsChannel(readOnlyBatch, 0, 0, 0, memory, memory + 0x100, 1.0f, 0, roChain) == BadPointer && errno == 71 && readOnlyBatch->offset == 0);
     Require(sceAcmChain_Audio3dPO1_RenderPassthroughObject(readOnlyBatch, 0, 0, 0, memory, memory + 0x100, 1.0f, 0, roChain) == BadPointer && errno == 71 && readOnlyBatch->offset == 0);
     Require(sceAcmChain_Audio3dPO2_RenderDelay(readOnlyBatch, 0, 0, memory, memory + 0x100, roDelays, 0, 0, roChain) == BadPointer && errno == 71 && readOnlyBatch->offset == 0);
+    AcmBatchInfo roDelayCommands{acmReadOnlyMem, 0, acmPageSize};
+    errno = 71;
+    Require(sceAcmChain_Audio3dPO2_RenderDelay(&roDelayCommands, 0, 0, memory, memory + 0x100, roDelays, 0, 0, roChain) == BadPointer && errno == 71 && roDelayCommands.offset == 0 && roDelayCommands.buffer_size == acmPageSize);
     AcmBatchInfo roStateBatch{commands, 0, sizeof(commands)};
     void* const readOnlyState = acmReadOnlyMem + 0x100;
     Require(sceAcmChain_Audio3dPO1_RenderAmbisonicsChannel(&roStateBatch, 0, 0, 0, memory, readOnlyState, 1.0f, 0, roChain) == BadPointer && errno == 71 && roStateBatch.offset == 0);

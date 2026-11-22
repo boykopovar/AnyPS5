@@ -306,7 +306,6 @@ int APS5_VABI sceAcmChain_Audio3dPO1_Activate(AcmBatchInfo* batch, std::uint32_t
     if (mode > 1 || !batch || !chain) return SCE_ACM_ERROR_BAD_POINTER;
     AcmBatchInfo localBatch{};
     if (!loadGuest(localBatch, batch)) return SCE_ACM_ERROR_BAD_POINTER;
-    if (!hasBatchRoom(localBatch, 8)) return SCE_ACM_ERROR_BATCH_FULL;
     std::uint16_t size16 = 0;
     if (mode != 1 && !loadGuestAt(size16, chain, 0x50)) return SCE_ACM_ERROR_BAD_POINTER;
     std::uint8_t field4c = 0;
@@ -317,19 +316,19 @@ int APS5_VABI sceAcmChain_Audio3dPO1_Activate(AcmBatchInfo* batch, std::uint32_t
         !loadGuestAt(ptr, chain, 0x20)) {
         return SCE_ACM_ERROR_BAD_POINTER;
     }
-    if (!hasBatchRoom(localBatch, 16)) return SCE_ACM_ERROR_BATCH_FULL;
     const std::uint64_t word0 = 0x200ULL;
     const std::uint64_t word1 = 0x0FULL | (static_cast<std::uint64_t>(field48) << 8);
     if (size16 == 0) {
+        if (!hasBatchRoom(localBatch, 24)) return SCE_ACM_ERROR_BATCH_FULL;
         const std::array<std::uint64_t, 3> words{word0, word1, 0x80AULL};
         return CommitBatchWords(batch, localBatch, words);
     }
     if (ptr == 0) return SCE_ACM_ERROR_BAD_POINTER;
     if (ptr & 0x7f) return SCE_ACM_ERROR_ALIGNMENT;
-    if (!hasBatchRoom(localBatch, 32)) return SCE_ACM_ERROR_BATCH_FULL;
     if (ptr > std::numeric_limits<std::uint64_t>::max() - size16) return SCE_ACM_ERROR_BAD_POINTER;
     const std::uint64_t ptr2 = ptr + size16;
     if (size16 & 0x7f) return SCE_ACM_ERROR_ALIGNMENT;
+    if (!hasBatchRoom(localBatch, 56)) return SCE_ACM_ERROR_BATCH_FULL;
     const std::array<std::uint64_t, 7> words{
         word0,
         word1,
@@ -482,9 +481,14 @@ int APS5_VABI sceAcmChain_Audio3dPO2_RenderDelay(
     if (bufferAddress > std::numeric_limits<std::uint64_t>::max() - localBatch.buffer_size) {
         return SCE_ACM_ERROR_BAD_POINTER;
     }
-    if (!storeGuest(batch, localBatch)) return SCE_ACM_ERROR_BAD_POINTER;
     auto* const cmdPos = reinterpret_cast<void*>(bufferAddress + localBatch.offset);
-    if (!probeGuestWritable<24>(cmdPos)) return SCE_ACM_ERROR_BAD_POINTER;
+    const auto descAddress = bufferAddress + descriptorOffset;
+    auto* const descPos = reinterpret_cast<void*>(descAddress);
+    if (!probeGuestWritable<sizeof(AcmBatchInfo)>(batch) ||
+        !probeGuestWritable<24>(cmdPos) ||
+        !probeGuestWritable<0x80>(descPos)) {
+        return SCE_ACM_ERROR_BAD_POINTER;
+    }
     std::array<std::byte, 0x80> descriptor{};
     const auto putDesc = [&descriptor](std::size_t position, auto value) {
         std::memcpy(descriptor.data() + position, &value, sizeof(value));
@@ -498,13 +502,12 @@ int APS5_VABI sceAcmChain_Audio3dPO2_RenderDelay(
     putDesc(0x20, inputAddress + 0x1800);
     putDesc(0x28, descMode);
     putDesc(0x2c, descWord2c);
-    const auto descAddress = bufferAddress + descriptorOffset;
     const std::array<std::uint64_t, 3> command{
         0x008000000000000DULL,
         descAddress,
         0x0AULL,
     };
-    if (!storeGuest(reinterpret_cast<void*>(descAddress), descriptor) ||
+    if (!storeGuest(descPos, descriptor) ||
         !storeGuest(cmdPos, command)) {
         return SCE_ACM_ERROR_BAD_POINTER;
     }
