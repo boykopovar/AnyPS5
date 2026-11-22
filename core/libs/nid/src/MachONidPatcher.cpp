@@ -157,6 +157,7 @@ Image ParseImage(const std::vector<std::uint8_t>& binary) {
     RequireRange(binary, sizeof(MachHeader64), image.Header.CommandBytes);
     std::size_t cursor = sizeof(MachHeader64);
     const auto end = cursor + image.Header.CommandBytes;
+    bool hasChainedFixups = false;
     for (std::uint32_t index = 0; index < image.Header.CommandCount; ++index) {
         if (cursor + sizeof(LoadCommand) > end) throw std::runtime_error("load command out of bounds");
         const auto command = Read<LoadCommand>(binary, cursor);
@@ -166,7 +167,11 @@ Image ParseImage(const std::vector<std::uint8_t>& binary) {
             minimumSize = sizeof(SegmentCommand64);
             break;
         case kLcDyldExportsTrie:
+            minimumSize = sizeof(LinkeditDataCommand);
+            break;
         case kLcDyldChainedFixups:
+            if (hasChainedFixups) throw std::runtime_error("Mach-O image has more than one chained fixups command");
+            hasChainedFixups = true;
             minimumSize = sizeof(LinkeditDataCommand);
             break;
         case kLcDyldInfo:
