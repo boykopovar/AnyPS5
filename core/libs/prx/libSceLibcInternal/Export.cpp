@@ -617,14 +617,16 @@ int APS5_VABI _CStrftime_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _CStrxfrm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+size_t APS5_VABI _CStrxfrm_nid_postfix(char* destination, const char* source, size_t count) {
+    size_t result = 0;
+    result = strxfrm_nid_postfix(destination, source, count);
+    return result;
 }
 
-int APS5_VABI _CWcsxfrm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+size_t APS5_VABI _CWcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, size_t count) {
+    size_t result = 0;
+    result = wcsxfrm_nid_postfix(destination, source, count);
+    return result;
 }
 
 int APS5_VABI _Closreg_nid_postfix() {
