@@ -115,7 +115,9 @@ bool TranslationContext::sAtomic(const RdnaInstruction& inst, IrOpcode opcode, b
         ? ir.IEqual(ir.Emit(IrOpcode::GetBuiltin, IrOpcodeType(IrOpcode::GetBuiltin), {&ir.Constant(static_cast<std::uint32_t>(StageInputKind::HelperInvocation)), &zero}), zero)
         : always;
     IrValue& lane = ir.Emit(IrOpcode::LaneId, IrOpcodeType(IrOpcode::LaneId), {});
-    IrValue& elected = ir.IEqual(lane, ir.Emit(IrOpcode::ReadFirstLane, IrType::U32, {&lane, &candidate}));
+    IrValue& elected = ir.LogicalAnd(
+        candidate,
+        ir.IEqual(lane, ir.Emit(IrOpcode::ReadFirstLane, IrType::U32, {&lane, &candidate})));
     const bool wide = IrOpcodeType(opcode) == IrType::U64;
     const bool compare = opcode == IrOpcode::AddressAtomicCmpSwap32 || opcode == IrOpcode::AddressAtomicCmpSwap64 || opcode == IrOpcode::BufferAtomicCmpSwap32 || opcode == IrOpcode::BufferAtomicCmpSwap64;
     const auto component = [&](std::uint32_t index) -> IrValue* {

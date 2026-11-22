@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -29,6 +30,7 @@ constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 64;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 constexpr std::size_t CounterBytes = 65536;
+constexpr std::uint32_t DemoteToHelperInvocation = 5379;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -93,7 +95,41 @@ std::array<std::uint32_t, 4> RawDescriptor(const void* data, std::uint32_t bytes
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const GuestCounter& counterMemory, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target) {
+bool AtomicElectionIncludesCandidate(std::span<const std::uint32_t> words) {
+    using Binary = std::array<std::uint32_t, 3>;
+    std::vector<std::uint32_t> ballotPredicates;
+    std::vector<std::uint32_t> shuffles;
+    std::vector<Binary> comparisons;
+    std::vector<Binary> conjunctions;
+    Require(words.size() >= 5u, "smem atomic election: the SPIR-V header is missing");
+    for (std::size_t offset = 5; offset < words.size();) {
+        const auto count = words[offset] >> 16u;
+        Require(count != 0u && count <= words.size() - offset, "smem atomic election: a SPIR-V instruction is truncated");
+        const auto opcode = static_cast<spv::Op>(words[offset] & 0xffffu);
+        if (count == 5u && opcode == spv::OpGroupNonUniformBallot) ballotPredicates.push_back(words[offset + 4u]);
+        if (count == 6u && opcode == spv::OpGroupNonUniformShuffle) shuffles.push_back(words[offset + 2u]);
+        if (count == 5u && (opcode == spv::OpIEqual || opcode == spv::OpLogicalAnd)) {
+            const Binary instruction{words[offset + 2u], words[offset + 3u], words[offset + 4u]};
+            (opcode == spv::OpIEqual ? comparisons : conjunctions).push_back(instruction);
+        }
+        offset += count;
+    }
+    const auto contains = [](const std::vector<std::uint32_t>& values, std::uint32_t id) {
+        return std::find(values.begin(), values.end(), id) != values.end();
+    };
+    std::vector<std::uint32_t> elections;
+    for (const auto& comparison : comparisons) {
+        if (contains(shuffles, comparison[1]) || contains(shuffles, comparison[2])) elections.push_back(comparison[0]);
+    }
+    Require(!ballotPredicates.empty() && !elections.empty(), "smem atomic election: cannot identify the candidate ballot and lane comparison");
+    for (const auto& conjunction : conjunctions) {
+        if ((contains(elections, conjunction[1]) && contains(ballotPredicates, conjunction[2])) ||
+            (contains(elections, conjunction[2]) && contains(ballotPredicates, conjunction[1]))) return true;
+    }
+    return false;
+}
+
+void Draw(AgcDriver::VulkanDevice& device, const GuestCounter& counterMemory, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target, std::uint8_t quadPixelMask) {
     Pixels.fill(std::byte{0});
     counterMemory.memory[0] = 0u;
 
@@ -113,6 +149,7 @@ void Draw(AgcDriver::VulkanDevice& device, const GuestCounter& counterMemory, st
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
     pixel.wave32 = waveSize == 32u;
+    pixel.quadPixelMask = quadPixelMask;
     pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
     pixel.posX = true;
     pixel.posY = true;
@@ -130,6 +167,9 @@ void Draw(AgcDriver::VulkanDevice& device, const GuestCounter& counterMemory, st
     };
     fragment.useCache = false;
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
+    if (quadPixelMask == 0u) {
+        Require(AtomicElectionIncludesCandidate(pixelResult.spirv.Words()), "smem atomic all-helper pixel wave" + std::to_string(waveSize) + ": the atomic election does not include its candidate predicate");
+    }
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
         {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
@@ -165,6 +205,16 @@ void Check(const GuestCounter& counterMemory, std::uint32_t waveSize) {
     Require(counterMemory.memory[0] == 1u, what + ": s_buffer_atomic_add from a wave whose first lane is a helper added " + std::to_string(counterMemory.memory[0]) + " times, expected once");
 }
 
+void CheckAllHelper(const GuestCounter& counterMemory, std::uint32_t waveSize) {
+    const auto what = "smem atomic all-helper pixel wave" + std::to_string(waveSize);
+    std::uint32_t covered = 0;
+    for (std::uint32_t pixel = 0; pixel < Width * Height; ++pixel) {
+        if (std::to_integer<std::uint8_t>(Pixels[pixel * 4u]) == 255u) ++covered;
+    }
+    Require(covered == 0u, what + ": the quad pixel mask left " + std::to_string(covered) + " covered pixels, expected zero");
+    Require(counterMemory.memory[0] == 0u, what + ": s_buffer_atomic_add updated the counter " + std::to_string(counterMemory.memory[0]) + " times, expected zero");
+}
+
 }
 
 int main() {
@@ -180,10 +230,17 @@ int main() {
             std::puts("skipped, the device does not import guest memory");
             return VulkanTestSkipped;
         }
+        const auto& capabilities = device->Target().supportedCapabilities;
+        const bool demote = std::find(capabilities.begin(), capabilities.end(), DemoteToHelperInvocation) != capabilities.end();
         for (const auto waveSize : {64u, 32u}) {
-            Draw(*device, counter, waveSize, device->Target());
+            Draw(*device, counter, waveSize, device->Target(), 0xfu);
             Check(counter, waveSize);
+            if (demote) {
+                Draw(*device, counter, waveSize, device->Target(), 0x0u);
+                CheckAllHelper(counter, waveSize);
+            }
         }
+        if (!demote) std::puts("skipped all-helper waves, the device has no demote to helper invocation");
         std::puts("smem atomic pixel helper tests passed");
         return 0;
     } catch (const std::exception& error) {
