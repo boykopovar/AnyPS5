@@ -15,7 +15,7 @@ endfunction()
 
 function(expect name folder expected)
     set(out "${WORK}/${name}.hpp")
-    execute_process(COMMAND ${CMAKE_COMMAND} -DGIT=${GIT} -DSOURCE=${folder} -DOUTPUT=${out} -P "${SCRIPT}" RESULT_VARIABLE rc)
+    execute_process(COMMAND ${CMAKE_COMMAND} -DGIT=${GIT} -DSOURCE=${folder} -DOUTPUT=${out} -P "${SCRIPT}" COMMAND_ERROR_IS_FATAL ANY)
     file(READ "${out}" text)
     math(EXPR cases "${cases} + 1")
     set(cases ${cases} PARENT_SCOPE)
