@@ -45,8 +45,6 @@ int main() {
     Require(WKBundleNodeHandleCopyVisibleRange() == 0);
     Require(WKBundleNodeHandleGetHTMLInputElementAutoFillAvailable() == 0);
     Require(WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled() == 0);
-    Require(WKBundleNodeHandleGetHTMLInputElementAutoFilled() == 0);
-    Require(WKBundleNodeHandleGetHTMLInputElementAutofilled() == 0);
     Require(WKBundlePageCopyContextMenuAtPointInWindow() == 0);
     Require(WKBundlePageCopyContextMenuItems() == 0);
     Require(WKBundlePageGetBackForwardList() == 0);
@@ -67,9 +65,7 @@ int main() {
     Require(WKContextMenuItemGetUserData() == 0);
     Require(WKContextMenuItemSeparatorItem() == 0);
     Require(WKContextResumeDownload() == 0);
-    Require(WKFrameCanShowMIMEType() == 0);
     Require(WKFrameCreateFrameInfo() == 0);
-    Require(WKFrameIsFrameSet() == 0);
     Require(WKIconDatabaseCopyIconDataForPageURL() == 0);
     Require(WKIconDatabaseCopyIconURLForPageURL() == 0);
     Require(WKKeyValueStorageManagerDeleteAllEntries() == 0);
@@ -82,7 +78,6 @@ int main() {
     Require(WKOpenPanelParametersCopyCapture() == 0);
     Require(WKOpenPanelParametersGetMediaCaptureType() == 0);
     Require(WKPageGetFrameSetLargestFrame() == 0);
-    Require(WKPageGetPaginationLineGridEnabled() == 0);
     Require(WKPageIsMockRealtimeMediaSourceCenterEnabled() == 0);
     Require(WKPlugInInformationReplacementObscuredKey() == 0);
     Require(WKPluginInformationBundleIdentifierKey() == 0);
@@ -100,7 +95,6 @@ int main() {
     Require(WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey() == 0);
     Require(WKPreferencesGetAccelerated2DCanvasEnabled() == 0);
     Require(WKPreferencesGetQTKitEnabled() == 0);
-    Require(WKProtectionSpaceCopyCertificateInfo() == 0);
     Require(_ZN3JSC12isFromJSCodeEPv() == 0);
     Require(_ZN3JSC22optimizeNextInvocationENS_7JSValueE() == static_cast<int>(0x0000000au));
     Require(_ZN3JSC22optimizeNextInvocationEPNS_14JSGlobalObjectEPNS_9CallFrameE() == static_cast<int>(0x0000000au));

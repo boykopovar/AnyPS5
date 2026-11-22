@@ -166,7 +166,7 @@ int APS5_VABI sceOpusCeltEncEncodeWithPriority(OpusCeltEncoder* state, const std
     if (priority < lowestPriority || priority > highestPriority) return encoderError(priorityErrorOffset);
     if (!hasStateMarker(state, codes.stateMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
     if (!acceptedPriorityFrame(guestStateWord(state, codes.stateRateOffset), static_cast<std::uint32_t>(frameSize))) return encoderError(codes.frameErrorOffset);
-    NotImplemented_nid_no_patch(__func__);
+    return library.Encode(state, samples, frameSize, data, maxDataBytes);
 }
 
 int APS5_VABI sceOpusCeltEncEncodeFloatWithPriority(OpusCeltEncoder* state, const float* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
