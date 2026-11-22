@@ -2458,7 +2458,10 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
     const auto view = read(cx, 0x31b + stride);
     const auto slice = view & 0x7ffu;
-    Require(((view >> 13u) & 0x7ffu) == slice, "GCN color views of several array slices are not implemented");
+    const auto lastSlice = (view >> 13u) & 0x7ffu;
+    Require(lastSlice >= slice, "the color view ends before its first slice");
+    const auto exports = find(cx, 0x207);
+    Require(lastSlice == slice || exports == cx.end() || (exports->second & (1u << 18u)) == 0, "GCN layered rendering into several array slices through the vertex render target index is not implemented");
     const auto pitch = ((read(cx, 0x319 + stride) & 0x7ffu) + 1u) * 8u;
     const auto sliceElements = ((read(cx, 0x31a + stride) & 0x3fffffu) + 1u) * 64u;
     color.extent = {pitch, sliceElements / pitch};
