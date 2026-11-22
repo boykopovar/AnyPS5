@@ -410,7 +410,7 @@ export const messages = {
         "faq1Question": "¿Dónde guardo el archivo INI?",
         "faq1Answer": "Pon anyps5-input.ini junto al ejecutable generado del juego. Para otra ruta, usa ANYPS5_INPUT_CONFIG.",
         "faq2Question": "¿Por qué no se captura una tecla?",
-        "faq2Answer": "El navegador o sistema puede interceptarla. Elígela en la lista. Escape cancela la captura; asígnala desde la lista.",
+        "faq2Answer": "El navegador o el sistema puede interceptarla. Elígela en la lista. Escape cancela la captura; asígnala desde la lista.",
         "faq3Question": "¿Se guardan mis cambios solos?",
         "faq3Answer": "Los cambios están en memoria: cópialos o descárgalos antes de recargar. Solo se guarda el idioma. Las acciones no configuradas conservan sus valores predeterminados.",
         "skip": "Saltar al contenido",
