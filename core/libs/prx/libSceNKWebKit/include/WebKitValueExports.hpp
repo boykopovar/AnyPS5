@@ -80,6 +80,8 @@ bool APS5_VABI WKBundleFrameHasHorizontalScrollbar(const void* frameRef);
 bool APS5_VABI WKBundleFrameHasVerticalScrollbar(const void* frameRef);
 bool APS5_VABI WKBundleFrameContainsAnyFormControls(const void* frameRef);
 bool APS5_VABI WKBundleFrameContainsAnyFormElements(const void* frameRef);
+void APS5_VABI WKBundleFrameClearOpener(const void* frameRef);
+void APS5_VABI WKBundleFrameFocus(const void* frameRef);
 std::uint32_t APS5_VABI WKBundleGetTypeID();
 int APS5_VABI WKBundleNumberOfPages(const void* bundleRef, const void* frameRef, double pageWidthInPixels, double pageHeightInPixels);
 bool APS5_VABI WKBundleIsPageBoxVisible(const void* bundleRef, const void* frameRef, int pageIndex);
