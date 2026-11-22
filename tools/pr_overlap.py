@@ -976,9 +976,12 @@ def main(argv=None):
                         help="before writing code, show whether each function is implemented on the base and which open pull requests add it or edit its body")
     parser.add_argument("--repo", help="owner/name; defaults to the upstream of the current checkout")
     parser.add_argument("--jobs", type=int, default=8, help="number of pull request comparisons to run at once")
+    parser.add_argument("--head-repo", help="head repository owner/name for --branch with the same branch name; must be the correct fork because its matching pull request is excluded")
     args = parser.parse_args(argv)
     if sum(map(bool, (args.out, args.branch, args.names))) != 1:
         parser.error("pass exactly one of --out, --branch or --names")
+    if args.head_repo is not None and (not args.branch or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+", args.head_repo) or args.head_repo.split("/", 1)[1] in (".", "..")):
+        parser.error("--head-repo needs --branch and a GitHub owner/name")
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
     global REPO
@@ -996,7 +999,7 @@ def main(argv=None):
             return 0
         if args.branch:
             sha = branch_sha
-            head_branch, head_repo = push_head(args.branch)
+            head_branch, head_repo = (args.branch, args.head_repo) if args.head_repo else push_head(args.branch)
             prs = without_own_pull_request(own(prs, sha), head_branch, head_repo)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)

@@ -10064,18 +10064,6 @@ int APS5_VABI WKViewGetPunchHoles() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKViewSetActive() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKViewSetFocus() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKViewSetSize() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKViewSetViewAccessibilityClient() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -10085,10 +10073,6 @@ int APS5_VABI WKViewSetViewClient() {
 }
 
 int APS5_VABI WKViewSetViewPopupMenuClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKViewSetVisible() {
     NotImplemented_nid_no_patch(__func__);
 }
 

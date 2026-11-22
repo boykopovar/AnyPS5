@@ -139,16 +139,16 @@ class UnbuiltExportTests(unittest.TestCase):
 
     def test_main_reports_exports_hidden_behind_documentation_includes(self):
         root = self.tree({
+            "build/CMakeCache.txt": "",
             "core/libs/prx/libSceExample/Built.cpp": '/* example\n#include "Forgotten.cpp"\n*/\n',
             "core/libs/prx/libSceExample/Forgotten.cpp": "int APS5_VABI forgotten() { return 7; }\n",
         })
-        for arguments in (["build"], ["build", "--json"]):
+        (root / "build/CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={root.as_posix()}\n", encoding="utf-8")
+        for arguments in ([str(root / "build")], [str(root / "build"), "--json"]):
             with self.subTest(arguments=arguments), \
-                    patch.object(check_test_registration, "__file__", str(root / "tools/check_test_registration.py")), \
                     patch.object(check_test_registration, "built", return_value={"covered_tests"}), \
                     patch.object(check_test_registration, "registered", return_value={"covered_tests"}), \
                     patch.object(check_test_registration, "compiled", return_value={(root / "core/libs/prx/libSceExample/Built.cpp").resolve()}), \
-                    patch.object(check_test_registration, "skipped_libraries", return_value=set()), \
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(check_test_registration.main(arguments), 1)
             if "--json" in arguments:
@@ -188,9 +188,10 @@ class UnbuiltExportTests(unittest.TestCase):
                     compiled[0]: "int parse() { return 0; }\n",
                     compiled[1]: "int input() { return 0; }\n",
                 })
+                with (root / "build/CMakeCache.txt").open("a", encoding="utf-8") as cache:
+                    cache.write(f"CMAKE_HOME_DIRECTORY:INTERNAL={root.as_posix()}\n")
                 for arguments in ([str(root / "build")], [str(root / "build"), "--json"]):
                     with self.subTest(flag=flag, value=value, arguments=arguments[1:]), \
-                            patch.object(check_test_registration, "__file__", str(root / "tools/check_test_registration.py")), \
                             patch.object(check_test_registration, "built", return_value={"example_tests"}), \
                             patch.object(check_test_registration, "registered", return_value={"example_tests"}), \
                             patch.object(check_test_registration, "compiled", return_value={(root / name).resolve() for name in compiled}), \
@@ -234,6 +235,7 @@ class UnbuiltExportTests(unittest.TestCase):
                     patch.object(check_test_registration, "registered", return_value={"example_tests"}), \
                     patch.object(check_test_registration, "compiled", return_value=set()), \
                     patch.object(check_test_registration, "skipped_libraries", return_value=set()), \
+                    patch.object(check_test_registration, "source_directory", return_value=Path.cwd()), \
                     patch.object(check_test_registration, "unbuilt_exports", return_value=result), \
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(check_test_registration.main(["build"]), expected)
@@ -244,6 +246,7 @@ class UnbuiltExportTests(unittest.TestCase):
                 patch.object(check_test_registration, "registered", return_value={"example_tests"}), \
                 patch.object(check_test_registration, "compiled", return_value=set()), \
                 patch.object(check_test_registration, "skipped_libraries", return_value={"libSceAddressSanitizer"}), \
+                patch.object(check_test_registration, "source_directory", return_value=Path.cwd()), \
                 patch.object(check_test_registration, "unbuilt_exports", return_value=[]), \
                 contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(check_test_registration.main(["build"]), 0)
