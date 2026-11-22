@@ -26,6 +26,10 @@ static constexpr std::size_t R12Offset = 0xa0;
 static constexpr std::size_t R13Offset = 0xa8;
 static constexpr std::size_t Xmm8Offset = 0x140 + 160 + 8 * 16;
 static constexpr std::size_t MxcsrOffset = 0x140 + 24;
+static constexpr std::size_t FpformatOffset = 0x110;
+static constexpr std::size_t OwnedfpOffset = 0x118;
+static constexpr std::uint64_t MC_FPFMT_XMM = 0x10002;
+static constexpr std::uint64_t MC_FPOWNED_FPU = 0x20001;
 static constexpr std::uint32_t FlushToZero = 0x8000;
 static constexpr std::uint32_t ReservedMxcsrBit = 0x10000;
 static constexpr int StartingRounds = 50;
@@ -45,12 +49,18 @@ static std::atomic<bool> patchContext{false};
 static std::atomic<std::uint64_t> observedR13{0};
 static std::atomic<std::uint64_t> observedXmm8{0};
 static std::atomic<std::uint32_t> observedMxcsr{0};
+static std::atomic<int> unexpectedFpDescriptors{0};
 
 static void APS5_VABI Handler(int signum, void* context) {
     Require(signum == GUEST_SIGUSR1);
     auto* bytes = static_cast<unsigned char*>(context);
     std::uint64_t rsp = 0;
     std::memcpy(&rsp, bytes + 0xf8, sizeof(rsp));
+    std::uint64_t fpformat = 0;
+    std::uint64_t ownedfp = 0;
+    std::memcpy(&fpformat, bytes + FpformatOffset, sizeof(fpformat));
+    std::memcpy(&ownedfp, bytes + OwnedfpOffset, sizeof(ownedfp));
+    if (fpformat != MC_FPFMT_XMM || ownedfp != MC_FPOWNED_FPU) unexpectedFpDescriptors.fetch_add(1);
     if (patchContext.load()) {
         std::uint64_t value = 0;
         std::memcpy(&value, bytes + R13Offset, sizeof(value));
@@ -834,6 +844,7 @@ int main() {
     ExpectDelivery(spinBefore, spinningId.load());
     Require(scePthreadJoin(spinningThread, nullptr) == 0);
     patchContext.store(false);
+    Require(unexpectedFpDescriptors.load() == 0);
     Require(observedR13.load() == SpinMarker && observedXmm8.load() == SpinMarker);
     Require(spin.r12 == PatchedR12 && spin.xmm8 == PatchedXmm8);
     Require(spin.mxcsr == (observedMxcsr.load() | FlushToZero));

@@ -180,6 +180,8 @@ void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucont
     m.trapno = trap.number;
     m.addr = trap.address;
     m.err = trap.error;
+    m.fpformat = FpFormatXmm;
+    m.ownedfp = FpOwnedFpu;
     const std::uint32_t mxcsrMask = FpWord(m, MxcsrMaskOffset);
     LogGuestExceptionContext(signum, m);
     handler(signum, &ucontext);

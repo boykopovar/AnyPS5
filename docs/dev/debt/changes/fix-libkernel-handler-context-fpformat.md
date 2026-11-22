@@ -1,0 +1,5 @@
+# libkernel
+
+## change builds the handler's
+
+- [sceKernelRaiseException](../../../core/libs/prx/libkernel/System/src/Exception.cpp) handler contexts are verified on the console only in the fields PS5Util reads; `mc_fpformat` and `mc_ownedfp` are not measured. A handler leaving through `sigreturn` or `setcontext` unblocks every guest signal on its thread, as `uc_sigmask` is empty where FreeBSD's `sendsig` saves the old mask; after a raise it keeps host SIGUSR1 blocked on Linux and macOS, losing later raises to that thread, and on Windows, after a raise on the calling thread or in a libkernel wait, resumes before the delivery and runs again (untested). Every handler context has `getcontext`'s layout (`mcontext` at 0x40, `mc_rsp` at 0xf8), sets `mc_fpformat` and `mc_ownedfp` to `_MC_FPFMT_XMM` and `_MC_FPOWNED_FPU` (FreeBSD reports `_MC_FPOWNED_PCB` when the FPU state was not live) and leaves `mc_flags` 0, where FreeBSD sets `_MC_HASSEGS` and, with XSAVE, `_MC_HASFPXSTATE`. Returning loads `mc_fpstate` whatever the two fields say
