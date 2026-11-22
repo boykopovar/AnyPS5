@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libSceIcu/DataMemoryOwnership.hpp"
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
 #include <array>
 #include <cerrno>
@@ -177,6 +178,7 @@ void Heap() {
     Require(status == U_ZERO_ERROR);
     Require(data != nullptr);
     Require(data->heapAllocated);
+    IcuDataMemoryOwnership::Register(data);
 
 #if defined(_WIN32)
     HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 4096, nullptr);
@@ -213,6 +215,16 @@ void Heap() {
 #endif
 }
 
+void ForgedOwnershipFlag() {
+    GuardedData guarded{};
+    guarded.before.fill(0xa5);
+    guarded.after.fill(0x5a);
+    std::memset(&guarded.data, 0, sizeof(guarded.data));
+    guarded.data.heapAllocated = 1;
+    guarded.data.length = 42;
+    udata_close_nid_postfix(&guarded.data);
+    RequireInitialized(guarded.data);
+    RequireGuards(guarded);
 }
 
 void Run() {
@@ -223,6 +235,9 @@ void Run() {
     Mapping();
     ReadOnlyWriteback();
     Heap();
+    ForgedOwnershipFlag();
+}
+
 }
 
 }

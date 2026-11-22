@@ -10,6 +10,7 @@
 // https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/udatamem.cpp
 
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
+#include "prx/libSceIcu/DataMemoryOwnership.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cmemory.h>
 #include <cerrno>
@@ -51,16 +52,17 @@ void APS5_VABI udata_close_nid_postfix(UDataMemory* data) {
     }
 #endif
 
-    if (local.heapAllocated) {
+    if (IcuDataMemoryOwnership::TryTake(data)) {
         uprv_free(data);
-    } else {
-        UDataMemory cleared{};
-        cleared.length = -1;
-        const int savedCopyErrno = errno;
-        const bool written = GuestCopyOut_nid_no_patch(data, &cleared, sizeof(cleared));
-        errno = savedCopyErrno;
-        if (!written) throw std::invalid_argument(__func__);
+        return;
     }
+
+    UDataMemory cleared{};
+    cleared.length = -1;
+    const int savedCopyErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(data, &cleared, sizeof(cleared));
+    errno = savedCopyErrno;
+    if (!written) throw std::invalid_argument(__func__);
 }
 
 }

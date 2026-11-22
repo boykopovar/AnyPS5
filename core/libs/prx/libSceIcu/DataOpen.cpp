@@ -2,6 +2,8 @@
 #include "prx/libSceIcu/DataName.hpp"
 #include "prx/libc/include/General.hpp"
 #include <unicode/udata.h>
+#include "prx/libSceIcu/DataMemoryOwnership.hpp"
+#include <algorithm>
 #include <bit>
 #include <cerrno>
 #include <exception>
@@ -62,7 +64,9 @@ UDataMemory* OpenData(const char* path, const char* type, const char* name, std:
         const bool written = GuestCopyOut_nid_no_patch(status, &outgoing, sizeof(outgoing));
         if (!written) NotImplemented_nid_no_patch(caller);
     }
-    return data.release();
+    auto* released = data.release();
+    if (released) IcuDataMemoryOwnership::Register(released);
+    return released;
 }
 
 }
