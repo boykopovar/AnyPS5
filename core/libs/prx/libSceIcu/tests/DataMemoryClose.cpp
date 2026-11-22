@@ -111,9 +111,12 @@ void Mapping() {
 
     MEMORY_BASIC_INFORMATION information{};
     Require(VirtualQuery(view, &information, sizeof(information)) == sizeof(information));
-    Require(information.State == MEM_FREE);
+    Require(information.State == MEM_COMMIT);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
+
+    UnmapViewOfFile(view);
+    CloseHandle(mapping);
 }
 #else
 void Mapping() {
@@ -130,16 +133,15 @@ void Mapping() {
     guarded.data.length = static_cast<std::int32_t>(pageSize);
     udata_close_nid_postfix(&guarded.data);
 
-    errno = 0;
 #if defined(__APPLE__)
-    Require(msync(mapping, pageSize, MS_ASYNC) == -1);
+    Require(msync(mapping, pageSize, MS_ASYNC) != -1);
 #else
     unsigned char residency = 0;
-    Require(mincore(mapping, pageSize, &residency) == -1);
+    Require(mincore(mapping, pageSize, &residency) == 0);
 #endif
-    Require(errno == ENOMEM);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
+    Require(munmap(mapping, pageSize) == 0);
 }
 #endif
 
@@ -227,6 +229,58 @@ void ForgedOwnershipFlag() {
     RequireGuards(guarded);
 }
 
+#if !defined(_WIN32)
+void ForgedMapping() {
+    const auto pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+
+    GuardedData guarded{};
+    guarded.before.fill(0xa5);
+    guarded.after.fill(0x5a);
+    std::memset(&guarded.data, 0, sizeof(guarded.data));
+    guarded.data.pHeader = static_cast<const DataHeader*>(mapping);
+    guarded.data.mapAddr = mapping;
+    guarded.data.map = static_cast<char*>(mapping) + pageSize;
+    guarded.data.length = static_cast<std::int32_t>(pageSize);
+
+    udata_close_nid_postfix(&guarded.data);
+
+    unsigned char residency = 0;
+    Require(mincore(mapping, pageSize, &residency) == 0);
+    RequireInitialized(guarded.data);
+    RequireGuards(guarded);
+    Require(munmap(mapping, pageSize) == 0);
+}
+#else
+void ForgedMapping() {
+   HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 4096, nullptr);
+    Require(mapping != nullptr);
+    void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, 4096);
+    Require(view != nullptr);
+
+    GuardedData guarded{};
+    guarded.before.fill(0xa5);
+    guarded.after.fill(0x5a);
+    std::memset(&guarded.data, 0, sizeof(guarded.data));
+    guarded.data.pHeader = static_cast<const DataHeader*>(view);
+    guarded.data.mapAddr = view;
+    guarded.data.map = mapping;
+    guarded.data.length = 4096;
+
+    udata_close_nid_postfix(&guarded.data);
+
+    MEMORY_BASIC_INFORMATION information{};
+    Require(VirtualQuery(view, &information, sizeof(information)) == sizeof(information));
+    Require(information.State == MEM_COMMIT);
+    RequireInitialized(guarded.data);
+    RequireGuards(guarded);
+
+    UnmapViewOfFile(view);
+    CloseHandle(mapping);
+}
+#endif
+
 void Run() {
     Null();
     ThrowUnreadable();
@@ -236,6 +290,7 @@ void Run() {
     ReadOnlyWriteback();
     Heap();
     ForgedOwnershipFlag();
+    ForgedMapping();
 }
 
 }
