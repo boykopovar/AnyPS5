@@ -328,7 +328,8 @@ def benchmark_context(summary):
     metadata = summary["metadata"]
     context = {name: metadata.get(name) for name in
                ("gpu", "driver", "os", *IDENTITY_STRINGS, *IDENTITY_INTEGERS)}
-    context.update({f"env.{name}": value for name, value in metadata["env"].items()})
+    context.update({f"env.{name}": value for name, value in metadata["env"].items()
+                    if name != "APS5_TRACE_DIR"})
     context["selection.ordinals"] = [row["ordinal"] for row in summary["intervals"]]
     context["selection.resolutions"] = [row["resolution"] for row in summary["intervals"]]
     return context
