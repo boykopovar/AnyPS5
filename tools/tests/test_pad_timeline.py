@@ -250,7 +250,10 @@ class TimelineTests(unittest.TestCase):
             timeline.write_text(original, encoding="utf-8")
             self.assertEqual(self.run_cli(timeline, timeline).returncode, 2)
             linked = root / "hardlink"
-            os.link(timeline, linked)
+            try:
+                os.link(timeline, linked)
+            except (OSError, NotImplementedError):
+                self.skipTest("hard links are unavailable")
             self.assertEqual(self.run_cli(timeline, linked).returncode, 2)
             self.assertEqual(timeline.read_text(encoding="utf-8"), original)
 
