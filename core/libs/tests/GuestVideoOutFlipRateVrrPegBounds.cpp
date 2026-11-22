@@ -46,10 +46,19 @@ static bool ThrowsVrrUnpeg(int handle) {
     return false;
 }
 
+static bool ThrowsVrrStatusFlagsPrivilege() {
+    try {
+        sceVideoOutAddVrrStatusFlagsPrivilege();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
 int main() {
     VideoOutTestEnvironment environment;
 
-    Require(sceVideoOutAddVrrStatusFlagsPrivilege() == 0);
+    Require(ThrowsVrrStatusFlagsPrivilege());
 
     const int unopenedHandles[] = {-1, 0, 42, 9999, 0x7FFFFFFF};
     for (const int unopened : unopenedHandles) {

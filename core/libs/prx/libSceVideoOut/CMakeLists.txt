@@ -570,6 +570,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(video_out_vrr_status_flags_privilege_tests tests/VrrStatusFlagsPrivilege.cpp)
+    target_include_directories(video_out_vrr_status_flags_privilege_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(video_out_vrr_status_flags_privilege_tests PRIVATE libSceVideoOut libkernel libc)
+    configure_windows_unwind(video_out_vrr_status_flags_privilege_tests)
+    add_test(NAME video_out_vrr_status_flags_privilege COMMAND video_out_vrr_status_flags_privilege_tests)
+    set_tests_properties(video_out_vrr_status_flags_privilege PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(video_out_vrr_status_flags_privilege PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(video_out_hdr_probe_tests tests/HdrProbe.cpp)
     target_include_directories(video_out_hdr_probe_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
     target_link_libraries(video_out_hdr_probe_tests PRIVATE libSceVideoOut libSceAgcDriver libc ${videoOutSdl})

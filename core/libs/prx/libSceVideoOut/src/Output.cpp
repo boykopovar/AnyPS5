@@ -605,7 +605,7 @@ int APS5_VABI sceVideoOutVrrPegToFixedRate(int handle, uint64_t arg1, uint64_t a
 }
 
 int APS5_VABI sceVideoOutAddVrrStatusFlagsPrivilege() {
-    return 0;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }
