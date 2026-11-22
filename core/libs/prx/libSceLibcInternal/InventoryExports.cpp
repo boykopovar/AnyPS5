@@ -594,10 +594,9 @@ void APS5_VABI libSceLibcInternalInventory_145_nid_no_patch(void*) {
 }
 APS5_EXPORT("kxXCvcat1cM", libSceLibcInternalInventory_145_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_146_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZNSt8ios_base4InitD2Ev_nid_postfix(void*) {
+    ReleaseStandardStreamInit(narrowStreamInitCount);
 }
-APS5_EXPORT("bxLH5WHgMBY", libSceLibcInternalInventory_146_nid_no_patch);
 
 int APS5_VABI libSceLibcInternalInventory_147_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);

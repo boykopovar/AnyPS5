@@ -342,6 +342,23 @@ class MainTests(unittest.TestCase):
         self.assertIn("bug_report:", err)
         self.assertFalse((self.root / "b.zip").exists())
 
+    def test_non_ascii_paths_with_cp1252_stdio_are_reported_as_utf8(self):
+        env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+        out = self.root / "bundle-\u2603.zip"
+        success = subprocess.run(
+            [sys.executable, bug_report.__file__, "--report", str(self.report), "--log", "", "--input-config", "", "--out", str(out)],
+            env=env, capture_output=True, timeout=5)
+        self.assertEqual(success.returncode, 0, success.stderr.decode("utf-8", errors="replace"))
+        self.assertTrue(out.is_file())
+        self.assertIn(out.name, success.stdout.decode("utf-8"))
+
+        missing = self.root / "missing-\u2603.json"
+        failure = subprocess.run(
+            [sys.executable, bug_report.__file__, "--report", str(missing), "--log", "", "--input-config", "", "--out", str(self.root / "unused.zip")],
+            env=env, capture_output=True, timeout=5)
+        self.assertEqual(failure.returncode, 1)
+        self.assertIn(missing.name, failure.stderr.decode("utf-8"))
+
 
 class IdentityTests(unittest.TestCase):
     def test_host_is_cut_at_the_first_dot(self):
