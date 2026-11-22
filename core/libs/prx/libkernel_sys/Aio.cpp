@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/LibKernelSysProviders.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -123,7 +124,7 @@ Aio& Instance() {
 }
 
 int Fail(int error) {
-    *__error_nid_postfix() = error;
+    *__error_nid_no_patch() = error;
     return -1;
 }
 
@@ -146,11 +147,11 @@ std::int64_t Fetch(const GuestAiocb* user, std::int64_t GuestAiocb::*member) {
 
 void Run(Job& job) {
     std::int64_t result = 0;
-    if (job.opcode == LioRead) result = job.bytes == 0 ? 0 : pread_nid_postfix(job.descriptor, job.buffer, job.bytes, job.offset);
-    else if (job.opcode == LioWrite) result = PosixPwrite_nid_no_patch(job.descriptor, job.buffer, job.bytes, job.offset);
-    else result = fsync_nid_postfix(job.descriptor);
+    if (job.opcode == LioRead) result = job.bytes == 0 ? 0 : pread_nid_no_patch(job.descriptor, job.buffer, job.bytes, job.offset);
+    else if (job.opcode == LioWrite) result = pwrite_nid_no_patch(job.descriptor, job.buffer, job.bytes, job.offset);
+    else result = fsync_nid_no_patch(job.descriptor);
     job.status = result < 0 ? -1 : result;
-    job.error = result < 0 ? *__error_nid_postfix() : 0;
+    job.error = result < 0 ? *__error_nid_no_patch() : 0;
 }
 
 std::uint64_t SendSignal(int guest, std::int32_t code, std::int64_t value, std::int64_t thread, bool directed) {
@@ -324,13 +325,13 @@ int Queue(GuestAiocb* user, int opcode) {
     if (notify != SigevKevent && notify != SigevSignal && notify != SigevThreadId && notify != SigevNone) return fail(GuestEinval);
     if ((notify == SigevSignal || notify == SigevThreadId) && (request.sigevent.signo <= 0 || request.sigevent.signo > SignalMax))
         return Fail(GuestEinval);
-    const int flags = fcntl_nid_postfix(request.fildes, GetFlags);
+    const int flags = fcntl_nid_no_patch(request.fildes, GetFlags);
     if (flags < 0) return fail(GuestEbadf);
     const int access = flags & AccessMode;
     if (opcode == LioRead && access != 0 && access != ReadWrite) return fail(GuestEbadf);
     if (opcode == LioWrite && access != WriteOnly && access != ReadWrite) return fail(GuestEbadf);
     FileStat status{};
-    if (_fstat_nid_postfix(request.fildes, &status) != 0) return fail(GuestEbadf);
+    if (_fstat_nid_no_patch(request.fildes, &status) != 0) return fail(GuestEbadf);
     const auto type = static_cast<std::uint16_t>(status.st_mode & TypeMask);
     const bool ksem = IsKsemDescriptor_nid_no_patch(request.fildes);
     const bool vnode = !ksem && type != 0 && type != TypeFifo && type != TypeSocket;
@@ -503,7 +504,7 @@ std::int64_t APS5_VABI aio_waitcomplete_nid_postfix(GuestAiocb** result, const K
 }
 
 int APS5_VABI aio_cancel_nid_postfix(int descriptor, GuestAiocb* aiocb) {
-    if (fcntl_nid_postfix(descriptor, GetFlags) < 0) return Fail(GuestEbadf);
+    if (fcntl_nid_no_patch(descriptor, GetFlags) < 0) return Fail(GuestEbadf);
     auto& aio = Instance();
     std::lock_guard lock(aio.lock);
     int cancelled = 0;
