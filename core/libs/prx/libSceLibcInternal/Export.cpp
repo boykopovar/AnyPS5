@@ -884,18 +884,26 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
     std::vector<Rule> rules;
     std::uint8_t lastYear = 0;
 
-    while (readByte(s) != '\0') {
-        if (readByte(s) == sep) {
+    while (true) {
+        const char head = readByte(s);
+        if (head == '\0') {
+            break;
+        }
+        if (head == sep) {
             return nullptr;
         }
 
         std::uint8_t ruleYear = lastYear;
-        if (readByte(s) == '(') {
+        if (head == '(') {
             ++s;
             int yearVal = 0;
             int digits = 0;
-            while (readByte(s) >= '0' && readByte(s) <= '9') {
-                yearVal = yearVal * 10 + (readByte(s) - '0');
+            while (true) {
+                const char digit = readByte(s);
+                if (digit < '0' || digit > '9') {
+                    break;
+                }
+                yearVal = yearVal * 10 + (digit - '0');
                 ++digits;
                 ++s;
                 if (digits > 4) {
@@ -912,9 +920,13 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
 
         int dateDigits = 0;
         char dateBuf[7] = {};
-        while (readByte(s) >= '0' && readByte(s) <= '9') {
+        while (true) {
+            const char digit = readByte(s);
+            if (digit < '0' || digit > '9') {
+                break;
+            }
             if (dateDigits < 6) {
-                dateBuf[dateDigits] = readByte(s);
+                dateBuf[dateDigits] = digit;
             }
             ++dateDigits;
             ++s;
@@ -939,13 +951,14 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
         }
 
         std::uint8_t suffixByte = 0;
-        if (readByte(s) == '+' || readByte(s) == '-') {
-            char sign = readByte(s);
+        const char sign = readByte(s);
+        if (sign == '+' || sign == '-') {
             ++s;
-            if (readByte(s) < '0' || readByte(s) > '6') {
+            const char weight = readByte(s);
+            if (weight < '0' || weight > '6') {
                 return nullptr;
             }
-            int w = readByte(s) - '0';
+            int w = weight - '0';
             ++s;
             int v = (w == 0) ? 7 : w;
             if (sign == '+') {
@@ -955,7 +968,8 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
             }
         }
 
-        if (readByte(s) != '\0' && readByte(s) != sep) {
+        const char stop = readByte(s);
+        if (stop != '\0' && stop != sep) {
             return nullptr;
         }
 
@@ -967,7 +981,7 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
         r.year = ruleYear;
         rules.push_back(r);
 
-        if (readByte(s) == sep) {
+        if (stop == sep) {
             ++s;
             if (readByte(s) == '\0') {
                 return nullptr;
