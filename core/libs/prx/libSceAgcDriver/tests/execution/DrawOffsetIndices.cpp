@@ -513,7 +513,7 @@ std::string CheckMeshReuseIndirectRouting(Fixture& fixture) {
                 draw.indirect->baseVertexSgpr = -1;
                 draw.indirect->startInstanceSgpr = -1;
                 const auto path = AgcDriver::DriverDetail::Driver::ClassifyIndirectDraw(vertex, state, Program(userData), fixture.device, draw, false);
-                const std::optional<Path> expected = !reuse && indexed && count == 1u ? std::nullopt : std::optional{Path::NonVertexPath};
+                const std::optional<Path> expected = !reuse && count == 1u ? std::nullopt : std::optional{Path::NonVertexPath};
                 const auto label = std::string(reuse ? "reuse" : "ordinary") + (indexed ? " indexed" : " non-indexed") + " mesh, " + std::to_string(count) + " records";
                 std::cout << label << ": " << PathName(path) << '\n';
                 if (path != expected) failures += label + ": expected " + PathName(expected) + ", got " + PathName(path) + "\n";
