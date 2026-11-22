@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <new>
 #include <stdexcept>
 
 namespace {
@@ -83,11 +84,22 @@ int main() {
     RequireFreed(second);
 
     const auto beforeFailure = string.bytes;
-    try {
-        Reserve(&string, std::numeric_limits<std::uint64_t>::max());
-        Require(false, "oversized reserve should throw a guest length error");
-    } catch (const std::length_error&) {
-        Require(string.bytes == beforeFailure, "oversized reserve modified the string");
+    constexpr auto maxCapacity = std::numeric_limits<std::uint64_t>::max() - 17u;
+    for (const auto capacity : {std::uint64_t{1} << 63u, maxCapacity}) {
+        try {
+            Reserve(&string, capacity);
+            Require(false, "an impractically large reserve should fail allocation");
+        } catch (const std::bad_alloc&) {
+            Require(string.bytes == beforeFailure, "allocation failure modified the string");
+        }
+    }
+    for (const auto capacity : {maxCapacity + 1u, std::numeric_limits<std::uint64_t>::max()}) {
+        try {
+            Reserve(&string, capacity);
+            Require(false, "oversized reserve should throw a guest length error");
+        } catch (const std::length_error&) {
+            Require(string.bytes == beforeFailure, "oversized reserve modified the string");
+        }
     }
     Destroy(&string);
     RequireFreed(third);
