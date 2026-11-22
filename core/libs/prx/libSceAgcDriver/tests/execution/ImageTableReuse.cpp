@@ -283,31 +283,52 @@ bool RunEntryMemo(AgcDriver::VulkanDevice& device, const GuestBlock& block, cons
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    const auto build = [&](std::uint64_t reused, std::uint64_t resolved, std::uint64_t memoHits, const std::string& what) {
-        const auto before = AgcDriver::Graphics::ImageTableReuses();
-        auto resources = std::make_shared<ShaderResources>(context, shader);
-        const auto after = AgcDriver::Graphics::ImageTableReuses();
-        const auto reusedNow = after.reused - before.reused;
-        const auto resolvedNow = after.resolved - before.resolved;
-        const auto memoNow = after.entryMemoHits - before.entryMemoHits;
-        Require(reusedNow == reused && resolvedNow == resolved && memoNow == memoHits, "image table entry memo: " + what + ": " + std::to_string(reusedNow) + " reused, " + std::to_string(resolvedNow) + " resolved, " + std::to_string(memoNow) + " memo hits; expected " + std::to_string(reused) + ", " + std::to_string(resolved) + " and " + std::to_string(memoHits));
-        Require(resources->SampledTextures().size() == Records, "image table entry memo: " + what + ": the build does not hold one texture per table entry");
-        return resources;
+    struct Built {
+        std::shared_ptr<ShaderResources> resources;
+        std::uint64_t reused = 0;
+        std::uint64_t resolved = 0;
+        std::uint64_t memoHits = 0;
     };
-    const auto first = build(0, 1, 0, "the first build");
-    const auto second = build(1, 0, 0, "the second build, which checks the cache by key");
-    const auto third = build(1, 0, 1, "the third build, with no cache entry erased since the second");
-    Require(third->SampledTextures() == first->SampledTextures(), "image table entry memo: the build through the memo holds other textures than the build that resolved the table");
+    const auto make = [&](const std::string& what) {
+        const auto before = AgcDriver::Graphics::ImageTableReuses();
+        Built built{std::make_shared<ShaderResources>(context, shader)};
+        const auto after = AgcDriver::Graphics::ImageTableReuses();
+        built.reused = after.reused - before.reused;
+        built.resolved = after.resolved - before.resolved;
+        built.memoHits = after.entryMemoHits - before.entryMemoHits;
+        Require(built.resources->SampledTextures().size() == Records, "image table entry memo: " + what + ": the build does not hold one texture per table entry");
+        Require(built.reused + built.resolved == 1u, "image table entry memo: " + what + ": the build reused " + std::to_string(built.reused) + " and resolved " + std::to_string(built.resolved) + " tables, not one table");
+        return built;
+    };
+    const auto describe = [](const Built& built) { return std::to_string(built.reused) + " reused, " + std::to_string(built.resolved) + " resolved, " + std::to_string(built.memoHits) + " memo hits"; };
+    const auto build = [&](std::uint64_t reused, std::uint64_t memoHits, const std::string& what) {
+        auto built = make(what);
+        Require(built.reused == reused && built.memoHits == memoHits, "image table entry memo: " + what + ": " + describe(built) + "; expected " + std::to_string(reused) + " reused and " + std::to_string(memoHits) + " memo hits");
+        return built.resources;
+    };
+    const auto settle = [&](const std::string& what) {
+        for (std::uint64_t attempt = 0; attempt <= CpuWriteResolutions; ++attempt) {
+            auto built = make(what);
+            Require(built.memoHits == 0u, "image table entry memo: " + what + ": the memo served a build before any reuse checked the cache by key (" + describe(built) + ")");
+            if (built.reused == 1u) return built.resources;
+        }
+        Require(false, "image table entry memo: " + what + ": the table was not reused within " + std::to_string(CpuWriteResolutions + 1u) + " builds after it was resolved");
+        return std::shared_ptr<ShaderResources>{};
+    };
+    const auto first = build(0, 0, "the first build");
+    const auto second = settle("the first reuse, which checks the cache by key");
+    const auto third = build(1, 1, "the next build, with no cache entry erased since the first reuse");
+    Require(third->SampledTextures() == second->SampledTextures(), "image table entry memo: the build through the memo holds other textures than the reuse that checked the cache by key");
     AgcDriver::Graphics::ClearCachedTextures(device.Device());
-    const auto cleared = build(0, 1, 0, "the build after the sampled-texture cache was cleared");
+    const auto cleared = build(0, 0, "the build after the sampled-texture cache was cleared");
     for (std::size_t texture = 0; texture < Records; ++texture) Require(cleared->SampledTextures()[texture] != first->SampledTextures()[texture], "image table entry memo: the build after the cache was cleared kept texture " + std::to_string(texture) + " of the erased entries");
-    const auto again = build(1, 0, 0, "the first reuse after the clear, which checks the cache by key");
-    const auto memo = build(1, 0, 1, "the second reuse after the clear");
-    Require(memo->SampledTextures() == cleared->SampledTextures(), "image table entry memo: the memo after the clear holds other textures than the build that resolved the table again");
+    const auto again = settle("the first reuse after the clear, which checks the cache by key");
+    const auto memo = build(1, 1, "the next reuse after the clear");
+    Require(memo->SampledTextures() == again->SampledTextures(), "image table entry memo: the memo after the clear holds other textures than the reuse before it");
     RuntimeSwitches::Assign(RuntimeSwitch::NoTableEntryMemo, true);
-    const auto control = build(1, 0, 0, "under APS5_NO_TABLE_ENTRY_MEMO");
+    const auto control = build(1, 0, "under APS5_NO_TABLE_ENTRY_MEMO");
     RuntimeSwitches::Assign(RuntimeSwitch::NoTableEntryMemo, false);
-    Require(control->SampledTextures() == cleared->SampledTextures(), "image table entry memo: under APS5_NO_TABLE_ENTRY_MEMO the reuse holds other textures");
+    Require(control->SampledTextures() == again->SampledTextures(), "image table entry memo: under APS5_NO_TABLE_ENTRY_MEMO the reuse holds other textures");
     AgcDriver::Graphics::ClearCachedTextures(device.Device());
     return true;
 }
