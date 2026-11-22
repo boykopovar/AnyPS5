@@ -686,9 +686,11 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     }
 
     const auto entryRounding = ComputeEntryRounding(cfg, decoded, options.floatMode.has_value() ? options.floatMode->floatMode : ModeUndeclaredSeed);
+    std::uint32_t nanPropagateCount = 0u;
     for (const auto& cfgBlock : cfg.blocks) {
         const auto typedIndex = blockIndices.at(cfgBlock.id);
         TranslationContext context(program, *blocks[typedIndex], vectorLimit);
+        context.SetNanPropagateCounter(&nanPropagateCount);
         if (const auto* workgroup = shaderWorkgroupInput(options.stage, options.inputInfo)) context.SetBufferLdsSize(workgroup->ldsSizeDwords * 4u);
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
         context.SetFloatMode(options.floatMode);

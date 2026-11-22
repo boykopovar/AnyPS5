@@ -110,6 +110,18 @@ bool ExactF32Arithmetic() {
     return exact;
 }
 
+std::uint32_t NanBranchBudget() {
+    static const std::uint32_t budget = [] {
+        const char* text = std::getenv("APS5_NAN_BRANCH_BUDGET");
+        if (text == nullptr || *text == '\0') return DefaultNanBranchBudget;
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(text, &end, 10);
+        if (end == text || *end != '\0') return DefaultNanBranchBudget;
+        return parsed == 0ul || parsed > 0xfffffffful ? 0xffffffffu : static_cast<std::uint32_t>(parsed);
+    }();
+    return budget;
+}
+
 DebugProbe DebugProbeConfig() {
     static const DebugProbe parsed = [] {
         DebugProbe result;

@@ -1932,7 +1932,9 @@ DiskStore& store() {
 }
 
 std::uint64_t SourceVersion() {
-    return ExactF32Arithmetic() ? Generated::SourceVersion : Generated::SourceVersion ^ 0x9e3779b97f4a7c15ull;
+    const std::uint64_t version = ExactF32Arithmetic() ? Generated::SourceVersion : Generated::SourceVersion ^ 0x9e3779b97f4a7c15ull;
+    const std::uint32_t budget = NanBranchBudget();
+    return budget == DefaultNanBranchBudget ? version : version ^ ((std::uint64_t{budget} + 1u) * 0xbf58476d1ce4e5b9ull);
 }
 
 void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, std::vector<std::byte>& key) {

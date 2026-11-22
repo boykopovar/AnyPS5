@@ -379,7 +379,10 @@ IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> source
         const std::uint32_t exponent = (constant->ImmediateU32() >> 23u) & 0xffu;
         return exponent != 0u && exponent != 0xffu;
     });
-    if (!normalFactor) {
+    // NanPropagateF32 is emitted as a branch around the source repair. A program with hundreds of them grows by a block and a merge for each one,
+    // and the host driver's pipeline creation grows with it, so only the first NanBranchBudget() NaN results of a program take that form.
+    if (!normalFactor && (nanPropagateCounter == nullptr || *nanPropagateCounter < NanBranchBudget())) {
+        if (nanPropagateCounter != nullptr) ++*nanPropagateCounter;
         std::array<IrValue*, 3> operands{};
         std::uint32_t count = 0u;
         for (IrValue* source : sources) operands.at(count++) = source;

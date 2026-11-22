@@ -19,6 +19,7 @@ public:
     void TranslateInstruction(const RdnaInstruction& instruction);
     void SetBufferLdsSize(std::uint32_t bytes) { bufferLdsBytes = bytes; }
     void SetPixelInput(const ShaderPixelInputInfo* info, bool barycentricEnabled) { pixelInput = info; fragmentShaderBarycentricEnabled = barycentricEnabled; }
+    void SetNanPropagateCounter(std::uint32_t* counter) { nanPropagateCounter = counter; }
     void SetFloatMode(const std::optional<ShaderFloatMode>& mode) {
         declaredFloatMode = mode;
         floatMode = mode;
@@ -414,6 +415,7 @@ private:
     std::optional<ShaderFloatMode> declaredFloatMode;
     RoundingState rounding;
     bool ieeeMode = false;
+    std::uint32_t* nanPropagateCounter = nullptr;  // NanPropagateF32 values the program holds so far; a context covers one block
     bool nativeFloat16 = false;
     bool nativeFloat16Fma = false;
     bool float16HostNans = false;
