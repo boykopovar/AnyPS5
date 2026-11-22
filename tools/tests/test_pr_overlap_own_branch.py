@@ -35,21 +35,42 @@ class OwnBranchTests(unittest.TestCase):
                 os.chdir(old)
 
     def test_drops_the_open_pull_request_whose_head_branch_is_the_probed_branch(self):
-        prs = {5: {"sha": "a" * 40, "branch": "contrib/topic"}, 6: {"sha": "b" * 40, "branch": "contrib/other"}}
-        self.assertEqual(set(pr_overlap.without_own_pull_request(prs, "contrib/topic")), {6})
+        prs = {5: {"branch": "contrib/topic", "head_repo": "mine/project"},
+               6: {"branch": "contrib/other", "head_repo": "mine/project"}}
+        self.assertEqual(set(pr_overlap.without_own_pull_request(prs, "contrib/topic", "mine/project")), {6})
 
     def test_keeps_every_pull_request_when_two_of_them_share_the_probed_branch_name(self):
-        prs = {5: {"sha": "a" * 40, "branch": "contrib/topic"}, 6: {"sha": "b" * 40, "branch": "contrib/topic"}}
-        self.assertEqual(set(pr_overlap.without_own_pull_request(prs, "contrib/topic")), {5, 6})
+        prs = {5: {"branch": "contrib/topic", "head_repo": "mine/project"},
+               6: {"branch": "contrib/topic", "head_repo": "mine/project"}}
+        self.assertEqual(set(pr_overlap.without_own_pull_request(prs, "contrib/topic", "mine/project")), {5, 6})
 
     def test_keeps_a_pull_request_record_without_a_head_branch(self):
         prs = {5: {"sha": "a" * 40}}
-        self.assertEqual(set(pr_overlap.without_own_pull_request(prs, "contrib/topic")), {5})
+        self.assertEqual(set(pr_overlap.without_own_pull_request(prs, "contrib/topic", "mine/project")), {5})
+
+    def test_keeps_the_only_same_named_branch_if_it_is_on_another_fork(self):
+        prs = {5: {"sha": "a" * 40, "branch": "contrib/topic", "head_repo": "other/project"}}
+        self.assertEqual(set(pr_overlap.without_own_pull_request(prs, "contrib/topic", "mine/project")), {5})
+
+    def test_drops_only_the_matching_repository_and_branch(self):
+        prs = {
+            5: {"branch": "contrib/topic", "head_repo": "Mine/Project"},
+            6: {"branch": "contrib/topic", "head_repo": "other/project"},
+        }
+        self.assertEqual(set(pr_overlap.without_own_pull_request(prs, "contrib/topic", "mine/project")), {6})
+
+    def test_keeps_same_named_pull_request_without_a_known_push_repository(self):
+        prs = {5: {"branch": "contrib/topic", "head_repo": "other/project"}}
+        self.assertEqual(set(pr_overlap.without_own_pull_request(prs, "contrib/topic", None)), {5})
 
     def test_the_branch_check_does_not_compare_the_branchs_own_pull_request(self):
         seen = {}
         with patch.object(sys, "argv", ["pr_overlap.py", "--repo", "owner/project", "--branch", "contrib/topic"]), \
-                patch.object(pr_overlap, "open_prs", return_value={7: {"branch": "contrib/topic"}, 8: {"branch": "other"}}), \
+                patch.object(pr_overlap, "open_prs", return_value={
+                    7: {"branch": "published/topic", "head_repo": "mine/project"},
+                    8: {"branch": "published/topic", "head_repo": "other/project"},
+                }), \
+                patch.object(pr_overlap, "push_head", return_value=("published/topic", "mine/project")), \
                 patch.object(pr_overlap, "base_commit", return_value="refs/pr/base"), \
                 patch.object(pr_overlap, "fetch_heads"), \
                 patch.object(pr_overlap, "own", side_effect=lambda prs, sha: prs), \
@@ -105,6 +126,22 @@ class BranchResolutionTests(unittest.TestCase):
     def test_resolves_the_head_commit_of_a_local_branch(self):
         run("branch", "contrib/topic")
         self.assertEqual(pr_overlap.resolve_branch("contrib/topic"), run("rev-parse", "HEAD"))
+
+    def test_uses_the_configured_push_repository_and_destination_branch(self):
+        run("remote", "add", "fork", "https://github.com/reader/project.git")
+        run("remote", "set-url", "--push", "fork", "git@github.com:writer/project.git")
+        run("config", "branch.main.pushRemote", "fork")
+        run("config", "remote.fork.push", "refs/heads/main:refs/heads/published/topic")
+        self.assertEqual(pr_overlap.push_head("main"), ("published/topic", "writer/project"))
+
+    def test_leaves_an_unconfigured_branch_without_a_push_identity(self):
+        self.assertEqual(pr_overlap.push_head("main"), ("main", None))
+
+    def test_rejects_malformed_push_identity_rows(self):
+        for row in ("refs/heads/main\tfork", "refs/heads/main\tfork\trefs/heads/topic\textra"):
+            with self.subTest(row=row), patch.object(pr_overlap, "git", return_value=row) as git:
+                self.assertEqual(pr_overlap.push_head("main"), ("main", None))
+                self.assertEqual(git.call_count, 1)
 
     def test_refuses_a_name_that_matches_no_commit(self):
         with self.assertRaises(ValueError) as raised:

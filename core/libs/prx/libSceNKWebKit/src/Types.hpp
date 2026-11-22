@@ -206,6 +206,12 @@ public:
     Retained<BundleNodeHandle> document;
     Retained<BundleFrame> documentFrame;
     Retained<BundleFrame> htmlIFrameElementContentFrame;
+    Retained<String> htmlInputElementValue;
+    bool htmlInputElementAutoFilled = false;
+    bool htmlInputElementAutoFilledAndViewable = false;
+    bool htmlInputElementSpellcheckEnabled = true;
+    bool htmlInputElementLastChangeWasUserEdit = false;
+    bool htmlTextAreaElementLastChangeWasUserEdit = false;
 };
 
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
@@ -397,6 +403,7 @@ public:
     bool isDisplayingMarkupDocument = false;
     bool isDisplayingStandaloneImageDocument = false;
     bool isMainFrame = false;
+    bool isFrameSet = false;
     std::uint64_t frameID = 0;
     std::uint32_t loadState = 2;
     Retained<URL> url;

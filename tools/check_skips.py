@@ -17,7 +17,7 @@ NO_RAW_SOCKET = re.compile(r"skipped,.*cannot create a raw socket", re.IGNORECAS
 
 HIGH_REFRESH_LIMITATION = re.compile(r"current display does not provide 120 Hz", re.IGNORECASE)
 DEVICE_LOG_SOURCE = re.compile(r"\[[^\]]*:\d+ [^\]]*\] ")
-DEVICE_LOG_SUBSYSTEM = re.compile(r"\[(?:float-controls|gpu|pipeline-cache|shader-disk-cache|time|write-watch)\] ")
+DEVICE_LOG_SUBSYSTEM = re.compile(r"\[(?:float-controls|gpu|pipeline-cache|pipeline-journal|shader-disk-cache|time|write-watch)\] ")
 VULKAN_LOADER_LOG = re.compile(r"\[Vulkan Loader\] (?:(?:DEBUG|INFO|WARNING) \| )?(?:LAYER|DRIVER):(?:\s|$)")
 HDR_OUTPUT_STATUS = re.compile(
     r"\[videoout\] HDR output (?:available: peak [0-9]+\.[0-9] nits, full frame [0-9]+\.[0-9] nits, black [0-9]+\.[0-9]{4} nits"
@@ -25,6 +25,8 @@ HDR_OUTPUT_STATUS = re.compile(
 CTEST_SKIP_STATUS = re.compile(r"SKIP_RETURN_CODE=\d+|SKIP_REGULAR_EXPRESSION_MATCHED", re.IGNORECASE)
 
 WINDOWS_PREFIX = "agc"
+
+NO_RESERVED_CORE = "this host reserves no committer core"
 
 ENVIRONMENT_LOADER_RETENTION = "environment binding: skipped unload checks because the platform loader retained libkernel; fallback detachment was not verified"
 
@@ -44,15 +46,19 @@ def symlink_privilege_limitation(name, output):
     return bool(reasons) and all(reason == "SKIP: Windows symbolic-link privileges unavailable" for reason in reasons)
 
 
+def emulator_log_line(line):
+    if HDR_OUTPUT_STATUS.fullmatch(line):
+        return True
+    return bool(DEVICE_LOG_SOURCE.match(line) or DEVICE_LOG_SUBSYSTEM.match(line) or VULKAN_LOADER_LOG.match(line)) and not re.search(r"skipped,", line, re.IGNORECASE)
+
+
 def high_refresh_limitation(output):
     reasons = []
     for line in output.splitlines():
         reason = line.strip()
         if not reason:
             continue
-        if HDR_OUTPUT_STATUS.fullmatch(reason):
-            continue
-        if (DEVICE_LOG_SOURCE.match(reason) or DEVICE_LOG_SUBSYSTEM.match(reason) or VULKAN_LOADER_LOG.match(reason)) and not re.search(r"skipped,", reason, re.IGNORECASE):
+        if emulator_log_line(reason):
             continue
         if match := re.search(r"skipped,", reason, re.IGNORECASE):
             reason = reason[match.end():].strip()
@@ -64,6 +70,22 @@ def high_refresh_limitation(output):
 def environment_loader_retention(output):
     reasons = [line.strip() for line in output.splitlines() if re.search(r"\bskipp(?:ed|ing)\b", line, re.IGNORECASE)]
     return reasons == [ENVIRONMENT_LOADER_RETENTION]
+
+
+def no_reserved_core(name, output):
+    if not name.startswith("agc_worker_affinity"):
+        return False
+    lines = [line.strip() for line in output.splitlines() if line.strip() and not emulator_log_line(line.strip())]
+    return lines == [NO_RESERVED_CORE]
+
+
+def skip_summary(output):
+    stated = next((line.strip() for line in output.splitlines() if re.search(r"skipped,|SKIP:", line, re.IGNORECASE)), None)
+    if stated is not None:
+        return stated
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    first = next((line for line in lines if not emulator_log_line(line)), lines[0] if lines else None)
+    return f"the test stated no reason; its output starts with: {first}" if first else "the test stated no reason and wrote no output"
 
 
 def skips(path, require_tests=False):
@@ -121,7 +143,7 @@ def main(argv=None):
         expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device, a display without a 120 Hz mode or no permission to create a raw socket, or the symlink creation and readlink limit tests reporting unavailable Windows symbolic-link privileges"
     else:
         unexpected = [name for name, output in found if not device_limitations(output, (DEVICE_LIMITATION,)) and not high_refresh_limitation(output)
-                      and not (name == "guest_environment_binding_unload" and environment_loader_retention(output))]
+                      and not (name == "guest_environment_binding_unload" and environment_loader_retention(output)) and not no_reserved_core(name, output)]
         expected = "any test that reports the device limitation it needs, such as narrow subgroups, a missing extension, no display for a Vulkan window, a display without a 120 Hz mode or no permission to create a raw socket, or guest_environment_binding_unload reporting loader retention"
     if args.json:
         grouped = {}
@@ -131,10 +153,7 @@ def main(argv=None):
             {"name": name, "output": "\n".join(outputs), "occurrences": len(outputs), "expected": name not in unexpected}
             for name, outputs in sorted(grouped.items())], "unexpected": unexpected}, sort_keys=True))
         return int(bool(unexpected))
-    reasons = {}
-    for name, output in found:
-        lines = [line.strip() for line in output.splitlines() if line.strip()]
-        reasons.setdefault(name, next((line for line in lines if re.search(r"skipped,", line, re.IGNORECASE)), lines[0] if lines else "no output"))
+    reasons = {name: skip_summary(output) for name, output in found}
     for name in unexpected:
         print(f"error: {name} skipped: {reasons[name]}")
     if unexpected:

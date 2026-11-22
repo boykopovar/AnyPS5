@@ -260,8 +260,11 @@ def fold(root, write):
             except FoldError as error:
                 problems.append(str(error))
                 continue
-            if key in claimed and claimed[key].fragment != operation.fragment:
-                problems.append(f"{operation.fragment}:{operation.line} and {claimed[key].fragment}:{claimed[key].line} both {operation.kind} the same {operation.library} entry; merge them into one fragment")
+            previous = claimed.get(key)
+            if previous is not None and previous.fragment == operation.fragment:
+                problems.append(f"{previous.fragment}:{previous.line} and {operation.fragment}:{operation.line} both target the same {operation.library} entry; name each entry once per fragment")
+            elif previous is not None:
+                problems.append(f"{operation.fragment}:{operation.line} and {previous.fragment}:{previous.line} both target the same {operation.library} entry; merge them into one fragment")
             claimed[key] = operation
     if problems:
         raise FoldError("\n".join(problems))

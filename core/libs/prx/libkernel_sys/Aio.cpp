@@ -1,6 +1,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <algorithm>
@@ -331,7 +332,8 @@ int Queue(GuestAiocb* user, int opcode) {
     FileStat status{};
     if (_fstat_nid_postfix(request.fildes, &status) != 0) return fail(GuestEbadf);
     const auto type = static_cast<std::uint16_t>(status.st_mode & TypeMask);
-    const bool vnode = type != 0 && type != TypeFifo && type != TypeSocket;
+    const bool ksem = IsKsemDescriptor_nid_no_patch(request.fildes);
+    const bool vnode = !ksem && type != 0 && type != TypeFifo && type != TypeSocket;
     if (opcode == LioSync && !vnode) return fail(GuestEinval);
     if (opcode != LioSync && request.offset < 0) return fail(GuestEinval);
     const auto token = static_cast<std::uint64_t>(aio.nextId);
@@ -344,7 +346,7 @@ int Queue(GuestAiocb* user, int opcode) {
             return fail(error);
     }
     Store(user, &GuestAiocb::error, std::int64_t{GuestEinprogress});
-    if (type != TypeRegular && type != TypeDirectory && type != TypeSocket) {
+    if (ksem || (type != TypeRegular && type != TypeDirectory && type != TypeSocket)) {
         if (notify == SigevKevent) KqueueAioFree_nid_no_patch(ident, token);
         return fail(GuestEopnotsupp);
     }

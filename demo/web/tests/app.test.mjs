@@ -306,9 +306,9 @@ test("a late rejected release request does not affect an active replacement work
   } });
   get("file").files = [{ name: "old.zip" }];
   get("file").onchange();
-  await inspect(workers[0], 1);
-  get("cancel").onclick();
-  await setImmediate();
+  assert.equal(get("cancel").hidden, false);
+  await get("cancel").onclick();
+  assert.equal(workers[0].terminated, true);
   get("file").files = [{ name: "new.zip" }];
   get("file").onchange();
   const current = workers[1];
@@ -336,9 +336,9 @@ test("a late successful release request cannot hide a replacement request failur
   } });
   get("file").files = [{ name: "old.zip" }];
   get("file").onchange();
-  await inspect(workers[0], 1);
-  get("cancel").onclick();
-  await setImmediate();
+  assert.equal(get("cancel").hidden, false);
+  await get("cancel").onclick();
+  assert.equal(workers[0].terminated, true);
   get("file").files = [{ name: "new.zip" }];
   get("file").onchange();
   replacement.reject(new TypeError("replacement failure"));
@@ -354,7 +354,13 @@ test("a late successful release request cannot hide a replacement request failur
 
 for (const [name, bad] of [
   ["HTTP error", { ok: false, status: 503 }],
-  ["invalid manifest", { ok: true, json: async () => ({ tag: "bad" }) }]
+  ["invalid manifest", { ok: true, json: async () => ({ tag: "bad" }) }],
+  ["negative Linux library size", { ok: true, json: async () => ({
+    tag: "v1-test", platforms: { linux: { expandedBytes: -1 }, windows: { expandedBytes: 1024 } }
+  }) }],
+  ["oversized Windows library size", { ok: true, json: async () => ({
+    tag: "v1-test", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 512 * 1024 * 1024 + 1 } }
+  }) }]
 ]) {
   test(`selecting an input retries release information after ${name}`, async t => {
     let calls = 0;
@@ -443,7 +449,11 @@ for (const type of ["write", "close-file", "complete"]) {
       get("save").listeners.get("change")();
       await get("convert").onclick();
       const request = old.onmessage({ data: { type, bytes: new Uint8Array([1]), mode: "zip", outputName: "old.elf", size: 1 } });
-      await get("cancel").onclick();
+      if (type === "complete") await old.onerror({ message: "old worker stopped" });
+      else {
+        assert.equal(get("cancel").hidden, false);
+        await get("cancel").onclick();
+      }
       get("file").files = [{ name: "replacement.zip" }];
       get("file").onchange();
       const replacement = workers.at(-1);
@@ -456,6 +466,33 @@ for (const type of ["write", "close-file", "complete"]) {
       assert.equal(get("convert").disabled, true);
     });
   }
+}
+
+for (const outcome of ["saved", "failed"]) {
+  test(`final ZIP close reports ${outcome} even if a late Cancel click arrives`, async t => {
+    const pending = deferred();
+    const sink = new WritableStream({ close: () => pending.promise }).getWriter();
+    const { get, workers } = await setup(t, `final-zip-close-${outcome}`, {
+      showSaveFilePicker: async () => ({ createWritable: async () => sink })
+    });
+    const current = await selected(get, workers, "app.zip");
+    await get("convert").onclick();
+    assert.equal(get("cancel").hidden, false);
+    const complete = current.onmessage({ data: {
+      type: "complete", mode: "zip", outputName: "app.elf", size: 1, apps: 1, release: "v1-test"
+    } });
+    await setImmediate();
+    const cancelWasHidden = get("cancel").hidden;
+    const cancel = get("cancel").onclick();
+    if (outcome === "failed") pending.reject(new Error("Cannot commit ZIP"));
+    else pending.resolve();
+    await Promise.all([complete, cancel]);
+
+    assert.equal(get("done").hidden, outcome === "failed");
+    assert.equal(get("error").hidden, outcome === "saved");
+    if (outcome === "failed") assert.equal(get("error").children[0].textContent, "Cannot commit ZIP");
+    assert.equal(cancelWasHidden, true);
+  });
 }
 
 for (const stage of ["picker", "writable", "root"]) {
@@ -530,6 +567,22 @@ for (const stage of ["picker", "writable"]) {
     assert.equal(get("error").hidden, true);
   });
 }
+
+test("selected batch details follow a language switch", async t => {
+  const { get, workers } = await setup(t, "locale-selected-batch");
+  const names = ["first.zip", "second.zip"];
+  get("file").files = names.map(name => ({ name }));
+  get("file").onchange();
+  await inspect(workers[0], names.length);
+  const rows = () => get("app-list").children.map(row => row.children.map(cell => cell.textContent));
+  assert.equal(get("archive-name").textContent, "2 app ZIPs");
+  assert.deepEqual(rows(), names.map(name => [name, "1 files · 1.0 KiB expanded · 0 modules"]));
+
+  get("locale").onclick();
+  assert.equal(document.documentElement.lang, "de");
+  assert.equal(get("archive-name").textContent, "2 App-ZIPs");
+  assert.deepEqual(rows(), names.map(name => [name, "1 Dateien · 1.0 KiB entpackt · 0 Module"]));
+});
 
 test("a visible error follows a language switch", async t => {
   const { get } = await setup(t, "locale-error", { fetch: async () => ({ ok: false, status: 404 }) });

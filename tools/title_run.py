@@ -93,7 +93,7 @@ def load_titles(path):
             fields[name] = value
         return fields
 
-    titles = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
+    titles = json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=unique_fields)
     for title_id, entry in titles.items():
         if not TITLE_ID.fullmatch(title_id):
             raise ValueError(f"{path}: {title_id} is not a title ID")
@@ -195,9 +195,9 @@ def read_report(path):
     unsupported = [entry for entry in unsupported if isinstance(entry, dict)] if isinstance(unsupported, list) else unsupported
     return {"averageFps": run.get("averageFps"),
             "frameMs": section(run, "frameMs") or None,
-            "shaders": {name: shaders.get(name) for name in SHADER_COUNTS} if coverage.get("shaders") else None,
-            "missing": functions if coverage.get("missing") and isinstance(functions, list) else None,
-            "unsupported": unsupported if coverage.get("unsupported") and isinstance(unsupported, list) else None,
+            "shaders": {name: shaders.get(name) for name in SHADER_COUNTS} if coverage.get("shaders") is True else None,
+            "missing": functions if coverage.get("missing") is True and isinstance(functions, list) else None,
+            "unsupported": unsupported if coverage.get("unsupported") is True and isinstance(unsupported, list) else None,
             "truncated": {"functions": truncated.get("functions", 0), "unsupported": truncated.get("unsupported", 0)}}
 
 
@@ -376,6 +376,11 @@ def names(entries):
     return ", ".join(label(entry) for entry in entries)
 
 
+def markdown_cell(value):
+    escaped = value.replace("\\", "\\\\").replace("|", "\\|")
+    return " ".join(escaped.splitlines())
+
+
 def render_compare(compared):
     columns = ["Title", "ID", "Measure", "Before", "Now"]
     lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
@@ -408,7 +413,8 @@ def render_compare(compared):
                 details.append(f"{title['name']} ({title_id}), {label.lower()} {unit}: "
                                f"only before: {before}; only now: {now}; in both: {both}")
         for label, values in measures:
-            lines.append("| " + " | ".join([title["name"], title_id, label, display(values["before"]), display(values["now"])]) + " |")
+            row = [title["name"], title_id, label, display(values["before"]), display(values["now"])]
+            lines.append("| " + " | ".join(map(markdown_cell, row)) + " |")
     return lines + [""] + details
 
 
@@ -445,11 +451,11 @@ def render_markdown(summary, previous=None):
         runs = title["runs"]
         error = next((entry["first_error"] for entry in runs if entry["outcome"] != "rendering" and entry["first_error"]), "")
         row = [title["name"], title_id, title["version"], cell(runs, "cold"), cell(runs, "warm"), f"{runs[-1]['fps']:.1f}",
-               error[:120].replace("|", "\\|")]
+               error[:120]]
         if previous:
             old = previous["titles"].get(title_id)
             row.append(worst(old["runs"]) if old else "new")
-        lines.append("| " + " | ".join(row) + " |")
+        lines.append("| " + " | ".join(map(markdown_cell, row)) + " |")
     if previous and (compared := compare_runs(summary, previous)):
         lines += ["", *render_compare(compared)]
     return "\n".join(lines + [""])
@@ -929,11 +935,27 @@ class Session:
             return bool(self.process_ids())
         try:
             os.killpg(self.process.pid, 0)
-            return True
         except PermissionError:
             return True
         except ProcessLookupError:
             return False
+        return self.process.returncode is None or self.group_running()
+
+    def group_running(self):
+        try:
+            if os.readlink("/proc/self") != str(os.getpid()):
+                return True
+            entries = [entry for entry in os.listdir("/proc") if entry.isdigit()]
+        except OSError:
+            return True
+        for entry in entries:
+            try:
+                state, _, group = Path("/proc", entry, "stat").read_bytes().rpartition(b")")[2].split()[:3]
+                if int(group) == self.process.pid and state not in (b"Z", b"X"):
+                    return True
+            except (OSError, ValueError):
+                pass
+        return False
 
     def image_path(self, handle):
         size = wintypes.DWORD(32768)
@@ -1250,7 +1272,7 @@ def run_cli(argv, capture_resources):
     parser.add_argument("--runs", type=positive, help="runs per title (default: 2 smoke, 1 performance)")
     parser.add_argument("--seconds", type=positive, help="run length for every title (default: the title's, else 60)")
     parser.add_argument("--note", default="", help="free text for the report, e.g. 'main + #6814'")
-    parser.add_argument("--compare", type=Path, help="summary.json of an earlier run; the comparison uses the last run of each title in both")
+    parser.add_argument("--compare", type=Path, help="summary.json of an earlier smoke run; the comparison uses the last run of each title in both")
     parser.add_argument("--json", action="store_true", help="with --compare, print the comparison as JSON instead of the table")
     parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
     parser.add_argument("--content", type=Path, help="directory holding the files that titles.json names with \"content\"")
@@ -1274,6 +1296,8 @@ def run_cli(argv, capture_resources):
         previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
     except (OSError, ValueError) as error:
         parser.error(f"--compare: {error}")
+    if isinstance(previous, dict) and previous.get("format") == "anyps5-performance-capture/1":
+        parser.error(f"--compare requires a smoke-run summary, got a performance capture summary: {args.compare}")
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     try:
         titles = load_titles(args.titles)
