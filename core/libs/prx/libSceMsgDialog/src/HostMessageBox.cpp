@@ -2,30 +2,27 @@
 
 #include <SDL.h>
 
-#include <string>
 #include <vector>
 
 namespace MsgDialog {
 
 std::optional<HostBoxAnswer> ShowHostMessageBox(std::string_view message, const ModalDialogRequest& request) {
-    std::vector<std::string> labels;
-    labels.reserve(request.buttons.size());
-    for (const auto& label : request.buttons) labels.push_back(HostMessageLabel(label));
+    const auto spec = BuildHostMessageBoxSpec(message, request);
+    if (!spec) return std::nullopt;
 
     std::vector<SDL_MessageBoxButtonData> buttons;
-    buttons.reserve(labels.size());
-    for (std::size_t index = 0; index < labels.size(); ++index) {
+    buttons.reserve(spec->buttons.size());
+    for (std::size_t index = 0; index < spec->buttons.size(); ++index) {
         Uint32 flags = 0;
-        if (index == request.cancel) flags |= SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT;
-        if (index == request.focus) flags |= SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT;
-        buttons.push_back({flags, static_cast<int>(index), labels[index].c_str()});
+        if (spec->buttons[index].isCancel) flags |= SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT;
+        if (spec->buttons[index].isFocus) flags |= SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT;
+        buttons.push_back({flags, static_cast<int>(index), spec->buttons[index].label.c_str()});
     }
 
-    const std::string text(message);
     SDL_MessageBoxData data{};
     data.flags = SDL_MESSAGEBOX_INFORMATION;
     data.title = "AnyPS5";
-    data.message = text.c_str();
+    data.message = spec->message.c_str();
     data.numbuttons = static_cast<int>(buttons.size());
     data.buttons = buttons.data();
     int pressed = -1;

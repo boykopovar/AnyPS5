@@ -289,7 +289,7 @@ def check_timeouts(tests, limit):
                 raise GateError(f"{test['name']}: TIMEOUT_AFTER_MATCH can restart the requested test timeout")
             if prop["name"] == "TIMEOUT":
                 value = prop["value"]
-                if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= limit:
+                if type(value) not in (int, float) or not 0 < value <= limit or not math.isfinite(value):
                     raise GateError(f"{test['name']}: TIMEOUT must be positive and at most {limit} seconds")
 
 

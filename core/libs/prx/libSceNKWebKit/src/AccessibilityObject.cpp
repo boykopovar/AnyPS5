@@ -31,4 +31,14 @@ const void* APS5_VABI WKAXObjectCopyURL(const void* objectRef) {
     return CopiedString(object->url);
 }
 
+std::uint32_t APS5_VABI WKAXObjectButtonState(const void* objectRef) {
+    const auto* object = NKWebKit::Cast<NKWebKit::AccessibilityObject>(objectRef, __func__);
+    return object->buttonState;
+}
+
+std::uint32_t APS5_VABI WKAXObjectRole(const void* objectRef) {
+    const auto* object = NKWebKit::Cast<NKWebKit::AccessibilityObject>(objectRef, __func__);
+    return object->role;
+}
+
 }
