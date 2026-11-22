@@ -29,6 +29,7 @@ int main() {
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -276,9 +277,22 @@ struct Window {
     std::vector<SiteCount> sites;
     std::uint64_t count = 0;
     std::uint64_t bytes = 0;
+    std::uint64_t hostDriverCount = 0;
+    std::uint64_t hostDriverBytes = 0;
     std::uint64_t busiestCount = 0;
     std::uint32_t busiest = 0;
 };
+
+bool InHostGpuDriver(std::uintptr_t address) {
+#ifdef __APPLE__
+    Dl_info info{};
+    if (dladdr(reinterpret_cast<void*>(address), &info) == 0 || info.dli_fname == nullptr) return false;
+    return std::string_view(info.dli_fname).starts_with("/System/Library/Extensions/");
+#else
+    (void)address;
+    return false;
+#endif
+}
 
 Window Measure(std::vector<std::uint32_t>& commands, std::size_t submits) {
     lostThreads.store(0);
@@ -304,6 +318,11 @@ Window Measure(std::vector<std::uint32_t>& commands, std::size_t submits) {
     Window window;
     for (const auto& site : sites) {
         if (site.caller.load() == 0) continue;
+        if (InHostGpuDriver(site.caller.load())) {
+            window.hostDriverCount += site.count.load();
+            window.hostDriverBytes += site.bytes.load();
+            continue;
+        }
         window.sites.push_back({site.caller.load(), site.count.load(), site.bytes.load()});
         window.count += site.count.load();
         window.bytes += site.bytes.load();
@@ -367,6 +386,7 @@ double ReportAllocations(const Shape& shape, std::size_t draws) {
     const auto perDraw = PerDraw(many.count, base.count, draws);
     std::printf("draw allocations [%s]: %zu draws: %llu allocations %llu bytes, without them: %llu allocations %llu bytes, busiest thread %llu allocations\n", shape.name, draws, static_cast<unsigned long long>(many.count), static_cast<unsigned long long>(many.bytes), static_cast<unsigned long long>(base.count), static_cast<unsigned long long>(base.bytes), static_cast<unsigned long long>(many.busiestCount));
     std::printf("draw allocations [%s] per draw: %.3f (%.1f bytes)\n", shape.name, perDraw, PerDraw(many.bytes, base.bytes, draws));
+    if (const auto hostDriverPerDraw = PerDraw(many.hostDriverCount, base.hostDriverCount, draws); hostDriverPerDraw >= 0.05) std::printf("draw allocations [%s]: not counted, made by the host GPU driver: %.3f per draw (%.1f bytes)\n", shape.name, hostDriverPerDraw, PerDraw(many.hostDriverBytes, base.hostDriverBytes, draws));
     auto ordered = many.sites;
     std::sort(ordered.begin(), ordered.end(), [](const SiteCount& left, const SiteCount& right) { return left.count > right.count; });
     std::uint64_t everyDraw = 0;
