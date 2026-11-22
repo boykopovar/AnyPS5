@@ -121,7 +121,6 @@ int ReadGate(const void* pathObject, const char* name) {
     if (statResult != 0) NotImplemented_nid_no_patch(name);
     const auto extension = ClassifyExtension(text);
     if (extension == ExtensionGate::Unsupported) return kUnsupportedFormat;
-    if (extension == ExtensionGate::Unmeasured) NotImplemented_nid_no_patch(name);
     NotImplemented_nid_no_patch(name);
     return 0;
 }
