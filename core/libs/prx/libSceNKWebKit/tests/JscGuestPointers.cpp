@@ -120,6 +120,21 @@ static void TestDoubleToStringConverter() {
         overflowed = true;
     }
     Require(overflowed && builder->position == 4);
+    converter.infinitySymbol = symbols + 4096 - 3;
+    for (int negative = 0; negative < 2; ++negative) {
+        *builder = DoubleConversionStringBuilder{{text, 64}, 62 - negative};
+        overflowed = false;
+        try {
+            ToExponential(&converter, negative ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity(), 2, builder);
+        } catch (const std::out_of_range&) {
+            overflowed = true;
+        }
+        Require(overflowed && builder->position == 62 - negative);
+    }
+    std::memcpy(symbols + 4096 - 2, "I", 2);
+    *builder = DoubleConversionStringBuilder{{text, 64}, 60};
+    Require(ToExponential(&converter, -std::numeric_limits<double>::infinity(), 2, builder));
+    Require(builder->position == 63 && std::memcmp(text + 60, "-xI", 3) == 0);
 
     char* writableText = reinterpret_cast<char*>(pages + 4096);
     std::memset(writableText, 0xcc, 64);

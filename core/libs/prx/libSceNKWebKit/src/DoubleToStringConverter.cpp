@@ -55,21 +55,23 @@ void AppendSubstring(HostBuilder& host, const char* text, int count) {
     builder.position += count;
 }
 
-bool CopySymbol(const char* source, std::size_t limit, std::string& destination) {
+enum class SymbolRead { Unreadable, Complete, TooLong };
+
+SymbolRead CopySymbol(const char* source, std::size_t limit, std::string& destination) {
     char chunk[4096];
     auto current = reinterpret_cast<std::uintptr_t>(source);
     while (destination.size() < limit) {
-        std::size_t count = sizeof(chunk) - current % sizeof(chunk);
+        std::size_t count = std::min(sizeof(chunk) - current % sizeof(chunk), limit - destination.size());
         if (!GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(current), count))
-            return false;
+            return SymbolRead::Unreadable;
         if (const auto* end = static_cast<const char*>(std::memchr(chunk, 0, count))) {
             destination.append(chunk, static_cast<std::size_t>(end - chunk));
-            return true;
+            return SymbolRead::Complete;
         }
-        destination.append(chunk, std::min(count, limit - destination.size()));
+        destination.append(chunk, count);
         current += count;
     }
-    return true;
+    return SymbolRead::TooLong;
 }
 
 bool StoreBuilder(DoubleConversionStringBuilder* destination, const HostBuilder& host, int position) {
@@ -105,10 +107,21 @@ void CreateExponentialRepresentation(
     AppendSubstring(builder, expDigits.data(), static_cast<int>(expDigits.size()));
 }
 
-void HandleSpecialValue(double value, const std::string& symbol, HostBuilder& builder) {
+bool HandleSpecialValue(double value, const char* symbol, HostBuilder& builder) {
     if (std::isinf(value) && value < 0.0)
         AppendCharacter(builder, '-');
-    AppendSubstring(builder, symbol.data(), static_cast<int>(symbol.size()));
+    const auto& state = builder.builder;
+    std::string text;
+    switch (CopySymbol(symbol, static_cast<std::size_t>(std::max(state.buffer.length - state.position, 0)), text)) {
+    case SymbolRead::Unreadable:
+        return false;
+    case SymbolRead::TooLong:
+        throw std::out_of_range("WTF::double_conversion::StringBuilder: buffer overflow");
+    case SymbolRead::Complete:
+        break;
+    }
+    AppendSubstring(builder, text.data(), static_cast<int>(text.size()));
+    return true;
 }
 
 }  // namespace
@@ -146,13 +159,11 @@ _ZNK3WTF17double_conversion23DoubleToStringConverter13ToExponentialEdiPNS0_13Str
         const char* symbol = std::isinf(value) ? converter.infinitySymbol : converter.nanSymbol;
         if (!symbol)
             return false;
-        std::string text;
-        if (!GuestCopyIn_nid_no_patch(&builder.builder, resultBuilder, sizeof(builder.builder))
-            || !CopySymbol(symbol, static_cast<std::size_t>(std::max(builder.builder.buffer.length, 0)), text))
+        if (!GuestCopyIn_nid_no_patch(&builder.builder, resultBuilder, sizeof(builder.builder)))
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        ValidateBuilder(builder.builder);
         int position = builder.builder.position;
-        HandleSpecialValue(value, text, builder);
-        if (!StoreBuilder(resultBuilder, builder, position))
+        if (!HandleSpecialValue(value, symbol, builder) || !StoreBuilder(resultBuilder, builder, position))
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return true;
     }
