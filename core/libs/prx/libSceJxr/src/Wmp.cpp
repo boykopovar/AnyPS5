@@ -2,9 +2,12 @@
 #include "prx/libSceJxr/src/EncoderMetadata.hpp"
 #include "prx/libSceJxr/src/WmpBridge.h"
 #include "prx/libc/include/General.hpp"
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -24,6 +27,64 @@ void Forget(const void* record) {
 
 void Require(bool value, const char* function, const char* what) {
     if (!value) throw std::invalid_argument(std::string(function) + " requires " + what);
+}
+
+constexpr std::size_t GuestProbeChunkBytes = 4096;
+
+struct GuestRect {
+    std::int32_t x;
+    std::int32_t y;
+    std::int32_t width;
+    std::int32_t height;
+};
+
+void RequireGuestAddressRange(const void* pointer, std::size_t size, const char* function) {
+    if (size == 0) return;
+    constexpr auto maxAddress = std::numeric_limits<std::uintptr_t>::max();
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    if (address == 0 || size > maxAddress - address) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+std::size_t CheckedPixelBufferSize(std::uint64_t lines, std::uint64_t stride, const char* function) {
+    if (lines == 0 || stride == 0) return 0;
+    if (lines > std::numeric_limits<std::size_t>::max() / stride)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return static_cast<std::size_t>(lines * stride);
+}
+
+void CopyInGuestBytes(void* destination, const void* source, std::size_t size, const char* function) {
+    if (size == 0) return;
+    RequireGuestAddressRange(source, size, function);
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (size == 0) return;
+    RequireGuestAddressRange(pointer, size, function);
+    std::array<std::byte, GuestProbeChunkBytes> scratch{};
+    const auto* cursor = static_cast<const std::byte*>(pointer);
+    std::size_t remaining = size;
+    while (remaining > 0) {
+        const std::size_t chunk = std::min(remaining, scratch.size());
+        const int savedErrno = errno;
+        const bool ok = GuestCopyIn_nid_no_patch(scratch.data(), cursor, chunk);
+        errno = savedErrno;
+        if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        cursor += chunk;
+        remaining -= chunk;
+    }
+}
+
+void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
+    if (size == 0) return;
+    RequireGuestAddressRange(pointer, size, function);
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(pointer, size);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
 template <typename TValue>
@@ -78,8 +139,13 @@ std::int64_t Supported(std::int64_t result, std::int32_t refusal, const char* fu
 std::int64_t APS5_VABI EncodeInitialize(Jxr::ImageEncode* encoder, Jxr::Stream* stream, void* parameters,
                                         std::size_t size) {
     Require(encoder != nullptr, "PKImageEncode_Initialize_WMP", "an encoder");
-    Require(parameters != nullptr || size != JxrWmpEncodeParameterSize_nid_no_patch(),
-            "PKImageEncode_Initialize_WMP", "codec parameters");
+    const auto expectedSize = JxrWmpEncodeParameterSize_nid_no_patch();
+    Require(parameters != nullptr || size != expectedSize, "PKImageEncode_Initialize_WMP", "codec parameters");
+    if (size == expectedSize) {
+        std::vector<std::byte> localParameters(size);
+        CopyInGuestBytes(localParameters.data(), parameters, size, "PKImageEncode_Initialize_WMP");
+        return JxrWmpEncodeInitialize_nid_no_patch(encoder, stream, localParameters.data(), size);
+    }
     return JxrWmpEncodeInitialize_nid_no_patch(encoder, stream, parameters, size);
 }
 
@@ -104,6 +170,8 @@ std::int64_t APS5_VABI EncodeSetDescriptiveMetadata(Jxr::ImageEncode* encoder, c
 std::int64_t APS5_VABI EncodeWritePixels(Jxr::ImageEncode* encoder, std::uint32_t lines, std::uint8_t* pixels,
                                          std::uint32_t stride) {
     Require(encoder != nullptr, "PKImageEncode_WritePixels_WMP", "an encoder");
+    RequireReadableGuestBytes(pixels, CheckedPixelBufferSize(lines, stride, "PKImageEncode_WritePixels_WMP"),
+                              "PKImageEncode_WritePixels_WMP");
     std::int32_t refusal = JXR_WMP_ACCEPTED;
     const auto result = JxrWmpEncodeWritePixels_nid_no_patch(encoder, lines, pixels, stride, &refusal);
     return Supported(result, refusal, "PKImageEncode_WritePixels_WMP");
@@ -119,6 +187,8 @@ std::int64_t APS5_VABI EncodeBandedBegin(Jxr::ImageEncode* encoder, Jxr::Stream*
 std::int64_t APS5_VABI EncodeBanded(Jxr::ImageEncode* encoder, std::uint32_t lines, std::uint8_t* pixels,
                                     std::uint32_t stride, std::int32_t last) {
     Require(encoder != nullptr, "PKImageEncode_WritePixelsBanded_WMP", "an encoder");
+    RequireReadableGuestBytes(pixels, CheckedPixelBufferSize(lines, stride, "PKImageEncode_WritePixelsBanded_WMP"),
+                              "PKImageEncode_WritePixelsBanded_WMP");
     std::int32_t refusal = JXR_WMP_ACCEPTED;
     const auto result = JxrWmpEncodeBanded_nid_no_patch(encoder, lines, pixels, stride, last, &refusal);
     return Supported(result, refusal, "PKImageEncode_WritePixelsBanded_WMP");
@@ -192,8 +262,15 @@ std::int64_t APS5_VABI DecodeGetRawStream(void* decoder, void** stream) {
 
 std::int64_t APS5_VABI DecodeCopy(void* decoder, const void* rectangle, std::uint8_t* pixels, std::uint32_t stride) {
     Require(decoder != nullptr && rectangle != nullptr, "PKImageDecode_Copy_WMP", "a decoder and a rectangle");
+    const auto localRect = ReadGuestOutputSlot(static_cast<const GuestRect*>(rectangle), "PKImageDecode_Copy_WMP");
+    if (localRect.height > 0) {
+        RequireWritableGuestBytes(
+            pixels,
+            CheckedPixelBufferSize(static_cast<std::uint32_t>(localRect.height), stride, "PKImageDecode_Copy_WMP"),
+            "PKImageDecode_Copy_WMP");
+    }
     std::int32_t refusal = JXR_WMP_ACCEPTED;
-    const auto result = JxrWmpDecodeCopy_nid_no_patch(decoder, rectangle, pixels, stride, &refusal);
+    const auto result = JxrWmpDecodeCopy_nid_no_patch(decoder, &localRect, pixels, stride, &refusal);
     return Checked(result, refusal, "PKImageDecode_Copy_WMP");
 }
 
@@ -201,12 +278,8 @@ std::int64_t APS5_VABI DecodeGetColorContext(void* decoder, std::uint8_t* buffer
     Require(decoder != nullptr && size != nullptr, "PKImageDecode_GetColorContext_WMP", "a decoder and a size");
     auto localSize = ReadGuestOutputSlot(size, "PKImageDecode_GetColorContext_WMP");
     RequireWritableGuestSlot(size, "PKImageDecode_GetColorContext_WMP");
-    if (buffer != nullptr && localSize > 0) {
-        const int savedErrno = errno;
-        const bool writable = GuestWritable_nid_no_patch(buffer, localSize);
-        errno = savedErrno;
-        if (!writable) NotImplementedAt_nid_no_patch("PKImageDecode_GetColorContext_WMP", __FILE__, __LINE__);
-    }
+    if (buffer != nullptr && localSize > 0)
+        RequireWritableGuestBytes(buffer, localSize, "PKImageDecode_GetColorContext_WMP");
     std::int32_t refusal = JXR_WMP_ACCEPTED;
     const auto result = JxrWmpDecodeGetColorContext_nid_no_patch(decoder, buffer, &localSize, &refusal);
     const auto checked = Checked(result, refusal, "PKImageDecode_GetColorContext_WMP");

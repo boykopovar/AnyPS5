@@ -11,6 +11,7 @@
 #include <exception>
 #include <map>
 #include <stdexcept>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -18,6 +19,12 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
+
+extern "C" {
+std::size_t JxrWmpReferenceParameterSize();
+void JxrWmpReferenceParameters(void* value, std::int32_t spatial, std::uint8_t alphaMode);
+void JxrWmpReferenceConfigureDecoder(void* value);
+}
 
 namespace {
 
@@ -88,25 +95,27 @@ void InitializeHeap() {
     ApplicationHeapInitialize_nid_no_patch(process.data());
 }
 
-template <typename TCall>
-void ExpectThrows(TCall&& call, int line) {
+template <typename TException, typename TCall>
+void ExpectThrowsAs(TCall&& call, int line) {
     bool threw = false;
     try {
         call();
-    } catch (const std::exception&) {
+    } catch (const TException&) {
         threw = true;
     }
     Require(threw, line);
 }
 
-#define CHECK_THROWS(expr) ExpectThrows([&] { expr; }, __LINE__)
+#define CHECK_THROWS_AS(type, expr) ExpectThrowsAs<type>([&] { expr; }, __LINE__)
 
-void SetPageWritable(void* address, std::size_t size, bool writable) {
+void SetPageProtection(void* address, std::size_t size, bool readable, bool writable) {
 #ifdef _WIN32
     DWORD oldProtect = 0;
-    CHECK(VirtualProtect(address, size, writable ? PAGE_READWRITE : PAGE_READONLY, &oldProtect) != 0);
+    const DWORD protect = !readable ? PAGE_NOACCESS : (writable ? PAGE_READWRITE : PAGE_READONLY);
+    CHECK(VirtualProtect(address, size, protect, &oldProtect) != 0);
 #else
-    CHECK(mprotect(address, size, writable ? (PROT_READ | PROT_WRITE) : PROT_READ) == 0);
+    const int prot = !readable ? PROT_NONE : (writable ? (PROT_READ | PROT_WRITE) : PROT_READ);
+    CHECK(mprotect(address, size, prot) == 0);
 #endif
 }
 
@@ -114,6 +123,7 @@ struct ProtectedPages {
     std::size_t pageSize = 0;
     void* unmapped = nullptr;
     void* readOnly = nullptr;
+    void* boundary = nullptr;
 
     ProtectedPages() {
 #ifdef _WIN32
@@ -125,7 +135,11 @@ struct ProtectedPages {
         readOnly = VirtualAlloc(nullptr, pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         CHECK(readOnly != nullptr);
         std::memset(readOnly, 0, pageSize);
-        SetPageWritable(readOnly, pageSize, false);
+        SetPageProtection(readOnly, pageSize, true, false);
+        boundary = VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        CHECK(boundary != nullptr);
+        std::memset(boundary, 0, pageSize * 2);
+        SetPageProtection(static_cast<std::byte*>(boundary) + pageSize, pageSize, false, false);
 #else
         pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
         unmapped = mmap(nullptr, pageSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -133,7 +147,11 @@ struct ProtectedPages {
         readOnly = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         CHECK(readOnly != MAP_FAILED);
         std::memset(readOnly, 0, pageSize);
-        SetPageWritable(readOnly, pageSize, false);
+        SetPageProtection(readOnly, pageSize, true, false);
+        boundary = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        CHECK(boundary != MAP_FAILED);
+        std::memset(boundary, 0, pageSize * 2);
+        SetPageProtection(static_cast<std::byte*>(boundary) + pageSize, pageSize, false, false);
 #endif
     }
 
@@ -141,9 +159,11 @@ struct ProtectedPages {
 #ifdef _WIN32
         VirtualFree(unmapped, 0, MEM_RELEASE);
         VirtualFree(readOnly, 0, MEM_RELEASE);
+        VirtualFree(boundary, 0, MEM_RELEASE);
 #else
         munmap(unmapped, pageSize);
         munmap(readOnly, pageSize);
+        munmap(boundary, pageSize * 2);
 #endif
     }
 };
@@ -162,6 +182,24 @@ struct Decoder {
     std::int64_t (APS5_VABI* release)(Decoder**);
 };
 
+struct Rect {
+    std::int32_t x;
+    std::int32_t y;
+    std::int32_t width;
+    std::int32_t height;
+};
+
+constexpr std::uint32_t Width = 32;
+constexpr std::uint32_t Height = 32;
+constexpr std::uint32_t Stride = Width * 3;
+constexpr std::size_t StreamCapacity = 1 << 18;
+
+Jxr::Stream* CreateMemoryStream(std::vector<std::uint8_t>& buffer) {
+    Jxr::Stream* stream = nullptr;
+    CHECK(CreateWS_Memory_nid_postfix(&stream, buffer.data(), buffer.size()) == 0 && stream != nullptr);
+    return stream;
+}
+
 }
 
 int main() {
@@ -173,66 +211,128 @@ int main() {
     auto** badDecoderOut = static_cast<void**>(pages.unmapped);
     auto** roDecoderOut = static_cast<void**>(pages.readOnly);
 
-    CHECK_THROWS(PKImageEncode_Create_WMP_nid_postfix(nullptr));
-    CHECK_THROWS(PKImageEncode_Create_WMP_nid_postfix(badEncoderOut));
-    CHECK_THROWS(PKImageEncode_Create_WMP_nid_postfix(roEncoderOut));
+    CHECK_THROWS_AS(std::invalid_argument, PKImageEncode_Create_WMP_nid_postfix(nullptr));
+    CHECK_THROWS_AS(std::runtime_error, PKImageEncode_Create_WMP_nid_postfix(badEncoderOut));
+    CHECK_THROWS_AS(std::runtime_error, PKImageEncode_Create_WMP_nid_postfix(roEncoderOut));
     CHECK(liveAllocations.empty());
 
-    CHECK_THROWS(PKImageDecode_Create_WMP_nid_postfix(nullptr));
-    CHECK_THROWS(PKImageDecode_Create_WMP_nid_postfix(badDecoderOut));
-    CHECK_THROWS(PKImageDecode_Create_WMP_nid_postfix(roDecoderOut));
+    CHECK_THROWS_AS(std::invalid_argument, PKImageDecode_Create_WMP_nid_postfix(nullptr));
+    CHECK_THROWS_AS(std::runtime_error, PKImageDecode_Create_WMP_nid_postfix(badDecoderOut));
+    CHECK_THROWS_AS(std::runtime_error, PKImageDecode_Create_WMP_nid_postfix(roDecoderOut));
     CHECK(liveAllocations.empty());
 
+    std::vector<std::uint8_t> parameters(JxrWmpReferenceParameterSize());
+    JxrWmpReferenceParameters(parameters.data(), 0, 0);
+    std::vector<std::uint8_t> sourcePixels(Height * Stride);
+    for (std::size_t i = 0; i < sourcePixels.size(); ++i)
+        sourcePixels[i] = static_cast<std::uint8_t>((i * 29 + 7) & 0xFF);
+    std::vector<std::uint8_t> encoded(StreamCapacity);
+
+    auto* encodeStream = CreateMemoryStream(encoded);
     Jxr::ImageEncode* encoder = nullptr;
     CHECK(PKImageEncode_Create_WMP_nid_postfix(&encoder) == 0 && encoder != nullptr);
-    CHECK_THROWS(encoder->release(nullptr));
-    CHECK_THROWS(encoder->release(badEncoderOut));
+    CHECK_THROWS_AS(std::invalid_argument, encoder->release(nullptr));
+    CHECK_THROWS_AS(std::runtime_error, encoder->release(badEncoderOut));
 
-    SetPageWritable(pages.readOnly, pages.pageSize, true);
+    auto* boundaryParams = static_cast<std::byte*>(pages.boundary) + pages.pageSize - 8;
+    CHECK_THROWS_AS(std::runtime_error, encoder->initialize(encoder, encodeStream, pages.unmapped, parameters.size()));
+    CHECK_THROWS_AS(std::runtime_error, encoder->initialize(encoder, encodeStream, boundaryParams, parameters.size()));
+    CHECK(encoder->initialize(encoder, encodeStream, parameters.data(), parameters.size()) == 0);
+    CHECK(encoder->setPixelFormat(encoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    CHECK(encoder->setSize(encoder, Width, Height) == 0);
+
+    auto* boundaryPixels = reinterpret_cast<std::uint8_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - 64);
+    CHECK_THROWS_AS(std::runtime_error, encoder->writePixels(encoder, Height, nullptr, Stride));
+    CHECK_THROWS_AS(std::runtime_error, encoder->writePixels(encoder, Height, static_cast<std::uint8_t*>(pages.unmapped), Stride));
+    CHECK_THROWS_AS(std::runtime_error, encoder->writePixels(encoder, Height, boundaryPixels, Stride));
+    CHECK(encoder->writePixels(encoder, Height, sourcePixels.data(), Stride) == 0);
+    std::size_t encodedBytes = 0;
+    CHECK(encodeStream->getPosition(encodeStream, &encodedBytes) == 0 && encodedBytes > 0);
+    CHECK(encoder->terminate(encoder) == 0);
+
+    SetPageProtection(pages.readOnly, pages.pageSize, true, true);
     *roEncoderOut = encoder;
-    SetPageWritable(pages.readOnly, pages.pageSize, false);
+    SetPageProtection(pages.readOnly, pages.pageSize, true, false);
     const auto liveBeforeRoRelease = liveAllocations.size();
-    CHECK_THROWS(encoder->release(roEncoderOut));
+    CHECK_THROWS_AS(std::runtime_error, encoder->release(roEncoderOut));
     CHECK(*roEncoderOut == encoder && liveAllocations.size() == liveBeforeRoRelease);
-    SetPageWritable(pages.readOnly, pages.pageSize, true);
+    SetPageProtection(pages.readOnly, pages.pageSize, true, true);
     *roEncoderOut = nullptr;
-    SetPageWritable(pages.readOnly, pages.pageSize, false);
+    SetPageProtection(pages.readOnly, pages.pageSize, true, false);
 
-    void* encoderRaw = encoder;
-    CHECK(PKFree_nid_postfix(&encoderRaw) == 0);
+    CHECK(encoder->release(&encoder) == 0 && encoder == nullptr);
     CHECK(liveAllocations.empty());
 
+    std::vector<std::uint8_t> bandedOutput(StreamCapacity);
+    auto* bandedStream = CreateMemoryStream(bandedOutput);
+    Jxr::ImageEncode* bandedEncoder = nullptr;
+    CHECK(PKImageEncode_Create_WMP_nid_postfix(&bandedEncoder) == 0 && bandedEncoder != nullptr);
+    CHECK(bandedEncoder->initialize(bandedEncoder, bandedStream, parameters.data(), parameters.size()) == 0);
+    CHECK(bandedEncoder->setPixelFormat(bandedEncoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    CHECK(bandedEncoder->setSize(bandedEncoder, Width, Height) == 0);
+    CHECK(bandedEncoder->writePixelsBandedBegin(bandedEncoder, nullptr) == 0);
+    CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, nullptr, Stride, 0));
+    CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, static_cast<std::uint8_t*>(pages.unmapped), Stride, 0));
+    CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, boundaryPixels, Stride, 0));
+    CHECK(bandedEncoder->release(&bandedEncoder) == 0 && bandedEncoder == nullptr);
+    CHECK(liveAllocations.empty());
+
+    auto* decodeStream = CreateMemoryStream(encoded);
     void* decoderRaw = nullptr;
     CHECK(PKImageDecode_Create_WMP_nid_postfix(&decoderRaw) == 0 && decoderRaw != nullptr);
     auto* decoder = static_cast<Decoder*>(decoderRaw);
+    CHECK(decoder->initialize(decoder, decodeStream) == 0);
+
+    std::int32_t width = 0;
+    std::int32_t height = 0;
+    CHECK(decoder->getSize(decoder, &width, &height) == 0);
+    CHECK(width == static_cast<std::int32_t>(Width) && height == static_cast<std::int32_t>(Height));
 
     std::int32_t validInt = 0;
     auto* badInt = static_cast<std::int32_t*>(pages.unmapped);
     auto* roInt = static_cast<std::int32_t*>(pages.readOnly);
-    CHECK_THROWS(decoder->getSize(decoder, badInt, &validInt));
-    CHECK_THROWS(decoder->getSize(decoder, &validInt, badInt));
-    CHECK_THROWS(decoder->getSize(decoder, roInt, &validInt));
-    CHECK_THROWS(decoder->getSize(decoder, &validInt, roInt));
-    CHECK_THROWS(decoder->getRawStream(decoder, static_cast<Jxr::Stream**>(pages.unmapped)));
-    CHECK_THROWS(decoder->getRawStream(decoder, static_cast<Jxr::Stream**>(pages.readOnly)));
-    CHECK_THROWS(decoder->getColorContext(decoder, nullptr, static_cast<std::uint32_t*>(pages.unmapped)));
-    CHECK_THROWS(decoder->getColorContext(decoder, nullptr, static_cast<std::uint32_t*>(pages.readOnly)));
-    std::uint32_t nonzeroSize = 8;
-    CHECK_THROWS(decoder->getColorContext(decoder, static_cast<std::uint8_t*>(pages.readOnly), &nonzeroSize));
+    CHECK_THROWS_AS(std::runtime_error, decoder->getSize(decoder, badInt, &validInt));
+    CHECK_THROWS_AS(std::runtime_error, decoder->getSize(decoder, &validInt, badInt));
+    CHECK_THROWS_AS(std::runtime_error, decoder->getSize(decoder, roInt, &validInt));
+    CHECK_THROWS_AS(std::runtime_error, decoder->getSize(decoder, &validInt, roInt));
 
-    CHECK_THROWS(decoder->release(reinterpret_cast<Decoder**>(badDecoderOut)));
-    SetPageWritable(pages.readOnly, pages.pageSize, true);
+    Jxr::Stream* rawStream = nullptr;
+    CHECK(decoder->getRawStream(decoder, &rawStream) == 0 && rawStream == decodeStream);
+    CHECK_THROWS_AS(std::runtime_error, decoder->getRawStream(decoder, static_cast<Jxr::Stream**>(pages.unmapped)));
+    CHECK_THROWS_AS(std::runtime_error, decoder->getRawStream(decoder, static_cast<Jxr::Stream**>(pages.readOnly)));
+
+    CHECK_THROWS_AS(std::runtime_error, decoder->getColorContext(decoder, nullptr, static_cast<std::uint32_t*>(pages.unmapped)));
+    CHECK_THROWS_AS(std::runtime_error, decoder->getColorContext(decoder, nullptr, static_cast<std::uint32_t*>(pages.readOnly)));
+    std::uint32_t nonzeroSize = 8;
+    CHECK_THROWS_AS(std::runtime_error, decoder->getColorContext(decoder, static_cast<std::uint8_t*>(pages.readOnly), &nonzeroSize));
+
+    JxrWmpReferenceConfigureDecoder(decoder);
+    const Rect validRect{0, 0, width, height};
+    std::vector<std::uint8_t> decodedPixels(Height * Stride);
+    auto* boundaryRect = static_cast<std::byte*>(pages.boundary) + pages.pageSize - 8;
+    CHECK_THROWS_AS(std::invalid_argument, decoder->copy(decoder, nullptr, decodedPixels.data(), Stride));
+    CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, pages.unmapped, decodedPixels.data(), Stride));
+    CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, boundaryRect, decodedPixels.data(), Stride));
+    CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, nullptr, Stride));
+    CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, static_cast<std::uint8_t*>(pages.unmapped), Stride));
+    CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, static_cast<std::uint8_t*>(pages.readOnly), Stride));
+    CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, boundaryPixels, Stride));
+    CHECK(decoder->copy(decoder, &validRect, decodedPixels.data(), Stride) == 0);
+
+    CHECK_THROWS_AS(std::runtime_error, decoder->release(reinterpret_cast<Decoder**>(badDecoderOut)));
+    SetPageProtection(pages.readOnly, pages.pageSize, true, true);
     *roDecoderOut = decoder;
-    SetPageWritable(pages.readOnly, pages.pageSize, false);
+    SetPageProtection(pages.readOnly, pages.pageSize, true, false);
     const auto liveBeforeRoDecoderRelease = liveAllocations.size();
-    CHECK_THROWS(decoder->release(reinterpret_cast<Decoder**>(roDecoderOut)));
+    CHECK_THROWS_AS(std::runtime_error, decoder->release(reinterpret_cast<Decoder**>(roDecoderOut)));
     CHECK(*roDecoderOut == decoder && liveAllocations.size() == liveBeforeRoDecoderRelease);
-    SetPageWritable(pages.readOnly, pages.pageSize, true);
+    SetPageProtection(pages.readOnly, pages.pageSize, true, true);
     *roDecoderOut = nullptr;
-    SetPageWritable(pages.readOnly, pages.pageSize, false);
+    SetPageProtection(pages.readOnly, pages.pageSize, true, false);
 
     CHECK(decoder->release(nullptr) == 0);
     CHECK(decoder->release(&decoder) == 0 && decoder == nullptr);
+    CHECK(decodeStream->close(&decodeStream) == 0 && decodeStream == nullptr);
     CHECK(liveAllocations.empty());
     return 0;
 }
