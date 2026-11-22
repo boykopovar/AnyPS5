@@ -92,6 +92,27 @@ def script_test_owners(build_dir, targets_by_name, patterns):
     return sorted(owners, key=str.casefold)
 
 
+def loaded_libraries(target, targets, source_root):
+    libraries = set()
+    pending = list(target.get("dependencies", []))
+    visited = set()
+    while pending:
+        dependency = pending.pop()
+        identifier = dependency.get("id")
+        if not isinstance(identifier, str) or not identifier or identifier not in targets:
+            raise ValueError(f"unknown dependency target id: {identifier}")
+        if identifier in visited:
+            continue
+        visited.add(identifier)
+        candidate = targets[identifier]
+        kind = candidate.get("type")
+        if kind in {"SHARED_LIBRARY", "MODULE_LIBRARY"} and host_only.is_product_library(candidate, source_root):
+            libraries.add(identifier)
+        elif kind in {"OBJECT_LIBRARY", "STATIC_LIBRARY", "INTERFACE_LIBRARY"}:
+            pending.extend(candidate.get("dependencies", []))
+    return libraries
+
+
 def guest_test_targets(source_root, targets, changed_paths=None):
     selected = []
     for target in targets.values():
@@ -119,10 +140,19 @@ def guest_test_targets(source_root, targets, changed_paths=None):
         target.get("name") == LIBRARY_LOAD_TEST and target.get("type") == "EXECUTABLE" for target in targets.values()) else []
     if broad_change:
         return sorted({target["name"] for target in selected} | set(load_test), key=str.casefold)
-    return [
-        target["name"] for target in selected
-        if changed & host_only.target_reached_sources(target, targets, source_root)
-    ] + load_test
+    library_sources = {}
+    chosen = []
+    for target in selected:
+        if changed & host_only.target_reached_sources(target, targets, source_root):
+            chosen.append(target["name"])
+            continue
+        for identifier in loaded_libraries(target, targets, source_root):
+            if identifier not in library_sources:
+                library_sources[identifier] = host_only.target_reached_sources(targets[identifier], targets, source_root)
+            if changed & library_sources[identifier]:
+                chosen.append(target["name"])
+                break
+    return chosen + load_test
 
 
 def core_lib_test_targets(source_root, targets, changed_paths=None):

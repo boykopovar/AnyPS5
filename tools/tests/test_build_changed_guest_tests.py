@@ -139,6 +139,39 @@ class GuestTestTargets(unittest.TestCase):
         self.assertEqual(self.selections(build, ["core/libs/tests/Guest.cpp"]), ["guest_pad_tests"])
         self.assertEqual(self.selections(build, ["core/relinker/codegen/src/Amd64OnlyConverter.cpp"]), [])
 
+    def test_a_library_source_change_selects_the_guest_tests_that_load_the_library(self):
+        guest = self.target("guest_mktime_tests", source="core/libs/tests/GuestMktime.cpp", fragment="libc.prx")
+        unrelated = self.target("guest_pad_tests", source="core/libs/tests/GuestPad.cpp", fragment="libScePad.prx")
+        library = self.target("libc", target_type="MODULE_LIBRARY", source="core/libs/prx/libc/src/SonyCrt.cpp")
+        guest["dependencies"] = [{"id": library["id"]}]
+        build = self.fixture([guest, unrelated, library])
+        self.assertEqual(
+            self.selections(build, ["core/libs/prx/libc/src/SonyCrt.cpp"]),
+            ["guest_mktime_tests"],
+        )
+        self.assertEqual(self.selections(build, ["core/libs/prx/libc/src/Getopt.cpp"]), [])
+
+    def test_a_library_source_change_reaches_a_test_through_a_static_helper(self):
+        guest = self.target("guest_mktime_tests", source="core/libs/tests/GuestMktime.cpp", fragment="libc.prx")
+        helper = self.target("mktime_helper", target_type="STATIC_LIBRARY", source="core/libs/tests/MktimeHelper.cpp")
+        library = self.target("libc", target_type="MODULE_LIBRARY", source="core/libs/prx/libc/src/SonyCrt.cpp")
+        guest["dependencies"] = [{"id": helper["id"]}]
+        helper["dependencies"] = [{"id": library["id"]}]
+        build = self.fixture([guest, helper, library])
+        self.assertEqual(
+            self.selections(build, ["core/libs/prx/libc/src/SonyCrt.cpp"]),
+            ["guest_mktime_tests"],
+        )
+
+    def test_a_library_source_change_does_not_select_a_test_that_does_not_load_it(self):
+        guest = self.target("guest_pad_tests", source="core/libs/tests/GuestPad.cpp", fragment="libc.prx libScePad.prx")
+        pad = self.target("libScePad", target_type="SHARED_LIBRARY", source="core/libs/prx/libScePad/Export.cpp")
+        other = self.target("libSceNgs2", target_type="SHARED_LIBRARY", source="core/libs/prx/libSceNgs2/Export.cpp")
+        guest["dependencies"] = [{"id": pad["id"]}]
+        build = self.fixture([guest, pad, other])
+        self.assertEqual(self.selections(build, ["core/libs/prx/libSceNgs2/Export.cpp"]), [])
+        self.assertEqual(self.selections(build, ["core/libs/prx/libScePad/Export.cpp"]), ["guest_pad_tests"])
+
     def test_an_unrelated_change_selects_nothing(self):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/relinker/codegen/src/Amd64OnlyConverter.cpp"]), [])
