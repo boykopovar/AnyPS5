@@ -30,9 +30,9 @@ Fn RequireForward(const std::atomic<Fn>& slot, const char* function) {
 }
 
 PthreadMutex* CheckedMutex(PthreadMutex* self, const char* function) {
-    if (!self || (reinterpret_cast<std::uintptr_t>(self) & (alignof(PthreadMutex) - 1)) != 0) {
-        throw std::invalid_argument(std::string(function) + ": invalid mutex pointer");
-    }
+    if (reinterpret_cast<std::uintptr_t>(self) % alignof(PthreadMutex) != 0 ||
+        !GuestWritable_nid_no_patch(self, sizeof(PthreadMutex)))
+        throw std::invalid_argument(std::string(function) + ": invalid mutex address");
     return self;
 }
 

@@ -99,13 +99,31 @@ int main() {
     _ZNSt3__15mutex6unlockEv_nid_postfix(&mutex);
     _ZNSt3__15mutexD1Ev_nid_postfix(&mutex);
 
-    bool rejected = false;
-    try {
-        _ZNSt3__15mutex4lockEv_nid_postfix(reinterpret_cast<PthreadMutex*>(std::uintptr_t{1}));
-    } catch (const std::invalid_argument&) {
-        rejected = true;
+    auto throwsInvalidArgument = [](auto&& fn) {
+        try {
+            fn();
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+    Require(throwsInvalidArgument([&] {
+                _ZNSt3__15mutex4lockEv_nid_postfix(reinterpret_cast<PthreadMutex*>(std::uintptr_t{1}));
+            }),
+            "libc++ mutex accepted an unaligned guest address");
+    for (PthreadMutex* badAddress : {
+             static_cast<PthreadMutex*>(nullptr),
+             reinterpret_cast<PthreadMutex*>(std::uintptr_t{0x10}),
+         }) {
+        Require(throwsInvalidArgument([&] { _ZNSt3__15mutex4lockEv_nid_postfix(badAddress); }),
+                "libc++ mutex lock accepted an unwritable guest address");
+        Require(throwsInvalidArgument([&] { static_cast<void>(_ZNSt3__15mutex8try_lockEv_nid_postfix(badAddress)); }),
+                "libc++ mutex try_lock accepted an unwritable guest address");
+        Require(throwsInvalidArgument([&] { _ZNSt3__15mutex6unlockEv_nid_postfix(badAddress); }),
+                "libc++ mutex unlock accepted an unwritable guest address");
+        Require(throwsInvalidArgument([&] { _ZNSt3__15mutexD1Ev_nid_postfix(badAddress); }),
+                "libc++ mutex destructor accepted an unwritable guest address");
     }
-    Require(rejected, "libc++ mutex accepted an unaligned guest address");
 
     {
         static const LibcxxPlainMutexForwards_nid_no_patch partialForwards{
