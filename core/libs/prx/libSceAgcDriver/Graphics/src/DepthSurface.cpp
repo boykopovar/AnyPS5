@@ -926,6 +926,7 @@ bool StencilShadowCopyWorks(const Context& context, VkFormat format, std::uint32
 
 class DepthSurface;
 std::pair<std::uint64_t, std::uint64_t> staleStencilRange(const DepthSurface& surface);
+std::uint32_t expandedHtileWord(std::uint32_t word, bool stencilInHtile, VkImageAspectFlags cleared);
 void noteStalePlane(std::uint64_t begin, std::uint64_t end);
 std::uint64_t nextPlaneSerial();
 
@@ -1031,6 +1032,15 @@ public:
     DepthSurface(const DepthSurface&) = delete;
     DepthSurface& operator=(const DepthSurface&) = delete;
 
+    bool expandedHtilePlane(const GuestMemory::UnchangedQuery& range) const {
+        for (std::uint64_t offset = 0u; offset + 4u <= range.bytes; offset += 4u) {
+            std::uint32_t word;
+            std::memcpy(&word, reinterpret_cast<const void*>(range.address + offset), sizeof(word));
+            if (word != expandedHtileWord(word, target.htileStencil, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) return false;
+        }
+        return true;
+    }
+
     void CheckCurrent() {
         if (target.samples == 1u) return;
         ProveOverwrite();
@@ -1057,10 +1067,18 @@ public:
             const auto& range = sampling.initial[index];
             Require(GuestMemory::Accessible(reinterpret_cast<const void*>(range.address), range.bytes) && GuestMemory::Watched(range.address, range.bytes), "native multisample depth requires watched accessible guest memory");
             if (recorder != nullptr && !(index == 1u && queuedFill) && !(index == 2u && queuedStencilFill) && recorder->PendingWriteOverlaps(range.address, range.bytes)) {
-                Require(!recorder->PendingStoreOverlaps(range.address, range.bytes), "external GPU writes over native multisample depth are not implemented");
-                const auto settled = GuestMemory::TrackerGeneration();
-                RecorderFor(context)->SyncThrough(range.address, range.bytes);
-                Require(!GuestMemory::WrittenSince(range.address, range.bytes, settled), "external GPU writes over native multisample depth are not implemented");
+                if (recorder->PendingStoreOverlaps(range.address, range.bytes)) {
+                    Require(index == 1u, "external GPU writes over native multisample depth are not implemented");
+                    RecorderFor(context)->SyncThrough(range.address, range.bytes);
+                    if (!expandedHtilePlane(range)) sampling.refusal = "external GPU writes over native multisample depth are not implemented";
+                    Require(sampling.refusal.empty(), sampling.refusal);
+                    sampling.initial[index].generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                    RebasePublication(1u);
+                } else {
+                    const auto settled = GuestMemory::TrackerGeneration();
+                    RecorderFor(context)->SyncThrough(range.address, range.bytes);
+                    Require(!GuestMemory::WrittenSince(range.address, range.bytes, settled), "external GPU writes over native multisample depth are not implemented");
+                }
             }
             GuestMemory::CollectWritesForGpuUse(range, samplingObservations[index]);
             const auto alias = MultisampleColorTargetOver(range.address, range.bytes);
