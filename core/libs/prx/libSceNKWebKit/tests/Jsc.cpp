@@ -801,6 +801,164 @@ void TestGcProtectWeakAndWatchdog() {
     JSContextGroupRelease(group);
 }
 
+bool IsJsNull(JSContextRef ctx, JSValueRef value) {
+    return value != nullptr && JSValueIsNull(ctx, value);
+}
+
+bool IsJsUndefined(JSContextRef ctx, JSValueRef value) {
+    return value != nullptr && JSValueIsUndefined(ctx, value);
+}
+
+bool IsJsText(JSContextRef ctx, JSValueRef value, const char* expected) {
+    if (value == nullptr || !JSValueIsString(ctx, value)) return false;
+    ScopedJsString copy(JSValueToStringCopy(ctx, value, nullptr));
+    return copy.ref != nullptr && JSStringIsEqualToUTF8CString(copy, expected);
+}
+
+void TestNullValueRefs() {
+    JSGlobalContextRef ctx = JSGlobalContextCreate(nullptr);
+    JSValueRef nullVal = JSValueMakeNull(ctx);
+    JSValueRef undefVal = JSValueMakeUndefined(ctx);
+    JSValueRef numVal = JSValueMakeNumber(ctx, 7.0);
+    JSValueRef exc = nullptr;
+
+    Require(JSValueGetType(ctx, nullptr) == kJSTypeNull);
+    Require(JSValueIsNull(ctx, nullptr));
+    Require(!JSValueIsUndefined(ctx, nullptr) && !JSValueIsBoolean(ctx, nullptr) && !JSValueIsNumber(ctx, nullptr));
+    Require(!JSValueIsString(ctx, nullptr) && !JSValueIsSymbol(ctx, nullptr) && !JSValueIsObject(ctx, nullptr));
+    Require(!JSValueIsArray(ctx, nullptr) && !JSValueIsDate(ctx, nullptr));
+    Require(JSValueGetTypedArrayType(ctx, nullptr, nullptr) == kJSTypedArrayTypeNone);
+    Require(JSValueGetType(ctx, numVal) == kJSTypeNumber && !JSValueIsNull(ctx, numVal));
+    Require(JSValueGetType(ctx, undefVal) == kJSTypeUndefined && !JSValueIsNull(ctx, undefVal));
+
+    Require(JSValueIsEqual(ctx, nullptr, nullptr, &exc));
+    Require(JSValueIsEqual(ctx, nullptr, nullVal, &exc) && JSValueIsEqual(ctx, nullVal, nullptr, &exc));
+    Require(JSValueIsEqual(ctx, nullptr, undefVal, &exc) && JSValueIsEqual(ctx, undefVal, nullptr, &exc));
+    Require(!JSValueIsEqual(ctx, nullptr, numVal, &exc) && !JSValueIsEqual(ctx, numVal, nullptr, &exc));
+    Require(JSValueIsStrictEqual(ctx, nullptr, nullptr));
+    Require(JSValueIsStrictEqual(ctx, nullptr, nullVal) && JSValueIsStrictEqual(ctx, nullVal, nullptr));
+    Require(!JSValueIsStrictEqual(ctx, nullptr, undefVal) && !JSValueIsStrictEqual(ctx, undefVal, nullptr));
+    Require(!JSValueIsStrictEqual(ctx, nullptr, numVal) && !JSValueIsStrictEqual(ctx, numVal, nullptr));
+    Require(!JSValueIsStrictEqual(nullptr, nullptr, nullptr) && !JSValueIsStrictEqual(nullptr, nullptr, numVal));
+
+    Require(exc == nullptr);
+
+    Require(!JSValueToBoolean(ctx, nullptr));
+    Require(JSValueToNumber(ctx, nullptr, &exc) == 0.0 && exc == nullptr);
+    Require(std::isnan(JSValueToNumber(ctx, undefVal, &exc)) && exc == nullptr);
+    Require(JSValueToNumber(ctx, numVal, &exc) == 7.0);
+
+    JSStringRef nullText = JSValueToStringCopy(ctx, nullptr, &exc);
+    Require(nullText != nullptr && JSStringIsEqualToUTF8CString(nullText, "null") && exc == nullptr);
+    JSStringRelease_nid_postfix(nullText);
+    JSStringRef undefinedText = JSValueToStringCopy(ctx, undefVal, &exc);
+    Require(undefinedText != nullptr && JSStringIsEqualToUTF8CString(undefinedText, "undefined"));
+    JSStringRelease_nid_postfix(undefinedText);
+
+    JSStringRef nullJson = JSValueCreateJSONString(ctx, nullptr, 0, &exc);
+    Require(nullJson != nullptr && JSStringIsEqualToUTF8CString(nullJson, "null") && exc == nullptr);
+    JSStringRelease_nid_postfix(nullJson);
+    Require(JSValueCreateJSONString(ctx, undefVal, 0, &exc) == nullptr && exc == nullptr);
+
+    Require(JSValueToObject(ctx, nullptr, &exc) == nullptr);
+    Require(exc != nullptr && JSValueIsObject(ctx, exc));
+    exc = nullptr;
+    Require(JSValueToObject(ctx, numVal, &exc) != nullptr && exc == nullptr);
+
+    JSObjectRef objectCtor = JSValueToObject(ctx, EvalUtf8(ctx, "Object"), nullptr);
+    Require(!JSValueIsInstanceOfConstructor(ctx, nullptr, objectCtor, &exc) && exc == nullptr);
+    Require(JSValueIsInstanceOfConstructor(ctx, JSObjectMake(ctx, nullptr, nullptr), objectCtor, &exc) && exc == nullptr);
+    JSObjectRef nullJudge = JSValueToObject(ctx, EvalUtf8(ctx, "(function() { function F() {} Object.defineProperty(F, Symbol.hasInstance, { value: function(v) { return v === null; } }); return F; })()"), nullptr);
+    Require(nullJudge != nullptr);
+    Require(JSValueIsInstanceOfConstructor(ctx, nullptr, nullJudge, &exc) && JSValueIsInstanceOfConstructor(ctx, nullVal, nullJudge, &exc));
+    Require(!JSValueIsInstanceOfConstructor(ctx, undefVal, nullJudge, &exc) && exc == nullptr);
+
+    JSValueProtect(ctx, nullptr);
+    JSValueUnprotect(ctx, nullptr);
+
+    JSValueRef mixed[3] = {nullptr, numVal, undefVal};
+    JSObjectRef describe = JSValueToObject(ctx, EvalUtf8(ctx, "(function() { return Array.prototype.map.call(arguments, function(v) { return v === null ? 'null' : typeof v; }).join(','); })"), nullptr);
+    Require(describe != nullptr);
+    Require(IsJsText(ctx, JSObjectCallAsFunction(ctx, describe, nullptr, 3, mixed, &exc), "null,number,undefined") && exc == nullptr);
+
+
+    JSObjectRef recorder = JSValueToObject(ctx, EvalUtf8(ctx, "(function(a, b, c) { this.kinds = [a, b, c].map(function(v) { return v === null ? 'null' : typeof v; }).join(','); })"), nullptr);
+    JSObjectRef recorded = JSObjectCallAsConstructor(ctx, recorder, 3, mixed, &exc);
+    ScopedJsString kindsKey("kinds");
+    Require(recorded != nullptr && exc == nullptr);
+    Require(IsJsText(ctx, JSObjectGetProperty(ctx, recorded, kindsKey, nullptr), "null,number,undefined"));
+
+    JSObjectRef arr = JSObjectMakeArray(ctx, 3, mixed, &exc);
+    Require(arr != nullptr && exc == nullptr);
+    Require(IsJsNull(ctx, JSObjectGetPropertyAtIndex(ctx, arr, 0, nullptr)));
+    Require(JSValueToNumber(ctx, JSObjectGetPropertyAtIndex(ctx, arr, 1, nullptr), nullptr) == 7.0);
+    Require(IsJsUndefined(ctx, JSObjectGetPropertyAtIndex(ctx, arr, 2, nullptr)));
+
+    JSValueRef nullArg = nullptr;
+    JSObjectRef epoch = JSObjectMakeDate(ctx, 1, &nullArg, &exc);
+    Require(epoch != nullptr && exc == nullptr && JSValueToNumber(ctx, epoch, nullptr) == 0.0);
+    JSObjectRef invalidDate = JSObjectMakeDate(ctx, 1, &undefVal, &exc);
+    Require(invalidDate != nullptr && std::isnan(JSValueToNumber(ctx, invalidDate, nullptr)));
+
+    ScopedJsString messageKey("message");
+    JSObjectRef nullError = JSObjectMakeError(ctx, 1, &nullArg, &exc);
+    Require(nullError != nullptr && IsJsText(ctx, JSObjectGetProperty(ctx, nullError, messageKey, nullptr), "null"));
+    JSObjectRef plainError = JSObjectMakeError(ctx, 1, &undefVal, &exc);
+    Require(plainError != nullptr && IsJsText(ctx, JSObjectGetProperty(ctx, plainError, messageKey, nullptr), ""));
+
+    ScopedJsString sourceKey("source");
+    JSObjectRef nullPattern = JSObjectMakeRegExp(ctx, 1, &nullArg, &exc);
+    Require(nullPattern != nullptr && IsJsText(ctx, JSObjectGetProperty(ctx, nullPattern, sourceKey, nullptr), "null"));
+    JSObjectRef emptyPattern = JSObjectMakeRegExp(ctx, 1, &undefVal, &exc);
+    Require(emptyPattern != nullptr && IsJsText(ctx, JSObjectGetProperty(ctx, emptyPattern, sourceKey, nullptr), "(?:)"));
+    Require(exc == nullptr);
+
+    JSObjectRef holder = JSObjectMake(ctx, nullptr, nullptr);
+    ScopedJsString slotKey("slot");
+    ScopedJsString fixedKey("fixed");
+    ScopedJsString undefinedKey("empty");
+    JSObjectSetProperty(ctx, holder, slotKey, nullptr, kJSPropertyAttributeNone, &exc);
+    Require(JSObjectHasProperty(ctx, holder, slotKey) && IsJsNull(ctx, JSObjectGetProperty(ctx, holder, slotKey, nullptr)));
+    JSObjectSetProperty(ctx, holder, fixedKey, nullptr, kJSPropertyAttributeReadOnly, &exc);
+    Require(JSObjectHasProperty(ctx, holder, fixedKey) && IsJsNull(ctx, JSObjectGetProperty(ctx, holder, fixedKey, nullptr)));
+    JSObjectSetProperty(ctx, holder, undefinedKey, undefVal, kJSPropertyAttributeNone, &exc);
+    Require(IsJsUndefined(ctx, JSObjectGetProperty(ctx, holder, undefinedKey, nullptr)));
+    JSObjectSetPropertyAtIndex(ctx, arr, 5, nullptr, &exc);
+    Require(IsJsNull(ctx, JSObjectGetPropertyAtIndex(ctx, arr, 5, nullptr)));
+    Require(IsJsUndefined(ctx, JSObjectGetPropertyAtIndex(ctx, arr, 4, nullptr)));
+    JSObjectSetPropertyForKey(ctx, holder, numVal, nullptr, kJSPropertyAttributeNone, &exc);
+    Require(IsJsNull(ctx, JSObjectGetPropertyForKey(ctx, holder, numVal, &exc)));
+    JSObjectSetPropertyForKey(ctx, holder, undefVal, nullptr, kJSPropertyAttributeDontEnum, &exc);
+    Require(IsJsNull(ctx, JSObjectGetPropertyForKey(ctx, holder, undefVal, &exc)));
+    Require(exc == nullptr);
+
+    ScopedJsString nullNameKey("null");
+    Require(!JSObjectHasProperty(ctx, holder, nullNameKey));
+    Require(IsJsUndefined(ctx, JSObjectGetPropertyForKey(ctx, holder, nullptr, &exc)));
+    JSObjectSetPropertyForKey(ctx, holder, nullptr, numVal, kJSPropertyAttributeNone, &exc);
+    Require(JSObjectHasProperty(ctx, holder, nullNameKey));
+    Require(JSValueToNumber(ctx, JSObjectGetProperty(ctx, holder, nullNameKey, nullptr), nullptr) == 7.0);
+    Require(JSValueToNumber(ctx, JSObjectGetPropertyForKey(ctx, holder, nullptr, &exc), nullptr) == 7.0);
+    Require(JSValueToNumber(ctx, JSObjectGetPropertyForKey(ctx, holder, nullVal, &exc), nullptr) == 7.0);
+    Require(JSObjectDeletePropertyForKey(ctx, holder, nullptr, &exc));
+    Require(!JSObjectHasProperty(ctx, holder, nullNameKey) && exc == nullptr);
+    JSObjectSetPropertyForKey(ctx, holder, nullptr, numVal, kJSPropertyAttributeDontDelete, &exc);
+    Require(JSObjectHasProperty(ctx, holder, nullNameKey) && !JSObjectDeletePropertyForKey(ctx, holder, nullptr, &exc));
+    Require(JSObjectHasProperty(ctx, holder, nullNameKey) && exc == nullptr);
+
+    JSObjectRef orphan = JSObjectMake(ctx, nullptr, nullptr);
+    JSObjectSetPrototype(ctx, orphan, holder);
+    Require(JSValueIsStrictEqual(ctx, JSObjectGetPrototype(ctx, orphan), holder));
+    JSObjectSetPrototype(ctx, orphan, nullptr);
+    Require(IsJsNull(ctx, JSObjectGetPrototype(ctx, orphan)));
+    JSObjectSetPrototype(ctx, orphan, holder);
+    Require(JSValueIsStrictEqual(ctx, JSObjectGetPrototype(ctx, orphan), holder));
+    JSObjectSetPrototype(ctx, orphan, numVal);
+    Require(IsJsNull(ctx, JSObjectGetPrototype(ctx, orphan)));
+
+    JSGlobalContextRelease(ctx);
+}
+
 }  // namespace
 
 int main() {
@@ -810,5 +968,6 @@ int main() {
     TestClassesAndCallbacks();
     TestTypedArraysAndArrayBuffers();
     TestGcProtectWeakAndWatchdog();
+    TestNullValueRefs();
     return 0;
 }
