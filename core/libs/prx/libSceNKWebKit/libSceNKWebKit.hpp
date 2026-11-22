@@ -20,6 +20,7 @@
 #include "prx/libSceNKWebKit/include/AuthenticationChallengeExports.hpp"
 #include "prx/libSceNKWebKit/include/ScrollbarValueExports.hpp"
 #include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"
+#include "prx/libSceNKWebKit/include/PasteboardExports.hpp"
 #include "prx/libSceNKWebKit/include/CursorExports.hpp"
 #include "prx/libSceNKWebKit/include/ProcessWarmingExports.hpp"
 #include "prx/libSceNKWebKit/include/FieldGettersExports.hpp"
