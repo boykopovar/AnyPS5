@@ -945,6 +945,16 @@ class NidEncodingTests(unittest.TestCase):
             db = nid_names.read_db(path)
             self.assertEqual(db, {"AAAAAAAAAAA": "first", "CCCCCCCCCCC": "third"})
 
+    def test_read_db_prefers_a_verified_duplicate_in_either_order(self):
+        symbol = "sceKernelUsleep"
+        nid = nid_names.compute_nid(symbol)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nids.txt"
+            for names in ((symbol, "guess"), ("guess", symbol, "later_guess")):
+                with self.subTest(names=names):
+                    path.write_text("".join(f"{nid}#A#A {name}#A#A\n" for name in names), encoding="utf-8")
+                    self.assertEqual(nid_names.read_db(path), {nid: symbol})
+
 
 if __name__ == "__main__":
     unittest.main()

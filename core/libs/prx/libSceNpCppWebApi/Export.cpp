@@ -5,7 +5,11 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
+#include <new>
+#include <unordered_set>
+#include <unordered_map>
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -15,6 +19,7 @@
 static constexpr int SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN = static_cast<int>(0x80552907);
 static constexpr std::size_t ReferenceCountOffset = 0;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;
+static constexpr std::uint64_t VectorBodyMagic = 0x434e507056656342ULL;
 static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
 
 static constexpr int TransactionInvalidArgument = static_cast<int>(0x80553503);
@@ -1029,32 +1034,31 @@ static LibContextState* LibContextStateFor(void* libContext) {
 
 static void* LibContextAllocate(void* libContext, const std::size_t size) {
     LibContextState* state = LibContextStateFor(libContext);
-    return state != nullptr ? sceLibcMspaceMalloc_nid_postfix(state->mspace, size) : nullptr;
+    return state != nullptr ? sceLibcMspaceMalloc_nid_postfix(state->mspace, size) : std::malloc(size);
 }
 
 static void* LibContextReallocate(void* libContext, void* object, const std::size_t size) {
     LibContextState* state = LibContextStateFor(libContext);
-    return state != nullptr ? sceLibcMspaceRealloc_nid_postfix(state->mspace, object, size) : nullptr;
+    return state != nullptr ? sceLibcMspaceRealloc_nid_postfix(state->mspace, object, size) : std::realloc(object, size);
 }
 
 static void LibContextDeallocate(void* libContext, void* object) {
     if (object == nullptr) return;
     LibContextState* state = LibContextStateFor(libContext);
     if (state != nullptr) sceLibcMspaceFree_nid_postfix(state->mspace, object);
+    else std::free(object);
 }
 
 static void* AllocateContextOrHost(void* libContext, const std::size_t size) {
-    return LibContextStateFor(libContext) != nullptr ? LibContextAllocate(libContext, size) : std::malloc(size);
+    return LibContextAllocate(libContext, size);
 }
 
 static void* ReallocateContextOrHost(void* libContext, void* object, const std::size_t size) {
-    return LibContextStateFor(libContext) != nullptr ? LibContextReallocate(libContext, object, size) : std::realloc(object, size);
+    return LibContextReallocate(libContext, object, size);
 }
 
 static void DeallocateContextOrHost(void* libContext, void* object) {
-    if (object == nullptr) return;
-    if (LibContextStateFor(libContext) != nullptr) LibContextDeallocate(libContext, object);
-    else std::free(object);
+    LibContextDeallocate(libContext, object);
 }
 
 static void ReleaseLibContextArena(LibContextState* state) {
@@ -1356,16 +1360,93 @@ static std::atomic_ref<std::int32_t> ReferenceCount(void* object, const std::siz
     return std::atomic_ref<std::int32_t>(*reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(object) + offset));
 }
 
+struct VectorHandleRegistration {
+    IntrusivePtr value;
+    bool hostBody;
+};
+
+static std::mutex VectorHandlesMutex;
+static std::unordered_map<const void*, VectorHandleRegistration> VectorHandles;
+static std::unordered_map<const void*, std::unordered_set<const void*>> VectorHandleOwners;
+
+static bool VectorReferenceOffset(const std::size_t offset) {
+    return offset == VectorReferenceCountOffset || offset == StringVectorReferenceCountOffset || offset == ScalarVectorReferenceCountOffset;
+}
+
+static bool TaggedVectorObject(const void* object) {
+    if (object == nullptr) return false;
+    std::uint64_t tag = 0;
+    std::memcpy(&tag, object, sizeof(tag));
+    return tag == VectorBodyMagic;
+}
+
+static void ForgetVectorHandleLocked(const void* self) {
+    const auto found = VectorHandles.find(self);
+    if (found == VectorHandles.end()) return;
+    const auto owners = VectorHandleOwners.find(found->second.value.object);
+    if (owners != VectorHandleOwners.end()) {
+        owners->second.erase(self);
+        if (owners->second.empty()) VectorHandleOwners.erase(owners);
+    }
+    VectorHandles.erase(found);
+}
+
+static void ForgetVectorHandle(const void* self) {
+    std::lock_guard lock(VectorHandlesMutex);
+    ForgetVectorHandleLocked(self);
+}
+
+static void ForgetVectorObject(const void* object) {
+    std::lock_guard lock(VectorHandlesMutex);
+    const auto owners = VectorHandleOwners.find(object);
+    if (owners == VectorHandleOwners.end()) return;
+    for (const void* handle : owners->second) VectorHandles.erase(handle);
+    VectorHandleOwners.erase(owners);
+}
+
+static bool SameVectorHandle(const IntrusivePtr& left, const IntrusivePtr& right) {
+    return left.object == right.object && left.deleter == right.deleter && left.libContext == right.libContext;
+}
+
+static void RememberVectorHandle(const IntrusivePtr* self) {
+    const bool tagged = TaggedVectorObject(self->object);
+    std::lock_guard lock(VectorHandlesMutex);
+    const auto found = VectorHandles.find(self);
+    if (found != VectorHandles.end() && SameVectorHandle(found->second.value, *self) && found->second.hostBody == tagged) return;
+    ForgetVectorHandleLocked(self);
+    if (self->object == nullptr) return;
+    auto owners = VectorHandleOwners.end();
+    try {
+        owners = VectorHandleOwners.try_emplace(self->object).first;
+        owners->second.insert(self);
+        try {
+            VectorHandles.emplace(self, VectorHandleRegistration{*self, tagged});
+        } catch (...) {
+            owners->second.erase(self);
+            throw;
+        }
+    } catch (...) {
+        if (owners != VectorHandleOwners.end() && owners->second.empty()) VectorHandleOwners.erase(owners);
+        throw;
+    }
+}
+
+static std::size_t IntrusiveReferenceOffset(const IntrusivePtr* self, const std::size_t requested) {
+    return VectorReferenceOffset(requested) && TaggedVectorObject(self->object) ? VectorReferenceCountOffset : requested;
+}
+
 static void CopyIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* source, const std::size_t referenceCountOffset) {
     *self = *source;
-    if (self->object) ReferenceCount(self->object, referenceCountOffset).fetch_add(1);
+    if (VectorReferenceOffset(referenceCountOffset)) RememberVectorHandle(self);
+    if (self->object) ReferenceCount(self->object, IntrusiveReferenceOffset(self, referenceCountOffset)).fetch_add(1);
 }
 
 static void ReleaseIntrusivePtr(IntrusivePtr* self, const std::size_t referenceCountOffset,
                                 const char* function, IntrusivePtrDestroy destroy = nullptr) {
     (void)function;
+    if (VectorReferenceOffset(referenceCountOffset)) ForgetVectorHandle(self);
     if (!self->object) return;
-    if (ReferenceCount(self->object, referenceCountOffset).fetch_sub(1) != 1) return;
+    if (ReferenceCount(self->object, IntrusiveReferenceOffset(self, referenceCountOffset)).fetch_sub(1) != 1) return;
     if (self->deleter != nullptr) {
         self->deleter(self->object);
     } else {
@@ -1984,7 +2065,6 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Le
 // Shared vector bodies. A Vector handle is an IntrusivePtr whose object is a body;
 // bodies adopted from a title through the pointer/deleter constructor keep their
 // 32-bit reference count at 0x30, so bodies created here do the same.
-static constexpr std::uint64_t VectorBodyMagic = 0x434e507056656342ULL;
 struct VectorBody {
     std::uint64_t magic;
     void* libContext;
@@ -1996,6 +2076,8 @@ struct VectorBody {
     std::uint64_t capacity;
 };
 static_assert(sizeof(VectorBody) == 0x50 && offsetof(VectorBody, referenceCount) == 0x30);
+
+static const VectorBody* HostVectorBody(const void* self, std::int32_t elementKind, const char* function);
 
 static void APS5_VABI DestroyVectorBody(void* object) {
     auto* body = static_cast<VectorBody*>(object);
@@ -2010,13 +2092,9 @@ static void APS5_VABI DestroyVectorBody(void* object) {
             ResetString(&elements[index]);
         }
     }
-    if (body->libContext != nullptr) {
-        LibContextDeallocate(body->libContext, body->elements);
-        LibContextDeallocate(body->libContext, body);
-    } else {
-        std::free(body->elements);
-        std::free(body);
-    }
+    LibContextDeallocate(body->libContext, body->elements);
+    ForgetVectorObject(body);
+    LibContextDeallocate(body->libContext, body);
 }
 
 static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementKind, const char* function) {
@@ -2042,11 +2120,30 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
         body->elementKind = elementKind;
         self->object = body;
         self->deleter = &DestroyVectorBody;
+        try {
+            RememberVectorHandle(self);
+        } catch (const std::bad_alloc&) {
+            self->object = nullptr;
+            self->deleter = nullptr;
+            LibContextDeallocate(body->libContext, body);
+            return nullptr;
+        } catch (...) {
+            self->object = nullptr;
+            self->deleter = nullptr;
+            LibContextDeallocate(body->libContext, body);
+            throw;
+        }
         return body;
     }
-    if (body->magic != VectorBodyMagic || body->elementKind != elementKind) {
-        // appending to a title-provided body needs its element layout, which is unknown
-        NotImplemented_nid_no_patch(function);
+    if (self->deleter == &DestroyVectorBody) {
+        if (!TaggedVectorObject(body) || body->elementKind != elementKind) NotImplemented_nid_no_patch(function);
+    } else {
+        body = const_cast<VectorBody*>(HostVectorBody(self, elementKind, function));
+        if (body == nullptr) NotImplemented_nid_no_patch(function);
+    }
+    try {
+        RememberVectorHandle(self);
+    } catch (const std::bad_alloc&) {
         return nullptr;
     }
     return body;
@@ -2070,17 +2167,25 @@ static const VectorBody* ResolveVectorBody(const void* self) {
     return static_cast<const VectorBody*>(static_cast<const IntrusivePtr*>(self)->object);
 }
 
-static std::uint64_t HostVectorSize(const void* self, const char* function) {
-    const auto* body = ResolveVectorBody(self);
-    if (body == nullptr) return 0;
-    if (body->magic != VectorBodyMagic) NotImplemented_nid_no_patch(function);
-    return body->size;
+
+static std::uint64_t HostVectorSize(const void* self, const std::size_t elementSize, const char* function) {
+    if (const auto* body = HostVectorBody(self, 0, function)) return body->size;
+    if (self == nullptr) return 0;
+    std::uintptr_t first = 0;
+    std::memcpy(&first, self, sizeof(first));
+    if (first == 0) return 0;
+    std::uintptr_t last = 0;
+    std::memcpy(&last, static_cast<const std::uint8_t*>(self) + 0x10, sizeof(last));
+    return (last - first) / elementSize;
 }
 
 static IntrusivePtr* HostVectorElement(void* self, const std::uint64_t index, const char* function) {
-    auto* body = const_cast<VectorBody*>(ResolveVectorBody(self));
-    if (body == nullptr || body->magic != VectorBodyMagic || body->elementKind != 1) NotImplemented_nid_no_patch(function);
-    return static_cast<IntrusivePtr*>(body->elements) + index;
+    if (const auto* body = HostVectorBody(self, 1, function)) return static_cast<IntrusivePtr*>(body->elements) + index;
+    if (self == nullptr) NotImplemented_nid_no_patch(function);
+    IntrusivePtr* first = nullptr;
+    std::memcpy(&first, self, sizeof(first));
+    if (first == nullptr) NotImplemented_nid_no_patch(function);
+    return first + index;
 }
 
 static int VectorPushBackIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* element) {
@@ -2121,12 +2226,10 @@ static int VectorPushBackString(IntrusivePtr* self, const CommonString* element)
 
 static_assert(sizeof(CommonIterator) == 0x10 && offsetof(CommonIterator, element) == 0x08);
 
+static void* VectorIteratorElement(const void* self, std::int32_t elementKind, std::size_t elementSize, bool end, const char* function);
+
 static IntrusivePtr* IntrusiveVectorElements(const IntrusivePtr* self, const bool end, const char* function) {
-    const auto* body = static_cast<const VectorBody*>(self->object);
-    if (body == nullptr) return nullptr;
-    if (body->magic != VectorBodyMagic || body->elementKind != 1) NotImplemented_nid_no_patch(function);
-    auto* elements = static_cast<IntrusivePtr*>(body->elements);
-    return end && body->size != 0 ? elements + body->size : elements;
+    return static_cast<IntrusivePtr*>(VectorIteratorElement(self, 1, sizeof(IntrusivePtr), end, function));
 }
 
 static CommonString* StringVectorElements(const IntrusivePtr* self, const bool end, const char* function) {
@@ -2138,25 +2241,64 @@ static CommonString* StringVectorElements(const IntrusivePtr* self, const bool e
 }
 
 static const VectorBody* HostVectorBody(const void* self, const std::int32_t elementKind, const char* function) {
-    const auto* body = ResolveVectorBody(self);
-    if (body == nullptr) return nullptr;
-    if (body->magic != VectorBodyMagic || body->elementKind != elementKind) NotImplemented_nid_no_patch(function);
+    if (self == nullptr) return nullptr;
+    const VectorBody* body = nullptr;
+    if (TaggedVectorObject(self)) {
+        body = static_cast<const VectorBody*>(self);
+    } else {
+        IntrusivePtr value{};
+        std::memcpy(&value, self, sizeof(value));
+        bool known = false;
+        bool host = false;
+        {
+            std::lock_guard lock(VectorHandlesMutex);
+            const auto found = VectorHandles.find(self);
+            if (found != VectorHandles.end() && SameVectorHandle(found->second.value, value)) {
+                known = true;
+                host = found->second.hostBody;
+            } else {
+                ForgetVectorHandleLocked(self);
+            }
+        }
+        if (known) {
+            if (!host) NotImplemented_nid_no_patch(function);
+            body = static_cast<const VectorBody*>(value.object);
+        } else if (value.object != nullptr && value.deleter == nullptr) {
+            if (!TaggedVectorObject(value.object)) NotImplemented_nid_no_patch(function);
+            body = static_cast<const VectorBody*>(value.object);
+        }
+    }
+    if (body != nullptr && elementKind != 0 && body->elementKind != elementKind) NotImplemented_nid_no_patch(function);
     return body;
 }
 
+static void* VectorIteratorElement(const void* self, const std::int32_t elementKind, const std::size_t elementSize, const bool end, const char* function) {
+    if (const auto* body = HostVectorBody(self, elementKind, function)) {
+        if (body->elements == nullptr) return nullptr;
+        return static_cast<std::uint8_t*>(body->elements) + (end ? body->size * elementSize : 0);
+    }
+    if (self == nullptr) return nullptr;
+    void* first = nullptr;
+    std::memcpy(&first, self, sizeof(first));
+    if (!end || first == nullptr) return first;
+    void* last = nullptr;
+    std::memcpy(&last, static_cast<const std::uint8_t*>(self) + 0x10, sizeof(last));
+    return last;
+}
+
 static void* HostVectorBegin(void* out, const void* self, const std::int32_t elementKind, const char* function) {
-    const VectorBody* body = HostVectorBody(self, elementKind, function);
+    void* element = VectorIteratorElement(self, elementKind, 0, false, function);
     auto* it = static_cast<CommonIterator*>(out);
     it->referenceCount = 0;
-    it->element = body != nullptr ? body->elements : nullptr;
+    it->element = element;
     return out;
 }
 
 static void* HostVectorEnd(void* out, const void* self, const std::int32_t elementKind, const std::size_t elementSize, const char* function) {
-    const VectorBody* body = HostVectorBody(self, elementKind, function);
+    void* element = VectorIteratorElement(self, elementKind, elementSize, true, function);
     auto* it = static_cast<CommonIterator*>(out);
     it->referenceCount = 0;
-    it->element = body != nullptr && body->elements != nullptr ? static_cast<std::uint8_t*>(body->elements) + body->size * elementSize : nullptr;
+    it->element = element;
     return out;
 }
 
@@ -2190,6 +2332,11 @@ static int HostVectorCopyFrom(IntrusivePtr* self, const IntrusivePtr* source, co
     const auto* sourceBody = sourceIsBody ? sourceDirect : static_cast<const VectorBody*>(source->object);
     if (body != static_cast<VectorBody*>(static_cast<void*>(self)) && self->libContext == nullptr) {
         self->libContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
+        try {
+            RememberVectorHandle(self);
+        } catch (const std::bad_alloc&) {
+            return ParameterOutOfMemory;
+        }
     }
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 1)) {
         NotImplemented_nid_no_patch(function);
@@ -2248,6 +2395,11 @@ static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* sou
     const auto* sourceBody = sourceIsBody ? sourceDirect : static_cast<const VectorBody*>(source->object);
     if (body != static_cast<VectorBody*>(static_cast<void*>(self)) && self->libContext == nullptr) {
         self->libContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
+        try {
+            RememberVectorHandle(self);
+        } catch (const std::bad_alloc&) {
+            return ParameterOutOfMemory;
+        }
     }
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 2)) {
         NotImplemented_nid_no_patch(function);
@@ -2658,18 +2810,12 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15DefaultResponseD1Ev(void* self) {
     return 0;
 }
 
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1EPS6_PFvS8_EPNS2_10LibContextE(IntrusivePtr* self, void* body, void (APS5_VABI* deleter)(void*), void* libContext) {
-    self->object = body;
-    self->deleter = deleter;
-    self->libContext = libContext;
-    if (body) ReferenceCount(body, StringVectorReferenceCountOffset).fetch_add(1);
-}
-
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1EPS6_PNS2_10LibContextE(IntrusivePtr* self, void* body, void* libContext) {
     self->object = body;
     self->deleter = nullptr;
     self->libContext = libContext;
-    if (body) ReferenceCount(body, StringVectorReferenceCountOffset).fetch_add(1);
+    RememberVectorHandle(self);
+    if (body) ReferenceCount(body, IntrusiveReferenceOffset(self, StringVectorReferenceCountOffset)).fetch_add(1);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V120RequestPlayerSessionEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext) {
@@ -3031,7 +3177,7 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGa
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V57ProductEEEE5beginEv(void* out, void* self) {
@@ -3043,15 +3189,15 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGa
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V53SkuEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V119AdditionalStatisticEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V122RequestPlayerStatisticEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEE5beginEv(CommonIterator* iterator, const IntrusivePtr* self) {
@@ -4098,7 +4244,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V1
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V120PlayerSessionForReadEEEE5emptyEv(const void* self) {
-    return HostVectorSize(self, __func__) == 0;
+    return HostVectorSize(self, 24, __func__) == 0;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V150PostPlayerSessionsSessionIdInvitationsResponseBodyEEC1Ev(IntrusivePtr* self) {
@@ -4187,7 +4333,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorImE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 8, __func__);
 }
 
 std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V129GetPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv() {
@@ -4308,7 +4454,7 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorImEneERKS4_(const void* self
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V120PlayerSessionForReadEEEEEED1Ev(IntrusivePtr* self) {
@@ -5312,7 +5458,7 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_13In
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V57ProductEEEE5emptyEv(const void* self) {
-    return HostVectorSize(self, __func__) == 0;
+    return HostVectorSize(self, 24, __func__) == 0;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEEneERKS9_(const void* self, const void* other) {
@@ -5383,7 +5529,7 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_13In
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEE5emptyEv(const void* self) {
-    return HostVectorSize(self, __func__) == 0;
+    return HostVectorSize(self, 24, __func__) == 0;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEEaSERKSA_(IntrusivePtr* self, const IntrusivePtr* source) {
@@ -7461,35 +7607,35 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultRespons
 
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V57ProductEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V118GameSessionForReadEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V120PlayerSessionForReadEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V113RequestMemberEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V118RequestMatchPlayerEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V120RequestTeamStatisticEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 
@@ -7524,6 +7670,13 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6String
     CopyIntrusivePtr(self, source, StringVectorReferenceCountOffset);
 }
 
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1EPS6_PFvS8_EPNS2_10LibContextE(IntrusivePtr* self, void* body, void (APS5_VABI* deleter)(void*), void* libContext) {
+    self->object = body;
+    self->deleter = deleter;
+    self->libContext = libContext;
+    RememberVectorHandle(self);
+    if (body) ReferenceCount(body, IntrusiveReferenceOffset(self, StringVectorReferenceCountOffset)).fetch_add(1);
+}
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext) {
     self->object = nullptr;
@@ -7533,7 +7686,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14Sessi
 
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEED1Ev(IntrusivePtr* self) {
@@ -7727,7 +7880,7 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V136GetFriendsPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE(void* self, const std::uint64_t* context) {
@@ -8848,7 +9001,7 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V131JoinedPlayerSessionWithPlatformEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V119PlayerSessionPlayerEEEEdeEv(const void* self) {
@@ -8978,13 +9131,11 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS
 }
 
 CommonConstIterator APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEE3endEv(const void* self) {
-    const VectorBody* body = HostVectorBody(self, 1, __func__);
-    return CommonConstIterator(0, body != nullptr && body->elements != nullptr ? static_cast<std::uint8_t*>(body->elements) + body->size * sizeof(IntrusivePtr) : nullptr);
+    return CommonConstIterator(0, VectorIteratorElement(self, 1, sizeof(IntrusivePtr), true, __func__));
 }
 
 CommonConstIterator APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEE5beginEv(const void* self) {
-    const VectorBody* body = HostVectorBody(self, 1, __func__);
-    return CommonConstIterator(0, body != nullptr ? body->elements : nullptr);
+    return CommonConstIterator(0, VectorIteratorElement(self, 1, sizeof(IntrusivePtr), false, __func__));
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEEdeEv(const void* self) {
@@ -9304,11 +9455,11 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V118GameSessionForReadEEEE5emptyEv(const void* self) {
-    return HostVectorSize(self, __func__) == 0;
+    return HostVectorSize(self, 24, __func__) == 0;
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V131ResponsePlayerSessionInvitationEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V111GameSessionEEEEdeEv(const void* self) {
@@ -9491,17 +9642,15 @@ const void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1
 }
 
 CommonConstIterator APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE3endEv(const void* self) {
-    const VectorBody* body = HostVectorBody(self, 1, __func__);
-    return CommonConstIterator(0, body != nullptr && body->elements != nullptr ? static_cast<std::uint8_t*>(body->elements) + body->size * sizeof(IntrusivePtr) : nullptr);
+    return CommonConstIterator(0, VectorIteratorElement(self, 1, sizeof(IntrusivePtr), true, __func__));
 }
 
 CommonConstIterator APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE5beginEv(const void* self) {
-    const VectorBody* body = HostVectorBody(self, 1, __func__);
-    return CommonConstIterator(0, body != nullptr ? body->elements : nullptr);
+    return CommonConstIterator(0, VectorIteratorElement(self, 1, sizeof(IntrusivePtr), false, __func__));
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V16AvatarEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V16AvatarEEEEdeEv(const void* self) {

@@ -15,8 +15,6 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80008u);
-
 constexpr std::int32_t INVITATION_DIALOG_MODE_SEND = 1;
 constexpr std::int32_t INVITATION_DIALOG_MODE_RECV = 2;
 

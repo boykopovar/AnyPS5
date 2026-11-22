@@ -1,6 +1,8 @@
 import base64
 import hashlib
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -54,6 +56,18 @@ class ElfDuplicateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2, (result.returncode, result.stderr))
         self.assertIn(b"duplicate patched export name: sceAlphaComputeLength", result.stderr)
         self.assertEqual(after, before)
+
+    def test_crlf_preserve_export_list_keeps_named_export(self):
+        with tempfile.TemporaryDirectory(prefix="anyps5-nid-crlf-") as directory:
+            path = Path(directory) / "exports.so"
+            listing = Path(directory) / "preserve.txt"
+            path.write_bytes(image(["sceAlphaComputeLength", "sceBetaCopyString"]))
+            listing.write_bytes(b"sceAlphaComputeLength\r\n")
+            result = subprocess.run([PATCHER, "libTest", "--preserve-export-list", str(listing), str(path)], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            patched = [entry[0] for entry in read_dynsym(path.read_bytes()) if entry[1] == 9]
+            self.assertIn("sceAlphaComputeLength", patched)
+            self.assertIn(nid("sceBetaCopyString"), patched)
 
     def test_distinct_exports_are_still_patched(self):
         names = ["sceAlphaComputeLength_nid_disambig1", "sceBetaCopyString_nid_postfix", "sceGammaKeep_nid_no_patch_cut"]

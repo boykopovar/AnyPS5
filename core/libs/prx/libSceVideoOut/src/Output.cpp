@@ -362,6 +362,13 @@ int APS5_VABI sceVideoOutCursorSetPosition(int32_t handle, int32_t index, uint32
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceVideoOutCursorSetHotSpot(int32_t handle, int32_t index, uint32_t, uint32_t) try {
+    if (const int error = cursorHandleError(__func__, handle, index)) return error;
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
 int APS5_VABI sceVideoOutCursorSet2xMagnify(int32_t handle, int32_t index, bool) try {
     if (const int error = cursorHandleError(__func__, handle, index)) return error;
     return 0;
