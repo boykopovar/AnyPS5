@@ -159,6 +159,7 @@ export class Archive {
       if (mode && mode !== 0x8000 && mode !== 0x4000) throw new Error(translate(locale, "unsupportedSpecialFile", { name: entry.filename }));
       paths.set(key, entry.directory);
       total = safeSize(total + safeSize(entry.uncompressedSize, locale), locale);
+      if (entry.directory && !entry.filename.endsWith("/")) entry.filename += "/";
       this.entries.push(entry);
     }
     if (!this.entries.some(entry => !entry.directory)) throw new Error(translate(locale, "noFilesSelected"));
