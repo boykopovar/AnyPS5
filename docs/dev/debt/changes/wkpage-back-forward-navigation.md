@@ -1,8 +1,8 @@
 # libSceNKWebKit
 
-## add Functional
+## add Silent stubs
 
-- [Page navigation controls](../../../core/libs/prx/libSceNKWebKit/src/PageNavigation.cpp) (libSceNKWebKit) - `WKPageGoBack`, `WKPageGoForward` and `WKPageGoToBackForwardListItem` navigate backward, forward or to a specific back-forward list item on the host page representation in memory; full session history traversal and active frame navigation remain unmodeled.
+- [Page navigation controls](../../../core/libs/prx/libSceNKWebKit/src/PageNavigation.cpp) (libSceNKWebKit) - `WKPageGoBack`, `WKPageGoForward` and `WKPageGoToBackForwardListItem` validate the page (and the list item) and record the request on the host page in memory without navigating; session history traversal, canGoBack and canGoForward updates, and loads remain unmodeled.
 
 ## remove o2fPZBklfHg
 
