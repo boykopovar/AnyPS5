@@ -101,6 +101,7 @@ struct OpaqueJSContextGroup {
     JSValue weakRefDerefFunc = JS_UNDEFINED;
     JSClassID callbackObjectClassId = 0;
     JSClassID callbackCallableClassId = 0;
+    JSClassID dateConstructorClassId = 0;
     JSAtom toStringTagAtom = JS_ATOM_NULL;
     JSAtom toPrimitiveAtom = JS_ATOM_NULL;
     JSAtom hasInstanceAtom = JS_ATOM_NULL;
@@ -248,6 +249,7 @@ GuestJSString* AtomToJsString(JSContext* qctx, JSAtom atom);
 std::string AtomToUtf8(JSContext* qctx, JSAtom atom);
 
 void CapturePendingException(OpaqueJSContext* ctx, JSValueRef* exception);
+void InstallDateConstructor(OpaqueJSContextGroup* group, JSContext* qctx);
 void SetExceptionValue(OpaqueJSContext* ctx, JSValueRef* exception, JSValue excVal);
 void RegisterCallbackClasses(OpaqueJSContextGroup* group);
 void RunClassInitialize(OpaqueJSContext* ctx, OpaqueJSValue* objHandle, OpaqueJSClass* jsClass);
