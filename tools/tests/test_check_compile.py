@@ -87,6 +87,16 @@ class CheckCompileTests(CheckCompileFixture):
         self.assertIn("1 translation units compile", result.stdout)
 
 
+class CheckCompileDatabaseNulTests(unittest.TestCase):
+    def test_rejects_embedded_nul_in_command_fields(self):
+        import check_compile
+        for record in ({"directory": "build", "file": "unit.c", "command": "cc\0 unit.c"},
+                       {"directory": "build", "file": "unit.c", "arguments": ["cc", "unit\0.c"]}):
+            with self.subTest(record=record):
+                with self.assertRaisesRegex(ValueError, "NUL"):
+                    check_compile.compilation_database(json.dumps([record]), "compile_commands.json")
+
+
 class CheckCompileRecordedCommandTests(CheckCompileFixture):
     def test_the_command_is_rewritten_to_syntax_only_without_object_or_dependency_files(self):
         source = self.source("unit.cpp")
@@ -578,6 +588,16 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
                 result = self.tool("--jobs", jobs, "first.c")
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("positive integer", result.stderr)
+
+
+class CheckCompileDuplicateCompilationDatabaseKeysTests(unittest.TestCase):
+    def test_rejects_duplicate_keys_in_compilation_records(self):
+        import check_compile
+        for content in ('[{"directory":"a","directory":"b","file":"a.c","command":"cc a.c"}]',
+                        '[{"directory":"a","file":"a.c","command":"cc a.c","command":"cc b.c"}]'):
+            with self.subTest(content=content):
+                with self.assertRaisesRegex(ValueError, "duplicate"):
+                    check_compile.compilation_database(content, "compile_commands.json")
 
 
 class CheckCompileDatabaseTests(CheckCompileFixture):
@@ -1114,10 +1134,15 @@ class CheckCompileResponseTests(CheckCompileFixture):
         if compiler is None:
             self.skipTest("Clang is required to compare Windows response-file quoting")
         prefix = "error: no such file or directory: '"
+        empty_error = prefix + "'" in subprocess.run(
+            [compiler, "-###", "--rsp-quoting=windows", "-fsyntax-only", "-x", "c", ""],
+            cwd=self.build, capture_output=True, text=True, encoding="utf-8").stderr
         response = self.build / "flags.rsp"
         for content in (r'a\\"b c"', 'a\\\\\\"b', "x\\ y", '"', '""', '"""', '""""', 'a""b', '"a""b"',
                         'x"y z', 'q\\\\"', '"\\"', "'a b'", "a\tb\r\nc", "a\vb\fc", '"a\nb" c'):
             with self.subTest(content=content):
+                if not empty_error and content in ('"', '""'):
+                    continue
                 response.write_bytes(("-- " + content).encode("utf-8"))
                 result = subprocess.run([compiler, "-###", "--rsp-quoting=windows", "-fsyntax-only", "-x", "c", "@flags.rsp"],
                                         cwd=self.build, capture_output=True, text=True, encoding="utf-8")
@@ -1309,19 +1334,19 @@ class CheckCompileLauncherTests(unittest.TestCase):
                 self.assertEqual(check_compile.syntax_arguments(
                     [*prefix, "ccache", "g++", "-DNAME=1", "-include", "pch.hxx", "-c", "-o", "unit.o", str(source)],
                     Path.cwd(), source),
-                    [*prefix, "ccache", "g++", "-fsyntax-only", "-DNAME=1", "-include", "pch.hxx", str(source)])
+                    [*prefix, "ccache", "g++", "-fsyntax-only", "-DNAME=1", "-include", "pch.hxx", str(check_compile.real(source))])
 
     def test_env_delimiter_preserves_a_command_path_containing_equals(self):
         source = Path.cwd() / "unit.cpp"
         prefix = ["cmake", "-E", "env", "--"]
         command = "compiler=tools/g++"
         self.assertEqual(check_compile.syntax_arguments([*prefix, command, "-c", str(source)], Path.cwd(), source),
-                         [*prefix, command, "-fsyntax-only", str(source)])
+                         [*prefix, command, "-fsyntax-only", str(check_compile.real(source))])
 
     def test_only_cmake_starts_an_env_prefix(self):
         source = Path.cwd() / "unit.cpp"
         self.assertEqual(check_compile.syntax_arguments(["g++", "-E", "env", "-c", str(source)], Path.cwd(), source),
-                         ["g++", "-fsyntax-only", "env", str(source)])
+                         ["g++", "-fsyntax-only", "env", str(check_compile.real(source))])
 
     def test_an_env_prefix_without_a_command_or_with_an_unmodeled_option_is_rejected(self):
         source = Path.cwd() / "unit.cpp"

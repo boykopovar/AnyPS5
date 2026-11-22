@@ -17,6 +17,11 @@ struct OptionalInt8 {
     bool engaged;
 };
 
+struct LegacyOptionalInt8 {
+    bool engaged;
+    std::int8_t value;
+};
+
 struct Box {
     const void* const* vtable;
     std::uint64_t size;
@@ -59,6 +64,7 @@ struct WebVTTCue {
 };
 
 static_assert(sizeof(OptionalInt8) == 2 && alignof(OptionalInt8) == 1 && std::is_trivially_copyable_v<OptionalInt8>);
+static_assert(sizeof(LegacyOptionalInt8) == 2 && offsetof(LegacyOptionalInt8, engaged) == 0 && offsetof(LegacyOptionalInt8, value) == 1);
 static_assert(sizeof(ByteVector) == 16);
 static_assert(std::is_standard_layout_v<Box> && std::is_standard_layout_v<TrackEncryptionBox> && std::is_standard_layout_v<ProtectionSystemSpecificHeaderBox> && std::is_standard_layout_v<WebVTTCue>);
 static_assert(sizeof(Box) == 0x28);
