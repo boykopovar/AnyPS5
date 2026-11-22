@@ -4912,6 +4912,8 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     }
     const auto pendingSince = GuestMemory::TrackerGeneration();
     StampUnkeptUnits(keptAtUnwatch, {descriptor.baseAddress, trackedLayerBytes, guestBytes}, layerGeneration, layerPendingSince, first, count, pendingSince);
+    if (layerResultsSince.size() != trackedLayers) layerResultsSince.assign(trackedLayers, 0);
+    std::fill_n(layerResultsSince.begin() + first, count, pendingSince);
     // Results of this image now cover the alias's results borrowed into these units: this image
     // stores them, the alias no longer has to (its results, unchanged since the borrow, are in
     // this image's content). An alias written since keeps its own newer results pending.
@@ -7212,15 +7214,62 @@ std::shared_ptr<StorageTexture> StorageTexture::FindLive(std::uint64_t address, 
     return nullptr;
 }
 
-std::shared_ptr<StorageTexture> StorageTexture::FindLiveNewest(const StorageTexture& shape) {
-    auto& live = Live();
-    std::lock_guard lock(live.mutex);
-    StorageTexture* newest = nullptr;
-    for (auto* texture : live.textures) {
-        if (texture == &shape || texture->released || texture->descriptor.baseAddress != shape.descriptor.baseAddress || !texture->SameSurfaceShape(shape)) continue;
-        if (newest == nullptr || texture->version > newest->version) newest = texture;
+void StorageTexture::stampStored(std::uint64_t from, std::uint64_t to) {
+    const auto stamp = GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
+    if (to <= descriptor.baseAddress || from >= descriptor.baseAddress + guestBytes) return;
+    if (layerStoredStamp.size() != trackedLayers) layerStoredStamp.assign(trackedLayers, 0);
+    if (trackedLayers == 1 || trackedLayerBytes == 0) {
+        layerStoredStamp[0] = stamp;
+        return;
     }
-    return newest != nullptr ? newest->weak_from_this().lock() : nullptr;
+    const auto first = (std::max(from, descriptor.baseAddress) - descriptor.baseAddress) / trackedLayerBytes;
+    const auto last = (std::min(to, descriptor.baseAddress + guestBytes) - 1 - descriptor.baseAddress) / trackedLayerBytes;
+    for (auto layer = first; layer <= last && layer < trackedLayers; ++layer) layerStoredStamp[layer] = stamp;
+}
+
+std::vector<std::pair<std::shared_ptr<StorageTexture>, std::vector<bool>>> StorageTexture::DepthPlaneWriters(const StorageTexture& mirror, const std::vector<bool>& units) {
+    std::vector<std::pair<std::shared_ptr<StorageTexture>, std::vector<bool>>> writers;
+    if (!mirror.blockUnits || units.size() != mirror.trackedLayers) return writers;
+    std::vector<std::shared_ptr<StorageTexture>> candidates;
+    {
+        auto& live = Live();
+        std::lock_guard lock(live.mutex);
+        for (auto* texture : live.textures) {
+            if (texture == &mirror || texture->released || !texture->blockUnits || texture->trackedLayers != mirror.trackedLayers || texture->descriptor.baseAddress != mirror.descriptor.baseAddress || !texture->SameSurfaceShape(mirror)) continue;
+            if (auto alive = texture->weak_from_this().lock()) candidates.push_back(std::move(alive));
+        }
+    }
+    const auto address = mirror.descriptor.baseAddress;
+    const auto bytes = static_cast<std::size_t>(mirror.guestBytes);
+    std::vector<std::uint64_t> newest(units.size(), 0);
+    std::vector<std::size_t> owner(units.size(), candidates.size());
+    std::vector<std::uint8_t> sinceStored(units.size()), sinceResults(units.size());
+    for (std::size_t index = 0; index < candidates.size(); ++index) {
+        const auto& stored = candidates[index]->layerStoredStamp;
+        const auto& results = candidates[index]->layerResultsSince;
+        const bool storedKnown = stored.size() == units.size() && GuestMemory::ChangedBlocks(address, bytes, stored, sinceStored);
+        const bool resultsKnown = results.size() == units.size() && GuestMemory::ChangedBlocks(address, bytes, results, sinceResults);
+        for (std::size_t unit = 0; unit < units.size(); ++unit) {
+            if (!units[unit]) continue;
+            const auto lastStore = storedKnown && sinceStored[unit] == GuestMemory::BlockUnchanged ? stored[unit] : 0;
+            const auto lastResults = resultsKnown && sinceResults[unit] == GuestMemory::BlockUnchanged ? results[unit] : 0;
+            const auto since = std::max(lastStore, lastResults);
+            if (since == 0 || since <= newest[unit]) continue;
+            newest[unit] = since;
+            owner[unit] = index;
+        }
+    }
+    for (std::size_t index = 0; index < candidates.size(); ++index) {
+        std::vector<bool> mine(units.size(), false);
+        bool any = false;
+        for (std::size_t unit = 0; unit < units.size(); ++unit) {
+            if (owner[unit] != index) continue;
+            mine[unit] = true;
+            any = true;
+        }
+        if (any) writers.emplace_back(candidates[index], std::move(mine));
+    }
+    return writers;
 }
 
 bool StorageTexture::SameSurfaceShape(const StorageTexture& other) const {
@@ -8054,7 +8103,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             traceKeyStore("block write-back", descriptor, guestBytes);
             if (!IsDccClear(filledKeys) && uploadedKeys != DccKeys::Uncompressed && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
             uploadedKeys = DccKeys::Uncompressed;
-            for (const auto& [from, to] : keep) GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
+            for (const auto& [from, to] : keep) stampStored(from, to);
             settle(true);
             commitStoredSave(saveUnits);
             ++Profile().storageDirectWriteBacks;
@@ -8072,7 +8121,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
                 if (!stamps.empty() && from / block <= (stamps.back().second - 1) / block + 1) stamps.back().second = to;
                 else stamps.emplace_back(from, to);
             }
-            for (const auto& [from, to] : stamps) GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
+            for (const auto& [from, to] : stamps) stampStored(from, to);
             settle(true);
             commitStoredSave(saveUnits);
             ++Profile().storageDirectWriteBacks;
@@ -8228,7 +8277,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         traceKeyStore("layer write-back", descriptor, guestBytes);
         if (!IsDccClear(filledKeys) && uploadedKeys != DccKeys::Uncompressed && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
         uploadedKeys = DccKeys::Uncompressed;
-        for (const auto& [from, to] : keep) GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
+        for (const auto& [from, to] : keep) stampStored(from, to);
         // The walk covers this surface's pages only: an adjacent image's later CPU write is stamped
         // newer than this value when its own range is collected. No CPU wrote the pages here
         // (MarkWritten made the only stamps), so the memoized collect is exact.

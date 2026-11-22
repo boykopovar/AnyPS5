@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -129,6 +130,54 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> ReadStart(AgcDriver::Vulkan
 
 }
 
+constexpr std::uint32_t Threads = 32;
+constexpr std::uint32_t Format16Unorm = 7;
+constexpr std::uint32_t Format32Float = 22;
+constexpr std::uint32_t TileDepth64KB = 0x18;
+constexpr std::uint32_t Type2D = 9;
+constexpr std::uint32_t Type2DArray = 13;
+constexpr std::uint32_t RowPasses = 15;
+
+alignas(256) constexpr std::array<std::uint32_t, 9> StoreRowCode{
+    0x7e280d00, 0x102828ff, 0x3cf80000, 0x7e3c0300, 0x7e3e0280, 0xf0201108, 0x0001141e, 0xbf810000, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 10> StoreRowLayerCode{
+    0x7e280d00, 0x102828ff, 0x3cf80000, 0x7e3c0300, 0x7e3e0280, 0x7e400280, 0xf0201128, 0x0001141e, 0xbf810000, 0xbf810000,
+};
+
+std::array<std::uint32_t, 8> StorageView(std::uint64_t address, std::uint32_t format, std::uint32_t layers, std::uint32_t baseLevel = 0, std::uint32_t lastLevel = 0) {
+    return {
+        static_cast<std::uint32_t>(address >> 8u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((PlaneWidth - 1u) & 3u) << 30u),
+        ((PlaneWidth - 1u) >> 2u) | ((PlaneHeight - 1u) << 14u),
+        0xfacu | (baseLevel << 12u) | (lastLevel << 16u) | (TileDepth64KB << 20u) | ((layers > 1u ? Type2DArray : Type2D) << 28u),
+        layers - 1u, lastLevel << 4u, 0u, 0u,
+    };
+}
+
+void Store(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& view, std::span<const std::uint32_t> code) {
+    std::vector<std::uint32_t> userData(16, 0u);
+    std::copy(view.begin(), view.end(), userData.begin() + 4);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto program = ShaderRecompiler::Recompile(request);
+    device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+void StoreRow(AgcDriver::VulkanDevice& device, std::uint8_t* plane, VkFormat format, std::uint32_t layers, std::uint32_t level = 0) {
+    const std::span<const std::uint32_t> code = layers > 1u ? std::span<const std::uint32_t>(StoreRowLayerCode) : std::span<const std::uint32_t>(StoreRowCode);
+    Store(device, StorageView(reinterpret_cast<std::uintptr_t>(plane), format == VK_FORMAT_D16_UNORM ? Format16Unorm : Format32Float, layers, level, level), code);
+}
+
 int main(int argc, char** argv) {
     try {
         const bool uploadImage = argc > 1 && std::string(argv[1]) == "--upload-image";
@@ -151,6 +200,50 @@ int main(int argc, char** argv) {
         const auto draw = [&](const Surface& surface, const DrawOptions& options) { return Draw(*device, shaders, surface, options, PlaneExtent, Colors); };
         const DrawOptions writeHalf{.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS};
 
+        if (argc == 2 && std::string_view(argv[1]).starts_with("--alias-")) {
+            const std::string mode(argv[1]);
+            if (!AgcDriver::GuestMemory::Watched(base, PlaneBytes)) return VulkanTestSkipped;
+            Fill(plane, 0.25f);
+            if (mode.ends_with("-prebind")) std::printf("first bind covered %u pixels\n", draw(depth, writeHalf));
+            StoreRow(*device, reinterpret_cast<std::uint8_t*>(plane), VK_FORMAT_D32_SFLOAT, 1);
+            AgcDriver::Graphics::StorageTexture::FlushPending(base, PlaneBytes, nullptr, "test");
+            device->WaitIdle();
+            const auto above = [&] { return static_cast<std::size_t>(std::count_if(plane, plane + PlaneBytes / 4, [](float x) { return x > 0.5f; })); };
+            std::printf("published row guest > half %zu, registered cached writer %d\n", above(), AgcDriver::Graphics::StorageTexture::FindLive(base, PlaneBytes) != nullptr);
+            if (mode.ends_with("-split")) {
+                const auto first = draw(depth, {});
+                std::printf("before unit replacement draw passed %u texels\n", first);
+                Require(first == RowPasses, "guest shader row was not readable through depth");
+            }
+            AgcDriver::GuestMemory::CollectWritesUncached(base, PlaneBytes);
+            const auto before = AgcDriver::GuestMemory::TrackerGeneration();
+            auto expected = RowPasses;
+            if (mode.find("-cpu") != std::string::npos) {
+                FillUnit(plane, 2, 0.75f);
+                expected += UnitTexels;
+            } else if (mode.find("-dma") != std::string::npos) {
+                const auto source = reinterpret_cast<std::uintptr_t>(blocks);
+                const auto destination = base + 2 * Block;
+                std::fill_n(reinterpret_cast<float*>(blocks), UnitTexels, 0.75f);
+                const std::array<std::uint32_t, 7> packet{0xc0055000, 0x60000000, static_cast<std::uint32_t>(source), static_cast<std::uint32_t>(source >> 32), static_cast<std::uint32_t>(destination), static_cast<std::uint32_t>(destination >> 32), Block};
+                AgcDriver::QueueState queue;
+                AgcDriver::Pm4::Validate(packet, 0);
+                AgcDriver::Pm4::Execute(packet, queue);
+                expected += UnitTexels;
+            }
+            const auto inMemory = above();
+            AgcDriver::GuestMemory::CollectWritesUncached(base, PlaneBytes);
+            std::array<std::uint64_t, Units> generation{};
+            generation.fill(before);
+            std::array<std::uint8_t, Units> changed{}, cpu{};
+            if (!AgcDriver::GuestMemory::ChangedBlocks(base, PlaneBytes, generation, changed, cpu)) return VulkanTestSkipped;
+            std::printf("unit 2 guest stamp %u CPU stamp %u\n", changed[2], cpu[2]);
+            const auto got = draw(depth, {});
+            std::printf("mode %s guest %zu GPU %u expected %u\n", mode.c_str(), inMemory, got, expected);
+            Require(inMemory == expected, "guest bytes before draw must contain both ordered writes");
+            Require(got == expected, "depth test must observe both ordered writes");
+            return 0;
+        }
         const bool pageWatch = argc == 2 && std::string_view(argv[1]) == "--cpu-write-after-page-unwatch";
         const bool partialWatch = pageWatch || (argc == 2 && std::string_view(argv[1]) == "--cpu-write-after-partial-unwatch");
         if (partialWatch || (argc == 2 && std::string_view(argv[1]) == "--cpu-write-after-memo")) {
