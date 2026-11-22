@@ -4,7 +4,9 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libSceFreeTypeOt/include/Calc.hpp"
 #include "prx/libc/include/General.hpp"
@@ -54,6 +56,46 @@ std::int32_t IntegerSqrt(std::uint64_t value) {
         }
     }
     return static_cast<std::int32_t>(low);
+}
+
+template <typename T>
+void ReadGuestValue(T& destination, const T* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
+    errno = savedErrno;
+    if (!ok) APS5_INVALID_ARG_EX;
+}
+
+template <typename T>
+void WriteGuestValue(T* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    if (!ok) APS5_INVALID_ARG_EX;
+}
+
+std::string ReadGuestCString(const char* source) {
+    if (!source) APS5_INVALID_ARG_EX;
+    std::string result;
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    std::size_t offset = 0;
+    for (;;) {
+        if (offset > std::numeric_limits<std::uintptr_t>::max() - base) APS5_INVALID_ARG_EX;
+        const auto current = base + offset;
+        const std::size_t toPageEnd = 4096u - (current % 4096u);
+        const std::size_t chunk = toPageEnd < 256u ? toPageEnd : 256u;
+        char buffer[256];
+        const int savedErrno = errno;
+        const bool ok = GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(current), chunk);
+        errno = savedErrno;
+        if (!ok) APS5_INVALID_ARG_EX;
+        if (const auto* end = static_cast<const char*>(std::memchr(buffer, '\0', chunk))) {
+            result.append(buffer, static_cast<std::size_t>(end - buffer));
+            return result;
+        }
+        result.append(buffer, chunk);
+        offset += chunk;
+    }
 }
 
 }
@@ -303,11 +345,15 @@ void APS5_VABI FT_Vector_Transform_Scaled_nid_postfix(FreeType::GuestVector* vec
     if (!vector || !matrix) {
         return;
     }
+    FreeType::GuestVector localVector{};
+    FreeType::GuestMatrix localMatrix{};
+    ReadGuestValue(localVector, vector);
+    ReadGuestValue(localMatrix, matrix);
     const FreeType::GuestVector transformed{
-        ScaledSum(vector->x, matrix->xx, vector->y, matrix->xy, divisor, __func__),
-        ScaledSum(vector->x, matrix->yx, vector->y, matrix->yy, divisor, __func__),
+        ScaledSum(localVector.x, localMatrix.xx, localVector.y, localMatrix.xy, divisor, __func__),
+        ScaledSum(localVector.x, localMatrix.yx, localVector.y, localMatrix.yy, divisor, __func__),
     };
-    *vector = transformed;
+    WriteGuestValue(vector, transformed);
 }
 
 std::int32_t APS5_VABI FT_SqrtFixed_nid_postfix(std::int32_t x) {
@@ -326,31 +372,42 @@ void APS5_VABI ft_synthesize_vertical_metrics_nid_postfix(FreeType::GuestGlyphMe
     if (!metrics) {
         return;
     }
-    std::int64_t height = metrics->height;
-    if (metrics->horiBearingY < 0) {
-        if (height < metrics->horiBearingY) {
-            height = metrics->horiBearingY;
+    FreeType::GuestGlyphMetrics local{};
+    ReadGuestValue(local, metrics);
+    std::int64_t height = local.height;
+    if (local.horiBearingY < 0) {
+        if (height < local.horiBearingY) {
+            height = local.horiBearingY;
         }
-    } else if (metrics->horiBearingY > 0) {
-        height -= metrics->horiBearingY;
+    } else if (local.horiBearingY > 0) {
+        height -= local.horiBearingY;
     }
     if (!advance) {
         advance = height * 12 / 10;
     }
-    metrics->vertBearingX = metrics->horiBearingX - metrics->horiAdvance / 2;
-    metrics->vertBearingY = (advance - height) / 2;
-    metrics->vertAdvance = advance;
+    local.vertBearingX = local.horiBearingX - local.horiAdvance / 2;
+    local.vertBearingY = (advance - height) / 2;
+    local.vertAdvance = advance;
+    WriteGuestValue(metrics, local);
 }
 
 void* APS5_VABI ft_service_list_lookup_nid_postfix(const GuestServiceDesc* descriptors, const char* service_id) {
-    if (descriptors && service_id) {
-        for (; descriptors->serv_id; ++descriptors) {
-            if (std::strcmp(descriptors->serv_id, service_id) == 0) {
-                return descriptors->serv_data;
-            }
+    if (!descriptors || !service_id) {
+        return nullptr;
+    }
+    const std::string targetId = ReadGuestCString(service_id);
+    const auto base = reinterpret_cast<std::uintptr_t>(descriptors);
+    for (std::size_t index = 0;; ++index) {
+        if (index > (std::numeric_limits<std::uintptr_t>::max() - base) / sizeof(GuestServiceDesc)) APS5_INVALID_ARG_EX;
+        GuestServiceDesc entry{};
+        ReadGuestValue(entry, reinterpret_cast<const GuestServiceDesc*>(base + index * sizeof(GuestServiceDesc)));
+        if (!entry.serv_id) {
+            return nullptr;
+        }
+        if (ReadGuestCString(entry.serv_id) == targetId) {
+            return entry.serv_data;
         }
     }
-    return nullptr;
 }
 
 int APS5_VABI sceFreeTypeOtUnknown_uSNqxrARpEQ_nid_no_patch() {
