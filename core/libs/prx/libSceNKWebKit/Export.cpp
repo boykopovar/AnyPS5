@@ -8353,10 +8353,6 @@ int APS5_VABI _ZN7Nicosia5SceneC1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings11getPropertyERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector8Protocol13BindingTraitsINS0_8Timeline13TimelineEventEE26assertValueHasExpectedTypeEPN3WTF8JSONImpl5ValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -20475,14 +20471,6 @@ int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal27restoreAttachedWindowHe
 }
 
 int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal27setTimelineProfilingEnabledEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings11setPropertyERKN3WTF6StringES5_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings14deletePropertyERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

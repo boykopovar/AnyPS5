@@ -36,6 +36,8 @@
 #include <cmath>
 #include <limits>
 
+using NKWebKit::WtfAbi::String;
+
 namespace {
 
 constexpr float minimumAttachedHeight = 250.0f;
@@ -63,6 +65,16 @@ unsigned int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal31constrainedAtt
 
 unsigned int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal30constrainedAttachedWindowWidthEjj(unsigned int preferredWidth, unsigned int totalWindowWidth) {
     return RoundToUnsigned(std::max(minimumAttachedWidth, std::min<float>(preferredWidth, totalWindowWidth - minimumAttachedInspectedWidth)));
+}
+
+String APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings11getPropertyERKN3WTF6StringE(void*, const String*) {
+    return String();
+}
+
+void APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings11setPropertyERKN3WTF6StringES5_(void*, const String*, const String*) {
+}
+
+void APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings14deletePropertyERKN3WTF6StringE(void*, const String*) {
 }
 
 }
