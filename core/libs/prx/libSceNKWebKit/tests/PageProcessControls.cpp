@@ -78,13 +78,13 @@ int main() {
 
     WKPageTerminate(pageRef);
     Require(page->isTerminated);
-    Require(page->isClosed);
-    Require(WKPageIsClosed(pageRef));
+    Require(!page->isClosed);
+    Require(!WKPageIsClosed(pageRef));
     Require(WKPageGetProcessIdentifier(pageRef) == 0);
 
     WKPageTerminate(pageRef);
     Require(page->isTerminated);
-    Require(page->isClosed);
+    Require(!page->isClosed);
 
     {
         const void* relatedArray = WKPageCopyRelatedPages(pageRef);
@@ -104,6 +104,13 @@ int main() {
     Require(page->websitePolicies.Get() == NKWebKit::ToObject(policies, "test"));
     WKRelease(otherPolicies);
     WKRelease(policies);
+
+    auto ordinaryClosedPage = NKWebKit::Make<NKWebKit::Page>();
+    const void* ordinaryClosedPageRef = ordinaryClosedPage.Get();
+    ordinaryClosedPage->isClosed = true;
+    Require(ordinaryClosedPage->isClosed);
+    Require(!ordinaryClosedPage->isTerminated);
+    Require(WKPageIsClosed(ordinaryClosedPageRef));
 
     RequireInvalidArgument([] { WKPageTerminate(nullptr); });
     RequireInvalidArgument([&] { WKPageTerminate(frame.Get()); });
