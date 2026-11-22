@@ -1046,7 +1046,6 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
-if(BUILD_TESTING)
     add_test_executable(guest_icu_normalizer_combine_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/NormalizerCombine.cpp)
     target_include_directories(guest_icu_normalizer_combine_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_icu_normalizer_combine_tests PRIVATE libSceIcu libc)
