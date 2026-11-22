@@ -30,6 +30,8 @@ constexpr std::uint32_t SampleRate = 48000;
 constexpr int MaxHostFrames = 32768;
 constexpr std::int32_t DefaultLevel = 0x4000;
 constexpr double LevelScale = 32768.0;
+constexpr std::size_t ChannelCount = 8;
+constexpr std::uint32_t AllChannelsMask = 0xff;
 
 std::mutex g_mutex;
 std::once_flag g_audioOutInit;
@@ -49,10 +51,14 @@ int MapAudioOutStatus(int status) {
     }
 }
 
-int ApplyLevel(int level) {
-    std::array<int, 8> levels;
+int ApplyLevel(int port, int level) {
+    std::array<int, ChannelCount> levels;
     levels.fill(level);
-    return MapAudioOutStatus(sceAudioOutSetVolume(g_port, 0xff, levels.data()));
+    return MapAudioOutStatus(sceAudioOutSetVolume(port, AllChannelsMask, levels.data()));
+}
+
+int ApplyCurrentLevel() {
+    return ApplyLevel(g_port, g_muted ? 0 : g_portLevel);
 }
 
 double VolumeFromLevel(std::int32_t level) {
@@ -90,6 +96,11 @@ int APS5_VABI sceCustomMusicAudioOutInitialize(int frames, int attribute, int fo
     if (port < 0) {
         return port;
     }
+    const int status = ApplyLevel(port, g_allMusicLevel);
+    if (status != 0) {
+        sceAudioOutClose(port);
+        return status;
+    }
     if (g_port != 0) {
         sceAudioOutClose(g_port);
     }
@@ -98,7 +109,6 @@ int APS5_VABI sceCustomMusicAudioOutInitialize(int frames, int attribute, int fo
     g_bufferBytes = static_cast<std::size_t>(frames) * 2 * sampleBytes;
     g_portLevel = g_allMusicLevel;
     g_muted = false;
-    ApplyLevel(g_portLevel);
     return 0;
 }
 
@@ -143,7 +153,7 @@ int APS5_VABI sceCustomMusicAudioOutSetVolume(double v) {
         return ErrorNotInitialized;
     }
     g_portLevel = static_cast<std::int32_t>(std::round(v * LevelScale));
-    return ApplyLevel(g_portLevel);
+    return ApplyCurrentLevel();
 }
 
 int APS5_VABI sceCustomMusicAudioOutGetMuted(bool* out) {
@@ -169,9 +179,8 @@ int APS5_VABI sceCustomMusicAudioOutSetMuted(bool m) {
     if (g_port == 0) {
         return ErrorNotInitialized;
     }
-    const int status = ApplyLevel(m ? 0 : g_portLevel);
     g_muted = m;
-    return status;
+    return ApplyCurrentLevel();
 }
 
 int APS5_VABI sceCustomMusicAudioOutGetAllMusicVolume(double* out) {
@@ -200,7 +209,7 @@ int APS5_VABI sceCustomMusicAudioOutSetAllMusicVolume(double v) {
     }
     g_allMusicLevel = static_cast<std::int32_t>(std::round(v * LevelScale));
     g_portLevel = g_allMusicLevel;
-    return ApplyLevel(g_portLevel);
+    return ApplyCurrentLevel();
 }
 
 int APS5_VABI sceCustomMusicAudioOutGetLastOutputTime(std::uint64_t* out) {

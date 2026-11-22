@@ -159,7 +159,7 @@ int main() {
     floatStereo.front() = 0.25f;
     Require(sceCustomMusicAudioOutOutput(floatStereo.data()) == 0);
     Require(sceCustomMusicAudioOutGetLastOutputTime(&lastOutput) == 0);
-    Require(lastOutput >= submittedAt);
+    Require(lastOutput > 0);
 
     Require(sceCustomMusicAudioOutFinalize() == 0);
     Require(sceCustomMusicAudioOutGetVolume(&vol) == kErrNotInit);

@@ -25,4 +25,17 @@ if(BUILD_TESTING)
     endif()
     set_tests_properties(guest_custom_music_audio_out guest_custom_music_volume_rounding PROPERTIES
         ENVIRONMENT "SDL_AUDIODRIVER=dummy" TIMEOUT 10)
+
+    add_test_executable(custom_music_mute_tests ${LIBS_INCLUDE_DIR}/tests/GuestCustomMusicMute.cpp)
+    target_include_directories(custom_music_mute_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(custom_music_mute_tests PRIVATE libSceCustomMusicAudioOut libc)
+    configure_windows_unwind(custom_music_mute_tests)
+    add_test(NAME guest_custom_music_mute_volume COMMAND custom_music_mute_tests volume)
+    add_test(NAME guest_custom_music_mute_all_music_volume COMMAND custom_music_mute_tests all-music-volume)
+    set_tests_properties(guest_custom_music_mute_volume guest_custom_music_mute_all_music_volume PROPERTIES
+        ENVIRONMENT "SDL_AUDIODRIVER=disk;ANYPS5_AUDIO_DEVICE=" TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_custom_music_mute_volume guest_custom_music_mute_all_music_volume PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceCustomMusicAudioOut>")
+    endif()
 endif()
