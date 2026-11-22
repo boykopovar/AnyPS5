@@ -1,5 +1,6 @@
 #include "prx/libSceConvertKeycode/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "ProcessParametersFixture.hpp"
 #include <array>
 #include <cstddef>
@@ -17,6 +18,7 @@ int main(int argc, char** argv) {
     constexpr std::uint32_t sdkVersion = 0x09000000u;
     std::memcpy(process.data() + 16, &sdkVersion, sizeof(sdkVersion));
     if (!ProcessParametersFixture::Install(process.data(), process.size())) return 2;
+    if (sceUserServiceInitialize(nullptr) != USER_SERVICE_OK) return 2;
     std::uint32_t type = 0xFFFFFFFFu;
     std::uint16_t virtualKey = 0;
     char16_t character = 0;

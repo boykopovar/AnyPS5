@@ -2268,6 +2268,7 @@ void TestCommIdGuestPointers() {
 }
 
 int main() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK, "user service init failed");
     TestAtomics();
     TestSemaphoresAndFlags();
     TestEventFlagClearAndCancel();

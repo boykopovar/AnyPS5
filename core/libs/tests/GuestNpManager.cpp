@@ -1251,6 +1251,7 @@ void CheckUnknownFieldComparisons() {
 }
 
 int main() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK, "user service init failed");
     CheckNpOfflineGetters();
     CheckAsmLifecycle();
     CheckAsmCallsBeforeInitialization();

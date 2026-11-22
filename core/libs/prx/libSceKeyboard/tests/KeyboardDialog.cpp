@@ -2,6 +2,7 @@
 #include "prx/libSceKeyboard/include/keyboard_structs.h"
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
 #include "SDL_events.h"
 #include "SDL_keyboard.h"
@@ -45,6 +46,7 @@ void OpenDialog() {
 int main() {
     KeyboardData data[16]{};
     Require(sceKeyboardInit() == KEYBOARD_OK, "init failed");
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK, "user service init failed");
     Require(sceKeyboardOpen(InitialUserId, 0, 0, nullptr) == KEYBOARD_HANDLE, "open failed");
     Require(Read(data) == 1, "the open state was not queued");
     KeyboardInput input;

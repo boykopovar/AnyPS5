@@ -1,5 +1,6 @@
 #include "prx/libSceContentSearch/include/Api.hpp"
 #include "prx/libSceContentSearch/include/InventoryExports.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "SceTypes.hpp"
@@ -104,6 +105,7 @@ int main() {
     Require(sceContentSearchInit(&param) == 0);
     Require(sceContentSearchInit(nullptr) == ErrorAlreadyInitialized);
     Require(sceContentSearchInit(&param) == ErrorAlreadyInitialized);
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
 
     constexpr int ErrorAvEventState = static_cast<int>(0x809D1014u);
     Require(sceContentSearchDisableAvContentCreatedEvent() == ErrorAvEventState);

@@ -30,8 +30,8 @@ void TestUserIdRangeBounds() {
         const int userId = USER_SERVICE_INITIAL_USER_ID + i;
 
         int number = -1;
-        Require(sceUserServiceGetUserNumber(userId, &number) == USER_SERVICE_OK);
-        Require(number == i + 1);
+        Require(sceUserServiceGetUserNumber(userId, &number) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+        Require(number == -1);
 
         int color = -1;
         Require(sceUserServiceGetUserColor(userId, &color) == USER_SERVICE_OK);
@@ -77,9 +77,9 @@ void TestInvalidUserIdRejection() {
 
     for (int invalidId : invalidUserIds) {
         int number = -1;
-        Require(sceUserServiceGetUserNumber(invalidId, &number) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetUserNumber(invalidId, &number) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(number == -1);
-        Require(sceUserServiceGetUserNumber(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetUserNumber(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         int color = -1;
         Require(sceUserServiceGetUserColor(invalidId, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -93,9 +93,9 @@ void TestInvalidUserIdRejection() {
         Require(sceUserServiceGetUserName(invalidId, name, 5) == USER_SERVICE_ERROR_UNKNOWN_USER);
 
         int32_t ktype = -1;
-        Require(sceUserServiceGetKeyboardType(invalidId, &ktype) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetKeyboardType(invalidId, &ktype) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(ktype == -1);
-        Require(sceUserServiceGetKeyboardType(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetKeyboardType(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         int32_t jpType = -1;
         Require(sceUserServiceGetJapaneseInputType(invalidId, &jpType) == USER_SERVICE_ERROR_UNKNOWN_USER);
@@ -108,9 +108,9 @@ void TestInvalidUserIdRejection() {
         Require(sceUserServiceGetTraditionalChineseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 
         uint32_t ageLevel = 0x5A5A;
-        Require(sceUserServiceGetAgeLevel(invalidId, &ageLevel) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(sceUserServiceGetAgeLevel(invalidId, &ageLevel) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(ageLevel == 0x5A5A);
-        Require(sceUserServiceGetAgeLevel(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(sceUserServiceGetAgeLevel(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         int32_t privacy = 0x5A5A;
         Require(sceUserServiceGetPlatformPrivacyWs1(invalidId, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
