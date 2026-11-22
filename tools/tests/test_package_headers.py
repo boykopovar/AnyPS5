@@ -54,6 +54,7 @@ class PackageHeadersBasicArchiveTests(unittest.TestCase):
             package_headers.package(self.root, self.output, "v1.2.3")
         zip_path = self.output / "prx-headers-v1.2.3.zip"
         tar_path = self.output / "prx-headers-v1.2.3.tar.gz"
+        first_zip_bytes = zip_path.read_bytes()
         with zipfile.ZipFile(zip_path) as archive:
             for info in archive.infolist():
                 self.assertEqual(info.create_system, 3)
@@ -64,6 +65,12 @@ class PackageHeadersBasicArchiveTests(unittest.TestCase):
                 self.assertEqual(info.mode, 0o644)
                 self.assertEqual(info.uid, 0)
                 self.assertEqual(info.gid, 0)
+        second_output = self.root / "output-second"
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": epoch}):
+            package_headers.package(self.root, second_output, "v1.2.3")
+            package_headers.package(self.root, self.output, "v1.2.3")
+        self.assertEqual(first_zip_bytes, (second_output / "prx-headers-v1.2.3.zip").read_bytes())
+        self.assertEqual(first_zip_bytes, zip_path.read_bytes())
 
     def test_invalid_version_tag_raises_value_error(self):
         for version in ("1.0.0", "v", "v1.", "v!bad", "alpha-v1"):
