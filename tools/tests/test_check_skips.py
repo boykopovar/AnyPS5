@@ -257,6 +257,42 @@ class CtestSkipPolicyTests(unittest.TestCase):
                         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                         self.assertIn(f"error: guest_video_out_colorimetry_metadata_bounds skipped: {expected}", result.stdout)
 
+    def test_summary_skips_emulator_log_lines_before_the_first_reason_line(self):
+        banner = "[src/HostCpu.cpp:220 operator()] host CPU AMD Ryzen 9 7950X3D 16-Core Processor: has SSE, SSE2, AVX2; lacks none"
+        reports = (
+            (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>{banner}\n[pipeline-journal] loaded 3 entries\nthe test wrote this</system-out>',
+             "the test stated no reason; its output starts with: the test wrote this"),
+            (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>{banner}</system-out>',
+             f"the test stated no reason; its output starts with: {banner}"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, expected in reports:
+                with self.subTest(report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"],
+                                            capture_output=True, encoding="utf-8")
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(f"error: guest_probe skipped: {expected}", result.stdout)
+
+    def test_worker_affinity_without_a_reserved_core_is_expected_on_linux(self):
+        banner = "[src/HostCpu.cpp:220 operator()] host CPU AMD Ryzen 9 7950X3D 16-Core Processor: has SSE, SSE2, AVX2; lacks none"
+        cases = (
+            ("agc_worker_affinity", f"{banner}\nthis host reserves no committer core", 0),
+            ("agc_worker_affinity_explicit", f"{banner}\n[time] scheduler tick raised to 0.5 ms\nthis host reserves no committer core", 0),
+            ("agc_worker_affinity", "this host reserves no committer core\nanother line", 1),
+            ("agc_worker_affinity", banner, 1),
+            ("guest_probe", f"{banner}\nthis host reserves no committer core", 1),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for name, output, code in cases:
+                with self.subTest(name=name, output=output):
+                    junit.write_text(f'<testsuite><testcase name="{name}"><skipped message="SKIP_RETURN_CODE=77"/><system-out>{output}</system-out></testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"],
+                                            capture_output=True, encoding="utf-8")
+                    self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+
     def test_stated_reason_is_quoted_unchanged(self):
         reports = (
             ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>host CPU has SSE2\nskipped, flaky</system-out>', "skipped, flaky"),
