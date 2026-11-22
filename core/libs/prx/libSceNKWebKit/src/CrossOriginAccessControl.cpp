@@ -25,8 +25,36 @@
  *
  */
 
+// Derived from https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/WebCore/loader/CrossOriginAccessControl.cpp
+/*
+ * Copyright (C) 2008 Apple Inc. All Rights Reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ *
+ */
+
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceNKWebKit/include/CrossOriginAccessControlExports.hpp"
+#include "prx/libSceNKWebKit/include/CrossOriginPreflightExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
 #include "prx/libSceNKWebKit/include/SecurityOriginExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -38,12 +66,14 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
 using NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler;
 using NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisablerVtableStorage;
 using NKWebKit::HttpAbi::HTTPHeaderName;
+using NKWebKit::WebCoreAbi::LegacyResourceRequestBase;
 using NKWebKit::WebCoreAbi::ResourceResponseBase;
 using NKWebKit::WebCoreAbi::ResourceResponseStatusLayout;
 using NKWebKit::WebCoreAbi::SecurityOrigin;
@@ -126,6 +156,36 @@ int StatusCode(const ResourceResponseBase& response) {
     return reinterpret_cast<const ResourceResponseStatusLayout&>(response).httpStatusCode;
 }
 
+ExpectedVoidString AccessControlCheck(const ResourceResponseBase& response, StoredCredentialsPolicy storedCredentialsPolicy, const SecurityOrigin& securityOrigin,
+                                      const CrossOriginAccessControlCheckDisabler* checkDisabler, bool reportStatusCode) {
+    const String allowedOrigin = _ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE(&response, HTTPHeaderName::AccessControlAllowOrigin);
+    bool starAllowed = storedCredentialsPolicy == StoredCredentialsPolicy::DoNotUse;
+    if (!starAllowed) starAllowed = checkDisabler && !CheckEnabled(*checkDisabler);
+    const bool isStar = EqualsLiteral(allowedOrigin, "*");
+    if (isStar && starAllowed) return ExpectedVoidString();
+
+    const String origin = _ZNK7WebCore14SecurityOrigin8toStringEv(&securityOrigin);
+    if (!_ZN3WTF5equalEPKNS_10StringImplES2_(allowedOrigin.impl, origin.impl)) {
+        if (isStar)
+            return ExpectedVoidString(Concatenate({Literal("Cannot use wildcard in Access-Control-Allow-Origin when credentials flag is true.")}));
+        if (Contains(allowedOrigin, u','))
+            return ExpectedVoidString(Concatenate({Literal("Access-Control-Allow-Origin cannot contain more than one origin.")}));
+        if (!reportStatusCode)
+            return ExpectedVoidString(Concatenate({Literal("Origin "), NKWebKit::WtfAbi::ViewOf(origin.impl), Literal(" is not allowed by Access-Control-Allow-Origin.")}));
+        const std::string statusCode = std::to_string(StatusCode(response));
+        return ExpectedVoidString(Concatenate({Literal("Origin "), NKWebKit::WtfAbi::ViewOf(origin.impl),
+                                               Literal(" is not allowed by Access-Control-Allow-Origin."), Literal(" Status code: "), Literal(statusCode)}));
+    }
+
+    if (storedCredentialsPolicy == StoredCredentialsPolicy::Use) {
+        const String allowCredentials =
+            _ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE(&response, HTTPHeaderName::AccessControlAllowCredentials);
+        if (!EqualsLiteral(allowCredentials, "true"))
+            return ExpectedVoidString(Concatenate({Literal("Credentials flag is true, but Access-Control-Allow-Credentials is not \"true\".")}));
+    }
+    return ExpectedVoidString();
+}
+
 }
 
 extern "C" {
@@ -187,29 +247,27 @@ ExpectedVoidString APS5_VABI _ZN7WebCore24passesAccessControlCheckERKNS_16Resour
     const CrossOriginAccessControlCheckDisabler* checkDisabler) {
     if (!response) throw std::invalid_argument("null WebCore::ResourceResponse");
     if (!securityOrigin) throw std::invalid_argument("null WebCore::SecurityOrigin");
-    const String allowedOrigin = _ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE(response, HTTPHeaderName::AccessControlAllowOrigin);
-    bool starAllowed = storedCredentialsPolicy == StoredCredentialsPolicy::DoNotUse;
-    if (!starAllowed) starAllowed = checkDisabler && !CheckEnabled(*checkDisabler);
-    const bool isStar = EqualsLiteral(allowedOrigin, "*");
-    if (isStar && starAllowed) return ExpectedVoidString();
+    return AccessControlCheck(*response, storedCredentialsPolicy, *securityOrigin, checkDisabler, true);
+}
 
+ExpectedVoidString APS5_VABI _ZN7WebCore25validatePreflightResponseERKNS_15ResourceRequestERKNS_16ResourceResponseENS_23StoredCredentialsPolicyERKNS_14SecurityOriginEPKNS_37CrossOriginAccessControlCheckDisablerE(
+    const LegacyResourceRequestBase* request, const ResourceResponseBase* response, StoredCredentialsPolicy storedCredentialsPolicy, const SecurityOrigin* securityOrigin,
+    const CrossOriginAccessControlCheckDisabler* checkDisabler) {
+    if (!request) throw std::invalid_argument("null WebCore::ResourceRequest");
+    if (!response) throw std::invalid_argument("null WebCore::ResourceResponse");
+    if (!securityOrigin) throw std::invalid_argument("null WebCore::SecurityOrigin");
+    const int statusCode = StatusCode(*response);
+    if (statusCode < 200 || statusCode >= 300) return ExpectedVoidString(Concatenate({Literal("Preflight response is not successful")}));
+    ExpectedVoidString accessControlCheckResult = AccessControlCheck(*response, storedCredentialsPolicy, *securityOrigin, checkDisabler, false);
+    if (!accessControlCheckResult.hasValue) return accessControlCheckResult;
+    auto result = NKWebKit::PreflightCache::Create(storedCredentialsPolicy, *response);
+    if (!result.item) return ExpectedVoidString(std::move(result.error));
+    request->resourceRequestUpdated = true;
+    auto errorDescription = NKWebKit::PreflightCache::ValidateMethodAndHeaders(
+        *result.item, request->httpMethod, reinterpret_cast<const NKWebKit::HttpAbi::HTTPHeaderMap&>(request->httpHeaderFields));
     const String origin = _ZNK7WebCore14SecurityOrigin8toStringEv(securityOrigin);
-    if (!_ZN3WTF5equalEPKNS_10StringImplES2_(allowedOrigin.impl, origin.impl)) {
-        if (isStar)
-            return ExpectedVoidString(Concatenate({Literal("Cannot use wildcard in Access-Control-Allow-Origin when credentials flag is true.")}));
-        if (Contains(allowedOrigin, u','))
-            return ExpectedVoidString(Concatenate({Literal("Access-Control-Allow-Origin cannot contain more than one origin.")}));
-        const std::string statusCode = std::to_string(StatusCode(*response));
-        return ExpectedVoidString(Concatenate({Literal("Origin "), NKWebKit::WtfAbi::ViewOf(origin.impl),
-                                               Literal(" is not allowed by Access-Control-Allow-Origin."), Literal(" Status code: "), Literal(statusCode)}));
-    }
-
-    if (storedCredentialsPolicy == StoredCredentialsPolicy::Use) {
-        const String allowCredentials =
-            _ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE(response, HTTPHeaderName::AccessControlAllowCredentials);
-        if (!EqualsLiteral(allowCredentials, "true"))
-            return ExpectedVoidString(Concatenate({Literal("Credentials flag is true, but Access-Control-Allow-Credentials is not \"true\".")}));
-    }
+    NKWebKit::PreflightCache::Append(origin, request->url, std::move(result.item));
+    if (errorDescription) return ExpectedVoidString(std::move(*errorDescription));
     return ExpectedVoidString();
 }
 
