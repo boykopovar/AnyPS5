@@ -43,6 +43,19 @@ int main() {
     object.data = truncatedArc.data();
     Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 1) == 0);
 
+    object.shortName = "named";
+    object.longName = "named";
+    Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 0) == 0);
+    const std::array<unsigned char, 3> nonMinimalArc{0x2a, 0x80, 0x01};
+    object.length = 3;
+    object.data = nonMinimalArc.data();
+    Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 1) == 0);
+    Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 0) == 0);
+    const std::array<unsigned char, 2> nonMinimalFirstArc{0x80, 0x01};
+    object.length = 2;
+    object.data = nonMinimalFirstArc.data();
+    Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 1) == 0);
+
     object.shortName = "rsaEncryption";
     object.longName = nullptr;
     object.length = 9;

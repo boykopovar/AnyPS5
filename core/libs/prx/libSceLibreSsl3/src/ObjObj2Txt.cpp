@@ -59,6 +59,15 @@ extern "C" int APS5_VABI OBJ_obj2txt_nid_postfix(char* buffer, int bufferLength,
     if (buffer && bufferLength > 0) buffer[0] = '\0';
     if (!object || !object->data) return 0;
     if (object->length < 0) return 0;
+    {
+        bool arcStart = true;
+        for (int index = 0; index < object->length; ++index) {
+            const unsigned byte = object->data[index];
+            if (arcStart && byte == 0x80) return 0;
+            arcStart = (byte & 0x80) == 0;
+        }
+        if (!arcStart) return 0;
+    }
     std::string text;
     if (!noName) {
         const char* name = nullptr;
