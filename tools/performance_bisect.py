@@ -106,7 +106,8 @@ def sample_summary(path, title_id, commit):
     if not isinstance(built_commit, str) or not 7 <= len(built_commit) <= 40 or not commit.startswith(built_commit) or build.get("dirty") is not False:
         raise ValueError(f"{path}: measured build is not the requested clean commit {commit}")
     machine = summary.get("machine")
-    title = summary.get("titles", {}).get(title_id)
+    titles = summary.get("titles")
+    title = titles.get(title_id) if isinstance(titles, dict) else None
     if not isinstance(machine, dict) or not isinstance(title, dict):
         raise ValueError(f"{path}: title runner summary is missing machine or title data")
     run_list = title.get("runs")
@@ -114,7 +115,7 @@ def sample_summary(path, title_id, commit):
         raise ValueError(f"{path}: expected exactly one measured title run")
     run = run_list[0]
     fps = run.get("fps")
-    if run.get("outcome") != "rendering" or type(fps) not in (int, float) or not math.isfinite(fps) or fps <= 0:
+    if run.get("outcome") != "rendering" or type(fps) not in (int, float) or not 0 < fps <= sys.float_info.max:
         raise ValueError(f"{path}: title did not render with a finite positive FPS measurement")
     identity = {key: machine.get(key, "") for key in ("os", "gpu", "driver", "cpu")}
     identity.update(title_id=title_id, title=title.get("name", ""), content_version=title.get("version", ""))
