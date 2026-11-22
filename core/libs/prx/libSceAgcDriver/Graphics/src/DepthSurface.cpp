@@ -4444,6 +4444,50 @@ std::optional<HtileMaskClear> MatchHtileBufferMaskClear(std::span<const std::uin
     return HtileMaskClear{address, static_cast<std::size_t>(records * 16u), userData[8], userData[4]};
 }
 
+std::optional<HtileClearedHiZPatch> MatchHtileClearedHiZPatch(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::span<const std::uint32_t> packet, std::uint64_t indirectArguments) {
+    static constexpr std::array<std::uint32_t, 51> kernel{
+        0xbfa00003u, 0xd7460008u, 0x04010a05u, 0xe0382000u, 0x80000008u, 0xbf8c3f70u, 0x360e048fu, 0x3612068fu,
+        0x360c028fu, 0x360a008fu, 0xd54a0004u, 0x001204ffu, 0x00000fffu, 0x7d840ef9u, 0x06868680u, 0x7d8412f9u,
+        0x06868880u, 0xd54a0007u, 0x001206ffu, 0x00000fffu, 0x7d840cf9u, 0x06868a80u, 0xd54a0009u, 0x001202ffu,
+        0x00000fffu, 0x7d840a80u, 0xd54a000au, 0x001200ffu, 0x00000fffu, 0xd5010006u, 0x001a0902u, 0xd5010007u,
+        0x00220f03u, 0xd5010005u, 0x002a1301u, 0x02081500u, 0x7d8a04f9u, 0x06068406u, 0x7d8a0707u, 0x7d8a02f9u,
+        0x06068605u, 0x7d8a00f9u, 0x06068804u, 0x88ea6a04u, 0x88ea6a06u, 0x88ea6a08u, 0xbefe046au, 0xbf880002u,
+        0xe0782000u, 0x80000408u, 0xbf810000u};
+    if (userData.size() != 5u || packet.size() < 5u || indirectArguments != 0u) return std::nullopt;
+    if (code.size() < kernel.size() || !std::equal(kernel.begin(), kernel.end(), code.begin())) return std::nullopt;
+    if (compute.numThreads != std::array<std::uint32_t, 3>{32u, 1u, 1u} || !compute.groupIdEnable[0] || compute.threadIdComponentCount == 0u || compute.threadIdComponentCount > 3u) return std::nullopt;
+    if (packet[1] == 0u || packet[2] != 1u || packet[3] != 1u || (packet[4] & 0x3u) != 0x1u) return std::nullopt;
+    const auto stride = (userData[1] >> 16u) & 0x3fffu;
+    const bool swizzled = ((userData[1] >> 31u) & 1u) != 0u;
+    const bool addTid = ((userData[3] >> 23u) & 1u) != 0u;
+    const auto outOfBounds = (userData[3] >> 28u) & 3u;
+    const auto type = userData[3] >> 30u;
+    if (stride != 16u || swizzled || addTid || type != 0u || outOfBounds > 1u) return std::nullopt;
+    const auto address = userData[0] | (static_cast<std::uint64_t>(userData[1] & 0xffffu) << 32u);
+    const std::uint64_t threads = (packet[4] & 0x20u) != 0u ? packet[1] : static_cast<std::uint64_t>(packet[1]) * 32u;
+    const auto records = std::min<std::uint64_t>(threads, userData[2]);
+    if (address == 0u || (address & 3u) != 0u || records == 0u || records > 0x400000u) return std::nullopt;
+    return HtileClearedHiZPatch{address, static_cast<std::size_t>(records * 16u), userData[4]};
+}
+
+bool SkipNoOpHtileHiZPatch(const HtileClearedHiZPatch& patch) {
+    if (patch.bytes == 0u) return false;
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    std::lock_guard lock(surfacesMutex());
+    const auto owner = std::find_if(surfaces().begin(), surfaces().end(), [&](const auto& surface) {
+        return surface->active->load(std::memory_order_acquire) && surface->samplingActive && surface->target.htileAddress == patch.address && surface->sampling.initial.size() > 1u && patch.bytes >= surface->sampling.initial[1].bytes;
+    });
+    if (owner == surfaces().end() || (*owner)->clearPending || (*owner)->pendingClear != 0u || !(*owner)->sampling.refusal.empty()) return false;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(patch.address), patch.bytes)) return false;
+    if (auto* recorder = RecorderFor((*owner)->context); recorder != nullptr && recorder->PendingWriteOverlaps(patch.address, patch.bytes)) recorder->SyncThrough(patch.address, patch.bytes);
+    const auto bounds = patch.value & ~0xfffu;
+    const auto* words = reinterpret_cast<const std::uint32_t*>(patch.address);
+    for (std::size_t index = 0u; index < patch.bytes / sizeof(std::uint32_t); ++index) {
+        if ((words[index] & 15u) == 0u && (words[index] & ~0xfffu) != bounds) return false;
+    }
+    return true;
+}
+
 std::optional<MemoryValueFill> MatchMemoryValueFill(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const std::array<std::uint32_t, 3>& numThreads, const std::array<std::uint32_t, 3>& groups) {
     static constexpr std::array<std::uint32_t, 9> kernel{0xd7460000u, 0x04010c08u, 0xf4201a82u, 0xfa000000u, 0xbf8cc07fu, 0x7e02026au, 0xe0102000u, 0x80000100u, 0xbf810000u};
     if (userData.size() < 8 || numThreads != std::array<std::uint32_t, 3>{64u, 1u, 1u} || groups[1] != 1u || groups[2] != 1u) return std::nullopt;

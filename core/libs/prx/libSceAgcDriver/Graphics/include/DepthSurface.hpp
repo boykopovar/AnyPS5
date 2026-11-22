@@ -94,6 +94,13 @@ struct HtileMaskClear {
     std::uint32_t value = 0;
 };
 std::optional<HtileMaskClear> MatchHtileBufferMaskClear(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::span<const std::uint32_t> packet, std::uint64_t indirectArguments);
+struct HtileClearedHiZPatch {
+    std::uint64_t address = 0;
+    std::size_t bytes = 0;
+    std::uint32_t value = 0;
+};
+std::optional<HtileClearedHiZPatch> MatchHtileClearedHiZPatch(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::span<const std::uint32_t> packet, std::uint64_t indirectArguments);
+bool SkipNoOpHtileHiZPatch(const HtileClearedHiZPatch& patch);
 void NoteHtileMaskOnGpu(const Context& context, const HtileMaskClear& clear);
 void ForgetHtileMasks_nid_no_patch(std::uint64_t recorderId);
 struct MemoryValueFill {
