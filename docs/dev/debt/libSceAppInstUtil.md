@@ -235,13 +235,13 @@
 | `sceAppInstUtilRestoreDataSource` | 1 |
 | `sceAppInstUtilGetNeededStorageSize` | 1, 2 |
 | `sceAppInstUtilAppGetStorageDestType` | 1, 2 |
-| `libSceAppInstUtilUnknown_2WQuFX8yYXg_nid_no_patch` | 1, 2, 3 |
+| `sceAppInstUtilGetWorkspaceCopyStatus` | 1, 2, 3 |
 | `libSceAppInstUtilUnknown_4vqRxwpIE1M_nid_no_patch` | 1, 2 |
 | `libSceAppInstUtilUnknown_9QIC1kZpSG4_nid_no_patch` | none |
 | `libSceAppInstUtilUnknown_K73u2VX0JFo_nid_no_patch` | 1, 2, 4 |
 | `libSceAppInstUtilUnknown_N6H7LMfZD5Q_nid_no_patch` | none |
 | `libSceAppInstUtilUnknown_QMjuGVPtjUY_nid_no_patch` | 1 |
-| `libSceAppInstUtilUnknown_R_minus_OUApMZ1d8_nid_no_patch` | 1, 2, 3 |
+| `sceAppInstUtilGetContentIdFromPkg` | 1, 2, 3 |
 | `libSceAppInstUtilUnknown_T9h6l8bFKGE_nid_no_patch` | none |
 | `libSceAppInstUtilUnknown_XWjOLtdgxa4_nid_no_patch` | none |
 | `libSceAppInstUtilUnknown_Y_plus_ln_minus_TkY_plus_hA_nid_no_patch` | 1 |
