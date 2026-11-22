@@ -69,7 +69,7 @@ void RequireWritableBytes(const void* ptr, std::size_t bytes, const char* caller
 }
 
 void RequireWritable(const WebRtcRecursiveCriticalSection* section, const char* caller) {
-    RequireWritableBytes(section, sizeof(*section), caller);
+    RequireWritableBytes(section, sizeof(*section), (std::string(caller) + " requires a critical section").c_str());
 }
 
 PthreadMutex* MutexField(const WebRtcRecursiveCriticalSection* section) {
