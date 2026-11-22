@@ -223,7 +223,8 @@ void CapturePendingException(OpaqueJSContext* ctx, JSValueRef* exception) {
         return;
     }
     if (JS_IsUncatchableError(exc)) {
-        JS_ClearUncatchableError(ctx->qctx, exc);
+        JS_FreeValue(ctx->qctx, exc);
+        exc = JS_NewString(ctx->qctx, "JavaScript execution terminated.");
     }
     if (exception) {
         *exception = ctx->group->ToHandle(ctx, exc);
