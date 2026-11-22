@@ -20,30 +20,48 @@ std::optional<VirtualAddress> FindSceCodeEnd(std::span<const std::uint8_t> segme
         std::memcpy(&displacement, segment.data() + at + 2, sizeof(displacement));
         return segmentVAddr + at + 6 + static_cast<VirtualAddress>(static_cast<std::int64_t>(displacement));
     };
-    const auto isPlt = [&](const std::size_t at) {
+    const ByteCount stubCount = pltRelocationsSize / 24;
+    const auto isHeader = [&](const std::size_t at) {
         return segment[at] == 0xff && segment[at + 1] == 0x35 && segment[at + 6] == 0xff && segment[at + 7] == 0x25
             && target(at) == pltGot + 8 && target(at + 6) == pltGot + 16;
     };
+    const auto isEagerStubs = [&](const std::size_t at) {
+        if (stubCount == 0 || stubCount > (segment.size() - at) / 16)
+            return false;
+        for (ByteCount index = 0; index < stubCount; ++index) {
+            const auto stub = segment.subspan(at + 16 * index, 16);
+            if (stub[0] != 0xff || stub[1] != 0x25 || target(at + 16 * index) != pltGot + 24 + 8 * index
+                || std::any_of(stub.begin() + 6, stub.end(), [](const std::uint8_t byte) { return byte != 0xcc; }))
+                return false;
+        }
+        return true;
+    };
     const std::size_t lastFunctionEnd = codeEnd - segmentVAddr;
-    const ByteCount pltSize = 16 * (1 + pltRelocationsSize / 24);
-    for (std::size_t at = lastFunctionEnd; segment.size() >= 16 && at <= segment.size() - 16; ++at) {
-        if (!isPlt(at))
-            continue;
-        if (pltSize > segment.size() - at)
-            throw RelinkerException("PLT exceeds executable segment", segmentVAddr + at);
-        return segmentVAddr + at + pltSize;
-    }
-    for (std::size_t at = 0; at < lastFunctionEnd && at + 12 <= segment.size(); ++at) {
-        if (!isPlt(at))
-            continue;
-        if (pltSize > segment.size() - at)
-            throw RelinkerException("PLT exceeds executable segment", segmentVAddr + at);
-        const VirtualAddress pltBegin = segmentVAddr + at;
-        for (const auto& function : functions)
-            if (function.Begin < pltBegin + pltSize && pltBegin < function.End)
-                throw RelinkerException("PLT overlaps an unwind function", pltBegin);
-        return codeEnd;
-    }
+    const auto find = [&](const auto& isPlt, const ByteCount pltSize) -> std::optional<VirtualAddress> {
+        for (std::size_t at = lastFunctionEnd; segment.size() >= 16 && at <= segment.size() - 16; ++at) {
+            if (!isPlt(at))
+                continue;
+            if (pltSize > segment.size() - at)
+                throw RelinkerException("PLT exceeds executable segment", segmentVAddr + at);
+            return segmentVAddr + at + pltSize;
+        }
+        for (std::size_t at = 0; at < lastFunctionEnd && at + 12 <= segment.size(); ++at) {
+            if (!isPlt(at))
+                continue;
+            if (pltSize > segment.size() - at)
+                throw RelinkerException("PLT exceeds executable segment", segmentVAddr + at);
+            const VirtualAddress pltBegin = segmentVAddr + at;
+            for (const auto& function : functions)
+                if (function.Begin < pltBegin + pltSize && pltBegin < function.End)
+                    throw RelinkerException("PLT overlaps an unwind function", pltBegin);
+            return codeEnd;
+        }
+        return std::nullopt;
+    };
+    if (const auto end = find(isHeader, 16 * (1 + stubCount)))
+        return end;
+    if (const auto end = find(isEagerStubs, 16 * stubCount))
+        return end;
     throw RelinkerException("PLT not found before or after the unwind functions", codeEnd);
 }
 

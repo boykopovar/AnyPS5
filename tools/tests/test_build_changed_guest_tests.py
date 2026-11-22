@@ -431,11 +431,12 @@ class Main(unittest.TestCase):
 
     def test_script_test_indices_are_one_based_sorted_and_unmatched_pattern_raises(self):
         listing = json.dumps({"tests": [{"name": "nid_b"}, {"name": "guest"}, {"name": "public_headers"}, {"name": "nid_a"}]})
-        with mock.patch.object(build_changed_guest_tests.subprocess, "run", return_value=run_result(listing)):
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", return_value=run_result(listing)) as run:
             self.assertEqual(build_changed_guest_tests.script_test_indices(
                 "build", [build_changed_guest_tests.NID_TESTS, build_changed_guest_tests.PUBLIC_HEADER_TESTS]), [1, 3, 4])
             with self.assertRaises(ValueError):
                 build_changed_guest_tests.script_test_indices("build", [build_changed_guest_tests.re.compile("^absent$")])
+        self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
 
     def test_public_header_inputs(self):
         for path in ("core/libs/prx/libSceXml/include/Xml.hpp", "core/libs/include/X.h", "core/libs/tests/test_public_headers.py",
