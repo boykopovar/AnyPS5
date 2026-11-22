@@ -818,9 +818,17 @@ bool ParseAlgorithm(std::span<const unsigned char> body, int& type, int& curve) 
         }
         return true;
     }
+    if (DsaTypeFromOid(oid.content) != 0) {
+        type = LibreSsl3PkeyDsa;
+        curve = 0;
+        return true;
+    }
     PutError(ErrLibEvp, EvpRUnsupportedAlgorithm);
     return false;
 }
+
+LibreSsl3X509Algor* DecodePkcs8Algor(std::span<const unsigned char> body);
+void FreeAlgor(LibreSsl3X509Algor* algor);
 
 LibreSsl3EvpPkey* DecodeSpki(std::span<const unsigned char>& input) {
     std::span<const unsigned char> remaining = input;
@@ -879,6 +887,21 @@ LibreSsl3EvpPkey* DecodeSpki(std::span<const unsigned char>& input) {
         if (!key || !EVP_PKEY_assign_nid_postfix(key, EcType, ec)) {
             if (key) EVP_PKEY_free_nid_disambig1_nid_postfix(key);
             EC_KEY_free_nid_postfix(ec);
+            return nullptr;
+        }
+        input = remaining;
+        return key;
+    }
+    if (type == LibreSsl3PkeyDsa) {
+        LibreSsl3X509Algor* const algor = DecodePkcs8Algor(algorithm.content);
+        if (!algor) {
+            PutError(ErrLibAsn1, ErrRNestedAsn1Error);
+            return nullptr;
+        }
+        auto* const key = DsaDecodePublicKey_nid_no_patch(algor, keyBits.data(), keyBits.size());
+        FreeAlgor(algor);
+        if (!key) {
+            PutError(ErrLibX509, X509RPublicKeyDecodeError);
             return nullptr;
         }
         input = remaining;
@@ -1565,6 +1588,12 @@ LibreSsl3EvpPkey* APS5_VABI d2i_PrivateKey_bio_nid_postfix(LibreSsl::Bio* bio, L
             return key;
         }
         return tryPkcs8(false);
+    }
+
+    if (elementCount == 6) {
+        const unsigned char* cursor = bytes.data();
+        return DecodeTraditionalPrivateKey_nid_no_patch(
+            LibreSsl3PkeyDsa, output, &cursor, static_cast<std::int64_t>(bytes.size()));
     }
 
     std::span<const unsigned char> rsaSpan(bytes);

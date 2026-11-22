@@ -3766,6 +3766,189 @@ void TestDsaEncoding() {
     EVP_PKEY_free_nid_disambig1_nid_postfix(key);
 }
 
+constexpr char Dsa1024PublicPem[] =
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MIIBtzCCASwGByqGSM44BAEwggEfAoGBAOcs/xi7X5F5t//ZlFbAvu4WX7uRF8Pm\n"
+    "7FEGBb5a7UIxxmbUrBMMmnHgLf6yW1PnlvTOhZBXnfB1NpI9DnwDOT5Heoj+jEP5\n"
+    "gv3Qog9eA2dfdkfcErVxIfsyHVNx/eb9n/WOls3WlLN5pE+V1G5uEm/7MY+08NcB\n"
+    "dH6FePNXBFt5AhUA/3ug7v7+mTR9TRvhUZZDjgc+h7ECgYEAmmFW6ol7V+WTBclf\n"
+    "i9JjwAf6JeS7WHaQHK7rgjbpCaJoS9tDoRNwqomPwomVDCoYx4oh7s8oddADqTin\n"
+    "i978bHQfr67i9hvNOCswK/h3ra9mQYpbAG7nqMBto7TvVR5yXgmQXp7J/qmLk1mg\n"
+    "s5POl1RGdtpJNhEdaVUOX7zH9poDgYQAAoGADzHe1puObV00zBbFAUbqCXmBmLT+\n"
+    "5EAgKsLtgpbfrfyKVt2+fnN7hoM8wwmrOJ4o0JsCktSkArh6vQCXkIuZq945K79/\n"
+    "IXW930MsJvYAYqcADXks3vFGiEaCsjBrgAIWO4rZ4dFGXXf+dcGOpuYXA42AOSEY\n"
+    "NjxfCaSDpCkXG6M=\n"
+    "-----END PUBLIC KEY-----\n";
+
+constexpr char Dsa2048PublicPem[] =
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MIIDRjCCAjkGByqGSM44BAEwggIsAoIBAQDH/igz3Ag85SjHHRXCga1HkOvpKiRR\n"
+    "R+uVbNYUZrxvA7kIkswurZpo1OEKQiN1pHUE4kvInrwZJGuF6oz1uRlhMqIkuKrW\n"
+    "eOOGYwP9PZZACzbZRyQ9HCkp46loeT4F88890j2pbmOFAP7hJrSZWrOOJ2i+KU0Q\n"
+    "NgPMknVC8bQvMraEsiOHZpE0d0HS0IY2aMsgf7Of38SCoyjkGaSqfm8VZ8J5lBpi\n"
+    "Wqom8tfI1xXivh9InCEg8OaiR3gUPXGyDboa34iS/R47O4fFnhjG8ixTnRNxHlD/\n"
+    "BHlNnTvN+t+AxYJWfdmu+1zq+L/eB8XBybtO7K7h6LT+mhyNe0gxUqu1AiEA2XbQ\n"
+    "YzQzGOpsrSf7lmfOyYXp/YB0oZUY2ODn0COYfCECggEAWyKMmLZikAtWE+X//L7I\n"
+    "NzvWT8iV2vIFrN4mf/RdOk2d0U24g2KIewdosezDkSmXX8BAZtZQMOm+vP4UT7mF\n"
+    "DJ9F48Fd7ccVyDT0fV8pMNHUr1dYmHImtNSKbT2iF4toUA02lZ69+1Dpltegpsf5\n"
+    "VYVItCPNeDllIl9WJ0GG5LqaYNxfWo01bW+9JVCsrPl9zC/VkNETWuzCes39A1zk\n"
+    "HWWFMZlaDmQRatIhYoKo35x3OVsyYS4LXXvcmuIgxB1WFZZf4JeVQTv3tiIMJWJ4\n"
+    "9/bSzIhTbmuAg17kvhwTsUF9tt7nJx/1v5a9Rrd6rsU+1u8uDP5zA4I/YcFmXt+8\n"
+    "fAOCAQUAAoIBAHRmmuKNMzke+N7HYRu1jnv6HQ/BhAmaU/lom6zeGiwBnb5qglu+\n"
+    "fbh8YFyYzZ7DWtJZnSIGjTzsuPvuVDu4yOXxxPhGoa3erwi2LtOaa6xuN6R5GSfV\n"
+    "SIXyOthXA59JqFbypuVamdIs5df2Qd15d1yu1XrUocCZbZmdcZho98ivgWMNARig\n"
+    "3uPGv3YmebWffceo1hU+OzXVejpVFZGXtGYwnBN9NXWTz3opVPXb+HnkPbsXfs8z\n"
+    "PQoMCMK3l+eyOkoQ3my0XOm2cA6Mv4VcWr719qoZQHJ5a8SP0NrswoRzIlBZPC0T\n"
+    "V1E31RBZ/4P5dqIIxhe7rVoEzpaUY2N6/No=\n"
+    "-----END PUBLIC KEY-----\n";
+
+constexpr int X509Errors = 11;
+constexpr int X509PublicKeyDecodeError = 125;
+
+Bytes DsaSpkiDer(const Bytes& oid, const Bytes& parameter, const Bytes& key) {
+    return Der(0x30, Join({Der(0x30, Join({Der(0x06, oid), parameter})), Der(0x03, Join({Bytes{0x00}, key}))}));
+}
+
+LibreSsl3EvpPkey* DecodeSpkiDer(const Bytes& der) {
+    ERR_clear_error_nid_postfix();
+    const unsigned char* cursor = der.data();
+    auto* key = d2i_PUBKEY_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(der.size()));
+    if (key != nullptr) Require(cursor == der.data() + der.size());
+    return key;
+}
+
+void ExpectDsaPublic(LibreSsl3EvpPkey* key, const DsaNumbers& expected, bool parameters,
+    std::source_location location = std::source_location::current()) {
+    const LibreSsl3Dsa* dsa = DsaOf(key, location);
+    const void* p = nullptr;
+    const void* q = nullptr;
+    const void* g = nullptr;
+    const void* publicKey = nullptr;
+    const void* privateKey = nullptr;
+    DSA_get0_pqg_nid_postfix(dsa, &p, &q, &g);
+    DSA_get0_key_nid_postfix(dsa, &publicKey, &privateKey);
+    if (parameters) {
+        Require(BignumMagnitude(p, location) == expected.p, location);
+        Require(BignumMagnitude(q, location) == expected.q, location);
+        Require(BignumMagnitude(g, location) == expected.g, location);
+    } else {
+        Require(p == nullptr && q == nullptr && g == nullptr, location);
+    }
+    Require(BignumMagnitude(publicKey, location) == expected.pub, location);
+    Require(privateKey == nullptr, location);
+    Require(dsa->pad == 0 && dsa->version == 0, location);
+    std::array<unsigned char, sizeof(LibreSsl3Dsa::rest)> rest{};
+    rest[DsaFlagsOffset] = 1;
+    rest[DsaReferencesOffset] = 1;
+    Require(std::memcmp(dsa->rest, rest.data(), rest.size()) == 0, location);
+}
+
+void ExpectDsaPublicVector(const char* privatePem, const char* publicPem) {
+    const DsaNumbers numbers = DsaNumbersOf(privatePem);
+    const Bytes der = BodyBytes(BytesOf(publicPem));
+    Require(der == DsaSpkiDer(DsaOidBytes, DsaParametersDer(numbers), DerUnsigned(numbers.pub)));
+    auto* key = DecodeSpkiDer(der);
+    ExpectDsaPublic(key, numbers, true);
+    ExpectEmptyQueue();
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+
+    ERR_clear_error_nid_postfix();
+    key = ReadPublicKey(BytesOf(publicPem), nullptr);
+    ExpectDsaPublic(key, numbers, true);
+    ExpectEmptyQueue();
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+}
+
+void ExpectDsaPublicFailure(const Bytes& der, ErrorList errors,
+    std::source_location location = std::source_location::current()) {
+    Require(DecodeSpkiDer(der) == nullptr, location);
+    errors.push_back({X509Errors, X509PublicKeyDecodeError});
+    ExpectErrorSequence(errors, location);
+}
+
+void TestDsaPublicKeys() {
+    ExpectDsaPublicVector(Dsa1024TraditionalPem, Dsa1024PublicPem);
+    ExpectDsaPublicVector(Dsa2048TraditionalPem, Dsa2048PublicPem);
+
+    const DsaNumbers good = DsaNumbersOf(Dsa1024TraditionalPem);
+    const Bytes parameters = DsaParametersDer(good);
+    const Bytes publicKey = DerUnsigned(good.pub);
+    const Bytes one{0x02, 0x01, 0x01};
+    DsaNumbers unit = good;
+    unit.pub = Bytes{0x01};
+
+    for (const Bytes& oid : {DsaOidBytes, DsaWithSha1OidBytes, DsaOldOidBytes, DsaWithShaOidBytes,
+             DsaWithSha1OldOidBytes}) {
+        auto* key = DecodeSpkiDer(DsaSpkiDer(oid, parameters, publicKey));
+        ExpectDsaPublic(key, good, true);
+        ExpectEmptyQueue();
+        EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+    }
+
+    for (const Bytes& parameter : {Bytes{}, Bytes{0x05, 0x00}}) {
+        auto* key = DecodeSpkiDer(DsaSpkiDer(DsaOidBytes, parameter, publicKey));
+        ExpectDsaPublic(key, good, false);
+        ExpectEmptyQueue();
+        EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+
+        key = DecodeSpkiDer(DsaSpkiDer(DsaOidBytes, parameter, one));
+        ExpectDsaPublic(key, unit, false);
+        ExpectEmptyQueue();
+        EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+    }
+
+    auto* trailing = DecodeSpkiDer(DsaSpkiDer(DsaOidBytes, parameters, Join({publicKey, Bytes{0x05, 0x00}})));
+    ExpectDsaPublic(trailing, good, true);
+    ExpectEmptyQueue();
+    EVP_PKEY_free_nid_disambig1_nid_postfix(trailing);
+
+    ExpectDsaPublicFailure(DsaSpkiDer(DsaOidBytes, Der(0x06, P256OidBytes), publicKey),
+        {{DsaLibrary, DsaParameterEncodingError}});
+    ExpectDsaPublicFailure(
+        DsaSpkiDer(DsaOidBytes, Der(0x30, Join({DerUnsigned(good.p), DerUnsigned(good.q)})), publicKey),
+        {{Asn1Errors, Asn1FieldMissing}, {DsaLibrary, DsaDecodeError}});
+    ExpectDsaPublicFailure(DsaSpkiDer(DsaOidBytes, parameters, Der(0x04, good.pub)),
+        {{Asn1Errors, Asn1WrongTag}, {Asn1Errors, Asn1NestedAsn1Error}, {DsaLibrary, DsaDecodeError}});
+    ExpectDsaPublicFailure(DsaSpkiDer(DsaOidBytes, parameters, one), {{DsaLibrary, DsaInvalidParameters}});
+    ExpectDsaPublicFailure(DsaSpkiDer(DsaOidBytes, parameters, DerUnsigned(good.p)),
+        {{DsaLibrary, DsaInvalidParameters}});
+    DsaNumbers evenSubprime = good;
+    evenSubprime.q.back() &= 0xfe;
+    ExpectDsaPublicFailure(DsaSpkiDer(DsaOidBytes, DsaParametersDer(evenSubprime), publicKey),
+        {{DsaLibrary, DsaInvalidParameters}});
+}
+
+void TestDsaAutoPrivateKey() {
+    for (const char* pem : {Dsa1024TraditionalPem, Dsa2048TraditionalPem}) {
+        const DsaNumbers numbers = DsaNumbersOf(pem);
+        ERR_clear_error_nid_postfix();
+        auto* key = KeyFromDerThroughBio(BodyBytes(BytesOf(pem)));
+        ExpectDsaKey(key, numbers, 0);
+        ExpectEmptyQueue();
+        EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+    }
+
+    const DsaNumbers good = DsaNumbersOf(Dsa1024TraditionalPem);
+    DsaNumbers evenSubprime = good;
+    evenSubprime.q.back() &= 0xfe;
+    const Bytes octet = Der(0x04, Bytes{0x01});
+    for (const Bytes& der : {DsaTraditionalDer(DsaZeroVersion, evenSubprime),
+             Der(0x30, Join({octet, octet, octet, octet, octet, octet}))}) {
+        Require(ReadPlainKey(DsaLabelPem(der)) == nullptr);
+        ErrorList expected = DrainErrors();
+        Require(expected.size() >= 2);
+        Require(expected.back() == std::pair<int, int>{PemLibrary, ErrorReasonAsn1Library});
+        expected.pop_back();
+        Require(expected.front().first == DsaLibrary || expected.front().first == Asn1Errors);
+
+        ERR_clear_error_nid_postfix();
+        LibreSsl::Bio* bio = MemoryBio(der);
+        Require(d2i_PrivateKey_bio_nid_postfix(bio, nullptr) == nullptr);
+        BIO_free_nid_postfix(bio);
+        ExpectErrorSequence(expected);
+    }
+}
+
 void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size == 0 ? 1 : size); }
 void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
 void* APS5_VABI HeapCallocate(std::size_t count, std::size_t size) {
@@ -3830,5 +4013,7 @@ int main() {
     TestDsaSlots();
     TestDsaObject();
     TestDsaEncoding();
+    TestDsaPublicKeys();
+    TestDsaAutoPrivateKey();
     return 0;
 }

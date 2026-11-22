@@ -800,6 +800,40 @@ LibreSsl3EvpPkey* DsaDecodePkcs8Key_nid_no_patch(const LibreSsl3X509Algor* algor
     return NewDsaPkey(0, numbers);
 }
 
+LibreSsl3EvpPkey* DsaDecodePublicKey_nid_no_patch(const LibreSsl3X509Algor* algorithm, const unsigned char* key,
+    std::size_t keyLength) {
+    if (algorithm == nullptr) throw std::invalid_argument("dsa_pub_decode: null algorithm");
+    const LibreSsl3Asn1Type* const parameter = algorithm->parameter;
+    Numbers numbers;
+    const bool hasParameters = parameter != nullptr && parameter->type == TypeSequence;
+    if (hasParameters) {
+        const auto* const sequence = static_cast<const LibreSsl3Asn1String*>(parameter->value);
+        if (sequence == nullptr || sequence->length < 0 || (sequence->data == nullptr && sequence->length > 0))
+            throw std::invalid_argument("dsa_pub_decode: malformed parameter string");
+        std::int64_t version = 0;
+        Reader reader{sequence->data, static_cast<std::size_t>(sequence->length)};
+        if (!ReadDsaSequence(reader, false, version, numbers)) {
+            PutError(DsaLibrary, DsaDecodeError);
+            return nullptr;
+        }
+    } else if (parameter != nullptr && parameter->type != TypeNull) {
+        PutError(DsaLibrary, DsaParameterEncodingError);
+        return nullptr;
+    }
+    Integer integer;
+    if (!ReadBareInteger(key, keyLength, integer)) {
+        PutError(DsaLibrary, DsaDecodeError);
+        return nullptr;
+    }
+    numbers.values[PublicIndex] = NewBignum(integer);
+    if (numbers.values[PublicIndex] == nullptr) {
+        PutError(DsaLibrary, DsaBnDecodeError);
+        return nullptr;
+    }
+    if (hasParameters && !CheckKey(numbers)) return nullptr;
+    return NewDsaPkey(0, numbers);
+}
+
 void DsaEncodePkcs8Parts_nid_no_patch(const LibreSsl3Dsa* key, std::vector<unsigned char>& parameters,
     std::vector<unsigned char>& privateKey) {
     if (key == nullptr) throw std::invalid_argument("dsa_priv_encode: null key");
