@@ -51,6 +51,9 @@ def render(report):
     for key in ("milestones", "missing", "shaders", "unsupported"):
         if type(report["coverage"].get(key)) is not bool:
             raise ValueError(f"report field 'coverage.{key}' must be a boolean")
+    for key in ("recovered", "incomplete"):
+        if type(report["run"].get(key)) is not bool:
+            raise ValueError(f"report field 'run.{key}' must be a boolean")
 
     game = report["game"]
     system = report["system"]

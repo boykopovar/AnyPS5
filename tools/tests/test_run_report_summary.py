@@ -105,6 +105,36 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("Warning: one or more observations were dropped", summary)
         self.assertIn("Warning: one or more diagnostic lists were truncated", summary)
 
+    def test_rejects_non_boolean_run_lifecycle_flags(self):
+        for flag in ("recovered", "incomplete"):
+            for value in ("false", "true", 0, 1, None, [], {}):
+                with self.subTest(flag=flag, value=value):
+                    report = self.report("stop-none.json")
+                    report["run"][flag] = value
+                    with self.assertRaisesRegex(ValueError, f"run\\.{flag}"):
+                        render(report)
+            with self.subTest(flag=flag, value="absent"):
+                report = self.report("stop-none.json")
+                del report["run"][flag]
+                with self.assertRaisesRegex(ValueError, f"run\\.{flag}"):
+                    render(report)
+
+    def test_cli_rejects_non_boolean_run_lifecycle_flags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for flag in ("recovered", "incomplete"):
+                report = self.report("stop-none.json")
+                report["run"][flag] = "false"
+                path = Path(directory) / f"{flag}.json"
+                path.write_text(json.dumps(report), encoding="utf-8")
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                    capture_output=True, text=True, encoding="utf-8", timeout=10,
+                )
+                with self.subTest(flag=flag):
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(f"run.{flag}", result.stderr)
+
     def test_unknown_text_does_not_emit_terminal_control_characters(self):
         report = self.report("stop-none.json")
         report["game"]["name"] = "Example\x1b[31mGame"
