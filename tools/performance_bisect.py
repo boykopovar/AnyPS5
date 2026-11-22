@@ -119,6 +119,9 @@ def sample_summary(path, title_id, commit):
     identity.update(title_id=title_id, title=title.get("name", ""), content_version=title.get("version", ""))
     if any(not identity[key] for key in ("os", "gpu", "driver", "title")):
         raise ValueError(f"{path}: measurement is missing machine, title, or content identity")
+    content_version = identity["content_version"]
+    if not isinstance(content_version, str) or not content_version.strip():
+        raise ValueError(f"{path}: measurement is missing a valid content version")
     return {"commit": commit, "fps": float(fps), "identity": identity, "outcome": run["outcome"]}
 
 

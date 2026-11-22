@@ -25,8 +25,8 @@ class RedactTests(unittest.TestCase):
         self.assertEqual(out, "~\\AppData")
 
     def test_user_is_matched_as_a_whole_word(self):
-        out = bug_report.redact("banana ana ana.txt ana-dir", home="", user="ana", host="")
-        self.assertEqual(out, "banana <user> <user>.txt ana-dir")
+        out = bug_report.redact("banana ana ana.txt ana-dir ANA", home="/home/ana", user="ana", host="")
+        self.assertEqual(out, "banana <user> <user>.txt ana-dir ANA")
 
     def test_windows_home_matches_mixed_case_and_separators(self):
         out = bug_report.redact(
@@ -137,6 +137,16 @@ class BundleTests(unittest.TestCase):
                 details["path"] = f"opened ~{suffix}"
                 self.assertEqual(archived, report)
 
+    def test_windows_username_case_is_redacted_in_report_and_log(self):
+        identity = {"home": r"C:\Profiles\Example", "user": "Example", "host": ""}
+        self.report.write_text(json.dumps({"run": {"note": "opened by EXAMPLE"}}), encoding="utf-8")
+        self.log.write_text("account eXaMpLe; sibling EXAMPLE-backup\n", encoding="utf-8")
+        out = self.root / "bundle.zip"
+        bug_report.make_bundle(self.report, out, log=self.log, **identity)
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(json.loads(bundle.read("anyps5-report.json")), {"run": {"note": "opened by <user>"}})
+            self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), "account <user>; sibling EXAMPLE-backup\n")
+
     def test_json_object_keys_are_redacted(self):
         report = {
             "/home/ana/games/title.elf": {
@@ -170,6 +180,18 @@ class BundleTests(unittest.TestCase):
     def test_missing_log_and_input_are_left_out(self):
         _, names = self.bundle(log=self.root / "absent.log", input_config=None)
         self.assertEqual(names, ["README.txt", "anyps5-report.json", "host.txt"])
+
+    def test_log_keeps_driver_versions_and_redacts_ipv4_endpoints(self):
+        self.log.write_text(
+            "[gpu]\ndriver_version: 621.14.0.0\ndriver_version: 580.95.5.1\n"
+            "peer http://192.168.1.20:8080/ from ::ffff:127.000.0.001\n"
+            "route 0.0.0.0 to 255.255.255.255\n"
+            "host 999.192.168.1.20\n", encoding="utf-8")
+        out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(bundle.read("anyps5.log"),
+                             b"[gpu]\ndriver_version: 621.14.0.0\ndriver_version: 580.95.5.1\n"
+                             b"peer http://<ip>:8080/ from ::ffff:<ip>\nroute <ip> to <ip>\nhost 999.<ip>\n")
 
     def test_report_that_is_not_json_is_refused(self):
         self.report.write_text("not json", encoding="utf-8")
@@ -214,6 +236,19 @@ class MainTests(unittest.TestCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = bug_report.main(argv)
         return code, out.getvalue(), err.getvalue()
+
+    def test_hostname_case_is_redacted_in_network_paths(self):
+        self.log.write_text(
+            "opened //SERVERFESTIVO/share/title.elf via serverfestivo.local\n"
+            "opened //serverfestivo-backup/share/title.elf\n", encoding="utf-8")
+        target = self.root / "bundle.zip"
+        code, _, error = self.run_main(["--report", str(self.report), "--log", str(self.log),
+                                        "--input-config", "", "--out", str(target)])
+        self.assertEqual(code, 0, error)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(bundle.read("anyps5.log").decode("utf-8"),
+                             "opened //<host>/share/title.elf via <host>.local\n"
+                             "opened //serverfestivo-backup/share/title.elf\n")
 
     def test_writes_the_bundle_with_identities_redacted(self):
         target = self.root / "bundle.zip"
@@ -317,6 +352,23 @@ class MainTests(unittest.TestCase):
         self.assertIn("bug_report:", err)
         self.assertFalse((self.root / "b.zip").exists())
 
+    def test_non_ascii_paths_with_cp1252_stdio_are_reported_as_utf8(self):
+        env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+        out = self.root / "bundle-\u2603.zip"
+        success = subprocess.run(
+            [sys.executable, bug_report.__file__, "--report", str(self.report), "--log", "", "--input-config", "", "--out", str(out)],
+            env=env, capture_output=True, timeout=5)
+        self.assertEqual(success.returncode, 0, success.stderr.decode("utf-8", errors="replace"))
+        self.assertTrue(out.is_file())
+        self.assertIn(out.name, success.stdout.decode("utf-8"))
+
+        missing = self.root / "missing-\u2603.json"
+        failure = subprocess.run(
+            [sys.executable, bug_report.__file__, "--report", str(missing), "--log", "", "--input-config", "", "--out", str(self.root / "unused.zip")],
+            env=env, capture_output=True, timeout=5)
+        self.assertEqual(failure.returncode, 1)
+        self.assertIn(missing.name, failure.stderr.decode("utf-8"))
+
 
 class IdentityTests(unittest.TestCase):
     def test_host_is_cut_at_the_first_dot(self):
@@ -359,10 +411,6 @@ class RedactReportTests(unittest.TestCase):
         self.assertEqual(report[3], ["/home/alice"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class HostTextTests(unittest.TestCase):
     def test_host_text_names_the_system_processor_cpus_and_python(self):
         with patch.object(bug_report.platform, "system", return_value="Linux"), \
@@ -372,3 +420,7 @@ class HostTextTests(unittest.TestCase):
                 patch.object(bug_report.os, "cpu_count", return_value=8):
             text = bug_report.host_text()
         self.assertEqual(text.splitlines(), ["os: Linux 6.1.0", "machine: x86_64", "processor: unknown", "logical cpus: 8", f"python: {bug_report.platform.python_version()}"])
+
+
+if __name__ == "__main__":
+    unittest.main()

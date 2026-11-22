@@ -17,6 +17,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Float16ConversionProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float16NanProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FloatFlushProbe.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -49,6 +50,7 @@
 #include "prx/libSceAgcDriver/TraceRevision.hpp"
 #include "prx/libSceAgcDriver/Execution/include/UpscaleMode.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
@@ -231,6 +233,17 @@ void DumpDeviceFaultVendorBinary(VkDevice device, PFN_vkGetDeviceFaultInfoEXT fa
 APS5_RUN_REPORT_COMPONENT("libSceAgcDriver")
 
 namespace {
+
+class RdnaProbeShaders {
+public:
+    RdnaProbeShaders() : gcn(ShaderRecompiler::GcnGuestShaders()) { ShaderRecompiler::SetGcnGuestShaders(false); }
+    ~RdnaProbeShaders() { ShaderRecompiler::SetGcnGuestShaders(gcn); }
+    RdnaProbeShaders(const RdnaProbeShaders&) = delete;
+    RdnaProbeShaders& operator=(const RdnaProbeShaders&) = delete;
+
+private:
+    bool gcn;
+};
 
 std::atomic<unsigned long long> descriptorUse[7 * 4];
 
@@ -2853,6 +2866,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             std::fprintf(stderr, "[present] ANYPS5_UPSCALE=fsr: FSR 1 EASU and RCAS when the window is larger than the display buffer, the normal scaler otherwise; RCAS sharpness %.2f\n", static_cast<double>(upscale.sharpness));
         }
     }
+    std::optional<RdnaProbeShaders> rdnaProbeShaders(std::in_place);
     if (state->float32FlushToZeroCandidate) {
         const auto probeStart = std::chrono::steady_clock::now();
         state->probingFloatControls = true;
@@ -2896,6 +2910,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->float16HostNans = probe.mismatches == 0u;
         std::fprintf(stderr, "[float-controls] f16 NaN results with IEEE_MODE clear: %s (%u of %u probe results differ from the selected NaN, %.0f ms)\n", state->float16HostNans ? "host" : "selected", probe.mismatches, probe.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
     }
+    rdnaProbeShaders.reset();
     // A device without a window is usually replaced by the window's device before the title draws
     // (Driver::AttachWindow): its replay starts at its first draw or dispatch instead, so the
     // journal is replayed once, on the device the title draws with.
@@ -2990,6 +3005,22 @@ bool VulkanDevice::HasComputePipeline(const ShaderRecompiler::RecompileResult& s
 
 namespace {
 thread_local bool buildingAhead = false;
+
+bool PauseClockForPipelines() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("APS5_PAUSE_CLOCK_FOR_PIPELINES");
+        return value != nullptr && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+struct PipelineWaitClockPause {
+    const bool paused = !buildingAhead && PauseClockForPipelines();
+    PipelineWaitClockPause() { if (paused) KernelPauseGuestClock_nid_no_patch(); }
+    ~PipelineWaitClockPause() { if (paused) KernelResumeGuestClock_nid_no_patch(); }
+    PipelineWaitClockPause(const PipelineWaitClockPause&) = delete;
+    PipelineWaitClockPause& operator=(const PipelineWaitClockPause&) = delete;
+};
 }
 
 void VulkanDevice::PrebuildComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress) {
@@ -6468,16 +6499,15 @@ VkPipeline VulkanDevice::splitComputePipeline(const Graphics::Context& context, 
 std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Graphics::Context& context, const ShaderRecompiler::RecompileResult& shader, VkDescriptorSetLayout setLayout, std::span<const std::uint32_t> layoutKey, VkShaderStageFlags pushStages, std::uint64_t programAddress) {
     const auto pipelineKey = ComputePipelineKey::Of(shader, pushStages != 0);
     std::promise<std::shared_ptr<ComputePipelineObjects>> building;
+    std::shared_future<std::shared_ptr<ComputePipelineObjects>> other;
     if (!pipelineKey.identity.Empty()) {
-        std::shared_future<std::shared_ptr<ComputePipelineObjects>> other;
-        {
-            std::lock_guard pipelines(state->computePipelinesMutex);
-            if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) return found->second;
-            if (const auto pending = state->computePipelinesBuilding.find(pipelineKey); pending != state->computePipelinesBuilding.end()) other = pending->second;
-            else state->computePipelinesBuilding.emplace(pipelineKey, building.get_future().share());
-        }
-        if (other.valid()) return other.get();
+        std::lock_guard pipelines(state->computePipelinesMutex);
+        if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) return found->second;
+        if (const auto pending = state->computePipelinesBuilding.find(pipelineKey); pending != state->computePipelinesBuilding.end()) other = pending->second;
+        else state->computePipelinesBuilding.emplace(pipelineKey, building.get_future().share());
     }
+    const PipelineWaitClockPause pause;
+    if (other.valid()) return other.get();
     const auto finish = [&](std::shared_ptr<ComputePipelineObjects> built, std::exception_ptr error) {
         if (pipelineKey.identity.Empty()) return built;
         {
