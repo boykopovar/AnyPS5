@@ -490,7 +490,8 @@ void TestEveryKind() {
         DisplayListDriver::Random random{static_cast<std::uint32_t>(info.kind + 1)};
         DisplayListDriver::Reader reader{random};
         const int before = guestAllocations;
-        void* storage = _Znwm_nid_postfix(static_cast<std::size_t>(info.size));
+        void* storage = _ZN3WTF10fastMallocEm(static_cast<std::size_t>(info.size));
+        Require(_ZN3WTF14fastMallocSizeEPKv(storage) == static_cast<std::size_t>(info.size));
         adapter.Construct(info.kind, reader, storage, true);
         const Item& item = *static_cast<Item*>(storage);
         Require(item.refCount == 1);
@@ -501,7 +502,7 @@ void TestEveryKind() {
         } else {
             VtableOf(storage).completeDestructor(storage);
             Require(item.vptr == itemTable);
-            _ZdlPv_nid_postfix(storage);
+            _ZN3WTF8fastFreeEPv(storage);
         }
         Require(guestAllocations == before);
     }
@@ -531,10 +532,10 @@ void TestBaseItems() {
     Require(drawing->item.vptr == itemTable);
 
     const int before = guestAllocations;
-    void* heapItem = _Znwm_nid_postfix(sizeof(DrawingItem));
+    void* heapItem = _ZN3WTF10fastMallocEm(sizeof(DrawingItem));
     _ZN7WebCore11DisplayList11DrawingItemC2ENS0_8ItemTypeE(static_cast<DrawingItem*>(heapItem), NKWebKit::DisplayListAbi::ItemType::Save);
     _ZN7WebCore11DisplayList11DrawingItemD0Ev(static_cast<DrawingItem*>(heapItem));
-    heapItem = _Znwm_nid_postfix(sizeof(Item));
+    heapItem = _ZN3WTF10fastMallocEm(sizeof(Item));
     _ZN7WebCore11DisplayList4ItemC2ENS0_8ItemTypeE(static_cast<Item*>(heapItem), NKWebKit::DisplayListAbi::ItemType::Save);
     _ZN7WebCore11DisplayList4ItemD0Ev(static_cast<Item*>(heapItem));
     Require(guestAllocations == before);

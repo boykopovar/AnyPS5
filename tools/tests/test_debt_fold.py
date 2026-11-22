@@ -108,7 +108,7 @@ class FoldTests(unittest.TestCase):
         self.fragment("b", "# libSceExample\n\n## remove [sceExampleC]\n")
         code, _, error = self.run_fold()
         self.assertEqual(code, 1)
-        self.assertIn("changes/b.md:3 and docs/dev/debt/changes/a.md:3 both remove the same libSceExample entry", error)
+        self.assertIn("changes/b.md:3 and docs/dev/debt/changes/a.md:3 both target the same libSceExample entry", error)
         self.assertEqual(self.debt(), BASE)
 
     def test_refuses_an_unknown_library(self):
