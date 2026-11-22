@@ -1,0 +1,10 @@
+add_test_executable(guest_copy_hook_errno_tests ${LIBS_INCLUDE_DIR}/tests/GuestCopyHookErrno.cpp)
+target_include_directories(guest_copy_hook_errno_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_copy_hook_errno_tests PRIVATE libc)
+configure_windows_unwind(guest_copy_hook_errno_tests)
+add_test(NAME guest_copy_hook_errno COMMAND guest_copy_hook_errno_tests)
+set_tests_properties(guest_copy_hook_errno PROPERTIES TIMEOUT 10)
+if(WIN32)
+    set_tests_properties(guest_copy_hook_errno PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()

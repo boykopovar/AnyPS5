@@ -16,6 +16,8 @@ ENTRY = 0x4000
 DEFAULT_BASE = 0x400000
 EXIT_WITH_ARGC = bytes.fromhex("8b07" "8d7829" "b83c000000" "0f05")
 PROLOGUE = bytes.fromhex("4889e7" "4883e4f0" "6a006a00" "4889e5")
+MXCSR_SAVE = bytes.fromhex("4883ec10" "0fae1c24" "c7442404c09f0000" "0fae542404")
+MXCSR_RESTORE = bytes.fromhex("0fae1424" "4883c410")
 
 
 def relink(relinker, case, library):
@@ -34,7 +36,7 @@ def relink(relinker, case, library):
 def entry_stub(image):
     entry, = struct.unpack_from("<Q", image, 24)
     offset = file_offset(image, entry)
-    return entry, image[offset:offset + 32]
+    return entry, image[offset:offset + 64]
 
 
 def rip_target(entry, stub, end):
@@ -63,8 +65,10 @@ def main():
         plain = relink(relinker, work / "without-kernel", "libc.prx")
         assert HELPER not in imported_symbols(plain)
         entry, stub = entry_stub(plain)
-        assert stub[:14] == PROLOGUE and stub[14:18] == bytes.fromhex("4831f6e8"), stub.hex()
-        assert rip_target(entry, stub, 22) == ENTRY + DEFAULT_BASE and stub[22:24] == bytes.fromhex("0f0b"), stub.hex()
+        assert stub[:14] == PROLOGUE and stub[14:17] == bytes.fromhex("4831f6") and stub[17:38] == MXCSR_SAVE, stub.hex()
+        assert stub[38:39] == b"\xe8", stub.hex()
+        assert rip_target(entry, stub, 43) == ENTRY + DEFAULT_BASE, stub.hex()
+        assert stub[43:51] == MXCSR_RESTORE and stub[51:53] == bytes.fromhex("0f0b"), stub.hex()
 
         kernel = relink(relinker, work / "with-kernel", "libkernel.prx")
         slots = helper_slots(kernel)
@@ -72,9 +76,11 @@ def main():
         slot, kind, addend, info, section = slots[0]
         assert (kind, addend, info, section) == (6, 0, 0x12, 0), slots
         entry, stub = entry_stub(kernel)
-        assert stub[:14] == PROLOGUE and stub[14:17] == bytes.fromhex("488d35"), stub.hex()
-        assert rip_target(entry, stub, 21) == ENTRY + DEFAULT_BASE and stub[21:23] == bytes.fromhex("ff15"), stub.hex()
-        assert rip_target(entry, stub, 27) == slot and stub[27:29] == bytes.fromhex("0f0b"), stub.hex()
+        assert stub[:14] == PROLOGUE and stub[14:17] == bytes.fromhex("488d35") and stub[21:42] == MXCSR_SAVE, stub.hex()
+        assert stub[42:44] == bytes.fromhex("ff15"), stub.hex()
+        assert rip_target(entry, stub, 21) == ENTRY + DEFAULT_BASE, stub.hex()
+        assert rip_target(entry, stub, 48) == slot, stub.hex()
+        assert stub[48:56] == MXCSR_RESTORE and stub[56:58] == bytes.fromhex("0f0b"), stub.hex()
 
         if sys.platform == "linux" and os.uname().machine == "x86_64":
             case = work / "with-kernel"

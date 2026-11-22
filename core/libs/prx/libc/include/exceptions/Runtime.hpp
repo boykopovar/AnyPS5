@@ -8,6 +8,8 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/specifics/itanium/CxxAbi.hpp"
 
+extern "C" [[noreturn]] void APS5_VABI LibcRuntimeAssertion(const char* file, int line, const char* function, const char* condition);
+
 namespace LibcException {
 struct Header {
     std::type_info* type {};

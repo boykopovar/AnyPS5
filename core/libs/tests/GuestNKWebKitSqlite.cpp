@@ -6,10 +6,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <exception>
 #include <filesystem>
 #include <random>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -18,6 +18,7 @@ constexpr int SQLITE_ERROR = 1;
 constexpr int SQLITE_BUSY = 5;
 constexpr int SQLITE_READONLY = 8;
 constexpr int SQLITE_CANTOPEN = 14;
+constexpr int SQLITE_PERM = 3;
 constexpr int SQLITE_INTERRUPT = 9;
 constexpr int SQLITE_MISUSE = 21;
 constexpr int SQLITE_AUTH = 23;
@@ -507,6 +508,37 @@ void CheckGuestPaths(const std::filesystem::path& directory) {
     Execute(uri, "CREATE TABLE memoryvfs.t(v)");
     Require(!std::filesystem::exists(directory / "memdb-only.db"), "memdb remains memory-only");
     Require(sqlite3_close_nid_postfix(uri) == SQLITE_OK, "close URI connection");
+
+    constexpr int uriFlags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI;
+    for (const auto& [name, file] : {std::pair{"file:/sqlite-store/opened%20uri.db?mode=rwc", "opened uri.db"},
+             std::pair{"file:///SQLITE-STORE/empty-authority.db", "empty-authority.db"},
+             std::pair{"file://localhost/sqlite-store/localhost.db", "localhost.db"},
+             std::pair{"file:sqlite-store/relative-uri.db", "relative-uri.db"}}) {
+        sqlite3* opened = nullptr;
+        Require(sqlite3_open_v2_nid_postfix(name, &opened, uriFlags, nullptr) == SQLITE_OK, "open mapped file URI");
+        Execute(opened, "CREATE TABLE t(v)");
+        Require(sqlite3_close_nid_postfix(opened) == SQLITE_OK, "close mapped file URI");
+        Require(std::filesystem::is_regular_file(storage / file), "an opened file URI uses the guest mount");
+        CheckWrittenDatabase(storage, file);
+    }
+    sqlite3* readonly = nullptr;
+    Require(sqlite3_open_v2_nid_postfix("file:/sqlite-exports/copy's%20file.db?mode=ro", &readonly, uriFlags, nullptr) ==
+        SQLITE_OK, "open read-only file URI");
+    CheckValue(readonly, "SELECT v FROM t", 42);
+    Require(SqlResult(readonly, "INSERT INTO t VALUES(99)") == SQLITE_READONLY, "opened URI read-only mode is preserved");
+    Require(sqlite3_close_nid_postfix(readonly) == SQLITE_OK, "close read-only file URI");
+    const auto refuse = [&](const char* name, int expected) {
+        sqlite3* refused = nullptr;
+        Require(sqlite3_open_v2_nid_postfix(name, &refused, uriFlags, nullptr) == expected, name);
+        Require(sqlite3_close_nid_postfix(refused) == SQLITE_OK, "close refused file URI");
+    };
+    refuse("file://elsewhere/sqlite-store/remote.db", SQLITE_ERROR);
+    Require(!std::filesystem::exists(storage / "remote.db"), "a URI authority other than localhost opens nothing");
+    refuse("file:/sqlite-blocked/blocked.db?mode=rwc", SQLITE_CANTOPEN);
+    Require(std::filesystem::is_empty(directory / "sqlite-blocked"), "an opened URI cannot use a blocked guest mount");
+    refuse("file:unmapped.db?vfs=unix-dotfile", SQLITE_ERROR);
+    refuse("file:unmapped.db?vfs=win32-longpath", SQLITE_ERROR);
+    Require(!std::filesystem::exists(directory / "unmapped.db"), "an opened URI cannot select an unwrapped disk VFS");
     RemovePathAlias_nid_no_patch("/sqlite-store");
     RemovePathAlias_nid_no_patch("/sqlite-exports");
 }
@@ -569,23 +601,37 @@ int main() {
     std::filesystem::create_directories(directory);
     std::filesystem::current_path(directory);
     constexpr int uriFlags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI;
-    for (const char* name : {"file:mode=memory.db?mode=rwc", "file:mode=memory.db", "file::memory:x", "file:later.db?mode=memory&mode=rwc", "file:encoded.db?mode=memory&mod%65=rwc", "file:m1.db?mode=rwc", "file:plain.db"}) {
-        for (const int flags : {uriFlags, uriFlags | SQLITE_OPEN_MEMORY}) {
-            sqlite3* host = nullptr;
-            try {
-                sqlite3_open_v2_nid_postfix(name, &host, flags, nullptr);
-            } catch (const std::exception&) {
-            }
-            if (host != nullptr) sqlite3_close_nid_postfix(host);
-            Require(std::filesystem::is_empty(directory), "a URI that only mentions mode=memory in its path creates no host file");
-        }
-    }
     for (const char* name : {"file:one?mode=memory", "file:two?cache=shared&mode=memory", "file::memory:?cache=private", "file:three?mode=rwc&mode=memory"}) {
         sqlite3* inMemory = nullptr;
         Require(sqlite3_open_v2_nid_postfix(name, &inMemory, uriFlags, nullptr) == SQLITE_OK, "memory URI parameter");
         Execute(inMemory, "CREATE TABLE t(v)");
         Require(sqlite3_close_nid_postfix(inMemory) == SQLITE_OK, "close memory URI parameter");
         Require(std::filesystem::is_empty(directory), "a memory URI creates no host file");
+    }
+    sqlite3* flagged = nullptr;
+    Require(sqlite3_open_v2_nid_postfix("file:flagged.db", &flagged, uriFlags | SQLITE_OPEN_MEMORY, nullptr) == SQLITE_OK,
+        "file URI with the memory flag");
+    Execute(flagged, "CREATE TABLE t(v)");
+    Require(sqlite3_close_nid_postfix(flagged) == SQLITE_OK, "close file URI with the memory flag");
+    Require(std::filesystem::is_empty(directory), "the memory flag keeps a file URI in memory");
+    for (const auto& [name, file] : {std::pair{"file:mode=memory.db?mode=rwc", "mode=memory.db"},
+             std::pair{"file:mode=memory.db", "mode=memory.db"}, std::pair{"file:m1.db?mode=rwc", "m1.db"},
+             std::pair{"file:later.db?mode=memory&mode=rwc", "later.db"}, std::pair{"file:plain.db", "plain.db"},
+             std::pair{"file:/encoded%20name.db?mod%65=rwc", "encoded name.db"}}) {
+        sqlite3* disk = nullptr;
+        Require(sqlite3_open_v2_nid_postfix(name, &disk, uriFlags, nullptr) == SQLITE_OK, "file URI");
+        Execute(disk, "CREATE TABLE IF NOT EXISTS t(v)");
+        Require(sqlite3_close_nid_postfix(disk) == SQLITE_OK, "close file URI");
+        Require(std::filesystem::is_regular_file(directory / file), "a file URI opens its decoded path in the guest root");
+        CheckWrittenDatabase(directory, file);
+    }
+    sqlite3* denied = nullptr;
+    Require(sqlite3_open_v2_nid_postfix("file:denied.db?mode=rwc", &denied, SQLITE_OPEN_READWRITE | SQLITE_OPEN_URI,
+        nullptr) == SQLITE_PERM, "a URI mode may not add access the flags do not grant");
+    Require(sqlite3_close_nid_postfix(denied) == SQLITE_OK, "close refused URI");
+    Require(!std::filesystem::exists(directory / "denied.db"), "a refused URI creates no file");
+    for (const char* file : {"mode=memory.db", "m1.db", "later.db", "plain.db", "encoded name.db"}) {
+        std::filesystem::remove(directory / file);
     }
     CheckGuestPaths(directory);
     CheckFileDatabase(directory);

@@ -50,7 +50,7 @@ def load_known(path):
     known = {}
     if not path.is_file():
         return known
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
         if not line.strip() or line.startswith("#"):
             continue
         fields = line.split("\t")
@@ -60,12 +60,13 @@ def load_known(path):
     return known
 
 
-def write_known(path, known, findings):
-    rows = {key: value for key, value in known.items() if value[0] == "skip"}
+def write_known(path, known, findings, ran_cases):
+    rows = {key: value for key, value in known.items() if value[0] == "skip" or key not in ran_cases}
     for case, (kind, _) in findings.items():
         rows[case] = (kind, known.get(case, (kind, ""))[1])
     lines = [f"{case}\t{kind}\t{reason}".rstrip("\t") for case, (kind, reason) in sorted(rows.items())]
-    path.write_text("".join(line + "\n" for line in lines), encoding="utf-8", newline="\n")
+    with path.open("w", encoding="utf-8", newline="\n") as output:
+        output.write("".join(line + "\n" for line in lines))
 
 
 def text(value):
@@ -74,10 +75,20 @@ def text(value):
     return value.decode("utf-8", "replace") if isinstance(value, bytes) else value
 
 
+def positive_seconds(value):
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a positive number of seconds") from None
+    if not 0 < seconds < float("inf"):
+        raise argparse.ArgumentTypeError("must be a positive number of seconds")
+    return seconds
+
+
 def environment(modules):
     copy = dict(os.environ)
     for name in ("PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
-        copy[name] = str(modules) + os.pathsep + copy.get(name, "")
+        copy[name] = os.pathsep.join(part for part in (str(modules), copy.get(name, "")) if part)
     return copy
 
 
@@ -97,7 +108,8 @@ def replay(binary, modules, golden, skip, timeout, run=subprocess.run):
         for line in output.splitlines():
             fields = line.split("\t")
             if fields[0] in ("DIFF", "MISSING", "BADSPEC") and len(fields) > 2:
-                findings[fields[1]] = (fields[0].lower(), "\t".join(fields[2:]))
+                detail = "\t".join(fields[2:])
+                findings[fields[1]] = ("throw" if fields[0] == "DIFF" and " threw '" in detail else fields[0].lower(), detail)
             elif fields[0] == "SUMMARY":
                 summary = " ".join(fields[1:])
         if not hung and code == 0 and summary is not None:
@@ -143,14 +155,45 @@ def default_replay(build):
     raise SystemExit(f"no library_oracle_replay under {build}; build it with: cmake --build {build} --target library_oracle_replay")
 
 
+def required_modules(binary, run=subprocess.run):
+    try:
+        done = run([str(binary), "--required-modules"], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    names = [line.split("\t", 1)[1].strip() for line in text(done.stdout).splitlines() if line.startswith("MODULE\t")]
+    return names or None
+
+
+def absent_modules(modules, names):
+    return [name for name in names if not (Path(modules) / name).is_file()]
+
+
+def module_warning(absent, modules):
+    if not absent:
+        return None
+    return f"warning: {', '.join(absent)} is not in {modules}; a MISSING case that needs one of them is a build gap, not a missing export"
+
+
+def missing_warning(binary, modules, findings, run=subprocess.run):
+    if not any(kind == "missing" for kind, _ in findings.values()):
+        return None
+    names = required_modules(binary, run=run)
+    return module_warning(absent_modules(modules, names) if names else [], modules)
+
+
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="replay prosper's PS5 console measurements against the built AnyPS5 modules")
     parser.add_argument("families", nargs="*", metavar="FAMILY", help=f"measurement families to replay (default: all of {', '.join(sorted(FAMILIES))})")
     parser.add_argument("--build", type=Path, default=ROOT / "build")
     parser.add_argument("--modules", type=Path, help="directory of the unpatched modules (default: BUILD/core/libs/libs/unpatched)")
     parser.add_argument("--replay", type=Path, help="the library_oracle_replay executable (default: found under BUILD)")
     parser.add_argument("--known", type=Path, default=HERE / "known.tsv")
-    parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--timeout", type=positive_seconds, default=60)
     parser.add_argument("--write-known", action="store_true", help="record every current finding in the known file, keeping existing reasons")
     args = parser.parse_args(argv)
     unknown = sorted(set(args.families) - set(FAMILIES))
@@ -169,8 +212,11 @@ def main(argv=None):
         print(f"{family}: {summary}")
         findings.update(found)
         ran_cases |= case_ids(golden) - skip
+    note = missing_warning(binary, modules, findings)
+    if note:
+        print(note)
     if args.write_known:
-        write_known(args.known, known, findings)
+        write_known(args.known, known, findings, ran_cases)
         print(f"wrote {len(findings)} findings to {args.known}")
         return 0
     new, expected, stale = classify(known, findings, ran_cases)

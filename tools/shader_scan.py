@@ -1,3 +1,4 @@
+import functools
 import re
 from pathlib import Path
 
@@ -8,6 +9,7 @@ TEXTURE_FORMATS = f"{AGC_DRIVER}Graphics/src/TextureFormat.cpp"
 SCANNED_DIRECTORIES = (RECOMPILER.rstrip("/"), AGC_DRIVER.rstrip("/"))
 FORMS = ("base", "vop3", "dpp16", "dpp8")
 TEST_PATH = re.compile(r"/tests?/")
+COMMENT_OR_LITERAL = re.compile(r"[/\"']")
 
 
 class ScanError(Exception):
@@ -17,12 +19,19 @@ class ScanError(Exception):
 
 def skip_literal(source, start):
     quote = source[start]
+    if quote == "'" and start + 1 < len(source) and source[start + 1] in "0123456789abcdefABCDEF":
+        begin = start
+        while begin and (source[begin - 1].isalnum() or source[begin - 1] in "_.'"):
+            begin -= 1
+        if begin < start and (source[begin].isdigit() or (source[begin] == "." and source[begin + 1].isdigit())):
+            return start
     j = start + 1
     while j < len(source) and source[j] != quote and source[j] != "\n":
         j += 2 if source[j] == "\\" else 1
     return j
 
 
+@functools.cache
 def strip_comments(source):
     out, i, n = [], 0, len(source)
     while i < n:
@@ -42,8 +51,10 @@ def strip_comments(source):
             out.append(source[i:j + 1])
             i = j + 1
         else:
-            out.append(c)
-            i += 1
+            match = COMMENT_OR_LITERAL.search(source, i + 1)
+            stop = match.start() if match else n
+            out.append(source[i:stop])
+            i = stop
     return "".join(out)
 
 
@@ -259,9 +270,9 @@ def translator_cases(files):
     return names
 
 
-def measure_forms(files, isa):
-    decoder = scan_decoder(files)
-    translated = translator_cases(files)
+def measure_forms(files, isa, decoder=None, translated=None):
+    decoder = scan_decoder(files) if decoder is None else decoder
+    translated = translator_cases(files) if translated is None else translated
     groups, untranslated = {}, set()
     for name, encoding, form, opcode in isa:
         group = groups.setdefault((encoding, form), {"encoding": encoding, "form": form, "total": 0, "decoded": 0, "translated": 0, "missing": [], "untranslated": []})
@@ -348,21 +359,27 @@ def read_tree(root):
     return dict(sorted(files.items()))
 
 
-def measure(root, isa):
-    files = read_tree(root)
-    forms, untranslated = measure_forms(files, isa)
+def measure_profile(files, isa, decoder=None, translated=None):
+    forms, untranslated = measure_forms(files, isa, decoder, translated)
     plain = [f for f in forms if f["form"] in ("base", "vop3")]
     dpp = [f for f in forms if f["form"] in ("dpp16", "dpp8")]
     total = lambda rows, key: sum(r[key] for r in rows)
-    throws = unsupported_throws(files)
     return {
-        "isa": "AMD RDNA 2",
         "instructions": {"total": total(plain, "total"), "decoded": total(plain, "decoded"), "translated": total(plain, "translated")},
         "dpp": {"total": total(dpp, "total"), "decoded": total(dpp, "decoded")},
-        "unsupported_throws": len(throws),
-        "throw_areas": throw_areas(throws),
-        "throw_sites": throws,
-        "formats": image_formats(files),
         "forms": forms,
         "untranslated": untranslated,
     }
+
+
+def measure(root, isa, profiles=None):
+    files = read_tree(root)
+    decoder, translated = scan_decoder(files), translator_cases(files)
+    result = measure_profile(files, isa, decoder, translated)
+    throws = unsupported_throws(files)
+    result.update({"isa": "AMD RDNA 2", "unsupported_throws": len(throws), "throw_areas": throw_areas(throws),
+                   "throw_sites": throws, "formats": image_formats(files)})
+    if profiles:
+        result["profiles"] = {key: {"isa": label, **measure_profile(files, forms, decoder, translated)}
+                              for key, (label, forms) in profiles.items()}
+    return result

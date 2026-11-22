@@ -7,6 +7,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include "SceTypes.hpp"
 
 static void Require(bool value) {
@@ -25,6 +31,10 @@ static std::uintptr_t AdvanceRing(std::byte* ring, std::uint32_t capacity, std::
 
 static void TestRingAdvance() {
     Require(libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(nullptr) == nullptr);
+    errno = 71;
+    Require(libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(reinterpret_cast<void*>(0x10)) == nullptr);
+    Require(libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(reinterpret_cast<void*>(~std::uintptr_t{0})) == nullptr);
+    Require(errno == 71);
     alignas(8) std::byte ring[0x18];
     std::memset(ring, 0xEE, sizeof(ring));
     const std::uint64_t base = 0x123400000ull;
@@ -45,7 +55,11 @@ constexpr int BadContext = static_cast<int>(0x81940002);
 constexpr int BadPointer = static_cast<int>(0x81940006);
 
 int main() {
+    auto* badContext = reinterpret_cast<AcmContextId*>(static_cast<std::uintptr_t>(0x10));
+    auto* badBatch = reinterpret_cast<AcmBatchId*>(static_cast<std::uintptr_t>(0x10));
+    auto* badError = reinterpret_cast<AcmBatchError*>(static_cast<std::uintptr_t>(0x10));
     Require(sceAcmContextCreate(nullptr) == BadPointer);
+    Require(sceAcmContextCreate(badContext) == BadPointer);
     Require(sceAcmContextDestroy(0) == BadContext);
     Require(sceAcmContextDestroy(999999) == BadContext);
 
@@ -59,9 +73,13 @@ int main() {
     Require(sceAcmContextCreate(&context2) == 0 && context2 != 0 && context2 != context1);
 
     std::uint32_t batch1 = 0;
+    AcmBatchError validError{};
     Require(sceAcmBatchStartBuffer(0, nullptr, 0, nullptr, &batch1) == BadContext);
     Require(sceAcmBatchStartBuffer(999999, nullptr, 0, nullptr, &batch1) == BadContext);
     Require(sceAcmBatchStartBuffer(context1, nullptr, 0, nullptr, nullptr) == BadPointer);
+    Require(sceAcmBatchStartBuffer(context1, nullptr, 0, badError, &batch1) == BadPointer);
+    Require(sceAcmBatchStartBuffer(context1, nullptr, 0, &validError, &batch1) == BadPointer);
+    Require(sceAcmBatchStartBuffer(context1, nullptr, 0, nullptr, badBatch) == BadPointer);
     Require(sceAcmBatchStartBuffer(context1, nullptr, 0, nullptr, &batch1) == 0 && batch1 != 0);
     errno = 0;
     Require(sceAcmBatchStartBuffer(context1, nullptr, 0, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == BadPointer);
@@ -75,14 +93,21 @@ int main() {
     Require(sceAcmBatchWait(context1, batch1, 0) == 0);
 
     std::uint32_t batch2 = 0;
-    Require(sceAcmBatchStartBuffers(0, 0, nullptr, nullptr, &batch2) == BadContext);
-    Require(sceAcmBatchStartBuffers(999999, 0, nullptr, nullptr, &batch2) == BadContext);
-    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, nullptr) == BadPointer);
-    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, &batch2) == 0 && batch2 != 0);
+    const AcmBatchInfo* const noInfos[1] = {nullptr};
+    Require(sceAcmBatchStartBuffers(0, 0, nullptr, nullptr, &batch2) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, &batch2) == BadPointer && batch2 == 0);
+    Require(sceAcmBatchStartBuffers(context2, 1, nullptr, nullptr, &batch2) == BadPointer && batch2 == 0);
+    Require(sceAcmBatchStartBuffers(0, 0, noInfos, nullptr, &batch2) == BadContext);
+    Require(sceAcmBatchStartBuffers(999999, 0, noInfos, nullptr, &batch2) == BadContext);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, nullptr, nullptr) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, badError, &batch2) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, &validError, &batch2) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, nullptr, badBatch) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, nullptr, &batch2) == 0 && batch2 != 0);
     errno = 0;
-    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == BadPointer);
     Require(errno == 0);
-    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, reinterpret_cast<AcmBatchError*>(0x10), &batch2) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, reinterpret_cast<AcmBatchError*>(0x10), &batch2) == BadPointer);
     Require(errno == 0);
     Require(sceAcmBatchWait(context2, batch2, 0) == 0);
 
@@ -217,10 +242,50 @@ int main() {
     const auto ringIs = [&reverbInput](std::uint32_t current, std::uint32_t available) { return reverbInput.currentBlock == current && reverbInput.availableBlocks == available; };
     const auto reverb = [&](std::uint32_t outputCount, const AcmReverbFilter* const* filters, const AcmReverbOutput* const* outputs) { return sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, &reverbInput, outputCount, filters, reverbGains, outputs); };
 
+    AcmReverbInput unreadableBatchInput = reverbInput;
+    Require(sceAcm_ConvReverb_SharedInput(reinterpret_cast<AcmBatchInfo*>(0x10), 1, &unreadableBatchInput, 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer);
     Require(sceAcm_ConvReverb_SharedInput(nullptr, 1, &reverbInput, 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer);
     Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 0, &reverbInput, 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer);
     Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, nullptr, 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer);
     Require(reverb(1, nullptr, reverbOutputs) == BadPointer);
+    AcmReverbInput guardedInput = reverbInput;
+    errno = 0;
+    Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, reinterpret_cast<AcmReverbInput*>(0x10), 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer);
+    Require(errno == 0 && guardedInput.currentBlock == 0 && guardedInput.availableBlocks == 0);
+    guardedInput.history = reinterpret_cast<const AcmReverbBuffer* const*>(0x10);
+    errno = 0;
+    Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, &guardedInput, 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer);
+    Require(errno == 0 && guardedInput.currentBlock == 3 && guardedInput.availableBlocks == 1);
+    guardedInput.history = historyChannels;
+    guardedInput.currentBlock = 0;
+    guardedInput.availableBlocks = 0;
+    guardedInput.inputChannels = reinterpret_cast<const void* const*>(0x10);
+    Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, &guardedInput, 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer && guardedInput.currentBlock == 3 && guardedInput.availableBlocks == 1);
+    guardedInput.inputChannels = inputChannels;
+    guardedInput.currentBlock = 0;
+    guardedInput.availableBlocks = 0;
+    historyChannels[0] = reinterpret_cast<const AcmReverbBuffer*>(0x10);
+    Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, &guardedInput, 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer && guardedInput.currentBlock == 3 && guardedInput.availableBlocks == 1);
+    historyChannels[0] = &historyBlocks[0];
+    guardedInput.currentBlock = 0;
+    guardedInput.availableBlocks = 0;
+    Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, &guardedInput, 1, reinterpret_cast<const AcmReverbFilter* const*>(0x10), reverbGains, reverbOutputs) == BadPointer && guardedInput.currentBlock == 0 && guardedInput.availableBlocks == 0);
+    const AcmReverbFilter* unreadableFilters[2]{reinterpret_cast<const AcmReverbFilter*>(0x10), &filterB};
+    Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, &guardedInput, 2, unreadableFilters, reverbGains, reverbOutputs) == BadPointer && guardedInput.currentBlock == 0 && guardedInput.availableBlocks == 0);
+    guardedInput.currentBlock = 0;
+    guardedInput.availableBlocks = 0;
+    filterChannelsA[0] = reinterpret_cast<const AcmReverbBuffer*>(0x10);
+    Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, &guardedInput, 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer && guardedInput.currentBlock == 3 && guardedInput.availableBlocks == 1);
+    filterChannelsA[0] = &filterBlocks[0];
+    guardedInput.currentBlock = 0;
+    guardedInput.availableBlocks = 0;
+    Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, &guardedInput, 1, reverbFilters, reinterpret_cast<const float*>(0x10), reverbOutputs) == BadPointer && guardedInput.currentBlock == 3 && guardedInput.availableBlocks == 1);
+    guardedInput.currentBlock = 0;
+    guardedInput.availableBlocks = 0;
+    Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, &guardedInput, 1, reverbFilters, reverbGains, reinterpret_cast<const AcmReverbOutput* const*>(0x10)) == BadPointer && guardedInput.currentBlock == 3 && guardedInput.availableBlocks == 1);
+    const AcmReverbOutput* unreadableOutputs[2]{reinterpret_cast<const AcmReverbOutput*>(0x10), &outputB};
+    Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, &guardedInput, 2, reverbFilters, reverbGains, unreadableOutputs) == BadPointer);
+    Require(reverbBatch.offset == 0 && reverbBatch.buffer_size == sizeof(reverbCommands));
     reverbInput.blockSize = 768;
     Require(reverb(1, reverbFilters, reverbOutputs) == BadPointer);
     reverbInput.blockSize = 512;
@@ -347,6 +412,109 @@ int main() {
     commandBatch = {commands, 0, sizeof(commands)};
     std::memset(commands, 0xCC, sizeof(commands));
     Require(sceAcmBatchJobPriority(nullptr, 0) == BadPointer);
+    errno = 71;
+    Require(sceAcmBatchJobPriority(reinterpret_cast<AcmBatchInfo*>(0x10), 0) == BadPointer);
+    Require(errno == 71);
+    commandBatch = {reinterpret_cast<void*>(0x10), 0, sizeof(commands)};
+    errno = 71;
+    Require(sceAcmBatchJobPriority(&commandBatch, 0) == BadPointer);
+    Require(errno == 71);
+    Require(commandBatch.offset == 0);
+    commandBatch = {commands, 0, sizeof(commands)};
+    std::memset(commands, 0xCC, sizeof(commands));
+    const void* unreadableParameterList[16]{reinterpret_cast<const void*>(0x1000)};
+    errno = 0;
+    Require(sceAcm_Panner(&commandBatch, 1, reinterpret_cast<const void* const*>(0x1000), 0, 0, 1, sources, sources, nullptr, outputs) == BadPointer);
+    Require(errno == 0 && commandBatch.offset == 0);
+    Require(sceAcm_Panner(&commandBatch, 1, sources, 0, 0, 1, reinterpret_cast<const void* const*>(0x1000), sources, nullptr, outputs) == BadPointer);
+    Require(errno == 0 && commandBatch.offset == 0);
+    Require(sceAcm_Panner(&commandBatch, 1, sources, 0, 0, 1, sources, reinterpret_cast<const void* const*>(0x1000), nullptr, outputs) == BadPointer);
+    Require(errno == 0 && commandBatch.offset == 0);
+    Require(sceAcm_Panner(&commandBatch, 1, sources, 0, 0, 1, sources, sources, nullptr, reinterpret_cast<void* const*>(0x1000)) == BadPointer);
+    Require(errno == 0 && commandBatch.offset == 0);
+    Require(sceAcm_Panner(&commandBatch, 1, sources, 0, 0, 1, sources, sources, reinterpret_cast<const void* const*>(0x1000), outputs) == BadPointer);
+    Require(errno == 0 && commandBatch.offset == 0);
+    Require(sceAcm_Panner(&commandBatch, 1, sources, 0, 0, 1, unreadableParameterList, sources, nullptr, outputs) == BadPointer);
+    Require(errno == 0 && commandBatch.offset == 0);
+    Require(sceAcm_Panner(reinterpret_cast<AcmBatchInfo*>(0x1000), 1, sources, 0, 0, 1, sources, sources, nullptr, outputs) == BadPointer);
+    Require(errno == 0 && commandBatch.offset == 0 && commands[0] == std::byte{0xCC});
+    std::memset(commands, 0xCC, sizeof(commands));
+    for (const std::size_t capacity : {std::size_t{8}, std::size_t{152}, std::size_t{159}}) {
+        AcmBatchInfo shortCommands{commands, 0, capacity};
+        Require(sceAcm_Panner(&shortCommands, 1, sources, 0, 0, 1, sources, sources, nullptr, outputs) == static_cast<int>(0x81940009));
+        Require(shortCommands.offset == 0 && shortCommands.buffer_size == capacity);
+        for (const auto byte : commands) Require(byte == std::byte{0xCC});
+    }
+    AcmBatchInfo unreadableCommands{reinterpret_cast<void*>(0x1000), 0, sizeof(commands)};
+    Require(sceAcm_Panner(&unreadableCommands, 1, sources, 0, 0, 1, sources, sources, nullptr, outputs) == BadPointer);
+    Require(errno == 0 && unreadableCommands.offset == 0 && unreadableCommands.buffer_size == sizeof(commands));
+#ifdef _WIN32
+    SYSTEM_INFO acmSysInfo{};
+    GetSystemInfo(&acmSysInfo);
+    const std::size_t acmPageSize = acmSysInfo.dwPageSize;
+    auto* const acmReadOnlyMem = static_cast<std::byte*>(VirtualAlloc(nullptr, acmPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(acmReadOnlyMem != nullptr);
+#else
+    const long acmNativePage = sysconf(_SC_PAGESIZE);
+    Require(acmNativePage > 0);
+    const std::size_t acmPageSize = static_cast<std::size_t>(acmNativePage);
+    auto* const acmReadOnlyMem = static_cast<std::byte*>(mmap(nullptr, acmPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(acmReadOnlyMem != MAP_FAILED);
+#endif
+    auto* const readOnlyBatch = reinterpret_cast<AcmBatchInfo*>(acmReadOnlyMem);
+    readOnlyBatch->buffer = commands;
+    readOnlyBatch->offset = 0;
+    readOnlyBatch->buffer_size = sizeof(commands);
+    AcmReverbBuffer roHistoryBlock{memory + 0xE000, nullptr};
+    const AcmReverbBuffer* roHistory[1]{&roHistoryBlock};
+    const void* roInputChannels[1]{memory + 0x8000};
+    AcmReverbBuffer roFilterBlock{memory + 0xE080, nullptr};
+    const AcmReverbBuffer* roFilterChannels[1]{&roFilterBlock};
+    AcmReverbFilter roFilter{512, 1, 1, 0, nullptr, roFilterChannels};
+    void* roWorkspace[1]{memory + 0xE100};
+    void* roSamples[1]{memory + 0xE200};
+    AcmReverbOutput roOutput{512, 1, roSamples, roWorkspace, 1.0f, 1.0f, nullptr};
+    const AcmReverbFilter* roFilters[1]{&roFilter};
+    const AcmReverbOutput* roOutputs[1]{&roOutput};
+    auto* const readOnlyInput = reinterpret_cast<AcmReverbInput*>(acmReadOnlyMem + 0x40);
+    readOnlyInput->blockSize = 512;
+    readOnlyInput->blockCount = 4;
+    readOnlyInput->channelCount = 1;
+    readOnlyInput->sampleFormat = 0;
+    readOnlyInput->currentBlock = 0;
+    readOnlyInput->availableBlocks = 0;
+    readOnlyInput->history = roHistory;
+    readOnlyInput->inputChannels = roInputChannels;
+    readOnlyInput->pendingBlocks = 0;
+#ifdef _WIN32
+    DWORD acmOldProtect = 0;
+    Require(VirtualProtect(acmReadOnlyMem, acmPageSize, PAGE_READONLY, &acmOldProtect) != 0);
+#else
+    Require(mprotect(acmReadOnlyMem, acmPageSize, PROT_READ) == 0);
+#endif
+    errno = 71;
+    Require(sceAcmBatchJobPriority(readOnlyBatch, 0) == BadPointer);
+    Require(errno == 71);
+    Require(readOnlyBatch->offset == 0);
+    Require(commands[0] == std::byte{0xCC});
+    AcmBatchInfo roBatch{commands, 0, sizeof(commands)};
+    errno = 71;
+    Require(sceAcm_ConvReverb_SharedInput(&roBatch, 1, readOnlyInput, 1, roFilters, nullptr, roOutputs) == BadPointer);
+    Require(errno == 71 && readOnlyInput->currentBlock == 0 && readOnlyInput->availableBlocks == 0 && roBatch.offset == 0);
+    errno = 71;
+    Require(sceAcm_Panner(readOnlyBatch, 1, sources, 0, 0, 1, sources, sources, nullptr, outputs) == BadPointer);
+    Require(errno == 71 && readOnlyBatch->offset == 0 && readOnlyBatch->buffer_size == sizeof(commands));
+    AcmBatchInfo readOnlyCommands{acmReadOnlyMem, 0, acmPageSize};
+    errno = 71;
+    Require(sceAcm_Panner(&readOnlyCommands, 1, sources, 0, 0, 1, sources, sources, nullptr, outputs) == BadPointer);
+    Require(errno == 71 && readOnlyCommands.offset == 0 && readOnlyCommands.buffer_size == acmPageSize);
+    std::memset(commands, 0xCC, sizeof(commands));
+#ifdef _WIN32
+    VirtualFree(acmReadOnlyMem, 0, MEM_RELEASE);
+#else
+    munmap(acmReadOnlyMem, acmPageSize);
+#endif
+    commandBatch = {commands, 0, sizeof(commands)};
     Require(sceAcmBatchJobPriority(&commandBatch, 4) == BadPointer && commandBatch.offset == 0);
     Require(sceAcmBatchJobPriority(&commandBatch, 0xFFFFFFFFu) == BadPointer && commandBatch.offset == 0);
     Require(sceAcmBatchJobPriority(&commandBatch, 3) == 0 && commandBatch.offset == 8);
@@ -368,6 +536,17 @@ int main() {
     std::memset(commands, 0xCC, sizeof(commands));
     commandBatch = {commands, 0, sizeof(commands)};
     Require(sceAcmBatchJobNotification(nullptr, 1, notification) == BadPointer);
+    errno = 71;
+    Require(sceAcmBatchJobNotification(reinterpret_cast<AcmBatchInfo*>(0x10), 1, notification) == BadPointer);
+    Require(errno == 71 && notification[0] == std::byte{0xAB});
+    commandBatch = {reinterpret_cast<void*>(0x10), 0, sizeof(commands)};
+    errno = 71;
+    Require(sceAcmBatchJobNotification(&commandBatch, 1, notification) == BadPointer);
+    Require(errno == 71 && commandBatch.offset == 0 && notification[0] == std::byte{0xAB});
+    commandBatch = {commands, 0, sizeof(commands)};
+    errno = 71;
+    Require(sceAcmBatchJobNotification(&commandBatch, 1, reinterpret_cast<void*>(0x80)) == BadPointer);
+    Require(errno == 71 && commandBatch.offset == 0 && commands[0] == std::byte{0xCC});
     Require(sceAcmBatchJobNotification(&commandBatch, 0, notification) == BadPointer && commandBatch.offset == 0);
     Require(sceAcmBatchJobNotification(&commandBatch, 1, nullptr) == BadPointer && commandBatch.offset == 0);
     Require(sceAcmBatchJobNotification(&commandBatch, 1, notification + 0x40) == static_cast<int>(0x8194000A) && commandBatch.offset == 0);
@@ -390,7 +569,8 @@ int main() {
     Require(sceAcmContextDestroy(context1) == 0);
     Require(sceAcmContextDestroy(context1) == BadContext);
     Require(sceAcmBatchStartBuffer(context1, nullptr, 0, nullptr, &batch1) == BadContext);
-    Require(sceAcmBatchStartBuffers(context1, 0, nullptr, nullptr, &batch1) == BadContext);
+    const AcmBatchInfo* const noInfosAfter[1] = {nullptr};
+    Require(sceAcmBatchStartBuffers(context1, 0, noInfosAfter, nullptr, &batch1) == BadContext);
     Require(sceAcmBatchWait(context1, batch1, 0) == BadContext);
 
     Require(sceAcmContextDestroy(context2) == 0);

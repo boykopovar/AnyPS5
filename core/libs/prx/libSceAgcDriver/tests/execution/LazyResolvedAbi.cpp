@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparationScope.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -33,8 +34,10 @@
 #include <iostream>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -465,6 +468,7 @@ Report Scenario(const Layout& layout, std::vector<std::uint8_t>& first, std::arr
     for (auto& reg : context) reg.value = ~reg.value;
     primitive.front().value = ~primitive.front().value;
     Settle(resolved);
+    while (AgcDriver::DriverDetail::RegistrationPreparationsPending() != std::optional<std::size_t>{0}) std::this_thread::yield();
     for (std::uint32_t index = 0; index <= Replaced; ++index) record("resolved", index);
     report["libraries resolved"] = Text(driver.PrebuiltLibraries());
     RegisterHeader(programs[Replacement], programs[Replaced].code, programs[Replaced].header.shader.shader_size / sizeof(std::uint32_t));

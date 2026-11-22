@@ -1,5 +1,7 @@
 #include "prx/libSceVenc/libSceVenc.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -8,6 +10,10 @@
 #include <initializer_list>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 constexpr int VencError(std::uint32_t code) {
     return static_cast<int>(0x80C70000u | code);
@@ -53,7 +59,9 @@ void CheckEncoderParameters() {
     void* encoder = target;
 
     Require(sceVencCreateEncoder(nullptr, nullptr, nullptr) == VencError(0x00), "Create: null output first");
+    errno = 71;
     Require(sceVencCreateEncoder(nullptr, &memory, &encoder) == VencError(0x01), "Create: null parameters");
+    Require(errno == 71, "Create: errno preserved on output clear");
     Require(encoder == nullptr, "Create: output cleared before the parameter checks");
     encoder = target;
     Require(sceVencCreateEncoder(&parameters, &memory, &encoder) == VencError(0x04), "Create: parameter +8");
@@ -67,6 +75,21 @@ void CheckEncoderParameters() {
         incomplete.Set(offset, nullptr);
         Require(sceVencCreateEncoder(&parameters, &incomplete, &encoder) == VencError(0x10), "Create: memory field");
     }
+    errno = 71;
+    Require(sceVencCreateEncoder(nullptr, nullptr, reinterpret_cast<void**>(0x10)) == VencError(0x00), "Create: unmapped output");
+    Require(errno == 71, "Create: errno preserved on unmapped output");
+    errno = 71;
+    Require(sceVencCreateEncoder(reinterpret_cast<const void*>(0x10), &memory, &encoder) == VencError(0x04), "Create: unmapped parameters");
+    Require(errno == 71, "Create: errno preserved on unmapped parameters");
+    errno = 71;
+    Require(sceVencCreateEncoder(&parameters, reinterpret_cast<const void*>(0x10), &encoder) == VencError(0x10), "Create: unmapped memory");
+    Require(errno == 71, "Create: errno preserved on unmapped memory");
+    errno = 71;
+    Require(sceVencQueryPreset2(reinterpret_cast<const void*>(0x10), nullptr, nullptr, nullptr) == VencError(0x04), "QueryPreset2: unmapped preset");
+    Require(errno == 71, "QueryPreset2: errno preserved");
+    errno = 71;
+    Require(sceVencMapMemory(&encoder, reinterpret_cast<const void*>(0x10)) == VencError(0x10), "MapMemory: unmapped region");
+    Require(errno == 71, "MapMemory: errno preserved");
 
     PointerBlock header;
     PointerBlock query;
@@ -166,9 +189,13 @@ void CheckSocSupport() {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     CheckEncoderParameters();
     CheckEncoderCalls();
     CheckSocSupport();
     std::puts("Venc tests passed");
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

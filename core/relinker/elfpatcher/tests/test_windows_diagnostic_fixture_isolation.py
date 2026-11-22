@@ -8,8 +8,8 @@ import sys
 import tempfile
 
 
-def run(executable):
-    result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=25)
+def run(executable, scenario):
+    result = subprocess.run([str(executable), scenario], capture_output=True, text=True, timeout=25)
     assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
     assert "Windows dependency machine-code tests passed" in result.stdout, result.stdout
 
@@ -17,6 +17,7 @@ def run(executable):
 def main():
     ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002 | 0x8000)
     original = Path(sys.argv[1]).resolve()
+    scenario = sys.argv[2]
     with tempfile.TemporaryDirectory(prefix="anyps5-diagnostic-isolation-") as temporary:
         directory = Path(temporary)
         executable = directory / original.name
@@ -27,9 +28,9 @@ def main():
         expected = b"previous diagnostic fixture" * 256
         fixture.write_bytes(expected)
         with fixture.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as mapping:
-            run(executable)
+            run(executable, scenario)
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                futures = [pool.submit(run, executable) for _ in range(2)]
+                futures = [pool.submit(run, executable, scenario) for _ in range(2)]
                 for future in futures:
                     future.result()
             assert mapping[:] == expected, "Mapped previous fixture changed"

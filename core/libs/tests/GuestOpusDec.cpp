@@ -1,4 +1,6 @@
 #include "prx/libSceOpusDec/include/Api.hpp"
+#include "prx/libSceOpusDec/include/InventoryExports.hpp"
+#include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -88,6 +90,9 @@ void CheckReference(int rate, int channels) {
 int main() {
     constexpr std::uint32_t errorBase = 0x81740000u;
     Require(sceOpusDecInitialize(nullptr) == static_cast<int>(errorBase + 13));
+    errno = 71;
+    Require(sceOpusDecInitialize(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(errorBase + 13));
+    Require(errno == 71);
     Require(sceOpusDecDestroy(nullptr) == static_cast<int>(errorBase));
     for (int rate : {8000, 12000, 16000, 24000, 48000})
         for (int channels : {1, 2}) CheckReference(rate, channels);
@@ -213,4 +218,31 @@ int main() {
     Require(narrow.front() == 12345 && narrow.back() == 12345);
     Require(sceOpusDecDestroy(narrowState.data()) == 0);
     Require(sceOpusDecTerminate(&narrowContext) == 0);
+
+    std::uint32_t untouchedValue = 0x5a5a5a5a;
+    std::array<std::uint8_t, 0x100> fakeState{};
+    Require(sceOpusDecGetAjmContext(nullptr, &untouchedValue) == static_cast<int>(0x81740000));
+    Require(sceOpusDecGetAjmContext(fakeState.data(), nullptr) == 0);
+    Require(libSceOpusDecUnknown_gMazl3u8Y40_nid_no_patch(nullptr, &untouchedValue) == static_cast<int>(0x81740000));
+    Require(libSceOpusDecUnknown_gMazl3u8Y40_nid_no_patch(fakeState.data(), nullptr) == 0);
+    Require(untouchedValue == 0x5a5a5a5a);
+    Require(libSceOpusDecUnknown_jXVNwfmd1II_nid_no_patch(nullptr) == static_cast<int>(0x8174000d));
+
+    constexpr int sizeArgument = static_cast<int>(0x81740003);
+    constexpr int secondArgument = static_cast<int>(0x81740016);
+    constexpr int thirdArgument = static_cast<int>(0x81740017);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(0, 1, 0) == sizeArgument);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(13, 1, 0) == sizeArgument);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(-1, 1, 0) == sizeArgument);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(1, 0, 0) == secondArgument);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(1, 13, 0) == secondArgument);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(0, 0, 0) == sizeArgument);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(2, 1, 2) == thirdArgument);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(2, 1, -1) == thirdArgument);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(12, 7, 6) == sizeArgument);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(12, 12, 1) == sizeArgument);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(1, 1, 0) == 0x290);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(1, 1, 1) == 0x290);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(12, 6, 6) == 0x290);
+    Require(libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(12, 12, 0) == 0x290);
 }

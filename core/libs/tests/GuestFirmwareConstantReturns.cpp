@@ -11,6 +11,7 @@
 #include "prx/libSceVisionManager/libSceVisionManager.hpp"
 #include "prx/libmdbg_syscore/libmdbg_syscore.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -98,6 +99,11 @@ void CheckComposite() {
     Require(sceCompositorSetIndirectCompositionCommand() == 0);
     Require(sceCompositorSetIndirectRenderTargetConfigCommand() == 0);
     Require(sceCompositorGetDummySize() == 0x400);
+    Require(sceCompositorGetMemoryPoolAddress() == 0);
+    Require(sceCompositorGetMemoryPoolSize() == 0);
+    Require(sceCompositorGetNullCanvasHandle() == 0);
+    Require(sceCompositorGetSecondaryMemoryAddress() == 0);
+    Require(sceCompositorGetSecondaryMemorySize() == 0);
     Require(libSceCompositeUnknown_NMGq0MJ2iGo_nid_no_patch() == 0);
     const std::uint32_t virtualHandles[] = {0xff00, 0xff01, 0xffff, 0xffffff00, 0x1234ff78, 0xffffffff, 0x8000ff00};
     const std::uint32_t otherHandles[] = {0, 0xfe00, 0x7f00, 0x12345678, 0x100, 0xff};
@@ -197,6 +203,15 @@ void CheckVisionManager() {
         Require(sceVisionManagerGetWorkingMemorySize(&sizes[0], &sizes[1], &sizes[2]) == 0);
         Require(sizes[0] == 0 && sizes[1] == 0x1600000 && sizes[2] == 0x4200000);
     }
+    std::uint32_t mem1 = 0, mem2 = 0, mem3 = 0;
+    Require(sceVisionManagerGetWorkingMemorySize(nullptr, &mem2, &mem3) == VisionInvalid);
+    Require(sceVisionManagerGetWorkingMemorySize(&mem1, nullptr, &mem3) == VisionInvalid);
+    Require(sceVisionManagerGetWorkingMemorySize(&mem1, &mem2, nullptr) == VisionInvalid);
+    errno = 71;
+    Require(sceVisionManagerGetWorkingMemorySize(reinterpret_cast<std::uint32_t*>(0x10), &mem2, &mem3) == VisionInvalid);
+    Require(sceVisionManagerGetWorkingMemorySize(&mem1, reinterpret_cast<std::uint32_t*>(0x10), &mem3) == VisionInvalid);
+    Require(sceVisionManagerGetWorkingMemorySize(&mem1, &mem2, reinterpret_cast<std::uint32_t*>(0x10)) == VisionInvalid);
+    Require(errno == 71);
 
     int context = 0;
     const std::int32_t parameters[] = {0, 1, 3, 4, 5, 6, -1, 0x7fffffff, static_cast<std::int32_t>(0x80000000)};

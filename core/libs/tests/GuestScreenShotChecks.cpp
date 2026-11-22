@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -72,6 +73,7 @@ int main() {
     std::array<std::byte, 0x1000> output{};
 
     Require(setParam(nullptr) == ErrorArgument, "SetParam took a null parameter");
+    Require(setParam(reinterpret_cast<const void*>(0x10)) == ErrorArgument, "SetParam took an invalid pointer");
     auto param = ParamBlock(nullptr, nullptr, nullptr);
     param.Set<std::uint64_t>(0x20, 1);
     Require(setParam(&param) == ErrorArgument, "SetParam took a nonzero reserved field");
@@ -88,6 +90,16 @@ int main() {
     Require(setParam(&param) == ErrorArgument, "SetParam took a second string of 256 characters");
     param = ParamBlock(nullptr, nullptr, long512.c_str());
     Require(setParam(&param) == ErrorArgument, "SetParam took a third string of 512 characters");
+    const auto unmapped = reinterpret_cast<const char*>(0x10);
+    param = ParamBlock(unmapped, nullptr, nullptr);
+    errno = 71;
+    Require(setParam(&param) == ErrorArgument && errno == 71, "SetParam took an unmapped first string");
+    param = ParamBlock(nullptr, unmapped, nullptr);
+    errno = 71;
+    Require(setParam(&param) == ErrorArgument && errno == 71, "SetParam took an unmapped second string");
+    param = ParamBlock(nullptr, nullptr, unmapped);
+    errno = 71;
+    Require(setParam(&param) == ErrorArgument && errno == 71, "SetParam took an unmapped third string");
 
     Require(capture(2, output.data(), nullptr, nullptr) == ErrorArgument && capture(0xffffffffu, output.data(), nullptr, nullptr) == ErrorArgument, "Capture took a type of 2 or more");
     Require(capture(0, nullptr, nullptr, nullptr) == ErrorArgument && capture(1, nullptr, nullptr, nullptr) == ErrorArgument, "Capture took a null output");
@@ -105,6 +117,7 @@ int main() {
     Require(getDrcParam(0, out, 0, out, out, 0, nullptr) == ErrorArgument, "GetDrcParam took a null seventh argument");
 
     Require(setDrcParam(nullptr) == ErrorArgument, "SetDrcParam took a null parameter");
+    Require(setDrcParam(reinterpret_cast<const void*>(0x10)) == ErrorArgument, "SetDrcParam took an invalid pointer");
     auto drc = DrcParam(out, out);
     drc.Set<std::uint64_t>(0x28, 1);
     Require(setDrcParam(&drc) == ErrorArgument, "SetDrcParam took a nonzero reserved field");

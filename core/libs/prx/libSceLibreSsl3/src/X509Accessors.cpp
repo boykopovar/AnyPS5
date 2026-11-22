@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl3/include/Objects.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -14,6 +15,16 @@ const LibreSsl3CertificateInfo* CertificateInfo(const LibreSsl3Certificate* cert
     return certificate->certInfo;
 }
 
+template <typename Object, typename Field>
+Field CopyFieldIn(const Object* object, Field Object::*field, const char* function) {
+    Field value{};
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&value, &(object->*field), sizeof(value));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
 } // namespace
 
 extern "C" {
@@ -24,8 +35,9 @@ LibreSsl3X509Pubkey* APS5_VABI X509_get_X509_PUBKEY_nid_postfix(const LibreSsl3C
 
 int APS5_VABI X509_get_signature_nid_nid_postfix(const LibreSsl3Certificate* certificate) {
     if (!certificate) throw std::invalid_argument(std::string(__func__) + ": null certificate");
-    if (!certificate->sigAlg) throw std::invalid_argument(std::string(__func__) + ": null signature algorithm");
-    return LibreSsl3::ObjectNid(static_cast<const LibreSslAsn1Object*>(certificate->sigAlg->algorithm));
+    const auto* const algorithm = CopyFieldIn(certificate, &LibreSsl3Certificate::sigAlg, __func__);
+    if (!algorithm) throw std::invalid_argument(std::string(__func__) + ": null signature algorithm");
+    return LibreSsl3::ObjectNid(static_cast<const LibreSslAsn1Object*>(CopyFieldIn(algorithm, &LibreSsl3X509Algor::algorithm, __func__)));
 }
 
 int APS5_VABI X509_get_ext_by_NID_nid_postfix(const LibreSsl3Certificate* certificate, int nid, int lastpos) {

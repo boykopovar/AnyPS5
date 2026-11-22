@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -43,6 +44,8 @@ bool ThrowsRuntimeError(TFunction function) {
 }
 
 void TestWriters() {
+    check(sceGnmGetOffChipTessellationBufferSize_nid_disambig1() == 0x800000, "the off-chip tessellation buffer size is not 8 MiB");
+    check(!sceGnmDriverTraceInProgress_nid_disambig1(), "a retail driver trace was reported in progress");
     std::array<std::uint32_t, 0x100> words{};
     words.fill(0xdeadbeefu);
     check(sceGnmDrawInitDefaultHardwareState175(words.data(), 0xff) == 0 && words[0] == 0xdeadbeefu, "the draw default state wrote into a short buffer");
@@ -70,6 +73,76 @@ void TestWriters() {
     check(words[0] == Header(0x10, 5) && words[1] == 0x68750001u && std::memcmp(&words[2], "ab", 3) == 0 && WholePackets(words.data(), 6), "the push marker packet is wrong");
     check(sceGnmInsertPopMarker(words.data(), 5) == -1, "a pop marker was written into 5 dwords");
     check(sceGnmInsertPopMarker(words.data(), 6) == 0 && words[0] == Header(0x10, 5) && words[1] == 0x68750002u && WholePackets(words.data(), 6), "the pop marker packet is wrong");
+
+    words.fill(0xdeadbeefu);
+    auto unchanged = words;
+    check(sceGnmInsertSetMarker(words.data(), 6, nullptr) == -1 && sceGnmInsertSetMarker(nullptr, 6, "ab") == -1, "a set marker without a buffer or text was accepted");
+    check(sceGnmInsertSetMarker(words.data(), 5, "ab") == -1 && sceGnmInsertSetMarker(words.data(), 7, "ab") == -1 && words == unchanged, "a set marker was written into the wrong size");
+    check(sceGnmInsertSetMarker(words.data(), 6, "ab") == 0, "the set marker was not written");
+    check(words[0] == Header(0x10, 5) && words[1] == 0x68750003u && std::memcmp(&words[2], "ab\0\0", 4) == 0 && words[3] == 0 && words[4] == 0 && words[5] == 0
+        && words[6] == 0xdeadbeefu && WholePackets(words.data(), 6), "the set marker packet is wrong");
+
+    words.fill(0xdeadbeefu);
+    unchanged = words;
+    check(sceGnmInsertPushColorMarker(words.data(), 9, nullptr, 0x11223344u) == -1 && sceGnmInsertPushColorMarker(nullptr, 9, "ab", 0x11223344u) == -1, "a color marker without a buffer or text was accepted");
+    check(sceGnmInsertPushColorMarker(words.data(), 6, "ab", 0x11223344u) == -1 && sceGnmInsertPushColorMarker(words.data(), 8, "ab", 0x11223344u) == -1 && words == unchanged,
+        "a color marker was written into the wrong size");
+    check(sceGnmInsertPushColorMarker(words.data(), 9, "ab", 0x11223344u) == 0, "the color marker was not written");
+    std::array<std::uint8_t, 28> colorText{};
+    std::memcpy(colorText.data(), "ab", 3);
+    const std::uint32_t color = 0x11223344u;
+    std::memcpy(colorText.data() + 11, &color, sizeof(color));
+    check(words[0] == Header(0x10, 8) && words[1] == 0x6875000eu && std::memcmp(&words[2], colorText.data(), colorText.size()) == 0 && words[9] == 0xdeadbeefu
+        && WholePackets(words.data(), 9), "the color marker packet is wrong");
+
+    words.fill(0xdeadbeefu);
+    unchanged = words;
+    check(sceGnmInsertWaitFlipDone(words.data(), 6, 0, 0) == -1 && sceGnmInsertWaitFlipDone(words.data(), 8, 0, 0) == -1 && words == unchanged, "a flip wait was written into the wrong size");
+
+    words.fill(0xdeadbeefu);
+    const auto untouched = words;
+    check(sceGnmInsertDingDongMarker_nid_disambig1(nullptr, 4) == -1, "a null ding dong buffer was accepted");
+    check(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 3) == -1 && words == untouched, "a ding dong marker was written into 3 dwords");
+    check(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 5) == -1 && words == untouched, "a ding dong marker was written into 5 dwords");
+    check(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 4) == 0, "the ding dong marker was not written");
+    check(words[0] == Header(0x10, 3) && words[1] == 0 && words[2] == 0 && words[3] == 0 && words[4] == 0xdeadbeefu && WholePackets(words.data(), 4),
+        "the ding dong marker packet is wrong");
+}
+
+void TestWorkloads() {
+
+    const char name[] = "workloads";
+    const auto nameAddress = reinterpret_cast<std::uint64_t>(name);
+    std::uint32_t stream = 0xdeadbeefu;
+    check(sceGnmCreateWorkloadStream_nid_disambig1(0, &stream) == 3 && stream == 0xdeadbeefu, "a workload stream without a name did not return 3 untouched");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(nameAddress, nullptr) == 3, "a workload stream without an output did not return 3");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(nameAddress, reinterpret_cast<std::uint32_t*>(1)) == 3, "an invalid workload stream output was accepted");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(0, nullptr) == 3, "a workload stream without a name and an output did not return 3");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(nameAddress, &stream) == 0 && stream == 1, "the created workload stream is not 1");
+    stream = 0xdeadbeefu;
+    check(sceGnmCreateWorkloadStream_nid_disambig1(1, &stream) == 0 && stream == 1, "a second workload stream is not 1");
+
+    check(sceGnmBeginWorkload_nid_disambig1(0, nullptr) == 3, "a workload without an output did not return 3");
+    check(sceGnmBeginWorkload_nid_disambig1(0x10, nullptr) == 3, "the workload output is not checked before the stream");
+    check(sceGnmBeginWorkload_nid_disambig1(1, reinterpret_cast<std::uint64_t*>(1)) == 3, "an invalid workload output was accepted");
+    check(sceGnmBeginWorkload_nid_disambig1(0x10, reinterpret_cast<std::uint64_t*>(1)) == 3, "the invalid workload output was not checked before the stream");
+    for (const std::uint32_t known : {0u, 1u, 0xfu}) {
+        std::uint64_t workload = ~0ull;
+        check(sceGnmBeginWorkload_nid_disambig1(known, &workload) == 0 && workload == 1, "stream " + std::to_string(known) + " did not begin workload 1");
+        check(sceGnmEndWorkload_nid_disambig1(workload) == 0, "the workload begun on stream " + std::to_string(known) + " did not end");
+    }
+    for (const std::uint32_t unknown : {0x10u, 0x11u, 0x80000000u, 0xffffffffu}) {
+        std::uint64_t workload = ~0ull;
+        check(sceGnmBeginWorkload_nid_disambig1(unknown, &workload) == 1 && workload == 0, "stream " + std::to_string(unknown) + " did not return 1 with workload 0");
+        check(sceGnmEndWorkload_nid_disambig1(workload) == 2, "workload 0 ended");
+    }
+
+    for (const std::uint64_t accepted : {1ull, 0x00ffffffffffffffull, 0x0100000000000000ull, 0x0f00000000000000ull, 0x0fffffffffffffffull}) {
+        check(sceGnmEndWorkload_nid_disambig1(accepted) == 0, "workload " + std::to_string(accepted) + " did not end");
+    }
+    for (const std::uint64_t refused : {0ull, 0x1000000000000000ull, 0x1000000000000001ull, 0x8000000000000000ull, 0xff00000000000000ull, ~0ull}) {
+        check(sceGnmEndWorkload_nid_disambig1(refused) == 2, "workload " + std::to_string(refused) + " did not return 2");
+    }
 }
 
 void TestSubmitValidation() {
@@ -130,6 +203,37 @@ void TestQueries() {
     check(sceGnmLogicalCuMaskToPhysicalCuMask(1, 0xabcdu) == 0xabcdu, "the CU mask with a first argument of 1 was changed");
     check(sceGnmLogicalCuMaskToPhysicalCuMask(0xffffffffu, 0xffffffffu) == 0xffffffffu, "the CU mask with a first argument of 0xffffffff was changed");
     check(sceGnmLogicalCuMaskToPhysicalCuMask(7, 0) == 0, "an empty CU mask was changed");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(0, 0) == -1, "the CU index with engine 0 and cuIndex 0 was not -1");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(1, 8) == -1, "the CU index with engine 1 and cuIndex 8 was not -1");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(2, 0) == 0, "the CU index with engine 2 was not 0");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(0, 9) == 0, "the CU index with cuIndex 9 was not 0");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(0xffffffffu, 0xffffffffu) == 0, "the CU index with engine and cuIndex 0xffffffff was not 0");
+}
+
+void TestEmbeddedShaders() {
+    std::array<std::uint32_t, 0x100> words{};
+    check(sceGnmSetEmbeddedPsShader_nid_disambig1(nullptr, 0x100, 0, 0) == -1, "a null embedded pixel shader buffer was accepted");
+    check(sceGnmSetEmbeddedPsShader_nid_disambig1(words.data(), 0x100, 2, 0) == static_cast<int>(0x8EEE00FFu), "an unknown embedded pixel shader id was accepted");
+
+    words.fill(0xdeadbeefu);
+    check(sceGnmSetEmbeddedPsShader_nid_disambig1(words.data(), 0x100, 0, 0) == 0, "the black embedded pixel shader failed");
+    check(words[0] == Header(0x76, 3) && words[1] == 8, "the black embedded pixel shader does not start with SET_SH_REG 8");
+    check(WholePackets(words.data(), 28), "the black embedded pixel shader is not whole PM4 packets");
+    check(words[28] == 0xc00a1000u && words[29] == 0, "the black embedded pixel shader does not end with the NOP packet");
+
+    words.fill(0xdeadbeefu);
+    check(sceGnmSetEmbeddedPsShader_nid_disambig1(words.data(), 0x100, 1, 0) == 0, "the depth-only embedded pixel shader failed");
+    check(words[0] == Header(0x76, 3) && words[1] == 8, "the depth-only embedded pixel shader does not start with SET_SH_REG 8");
+    check(WholePackets(words.data(), 28), "the depth-only embedded pixel shader is not whole PM4 packets");
+
+    check(sceGnmSetEmbeddedVsShader_nid_disambig1(nullptr, 0x100, 0, 0) == -1, "a null embedded vertex shader buffer was accepted");
+    check(sceGnmSetEmbeddedVsShader_nid_disambig1(words.data(), 0x100, 1, 0) == static_cast<int>(0x8EEE00FFu), "an unknown embedded vertex shader id was accepted");
+
+    words.fill(0xdeadbeefu);
+    check(sceGnmSetEmbeddedVsShader_nid_disambig1(words.data(), 0x100, 0, 0) == 0, "the fullscreen embedded vertex shader failed");
+    check(words[0] == Header(0x76, 3) && words[1] == 0x48, "the fullscreen embedded vertex shader does not start with SET_SH_REG 0x48");
+    check(WholePackets(words.data(), 17), "the fullscreen embedded vertex shader is not whole PM4 packets");
+    check(words[17] == 0xc00a1000u && words[18] == 0, "the fullscreen embedded vertex shader does not end with the NOP packet");
 }
 
 }
@@ -138,7 +242,9 @@ int main() {
     try {
         TestQueries();
         TestWriters();
+        TestEmbeddedShaders();
         TestSubmitValidation();
+        TestWorkloads();
         TestFillerSubmit();
         LibcRunShutdown_nid_postfix();
         std::puts("gnm driver tests passed");

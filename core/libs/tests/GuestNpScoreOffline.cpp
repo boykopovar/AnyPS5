@@ -1,11 +1,14 @@
 #include "prx/libSceNpScoreRanking/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <thread>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -136,6 +139,11 @@ void CheckRequests() {
 
     req = NewRequest();
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScore", "the first call did not return SIGNED_OUT");
+    errno = 71;
+    Require(sceNpScorePollAsync(req, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpScorePollAsync", "an unwritable result was not refused with INVALID_ARGUMENT");
+    Require(errno == 71, "sceNpScorePollAsync", "errno was not preserved");
+    Require(sceNpScoreWaitAsync(req, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpScoreWaitAsync", "an unwritable result was not refused with INVALID_ARGUMENT");
+    Require(errno == 71, "sceNpScoreWaitAsync", "errno was not preserved");
     Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting a finished request failed");
     Require(sceNpScorePollAsync(req, &result) == PollFinished && result == SignedOut, "sceNpScoreAbortRequest", "aborting a finished request changed its result");
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScore", "a finished request was not reused");
@@ -147,6 +155,9 @@ void CheckRecord() {
     NpScoreGameInfo info{};
     std::uint32_t tmpRank = 77;
     const int req = NewRequest();
+    errno = 71;
+    Require(sceNpScoreRecordScore(req, 1, 5, nullptr, reinterpret_cast<const NpScoreGameInfo*>(0x10), &tmpRank, nullptr, nullptr) == InvalidArgument, "sceNpScoreRecordScore", "unmapped game info was taken");
+    Require(errno == 71, "sceNpScoreRecordScore", "errno was preserved");
     info.infoSize = 190;
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, &info, &tmpRank, nullptr, &info) == InvalidArgument, "sceNpScoreRecordScore", "an option was taken");
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, &info, &tmpRank, nullptr, nullptr) == InvalidArgument, "sceNpScoreRecordScore", "190 bytes of game info were taken");
@@ -355,6 +366,27 @@ void CheckContextsAndWaiting() {
     sceNpScoreDeleteRequest(aborted);
 }
 
+void CheckBlockingWait() {
+    const auto waitAsync = Resolve<WaitAsyncFn>("sceNpScoreWaitAsync");
+    for (const bool abort : {false, true}) {
+        const int req = NewRequest();
+        std::atomic<bool> returned = false;
+        int status = 1;
+        int result = 0;
+        std::thread waiter([&] {
+            status = waitAsync(req, &result);
+            returned = true;
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        Require(!returned, "sceNpScoreWaitAsync", "a request with no operation started did not block");
+        if (abort) Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting a waited request failed");
+        else Require(sceNpScoreRecordScoreAsync(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScoreAsync", "valid arguments did not return SIGNED_OUT");
+        waiter.join();
+        Require(status == 0 && result == (abort ? Aborted : SignedOut), "sceNpScoreWaitAsync", "a blocked wait did not report the request's result");
+        sceNpScoreDeleteRequest(req);
+    }
+}
+
 void CheckCrossSave() {
     const auto byRange = Resolve<RangeFn>("sceNpScoreGetRankingByRangeForCrossSave");
     const auto byRangeAsync = Resolve<RangeFn>("sceNpScoreGetRankingByRangeForCrossSaveAsync");
@@ -443,6 +475,10 @@ void CheckCommentsAndGameData() {
         Require(call(req + 100, tooLong, nullptr) == InvalidId, "sceNpScoreCensorComment", "the request was not looked up before the length");
         Require(call(req, tooLong, nullptr) == InvalidArgument, "sceNpScoreCensorComment", "a 256-character comment was taken");
         Require(sceNpScorePollAsync(req, nullptr) == PollRunning, "sceNpScoreCensorComment", "a refused call finished the request");
+        errno = 71;
+        Require(call(req, reinterpret_cast<const char*>(0x10), nullptr) == InvalidArgument, "sceNpScoreCensorComment", "an unmapped comment was taken");
+        Require(errno == 71, "sceNpScoreCensorComment", "errno was not preserved");
+        Require(sceNpScorePollAsync(req, nullptr) == PollRunning, "sceNpScoreCensorComment", "an unmapped comment finished the request");
         CheckOffline("sceNpScoreCensorComment", call(req, longest, nullptr), req);
         sceNpScoreDeleteRequest(req);
     }
@@ -451,6 +487,10 @@ void CheckCommentsAndGameData() {
         Require(call(req, longest, sanitized, &option) == InvalidArgument, "sceNpScoreSanitizeComment", "an option was taken");
         Require(call(req + 100, nullptr, sanitized, nullptr) == InsufficientArgument, "sceNpScoreSanitizeComment", "a null comment was not refused before the request lookup");
         Require(call(req, tooLong, sanitized, nullptr) == InvalidArgument, "sceNpScoreSanitizeComment", "a 256-character comment was taken");
+        errno = 71;
+        Require(call(req, reinterpret_cast<const char*>(0x10), sanitized, nullptr) == InvalidArgument, "sceNpScoreSanitizeComment", "an unmapped comment was taken");
+        Require(errno == 71, "sceNpScoreSanitizeComment", "errno was not preserved");
+        Require(sceNpScorePollAsync(req, nullptr) == PollRunning, "sceNpScoreSanitizeComment", "an unmapped comment finished the request");
         CheckOffline("sceNpScoreSanitizeComment", call(req, longest, nullptr, nullptr), req);
         sceNpScoreDeleteRequest(req);
     }
@@ -489,6 +529,7 @@ int main() {
     CheckNpIdPcId();
     CheckGameDataAndBoard();
     CheckContextsAndWaiting();
+    CheckBlockingWait();
     CheckCrossSave();
     CheckSettings();
     CheckCommentsAndGameData();

@@ -21,6 +21,15 @@ if(BUILD_TESTING)
         set_tests_properties(keyboard_input PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceKeyboard>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
     endif()
+    add_test_executable(keyboard_dbg_alias_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/KeyboardDbgAliases.cpp)
+    target_include_directories(keyboard_dbg_alias_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(keyboard_dbg_alias_tests PRIVATE libSceKeyboard libkernel libc)
+    configure_windows_unwind(keyboard_dbg_alias_tests)
+    add_test(NAME keyboard_dbg_alias COMMAND keyboard_dbg_alias_tests)
+    if(WIN32)
+        set_tests_properties(keyboard_dbg_alias PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceKeyboard>")
+    endif()
     add_test_executable(keyboard_dialog_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/KeyboardDialog.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libSceVideoOut/src/KeyboardInput.cpp
