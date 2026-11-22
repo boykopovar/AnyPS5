@@ -23,6 +23,8 @@ using NKWebKit::WtfAbi::URL;
 using NKWebKit::WebCoreAbi::Cookie;
 using NKWebKit::WebCoreAbi::CookieVector;
 
+const unsigned DefaultSession = 1;
+
 void RequireImpl(bool condition, int line) {
     if (!condition) {
         std::fprintf(stderr, "NetworkStorageSession cookie check failed at line %d\n", line);
@@ -102,17 +104,17 @@ Cookie MakeCookie(std::string_view name, std::string_view value, std::string_vie
 }
 
 CookieVector GetCookies(const URL& url) {
-    return _ZN7WebCore21NetworkStorageSession10getCookiesERKN3WTF3URLE(nullptr, &url);
+    return _ZN7WebCore21NetworkStorageSession10getCookiesERKN3WTF3URLE(&DefaultSession, &url);
 }
 
 void SetCookies(const std::vector<Cookie>& cookies, const URL& url, const URL& firstParty) {
     CookieVector vector;
     for (const auto& cookie : cookies) vector.append(cookie);
-    _ZN7WebCore21NetworkStorageSession10setCookiesERKN3WTF6VectorINS_6CookieELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEERKNS1_3URLESB_(nullptr, &vector, &url, &firstParty);
+    _ZN7WebCore21NetworkStorageSession10setCookiesERKN3WTF6VectorINS_6CookieELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEERKNS1_3URLESB_(&DefaultSession, &vector, &url, &firstParty);
 }
 
 void DeleteCookie(const Cookie& cookie) {
-    _ZN7WebCore21NetworkStorageSession12deleteCookieERKNS_6CookieE(nullptr, &cookie);
+    _ZN7WebCore21NetworkStorageSession12deleteCookieERKNS_6CookieE(&DefaultSession, &cookie);
 }
 
 std::vector<std::string> Names(const CookieVector& cookies) {

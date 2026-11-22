@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <stdexcept>
+#include <unordered_map>
 
 namespace NKWebKit::WebCoreAbi {
 
@@ -92,9 +94,12 @@ bool IsExpired(const Cookie& cookie, double now) {
     return cookie.expires.has && now > cookie.expires.value;
 }
 
-SessionCookieJar& SessionCookies() {
-    static SessionCookieJar jar;
-    return jar;
+SessionCookieJar& SessionCookies(const void* session) {
+    if (!session) throw std::invalid_argument("NetworkStorageSession requires a session");
+    static std::mutex mutex;
+    static std::unordered_map<const void*, SessionCookieJar> jars;
+    std::lock_guard lock(mutex);
+    return jars.try_emplace(session).first->second;
 }
 
 void SessionCookieJar::addCookie(const Cookie& cookie, const WtfAbi::URL& url) {
