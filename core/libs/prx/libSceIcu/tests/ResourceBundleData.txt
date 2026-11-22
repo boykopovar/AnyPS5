@@ -2,6 +2,8 @@ aps5ResourceFixture {
     greeting { "h\u00e9llo \u4e16\u754c" }
     values:array { "first", "\u4e8c", "" }
     nested:table {
+        malformed { "a\ud800" }
+        emptyString { "" }
         word { "nested" }
         count:int { 42 }
     }

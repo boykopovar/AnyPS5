@@ -44,6 +44,17 @@ const char16_t* ResourceOracleString(const void* handle, std::int32_t mode, cons
     if (status) *status = error;
     return result;
 }
+const char* ResourceOracleUtf8(const void* handle, std::int32_t mode, const char* key, char* dest,
+                               std::int32_t* length, bool forceCopy, std::int32_t* status) {
+    auto error = static_cast<UErrorCode>(*status);
+    const auto* source = static_cast<const UResourceBundle*>(handle);
+    const char* result;
+    if (mode == 0) result = ures_getUTF8String(source, dest, length, forceCopy, &error);
+    else if (mode == 1) result = ures_getUTF8StringByKey(source, key, dest, length, forceCopy, &error);
+    else result = ures_getUTF8StringByIndex(source, 0, dest, length, forceCopy, &error);
+    *status = error;
+    return result;
+}
 std::int32_t ResourceOracleInt(const void* handle, std::int32_t* status) {
     auto error = status ? static_cast<UErrorCode>(*status) : U_ZERO_ERROR;
     const auto result = ures_getInt(static_cast<const UResourceBundle*>(handle), status ? &error : nullptr);

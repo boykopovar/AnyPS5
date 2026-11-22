@@ -120,6 +120,53 @@ void Value(const Bundle& bundle, int operation, std::int32_t incoming = 0, bool 
     }
 }
 
+void CompareUtf8(const Bundle& parent, const char* key, int capacity, bool forceCopy, std::int32_t incoming) {
+    Bundle child(parent, key);
+    for (auto lookup : {0, 1, 2}) {
+        const auto& bundle = lookup == 1 ? parent : child;
+        std::array<char, 40> expected;
+        for (std::size_t i = 0; i < expected.size(); ++i) expected[i] = static_cast<char>('A' + i % 26);
+        auto actual = expected;
+        auto expectedLength = capacity;
+        auto actualLength = capacity;
+        auto expectedStatus = incoming;
+        auto actualStatus = incoming;
+        const char* wanted = ResourceOracleUtf8(bundle.native, lookup, key, expected.data(), &expectedLength,
+                                                forceCopy, &expectedStatus);
+        const char* result;
+        if (lookup == 0) result = ures_getUTF8String_nid_postfix(bundle.guest, actual.data(), &actualLength, forceCopy, &actualStatus);
+        else if (lookup == 1) result = ures_getUTF8StringByKey_nid_postfix(bundle.guest, key, actual.data(), &actualLength, forceCopy, &actualStatus);
+        else result = ures_getUTF8StringByIndex_nid_postfix(bundle.guest, 0, actual.data(), &actualLength, forceCopy, &actualStatus);
+        Require(actual == expected, "UTF-8 written prefix and untouched bytes match native");
+        Require(actualStatus == expectedStatus, "UTF-8 conversion status matches native");
+        Require(actualLength == expectedLength, "UTF-8 conversion length matches native");
+        if (!wanted) {
+            Require(!result, "failed or pure-preflight conversion returns null");
+        } else {
+            const auto pos = reinterpret_cast<std::uintptr_t>(wanted) - reinterpret_cast<std::uintptr_t>(expected.data());
+            if (pos < expected.size()) Require(result == actual.data() + pos, "UTF-8 buffer pointer offset matches native");
+            else Require(result && *result == 0 && result != actual.data(), "empty UTF-8 resource returns an empty constant");
+        }
+    }
+}
+
+void Utf8Conversion(std::string_view mode) {
+    Bundle root;
+    Bundle nested(root, "nested");
+    for (bool forceCopy : {false, true}) {
+        if (mode == "utf8_partial") {
+            for (int capacity : {0, 7, 8, 9, 12, 13, 14, 40}) CompareUtf8(root, "greeting", capacity, forceCopy, 0);
+        } else if (mode == "utf8_warning") {
+            for (int incoming : {-124, -1}) {
+                CompareUtf8(root, "greeting", 40, forceCopy, incoming);
+                for (int capacity : {0, 1}) CompareUtf8(nested, "emptyString", capacity, forceCopy, incoming);
+            }
+        } else {
+            for (int capacity : {0, 1, 2, 40}) CompareUtf8(nested, "malformed", capacity, forceCopy, 0);
+        }
+    }
+}
+
 void Interoperability() {
     Bundle locale("en_US", false);
     Require(bool(ures_hasNext_nid_postfix(locale.guest)) == (ResourceOracleSize(locale.native) > 0),
@@ -369,6 +416,7 @@ int main(int argc, char** argv) {
         const std::string_view mode = argv[2];
         if (mode == "literals") Literals();
         else if (mode == "interop") Interoperability();
+        else if (mode == "utf8_partial" || mode == "utf8_warning" || mode == "utf8_invalid") Utf8Conversion(mode);
         else if (mode == "fillin") FillIn();
         else if (mode == "status") Status();
         else if (mode == "lifetime") Lifetime();
