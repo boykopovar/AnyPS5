@@ -135,6 +135,29 @@ static void TestDoubleToStringConverter() {
     *builder = DoubleConversionStringBuilder{{text, 64}, 60};
     Require(ToExponential(&converter, -std::numeric_limits<double>::infinity(), 2, builder));
     Require(builder->position == 63 && std::memcmp(text + 60, "-xI", 3) == 0);
+    std::memset(symbols + 4096 - 2, 'x', 2);
+    converter.infinitySymbol = symbols + 4096 - 2;
+    *builder = DoubleConversionStringBuilder{{text, 64}, 61};
+    overflowed = false;
+    try {
+        ToExponential(&converter, -std::numeric_limits<double>::infinity(), 2, builder);
+    } catch (const std::out_of_range&) {
+        overflowed = true;
+    }
+    Require(overflowed && builder->position == 61 && std::memcmp(text + 60, "-xI", 3) == 0);
+    std::memcpy(symbols + 4096 - 4, "xyz", 4);
+    converter.infinitySymbol = symbols + 4096 - 4;
+    *builder = DoubleConversionStringBuilder{{text, 64}, 60};
+    overflowed = false;
+    try {
+        ToExponential(&converter, -std::numeric_limits<double>::infinity(), 2, builder);
+    } catch (const std::out_of_range&) {
+        overflowed = true;
+    }
+    Require(overflowed && builder->position == 60 && std::memcmp(text + 60, "-xI", 3) == 0);
+    *builder = DoubleConversionStringBuilder{{text, 64}, 60};
+    Require(ToExponential(&converter, std::numeric_limits<double>::infinity(), 2, builder));
+    Require(builder->position == 63 && std::memcmp(text + 60, "xyz", 3) == 0);
 
     char* writableText = reinterpret_cast<char*>(pages + 4096);
     std::memset(writableText, 0xcc, 64);
