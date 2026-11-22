@@ -10,6 +10,9 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <thread>
 #undef main
 
@@ -138,6 +141,50 @@ void CheckKeyboardStaysOutOfWithdrawnPort0(DisplayWindow& window, int index, SDL
     Require(!CrossPressed(), "a key pressed while port 0 was withdrawn is not given to it when the controller returns");
 }
 
+void CheckWatchReloadClearsLatchedKeyboard(DisplayWindow& window) {
+    const auto config = std::filesystem::temp_directory_path() /
+        ("anyps5-pad-watch-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".ini");
+    const auto write = [&](const char* text) {
+        std::ofstream file(config, std::ios::trunc);
+        file << text;
+        Require(file.good(), "write temporary input mapping");
+    };
+    write("ToggleActions = Cross\n");
+#ifdef _WIN32
+    Require(_wputenv_s(L"ANYPS5_INPUT_CONFIG", config.c_str()) == 0, "set input mapping path");
+    Require(_putenv_s("ANYPS5_INPUT_WATCH", "1") == 0, "enable input mapping watch");
+#else
+    Require(setenv("ANYPS5_INPUT_CONFIG", config.c_str(), 1) == 0, "set input mapping path");
+    Require(setenv("ANYPS5_INPUT_WATCH", "1", 1) == 0, "enable input mapping watch");
+#endif
+    SetPort0State(nullptr);
+    {
+        PadInput pad;
+        Require(!pad.SlotOccupied(0) && Pad::IsConnected(0), "keyboard-only port 0 is connected");
+        SendKey(pad, window, SDL_KEYDOWN, SDL_SCANCODE_SPACE);
+        SendKey(pad, window, SDL_KEYUP, SDL_SCANCODE_SPACE);
+        Require(CrossPressed(), "released Space leaves Cross toggled on");
+        write("Cross = KEY:Return\n");
+        PumpUntil(pad, window, std::chrono::seconds{6}, [&] {
+            Send(pad, window, SDL_USEREVENT, 0);
+            return !CrossPressed();
+        });
+        SendKey(pad, window, SDL_KEYDOWN, SDL_SCANCODE_RETURN);
+        Require(CrossPressed(), "the changed key mapping is active");
+        SendKey(pad, window, SDL_KEYUP, SDL_SCANCODE_RETURN);
+        Require(!CrossPressed(), "the new non-toggle mapping releases Cross");
+    }
+#ifdef _WIN32
+    _wputenv_s(L"ANYPS5_INPUT_CONFIG", L"");
+    _putenv_s("ANYPS5_INPUT_WATCH", "");
+#else
+    unsetenv("ANYPS5_INPUT_CONFIG");
+    unsetenv("ANYPS5_INPUT_WATCH");
+#endif
+    std::filesystem::remove(config);
+}
+
+
 }
 
 int main() {
@@ -154,6 +201,11 @@ int main() {
         return 77;
     }
 
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK, "user service init failed");
+    Pad::Initialize();
+    DisplayWindow window;
+    CheckWatchReloadClearsLatchedKeyboard(window);
+
     SDL_VirtualJoystickDesc desc{};
     desc.version = SDL_VIRTUAL_JOYSTICK_DESC_VERSION;
     desc.type = SDL_JOYSTICK_TYPE_GAMECONTROLLER;
@@ -164,9 +216,6 @@ int main() {
     Require(device >= 0 && SDL_IsGameController(device), "virtual controller attach failed");
     const SDL_JoystickID id = SDL_JoystickGetDeviceInstanceID(device);
 
-    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK, "user service init failed");
-    Pad::Initialize();
-    DisplayWindow window;
     CheckDefaultKeepsPort0(window, device, id);
     CheckControllerModeFollowsTheController(window, device, id);
     CheckKeyboardStaysOutOfWithdrawnPort0(window, device, id);

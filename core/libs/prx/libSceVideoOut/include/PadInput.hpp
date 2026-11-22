@@ -57,7 +57,7 @@ private:
 
     explicit PadInput(Pad::InputConfiguration configuration);
     void publish(std::uint64_t frame);
-    void applyMappingSnapshot();
+    bool applyMappingSnapshot();
     void reloadInputMapping();
     void dispatchPadChords(DisplayWindow& window);
     void applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window);
