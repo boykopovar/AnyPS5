@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -65,17 +66,6 @@ constexpr std::array<MadVector, 8> Vectors{{
     {{0x1234abcdu, 0xfedc5678u, 0x9abc0defu, 0x0000ffffu}, {0xd4c37407u, 0x3a0800d4u, 0x74070000u, 0xd76c0000u, 0x3a07784cu, 0x74070000u, 0x3a076618u, 0x66180000u, 0x7e4b7407u, 0xe39000d4u, 0x74070000u, 0xd76c0000u, 0xe38f784cu, 0x00000000u, 0xe38f6618u, 0x66180000u}},
     {{0x00000000u, 0x00000000u, 0x0000ffffu, 0x00010000u}, {0x0000ffffu, 0x00000000u, 0xffff0000u, 0x00000000u, 0x00001234u, 0xffff0000u, 0x00000001u, 0x00010000u, 0x0000ffffu, 0x00000000u, 0xffff0000u, 0x00000000u, 0x00001234u, 0xffff0000u, 0x00000001u, 0x00010000u}},
 }};
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 void Run(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t lane = 0; lane < Threads; ++lane) {

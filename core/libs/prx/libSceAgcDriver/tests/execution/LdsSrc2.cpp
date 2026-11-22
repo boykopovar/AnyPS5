@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -71,17 +72,6 @@ void Fill(std::uint32_t tid, std::uint32_t* words) {
     words[1] = tid % 4u == 0u ? (tid * 3u) % 7u : tid % 4u == 1u ? words[0] : static_cast<std::uint32_t>(mixed >> 32u);
     words[2] = std::bit_cast<std::uint32_t>(static_cast<float>(static_cast<std::int32_t>(tid % 9u) - 4) * 1.75f + 0.5f);
     words[3] = std::bit_cast<std::uint32_t>(static_cast<float>(static_cast<std::int32_t>((tid * 5u) % 11u) - 5) * 0.625f + 0.25f);
-}
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
 }
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode = std::nullopt) {

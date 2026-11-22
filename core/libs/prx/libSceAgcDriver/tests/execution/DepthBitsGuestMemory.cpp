@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -115,12 +116,6 @@ constexpr std::array<Case, 3> Cases{{
 
 static_assert(Texels * 4u <= SlotBytes && 4u * SlotBytes <= BlockBytes, "the slots and the output must fit the guest block");
 
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
-
 std::uint32_t Mix(std::uint32_t x, std::uint32_t y) {
     auto hash = (x * 0x9e3779b1u) ^ (y * 0x85ebca77u);
     hash ^= hash >> 15u;
@@ -133,11 +128,6 @@ std::uint32_t Pattern(const Case& test, std::uint32_t x, std::uint32_t y) {
     const bool edge = (x & 15u) == (y & 15u);
     if (test.elementBytes == 2u) return edge ? Edges16[(x / 16u + y) % Edges16.size()] : Mix(x, y) & 0xffffu;
     return edge ? Edges32[(x / 16u + y) % Edges32.size()] : Mix(x, y);
-}
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t format) {

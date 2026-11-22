@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -25,17 +26,6 @@ alignas(256) constexpr std::array<std::uint32_t, 22> Code{
     0x80010103, 0x4a080081, 0xbe890383, 0x7e0a0280, 0xbefc0380, 0x7e0c8704, 0x4a0a0b06, 0x4a080890,
     0x80898109, 0xbf078009, 0xbf85fff9, 0xe0701004, 0x80010503, 0xbf810000,
 };
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uint32_t threads, std::uint32_t overwrite) {
     Output.fill(0xdeadbeefu);

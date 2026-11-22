@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -30,17 +31,6 @@ alignas(256) constexpr std::array<std::uint32_t, 24> MixedNested{0x34020084u, 0x
 
 constexpr std::array<std::uint32_t, 8> Selectors{0u, 1u, 2u, 3u, 4u, 7u, 0x80000000u, 0xffffffffu};
 constexpr const char* Names[Results] = {"add", "xor", "sum", "xor_second"};
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 std::uint32_t Expected(std::uint32_t lane, std::uint32_t result) {
     const auto selector = Input[lane * Inputs];

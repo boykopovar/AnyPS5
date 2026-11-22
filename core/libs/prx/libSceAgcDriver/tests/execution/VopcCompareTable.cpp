@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -725,11 +726,6 @@ constexpr const char* Names[Compares] = {
     "cmpx_le_u16_e32", "cmpx_le_u16_e64", "cmpx_gt_u16_e32", "cmpx_gt_u16_e64", "cmpx_ne_u16_e32", "cmpx_ne_u16_e64",
     "cmpx_ge_u16_e32", "cmpx_ge_u16_e64", "cmpx_class_f32_e32", "cmpx_class_f32_e64", "cmpx_class_f16_e32", "cmpx_class_f16_e64",
 };
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target) {
     for (std::uint32_t tid = 0; tid < MaxThreads; ++tid) std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), &Input[tid * Inputs]);

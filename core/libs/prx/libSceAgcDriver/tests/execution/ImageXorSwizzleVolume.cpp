@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -42,11 +43,6 @@ alignas(256) constexpr std::array<std::uint32_t, 10> Code{
     0x34020084, 0xe0381000, 0x80000201, 0xbf8c3f70, 0xf0001f10, 0x00020602, 0xbf8c3f70, 0xe0781000,
     0x80010601, 0xbf810000,
 };
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
 
 std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t tileMode) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Texels.data()));
