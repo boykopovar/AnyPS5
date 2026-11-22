@@ -85,6 +85,16 @@ class BlockerTests(unittest.TestCase):
                                                     ("relinker (ubuntu-latest, g++)", "completed", "success")])))
         self.assertFalse(pr_ready.built(make(checks=[("conventions", "completed", "success"), ("linux", "completed", "skipped")])))
 
+    def test_every_build_workflow_job_counts_as_a_build(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/build.yml").read_text(encoding="utf-8")
+        jobs = workflow.split("\njobs:\n", 1)[1]
+        names = {line[2:].split(":", 1)[0] for line in jobs.split("\n") if line.startswith("  ") and not line.startswith("   ")
+                 and line.rstrip().endswith(":")}
+        self.assertEqual(names - pr_ready.BOT_CHECKS, pr_ready.BUILD_CHECKS)
+        for name in ("pipe-write (macos-15)", "edge-watch (macos-15-intel)"):
+            with self.subTest(name=name):
+                self.assertTrue(pr_ready.built(make(checks=[("conventions", "completed", "success"), (name, "completed", "success")])))
+
     def test_the_newest_run_of_a_check_wins(self):
         data = node(checks=[("conventions", "completed", "success")])
         data["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"] += [
@@ -190,6 +200,13 @@ class MainTests(unittest.TestCase):
 
         def fake(*args):
             if args[:2] == ("api", "graphql"):
+                if "--explain" in argv:
+                    number = int(argv[argv.index("--explain") + 1])
+                    self.assertIn("resource(url: $url)", args[3])
+                    self.assertEqual(args[-1], f"url=https://github.com/o/r/pull/{number}")
+                    match = next((pr for pr in prs if pr["number"] == number), None)
+                    resource = {"state": "OPEN", "baseRefName": "main", **match} if match else None
+                    return json.dumps({"data": {"resource": resource}})
                 if any("CLOSED" in arg for arg in args):
                     return json.dumps({"data": {"repository": {"pullRequests": {
                         "pageInfo": {"hasNextPage": False, "endCursor": None},
@@ -232,6 +249,29 @@ class MainTests(unittest.TestCase):
             self.run_main([], prs, calls)
         self.assertEqual([call[2] for call in calls], ["1", "2"])
 
+    def test_author_explains_each_open_pull_request_of_that_author_and_writes_nothing(self):
+        calls = []
+        prs = [node(number=9, author="Alice", draft=True), node(number=8, author="bob"), node(number=7, author="alice", changes=["carol"])]
+        code, out, _ = self.run_main(["--author", "alice"], prs, calls, closed=[3])
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [])
+        self.assertEqual(out.splitlines(), [f"#7: {'; '.join(pr_ready.blockers(make(number=7, changes=['carol'])))}",
+                                            f"#9: {'; '.join(pr_ready.blockers(make(number=9, draft=True)))}"])
+
+    def test_author_without_open_pull_requests_says_so(self):
+        calls = []
+        code, out, _ = self.run_main(["--author", "dave"], [node(number=7)], calls)
+        self.assertEqual((code, out, calls), (0, "dave has no open pull request to main\n", []))
+
+    def test_author_reports_an_unblocked_pull_request(self):
+        code, out, _ = self.run_main(["--author", "alice"], [node(number=7)], [])
+        self.assertEqual((code, out), (0, "#7: nothing blocks it\n"))
+
+    def test_author_and_explain_cannot_be_combined(self):
+        code, _, err = self.run_main(["--author", "alice", "--explain", "7"], [node(number=7)], [])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot be combined", err)
+
     def test_a_dry_run_writes_nothing(self):
         calls = []
         _, out, _ = self.run_main(["--dry-run", "--issue", "3"], [node(number=7)], calls)
@@ -262,10 +302,27 @@ class MainTests(unittest.TestCase):
         self.assertEqual(out.strip(), "draft")
         self.assertEqual(calls, [])
 
+    def test_explain_reports_only_the_selected_pr_and_leaves_the_queue_alone(self):
+        calls = []
+        prs = [node(number=1, draft=True), node(number=7, checks=[("conventions", "completed", "failure")],
+                                                changes=["bob"])]
+        code, out, _ = self.run_main(["--explain", "7", "--issue", "3"], prs, calls, closed=[2])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines(), ["failing: conventions", "change request not answered by a re-request: bob"])
+        self.assertEqual(calls, [])
+
     def test_explain_an_unknown_pull_request_fails(self):
         code, _, err = self.run_main(["--explain", "9"], [node(number=7)], [])
         self.assertEqual(code, 2)
         self.assertIn("#9 is not an open pull request", err)
+
+    def test_explain_rejects_a_closed_or_retargeted_pull_request(self):
+        for fields in ({"state": "MERGED"}, {"state": "CLOSED"}, {"baseRefName": "release"}):
+            with self.subTest(fields=fields):
+                calls = []
+                code, _, err = self.run_main(["--explain", "7"], [{**node(), **fields}], calls)
+                self.assertEqual((code, calls), (2, []))
+                self.assertIn("#7 is not an open pull request to main", err)
 
     def test_a_malformed_response_is_an_error(self):
         code, _, err = self.run_main([], [{"number": 7}], [])

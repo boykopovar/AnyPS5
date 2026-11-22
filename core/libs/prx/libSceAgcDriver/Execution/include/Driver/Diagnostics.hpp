@@ -28,6 +28,7 @@ public:
 
 bool SkipRefusedDraws();
 bool AsyncDrawCompile();
+std::size_t AsyncComputePipelineWords();
 
 void ReportRefusedDraw(const RefusedDraw& refused);
 std::optional<std::size_t> RefusedShaderCount();

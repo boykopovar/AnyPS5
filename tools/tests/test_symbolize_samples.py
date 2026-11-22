@@ -380,6 +380,67 @@ class SymbolizeSamplesTests(unittest.TestCase):
                 for path, content in original.items():
                     self.assertEqual(path.read_bytes(), content)
 
+    def test_code_section_overlaps_are_rejected_before_symbolization(self):
+        path = self.libs / "overlap.prx"
+        sections = 0x58 + 240
+        cases = {
+            "code": [(sections + 80 + 12, 0x1040)],
+            "data_after": [(sections + 40 + 12, 0x1080)],
+            "data_before": [(sections + 40 + 12, 0x0F80)],
+            "contained_data": [(sections + 40 + 12, 0x1040), (sections + 40 + 8, 0x10),
+                               (sections + 40 + 16, 0x10)],
+            "same_start": [(sections + 80 + 12, 0x1000)],
+            "raw_padding": [(sections + 16, 0x200), (sections + 80 + 12, 0x1100)],
+            "virtual_tail": [(sections + 8, 0x200), (sections + 80 + 12, 0x1100)],
+            "headers": [(0x58 + 60, 0x1001)],
+        }
+        inventory = Path(__file__).resolve().parents[1] / "pe_symbol_inventory.py"
+        for name, updates in cases.items():
+            with self.subTest(name=name):
+                build_pe(path, second_code=True)
+                image = bytearray(path.read_bytes())
+                for offset, value in updates:
+                    struct.pack_into("<I", image, offset, value)
+                path.write_bytes(image)
+                with self.assertRaisesRegex(ValueError, "code section overlaps"):
+                    symbolize_samples.PeModule(path)
+                warnings = []
+                symbolizer = symbolize_samples.Symbolizer([self.libs], {path.name: (SIZE_OF_IMAGE, TIMESTAMP)},
+                                                          warn=warnings.append)
+                frame = "overlap.prx+0x1080"
+                self.assertEqual(symbolizer.frame(frame), frame)
+                self.assertIn("code section overlaps", "\n".join(warnings))
+        build_pe(path, second_code=True)
+        image = bytearray(path.read_bytes())
+        struct.pack_into("<I", image, sections + 80 + 12, 0x1040)
+        path.write_bytes(image)
+        result = subprocess.run([sys.executable, str(inventory), str(path)],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("code section overlaps", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_adjacent_code_sections_and_empty_overlapping_sections_remain_supported(self):
+        path = self.libs / "boundaries.prx"
+        sections = 0x58 + 240
+        for index in (1, 2):
+            with self.subTest(empty_section=index):
+                build_pe(path, second_code=True)
+                image = bytearray(path.read_bytes())
+                struct.pack_into("<I", image, sections + index * 40 + 12, 0x1040)
+                struct.pack_into("<I", image, sections + index * 40 + 8, 0)
+                struct.pack_into("<I", image, sections + index * 40 + 16, 0)
+                path.write_bytes(image)
+                self.assertEqual(symbolize_samples.PeModule(path).name(0x1085), "static_f")
+        build_pe(path, second_code=True)
+        image = bytearray(path.read_bytes())
+        struct.pack_into("<I", image, sections + 80 + 12, 0x1100)
+        path.write_bytes(image)
+        module = symbolize_samples.PeModule(path)
+        self.assertEqual(module.name(0x1085), "static_f")
+        self.assertEqual(module.name(0x1140), "late_fn")
+
     def test_coff_symbols_name_code_addresses(self):
         module = symbolize_samples.PeModule(self.libs / "libSceAgcDriver.prx")
         self.assertEqual((module.size, module.timestamp), (SIZE_OF_IMAGE, TIMESTAMP))

@@ -48,6 +48,12 @@ class GeneratorTests(unittest.TestCase):
         rows = [line for line in text.splitlines() if line.startswith('    "')]
         self.assertEqual([row.count('"') // 2 for row in rows], [10] * 19 + [3])
 
+    def test_windows_checkout_matches_the_pinned_header(self):
+        header = header_text(range(SCRIPT_COUNT))
+        expected = self.generate(header)
+        checkout = header.replace(b"\n", b"\r\n")
+        self.assertEqual(self.generate(checkout, checksum=hashlib.sha256(header).hexdigest()), expected)
+
     def test_input_header_is_not_overwritten_by_the_output(self):
         header = header_text(range(SCRIPT_COUNT))
         source = self.root / "uscript.h"
@@ -71,6 +77,19 @@ class GeneratorTests(unittest.TestCase):
             self.generate(header_text(codes))
         self.assertEqual(refused.exception.code, 2)
         self.assertFalse((self.root / "IcuScriptNames.hpp").exists())
+
+
+class SameFileTests(unittest.TestCase):
+    def test_same_input_output_compares_the_real_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            header = root / 'uscript.h'
+            header.write_text('x', encoding='utf-8')
+            other = root / 'other.h'
+            other.write_text('y', encoding='utf-8')
+            self.assertTrue(generator.same_input_output(header, header))
+            self.assertFalse(generator.same_input_output(header, other))
+            self.assertFalse(generator.same_input_output(header, root / 'missing.h'))
 
 
 if __name__ == "__main__":

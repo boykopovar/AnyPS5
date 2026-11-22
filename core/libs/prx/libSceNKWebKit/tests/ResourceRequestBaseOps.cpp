@@ -16,6 +16,7 @@ using NKWebKit::HttpAbi::HTTPHeaderMap;
 using NKWebKit::HttpAbi::HTTPHeaderName;
 using NKWebKit::WebCoreAbi::FormData;
 using NKWebKit::WebCoreAbi::FormDataElement;
+using NKWebKit::WebCoreAbi::LegacyResourceRequestBase;
 using NKWebKit::WebCoreAbi::ResourceRequestBase;
 using NKWebKit::WtfAbi::EmptyStringImpl;
 using NKWebKit::WtfAbi::String;
@@ -110,6 +111,44 @@ static void Clear(ResourceRequestBase& request) {
     map = HTTPHeaderMap{};
 }
 
+static HTTPHeaderMap& Headers(LegacyResourceRequestBase& request) {
+    return *reinterpret_cast<HTTPHeaderMap*>(&request.httpHeaderFields);
+}
+
+static LegacyResourceRequestBase MakeLegacyRequest() {
+    LegacyResourceRequestBase request{};
+    request.priority = 1;
+    request.allowCookies = true;
+    request.resourceRequestUpdated = true;
+    request.platformRequestUpdated = true;
+    request.resourceRequestBodyUpdated = true;
+    return request;
+}
+
+static void Clear(LegacyResourceRequestBase& request) {
+    auto& map = Headers(request);
+    while (map.common.size) _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&map, map.common.buffer[0].key);
+    while (map.uncommon.size) {
+        String key(map.uncommon.buffer[0].key);
+        _ZN7WebCore13HTTPHeaderMap6removeERKN3WTF6StringE(&map, key);
+    }
+    _ZN3WTF8fastFreeEPv(map.common.buffer);
+    _ZN3WTF8fastFreeEPv(map.uncommon.buffer);
+    map = HTTPHeaderMap{};
+}
+
+static unsigned char ByteAt(const LegacyResourceRequestBase& request, std::size_t offset) {
+    unsigned char value = 0;
+    std::memcpy(&value, reinterpret_cast<const unsigned char*>(&request) + offset, 1);
+    return value;
+}
+
+static const void* PointerAt(const LegacyResourceRequestBase& request, std::size_t offset) {
+    const void* value = nullptr;
+    std::memcpy(&value, reinterpret_cast<const unsigned char*>(&request) + offset, sizeof(value));
+    return value;
+}
+
 static FormData* CreateForm(const void* data, std::size_t size) {
     auto ref = _ZN7WebCore8FormData6createEPKvm(data, size);
     return std::exchange(ref.m_ptr, nullptr);
@@ -122,7 +161,7 @@ static FormData* CreateEmptyForm() {
 
 static void FreeForm(FormData* form) {
     _ZN7WebCore8FormDataD1Ev(form);
-    _ZdlPv_nid_postfix(form);
+    _ZN3WTF8fastFreeEPv(form);
 }
 
 static std::string BodyBytes(const FormDataElement& element) {
@@ -188,11 +227,46 @@ static void SetURLField(NKWebKit::WtfAbi::URL& field, StringImpl& impl, unsigned
     field.queryEnd = pathEnd;
 }
 
+static void TestLegacyLayout() {
+    LegacyResourceRequestBase request{};
+    Require(sizeof(request) == 184);
+    request.allowCookies = true;
+    Require(ByteAt(request, 180) == 0x01);
+    request.resourceRequestUpdated = true;
+    Require(ByteAt(request, 180) == 0x03);
+    request.platformRequestUpdated = true;
+    Require(ByteAt(request, 180) == 0x07);
+    request.resourceRequestBodyUpdated = true;
+    Require(ByteAt(request, 180) == 0x0F);
+    request.platformRequestBodyUpdated = true;
+    Require(ByteAt(request, 180) == 0x1F);
+    request.hiddenFromInspector = true;
+    Require(ByteAt(request, 180) == 0x3F);
+    request.isTopSite = true;
+    Require(ByteAt(request, 180) == 0x7F);
+    request.inspectorInitiatorNodeIdentifier = {true, 0x11223344};
+    Require(ByteAt(request, 172) == 1 && ByteAt(request, 176) == 0x44 && ByteAt(request, 179) == 0x11);
+}
+
 static void TestSetHTTPBody() {
-    auto request = MakeRequest();
+    auto request = MakeLegacyRequest();
+    request.cachePolicy = 0xA1;
+    request.sameSiteDisposition = 0xA2;
+    request.priority = 0xA3;
+    request.requester = 0xA4;
+    request.inspectorInitiatorNodeIdentifier = {true, 0x11223344};
+    request.platformRequestBodyUpdated = true;
+    Require(ByteAt(request, 180) == 0x1F);
+    auto witness = Make("witness");
+    String witnessText(&witness);
+    witness.refCount += 2;
     auto* firstForm = CreateForm("abc", 3);
     auto* secondForm = CreateForm("def", 3);
     Require(firstForm->refCount == 1 && secondForm->refCount == 1);
+    Require(guestAllocations.empty());
+    Require(_ZN3WTF14fastMallocSizeEPKv(firstForm) == 72);
+    PushFile(firstForm, witnessText, 0, 1);
+    Require(witness.refCount == 6);
 
     auto* body = firstForm;
     _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(&request, &body);
@@ -202,13 +276,19 @@ static void TestSetHTTPBody() {
     Require(!request.platformRequestBodyUpdated);
     Require(request.resourceRequestBodyUpdated);
     Require(request.platformRequestUpdated);
+    Require(PointerAt(request, 160) == firstForm);
+    Require(ByteAt(request, 180) == 0x0F);
+    Require(request.cachePolicy == 0xA1 && request.sameSiteDisposition == 0xA2 && request.priority == 0xA3 && request.requester == 0xA4);
+    Require(request.inspectorInitiatorNodeIdentifier.engaged && request.inspectorInitiatorNodeIdentifier.value == 0x11223344);
+    Require(request.initiatorIdentifier.impl == nullptr && request.cachePartition.impl == nullptr);
 
+    request.resourceRequestBodyUpdated = false;
     body = secondForm;
     _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(&request, &body);
     Require(request.httpBody == secondForm);
     Require(secondForm->refCount == 1);
     Require(body == nullptr);
-    Require(guestAllocations.count(firstForm) == 0);
+    Require(witness.refCount == 4);
 
     secondForm->ref();
     body = secondForm;
@@ -216,6 +296,7 @@ static void TestSetHTTPBody() {
     Require(request.httpBody == secondForm);
     Require(secondForm->refCount == 1);
     Require(body == nullptr);
+    Require(ByteAt(request, 180) == 0x0F);
 
     request.resourceRequestUpdated = false;
     secondForm->ref();
@@ -288,22 +369,41 @@ static void TestClearPurposeAndReferrer() {
     Require(purpose.refCount == 4 && referrer.refCount == 4);
 }
 
+static std::optional<std::string> PartitionOf(const char* text) {
+    StringImpl impl{3, static_cast<unsigned>(std::strlen(text)), text, 4};
+    const String domain(&impl);
+    std::optional<std::string> partition;
+    {
+        const String name = _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(&domain);
+        Require(name.impl != nullptr);
+        Require(name.impl->length != 0 || name.impl == EmptyStringImpl());
+        const auto view = NKWebKit::WtfAbi::ViewOf(name.impl);
+        partition.emplace();
+        for (unsigned i = 0; i < view.length; ++i) partition->push_back(static_cast<char>(NKWebKit::WtfAbi::CodeUnitAt(view, i)));
+    }
+    Require(impl.refCount == 3 && impl.data == text);
+    return partition;
+}
+
 static void TestPartitionName() {
     StringImpl* shared = EmptyStringImpl();
     String null;
-    String result = _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(&null);
-    Require(result.impl == shared);
-    Require(result.impl->length == 0);
+    {
+        String result = _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(&null);
+        Require(result.impl == shared);
+        Require(result.impl->length == 0);
+    }
 
-    auto domain = Make("example.com");
-    String domainText(&domain);
-    domain.refCount += 2;
-    String other = _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(&domainText);
-    Require(other.impl == shared);
-    Require(domain.refCount == 4);
-    String third = _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(nullptr);
-    Require(third.impl == shared);
-    Require(third.impl->length == 0);
+    Require(PartitionOf("example.com") == "example.com");
+    Require(PartitionOf("www.example.com") == "example.com");
+    Require(PartitionOf("a.b.example.co.uk") == "example.co.uk");
+    Require(PartitionOf("WWW.Example.CO.UK") == "example.co.uk");
+    Require(PartitionOf("a.user.github.io") == "user.github.io");
+    Require(PartitionOf("..www.example.com") == "example.com");
+    Require(PartitionOf("localhost") == "localhost");
+    Require(PartitionOf("192.168.0.1") == "192.168.0.1");
+    for (const char* none : {"", "com", "co.uk", "github.io", "..."}) Require(PartitionOf(none) == "");
+    Require(Throws([] { _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(nullptr); }));
 }
 
 static void TestSetCachePartition() {
@@ -520,6 +620,9 @@ static void TestEqual() {
     _ZN7WebCore19ResourceRequestBase18setHTTPHeaderFieldERKN3WTF6StringES4_(&right, &customText, &leftValueText);
     Require(_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&left, &right));
 
+    auto witness = Make("witness");
+    String witnessText(&witness);
+    witness.refCount += 2;
     auto* bodyLeft = CreateForm("ab", 2);
     auto* bodyRight = CreateForm("ab", 2);
     left.httpBody = bodyLeft;
@@ -529,14 +632,18 @@ static void TestEqual() {
     _ZN7WebCore8FormData10appendDataEPKvm(bodyRight, "c", 1);
     Require(!_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&left, &right));
     right.httpBody = bodyLeft;
+    PushFile(bodyRight, witnessText, 0, 1);
+    Require(witness.refCount == 6);
     bodyRight->deref();
-    Require(guestAllocations.count(bodyRight) == 0);
+    Require(witness.refCount == 4);
     Require(_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&left, &right));
     right.httpBody = nullptr;
     Require(!_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&left, &right));
     left.httpBody = nullptr;
+    PushFile(bodyLeft, witnessText, 0, 1);
+    Require(witness.refCount == 6);
     bodyLeft->deref();
-    Require(guestAllocations.count(bodyLeft) == 0);
+    Require(witness.refCount == 4);
 
     {
         auto file = Make("file.bin");
@@ -611,7 +718,8 @@ static void TestEqual() {
 }
 
 static void TestHTTPHeaderFieldString() {
-    auto request = MakeRequest();
+    auto request = MakeLegacyRequest();
+    auto& map = Headers(request);
     auto known = Make("content-TYPE");
     auto custom = Make("X-Custom");
     auto value = Make("v");
@@ -621,16 +729,24 @@ static void TestHTTPHeaderFieldString() {
     known.refCount += 2;
     custom.refCount += 2;
     value.refCount += 2;
-    _ZN7WebCore19ResourceRequestBase18setHTTPHeaderFieldERKN3WTF6StringES4_(&request, &knownText, &valueText);
-    _ZN7WebCore19ResourceRequestBase18setHTTPHeaderFieldERKN3WTF6StringES4_(&request, &customText, &valueText);
+
+    _ZN7WebCore13HTTPHeaderMap3setERKN3WTF6StringES4_(&map, customText, valueText);
+    Require(map.common.size == 0 && map.uncommon.size == 1);
+    {
+        String other = _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(&request, &customText);
+        Require(other.impl == &value && value.refCount == 8);
+    }
+    _ZN7WebCore13HTTPHeaderMap3setERKN3WTF6StringES4_(&map, knownText, valueText);
+    Require(map.common.size == 1 && map.uncommon.size == 1);
+    Require(PointerAt(request, 112) == map.common.buffer && PointerAt(request, 128) == map.uncommon.buffer);
 
     {
         String got = _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(&request, &knownText);
         Require(got.impl == &value && value.refCount == 10);
         String other = _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(&request, &customText);
         Require(other.impl == &value && value.refCount == 12);
-        String missing = _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(&request, &knownText);
-        Require(missing.impl == &value && value.refCount == 14);
+        String again = _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(&request, &knownText);
+        Require(again.impl == &value && value.refCount == 14);
     }
     Require(value.refCount == 8);
 
@@ -1039,6 +1155,7 @@ int main() {
         reinterpret_cast<void*>(&Calloc_nid_no_patch), reinterpret_cast<void*>(&Reallocate_nid_no_patch),
         reinterpret_cast<void*>(&Align_nid_no_patch), reinterpret_cast<void*>(&Realign_nid_no_patch), reinterpret_cast<void*>(&PosixAlign_nid_no_patch)};
     ApplicationHeapRegister_nid_no_patch(api);
+    TestLegacyLayout();
     TestSetHTTPBody();
     TestClearPurposeAndReferrer();
     TestPartitionName();

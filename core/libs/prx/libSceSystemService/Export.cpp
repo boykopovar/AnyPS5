@@ -97,15 +97,12 @@ ConsoleTimeZone HostTimeZone() {
 std::mutex appSuspendBlockMutex;
 int appSuspendBlocks = 0;
 
-int WriteStatus(bool* status, bool value, const char* function) {
-    if (status == nullptr) NotImplemented_nid_no_patch((std::string(function) + " with a null output").c_str());
-    *status = value;
-    return SYSTEM_SERVICE_OK;
-}
-
 int WriteStatusOrRefuse(bool* status, bool value, int nullOutputError) {
     if (status == nullptr) return nullOutputError;
-    if (!GuestCopyOut_nid_no_patch(status, &value, sizeof(value))) return nullOutputError;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return nullOutputError;
     return SYSTEM_SERVICE_OK;
 }
 
@@ -252,8 +249,10 @@ template<typename TValue>
 int AnswerForRunningApp(const std::string& caller, std::int32_t appId, TValue* destination, std::type_identity_t<TValue> value, int nullOutputResult) {
     if (destination == nullptr) return nullOutputResult;
     if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) throw std::runtime_error(caller + ": application other than the running title");
-    *destination = value;
-    return SYSTEM_SERVICE_OK;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return copied ? SYSTEM_SERVICE_OK : nullOutputResult;
 }
 
 int AnswerRunningAppCategoryType(const char* caller, std::int32_t appId, std::uint32_t* categoryType, int nullOutputResult) {
@@ -549,7 +548,7 @@ bool APS5_VABI sceSystemStateMgrIsShellUIShutdownInProgress() {
 }
 
 int APS5_VABI sceShellCoreUtilGetSocialScreenStatus(bool* active) {
-    return WriteStatus(active, false, __func__);
+    return WriteStatusOrRefuse(active, false, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
 }
 
 int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
