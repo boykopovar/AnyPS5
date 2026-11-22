@@ -929,11 +929,27 @@ class Session:
             return bool(self.process_ids())
         try:
             os.killpg(self.process.pid, 0)
-            return True
         except PermissionError:
             return True
         except ProcessLookupError:
             return False
+        return self.process.returncode is None or self.group_running()
+
+    def group_running(self):
+        try:
+            if os.readlink("/proc/self") != str(os.getpid()):
+                return True
+            entries = [entry for entry in os.listdir("/proc") if entry.isdigit()]
+        except OSError:
+            return True
+        for entry in entries:
+            try:
+                state, _, group = Path("/proc", entry, "stat").read_bytes().rpartition(b")")[2].split()[:3]
+                if int(group) == self.process.pid and state not in (b"Z", b"X"):
+                    return True
+            except (OSError, ValueError):
+                pass
+        return False
 
     def image_path(self, handle):
         size = wintypes.DWORD(32768)

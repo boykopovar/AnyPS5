@@ -164,6 +164,9 @@ struct OpaqueJSContext {
     JSContext* qctx = nullptr;
     OpaqueJSValue* globalObject = nullptr;
     JSValue globalExoticInterceptor = JS_UNDEFINED;
+    JSValue dateConstructor = JS_UNDEFINED;
+    JSValue errorConstructor = JS_UNDEFINED;
+    JSValue regExpConstructor = JS_UNDEFINED;
     std::unordered_map<OpaqueJSClass*, OpaqueJSValue*> classPrototypes;
     OpaqueJSValue* unhandledRejectionCallback = nullptr;
     std::vector<std::pair<JSValue, JSValue>> pendingUnhandledRejections;

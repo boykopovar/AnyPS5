@@ -562,6 +562,22 @@ for (const stage of ["picker", "writable"]) {
   });
 }
 
+test("selected batch details follow a language switch", async t => {
+  const { get, workers } = await setup(t, "locale-selected-batch");
+  const names = ["first.zip", "second.zip"];
+  get("file").files = names.map(name => ({ name }));
+  get("file").onchange();
+  await inspect(workers[0], names.length);
+  const rows = () => get("app-list").children.map(row => row.children.map(cell => cell.textContent));
+  assert.equal(get("archive-name").textContent, "2 app ZIPs");
+  assert.deepEqual(rows(), names.map(name => [name, "1 files · 1.0 KiB expanded · 0 modules"]));
+
+  get("locale").onclick();
+  assert.equal(document.documentElement.lang, "de");
+  assert.equal(get("archive-name").textContent, "2 App-ZIPs");
+  assert.deepEqual(rows(), names.map(name => [name, "1 Dateien · 1.0 KiB entpackt · 0 Module"]));
+});
+
 test("a visible error follows a language switch", async t => {
   const { get } = await setup(t, "locale-error", { fetch: async () => ({ ok: false, status: 404 }) });
   assert.equal(get("error").hidden, false);

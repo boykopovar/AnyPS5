@@ -249,15 +249,44 @@ def listed(root):
     return sorted(set(filter(None, output.split("\0"))))
 
 
+def folded_run_lines(lines, content_indent):
+    paragraph = []
+    for line in lines:
+        text = line.lstrip(" ")
+        if text.strip():
+            indent = len(line) - len(text)
+            if content_indent is None:
+                content_indent = indent
+            if indent == content_indent:
+                paragraph.append(text)
+                continue
+        if paragraph:
+            yield " ".join(paragraph)
+            paragraph = []
+        if text.strip():
+            yield line
+    if paragraph:
+        yield " ".join(paragraph)
+
+
 def workflow_run_lines(content):
     parents = []
     step_key_indent = None
     block_indent = None
+    folded = None
+    content_indent = None
     for line in content.splitlines():
         text = line.lstrip()
+        indent = len(line) - len(text)
+        if folded is not None:
+            if not text or indent > block_indent:
+                folded.append(line)
+                continue
+            yield from folded_run_lines(folded, content_indent)
+            folded = None
+            block_indent = None
         if not text or text.startswith("#"):
             continue
-        indent = len(line) - len(text)
         if block_indent is not None:
             if indent > block_indent:
                 yield line
@@ -284,9 +313,15 @@ def workflow_run_lines(content):
         if step and key_indent == step_key_indent and key == "run":
             if value.startswith(("|", ">")):
                 block_indent = key_indent
+                if value.startswith(">"):
+                    folded = []
+                    explicit = re.search(r"[1-9]", value.split()[0])
+                    content_indent = key_indent + int(explicit[0]) if explicit else None
             elif value:
                 yield value
         parents.append((key_indent, key))
+    if folded is not None:
+        yield from folded_run_lines(folded, content_indent)
 
 
 def disabled_properties(command, arguments):

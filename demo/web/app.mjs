@@ -46,6 +46,22 @@ function updateLocaleButton() {
   $("locale").textContent = locale.toUpperCase();
 }
 
+function renderSelection() {
+  const multi = selectedInputs.length > 1;
+  $("archive-name").textContent = multi ? translate(locale, "batchArchiveName", { count: selectedInputs.length }) : selectedInputs[0].name;
+  $("app-list").replaceChildren(...selectedInputs.map((input, index) => {
+    const item = document.createElement("li");
+    const name = document.createElement("strong");
+    name.textContent = input.name;
+    const details = document.createElement("span");
+    const summary = summaries[index];
+    details.textContent = translate(locale, "appListDetails", { files: summary.files, size: bytes(summary.totalBytes), modules: summary.modules });
+    item.append(name, details);
+    return item;
+  }));
+  $("app-list").hidden = !multi;
+}
+
 function update() {
   const target = document.querySelector('input[name="target"]:checked').value;
   const multi = selectedInputs.length > 1;
@@ -216,18 +232,7 @@ async function onMessage({ data }, currentWorker) {
       working = false;
       $("selection").hidden = false;
       $("drop").hidden = true;
-      $("archive-name").textContent = selectedInputs.length > 1 ? translate(locale, "batchArchiveName", { count: selectedInputs.length }) : selectedInputs[0].name;
-      $("app-list").replaceChildren(...selectedInputs.map((input, index) => {
-        const item = document.createElement("li");
-        const name = document.createElement("strong");
-        name.textContent = input.name;
-        const details = document.createElement("span");
-        const summary = summaries[index];
-        details.textContent = translate(locale, "appListDetails", { files: summary.files, size: bytes(summary.totalBytes), modules: summary.modules });
-        item.append(name, details);
-        return item;
-      }));
-      $("app-list").hidden = selectedInputs.length < 2;
+      renderSelection();
       const warningItems = [];
       for (let index = 0; index < summaries.length; index++) {
         for (const message of summaries[index].warnings) {
@@ -459,6 +464,7 @@ $("locale").onclick = () => {
   locale = locales[(index + 1) % locales.length].code;
   setLocale(locale);
   updateLocaleButton();
+  if (inspectionComplete && selectedInputs.length > 1) renderSelection();
   update();
 };
 updateLocaleButton();

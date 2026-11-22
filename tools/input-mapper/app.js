@@ -76,7 +76,9 @@ function renderHelp() {
 function renderImportReport() {
     if (!importReport) return;
     const report = byId('import-report');
-    report.replaceChildren(element('h2', t(importReport.errors.length ? 'importRejected' : 'importRead')));
+    const heading = element('h2', t(importReport.errors.length ? 'importRejected' : 'importRead'));
+    heading.id = 'import-report-title';
+    report.replaceChildren(heading);
     const messages = [...importReport.errors, ...importReport.warnings];
     if (messages.length) {
         const list = element('ul');
