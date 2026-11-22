@@ -28,10 +28,8 @@ JSType APS5_VABI JSValueGetType(JSContextRef ctx, JSValueRef value) {
         return kJSTypeString;
     case JS_TAG_SYMBOL:
         return kJSTypeSymbol;
-    case JS_TAG_OBJECT:
-        return kJSTypeObject;
     default:
-        return kJSTypeUndefined;
+        return kJSTypeObject;
     }
 }
 
@@ -93,7 +91,7 @@ bool APS5_VABI JSValueIsSymbol(JSContextRef ctx, JSValueRef value) {
 }
 
 bool APS5_VABI JSValueIsObject(JSContextRef ctx, JSValueRef value) {
-    return JSValueGetType(ctx, value) == kJSTypeObject;
+    return JSValueGetType(ctx, value) == kJSTypeObject && JS_IsObject(value->qval);
 }
 
 bool APS5_VABI JSValueIsObjectOfClass(JSContextRef ctx, JSValueRef value, JSClassRef jsClass) {
@@ -108,19 +106,7 @@ bool APS5_VABI JSValueIsObjectOfClass(JSContextRef ctx, JSValueRef value, JSClas
 
 bool APS5_VABI JSValueIsArray(JSContextRef ctx, JSValueRef value) {
     if (!ctx || !value || !value->alive || !value->isObjectHandle) return false;
-    JSValue cur = JS_DupValue(ctx->qctx, value->qval);
-    while (JS_IsProxy(cur)) {
-        JSValue next = JS_GetProxyTarget(ctx->qctx, cur);
-        JS_FreeValue(ctx->qctx, cur);
-        if (JS_IsException(next)) {
-            JS_FreeValue(ctx->qctx, JS_GetException(ctx->qctx));
-            return false;
-        }
-        cur = next;
-    }
-    const bool result = JS_IsArray(cur);
-    JS_FreeValue(ctx->qctx, cur);
-    return result;
+    return JS_IsArray(value->qval);
 }
 
 bool APS5_VABI JSValueIsDate(JSContextRef ctx, JSValueRef value) {

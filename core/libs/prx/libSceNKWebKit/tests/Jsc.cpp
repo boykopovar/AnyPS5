@@ -959,6 +959,56 @@ void TestNullValueRefs() {
     JSGlobalContextRelease(ctx);
 }
 
+void TestBigIntAndProxyTypes() {
+    JSGlobalContextRef ctx = JSGlobalContextCreate(nullptr);
+
+    const char* bigSources[] = {"10n", "0n", "-1n", "2n ** 80n", "-(2n ** 200n)"};
+    for (const char* source : bigSources) {
+        JSValueRef big = EvalUtf8(ctx, source);
+        Require(big != nullptr);
+        Require(JSValueGetType(ctx, big) == kJSTypeObject);
+        Require(!JSValueIsUndefined(ctx, big) && !JSValueIsNull(ctx, big) && !JSValueIsBoolean(ctx, big));
+        Require(!JSValueIsNumber(ctx, big) && !JSValueIsString(ctx, big) && !JSValueIsSymbol(ctx, big));
+        Require(!JSValueIsObject(ctx, big) && !JSValueIsArray(ctx, big) && !JSValueIsDate(ctx, big));
+        Require(JSValueGetTypedArrayType(ctx, big, nullptr) == kJSTypedArrayTypeNone);
+    }
+    Require(JSValueToBoolean(ctx, EvalUtf8(ctx, "typeof 10n === 'bigint' && typeof (2n ** 80n) === 'bigint'")));
+
+    JSValueRef boxedBig = EvalUtf8(ctx, "Object(10n)");
+    Require(JSValueGetType(ctx, boxedBig) == kJSTypeObject && JSValueIsObject(ctx, boxedBig));
+    JSValueRef undefVal = EvalUtf8(ctx, "undefined");
+    Require(JSValueGetType(ctx, undefVal) == kJSTypeUndefined && JSValueIsUndefined(ctx, undefVal) && !JSValueIsObject(ctx, undefVal));
+    JSValueRef symVal = EvalUtf8(ctx, "Symbol.iterator");
+    Require(JSValueGetType(ctx, symVal) == kJSTypeSymbol && JSValueIsSymbol(ctx, symVal) && !JSValueIsObject(ctx, symVal));
+    JSValueRef numberObject = EvalUtf8(ctx, "new Number(1)");
+    Require(JSValueGetType(ctx, numberObject) == kJSTypeObject && JSValueIsObject(ctx, numberObject) && !JSValueIsNumber(ctx, numberObject));
+    JSValueRef stringObject = EvalUtf8(ctx, "new String('s')");
+    Require(JSValueGetType(ctx, stringObject) == kJSTypeObject && JSValueIsObject(ctx, stringObject) && !JSValueIsString(ctx, stringObject));
+    JSValueRef functionValue = EvalUtf8(ctx, "(function() {})");
+    Require(JSValueGetType(ctx, functionValue) == kJSTypeObject && JSValueIsObject(ctx, functionValue));
+
+    JSValueRef realArray = EvalUtf8(ctx, "[1, 2]");
+    JSValueRef derivedArray = EvalUtf8(ctx, "new (class extends Array {})(3)");
+    JSValueRef proxiedArray = EvalUtf8(ctx, "new Proxy([1, 2], {})");
+    JSValueRef nestedProxy = EvalUtf8(ctx, "new Proxy(new Proxy([], {}), {})");
+    JSValueRef revokedProxy = EvalUtf8(ctx, "(function() { var r = Proxy.revocable([], {}); r.revoke(); return r.proxy; })()");
+    JSValueRef argumentsObject = EvalUtf8(ctx, "(function() { return arguments; })(1, 2)");
+    JSValueRef typedArray = EvalUtf8(ctx, "new Uint8Array(2)");
+    JSValueRef arrayLike = EvalUtf8(ctx, "({ length: 1, 0: 1 })");
+    Require(realArray != nullptr && derivedArray != nullptr && proxiedArray != nullptr && nestedProxy != nullptr && revokedProxy != nullptr);
+    Require(JSValueIsArray(ctx, realArray) && JSValueIsArray(ctx, derivedArray));
+    Require(!JSValueIsArray(ctx, proxiedArray) && !JSValueIsArray(ctx, nestedProxy) && !JSValueIsArray(ctx, revokedProxy));
+    Require(!JSValueIsArray(ctx, argumentsObject) && !JSValueIsArray(ctx, typedArray) && !JSValueIsArray(ctx, arrayLike));
+    Require(JSValueIsObject(ctx, proxiedArray) && JSValueGetType(ctx, proxiedArray) == kJSTypeObject);
+    Require(JSValueToBoolean(ctx, EvalUtf8(ctx, "Array.isArray(new Proxy([1, 2], {}))")));
+
+    JSValueRef realDate = EvalUtf8(ctx, "new Date(0)");
+    JSValueRef proxiedDate = EvalUtf8(ctx, "new Proxy(new Date(0), {})");
+    Require(JSValueIsDate(ctx, realDate) && !JSValueIsDate(ctx, proxiedDate) && !JSValueIsDate(ctx, realArray));
+
+    JSGlobalContextRelease(ctx);
+}
+
 }  // namespace
 
 int main() {
@@ -969,5 +1019,6 @@ int main() {
     TestTypedArraysAndArrayBuffers();
     TestGcProtectWeakAndWatchdog();
     TestNullValueRefs();
+    TestBigIntAndProxyTypes();
     return 0;
 }
