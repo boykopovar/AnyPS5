@@ -3012,7 +3012,7 @@ void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object* self) {
 }
 void APS5_VABI _ZN3sce4Json6ObjectC1ERKS1_(Object* self, const Object* other) {
     const auto source = LoadGuest<Object>(other, __func__);
-    if (GuestObjectRangesOverlap(self, sizeof(Object), other, sizeof(Object))) NotImplemented_nid_no_patch(__func__);
+    if (GuestObjectRangesOverlap(self, sizeof(Object), other, sizeof(Object))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     RequireGuestObjectWritable<Object>(self, __func__);
     Object copy{};
     CopyObject(copy, source, self, __func__);
@@ -3025,7 +3025,7 @@ void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object* self) {
 Object* APS5_VABI _ZN3sce4Json6ObjectaSERKS1_(Object* self, const Object* other) {
     auto destination = LoadGuest<Object>(self, __func__);
     const auto source = LoadGuest<Object>(other, __func__);
-    if (self != other && GuestObjectRangesOverlap(self, sizeof(Object), other, sizeof(Object))) NotImplemented_nid_no_patch(__func__);
+    if (self != other && GuestObjectRangesOverlap(self, sizeof(Object), other, sizeof(Object))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     RequireGuestObjectWritable<Object>(self, __func__);
     AssignObjectWithTarget(destination, source, self, __func__);
     return self;
@@ -3041,7 +3041,7 @@ Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object* self, const String
 }
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(ObjectIterator* result, const Object* self) {
     const auto object = LoadGuest<Object>(self, __func__);
-    if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object))) NotImplemented_nid_no_patch(__func__);
+    if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     RequireGuestObjectWritable<ObjectIterator>(result, __func__);
     ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
     if (state.state) state.state->position = object.items && object.items->head ? object.items->head->left : nullptr;
@@ -3052,7 +3052,7 @@ ObjectIterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(ObjectIterator* result, c
 }
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object3endEv(ObjectIterator* result, const Object* self) {
     const auto object = LoadGuest<Object>(self, __func__);
-    if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object))) NotImplemented_nid_no_patch(__func__);
+    if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     RequireGuestObjectWritable<ObjectIterator>(result, __func__);
     ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
     if (state.state) state.state->position = object.items ? object.items->head : nullptr;
@@ -3071,7 +3071,6 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEv(ObjectIterator* self)
     const auto iterator = LoadGuest<ObjectIterator>(self, __func__);
     if (iterator.state) {
         auto state = LoadGuest<ObjectIteratorState>(iterator.state, __func__);
-        RequireGuestObjectWritable<ObjectIteratorState>(iterator.state, __func__);
         state.position = NextObjectLink(state.position);
         StoreGuest(iterator.state, state, __func__);
     }
@@ -3099,7 +3098,7 @@ ObjectIterator* APS5_VABI _ZNK3sce4Json6Object4findERKNS0_6StringE(ObjectIterato
     if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object)) ||
         GuestObjectRangesOverlap(result, sizeof(ObjectIterator), key, sizeof(String)) ||
         (loadedKey.text && GuestObjectRangesOverlap(result, sizeof(ObjectIterator), loadedKey.text, sizeof(Text))))
-        NotImplemented_nid_no_patch(__func__);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     RequireGuestObjectWritable<ObjectIterator>(result, __func__);
     ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
     if (state.state) state.state->position = object.items && loadedKey.text ? object.items->Find(Characters(loadedKey)) : nullptr;
@@ -3126,7 +3125,7 @@ void APS5_VABI _ZN3sce4Json6Object8iteratorC1ERKS2_(ObjectIterator* self, const 
     if (source.state) sourceState = LoadGuest<ObjectIteratorState>(source.state, __func__);
     if (GuestObjectRangesOverlap(self, sizeof(ObjectIterator), other, sizeof(ObjectIterator)) ||
         (source.state && GuestObjectRangesOverlap(self, sizeof(ObjectIterator), source.state, sizeof(ObjectIteratorState))))
-        NotImplemented_nid_no_patch(__func__);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     RequireGuestObjectWritable<ObjectIterator>(self, __func__);
     ScopedObjectIteratorState state(source.state ? static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))) : nullptr);
     if (state.state) *state.state = sourceState;
@@ -3138,7 +3137,6 @@ void APS5_VABI _ZN3sce4Json6Object8iterator7advanceEm(ObjectIterator* self, std:
     if (iterator.state) {
         auto state = LoadGuest<ObjectIteratorState>(iterator.state, __func__);
         if (!count) return;
-        RequireGuestObjectWritable<ObjectIteratorState>(iterator.state, __func__);
         while (count--) state.position = NextObjectLink(state.position);
         StoreGuest(iterator.state, state, __func__);
     }
@@ -3546,7 +3544,7 @@ void APS5_VABI _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(Pair* self
         (loadedKey.text && GuestObjectRangesOverlap(self, sizeof(Pair), loadedKey.text, sizeof(Text))) ||
         (loadedValue.type >= TypeString && loadedValue.type <= TypeObject && loadedValue.payload != 0 &&
             GuestObjectRangesOverlap(self, sizeof(Pair), reinterpret_cast<const void*>(loadedValue.payload), sizeof(void*))))
-        NotImplemented_nid_no_patch(__func__);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     RequireGuestObjectWritable<Pair>(self, __func__);
     String builtKey{};
     Construct(builtKey, loadedKey);
@@ -3570,7 +3568,7 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator
     if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object)) ||
         GuestObjectRangesOverlap(result, sizeof(ObjectIterator), pair, sizeof(Pair)) ||
         (loadedPair.key.text && GuestObjectRangesOverlap(result, sizeof(ObjectIterator), loadedPair.key.text, sizeof(Text))))
-        NotImplemented_nid_no_patch(__func__);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     RequireGuestObjectWritable<ObjectIterator>(result, __func__);
     ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
     if (state.state) state.state->position = nullptr;
@@ -3648,7 +3646,7 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratoraSERKS2_(ObjectIterator* s
     if (source.state) sourceState = LoadGuest<ObjectIteratorState>(source.state, __func__);
     if ((self != other && GuestObjectRangesOverlap(self, sizeof(ObjectIterator), other, sizeof(ObjectIterator))) ||
         (source.state && GuestObjectRangesOverlap(self, sizeof(ObjectIterator), source.state, sizeof(ObjectIteratorState))))
-        NotImplemented_nid_no_patch(__func__);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     if (destination.state) {
         if (source.state && sourceState.position) {
             RequireGuestObjectWritable<ObjectIteratorState>(destination.state, __func__);
