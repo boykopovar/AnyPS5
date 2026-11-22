@@ -69,28 +69,14 @@ int main() {
     Require(phys2 >= 0);
     Require(sceKernelReleaseToolMemory(phys2, page * 4) == 0);
 
-    bool rangeThrew = false;
-    try {
-        sceKernelGetToolMemoryRange(0x15, &start, &end);
-    } catch (const std::runtime_error&) {
-        rangeThrew = true;
+    for (const std::int32_t partition : {std::int32_t{0x15}, std::int32_t{-1}, std::int32_t{0}}) {
+        Require(sceKernelGetToolMemoryRange(partition, &start, &end) == 0);
+        Require(start == 0 && end == size);
+        int64_t extraPhys = -1;
+        Require(sceKernelAllocateToolMemory(partition, 0, size, page, 0, 0, &extraPhys) == 0);
+        Require(extraPhys >= 0 && (extraPhys % static_cast<int64_t>(page)) == 0);
+        Require(sceKernelReleaseToolMemory(extraPhys, page) == 0);
     }
-    Require(rangeThrew);
-    bool allocThrew = false;
-    try {
-        int64_t badPhys = 0;
-        sceKernelAllocateToolMemory(0x15, 0, size, page, 0, 0, &badPhys);
-    } catch (const std::runtime_error&) {
-        allocThrew = true;
-    }
-    Require(allocThrew);
-    bool negativeThrew = false;
-    try {
-        sceKernelGetToolMemoryRange(-1, &start, &end);
-    } catch (const std::runtime_error&) {
-        negativeThrew = true;
-    }
-    Require(negativeThrew);
 
     Require(sceKernelReleaseToolMemory(phys2, page * 4) == 0);
     Require(sceKernelReleaseToolMemory(phys2, page * 4) == 0);
