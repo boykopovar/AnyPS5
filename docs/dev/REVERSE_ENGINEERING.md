@@ -19,7 +19,7 @@ one settles, and how to cite it.
 
 When sources disagree, say so in the pull request and in the debt entry.
 
-[prosper](https://github.com/mattias800/prosper)'s console oracle has published such measurements for libSceRtc, libc, libSceHttp, libSceNet, libSceUserService, libkernel and libSceAgc's packet builders. `python3 tools/library-oracle/library_oracle.py` replays them against the built modules, after `cmake --build build --target library_oracle_replay`: it downloads the measurements from a pinned commit, checks their digest and fails on a result that is not in [known.tsv](../../tools/library-oracle/known.tsv). A pull request that fixes a listed case removes its line, and one that adds a difference explains it there.
+[prosper](https://github.com/mattias800/prosper)'s console oracle has published such measurements for libSceRtc, libc, libSceHttp, libSceNet, libSceUserService, libkernel and libSceAgc's packet builders. `python3 tools/library-oracle/library_oracle.py` replays them against the built modules, after `cmake --build build --target library_oracle_replay libs`, which builds the replay executable and the unpatched modules it loads from `build/core/libs/libs/unpatched`: it downloads the measurements from a pinned commit, checks their digest and fails on a result that is not in [known.tsv](../../tools/library-oracle/known.tsv). A pull request that fixes a listed case removes its line, and one that adds a difference explains it there.
 
 ## Public source baselines
 
