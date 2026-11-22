@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <nid/NidCompute.hpp>
 #include <array>
 #include <barrier>
@@ -117,7 +118,7 @@ static void Check(Fetch<TValue> fetch, const std::string& operation) {
 
 int main(int argc, char** argv) {
     Require(argc == 5, "library directory, patched or unpatched, operation, width");
-    const auto path = std::filesystem::absolute(argv[1]) / "libc.prx";
+    const auto path = std::filesystem::absolute(ArgumentPath(argv, 1)) / "libc.prx";
     const std::string operation = argv[3];
     const int width = std::atoi(argv[4]);
     Require(operation == "add" || operation == "and" || operation == "or" || operation == "xor", "operation");
