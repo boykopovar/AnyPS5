@@ -2,7 +2,7 @@
 
 ## change [256-bit integer lowering]
 
-- [256-bit integer lowering](../../../core/relinker/codegen/src/x86/LaneSplitLowering.cpp) under `--to-avx` does not cover variable shifts, VPBLENDVB, VMPSADBW, VPMOVMSKB or masked moves, and each covered instruction runs about ten times slower than on an AVX2 host. It runs the lane-local integer instructions listed in `_shape` as two VEX.128 halves: VEXTRACTF128 into scratch YMM registers saved in a 224-byte frame below the red zone, the 128-bit form per half, then VINSERTF128; RFLAGS is not written. The execution test compares each split with the 128-bit instruction on each half, with aliasing, the other YMM registers and the red zone checked; memory sources are decoded but not executed.
+- [256-bit integer lowering](../../../core/relinker/codegen/src/x86/LaneSplitLowering.cpp) under `--to-avx` does not cover variable shifts or masked moves, and each covered instruction runs about ten times slower than on an AVX2 host. It runs the lane-local integer instructions listed in `_shape` as two VEX.128 halves: VEXTRACTF128 into scratch YMM registers saved in a frame below the red zone, the 128-bit form per half, then VINSERTF128; VPMOVMSKB joins its two 16-bit masks through that frame. RFLAGS is not written. VPMOVMSKB with a memory operand or a VEX.vvvv other than 1111b, and VPBLENDVB with VEX.W set, are left in place. The execution test compares each split with the 128-bit instruction on each half, or with the SDM result for VPBLENDVB, VMPSADBW and VPMOVMSKB, with aliasing, the other YMM registers and the red zone checked; memory sources are decoded but not executed, except one in the red zone, and VPMOVMSKB is not run with RDI as its destination.
 
 ## add Functional
 
