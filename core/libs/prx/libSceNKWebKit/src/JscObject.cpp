@@ -35,6 +35,23 @@ OpaqueJSClass* ObjectClass(const CallbackObjectData* data) {
     return data->isDirectConstructor ? nullptr : data->jsClass;
 }
 
+JSValue OrdinaryToPrimitive(JSContext* qctx, JSValueConst object, bool preferString) {
+    static constexpr const char* names[] {"toString", "valueOf"};
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        JSValue method = JS_GetPropertyStr(qctx, object, names[preferString ? attempt : 1 - attempt]);
+        if (JS_IsException(method)) return method;
+        if (!JS_IsFunction(qctx, method)) {
+            JS_FreeValue(qctx, method);
+            continue;
+        }
+        JSValue result = JS_Call(qctx, method, object, 0, nullptr);
+        JS_FreeValue(qctx, method);
+        if (JS_IsException(result) || !JS_IsObject(result)) return result;
+        JS_FreeValue(qctx, result);
+    }
+    return JS_ThrowTypeError(qctx, "No default value");
+}
+
 JSValue ToPrimitiveClosure(JSContext* qctx, JSValueConst thisVal, int argc, JSValueConst* argv, int magic, void* opaque) {
     (void)magic;
     auto* data = static_cast<CallbackObjectData*>(opaque);
@@ -61,11 +78,12 @@ JSValue ToPrimitiveClosure(JSContext* qctx, JSValueConst thisVal, int argc, JSVa
                 return JS_Throw(qctx, JS_DupValue(qctx, exc->qval));
             }
             if (res && res->alive) {
+                if (JS_IsObject(res->qval)) return OrdinaryToPrimitive(qctx, res->qval, hint == kJSTypeString);
                 return JS_DupValue(qctx, res->qval);
             }
         }
     }
-    return JS_UNDEFINED;
+    return OrdinaryToPrimitive(qctx, targetHandle->qval, hint == kJSTypeString);
 }
 
 JSValue HasInstanceClosure(JSContext* qctx, JSValueConst thisVal, int argc, JSValueConst* argv, int magic, void* opaque) {
@@ -163,7 +181,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
             return 1;
         }
     } else if (prop == group->hasInstanceAtom) {
-        if (ObjectClass(data) && ObjectClass(data)->HasInstanceCallback()) {
+        if (ObjectClass(data)) {
             if (desc) {
                 desc->flags = JS_PROP_CONFIGURABLE;
                 desc->value = JS_NewCClosure(qctx, &HasInstanceClosure, "[Symbol.hasInstance]", nullptr, 1, 0, data);
@@ -242,10 +260,6 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
             }
 
             if (const StaticValueEntry* sv = cls->FindStaticValue(propUtf8)) {
-                if (!desc) {
-                    if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
-                    return 1;
-                }
                 for (OpaqueJSClass* svCls = cls; svCls; svCls = svCls->parentClass) {
                     if (const StaticValueEntry* entry = svCls->FindStaticValue(propUtf8)) {
                         if (entry->getProperty) {
@@ -258,10 +272,12 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                             }
                             if (val && val->alive) {
                                 if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
-                                desc->flags = ToQuickJsPropFlags(sv->attributes);
-                                desc->value = JS_DupValue(qctx, val->qval);
-                                desc->getter = JS_UNDEFINED;
-                                desc->setter = JS_UNDEFINED;
+                                if (desc) {
+                                    desc->flags = ToQuickJsPropFlags(sv->attributes);
+                                    desc->value = JS_DupValue(qctx, val->qval);
+                                    desc->getter = JS_UNDEFINED;
+                                    desc->setter = JS_UNDEFINED;
+                                }
                                 return 1;
                             }
                         }
@@ -752,7 +768,8 @@ JSValue CallbackClassCall(JSContext* qctx, JSValueConst funcObj, JSValueConst th
             if (exc) {
                 return JS_Throw(qctx, JS_DupValue(qctx, exc->qval));
             }
-            if (!res || !res->alive) return JS_UNDEFINED;
+            if (!res) return JS_NULL;
+            if (!res->alive) return JS_UNDEFINED;
             return JS_DupValue(qctx, res->qval);
         }
     }
