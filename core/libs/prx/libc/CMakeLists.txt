@@ -191,6 +191,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareAtomics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareInternals.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxNextPrime.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxSharedControl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxSort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
