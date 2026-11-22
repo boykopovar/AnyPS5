@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -111,6 +112,7 @@ int main() {
                 if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
                 std::printf("%u-fragment 2D MSAA resinfo skipped, the device lacks %u-sample color attachments\n", 1u << log2Fragments, 1u << log2Fragments);
             }
+            AgcDriver::Graphics::RetireResidentImagesOver_nid_no_patch(reinterpret_cast<std::uintptr_t>(Texels.data()), Texels.size());
         }
         std::puts("image resinfo dimension tests passed");
         return 0;
