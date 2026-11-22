@@ -8,6 +8,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
+from functools import cache
 from pathlib import Path, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -132,22 +133,22 @@ def entries(build):
     return compilation_database(result.stdout, "ninja -t compdb", skip_empty_commands=True)
 
 
-def entry_key(entry, root):
-    directory = real(entry["directory"])
+def entry_key(entry, root, resolve=real):
     source = Path(entry["file"])
     if not source.is_absolute():
-        source = directory / source
-    source = real(source)
+        source = resolve(entry["directory"]) / source
+    source = resolve(os.fspath(source))
     try:
-        return source.relative_to(real(root)).as_posix()
+        return source.relative_to(resolve(os.fspath(root))).as_posix()
     except ValueError:
         return source.as_posix()
 
 
 def index(build, root):
+    resolve = cache(real)
     commands = {}
     for entry in entries(build):
-        commands.setdefault(entry_key(entry, root), []).append(entry)
+        commands.setdefault(entry_key(entry, root, resolve), []).append(entry)
     return commands
 
 
