@@ -52,7 +52,10 @@ struct Variant {
     FieldPatch setDst;
     FieldPatch setCachePolicy;
     std::uint8_t maxDst;
+    bool addressReportsInvalidPacket;
 };
+
+constexpr int InvalidPacket = static_cast<int>(0x8a6c000cu);
 
 std::uint32_t* build(Packet& packet, const Variant& variant, const Fields& fields) {
     return variant.writer(&packet.buffer, fields.dst, fields.cachePolicy, fields.address, Payload.data(), static_cast<std::uint32_t>(Payload.size()), 1, fields.writeConfirm);
@@ -94,7 +97,13 @@ void testVariant(const Variant& variant) {
 
     std::array<std::uint32_t, 8> nop{0xc0021000u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
     const auto nopBefore = nop;
-    expectFailure([&] { variant.setAddress(nop.data(), Address); });
+    if (variant.addressReportsInvalidPacket) {
+        check(variant.setAddress(nop.data(), Address) == InvalidPacket, "address patch of another packet did not report an invalid packet");
+        check(variant.setAddress(nop.data(), Address + 2) == InvalidPacket, "address patch of another packet checked the address before the packet");
+        check(variant.setAddress(nop.data() + 1, Address) == InvalidPacket, "address patch of a packet body did not report an invalid packet");
+    } else {
+        expectFailure([&] { variant.setAddress(nop.data(), Address); });
+    }
     expectFailure([&] { variant.setDst(nop.data(), 5); });
     expectFailure([&] { variant.setCachePolicy(nop.data(), 1); });
     check(nop == nopBefore, "patch of another packet modified it");
@@ -121,8 +130,8 @@ void testAddressAlignment() {
 int main() {
     try {
         testAddressAlignment();
-        testVariant({sceAgcDcbWriteData, sceAgcWriteDataPatchSetAddressOrOffset, sceAgcWriteDataPatchSetDst, sceAgcWriteDataPatchSetCachePolicy, 0x1f});
-        testVariant({sceAgcAcbWriteData, sceAgcAsyncWriteDataPatchSetAddressOrOffset, sceAgcAsyncWriteDataPatchSetDst, sceAgcAsyncWriteDataPatchSetCachePolicy, 0xf});
+        testVariant({sceAgcDcbWriteData, sceAgcWriteDataPatchSetAddressOrOffset, sceAgcWriteDataPatchSetDst, sceAgcWriteDataPatchSetCachePolicy, 0x1f, true});
+        testVariant({sceAgcAcbWriteData, sceAgcAsyncWriteDataPatchSetAddressOrOffset, sceAgcAsyncWriteDataPatchSetDst, sceAgcAsyncWriteDataPatchSetCachePolicy, 0xf, false});
         std::puts("AGC write data patch tests passed");
         return 0;
     } catch (const std::exception& error) {

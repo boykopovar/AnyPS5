@@ -95,6 +95,16 @@ BACKTICKS = re.compile(r"`+")
 INLINE = re.compile(BACKSLASH_ESCAPE.pattern + r"|`+")
 SECTION = re.compile(r"^###(?!#)\s*(.+?)\s*$", re.M)
 KEY = re.compile(r"^( *)([A-Za-z0-9_-]+|'[^']*'|\"[^\"]*\"):(?:\s+(.*?))?\s*$")
+_NON_CODE_TRIGGER = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|["\']')
+_STRING_TAIL = re.compile(r'"(?:\\[\s\S]|[^"\\])*"')
+_CHAR_TAIL = re.compile(r"'(?:\\[\s\S]|[^'\\])*'")
+_RAW_HEAD = re.compile(r'"(?P<delim>[^\s()\\]{0,16})\(')
+_NUM_TAIL = re.compile(r"[A-Za-z0-9_.']*")
+_NUMERIC_START = re.compile(r"[0-9]|\.[0-9]")
+_ASCII_IDENT = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_")
+_NUM_PREFIX_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.'")
+_QUOTE_PREFIX_ENDS = frozenset("uULR8")
+_NON_NEWLINE = re.compile(r"[^\n]+")
 
 
 
@@ -138,7 +148,18 @@ class Check:
         self.blobs = {}
         self.heading_cache = {}
         self.tree = set(self.modes)
-        self.dirs = {str(parent) for path in self.tree for parent in PurePosixPath(path).parents}
+        dirs = {"."} if self.tree else set()
+        for path in self.tree:
+            slash = path.rfind("/")
+            while slash != -1:
+                parent = path[:slash] or "/"
+                if parent in dirs:
+                    break
+                dirs.add(parent)
+                if slash == 0:
+                    break
+                slash = parent.rfind("/")
+        self.dirs = dirs
         diff = ("--find-renames", "-l0", "--no-relative", "--ignore-submodules=none", self.base, head)
         statuses = iter(git("diff", "--name-status", "-z", *diff).split("\0")[:-1])
         for status in statuses:
@@ -164,9 +185,15 @@ class Check:
             elif path and number is not None and line.startswith("+"):
                 self.added[path].append((number, line[1:]))
                 number += 1
-        self.read([path for path in sorted(self.tree) if is_debt(path) or is_debt_fragment(path)] +
+        needs_debt = any(
+            (path.startswith("core/libs/prx/") and os.path.splitext(path)[1] in CPP)
+            or is_debt(path) or is_debt_fragment(path)
+            for path in self.status
+        )
+        debt_paths = [path for path in sorted(self.tree) if is_debt(path) or is_debt_fragment(path)] if needs_debt else []
+        self.read(debt_paths +
                   [path for path, (added, _) in self.numstat.items() if self.status.get(path) != "D" and added != "-" and
-                   not path.startswith("3rdparty/") and PurePosixPath(path).suffix.lower() not in IMAGES])
+                   not path.startswith("3rdparty/") and os.path.splitext(path)[1].lower() not in IMAGES])
 
     def changes_debt(self):
         return any(is_debt(path) or is_debt_fragment(path) for path in self.status)
@@ -206,31 +233,36 @@ class Check:
         return self.heading_cache[path]
 
     def code(self):
-        debt = [entry for path in sorted(self.tree) if is_debt(path) for entry in silent_stub_debt(self.show(path), path)]
+        debt = None
         exports = {}
         unknowns, symbols = [], []
         for path, lines in self.files(lambda p: p.suffix in CPP):
-            core = path.startswith("core/") and "tests" not in PurePosixPath(path).parts
-            source = self.show(path).split("\n")
-            expanded = expand_abi_aliases(cpp_text("\n".join(source))).split("\n")
-            masked = cpp_text("\n".join(source), preserve_comments=True).split("\n")
-            assembly = asm_exports("\n".join(source)) if core and path.startswith("core/libs/prx/") else {}
+            core = path.startswith("core/") and "/tests/" not in f"/{path}/"
+            raw = self.show(path)
+            source = raw.split("\n")
+            stripped = cpp_text(raw)
+            expanded = expand_abi_aliases(stripped).split("\n")
+            masked = cpp_text(raw, preserve_comments=True).split("\n")
+            assembly = asm_exports(raw) if core and path.startswith("core/libs/prx/") else {}
             constants, starts = None, None
             for number, text in lines:
                 bare = masked[number - 1]
                 if ("//" in bare or "/*" in bare) and not ALLOWED_COMMENT.match(bare) and not license_run(source, expanded, number - 1):
                     self.report("comment", path, number)
-                if EXTENSION.search(bare):
-                    self.report("extension", path, number, EXTENSION.search(bare).group(0))
+                ext = EXTENSION.search(bare)
+                if ext:
+                    self.report("extension", path, number, ext.group(0))
                 if "alignas" in bare:
                     if constants is None:
-                        constants = named_constants(cpp_text("\n".join(source)))
+                        constants = named_constants(stripped)
                         starts = list(itertools.accumulate((len(line) + 1 for line in masked), initial=0))
                     alignment = over_aligned(bare, constants, starts[number - 1])
                     if alignment:
                         self.report("alignment", path, number, alignment)
-                if core and TITLE.search(text):
-                    self.report("title-specific", path, number, TITLE.search(text).group(0))
+                if core:
+                    title = TITLE.search(text)
+                    if title:
+                        self.report("title-specific", path, number, title.group(0))
                 bare = expanded[number - 1]
                 if core and path.startswith("core/libs/prx/"):
                     unknowns.extend((nid, name, path, number) for nid, name in source_aliases(text) if "unknown" in name.lower())
@@ -243,8 +275,12 @@ class Check:
                     if body is None:
                         continue
                     exports[match.group(1)] = (path, number)
-                    if match.group(1).startswith("sce") and STUB_BODY.match(body) and not listed(debt, match.group(1), path):
-                        self.report("silent-stub", path, number, match.group(1))
+                    if match.group(1).startswith("sce") and STUB_BODY.match(body):
+                        if debt is None:
+                            debt = [entry for debt_path in sorted(self.tree) if is_debt(debt_path)
+                                    for entry in silent_stub_debt(self.show(debt_path), debt_path)]
+                        if not listed(debt, match.group(1), path):
+                            self.report("silent-stub", path, number, match.group(1))
         self.duplicates(exports)
         self.unknown_nids(unknowns, symbols)
         for path, lines in self.files(lambda p: p.suffix in (".py", ".cmake") or p.name == "CMakeLists.txt"):
@@ -262,11 +298,18 @@ class Check:
         if not exports:
             return
         paths = sorted(path for path in self.objects if path.startswith("core/libs/prx/") and
-                       "tests" not in PurePosixPath(path).parts)
+                       "/tests/" not in f"/{path}/")
         self.read(paths)
+        export_names = tuple(exports)
+        use_substring = len(export_names) <= 32
         for path in paths:
             text = self.show(path)
-            if "APS5_VABI" not in text and "ASM_FUNCTION" not in text or exports.keys().isdisjoint(re.findall(r"\w+", text)):
+            if "APS5_VABI" not in text and "ASM_FUNCTION" not in text:
+                continue
+            if use_substring:
+                if not any(name in text for name in export_names):
+                    continue
+            elif exports.keys().isdisjoint(re.findall(r"\w+", text)):
                 continue
             source = expand_abi_aliases(cpp_text(text)).split("\n")
             assembly = asm_exports(text)
@@ -284,14 +327,22 @@ class Check:
             return
         result = subprocess.run(["git", "grep", "--no-color", "-InE", "--full-name", NID_SOURCES, self.head, "--", ":(top)core/libs/prx"], capture_output=True, encoding="utf-8", errors="replace")
         tree_unknowns, tree_symbols = defaultdict(list), defaultdict(list)
-        for path, number, text in (line.split(":", 3)[1:] for line in filter(None, result.stdout.split("\n"))):
-            if "tests" in PurePosixPath(path).parts or PurePosixPath(path).suffix not in CPP:
+        need_symbols = bool(unknowns)
+        for line in result.stdout.split("\n"):
+            if not line:
                 continue
-            for nid, name in source_aliases(text):
-                if "unknown" in name.lower():
-                    tree_unknowns[nid].append(f"{name} at {path}:{number}")
-            for symbol in nid_symbols(text) if unknowns else ():
-                tree_symbols[symbol_nid(symbol)].append(f"{symbol} at {path}:{number}")
+            if not need_symbols and "unknown" not in line.lower():
+                continue
+            path, number, text = line.split(":", 3)[1:]
+            if "/tests/" in f"/{path}/" or os.path.splitext(path)[1] not in CPP:
+                continue
+            if "unknown" in text.lower():
+                for nid, name in source_aliases(text):
+                    if "unknown" in name.lower():
+                        tree_unknowns[nid].append(f"{name} at {path}:{number}")
+            if need_symbols:
+                for symbol in nid_symbols(text):
+                    tree_symbols[symbol_nid(symbol)].append(f"{symbol} at {path}:{number}")
         for nid, name, path, number in unknowns:
             if tree_symbols[nid]:
                 self.report("unknown-nid", path, number, f"{nid} ({name}) is {tree_symbols[nid][0]}")
@@ -327,9 +378,10 @@ class Check:
             return
         for path, lines in self.files(lambda p: p.suffix in ASSEMBLY):
             preprocessed = PurePosixPath(path).suffix == ".S"
-            source = self.show(path).split("\n")
-            expanded = cpp_text("\n".join(source)).split("\n")
-            masked = cpp_text("\n".join(source), preserve_comments=True).split("\n")
+            raw = self.show(path)
+            source = raw.split("\n")
+            expanded = cpp_text(raw).split("\n")
+            masked = cpp_text(raw, preserve_comments=True).split("\n")
             directives = set()
             for number, text in enumerate(masked, 1):
                 if preprocessed and (DIRECTIVE.match(text) or (number - 1 in directives and masked[number - 2].rstrip().endswith("\\"))):
@@ -497,12 +549,17 @@ class Check:
                     removed.update(match.group("name") for _, match in env_reference.line_reads(line[1:]))
             elif line.startswith("+++ b/"):
                 path = line[6:].removesuffix("\t")
-        result = subprocess.run(["git", "grep", "--no-color", "-nF", "--full-name", "-e", "APS5_", "-e", "ANYPS5_",
-                                 self.head, "--", ":(top)core"],
-                                capture_output=True, encoding="utf-8", errors="replace")
+        if not added and not removed and not dropped:
+            return
         reads = set()
-        for line in result.stdout.split("\n"):
-            reads.update(match.group("name") for _, match in env_reference.line_reads(line))
+        need_reads = sorted(removed | dropped)
+        if need_reads:
+            patterns = [arg for name in need_reads for arg in ("-e", name)] if len(need_reads) <= 64 else ["-e", "APS5_", "-e", "ANYPS5_"]
+            result = subprocess.run(["git", "grep", "--no-color", "-nF", "--full-name", *patterns,
+                                     self.head, "--", ":(top)core"],
+                                    capture_output=True, encoding="utf-8", errors="replace")
+            for line in result.stdout.split("\n"):
+                reads.update(match.group("name") for _, match in env_reference.line_reads(line))
         pattern = env_reference.documented_pattern(env_reference.PREFIXES)
         documented = set(pattern.findall(self.show(doc))) if doc in self.tree else set()
         if git("ls-tree", "--full-tree", "--name-only", self.target, "--", doc).strip() == doc:
@@ -855,15 +912,123 @@ def cmake_comments(text):
     return lines
 
 
+def _blank_span(raw):
+    return _NON_NEWLINE.sub(lambda match: " " * (match.end() - match.start()), raw) if "\n" in raw else " " * len(raw)
+
+
+def _numeric_token_end(text, pos, floor):
+    if pos <= floor or text[pos - 1] not in _NUM_PREFIX_CHARS:
+        return None
+    newline = text.rfind("\n", floor, pos)
+    cursor = floor if newline < 0 else newline + 1
+    while cursor < pos:
+        ch = text[cursor]
+        if ch in _ASCII_IDENT and not ("0" <= ch <= "9"):
+            cursor += 1
+            while cursor < pos and text[cursor] in _ASCII_IDENT:
+                cursor += 1
+            continue
+        if _NUMERIC_START.match(text, cursor):
+            end = _NUM_TAIL.match(text, cursor + 1).end()
+            if end >= pos:
+                return end
+            cursor = end
+            continue
+        cursor += 1
+    return None
+
+
+def _prefix_start(text, quote_pos, floor, raw):
+    prefix_end = quote_pos - 1 if raw else quote_pos
+    if raw and (prefix_end < floor or text[prefix_end] != "R"):
+        return None
+    if prefix_end > floor and text[prefix_end - 1] in _ASCII_IDENT:
+        if prefix_end >= floor + 2 and text[prefix_end - 2:prefix_end] == "u8":
+            start = prefix_end - 2
+            if start == floor or text[start - 1] not in _ASCII_IDENT:
+                return start
+        elif text[prefix_end - 1] in ("u", "U", "L"):
+            start = prefix_end - 1
+            if start == floor or text[start - 1] not in _ASCII_IDENT:
+                return start
+        return None if raw else quote_pos
+    return prefix_end
+
+
 def cpp_mask(match, preserve_comments=False):
     if match.group("code") is not None or preserve_comments and match.group("comment") is not None:
         return match.group()
-    blank = re.sub(r"[^\n]", " ", match.group())
+    blank = _blank_span(match.group())
     return blank if match.group("comment") is not None else '""' + blank[2:]
 
 
 def cpp_text(text, preserve_comments=False):
-    return CPP_TOKEN.sub(lambda match: cpp_mask(match, preserve_comments), text)
+    if "/" not in text and '"' not in text and "'" not in text:
+        return text
+    out = []
+    pos = 0
+    length = len(text)
+    search = _NON_CODE_TRIGGER.search
+    while pos < length:
+        match = search(text, pos)
+        if match is None:
+            out.append(text[pos:])
+            break
+        start = match.start()
+        ch = text[start]
+        if ch == "/":
+            end = match.end()
+            if preserve_comments:
+                out.append(text[pos:end])
+            else:
+                out.append(text[pos:start])
+                out.append(_blank_span(text[start:end]))
+            pos = end
+            continue
+        if ch == "'":
+            num_end = _numeric_token_end(text, start, pos)
+            if num_end is not None and num_end > start:
+                out.append(text[pos:num_end])
+                pos = num_end
+                continue
+            token_start = start if num_end == start else _prefix_start(text, start, pos, False)
+            if token_start is not None:
+                char_match = _CHAR_TAIL.match(text, start)
+                if char_match is not None:
+                    end = char_match.end()
+                    out.append(text[pos:token_start])
+                    out.append('""' + _blank_span(text[token_start:end])[2:])
+                    pos = end
+                    continue
+            out.append(text[pos:start + 1])
+            pos = start + 1
+            continue
+        num_end = _numeric_token_end(text, start, pos) if start > pos and text[start - 1] in _QUOTE_PREFIX_ENDS else None
+        if num_end != start:
+            raw_start = _prefix_start(text, start, pos, True)
+            if raw_start is not None:
+                raw_head = _RAW_HEAD.match(text, start)
+                if raw_head is not None:
+                    closing = ")" + raw_head.group("delim") + '"'
+                    close_pos = text.find(closing, raw_head.end())
+                    if close_pos != -1:
+                        end = close_pos + len(closing)
+                        out.append(text[pos:raw_start])
+                        out.append('""' + _blank_span(text[raw_start:end])[2:])
+                        pos = end
+                        continue
+        token_start = start if num_end == start else _prefix_start(text, start, pos, False)
+        if token_start is not None:
+            str_match = _STRING_TAIL.match(text, start)
+            if str_match is not None:
+                end = str_match.end()
+                out.append(text[pos:token_start])
+                out.append('""' + _blank_span(text[token_start:end])[2:])
+                pos = end
+                continue
+        out.append(text[pos:start + 1])
+        pos = start + 1
+    return "".join(out)
 
 
 def license_run(source, expanded, index):

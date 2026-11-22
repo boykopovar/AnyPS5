@@ -8,6 +8,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
+from functools import cache
 from pathlib import Path, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -76,9 +77,18 @@ def validate_arguments(arguments):
         raise ValueError("arguments must be a nonempty list of strings with an executable")
 
 
+def _unique_compilation_object(pairs):
+    record = {}
+    for key, value in pairs:
+        if key in record:
+            raise ValueError(f"duplicate compilation database JSON key {key!r}")
+        record[key] = value
+    return record
+
+
 def compilation_database(text, source, skip_empty_commands=False):
     try:
-        database = json.loads(text)
+        database = json.loads(text, object_pairs_hook=_unique_compilation_object)
     except RecursionError as error:
         raise ValueError(f"{source}: compilation database is nested too deeply") from error
     if not isinstance(database, list):
@@ -104,6 +114,13 @@ def compilation_database(text, source, skip_empty_commands=False):
             raise ValueError(f"{context}: expected arguments or command")
         elif not isinstance(entry["command"], str) or not entry["command"].strip():
             raise ValueError(f"{context}: command must be a nonempty string")
+        values = [entry["directory"], entry["file"]]
+        if "arguments" in entry:
+            values.extend(entry["arguments"])
+        else:
+            values.append(entry["command"])
+        if any("\0" in value for value in values):
+            raise ValueError(f"{context}: NUL byte in compilation command fields")
         commands.append(entry)
     return commands
 
@@ -123,22 +140,22 @@ def entries(build):
     return compilation_database(result.stdout, "ninja -t compdb", skip_empty_commands=True)
 
 
-def entry_key(entry, root):
-    directory = real(entry["directory"])
+def entry_key(entry, root, resolve=real):
     source = Path(entry["file"])
     if not source.is_absolute():
-        source = directory / source
-    source = real(source)
+        source = resolve(entry["directory"]) / source
+    source = resolve(os.fspath(source))
     try:
-        return source.relative_to(real(root)).as_posix()
+        return source.relative_to(resolve(os.fspath(root))).as_posix()
     except ValueError:
         return source.as_posix()
 
 
 def index(build, root):
+    resolve = cache(real)
     commands = {}
     for entry in entries(build):
-        commands.setdefault(entry_key(entry, root), []).append(entry)
+        commands.setdefault(entry_key(entry, root, resolve), []).append(entry)
     return commands
 
 

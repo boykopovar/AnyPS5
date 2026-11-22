@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_TEXTURE_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_TEXTURE_HPP
 
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
@@ -29,6 +30,18 @@ namespace AgcDriver::Graphics {
 class Buffer;
 class ResidentColor;
 class CommandBatch;
+class FlushExclusion {
+public:
+    FlushExclusion();
+    ~FlushExclusion();
+    FlushExclusion(const FlushExclusion&) = delete;
+    FlushExclusion& operator=(const FlushExclusion&) = delete;
+    static bool SelectionExcludedForTest();
+
+private:
+    std::unique_lock<GuestMemory::GpuMutexType> gpu;
+};
+
 class StorageTexture;
 struct HostImportCopy;
 
@@ -343,6 +356,7 @@ public:
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     static bool UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static void SetPublishHookForTest(void (*hook)());
+    static void SetFlushSelectedHookForTest(void (*hook)());
     static void SetPendingHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
     static constexpr std::uint64_t OccasionalStoreBytes = 1024 * 1024;
@@ -362,6 +376,7 @@ public:
     // Whether an image with results pending, or one a FlushPending is storing right now, overlaps
     // any of the [begin, end) ranges: one acquisition of the registry's mutex.
     static bool AnyPendingOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    static void AppendPendingRanges(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
     static bool AnyPendingUnitsOverlap(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static bool AnyLiveOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static std::uint64_t StampKeepingNewerResults(std::uint64_t address, std::size_t bytes, std::uint64_t recorded, const std::function<std::uint64_t()>& stamp);
@@ -577,6 +592,7 @@ public:
     // was still current (nothing uploaded).
     // Keeps the image current with guest memory (see GuestMemory::CollectWrites).
     bool Refresh();
+    bool ChangedOutsideWatch() const;
     bool RefreshLayers(std::uint32_t first, std::uint32_t count);
     static void SetRefreshUnchangedHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
     inline static std::atomic<std::uint64_t> epochRefreshes{0};
@@ -627,6 +643,7 @@ private:
     };
     static const char* BaselineMissText(BaselineMiss miss);
     BaselineMiss baselineMiss(std::uint32_t unit) const;
+    bool unitChangedOutsideWatch(std::uint32_t unit) const;
     std::array<std::uint64_t, 2> unitContentHash(std::uint32_t unit) const;
     void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
     void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
@@ -670,7 +687,7 @@ private:
     void releaseUnheldOriginal();
     // Lets the batches holding the saves of the units `layers` selects (every unit for none) complete.
     void awaitStoredSave(const std::vector<bool>* layers);
-    bool guestBytesSettled() const;
+    bool unitSettled(std::uint32_t unit) const;
     // Tracked units as 64 KiB write-stamp blocks (`blockUnits`: a thin tiled surface at a 64 KiB
     // aligned base; APS5_NO_BLOCK_TRACKING=1 tracks array layers as above instead): a fill of one
     // layer, a CPU write or another image's store then costs the blocks it touched, moved through
@@ -962,6 +979,9 @@ private:
     std::atomic<bool> writtenOccasionally{false};
     std::uint64_t version = 0;
     std::uint64_t writes = 0;
+    std::uint64_t zeroForgetMarks = 0;
+    std::uint64_t zeroForgetBegin = 0;
+    std::uint64_t zeroForgetEnd = 0;
     // `original` holds the guest bytes; false after a GPU-side clear, which never read them.
     std::vector<bool> layerOriginal;
     std::map<std::uint64_t, std::uint64_t> keptAtUnwatch;
