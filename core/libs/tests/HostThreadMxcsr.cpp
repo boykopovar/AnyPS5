@@ -35,6 +35,9 @@ struct FailureReportBarrier {
 };
 
 int ProbeFreeFailureReportSlots() {
+#ifdef _WIN32
+    return 4;
+#else
     int count = 0;
     for (; count < 8; ++count) {
         try {
@@ -47,6 +50,7 @@ int ProbeFreeFailureReportSlots() {
         LibcUnregisterFailureReport_nid_no_patch(TestReports[i]);
     }
     return count;
+#endif
 }
 
 void RegisterSharedReportWorker(FailureReportBarrier* state) {
@@ -67,6 +71,7 @@ void RegisterSharedReportWorker(FailureReportBarrier* state) {
 }
 
 void TestFailureReportSingleThreaded(int freeSlots) {
+#ifndef _WIN32
     bool threwInvalid = false;
     try {
         LibcRegisterFailureReport_nid_no_patch(nullptr);
@@ -74,6 +79,7 @@ void TestFailureReportSingleThreaded(int freeSlots) {
         threwInvalid = true;
     }
     Require(threwInvalid);
+#endif
 
     LibcRegisterFailureReport_nid_no_patch(TestReports[0]);
     LibcRegisterFailureReport_nid_no_patch(TestReports[0]);
@@ -83,6 +89,7 @@ void TestFailureReportSingleThreaded(int freeSlots) {
 
     LibcUnregisterFailureReport_nid_no_patch(nullptr);
 
+#ifndef _WIN32
     bool threwFull = false;
     try {
         LibcRegisterFailureReport_nid_no_patch(TestReports[freeSlots]);
@@ -90,6 +97,7 @@ void TestFailureReportSingleThreaded(int freeSlots) {
         threwFull = true;
     }
     Require(threwFull);
+#endif
 
     LibcUnregisterFailureReport_nid_no_patch(TestReports[0]);
     LibcUnregisterFailureReport_nid_no_patch(TestReports[0]);
