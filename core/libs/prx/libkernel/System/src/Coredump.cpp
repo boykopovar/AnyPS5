@@ -24,6 +24,10 @@ static bool validUserFileFlags(std::uint32_t userValue) {
     return coredumpSdkVersion.load(std::memory_order_relaxed) < 0x06500000 || (userValue & 0xc0000000u) != 0x40000000u;
 }
 
+static int userFileResult() {
+    return g_coredumpHandler.load(std::memory_order_relaxed) ? SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER : 0;
+}
+
 extern "C" {
 
 int APS5_VABI sceCoredumpRegisterCoredumpHandler(uint64_t handler, size_t stack_size, uint64_t context) {
@@ -54,8 +58,8 @@ int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_
 int APS5_VABI sceCoredumpAttachUserFile(std::uint32_t userValue, const char* path) {
     if (!path || !validUserFileFlags(userValue)) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
     std::string guestPath;
-    if (CopyGuestPath_nid_no_patch(path, guestPath) != 0) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
-    return SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER;
+    if (const int copied = CopyGuestPath_nid_no_patch(path, guestPath); copied != 0 && copied != 63) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
+    return userFileResult();
 }
 
 int APS5_VABI sceCoredumpGetStopInfoGpu_Agc(void* info, size_t size) {
@@ -67,7 +71,7 @@ int APS5_VABI sceCoredumpGetStopInfoGpu_Agc(void* info, size_t size) {
 int APS5_VABI sceCoredumpAttachMemoryRegionAsUserFile(std::uint32_t userValue, const void* mem, std::int32_t size, const char* name) {
     (void)mem;
     if (!name || !validUserFileFlags(userValue)) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
-    return size < 0 ? 0 : SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER;
+    return size < 0 ? 0 : userFileResult();
 }
 
 int APS5_VABI sceCoredumpSetUserDataType(std::int32_t type) {

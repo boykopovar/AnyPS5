@@ -35,7 +35,7 @@ int main() {
         Buffer arguments(context, 4096, usage);
         const auto commands = recorder->Commands();
         const auto before = recorder->EncoderCounts();
-        const std::array<std::uint32_t, 7> rules{};
+        const std::array<std::uint32_t, 8> rules{};
         bool recorded = false;
         {
             Recorder::EncodingWindow window(*recorder);
