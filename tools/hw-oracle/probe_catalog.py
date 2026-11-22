@@ -135,10 +135,10 @@ def validate_probe(probe, index):
 def read_catalog(path=DEFAULT_CATALOG):
     try:
         raw = Path(path).read_bytes()
-        catalog = json.loads(raw.decode("utf-8-sig"))
+        catalog = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=compare_results.unique_object)
     except RecursionError as error:
         raise ValueError(f"{path}: catalog is nested too deeply") from error
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    except (OSError, ValueError) as error:
         raise ValueError(f"{path}: cannot read probe catalog: {error}") from error
     if not isinstance(catalog, dict) or set(catalog) != CATALOG_KEYS:
         raise ValueError(f"{path}: expected an object with schema_version and probes")

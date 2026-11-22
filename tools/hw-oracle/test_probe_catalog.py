@@ -78,6 +78,22 @@ class CatalogLoadingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "duplicate probe id"):
                 probe_catalog.read_catalog(path)
 
+    def test_catalog_refuses_duplicate_fields_before_validating_probes(self):
+        catalog = json.dumps(self.catalog)
+        cases = (
+            ('{"schema_version": 2, ' + catalog[1:], "schema_version"),
+            (catalog.replace('"wave_size": ', '"wave_size": 42, "wave_size": ', 1), "wave_size"),
+            (catalog.replace('"ieee": ', '"ieee": 42, "ieee": ', 1), "ieee"),
+            (catalog.replace('"input": ', '"input": [], "input": ', 1), "input"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "catalog"
+            for payload, key in cases:
+                with self.subTest(key=key):
+                    path.write_text(payload, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, f"catalog:.*duplicate JSON field '{key}'"):
+                        probe_catalog.read_catalog(path)
+
     def test_probe_ids_and_catalog_shape_are_restricted(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "catalog"
