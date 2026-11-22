@@ -199,6 +199,10 @@ public:
     bool containsAnyFormControls = false;
     bool isFocused = false;
     bool hasOpener = false;
+    bool allowsFollowingLink = true;
+    bool shouldCloseOnWebView = true;
+    std::optional<std::u16string> accessibleName;
+    std::optional<std::u16string> textDirection;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
