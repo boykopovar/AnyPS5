@@ -9,6 +9,7 @@
 // https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/uresbund.cpp
 
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
+#include "prx/libSceIcu/ResourceBundleBackend.hpp"
 #include "prx/libc/include/General.hpp"
 #include "unicode/ustring.h"
 #include <cerrno>
@@ -191,6 +192,19 @@ const char* ToUtf8(const std::vector<char16_t>& units, char* dest, std::int32_t*
     return dest + offset;
 }
 
+std::optional<const char*> OwnedUtf8(const UResourceBundle* bundle, IcuResourceBundle::StringLookup lookup, const char* key,
+    std::int32_t index, char* dest, std::int32_t* length, std::int8_t forceCopy, std::int32_t* status,
+    std::int32_t currentStatus, int savedErrno, const char* caller) {
+    std::vector<char16_t> units;
+    auto after = currentStatus;
+    const bool owned = IcuResourceBundle::CopyOwnedString_nid_no_patch(bundle, lookup, key, index, units, after);
+    errno = savedErrno;
+    if (!owned) return std::nullopt;
+    if (after != currentStatus) CopyOut(status, &after, sizeof(after), savedErrno, caller);
+    if (after > 0) return nullptr;
+    return ToUtf8(units, dest, length, forceCopy, status, savedErrno, caller);
+}
+
 }
 
 extern "C" {
@@ -203,6 +217,8 @@ const char* APS5_VABI ures_getUTF8String_nid_postfix(const UResourceBundle* resB
     CopyIn(&currentStatus, status, sizeof(currentStatus), savedErrno, __func__);
     if (currentStatus > 0) return nullptr;
     if (!resB) return Fail(status, IllegalArgument, savedErrno, __func__);
+    if (const auto owned = OwnedUtf8(resB, IcuResourceBundle::StringLookup::Direct, nullptr, 0, dest, length, forceCopy,
+                                     status, currentStatus, savedErrno, __func__)) return *owned;
 
     std::uint32_t resource;
     CopyIn(&resource, reinterpret_cast<const std::uint8_t*>(resB) + Icu68ResourceOffset, sizeof(resource), savedErrno,
@@ -226,6 +242,8 @@ const char* APS5_VABI ures_getUTF8StringByIndex_nid_postfix(const UResourceBundl
     CopyIn(&currentStatus, status, sizeof(currentStatus), savedErrno, __func__);
     if (currentStatus > 0) return nullptr;
     if (!resB) return Fail(status, IllegalArgument, savedErrno, __func__);
+    if (const auto owned = OwnedUtf8(resB, IcuResourceBundle::StringLookup::Index, nullptr, index, dest, length, forceCopy,
+                                     status, currentStatus, savedErrno, __func__)) return *owned;
 
     std::int32_t size = 0;
     CopyIn(&size, reinterpret_cast<const std::uint8_t*>(resB) + Icu68SizeOffset, sizeof(size), savedErrno, __func__);
@@ -260,6 +278,8 @@ const char* APS5_VABI ures_getUTF8StringByKey_nid_postfix(const UResourceBundle*
     CopyIn(&currentStatus, status, sizeof(currentStatus), savedErrno, __func__);
     if (currentStatus > 0) return nullptr;
     if (!resB) return Fail(status, IllegalArgument, savedErrno, __func__);
+    if (const auto owned = OwnedUtf8(resB, IcuResourceBundle::StringLookup::Key, key, 0, dest, length, forceCopy,
+                                     status, currentStatus, savedErrno, __func__)) return *owned;
 
     std::uint32_t resource;
     CopyIn(&resource, reinterpret_cast<const std::uint8_t*>(resB) + Icu68ResourceOffset, sizeof(resource), savedErrno,

@@ -1,11 +1,26 @@
 #pragma once
 #include <cstdint>
+#include <optional>
+#include <vector>
+
+struct UResourceBundle;
+
+namespace IcuResourceBundle {
+
+enum class StringLookup { Direct, Key, Index };
+
+std::optional<bool> OwnedHasNext_nid_no_patch(const UResourceBundle*);
+bool CopyOwnedString_nid_no_patch(const UResourceBundle*, StringLookup, const char*, std::int32_t,
+                                 std::vector<char16_t>&, std::int32_t&);
+
+} // namespace IcuResourceBundle
 
 namespace IcuResourceBackend {
 
 void* Open_nid_no_patch(const char*, const char*, bool, std::int32_t*);
 void Close_nid_no_patch(void*);
 void* Child_nid_no_patch(const void*, const char*, std::int32_t, bool, void*, std::int32_t*);
+bool HasNext_nid_no_patch(const void*);
 std::int32_t Size_nid_no_patch(const void*);
 std::int32_t Type_nid_no_patch(const void*);
 const char* Key_nid_no_patch(const void*);

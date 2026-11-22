@@ -146,8 +146,17 @@ void Interoperability() {
     length = 0;
     result = ures_getUTF8String_nid_postfix(greeting.guest, nullptr, &length, 1, &status);
     Require(!result && status == 15 && length == expected.size(), "owned UTF-8 preflight returns the byte count");
+    status = 0;
+    length = buffer.size();
+    result = ures_getUTF8StringByKey_nid_postfix(root.guest, "missing", buffer.data(), &length, 1, &status);
+    Require(!result && status == 2 && length == buffer.size(), "missing owned key leaves capacity intact");
+    status = 0;
+    result = ures_getUTF8StringByKey_nid_postfix(values.guest, nullptr, buffer.data(), &length, 1, &status);
+    Require(!result && status == 17, "owned type mismatch precedes keyed lookup");
     auto* closed = greeting.guest;
     greeting.Close();
+    Require(!ures_getUTF8String_nid_postfix(closed, nullptr, nullptr, 0, &status) && status == 17,
+            "incoming error precedes closed bundle lookup");
     Refuses([&] { ures_hasNext_nid_postfix(closed); });
     status = 0;
     Refuses([&] { ures_getUTF8String_nid_postfix(closed, nullptr, nullptr, 0, &status); });

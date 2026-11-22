@@ -1,3 +1,4 @@
+#include "prx/libSceIcu/ResourceBundleBackend.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 #include "prx/libSceIcu/DefaultLocaleName.hpp"
@@ -164,6 +165,7 @@ int APS5_VABI _ZN6icu_686UStackC1ER10UErrorCode_nid_postfix() {
 
 std::int8_t APS5_VABI ures_hasNext_nid_postfix(const UResourceBundle* resourceBundle) {
     if (!resourceBundle) return 0;
+    if (const auto owned = IcuResourceBundle::OwnedHasNext_nid_no_patch(resourceBundle)) return *owned;
     const auto base = reinterpret_cast<std::uintptr_t>(resourceBundle);
     constexpr auto offset = offsetof(UResourceBundle, fIndex);
     if (base > std::numeric_limits<std::uintptr_t>::max() - offset) NotImplemented_nid_no_patch(__func__);

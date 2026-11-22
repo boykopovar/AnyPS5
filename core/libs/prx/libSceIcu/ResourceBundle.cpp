@@ -233,6 +233,52 @@ const Character* Data(const UResourceBundle* handle, std::int32_t* length, std::
 
 } // namespace
 
+namespace IcuResourceBundle {
+
+std::optional<bool> OwnedHasNext_nid_no_patch(const UResourceBundle* handle) {
+    bool known;
+    const auto owner = Optional(handle, &known);
+    if (!known) return std::nullopt;
+    if (!owner) NotImplemented_nid_no_patch(__func__);
+    const std::lock_guard lock(owner->mutex);
+    return IcuResourceBackend::HasNext_nid_no_patch(owner->native.get());
+}
+
+bool CopyOwnedString_nid_no_patch(const UResourceBundle* handle, StringLookup lookup, const char* key,
+                                 std::int32_t index, std::vector<char16_t>& units, std::int32_t& status) {
+    bool known;
+    const auto owner = Optional(handle, &known);
+    if (!known) return false;
+    if (!owner) NotImplemented_nid_no_patch(__func__);
+    const std::lock_guard lock(owner->mutex);
+    try {
+        std::string input;
+        if (lookup == StringLookup::Key) {
+            if (IcuResourceBackend::Type_nid_no_patch(owner->native.get()) != 2) {
+                status = ResourceTypeMismatch;
+                return true;
+            }
+            if (!key) {
+                status = 2;
+                return true;
+            }
+            const int savedErrno = errno;
+            const int error = CopyGuestString_nid_no_patch(key, 0x10000, input);
+            errno = savedErrno;
+            if (error != 0) NotImplemented_nid_no_patch(__func__);
+        }
+        std::int32_t size = 0;
+        const auto* text = IcuResourceBackend::String_nid_no_patch(owner->native.get(), static_cast<int>(lookup),
+            lookup == StringLookup::Key ? input.c_str() : nullptr, index, &size, &status);
+        if (text && size > 0) units.assign(text, text + size);
+    } catch (const std::bad_alloc&) {
+        status = 7;
+    }
+    return true;
+}
+
+} // namespace IcuResourceBundle
+
 extern "C" {
 
 UResourceBundle* APS5_VABI ures_open(const char* path, const char* name, std::int32_t* status) {
