@@ -1,3 +1,26 @@
+/* The test vectors are adapted for AnyPS5 from Project Wycheproof,
+ * testvectors_v1/rsa_pss_2048_sha256_mgf1_32_params_test.json,
+ * rsa_pss_2048_sha256_mgf1_0_params_test.json at commit 65ca494727a52944c204441c860b039e6786b99b
+ * (https://github.com/C2SP/wycheproof/tree/65ca494727a52944c204441c860b039e6786b99b/testvectors_v1).
+ * Altered: all 211 tests of both files are run through EVP_PKEY_verify with PSS padding and the
+ * listed salt length; valid tests must verify and invalid tests must not. The files have no
+ * acceptable tests.
+ *
+ * Copyright 2016-2026 The Wycheproof Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyContext.hpp"
 #include "prx/libSceLibreSsl3/include/RsaCrypto.hpp"
