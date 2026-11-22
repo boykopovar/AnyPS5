@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "prx/libSceLibcInternal/include/ErrExports.hpp"
+#include "prx/libSceLibcInternal/include/FacetConstruction.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -28,6 +29,7 @@ extern std::int32_t _ZNSt6locale2id7_Id_cntE_nid_postfix;
 extern std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix;
 }
 
 namespace {
@@ -799,6 +801,139 @@ GuestLocale::InputIterator APS5_VABI CharNumGetBool(const GuestLocale::Facet*, G
     return ToGuestIterator(inFirst);
 }
 
+std::u16string TakeWidePunctString(GuestLocale::String* (APS5_VABI *method)(GuestLocale::String*, const GuestLocale::WideNumpunctFacet*), const GuestLocale::Facet* facet) {
+    constexpr std::size_t WideInlineCapacity = 7;
+    GuestLocale::String value{};
+    method(&value, reinterpret_cast<const GuestLocale::WideNumpunctFacet*>(facet));
+    struct Guard {
+        GuestLocale::String& ref;
+        bool onHeap;
+        ~Guard() {
+            if (onHeap) GuestStringStorage::Deallocate(ref.pointer, (ref.capacity + 1) * sizeof(std::uint16_t));
+        }
+    } guard{value, value.capacity > WideInlineCapacity};
+    std::u16string text(value.size, u'\0');
+    std::memcpy(text.data(), guard.onHeap ? value.pointer : value.buffer, value.size * sizeof(std::uint16_t));
+    return text;
+}
+
+GuestLocale::InputIterator APS5_VABI WideNumGetBool(const GuestLocale::Facet*, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, bool* value) {
+    ValidateNumGetArgs(stream, state, value);
+    auto inFirst = FromGuestIterator<std::uint16_t>(first);
+    auto inLast = FromGuestIterator<std::uint16_t>(last);
+
+    if ((stream->flags & IosBoolAlpha) == 0) {
+        char digits[MaxIntDigits];
+        const auto parsed = ParseIntField(digits, inFirst, inLast, stream);
+        if (parsed.base < 0) {
+            *value = false;
+            *state = IosFailBit;
+        } else {
+            char* end = nullptr;
+            int error = 0;
+            int& guestErrno = *__error_nid_postfix();
+            const int savedErrno = guestErrno;
+            const std::int64_t parsedValue = _Stolx_nid_postfix(digits, &end, parsed.base, &error);
+            guestErrno = savedErrno;
+
+            if (parsed.badGrouping || end == digits || error != 0) {
+                *value = true;
+                *state = IosFailBit;
+            } else {
+                *value = parsedValue != 0;
+                if (parsedValue < 0 || parsedValue > 1) *state = IosFailBit;
+            }
+        }
+    } else {
+        const GuestLocale::Facet* punct = FindFacet(stream, _ZNSt8numpunctIwE2idE_nid_postfix);
+        if (punct == nullptr) throw std::invalid_argument("num_get::do_get(bool): missing numpunct facet");
+
+        const auto& vtable = *reinterpret_cast<const GuestLocale::WideNumpunctVtable*>(punct->vtable);
+        const std::u16string falseName = TakeWidePunctString(vtable.falsename, punct);
+        const std::u16string trueName = TakeWidePunctString(vtable.truename, punct);
+
+        std::size_t falseOffset = 0;
+        std::size_t trueOffset = 0;
+        bool falsePossible = true;
+        bool truePossible = true;
+
+        while (!InputEnded(inFirst, inLast)) {
+            const std::uint16_t character = PeekChar(inFirst);
+            const bool falseMatches =
+                falsePossible &&
+                falseOffset < falseName.size() &&
+                static_cast<std::uint16_t>(falseName[falseOffset]) == character;
+            const bool trueMatches =
+                truePossible &&
+                trueOffset < trueName.size() &&
+                static_cast<std::uint16_t>(trueName[trueOffset]) == character;
+
+            if (!falseMatches && !trueMatches) break;
+
+            falsePossible = falseMatches;
+            truePossible = trueMatches;
+            if (falseMatches) ++falseOffset;
+            if (trueMatches) ++trueOffset;
+            AdvanceChar(inFirst);
+
+            const bool falseComplete = falsePossible && falseOffset == falseName.size();
+            const bool trueComplete = truePossible && trueOffset == trueName.size();
+            const bool falseContinues = falsePossible && falseOffset < falseName.size();
+            const bool trueContinues = truePossible && trueOffset < trueName.size();
+
+            if ((falseComplete || trueComplete) && !falseContinues && !trueContinues) break;
+        }
+
+        const bool falseMatch = falsePossible && falseOffset == falseName.size();
+        const bool trueMatch = truePossible && trueOffset == trueName.size();
+
+        *value = trueMatch && !falseMatch;
+        if (falseMatch == trueMatch) *state = IosFailBit;
+    }
+
+    if (InputEnded(inFirst, inLast)) *state |= IosEofBit;
+    return ToGuestIterator(inFirst);
+}
+
+template<typename TChar>
+GuestLocale::InputIterator DoGetPointer(GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, void** value) {
+    ValidateNumGetArgs(stream, state, value);
+    auto inFirst = FromGuestIterator<TChar>(first);
+    auto inLast = FromGuestIterator<TChar>(last);
+    GuestLocale::IosBase hexadecimal = *stream;
+    hexadecimal.flags = IosHex;
+    char ac[MaxIntDigits];
+    const auto parsed = ParseIntField(ac, inFirst, inLast, &hexadecimal);
+    if (parsed.base < 0 || parsed.badGrouping) ac[0] = '\0';
+    const int base = parsed.base < 0 ? ~parsed.base : parsed.base;
+    char* ep = nullptr;
+    int err = 0;
+    int& guestErrno = *__error_nid_postfix();
+    const int savedErrno = guestErrno;
+    const std::uint64_t result = _Stoullx_nid_postfix(ac, &ep, base, &err);
+    guestErrno = savedErrno;
+    if (InputEnded(inFirst, inLast)) *state |= IosEofBit;
+    if (ep == ac || err != 0) *state |= IosFailBit;
+    *value = reinterpret_cast<void*>(static_cast<std::uintptr_t>(result));
+    return ToGuestIterator(inFirst);
+}
+
+template<typename TChar>
+int GetIntegerFieldExport(char* digits, GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::int32_t basefield, const GuestLocaleFacade* locale) {
+    if (digits == nullptr || first == nullptr || last == nullptr || locale == nullptr || locale->implementation == nullptr) {
+        throw std::invalid_argument("num_get::_Getifld: null argument");
+    }
+    GuestLocale::IosBase view{};
+    view.locale = const_cast<GuestLocale::Implementation**>(&locale->implementation);
+    view.flags = basefield;
+    auto inFirst = FromGuestIterator<TChar>(*first);
+    auto inLast = FromGuestIterator<TChar>(*last);
+    const auto parsed = ParseIntField(digits, inFirst, inLast, &view);
+    *first = ToGuestIterator(inFirst);
+    if (parsed.base < 0 || parsed.badGrouping) *digits = '\0';
+    return parsed.base < 0 ? ~parsed.base : parsed.base;
+}
+
 GuestLocale::InputIterator APS5_VABI UnimplementedCharNumGetPointer(const GuestLocale::Facet*, GuestLocale::InputIterator, GuestLocale::InputIterator, GuestLocale::IosBase*, std::int32_t*, void**) {
     NotImplemented_nid_no_patch("_ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERPv_nid_postfix");
 }
@@ -1009,6 +1144,30 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt7num_getIwSt19istreambuf_iteratorIwSt
 
 int APS5_VABI _ZNKSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE8_GetffldEPcRS3_S6_RSt8ios_basePi_nid_postfix(const GuestLocale::Facet*, char* digits, GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, GuestLocale::IosBase* stream, std::int32_t* hexExp) {
     return GetFloatingFieldExport<std::uint16_t>(digits, first, last, stream, hexExp);
+}
+
+const GuestLocale::FacetVtable* LibcInternalCharNumGetVtable_nid_no_patch() {
+    return &g_charNumGetVtable.facet;
+}
+
+GuestLocale::InputIterator APS5_VABI _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERb_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, bool* value) {
+    return CharNumGetBool(self, first, last, stream, state, value);
+}
+
+GuestLocale::InputIterator APS5_VABI _ZNKSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERb_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, bool* value) {
+    return WideNumGetBool(self, first, last, stream, state, value);
+}
+
+GuestLocale::InputIterator APS5_VABI _ZNKSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERPv_nid_postfix(const GuestLocale::Facet*, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, void** value) {
+    return DoGetPointer<std::uint16_t>(first, last, stream, state, value);
+}
+
+int APS5_VABI _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE8_GetifldEPcRS3_S6_NSt5_IosbIiE9_FmtflagsERKSt6locale_nid_postfix(const GuestLocale::Facet*, char* digits, GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::int32_t basefield, const GuestLocaleFacade* locale) {
+    return GetIntegerFieldExport<char>(digits, first, last, basefield, locale);
+}
+
+int APS5_VABI _ZNKSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE8_GetifldEPcRS3_S6_NSt5_IosbIiE9_FmtflagsERKSt6locale_nid_postfix(const GuestLocale::Facet*, char* digits, GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::int32_t basefield, const GuestLocaleFacade* locale) {
+    return GetIntegerFieldExport<std::uint16_t>(digits, first, last, basefield, locale);
 }
 
 std::size_t APS5_VABI _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {

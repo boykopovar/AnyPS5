@@ -640,6 +640,70 @@ void CheckWideBoundaryAndFailures() {
 
 }
 
+String MakeNarrowHeap(const char* text, std::size_t capacity) {
+    const std::size_t size = std::strlen(text);
+    Require(capacity > GuestLocale::StringInlineCapacity && size <= capacity, "narrow heap setup has a valid capacity");
+    String string{};
+    string.reserved = Allocator;
+    string.size = size;
+    string.capacity = capacity;
+    string.pointer = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
+    std::memcpy(string.pointer, text, size + 1);
+    return string;
+}
+
+void ReleaseNarrow(String& string) {
+    if (string.capacity > GuestLocale::StringInlineCapacity) {
+        GuestStringStorage::Deallocate(string.pointer, string.capacity + 1);
+        string.pointer = nullptr;
+        string.capacity = GuestLocale::StringInlineCapacity;
+        string.size = 0;
+    }
+}
+
+void CheckNarrowCopy() {
+    String fromInline = Make("abcde");
+    const long inlineLive = live;
+    _ZNSs5_CopyEmm_nid_postfix(&fromInline, 16, 5);
+    Require(Holds(fromInline, "abcde") && fromInline.capacity == 31 && live == inlineLive + 1,
+        "narrow _Copy moves an inline string to a heap buffer rounded up to thirty-one bytes");
+    ReleaseNarrow(fromInline);
+
+    const char* text = "ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJK";
+    String geometric = MakeNarrowHeap(text, 63);
+    const long geometricLive = live;
+    _ZNSs5_CopyEmm_nid_postfix(&geometric, 64, 63);
+    Require(Holds(geometric, text) && geometric.capacity == 94 && live == geometricLive,
+        "narrow _Copy grows by half the old capacity and releases the old buffer");
+    ReleaseNarrow(geometric);
+
+    String kept = MakeNarrowHeap("0123456789", 31);
+    _ZNSs5_CopyEmm_nid_postfix(&kept, 40, 4);
+    Require(Holds(kept, "0123") && kept.capacity == 47, "narrow _Copy keeps only the requested length and terminates it");
+    ReleaseNarrow(kept);
+
+    String retried = MakeNarrowHeap("0123456789", 31);
+    const long retriedLive = live;
+    failedAllocations = 1;
+    lastAllocationSize = 0;
+    _ZNSs5_CopyEmm_nid_postfix(&retried, 40, 10);
+    Require(failedAllocations == 0 && lastAllocationSize == 41 && Holds(retried, "0123456789") && retried.capacity == 40 && live == retriedLive,
+        "narrow _Copy retries a failed allocation at the requested size");
+    ReleaseNarrow(retried);
+
+    String failed = MakeNarrowHeap("0123456789", 31);
+    const long failedLive = live;
+    failedAllocations = 2;
+    bool caughtBadAlloc = false;
+    try {
+        _ZNSs5_CopyEmm_nid_postfix(&failed, 40, 10);
+    } catch (const std::bad_alloc&) {
+        caughtBadAlloc = true;
+    }
+    Require(caughtBadAlloc && failedAllocations == 0 && Holds(failed, "") && failed.capacity == GuestLocale::StringInlineCapacity && live == failedLive - 1,
+        "narrow _Copy discards the storage and rethrows when the retry fails too");
+}
+
 int main() {
     const std::array<void*, 10> api{
         reinterpret_cast<void*>(&TestAllocate), reinterpret_cast<void*>(&TestFree),
@@ -661,6 +725,7 @@ int main() {
     CheckWideCapacityAndAliases();
     CheckWideBoundaryAndFailures();
     CheckWideCopy();
+    CheckNarrowCopy();
     Require(live == before, "every string allocation is released");
     std::puts("libc internal basic_string: ok");
     return 0;
