@@ -31,6 +31,11 @@ int main() {
         {{0xd7640002u, 0x00020300u}, RdnaOpcode::VBcntU32B32, "VOP3 v_bcnt_u32_b32"},
         {{0xd7650002u, 0x00020300u}, RdnaOpcode::VMbcntLoU32B32, "VOP3 v_mbcnt_lo_u32_b32"},
         {{0xd7660002u, 0x00020300u}, RdnaOpcode::VMbcntHiU32B32, "VOP3 v_mbcnt_hi_u32_b32"},
+        {{0xd52b0002u, 0x80020300u}, RdnaOpcode::VMacF32, "VOP3 v_fmac_f32 with a negated accumulator"},
+        {{0xd52b0402u, 0x00020300u}, RdnaOpcode::VMacF32, "VOP3 v_fmac_f32 with an absolute accumulator"},
+        {{0xd51f0002u, 0x60020300u}, RdnaOpcode::VMacF32, "VOP3 v_mac_f32 with negated sources"},
+        {{0xd5368302u, 0x68020300u}, RdnaOpcode::VFmacF16, "VOP3 v_fmac_f16 with source modifiers, clamp and mul:2"},
+        {{0xd5360402u, 0x80020300u}, RdnaOpcode::VFmacF16, "VOP3 v_fmac_f16 with accumulator modifiers"},
     };
     const std::vector<Refused> refused{
         {{0x2a040300u}, "VOP2 opcode is not implemented", "VOP2 opcode 0x15"},
@@ -48,6 +53,9 @@ int main() {
         {{0xd5370002u, 0x00020300u}, "VOP3 opcode is not implemented", "VOP3 opcode 0x137"},
         {{0xd5380002u, 0x00020300u}, "VOP3 opcode is not implemented", "VOP3 opcode 0x138"},
         {{0xd53c0002u, 0x00020300u}, "VOP3 opcode is not implemented", "VOP3 opcode 0x13c"},
+        {{0xd51f0002u, 0x80020300u}, "VOP3 source modifiers are not implemented", "VOP3 v_mac_f32 with a negated accumulator"},
+        {{0xd5060402u, 0x00020300u}, "VOP3 source modifiers are not implemented", "VOP3 opcode 0x106 with an absolute accumulator"},
+        {{0xd5360802u, 0x00020300u}, "VOP3 source modifiers are not implemented", "VOP3 v_fmac_f16 with op_sel"},
     };
     int failures = 0;
     for (const auto& test : accepted) {
@@ -77,6 +85,18 @@ int main() {
             std::fprintf(stderr, "%s was not refused\n", test.name);
             ++failures;
         }
+    }
+    try {
+        const std::vector<std::uint32_t> code{0xd52b0402u, 0x80020300u, 0xbf810000u};
+        const auto decoded = RdnaInstructionDecoder{}.Decode(code);
+        const RdnaInstruction& fmac = decoded.instructions.at(0);
+        if (!fmac.source2.absolute || !fmac.source2.negate || fmac.source0.absolute || fmac.source0.negate || fmac.source1.absolute || fmac.source1.negate) {
+            std::fprintf(stderr, "VOP3 v_fmac_f32 does not carry only its accumulator modifiers\n");
+            ++failures;
+        }
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "VOP3 v_fmac_f32 with accumulator modifiers was refused: %s\n", error.what());
+        ++failures;
     }
     return failures == 0 ? 0 : 1;
 }

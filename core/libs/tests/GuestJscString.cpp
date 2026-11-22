@@ -178,6 +178,14 @@ static void NullText() {
     Require(!JSStringIsEqualToUTF8CString(nullptr, ""));
     Require(JSStringIsEqualToUTF8CString(nullText, "\xC0\x80"));
     Require(!JSStringIsEqualToUTF8CString(nullText, ""));
+    const char* const unmapped = reinterpret_cast<const char*>(0x10);
+    auto* unmappedText = JSStringCreateWithUTF8CString_nid_postfix(unmapped);
+    Require(JSStringGetLength_nid_postfix(unmappedText) == 0 && JSStringGetCharactersPtr_nid_postfix(unmappedText) == nullptr);
+    Require(!JSStringIsEqualToUTF8CString(text, unmapped));
+    auto* unmappedChars = JSStringCreateWithCharacters_nid_postfix(reinterpret_cast<const std::uint16_t*>(0x10), 10);
+    Require(JSStringGetLength_nid_postfix(unmappedChars) == 0 && JSStringGetCharactersPtr_nid_postfix(unmappedChars) == nullptr);
+    JSStringRelease_nid_postfix(unmappedText);
+    JSStringRelease_nid_postfix(unmappedChars);
     for (auto* string : {nullText, malformed, nullCharacters, empty, emptyCharacters, text}) JSStringRelease_nid_postfix(string);
 }
 

@@ -278,6 +278,8 @@ Args ParseArgs(int argc, char* argv[]) {
         throw std::runtime_error("--linux-fixed-base cannot be used with --windows or --macos");
     if (args.linuxFixedBase && args.lazyBinding)
         throw std::runtime_error("--linux-fixed-base conflicts with --lazy-binding");
+    if (args.omitUnavailableDependencies && (args.toWindows || args.toMacos))
+        throw std::runtime_error("--omit-unavailable-dependencies cannot be used with --windows or --macos");
     if (args.macosFixedBase && !args.toMacos)
         throw std::runtime_error("--macos-fixed-base requires --macos");
 

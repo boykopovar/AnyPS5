@@ -10,6 +10,8 @@
 #include <thread>
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/mman.h>
 #endif
 
 static void Check(bool value, int line) {
@@ -65,8 +67,18 @@ static void Defaults() {
     Error(0x0501);
     glBlendFuncSeparate_nid_postfix(1, 0x0308, 1, 0);
     Error(0x0500);
-    glBlendFuncSeparate_nid_postfix(0x8001, 0x8003, 1, 0);
-    Error(0x0502);
+    glBlendFuncSeparate_nid_postfix(0x8001, 0x8003, 0x8002, 0x8004);
+    Error(0);
+    Require(Integer(0x80c9) == 0x8001);
+    Require(Integer(0x80c8) == 0x8003);
+    Require(Integer(0x80cb) == 0x8002);
+    Require(Integer(0x80ca) == 0x8004);
+    glBlendFunc_nid_postfix(0x8004, 0x8002);
+    Error(0);
+    Require(Integer(0x80c9) == 0x8004);
+    Require(Integer(0x80c8) == 0x8002);
+    glBlendFunc_nid_postfix(1, 0);
+    Error(0);
     Require(Integer(0x80c9) == 1);
     glClearColor_nid_postfix(-1, 2, 0.5f, 1);
     glGetFloatv_nid_postfix(0x0c22, attr.data());
@@ -194,6 +206,87 @@ static void Pixels() {
     glDeleteFramebuffers_nid_postfix(1, &framebuffer);
     Require(Integer(0x8ca6) == 0);
     Error(0);
+}
+
+static unsigned char* PageBeforeHole() {
+#ifdef _WIN32
+    auto* pages = static_cast<unsigned char*>(VirtualAlloc(nullptr, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    DWORD old = 0;
+    Require(pages != nullptr && VirtualProtect(pages + 4096, 4096, PAGE_NOACCESS, &old));
+#else
+    void* mapped = mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* pages = static_cast<unsigned char*>(mapped);
+    Require(mprotect(pages + 4096, 4096, PROT_NONE) == 0);
+#endif
+    return pages;
+}
+
+static void PixelFaults() {
+    void* unmapped = reinterpret_cast<void*>(0x10);
+    unsigned char* pages = PageBeforeHole();
+    GLuint texture, framebuffer;
+    glGenTextures_nid_postfix(1, &texture);
+    glBindTexture_nid_postfix(0x0de1, texture);
+    glGenFramebuffers_nid_postfix(1, &framebuffer);
+    glBindFramebuffer_nid_postfix(0x8d40, framebuffer);
+
+    glPixelStorei_nid_postfix(0x0cf5, 8);
+    unsigned char* source = pages + 4096 - 28;
+    for (unsigned i = 0; i < 28; ++i) source[i] = static_cast<unsigned char>(i + 1);
+    glTexImage2D_nid_postfix(0x0de1, 0, 0x1908, 3, 2, 0, 0x1908, 0x1401, source);
+    Error(0);
+    glFramebufferTexture2D_nid_postfix(0x8d40, 0x8ce0, 0x0de1, texture, 0);
+    Require(glCheckFramebufferStatus_nid_postfix(0x8d40) == 0x8cd5);
+    std::array<unsigned char, 24> expected{};
+    for (unsigned i = 0; i < 12; ++i) expected[i] = static_cast<unsigned char>(i + 1);
+    for (unsigned i = 0; i < 12; ++i) expected[12 + i] = static_cast<unsigned char>(i + 17);
+    std::array<unsigned char, 24> read{};
+    glReadPixels_nid_postfix(0, 0, 3, 2, 0x1908, 0x1401, read.data());
+    Require(read == expected);
+    Error(0);
+
+    errno = 71;
+    glTexImage2D_nid_postfix(0x0de1, 0, 0x1908, 3, 2, 0, 0x1908, 0x1401, unmapped);
+    Error(0x0501);
+    glTexImage2D_nid_postfix(0x0de1, 0, 0x1908, 3, 3, 0, 0x1908, 0x1401, source);
+    Error(0x0501);
+    glTexSubImage2D_nid_postfix(0x0de1, 0, 0, 0, 1, 1, 0x1908, 0x1401, unmapped);
+    Error(0x0501);
+    Require(errno == 71);
+    read.fill(0);
+    glReadPixels_nid_postfix(0, 0, 3, 2, 0x1908, 0x1401, read.data());
+    Require(read == expected);
+
+    unsigned char* destination = pages + 4096 - 24;
+    glReadPixels_nid_postfix(0, 0, 3, 2, 0x1908, 0x1401, destination);
+    Error(0);
+    Require(std::memcmp(destination, expected.data(), expected.size()) == 0);
+    std::array<unsigned char, 24> clipped{};
+    clipped.fill(7);
+    glReadPixels_nid_postfix(-1, 0, 3, 2, 0x1908, 0x1401, clipped.data());
+    Error(0);
+    Require(clipped[0] == 7 && clipped[12] == 7);
+    Require(std::memcmp(clipped.data() + 4, expected.data(), 8) == 0 && std::memcmp(clipped.data() + 16, expected.data() + 12, 8) == 0);
+    errno = 71;
+    glReadPixels_nid_postfix(0, 0, 3, 2, 0x1908, 0x1401, unmapped);
+    Error(0x0501);
+    glReadPixels_nid_postfix(0, 0, 3, 2, 0x1908, 0x1401, pages + 4096 - 12);
+    Error(0x0501);
+    glReadPixels_nid_postfix(-1, 0, 3, 2, 0x1908, 0x1401, pages + 4096 - 12);
+    Error(0x0501);
+    Require(errno == 71);
+
+    glPixelStorei_nid_postfix(0x0cf5, 4);
+    glBindFramebuffer_nid_postfix(0x8d40, 0);
+    glDeleteFramebuffers_nid_postfix(1, &framebuffer);
+    glDeleteTextures_nid_postfix(1, &texture);
+    Error(0);
+#ifdef _WIN32
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(pages, 8192);
+#endif
 }
 
 static void Shaders() {
@@ -973,6 +1066,40 @@ static void GuestPointerFaults(EGLDisplay display, EGLConfig config, EGLContext 
     Error(0x0501);
     Require(errno == 71);
 
+    const GLuint infoLogShader = glCreateShader_nid_postfix(0x8b31);
+    const GLuint infoLogProgram = glCreateProgram_nid_postfix();
+    Require(infoLogShader != 0 && infoLogProgram != 0);
+    Error(0);
+
+    GLsizei logLength = -99;
+    char log[2] = {'x', 'x'};
+
+    errno = 71;
+    glGetShaderInfoLog_nid_postfix(infoLogShader, 1, &logLength, static_cast<GLchar*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    Require(logLength == -99);
+
+    errno = 71;
+    glGetShaderInfoLog_nid_postfix(infoLogShader, 0, static_cast<GLsizei*>(unmapped), static_cast<GLchar*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+
+    errno = 71;
+    glGetProgramInfoLog_nid_postfix(infoLogProgram, 1, static_cast<GLsizei*>(unmapped), log);
+    Error(0x0501);
+    Require(errno == 71);
+    Require(log[0] == 0);
+
+    errno = 71;
+    glGetProgramInfoLog_nid_postfix(infoLogProgram, 0, nullptr, static_cast<GLchar*>(unmapped));
+    Error(0);
+    Require(errno == 71);
+
+    glDeleteShader_nid_postfix(infoLogShader);
+    glDeleteProgram_nid_postfix(infoLogProgram);
+    Error(0);
+
     glVertexAttribPointer_nid_postfix(6, 3, 0x1406, 0, 12, nullptr);
     errno = 71;
     glGetVertexAttribfv_nid_postfix(6, 0x8626, static_cast<GLfloat*>(unmapped));
@@ -1204,6 +1331,7 @@ int main() {
     Defaults();
     Buffers();
     Pixels();
+    PixelFaults();
     TextureFormats();
     Shaders();
     Rasterizer();

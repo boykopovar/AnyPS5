@@ -39,7 +39,7 @@ int main() {
         errno = 71;
         Require(libScePngParserUnknown_vJpgNFIBlCk_nid_no_patch(config.data()) == 0);
         Require(errno == 71);
-        Require(libScePngParserUnknown_suBT1aYALqA_nid_no_patch() == 0);
+        Require(_ZN23sceMetadataReaderWriter9pngParser17pngParserFinalizeEv() == 0);
     }
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);

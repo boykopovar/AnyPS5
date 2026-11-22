@@ -50,13 +50,54 @@
  */
 
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <algorithm>
+#include <cerrno>
+#include <cstddef>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
 constexpr unsigned char DefaultIv[8] = {0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6};
+
+bool CopyIn(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOut(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyInChunks(std::vector<unsigned char>& host, const unsigned char* source, std::size_t bytes) {
+    constexpr std::size_t Chunk = 64 * 1024;
+    host.clear();
+    for (std::size_t done = 0; done < bytes;) {
+        const std::size_t size = std::min(Chunk, bytes - done);
+        host.resize(done + size);
+        if (!CopyIn(host.data() + done, source + done, size)) return false;
+        done += size;
+    }
+    return true;
+}
+
+bool CopyOutChunks(unsigned char* destination, const unsigned char* host, std::size_t bytes) {
+    constexpr std::size_t Chunk = 64 * 1024;
+    for (std::size_t done = 0; done < bytes;) {
+        const std::size_t size = std::min(Chunk, bytes - done);
+        if (!CopyOut(destination + done, host + done, size)) return false;
+        done += size;
+    }
+    return true;
+}
 
 }
 
@@ -68,12 +109,15 @@ int APS5_VABI AES_unwrap_key_nid_postfix(AesKey* key, const unsigned char* iv, u
     if (!key || !out || !in)
         throw std::invalid_argument("AES_unwrap_key requires a key, input and output");
     length -= 8;
+    AesKey schedule;
     unsigned char block[16];
+    std::vector<unsigned char> data;
+    if (!CopyIn(&schedule, key, sizeof(schedule)) || !CopyIn(block, in, 8) || !CopyInChunks(data, in + 8, length)) {
+        throw std::invalid_argument("AES_unwrap_key: unreadable key or input");
+    }
     unsigned int step = 6 * (length >> 3);
-    std::memcpy(block, in, 8);
-    std::memmove(out, in + 8, length);
     for (unsigned int round = 0; round < 6; ++round) {
-        unsigned char* chunk = out + length;
+        unsigned char* chunk = data.data() + length;
         for (unsigned int offset = 0; offset < length; offset += 8, --step) {
             chunk -= 8;
             block[7] ^= static_cast<unsigned char>(step & 0xff);
@@ -83,17 +127,19 @@ int APS5_VABI AES_unwrap_key_nid_postfix(AesKey* key, const unsigned char* iv, u
                 block[4] ^= static_cast<unsigned char>((step >> 24) & 0xff);
             }
             std::memcpy(block + 8, chunk, 8);
-            AES_decrypt_nid_postfix(block, block, key);
+            AES_decrypt_nid_postfix(block, block, &schedule);
             std::memcpy(chunk, block + 8, 8);
         }
     }
-    if (!iv)
-        iv = DefaultIv;
-    if (CRYPTO_memcmp_nid_postfix(block, iv, 8)) {
-        volatile unsigned char* cleared = out;
+    unsigned char expected[8];
+    if (!CopyIn(expected, iv ? iv : DefaultIv, sizeof(expected))) throw std::invalid_argument("AES_unwrap_key: unreadable iv");
+    if (CRYPTO_memcmp_nid_postfix(block, expected, 8)) {
+        volatile unsigned char* cleared = data.data();
         for (unsigned int index = 0; index < length; ++index) cleared[index] = 0;
+        if (!CopyOutChunks(out, data.data(), length)) throw std::invalid_argument("AES_unwrap_key: unwritable output");
         return 0;
     }
+    if (!CopyOutChunks(out, data.data(), length)) throw std::invalid_argument("AES_unwrap_key: unwritable output");
     return static_cast<int>(length);
 }
 

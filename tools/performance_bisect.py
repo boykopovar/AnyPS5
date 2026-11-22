@@ -12,15 +12,24 @@ from pathlib import Path
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
-PLACEHOLDERS = ("worktree", "build_dir", "result_dir", "commit")
+PLACEHOLDER = re.compile(r"\{(worktree|build_dir|result_dir|commit)\}")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
 RECIPE_FIELDS = {"title_id", "build_commands", "build_dir", "games", "seconds", "repetitions",
                  "regression_pct", "max_spread_pct", "titles", "content"}
 
 
+def unique_recipe_fields(pairs):
+    fields = {}
+    for name, value in pairs:
+        if name in fields:
+            raise ValueError(f"recipe has a duplicate field: {name}")
+        fields[name] = value
+    return fields
+
+
 def load_recipe(path):
     recipe_path = Path(path).resolve()
-    recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+    recipe = json.loads(recipe_path.read_text(encoding="utf-8"), object_pairs_hook=unique_recipe_fields)
     if not isinstance(recipe, dict):
         raise ValueError("recipe must be a JSON object")
     unknown = set(recipe) - RECIPE_FIELDS
@@ -110,6 +119,9 @@ def sample_summary(path, title_id, commit):
     identity.update(title_id=title_id, title=title.get("name", ""), content_version=title.get("version", ""))
     if any(not identity[key] for key in ("os", "gpu", "driver", "title")):
         raise ValueError(f"{path}: measurement is missing machine, title, or content identity")
+    content_version = identity["content_version"]
+    if not isinstance(content_version, str) or not content_version.strip():
+        raise ValueError(f"{path}: measurement is missing a valid content version")
     return {"commit": commit, "fps": float(fps), "identity": identity, "outcome": run["outcome"]}
 
 
@@ -144,8 +156,8 @@ def git(repo, *args):
 
 
 def first_parent_commits(repo, good, bad):
-    good_sha = git(repo, "rev-parse", "--verify", f"{good}^{{commit}}")
-    bad_sha = git(repo, "rev-parse", "--verify", f"{bad}^{{commit}}")
+    good_sha = git(repo, "rev-parse", "--verify", f"{good}^0")
+    bad_sha = git(repo, "rev-parse", "--verify", f"{bad}^0")
     result = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", good_sha, bad_sha], capture_output=True)
     if result.returncode:
         raise ValueError("good commit must be an ancestor of bad commit")
@@ -159,12 +171,7 @@ def first_parent_commits(repo, good, bad):
 
 
 def format_command(command, values):
-    result = []
-    for argument in command:
-        for name in PLACEHOLDERS:
-            argument = argument.replace("{" + name + "}", str(values[name]))
-        result.append(argument)
-    return result
+    return [PLACEHOLDER.sub(lambda match: str(values[match[1]]), argument) for argument in command]
 
 
 def reset_build_dir(worktree, build_dir):
@@ -295,9 +302,10 @@ def bisect(repo, good, bad, recipe, output_dir, temp_dir=None):
         raise ValueError(f"report already exists: {output_dir}")
     good_sha, bad_sha, commits = first_parent_commits(repo, good, bad)
     with tempfile.TemporaryDirectory(prefix="anyps5-performance-bisect-", dir=temp_dir) as temporary:
-        root = Path(temporary)
+        root = Path(temporary).resolve()
         worktree = root / "source"
         results = root / "results"
+        results.mkdir()
         git(repo, "worktree", "add", "--detach", str(worktree), good_sha)
         try:
             baseline = measure_commit(repo, worktree, results, recipe, good_sha)

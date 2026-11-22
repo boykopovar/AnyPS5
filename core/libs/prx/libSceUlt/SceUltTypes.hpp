@@ -34,7 +34,8 @@ inline int InitializeOptParam(UltOptParam* optParam) {
     if (optParam == nullptr) {
         return ULT_ERROR_NULL;
     }
-    std::memset(optParam, 0, sizeof(*optParam));
+    const UltOptParam cleared{};
+    if (!GuestCopyOut_nid_no_patch(optParam, &cleared, sizeof(cleared))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 

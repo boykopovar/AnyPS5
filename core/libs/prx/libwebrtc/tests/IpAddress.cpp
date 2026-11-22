@@ -116,8 +116,62 @@ void TestMaskBits() {
     Require(MaskBits(Address(1, {255, 255, 255, 0})) == 0);
 }
 
+WebRtcIpAddress Truncate(const WebRtcIpAddress& address, std::int32_t length) {
+    WebRtcIpAddress result;
+    Require(_ZN3rtc10TruncateIPERKNS_9IPAddressEi_nid_postfix(&result, &address, length) == &result);
+    return result;
+}
+
+WebRtcIpAddress V6Filled(std::uint8_t value) {
+    WebRtcIpAddress address = Address(WebRtcAfInet6, {});
+    std::memset(address.address.ip6.bytes, value, sizeof(address.address.ip6.bytes));
+    return address;
+}
+
+void TestTruncate() {
+    WebRtcIpAddress v4 = V4(10, 1, 2, 3);
+    WebRtcIpAddress truncated = Truncate(v4, 8);
+    Require(truncated.family == WebRtcAfInet);
+    Require(Equal(truncated, V4(10, 0, 0, 0)));
+    Require(Equal(Truncate(V4(192, 168, 1, 10), 24), V4(192, 168, 1, 0)));
+    Require(Equal(Truncate(V4(255, 255, 255, 255), 31), V4(255, 255, 255, 254)));
+    Require(Equal(Truncate(V4(192, 168, 1, 10), 32), V4(192, 168, 1, 10)));
+    Require(Truncate(V4(192, 168, 1, 10), 32).family == WebRtcAfInet);
+
+    truncated = Truncate(V4(192, 168, 1, 10), 0);
+    Require(truncated.family == WebRtcAfInet);
+    Require(Equal(truncated, V4(0, 0, 0, 0)));
+
+    WebRtcIpAddress v6 = Address(WebRtcAfInet6, {0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01});
+    truncated = Truncate(v6, 64);
+    Require(truncated.family == WebRtcAfInet6);
+    Require(Equal(truncated, Address(WebRtcAfInet6, {0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0})));
+    Require(Equal(Truncate(v6, 128), v6));
+    truncated = Truncate(v6, 0);
+    Require(truncated.family == WebRtcAfInet6);
+    Require(Equal(truncated, Address(WebRtcAfInet6, {})));
+
+    WebRtcIpAddress filled = V6Filled(0xFF);
+    Require(Equal(Truncate(filled, 32), Address(WebRtcAfInet6, {0xFF, 0xFF, 0xFF, 0xFF})));
+    Require(Equal(Truncate(filled, 33), Address(WebRtcAfInet6, {0xFF, 0xFF, 0xFF, 0xFF, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})));
+    truncated = Truncate(filled, 33);
+    Require(truncated.address.ip6.bytes[3] == 0xFF && truncated.address.ip6.bytes[4] == 0x80);
+    Require(truncated.address.ip6.bytes[5] == 0 && truncated.address.ip6.bytes[15] == 0);
+    truncated = Truncate(filled, 127);
+    Require(truncated.address.ip6.bytes[11] == 0xFF && truncated.address.ip6.bytes[12] == 0xFF);
+    Require(truncated.address.ip6.bytes[15] == 0xFE);
+
+    Require(Truncate(v4, -1).family == WebRtcAfUnspec);
+    Require(Truncate(v6, -1).family == WebRtcAfUnspec);
+    Require(Truncate(Address(1, {10, 0, 0, 1}), 8).family == WebRtcAfUnspec);
+    Require(Equal(Truncate(Address(1, {10, 0, 0, 1}), 8), Address(WebRtcAfUnspec, {})));
+}
+
 void TestNullAddress() {
     WebRtcIpAddress v4 = V4(10, 0, 0, 1);
+    WebRtcIpAddress result;
+    RequireInvalidArgument([&] { _ZN3rtc10TruncateIPERKNS_9IPAddressEi_nid_postfix(nullptr, &v4, 8); });
+    RequireInvalidArgument([&] { _ZN3rtc10TruncateIPERKNS_9IPAddressEi_nid_postfix(&result, nullptr, 8); });
     RequireInvalidArgument([] { _ZNK3rtc9IPAddress12ipv4_addressEv_nid_postfix(nullptr); });
     RequireInvalidArgument([] { _ZNK3rtc9IPAddress12ipv6_addressEv_nid_postfix(nullptr); });
     RequireInvalidArgument([] { _ZNK3rtc9IPAddress27v4AddressAsHostOrderIntegerEv_nid_postfix(nullptr); });
@@ -132,6 +186,7 @@ int main() {
     TestAccessors();
     TestEquality();
     TestMaskBits();
+    TestTruncate();
     TestNullAddress();
     return 0;
 }
