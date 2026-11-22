@@ -29,7 +29,7 @@ MODULE_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 
 
 def is_mangled(name):
-    return name.startswith("_Z") and len(name) > 2 and name[2].isdigit()
+    return (name.startswith("_Z") and len(name) > 2 and name[2].isdigit()) or bool(re.match(r"^_ZN[KVrRO]*(?:[0-9]|St[0-9])", name))
 
 
 def helper_reason(name):
@@ -337,7 +337,8 @@ def report_module(module, console_nids, provided, db):
         if reason is None:
             lines.append(f"missing {nid} {name}")
         else:
-            lines.append(f"{module}: {name} ({nid}) {reason} and needs a renamed helper bound with APS5_EXPORT, like libSceAmpr")
+            action = "may use a renamed helper bound with APS5_EXPORT" if is_mangled(name) else "needs a renamed helper bound with APS5_EXPORT"
+            lines.append(f"{module}: {name} ({nid}) {reason} and {action}, like libSceAmpr")
     for nid, name, how in already:
         if name is None:
             lines.append(f"already provided {nid} {how}")
