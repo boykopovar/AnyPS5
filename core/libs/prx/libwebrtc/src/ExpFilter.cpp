@@ -41,6 +41,7 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <cmath>
 #include <stdexcept>
@@ -48,26 +49,36 @@
 extern "C" {
 
 void APS5_VABI _ZN3rtc9ExpFilter5ResetEf_nid_postfix(WebRtcExpFilter* filter, float alpha) {
-    if (!filter)
+    if (!filter || !GuestWritable_nid_no_patch(filter, sizeof(*filter)))
         throw std::invalid_argument("ExpFilter::Reset requires a filter");
-    filter->alpha = alpha;
-    filter->filtered = WebRtcExpFilterValueUndefined;
+    WebRtcExpFilter host{};
+    if (!GuestPtr<WebRtcExpFilter>(filter).CopyIn(host))
+        throw std::invalid_argument("ExpFilter::Reset requires a filter");
+    host.alpha = alpha;
+    host.filtered = WebRtcExpFilterValueUndefined;
+    if (!GuestPtr<WebRtcExpFilter>(filter).CopyOut(host))
+        throw std::invalid_argument("ExpFilter::Reset requires a filter");
 }
 
 float APS5_VABI _ZN3rtc9ExpFilter5ApplyEff_nid_postfix(WebRtcExpFilter* filter, float exponent, float sample) {
-    if (!filter)
+    if (!filter || !GuestWritable_nid_no_patch(filter, sizeof(*filter)))
         throw std::invalid_argument("ExpFilter::Apply requires a filter");
-    if (filter->filtered == WebRtcExpFilterValueUndefined) {
-        filter->filtered = sample;
+    WebRtcExpFilter host{};
+    if (!GuestPtr<WebRtcExpFilter>(filter).CopyIn(host))
+        throw std::invalid_argument("ExpFilter::Apply requires a filter");
+    if (host.filtered == WebRtcExpFilterValueUndefined) {
+        host.filtered = sample;
     } else if (exponent == 1.0f) {
-        filter->filtered = filter->alpha * filter->filtered + (1 - filter->alpha) * sample;
+        host.filtered = host.alpha * host.filtered + (1 - host.alpha) * sample;
     } else {
-        float alpha = std::pow(filter->alpha, exponent);
-        filter->filtered = alpha * filter->filtered + (1 - alpha) * sample;
+        float alpha = std::pow(host.alpha, exponent);
+        host.filtered = alpha * host.filtered + (1 - alpha) * sample;
     }
-    if (filter->max != WebRtcExpFilterValueUndefined && filter->filtered > filter->max)
-        filter->filtered = filter->max;
-    return filter->filtered;
+    if (host.max != WebRtcExpFilterValueUndefined && host.filtered > host.max)
+        host.filtered = host.max;
+    if (!GuestPtr<WebRtcExpFilter>(filter).CopyOut(host))
+        throw std::invalid_argument("ExpFilter::Apply requires a filter");
+    return host.filtered;
 }
 
 }

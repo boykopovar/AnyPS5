@@ -3,13 +3,31 @@
 
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
+#include <cstdint>
 
 extern "C" {
 
 void LibreSslWipe_nid_no_patch(void* pointer, std::size_t size);
 void LibreSslAsn1StringFree_nid_no_patch(Asn1String* string);
+void LibreSslAsn1ObjectFree_nid_no_patch(LibreSslAsn1Object* object);
+void LibreSslAsn1TypeFree_nid_no_patch(void* type);
+void LibreSslX509NameFree_nid_no_patch(void* name);
 void LibreSslOcspResponseBytesFree_nid_no_patch(LibreSslOcspResponseBytes* bytes);
 
 }
+
+LibreSslStack* LibreSslStackNew_nid_no_patch();
+bool LibreSslStackPush_nid_no_patch(LibreSslStack* stack, void* element);
+
+enum class LibreSslExtensionValue { GeneralizedTime, Null, Object, CrlId };
+
+struct LibreSslOcspCrlId {
+    Asn1String* crlUrl;
+    Asn1String* crlNum;
+    Asn1String* crlTime;
+};
+
+void* LibreSslExtensionValueDecode_nid_no_patch(LibreSslExtensionValue type, const unsigned char* data, std::int64_t length);
+void LibreSslExtensionValueFree_nid_no_patch(LibreSslExtensionValue type, void* value);
 
 #endif

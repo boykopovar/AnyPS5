@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    foreach(wave IN ITEMS 32 64)
+        add_test(NAME agc_driver_mubuf_load_lds_wave${wave} COMMAND agc_driver_mubuf_load_lds_tests ${wave})
+        set_tests_properties(agc_driver_mubuf_load_lds_wave${wave} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30)
+        if(WIN32)
+            set_tests_properties(agc_driver_mubuf_load_lds_wave${wave} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+endif()

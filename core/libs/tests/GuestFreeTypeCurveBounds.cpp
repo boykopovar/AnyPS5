@@ -5,6 +5,7 @@
 #include FT_BBOX_H
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -98,10 +99,24 @@ int main() {
     Require(FT_Outline_Get_BBox_nid_postfix(nullptr, &invalid.box) == FT_Outline_Get_BBox(nullptr, &native));
     Require(Equal(invalid.box, sentinel));
     Require(FT_Outline_Get_BBox_nid_postfix(reinterpret_cast<GuestOutline*>(std::uintptr_t{1}), nullptr) == FT_Outline_Get_BBox(nullptr, nullptr));
+    errno = 71;
+    Require(FT_Outline_Get_BBox_nid_postfix(reinterpret_cast<GuestOutline*>(std::uintptr_t{0x10}), &invalid.box) == FT_Err_Invalid_Argument);
+    Require(errno == 71 && Equal(invalid.box, sentinel));
+    std::vector<GuestVector> readablePoints{{1, 2}, {3, 4}, {5, 6}};
+    std::vector<unsigned char> readableTags{1, 1, 1};
+    std::vector<std::uint16_t> readableContours{2};
+    GuestOutline unmappedPoints{1, 3, reinterpret_cast<GuestVector*>(std::uintptr_t{0x10}), readableTags.data(), readableContours.data(), 0};
+    GuestOutline unmappedTags{1, 3, readablePoints.data(), reinterpret_cast<unsigned char*>(std::uintptr_t{0x10}), readableContours.data(), 0};
+    for (auto* outline : {&unmappedPoints, &unmappedTags}) {
+        errno = 71;
+        Require(FT_Outline_Get_BBox_nid_postfix(outline, &invalid.box) == FT_Err_Invalid_Argument);
+        Require(errno == 71 && Equal(invalid.box, sentinel));
+    }
     Check({}, {}, {});
     GuestOutline empty{0, 3, reinterpret_cast<GuestVector*>(std::uintptr_t{1}),
         reinterpret_cast<unsigned char*>(std::uintptr_t{1}), reinterpret_cast<std::uint16_t*>(std::uintptr_t{1}), 123};
     Require(FT_Outline_Get_BBox_nid_postfix(&empty, &invalid.box) == 0 && Equal(invalid.box, {}));
+    Require(FT_Outline_Get_BBox_nid_postfix(&empty, reinterpret_cast<GuestBBox*>(std::uintptr_t{1})) == FT_Err_Invalid_Argument);
     empty.n_contours = 1;
     empty.n_points = 0;
     Require(FT_Outline_Get_BBox_nid_postfix(&empty, &invalid.box) == 0 && Equal(invalid.box, {}));

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstring>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -37,6 +38,8 @@ struct RegEntry {
     std::vector<uint8_t> binVal;
 };
 
+constexpr std::size_t SCE_REG_MGR_MAX_BINARY_SIZE = 1024 * 1024;
+
 class RegistryStore {
 public:
     RegistryStore() = default;
@@ -56,7 +59,6 @@ public:
     }
 
     int getStr(int64_t key, char* out, int len) {
-        if (len == 0) NotImplemented_nid_no_patch(__func__);
         if (out == nullptr || len < 0) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
@@ -71,7 +73,6 @@ public:
     }
 
     int getBin(int64_t key, void* out, int size) {
-        if (size == 0) NotImplemented_nid_no_patch(__func__);
         if (out == nullptr || size < 0) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
@@ -158,6 +159,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
         if (it != entries_.end() && it->second.type != TypeBin) return SCE_REG_MGR_ERROR_INVALID_TYPE;
+        if (size > SCE_REG_MGR_MAX_BINARY_SIZE) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         std::vector<std::uint8_t> bytes(size);
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(bytes.data(), value, size);
@@ -217,14 +219,14 @@ int APS5_VABI sceRegMgrGetStr(std::int64_t optionId, char* outString, int string
     return gStore.getStr(optionId, outString, stringLength);
 }
 int APS5_VABI sceRegMgrSetBin(std::uint32_t optionId, const void* data, std::size_t size) {
-    if (size == 0) NotImplemented_nid_no_patch(__func__);
+    if (size == 0) throw std::runtime_error("sceRegMgrSetBin: a zero-length write is unmeasured");
     return gStore.setBin(optionId, data, size);
 }
 int APS5_VABI sceRegMgrSetInt(int32_t optionId, int32_t inInt) {
     return gStore.setInt(static_cast<std::uint32_t>(optionId), inInt);
 }
 int APS5_VABI sceRegMgrSetStr(int32_t optionId, const char* inStirng, std::size_t stringLength) {
-    if (stringLength == 0) NotImplemented_nid_no_patch(__func__);
+    if (stringLength == 0) throw std::runtime_error("sceRegMgrSetStr: a zero-length write is unmeasured");
     return gStore.setStr(static_cast<std::uint32_t>(optionId), inStirng, stringLength);
 }
 std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t type, std::int32_t* data) {

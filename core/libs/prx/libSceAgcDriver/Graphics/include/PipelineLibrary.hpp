@@ -24,6 +24,8 @@ struct PipelineLibraryKeys {
     std::vector<std::byte> fragmentLayout;
     std::uint32_t preRasterizationSets = 0;
     std::uint32_t fragmentSets = 0;
+    bool narrow = false;
+    bool fragmentPerSample = false;
 };
 
 std::span<const VkDynamicState> PipelineLibraryDynamicStates();

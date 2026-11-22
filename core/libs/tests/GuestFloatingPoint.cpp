@@ -182,6 +182,15 @@ void CheckFlags() {
         } catch (const std::invalid_argument&) { threw = true; }
         Require(threw, "reject null exception storage");
     }
+    auto* unmappedFlags = reinterpret_cast<std::uint16_t*>(std::uintptr_t{0x10});
+    for (const bool get : {false, true}) {
+        bool threw = false;
+        try {
+            if (get) fegetexceptflag_nid_postfix(unmappedFlags, 0x3f);
+            else fesetexceptflag_nid_postfix(unmappedFlags, 0x3f);
+        } catch (const std::invalid_argument&) { threw = true; }
+        Require(threw, "reject unmapped exception storage");
+    }
     CheckFeraise();
 }
 

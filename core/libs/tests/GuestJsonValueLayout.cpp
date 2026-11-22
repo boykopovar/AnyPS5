@@ -26,6 +26,13 @@ int main() {
     _ZN3sce4Json5ValueC1Ev(&value);
     Prefix(value, 0);
     Require(value.payload == 0xa5a5a5a5a5a5a5a5ULL, "Null construction must preserve inactive payload bytes");
+    for (bool state : {true, false, true}) {
+        _ZN3sce4Json5Value3setEb(&value, state);
+        Prefix(value, TypeBoolean);
+        Require(*_ZNK3sce4Json5Value10getBooleanEv(&value) == state &&
+                    value.payload == (0xa5a5a5a5a5a5a500ULL | static_cast<std::uint64_t>(state)),
+                "Boolean setting from null and boolean must preserve inactive payload bytes");
+    }
     _ZN3sce4Json5ValueD1Ev(&value);
     _ZN3sce4Json5ValueC1Eb(&value, true);
     Prefix(value, 1);
@@ -65,6 +72,14 @@ int main() {
     Prefix(value, 3);
     Require(value.payload == 0xfedcba9876543210ULL && *_ZNK3sce4Json5Value11getUIntegerEv(&value) == value.payload,
             "Unsigned construction must preserve all 64 payload bits");
+    for (bool state : {false, true}) {
+        _ZN3sce4Json5Value3setEm(&value, 0xfedcba9876543210ULL);
+        _ZN3sce4Json5Value3setEb(&value, state);
+        Prefix(value, TypeBoolean);
+        Require(*_ZNK3sce4Json5Value10getBooleanEv(&value) == state &&
+                    value.payload == (0xfedcba9876543200ULL | static_cast<std::uint64_t>(state)),
+                "Boolean setting from an integer must replace only the active byte");
+    }
     _ZN3sce4Json5ValueD1Ev(&value);
     for (std::uint64_t bits : {0x3fc0000000000000ULL, 0x8000000000000000ULL, 0x7ff80000cafef00dULL}) {
         _ZN3sce4Json5ValueC1Ed(&value, std::bit_cast<double>(bits));

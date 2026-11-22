@@ -329,6 +329,9 @@ int ReadAbsolutePosition(std::int32_t handle, MouseAbsoluteData* data, std::int3
         if (endsRecord[first]) ++kept;
         while (first > 0 && !endsRecord[first - 1]) --first;
     }
+    for (int i = 0; i < first; ++i) {
+        if (samples[i].connected) moveAbsolute(samples[i].x, samples[i].y);
+    }
     int written = 0;
     std::int32_t wheel = 0;
     std::int32_t tilt = 0;
@@ -367,10 +370,17 @@ int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
     std::lock_guard lock(mouseMutex);
     if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
     if (deviceId == nullptr) return MOUSE_ERROR_INVALID_ARG;
-    *deviceId = -1;
+    const std::int32_t initialId = -1;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(deviceId, &initialId, sizeof(initialId));
+    errno = savedErrno;
+    if (!copied) return MOUSE_ERROR_INVALID_ARG;
     if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
     if (!connected) return MOUSE_OK;
-    *deviceId = MOUSE_DEVICE_ID;
+    const std::int32_t connectedId = MOUSE_DEVICE_ID;
+    const int savedErrno2 = errno;
+    GuestCopyOut_nid_no_patch(deviceId, &connectedId, sizeof(connectedId));
+    errno = savedErrno2;
     return MOUSE_OK;
 }
 

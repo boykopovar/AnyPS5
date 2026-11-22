@@ -88,8 +88,9 @@ int APS5_VABI sceVencCreateEncoder(const void* parameters, const void* memory, v
     }
     void* localEncoder = nullptr;
     const int savedErrno = errno;
-    if (!GuestCopyOut_nid_no_patch(encoder, &localEncoder, sizeof(localEncoder))) {
-        errno = savedErrno;
+    const bool copied = GuestCopyOut_nid_no_patch(encoder, &localEncoder, sizeof(localEncoder));
+    errno = savedErrno;
+    if (!copied) {
         return VencError(0x00);
     }
     if (parameters == nullptr) {

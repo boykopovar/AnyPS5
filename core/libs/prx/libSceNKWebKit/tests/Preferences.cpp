@@ -510,8 +510,11 @@ void Features() {
     WKPreferencesSetStorageAccessAPIEnabled(preferences.Get(), false);
     WKPreferencesSetHighlightAPIEnabled(preferences.Get(), false);
     WKPreferencesSetAcceleratedDrawingEnabled(preferences.Get(), false);
+    Require(!WKPreferencesGetApplicationChromeModeEnabled(preferences.Get()));
     WKPreferencesSetApplicationChromeModeEnabled(preferences.Get(), true);
+    Require(WKPreferencesGetApplicationChromeModeEnabled(preferences.Get()));
     RequireThrows<std::invalid_argument>([&] { WKPreferencesSetApplicationChromeModeEnabled(nullptr, true); });
+    RequireThrows<std::invalid_argument>([&] { WKPreferencesGetApplicationChromeModeEnabled(nullptr); });
     WKPreferencesSetCompositingBordersVisible(preferences.Get(), true);
     WKPreferencesSetFullScreenEnabled(preferences.Get(), true);
     WKPreferencesSetDefaultFontSize(preferences.Get(), 23);

@@ -1,8 +1,11 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/libc.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -26,15 +29,33 @@ bool EqualName(std::string_view text, std::string_view name) {
     return true;
 }
 
+std::string ReadGuestText(const char* text, const char* caller) {
+    const int savedErrno = errno;
+    std::string copied;
+    int error = CopyGuestString_nid_no_patch(text, 65536, copied);
+    if (error == 63) error = CopyGuestString_nid_no_patch(text, 1u << 20, copied);
+    errno = savedErrno;
+    if (error != 0) NotImplemented_nid_no_patch(caller);
+    return copied;
+}
+
+bool TryWriteProtocols(std::uint32_t* protocols, std::uint32_t value) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(protocols, &value, sizeof(value));
+    errno = savedErrno;
+    return ok;
+}
+
 }
 
 extern "C" int APS5_VABI tls_config_parse_protocols_nid_postfix(std::uint32_t* protocols, const char* text) {
     if (!protocols) throw std::invalid_argument("tls_config_parse_protocols: null output");
     if (!text) {
-        *protocols = SupportedProtocols;
+        if (!TryWriteProtocols(protocols, SupportedProtocols)) NotImplemented_nid_no_patch(__func__);
         return 0;
     }
-    char* const copy = strdup_nid_postfix(text);
+    const std::string guestText = ReadGuestText(text, __func__);
+    char* const copy = strdup_nid_postfix(guestText.c_str());
     if (!copy) return -1;
     std::string_view remaining(copy);
     std::uint32_t result = 0;
@@ -64,7 +85,8 @@ extern "C" int APS5_VABI tls_config_parse_protocols_nid_postfix(std::uint32_t* p
         if (separator == std::string_view::npos) break;
         remaining.remove_prefix(separator + 1);
     }
-    *protocols = result;
+    const bool written = TryWriteProtocols(protocols, result);
     free_nid_postfix(copy);
+    if (!written) NotImplemented_nid_no_patch(__func__);
     return 0;
 }

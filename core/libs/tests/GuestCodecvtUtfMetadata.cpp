@@ -201,9 +201,17 @@ void CheckInvalidFacets() {
     }
 }
 
+void WarmUpHostExceptionRuntime() {
+    try {
+        throw std::runtime_error("warm-up");
+    } catch (const std::runtime_error&) {
+    }
+}
+
 }
 
 int main() {
+    WarmUpHostExceptionRuntime();
     CheckModes();
     CheckUnshift();
     CheckGuardedMemory();

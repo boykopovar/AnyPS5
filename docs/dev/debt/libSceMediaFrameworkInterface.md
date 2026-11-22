@@ -185,3 +185,7 @@
 | `Unknown` | `vTdFuGzVGh4` |
 | `Unknown` | `vzcDDgUCCrc` |
 | `Unknown` | `zbDNeWDHhTc` |
+
+### Additional catalog exports (PS5 13.60 stub-library catalog)
+
+- [libSce catalog exports](../../../core/libs/prx/libSceMediaFrameworkInterface/Export.cpp) - 14 named callable exports complete the set the [PS5 13.60 function stub library catalog](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscemediaframeworkinterface-971396c6b2.jsonl) gives as `defined_function_export` with `source_evidence: [firmware_export_table, verified_nid_name_map]`, and were absent from the repository. Names and NIDs come from that catalog; the catalog publishes no prototypes and no signature information, so the declarations use the no-parameter unknown-signature convention and the bodies throw through `NotImplemented_nid_no_patch`. Console behaviour is not measured.

@@ -108,7 +108,11 @@ int main() {
         if (result != &context) throw std::runtime_error("Thread return value was lost");
         if ((workerMxcsrInDtor.load() & 0x9fc0) != 0x9fc0)
             throw std::runtime_error("Guest thread MXCSR was not active during thread cleanup");
-        if (workerMxcsrAfterReturn.load() != hostMxcsrBefore)
+#ifndef __APPLE__
+        if (context.incomingHostMxcsr != hostMxcsrBefore)
+            throw std::runtime_error("Worker thread did not start with the creator's host MXCSR");
+#endif
+        if (workerMxcsrAfterReturn.load() != context.incomingHostMxcsr)
             throw std::runtime_error("Worker thread host MXCSR was not restored upon guest return");
     }
 #ifdef _WIN32
@@ -136,7 +140,7 @@ int main() {
         void* result = nullptr;
         if (scePthreadJoin(context.thread, &result) != 0) throw std::runtime_error("Thread join failed");
         asm volatile("ldmxcsr %0" : : "m"(hostMxcsrBefore));
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
         if (context.incomingHostMxcsr != guestMxcsr)
             throw std::runtime_error("Worker incoming MXCSR did not match creator MXCSR on POSIX");
 #endif
@@ -155,7 +159,7 @@ int main() {
         void* result = nullptr;
         if (scePthreadJoin(context.thread, &result) != 0) throw std::runtime_error("Thread join failed");
         asm volatile("ldmxcsr %0" : : "m"(hostMxcsrBefore));
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
         if (context.incomingHostMxcsr != guestMxcsr)
             throw std::runtime_error("Worker incoming MXCSR did not match creator MXCSR on POSIX");
 #endif
