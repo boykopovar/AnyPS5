@@ -937,7 +937,13 @@ static int deleteSave(const SaveDataDelete* del, std::string* traceDir) {
     if (error) return SAVE_DATA_ERROR_INTERNAL;
     try {
         require_plain_paths(dirName, {BACKUP_DIR, BACKUP_STAGING_DIR, BACKUP_OLD_DIR});
-        if (std::filesystem::is_directory(path)) {
+        std::error_code directoryError;
+        const bool isDirectory = std::filesystem::is_directory(path, directoryError);
+        if (directoryError && directoryError != std::errc::no_such_file_or_directory &&
+            directoryError != std::errc::not_a_directory) {
+            return SAVE_DATA_ERROR_INTERNAL;
+        }
+        if (isDirectory) {
             RemoveTree(path);
         }
         std::error_code ec;
