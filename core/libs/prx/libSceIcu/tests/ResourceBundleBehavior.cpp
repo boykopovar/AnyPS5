@@ -120,6 +120,41 @@ void Value(const Bundle& bundle, int operation, std::int32_t incoming = 0, bool 
     }
 }
 
+void Interoperability() {
+    Bundle locale("en_US", false);
+    Require(bool(ures_hasNext_nid_postfix(locale.guest)) == (ResourceOracleSize(locale.native) > 0),
+            "owned locale bundle exposes its initial iterator state");
+    Bundle root;
+    Bundle greeting(root, "greeting");
+    Bundle values(root, "values");
+    std::array<char, 40> buffer{};
+    constexpr std::string_view expected = "h\xc3\xa9llo \xe4\xb8\x96\xe7\x95\x8c";
+    std::int32_t status = 0;
+    std::int32_t length = buffer.size();
+    auto* result = ures_getUTF8String_nid_postfix(greeting.guest, buffer.data(), &length, 1, &status);
+    Require(result == buffer.data() && status == 0 && length == expected.size() && result == expected,
+            "owned string child returns its UTF-8 contents");
+    length = buffer.size();
+    result = ures_getUTF8StringByKey_nid_postfix(root.guest, "greeting", buffer.data(), &length, 1, &status);
+    Require(result == buffer.data() && status == 0 && length == expected.size() && result == expected,
+            "owned table returns UTF-8 by key");
+    length = buffer.size();
+    result = ures_getUTF8StringByIndex_nid_postfix(values.guest, 1, buffer.data(), &length, 1, &status);
+    Require(result == buffer.data() && status == 0 && length == 3 && std::string_view(result, length) == "\xe4\xba\x8c",
+            "owned array returns UTF-8 by index");
+    Require(ures_hasNext_nid_postfix(root.guest), "owned fixture table starts with a next item");
+    length = 0;
+    result = ures_getUTF8String_nid_postfix(greeting.guest, nullptr, &length, 1, &status);
+    Require(!result && status == 15 && length == expected.size(), "owned UTF-8 preflight returns the byte count");
+    auto* closed = greeting.guest;
+    greeting.Close();
+    Refuses([&] { ures_hasNext_nid_postfix(closed); });
+    status = 0;
+    Refuses([&] { ures_getUTF8String_nid_postfix(closed, nullptr, nullptr, 0, &status); });
+    Refuses([&] { ures_getUTF8StringByKey_nid_postfix(closed, "greeting", nullptr, nullptr, 0, &status); });
+    Refuses([&] { ures_getUTF8StringByIndex_nid_postfix(closed, 0, nullptr, nullptr, 0, &status); });
+}
+
 void Literals() {
     Bundle root;
     root.Metadata();
@@ -324,6 +359,7 @@ int main(int argc, char** argv) {
         Package package(argv[1]);
         const std::string_view mode = argv[2];
         if (mode == "literals") Literals();
+        else if (mode == "interop") Interoperability();
         else if (mode == "fillin") FillIn();
         else if (mode == "status") Status();
         else if (mode == "lifetime") Lifetime();
