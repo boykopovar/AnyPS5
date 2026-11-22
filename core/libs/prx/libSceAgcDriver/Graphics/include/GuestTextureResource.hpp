@@ -153,6 +153,7 @@ bool IsNullTextureResource(std::span<const std::uint32_t> words);
 std::optional<std::uint64_t> TextureResourceAllocationAddress(std::span<const std::uint32_t> words);
 bool IsNullSampledTextureResource(std::span<const std::uint32_t> words);
 GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words);
+TextureTileMode GcnTileMode(std::uint32_t index);
 
 struct TextureResourceDecode {
     GuestTextureResource resource{};

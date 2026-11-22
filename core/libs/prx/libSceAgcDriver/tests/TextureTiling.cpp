@@ -687,12 +687,77 @@ void gcnMultisampleTilingTests() {
     reject([&] { ComputeGcnMipLayout(kGcnDepth2D64, 20u, 1792u, 1800u, 1792u, false, 2u, false, 1u, false, 2u); }, "one level and one slice in a depth tile mode");
 }
 
+void gcnMultisampleLayoutTests() {
+    using enum TextureTileMode;
+    std::uint32_t compared = 0;
+    for (const auto mode : {kGcnDepth2D64, kGcnDepth2D128, kGcnDepth2D256, kGcnDepth2D512, kGcnDepth2D1K, kGcnDepthPrt256, kGcnDepthPrt1K}) {
+        for (std::uint32_t bytes = 1u; bytes <= 4u; bytes <<= 1u) {
+            for (std::uint32_t samples = 2u; samples <= 8u; samples <<= 1u) {
+                const auto split = mode == kGcnDepthPrt256 ? 256u : mode == kGcnDepthPrt1K ? 1024u : 64u << (static_cast<std::uint32_t>(mode) - static_cast<std::uint32_t>(kGcnDepth2D64));
+                if (64u * bytes * samples / std::min(split, 64u * bytes * samples) > 16u) continue;
+                const auto what = "the PS4 multisampled depth layout of tile mode " + std::to_string(static_cast<int>(mode)) + " at " + std::to_string(bytes) + " bytes and " + std::to_string(samples) + " samples";
+                const auto geometry = GcnTiling(mode, bytes, samples);
+                const auto pitch = geometry.blockWidth * 2u;
+                const auto rows = geometry.blockHeight * 2u - 8u;
+                const auto padded = geometry.blockHeight * 2u;
+                const GcnMultisampleTextureLayout layout(mode, bytes, samples, pitch, rows);
+                Require(layout.Bytes() == static_cast<std::uint64_t>(pitch) * padded * bytes * samples, what + ": its size is not the pitch x padded height x bytes x samples");
+                Require(layout.LinearBytes() == static_cast<std::uint64_t>(pitch) * rows * bytes * samples, what + ": its linear size is not the pitch x rows x bytes x samples");
+                for (std::uint32_t y = 0; y < rows; ++y) {
+                    for (std::uint32_t x = 0; x < pitch; ++x) {
+                        for (std::uint32_t sample = 0; sample < samples; ++sample) {
+                            const auto expected = referenceGcnAddress(mode, bytes, pitch, padded, x, y, 0u, samples, sample);
+                            if (layout.Offset(x, y, sample) != expected) Require(false, what + ": sample " + std::to_string(sample) + " of element " + std::to_string(x) + "," + std::to_string(y) + " is at " + std::to_string(layout.Offset(x, y, sample)) + ", addrlib places it at " + std::to_string(expected));
+                        }
+                    }
+                }
+                ++compared;
+            }
+        }
+    }
+    Require(compared == 62u, "the PS4 multisampled depth layout sweep compared " + std::to_string(compared) + " layouts, not 62");
+
+    const GcnMultisampleTextureLayout depth(kGcnDepth2D128, 4u, 2u, 1792u, 1920u);
+    const GcnMultisampleTextureLayout stencil(kGcnDepth2D128, 1u, 2u, 1792u, 1920u);
+    Require(depth.Bytes() == 1792u * 1920u * 4u * 2u && stencil.Bytes() == 1792u * 1920u * 2u, "a 2-sample D32 S8 PS4 depth target of 1792 x 1920 in the 128-byte split mode holds 1792 x 1920 x 4 x 2 and 1792 x 1920 x 2 bytes");
+
+    const GcnMultisampleTextureLayout small(kGcnDepth2D128, 4u, 2u, 128u, 120u);
+    std::vector<std::byte> linear(static_cast<std::size_t>(small.LinearBytes()));
+    for (std::size_t index = 0; index < linear.size(); ++index) linear[index] = static_cast<std::byte>((index * 7u + index / 251u) & 0xffu);
+    std::vector<std::byte> tiled(static_cast<std::size_t>(small.Bytes()), std::byte{0x5a});
+    small.TileHoisted(linear, tiled);
+    std::vector<std::byte> back(linear.size());
+    small.Detile(tiled, back);
+    Require(back == linear, "PS4 multisampled depth samples changed in a tile and detile round trip");
+    std::vector<bool> written(tiled.size(), false);
+    for (std::uint32_t y = 0; y < 120u; ++y) {
+        for (std::uint32_t x = 0; x < 128u; ++x) {
+            for (std::uint32_t sample = 0; sample < 2u; ++sample) {
+                for (std::uint32_t byte = 0; byte < 4u; ++byte) written[static_cast<std::size_t>(small.Offset(x, y, sample)) + byte] = true;
+            }
+        }
+    }
+    for (std::size_t offset = 0; offset < tiled.size(); ++offset) {
+        if (!written[offset]) Require(tiled[offset] == std::byte{0x5a}, "tiling PS4 multisampled depth samples wrote a byte of the padded rows");
+    }
+    Require(std::ranges::count(written, false) == 128u * 8u * 4u * 2u, "the padded rows of a 128 x 120 PS4 multisampled depth surface are not 8 rows of both samples");
+
+    reject([&] { GcnMultisampleTextureLayout(kGcnThin2D, 4u, 2u, 128u, 128u); }, "needs a 2D or PRT depth tile mode");
+    reject([&] { GcnMultisampleTextureLayout(kGcnThin1D, 4u, 2u, 128u, 128u); }, "needs a 2D or PRT depth tile mode");
+    reject([&] { GcnMultisampleTextureLayout(kGcnDepth2D128, 4u, 1u, 128u, 128u); }, "needs a 2D or PRT depth tile mode");
+    reject([&] { GcnMultisampleTextureLayout(kGcnDepth2D128, 8u, 2u, 128u, 128u); }, "needs a 2D or PRT depth tile mode");
+    reject([&] { GcnMultisampleTextureLayout(kGcnDepth2D128, 4u, 2u, 192u, 128u); }, "pitch is not a whole number of macro tiles");
+    reject([&] { (void)depth.Offset(1792u, 0u, 0u); }, "coordinate is outside its extent");
+    reject([&] { (void)depth.Offset(0u, 0u, 2u); }, "coordinate is outside its extent");
+}
+
 }
 
 void RunTextureTilingTests() {
     gcnTilingTests();
     gcnThickTilingTests();
     gcnMultisampleTilingTests();
+    gcnMultisampleLayoutTests();
     sizeOnlySurfaceTests();
     {
         const auto mips = ComputeMipLayout(TextureTileMode::kLinear, 1, 4, 4, 2);
