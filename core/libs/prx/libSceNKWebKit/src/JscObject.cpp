@@ -137,16 +137,19 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
 
     if (prop == group->toStringTagAtom) {
         if (ObjectClass(data)) {
-            for (OpaqueJSClass* cls = ObjectClass(data); cls; cls = cls->parentClass) {
-                if (!cls->className.empty()) {
-                    if (desc) {
-                        desc->flags = JS_PROP_CONFIGURABLE;
-                        desc->value = JS_NewString(qctx, cls->className.c_str());
-                        desc->getter = JS_UNDEFINED;
-                        desc->setter = JS_UNDEFINED;
-                    }
-                    return 1;
+            if (!JS_IsUndefined(data->propStore)) {
+                const int ownRes = JS_GetOwnProperty(qctx, desc, data->propStore, prop);
+                if (ownRes != 0) return ownRes;
+            }
+            const std::string& className = ObjectClass(data)->className;
+            if (!className.empty() || !data->isGlobalInterceptor) {
+                if (desc) {
+                    desc->flags = JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE;
+                    desc->value = JS_NewString(qctx, className.empty() ? "CallbackObject" : className.c_str());
+                    desc->getter = JS_UNDEFINED;
+                    desc->setter = JS_UNDEFINED;
                 }
+                return 1;
             }
         }
     } else if (prop == group->toPrimitiveAtom) {
@@ -850,8 +853,11 @@ void OpaqueJSClass::DestroyInPlace() {
         parentClass = nullptr;
     }
     if (prototypeClass) {
-        prototypeClass->DestroyInPlace();
-        prototypeClass.reset();
+        OpaqueJSClass* released = prototypeClass.release();
+        if (released->refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            released->DestroyInPlace();
+            delete released;
+        }
     }
 }
 
@@ -953,9 +959,7 @@ void RunClassFinalize(CallbackObjectData* data) {
 
 OpaqueJSValue* GetOrCreateClassPrototype(OpaqueJSContext* ctx, OpaqueJSClass* jsClass) {
     if (!ctx || !jsClass) return nullptr;
-    if (jsClass->attributes & kJSClassAttributeNoAutomaticPrototype) {
-        return jsClass->parentClass ? GetOrCreateClassPrototype(ctx, jsClass->parentClass) : nullptr;
-    }
+    if (!jsClass->prototypeClass) return nullptr;
     auto it = ctx->classPrototypes.find(jsClass);
     if (it != ctx->classPrototypes.end() && it->second && it->second->alive) {
         return it->second;
@@ -1042,7 +1046,7 @@ extern "C" {
 using namespace NKWebKit;
 
 JSClassRef APS5_VABI JSClassCreate(const JSClassDefinition* definition) {
-    if (!definition || definition->version != 0) return nullptr;
+    if (!definition) return nullptr;
     auto* cls = new OpaqueJSClass();
     cls->attributes = definition->attributes;
     if (definition->className) {
@@ -1060,20 +1064,35 @@ JSClassRef APS5_VABI JSClassCreate(const JSClassDefinition* definition) {
             entry.setProperty = sv->setProperty;
             entry.attributes = sv->attributes;
             entry.propertyNameRef = Utf8ToJsString(entry.name);
-            cls->staticValues.push_back(std::move(entry));
+            auto existingValue = std::find_if(cls->staticValues.begin(), cls->staticValues.end(), [&entry](const StaticValueEntry& other) { return other.name == entry.name; });
+            if (existingValue == cls->staticValues.end()) {
+                cls->staticValues.push_back(std::move(entry));
+            } else {
+                JSStringRelease_nid_postfix(existingValue->propertyNameRef);
+                *existingValue = std::move(entry);
+            }
         }
     }
+    std::vector<StaticFunctionEntry> functions;
     if (definition->staticFunctions) {
         for (const JSStaticFunction* sf = definition->staticFunctions; sf->name != nullptr; ++sf) {
             StaticFunctionEntry entry;
             entry.name = sf->name;
             entry.callAsFunction = sf->callAsFunction;
             entry.attributes = sf->attributes;
-            cls->staticFunctions.push_back(std::move(entry));
+            auto existingFunction = std::find_if(functions.begin(), functions.end(), [&entry](const StaticFunctionEntry& other) { return other.name == entry.name; });
+            if (existingFunction == functions.end()) {
+                functions.push_back(std::move(entry));
+            } else {
+                *existingFunction = std::move(entry);
+            }
         }
+    }
+    if (cls->attributes & kJSClassAttributeNoAutomaticPrototype) {
+        cls->staticFunctions = std::move(functions);
+    } else {
         auto protoCls = std::make_unique<OpaqueJSClass>();
-        protoCls->className = cls->className;
-        protoCls->staticFunctions = cls->staticFunctions;
+        protoCls->staticFunctions = std::move(functions);
         cls->prototypeClass = std::move(protoCls);
     }
     cls->initialize = definition->initialize;
