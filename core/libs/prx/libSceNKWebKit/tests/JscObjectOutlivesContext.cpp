@@ -110,6 +110,17 @@ bool APS5_VABI HasInstanceOfText(JSContextRef ctx, JSObjectRef constructor, JSVa
     return JSValueIsString(ctx, MakeText(ctx, "probe")) && JSValueIsNumber(ctx, possibleInstance);
 }
 
+JSObjectRef APS5_VABI ConstructPlain(JSContextRef ctx, JSObjectRef constructor, std::size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception) {
+    (void)constructor;
+    (void)argumentCount;
+    (void)arguments;
+    (void)exception;
+    JSObjectRef made = JSObjectMake(ctx, nullptr, nullptr);
+    ScopedJsString key("madeBy");
+    JSObjectSetProperty(ctx, made, key, MakeText(ctx, "constructor"), kJSPropertyAttributeNone, nullptr);
+    return made;
+}
+
 const JSStaticFunction staticFunctions[] = {
     {"method", &CallReturnsText, kJSPropertyAttributeNone},
     {nullptr, nullptr, 0},
@@ -161,12 +172,16 @@ void TestOneSurvivor(bool collect) {
     SetGlobal(second, "survivor", object);
     Require(EvalBool(first, "this.plainOfFirst = 12; true"));
     SetGlobal(second, "firstGlobal", JSContextGetGlobalObject(first));
+    SetGlobal(second, "apiFunction", JSObjectMakeFunctionWithCallback(first, nullptr, &CallReturnsText));
+    SetGlobal(second, "ApiConstructor", JSObjectMakeConstructor(first, nullptr, &ConstructPlain));
     RequireTheObjectWorks(second, object);
+    Require(EvalBool(second, "apiFunction() === 'called' && new ApiConstructor().madeBy === 'constructor'"));
 
     JSGlobalContextRelease(first);
     if (collect) JSGarbageCollect(second);
     RequireTheObjectWorks(second, object);
     Require(EvalBool(second, "firstGlobal.plainOfFirst === 12"));
+    Require(EvalBool(second, "apiFunction() === 'called' && new ApiConstructor().madeBy === 'constructor'"));
 
     JSValueUnprotect(second, object);
     JSGlobalContextRelease(second);
