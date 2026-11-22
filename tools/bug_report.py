@@ -111,7 +111,7 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None, e
     members["README.txt"] = README
     with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name, content in members.items():
-            bundle.writestr(name, content.encode("utf-8"))
+            bundle.writestr(name, content.encode("utf-8", errors="backslashreplace"))
     return sorted(members)
 
 

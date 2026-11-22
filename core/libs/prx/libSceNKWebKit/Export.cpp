@@ -8955,14 +8955,6 @@ int APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleNodeHandleGetRenderRect() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8972,26 +8964,6 @@ int APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable() {
 }
 
 int APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFilled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutofilled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleSetHTMLInputElementValueForUser() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -13837,22 +13809,6 @@ int APS5_VABI _ZN7WebCore10ScrollView4showEv() {
 }
 
 int APS5_VABI _ZN7WebCore10ScrollView8addChildERNS_6WidgetE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10StorageMap20setItemIgnoringQuotaERKN3WTF6StringES4_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10StorageMap3keyEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -25446,14 +25402,6 @@ int APS5_VABI _ZNK7WebCore10ScrollView42documentScrollPositionRelativeToViewOrig
 }
 
 int APS5_VABI _ZNK7WebCore10StorageMap6lengthEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore10StorageMap7getItemERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore10StorageMap8containsERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

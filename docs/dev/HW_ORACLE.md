@@ -159,13 +159,18 @@ cmake --build build --target agc_oracle_runner
 | `HW_ORACLE_VULKAN_RUNNER` | path of the built `agc_oracle_runner` executable |
 | `ANYPS5_GPU` | case-insensitive substring of the Vulkan device name, as for every AnyPS5 tool |
 
-On Windows the runner needs `build/core/libs/libs/unpatched` in `PATH` ([BUILD](BUILD.md)). Run the hardware with the default
-runtime and the recompiler with `vulkan`, with the same body, rows and settings, each with `--json`, then compare:
+On Windows add `build/core/libs/libs/unpatched` to `PATH` ([BUILD](BUILD.md)). The example uses the `.exe` runner when it
+is present. Run the hardware with the default runtime and the recompiler with `vulkan`, with the same body, rows and
+settings, each with `--json`, then compare:
 
 ```sh
 SETTINGS="--ieee 0 --dx10-clamp 1 --denorm32 0 --denorm16 3 --round32 0 --round16 0 --fp16-overflow 0"
+RUNNER=build/core/libs/prx/libSceAgcDriver/agc_oracle_runner
+if [ -f "$RUNNER.exe" ]; then
+  RUNNER="$RUNNER.exe"
+fi
 python3 tools/hw-oracle/hw_oracle.py body.s rows.txt --json $SETTINGS > hardware.json
-HW_ORACLE_RUNTIME=vulkan HW_ORACLE_VULKAN_RUNNER=<path to agc_oracle_runner> \
+HW_ORACLE_RUNTIME=vulkan HW_ORACLE_VULKAN_RUNNER="$RUNNER" \
   python3 tools/hw-oracle/hw_oracle.py body.s rows.txt --json $SETTINGS > recompiler.json
 python3 tools/hw-oracle/compare_results.py hardware.json recompiler.json
 ```

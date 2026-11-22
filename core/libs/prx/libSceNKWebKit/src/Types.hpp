@@ -206,6 +206,12 @@ public:
     Retained<BundleNodeHandle> document;
     Retained<BundleFrame> documentFrame;
     Retained<BundleFrame> htmlIFrameElementContentFrame;
+    Retained<String> htmlInputElementValue;
+    bool htmlInputElementAutoFilled = false;
+    bool htmlInputElementAutoFilledAndViewable = false;
+    bool htmlInputElementSpellcheckEnabled = true;
+    bool htmlInputElementLastChangeWasUserEdit = false;
+    bool htmlTextAreaElementLastChangeWasUserEdit = false;
 };
 
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
