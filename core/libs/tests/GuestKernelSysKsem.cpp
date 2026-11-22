@@ -283,8 +283,11 @@ void Duplicates() {
     Require(ksem_trywait_nid_postfix(target) == 0 && Value(id) == 1);
     Require(dup2_nid_postfix(static_cast<int>(id), static_cast<int>(id)) == static_cast<int>(id));
     Require(Value(id) == 1);
+    Require(fchmod_nid_postfix(copy, 0600) == 0 && Status(static_cast<int>(id)).st_mode == 0100600);
     Require(ksem_destroy_nid_postfix(id) == 0);
+    Require(fchmod_nid_postfix(moved, 0640) == 0);
     for (const int descriptor : {copy, moved, static_cast<int>(target)}) {
+        Require(Status(descriptor).st_mode == 0100640);
         Require(ksem_post_nid_postfix(descriptor) == -1 && Error() == Einval);
         Require(ksem_trywait_nid_postfix(descriptor) == -1 && Error() == Einval);
         int value = -1;

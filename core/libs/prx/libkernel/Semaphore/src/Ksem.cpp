@@ -73,6 +73,13 @@ std::shared_ptr<Ksem> Find(std::intptr_t id) {
     return found->second;
 }
 
+std::shared_ptr<Ksem> FindOpen(int descriptor) {
+    std::lock_guard lock(g_ksemLock);
+    const auto found = g_ksems.find(descriptor);
+    if (found == g_ksems.end()) return {};
+    return found->second;
+}
+
 std::size_t SemaphoreCount() {
     std::set<const Ksem*> semaphores;
     for (const auto& entry : g_ksems) semaphores.insert(entry.second.get());
@@ -153,7 +160,7 @@ extern "C" bool IsKsemDescriptor_nid_no_patch(int descriptor) {
 }
 
 bool KsemStat(int descriptor, FileStat& status) {
-    const auto ksem = Find(descriptor);
+    const auto ksem = FindOpen(descriptor);
     if (!ksem) return false;
     std::lock_guard lock(ksem->lock);
     status = {};
@@ -168,7 +175,7 @@ bool KsemStat(int descriptor, FileStat& status) {
 }
 
 bool KsemChangeMode(int descriptor, std::uint16_t mode) {
-    const auto ksem = Find(descriptor);
+    const auto ksem = FindOpen(descriptor);
     if (!ksem) return false;
     std::lock_guard lock(ksem->lock);
     ksem->mode = static_cast<std::uint16_t>(mode & 0777);
