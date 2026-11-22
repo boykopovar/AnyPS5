@@ -2,7 +2,6 @@
 
 #include "SceTypes.hpp"
 
-void SetSysmoduleLibcForLibkernelPreloaded_nid_no_patch(bool preloaded);
 void SetSysmoduleLibcForLibkernelSources_nid_no_patch(KernelModule (*loader)(const char*), const char* (*sandbox)(), int (*ps4)());
 
 extern "C" {

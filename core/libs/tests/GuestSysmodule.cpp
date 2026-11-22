@@ -633,7 +633,7 @@ int main() {
     errno = 71;
     Require(ThrowsRuntimeError([] { sceSysmoduleMapLibcForLibkernel(reinterpret_cast<int*>(0x10)); }));
     Require(errno == 71);
-    SetSysmoduleLibcForLibkernelPreloaded_nid_no_patch(true);
+    Require(sceSysmodulePreloadModuleForLibkernel() == 0);
     Require(sceSysmoduleMapLibcForLibkernel(&libcHandle) == 0);
     Require(libcHandle > 0);
     Require(sceKernelStopUnloadModule(libcHandle, 0, nullptr, 0, nullptr, nullptr) == 0);
@@ -671,8 +671,8 @@ int main() {
     Require(libcHandle == -1);
     RequireLibcPaths({"/app0/sce_module/libc.prx", "/system/common/lib/libc.sprx"});
 
-    SetSysmoduleLibcForLibkernelPreloaded_nid_no_patch(false);
     gLibcPs4 = 1;
+    Require(ThrowsRuntimeError([] { sceSysmodulePreloadModuleForLibkernel(); }));
     libcHandle = 0x5a5a5a5a;
     Require(sceSysmoduleMapLibcForLibkernel(&libcHandle) == -4);
     Require(libcHandle == 0x5a5a5a5a);

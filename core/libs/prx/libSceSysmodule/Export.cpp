@@ -220,11 +220,6 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
 
 }
 
-void SetSysmoduleLibcForLibkernelPreloaded_nid_no_patch(bool preloaded) {
-    std::lock_guard lock(gMutex);
-    gLibcForLibkernelPreloaded = preloaded;
-}
-
 void SetSysmoduleLibcForLibkernelSources_nid_no_patch(KernelModule (*loader)(const char*), const char* (*sandbox)(), int (*ps4)()) {
     std::lock_guard lock(gMutex);
     gLibcForLibkernelLoader = loader;
@@ -545,7 +540,18 @@ int APS5_VABI sceSysmoduleMapLibcForLibkernel(int* handle) {
 }
 
 int APS5_VABI sceSysmodulePreloadModuleForLibkernel() {
-    NotImplemented_nid_no_patch(__func__);
+    int (*ps4Source)();
+    {
+        std::lock_guard lock(gMutex);
+        ps4Source = gLibcForLibkernelPs4;
+    }
+    if ((ps4Source != nullptr ? ps4Source() : sceKernelIsPs4Process()) == 1) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    {
+        std::lock_guard lock(gMutex);
+        gLibcForLibkernelPreloaded = true;
+    }
     return 0;
 }
 
