@@ -74,6 +74,8 @@ public:
     explicit SubmitGate(AgcDriver::VulkanDevice& device) : device(device) {
 #ifdef _WIN32
         library.reset(SDL_LoadObject("vulkan-1.dll"));
+#elif defined(__APPLE__)
+        library.reset(SDL_LoadObject("libvulkan.1.dylib"));
 #else
         library.reset(SDL_LoadObject("libvulkan.so.1"));
 #endif
