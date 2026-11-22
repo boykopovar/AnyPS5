@@ -96,6 +96,19 @@ void moveAbsolute(AbsoluteCursor& cursor, std::int32_t dx, std::int32_t dy) {
     cursor.y = std::clamp<std::int64_t>(cursor.y + moveY, 0, SCREEN_HEIGHTS[screenSize] - 1);
 }
 
+bool copyGuestOutChecked(void* destination, const void* source, std::size_t bytes) {
+    if (bytes == 0) return true;
+    constexpr std::uintptr_t MaxAddress = std::numeric_limits<std::uintptr_t>::max();
+    const std::uintptr_t start = reinterpret_cast<std::uintptr_t>(destination);
+    if (start == 0 || bytes > MaxAddress - start) return false;
+    const ErrnoGuard restoreErrno;
+    {
+        const GuestArena::HostWrite guard(destination, bytes);
+        if (!guard.Open() || !GuestWritable_nid_no_patch(destination, bytes)) return false;
+    }
+    return GuestCopyOut_nid_no_patch(destination, source, bytes);
+}
+
 bool copyAbsoluteRecords(MouseAbsoluteData* destination, const MouseAbsoluteData* source, std::size_t rows) {
     if (rows == 0) return true;
     constexpr std::size_t HeadSize = offsetof(MouseAbsoluteData, padding);
@@ -325,8 +338,7 @@ int Read(std::int32_t handle, MouseData* data, std::int32_t num) {
     for (int i = 0; i < available; ++i) {
         records[i] = history[(head + i) % MOUSE_MAX_DATA_NUM];
     }
-    const ErrnoGuard restoreErrno;
-    if (!GuestCopyOut_nid_no_patch(data, records.data(), static_cast<std::size_t>(available) * sizeof(MouseData))) {
+    if (!copyGuestOutChecked(data, records.data(), static_cast<std::size_t>(available) * sizeof(MouseData))) {
         return MOUSE_ERROR_INVALID_ARG;
     }
     head = (head + available) % MOUSE_MAX_DATA_NUM;
@@ -361,8 +373,7 @@ int ReadAbsolutePosition(std::int32_t handle, MouseAbsoluteData* data, std::int3
     if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
     if (!connected) {
         const MouseAbsoluteData empty{};
-        const ErrnoGuard restoreErrno;
-        return GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty)) ? 1 : MOUSE_ERROR_INVALID_ARG;
+        return copyGuestOutChecked(data, &empty, sizeof(empty)) ? 1 : MOUSE_ERROR_INVALID_ARG;
     }
     std::array<AbsoluteSample, MOUSE_MAX_DATA_NUM> samples{};
     std::array<bool, MOUSE_MAX_DATA_NUM> endsRecord{};
