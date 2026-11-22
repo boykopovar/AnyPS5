@@ -319,6 +319,60 @@ static void TestLayoutRect() {
     Require(_ZNK7WebCore10LayoutRect8containsERKS0_(&lrA, insideLr));
 }
 
+static WebCore::Color RawColor(std::uint64_t bits) {
+    WebCore::Color color;
+    color.m_colorAndFlags = bits;
+    return color;
+}
+
+static void TestColorMoveAssignEqual() {
+    constexpr std::uint64_t first = 0x11040000FF0000FFull;
+    constexpr std::uint64_t second = 0x110400000000FFFFull;
+
+    WebCore::Color same = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&same, std::move(same));
+    Require(same.m_colorAndFlags == first);
+
+    WebCore::Color target = RawColor(first);
+    WebCore::Color equal = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&target, std::move(equal));
+    Require(target.m_colorAndFlags == first);
+    Require(equal.m_colorAndFlags == first);
+
+    WebCore::Color invalid = RawColor(0);
+    WebCore::Color alsoInvalid = RawColor(0);
+    _ZN7WebCore5ColoraSEOS0_(&invalid, std::move(alsoInvalid));
+    Require(invalid.m_colorAndFlags == 0 && alsoInvalid.m_colorAndFlags == 0);
+
+    WebCore::Color different = RawColor(second);
+    _ZN7WebCore5ColoraSEOS0_(&target, std::move(different));
+    Require(target.m_colorAndFlags == second);
+    Require(different.m_colorAndFlags == 0);
+
+    WebCore::Color fromInvalid = RawColor(0);
+    _ZN7WebCore5ColoraSEOS0_(&target, std::move(fromInvalid));
+    Require(target.m_colorAndFlags == 0 && fromInvalid.m_colorAndFlags == 0);
+
+    WebCore::Color nearlyEqual = RawColor(first ^ 1ull);
+    WebCore::Color original = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&original, std::move(nearlyEqual));
+    Require(original.m_colorAndFlags == (first ^ 1ull));
+    Require(nearlyEqual.m_colorAndFlags == 0);
+
+    WebCore::Color flagged = RawColor(first | (1ull << 48));
+    WebCore::Color plain = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&plain, std::move(flagged));
+    Require(plain.m_colorAndFlags == (first | (1ull << 48)));
+    Require(flagged.m_colorAndFlags == 0);
+
+    WebCore::Color copied = RawColor(first);
+    WebCore::Color source = RawColor(first);
+    _ZN7WebCore5ColoraSERKS0_(&copied, source);
+    Require(copied.m_colorAndFlags == first && source.m_colorAndFlags == first);
+    _ZN7WebCore5ColoraSERKS0_(&copied, copied);
+    Require(copied.m_colorAndFlags == first);
+}
+
 static void TestRoundedRect() {
     WebCore::LayoutRect lr{WebCore::LayoutPoint{0, 0}, WebCore::LayoutSize{6400, 6400}};
     WebCore::LayoutSize sz{640, 640};
@@ -763,6 +817,7 @@ int main() {
     TestFloatQuad();
     TestFloatRoundedRect();
     TestIntPointIntSizeIntRect();
+    TestColorMoveAssignEqual();
     TestLayoutRect();
     TestRoundedRect();
     TestColor();
