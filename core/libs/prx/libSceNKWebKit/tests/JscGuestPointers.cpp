@@ -158,6 +158,16 @@ static void TestDoubleToStringConverter() {
     *builder = DoubleConversionStringBuilder{{text, 64}, 60};
     Require(ToExponential(&converter, std::numeric_limits<double>::infinity(), 2, builder));
     Require(builder->position == 63 && std::memcmp(text + 60, "xyz", 3) == 0);
+    for (int special = 0; special < 2; ++special) {
+        *builder = DoubleConversionStringBuilder{{text, 64}, std::numeric_limits<int>::max()};
+        overflowed = false;
+        try {
+            ToExponential(special ? &converter : ecma, special ? -std::numeric_limits<double>::infinity() : 1.0, 2, builder);
+        } catch (const std::out_of_range&) {
+            overflowed = true;
+        }
+        Require(overflowed && builder->position == std::numeric_limits<int>::max());
+    }
 
     char* writableText = reinterpret_cast<char*>(pages + 4096);
     std::memset(writableText, 0xcc, 64);

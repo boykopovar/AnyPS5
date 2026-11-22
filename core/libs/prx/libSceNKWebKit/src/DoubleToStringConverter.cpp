@@ -34,7 +34,7 @@ void AppendCharacter(HostBuilder& host, char ch) {
     ValidateBuilder(builder);
     if (ch == '\0')
         throw std::invalid_argument("WTF::double_conversion::StringBuilder: NUL character");
-    if (builder.position + 1 >= builder.buffer.length)
+    if (builder.position >= builder.buffer.length - 1)
         throw std::out_of_range("WTF::double_conversion::StringBuilder: buffer overflow");
     host.text.push_back(ch);
     ++builder.position;
@@ -49,7 +49,7 @@ void AppendSubstring(HostBuilder& host, const char* text, int count) {
         return;
     if (!text)
         throw std::invalid_argument("WTF::double_conversion::StringBuilder: null substring");
-    if (builder.position + count >= builder.buffer.length)
+    if (count >= builder.buffer.length - builder.position)
         throw std::out_of_range("WTF::double_conversion::StringBuilder: buffer overflow");
     host.text.append(text, static_cast<std::size_t>(count));
     builder.position += count;
