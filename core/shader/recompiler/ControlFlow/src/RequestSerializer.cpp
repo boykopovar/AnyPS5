@@ -927,7 +927,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(64u);
+    writer.WriteU32(65u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -981,6 +981,17 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteU32(request.target.maxImageArrayLayers);
     writer.WriteBool(request.target.fixedPushSlots);
     writer.WriteBool(request.target.spannedAnySubgroup);
+    writer.WriteBool(request.context.convertedSamples);
+    writer.WriteBool(request.context.layerRowSamples);
+    writer.WriteBool(request.target.robustBufferAccess2);
+    writer.WriteBool(request.target.exactRobustLoads);
+    writer.WriteBool(request.target.waveLdsMemoryBarriers);
+    writer.WriteBool(request.target.deviceScopeLdsMemoryBarriers);
+    writer.WriteBool(request.target.ldsLockFences);
+    writer.WriteBool(request.target.deviceAtomicWorkgroupMemoryBarriers);
+    writer.WriteBool(request.target.meshWindowBuffer);
+    writer.WriteBool(request.target.float16HostNans);
+    writer.WriteBool(request.target.meshInlineFunctions);
     if (request.graphics.has_value() && request.graphics->mesh.has_value()) {
         writer.WriteU32(request.graphics->mesh->reuseVertexLimit);
         writer.WriteU32(request.graphics->mesh->reusePrimitiveLimit);
@@ -994,7 +1005,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 64u || version == 50u || (version >= 58u && version <= 61u)) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 65u || version == 50u || (version >= 58u && version <= 61u)) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -1070,7 +1081,20 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.fixedPushSlots = reader.ReadBool();
     }
     if (version >= 62u) result.request.target.spannedAnySubgroup = reader.ReadBool();
-    if (version >= 64u && result.request.graphics.has_value() && result.request.graphics->mesh.has_value()) {
+    if (version >= 64u) {
+        result.request.context.convertedSamples = reader.ReadBool();
+        result.request.context.layerRowSamples = reader.ReadBool();
+        result.request.target.robustBufferAccess2 = reader.ReadBool();
+        result.request.target.exactRobustLoads = reader.ReadBool();
+        result.request.target.waveLdsMemoryBarriers = reader.ReadBool();
+        result.request.target.deviceScopeLdsMemoryBarriers = reader.ReadBool();
+        result.request.target.ldsLockFences = reader.ReadBool();
+        result.request.target.deviceAtomicWorkgroupMemoryBarriers = reader.ReadBool();
+        result.request.target.meshWindowBuffer = reader.ReadBool();
+        result.request.target.float16HostNans = reader.ReadBool();
+        result.request.target.meshInlineFunctions = reader.ReadBool();
+    }
+    if (version >= 65u && result.request.graphics.has_value() && result.request.graphics->mesh.has_value()) {
         result.request.graphics->mesh->reuseVertexLimit = reader.ReadU32();
         result.request.graphics->mesh->reusePrimitiveLimit = reader.ReadU32();
     }

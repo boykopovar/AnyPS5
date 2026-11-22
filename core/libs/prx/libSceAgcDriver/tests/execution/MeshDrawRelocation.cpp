@@ -22,9 +22,10 @@ using AgcDriver::DriverDetail::DrawMiss;
 constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 64;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
-alignas(256) constexpr std::array<std::uint16_t, 4> Indices{0, 1, 2, 0};
-alignas(256) constexpr std::array<std::array<float, 8>, 3> Vertices{{
-    {-0.9f, -0.8f, 0, 1, 1, 1, 1, 1}, {-0.1f, -0.8f, 0, 1, 1, 1, 1, 1}, {-0.5f, 0.8f, 0, 1, 1, 1, 1, 1}
+alignas(256) constexpr std::array<std::uint16_t, 6> Indices{0, 1, 2, 3, 4, 5};
+alignas(256) constexpr std::array<std::array<float, 8>, 6> Vertices{{
+    {-0.9f, -0.8f, 0, 1, 1, 1, 1, 1}, {-0.1f, -0.8f, 0, 1, 1, 1, 1, 1}, {-0.5f, 0.8f, 0, 1, 1, 1, 1, 1},
+    {0.1f, -0.8f, 0, 1, 1, 1, 1, 1}, {0.9f, -0.8f, 0, 1, 1, 1, 1, 1}, {0.5f, 0.8f, 0, 1, 1, 1, 1, 1}
 }};
 alignas(256) constexpr std::array<std::uint32_t, 4> PixelCode{0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u};
 
@@ -46,6 +47,10 @@ struct Header {
 Header GeometryHeader{};
 Header PixelHeader{};
 bool IndirectMode = false;
+bool MultiMode = false;
+bool LeftRecord = true;
+bool RightRecord = true;
+alignas(256) std::array<std::uint32_t, 10> MultiArguments{3u, 1u, 0u, 0u, 0u, 3u, 1u, 3u, 0u, 0u};
 alignas(256) std::array<std::uint32_t, 5> IndirectArguments{3u, 1u, 0u, 0u, 0u};
 
 void Register(Header& header, const std::uint32_t* code, std::size_t size, std::uint8_t type) {
@@ -108,18 +113,26 @@ AgcDriver::DriverDetail::DrawEntryCounters Draw(const std::array<std::uint32_t, 
     auto commands = Setup(descriptor);
     const auto address = reinterpret_cast<std::uintptr_t>(Indices.data());
     if (IndirectMode) {
-        const auto arguments = reinterpret_cast<std::uintptr_t>(IndirectArguments.data());
+        const auto arguments = reinterpret_cast<std::uintptr_t>(MultiMode ? MultiArguments.data() : IndirectArguments.data());
         commands.insert(commands.end(), {0xc0021100u, 1u, static_cast<std::uint32_t>(arguments), static_cast<std::uint32_t>(arguments >> 32u)});
         commands.insert(commands.end(), {0xc0012600u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)});
-        commands.insert(commands.end(), {0xc0001300u, 3u});
-        commands.insert(commands.end(), {0xc0032500u, 0u, 0u, 0u, 0u});
+        commands.insert(commands.end(), {0xc0001300u, MultiMode ? 6u : 3u});
+        if (MultiMode) commands.insert(commands.end(), {0xc0083800u, 0u, 0u, 0u, 0u, 2u, 0u, 0u, 20u, 0u});
+        else commands.insert(commands.end(), {0xc0032500u, 0u, 0u, 0u, 0u});
     } else {
         commands.insert(commands.end(), {0xc0042700u, 3u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 3u, 0u});
     }
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "mesh submission failed");
     AgcDriverWaitIdle_nid_postfix();
-    Require(std::to_integer<unsigned>(Pixels[(24u * Width + 16u) * 4u]) > 200u, "the mesh draw did not cover its triangle");
+    if (MultiMode) {
+        const auto left = std::to_integer<unsigned>(Pixels[(24u * Width + 16u) * 4u]);
+        const auto right = std::to_integer<unsigned>(Pixels[(24u * Width + 48u) * 4u]);
+        Require(LeftRecord ? left > 200u : left == 0u, "the first indirect record produced the wrong left triangle");
+        Require(RightRecord ? right > 200u : right == 0u, "the second indirect record produced the wrong right triangle");
+    } else {
+        Require(std::to_integer<unsigned>(Pixels[(24u * Width + 16u) * 4u]) > 200u, "the mesh draw did not cover its triangle");
+    }
     return AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
 }
 
@@ -154,7 +167,19 @@ int main(int argc, char** argv) {
         }
         Register(GeometryHeader, GeometryCode.data(), sizeof(GeometryCode), 2);
         Register(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
-        if (argc == 2 && std::string(argv[1]) == "mesh-reuse-indirect") {
+        if (argc == 2 && std::string(argv[1]).starts_with("mesh-reuse-indirect-multi-")) {
+            const auto mode = std::string(argv[1]).substr(std::string("mesh-reuse-indirect-multi-").size());
+            Require(mode == "both" || mode == "left" || mode == "right" || mode == "none", "unknown multi-record mesh case");
+            IndirectMode = MultiMode = true;
+            LeftRecord = mode == "both" || mode == "left";
+            RightRecord = mode == "both" || mode == "right";
+            MultiArguments[0] = LeftRecord ? 3u : 0u;
+            MultiArguments[5] = RightRecord ? 3u : 0u;
+            const auto vertices = reinterpret_cast<std::uintptr_t>(Vertices.data());
+            Descriptors[0] = {static_cast<std::uint32_t>(vertices), static_cast<std::uint32_t>(vertices >> 32u) | (32u << 16u), static_cast<std::uint32_t>(Vertices.size()), 0x01016facu};
+            Draw(Descriptors[0]);
+            std::cout << "distinct-record mesh pixels passed: " << mode << '\n';
+        } else if (argc == 2 && std::string(argv[1]) == "mesh-reuse-indirect") {
             IndirectMode = true;
             const auto vertices = reinterpret_cast<std::uintptr_t>(Vertices.data());
             Descriptors[0] = {static_cast<std::uint32_t>(vertices), static_cast<std::uint32_t>(vertices >> 32u) | (32u << 16u), static_cast<std::uint32_t>(Vertices.size()), 0x01016facu};
