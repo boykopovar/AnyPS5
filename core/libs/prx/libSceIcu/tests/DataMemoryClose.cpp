@@ -109,8 +109,13 @@ void Mapping() {
     guarded.data.length = 4096;
     udata_close_nid_postfix(&guarded.data);
 
+    MEMORY_BASIC_INFORMATION information{};
+    Require(VirtualQuery(view, &information, sizeof(information)) == sizeof(information));
+    Require(information.State != MEM_FREE);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
+    UnmapViewOfFile(view);
+    CloseHandle(mapping);
 }
 #else
 void Mapping() {
@@ -128,15 +133,11 @@ void Mapping() {
     udata_close_nid_postfix(&guarded.data);
 
     errno = 0;
-#if defined(__APPLE__)
-    Require(msync(mapping, pageSize, MS_ASYNC) == -1);
-#else
     unsigned char residency = 0;
-    Require(mincore(mapping, pageSize, &residency) == -1);
-#endif
-    Require(errno == ENOMEM);
+    Require(mincore(mapping, pageSize, &residency) == 0);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
+    Require(munmap(mapping, pageSize) == 0);
 }
 #endif
 
@@ -166,6 +167,48 @@ void ReadOnlyWriteback() {
     Require(after.length == 42);
     Require(after.heapAllocated == 0);
     Require(munmap(mapping, pageSize) == 0);
+#endif
+}
+
+void TrustedDoubleCloseAndErrno() {
+    errno = 0;
+    UErrorCode status = U_ZERO_ERROR;
+    UDataMemory* data = UDataMemory_createNewInstance(&status);
+    Require(status == U_ZERO_ERROR);
+    Require(data != nullptr);
+#if defined(_WIN32)
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 4096, nullptr);
+    Require(mapping != nullptr);
+    void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, 4096);
+    Require(view != nullptr);
+    IcuDataMemoryOwnership::Register(data, view, view, mapping);
+    data->pHeader = static_cast<const DataHeader*>(view);
+    data->mapAddr = view;
+    data->map = mapping;
+#else
+    const auto pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+    IcuDataMemoryOwnership::Register(data, mapping, mapping, static_cast<char*>(mapping) + pageSize);
+    data->pHeader = static_cast<const DataHeader*>(mapping);
+    data->mapAddr = mapping;
+    data->map = static_cast<char*>(mapping) + pageSize;
+#endif
+    errno = 0x41;
+    udata_close_nid_postfix(data);
+    Require(errno == 0x41);
+    Require(IcuDataMemoryOwnership::IsFreed(data));
+    udata_close_nid_postfix(data);
+#if defined(_WIN32)
+    MEMORY_BASIC_INFORMATION information{};
+    Require(VirtualQuery(view, &information, sizeof(information)) == sizeof(information));
+    Require(information.State == MEM_FREE);
+    CloseHandle(mapping);
+#else
+    errno = 0;
+    unsigned char residency = 0;
+    Require(mincore(mapping, pageSize, &residency) == -1);
+    Require(errno == ENOMEM);
 #endif
 }
 
@@ -209,12 +252,8 @@ void Heap() {
     udata_close_nid_postfix(data);
 
     errno = 0;
-#if defined(__APPLE__)
-    Require(msync(mapping, pageSize, MS_ASYNC) == -1);
-#else
     unsigned char residency = 0;
     Require(mincore(mapping, pageSize, &residency) == -1);
-#endif
     Require(errno == ENOMEM);
 #endif
 }
@@ -226,6 +265,18 @@ void ForgedOwnershipFlag() {
     std::memset(&guarded.data, 0, sizeof(guarded.data));
     guarded.data.heapAllocated = 1;
     guarded.data.length = 42;
+    udata_close_nid_postfix(&guarded.data);
+    RequireInitialized(guarded.data);
+    RequireGuards(guarded);
+}
+
+void UnregisteredGarbage() {
+    GuardedData guarded{};
+    guarded.before.fill(0xa5);
+    guarded.after.fill(0x5a);
+    std::memset(&guarded.data, 0, sizeof(guarded.data));
+    guarded.data.heapAllocated = 1;
+    guarded.data.length = 101;
     udata_close_nid_postfix(&guarded.data);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
@@ -249,15 +300,11 @@ void ForgedMapping() {
     udata_close_nid_postfix(&guarded.data);
 
     errno = 0;
-#if defined(__APPLE__)
-    Require(msync(mapping, pageSize, MS_ASYNC) == -1);
-#else
     unsigned char residency = 0;
-    Require(mincore(mapping, pageSize, &residency) == -1);
-#endif
-    Require(errno == ENOMEM);
+    Require(mincore(mapping, pageSize, &residency) == 0);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
+    Require(munmap(mapping, pageSize) == 0);
 }
 #else
 void ForgedMapping() {
@@ -277,14 +324,20 @@ void ForgedMapping() {
 
     udata_close_nid_postfix(&guarded.data);
 
+    MEMORY_BASIC_INFORMATION information{};
+    Require(VirtualQuery(view, &information, sizeof(information)) == sizeof(information));
+    Require(information.State != MEM_FREE);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
+    UnmapViewOfFile(view);
+    CloseHandle(mapping);
 }
 #endif
 
 void Run() {
     Null();
     ThrowUnreadable();
+    TrustedDoubleCloseAndErrno();
     Stack();
     Parity();
     Mapping();
@@ -292,6 +345,7 @@ void Run() {
     Heap();
     ForgedOwnershipFlag();
     ForgedMapping();
+    UnregisteredGarbage();
 }
 
 }

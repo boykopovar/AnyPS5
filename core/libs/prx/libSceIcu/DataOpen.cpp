@@ -66,7 +66,9 @@ UDataMemory* OpenData(const char* path, const char* type, const char* name, std:
         if (!written) NotImplemented_nid_no_patch(caller);
     }
     auto* released = data.release();
-    if (released) IcuDataMemoryOwnership::Register(released, released->pHeader, released->mapAddr, released->map);
+    if (released && hostStatus == U_ZERO_ERROR) {
+        IcuDataMemoryOwnership::Register(released, released->pHeader, released->mapAddr, released->map);
+    }
     return released;
 }
 
