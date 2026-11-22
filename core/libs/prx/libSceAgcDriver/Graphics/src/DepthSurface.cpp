@@ -4861,11 +4861,25 @@ std::optional<float> planeFillDepth(const DepthTarget& target, std::uint64_t add
     return DepthFillValue(pattern, d16);
 }
 
+void settleImportsUnderFill(std::uint64_t address, std::size_t bytes) {
+    std::vector<Context> contexts;
+    {
+        std::lock_guard lock(surfacesMutex());
+        for (const auto& surface : surfaces()) {
+            if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive) continue;
+            const bool covered = std::any_of(surface->sampling.initial.begin(), surface->sampling.initial.end(), [&](const auto& range) { return address < range.address + range.bytes && range.address < address + bytes; });
+            if (covered && std::none_of(contexts.begin(), contexts.end(), [&](const Context& context) { return context.device == surface->context.device; })) contexts.push_back(surface->context);
+        }
+    }
+    for (const auto& context : contexts) static_cast<void>(WatchedAfterSettle(context, address, bytes));
+}
+
 }
 
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
     forgetCopiesInside(address, bytes);
     std::lock_guard gpu(GuestMemory::GpuMutex());
+    settleImportsUnderFill(address, bytes);
     std::lock_guard lock(surfacesMutex());
     forgetHtileReads(address, bytes);
     for (const auto& surface : surfaces()) {
