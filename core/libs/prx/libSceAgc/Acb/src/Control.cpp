@@ -80,7 +80,7 @@ std::uint32_t* APS5_VABI sceAgcAcbResetQueue(CommandBuffer* buf, std::uint32_t f
     const auto prefixWords = sceAgcDriverUserDataGetPacketSize(4);
     if (!ReserveReset(buf, prefixWords, false)) return nullptr;
     auto* result = buf->cursor_up;
-    const auto version = Agc::Command::GetQueueResetState(instance, false).version;
+    const auto version = state.version;
     buf->cursor_up += sceAgcDriverUserDataWritePacket(buf->cursor_up, 1, marker, &version, sizeof(version));
     if ((flags & 0x80u) != 0) {
         if (!ReserveReset(buf, 2, true)) return nullptr;
@@ -90,7 +90,7 @@ std::uint32_t* APS5_VABI sceAgcAcbResetQueue(CommandBuffer* buf, std::uint32_t f
         event[1] = 0x407u;
     }
     if ((flags & 2u) != 0) {
-        const auto commands = Agc::Command::GetQueueResetState(instance, false).commands;
+        const auto commands = state.commands;
         if (commands.empty()) return nullptr;
         if (!ReserveReset(buf, static_cast<std::uint32_t>(commands.size()), true)) return nullptr;
         auto* restore = buf->cursor_up;
