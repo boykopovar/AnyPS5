@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -31,6 +32,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -172,21 +174,21 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3, bool standardOrder) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3, bool standardOrder, std::uint32_t sampleShift = 0) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
     cx[0x31b] = 0;
     cx[0x31c] = standardOrder ? StandardOrderInfo : Float11_11_10Info;
-    cx[0x31d] = 0;
+    cx[0x31d] = (sampleShift << 12u) | (sampleShift << 15u);
     cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
     cx[0x3b8] = attrib3;
     cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
     auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
-    Require(color.format == VK_FORMAT_R32_UINT && color.elementBytes == 4 && color.componentMapping == (standardOrder ? 0xe4u : 0xc6u) && color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 && color.bytes == block.bytes, "the 11_11_10 float target did not decode as a packed R32_UINT surface");
+    Require(color.format == VK_FORMAT_R32_UINT && color.elementBytes == 4 && color.componentMapping == (standardOrder ? 0xe4u : 0xc6u) && color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 && color.samples == 1u << sampleShift && (color.bytes << sampleShift) == block.bytes, "the 11_11_10 float target did not decode as a packed R32_UINT surface");
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, std::uint16_t sampleMask = 0xffffu) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::vector<std::uint32_t> vertexUserData(4, 0u);
@@ -221,6 +223,8 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.blends = {blend};
     state.blend = blend;
     state.blendConstants = {};
+    state.samples = color.samples;
+    state.quadSampleMask.fill(sampleMask);
 
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(pixelCode.data());
     const AgcDriver::Registers context{{0x1b6, 0x8000}, {0x1b3, 0}, {0x1b4, 0}, {0x203, 0}, {0x1c5, exportFormat}};
@@ -279,6 +283,39 @@ void ExpectSurface(AgcDriver::VulkanDevice& device, const Block& block, const Co
     }
 }
 
+void ResolveCase(AgcDriver::VulkanDevice& device, std::uint32_t sampleShift, const std::vector<std::array<float, 3>>& samples, std::uint32_t word, const std::string& what) {
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 4);
+    Block source(layout.Bytes() << sampleShift);
+    Block resolved(layout.Bytes());
+    std::memset(source.data, 0, source.bytes);
+    std::memset(resolved.data, 0x5a, resolved.bytes);
+    const auto multisampled = DecodeTarget(source, TiledAttrib3, true, sampleShift);
+    for (std::uint32_t sample = 0; sample < (1u << sampleShift); ++sample) Draw(device, multisampled, Float32Export, Float32Program(samples[sample % samples.size()]), static_cast<std::uint16_t>(1u << sample));
+    AgcDriver::Graphics::ColorMetadataPass pass{};
+    pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+    pass.source = multisampled;
+    pass.targets = {DecodeTarget(resolved, TiledAttrib3, true)};
+    device.ColorMetadataPass(pass);
+    ExpectSurface(device, resolved, layout, std::vector<std::uint32_t>(resolved.bytes / 4u, 0u), word, what);
+    AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+}
+
+void ResolveTests(AgcDriver::VulkanDevice& device) {
+    const float infinity = std::numeric_limits<float>::infinity();
+    const float nan = std::bit_cast<float>(0x7fa00000u);
+    ResolveCase(device, 2u, {{1.0f + 1.0f / 32.0f, 3.0f, std::ldexp(1.0f, -15)}, {1.0f + 1.0f / 16.0f, 0.5f, std::ldexp(1.0f, -16)}},
+        (SmallFloat(1.0f, 5) + 1u) | (SmallFloat(1.75f, 6) << 10u) | (24u << 21u), "a CB resolve of a four-sample 11_11_10 float target");
+    ResolveCase(device, 2u, {{infinity, infinity, nan}, {1.0f, 1.0f, 2.0f}, {nan, 1.0f, 2.0f}, {1.0f, 1.0f, 2.0f}},
+        0x3f0u | (0x7c0u << 10u) | (0x7e0u << 21u), "a CB resolve of a four-sample 11_11_10 float target with NaN and infinite samples");
+    try {
+        ResolveCase(device, 3u, {{1.0f, 7.4375f, 7.4375f}, {1.0f, 49152.0f, 49152.0f}, {1.0f, 24.5f, 24.5f}, {1.0f, 10240.0f, 10240.0f}, {1.0f, 3424.0f, 3424.0f}, {1.0f, 13440.0f, 13440.0f}, {1.0f, 0.06201171875f, 0.06201171875f}, {1.0f, 38400.0f, 38400.0f}},
+            SmallFloat(1.0f, 5) | (0x72fu << 10u) | (0x72fu << 21u), "a CB resolve of an eight-sample 11_11_10 float target whose float32 sum rounds up");
+    } catch (const std::runtime_error& error) {
+        if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
+        std::puts("eight-sample 11_11_10 float resolve skipped, the device lacks eight-sample color attachments");
+    }
+}
+
 std::vector<std::uint32_t> Fill(Block& block) {
     std::vector<std::uint32_t> words(block.bytes / 4u);
     for (std::size_t index = 0; index < words.size(); ++index) words[index] = static_cast<std::uint32_t>(index * 0x9e3779b9u);
@@ -333,6 +370,7 @@ int main() {
             TargetTests(*device, tiled, TiledAttrib3, ColorTileMode::RenderTarget, standardOrder ? "tiled standard-order" : "tiled", standardOrder);
             TargetTests(*device, linear, LinearAttrib3, ColorTileMode::Linear, standardOrder ? "linear standard-order" : "linear", standardOrder);
         }
+        ResolveTests(*device);
         std::puts("11_11_10 float color target tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -49,6 +49,35 @@ class TimelinePreviewTests(unittest.TestCase):
         self.assertEqual(result["events"][0], {"at_ms": 0, "hold_ms": 300, "buttons": 0, "left_stick": [255, 128], "right_stick": [128, 128]})
         self.assertEqual(result["events"][1], {"at_ms": 400, "hold_ms": 100, "buttons": pad_timeline.BUTTONS["cross"]})
 
+    def test_cli_text_output_lists_stick_positions(self):
+        document = {"version": 1, "events": [{"at_ms": 0, "hold_ms": 300, "buttons": [], "left_stick": [255, 128]},
+                                             {"at_ms": 400, "hold_ms": 100, "buttons": ["cross"]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            timeline = Path(directory) / "timeline.json"
+            timeline.write_text(json.dumps(document), encoding="utf-8")
+            result = subprocess.run([sys.executable, preview_pad_timeline.__file__, str(timeline)],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines(), [
+                "Preview only: 2 events, ending at 500 ms. No controller command file was written.",
+                "at_ms hold_ms button_mask",
+                "0 300 0x0 left [255, 128] right [128, 128]",
+                f"400 100 0x{pad_timeline.BUTTONS['cross']:x}"])
+
+    def test_missing_timeline_is_a_usage_error_without_a_preview(self):
+        with tempfile.TemporaryDirectory() as directory:
+            timeline = Path(directory) / "missing.json"
+            for options in ([], ["--json"]):
+                with self.subTest(options=options):
+                    result = subprocess.run([sys.executable, preview_pad_timeline.__file__, str(timeline), *options],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=5)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertTrue(result.stderr.startswith("preview_pad_timeline.py: "), result.stderr)
+                    self.assertIn("missing.json", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(list(Path(directory).iterdir()), [])
+
     def test_cli_previews_without_creating_or_changing_command_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

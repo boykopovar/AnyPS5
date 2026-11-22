@@ -1,0 +1,9 @@
+# libSceLibcInternal
+
+## change [fstatvfs]
+
+- [fstatvfs](../../../core/libs/prx/libSceLibcInternal/FilesystemStatistics.cpp) (libSceLibcInternal) converts `_fstatfs` to the 88-byte `struct statvfs` as FreeBSD 9.2's `sfs2svfs` does (`f_bsize` from the transfer size, `f_frsize` from the block size, `f_favail` equal to `f_ffree`, `f_fsid` 0, `ST_RDONLY` and `ST_NOSUID` only). Differences: `f_namemax` is the `statfs` value, not `fpathconf(_PC_NAME_MAX)`; negative `f_bavail` and `f_ffree` wrap to unsigned without `EOVERFLOW`, as the same-width copy in FreeBSD does; inode counts are 0 on Windows, inherited from `_fstatfs`; a null or unmapped output returns `EFAULT` after the descriptor is validated, where FreeBSD would fault. A payload process on firmware 11.60 measured that conversion (`ST_NOSUID` was not seen) and 9 for the descriptors -1, 999 and one closed just before and 22 for a pipe, which `_fstatfs` returns here by reading (not run); descriptors 0 to 2 depend on the host; a null output is unmeasured
+
+## change [statvfs]
+
+- [statvfs](../../../core/libs/prx/libSceLibcInternal/PathStatistics.cpp) (libSceLibcInternal) returns `EFAULT` (14) for a null or unmapped path, which is read page by page up to its terminator, and for an unmapped output, which is written with one all-or-nothing guest copy. A payload process on firmware 11.60 (a title process may differ) also returned 14, without a signal, for a null path, the path 0x1 and a text without terminator at the end of a readable page; for a null output and for the output 0x1 with a valid path it faulted and wrote nothing, so for the output 14 stays a host-safety fallback. It returned 2 for an empty or missing path and 20 for a path below a file, as `PathStatistics.cpp` reads; the emulator was not run, and the 63 it returned for a path of 1100 characters was not compared
