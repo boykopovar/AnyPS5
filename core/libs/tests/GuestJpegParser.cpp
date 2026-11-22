@@ -38,9 +38,12 @@ struct GuestString {
 std::vector<std::size_t> allocations;
 unsigned releases = 0;
 bool refuse = false;
+bool finalizeDuringAllocation = false;
 
 void* APS5_VABI Allocate(std::size_t size) {
     allocations.push_back(size);
+    if (finalizeDuringAllocation)
+        Require(_ZN23sceMetadataReaderWriter10jpegParser18jpegParserFinalizeEv() == 0, "finalize from allocator");
     return refuse ? nullptr : std::malloc(size);
 }
 
@@ -172,6 +175,12 @@ void TestExtract() {
     }
     Require(_ZN23sceMetadataReaderWriter10jpegParser18jpegParserFinalizeEv() == 0, "active finalize");
     Require(allocations.size() == releases + 1, "callback allocation/release balance");
+    finalizeDuringAllocation = true;
+    const auto releasesBeforeCancellation = releases;
+    Require(libSceJpegParserUnknown_v3aOHSEXfjo_nid_no_patch(config.data()) == static_cast<int>(0x809D4014u), "initialization canceled by allocator");
+    finalizeDuringAllocation = false;
+    Require(releases == releasesBeforeCancellation + 1, "canceled context released once");
+    Require(_ZN23sceMetadataReaderWriter10jpegParser18jpegParserFinalizeEv() == 0 && releases == releasesBeforeCancellation + 1, "no context left after cancellation");
     Require(libSceJpegParserUnknown_v3aOHSEXfjo_nid_no_patch(config.data()) == 0, "reinitialize");
     Require(_ZN23sceMetadataReaderWriter10jpegParser18jpegParserFinalizeEv() == 0, "finalize again");
 }

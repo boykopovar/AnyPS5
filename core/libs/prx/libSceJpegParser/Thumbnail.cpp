@@ -37,6 +37,7 @@ struct Parser {
     Config config{};
     void* context = nullptr;
     bool initializing = false;
+    bool finalizePending = false;
 };
 
 std::mutex g_mutex;
@@ -214,13 +215,21 @@ int APS5_VABI libSceJpegParserUnknown_v3aOHSEXfjo_nid_no_patch(const void* confi
         context = callbacks.allocate(0x168);
     } catch (...) {
         const std::lock_guard lock(g_mutex);
-        g_parser.initializing = false;
+        if (g_parser.finalizePending) g_parser = {};
+        else g_parser.initializing = false;
         throw;
     }
-    const std::lock_guard lock(g_mutex);
-    g_parser.initializing = false;
-    g_parser.context = context;
-    return context ? 0 : static_cast<int>(0x809D4029u);
+    {
+        const std::lock_guard lock(g_mutex);
+        if (!g_parser.finalizePending) {
+            g_parser.initializing = false;
+            g_parser.context = context;
+            return context ? 0 : static_cast<int>(0x809D4029u);
+        }
+        g_parser = {};
+    }
+    if (context) callbacks.release(context);
+    return kParserError;
 }
 APS5_EXPORT("v3aOHSEXfjo", libSceJpegParserUnknown_v3aOHSEXfjo_nid_no_patch);
 
@@ -228,6 +237,10 @@ int APS5_VABI _ZN23sceMetadataReaderWriter10jpegParser18jpegParserFinalizeEv() {
     Parser saved;
     {
         const std::lock_guard lock(g_mutex);
+        if (g_parser.initializing) {
+            g_parser.finalizePending = true;
+            return 0;
+        }
         if (!g_parser.context) return 0;
         saved = g_parser;
         g_parser = {};
