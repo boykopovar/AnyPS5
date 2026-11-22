@@ -66,6 +66,14 @@ def environment_loader_retention(output):
     return reasons == [ENVIRONMENT_LOADER_RETENTION]
 
 
+def skip_summary(output):
+    stated = next((line.strip() for line in output.splitlines() if re.search(r"skipped,|SKIP:", line, re.IGNORECASE)), None)
+    if stated is not None:
+        return stated
+    first = next((line.strip() for line in output.splitlines() if line.strip()), None)
+    return f"the test stated no reason; its output starts with: {first}" if first else "the test stated no reason and wrote no output"
+
+
 def skips(path, require_tests=False):
     root = ET.parse(path).getroot()
     if root.tag not in ("testsuite", "testsuites"):
@@ -131,10 +139,7 @@ def main(argv=None):
             {"name": name, "output": "\n".join(outputs), "occurrences": len(outputs), "expected": name not in unexpected}
             for name, outputs in sorted(grouped.items())], "unexpected": unexpected}, sort_keys=True))
         return int(bool(unexpected))
-    reasons = {}
-    for name, output in found:
-        lines = [line.strip() for line in output.splitlines() if line.strip()]
-        reasons.setdefault(name, next((line for line in lines if re.search(r"skipped,", line, re.IGNORECASE)), lines[0] if lines else "no output"))
+    reasons = {name: skip_summary(output) for name, output in found}
     for name in unexpected:
         print(f"error: {name} skipped: {reasons[name]}")
     if unexpected:
