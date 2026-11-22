@@ -338,6 +338,36 @@ void ControllerRemapping(PadInput& padInput, DisplayWindow& window, int device, 
     padInput.HandleEvent(event, window);
     Require(Pad::ReadState(0).buttons == Cross);
     button(SDL_CONTROLLER_BUTTON_A, false);
+
+    writeConfig("SDLButton:a = Circle\nReloadInputMapping = KEY:F1\nReloadInputMapping = PAD:R2\n");
+    reload();
+    writeConfig("SDLButton:a = Square\nReloadInputMapping = PAD:R2\n");
+    const auto trigger = [&](Sint16 value) {
+        Require(SDL_JoystickSetVirtualAxis(joystick, SDL_CONTROLLER_AXIS_TRIGGERRIGHT, value) == 0);
+        SDL_GameControllerUpdate();
+        SDL_Event axis{};
+        axis.type = SDL_CONTROLLERAXISMOTION;
+        axis.caxis.which = SDL_JoystickInstanceID(joystick);
+        axis.caxis.axis = SDL_CONTROLLER_AXIS_TRIGGERRIGHT;
+        padInput.HandleEvent(axis, window);
+    };
+    const auto requireButtonsWithA = [&](std::uint32_t buttons, std::source_location where = std::source_location::current()) {
+        button(SDL_CONTROLLER_BUTTON_A, true);
+        Require(Pad::ReadState(0).buttons == buttons, where);
+        button(SDL_CONTROLLER_BUTTON_A, false);
+    };
+    trigger(SDL_JOYSTICK_AXIS_MIN + 16);
+    requireButtonsWithA(Circle);
+    trigger(SDL_JOYSTICK_AXIS_MAX / 2);
+    requireButtonsWithA(Square | R2);
+    writeConfig("SDLButton:a = Cross\nReloadInputMapping = PAD:R2\n");
+    trigger(SDL_JOYSTICK_AXIS_MAX);
+    requireButtonsWithA(Square | R2);
+    trigger(SDL_JOYSTICK_AXIS_MIN);
+    requireButtonsWithA(Square);
+    trigger(SDL_JOYSTICK_AXIS_MAX / 2);
+    requireButtonsWithA(Cross | R2);
+    trigger(SDL_JOYSTICK_AXIS_MIN);
 }
 
 }
