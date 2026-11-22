@@ -1,18 +1,36 @@
+#include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "Optimization/TessellationLowering.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "VulkanTestDevice.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <initializer_list>
 #include <iostream>
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -78,6 +96,15 @@ alignas(256) constexpr std::array<std::uint32_t, 28> GcnHullOnChipPassthrough{
     0x08000809, 0xe0701008, 0x08000809, 0xe070100c, 0x08000809, 0x7e140211, 0xd286000a, 0x04282103,
     0x7e1602f2, 0xd8340000, 0x00000b0a, 0xbf810000,
 };
+
+constexpr std::size_t PatchConstantWord = 24;
+static_assert(GcnHullOnChipPassthrough[PatchConstantWord] == 0x7e1602f2u, "the patched word is v_mov_b32 v11, 1.0, the patch constant the pass-through hull writes");
+
+alignas(256) constexpr std::array<std::uint32_t, 28> GcnHullOnChipBufferScale = [] {
+    auto code = GcnHullOnChipPassthrough;
+    code[PatchConstantWord] = 0x7e160c13u;
+    return code;
+}();
 
 alignas(256) constexpr std::array<std::uint32_t, 45> GcnHullOnChipOutputs{
     0xbefc03c1, 0xc2c60500, 0xd2900002, 0x02151101, 0xd2900003, 0x02210101, 0xbf8c007f, 0x34080484,
@@ -223,6 +250,21 @@ std::uint32_t Row(float y) {
     return static_cast<std::uint32_t>((1.0f - y) * 0.5f * Height);
 }
 
+template<typename TPixel>
+void RequireCoverage(const std::string& program, const TPixel& pixelAt, bool drawn) {
+    constexpr std::array<std::pair<float, float>, 4> inside{{{0.25f, -0.267f}, {0.06f, -0.72f}, {0.44f, -0.72f}, {0.25f, 0.4f}}};
+    for (std::uint32_t patch = 0; patch < 3u; ++patch) {
+        const bool covered = drawn && patch != 1u;
+        const auto expected = covered ? White : Background;
+        for (const auto [x, y] : inside) {
+            const auto pixel = pixelAt(Column(patch, x), Row(y));
+            Require(pixel == expected, program + ": patch " + std::to_string(patch) + " at (" + std::to_string(x) + ", " + std::to_string(y) + ") is " + PixelText(pixel) + ", expected " + PixelText(expected) + (covered ? " inside its tessellated triangle" : patch == 1u ? " for a patch whose tessellation factors are 0" : " for a patch whose positions are scaled to 0"));
+        }
+        const auto outside = pixelAt(Column(patch, 0.45f), Row(0.5f));
+        Require(outside == Background, program + ": patch " + std::to_string(patch) + " covers a pixel outside its triangle: " + PixelText(outside));
+    }
+}
+
 void Draw(AgcDriver::VulkanDevice& device, const Stages& stages, const TessellationConfiguration& configuration) {
     for (std::size_t i = 0; i < Pixels.size(); i += 4) {
         for (std::size_t c = 0; c < 4; ++c) Pixels[i + c] = std::byte{Background[c]};
@@ -274,16 +316,7 @@ void RequirePatches(AgcDriver::VulkanDevice& device, std::span<const std::uint32
         Compile(target, ShaderStage::Fragment, PixelCode, cursor, configuration),
     };
     Draw(device, stages, configuration);
-    constexpr std::array<std::pair<float, float>, 4> inside{{{0.25f, -0.267f}, {0.06f, -0.72f}, {0.44f, -0.72f}, {0.25f, 0.4f}}};
-    for (std::uint32_t patch = 0; patch < 3u; ++patch) {
-        const auto expected = patch == 1u ? Background : White;
-        for (const auto [x, y] : inside) {
-            const auto pixel = PixelAt(Column(patch, x), Row(y));
-            Require(pixel == expected, program + ": patch " + std::to_string(patch) + " at (" + std::to_string(x) + ", " + std::to_string(y) + ") is " + PixelText(pixel) + ", expected " + PixelText(expected) + (patch == 1u ? " for a patch whose tessellation factors are 0" : " inside its tessellated triangle"));
-        }
-        const auto outside = PixelAt(Column(patch, 0.45f), Row(0.5f));
-        Require(outside == Background, program + ": patch " + std::to_string(patch) + " covers a pixel outside its triangle: " + PixelText(outside));
-    }
+    RequireCoverage(program, PixelAt, true);
 }
 
 void Bind(AgcDriver::QueueState& queue, const void* code, std::uint32_t program, std::uint32_t resources, std::span<const std::uint32_t> users) {
@@ -332,6 +365,133 @@ void RequireProgramDecode() {
     Require(!draw.state.stages.tessellation->mergedHull, "a GCN hull program decoded as a merged hull");
 }
 
+constexpr std::uint64_t GcnAddressLimit = std::uint64_t{1} << 40u;
+constexpr std::size_t ColorBytes = Width * Height * 4u;
+constexpr std::size_t ConstantsOffset = 0x14000;
+constexpr std::size_t IndicesOffset = 0x14100;
+constexpr std::size_t BlockBytes = 0x20000;
+static_assert(ColorBytes <= ConstantsOffset, "the color target overlaps the tessellation constant buffer");
+
+class LowBlock {
+public:
+    LowBlock() {
+#if defined(_WIN32) || defined(__APPLE__)
+        data = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
+#ifdef _WIN32
+        if (data != nullptr) GuestArena::GuestArenaCommit_nid_postfix(data, BlockBytes, PAGE_READWRITE, BlockBytes);
+#else
+        constexpr std::uint32_t ReadWriteProtection = 0x04;
+        if (data != nullptr) GuestArena::GuestArenaCommit_nid_postfix(data, BlockBytes, ReadWriteProtection, BlockBytes);
+#endif
+#else
+#ifdef ANYPS5_ENABLE_ASAN
+        constexpr std::uintptr_t FirstHint = 0x60000000;
+#else
+        constexpr std::uintptr_t FirstHint = std::uintptr_t{1} << 32u;
+#endif
+        for (std::uintptr_t hint = FirstHint; data == nullptr && hint < GcnAddressLimit; hint += std::uintptr_t{1} << 32u) {
+            void* mapped = mmap(reinterpret_cast<void*>(hint), BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+            if (mapped != MAP_FAILED) data = static_cast<std::uint8_t*>(mapped);
+        }
+        if (data != nullptr && AgcDriver::GuestMemory::WriteWatched()) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(data, BlockBytes);
+#endif
+        if (data == nullptr) return;
+        std::memset(data, 0, BlockBytes);
+        GuestAllocations::Mutation().Add(data, BlockBytes, true, true, true);
+    }
+
+    LowBlock(const LowBlock&) = delete;
+    LowBlock& operator=(const LowBlock&) = delete;
+
+    bool Usable() const { return data != nullptr && At(BlockBytes) <= GcnAddressLimit; }
+    std::uint64_t At(std::size_t offset) const { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data)) + offset; }
+    std::uint8_t* Bytes(std::size_t offset) const { return data + offset; }
+
+private:
+    std::uint8_t* data = nullptr;
+};
+
+void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::span<const std::uint32_t> payload) {
+    commands.push_back(0xc0000000u | (static_cast<std::uint32_t>(payload.size() - 1u) << 16u) | (opcode << 8u));
+    commands.insert(commands.end(), payload.begin(), payload.end());
+}
+
+void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
+    Append(commands, opcode, std::span<const std::uint32_t>(payload.begin(), payload.size()));
+}
+
+void SetProgram(std::vector<std::uint32_t>& commands, std::uint32_t program, const void* code, std::span<const std::uint32_t> users) {
+    const auto address = reinterpret_cast<std::uintptr_t>(code);
+    Append(commands, 0x76, {program, static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>(address >> 40u)});
+    Append(commands, 0x76, {program + 2u, 0u, static_cast<std::uint32_t>(users.size()) << 1u});
+    if (users.empty()) return;
+    std::vector<std::uint32_t> payload{program + 4u};
+    payload.insert(payload.end(), users.begin(), users.end());
+    Append(commands, 0x76, payload);
+}
+
+void SubmitOnChipDraw(const LowBlock& block) {
+    for (std::size_t i = 0; i < ColorBytes; i += 4) std::memcpy(block.Bytes(i), Background.data(), Background.size());
+    const auto color = block.At(0);
+    const auto constants = block.At(ConstantsOffset);
+    const std::array<std::uint32_t, 4> buffer{static_cast<std::uint32_t>(constants), static_cast<std::uint32_t>(constants >> 32u) & 0xffffu, static_cast<std::uint32_t>(sizeof(Constants)), 0x00027facu};
+    const std::array<std::uint32_t, 8> hullUsers{RingUserData[0], RingUserData[1], RingUserData[2], RingUserData[3], buffer[0], buffer[1], buffer[2], buffer[3]};
+    const auto extent = (Height << 16u) | Width;
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
+        {0x2d5, 0x45}, {0x2d6, (3u << 14u) | (3u << 8u) | 4u}, {0x2db, (2u << 5u) | 1u},
+        {0x286, std::bit_cast<std::uint32_t>(64.0f)}, {0x287, std::bit_cast<std::uint32_t>(1.0f)},
+        {0x1b6, 1}, {0x191, 0x400}, {0x207, 0}, {0x200, 0}, {0x203, 0x800},
+        {0x2dc, 0xaa00}, {0x2f8, 0}, {0x292, 2}, {0x293, 0},
+        {0x80, 0}, {0x8d, 0}, {0x83, 0xffff}, {0x8c, 0xa},
+        {0x2f9, 0x2d}, {0x313, 0x6000}, {0x30e, 0xffffffff}, {0x30f, 0xffffffff},
+        {0x206, 0x43f}, {0x204, 0x80000}, {0x205, 0x240},
+        {0x8e, 0xf}, {0x8f, 0xf}, {0x202, 0xcc0010},
+        {0x1c4, 0}, {0x1c5, 9}, {0x1c3, 4},
+        {0x318, static_cast<std::uint32_t>(color >> 8u)}, {0x319, Width / 8u - 1u}, {0x31a, Width * Height / 64u - 1u},
+        {0x31b, 0}, {0x31c, (1u << 15u) | (10u << 2u)}, {0x31d, 8}, {0x1e0, 0},
+        {0xc, 0}, {0xd, extent}, {0x81, 0x80000000}, {0x82, extent},
+        {0x90, 0x80000000}, {0x91, extent}, {0x94, 0x80000000}, {0x95, extent},
+        {0x10f, std::bit_cast<std::uint32_t>(Width * 0.5f)}, {0x110, std::bit_cast<std::uint32_t>(Width * 0.5f)},
+        {0x111, std::bit_cast<std::uint32_t>(Height * -0.5f)}, {0x112, std::bit_cast<std::uint32_t>(Height * 0.5f)},
+        {0x113, std::bit_cast<std::uint32_t>(1.0f)}, {0x114, 0},
+        {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)},
+    };
+    std::vector<std::uint32_t> commands;
+    Append(commands, 0x79, {0x242, 9});
+    for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
+    SetProgram(commands, 0x148u, GcnLocal.data(), {});
+    SetProgram(commands, 0x108u, GcnHullOnChipBufferScale.data(), hullUsers);
+    SetProgram(commands, 0x048u, GcnDomainOnChipInputs.data(), buffer);
+    SetProgram(commands, 0x008u, PixelCode.data(), {});
+    const auto indices = block.At(IndicesOffset);
+    Append(commands, 0x2a, {0});
+    Append(commands, 0x27, {static_cast<std::uint32_t>(Indices.size()), static_cast<std::uint32_t>(indices), static_cast<std::uint32_t>(indices >> 32u), static_cast<std::uint32_t>(Indices.size()), 0});
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the on-chip GCN tessellation draw submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriver::GuestMemory::FlushGpuWrites(color, ColorBytes);
+}
+
+void RequireRewrittenConstants() {
+    const LowBlock block;
+    if (!block.Usable()) {
+        std::printf("GCN tessellation: the constant buffer rewrites are skipped, no guest block below the 40-bit GCN color base range (0x%llx)\n", static_cast<unsigned long long>(block.At(0)));
+        return;
+    }
+    std::memcpy(block.Bytes(IndicesOffset), Indices.data(), sizeof(Indices));
+    const auto pixelAt = [&](std::uint32_t x, std::uint32_t y) {
+        const auto* pixel = block.Bytes((static_cast<std::size_t>(y) * Width + x) * 4u);
+        return std::array<std::uint8_t, 4>{pixel[0], pixel[1], pixel[2], pixel[3]};
+    };
+    auto constants = PassthroughConstants;
+    for (const std::uint32_t scale : {1u, 0u, 1u}) {
+        constants[7] = scale;
+        std::memcpy(block.Bytes(ConstantsOffset), constants.data(), sizeof(constants));
+        SubmitOnChipDraw(block);
+        RequireCoverage("GCN on-chip draw through the driver after word 7 of its tessellation constant buffer, which the hull writes as the patch constant the domain shader scales positions by, was rewritten to " + std::to_string(scale), pixelAt, scale != 0u);
+    }
+}
+
 }
 
 int main() {
@@ -360,6 +520,11 @@ int main() {
         ExpectConstantsRequired(target, ShaderStage::TessellationEvaluation, GcnDomainOnChipInputs, domainUsers, 0u);
         ShaderRecompiler::SetGcnGuestShaders(false);
         device.reset();
+        AgcDriver::DriverDetail::Driver::Get().WaitForPipelineJournal();
+        ShaderRecompiler::SetGcnGuestShaders(true);
+        RequireRewrittenConstants();
+        ShaderRecompiler::SetGcnGuestShaders(false);
+        AgcDriverShutdown_nid_postfix();
         std::puts("GCN tessellation tests passed");
         return 0;
     } catch (const std::exception& error) {
