@@ -516,31 +516,35 @@ void OpaqueJSContextGroup::CollectGarbage() {
     inGarbageCollect = false;
 }
 
-void OpaqueJSContextGroup::DrainMicrotasks(OpaqueJSContext* ctx) {
-    JSContext* jobCtx = nullptr;
-    while (JS_IsJobPending(rt)) {
-        if (JS_ExecutePendingJob(rt, &jobCtx) < 0) {
-            if (jobCtx) {
-                JS_FreeValue(jobCtx, JS_GetException(jobCtx));
-            }
-        }
-    }
-    if (ctx && !ctx->pendingUnhandledRejections.empty()) {
-        auto rejections = std::move(ctx->pendingUnhandledRejections);
-        ctx->pendingUnhandledRejections.clear();
-        for (auto& [promiseVal, reasonVal] : rejections) {
-            if (ctx->unhandledRejectionCallback && ctx->unhandledRejectionCallback->alive) {
-                JSValueConst args[2] = {promiseVal, reasonVal};
-                JSValue res = JS_Call(ctx->qctx, ctx->unhandledRejectionCallback->qval, ctx->globalObject->qval, 2, args);
-                JS_FreeValue(ctx->qctx, res);
-                if (JS_HasException(ctx->qctx)) {
-                    JS_FreeValue(ctx->qctx, JS_GetException(ctx->qctx));
+void OpaqueJSContextGroup::DrainMicrotasks() {
+    do {
+        JSContext* jobCtx = nullptr;
+        while (JS_IsJobPending(rt)) {
+            if (JS_ExecutePendingJob(rt, &jobCtx) < 0) {
+                if (jobCtx) {
+                    JS_FreeValue(jobCtx, JS_GetException(jobCtx));
                 }
             }
-            JS_FreeValue(ctx->qctx, promiseVal);
-            JS_FreeValue(ctx->qctx, reasonVal);
         }
-    }
+        const std::vector<OpaqueJSContext*> current(contexts.begin(), contexts.end());
+        for (OpaqueJSContext* ctx : current) {
+            if (std::find(contexts.begin(), contexts.end(), ctx) == contexts.end() || ctx->pendingUnhandledRejections.empty()) continue;
+            auto rejections = std::move(ctx->pendingUnhandledRejections);
+            ctx->pendingUnhandledRejections.clear();
+            for (auto& [promiseVal, reasonVal] : rejections) {
+                if (ctx->unhandledRejectionCallback && ctx->unhandledRejectionCallback->alive) {
+                    JSValueConst args[2] = {promiseVal, reasonVal};
+                    JSValue res = JS_Call(ctx->qctx, ctx->unhandledRejectionCallback->qval, ctx->globalObject->qval, 2, args);
+                    JS_FreeValue(ctx->qctx, res);
+                    if (JS_HasException(ctx->qctx)) {
+                        JS_FreeValue(ctx->qctx, JS_GetException(ctx->qctx));
+                    }
+                }
+                JS_FreeValue(ctx->qctx, promiseVal);
+                JS_FreeValue(ctx->qctx, reasonVal);
+            }
+        }
+    } while (JS_IsJobPending(rt));
 }
 
 void OpaqueJSContextGroup::RefreshDeadline() {
@@ -560,6 +564,7 @@ void OpaqueJSContextGroup::EnterVm() {
 }
 
 void OpaqueJSContextGroup::ExitVm() {
+    if (vmEntryDepth == 1) DrainMicrotasks();
     if (--vmEntryDepth == 0) deadlineArmed = false;
 }
 
@@ -978,12 +983,10 @@ JSValueRef APS5_VABI JSEvaluateScript(JSContextRef ctx, JSStringRef script, JSOb
 
     if (JS_IsException(result)) {
         CapturePendingException(mutCtx, exception);
-        mutCtx->group->DrainMicrotasks(mutCtx);
         return nullptr;
     }
 
     OpaqueJSValue* resultHandle = mutCtx->group->ToHandle(mutCtx, result);
-    mutCtx->group->DrainMicrotasks(mutCtx);
     return resultHandle;
 }
 
@@ -1051,12 +1054,10 @@ JSValueRef APS5_VABI JSScriptEvaluate(JSContextRef ctx, JSScriptRef script, JSVa
 
     if (JS_IsException(result)) {
         CapturePendingException(mutCtx, exception);
-        mutCtx->group->DrainMicrotasks(mutCtx);
         return nullptr;
     }
 
     OpaqueJSValue* resultHandle = mutCtx->group->ToHandle(mutCtx, result);
-    mutCtx->group->DrainMicrotasks(mutCtx);
     return resultHandle;
 }
 
