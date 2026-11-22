@@ -98,6 +98,8 @@ void TestGuestClock() {
 
 void TestGuestClockCountsOnlyThisThread() {
     CpuTimeClockForTest_nid_no_patch(nullptr);
+    std::thread warmup([] {});
+    warmup.join();
     std::atomic<bool> workerBurned{false};
     std::latch ready(1);
     std::latch start(1);
