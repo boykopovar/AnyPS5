@@ -1,6 +1,7 @@
 import contextlib
 import ctypes
 import copy
+import errno
 import io
 import json
 import os
@@ -252,7 +253,15 @@ class TimelineTests(unittest.TestCase):
             linked = root / "hardlink"
             try:
                 os.link(timeline, linked)
-            except (OSError, NotImplementedError):
+            except NotImplementedError:
+                self.skipTest("hard links are unavailable")
+            except OSError as error:
+                unsupported = {
+                    getattr(errno, name, None)
+                    for name in ("EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EMLINK")
+                } - {None}
+                if error.errno not in unsupported and getattr(error, "winerror", None) not in (1, 5):
+                    raise
                 self.skipTest("hard links are unavailable")
             self.assertEqual(self.run_cli(timeline, linked).returncode, 2)
             self.assertEqual(timeline.read_text(encoding="utf-8"), original)
