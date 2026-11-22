@@ -1,5 +1,5 @@
 import { abortAndDiscardOutput, OutputDirectoryTransaction } from "./output-directory.mjs";
-import { batchMemoryEstimate } from "./batch.mjs";
+import { batchMemoryEstimate, MEMORY_LIMIT, memoryEstimate } from "./batch.mjs";
 import { failureReport } from "./failure-report.mjs";
 import { apply, current, locales, set as setLocale, translate } from "./i18n.mjs";
 
@@ -78,14 +78,18 @@ function update() {
   const conversionBlocked = conversionTooLarge || iconTooLarge;
   let estimate = null;
   let estimateOverflow = false;
-  if (inspected && libraryBytes !== undefined) {
-    try { estimate = batchMemoryEstimate(summaries, target, libraryBytes, locale); }
+  if (libraryBytes !== undefined) {
+    try {
+      estimate = inspected
+        ? batchMemoryEstimate(summaries, target, libraryBytes, locale)
+        : memoryEstimate(0, 0, libraryBytes, 0, locale);
+    }
     catch (error) {
       if (!(error instanceof Error) || error.message !== translate(locale, "unsupportedFileSize")) throw error;
       estimateOverflow = true;
     }
   }
-  const tooLarge = estimateOverflow || (estimate !== null && estimate > 256 * 1024 * 1024);
+  const tooLarge = estimateOverflow || (estimate !== null && estimate > MEMORY_LIMIT);
   $("save").querySelector('[value="memory"]').disabled = Boolean(tooLarge);
   const memoryBlocked = $("save").value === "memory" && tooLarge;
   if (inspected) {
@@ -109,7 +113,7 @@ function update() {
     : iconTooLarge ? translate(locale, "iconTooLargeHint")
     : conversionTooLarge ? translate(locale, "conversionTooLargeHint", { target })
     : estimateOverflow ? translate(locale, "estimateOverflow")
-    : memoryBlocked ? translate(locale, "memoryBlockedHint")
+    : tooLarge ? translate(locale, "memoryBlockedHint")
     : translate(locale, "browserDefault");
   const hasWarnings = inspected && summaries.some(summary => summary.warnings.length > 0);
   $("convert").disabled = !supported || working || !inspected || !release || conversionBlocked || memoryBlocked || folderBlocked || (hasWarnings && !$("acknowledge").checked);

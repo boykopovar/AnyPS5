@@ -205,6 +205,35 @@ async function selected(get, workers, name) {
 
 const validReleaseResponse = () => ({ ok: true, json: async () => ({ tag: "v1-test", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 1024 } } }) });
 
+test("Memory downloads reflect the target budget before inspection", async t => {
+  const { get, workers } = await setup(t, "memory-budget-before-inspection", {
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({
+        tag: "v1-test",
+        platforms: {
+          linux: { expandedBytes: 248 * 1024 * 1024 + 1 },
+          windows: { expandedBytes: 248 * 1024 * 1024 }
+        }
+      })
+    })
+  });
+  const memory = get("save").querySelector('[value="memory"]');
+  assert.equal(workers.length, 0);
+  assert.equal(memory.disabled, true);
+  assert.equal(get("browser-note").hidden, false);
+  assert.match(get("browser-note").textContent, /exceeds the memory-download limit/);
+
+  globalThis.document.querySelector = () => ({ value: "windows" });
+  get("target").listeners.get("change")();
+  assert.equal(memory.disabled, false);
+
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  assert.equal(memory.disabled, true);
+});
+
 test("selecting an input retries release information after a transient failure", async t => {
   let calls = 0;
   const { get, workers } = await setup(t, "retry-release-info", { fetch: async () => {
