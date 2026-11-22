@@ -4348,10 +4348,6 @@ int APS5_VABI _ZN7WebCore16comparePositionsERKNS_8PositionES2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore12KeyedDecoder7decoderEPKhm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore6Path2D6createERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
