@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -239,6 +240,43 @@ char* APS5_VABI gets_nid_postfix(char* buffer) {
         }
         *cursor++ = static_cast<char>(value);
     }
+}
+std::int64_t APS5_VABI getdelim_nid_postfix(char** lineptr, std::size_t* n, int delimiter, FileStream* stream) {
+    if (lineptr == nullptr || n == nullptr || stream == nullptr) { errno = 22; return -1; }
+    char* buffer = nullptr;
+    std::size_t capacity = 0;
+    if (!GuestCopyIn_nid_no_patch(&buffer, lineptr, sizeof(buffer)) || !GuestCopyIn_nid_no_patch(&capacity, n, sizeof(capacity))) { errno = 14; return -1; }
+    if (!stream->IsOpen()) { errno = 9; return -1; }
+    flockfile_nid_postfix(stream);
+
+    struct Unlock {
+        FileStream* stream;
+        ~Unlock() { funlockfile_nid_postfix(stream); }
+    } unlock{stream};
+    const bool failedBefore = ferror_nid_postfix(stream) != 0;
+    std::string line;
+    for (;;) {
+        const int value = fgetc_nid_postfix(stream);
+        if (value == EOF) break;
+        line.push_back(static_cast<char>(value));
+        if (value == delimiter) break;
+    }
+    if (ferror_nid_postfix(stream) != 0 && !failedBefore) return -1;
+    if (line.empty()) return -1;
+
+    const std::size_t needed = line.size() + 1;
+    if (buffer == nullptr || capacity < needed) {
+        auto* grown = static_cast<char*>(realloc_nid_postfix(buffer, needed));
+        if (grown == nullptr) { errno = 12; return -1; }
+        buffer = grown;
+        capacity = needed;
+    }
+    if (!GuestCopyOut_nid_no_patch(buffer, line.c_str(), needed)) { errno = 14; return -1; }
+    if (!GuestCopyOut_nid_no_patch(lineptr, &buffer, sizeof(buffer)) || !GuestCopyOut_nid_no_patch(n, &capacity, sizeof(capacity))) { errno = 14; return -1; }
+    return static_cast<std::int64_t>(line.size());
+}
+std::int64_t APS5_VABI getline_nid_postfix(char** lineptr, std::size_t* n, FileStream* stream) {
+    return getdelim_nid_postfix(lineptr, n, '\n', stream);
 }
 std::int32_t APS5_VABI getwc_nid_postfix(FileStream* stream) { return fgetwc_nid_postfix(stream); }
 std::int32_t APS5_VABI getwchar_nid_postfix() { return fgetwc_nid_postfix(__stdinp_nid_postfix); }
