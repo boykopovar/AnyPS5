@@ -1654,6 +1654,15 @@ class RunReportTests(unittest.TestCase):
         self.assertIsNone(report["missing"])
         self.assertIsNone(report["unsupported"])
 
+    def test_non_boolean_coverage_flags_are_not_collected(self):
+        for flag in ("missing", "shaders", "unsupported"):
+            for value in ("false", "true", 0, 1, None, []):
+                with self.subTest(flag=flag, value=value):
+                    coverage = {"milestones": True, "missing": True, "shaders": True, "unsupported": True, "imageFormats": True, "descriptors": True}
+                    coverage[flag] = value
+                    report = self.read(self.report(coverage=coverage))
+                    self.assertIsNone(report[flag], f"coverage.{flag}={value!r} should not be collected")
+
     def test_null_fps_is_kept_as_null(self):
         document = self.report()
         document["run"]["averageFps"] = None
