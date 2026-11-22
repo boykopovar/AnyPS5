@@ -62,4 +62,17 @@ int main() {
     Require(sceNetGetsockopt(unlisted, 0xffff, 0x1016, &unlistedValue, nullptr) < 0 && *sceNetErrnoLoc() == 22);
     Require(unlistedValue == 99 && unlistedSize == 4);
     Require(sceNetSocketClose(unlisted) == 0);
+    for (const int family : {2, 28}) {
+        const int wildcard = sceNetSocket("raw-protocol-zero", family, 3, 0);
+        if (wildcard < 0) {
+            const int error = *sceNetErrnoLoc();
+            if (error == 1 || error == 13 || error == 43) {
+                std::fprintf(stderr, "skipped, the runner cannot create a raw socket with protocol 0 in family %d (errno %d)\n", family, error);
+                continue;
+            }
+            Require(false);
+        }
+        CheckProtocol(wildcard, 255);
+        Require(sceNetSocketClose(wildcard) == 0);
+    }
 }

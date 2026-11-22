@@ -1379,6 +1379,7 @@ int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol)
     s.protocol = protocol;
     if (protocol == 0 && type == NET_SOCK_STREAM) s.protocol = IPPROTO_TCP;
     if (protocol == 0 && type == NET_SOCK_DGRAM) s.protocol = IPPROTO_UDP;
+    if (protocol == 0 && type == NET_SOCK_RAW) s.protocol = IPPROTO_RAW;
     s.tcpMaximumSegment = family == NET_AF_INET6 ? NET_TCP_DEFAULT_MAXSEG6 : NET_TCP_DEFAULT_MAXSEG;
     s.native = std::move(handle);
     s.name = std::move(guestName);
@@ -2261,7 +2262,6 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         return 0;
     }
     if (level == NET_SOL_SOCKET && optname == NET_SO_PROTOCOL) {
-        if (socket.type == NET_SOCK_RAW && socket.protocol == 0) NotImplemented_nid_no_patch(__func__);
         const int protocol = socket.type == NET_SOCK_RAW && !RawProtocolEntry(socket.family, socket.protocol) ? 0 : socket.protocol;
         std::uint32_t length = 0;
         if (!GuestCopyIn_nid_no_patch(&length, optlen, sizeof(length))) return fail(NET_EFAULT);
