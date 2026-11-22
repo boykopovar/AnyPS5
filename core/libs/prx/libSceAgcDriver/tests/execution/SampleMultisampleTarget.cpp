@@ -2076,7 +2076,7 @@ void NativeFmask(std::unique_ptr<AgcDriver::VulkanDevice>& device, std::uint32_t
     }
 }
 
-void ColdNativeFmask(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
+int ColdNativeFmask(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
     using namespace AgcDriver::Graphics;
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     const auto shift = static_cast<std::uint32_t>(std::countr_zero(samples));
@@ -2092,6 +2092,14 @@ void ColdNativeFmask(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
         };
         materialize();
         Require(AgcDriver::GuestMemory::ImportWatched(fmask.Address(), fmask.bytes, [] { return true; }), "the overlapping watched import failed");
+        if (!AgcDriver::GuestMemory::Watched(fmask.Address(), fmask.bytes)) {
+            std::printf("cold native FMASK skipped, host imports are compared, not watched: a zero store over zero pages cannot be told apart\n");
+            device.SubmitRecorded(true);
+            device.WaitIdle();
+            ClearCachedTextures(context.device);
+            ClearMultisampleTargets(context.device);
+            return VulkanTestSkipped;
+        }
         materialize();
         materialize();
         *static_cast<volatile std::uint8_t*>(fmask.data) = stored;
@@ -2108,6 +2116,7 @@ void ColdNativeFmask(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
         ClearMultisampleTargets(context.device);
     }
     std::printf("Cold native FMASK: %u samples keep a resident target across an overlapping import of untouched FMASK pages, and refuse real zero and nonzero stores\n", samples);
+    return 0;
 }
 
 }
@@ -2132,9 +2141,11 @@ int main(int argc, char** argv) {
             const auto samples = static_cast<std::uint32_t>(std::stoul(argv[2]));
             Require(samples == 2u || samples == 8u, "the cold native FMASK probe requires two or eight samples");
             const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
-            if ((context.limits.framebufferColorSampleCounts & samples) == 0u) return VulkanTestSkipped;
-            ColdNativeFmask(*device, samples);
-            return 0;
+            if (!context.storageImageMultisample || (context.limits.framebufferColorSampleCounts & samples) == 0u) {
+                std::printf("cold native FMASK skipped, the device does not render or store %u-sample color\n", samples);
+                return VulkanTestSkipped;
+            }
+            return ColdNativeFmask(*device, samples);
         }
         if (argc == 2 && std::string_view(argv[1]) == "--native-vertex-input") return NativeVertexInput(device);
         if (argc == 2 && std::string_view(argv[1]) == "--readback") { Readback(*device); return 0; }
