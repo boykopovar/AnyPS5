@@ -171,6 +171,18 @@ class BundleTests(unittest.TestCase):
         _, names = self.bundle(log=self.root / "absent.log", input_config=None)
         self.assertEqual(names, ["README.txt", "anyps5-report.json", "host.txt"])
 
+    def test_log_keeps_driver_versions_and_redacts_ipv4_endpoints(self):
+        self.log.write_text(
+            "[gpu]\ndriver_version: 621.14.0.0\ndriver_version: 580.95.5.1\n"
+            "peer http://192.168.1.20:8080/ from ::ffff:127.000.0.001\n"
+            "route 0.0.0.0 to 255.255.255.255\n"
+            "host 999.192.168.1.20\n", encoding="utf-8")
+        out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(bundle.read("anyps5.log"),
+                             b"[gpu]\ndriver_version: 621.14.0.0\ndriver_version: 580.95.5.1\n"
+                             b"peer http://<ip>:8080/ from ::ffff:<ip>\nroute <ip> to <ip>\nhost 999.<ip>\n")
+
     def test_report_that_is_not_json_is_refused(self):
         self.report.write_text("not json", encoding="utf-8")
         with self.assertRaises(ValueError):
@@ -214,6 +226,19 @@ class MainTests(unittest.TestCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = bug_report.main(argv)
         return code, out.getvalue(), err.getvalue()
+
+    def test_hostname_case_is_redacted_in_network_paths(self):
+        self.log.write_text(
+            "opened //SERVERFESTIVO/share/title.elf via serverfestivo.local\n"
+            "opened //serverfestivo-backup/share/title.elf\n", encoding="utf-8")
+        target = self.root / "bundle.zip"
+        code, _, error = self.run_main(["--report", str(self.report), "--log", str(self.log),
+                                        "--input-config", "", "--out", str(target)])
+        self.assertEqual(code, 0, error)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(bundle.read("anyps5.log").decode("utf-8"),
+                             "opened //<host>/share/title.elf via <host>.local\n"
+                             "opened //serverfestivo-backup/share/title.elf\n")
 
     def test_writes_the_bundle_with_identities_redacted(self):
         target = self.root / "bundle.zip"

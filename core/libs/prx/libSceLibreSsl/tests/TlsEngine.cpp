@@ -1,10 +1,22 @@
+#include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl/include/TlsEngine.hpp"
 #include "prx/libSceLibreSsl/tests/FakeSocket.hpp"
 #include "prx/libkernel/include/Api.hpp"
-#ifndef _WIN32
+#include "prx/libc/include/GuestArena.hpp"
 #include <cerrno>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
 #include <csignal>
 #include <pthread.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 #include <mbedtls/x509.h>
@@ -1105,6 +1117,119 @@ void ReassignedSocket() {
     Run(scenario);
 }
 
+class ReadOnlyBytePage {
+public:
+    explicit ReadOnlyBytePage(unsigned char initialValue) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = static_cast<unsigned char*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr, "read-only byte page allocation");
+        data[0] = initialValue;
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "read-only byte page protection");
+#else
+        bytes = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "read-only byte page mapping");
+        data = static_cast<unsigned char*>(mapped);
+        data[0] = initialValue;
+        Require(mprotect(data, bytes, PROT_READ) == 0, "read-only byte page protection");
+#endif
+    }
+
+    ~ReadOnlyBytePage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    unsigned char* Byte() { return data; }
+
+private:
+    unsigned char* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+std::uintptr_t watchedReadAddress = 0;
+std::size_t watchedReadCount = 0;
+
+void CountWatchedRead(std::uintptr_t address, std::size_t bytes) {
+    if (address == watchedReadAddress && bytes == 1)
+        ++watchedReadCount;
+}
+
+struct ReadHookGuard {
+    explicit ReadHookGuard(void (*hook)(std::uintptr_t, std::size_t)) {
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(hook);
+    }
+    ~ReadHookGuard() {
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    }
+    ReadHookGuard(const ReadHookGuard&) = delete;
+    ReadHookGuard& operator=(const ReadHookGuard&) = delete;
+};
+
+void SelectNextProto() {
+    unsigned char peer[] = {2, 'h', '3', 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+    unsigned char supported[] = {8, 'h', 't', 't', 'p', '/', '1', '.', '1', 2, 'h', '2'};
+    unsigned char sentinel = 0;
+    unsigned char* output = &sentinel;
+    unsigned char outputLength = 0xff;
+    ReadHookGuard readHook(CountWatchedRead);
+
+    watchedReadAddress = reinterpret_cast<std::uintptr_t>(peer + 3);
+    watchedReadCount = 0;
+    errno = 71;
+    Require(SSL_select_next_proto_nid_postfix(&output, &outputLength, peer, sizeof(peer), supported, sizeof(supported)) == 1,
+        "negotiated protocol selection returns 1");
+    Require(output == peer + 4 && outputLength == 2, "negotiated selection picks the first peer-offered match");
+    Require(watchedReadCount == 1, "negotiated selection reads matched length byte once");
+    Require(errno == 71, "negotiated protocol selection preserves errno");
+
+    unsigned char peerOther[] = {2, 'h', '3'};
+    output = &sentinel;
+    outputLength = 0xff;
+    watchedReadAddress = reinterpret_cast<std::uintptr_t>(supported);
+    watchedReadCount = 0;
+    errno = 71;
+    Require(SSL_select_next_proto_nid_postfix(&output, &outputLength, peerOther, sizeof(peerOther), supported, sizeof(supported)) == 2,
+        "non-overlapping lists return NoOverlap");
+    Require(output == supported + 1 && outputLength == 8, "NoOverlap falls back to the first supported entry");
+    Require(watchedReadCount == 2, "NoOverlap fallback reads supported length byte on fallback");
+    Require(errno == 71, "NoOverlap fallback preserves errno");
+
+    unsigned char emptyPeer[] = {0};
+    unsigned char emptySupported[] = {0};
+    output = &sentinel;
+    outputLength = 0xff;
+    watchedReadAddress = reinterpret_cast<std::uintptr_t>(emptyPeer);
+    watchedReadCount = 0;
+    errno = 71;
+    Require(SSL_select_next_proto_nid_postfix(&output, &outputLength, emptyPeer, sizeof(emptyPeer), emptySupported, sizeof(emptySupported)) == 1,
+        "zero-length protocol entries negotiate");
+    Require(output == emptyPeer + 1 && outputLength == 0, "zero-length match writes zero outputLength");
+    Require(watchedReadCount == 1, "zero-length negotiation reads matched length byte once");
+    Require(errno == 71, "zero-length negotiation preserves errno");
+
+    ReadOnlyBytePage readOnlyLengthPage(0x5a);
+    unsigned char* rollbackTarget = &sentinel;
+    watchedReadAddress = 0;
+    watchedReadCount = 0;
+    errno = 71;
+    RequireThrows<std::runtime_error>(
+        [&] {
+            SSL_select_next_proto_nid_postfix(&rollbackTarget, readOnlyLengthPage.Byte(), peer, sizeof(peer), supported, sizeof(supported));
+        },
+        "unwritable outputLength throws");
+    Require(rollbackTarget == &sentinel, "unwritable outputLength rolls back *output");
+    Require(*readOnlyLengthPage.Byte() == 0x5a, "unwritable outputLength stays unchanged");
+    Require(errno == 71, "unwritable outputLength rollback preserves errno");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -1131,6 +1256,7 @@ int main(int argc, char** argv) {
             ServerWithoutCertificate();
             EofDuringHandshake();
             ServerNameOnly();
+            SelectNextProto();
         }
         if (data) {
             RoundTrip();

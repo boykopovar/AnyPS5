@@ -124,9 +124,16 @@ async function setup(t, name) {
         get,
         setDialogDecision(value) { dialogDecision = value; },
         dialogOpens: () => dialogOpens,
-        async importFile(filename, text) {
+        async importFile(filename, text, pendingRead) {
             const bytes = new TextEncoder().encode(text);
-            const file = {name: filename, size: bytes.byteLength, arrayBuffer: async () => bytes.buffer};
+            const file = {
+                name: filename,
+                size: bytes.byteLength,
+                async arrayBuffer() {
+                    await pendingRead;
+                    return bytes.buffer;
+                }
+            };
             const input = get('file');
             input.files = [file];
             input.dispatchEvent(new Event('change'));
@@ -134,6 +141,69 @@ async function setup(t, name) {
         }
     };
 }
+
+for (const outcome of ['valid', 'invalid', 'failed']) {
+    test(`a late ${outcome} read cannot affect a newer import`, async t => {
+        const app = await setup(t, `stale-import-${outcome}`);
+        const read = Promise.withResolvers();
+        const first = outcome === 'invalid' ? 'NotAnAction = KEY:F\n' : 'Cross = KEY:F\n';
+        await app.importFile('first.ini', first, read.promise);
+        await app.importFile('second.ini', 'Cross = KEY:J\n');
+        assert.equal(app.get('preview').value, 'Cross = KEY:J\n');
+        const status = app.get('status').textContent;
+
+        if (outcome === 'failed') read.reject(new Error('File is unavailable'));
+        else read.resolve();
+        await setImmediate();
+
+        assert.equal(app.get('preview').value, 'Cross = KEY:J\n');
+        assert.equal(app.get('status').textContent, status);
+        assert.equal(app.get('import-report').children[0].textContent, 'Import read successfully');
+        assert.equal(app.dialogOpens(), 0);
+    });
+}
+
+test('a delayed close cannot answer the confirmation for a newer import', async t => {
+    const app = await setup(t, 'stale-confirmation');
+    app.get('mappings').querySelector('.add-binding').click();
+    const confirmation = app.get('replace-dialog');
+    confirmation.showModal = () => { confirmation.open = true; };
+
+    await app.importFile('first.ini', 'Cross = KEY:F\n');
+    assert.equal(confirmation.open, true);
+    const laterRead = Promise.withResolvers();
+    await app.importFile('second.ini', 'Square = KEY:J\n', laterRead.promise);
+    confirmation.open = false;
+    confirmation.returnValue = 'cancel';
+    laterRead.resolve();
+    await setImmediate();
+    assert.equal(confirmation.open, true);
+    confirmation.dispatchEvent(new Event('close'));
+    await setImmediate();
+    assert.equal(app.get('preview').value, '');
+
+    confirmation.open = false;
+    confirmation.returnValue = 'discard';
+    confirmation.dispatchEvent(new Event('close'));
+    await setImmediate();
+    assert.equal(app.get('preview').value, 'Square = KEY:J\n');
+});
+
+test('a late import cannot restore a configuration after reset', async t => {
+    const app = await setup(t, 'stale-import-after-reset');
+    await app.importFile('first.ini', 'Cross = KEY:F\n');
+    const read = Promise.withResolvers();
+    await app.importFile('pending.ini', 'Cross = KEY:J\n', read.promise);
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(app.get('preview').value, '');
+
+    read.resolve();
+    await setImmediate();
+
+    assert.equal(app.get('preview').value, '');
+    assert.equal(app.get('import-report').hidden, true);
+});
 
 test('cancelling replacement keeps the previous import report hidden and preserves unsaved edits', async t => {
     const app = await setup(t, 'cancel-hidden');

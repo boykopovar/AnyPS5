@@ -2698,12 +2698,14 @@ static void TestFrame() {
     Require(!WKFrameIsDisplayingMarkupDocument(ref));
     Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(!WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
 
     frame->isDisplayingMarkupDocument = true;
     Require(WKFrameCanProvideSource(ref));
     Require(WKFrameIsDisplayingMarkupDocument(ref));
     Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(!WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
 
     frame->isDisplayingMarkupDocument = false;
     frame->isDisplayingStandaloneImageDocument = true;
@@ -2711,6 +2713,7 @@ static void TestFrame() {
     Require(!WKFrameIsDisplayingMarkupDocument(ref));
     Require(WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(!WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
 
     frame->isDisplayingStandaloneImageDocument = false;
     frame->isMainFrame = true;
@@ -2718,10 +2721,27 @@ static void TestFrame() {
     Require(!WKFrameIsDisplayingMarkupDocument(ref));
     Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
+
+    frame->isMainFrame = false;
+    frame->isFrameSet = true;
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+    Require(WKFrameIsFrameSet(ref));
 
     bool caught = false;
     try {
         WKFrameIsMainFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        caught = true;
+    }
+    Require(caught);
+
+    caught = false;
+    try {
+        WKFrameIsFrameSet(nullptr);
     } catch (const std::invalid_argument&) {
         caught = true;
     }
@@ -2802,6 +2822,50 @@ static void TestFrame() {
     checkThrows(WKFrameCopyUnreachableURL);
     checkThrows(WKFrameCreateFrameHandle);
     checkThrows(WKFrameGetFrameLoadState);
+
+    auto* htmlMime = WKStringCreateWithUTF8CString("text/html");
+    Require(WKFrameCanShowMIMEType(ref, htmlMime));
+    WKRelease(htmlMime);
+
+    auto* pngMime = WKStringCreateWithUTF8CString("image/png");
+    Require(WKFrameCanShowMIMEType(ref, pngMime));
+    WKRelease(pngMime);
+
+    auto* unsupportedMime = WKStringCreateWithUTF8CString("text/rtf");
+    Require(!WKFrameCanShowMIMEType(ref, unsupportedMime));
+    WKRelease(unsupportedMime);
+
+    auto* emptyMime = WKStringCreateWithUTF8CString("");
+    Require(!WKFrameCanShowMIMEType(ref, emptyMime));
+    WKRelease(emptyMime);
+
+    auto* nullMime = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>());
+    Require(!WKFrameCanShowMIMEType(ref, nullMime));
+    WKRelease(nullMime);
+
+    bool threwMime = false;
+    try {
+        WKFrameCanShowMIMEType(nullptr, ref);
+    } catch (const std::invalid_argument&) {
+        threwMime = true;
+    }
+    Require(threwMime);
+
+    threwMime = false;
+    try {
+        WKFrameCanShowMIMEType(ref, nullptr);
+    } catch (const std::invalid_argument&) {
+        threwMime = true;
+    }
+    Require(threwMime);
+
+    threwMime = false;
+    try {
+        WKFrameCanShowMIMEType(ref, ref);
+    } catch (const std::invalid_argument&) {
+        threwMime = true;
+    }
+    Require(threwMime);
 }
 
 static void TestImage() {

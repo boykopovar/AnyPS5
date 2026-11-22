@@ -12,6 +12,7 @@ let controllerRemaps = [];
 const configurationText = () => serialize(entries, settings, controllerRemaps);
 const snapshot = () => JSON.stringify([entries, settings, controllerRemaps]);
 let savedConfiguration = snapshot();
+let replacementRequest = 0;
 let captureTarget;
 let captureButton;
 let selectedGroup = groups[0].name;
@@ -123,7 +124,12 @@ async function confirmReplacement() {
     const confirmation = byId('replace-dialog');
     confirmation.returnValue = 'cancel';
     return new Promise(resolve => {
-        confirmation.addEventListener('close', () => resolve(confirmation.returnValue === 'discard'), {once: true});
+        function finish() {
+            if (confirmation.open) return;
+            confirmation.removeEventListener('close', finish);
+            resolve(confirmation.returnValue === 'discard');
+        }
+        confirmation.addEventListener('close', finish);
         confirmation.showModal();
     });
 }
@@ -407,7 +413,8 @@ window.addEventListener('keydown', event => {
 byId('search').addEventListener('input', filterActions);
 byId('profile-title-id').addEventListener('input', updateOutput);
 byId('reset').addEventListener('click', async () => {
-    if (!await confirmReplacement()) return;
+    const request = ++replacementRequest;
+    if (!await confirmReplacement() || request !== replacementRequest) return;
     entries = [];
     settings = [];
     controllerRemaps = [];
@@ -423,9 +430,12 @@ byId('file').addEventListener('change', async event => {
     const file = event.target.files[0];
     if (!file) return;
     event.target.value = '';
+    const request = ++replacementRequest;
     try {
         if (file.size > 1024 * 1024) throw new Error(t('fileTooLarge'));
-        const text = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer());
+        const bytes = await file.arrayBuffer();
+        if (request !== replacementRequest) return;
+        const text = new TextDecoder('utf-8', {fatal: true}).decode(bytes);
         const result = parseIni(text);
         const report = byId('import-report');
         if (result.errors.length) {
@@ -434,7 +444,7 @@ byId('file').addEventListener('change', async event => {
             report.focus();
             return;
         }
-        if (!await confirmReplacement()) return;
+        if (!await confirmReplacement() || request !== replacementRequest) return;
         importReport = result;
         renderImportReport();
         entries = result.entries;
@@ -444,6 +454,7 @@ byId('file').addEventListener('change', async event => {
         render();
         setStatus('imported', {name: file.name});
     } catch (error) {
+        if (request !== replacementRequest) return;
         setStatus('importFailed', {message: error instanceof TypeError ? t('invalidUtf8') : diagnostic(locale, error.message)});
     }
 });
