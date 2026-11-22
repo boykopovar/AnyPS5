@@ -383,6 +383,19 @@ class BenchmarkCompareTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             benchmark_compare.compare_benchmark_runs(self.write_series(runs))
 
+    def test_missing_inode_uses_capture_hashes(self):
+        runs = self.abba()[:2]
+        path = self.write_series(runs)
+        captures = [benchmark_compare.load_benchmark(self.root / run["capture"]) for run in runs]
+        for capture in captures:
+            capture["source"]["_identity"] = (1, 0)
+        with patch.object(benchmark_compare, "load_benchmark", side_effect=captures):
+            report = benchmark_compare.compare_benchmark_runs(path)
+        self.assertEqual(report["aggregate"]["complete_pairs"], 1)
+        with patch.object(benchmark_compare, "load_benchmark", side_effect=[captures[0]] * 2):
+            with self.assertRaisesRegex(ValueError, "duplicate capture evidence"):
+                benchmark_compare.compare_benchmark_runs(path)
+
     def test_expected_raw_hash_is_verified_and_retained(self):
         runs = self.abba()[:2]
         expected = hashlib.sha256((self.root / runs[0]["capture"]).read_bytes()).hexdigest()

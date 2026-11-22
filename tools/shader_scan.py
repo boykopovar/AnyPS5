@@ -19,6 +19,12 @@ class ScanError(Exception):
 
 def skip_literal(source, start):
     quote = source[start]
+    if quote == "'" and start + 1 < len(source) and source[start + 1] in "0123456789abcdefABCDEF":
+        begin = start
+        while begin and (source[begin - 1].isalnum() or source[begin - 1] in "_.'"):
+            begin -= 1
+        if begin < start and (source[begin].isdigit() or (source[begin] == "." and source[begin + 1].isdigit())):
+            return start
     j = start + 1
     while j < len(source) and source[j] != quote and source[j] != "\n":
         j += 2 if source[j] == "\\" else 1

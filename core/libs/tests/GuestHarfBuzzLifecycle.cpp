@@ -229,6 +229,87 @@ static void CheckFaceLifetime(const Api& api) {
     Require(state.tableOwner.destroyed == 1);
 }
 
+struct IsolatedFaceState {
+    const Api* api;
+    hb_face_t* face = nullptr;
+    Owner faceOwner;
+    std::array<Owner, 2> tableOwners;
+    std::uint32_t expectedTag = 0;
+    const char* payload = nullptr;
+    unsigned payloadLength = 0;
+    unsigned requests = 0;
+};
+
+static hb_blob_t* APS5_VABI IsolatedTable(hb_face_t* face, std::uint32_t tag, void* opaque) {
+    auto& state = *static_cast<IsolatedFaceState*>(opaque);
+    Require(face == state.face && state.faceOwner.destroyed == 0);
+    Require(tag == state.expectedTag);
+    Require(state.requests < state.tableOwners.size());
+    auto& owner = state.tableOwners[state.requests++];
+    return state.api->blob(state.payload, state.payloadLength, HB_MEMORY_MODE_READONLY, &owner, Destroy);
+}
+
+static void APS5_VABI DestroyIsolatedFace(void* opaque) {
+    auto& state = *static_cast<IsolatedFaceState*>(opaque);
+    Destroy(&state.faceOwner);
+}
+
+static void CheckFaceContextIsolation(const Api& api) {
+    constexpr auto tag = HB_TAG('C', 'T', 'X', 'T');
+    std::array<char, 4> payloadA{'a', '\0', '1', 'A'};
+    std::array<char, 6> payloadB{'b', '\0', '2', 'B', '\xff', '!'};
+    IsolatedFaceState stateA{&api, nullptr, {}, {}, tag, payloadA.data(), static_cast<unsigned>(payloadA.size())};
+    IsolatedFaceState stateB{&api, nullptr, {}, {}, tag, payloadB.data(), static_cast<unsigned>(payloadB.size())};
+    stateA.face = api.face(IsolatedTable, &stateA, DestroyIsolatedFace);
+    stateB.face = api.face(IsolatedTable, &stateB, DestroyIsolatedFace);
+    Require(stateA.face != nullptr && stateB.face != nullptr && stateA.face != stateB.face);
+    Require(stateA.faceOwner.destroyed == 0 && stateB.faceOwner.destroyed == 0);
+    Require(stateA.requests == 0 && stateB.requests == 0);
+
+    auto* blobA1 = hb_face_reference_table(stateA.face, tag);
+    Require(stateA.requests == 1 && stateB.requests == 0);
+    CheckData(blobA1, payloadA.data(), payloadA.size());
+
+    auto* blobB1 = hb_face_reference_table(stateB.face, tag);
+    Require(stateA.requests == 1 && stateB.requests == 1);
+    CheckData(blobB1, payloadB.data(), payloadB.size());
+
+    auto* blobA2 = hb_face_reference_table(stateA.face, tag);
+    Require(stateA.requests == 2 && stateB.requests == 1);
+    CheckData(blobA2, payloadA.data(), payloadA.size());
+    Require(blobA1 != blobB1 && blobA2 != blobB1);
+
+    hb_blob_destroy(blobA2);
+    Require(stateA.tableOwners[1].destroyed == 1);
+    Require(stateA.tableOwners[0].destroyed == 0 && stateB.tableOwners[0].destroyed == 0);
+
+    api.destroyFace(stateA.face);
+    Require(stateA.faceOwner.destroyed == 1 && stateB.faceOwner.destroyed == 0);
+    Require(stateA.tableOwners[0].destroyed == 0 && stateB.tableOwners[0].destroyed == 0);
+    CheckData(blobA1, payloadA.data(), payloadA.size());
+
+    auto* blobB2 = hb_face_reference_table(stateB.face, tag);
+    Require(stateA.requests == 2 && stateB.requests == 2);
+    CheckData(blobB2, payloadB.data(), payloadB.size());
+    CheckData(blobB1, payloadB.data(), payloadB.size());
+    CheckData(blobA1, payloadA.data(), payloadA.size());
+
+    hb_blob_destroy(blobA1);
+    Require(stateA.tableOwners[0].destroyed == 1);
+    Require(stateB.tableOwners[0].destroyed == 0 && stateB.tableOwners[1].destroyed == 0);
+
+    hb_blob_destroy(blobB1);
+    Require(stateB.tableOwners[0].destroyed == 1 && stateB.tableOwners[1].destroyed == 0);
+    Require(stateB.faceOwner.destroyed == 0);
+
+    api.destroyFace(stateB.face);
+    Require(stateB.faceOwner.destroyed == 1 && stateB.tableOwners[1].destroyed == 0);
+    CheckData(blobB2, payloadB.data(), payloadB.size());
+
+    hb_blob_destroy(blobB2);
+    Require(stateB.tableOwners[1].destroyed == 1);
+}
+
 static void CheckEmptyFaces(const Api& api) {
     Owner owner;
     auto* empty = api.face(nullptr, &owner, Destroy);
@@ -371,6 +452,7 @@ int main(int argc, char** argv) try {
     CheckBlobBoundaries(api);
     CheckSubBlobLifetime(api);
     CheckFaceLifetime(api);
+    CheckFaceContextIsolation(api);
     CheckEmptyFaces(api);
     CheckCachedFace(api, ft);
 #ifdef _WIN32
