@@ -40,6 +40,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Optimization/include/Optimization/ShaderStageInputInfo.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
+#include "RdnaDecoder/include/RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "ImageTableAbi.hpp"
 #include <cstring>
@@ -5628,7 +5629,10 @@ std::uint64_t ShaderResources::guestBufferBytes(std::span<const std::uint32_t> w
     const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1] & ~0x40000000u, words[2], words[3]}};
     const auto address = descriptor.Base48();
     auto byteSize = descriptor.GetSize();
-    if (byteSize > context.limits.maxStorageBufferRange) {
+    if (ShaderRecompiler::GcnGuestShaders() && byteSize >= context.limits.maxStorageBufferRange) {
+        const auto runEnd = RegisteredReadableRunEnd(address);
+        byteSize = runEnd <= address ? 0 : std::min(byteSize, runEnd - address);
+    } else if (byteSize > context.limits.maxStorageBufferRange) {
         const auto mappedEnd = RegisteredReadableEnd(address);
         if (mappedEnd <= address) byteSize = 0;
         else if (mappedEnd - address < context.limits.maxStorageBufferRange) byteSize = mappedEnd - address;

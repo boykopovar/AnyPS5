@@ -7336,6 +7336,57 @@ void viewAtRangeLimitTests() {
     ::operator delete(block, std::align_val_t{blockBytes});
 }
 
+void limitDescriptorRunTests() {
+    constexpr std::size_t blockBytes = 131072;
+    constexpr std::size_t firstBytes = 65536;
+    constexpr std::size_t secondBytes = 4096;
+    constexpr std::size_t runTailBytes = 8192;
+    auto* block = static_cast<std::byte*>(::operator new(blockBytes, std::align_val_t{firstBytes}));
+    for (std::size_t index = 0; index < blockBytes; ++index) block[index] = static_cast<std::byte>(index * 7u);
+    auto* second = block + firstBytes;
+    {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, firstBytes, true, true, true);
+        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, second, secondBytes, true, true, true);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    }
+    const auto* base = second + secondBytes - runTailBytes;
+    const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+    const auto bound = [&](bool ps4) {
+        ShaderRecompiler::SetGcnGuestShaders(ps4);
+        struct Restore {
+            ~Restore() { ShaderRecompiler::SetGcnGuestShaders(false); }
+        } restore;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        mock = MockVulkan{};
+        const auto context = mockContext();
+        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, vsharp(base, static_cast<std::uint32_t>(context.limits.maxStorageBufferRange))));
+        VkDeviceSize range = 0;
+        bool same = false;
+        {
+            AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+            const auto& write = findWrite(0);
+            Require(write.buffers.size() == 1, "a V# of the range limit was not bound");
+            range = write.buffers[0].range;
+            same = range <= runTailBytes && sameBytes(bufferBytes(write.buffers[0].buffer), base, static_cast<std::size_t>(range));
+        }
+        Require(mock.live == 0, "a V# of the range limit leaked Vulkan objects");
+        return std::pair{range, same};
+    };
+    const auto ps4 = bound(true);
+    Require(ps4.first == runTailBytes && ps4.second, "a PS4 title's V# of the range limit was not bound up to the end of the registered run holding its base");
+    const auto ps5 = bound(false);
+    Require(ps5.first == mockContext().limits.maxStorageBufferRange, "a PS5 title's V# of exactly the range limit was not bound by the limit as before");
+    {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, second);
+        GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    }
+    ::operator delete(block, std::align_val_t{firstBytes});
+}
+
 void guestBufferViewBytesTests() {
     using AgcDriver::Graphics::GuestBufferMemory;
     for (const std::uint64_t bytes : {2ull, 3ull, 4ull, 6ull, 7ull, 16ull, 4096ull, 4098ull}) {
@@ -16289,6 +16340,7 @@ int main(int argc, char** argv) {
         unsetFormatStorageImageTests();
         oversizedDescriptorTests();
         viewAtRangeLimitTests();
+        limitDescriptorRunTests();
         guestBufferViewBytesTests();
         descriptorSnapshotTests();
         drawMovedInPlaceTests();

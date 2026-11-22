@@ -5527,6 +5527,15 @@ std::uint64_t RegisteredReadableEnd(std::uint64_t address) {
     return range != nullptr ? range->address + range->bytes : 0;
 }
 
+std::uint64_t RegisteredReadableRunEnd(std::uint64_t address) {
+    if (address == std::numeric_limits<std::uint64_t>::max()) return 0;
+    const auto lease = GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix();
+    auto index = leasedIndexContaining(lease, address);
+    if (index == lease.size()) return 0;
+    while (index + 1 < lease.size() && continuesRun(*lease[index], *lease[index + 1])) ++index;
+    return lease[index]->address + lease[index]->bytes;
+}
+
 std::uint64_t HostImportSetGeneration() {
     return importSetGeneration.load(std::memory_order_acquire);
 }
