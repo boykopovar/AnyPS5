@@ -35,18 +35,17 @@ void APS5_VABI udata_close_nid_postfix(UDataMemory* data) {
     errno = savedErrno;
     if (!readable) throw std::invalid_argument(__func__);
 
-    if (IcuDataMemoryOwnership::TryTake(data)) {
+    IcuDataMemoryOwnership::TrustedRecord trusted{};
+    if (IcuDataMemoryOwnership::TryTake(data, trusted)) {
+        if (trusted.map && trusted.mapAddr && trusted.pHeader) {
 #if defined(_WIN32)
-        if (local.map) {
-            UnmapViewOfFile(local.pHeader);
-            CloseHandle(local.map);
-        }
+            UnmapViewOfFile(const_cast<void*>(trusted.pHeader));
+            CloseHandle(static_cast<HANDLE>(trusted.map));
 #else
-        if (local.map && local.mapAddr) {
-            const auto length = static_cast<char*>(local.map) - static_cast<char*>(local.mapAddr);
-            if (length > 0) munmap(local.mapAddr, static_cast<std::size_t>(length));
-        }
+            const auto length = static_cast<char*>(trusted.map) - static_cast<char*>(trusted.mapAddr);
+            if (length > 0) munmap(trusted.mapAddr, static_cast<std::size_t>(length));
 #endif
+        }
         uprv_free(data);
         return;
     }

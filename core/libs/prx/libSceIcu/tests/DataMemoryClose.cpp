@@ -175,17 +175,19 @@ void Heap() {
     Require(status == U_ZERO_ERROR);
     Require(data != nullptr);
     Require(data->heapAllocated);
-    IcuDataMemoryOwnership::Register(data);
-
 #if defined(_WIN32)
     HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 4096, nullptr);
     Require(mapping != nullptr);
     void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, 4096);
     Require(view != nullptr);
+    IcuDataMemoryOwnership::Register(data, view, view, mapping);
     data->pHeader = static_cast<const DataHeader*>(view);
     data->mapAddr = view;
     data->map = mapping;
     data->length = 4096;
+    data->pHeader = static_cast<const DataHeader*>(nullptr);
+    data->map = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1));
+    data->length = 12345;
     udata_close_nid_postfix(data);
 
     MEMORY_BASIC_INFORMATION information{};
@@ -195,10 +197,15 @@ void Heap() {
     const auto pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
     void* mapping = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     Require(mapping != MAP_FAILED);
+    IcuDataMemoryOwnership::Register(data, mapping, mapping, static_cast<char*>(mapping) + pageSize);
     data->pHeader = static_cast<const DataHeader*>(mapping);
     data->mapAddr = mapping;
     data->map = static_cast<char*>(mapping) + pageSize;
     data->length = static_cast<std::int32_t>(pageSize);
+    data->pHeader = static_cast<const DataHeader*>(nullptr);
+    data->mapAddr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1));
+    data->map = static_cast<char*>(nullptr);
+    data->length = 12345;
     udata_close_nid_postfix(data);
 
     errno = 0;

@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/DataInfo.hpp"
 #include "prx/libSceIcu/DataName.hpp"
+#include <udatamem.h>
 #include "prx/libc/include/General.hpp"
 #include <unicode/udata.h>
 #include "prx/libSceIcu/DataMemoryOwnership.hpp"
@@ -65,7 +66,7 @@ UDataMemory* OpenData(const char* path, const char* type, const char* name, std:
         if (!written) NotImplemented_nid_no_patch(caller);
     }
     auto* released = data.release();
-    if (released) IcuDataMemoryOwnership::Register(released);
+    if (released) IcuDataMemoryOwnership::Register(released, released->pHeader, released->mapAddr, released->map);
     return released;
 }
 
