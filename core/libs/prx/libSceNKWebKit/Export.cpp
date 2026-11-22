@@ -26984,10 +26984,6 @@ int APS5_VABI _ZNK7WebCore17SubresourceLoader15originalHeadersEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore17TiledBackingStore13mapToContentsERKNS_7IntRectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore18DOMWindowExtension5frameEv() {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -5078,7 +5078,6 @@ int APS5_VABI _ZNK7WebCore17ResourceErrorBase12isolatedCopyEv();
 int APS5_VABI _ZNK7WebCore17ResourceErrorBase8lazyInitEv();
 int APS5_VABI _ZNK7WebCore17SMILTimeContainer19animationFrameDelayEv();
 int APS5_VABI _ZNK7WebCore17SubresourceLoader15originalHeadersEv();
-int APS5_VABI _ZNK7WebCore17TiledBackingStore13mapToContentsERKNS_7IntRectE();
 int APS5_VABI _ZNK7WebCore18DOMWindowExtension5frameEv();
 int APS5_VABI _ZNK7WebCore18HTMLMarqueeElement11scrollDelayEv();
 int APS5_VABI _ZNK7WebCore18HTMLMarqueeElement12scrollAmountEv();
