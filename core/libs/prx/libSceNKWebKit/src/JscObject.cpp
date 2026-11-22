@@ -154,6 +154,13 @@ JSValue CreateStaticFunctionObject(OpaqueJSContext* ctx, const StaticFunctionEnt
     return fnObj;
 }
 
+JSValue NullStaticFunctionGetter(JSContext* qctx, JSValueConst thisVal, int argc, JSValueConst* argv) {
+    (void)thisVal;
+    (void)argc;
+    (void)argv;
+    return JS_ThrowReferenceError(qctx, "Static function property defined with NULL callAsFunction callback.");
+}
+
 int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JSValueConst obj, JSAtom prop) {
     auto* group = static_cast<OpaqueJSContextGroup*>(JS_GetRuntimeOpaque(JS_GetRuntime(qctx)));
     if (!group || group->shuttingDown) return 0;
@@ -306,13 +313,24 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                         return ownRes;
                     }
                 }
-                if (!sf->callAsFunction) {
-                    if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
-                    JS_ThrowReferenceError(qctx, "Static function property defined with NULL callAsFunction callback.");
-                    return -1;
+                const StaticFunctionEntry* callable = nullptr;
+                int enumerable = 0;
+                for (OpaqueJSClass* fnCls = cls; fnCls; fnCls = fnCls->parentClass) {
+                    const StaticFunctionEntry* entry = fnCls->FindStaticFunction(propUtf8);
+                    if (!entry) continue;
+                    if (!(entry->attributes & kJSPropertyAttributeDontEnum)) enumerable = JS_PROP_ENUMERABLE;
+                    if (!callable && entry->callAsFunction) callable = entry;
                 }
-                JSValue fnObj = CreateStaticFunctionObject(ctx, *sf);
-                const int propFlags = ToQuickJsPropFlags(sf->attributes);
+                if (!callable) {
+                    if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
+                    desc->flags = JS_PROP_GETSET | JS_PROP_CONFIGURABLE | enumerable;
+                    desc->value = JS_UNDEFINED;
+                    desc->getter = JS_NewCFunction(qctx, &NullStaticFunctionGetter, sf->name.c_str(), 0);
+                    desc->setter = JS_UNDEFINED;
+                    return 1;
+                }
+                JSValue fnObj = CreateStaticFunctionObject(ctx, *callable);
+                const int propFlags = (ToQuickJsPropFlags(callable->attributes) & ~JS_PROP_ENUMERABLE) | enumerable;
                 if (!JS_IsUndefined(data->propStore)) {
                     JS_DefinePropertyValue(qctx, data->propStore, prop, JS_DupValue(qctx, fnObj), propFlags | JS_PROP_HAS_VALUE | JS_PROP_HAS_WRITABLE | JS_PROP_HAS_ENUMERABLE | JS_PROP_HAS_CONFIGURABLE);
                 }
