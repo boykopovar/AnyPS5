@@ -49,6 +49,10 @@ async function headerBytes(entry, size = 4) {
   return filled === size ? header : null;
 }
 
+function isMacMetadata(name) {
+  return /^__macosx\//iu.test(name);
+}
+
 async function isAppleDouble(entry) {
   const header = await headerBytes(entry, 26);
   const view = header && new DataView(header.buffer, header.byteOffset, header.byteLength);
@@ -164,11 +168,11 @@ export class Archive {
       for (let index = 1; index < parts.length; index++) {
         const parent = parts.slice(0, index).join("/").toLowerCase();
         if (paths.get(parent) === false) throw new Error(translate(locale, "fileUsedAsFolder", { name: entry.filename }));
-        if (!entry.filename.toLowerCase().startsWith("__macosx/")) directories.add(parent);
+        if (!isMacMetadata(entry.filename)) directories.add(parent);
       }
     }
-    const applicationPaths = new Map([...paths].filter(([name]) => name !== "__macosx" && !name.startsWith("__macosx/")));
-    const metadata = this.entries.filter(entry => entry.filename.startsWith("__MACOSX/"));
+    const applicationPaths = new Map([...paths].filter(([name]) => name !== "__macosx" && !isMacMetadata(name)));
+    const metadata = this.entries.filter(entry => isMacMetadata(entry.filename));
     let appleDouble = metadata.some(entry => !entry.directory);
     for (const entry of metadata) {
       if (entry.directory) {
@@ -176,11 +180,11 @@ export class Archive {
         if (companion && applicationPaths.get(companion) !== true && !directories.has(companion)) { appleDouble = false; break; }
         continue;
       }
-      const match = /^__MACOSX\/(.*\/)?\._([^/]+)$/u.exec(entry.filename);
+      const match = /^__macosx\/(.*\/)?\._([^/]+)$/iu.exec(entry.filename);
       const companion = match && ((match[1] ?? "") + match[2]).toLowerCase();
       if (!companion || (!applicationPaths.has(companion) && !directories.has(companion)) || !await isAppleDouble(entry)) { appleDouble = false; break; }
     }
-    if (appleDouble) this.entries = this.entries.filter(entry => !entry.filename.startsWith("__MACOSX/"));
+    if (appleDouble) this.entries = this.entries.filter(entry => !isMacMetadata(entry.filename));
     if (!this.entries.some(entry => !entry.directory)) throw new Error(translate(locale, "noFilesSelected"));
     let prefix = "";
     const files = this.entries.filter(entry => !entry.directory);

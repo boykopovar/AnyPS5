@@ -204,6 +204,7 @@ kbd { border: 1px solid #ffffff50; border-radius: 4px; padding: 1px 5px; font: i
     #picker-dialog { inset-inline: 8px; top: auto; bottom: 8px; width: calc(100% - 16px); max-width: calc(100% - 16px); height: min(var(--picker-height, 480px), 76dvh); max-height: calc(100dvh - 16px); padding: 18px 16px calc(16px + env(safe-area-inset-bottom)); border-radius: 22px; }
     #picker-dialog::backdrop { background: #05081080; backdrop-filter: blur(7px); }
     .picker-option { min-height: 46px; font-size: 15px; }
+    .action-title { flex-basis: 100%; }
 }
-@media (max-width: 360px) { #clock { display: none; } .system-tools { gap: 16px; } .binding { grid-template-columns: 94px minmax(0, 1fr); } .action-title { flex-basis: 120px; } }
+@media (max-width: 360px) { #clock { display: none; } .system-tools { gap: 16px; } .binding { grid-template-columns: 94px minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation: none !important; transition: none !important; } }

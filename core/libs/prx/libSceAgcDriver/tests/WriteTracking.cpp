@@ -193,6 +193,28 @@ void CheckSharedBlock() {
     if (!Watched(outside, unwatched.size())) Require(StoredOver(outside, unwatched.size(), TrackerGeneration()), "an unwatched range reads as not stored over");
 }
 
+void CheckDriverStoredOver() {
+    void* memory = AllocateWatched(2 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, 2 * Block);
+    const auto synced = CollectWrites(base, 2 * Block);
+    Require(synced != 0, "the driver-store fixture is not collected");
+    Require(!DriverStoredOver(base + 0x100, 8, synced), "a range nothing stored over reads as stored over by the driver");
+    const auto stamped = MarkWritten(base + 0x100, 8);
+    Require(DriverStoredOver(base + 0x100, 8, synced), "a driver store over the range is not seen");
+    Require(!DriverStoredOver(base + 0x200, 8, synced), "a driver store beside the range counts for it");
+    Require(!DriverStoredOver(base + 0x100, 8, stamped), "a driver store older than the generation is seen");
+    const auto beforeCpu = CollectWrites(base, 2 * Block);
+    static_cast<volatile std::uint8_t*>(memory)[0x300] = 0x22;
+    CollectWritesUncached(base, 2 * Block);
+    Require(StoredOver(base + 0x300, 8, beforeCpu), "a collected CPU store is not seen as stored over");
+    Require(!DriverStoredOver(base + 0x300, 8, beforeCpu), "a collected CPU store counts as a driver store");
+    Require(DriverStoredOver(base + 0x100, 8, 0), "a zero generation reads as not stored over by the driver");
+    std::array<std::uint8_t, 64> unwatched{};
+    const auto outside = reinterpret_cast<std::uint64_t>(unwatched.data());
+    if (!Watched(outside, unwatched.size())) Require(DriverStoredOver(outside, unwatched.size(), TrackerGeneration()), "a range outside the write watch reads as not stored over by the driver");
+}
+
 void CheckStoredOverUsesPageEvidence() {
     constexpr std::size_t Page = 4096;
     auto* memory = static_cast<std::uint8_t*>(AllocateWatched(2 * Block));
@@ -2723,6 +2745,7 @@ int main(int argc, char** argv) {
 #endif
         CheckSharedBlock();
         CheckStoredOverUsesPageEvidence();
+        CheckDriverStoredOver();
         CheckRepeatedNeighbourStores();
         CheckStoredAllSince();
         CheckSharedBlockProofs();
