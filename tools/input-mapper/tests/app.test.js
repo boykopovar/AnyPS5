@@ -240,6 +240,31 @@ test('cancelling replacement preserves an earlier import report until replacemen
     assert.equal(app.get('preview').value, 'Cross = KEY:Space\n');
 });
 
+test('successful imports use the destination from a recognized profile filename', async t => {
+    const app = await setup(t, 'import-profile');
+    const titleId = app.get('profile-title-id');
+    const preview = app.get('preview-name');
+    const binding = 'Cross = KEY:X\n';
+    await app.importFile('anyps5-input.PPSA00001.ini', binding);
+    assert.equal(titleId.value, 'PPSA00001');
+    assert.equal(preview.textContent, 'anyps5-input.PPSA00001.ini');
+
+    await app.importFile('anyps5-input.PPSA00002.ini', 'Cross = invalid\n');
+    assert.equal(titleId.value, 'PPSA00001');
+    await app.importFile('anyps5-input.PPSA00003.backup.ini', binding);
+    assert.equal(titleId.value, 'PPSA00001');
+
+    app.get('mappings').querySelector('.add-binding').click();
+    await app.importFile('anyps5-input.PPSA00004.ini', binding);
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(titleId.value, 'PPSA00001');
+
+    app.setDialogDecision('discard');
+    await app.importFile('anyps5-input.ini', binding);
+    assert.equal(titleId.value, '');
+    assert.equal(preview.textContent, 'anyps5-input.ini');
+});
+
 test('replacing a built-in search result keeps the new binding reachable until it has a value', async t => {
     const app = await setup(t, 'search-add');
     const search = app.get('search');
