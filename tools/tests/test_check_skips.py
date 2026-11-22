@@ -747,6 +747,11 @@ class SkipReportTests(unittest.TestCase):
     def test_running_test_without_skipped_marker_is_not_a_skip(self):
         self.assertEqual(self.skipped('<testsuite><testcase name="coverage" status="run"/></testsuite>'), [])
 
+    def test_unknown_ctest_status_is_rejected(self):
+        for status, children in (("typo", ""), ("", ""), ("pass", '<skipped message="no display"/>')):
+            with self.subTest(status=status), self.assertRaisesRegex(ValueError, "invalid testcase status.*coverage"):
+                self.skipped(f'<testsuite><testcase name="coverage" status="{status}">{children}</testcase></testsuite>')
+
     def test_skip_message_preserves_the_device_reason(self):
         found = self.skipped('<testsuite><testcase name="gpu"><skipped message="the device has no required extension"/></testcase></testsuite>')
         self.assertEqual(len(found), 1)
