@@ -143,6 +143,36 @@ void* Append(void* string, const char* source, std::uint64_t count, char value =
     return string;
 }
 
+void Resize(void* string, std::uint64_t requested, char value) {
+    auto representation = ReadString(string);
+    const bool isLong = (representation[0] & LongFlag) != 0;
+    auto fields = isLong ? ReadLongString(representation) : LongString{};
+    const std::uint64_t size = isLong ? fields.size : representation[0] >> 1u;
+    if (!isLong && size > InlineCapacity) {
+        _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string: invalid short size");
+    }
+    if (requested >= size) {
+        Append(string, nullptr, requested - size, value);
+        return;
+    }
+    if (isLong) {
+        auto* data = reinterpret_cast<char*>(static_cast<std::uintptr_t>(fields.address));
+        constexpr char terminator = '\0';
+        if (!GuestWritable_nid_no_patch(string, representation.size()) ||
+            !GuestCopyOut_nid_no_patch(data + requested, &terminator, sizeof(terminator))) {
+            _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::resize: unwritable string storage");
+        }
+        fields.size = requested;
+        representation = std::bit_cast<Representation>(fields);
+    } else {
+        representation[0] = static_cast<unsigned char>(requested << 1u);
+        representation[1 + requested] = 0;
+    }
+    if (!GuestCopyOut_nid_no_patch(string, representation.data(), representation.size())) {
+        _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::resize: unwritable representation");
+    }
+}
+
 }
 
 extern "C" void APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE7reserveEm_nid_postfix(
@@ -206,4 +236,14 @@ extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allo
 extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6appendEmc_nid_postfix(
     void* string, std::uint64_t count, char value) {
     return Append(string, nullptr, count, value);
+}
+
+extern "C" void APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6resizeEmc_nid_postfix(
+    void* string, std::uint64_t requested, char value) {
+    Resize(string, requested, value);
+}
+
+extern "C" void APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE9push_backEc_nid_postfix(
+    void* string, char value) {
+    Append(string, nullptr, 1, value);
 }
