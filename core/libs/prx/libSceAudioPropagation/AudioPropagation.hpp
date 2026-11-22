@@ -243,6 +243,9 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPaths(AudioPropagationHa
 std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPath(AudioPropagationHandle path, const AudioPropagation::AudioPath* data, float gain);
 std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle system, AudioPropagation::RenderInfo* infos, std::uint32_t count);
 std::int32_t APS5_VABI sceAudioPropagationSourceQueryAudioPaths(AudioPropagationHandle source, std::uint64_t* paths, std::size_t size);
+int APS5_VABI sceAudioPropagationMaterialQueryInfo();
+int APS5_VABI sceAudioPropagationAudioPathQueryInfo();
+int APS5_VABI sceAudioPropagationPortalQueryInfo();
 
 }
 
