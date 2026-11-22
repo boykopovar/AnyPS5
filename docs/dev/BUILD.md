@@ -39,6 +39,12 @@ build-fuzz/tests/relinker_conversion_fuzzer build-fuzz/fuzz-corpus -fork=2 -max_
 git submodule update --init --recursive
 ```
 
+### Self-hosted Linux checkout recovery
+
+The self-hosted Linux `Build` job in [`.github/workflows/build.yml`](../../.github/workflows/build.yml) is designed to recover from an interrupted recursive checkout. Before checkout it removes stale Git lock files. If `actions/checkout` fails, it removes only submodules that have a worktree but no valid `HEAD` (and their matching `.git/modules` directories), then retries the recursive checkout. If no specific broken submodule can be identified safely, it empties the workspace and retries instead.
+
+That retry is a repair path, not a substitute for a healthy runner seed. If the same runner repeatedly spends most of its job timeout fetching recorded submodule commits, or repeatedly returns with half-cloned submodules, take it out of rotation and reseed its AnyPS5 workspace with a complete recursive checkout at the recorded commits before returning it to service. This avoids carrying one interrupted checkout into every later job while preserving the shared compiler and shader caches outside `GITHUB_WORKSPACE`.
+
 ## Selective test builds
 
 [`tools/select_tests.py`](../../tools/select_tests.py) selects the tests whose build inputs a change touches, so a pull request can build and run only those tests. Configure and build a full tree with `-DBUILD_TESTING=ON` (`dump` needs the header dependencies that only exist once the objects are built), then:
