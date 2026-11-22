@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
-PLACEHOLDERS = ("worktree", "build_dir", "result_dir", "commit")
+PLACEHOLDER = re.compile(r"\{(worktree|build_dir|result_dir|commit)\}")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
 RECIPE_FIELDS = {"title_id", "build_commands", "build_dir", "games", "seconds", "repetitions",
                  "regression_pct", "max_spread_pct", "titles", "content"}
@@ -29,7 +29,7 @@ def unique_recipe_fields(pairs):
 
 def load_recipe(path):
     recipe_path = Path(path).resolve()
-    recipe = json.loads(recipe_path.read_text(encoding="utf-8"), object_pairs_hook=unique_recipe_fields)
+    recipe = json.loads(recipe_path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_recipe_fields)
     if not isinstance(recipe, dict):
         raise ValueError("recipe must be a JSON object")
     unknown = set(recipe) - RECIPE_FIELDS
@@ -67,10 +67,10 @@ def load_recipe(path):
     if type(repetitions) is not int or repetitions < 3:
         raise ValueError("recipe.repetitions must be an integer of at least 3")
     regression_pct = recipe.get("regression_pct", 5)
-    if type(regression_pct) not in (int, float) or not math.isfinite(regression_pct) or not 0 < regression_pct < 100:
+    if type(regression_pct) not in (int, float) or not 0 < regression_pct < 100:
         raise ValueError("recipe.regression_pct must be between 0 and 100")
     max_spread_pct = recipe.get("max_spread_pct", 3)
-    if type(max_spread_pct) not in (int, float) or not math.isfinite(max_spread_pct) or not 0 < max_spread_pct < 100:
+    if type(max_spread_pct) not in (int, float) or not 0 < max_spread_pct < 100:
         raise ValueError("recipe.max_spread_pct must be between 0 and 100")
     titles = recipe.get("titles", str(TOOLS_DIR / "titles.json"))
     if not isinstance(titles, str):
@@ -119,6 +119,9 @@ def sample_summary(path, title_id, commit):
     identity.update(title_id=title_id, title=title.get("name", ""), content_version=title.get("version", ""))
     if any(not identity[key] for key in ("os", "gpu", "driver", "title")):
         raise ValueError(f"{path}: measurement is missing machine, title, or content identity")
+    content_version = identity["content_version"]
+    if not isinstance(content_version, str) or not content_version.strip():
+        raise ValueError(f"{path}: measurement is missing a valid content version")
     return {"commit": commit, "fps": float(fps), "identity": identity, "outcome": run["outcome"]}
 
 
@@ -168,12 +171,7 @@ def first_parent_commits(repo, good, bad):
 
 
 def format_command(command, values):
-    result = []
-    for argument in command:
-        for name in PLACEHOLDERS:
-            argument = argument.replace("{" + name + "}", str(values[name]))
-        result.append(argument)
-    return result
+    return [PLACEHOLDER.sub(lambda match: str(values[match[1]]), argument) for argument in command]
 
 
 def reset_build_dir(worktree, build_dir):
@@ -304,7 +302,7 @@ def bisect(repo, good, bad, recipe, output_dir, temp_dir=None):
         raise ValueError(f"report already exists: {output_dir}")
     good_sha, bad_sha, commits = first_parent_commits(repo, good, bad)
     with tempfile.TemporaryDirectory(prefix="anyps5-performance-bisect-", dir=temp_dir) as temporary:
-        root = Path(temporary)
+        root = Path(temporary).resolve()
         worktree = root / "source"
         results = root / "results"
         results.mkdir()

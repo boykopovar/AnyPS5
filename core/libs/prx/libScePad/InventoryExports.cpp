@@ -1,7 +1,11 @@
 #include "prx/libScePad/include/LaterExports.hpp"
+#include "prx/libScePad/include/Pad.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+
+#include <cerrno>
+#include <cstdint>
 
 extern "C" {
 
@@ -93,8 +97,26 @@ int APS5_VABI libScePadUnknown_WH0f85fU998_nid_no_patch() {
 }
 APS5_EXPORT("WH0f85fU998", libScePadUnknown_WH0f85fU998_nid_no_patch);
 
-int APS5_VABI libScePadUnknown_oARLr0ca9N8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libScePadUnknown_oARLr0ca9N8_nid_no_patch(int handle, std::uint8_t* out) {
+    if (scePadUnknown_n3kSX62fgNo() != PAD_OK) {
+        return PAD_ERROR_NOT_INITIALIZED;
+    }
+    if (out == nullptr) {
+        return PAD_ERROR_INVALID_ARG;
+    }
+    if (!scePadIsValidHandle(handle, PAD_PORT_TYPE_STANDARD) &&
+        !scePadIsValidHandle(handle, PAD_PORT_TYPE_SPECIAL) &&
+        !scePadIsValidHandle(handle, PAD_PORT_TYPE_REMOTE)) {
+        return PAD_ERROR_INVALID_HANDLE;
+    }
+    const std::uint8_t value = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(out, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) {
+        return PAD_ERROR_INVALID_ARG;
+    }
+    return PAD_OK;
 }
 APS5_EXPORT("oARLr0ca9N8", libScePadUnknown_oARLr0ca9N8_nid_no_patch);
 

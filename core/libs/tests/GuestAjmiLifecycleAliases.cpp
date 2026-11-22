@@ -100,6 +100,7 @@ constexpr int InvalidContext = static_cast<int>(0x80930002u);
 constexpr int InvalidInstance = static_cast<int>(0x80930003u);
 constexpr int InvalidBatch = static_cast<int>(0x80930004u);
 constexpr int InvalidParameter = static_cast<int>(0x80930005u);
+constexpr int InvalidFlags = static_cast<int>(0x8093000Cu);
 
 std::uint32_t Context(const Api& api, std::int64_t reserved = 0) {
     Guarded<std::uint32_t> context;
@@ -136,7 +137,7 @@ void CheckInstances(const Api& alias, const Api& native) {
     Require(alias.create(0, 0, 0, &first.value) == InvalidContext);
     Require(alias.create(std::numeric_limits<std::uint32_t>::max(), 0, 0, &first.value) == InvalidContext);
     Require(first.value == 0xA5A5A5A5u);
-    Require(alias.create(0, 0, 0, nullptr) == InvalidContext);
+    Require(alias.create(0, 0, 0, nullptr) == InvalidParameter);
     Require(alias.create(context, 0, 0, nullptr) == InvalidParameter);
     errno = 71;
     Require(alias.create(context, 0, 0, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidParameter && errno == 71);
@@ -151,7 +152,7 @@ void CheckInstances(const Api& alias, const Api& native) {
     Require(alias.destroy(other, second.value) == 0);
     Require(native.destroy(other, second.value) == InvalidInstance);
     Require(alias.destroy(std::numeric_limits<std::uint32_t>::max(), 0) == InvalidContext);
-    for (const auto flags : {std::uint64_t{1} << 48, std::uint64_t{1} << 63}) {
+    for (const auto flags : {std::uint64_t{1} << 48, std::uint64_t{1} << 59}) {
         const auto rejected = [&](const Api& api) {
             std::uint32_t instance = 0xA5A5A5A5u;
             std::string message;
@@ -165,6 +166,8 @@ void CheckInstances(const Api& alias, const Api& native) {
         };
         Require(rejected(alias) == rejected(native));
     }
+    std::uint32_t refused = 0xA5A5A5A5u;
+    Require(alias.create(context, 2, std::uint64_t{1} << 63, &refused) == InvalidFlags && refused == 0xA5A5A5A5u);
     first.Check();
     second.Check();
 }

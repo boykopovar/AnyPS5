@@ -1,16 +1,20 @@
 import argparse
+import codecs
 import re
 import sys
+from collections import deque
 from dataclasses import dataclass
+from io import TextIOWrapper
 from pathlib import Path
 
 
 TRACE_PREFIX = re.compile(r"^\[memory\]\s+")
-RANGE = re.compile(r"(?P<address>(?:0x)?[0-9a-fA-F]+)\+(?P<size>0x[0-9a-fA-F]+)")
+RANGE = re.compile(r"(?P<address>(?:0x)?[0-9a-fA-F]+|\(nil\))\+(?P<size>0x[0-9a-fA-F]+)")
 OPERATIONS = (
     "remap fixed",
     "map direct",
     "map anon",
+    "flexible backing",
     "map file",
     "map shared",
     "protect",
@@ -30,7 +34,10 @@ class MappingEvent:
 
 
 def parse_events(lines):
-    events = []
+    return list(iter_events(lines))
+
+
+def iter_events(lines):
     for number, line in enumerate(lines, 1):
         match = TRACE_PREFIX.match(line)
         if match is None:
@@ -42,15 +49,19 @@ def parse_events(lines):
         address = RANGE.search(detail)
         if address is None:
             raise ValueError(f"line {number}: {operation} event has no address range")
-        events.append(MappingEvent(number, operation, int(address["address"], 16),
-                                   int(address["size"], 16), detail))
-    return events
+        start = 0 if address["address"] == "(nil)" else int(address["address"], 16)
+        yield MappingEvent(number, operation, start, int(address["size"], 16), detail)
 
 
 def parse_range(address, size):
     try:
-        start = int(address, 0)
-        length = int(size, 0)
+        def parse_number(value):
+            if re.fullmatch(r"[+-]?[0-9](?:_?[0-9])*", value.strip()):
+                return int(value, 10)
+            return int(value, 0)
+
+        start = parse_number(address)
+        length = parse_number(size)
     except ValueError as error:
         raise ValueError("address and byte count must be decimal or 0x-prefixed integers") from error
     if start < 0 or start >= 1 << 64:
@@ -61,7 +72,7 @@ def parse_range(address, size):
 
 
 def overlaps(event, start, size):
-    return event.address < start + size and start < event.address + event.size
+    return event.size > 0 and event.address < start + size and start < event.address + event.size
 
 
 def select_events(events, start, size):
@@ -69,16 +80,28 @@ def select_events(events, start, size):
 
 
 def render_events(events, path, start, size, limit):
-    matches = select_events(events, start, size)
+    matches = deque()
+    count = 0
+    for event in events:
+        if overlaps(event, start, size):
+            count += 1
+            matches.append(event)
+            if len(matches) > limit:
+                matches.popleft()
     lines = [f"APS5_TRACE_MEMORY events overlapping 0x{start:x}+0x{size:x} in {path}"]
     if not matches:
         lines.append("No traced mapping operations overlap this range.")
         return "\n".join(lines) + "\n"
-    if len(matches) > limit:
-        lines.append(f"Showing the last {limit} of {len(matches)} matching events.")
-        matches = matches[-limit:]
+    if count > limit:
+        lines.append(f"Showing the last {limit} of {count} matching events.")
     lines.extend(f"line {event.line}: {event.detail}" for event in matches)
     return "\n".join(lines) + "\n"
+
+
+def decode_trace(source):
+    bom = source.peek(2)[:2]
+    encoding = "utf-16" if bom in (codecs.BOM_UTF16_BE, codecs.BOM_UTF16_LE) else "utf-8-sig"
+    return TextIOWrapper(source, encoding=encoding, errors="replace")
 
 
 def main(argv=None):
@@ -96,9 +119,9 @@ def main(argv=None):
         parser.error("--limit must be positive")
     try:
         start, size = parse_range(args.address, args.length)
-        with args.trace.open(encoding="utf-8-sig", errors="replace") as source:
-            events = parse_events(source)
-        sys.stdout.write(render_events(events, args.trace, start, size, args.limit))
+        with args.trace.open("rb") as raw, decode_trace(raw) as source:
+            output = render_events(iter_events(source), args.trace, start, size, args.limit)
+        sys.stdout.write(output)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     return 0

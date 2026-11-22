@@ -315,6 +315,25 @@ class BenchmarkCompareTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     benchmark_compare.compare_benchmark_runs(path, require_matching_context=True)
 
+    def test_trace_output_directory_is_not_comparison_context(self):
+        for directories in (("baseline", "candidate"), (None, "candidate"), ("baseline", None)):
+            with self.subTest(directories=directories):
+                runs = self.abba()[:2]
+                environments = []
+                for run, directory in zip(runs, directories):
+                    capture = self.root / run["capture"]
+                    data = json.loads(gzip.decompress(capture.read_bytes()))
+                    if directory is not None:
+                        data["env"]["APS5_TRACE_DIR"] = directory
+                    environments.append(data["env"])
+                    self.write_capture(capture.name, data)
+                result = self.cli("compare", self.write_series(runs), "--require-matching-context", "--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report["configuration_differences"], [])
+                self.assertEqual(report["aggregate"]["complete_pairs"], 1)
+                self.assertEqual([run["summary"]["metadata"]["env"] for run in report["runs"]], environments)
+
     def test_same_context_different_arm_commits_is_allowed_but_arm_drift_is_reported(self):
         path = self.write_series(self.abba())
         self.assertEqual(benchmark_compare.compare_benchmark_runs(path, True)["configuration_differences"], [])
@@ -382,6 +401,19 @@ class BenchmarkCompareTests(unittest.TestCase):
         runs[1]["capture"] = alias.name
         with self.assertRaises(ValueError):
             benchmark_compare.compare_benchmark_runs(self.write_series(runs))
+
+    def test_missing_inode_uses_capture_hashes(self):
+        runs = self.abba()[:2]
+        path = self.write_series(runs)
+        captures = [benchmark_compare.load_benchmark(self.root / run["capture"]) for run in runs]
+        for capture in captures:
+            capture["source"]["_identity"] = (1, 0)
+        with patch.object(benchmark_compare, "load_benchmark", side_effect=captures):
+            report = benchmark_compare.compare_benchmark_runs(path)
+        self.assertEqual(report["aggregate"]["complete_pairs"], 1)
+        with patch.object(benchmark_compare, "load_benchmark", side_effect=[captures[0]] * 2):
+            with self.assertRaisesRegex(ValueError, "duplicate capture evidence"):
+                benchmark_compare.compare_benchmark_runs(path)
 
     def test_expected_raw_hash_is_verified_and_retained(self):
         runs = self.abba()[:2]
