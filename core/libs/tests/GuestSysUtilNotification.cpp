@@ -219,6 +219,18 @@ int main() {
     errno = 71;
     Require(sceSysUtilSendSystemNotificationWithTextRelatedToUser(1, 42, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x8002000Eu), "an unreadable related message pointer did not return EFAULT");
     Require(errno == 71, "unreadable related message pointer clobbered errno");
+    constexpr SysUtilNotificationWithParams emptyParams{{0}, {0}, {0}};
+    Require(sceSysUtilSendSystemNotificationWithParams(1, emptyParams) == notSupported, "an empty params struct did not reach the unsupported host notification handler");
+    SysUtilNotificationWithParams fullParams{};
+    std::strncpy(fullParams.first, "hello", sizeof(fullParams.first) - 1);
+    std::strncpy(fullParams.second, "world", sizeof(fullParams.second) - 1);
+    std::strncpy(fullParams.third, "info", sizeof(fullParams.third) - 1);
+    Require(sceSysUtilSendSystemNotificationWithParams(1, fullParams) == notSupported, "a populated params struct did not reach the unsupported host notification handler");
+    SysUtilNotificationWithParams longParams{};
+    std::memset(longParams.first, 'a', sizeof(longParams.first));
+    std::memset(longParams.second, 'b', sizeof(longParams.second));
+    std::memset(longParams.third, 'c', sizeof(longParams.third));
+    Require(sceSysUtilSendSystemNotificationWithParams(1, longParams) == notSupported, "oversized params fields did not reach the unsupported host notification handler");
     errno = 71;
     Require(sceSysUtilSendNotificationRequest(reinterpret_cast<const char*>(0x10), 0) == static_cast<int>(0x8002000Eu), "an unreadable generic message pointer did not return EFAULT");
     Require(errno == 71, "unreadable generic message pointer clobbered errno");
