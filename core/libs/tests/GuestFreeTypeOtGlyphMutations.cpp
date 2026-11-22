@@ -280,6 +280,47 @@ void StrokeBorderGlyph(const Exports& ot, FT_Bool inside, FT_Bool destroy) {
     FT_Done_Glyph(native);
 }
 
+void FailedStroke(const Exports& ot, bool border, FT_Bool destroy) {
+    Fixture fixture(ot);
+    auto [guest, native] = fixture.Glyph();
+    auto* oldGuest = guest;
+    const FT_Glyph oldNative = native;
+    const auto guestError = border ? ot.strokeBorder(&guest, nullptr, 0, destroy) : ot.stroke(&guest, nullptr, destroy);
+    const auto nativeError = border ? FT_Glyph_StrokeBorder(&native, nullptr, 0, destroy) : FT_Glyph_Stroke(&native, nullptr, destroy);
+    Require(guestError == nativeError && guestError != 0, "failed stroke error matches FreeType");
+    Require((guest == nullptr) == (native == nullptr), "failed stroke output pointer matches FreeType");
+    Require((!guest || guest == oldGuest) && (!native || native == oldNative), "failed stroke keeps the input glyph");
+    Matches(oldGuest, oldNative, fixture.library, false);
+    ot.doneGlyph(oldGuest);
+    FT_Done_Glyph(oldNative);
+}
+
+void FailedBitmapConversion(const Exports& ot, FT_Bool destroy) {
+    Fixture fixture(ot);
+    auto [guest, native] = fixture.Glyph();
+    auto* oldGuest = guest;
+    const FT_Glyph oldNative = native;
+    const GuestVector origin{17, -9};
+    const FT_Vector nativeOrigin{17, -9};
+    const auto mode = static_cast<FT_Render_Mode>(FT_RENDER_MODE_MAX);
+    const auto guestError = ot.toBitmap(&guest, mode, &origin, destroy);
+    const auto nativeError = FT_Glyph_To_Bitmap(&native, mode, &nativeOrigin, destroy);
+    Require(guestError == nativeError, "unsupported render mode error matches FreeType");
+    if (nativeError) {
+        Require(guest == oldGuest && native == oldNative, "failed bitmap conversion keeps the input glyph");
+        Matches(guest, native, fixture.library, false);
+    } else {
+        Matches(guest, native, fixture.library, true);
+        if (!destroy) {
+            Matches(oldGuest, oldNative, fixture.library, false);
+            ot.doneGlyph(oldGuest);
+            FT_Done_Glyph(oldNative);
+        }
+    }
+    ot.doneGlyph(guest);
+    FT_Done_Glyph(native);
+}
+
 void InvalidBitmapStroke(const Exports& ot) {
     Fixture fixture(ot);
     StrokerPair stroker(fixture);
@@ -415,6 +456,11 @@ int main(int argc, char** argv) {
         }
         StrokeBorderGlyph(ot, 2, 2);
         InvalidBitmapStroke(ot);
+        for (const auto destroy : {FT_Bool{0}, FT_Bool{1}}) {
+            FailedStroke(ot, false, destroy);
+            FailedStroke(ot, true, destroy);
+            FailedBitmapConversion(ot, destroy);
+        }
         InvalidHandles(ot);
         InvalidOutlinePointerPreservesOwner(ot);
     } catch (const std::runtime_error& error) {

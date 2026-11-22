@@ -142,25 +142,36 @@ Glyph& Register(GuestLibrary* library, bool isBitmap, std::size_t pointCount) {
 }
 
 template <typename TOperation> FT_Error Replace(GuestGlyphRec** glyph, bool destroy, const char* function, TOperation operation) {
-    if (!glyph) return operation(nullptr);
+    const FT_Bool nativeDestroy = destroy ? 1 : 0;
+    if (!glyph) return operation(nullptr, nativeDestroy);
     if (!*glyph) {
         FT_Glyph empty = nullptr;
-        return operation(&empty);
+        return operation(&empty, nativeDestroy);
     }
     std::lock_guard lock(glyphMutex);
     auto* oldRoot = *glyph;
     auto& oldOwner = Find(oldRoot, function);
     oldOwner.Sync(function);
     const auto oldLibrary = oldOwner.library;
-    FT_Glyph result = oldOwner.host.get();
-    const FT_Error error = operation(&result);
-    if (error) return error;
+    const FT_Glyph oldHost = oldOwner.host.get();
+    FT_Glyph result = oldHost;
+    const FT_Error error = operation(&result, nativeDestroy);
+    if (error) {
+        if (result && result != oldHost) NotImplemented_nid_no_patch(function);
+        oldOwner.Publish(function);
+        if (!result) *glyph = nullptr;
+        return error;
+    }
     if (!result) NotImplemented_nid_no_patch(function);
-    if (result == oldOwner.host.get()) {
+    if (result == oldHost) {
         oldOwner.Publish(function);
         return error;
     }
     std::unique_ptr<FT_GlyphRec, decltype(&FT_Done_Glyph)> resultOwner(result, &FT_Done_Glyph);
+    if (destroy) {
+        static_cast<void>(oldOwner.host.release());
+        glyphs.erase(oldRoot);
+    }
     auto replacement = std::make_unique<Glyph>();
     replacement->library = oldLibrary;
     replacement->isBitmap = result->format == FT_GLYPH_FORMAT_BITMAP;
@@ -174,7 +185,6 @@ template <typename TOperation> FT_Error Replace(GuestGlyphRec** glyph, bool dest
     auto* newRoot = replacement->Root();
     const bool inserted = glyphs.emplace(newRoot, std::move(replacement)).second;
     if (!inserted) NotImplemented_nid_no_patch(function);
-    if (destroy) glyphs.erase(oldRoot);
     *glyph = newRoot;
     return error;
 }
@@ -347,8 +357,8 @@ extern "C" int FreeType::FreeTypeGlyphMutationToBitmapHost_nid_no_patch(GuestGly
         nativeOrigin = {Count<FT_Pos>(origin->x, function), Count<FT_Pos>(origin->y, function)};
         nativeOriginPointer = &nativeOrigin;
     }
-    return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native) {
-        return FT_Glyph_To_Bitmap(native, static_cast<FT_Render_Mode>(renderMode), nativeOriginPointer, 0);
+    return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native, FT_Bool nativeDestroy) {
+        return FT_Glyph_To_Bitmap(native, static_cast<FT_Render_Mode>(renderMode), nativeOriginPointer, nativeDestroy);
     });
 }
 
@@ -377,14 +387,14 @@ extern "C" int FreeType::FreeTypeGlyphMutationTransformHost_nid_no_patch(GuestGl
 }
 
 extern "C" int FreeType::FreeTypeGlyphMutationStrokeHost_nid_no_patch(GuestGlyphRec** glyph, void* stroker, std::uint8_t destroy, const char* function) {
-    return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native) {
-        return FT_Glyph_Stroke(native, static_cast<FT_Stroker>(FreeTypeHostStroker_nid_no_patch(stroker)), 0);
+    return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native, FT_Bool nativeDestroy) {
+        return FT_Glyph_Stroke(native, static_cast<FT_Stroker>(FreeTypeHostStroker_nid_no_patch(stroker)), nativeDestroy);
     });
 }
 
 extern "C" int FreeType::FreeTypeGlyphMutationStrokeBorderHost_nid_no_patch(GuestGlyphRec** glyph, void* stroker, std::uint8_t inside,
                                                                std::uint8_t destroy, const char* function) {
-    return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native) {
-        return FT_Glyph_StrokeBorder(native, static_cast<FT_Stroker>(FreeTypeHostStroker_nid_no_patch(stroker)), static_cast<FT_Bool>(inside), 0);
+    return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native, FT_Bool nativeDestroy) {
+        return FT_Glyph_StrokeBorder(native, static_cast<FT_Stroker>(FreeTypeHostStroker_nid_no_patch(stroker)), static_cast<FT_Bool>(inside), nativeDestroy);
     });
 }
