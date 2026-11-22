@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 static void Require(bool condition) { if (!condition) std::abort(); }
 
@@ -25,4 +26,18 @@ int main() {
     Require(getpwuid_nid_postfix(1) == nullptr);
     Require(getpwuid_nid_postfix(UINT32_MAX) == nullptr);
     Require(errno == E2BIG);
+
+    Require(getpwnam_nid_postfix("root") == root);
+    Require(std::strcmp(root->pw_name, "root") == 0 && root->pw_uid == 0);
+    Require(getpwnam_nid_postfix("nobody") == nullptr);
+    Require(getpwnam_nid_postfix("") == nullptr);
+    Require(getpwnam_nid_postfix("Root") == nullptr);
+    Require(errno == E2BIG);
+    bool threw = false;
+    try {
+        getpwnam_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }

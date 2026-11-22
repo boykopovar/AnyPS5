@@ -50,6 +50,16 @@ int Failure(int error) {
     return -1;
 }
 
+bool NextName(char* pattern, std::size_t start, std::size_t length, const std::string& initial) {
+    auto position = start;
+    for (; position < length; ++position) {
+        const auto index = std::strchr(Characters, pattern[position]) - Characters;
+        pattern[position] = Characters[(index + 1) % (sizeof(Characters) - 1)];
+        if (pattern[position] != initial[position - start]) break;
+    }
+    return position != length;
+}
+
 int TemporaryFile(char* pattern, int flags) {
     if (!pattern) return Failure(14);
     std::string copy;
@@ -93,13 +103,7 @@ int TemporaryFile(char* pattern, int flags) {
             return descriptor;
         }
         if (*__error_nid_postfix() != 17) return -1;
-        auto position = start;
-        for (; position < length; ++position) {
-            const auto index = std::strchr(Characters, pattern[position]) - Characters;
-            pattern[position] = Characters[(index + 1) % (sizeof(Characters) - 1)];
-            if (pattern[position] != initial[position - start]) break;
-        }
-        if (position == length) return -1;
+        if (!NextName(pattern, start, length, initial)) return -1;
     }
 }
 
@@ -107,6 +111,36 @@ int TemporaryFile(char* pattern, int flags) {
 
 extern "C" int APS5_VABI mkstemp_nid_postfix(char* pattern) {
     return TemporaryFile(pattern, 0);
+}
+
+extern "C" char* APS5_VABI mkdtemp_nid_postfix(char* pattern) {
+    if (!pattern) throw std::invalid_argument("mkdtemp: null template");
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(pattern, copy)) {
+        Failure(error);
+        return nullptr;
+    }
+    const auto length = copy.size();
+    if (length < 6 || copy.compare(length - 6, 6, "XXXXXX") != 0) {
+        Failure(22);
+        return nullptr;
+    }
+    const auto start = length - 6;
+    const GuestArena::HostWrite destination(pattern + start, 6);
+    if (!destination.Open() || !GuestWritable_nid_no_patch(pattern + start, 6)) {
+        Failure(14);
+        return nullptr;
+    }
+    std::random_device random;
+    std::uniform_int_distribution<unsigned int> character(0, sizeof(Characters) - 2);
+    for (auto position = start; position < length; ++position)
+        pattern[position] = Characters[character(random)];
+    const std::string initial(pattern + start, 6);
+    for (;;) {
+        if (mkdir_nid_postfix(pattern, 0700) == 0) return pattern;
+        if (*__error_nid_postfix() != 17) return nullptr;
+        if (!NextName(pattern, start, length, initial)) return nullptr;
+    }
 }
 
 extern "C" int APS5_VABI mkostemp_nid_postfix(char* pattern, int flags) {
