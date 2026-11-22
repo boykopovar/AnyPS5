@@ -125,7 +125,7 @@ struct PthreadAttrPrivate {
     bool _createSuspended = false;
     KernelCpumask _affinity = ~KernelCpumask{0};
     bool _affinityExplicit = false;
-    std::size_t _guardsize = 0x1000;
+    std::size_t _guardsize = 0x4000;
     int _solosched = 0;
     int _scope = GUEST_SCOPE_SYSTEM;
 };
