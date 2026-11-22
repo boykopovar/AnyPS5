@@ -14,37 +14,52 @@ QUEUE_SIZE = 30
 BLOCKING_LABELS = {"needs rebase", "perf numbers missing", "open PR limit"}
 CONVENTIONS_CHECK = "conventions"
 BOT_CHECKS = {"intake", "labels", "eligibility", "report"}
-BUILD_CHECKS = {"linux", "windows", "relinker", "relinker-asan", "register-context", "write-watch"}
+BUILD_CHECKS = {"linux", "windows", "relinker", "relinker-asan", "register-context", "write-watch", "pipe-write", "edge-watch"}
 FAILED = {"failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale", "error"}
 PASSED = {"success", "neutral"}
 MARKER = "<!-- pr-review-queue -->"
 WRITE_PAUSE = 1.0
 PAGE_SIZE = 25
 
+PULL_FIELDS = """
+fragment Readiness on PullRequest {
+  number title isDraft mergeable headRefOid createdAt
+  author { login }
+  labels(first: 50) { nodes { name } }
+  reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } }
+  latestOpinionatedReviews(first: 50) { nodes { state author { login } } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) {
+    pageInfo { hasNextPage }
+    nodes {
+      __typename
+      ... on CheckRun { databaseId name status conclusion }
+      ... on StatusContext { context state }
+    }
+  } } } } }
+}
+"""
+
 QUERY = """
 query($owner: String!, $name: String!, $after: String, $size: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequests(states: OPEN, baseRefName: "main", first: $size, after: $after) {
       pageInfo { hasNextPage endCursor }
-      nodes {
-        number title isDraft mergeable headRefOid createdAt
-        author { login }
-        labels(first: 50) { nodes { name } }
-        reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } }
-        latestOpinionatedReviews(first: 50) { nodes { state author { login } } }
-        commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) {
-          pageInfo { hasNextPage }
-          nodes {
-            __typename
-            ... on CheckRun { databaseId name status conclusion }
-            ... on StatusContext { context state }
-          }
-        } } } } }
-      }
+      nodes { ...Readiness }
     }
   }
 }
-"""
+""" + PULL_FIELDS
+
+EXPLAIN_QUERY = """
+query($url: URI!) {
+  resource(url: $url) {
+    ... on PullRequest {
+      state baseRefName
+      ...Readiness
+    }
+  }
+}
+""" + PULL_FIELDS
 
 CLOSED_QUERY = """
 query($owner: String!, $name: String!, $label: String!, $after: String) {
@@ -192,6 +207,17 @@ def fetch(repo):
         after = pagination_cursor(connection, seen, "open pull request")
 
 
+def fetch_one(repo, number):
+    page = json.loads(pr_labels.gh("api", "graphql", "-f", f"query={EXPLAIN_QUERY}",
+                                   "-f", f"url=https://github.com/{repo}/pull/{number}"))
+    if page.get("errors"):
+        raise ValueError(str(page["errors"])[:300])
+    node = page["data"]["resource"]
+    if node and node["state"] == "OPEN" and node["baseRefName"] == "main":
+        return pull(node)
+    return None
+
+
 def closed_with_label(repo):
     owner, name = repo.split("/", 1)
     closed, after = [], None
@@ -242,18 +268,18 @@ def main(argv=None):
         parser.error("--explain and --author cannot be combined")
     try:
         repo = pr_labels.repository()
+        if args.explain is not None:
+            pr = fetch_one(repo, args.explain)
+            if pr is None:
+                parser.error(f"#{args.explain} is not an open pull request to main")
+            print("\n".join(blockers(pr)) or "nothing blocks it")
+            return 0
         prs = fetch(repo)
-        closed = closed_with_label(repo) if args.explain is None and args.author is None else []
+        closed = closed_with_label(repo) if args.author is None else []
     except subprocess.CalledProcessError as error:
         parser.error((error.stderr or str(error)).strip())
     except (ValueError, KeyError, TypeError, RecursionError) as error:
         parser.error(f"cannot read pull requests: {error}")
-    if args.explain is not None:
-        match = [pr for pr in prs if pr["number"] == args.explain]
-        if not match:
-            parser.error(f"#{args.explain} is not an open pull request to main")
-        print("\n".join(blockers(match[0])) or "nothing blocks it")
-        return 0
     if args.author is not None:
         mine = sorted((pr for pr in prs if pr["author"].casefold() == args.author.casefold()), key=lambda pr: pr["number"])
         for pr in mine:

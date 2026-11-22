@@ -1,3 +1,4 @@
+import io
 import os
 import subprocess
 import sys
@@ -84,6 +85,42 @@ class OwnBranchTests(unittest.TestCase):
                 patch("builtins.print"):
             self.assertEqual(pr_overlap.main(), 0)
         self.assertEqual(set(seen), {0, 8})
+
+    def test_explicit_head_repo_ignores_only_same_fork_and_branch_after_rebase(self):
+        seen = {}
+        prs = {7: {"branch": "contrib/topic", "head_repo": "mine/project"},
+               8: {"branch": "contrib/topic", "head_repo": "other/project"},
+               9: {"branch": "contrib/other", "head_repo": "mine/project"}}
+        with patch.object(pr_overlap, "open_prs", return_value=prs), \
+                patch.object(pr_overlap, "resolve_branch", return_value="a" * 40), \
+                patch.object(pr_overlap, "push_head", side_effect=AssertionError("explicit identity must not be inferred")), \
+                patch.object(pr_overlap, "base_commit", return_value="refs/pr/base"), \
+                patch.object(pr_overlap, "fetch_heads"), \
+                patch.object(pr_overlap, "own", side_effect=lambda rows, sha: rows), \
+                patch.object(pr_overlap, "scan_all", side_effect=lambda rows, jobs: seen.update(rows)), \
+                patch.object(pr_overlap, "base_exports", return_value={}), \
+                patch.object(pr_overlap, "main_export_findings", return_value={}), \
+                patch.object(pr_overlap, "overlaps", return_value=None), \
+                patch.object(pr_overlap, "report", return_value=""), \
+                patch.object(pr_overlap, "progress"), \
+                patch("builtins.print"):
+            result = pr_overlap.main(["--repo", "owner/project", "--branch", "contrib/topic", "--head-repo", "Mine/Project"])
+        self.assertEqual(result, 0)
+        self.assertEqual(set(seen), {0, 8, 9})
+
+    def test_explicit_head_repo_requires_branch_and_owner_repo(self):
+        for args in (["--names", "a", "--head-repo", "mine/project"],
+                     ["--out", "unused", "--head-repo", "mine/project"],
+                     ["--branch", "topic", "--head-repo", ""],
+                     ["--branch", "topic", "--head-repo", "not-a-repo"],
+                     ["--branch", "topic", "--head-repo", "mine/project/extra"]):
+            with self.subTest(args=args), patch.object(pr_overlap, "open_prs") as network, \
+                    patch.object(sys, "stderr", new_callable=io.StringIO) as stderr:
+                with self.assertRaises(SystemExit) as error:
+                    pr_overlap.main(args)
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("--head-repo needs --branch and a GitHub owner/name", stderr.getvalue())
+                network.assert_not_called()
 
     def test_scans_all_pull_requests_with_a_bounded_worker_pool(self):
         prs = {number: {"sha": str(number)} for number in range(1, 9)}
