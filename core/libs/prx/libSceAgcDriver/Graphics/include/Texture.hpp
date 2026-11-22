@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_TEXTURE_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_TEXTURE_HPP
 
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
@@ -29,8 +30,20 @@ namespace AgcDriver::Graphics {
 class Buffer;
 class ResidentColor;
 class CommandBatch;
+class FlushExclusion {
+public:
+    FlushExclusion();
+    ~FlushExclusion();
+    FlushExclusion(const FlushExclusion&) = delete;
+    FlushExclusion& operator=(const FlushExclusion&) = delete;
+    static bool SelectionExcludedForTest();
+
+private:
+    std::unique_lock<GuestMemory::GpuMutexType> gpu;
+};
+
 class StorageTexture;
-struct HostImport;
+struct HostImportCopy;
 
 // The Vulkan format storage images of a guest format use (sRGB formats store as their UNORM form).
 // Throws when the format has no storage form; the query is cached per format (a lookup cost a
@@ -70,7 +83,7 @@ struct OwnedImage {
 
 class Texture {
 public:
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, bool layerRows = false, const VkClearColorValue* clear = nullptr, std::optional<std::span<const std::uint32_t>> packedSlabs = std::nullopt, const HostImport* source = nullptr);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, bool layerRows = false, const VkClearColorValue* clear = nullptr, std::optional<std::span<const std::uint32_t>> packedSlabs = std::nullopt, std::span<const HostImportCopy> sources = {});
     Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::shared_ptr<Buffer> staging, bool depthCompare = false, bool layerRows = false, std::optional<std::span<const std::uint32_t>> packedSlabs = std::nullopt);
     Texture(const Context& context, const std::shared_ptr<ResidentColor>& source, const GuestTextureResource& descriptor, VkComponentMapping components);
     // A view of a storage image's own VkImage: the sampled texture follows the image's content, so a
@@ -144,7 +157,7 @@ public:
     void MarkReleased() { released.store(true, std::memory_order_release); }
 
 private:
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, std::shared_ptr<Buffer> staging, bool depthCompare, bool layerRows, const VkClearColorValue* clear, std::optional<std::span<const std::uint32_t>> packedSlabs, const HostImport* source);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, std::shared_ptr<Buffer> staging, bool depthCompare, bool layerRows, const VkClearColorValue* clear, std::optional<std::span<const std::uint32_t>> packedSlabs, std::span<const HostImportCopy> sources);
     void release() noexcept;
     bool refreshBlockCopy();
     bool refreshSrgbExpand();
@@ -339,9 +352,11 @@ public:
     static void FlushAllPending(const char* reason, VkDevice device = VK_NULL_HANDLE);
     static bool FlushAllPendingUntil(const char* reason, const std::function<bool()>& stop, VkDevice device = VK_NULL_HANDLE);
     static bool WaitForFlushing(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr);
+    static void InstallUnwatchHook();
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     static bool UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static void SetPublishHookForTest(void (*hook)());
+    static void SetFlushSelectedHookForTest(void (*hook)());
     static void SetPendingHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
     static constexpr std::uint64_t OccasionalStoreBytes = 1024 * 1024;
@@ -361,6 +376,7 @@ public:
     // Whether an image with results pending, or one a FlushPending is storing right now, overlaps
     // any of the [begin, end) ranges: one acquisition of the registry's mutex.
     static bool AnyPendingOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    static void AppendPendingRanges(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
     static bool AnyPendingUnitsOverlap(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static bool AnyLiveOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static std::uint64_t StampKeepingNewerResults(std::uint64_t address, std::size_t bytes, std::uint64_t recorded, const std::function<std::uint64_t()>& stamp);
@@ -417,6 +433,47 @@ public:
     // does when it lists no image, and all an access AccessKeptByCpu approved needs): whether any
     // unit was published.
     static bool PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason = "memory access", bool waited = false);
+    class MirrorPublishScope {
+    public:
+        MirrorPublishScope(std::vector<std::shared_ptr<StorageTexture>>& deferred, std::uint64_t address, std::size_t bytes);
+        ~MirrorPublishScope();
+        MirrorPublishScope(const MirrorPublishScope&) = delete;
+        MirrorPublishScope& operator=(const MirrorPublishScope&) = delete;
+
+    private:
+        MirrorPublishScope* previous;
+        std::vector<std::shared_ptr<StorageTexture>>& deferred;
+        std::uint64_t address;
+        std::size_t bytes;
+        friend class StorageTexture;
+    };
+    static bool MirrorPublishEnabled();
+    static bool DeferToMirror(std::uint64_t address, std::size_t bytes);
+    std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> MirrorPublishRanges(std::uint64_t begin, std::uint64_t end) const;
+    struct MirrorTarget {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        std::uint64_t origin = 0;
+        std::uint64_t serial = 0;
+        std::uint64_t uploads = 0;
+        std::shared_ptr<void> keep;
+    };
+    bool MirrorPublishCurrent(const MirrorTarget& target, std::uint64_t begin, std::uint64_t end) const;
+    std::uint64_t PublishIntoMirror(const MirrorTarget& target, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t begin, std::uint64_t end);
+    enum class MirrorFallback : std::uint8_t { ReadTrap, DccKeys, DrawnRect, Unwatched, NoGeneration, Copied, Written, Untracked, NoRecorder, Count };
+    static constexpr std::size_t MirrorFallbackReasons = static_cast<std::size_t>(MirrorFallback::Count);
+    static const char* MirrorFallbackName(MirrorFallback reason);
+    struct MirrorPublishCounts {
+        std::uint64_t published = 0;
+        std::uint64_t bytes = 0;
+        std::uint64_t skipped = 0;
+        std::uint64_t fallbacks = 0;
+        std::uint64_t refreshed = 0;
+        std::array<std::uint64_t, MirrorFallbackReasons> reasons{};
+        std::array<std::uint64_t, MirrorFallbackReasons> reasonBytes{};
+    };
+    static MirrorPublishCounts MirrorPublishTotals();
+    static void NoteMirrorPublishFallback(MirrorFallback reason, std::uint64_t bytes);
+    static void NoteMirrorPublishRefresh();
     // For the [hooksync] recorded-store line: images a FlushPending stored after a hook skip of
     // theirs (AccessKeptByCpu), of which by the hook for the same read site as the last skip; 10 s deltas.
     struct HookSkipCounts {
@@ -446,6 +503,7 @@ public:
     // contains a descriptor of its first mips), if any; the caller decides whether the geometry fits
     // (Texture::CanCopyFrom, ResidentPresentable).
     static std::shared_ptr<StorageTexture> FindPending(std::uint64_t address, std::uint64_t bytes);
+    bool IsPendingAlias(const StorageTexture& pending) const;
     VkDevice Device() const;
     static std::uint64_t EightBitWrites();
     static std::shared_ptr<StorageTexture> FindPendingSlice(std::uint64_t address, std::uint64_t bytes);
@@ -534,6 +592,7 @@ public:
     // was still current (nothing uploaded).
     // Keeps the image current with guest memory (see GuestMemory::CollectWrites).
     bool Refresh();
+    bool ChangedOutsideWatch() const;
     bool RefreshLayers(std::uint32_t first, std::uint32_t count);
     static void SetRefreshUnchangedHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
     inline static std::atomic<std::uint64_t> epochRefreshes{0};
@@ -584,6 +643,7 @@ private:
     };
     static const char* BaselineMissText(BaselineMiss miss);
     BaselineMiss baselineMiss(std::uint32_t unit) const;
+    bool unitChangedOutsideWatch(std::uint32_t unit) const;
     std::array<std::uint64_t, 2> unitContentHash(std::uint32_t unit) const;
     void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
     void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
@@ -627,7 +687,7 @@ private:
     void releaseUnheldOriginal();
     // Lets the batches holding the saves of the units `layers` selects (every unit for none) complete.
     void awaitStoredSave(const std::vector<bool>* layers);
-    bool guestBytesSettled() const;
+    bool unitSettled(std::uint32_t unit) const;
     // Tracked units as 64 KiB write-stamp blocks (`blockUnits`: a thin tiled surface at a 64 KiB
     // aligned base; APS5_NO_BLOCK_TRACKING=1 tracks array layers as above instead): a fill of one
     // layer, a CPU write or another image's store then costs the blocks it touched, moved through
@@ -787,6 +847,7 @@ private:
     void forgetBorrowed(std::uint32_t first, std::uint32_t count);
     bool clearByKeysFill(DccKeys keys, std::uint8_t key);
     bool overlaps(std::uint64_t address, std::size_t bytes) const;
+    static bool trapReadsAtLabel(const StorageTexture* texture);
     // Whether the image is live (not released) and overlaps the fill: the test that gives ClassifyFill
     // its overlapping images, and that NoteKeysFill and ClearByKeysFill use to bound the key match.
     bool overlapsLive(std::uint64_t address, std::size_t bytes) const;
@@ -795,6 +856,16 @@ private:
     // saying whether any live image overlaps the fill (see Texture.cpp).
     bool keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const;
     bool pendingUnitInside(std::uint64_t address, std::size_t bytes) const;
+    std::optional<MirrorFallback> mirrorPublishRefusal() const;
+    struct MirrorPublishMemo {
+        std::uint64_t mirror = 0;
+        std::uint64_t begin = 0;
+        std::uint64_t end = 0;
+        std::uint64_t version = 0;
+        std::uint64_t uploads = 0;
+        std::uint64_t tracker = 0;
+    };
+    std::vector<MirrorPublishMemo> mirrorMemos;
     bool storesWhole() const;
     void appendStoredLayers(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) const;
     VkImageView createView(std::uint32_t mip, bool firstLayer, VkFormat format) const;
@@ -908,6 +979,9 @@ private:
     std::atomic<bool> writtenOccasionally{false};
     std::uint64_t version = 0;
     std::uint64_t writes = 0;
+    std::uint64_t zeroForgetMarks = 0;
+    std::uint64_t zeroForgetBegin = 0;
+    std::uint64_t zeroForgetEnd = 0;
     // `original` holds the guest bytes; false after a GPU-side clear, which never read them.
     std::vector<bool> layerOriginal;
     std::map<std::uint64_t, std::uint64_t> keptAtUnwatch;

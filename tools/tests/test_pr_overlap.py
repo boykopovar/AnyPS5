@@ -19,7 +19,7 @@ class OpenPullRequestsTests(unittest.TestCase):
     def test_collects_pull_requests_beyond_the_previous_limit(self):
         pull_requests = [
             {"number": number, "user": {"login": f"author{number}"},
-             "head": {"sha": f"sha{number}"}, "body": None}
+             "head": {"sha": f"sha{number}", "ref": f"branch{number}"}, "body": None}
             for number in range(1, 202)
         ]
         pull_requests[-1]["body"] = "Depends on: #12\n- #34\n"
@@ -38,7 +38,8 @@ class OpenPullRequestsTests(unittest.TestCase):
             found = pr_overlap.open_prs("main")
         self.assertEqual(set(found), set(range(1, 202)))
         self.assertEqual(found[201], {
-            "ref": "refs/pr/201", "sha": "sha201", "author": "author201", "title": "", "depends": {12, 34},
+            "ref": "refs/pr/201", "sha": "sha201", "branch": "branch201", "author": "author201", "title": "",
+            "depends": {12, 34},
         })
         self.assertEqual(found[1]["depends"], set())
 
@@ -52,19 +53,20 @@ class OpenPullRequestsTests(unittest.TestCase):
         )
 
     def test_single_page_preserves_author_head_and_dependencies(self):
-        pull_requests = [{"number": 7, "user": {"login": "contributor"}, "head": {"sha": "head-sha"},
+        pull_requests = [{"number": 7, "user": {"login": "contributor"}, "head": {"sha": "head-sha", "ref": "contrib/topic"},
                           "body": "Depends on: none\nUnrelated issue #42"}]
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
                 patch.object(pr_overlap, "gh", return_value=json.dumps(pull_requests)):
             found = pr_overlap.open_prs("main")
         self.assertEqual(found, {
-            7: {"ref": "refs/pr/7", "sha": "head-sha", "author": "contributor", "title": "", "depends": set()},
+            7: {"ref": "refs/pr/7", "sha": "head-sha", "branch": "contrib/topic", "author": "contributor", "title": "",
+                "depends": set()},
         })
 
     def test_collects_concatenated_json_pages_from_paginated_gh_output(self):
         pull_requests = [
             {"number": number, "user": {"login": f"author{number}"},
-             "head": {"sha": f"sha{number}"}, "body": None}
+             "head": {"sha": f"sha{number}", "ref": f"branch{number}"}, "body": None}
             for number in range(1, 4)
         ]
         pages = [pull_requests[:2], pull_requests[2:]]
@@ -418,7 +420,7 @@ class SubdirectoryTests(unittest.TestCase):
                 git("add", ".")
                 git("commit", "-qm", "fix: change value")
                 heads[branch] = git("rev-parse", "HEAD")
-            pulls = [{"number": 7, "user": {"login": "someone"}, "head": {"sha": heads["theirs"]}, "body": "Depends on: none"}]
+            pulls = [{"number": 7, "user": {"login": "someone"}, "head": {"sha": heads["theirs"], "ref": "theirs"}, "body": "Depends on: none"}]
             (fake / "pulls.json").write_text(json.dumps(pulls), encoding="utf-8")
             (fake / "gh").write_text(f"#!/bin/sh\ncat '{fake / 'pulls.json'}'\n", encoding="utf-8")
             (fake / "gh").chmod(0o755)
@@ -619,6 +621,154 @@ class CommentStateTests(unittest.TestCase):
         first = self.report("a" * 40, (3, 4))
         self.run_step(first, None)
         self.assertEqual(self.run_step(self.report("b" * 40, (5, 6)), first), [["api", "repos/owner/project/issues/42/comments", "--paginate"], ["api", "-X", "PATCH"]])
+
+
+class HelperPathTests(unittest.TestCase):
+    def test_code_span_uses_a_longer_delimiter_when_the_item_has_backticks(self):
+        self.assertEqual(pr_overlap.code_span("plain"), "`plain`")
+        self.assertEqual(pr_overlap.code_span("a`b"), "`` a`b ``")
+
+    def test_library_for_path_names_the_library_directory_only(self):
+        self.assertEqual(pr_overlap.library_for_path("core/libs/prx/libSceFoo/src/Export.cpp"),
+                         "core/libs/prx/libSceFoo")
+        self.assertEqual(pr_overlap.library_for_path("core/libs/prx/libSceFoo"), "core/libs/prx/libSceFoo")
+        self.assertEqual(pr_overlap.library_for_path("core/libs/prx"), "")
+        self.assertEqual(pr_overlap.library_for_path("tools/pr_overlap.py"), "")
+
+    def test_canonical_drops_the_postfix_and_the_disambiguator(self):
+        self.assertEqual(pr_overlap.canonical("sceFoo_nid_postfix"), "sceFoo")
+        self.assertEqual(pr_overlap.canonical("sceFoo_nid_disambig2_nid_postfix"), "sceFoo")
+        self.assertEqual(pr_overlap.canonical("sceFoo"), "sceFoo")
+
+    def test_depends_on_reads_plain_and_linked_pull_request_numbers(self):
+        self.assertEqual(pr_overlap.depends_on("- [ ] Depends on: #12, #34"), {12, 34})
+        self.assertEqual(pr_overlap.depends_on("- [ ] Depends on: none"), set())
+        self.assertEqual(pr_overlap.depends_on(
+            "- [ ] Depends on: [#7](https://github.com/boykopovar/AnyPS5/pull/7)"), {7})
+        self.assertEqual(pr_overlap.depends_on(""), set())
+class PageAndCacheHelperTests(unittest.TestCase):
+    def test_decode_pages_reads_consecutive_json_arrays(self):
+        self.assertEqual(pr_overlap.decode_pages("[1]\n[2, 3] [] "), [[1], [2, 3], []])
+
+    def test_decode_pages_refuses_a_non_array_page(self):
+        with self.assertRaisesRegex(ValueError, "non-array page"):
+            pr_overlap.decode_pages("{}")
+
+    def test_repair_escapes_keeps_valid_escapes_and_doubles_invalid_ones(self):
+        self.assertEqual(pr_overlap.repair_escapes("a\\nb"), "a\\nb")
+        self.assertEqual(pr_overlap.repair_escapes("\\q"), "\\\\q")
+
+    def test_export_cache_round_trips_files_for_the_same_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cache.json"
+            pr_overlap.save_export_cache(path, 2, {"libA": ["x"]})
+            self.assertEqual(pr_overlap.load_export_cache(path, 2), {"libA": ["x"]})
+
+    def test_export_cache_is_ignored_when_stale_or_unreadable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cache.json"
+            pr_overlap.save_export_cache(path, 2, {"libA": ["x"]})
+            self.assertEqual(pr_overlap.load_export_cache(path, 3), {})
+            path.write_text("[not json", encoding="utf-8")
+            self.assertEqual(pr_overlap.load_export_cache(path, 2), {})
+            self.assertEqual(pr_overlap.load_export_cache(Path(directory) / "missing.json", 2), {})
+class CellAndDependencyTests(unittest.TestCase):
+    def test_cell_lists_sorted_code_spans_joined_by_breaks(self):
+        self.assertEqual(pr_overlap.cell({"b", "a"}), "`a`<br>`b`")
+        self.assertEqual(pr_overlap.cell(None), "")
+
+    def test_dependencies_follow_chains_and_ignore_unknown_numbers(self):
+        prs = {1: {"depends": {2}}, 2: {"depends": {3}}, 3: {"depends": set()}}
+        self.assertEqual(pr_overlap.dependencies(prs, 1), {2, 3})
+        self.assertEqual(pr_overlap.dependencies({1: {"depends": {9}}}, 1), set())
+    def test_dependencies_terminate_on_a_cycle(self):
+        prs = {1: {"depends": {2}}, 2: {"depends": {1}}}
+        self.assertEqual(pr_overlap.dependencies(prs, 1), {1, 2})
+class TruncationTests(unittest.TestCase):
+    def test_truncated_keeps_the_longest_prefix_that_fits_and_names_the_rest(self):
+        lines = ["x" * 30000, "y" * 30000, "z" * 30000]
+        text = pr_overlap.truncated(lines)
+        self.assertTrue(text.startswith("x" * 30000 + "\n_Report truncated: 2 more lines omitted._"))
+
+    def test_truncated_output_stays_within_the_report_limit(self):
+        lines = ["x" * 30000, "y" * 30000, "z" * 30000]
+        self.assertLessEqual(len(pr_overlap.truncated(lines)), pr_overlap.MAX_REPORT_CHARS)
+class ExportScanTests(unittest.TestCase):
+    def test_exports_reads_added_export_names_only(self):
+        diff = "+APS5_VABI sceFoo(int a) {\n-APS5_VABI sceBar(int b) {\n+ other\n"
+        self.assertEqual(pr_overlap.exports(diff, "+"), {"sceFoo"})
+
+    def test_exports_skips_unpatched_names(self):
+        self.assertEqual(pr_overlap.exports("+APS5_VABI sceFoo_nid_no_patch(int a) {\n", "+"), set())
+
+    def test_source_exports_keys_each_export_by_library_and_nid(self):
+        import nid_names
+        text = "int APS5_VABI sceFoo(int a) { return a; }\n"
+        self.assertEqual(pr_overlap.source_exports(text, "libA"),
+                         {("libA", nid_names.compute_nid("sceFoo")): {"sceFoo"}})
+        self.assertEqual(pr_overlap.source_exports("int APS5_VABI sceFoo_nid_no_patch(int a) { return a; }\n", "libA"), {})
+
+class BlobTextsTests(unittest.TestCase):
+    def test_empty_blob_list_runs_no_command(self):
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            self.assertEqual(pr_overlap.blob_texts("root", []), {})
+        run.assert_not_called()
+
+    def test_batch_output_is_split_by_declared_sizes(self):
+        output = b"aaa blob 5\nhello\nbbb blob 6\nab\ncde\nccc blob 0\n\n"
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            run.return_value.stdout = output
+            texts = pr_overlap.blob_texts("root", ["aaa", "bbb", "ccc"])
+        self.assertEqual(texts, {"aaa": "hello", "bbb": "ab\ncde", "ccc": ""})
+        self.assertEqual(run.call_args.kwargs["input"], b"aaa\nbbb\nccc\n")
+
+    def test_invalid_utf8_is_replaced(self):
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            run.return_value.stdout = b"aaa blob 2\n\xff\xfe\n"
+            texts = pr_overlap.blob_texts("root", ["aaa"])
+        self.assertEqual(texts["aaa"], "\ufffd\ufffd")
+
+
+class BaseSourcesTests(unittest.TestCase):
+    def listing(self, *entries):
+        return "".join(f"{mode} {kind} {blob}\t{name}\0" for mode, kind, blob, name in entries).encode()
+
+    def test_keeps_only_regular_non_test_cpp_blobs(self):
+        output = self.listing(
+            ("100644", "blob", "a1", "core/libs/prx/libX/Export.cpp"),
+            ("100644", "blob", "a2", "core/libs/prx/libX/src/Impl.cpp"),
+            ("100644", "blob", "b1", "core/libs/prx/libX/Export.hpp"),
+            ("120000", "blob", "b2", "core/libs/prx/libX/Link.cpp"),
+            ("100644", "blob", "b3", "core/libs/prx/libX/tests/Test.cpp"),
+            ("100644", "blob", "b4", "core/libs/prx/libX/Tests/Case.cpp"),
+            ("160000", "commit", "b5", "core/libs/prx/libX/sub.cpp"),
+        )
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            run.return_value.stdout = output
+            sources = pr_overlap.base_sources("root", "refs/pr/base")
+        self.assertEqual(sources, [("a1", "core/libs/prx/libX/Export.cpp"), ("a2", "core/libs/prx/libX/src/Impl.cpp")])
+        self.assertEqual(run.call_args.args[0][-4:], ["-z", "refs/pr/base", "--", "core/libs"])
+
+    def test_empty_listing_has_no_sources(self):
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            run.return_value.stdout = b""
+            self.assertEqual(pr_overlap.base_sources("root", "ref"), [])
+
+
+class MergeBaseTests(unittest.TestCase):
+    def test_single_merge_base_is_returned(self):
+        with patch.object(pr_overlap, "git", return_value="abc\n") as git:
+            self.assertEqual(pr_overlap.merge_base("refs/pr/1"), "abc")
+        git.assert_called_once_with("merge-base", "--all", pr_overlap.BASE_REF, "refs/pr/1")
+
+    def test_multiple_bases_pick_the_one_with_the_smallest_diff(self):
+        def fake_git(*args):
+            if args[0] == "merge-base":
+                return "one two three\n"
+            return {"one": "a\0b\0c\0", "two": "a\0", "three": "a\0b\0"}[args[4]]
+        with patch.object(pr_overlap, "git", side_effect=fake_git):
+            self.assertEqual(pr_overlap.merge_base("refs/pr/2"), "two")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,12 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+void* g_vprintfCallback = nullptr;
+
+}
+
 extern "C" {
 
 APS5_DUMMY_FUN
@@ -68,8 +74,9 @@ int APS5_VABI MvpHttpSetRedirectCb_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI sceAvPlayerStreamingRegisterVprinf() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAvPlayerStreamingRegisterVprinf(void* fn) {
+    g_vprintfCallback = fn;
+    return 0;
 }
 
 int APS5_VABI sceTsCloseFile(void* file) {
@@ -126,7 +133,10 @@ int APS5_VABI sceTsGetRepresentationCount(void* file) {
     return 0;
 }
 
-int APS5_VABI sceTsGetRepresentationInfo(void) {
+int APS5_VABI sceTsGetRepresentationInfo(void* ts, std::uint32_t a2, std::uint32_t a3, void* a4) {
+    (void)a2;
+    (void)a3;
+    if (ts == nullptr || a4 == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -156,7 +166,6 @@ int APS5_VABI sceTsJumpPTS(void* file) {
 }
 
 int APS5_VABI sceTsOpenFile(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -165,12 +174,27 @@ int APS5_VABI sceTsOpenFileEx(void) {
     return 0;
 }
 
-int APS5_VABI sceTsReleaseBuffer(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceTsReleaseBuffer(void* ts, void* b) {
+    (void)ts;
+    if (b == nullptr) {
+        return 0;
+    }
+    const int savedErrno = errno;
+    std::uint64_t zero64 = 0;
+    std::uint32_t zero32 = 0;
+    if (!GuestCopyOut_nid_no_patch(b, &zero64, sizeof(zero64)) ||
+        !GuestCopyOut_nid_no_patch(static_cast<char*>(b) + 8, &zero32, sizeof(zero32))) {
+        errno = savedErrno;
+        return -1;
+    }
+    errno = savedErrno;
     return 0;
 }
 
-int APS5_VABI sceTsRepresentationIsEnabled(void) {
+int APS5_VABI sceTsRepresentationIsEnabled(void* ts, std::uint32_t a2, std::uint32_t a3, void* a4) {
+    (void)a2;
+    (void)a3;
+    if (ts == nullptr || a4 == nullptr) return -1;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

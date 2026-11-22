@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_environment_retained_borrow_tests ${LIBS_INCLUDE_DIR}/tests/GuestEnvironmentRetainedBorrow.cpp)
+    target_include_directories(guest_environment_retained_borrow_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_environment_retained_borrow_tests PRIVATE libc)
+    configure_windows_unwind(guest_environment_retained_borrow_tests)
+    add_test(NAME guest_environment_retained_borrow COMMAND guest_environment_retained_borrow_tests)
+    set_tests_properties(guest_environment_retained_borrow PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_environment_retained_borrow PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

@@ -786,6 +786,7 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     errno = 0;
     const auto result = std::fwrite(buffer, size, count, handle);
     const int nativeError = errno;
+    if (result < count) stream->DropFailedUnbufferedWrite();
     stream->SyncStatus();
     errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
@@ -940,6 +941,7 @@ int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     errno = 0;
     const int result = std::fputs(str, native);
     const int nativeError = errno;
+    if (result == EOF) stream->DropFailedUnbufferedWrite();
     stream->SyncStatus();
     errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
