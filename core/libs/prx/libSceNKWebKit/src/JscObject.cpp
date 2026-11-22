@@ -40,6 +40,10 @@ OpaqueJSValue* CoerceThisToObject(OpaqueJSContext* ctx, JSValueConst thisVal) {
     return ctx->group->ToHandle(ctx, boxed);
 }
 
+OpaqueJSClass* ObjectClass(const CallbackObjectData* data) {
+    return data->isDirectConstructor ? nullptr : data->jsClass;
+}
+
 JSValue ToPrimitiveClosure(JSContext* qctx, JSValueConst thisVal, int argc, JSValueConst* argv, int magic, void* opaque) {
     (void)magic;
     auto* data = static_cast<CallbackObjectData*>(opaque);
@@ -141,8 +145,8 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
     OpaqueJSValue* targetHandle = data->handle;
 
     if (prop == group->toStringTagAtom) {
-        if (data->jsClass) {
-            for (OpaqueJSClass* cls = data->jsClass; cls; cls = cls->parentClass) {
+        if (ObjectClass(data)) {
+            for (OpaqueJSClass* cls = ObjectClass(data); cls; cls = cls->parentClass) {
                 if (!cls->className.empty()) {
                     if (desc) {
                         desc->flags = JS_PROP_CONFIGURABLE;
@@ -155,7 +159,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
             }
         }
     } else if (prop == group->toPrimitiveAtom) {
-        if (data->jsClass && data->jsClass->HasConvertToType()) {
+        if (ObjectClass(data) && ObjectClass(data)->HasConvertToType()) {
             if (desc) {
                 desc->flags = JS_PROP_CONFIGURABLE;
                 desc->value = JS_NewCClosure(qctx, &ToPrimitiveClosure, "[Symbol.toPrimitive]", nullptr, 1, 0, data);
@@ -165,7 +169,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
             return 1;
         }
     } else if (prop == group->hasInstanceAtom) {
-        if (data->jsClass && data->jsClass->HasInstanceCallback()) {
+        if (ObjectClass(data) && ObjectClass(data)->HasInstanceCallback()) {
             if (desc) {
                 desc->flags = JS_PROP_CONFIGURABLE;
                 desc->value = JS_NewCClosure(qctx, &HasInstanceClosure, "[Symbol.hasInstance]", nullptr, 1, 0, data);
@@ -180,7 +184,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
     const bool isSymbol = JS_IsSymbol(atomVal);
     JS_FreeValue(qctx, atomVal);
 
-    if (!isSymbol && data->jsClass) {
+    if (!isSymbol && ObjectClass(data)) {
         const std::string propUtf8 = AtomToUtf8(qctx, prop);
         JSStringRef propNameRef = nullptr;
         auto getPropNameRef = [&]() -> JSStringRef {
@@ -193,14 +197,14 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
         CallbackPinScope pinScope(group);
         pinScope.Pin(targetHandle);
 
-        for (OpaqueJSClass* cls = data->jsClass; cls; cls = cls->parentClass) {
+        for (OpaqueJSClass* cls = ObjectClass(data); cls; cls = cls->parentClass) {
             if (cls->hasProperty) {
                 if (cls->hasProperty(ctx, targetHandle, getPropNameRef())) {
                     if (!desc) {
                         if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
                         return 1;
                     }
-                    for (OpaqueJSClass* getterCls = data->jsClass; getterCls; getterCls = getterCls->parentClass) {
+                    for (OpaqueJSClass* getterCls = ObjectClass(data); getterCls; getterCls = getterCls->parentClass) {
                         if (getterCls->getProperty) {
                             JSValueRef exc = nullptr;
                             JSValueRef val = getterCls->getProperty(ctx, targetHandle, getPropNameRef(), &exc);
@@ -340,7 +344,7 @@ int CallbackExoticSetProperty(JSContext* qctx, JSValueConst obj, JSAtom prop, JS
     const bool isSymbol = JS_IsSymbol(atomVal);
     JS_FreeValue(qctx, atomVal);
 
-    if (!isSymbol && data->jsClass) {
+    if (!isSymbol && ObjectClass(data)) {
         const std::string propUtf8 = AtomToUtf8(qctx, prop);
         JSStringRef propNameRef = nullptr;
         auto getPropNameRef = [&]() -> JSStringRef {
@@ -354,7 +358,7 @@ int CallbackExoticSetProperty(JSContext* qctx, JSValueConst obj, JSAtom prop, JS
         pinScope.Pin(targetHandle);
         pinScope.Pin(valHandle);
 
-        for (OpaqueJSClass* cls = data->jsClass; cls; cls = cls->parentClass) {
+        for (OpaqueJSClass* cls = ObjectClass(data); cls; cls = cls->parentClass) {
             if (cls->setProperty) {
                 JSValueRef exc = nullptr;
                 const bool handled = cls->setProperty(ctx, targetHandle, getPropNameRef(), valHandle, &exc);
@@ -492,7 +496,7 @@ int CallbackExoticDeleteProperty(JSContext* qctx, JSValueConst obj, JSAtom prop)
     const bool isSymbol = JS_IsSymbol(atomVal);
     JS_FreeValue(qctx, atomVal);
 
-    if (!isSymbol && data->jsClass) {
+    if (!isSymbol && ObjectClass(data)) {
         const std::string propUtf8 = AtomToUtf8(qctx, prop);
         JSStringRef propNameRef = nullptr;
         auto getPropNameRef = [&]() -> JSStringRef {
@@ -504,7 +508,7 @@ int CallbackExoticDeleteProperty(JSContext* qctx, JSValueConst obj, JSAtom prop)
         CallbackPinScope pinScope(group);
         pinScope.Pin(targetHandle);
 
-        for (OpaqueJSClass* cls = data->jsClass; cls; cls = cls->parentClass) {
+        for (OpaqueJSClass* cls = ObjectClass(data); cls; cls = cls->parentClass) {
             if (cls->deleteProperty) {
                 JSValueRef exc = nullptr;
                 const bool deleted = cls->deleteProperty(ctx, targetHandle, getPropNameRef(), &exc);
@@ -559,7 +563,7 @@ int CallbackExoticGetOwnPropertyNames(JSContext* qctx, JSPropertyEnum** ptab, st
     pinScope.Pin(targetHandle);
 
     data->dynamicEnumeratedNames.clear();
-    for (OpaqueJSClass* cls = data->jsClass; cls; cls = cls->parentClass) {
+    for (OpaqueJSClass* cls = ObjectClass(data); cls; cls = cls->parentClass) {
         if (cls->getPropertyNames) {
             cls->getPropertyNames(ctx, targetHandle, &acc);
         }
@@ -711,7 +715,8 @@ JSValue CallbackClassCall(JSContext* qctx, JSValueConst funcObj, JSValueConst th
                 if (exc) {
                     return JS_Throw(qctx, JS_DupValue(qctx, exc->qval));
                 }
-                if (!res || !res->alive) return JS_UNDEFINED;
+                if (!res) return JS_ThrowTypeError(qctx, "Type error");
+                if (!res->alive) return JS_UNDEFINED;
                 return JS_DupValue(qctx, res->qval);
             }
             OpaqueJSValue* instance = MakeCallbackObject(ctx, data->jsClass, nullptr);
@@ -746,7 +751,7 @@ JSValue CallbackClassCall(JSContext* qctx, JSValueConst funcObj, JSValueConst th
         return JS_DupValue(qctx, res->qval);
     }
 
-    for (OpaqueJSClass* cls = data->jsClass; cls; cls = cls->parentClass) {
+    for (OpaqueJSClass* cls = ObjectClass(data); cls; cls = cls->parentClass) {
         if (cls->callAsFunction) {
             JSValueRef exc = nullptr;
             JSValueRef res = cls->callAsFunction(ctx, funcHandle, thisObj, args.size(), args.empty() ? nullptr : args.data(), &exc);
@@ -939,8 +944,8 @@ void RunClassInitialize(OpaqueJSContext* ctx, OpaqueJSValue* objHandle, OpaqueJS
 void RunClassFinalize(CallbackObjectData* data) {
     if (!data || data->finalized) return;
     data->finalized = true;
-    if (data->jsClass && data->handle) {
-        for (OpaqueJSClass* cls = data->jsClass; cls; cls = cls->parentClass) {
+    if (ObjectClass(data) && data->handle) {
+        for (OpaqueJSClass* cls = ObjectClass(data); cls; cls = cls->parentClass) {
             if (cls->finalize) {
                 cls->finalize(data->handle);
             }
@@ -1175,8 +1180,7 @@ JSObjectRef APS5_VABI JSObjectMakeConstructor(JSContextRef ctx, JSClassRef jsCla
     mutCtx->group->callbackDataByPtr[ptr] = cbData;
 
     OpaqueJSValue* classProto = jsClass ? GetOrCreateClassPrototype(mutCtx, jsClass) : nullptr;
-    JSValue ctorProto = (classProto && classProto->alive) ? JS_NewObjectProto(mutCtx->qctx, classProto->qval) : JS_NewObject(mutCtx->qctx);
-    JS_DefinePropertyValueStr(mutCtx->qctx, ctorProto, "constructor", JS_DupValue(mutCtx->qctx, handle->qval), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JSValue ctorProto = (classProto && classProto->alive) ? JS_DupValue(mutCtx->qctx, classProto->qval) : JS_GetClassProto(mutCtx->qctx, mutCtx->group->callbackObjectClassId);
     JS_DefinePropertyValueStr(mutCtx->qctx, cbData->propStore, "prototype", ctorProto, 0);
     return handle;
 }
@@ -1507,14 +1511,14 @@ bool APS5_VABI JSObjectDeletePropertyForKey(JSContextRef ctx, JSObjectRef object
 void* APS5_VABI JSObjectGetPrivate(JSObjectRef object) {
     if (!object || !object->alive || !object->group) return nullptr;
     CallbackObjectData* data = object->group->FindCallbackData(object);
-    if (!data || (!data->jsClass && !data->isDirectConstructor)) return nullptr;
+    if (!data || !ObjectClass(data)) return nullptr;
     return data->privateData;
 }
 
 bool APS5_VABI JSObjectSetPrivate(JSObjectRef object, void* data) {
     if (!object || !object->alive || !object->group) return false;
     CallbackObjectData* cbData = object->group->FindCallbackData(object);
-    if (!cbData || (!cbData->jsClass && !cbData->isDirectConstructor)) return false;
+    if (!cbData || !ObjectClass(cbData)) return false;
     cbData->privateData = data;
     return true;
 }
@@ -1522,7 +1526,7 @@ bool APS5_VABI JSObjectSetPrivate(JSObjectRef object, void* data) {
 JSValueRef APS5_VABI JSObjectGetPrivateProperty(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName) {
     if (!ctx || !object || !propertyName || !object->alive) return nullptr;
     CallbackObjectData* cbData = ctx->group->FindCallbackData(object);
-    if (!cbData || !cbData->jsClass) return nullptr;
+    if (!cbData || !ObjectClass(cbData)) return nullptr;
     const std::string key = JsStringToUtf8(propertyName);
     auto it = cbData->privateProperties.find(key);
     if (it == cbData->privateProperties.end() || !it->second.handle || !it->second.handle->alive) return nullptr;
@@ -1532,7 +1536,7 @@ JSValueRef APS5_VABI JSObjectGetPrivateProperty(JSContextRef ctx, JSObjectRef ob
 bool APS5_VABI JSObjectSetPrivateProperty(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSValueRef value) {
     if (!ctx || !object || !propertyName || !object->alive) return false;
     CallbackObjectData* cbData = ctx->group->FindCallbackData(object);
-    if (!cbData || !cbData->jsClass) return false;
+    if (!cbData || !ObjectClass(cbData)) return false;
     const std::string key = JsStringToUtf8(propertyName);
     auto existing = cbData->privateProperties.find(key);
     if (existing != cbData->privateProperties.end()) {
@@ -1553,7 +1557,7 @@ bool APS5_VABI JSObjectSetPrivateProperty(JSContextRef ctx, JSObjectRef object, 
 bool APS5_VABI JSObjectDeletePrivateProperty(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName) {
     if (!ctx || !object || !propertyName || !object->alive) return false;
     CallbackObjectData* cbData = ctx->group->FindCallbackData(object);
-    if (!cbData || !cbData->jsClass) return false;
+    if (!cbData || !ObjectClass(cbData)) return false;
     const std::string key = JsStringToUtf8(propertyName);
     auto existing = cbData->privateProperties.find(key);
     if (existing != cbData->privateProperties.end()) {
