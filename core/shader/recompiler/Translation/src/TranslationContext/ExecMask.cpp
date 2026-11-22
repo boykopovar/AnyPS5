@@ -193,8 +193,18 @@ void TranslationContext::AddBranchCondition(const BasicBlock& source, BlockInfo&
         case BranchCondition::Always: condition = IrU1(ir.ConstantBool(true)); break;
         case BranchCondition::SccZero: condition = IrU1(ir.LogicalNot(ir.GetScc())); break;
         case BranchCondition::SccNonZero: condition = IrU1(ir.GetScc()); break;
-        case BranchCondition::VccZero: condition = IrU1(ir.LogicalNot(ir.GetVcc())); break;
-        case BranchCondition::VccNonZero: condition = IrU1(ir.GetVcc()); break;
+        case BranchCondition::VccZero:
+        case BranchCondition::VccNonZero: {
+            const bool zero = source.terminator.condition == BranchCondition::VccZero;
+            if (program.Resources().stage == IrShaderStage::Compute && program.WaveSize() == 32u) {
+                auto& oldZero = ir.LogicalNot(ir.GetVcc());
+                auto& wordZero = ir.Emit(IrOpcode::ResolveWave32VccZero, IrType::U1, {&ir.GetVccLo(), &oldZero});
+                condition = IrU1(zero ? wordZero : ir.LogicalNot(wordZero));
+            } else {
+                condition = IrU1(zero ? ir.LogicalNot(ir.GetVcc()) : ir.GetVcc());
+            }
+            break;
+        }
         case BranchCondition::ExecZero: condition = IrU1(ir.LogicalNot(ir.GetExec())); break;
         case BranchCondition::ExecNonZero: condition = IrU1(ir.GetExec()); break;
         case BranchCondition::IndirectTarget: {

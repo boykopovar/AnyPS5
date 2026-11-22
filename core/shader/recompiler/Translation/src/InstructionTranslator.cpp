@@ -685,11 +685,15 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         }
     }
 
+    const auto* compute = options.inputInfo.compute;
+    const bool smallComputeSubgroup = options.stage == ShaderStageKind::Compute && compute != nullptr &&
+        compute->hostSubgroupSize > 0u && compute->hostSubgroupSize < 32u;
     const auto entryRounding = ComputeEntryRounding(cfg, decoded, options.floatMode.has_value() ? options.floatMode->floatMode : ModeUndeclaredSeed);
     for (const auto& cfgBlock : cfg.blocks) {
         const auto typedIndex = blockIndices.at(cfgBlock.id);
         TranslationContext context(program, *blocks[typedIndex], vectorLimit);
         if (const auto* workgroup = shaderWorkgroupInput(options.stage, options.inputInfo)) context.SetBufferLdsSize(workgroup->ldsSizeDwords * 4u);
+        context.SetSmallComputeSubgroup(smallComputeSubgroup);
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
         context.SetFloatMode(options.floatMode);
         context.SetNativeFloat16(options.nativeFloat16, options.nativeFloat16Fma, options.float16HostNans);
