@@ -570,7 +570,6 @@ int StatInDirectory_nid_no_patch(int directory, const char* path, FileStat* sb, 
     if (base == nullptr) return SceErrorFromErrno(error);
     const auto native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path));
     if (follow) return StatNative(native, std::string_view(path).back() == '/', sb);
-    if (sb == nullptr) return SceErrorFromErrno(GuestEfault);
     FileStat result{};
     if (!File::FillLinkStat(native, &result)) return SceErrorFromErrno(errno);
     if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GuestEfault);
