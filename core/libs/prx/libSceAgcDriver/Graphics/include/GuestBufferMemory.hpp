@@ -57,6 +57,10 @@ inline VkDeviceSize HostImportOffset(const HostImport& import, std::uint64_t add
     return address - import.base + import.lead;
 }
 
+inline bool HostImportDeviceLocal(const Context& context, const HostImport& import) {
+    return import.memoryType < context.memory.memoryTypeCount && (context.memory.memoryHeaps[context.memory.memoryTypes[import.memoryType].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+}
+
 struct HostImportStart {
     std::uint64_t guest;
     VkDeviceAddress device;
@@ -67,6 +71,7 @@ inline HostImportStart HostImportBufferStart(const HostImport& import) {
 }
 
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
+enum class SnapshotService : std::uint8_t { Served, Outside, Partial, Changed };
 
 struct ImportProbe {
     const char* failure = nullptr;
@@ -86,6 +91,7 @@ ImportProbe ProbeImportWriteProtection(const Context& context);
 ImportProbe ProbeDmaBufImportWriteProtection(const Context& context);
 ImportWatch PrepareImportWatch(const Context& context);
 void SetImportWatch(const Context& context, ImportWatch watch);
+bool DmaBufImportSelected(const Context& context);
 
 enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment, ColorTarget };
 inline constexpr std::size_t ImportRequesterCount = 6;
@@ -103,6 +109,11 @@ struct HostImportCounts {
     std::uint64_t live = 0;
     std::uint64_t liveBytes = 0;
     std::array<HostImportRequesterCounts, ImportRequesterCount> requesters{};
+    std::uint64_t growing = 0;
+    std::uint64_t budgetChecks = 0;
+    std::uint64_t retiredPinnedBytes = 0;
+    std::uint64_t credited = 0;
+    std::uint64_t creditedBytes = 0;
 };
 
 const char* ImportRequesterName(ImportRequester requester);
@@ -114,7 +125,14 @@ void ReportHostImports();
 // (alignment and budget permitting), or null. Bytes at `address` are at `HostImportOffset(*import,
 // address)` in the import's buffer.
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester = ImportRequester::Access);
+bool HostImportUsesDmaBuf(const Context& context, std::uint64_t address, std::size_t bytes);
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+struct HostImportCopy {
+    VkBuffer buffer;
+    VkDeviceSize offset;
+    VkDeviceSize bytes;
+};
+std::vector<HostImportCopy> ExistingHostImportCopies(const Context& context, std::uint64_t address, std::size_t bytes);
 void RequireGpuLockBeforeImports(const char* where);
 bool ImportsHeldByThisThread();
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes);
@@ -124,9 +142,13 @@ void SetHostImportWindow(std::uint64_t bytes);
 void SetHostImportRangeWindow(std::uint64_t bytes);
 void SetHostImportBudget(std::uint64_t bytes);
 std::uint64_t HostImportBudgetFor(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t configured, std::uint64_t liveBytes);
+bool HostImportsInHeapUsage(VkDriverId driver);
+VkPhysicalDeviceMemoryBudgetPropertiesEXT UsageWithoutHostImports(const VkPhysicalDeviceMemoryProperties& memory, VkPhysicalDeviceMemoryBudgetPropertiesEXT reported, std::uint64_t liveBytes, bool importsInUsage);
 std::uint64_t HostImportBudgetWith(std::uint64_t configured, bool set, std::uint64_t reported, bool allocationFailed, std::uint64_t ceiling);
 void SetAddressCopyLimit(std::uint64_t bytes);
 void SetHostImportDeferredSettles(bool enabled);
+void SetHeapMirrorRetry(bool enabled);
+void SetImportRetireCredit(bool enabled);
 // The larger of 6 GiB and half the physical memory, at most the largest host heap less the larger of 2 GiB and half
 // that heap: the other half stays for the buffers, mirrors and textures that share it.
 std::uint64_t HostImportBudget(const VkPhysicalDeviceMemoryProperties& memory, std::uint64_t physicalBytes);
@@ -153,8 +175,10 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
 // with the registry or making one (HostImportFor may take a registry lease): a hint for choices
 // made outside the device lock (a sampled texture's path, a dispatch's pre-sync); the path taken
 // re-checks with HostImportFor when it binds the import.
+bool HostImportOverlaps(const Context& context, std::uint64_t address, std::size_t bytes);
 bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes);
 bool ComparedHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes);
+std::uint64_t HostImportSetGeneration();
 struct RegisteredPiece {
     std::uint64_t address;
     std::uint64_t bytes;
@@ -170,6 +194,14 @@ std::uint64_t RegisteredReadableEnd(std::uint64_t address);
 // imported); see GuestBufferMemory.cpp.
 struct ImageMirror;
 class Recorder;
+class StorageTexture;
+
+struct MirrorPublishEntry {
+    std::shared_ptr<StorageTexture> image;
+    std::uint64_t base = 0;
+    std::uint64_t serial = 0;
+    std::uint64_t since = 0;
+};
 
 template<typename TRange>
 void OverlappedRanges(std::span<const TRange> sorted, std::size_t first, std::span<const std::pair<std::uint64_t, std::uint64_t>> writes, std::vector<std::size_t>& indices) {
@@ -190,6 +222,9 @@ void OverlappedRanges(std::span<const TRange> sorted, std::size_t first, std::sp
 // work using the import is recorded) the imports are left as they are.
 std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, std::size_t bytes, bool reconcile);
 
+bool HostImportView(const Context& context, std::uint64_t address, std::size_t bytes, VkDescriptorBufferInfo& view, std::uint64_t& serial);
+
+
 // The import table's identity (the fast Revalidate): serials proved under one identity stand
 // while the table still has it, i.e. the same device, the same epoch (bumped by every retire)
 // and the registry generation it was reconciled with, which must still be the live one.
@@ -201,11 +236,15 @@ struct HostImportsProof {
 };
 // Whether the table still matches `proof` (one lock); false for an empty or stale proof.
 bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof);
+bool TouchHostImportsIfUnchanged(const Context& context, const HostImportsProof& proof, std::span<const HostImport* const> imports);
 bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof);
 // The table's identity when it is reconciled with the live registry (one lock), else empty.
 HostImportsProof HostImportsIdentity(const Context& context);
+std::uint64_t RetiredImportSerial();
 void SetDeviceLocalFullForTests(bool full);
 std::uint64_t StagingShadowsRefused();
+std::uint64_t ChangedCopySnapshotBytes();
+std::uint64_t ChangedCopySnapshotsMade();
 
 // Identity of the read-only image mirror serving [address, address + bytes) (the counterpart of
 // HostImportSerial for main-image ranges, which no import serves): a serial unique for the life of
@@ -225,11 +264,15 @@ std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, s
 // when synced, and the waiter targets the newest of them. Under APS5_PROFILE_DRAW CountLeaseOutcome
 // prints the [address-sync] leases line every 10 s from LeaseCounters (cumulative).
 bool SyncLeaseWork();
-void CountLeaseOutcome(bool synced, std::uint64_t batchSerial);
+void CountLeaseOutcome(bool synced, std::uint64_t batchSerial, bool writes);
 void FinishLeaseWork();
+void FinishLeaseWrites();
+bool LeaseWorkPending();
+bool LeaseWritesMayBePending();
 struct LeaseStats {
     std::uint64_t deferred = 0;
     std::uint64_t synced = 0;
+    std::uint64_t writing = 0;
     // Pin-contention waits made by guest threads (the waiter calls), how many of them finished the
     // newest lease batch, how many had to drain the whole recorder instead (no lease batch noted),
     // how many only dropped the cached address space (no GPU wait, see AddressSpaceStats), and
@@ -260,6 +303,12 @@ struct AddressSpaceStats {
     std::uint64_t dissolvedOverlap = 0;
     std::uint64_t dissolvedImports = 0;
     std::uint64_t waiterDrops = 0;
+    std::uint64_t patchedEpoch = 0;
+    std::uint64_t rebuiltGrowth = 0;
+    std::uint64_t heapRetries = 0;
+    std::uint64_t heapRetryImports = 0;
+    std::uint64_t heapRetryOwed = 0;
+    std::uint64_t heapRetryRetakes = 0;
 };
 AddressSpaceStats AddressSpaceCounters();
 
@@ -273,6 +322,7 @@ struct MirrorStats {
     std::uint64_t heapChecks = 0;
     std::uint64_t sparseBinds = 0;
     std::uint64_t evictions = 0;
+    std::uint64_t rangeMirrors = 0;
 };
 MirrorStats MirrorCounters();
 std::uint64_t SnapshotMismatches();
@@ -285,6 +335,17 @@ void ClearSnapshotCopies(VkDevice device);
 std::vector<std::uint64_t> AddressTableKey(std::span<const std::pair<std::uint64_t, std::uint64_t>> writes, std::span<const ShaderRecompiler::BdaAbi::Range> own);
 void ClearImageMirrors(VkDevice device);
 void ClearHostImports(VkDevice device);
+
+struct RetainedAddressSpace {
+    std::shared_ptr<const void> space;
+    VkDevice device = VK_NULL_HANDLE;
+    std::uint64_t recorder = 0;
+    std::uint64_t serial = 0;
+    RetainedAddressSpace* next = nullptr;
+};
+void ClearRetainedSpaces(VkDevice device);
+void ClearUploadCopies(VkDevice device);
+std::size_t RetainedSpaceCount();
 
 struct AddressCopy {
     std::uint64_t begin;
@@ -335,8 +396,8 @@ public:
     void AddReadable(std::uint64_t address, std::size_t bytes);
     // Device-local staging of written and atomic elements inside host imports (see
     // GuestBufferMemory.cpp): allowed only for a build whose every use records its work and then
-    // calls RecordCopyBacks (a dispatch), since a staged region's results reach guest memory by
-    // that copy alone. Call before Upload.
+    // calls RecordCopyBacks (a dispatch or a recorded draw), since a staged region's results reach
+    // guest memory by that copy alone. Call before Upload.
     void AllowDeviceStaging() { stagingAllowed = true; }
     void DisallowAddressStaging() { addressStaging = false; }
     void AllowAdjustedRegions() { adjustedRegions = true; }
@@ -373,6 +434,7 @@ public:
         const std::vector<ShaderRecompiler::BdaAbi::Range>* ranges;
     };
     std::optional<CachedTable> CachedAddressTable() const;
+    static std::optional<std::pair<std::uint64_t, std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>>>> TrySnapshotAddressSpace() noexcept;
     // The registered memory an address-based build maps, shared by consecutive builds (see
     // GuestBufferMemory.cpp): its lease and the sorted, immutable regions of the ranges served in
     // place by imports and mirrors. Opaque outside GuestBufferMemory.cpp.
@@ -404,10 +466,24 @@ public:
         for (const auto& region : regions) if (region.gpuCopy && !region.deviceLocal) return true;
         return false;
     }
+    bool HasStagedCopies() const {
+        for (const auto& region : regions) if (region.gpuCopy && region.deviceLocal) return true;
+        return false;
+    }
     void MarkStagedWrites() const;
+    void NoteCarriedShadows(const Recorder& recorder) const;
+    static std::uint64_t CarriedShadowCopies();
     // Whether registered allocations are pinned until write-back (address-based shaders): by this
     // build's own lease, or by the cached address space it holds.
     bool HoldsLease() const { return !lease.empty() || space != nullptr; }
+    bool SpaceOnly() const;
+    std::shared_ptr<const void> ReleaseSpace();
+    bool RetakeSpace();
+    bool SpaceHeld() const;
+    void HoldSpaceThrough(std::uint64_t recorder, std::uint64_t serial);
+    bool ReleaseCompletedSpace(std::uint64_t recorder, std::uint64_t completedThrough);
+    static void ReleaseRetainedSpaces(std::uint64_t recorder, std::uint64_t completedThrough);
+    SnapshotService SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const;
     std::size_t CopiedBytes() const {
         std::size_t bytes = 0;
         for (const auto& region : regions) if (region.buffer != nullptr) bytes += static_cast<std::size_t>((region.bufferEnd != 0 ? region.bufferEnd : region.end) - region.begin);
@@ -434,8 +510,10 @@ public:
         std::vector<std::pair<std::uint64_t, std::uint64_t>> own;
     };
     std::optional<SplitReads> SplitInPlaceReads() const;
+    bool InPlaceReadsOverlap(std::uint64_t address, std::size_t bytes) const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const;
     void DeviceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const;
+    void AddressStores(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const;
 
 private:
     struct Region {
@@ -482,6 +560,7 @@ private:
         VkDeviceAddress copySourceAddress = 0;
         bool copiedBack = false;
         std::shared_ptr<Buffer> shadowCopy;
+        std::weak_ptr<Buffer> releasedShadowCopy;
         // An element the shader updates atomically lies inside (AddWritable's `atomic`).
         bool atomic = false;
         bool swept = false;
@@ -519,6 +598,7 @@ private:
     static ShaderRecompiler::BdaAbi::Range addressRange(const Region& region);
     static std::uint64_t servedEnd(const Region& region);
     static std::uint64_t inPlaceEnd(const Region& region);
+    static bool addressWritable(const Region& region);
     void validate(std::uint64_t address, std::size_t bytes) const;
     // The region of a descriptor-bound range (AddWritable/AddReadable), committed pages only. A
     // range inside a base region of the space adds nothing: the region serves it, as today's merge
@@ -534,6 +614,7 @@ private:
     // instead of the CPU (see Region::gpuCopy): live guest bytes, not sparse, at most the size
     // APS5_GPU_COPY_MAX_KIB allows, and APS5_CPU_COPIES unset.
     bool gpuCopyEligible(const Region& region) const;
+    bool copyBehindGpuWork(const Region& region, bool locked) const;
     // Whether a region inside a host import is staged in device memory instead of bound in place
     // (see GuestBufferMemory.cpp): staging allowed, not address-based unless an overlay region, a
     // written element inside, and an atomic element or a size within the written-shadow window.
@@ -549,6 +630,8 @@ private:
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
     void takeHeapReferences();
     void releaseHeapReferences() noexcept;
+    void publishIntoMirrors();
+    std::vector<MirrorPublishEntry> mirrorPublishes;
     Context context;
     bool stagingAllowed = false;
     bool addressStaging = true;
@@ -557,6 +640,11 @@ private:
     // The cached address space this build maps through (its lease pins the ranges); `regions` then
     // holds only the regions outside it (V#s, snapshots, ranges copied per build).
     std::shared_ptr<const AddressSpace> space;
+    std::weak_ptr<const AddressSpace> releasedSpace;
+    std::uint64_t spaceHeldThrough = 0;
+    std::uint64_t spaceHeldBy = 0;
+    std::unique_ptr<RetainedAddressSpace> retention;
+    void ensureRetention();
     mutable std::uint64_t tableSerial = 0;
     mutable std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>> tableRanges;
     // Import registry epoch when `direct` pointers were taken at acquire time; they are reused while
@@ -569,6 +657,7 @@ private:
     bool regionsSorted = false;
     bool regionsOverlap = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readsOverBase;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> servedInsideBase;
     std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> heapReferences;

@@ -8,11 +8,13 @@ namespace AgcDriver {
 struct Float32FlushControl {
     bool probe = false;
     bool declared = false;
+    bool computeOnly = false;
 };
 
 inline Float32FlushControl Float32FlushControlFor(VkDriverId driver, VkBool32 flushToZero, VkShaderFloatControlsIndependence independence) {
     const bool declared = flushToZero == VK_TRUE && independence != VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE;
-    return {declared || driver == VK_DRIVER_ID_MOLTENVK || driver == VK_DRIVER_ID_NVIDIA_PROPRIETARY, declared};
+    const bool kosmicKrisp = driver == VK_DRIVER_ID_MESA_KOSMICKRISP;
+    return {declared || driver == VK_DRIVER_ID_MOLTENVK || kosmicKrisp || driver == VK_DRIVER_ID_NVIDIA_PROPRIETARY, declared, kosmicKrisp};
 }
 
 }

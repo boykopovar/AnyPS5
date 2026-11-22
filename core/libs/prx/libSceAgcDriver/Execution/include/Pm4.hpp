@@ -7,6 +7,8 @@
 #include <vector>
 #include <optional>
 #include <array>
+#include <atomic>
+#include <cstdint>
 #include <span>
 #include <string>
 
@@ -81,6 +83,7 @@ struct DrawArguments {
 // path (which waits for recorded GPU work that writes them).
 DrawArguments ReadDrawArguments(const DrawParameters::IndirectDraw& indirect, std::uint32_t record);
 std::uint32_t ReadDrawCount(const DrawParameters::IndirectDraw& indirect);
+DrawArguments ReadDrawArgumentsUnsynced(const DrawParameters::IndirectDraw& indirect, std::uint32_t record);
 inline bool IndirectDrawOpcode(std::uint32_t opcode) { return opcode == 0x24 || opcode == 0x25 || opcode == 0x2c || opcode == 0x38; }
 inline bool DrawOpcode(std::uint32_t opcode) { return opcode == 0x27 || opcode == 0x2d || opcode == 0x35 || IndirectDrawOpcode(opcode); }
 
@@ -104,13 +107,21 @@ bool UsesGpuCacheBarrier(std::span<const std::uint32_t> packet);
 bool IsTagMarker(std::span<const std::uint32_t> packet);
 inline bool Predicated(std::uint32_t header) { return !FillerPacket(header) && (header & 1u) != 0; }
 bool PredicationPasses(const QueueState& queue);
+std::size_t PredicationBytes(const Predication& predication);
 bool WaitSatisfied(std::span<const std::uint32_t> packet);
 // WaitSatisfied for a polling loop: the caller has validated the address once, so the value is read
 // directly instead of through the checked guest memory path.
 bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet);
+
+inline std::uint64_t LoadLabel(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 8) return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).load(std::memory_order_acquire);
+    return std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address)).load(std::memory_order_acquire);
+}
+
 // Whether a WAIT_REG_MEM's compare holds for `value` (the 4 or 8 bytes a label the recorder still
 // holds will store), without reading memory.
 bool WaitComparesValue(std::span<const std::uint32_t> packet, std::uint64_t value);
+bool WaitCompares(std::uint32_t function, std::uint64_t reference, std::uint64_t mask, std::uint64_t value);
 std::size_t WaitAwaitedBytes(std::span<const std::uint32_t> packet);
 std::size_t ConditionalWords(std::span<const std::uint32_t> packet);
 std::uint32_t ReadCondition(std::span<const std::uint32_t> packet);
@@ -155,7 +166,9 @@ inline constexpr std::uint32_t DmaSourceData = 2;
 inline constexpr std::uint32_t DmaDestinationNowhere = 2;
 inline std::size_t DmaBytes(std::span<const std::uint32_t> packet) { return packet[6] & 0x3ffffffu; }
 inline constexpr std::uint32_t CopyDataGpuClockSource = 18;
+inline constexpr std::uint32_t CopyDataSelectGds = 6;
 inline std::uint32_t CopyDataSource(std::span<const std::uint32_t> packet) { return ((packet[1] & 0xfu) << 1u) | ((packet[1] >> 30u) & 1u); }
+inline std::uint32_t CopyDataDestination(std::span<const std::uint32_t> packet) { return ((packet[1] >> 8u) & 0xfu) << 1u; }
 inline bool CopyDataImmediate(std::uint32_t source) { return source >= 10 && source != CopyDataGpuClockSource; }
 inline bool CopyDataToRegister(std::span<const std::uint32_t> packet) { return ((packet[1] >> 8u) & 0xfu) == 0; }
 inline std::size_t CopyDataBytes(std::span<const std::uint32_t> packet) { return (packet[1] & 0x10000u) != 0 ? 8 : 4; }
@@ -189,6 +202,10 @@ inline constexpr std::uint64_t SampleDumpBlockBytes = 8;
 inline constexpr std::uint64_t SampleDumpBytes = (SampleDumpBlocks - 1) * SampleDumpStride + SampleDumpBlockBytes;
 inline bool SampleDump(std::span<const std::uint32_t> packet) { return ((packet[0] >> 8u) & 0xffu) == 0x46u && packet.size() >= 2 && (packet[1] & 0x3fu) == SampleDumpEvent; }
 inline std::uint64_t SampleDumpAddress(std::span<const std::uint32_t> packet) { return packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u); }
+inline constexpr std::uint32_t SampleControlEvent = 0x38;
+static_assert(AllSampleDumpBlocks == (1u << SampleDumpBlocks) - 1u);
+inline bool SampleControl(std::span<const std::uint32_t> packet) { return ((packet[0] >> 8u) & 0xffu) == 0x46u && packet.size() >= 3 && (packet[1] & 0x3fu) == SampleControlEvent; }
+inline std::uint32_t SampleControlBlocks(std::span<const std::uint32_t> packet) { return (packet[2] >> 11u) & AllSampleDumpBlocks; }
 struct PacketStore {
     enum class Value : std::uint8_t { Bytes, Pattern, RunTime };
     std::uint64_t address = 0;

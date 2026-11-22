@@ -1,6 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <cstdint>
@@ -24,6 +25,7 @@ static constexpr int SCE_OK = 0;
 
 static constexpr int GUEST_CLOCK_MONOTONIC = 4;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
+static constexpr int GUEST_CLOCK_PROF = 2;
 static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
 
 static constexpr std::int64_t NANOS_PER_SECOND = 1000000000LL;
@@ -42,14 +44,22 @@ static std::int64_t Nanos(int clockId) {
     return time.tv_sec * NANOS_PER_SECOND + time.tv_nsec;
 }
 
-static void RequireResolution(int clockId) {
+static void ThreadClockResolutionIsAMicrosecond() {
     KernelTimespec resolution{-1, -1};
-    Require(clock_getres_nid_postfix(clockId, &resolution) == SCE_OK);
-    Require(resolution.tv_sec == 0);
-    Require(resolution.tv_nsec > 0 && resolution.tv_nsec < NANOS_PER_SECOND);
-    KernelTimespec sceResolution{-1, -1};
-    Require(sceKernelClockGetres(clockId, &sceResolution) == SCE_OK);
-    Require(sceResolution.tv_sec == resolution.tv_sec && sceResolution.tv_nsec == resolution.tv_nsec);
+    Require(clock_getres_nid_postfix(GUEST_CLOCK_THREAD_CPUTIME_ID, &resolution) == SCE_OK);
+    Require(resolution.tv_sec == 0 && resolution.tv_nsec == 1000);
+    resolution = {-1, -1};
+    Require(sceKernelClockGetres(GUEST_CLOCK_THREAD_CPUTIME_ID, &resolution) == SCE_OK);
+    Require(resolution.tv_sec == 0 && resolution.tv_nsec == 1000);
+}
+
+static void ProcessClockHasNoResolution() {
+    KernelTimespec resolution{-1, -1};
+    *__error_nid_postfix() = 0;
+    Require(clock_getres_nid_postfix(GUEST_CLOCK_PROCESS_CPUTIME_ID, &resolution) == -1 && *__error_nid_postfix() == 22);
+    Require(resolution.tv_sec == -1 && resolution.tv_nsec == -1);
+    Require(sceKernelClockGetres(GUEST_CLOCK_PROCESS_CPUTIME_ID, &resolution) == SCE_KERNEL_ERROR_EINVAL);
+    Require(resolution.tv_sec == -1 && resolution.tv_nsec == -1);
 }
 
 static void RequireNeverDecreases(int clockId) {
@@ -91,10 +101,10 @@ static void SleepingThreadAccumulatesNone() {
 static void ProcessClockCountsOtherThreads() {
     const std::int64_t wallStart = Nanos(GUEST_CLOCK_MONOTONIC);
     const std::int64_t threadStart = Nanos(GUEST_CLOCK_THREAD_CPUTIME_ID);
-    const std::int64_t processStart = Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID);
+    const std::int64_t processStart = Nanos(GUEST_CLOCK_PROF);
     Pthread burner = nullptr;
     Require(scePthreadCreate(&burner, nullptr, Burn, nullptr, nullptr) == SCE_OK);
-    while (Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID) - processStart < BURN_NANOS) {
+    while (Nanos(GUEST_CLOCK_PROF) - processStart < BURN_NANOS) {
         Require(Nanos(GUEST_CLOCK_MONOTONIC) - wallStart < GIVE_UP_NANOS);
         Require(sceKernelUsleep_nid_postfix(50000) == SCE_OK);
     }
@@ -120,8 +130,8 @@ int main() {
     Require(sceKernelClockGetres(GUEST_CLOCK_PROCESS_CPUTIME_ID, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelClockGettime(static_cast<KernelClockid>(-1), &time) == SCE_KERNEL_ERROR_EINVAL);
 
-    RequireResolution(GUEST_CLOCK_THREAD_CPUTIME_ID);
-    RequireResolution(GUEST_CLOCK_PROCESS_CPUTIME_ID);
+    ThreadClockResolutionIsAMicrosecond();
+    ProcessClockHasNoResolution();
     RequireNeverDecreases(GUEST_CLOCK_THREAD_CPUTIME_ID);
     RequireNeverDecreases(GUEST_CLOCK_PROCESS_CPUTIME_ID);
 

@@ -47,9 +47,12 @@ query($owner: String!, $name: String!, $after: String, $size: Int!) {
 """
 
 CLOSED_QUERY = """
-query($owner: String!, $name: String!, $label: String!) {
+query($owner: String!, $name: String!, $label: String!, $after: String) {
   repository(owner: $owner, name: $name) {
-    pullRequests(states: [CLOSED, MERGED], labels: [$label], first: 100) { nodes { number } }
+    pullRequests(states: [CLOSED, MERGED], labels: [$label], first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { number }
+    }
   }
 }
 """
@@ -146,10 +149,10 @@ def ranked(prs):
 
 
 def clean(text):
-    text = "".join(ch for ch in text if ch.isprintable()).replace("@", "@​")
-    for char in "[]|`<>*_~":
+    text = "".join(ch for ch in text if ch.isprintable())[:100].replace("@", "@​")
+    for char in "\\[]|`<>*_~":
         text = text.replace(char, "\\" + char)
-    return text[:100]
+    return text
 
 
 def queue_body(queue, total, ready):
@@ -161,9 +164,20 @@ def queue_body(queue, total, ready):
     return "\n".join(lines) + "\n"
 
 
+def pagination_cursor(connection, seen, label):
+    cursor = connection["pageInfo"]["endCursor"]
+    if not isinstance(cursor, str) or not cursor:
+        raise ValueError(f"{label} page has no cursor")
+    if cursor in seen:
+        raise ValueError(f"{label} pagination did not advance")
+    seen.add(cursor)
+    return cursor
+
+
 def fetch(repo):
     owner, name = repo.split("/", 1)
     prs, after = [], None
+    seen = set()
     while True:
         args = ["api", "graphql", "-f", f"query={QUERY}", "-F", f"owner={owner}", "-F", f"name={name}", "-F", f"size={PAGE_SIZE}"]
         if after:
@@ -175,16 +189,26 @@ def fetch(repo):
         prs += [pull(node) for node in listed(connection)]
         if not connection["pageInfo"]["hasNextPage"]:
             return prs
-        after = connection["pageInfo"]["endCursor"]
+        after = pagination_cursor(connection, seen, "open pull request")
 
 
 def closed_with_label(repo):
     owner, name = repo.split("/", 1)
-    page = json.loads(pr_labels.gh("api", "graphql", "-f", f"query={CLOSED_QUERY}", "-F", f"owner={owner}",
-                                   "-F", f"name={name}", "-f", f"label={QUEUE_LABEL}"))
-    if page.get("errors"):
-        raise ValueError(str(page["errors"])[:300])
-    return [node["number"] for node in listed(page["data"]["repository"]["pullRequests"])]
+    closed, after = [], None
+    seen = set()
+    while True:
+        args = ["api", "graphql", "-f", f"query={CLOSED_QUERY}", "-F", f"owner={owner}",
+                "-F", f"name={name}", "-f", f"label={QUEUE_LABEL}"]
+        if after:
+            args += ["-f", f"after={after}"]
+        page = json.loads(pr_labels.gh(*args))
+        if page.get("errors"):
+            raise ValueError(str(page["errors"])[:300])
+        connection = page["data"]["repository"]["pullRequests"]
+        closed += [node["number"] for node in listed(connection)]
+        if not connection["pageInfo"]["hasNextPage"]:
+            return closed
+        after = pagination_cursor(connection, seen, "closed pull request")
 
 
 def apply(repo, prs, queue, dry_run, closed=()):
@@ -211,12 +235,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Label the pull requests that are next in the review queue.")
     parser.add_argument("--dry-run", action="store_true", help="print the planned changes and write nothing")
     parser.add_argument("--explain", type=int, metavar="PR", help="print what blocks one pull request and write nothing")
+    parser.add_argument("--author", metavar="LOGIN", help="print what blocks each open pull request of one author and write nothing")
     parser.add_argument("--issue", type=int, help="issue whose body lists the queue")
     args = parser.parse_args(argv)
+    if args.explain is not None and args.author is not None:
+        parser.error("--explain and --author cannot be combined")
     try:
         repo = pr_labels.repository()
         prs = fetch(repo)
-        closed = closed_with_label(repo) if args.explain is None else []
+        closed = closed_with_label(repo) if args.explain is None and args.author is None else []
     except subprocess.CalledProcessError as error:
         parser.error((error.stderr or str(error)).strip())
     except (ValueError, KeyError, TypeError, RecursionError) as error:
@@ -226,6 +253,13 @@ def main(argv=None):
         if not match:
             parser.error(f"#{args.explain} is not an open pull request to main")
         print("\n".join(blockers(match[0])) or "nothing blocks it")
+        return 0
+    if args.author is not None:
+        mine = sorted((pr for pr in prs if pr["author"].casefold() == args.author.casefold()), key=lambda pr: pr["number"])
+        for pr in mine:
+            print(f"#{pr['number']}: {'; '.join(blockers(pr)) or 'nothing blocks it'}")
+        if not mine:
+            print(f"{args.author} has no open pull request to main")
         return 0
     ready = ranked(prs)
     queue = ready[:QUEUE_SIZE]

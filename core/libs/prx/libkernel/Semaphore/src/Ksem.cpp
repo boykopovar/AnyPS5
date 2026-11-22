@@ -1,13 +1,16 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/CreationMask.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Ksem.hpp"
-#include <chrono>
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
+#include <algorithm>
 #include <climits>
-#include <condition_variable>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -33,7 +36,13 @@ constexpr std::size_t SemMax = 30;
 
 struct Ksem {
     std::mutex lock;
-    std::condition_variable available;
+    TimedWait::Condition available;
+    std::uint16_t mode = 0;
+    std::uint32_t user = 0;
+    std::uint32_t group = 0;
+    KernelTimespec born{};
+    KernelTimespec accessed{};
+    KernelTimespec changed{};
     unsigned count = 0;
     unsigned waiters = 0;
 };
@@ -44,6 +53,13 @@ std::map<int, std::shared_ptr<Ksem>> g_ksems;
 int Fail(int error) {
     *__error_nid_postfix() = error;
     return -1;
+}
+
+KernelTimespec Timestamp() {
+    KernelTimespec now{};
+    clock_gettime_nid_postfix(0, &now);
+    now.tv_nsec -= now.tv_nsec % 1000;
+    return now;
 }
 
 std::shared_ptr<Ksem> Find(std::intptr_t id) {
@@ -75,16 +91,31 @@ int Wait(std::intptr_t id, bool once, const KernelTimespec* abstime) {
     const auto ksem = Find(id);
     if (!ksem) return Fail(GuestEinval);
     std::unique_lock lock(ksem->lock);
+    ksem->accessed = Timestamp();
     if (ksem->count == 0) {
         if (once) return Fail(GuestEagain);
         ++ksem->waiters;
         bool ready = true;
         if (abstime == nullptr) {
-            ksem->available.wait(lock, [&] { return ksem->count > 0; });
+            ksem->available.Wait(lock, [&] { return ksem->count > 0; });
         } else {
-            const auto deadline = std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(
-                std::chrono::seconds(abstime->tv_sec) + std::chrono::nanoseconds(abstime->tv_nsec)));
-            ready = ksem->available.wait_until(lock, deadline, [&] { return ksem->count > 0; });
+            const auto deadline = *abstime;
+            while (ksem->count == 0) {
+                KernelTimespec now{};
+                clock_gettime_nid_postfix(0, &now);
+                if (deadline.tv_sec < now.tv_sec || (deadline.tv_sec == now.tv_sec && deadline.tv_nsec <= now.tv_nsec)) {
+                    ready = false;
+                    break;
+                }
+                const auto seconds = static_cast<std::uint64_t>(deadline.tv_sec) - static_cast<std::uint64_t>(now.tv_sec);
+                constexpr KernelUseconds maximum = std::numeric_limits<KernelUseconds>::max();
+                KernelUseconds usec = maximum;
+                if (seconds <= maximum / 1000000ULL + 1) {
+                    const auto nanos = static_cast<std::int64_t>(seconds) * 1000000000 + deadline.tv_nsec - now.tv_nsec;
+                    usec = static_cast<KernelUseconds>(std::min<std::int64_t>((nanos + 999) / 1000, maximum));
+                }
+                ksem->available.WaitUntil(lock, TimedWait::DeadlineNanos(usec));
+            }
         }
         --ksem->waiters;
         if (!ready) return Fail(GuestEtimedout);
@@ -100,19 +131,60 @@ bool IsKsemDescriptor(int descriptor) {
     return g_ksems.count(descriptor) != 0;
 }
 
+extern "C" bool IsKsemDescriptor_nid_no_patch(int descriptor) {
+    std::lock_guard lock(g_ksemLock);
+    return g_ksems.count(descriptor) != 0;
+}
+
+bool KsemStat(int descriptor, FileStat& status) {
+    const auto ksem = Find(descriptor);
+    if (!ksem) return false;
+    std::lock_guard lock(ksem->lock);
+    status = {};
+    status.st_mode = static_cast<std::uint16_t>(0100000 | ksem->mode);
+    status.st_uid = ksem->user;
+    status.st_gid = ksem->group;
+    status.st_atim = ksem->accessed;
+    status.st_mtim = ksem->born;
+    status.st_ctim = ksem->changed;
+    status.st_birthtim = ksem->born;
+    return true;
+}
+
+bool KsemChangeMode(int descriptor, std::uint16_t mode) {
+    const auto ksem = Find(descriptor);
+    if (!ksem) return false;
+    std::lock_guard lock(ksem->lock);
+    ksem->mode = static_cast<std::uint16_t>(mode & 0777);
+    return true;
+}
+
+#ifdef ANYPS5_KSEM_TESTING
+extern "C" unsigned KsemWaiterCountForTests_nid_no_patch(std::intptr_t id) {
+    const auto ksem = Find(id);
+    if (!ksem) return 0;
+    std::lock_guard lock(ksem->lock);
+    return ksem->waiters;
+}
+#endif
+
 extern "C" {
 
 int APS5_VABI ksem_init_nid_postfix(std::intptr_t* idp, unsigned int value) {
     if (value > SemValueMax) return Fail(GuestEinval);
     const int descriptor = ReserveDescriptor();
     if (descriptor < 0) return Fail(GuestEnospc);
-    if (idp == nullptr) {
+    const std::intptr_t id = descriptor;
+    if (idp == nullptr || !GuestCopyOut_nid_no_patch(idp, &id, sizeof(id))) {
         close_nid_postfix(descriptor);
         return Fail(GuestEfault);
     }
-    *idp = descriptor;
     auto ksem = std::make_shared<Ksem>();
     ksem->count = value;
+    ksem->mode = static_cast<std::uint16_t>(0770 & ~File::GetCreationMask_nid_no_patch());
+    ksem->user = static_cast<std::uint32_t>(getuid_nid_postfix());
+    ksem->group = static_cast<std::uint32_t>(getgid_nid_postfix());
+    ksem->born = ksem->accessed = ksem->changed = Timestamp();
     {
         std::lock_guard lock(g_ksemLock);
         if (g_ksems.size() < SemMax) {
@@ -130,7 +202,8 @@ int APS5_VABI ksem_post_nid_postfix(std::intptr_t id) {
     std::lock_guard lock(ksem->lock);
     if (ksem->count == SemValueMax) return Fail(GuestEoverflow);
     ++ksem->count;
-    ksem->available.notify_one();
+    ksem->available.NotifyOne();
+    ksem->changed = Timestamp();
     return 0;
 }
 
@@ -143,16 +216,24 @@ int APS5_VABI ksem_trywait_nid_postfix(std::intptr_t id) {
 }
 
 int APS5_VABI ksem_timedwait_nid_postfix(std::intptr_t id, const KernelTimespec* abstime) {
-    if (abstime != nullptr && (abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000)) return Fail(GuestEinval);
-    return Wait(id, false, abstime);
+    KernelTimespec deadline{};
+    if (abstime != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&deadline, abstime, sizeof(deadline))) return Fail(GuestEfault);
+        if (deadline.tv_nsec < 0 || deadline.tv_nsec >= 1000000000) return Fail(GuestEinval);
+    }
+    return Wait(id, false, abstime != nullptr ? &deadline : nullptr);
 }
 
 int APS5_VABI ksem_getvalue_nid_postfix(std::intptr_t id, int* value) {
     const auto ksem = Find(id);
     if (!ksem) return Fail(GuestEinval);
-    if (value == nullptr) return Fail(GuestEfault);
-    std::lock_guard lock(ksem->lock);
-    *value = static_cast<int>(ksem->count);
+    int count = 0;
+    {
+        std::lock_guard lock(ksem->lock);
+        count = static_cast<int>(ksem->count);
+        ksem->accessed = Timestamp();
+    }
+    if (!GuestCopyOut_nid_no_patch(value, &count, sizeof(count))) return Fail(GuestEfault);
     return 0;
 }
 

@@ -4,11 +4,18 @@
 #include "SceTypes.hpp"
 #include <cstdlib>
 #include <initializer_list>
-#include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static constexpr int SCE_OK = 0;
 static constexpr int SceEinval = static_cast<int>(0x80020016u);
+static constexpr int SceEfault = static_cast<int>(0x8002000Eu);
 static constexpr int GuestEinval = 22;
+static constexpr int GuestEfault = 14;
 static constexpr KernelClockid Monotonic = 4;
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -23,16 +30,84 @@ static void CheckClock(const PthreadCondattr* attr, KernelClockid expected) {
 }
 
 static void CheckClockRefused(const PthreadCondattr* attr, KernelClockid* clockId) {
-    bool threw = false;
-    try {
-        pthread_condattr_getclock_nid_postfix(attr, clockId);
-    } catch (const std::invalid_argument&) {
-        threw = true;
+    Require(pthread_condattr_getclock_nid_postfix(attr, clockId) == GuestEfault);
+}
+
+class GuardPage {
+public:
+    GuardPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        page = static_cast<std::size_t>(size);
+        memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
     }
-    Require(threw);
+
+    ~GuardPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * page);
+#endif
+    }
+
+    GuardPage(const GuardPage&) = delete;
+    GuardPage& operator=(const GuardPage&) = delete;
+
+    void* Unreadable() const { return memory + page; }
+
+private:
+    char* memory = nullptr;
+    std::size_t page = 0;
+};
+
+static void CheckBadPointers() {
+    GuardPage guard;
+    void* const bad[] = {nullptr, reinterpret_cast<void*>(0x10), guard.Unreadable()};
+    for (void* pointer : bad) {
+        const bool null = pointer == nullptr;
+        auto* attrs = static_cast<PthreadCondattr*>(pointer);
+        auto* clockOut = static_cast<KernelClockid*>(pointer);
+        auto* sharedOut = static_cast<int*>(pointer);
+        const int attrError = null ? GuestEinval : GuestEfault;
+        const int sceAttrError = null ? SceEinval : SceEfault;
+        KernelClockid clockId = -1;
+        int sharing = -1;
+        Require(pthread_condattr_destroy_nid_postfix(attrs) == attrError);
+        Require(pthread_condattr_setclock_nid_postfix(attrs, Monotonic) == attrError);
+        Require(pthread_condattr_getclock_nid_postfix(attrs, &clockId) == attrError && clockId == -1);
+        Require(pthread_condattr_setpshared_nid_postfix(attrs, 0) == attrError);
+        Require(pthread_condattr_getpshared_nid_postfix(attrs, &sharing) == attrError && sharing == -1);
+        Require(scePthreadCondattrDestroy(attrs) == sceAttrError);
+        Require(scePthreadCondattrSetclock(attrs, Monotonic) == sceAttrError);
+        Require(scePthreadCondattrSetpshared(attrs, 0) == sceAttrError);
+        Require(scePthreadCondattrGetpshared(attrs, &sharing) == sceAttrError && sharing == -1);
+        Require(scePthreadCondattrInit(attrs) == SceEfault);
+        Require(pthread_condattr_init_nid_postfix(attrs) == (null ? GuestEinval : GuestEfault));
+
+        PthreadCondattr attr = nullptr;
+        Require(pthread_condattr_init_nid_postfix(&attr) == 0);
+        Require(pthread_condattr_getclock_nid_postfix(&attr, clockOut) == GuestEfault);
+        Require(pthread_condattr_getpshared_nid_postfix(&attr, sharedOut) == GuestEfault);
+        Require(scePthreadCondattrGetpshared(&attr, sharedOut) == SceEfault);
+        CheckClock(&attr, 0);
+        Require(pthread_condattr_destroy_nid_postfix(&attr) == 0 && attr == nullptr);
+    }
 }
 
 int main() {
+    CheckBadPointers();
     PthreadCondattr unset = nullptr;
     KernelClockid clockId = -1;
     Require(pthread_condattr_getclock_nid_postfix(nullptr, &clockId) == GuestEinval && clockId == -1);
@@ -94,14 +169,7 @@ int main() {
     Require(pthread_condattr_setpshared_nid_postfix(&attr, 0) == 0);
     sharing = -1;
     Require(pthread_condattr_getpshared_nid_postfix(&attr, &sharing) == 0 && sharing == 0);
-    bool threw = false;
-    try {
-        pthread_condattr_getpshared_nid_postfix(&attr, nullptr);
-
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
+    Require(pthread_condattr_getpshared_nid_postfix(&attr, nullptr) == GuestEfault);
     Require(scePthreadCondattrDestroy(&attr) == SCE_OK && attr == nullptr);
     Require(pthread_condattr_getclock_nid_postfix(&attr, &clockId) == GuestEinval && clockId == -1);
     Require(scePthreadCondattrDestroy(&attr) == SceEinval);

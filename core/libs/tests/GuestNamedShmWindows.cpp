@@ -240,9 +240,71 @@ void VerifyResizeReadPosition(const std::string& name) {
     RequireNoUnlinkedFiles(name);
 }
 
-void Run() {
-    VerifyAnonymousDescriptorClassification();
+void VerifyLargeObject(const std::string& name) {
+    const int descriptor = shm_open_nid_postfix(name.c_str(), ReadWrite | Create | Exclusive, 0600);
+    Require(descriptor >= 0, "creating the large object failed");
+    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    DWORD returned = 0;
+    if (::DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr)) {
+        for (const std::int64_t size : {std::int64_t{0x80000040}, std::int64_t{0x100000040}, std::int64_t{0x17fffffff}}) {
+            LARGE_INTEGER end{};
+            end.QuadPart = size;
+            Require(::SetFilePointerEx(handle, end, nullptr, FILE_BEGIN) && ::SetEndOfFile(handle), "sizing the large object failed");
+            Require(lseek_nid_postfix(descriptor, 0, 2) == size, "seek to the end of a large object returned the wrong position");
+            Require(lseek_nid_postfix(descriptor, size - 48, 0) == size - 48, "seek near the end of a large object failed");
+            const char bytes[100]{};
+            Require(write_nid_postfix(descriptor, bytes, sizeof(bytes)) == 48, "write near the end of a large object was not bounded by its size");
+            Require(lseek_nid_postfix(descriptor, 0, 1) == size, "bounded write left the wrong position in a large object");
+            Require(lseek_nid_postfix(descriptor, -16, 2) == size - 16, "seek back from the end of a large object failed");
+            Require(pwrite_nid_disambig1_nid_postfix(descriptor, "x", 1, size - 1) == 1, "positioned write at the last byte of a large object failed");
+            Require(pwrite_nid_disambig1_nid_postfix(descriptor, "x", 1, size) == 0, "positioned write at the end of a large object extended it");
+            Require(lseek_nid_postfix(descriptor, 0, 0) == 0 && write_nid_postfix(descriptor, bytes, 16) == 16,
+                    "write at the start of a large object failed");
+            *__error_nid_postfix() = 0;
+            Require(lseek_nid_postfix(descriptor, size + 1, 0) == -1 && *__error_nid_postfix() == 22,
+                    "seek past the end of a large object did not fail with EINVAL");
+            struct _stat64 status{};
+            Require(::_fstat64(descriptor, &status) == 0 && status.st_size == size, "writes changed the size of a large object");
+        }
+    } else {
+        std::fprintf(stderr, "named shared memory: no sparse files on the temporary volume, large-object checks skipped\n");
+    }
+    Require(shm_unlink_nid_postfix(name.c_str()) == 0 && close_nid_postfix(descriptor) == 0, "large-object cleanup failed");
+    RequireNoUnlinkedFiles(name);
+}
+
+void Run(std::string_view selection) {
+    if (selection == "all") {
+        for (const auto part : {"basic", "reuse", "resize_read", "resize_write"}) Run(part);
+        return;
+    }
     const std::string base = "/anyps5-windows-named-" + std::to_string(::GetCurrentProcessId()) + "-" + std::to_string(::GetTickCount64());
+    if (selection == "reuse") {
+        const std::string name = base + "-reuse";
+        const int descriptor = shm_open_nid_postfix(name.c_str(), ReadWrite | Create | Exclusive, 0600);
+        Require(descriptor >= 0 && ftruncate_nid_postfix(descriptor, 64) == 0, "creating the descriptor-reuse object failed");
+        VerifyConcurrentDescriptorReuse(name);
+        Require(shm_unlink_nid_postfix(name.c_str()) == 0 && close_nid_postfix(descriptor) == 0, "descriptor-reuse cleanup failed");
+        RequireNoUnlinkedFiles(name);
+        return;
+    }
+    if (selection == "resize_read") {
+        VerifyResizeReadPosition(base + "-resize-read");
+        return;
+    }
+    if (selection == "resize_write") {
+        const std::string raceName = base + "-cross-process-race";
+        const int raceDescriptor = shm_open_nid_postfix(raceName.c_str(), ReadWrite | Create | Exclusive, 0600);
+        Require(raceDescriptor >= 0 && ftruncate_nid_postfix(raceDescriptor, RaceSize) == 0,
+                "cross-process race object creation failed");
+        VerifyCrossProcessResizeWrite(raceName, raceDescriptor);
+        Require(close_nid_postfix(raceDescriptor) == 0, "closing cross-process race descriptor failed");
+        RequireNoUnlinkedFiles(raceName);
+        return;
+    }
+    Require(selection == "basic", "unknown named shared-memory test selection");
+    VerifyAnonymousDescriptorClassification();
+    VerifyLargeObject(base + "-large");
     const std::string name = base + "-lifecycle";
     Require(shm_unlink_nid_postfix(name.c_str()) == -1 && *__error_nid_postfix() == 2,
             "new test name unexpectedly existed");
@@ -252,7 +314,12 @@ void Run() {
     Require(original >= 0 && *__error_nid_postfix() == 73, "exclusive creation failed or changed guest errno");
     VerifyUntrackedDescriptor(original);
     Require(ftruncate_nid_postfix(original, 64) == 0, "sizing the named object failed");
-    VerifyConcurrentDescriptorReuse(name);
+    const int reopened = shm_open_nid_postfix(name.c_str(), ReadWrite, 0);
+    Require(reopened >= 0 && File::IsSharedMemoryDescriptor_nid_no_patch(reopened), "reopened named descriptor is not tracked");
+    Require(pwrite_nid_disambig1_nid_postfix(reopened, "x", 1, 64) == 0, "positioned write at the named-object boundary extended it");
+    struct _stat64 bounded{};
+    Require(::_fstat64(reopened, &bounded) == 0 && bounded.st_size == 64, "positioned write changed the named-object size");
+    Require(close_nid_postfix(reopened) == 0, "closing reopened named descriptor failed");
     const char originalBytes[] = "original";
     Require(pwrite_nid_disambig1_nid_postfix(original, originalBytes, sizeof(originalBytes), 0) == sizeof(originalBytes),
             "write to named object failed");
@@ -338,7 +405,6 @@ void Run() {
             close_nid_postfix(duplicateReplacement) == 0 && close_nid_postfix(duplicate) == 0,
             "cleaning up dup2 replacement descriptors failed");
     RequireNoUnlinkedFiles(replacementName);
-    VerifyResizeReadPosition(base + "-resize-read");
 
     const std::string concurrentName = base + "-exclusive-race";
     constexpr int contenderCount = 12;
@@ -364,13 +430,6 @@ void Run() {
     }
     Require(created == 1, "exclusive create race produced more or fewer than one winner");
     Require(shm_unlink_nid_postfix(concurrentName.c_str()) == 0, "exclusive-race cleanup failed");
-
-    const std::string raceName = base + "-cross-process-race";
-    const int raceDescriptor = shm_open_nid_postfix(raceName.c_str(), ReadWrite | Create | Exclusive, 0600);
-    Require(raceDescriptor >= 0 && ftruncate_nid_postfix(raceDescriptor, RaceSize) == 0,
-            "cross-process race object creation failed");
-    VerifyCrossProcessResizeWrite(raceName, raceDescriptor);
-    Require(close_nid_postfix(raceDescriptor) == 0, "closing cross-process race descriptor failed");
 
     const std::string permissionsName = base + "-permissions";
     const int restricted = shm_open_nid_postfix(permissionsName.c_str(), ReadWrite | Create | Exclusive, 0400);
@@ -501,7 +560,7 @@ void RemovePrivateDirectory(const std::filesystem::path& directory) {
         throw std::runtime_error("removing the private temporary directory failed");
 }
 
-int RunWithShortTempPath(bool longPath) {
+int RunWithShortTempPath(bool longPath, std::string_view selection) {
     wchar_t tempBuffer[32768]{};
     const DWORD tempLength = ::GetTempPathW(static_cast<DWORD>(std::size(tempBuffer)), tempBuffer);
     if (tempLength == 0 || tempLength >= std::size(tempBuffer))
@@ -593,7 +652,7 @@ int RunWithShortTempPath(bool longPath) {
         const DWORD executableLength = ::GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
         if (executableLength == 0 || executableLength >= std::size(executable))
             throw std::runtime_error("locating the Windows shared-memory test executable failed");
-        std::wstring command = L"\"" + std::wstring(executable, executableLength) + L"\" --short-temp-child";
+        std::wstring command = L"\"" + std::wstring(executable, executableLength) + L"\" --short-temp-child " + std::wstring(selection.begin(), selection.end());
         auto environment = EnvironmentWithTempPath(DosPath(shortRoot).native());
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
@@ -626,15 +685,18 @@ int main(int argumentCount, char** arguments) {
     try {
         if (argumentCount == 3 && std::string_view(arguments[1]) == "--race")
             return RunResizeWriteRace(arguments[2]) ? 0 : 1;
-        if (argumentCount == 2 && std::string_view(arguments[1]) == "--short-temp")
-            return RunWithShortTempPath(false);
-        if (argumentCount == 2 && std::string_view(arguments[1]) == "--long-short-temp")
-            return RunWithShortTempPath(true);
-        if (argumentCount == 2 && std::string_view(arguments[1]) == "--short-temp-child") {
-            Run();
-            return 0;
+        const std::string_view selection = argumentCount == 3 ? arguments[2] : "all";
+        Require(selection == "all" || selection == "basic" || selection == "reuse" || selection == "resize_read" || selection == "resize_write",
+                "unknown named shared-memory test selection");
+        if (argumentCount == 2 || argumentCount == 3) {
+            const std::string_view option = arguments[1];
+            if (option == "--short-temp") return RunWithShortTempPath(false, selection);
+            if (option == "--long-short-temp") return RunWithShortTempPath(true, selection);
+            Require(option == "--case" || option == "--short-temp-child", "unknown named shared-memory test option");
+        } else {
+            Require(argumentCount == 1, "invalid named shared-memory test arguments");
         }
-        Run();
+        Run(selection);
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

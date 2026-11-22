@@ -9,6 +9,20 @@
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+static void CheckIso8859OneWideIdentity() {
+    const std::uint8_t* profile = sceCesRefersUcsProfileIso8859_1();
+    for (std::uint32_t byte = 0; byte < 256; ++byte) {
+        const auto sbc = static_cast<std::uint8_t>(byte);
+        std::uint16_t ucs2 = 0xA5A5;
+        Require(sceCesSbcToUcs2(profile, sbc, &ucs2) == 0 && ucs2 == byte);
+        std::uint16_t utf16 = 0xA5A5;
+        std::uint32_t length = 7;
+        Require(sceCesSbcToUtf16(profile, sbc, &utf16, 1, &length) == 0 && utf16 == byte && length == 1);
+        std::uint32_t utf32 = 0xA5A5A5A5;
+        Require(sceCesSbcToUtf32(profile, sbc, &utf32) == 0 && utf32 == byte);
+    }
+}
+
 static void RequireSbcToUtf8(const std::uint8_t* profile, std::uint8_t sbc, const char* expected) {
     std::uint8_t utf8[4] = {};
     std::uint32_t length = 0;
@@ -189,6 +203,20 @@ static void RequireMeasuredStrings(void* latin, void* eucJp) {
     }
 
     const auto* letters = reinterpret_cast<const std::uint8_t*>("ABC");
+    {
+        std::uint8_t zeroContext[512]{};
+        const std::uint8_t input[] = {'A', 'B', 'C', 0, 'D'};
+        std::uint8_t output[16];
+        std::memset(output, 0xBB, sizeof(output));
+        std::uint32_t read = 7;
+        std::uint32_t written = 7;
+
+        const int result = sceCesMbcsStrToUtf8Str(zeroContext, input, 3, &read, output, sizeof(output), &written);
+        Require(result == 0);
+        Require(read == 0 && written == 0);
+        Require(output[0] == 0 && output[1] == 0xBB);
+    }
+
     std::uint8_t output[4] = {0xBB, 0xBB, 0xBB, 0xBB};
     std::uint32_t read = 7;
     std::uint32_t written = 7;
@@ -360,16 +388,22 @@ static void RequireSbcCode(const std::uint8_t* profile, std::uint8_t sbc, std::u
 }
 
 static bool MeasuredHole(const std::uint8_t* profile, int sbc) {
+    const std::initializer_list<int> cp1253 = {0x81, 0x88, 0x8A, 0x8C, 0x8D, 0x8E, 0x8F, 0x90, 0x98, 0x9A, 0x9C, 0x9D, 0x9E, 0x9F, 0xAA, 0xD2, 0xFF};
     const std::initializer_list<int> cp1254 = {0x81, 0x8D, 0x8E, 0x8F, 0x90, 0x9D, 0x9E};
+    const std::initializer_list<int> cp1255 = {0x81, 0x8A, 0x8C, 0x8D, 0x8E, 0x8F, 0x90, 0x9A, 0x9C, 0x9D, 0x9E, 0x9F, 0xCA, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF, 0xFB, 0xFC, 0xFF};
+    const std::initializer_list<int> cp1257 = {0x81, 0x83, 0x88, 0x8A, 0x8C, 0x90, 0x98, 0x9A, 0x9C, 0x9F, 0xA1, 0xA5};
     const std::initializer_list<int> cp1258 = {0x81, 0x8A, 0x8D, 0x8E, 0x8F, 0x90, 0x9A, 0x9D, 0x9E};
+    if (profile == sceCesRefersUcsProfileCp1253()) return std::find(cp1253.begin(), cp1253.end(), sbc) != cp1253.end();
     if (profile == sceCesRefersUcsProfileCp1254()) return std::find(cp1254.begin(), cp1254.end(), sbc) != cp1254.end();
+    if (profile == sceCesRefersUcsProfileCp1255()) return std::find(cp1255.begin(), cp1255.end(), sbc) != cp1255.end();
+    if (profile == sceCesRefersUcsProfileCp1257()) return std::find(cp1257.begin(), cp1257.end(), sbc) != cp1257.end();
     if (profile == sceCesRefersUcsProfileCp1258()) return std::find(cp1258.begin(), cp1258.end(), sbc) != cp1258.end();
     return false;
 }
 
 static void CheckSingleByteProfiles() {
     constexpr int unassignedCode = static_cast<int>(0x805C0020);
-    const auto getters = {sceCesRefersUcsProfileIso8859_1, sceCesRefersUcsProfileIso8859_2, sceCesRefersUcsProfileIso8859_4, sceCesRefersUcsProfileIso8859_5, sceCesRefersUcsProfileIso8859_9, sceCesRefersUcsProfileIso8859_10, sceCesRefersUcsProfileIso8859_13, sceCesRefersUcsProfileIso8859_14, sceCesRefersUcsProfileIso8859_15, sceCesRefersUcsProfileIso8859_16, sceCesRefersUcsProfileCp437, sceCesRefersUcsProfileCp737, sceCesRefersUcsProfileCp775, sceCesRefersUcsProfileCp850, sceCesRefersUcsProfileCp852, sceCesRefersUcsProfileCp855, sceCesRefersUcsProfileCp860, sceCesRefersUcsProfileCp861, sceCesRefersUcsProfileCp862, sceCesRefersUcsProfileCp863, sceCesRefersUcsProfileCp865, sceCesRefersUcsProfileCp866, sceCesRefersUcsProfileKoi8R, sceCesRefersUcsProfileKoi8U, sceCesRefersUcsProfileCp1254, sceCesRefersUcsProfileCp1256, sceCesRefersUcsProfileCp1258, sceCesRefersUcsProfileCp858};
+    const auto getters = {sceCesRefersUcsProfileIso8859_1, sceCesRefersUcsProfileIso8859_2, sceCesRefersUcsProfileIso8859_4, sceCesRefersUcsProfileIso8859_5, sceCesRefersUcsProfileIso8859_9, sceCesRefersUcsProfileIso8859_10, sceCesRefersUcsProfileIso8859_13, sceCesRefersUcsProfileIso8859_14, sceCesRefersUcsProfileIso8859_15, sceCesRefersUcsProfileIso8859_16, sceCesRefersUcsProfileCp437, sceCesRefersUcsProfileCp737, sceCesRefersUcsProfileCp775, sceCesRefersUcsProfileCp850, sceCesRefersUcsProfileCp852, sceCesRefersUcsProfileCp855, sceCesRefersUcsProfileCp860, sceCesRefersUcsProfileCp861, sceCesRefersUcsProfileCp862, sceCesRefersUcsProfileCp863, sceCesRefersUcsProfileCp865, sceCesRefersUcsProfileCp866, sceCesRefersUcsProfileKoi8R, sceCesRefersUcsProfileKoi8U, sceCesRefersUcsProfileCp1254, sceCesRefersUcsProfileCp1256, sceCesRefersUcsProfileCp1258, sceCesRefersUcsProfileCp858, sceCesRefersUcsProfileCp1253, sceCesRefersUcsProfileCp1255, sceCesRefersUcsProfileCp1257};
     const void* existing[] = {sceCesRefersUcsProfileCp1252(), sceCesRefersUcsProfileCp1251(), sceCesRefersUcsProfileCp1250()};
     std::size_t index = 0;
     for (const auto getter : getters) {
@@ -388,7 +422,7 @@ static void CheckSingleByteProfiles() {
             std::uint8_t back = 0;
             if (MeasuredHole(profile, sbc)) {
                 std::uint32_t code = 0x5A5A5A5A;
-                Require(sceCesSbcToUtf32(profile, static_cast<std::uint8_t>(sbc), &code) == unassignedCode && code == 0x5A5A5A5A);
+                Require(sceCesSbcToUtf32(profile, static_cast<std::uint8_t>(sbc), &code) == unassignedCode && code == 0);
                 Require(sceCesUtf32ToSbc(static_cast<std::uint32_t>(sbc), profile, &back) == unassignedCode);
                 continue;
             }
@@ -531,6 +565,96 @@ static void CheckSingleByteProfiles() {
     Require(used == 6 && produced == 12 && std::memcmp(utf8, "\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82", 12) == 0);
 }
 
+static void CheckCp864Profile() {
+    constexpr int unassignedCode = static_cast<int>(0x805C0020);
+    const std::uint8_t* arabic = sceCesRefersUcsProfileCp864();
+    Require(arabic != nullptr && arabic == sceCesRefersUcsProfileCp864());
+    Require(arabic != sceCesRefersUcsProfileCp850() && arabic != sceCesRefersUcsProfileCp1256());
+    RequireSbcRoundTrip(arabic, {0x9B, 0x9C, 0x9F, 0xA6, 0xA7, 0xFF});
+    for (int sbc = 1; sbc < 0x80; ++sbc) {
+        if (sbc != 0x25) RequireSbcCode(arabic, static_cast<std::uint8_t>(sbc), static_cast<std::uint32_t>(sbc));
+    }
+    RequireSbcCode(arabic, 0x25, 0x066A);
+    RequireSbcCode(arabic, 0x80, 0x00B0);
+    RequireSbcCode(arabic, 0xB0, 0x0660);
+    RequireSbcCode(arabic, 0xC1, 0xFE80);
+    RequireSbcCode(arabic, 0xFE, 0x25A0);
+    RequireUtf8ToSbc(arabic, "\xD9\xAA", 0x25);
+    Require(Utf8ToSbc(arabic, "%", 1) == unassignedCode);
+    Require(Utf8ToSbc(arabic, "\xEF\xBF\xBF", 3) == unassignedCode);
+
+    char context[256] = {};
+    Require(sceCesMbcsUcsContextInit(context, arabic) == 0);
+    std::uint8_t utf8[16] = {};
+    std::uint32_t used = 0;
+    std::uint32_t produced = 0;
+    Require(sceCesMbcsStrToUtf8Str(context, reinterpret_cast<const std::uint8_t*>("\x25\xB1"), 2, &used, utf8, sizeof(utf8), &produced) == 0);
+    Require(used == 2 && produced == 4 && std::memcmp(utf8, "\xD9\xAA\xD9\xA1", 4) == 0);
+    Require(sceCesMbcsStrToUtf8Str(context, reinterpret_cast<const std::uint8_t*>("\xA6"), 1, &used, utf8, sizeof(utf8), &produced) == unassignedCode);
+    std::uint8_t encoded[4] = {};
+    Require(sceCesUtf8StrToMbcsStr(context, reinterpret_cast<const std::uint8_t*>("\xD9\xAA\xD9\xA1"), 4, &used, encoded, sizeof(encoded), &produced) == 0);
+    Require(used == 4 && produced == 2 && std::memcmp(encoded, "\x25\xB1", 2) == 0);
+}
+
+static void CheckScalarErrorOutputs() {
+    constexpr int invalidProfile = static_cast<int>(0x805C0004);
+    constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
+    constexpr int invalidEncode = static_cast<int>(0x805C0014);
+    constexpr int illegalCode = static_cast<int>(0x805C0015);
+    constexpr int unassignedCode = static_cast<int>(0x805C0020);
+    constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
+    const std::uint8_t* cp1252 = sceCesRefersUcsProfileCp1252();
+    const std::uint8_t* ascii = sceCesRefersUcsProfileAscii();
+
+    std::uint16_t ucs2 = 0xA5A5;
+    Require(sceCesSbcToUcs2(nullptr, 'A', &ucs2) == invalidProfile && ucs2 == 0);
+    ucs2 = 0xA5A5;
+    Require(sceCesSbcToUcs2(cp1252, 0x81, &ucs2) == unassignedCode && ucs2 == 0);
+    ucs2 = 0xA5A5;
+    Require(sceCesSbcToUcs2(ascii, 0x80, &ucs2) == invalidEncode && ucs2 == 0);
+
+    std::uint16_t utf16 = 0xA5A5;
+    std::uint32_t utf16Len = 7;
+    Require(sceCesSbcToUtf16le(nullptr, 'A', &utf16, 1, &utf16Len) == invalidProfile && utf16 == 0 && utf16Len == 0);
+    utf16 = 0xA5A5; utf16Len = 7;
+    Require(sceCesSbcToUtf16le(cp1252, 0x81, &utf16, 1, &utf16Len) == unassignedCode && utf16 == 0 && utf16Len == 0);
+    utf16 = 0xA5A5; utf16Len = 7;
+    Require(sceCesSbcToUtf16le(cp1252, 'A', &utf16, 0, &utf16Len) == dstBufferEnd && utf16 == 0xA5A5 && utf16Len == 1);
+
+    std::uint32_t utf32 = 0xA5A5A5A5u;
+    Require(sceCesSbcToUtf32le(nullptr, 'A', &utf32) == invalidProfile && utf32 == 0);
+    utf32 = 0xA5A5A5A5u;
+    Require(sceCesSbcToUtf32le(cp1252, 0x81, &utf32) == unassignedCode && utf32 == 0);
+
+    std::uint8_t sbc = 0xA5;
+    Require(sceCesUcs2ToSbc(0xD800, cp1252, &sbc) == illegalCode && sbc == 0);
+    sbc = 0xA5;
+    Require(sceCesUcs2ToSbc(0x0100, cp1252, &sbc) == unassignedCode && sbc == 0);
+    sbc = 0xA5;
+    Require(sceCesUcs2ToSbc('A', nullptr, &sbc) == invalidProfile && sbc == 0);
+
+    const std::uint16_t lowSurrogate[] = {0xDC00};
+    const std::uint16_t highSurrogate[] = {0xD800};
+    const std::uint16_t surrogatePair[] = {0xD83D, 0xDE00};
+    const std::uint16_t letter[] = {'A'};
+    std::uint32_t used = 9;
+    sbc = 0xA5;
+    Require(sceCesUtf16leToSbc(lowSurrogate, 1, &used, cp1252, &sbc) == illegalCode && sbc == 0 && used == 1);
+    used = 9; sbc = 0xA5;
+    Require(sceCesUtf16leToSbc(highSurrogate, 1, &used, cp1252, &sbc) == srcBufferEnd && sbc == 0 && used == 2);
+    used = 9; sbc = 0xA5;
+    Require(sceCesUtf16leToSbc(surrogatePair, 2, &used, cp1252, &sbc) == unassignedCode && sbc == 0 && used == 2);
+    used = 9; sbc = 0xA5;
+    Require(sceCesUtf16leToSbc(letter, 1, &used, nullptr, &sbc) == invalidProfile && sbc == 0 && used == 1);
+
+    sbc = 0xA5;
+    Require(sceCesUtf32ToSbc(0xD800, cp1252, &sbc) == illegalCode && sbc == 0);
+    sbc = 0xA5;
+    Require(sceCesUtf32ToSbc(0x1F600, cp1252, &sbc) == unassignedCode && sbc == 0);
+    sbc = 0xA5;
+    Require(sceCesUtf32ToSbc('A', nullptr, &sbc) == invalidProfile && sbc == 0);
+}
+
 int main() {
     constexpr int invalidParameter = static_cast<int>(0x805C0001);
     constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
@@ -543,6 +667,8 @@ int main() {
     const std::uint8_t* profile = sceCesRefersUcsProfileCp1252();
     Require(profile != nullptr && profile == sceCesRefersUcsProfileCp1252());
     CheckSingleByteProfiles();
+    CheckIso8859OneWideIdentity();
+    CheckCp864Profile();
 
     RequireSbcToUtf8(profile, 'A', "A");
     RequireSbcToUtf8(profile, 0x80, "\xE2\x82\xAC");
@@ -556,6 +682,7 @@ int main() {
     RequireUtf8ToSbc(profile, "\xC3\xA9", 0xE9);
     RequireSbcRoundTrip(profile, {0x81, 0x8D, 0x8F, 0x90, 0x9D});
     RequireMeasuredUtf8ToSbc(profile);
+    CheckScalarErrorOutputs();
 
     std::uint8_t utf8[4] = {};
     std::uint32_t length = 0;

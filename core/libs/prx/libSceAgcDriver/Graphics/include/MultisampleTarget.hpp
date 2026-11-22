@@ -3,12 +3,15 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -34,6 +37,8 @@ public:
     bool TakeClear();
     DccKeys Keys() const { return keys; }
     const std::string& Refusal() const { return refusal; }
+    std::uint64_t Address() const { return address; }
+    std::uint64_t Bytes() const { return bytes; }
 
 private:
     std::uint64_t address = 0;
@@ -50,12 +55,16 @@ public:
     void Discard();
     std::optional<std::uint32_t> Pending() const { return filled; }
     const std::string& Refusal() const { return refusal; }
+    std::uint64_t Noted() const { return noted; }
+    std::uint64_t SameRun() const { return sameRun; }
 
 private:
     std::uint64_t address = 0;
     std::uint64_t bytes = 0;
     std::optional<std::uint32_t> filled;
     std::string refusal;
+    std::uint64_t noted = 0;
+    std::uint64_t sameRun = 0;
 };
 
 enum class MultisampleColorContent { Unknown, Fill, FastClear, Clear, Drawn };
@@ -68,9 +77,16 @@ struct MultisampleColorAlias {
     MultisampleColorContent newest = MultisampleColorContent::Unknown;
     std::optional<VkClearColorValue> value;
     std::optional<std::uint8_t> byte;
+    std::shared_ptr<std::atomic<bool>> active;
+    std::uint64_t contents = 0;
+    std::uint64_t filledBytes = 0;
+    std::uint64_t fills = 0;
+    std::uint64_t sameRun = 0;
 };
 
 std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t address, std::size_t bytes);
+std::vector<MultisampleColorAlias> MultisampleColorTargetsOver(std::uint64_t address, std::size_t bytes);
+void WithMultisampleTargetsLockForTest(const std::function<void()>& inside);
 
 std::uint64_t MultisampledColorBytes(const ColorTarget& target);
 std::size_t MultisampledDccBytes(const ColorTarget& target);
@@ -87,8 +103,16 @@ bool TakeMultisampledClear(MultisampledCmask& cmask, MultisampledColorFill& colo
 SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const ColorTarget& target);
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
 std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, const GuestTextureResource& resource, VkComponentMapping components);
+struct MultisampleColorSnapshot {
+    std::vector<std::byte> original;
+    std::vector<std::byte> current;
+};
+
+std::vector<std::byte> ReadMultisampleTargetSamples_nid_no_patch(const Context& context, const ColorTarget& target);
+MultisampleColorSnapshot ReadMultisampleTargetColorSnapshot_nid_no_patch(const Context& context, const ColorTarget& target);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image = nullptr);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image = nullptr);
+void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const ColorTarget& target);
 void KeepMultisampleTarget_nid_no_patch(const std::shared_ptr<void>& owner);
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target);
 VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage = false);
@@ -98,16 +122,38 @@ bool MultisampledColorFillAbsorbs(std::uint64_t address, std::size_t bytes, std:
 void NoteColorMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
 std::shared_ptr<Texture> MultisampleTargetFmaskTexture_nid_no_patch(const Context& context, const GuestTextureResource& resource, VkComponentMapping components);
 void ClearMultisampleTargets(VkDevice device);
+bool MultisampleDccUnwatchLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+void SaveMultisampleDccBeforeUnwatch(std::uint64_t address, std::size_t bytes);
+void SetMultisampleDccPublishHookForTest(void (*hook)());
+void SetMultisampleDccCopyHookForTest(void (*hook)());
 std::uint64_t MultisampleTargetRangeGeneration();
+std::uint64_t MultisampleClaimSerial();
 std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTargetRanges(
     VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges, std::uint64_t& generation);
 void InstallResidentImageReadGuard_nid_no_patch();
 void UpdateResidentImageUnmapObserver_nid_no_patch();
+void RetireResidentImagesOver_nid_no_patch(std::uintptr_t address, std::size_t bytes);
 void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes);
+bool MultisampleColorTargetOverlaps(std::uint64_t address, std::uint64_t bytes);
+void ClaimMultisampleTargetStore(std::uint64_t address, std::uint64_t bytes);
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target);
-void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
+bool HoldsMultisampleTargetsLock();
+void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access, DepthReadCause cause = DepthReadCause::Access);
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);
+void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& active);
+void RetireMultisampleColorTargetsOnFmaskWrite(std::uint64_t address, std::size_t bytes);
 std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes);
+struct RetiredGpuOwners {
+    std::size_t color = 0;
+    std::size_t depthOwners = 0;
+    std::size_t depthSurfaces = 0;
+    std::size_t depthPlanes = 0;
+};
+RetiredGpuOwners RetireGpuOwnersOver(std::uint64_t address, std::size_t bytes);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> GpuOwnedRanges(std::uint64_t address, std::size_t bytes);
+std::size_t ResidentOwnersOver(std::uint64_t address, std::size_t bytes, bool gpuOnly);
+void OmitGpuOwnersForTest(bool omit);
+std::uint64_t GpuOwnerInventoryWalksForTest();
 
 }
 

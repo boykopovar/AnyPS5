@@ -30,6 +30,7 @@ constexpr std::uint32_t UndefinedFormat = 300;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t ValidSelector = 0;
 constexpr std::uint32_t FoldedSelector = 1;
+constexpr std::uint32_t BufferDataSelector = 4;
 constexpr std::uint32_t SecondSelector = 2;
 constexpr std::uint32_t Untouched = 0xdeadbeefu;
 constexpr std::uint32_t FirstTexel = 0xffu;
@@ -100,6 +101,39 @@ alignas(256) constexpr std::array<std::uint32_t, 49> NoLaneLaneIndexWebCode{
     0x7e1c0508u, 0x7e1e0509u, 0xbefe0380u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u,
     0xbf810000u,
 };
+
+alignas(256) constexpr std::array<std::uint32_t, 26> BufferDataWebCode = [] {
+    std::array<std::uint32_t, 26> code{};
+    std::copy_n(WebCode.begin(), 17, code.begin());
+    code[10] = 0xbf850009u;
+    code[11] = 0xbf068410u;
+    code[16] = 0xbf820003u;
+    code[17] = 0xf420038cu;
+    code[18] = 0x20000000u;
+    code[19] = 0xbf8cc07fu;
+    std::copy(WebCode.begin() + 18, WebCode.end(), code.begin() + 20);
+    return code;
+}();
+
+alignas(256) constexpr std::array<std::uint32_t, 27> BufferDataNoLaneWebCode = [] {
+    std::array<std::uint32_t, 27> code{};
+    std::copy_n(BufferDataWebCode.begin(), 20, code.begin());
+    code[20] = 0xbefe0380u;
+    std::copy(BufferDataWebCode.begin() + 20, BufferDataWebCode.end(), code.begin() + 21);
+    return code;
+}();
+
+alignas(256) constexpr std::array<std::uint32_t, 26> SamplerBufferDataWebCode = [] {
+    auto code = BufferDataWebCode;
+    code[17] = 0xf420050cu;
+    return code;
+}();
+
+alignas(256) constexpr std::array<std::uint32_t, 27> SamplerBufferDataNoLaneWebCode = [] {
+    auto code = BufferDataNoLaneWebCode;
+    code[17] = 0xf420050cu;
+    return code;
+}();
 
 class StderrCapture {
 public:
@@ -246,12 +280,41 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     const auto foldedNoLanes = Run(device, NoLaneWebCode, Format8888UNorm, FoldedSelector);
     Require(Clean(foldedNoLanes.log) && foldedNoLanes.word == Untouched, "descriptor web faults: the folded path faulted or wrote with no lane enabled:\n" + foldedNoLanes.log);
 
+    const auto bufferValid = Run(device, BufferDataWebCode, Format8888UNorm, ValidSelector);
+    Require(Clean(bufferValid.log) && Reads(bufferValid.word, FirstTexel), "descriptor web faults: an unselected buffer-data arm changed the valid texture read:\n" + bufferValid.log);
+    const auto bufferOther = Run(device, BufferDataWebCode, Format8888UNorm, SecondSelector);
+    Require(Clean(bufferOther.log) && Reads(bufferOther.word, SecondTexel), "descriptor web faults: a buffer-data arm changed the second texture read:\n" + bufferOther.log);
+    const auto bufferFolded = Run(device, BufferDataWebCode, Format8888UNorm, BufferDataSelector);
+    Require(Faulted(bufferFolded.log, 0x50u), "descriptor web faults: an enabled lane selecting a buffer-data descriptor did not fault at the read:\n" + bufferFolded.log);
+    const auto bufferDisabled = Run(device, BufferDataNoLaneWebCode, Format8888UNorm, BufferDataSelector);
+    Require(Clean(bufferDisabled.log) && bufferDisabled.word == Untouched, "descriptor web faults: a buffer-data descriptor faulted or wrote with no enabled lane:\n" + bufferDisabled.log);
+
+    const auto samplerBufferValid = Run(device, SamplerBufferDataWebCode, Format8888UNorm, ValidSelector);
+    Require(Clean(samplerBufferValid.log) && Reads(samplerBufferValid.word, FirstTexel), "descriptor web faults: an unselected buffer-data sampler changed the first texture read:\n" + samplerBufferValid.log);
+    const auto samplerBufferOther = Run(device, SamplerBufferDataWebCode, Format8888UNorm, SecondSelector);
+    Require(Clean(samplerBufferOther.log) && Reads(samplerBufferOther.word, SecondTexel), "descriptor web faults: a buffer-data sampler changed the second texture read:\n" + samplerBufferOther.log);
+    const auto samplerBufferFolded = Run(device, SamplerBufferDataWebCode, Format8888UNorm, BufferDataSelector);
+    Require(Faulted(samplerBufferFolded.log, 0x50u), "descriptor web faults: an enabled lane selecting a buffer-data sampler did not fault at the read:\n" + samplerBufferFolded.log);
+    const auto samplerBufferDisabled = Run(device, SamplerBufferDataNoLaneWebCode, Format8888UNorm, BufferDataSelector);
+    Require(Clean(samplerBufferDisabled.log) && samplerBufferDisabled.word == Untouched, "descriptor web faults: a buffer-data sampler faulted or wrote with no enabled lane:\n" + samplerBufferDisabled.log);
+
     const auto unselected = Run(device, WebCode, UndefinedFormat, ValidSelector);
     Require(Clean(unselected.log) && Reads(unselected.word, FirstTexel), "descriptor web faults: an undefined arm that no lane selects faulted or changed the selected arm's read:\n" + unselected.log);
     const auto selected = Run(device, WebCode, UndefinedFormat, SecondSelector);
     Require(Faulted(selected.log, SamplePc), "descriptor web faults: a lane selecting an undefined arm did not fault at the read:\n" + selected.log);
     const auto selectedNoLanes = Run(device, NoLaneWebCode, UndefinedFormat, SecondSelector);
     Require(Clean(selectedNoLanes.log) && selectedNoLanes.word == Untouched, "descriptor web faults: an undefined arm faulted or wrote with no lane enabled:\n" + selectedNoLanes.log);
+
+    auto wholeQuad = WebCode;
+    wholeQuad[17] = 0xbe8e0a7eu;
+    const auto wholeQuadValid = Run(device, wholeQuad, Format8888UNorm, ValidSelector);
+    Require(Clean(wholeQuadValid.log) && Reads(wholeQuadValid.word, FirstTexel), "descriptor web faults: an unselected whole-quad mask changed the valid arm's read:\n" + wholeQuadValid.log);
+    const auto wholeQuadFolded = Run(device, wholeQuad, Format8888UNorm, FoldedSelector);
+    Require(Faulted(wholeQuadFolded.log, SamplePc), "descriptor web faults: a selected whole-quad mask did not fault at the read:\n" + wholeQuadFolded.log);
+    auto wholeQuadNoLanes = NoLaneWebCode;
+    wholeQuadNoLanes[17] = 0xbe8e0a7eu;
+    const auto wholeQuadDisabled = Run(device, wholeQuadNoLanes, Format8888UNorm, FoldedSelector);
+    Require(Clean(wholeQuadDisabled.log) && wholeQuadDisabled.word == Untouched, "descriptor web faults: a whole-quad mask faulted or wrote with no lane enabled:\n" + wholeQuadDisabled.log);
 
     constexpr std::uint32_t TableSamplePc = 0xb0u;
     const auto tableValid = Run(device, TableWebCode, Format8888UNorm, ValidSelector, true);

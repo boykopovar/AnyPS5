@@ -51,6 +51,14 @@ int main() {
     Require(qaRecording() == NotInitialized, "QA recording was enabled before sceVoiceInit");
     Require(customerData(0, data, sizeof(data), &gain) == NotInitialized && gain == 1.0f, "customer data was taken before sceVoiceInit");
     Require(customerData(0, nullptr, 0, nullptr) == NotInitialized, "customer data checked its arguments before initialization");
+    Require(sceVoiceSetMuteFlagAll(true) == NotInitialized, "mute flag all succeeded before sceVoiceInit");
+    Require(sceVoiceSetMuteFlagAll(false) == NotInitialized, "unmute flag all succeeded before sceVoiceInit");
+    Require(sceVoicePausePortAll() == NotInitialized, "pause port all succeeded before sceVoiceInit");
+    Require(sceVoiceResumePortAll() == NotInitialized, "resume port all succeeded before sceVoiceInit");
+    Require(sceVoiceVADSetVersion(0) == 0, "VAD set version 0 failed before sceVoiceInit");
+    Require(sceVoiceVADSetVersion(1) == 0, "VAD set version 1 failed before sceVoiceInit");
+    Require(sceVoiceVADSetVersion(-1) == InvalidArgument, "VAD set version accepted -1");
+    Require(sceVoiceVADSetVersion(2) == InvalidArgument, "VAD set version accepted 2");
     Require(memorySize(2, 0, 0, 0, 0, 0, 0, 0, 0, &size) == NotInitialized && size == Untouched, "the memory size was answered before sceVoiceInit");
     Require(memorySize(2, 0, 0, 0, 0, 0, 0, 0, 0, nullptr) == NotInitialized, "the memory size checked its output before initialization");
 
@@ -60,6 +68,10 @@ int main() {
     adjustment(1.0f, 0.0f);
     pvtAdjustment(0.0f, 0.0f, 0.0f, 0.0f);
     Require(qaRecording() == 0, "QA recording was not enabled after sceVoiceInit");
+    Require(sceVoiceSetMuteFlagAll(true) == 0, "mute flag all failed after sceVoiceInit");
+    Require(sceVoiceSetMuteFlagAll(false) == 0, "unmute flag all failed after sceVoiceInit");
+    Require(sceVoicePausePortAll() == 0, "pause port all failed after sceVoiceInit");
+    Require(sceVoiceResumePortAll() == 0, "resume port all failed after sceVoiceInit");
 
     Require(customerData(0, nullptr, 0, &gain) == InvalidArgument, "customer data took null data");
     Require(customerData(0, data, 0, nullptr) == InvalidArgument, "customer data took a null gain");

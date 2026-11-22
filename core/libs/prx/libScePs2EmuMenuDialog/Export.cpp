@@ -1,4 +1,5 @@
 #include "prx/libScePs2EmuMenuDialog/include/Api.hpp"
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -6,7 +7,6 @@
 namespace {
 
 constexpr int PS2_EMU_MENU_DIALOG_ERROR_UNAVAILABLE = static_cast<int>(0x80B8000Fu);
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
 
 }
 

@@ -1,16 +1,24 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/PadAudioHapticQueue.hpp"
+#include "prx/libScePad/include/PadHapticBuffer.hpp"
+#include "prx/libScePad/include/PadRumbleIntensity.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/InputCommandFile.hpp"
+#include "prx/libScePad/include/PadRecording.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <cstdlib>
 #include <deque>
 #include <mutex>
 #include <stdexcept>
+#include <cstdio>
+#include <memory>
+#include "prx/libScePad/include/InputScript.hpp"
 
 namespace {
     struct Quat { float w = 1.0f, x = 0.0f, y = 0.0f, z = 0.0f; };
@@ -20,6 +28,10 @@ namespace {
     std::uint64_t injectedTimestamp = 0;
     std::uint32_t injectedHeldThroughCapture = 0;
     std::uint64_t injectedHeldAt = 0;
+    std::mutex hapticMutex;
+    std::condition_variable hapticReady;
+    PadHapticBuffer haptics;
+    std::atomic<bool> hapticStreamOpen{false};
 
     struct QueuedInput {
         PadInputState input;
@@ -30,6 +42,9 @@ namespace {
     struct PadSlot {
         PadInputState state;
         PadOutputState output;
+        std::array<std::uint8_t, 2> liveTriggerEffects{};
+        std::array<std::uint8_t, 2> liveTriggerStatuses{};
+        bool liveTriggerStatusValid = false;
         std::deque<QueuedInput> queue;
         Quat orientation;
         std::uint64_t lastFuseTime = 0;
@@ -60,6 +75,7 @@ namespace {
     }();
     std::exception_ptr failure;
     bool initialized = false;
+    Pad::InputScript* Script();
     constexpr float kAngularVelocityDeadband = 0.017453292f;
 
     bool RefreshAudioHaptics(PadSlot& slot) {
@@ -134,11 +150,25 @@ namespace {
     std::uint8_t scaleStrength(std::uint8_t s) {
         return s == 0 ? 0 : static_cast<std::uint8_t>(std::min(255, 32 * std::min<int>(s, 8)));
     }
+
+    std::int32_t triggerState(std::uint8_t effect, std::uint8_t status) {
+        switch (effect) {
+            case 1:
+                return status == 0 ? 1 : status == 1 ? 2 : 0;
+            case 2:
+                return status == 0 ? 3 : status == 1 ? 4 : status == 2 ? 5 : 0;
+            case 3:
+                return status == 0 ? 6 : status == 1 ? 7 : 0;
+            default:
+                return 0;
+        }
+    }
 }
 
 void Pad::Initialize() {
     std::lock_guard lock(stateMutex);
     if (failure) std::rethrow_exception(failure);
+    Script();
     if (!initialized) {
         const std::uint64_t now = sceKernelGetProcessTime();
         for (std::size_t i = 0; i < slots.size(); ++i) {
@@ -150,6 +180,11 @@ void Pad::Initialize() {
             slots[i].readInterval = 0;
         }
     }
+    for (auto& slot : slots) {
+        slot.liveTriggerEffects.fill(0);
+        slot.liveTriggerStatuses.fill(0);
+        slot.liveTriggerStatusValid = false;
+    }
     initialized = true;
 }
 
@@ -159,17 +194,27 @@ bool Pad::IsInitialized() {
 }
 
 namespace {
-PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t changeTime, std::uint64_t now, const Pad::InputCommandFile::Input& injected, int port) {
+void InjectSticks(std::array<std::uint8_t, 4>& sticks, const Pad::InputCommandFile::Input& injected) {
+    if (!injected.hasSticks) return;
+    for (int stick = 0; stick < 2; ++stick) {
+        if ((injected.stickMask & (1u << stick)) == 0) continue;
+        sticks[stick * 2] = injected.sticks[stick * 2];
+        sticks[stick * 2 + 1] = injected.sticks[stick * 2 + 1];
+    }
+}
+
+PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t changeTime, std::uint64_t fuseTime, const Pad::InputCommandFile::Input& injected, int port) {
     PadData data{};
     const bool intercepted = state.intercepted;
     data.buttons = intercepted ? kInterceptedButton : state.buttons | injected.buttons;
-    const auto& sticks = !intercepted && injected.hasSticks ? injected.sticks : state.sticks;
+    auto sticks = state.sticks;
+    if (!intercepted) InjectSticks(sticks, injected);
     data.left_stick_x = sticks[0];
     data.left_stick_y = sticks[1];
     data.right_stick_x = sticks[2];
     data.right_stick_y = sticks[3];
     const auto trigger = [&](std::uint8_t analog, std::uint32_t bit) -> std::uint8_t {
-        return (!intercepted && (injected.buttons & bit) != 0) || (analog == 0 && (state.buttons & bit) != 0) ? 255 : analog;
+        return !intercepted && ((injected.buttons & bit) != 0 || (analog == 0 && (state.buttons & bit) != 0)) ? 255 : analog;
     };
     data.analog_buttons_l2 = trigger(state.analogButtonsL2, 0x100);
     data.analog_buttons_r2 = trigger(state.analogButtonsR2, 0x200);
@@ -184,14 +229,14 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
         }
     }
     if (live) {
-        float dt = slot.lastFuseTime != 0 && now > slot.lastFuseTime ? static_cast<float>(now - slot.lastFuseTime) * 1e-6f : 0.0f;
+        float dt = slot.lastFuseTime != 0 && fuseTime > slot.lastFuseTime ? static_cast<float>(fuseTime - slot.lastFuseTime) * 1e-6f : 0.0f;
         dt = std::min(dt, 0.1f);
         fuse(slot, dt, accel, gyro);
     } else {
         slot.orientation = Quat{};
         slot.biasIntegral[0] = slot.biasIntegral[1] = slot.biasIntegral[2] = 0.0f;
     }
-    slot.lastFuseTime = now;
+    slot.lastFuseTime = std::max(slot.lastFuseTime, fuseTime);
     data.orientation_x = slot.orientation.x;
     data.orientation_y = slot.orientation.y;
     data.orientation_z = slot.orientation.z;
@@ -233,11 +278,11 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
         }
         ++touchNum;
     }
-    const bool injectedTouch = !intercepted && (injected.touchLeft || injected.touchRight);
-    if (!injectedContact && touchNum == 0 && (state.touchLeft || state.touchRight || injectedTouch)) {
+    const bool injectedTouch = injected.touchLeft || injected.touchRight;
+    if (!intercepted && !injectedContact && touchNum == 0 && (state.touchLeft || state.touchRight || injectedTouch)) {
         data.buttons |= 0x100000;
         touchNum = 1;
-        data.touch_data_touch0_x = state.touchRight || (!intercepted && injected.touchRight) ? kTouchPadWidth * 3 / 4 : kTouchPadWidth / 4;
+        data.touch_data_touch0_x = state.touchRight || injected.touchRight ? kTouchPadWidth * 3 / 4 : kTouchPadWidth / 4;
         data.touch_data_touch0_y = kTouchPadHeight / 2;
         data.touch_data_touch0_id = 0;
     }
@@ -273,9 +318,68 @@ Pad::InputCommandFile& InjectedCommands() {
     return commands;
 }
 
-Pad::InputCommandFile::Input InjectedInput(std::uint64_t now) {
+std::uint64_t EnvironmentNumber(const char* name) {
+    const char* value = std::getenv(name);
+    if (value == nullptr || *value == '\0') return 0;
+    std::uint64_t result = 0;
+    const std::string_view text(value);
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), result);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) {
+        std::fprintf(stderr, "%s must be a non-negative integer, not '%s'\n", name, value);
+        std::fflush(stderr);
+        std::exit(1);
+    }
+    return result;
+}
+
+Pad::InputScript* Script() {
+    static const std::unique_ptr<Pad::InputScript> script = [] () -> std::unique_ptr<Pad::InputScript> {
+#ifdef _WIN32
+        const auto* pathValue = _wgetenv(L"APS5_PAD_SCRIPT");
+        const auto* liveValue = _wgetenv(L"APS5_PAD_SCRIPT_LIVE");
+#else
+        const auto* pathValue = std::getenv("APS5_PAD_SCRIPT");
+        const auto* liveValue = std::getenv("APS5_PAD_SCRIPT_LIVE");
+#endif
+        const std::filesystem::path path = pathValue ? std::filesystem::path(pathValue) : std::filesystem::path{};
+        const std::filesystem::path live = liveValue ? std::filesystem::path(liveValue) : std::filesystem::path{};
+        if (path.empty() && live.empty()) return nullptr;
+        auto created = std::make_unique<Pad::InputScript>();
+        if (!path.empty()) {
+            try {
+                created->SetScript(Pad::InputScript::ParseFile(path));
+            } catch (const std::runtime_error& error) {
+                std::fprintf(stderr, "%s\n", error.what());
+                std::fflush(stderr);
+                std::exit(1);
+            }
+        }
+        created->SetLoopMs(EnvironmentNumber("APS5_PAD_SCRIPT_LOOP_MS"));
+        if (!live.empty()) created->SetLive(live);
+        return created;
+    }();
+    return script.get();
+}
+
+Pad::InputCommandFile::Input InjectedInput(std::uint64_t now, bool titleRead = false) {
     static Pad::InputCommandFile::Input lastInjected;
-    const auto injected = InjectedCommands().Poll(now);
+    auto injected = InjectedCommands().Poll(now);
+    if (auto* script = Script()) {
+        if (titleRead) script->Start(now);
+        Pad::InputScript::Report report;
+        const auto frame = script->Sample(now, &report);
+        for (const auto& fired : report.fired) {
+            std::fprintf(stderr, "[pad-script] t=%llu %s hold %llu\n", static_cast<unsigned long long>(fired.elapsedMs), fired.label.c_str(), static_cast<unsigned long long>(fired.holdMs));
+        }
+        for (const auto& error : report.errors) std::fprintf(stderr, "%s\n", error.c_str());
+        if (!report.fired.empty() || !report.errors.empty()) std::fflush(stderr);
+        injected.buttons |= frame.buttons;
+        if (frame.hasSticks && !injected.hasSticks) {
+            injected.hasSticks = true;
+            injected.sticks = frame.sticks;
+            injected.stickMask = frame.stickMask;
+        }
+    }
     if (injected != lastInjected) {
         lastInjected = injected;
         slots[0].timestamp = now;
@@ -285,12 +389,38 @@ Pad::InputCommandFile::Input InjectedInput(std::uint64_t now) {
 }
 
 Pad::InputCommandFile::Input InjectedTitleInput(std::uint64_t now) {
-    auto injected = InjectedInput(now);
+    auto injected = InjectedInput(now, true);
     if (slots[0].state.intercepted) injectedHeldThroughCapture |= injected.buttons;
     else injectedHeldThroughCapture &= InjectedCommands().HeldThrough(injectedHeldAt, now);
     injectedHeldAt = now;
     injected.buttons &= ~injectedHeldThroughCapture;
     return injected;
+}
+
+std::filesystem::path EnvironmentPath(const wchar_t* wide, const char* narrow) {
+#ifdef _WIN32
+    static_cast<void>(narrow);
+    const auto* path = _wgetenv(wide);
+#else
+    static_cast<void>(wide);
+    const auto* path = std::getenv(narrow);
+#endif
+    return path ? std::filesystem::path(path) : std::filesystem::path{};
+}
+
+void ApplyRecording(PadData& data, std::uint64_t now) {
+    static Pad::RecordingPlayer player(EnvironmentPath(L"APS5_PAD_REPLAY", "APS5_PAD_REPLAY"));
+    static Pad::RecordingWriter writer(EnvironmentPath(L"APS5_PAD_RECORD", "APS5_PAD_RECORD"));
+    if (const auto replayed = player.At(now)) {
+        data.buttons = replayed->buttons;
+        data.left_stick_x = replayed->sticks[0];
+        data.left_stick_y = replayed->sticks[1];
+        data.right_stick_x = replayed->sticks[2];
+        data.right_stick_y = replayed->sticks[3];
+        data.analog_buttons_l2 = replayed->triggers[0];
+        data.analog_buttons_r2 = replayed->triggers[1];
+    }
+    if (writer.Active()) writer.Record(now, {data.buttons, {data.left_stick_x, data.left_stick_y, data.right_stick_x, data.right_stick_y}, {data.analog_buttons_l2, data.analog_buttons_r2}});
 }
 
 std::uint64_t LatchExpiry(const PadSlot& slot) {
@@ -307,8 +437,8 @@ PadData Pad::ReadState(int port) {
     const auto injected = port == 0 ? InjectedTitleInput(now) : Pad::InputCommandFile::Input{};
     auto& slot = slots[port];
     const bool withdrawn = WithdrawnPort(port, slot);
-    PadData data = withdrawn ? WithdrawnData(slot.timestamp) : BuildData(slot, slot.state, slot.timestamp, now, injected, port);
-    if (!withdrawn && slot.pressedSinceRead != 0 && now - slot.pressedAt <= LatchExpiry(slot)) {
+    PadData data = withdrawn ? WithdrawnData(slot.timestamp) : BuildData(slot, slot.state, now, now, injected, port);
+    if (!withdrawn && !slot.state.intercepted && slot.pressedSinceRead != 0 && now - slot.pressedAt <= LatchExpiry(slot)) {
         data.buttons |= slot.pressedSinceRead;
         if (slot.pressedSinceRead & 0x100u) data.analog_buttons_l2 = std::max(data.analog_buttons_l2, slot.pressedAnalogL2);
         if (slot.pressedSinceRead & 0x200u) data.analog_buttons_r2 = std::max(data.analog_buttons_r2, slot.pressedAnalogR2);
@@ -316,6 +446,7 @@ PadData Pad::ReadState(int port) {
     slot.pressedSinceRead = 0;
     if (slot.lastReadAt != 0) slot.readInterval = now - slot.lastReadAt;
     slot.lastReadAt = now;
+    if (port == 0 && !withdrawn) ApplyRecording(data, now);
     return data;
 }
 
@@ -335,13 +466,16 @@ int Pad::Read(PadData* data, int num, int port) {
         return 1;
     }
     if (slot.queue.empty()) {
-        data[0] = BuildData(slot, slot.state, slot.timestamp, now, injected, port);
+        data[0] = BuildData(slot, slot.state, now, now, injected, port);
+        if (port == 0) ApplyRecording(data[0], now);
         return 1;
     }
     int count = 0;
     while (count < num && !slot.queue.empty()) {
         const QueuedInput& entry = slot.queue.front();
-        data[count++] = BuildData(slot, entry.input, port == 0 ? std::max(entry.timestamp, injectedTimestamp) : entry.timestamp, now, injected, port);
+        const std::uint64_t sample = port == 0 ? std::max(entry.timestamp, injectedTimestamp) : entry.timestamp;
+        data[count++] = BuildData(slot, entry.input, sample, sample, injected, port);
+        if (port == 0) ApplyRecording(data[count - 1], now);
         slot.queue.pop_front();
     }
     return count;
@@ -470,12 +604,25 @@ void Pad::SetTriggerCommand(int port, int trigger, const std::uint8_t* command) 
     std::lock_guard lock(stateMutex);
     auto& output = slots[port].output;
     output.trigger[trigger] = req;
-    output.triggerTouched = true;
+    output.triggerTouched[trigger] = true;
     ++output.sequence;
 }
 
 void Pad::SetTriggerCommand(int trigger, const std::uint8_t* command) {
     SetTriggerCommand(0, trigger, command);
+}
+
+void Pad::SetTriggerEffectsDisabled(int port, bool disabled) {
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS) return;
+    std::lock_guard lock(stateMutex);
+    auto& output = slots[port].output;
+    if (output.triggerDisabled == disabled) return;
+    output.triggerDisabled = disabled;
+    ++output.sequence;
+}
+
+void Pad::SetTriggerEffectsDisabled(bool disabled) {
+    SetTriggerEffectsDisabled(0, disabled);
 }
 
 void Pad::ResetOrientation(int port) {
@@ -541,18 +688,25 @@ extern "C" void PadPublishInputForPort_nid_postfix(int port, const PadInputState
         slot.state.touchLeft == input.touchLeft && slot.state.touchRight == input.touchRight &&
         slot.state.hasMotion == input.hasMotion && slot.state.accel == input.accel && slot.state.gyro == input.gyro &&
         slot.state.touch == input.touch && slot.state.deviceKind == input.deviceKind && slot.state.intercepted == input.intercepted) return;
+    slot.timestamp = sceKernelGetProcessTime();
     if (input.intercepted) {
         slot.pressedSinceRead = 0;
+        slot.pressedAnalogL2 = 0;
+        slot.pressedAnalogR2 = 0;
         if (!slot.state.intercepted) slot.queue.clear();
-    }
-    const std::uint32_t pressed = input.buttons & ~slot.state.buttons;
-    slot.timestamp = sceKernelGetProcessTime();
-    if (pressed != 0) {
-        if (slot.pressedSinceRead != 0 && slot.timestamp - slot.pressedAt > LatchExpiry(slot)) slot.pressedSinceRead = 0;
-        slot.pressedSinceRead |= pressed;
-        slot.pressedAt = slot.timestamp;
-        if (pressed & 0x100u) slot.pressedAnalogL2 = input.analogButtonsL2;
-        if (pressed & 0x200u) slot.pressedAnalogR2 = input.analogButtonsR2;
+    } else {
+        const std::uint32_t pressed = input.buttons & ~slot.state.buttons;
+        if (pressed != 0) {
+            if (slot.pressedSinceRead != 0 && slot.timestamp - slot.pressedAt > LatchExpiry(slot)) {
+                slot.pressedSinceRead = 0;
+                slot.pressedAnalogL2 = 0;
+                slot.pressedAnalogR2 = 0;
+            }
+            slot.pressedSinceRead |= pressed;
+            slot.pressedAt = slot.timestamp;
+            if (pressed & 0x100u) slot.pressedAnalogL2 = input.analogButtonsL2;
+            if (pressed & 0x200u) slot.pressedAnalogR2 = input.analogButtonsR2;
+        }
     }
     slot.state = input;
     if (slot.queue.size() == kQueueCapacity) slot.queue.pop_front();
@@ -570,7 +724,7 @@ extern "C" void PadApplyInjectedInput_nid_postfix(PadInputState* state) {
     injectedHeldThroughCapture |= injected.buttons;
     injectedHeldAt = sceKernelGetProcessTime();
     state->buttons |= injected.buttons;
-    if (injected.hasSticks) state->sticks = injected.sticks;
+    InjectSticks(state->sticks, injected);
 }
 
 extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error) {
@@ -592,6 +746,41 @@ extern "C" bool PadFetchOutputForPort_nid_postfix(int port, std::uint32_t* seenS
 
 extern "C" bool PadFetchOutput_nid_postfix(std::uint32_t* seenSequence, PadOutputState* out) {
     return PadFetchOutputForPort_nid_postfix(0, seenSequence, out);
+}
+
+extern "C" void PadPublishTriggerStatus_nid_postfix(int port, std::uint8_t leftEffect, std::uint8_t leftStatus, std::uint8_t rightEffect, std::uint8_t rightStatus) {
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS) return;
+    std::lock_guard lock(stateMutex);
+    auto& slot = slots[port];
+    if (slot.liveTriggerStatusValid && slot.liveTriggerEffects[0] == leftEffect && slot.liveTriggerStatuses[0] == leftStatus &&
+        slot.liveTriggerEffects[1] == rightEffect && slot.liveTriggerStatuses[1] == rightStatus) return;
+    slot.liveTriggerEffects[0] = leftEffect;
+    slot.liveTriggerEffects[1] = rightEffect;
+    slot.liveTriggerStatuses[0] = leftStatus;
+    slot.liveTriggerStatuses[1] = rightStatus;
+    slot.liveTriggerStatusValid = true;
+}
+
+extern "C" void PadClearTriggerStatus_nid_postfix(int port) {
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS) return;
+    std::lock_guard lock(stateMutex);
+    auto& slot = slots[port];
+    slot.liveTriggerEffects.fill(0);
+    slot.liveTriggerStatuses.fill(0);
+    slot.liveTriggerStatusValid = false;
+}
+
+extern "C" void PadGetTriggerEffectState_nid_postfix(int port, std::int32_t* states) {
+    if (states == nullptr || port < 0 || port >= PAD_MAX_CONTROLLERS) return;
+    std::lock_guard lock(stateMutex);
+    auto& slot = slots[port];
+    if (!slot.liveTriggerStatusValid) {
+        states[0] = 0;
+        states[1] = 0;
+        return;
+    }
+    states[0] = triggerState(slot.liveTriggerEffects[0], slot.liveTriggerStatuses[0]);
+    states[1] = triggerState(slot.liveTriggerEffects[1], slot.liveTriggerStatuses[1]);
 }
 
 extern "C" void PadSubmitAudioHapticsForPort_nid_postfix(int port, std::uint8_t large, std::uint8_t small) {
@@ -626,4 +815,40 @@ extern "C" void PadSubmitAudioHaptics_nid_postfix(std::uint8_t large, std::uint8
 
 extern "C" void PadSetPortConnected_nid_postfix(int port, bool connected) {
     Pad::SetConnected(port, connected);
+}
+
+extern "C" void PadSetHapticStreamOpen_nid_postfix(bool open) {
+    {
+        std::lock_guard lock(hapticMutex);
+        haptics.Clear();
+        hapticStreamOpen.store(open);
+    }
+    hapticReady.notify_all();
+}
+
+extern "C" bool PadHapticStreamOpen_nid_postfix() {
+    return hapticStreamOpen.load();
+}
+
+extern "C" void PadSubmitHapticFrames_nid_postfix(const float* left, const float* right, std::size_t stride, std::uint32_t frames, std::uint32_t rate) {
+    if (left == nullptr || right == nullptr || !hapticStreamOpen.load()) return;
+    {
+        std::lock_guard lock(hapticMutex);
+        haptics.Push(left, right, stride, frames, rate, Pad::RumblePercent());
+    }
+    hapticReady.notify_all();
+}
+
+extern "C" bool PadWaitTakeHapticBlock_nid_postfix(std::int8_t* block, std::uint32_t timeoutMs) {
+    if (block == nullptr) return false;
+    std::unique_lock lock(hapticMutex);
+    hapticReady.wait_for(lock, std::chrono::milliseconds(timeoutMs), [] {
+        return !hapticStreamOpen.load() || haptics.Frames() >= PadHapticBuffer::BlockFrames * 2;
+    });
+    if (!hapticStreamOpen.load()) return false;
+    return haptics.Take(std::span<std::int8_t, PadHapticBuffer::BlockFrames * 2>(block, PadHapticBuffer::BlockFrames * 2));
+}
+
+extern "C" bool PadScriptActive_nid_postfix() {
+    return Script() != nullptr;
 }

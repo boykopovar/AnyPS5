@@ -2,6 +2,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
 #include <barrier>
 #include <chrono>
 #include <cstdio>
@@ -152,7 +153,7 @@ static void Conversions() {
         Require(flock_nid_postfix(fixture.other, 1 | 4) == 0);
         Require(flock_nid_postfix(copy, 2 | 4) == -1 && *__error_nid_postfix() == 35);
         Require(flock_nid_postfix(fixture.other, 8) == 0);
-        Require(Acquires(fixture.other, 2));
+        Require(!Acquires(fixture.other, 2) && Acquires(fixture.other, 1));
         Require(flock_nid_postfix(fixture.source, 2 | 4) == 0);
         char byte = 'x';
         Require(sceKernelPwrite(fixture.other, &byte, 1, 0) == 1 && sceKernelWrite(fixture.other, "yz", 2) == 2);
@@ -160,6 +161,48 @@ static void Conversions() {
         Require(flock_nid_postfix(fixture.other, 1 | 4) == -1 && *__error_nid_postfix() == 35);
         Require(flock_nid_postfix(fixture.source, 8) == 0);
     }
+    Fixture fixture;
+    const int third = fixture.Open(false);
+    Require(flock_nid_postfix(fixture.source, 2 | 4) == 0);
+    auto exclusive = std::async(std::launch::async, [&] { return flock_nid_postfix(fixture.other, 2); });
+    Require(exclusive.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout);
+    Require(flock_nid_postfix(fixture.source, 1 | 4) == 0);
+    Require(exclusive.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout);
+    Require(Acquires(third, 1) && !Acquires(third, 2));
+    Require(flock_nid_postfix(fixture.source, 8) == 0);
+    Require(exclusive.wait_for(std::chrono::seconds(2)) == std::future_status::ready && exclusive.get() == 0);
+    Require(flock_nid_postfix(fixture.other, 1 | 4) == 0 && flock_nid_postfix(fixture.source, 1 | 4) == 0);
+    auto upgrade = std::async(std::launch::async, [&] { return flock_nid_postfix(fixture.source, 2); });
+    Require(upgrade.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout);
+    Require(Acquires(third, 1) && !Acquires(third, 2));
+    Require(flock_nid_postfix(fixture.other, 8) == 0);
+    Require(upgrade.wait_for(std::chrono::seconds(2)) == std::future_status::ready && upgrade.get() == 0);
+    Require(!Acquires(third, 1));
+    Require(flock_nid_postfix(fixture.source, 1 | 4) == 0);
+    std::atomic<bool> stop = false;
+    auto rival = std::async(std::launch::async, [&] {
+        int taken = 0;
+        while (!stop) {
+            if (Acquires(third, 2)) ++taken;
+        }
+        return taken;
+    });
+    for (int repeat = 0; repeat != 2000; ++repeat) {
+        Require(flock_nid_postfix(fixture.source, 2 | 4) == 0);
+        Require(flock_nid_postfix(fixture.source, 1 | 4) == 0);
+    }
+    stop = true;
+    Require(rival.get() == 0);
+    Require(flock_nid_postfix(fixture.source, 8) == 0 && Acquires(third, 2));
+    Require(flock_nid_postfix(fixture.source, 1 | 4) == 0);
+    auto waiter = std::async(std::launch::async, [&] { return flock_nid_postfix(fixture.other, 2); });
+    Require(waiter.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout);
+    Require(flock_nid_postfix(fixture.source, 2 | 4) == -1 && *__error_nid_postfix() == 35);
+    Require(Acquires(third, 1) && !Acquires(third, 2));
+    Require(waiter.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout);
+    Require(flock_nid_postfix(fixture.source, 8) == 0);
+    Require(waiter.wait_for(std::chrono::seconds(2)) == std::future_status::ready && waiter.get() == 0);
+    Require(flock_nid_postfix(fixture.other, 8) == 0);
 }
 
 static void Threads() {

@@ -3,6 +3,7 @@
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
+#include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -29,6 +30,7 @@ public:
     void Bind(std::size_t slot, VkImage image, std::uint32_t width, std::uint32_t height, std::uint64_t pixelFormat, float whiteNits, std::uint32_t layer = 0);
     void BindTexels(std::size_t slot, VkCommandBuffer commands, std::span<const std::byte> texels, std::uint32_t width, std::uint32_t height, std::uint64_t pixelFormat, float whiteNits);
     void RecordPresent(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout);
+    void RecordStage(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout);
     void RecordOverlay(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout);
     void RecordDump(VkCommandBuffer commands, std::size_t slot, std::uint32_t stride, VkBuffer destination);
     void RecordDumpImage(VkCommandBuffer commands, std::size_t slot, std::uint32_t stride);
@@ -38,6 +40,7 @@ public:
     void Release(std::size_t slot) noexcept;
     static bool TenBitFormat(VkFormat format);
     static VkExtent2D DumpExtent(std::uint32_t width, std::uint32_t height, std::uint32_t stride);
+    static VkSubpassDependency ExitDependency(VkImageLayout finalLayout);
 
 private:
     struct Target {
@@ -72,6 +75,7 @@ private:
     void ensureUploadImage(Slot& slot, VkExtent2D extent);
     void releaseUploadImage(Slot& slot) noexcept;
     void draw(VkCommandBuffer commands, const Slot& slot, const Target& target, VkFramebuffer framebuffer, VkExtent2D extent, VkRect2D scissor, const std::int32_t (&parameters)[9]) const;
+    void recordInto(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout, const AspectFitRect& rect);
     void release() noexcept;
 
     Graphics::Context context;

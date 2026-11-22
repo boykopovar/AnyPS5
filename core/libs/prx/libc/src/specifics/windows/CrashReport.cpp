@@ -4,9 +4,11 @@
 #include "prx/libc/include/CallTrace.hpp"
 #include "prx/libc/include/FailureReport.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/HostFault.hpp"
 #include "prx/libc/include/LogFile.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/CrashText.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -158,6 +160,7 @@ void InstallWatch() {
         g_watchAddress = std::strtoull(absolute, nullptr, 16);
         const auto page = g_watchAddress & ~static_cast<std::uintptr_t>(0xfff);
         CreateThread(nullptr, 0, [](void* parameter) -> DWORD {
+            Libc::SetHostMxcsr();
             const auto page = reinterpret_cast<std::uintptr_t>(parameter);
             for (;;) {
                 MEMORY_BASIC_INFORMATION memory{};
@@ -335,6 +338,13 @@ void ReportUndeliverableException(const EXCEPTION_POINTERS* info, std::uint64_t 
     ReportStackCandidates(info->ContextRecord->Rsp, 32, 0x4000);
 }
 
+std::atomic<LibcHostFaultHandler> g_hostFaultHandler{nullptr};
+
+bool HandleHostFault(EXCEPTION_POINTERS* info) {
+    const auto handler = g_hostFaultHandler.load(std::memory_order_acquire);
+    return handler != nullptr && handler(info);
+}
+
 bool HandleSse4a(EXCEPTION_POINTERS* info) {
     if (!g_sse4aEmulation) return false;
     const auto* record = info->ExceptionRecord;
@@ -358,7 +368,9 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 1 && GuestArena::GuestArenaHandleWrite_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
     if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 0 && GuestArena::GuestArenaHandleRead_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleWatch(info)) return EXCEPTION_CONTINUE_EXECUTION;
+    if (GuestArena::GuestArenaRecoverWrite_nid_no_patch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleSse4a(info)) return EXCEPTION_CONTINUE_EXECUTION;
+    if (HandleHostFault(info)) return EXCEPTION_CONTINUE_EXECUTION;
     const auto* record = info->ExceptionRecord;
     if ((record->ExceptionCode & GccExceptionMask) == GccException) {
         if (const auto frame = FrameWithoutUnwindData(*info->ContextRecord)) ReportUndeliverableException(info, frame);
@@ -386,6 +398,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
         char hex[3 * sizeof(bytes) + 1] = "";
         for (std::size_t i = 0; i < available; ++i) std::snprintf(hex + 3 * i, sizeof(hex) - 3 * i, "%02x ", bytes[i]);
         Report("  bytes %s(sse4a emulation %s, %llu emulated so far)\n", hex, g_sse4aEmulation ? "on" : "off", g_sse4aEmulated.load());
+        if (const char* name = crash_text::AmdOnlyInstruction(bytes, available)) Report("  %s is an AMD-only instruction this CPU lacks: relink with --to-intel, which converts the executable and its modules but not code generated at run time\n", name);
     }
     if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2) {
         const char* kind = record->ExceptionInformation[0] == 0 ? "read" : record->ExceptionInformation[0] == 1 ? "write" : "execute";
@@ -616,6 +629,7 @@ void ReportAllThreads() {
 }
 
 DWORD WINAPI HangWatchdog(LPVOID param) {
+    Libc::SetHostMxcsr();
     const auto seconds = static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(param));
     Sleep(static_cast<DWORD>(seconds * 1000ull));
     Report("\nFATAL: timed dump after %llu s (APS5_HANG_DUMP_SECS); aborting\n", seconds);
@@ -692,5 +706,9 @@ const bool g_crashReportInstalled = [] {
     return true;
 }();
 
+}
+
+extern "C" void LibcSetHostFaultHandler_nid_no_patch(LibcHostFaultHandler handler) noexcept {
+    g_hostFaultHandler.store(handler, std::memory_order_release);
 }
 #endif

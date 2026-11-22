@@ -422,6 +422,7 @@ WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix5scale
 
 WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix6rotateEd(
     WebCore::TransformationMatrix* self, double a) {
+    if (std::fmod(a, 360.0) == 0.0) return *self;
     return _ZN7WebCore20TransformationMatrix8rotate3dEddd(self, 0.0, 0.0, a);
 }
 
@@ -442,6 +443,13 @@ WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix8multi
         }
     }
     return *self;
+}
+
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix16applyPerspectiveEd(
+    WebCore::TransformationMatrix* self, double perspective) {
+    WebCore::TransformationMatrix mat;
+    if (perspective != 0.0) mat.m_matrix[2][3] = -1.0 / perspective;
+    return _ZN7WebCore20TransformationMatrix8multiplyERKS0_(self, mat);
 }
 
 WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix8rotate3dEddd(

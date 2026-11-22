@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(global_atomic_csub_translation_tests ${LIBS_INCLUDE_DIR}/tests/GlobalAtomicCsubTranslation.cpp)
+    target_link_libraries(global_atomic_csub_translation_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(global_atomic_csub_translation_tests)
+    add_test(NAME global_atomic_csub_translation COMMAND global_atomic_csub_translation_tests)
+    if(WIN32)
+        set_tests_properties(global_atomic_csub_translation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

@@ -1,0 +1,5 @@
+# libc
+
+## change [daemon]
+
+- [daemon](../../../core/libs/prx/libc/src/Process.cpp) (libc) throws: forking into the background is not supported, as guest `fork` throws. An application process is unmeasured. A [PS5 payload process](https://github.com/boykopovar/AnyPS5/issues/13271#issuecomment-6792156826) (firmware 13.590.001) forks, and all four `nochdir`/`noclose` combinations return 0 in a new session with SIGHUP at its default: the working directory is `/` unless `nochdir` is set, and descriptors 0 to 2 point at `/dev/null` unless `noclose` is set. PPSA85300 imports it and fails to load without it. VLC 3.0 calls it only when its `daemon` option is set ([libvlc.c](https://github.com/videolan/vlc/blob/6de05adcbaf2e8b85fe86aad4169393098628119/src/libvlc.c#L190-L197)), and the title starts libVLC with `--ignore-config` and without `--daemon` ([player.cc](https://github.com/ZiZc3/VLC/blob/f3253020a64368153233ede29183014c0b6c8979/src/player.cc#L960-L981))

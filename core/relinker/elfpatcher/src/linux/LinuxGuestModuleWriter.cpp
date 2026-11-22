@@ -6,6 +6,7 @@
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <span>
 
 namespace Elfpatcher {
@@ -24,8 +25,19 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         if (header.Type == 7) header.Alignment = std::max<std::uint64_t>(header.Alignment, 1);
         headers.push_back(header);
     }
-    if (std::none_of(headers.begin(), headers.end(), [&](const auto& header) { return header.Type == PT_GNU_STACK; }))
+    const auto lastStack = std::find_if(headers.rbegin(), headers.rend(), [](const auto& header) { return header.Type == PT_GNU_STACK; });
+    if (lastStack == headers.rend()) {
         headers.push_back({PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0, 0, 16});
+    } else {
+        auto lastIndex = static_cast<std::size_t>(std::distance(lastStack, headers.rend()) - 1);
+        for (std::size_t i = 0; i < lastIndex; ++i) {
+            if (headers[i].Type == PT_GNU_STACK) {
+                headers.erase(headers.begin() + static_cast<std::ptrdiff_t>(i));
+                --i;
+                --lastIndex;
+            }
+        }
+    }
     std::vector<Domain::ProgramHeader> loads;
     for (const auto& header : headers)
         if (header.Type == 1) loads.push_back(header);
@@ -74,6 +86,33 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         bytes.push_back(0xe9);
         Io::AppendU32(bytes, static_cast<std::uint32_t>(-static_cast<std::int32_t>(thunk + 5)));
         Io::WriteU64(symbols, index * 24 + 8, thunk);
+    }
+    if (!image.BindingAliases.empty()) {
+        if (symbols.size() % 24 != 0) throw Domain::RelinkerException("Invalid guest symbol table for binding aliases");
+        const auto originalCount = symbols.size() / 24;
+        std::set<std::string> names;
+        for (std::size_t index = 0; index < originalCount; ++index) {
+            const auto offset = Io::ReadU32(symbols, index * 24);
+            if (offset >= strings.size()) throw Domain::RelinkerException("Invalid guest binding alias string offset");
+            const auto start = strings.begin() + offset;
+            const auto end = std::find(start, strings.end(), 0);
+            if (end == strings.end()) throw Domain::RelinkerException("Unterminated guest binding alias string");
+            if (Io::ReadU16(symbols, index * 24 + 6) != 0) names.emplace(start, end);
+        }
+        for (const auto& [index, name] : image.BindingAliases) {
+            if (index == 0 || index >= originalCount) throw Domain::RelinkerException("Invalid guest binding alias symbol index");
+            const auto offset = index * 24;
+            const auto visibility = symbols[offset + 5] & 3;
+            if (Io::ReadU16(symbols, offset + 6) == 0 || (symbols[offset + 4] >> 4) == 0 || visibility == 1 || visibility == 2)
+                throw Domain::RelinkerException("Guest binding alias requires an exported definition");
+            if (name.empty() || name.find('\0') != std::string::npos || !names.insert(name).second)
+                throw Domain::RelinkerException("Duplicate or empty guest binding alias: " + name);
+            if (symbols.size() / 24 >= std::numeric_limits<std::uint32_t>::max()) throw Domain::RelinkerException("Guest binding alias symbol table too large");
+            const std::vector<std::uint8_t> symbol(symbols.begin() + offset, symbols.begin() + offset + 24);
+            const auto entry = symbols.size();
+            symbols.insert(symbols.end(), symbol.begin(), symbol.end());
+            Io::WriteU32(symbols, entry, addString(name));
+        }
     }
     std::vector<std::uint64_t> needed;
     for (const auto& dependency : dependencies) needed.push_back(addString(dependency));
@@ -321,6 +360,46 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     const auto phCount = headers.size() + 2;
     if (phCount > std::numeric_limits<std::uint16_t>::max()) throw Domain::RelinkerException("Too many guest program headers");
     const auto extraSize = bytes.size() + phCount * 56 - extraOffset;
+    const auto sources = headers;
+    std::vector<std::size_t> order;
+    for (std::size_t index = 0; index < headers.size(); ++index)
+        if (headers[index].Type == 1) order.push_back(index);
+    std::vector<std::vector<std::uint8_t>> prefixes(headers.size());
+    std::vector<bool> moved(headers.size(), false);
+    auto cursor = static_cast<std::uint64_t>(bytes.size() + phCount * 56);
+    for (std::size_t position = 0; position < order.size(); ++position) {
+        auto& load = headers[order[position]];
+        const auto prefix = load.MappedAddress % kDefaultLoadAlignment;
+        const bool congruent = load.Offset % kDefaultLoadAlignment == prefix;
+        if (congruent && prefix == 0) continue;
+        const auto pageStart = load.MappedAddress - prefix;
+        std::vector<std::uint8_t> page(static_cast<std::size_t>(prefix), 0);
+        std::vector<bool> covered(static_cast<std::size_t>(prefix), false);
+        bool sharesMoved = false;
+        for (std::size_t below = 0; below < position; ++below) {
+            const auto& other = sources[order[below]];
+            const auto start = std::max(other.MappedAddress, pageStart);
+            const auto end = std::min(other.MappedAddress + other.MemorySize, load.MappedAddress);
+            if (start < end && moved[order[below]]) sharesMoved = true;
+            for (auto address = start; address < end; ++address) {
+                const auto relative = address - other.MappedAddress;
+                covered[static_cast<std::size_t>(address - pageStart)] = true;
+                page[static_cast<std::size_t>(address - pageStart)] = relative < other.FileSize ? bytes[static_cast<std::size_t>(other.Offset + relative)] : 0;
+            }
+        }
+        const auto mapped = load.Offset - prefix;
+        bool differs = !congruent;
+        for (std::size_t index = 0; index < page.size() && !differs && sharesMoved; ++index)
+            differs = covered[index] && bytes[static_cast<std::size_t>(mapped) + index] != page[index];
+        if (!differs) continue;
+        if (load.Alignment > kDefaultLoadAlignment)
+            throw Domain::RelinkerException("Guest PT_LOAD sharing a page with a moved load is aligned above the page", load.MappedAddress);
+        cursor = Io::AlignUp64(cursor, kDefaultLoadAlignment) + prefix;
+        load.Offset = cursor;
+        cursor += load.FileSize;
+        prefixes[order[position]] = std::move(page);
+        moved[order[position]] = true;
+    }
     headers.push_back({1, 7, extraOffset, extraAddress, extraAddress, extraSize, extraSize, 0x4000});
     headers.push_back({2, 6, dynamicOffset, dynamicAddress, dynamicAddress, dynamicSize, dynamicSize, 8});
     for (const auto& header : headers) {
@@ -332,6 +411,14 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         Io::AppendU64(bytes, header.FileSize);
         Io::AppendU64(bytes, header.MemorySize);
         Io::AppendU64(bytes, header.Alignment);
+    }
+    for (const auto index : order) {
+        if (!moved[index]) continue;
+        Io::AlignBuffer(bytes, static_cast<std::size_t>(kDefaultLoadAlignment));
+        bytes.insert(bytes.end(), prefixes[index].begin(), prefixes[index].end());
+        const auto offset = bytes.size();
+        bytes.resize(offset + static_cast<std::size_t>(sources[index].FileSize));
+        std::copy_n(bytes.begin() + static_cast<std::ptrdiff_t>(sources[index].Offset), static_cast<std::size_t>(sources[index].FileSize), bytes.begin() + static_cast<std::ptrdiff_t>(offset));
     }
     std::fill_n(bytes.begin() + 7, 9, std::uint8_t{0});
     Io::WriteU16(bytes, 16, 3);

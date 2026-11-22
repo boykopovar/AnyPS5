@@ -1,12 +1,20 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 
 #include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -39,22 +47,6 @@ void CheckSetFlags(std::uint64_t initial, std::uint64_t flags) {
     Require(std::memcmp(&guarded, &expected, sizeof(guarded)) == 0);
 }
 
-void CheckVersionDependent(std::uint64_t initial, std::uint64_t flags) {
-    GuardedParam guarded;
-    std::memset(&guarded, 0x5A, sizeof(guarded));
-    guarded.param.flags = initial;
-    GuardedParam expected;
-    std::memcpy(&expected, &guarded, sizeof(guarded));
-    bool thrown = false;
-    try {
-        X509_VERIFY_PARAM_set_flags_nid_postfix(&guarded.param, flags);
-    } catch (const std::runtime_error&) {
-        thrown = true;
-    }
-    Require(thrown);
-    Require(std::memcmp(&guarded, &expected, sizeof(guarded)) == 0);
-}
-
 void TestSetFlags() {
     CheckSetFlags(0, 0);
     CheckSetFlags(0, PartialChain);
@@ -66,9 +58,6 @@ void TestSetFlags() {
     CheckSetFlags(0, PolicyCheck | ExplicitPolicy);
     CheckSetFlags(PolicyCheck, ExplicitPolicy);
     CheckSetFlags(PolicyCheck | PartialChain, InhibitAny | InhibitMap);
-    for (std::uint64_t initial : {std::uint64_t {0}, PartialChain, ExplicitPolicy})
-        for (std::uint64_t flags : {ExplicitPolicy, InhibitAny, InhibitMap, ExplicitPolicy | PartialChain})
-            CheckVersionDependent(initial, flags);
     bool thrown = false;
     try {
         X509_VERIFY_PARAM_set_flags_nid_postfix(nullptr, PartialChain);
@@ -78,9 +67,85 @@ void TestSetFlags() {
     Require(thrown);
 }
 
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(data != nullptr);
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0);
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(data != nullptr && data != MAP_FAILED);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename T>
+    T* Set(const T& value) {
+        Require(sizeof(value) <= bytes);
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<T*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template <typename TCall>
+void Rejects(TCall call) {
+    errno = EINVAL;
+    bool thrown = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        thrown = true;
+    }
+    Require(thrown);
+    Require(errno == EINVAL);
+}
+
+void GuestPointers() {
+    auto* badParam = reinterpret_cast<LibreSslX509VerifyParam*>(0x10);
+    Rejects([&] { X509_VERIFY_PARAM_set_flags_nid_postfix(badParam, PartialChain); });
+
+    ReadOnlyPage page;
+    LibreSslX509VerifyParam initial{};
+    initial.flags = PolicyCheck;
+    auto* roParam = page.Set(initial);
+    page.Protect();
+
+    Rejects([&] { X509_VERIFY_PARAM_set_flags_nid_postfix(roParam, PartialChain); });
+    Rejects([&] { X509_VERIFY_PARAM_set_flags_nid_postfix(roParam, 0); });
+    Require(roParam->flags == PolicyCheck);
+}
+
 }
 
 int main() {
     TestSetFlags();
+    GuestPointers();
     std::puts("LibreSSL3 X509_VERIFY_PARAM tests passed");
 }

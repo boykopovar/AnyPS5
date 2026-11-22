@@ -13,4 +13,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_opus_silk_enc PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceOpusSilkEnc>")
     endif()
+    add_test_executable(guest_opus_silk_enc_check_order_tests ${LIBS_INCLUDE_DIR}/tests/GuestOpusSilkEncCheckOrder.cpp)
+    target_include_directories(guest_opus_silk_enc_check_order_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_opus_silk_enc_check_order_tests PRIVATE libSceOpusSilkEnc libc opus)
+    configure_windows_unwind(guest_opus_silk_enc_check_order_tests)
+    add_test(NAME guest_opus_silk_enc_check_order COMMAND guest_opus_silk_enc_check_order_tests)
+    if(WIN32)
+        set_tests_properties(guest_opus_silk_enc_check_order PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceOpusSilkEnc>")
+    endif()
 endif()

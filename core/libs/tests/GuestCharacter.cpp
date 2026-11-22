@@ -59,6 +59,7 @@ int main() {
         result = setlocale_nid_postfix(category, "");
         Require(result != nullptr && std::strcmp(result, "C") == 0);
         Require(setlocale_nid_postfix(category, "en_US.UTF-8") == nullptr);
+        Require(setlocale_nid_postfix(category, reinterpret_cast<const char*>(0x10)) == nullptr);
     }
     for (const int category : std::array<int, 4>{-1, 7, 100, 1 << 30}) {
         const char* result = setlocale_nid_postfix(category, "C");

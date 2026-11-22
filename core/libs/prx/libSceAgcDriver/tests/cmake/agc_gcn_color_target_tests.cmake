@@ -1,0 +1,15 @@
+add_test_executable(agc_gcn_color_target_tests EXCLUDE_FROM_ALL tests/GcnColorTarget.cpp)
+target_include_directories(agc_gcn_color_target_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR} ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR})
+target_link_libraries(agc_gcn_color_target_tests PRIVATE libSceAgcDriver libkernel libc)
+set_target_properties(agc_gcn_color_target_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_gcn_color_target_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_gcn_color_target_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_gcn_color_target COMMAND agc_gcn_color_target_tests)
+    set_tests_properties(agc_gcn_color_target PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_gcn_color_target PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

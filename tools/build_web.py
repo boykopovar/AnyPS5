@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.request
 import zipfile
 
@@ -60,9 +61,13 @@ def release_web_files(revision):
 
 def copy_sources(output):
     source = ROOT / "demo/web"
-    for file in source.iterdir():
-        if file.is_file():
-            shutil.copy2(file, output / file.name)
+    files = [file for file in source.iterdir() if file.is_file()]
+    names = {file.name for file in files}
+    for file in output.iterdir():
+        if file.name not in names and not file.is_dir():
+            file.unlink()
+    for file in files:
+        shutil.copy2(file, output / file.name)
     (output / ".nojekyll").touch()
 
 
@@ -158,13 +163,20 @@ def publish_libraries(output, release=None):
                     raise ValueError("Library ZIP links and special files are not supported")
                 names = {}
                 for file in files:
+                    parts = file.filename.removesuffix("/").split("/")
                     if (file.orig_filename != file.filename or not file.filename.startswith("libs/")
-                            or any(part in ("..", ".", "") for part in file.filename.rstrip("/").split("/")) or "\\" in file.filename):
+                            or any(ord(char) < 32 or char in '\\<>:"|?*' for char in file.filename)
+                            or any(part in ("..", ".", "") or part.endswith((".", " "))
+                                   or re.match(r"(?:con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)", part, re.IGNORECASE)
+                                   for part in parts)):
                         raise ValueError("Invalid library archive layout")
                     name = file.filename.rstrip("/").lower()
                     if name in names:
                         raise ValueError(f"Duplicate library archive path: {file.filename}")
                     names[name] = file.is_dir()
+                runtimes = [file for file in files if not file.is_dir() and file.filename.lower().endswith(".prx")]
+                if not runtimes or any(file.file_size == 0 for file in runtimes):
+                    raise ValueError("Library archive must contain nonempty runtime modules")
                 for name in names:
                     parts = name.split("/")
                     if any(names.get("/".join(parts[:index])) is False for index in range(1, len(parts))):
@@ -184,6 +196,17 @@ def publish_libraries(output, release=None):
             temporary.unlink(missing_ok=True)
     (output / "release.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"Published library assets from {tag}")
+
+
+def rename(source, target):
+    deadline = time.monotonic() + 1
+    while True:
+        try:
+            return source.rename(target)
+        except PermissionError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.05)
 
 
 def publish_release(output):
@@ -246,13 +269,13 @@ def publish_release(output):
         (staging / "release.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         (staging / ".nojekyll").touch()
         if output.exists():
-            output.rename(previous)
+            rename(output, previous)
         try:
-            staging.rename(output)
+            rename(staging, output)
         except OSError:
             if previous.exists():
                 try:
-                    previous.rename(output)
+                    rename(previous, output)
                 except OSError as error:
                     raise RuntimeError(f"Could not restore release output. Previous site is preserved at {previous}") from error
             raise
@@ -274,7 +297,7 @@ def main(argv=None):
     parser.add_argument("--release", "--libraries", dest="release", action="store_true",
                         help="Download the matching converter and libraries from the latest release")
     args = parser.parse_args(argv)
-    output = args.build.resolve() / "web"
+    output = Path(os.path.realpath(args.build)) / "web"
     try:
         if args.release:
             publish_release(output)

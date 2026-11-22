@@ -37,6 +37,8 @@ public:
     void SetScalarMaskTag(ScalarReg reg, IrValue& value);
     IrValue& GetVectorReg(VectorReg reg);
     void SetVectorReg(VectorReg reg, IrValue& value);
+    void SetVectorWindowActive(bool active) { vectorWindowActive = active; }
+    void SyncVectorWindow(bool toWindow);
     IrValue& GetGotoVariable(std::uint32_t id);
     void SetGotoVariable(std::uint32_t id, IrValue& value);
     IrValue& GetScc();
@@ -91,6 +93,7 @@ private:
     IrValue* vectorWindowIndex(VectorReg reg);
     IrProgram& program;
     IrBlock* insertionPoint;
+    bool vectorWindowActive = true;
 };
 
 }

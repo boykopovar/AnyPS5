@@ -124,6 +124,7 @@ int main(int argc, char** argv) {
     for (int invalid : {-1, 3, INT_MIN, INT_MAX}) {
         RequireFailure(invalid, &valid, 22, "an unknown timer did not report EINVAL");
         RequireFailure(invalid, nullptr, 22, "an unknown timer read did not report EINVAL");
+        RequireFailure(invalid, reinterpret_cast<const GuestItimerval*>(std::uintptr_t{0x10}), 14, "an unreadable value was not copied in before the timer was checked");
         *__error_nid_postfix() = 0;
         Require(setitimer_nid_postfix(invalid, nullptr, nullptr) == -1 && *__error_nid_postfix() == 22, "EINVAL is not checked before EFAULT");
     }

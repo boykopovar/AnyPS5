@@ -1,4 +1,5 @@
 #include "prx/libSceFont/libSceFont.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -129,6 +130,9 @@ static void CreateValidation() {
     Require(sceFontCreateWords(&badMemory, &source, 0, &words) == SCE_FONT_ERROR_INVALID_MEMORY && words == nullptr);
     Require(sceFontCreateWords(&fixture.memory, nullptr, 0, &words) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontCreateWords(&fixture.memory, &source, 0, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontCreateWords(&fixture.memory, &source, 0, reinterpret_cast<FontWords**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     FontTextSource noParser = source;
     noParser.textParser = nullptr;
     words = reinterpret_cast<FontWords*>(1);
@@ -204,6 +208,11 @@ static void FindValidation() {
     next = chars[0];
     Require(sceFontWordsFindWordCharacters(words, nullptr, nullptr, &last, &next) == SCE_FONT_ERROR_INVALID_PARAMETER && next == nullptr);
     Require(sceFontWordsFindWordCharacters(words, chars[0], nullptr, nullptr, &next) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontWordsFindWordCharacters(words, chars[0], nullptr, reinterpret_cast<FontTextCharacter**>(0x10), &next) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    Require(sceFontWordsFindWordCharacters(words, chars[0], nullptr, &last, reinterpret_cast<FontTextCharacter**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     std::uint64_t garbage[8]{};
     last = chars[0];
     Require(sceFontWordsFindWordCharacters(reinterpret_cast<FontWords*>(garbage), chars[0], nullptr, &last, nullptr) == SCE_FONT_ERROR_INVALID_WORDS && last == nullptr);
@@ -304,6 +313,43 @@ static void DepthLimit() {
     Require(sceFontDestroyWords(&words) == SCE_FONT_OK);
 }
 
+static void CharacterQueries() {
+    Characters text("a b");
+    auto* font = reinterpret_cast<FontHandle>(static_cast<std::uintptr_t>(0x1230));
+    int order = 0;
+    text[0]->font = font;
+    text[0]->textOrder = &order;
+    text[0]->flags = (std::uint64_t{3} << 24) | (std::uint64_t{1} << 42);
+    text[1]->flags = std::uint64_t{0x0E} << 8;
+    FontHandle handle = nullptr;
+    std::uint32_t code = 7;
+    Require(sceFontCharacterGetTextFontCode(text[0], &handle, &code) == SCE_FONT_OK && handle == font && code == 'a');
+    Require(sceFontCharacterGetTextFontCode(text[0], nullptr, &code) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontCharacterGetTextFontCode(text[0], &handle, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    code = 7;
+    Require(sceFontCharacterGetTextFontCode(nullptr, &handle, &code) == SCE_FONT_ERROR_INVALID_PARAMETER && handle == nullptr && code == 0);
+    int level = -1;
+    Require(sceFontCharacterGetBidiLevel(text[0], &level) == SCE_FONT_OK && level == 3);
+    Require(sceFontCharacterGetBidiLevel(text[1], &level) == SCE_FONT_OK && level == 0);
+    Require(sceFontCharacterGetBidiLevel(nullptr, &level) == SCE_FONT_ERROR_INVALID_PARAMETER && sceFontCharacterGetBidiLevel(text[0], nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = EBUSY;
+    Require(sceFontCharacterGetBidiLevel(text[0], reinterpret_cast<int*>(std::uintptr_t{0x10})) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EBUSY);
+    void* textOrder = nullptr;
+    Require(sceFontCharacterGetTextOrder(text[0], &textOrder) == SCE_FONT_OK && textOrder == &order);
+    Require(sceFontCharacterGetTextOrder(nullptr, &textOrder) == SCE_FONT_ERROR_INVALID_PARAMETER && textOrder == nullptr);
+    Require(sceFontCharacterGetTextOrder(text[0], nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontCharacterLooksWhiteSpace(text[1]) == ' ' && sceFontCharacterLooksWhiteSpace(text[0]) == 0 && sceFontCharacterLooksWhiteSpace(nullptr) == 0);
+    Require(sceFontCharacterLooksFormatCharacters(text[0]) == 'a' && sceFontCharacterLooksFormatCharacters(text[1]) == 0 && sceFontCharacterLooksFormatCharacters(nullptr) == 0);
+    Require(sceFontCharacterRefersTextNext(text[0]) == text[1] && sceFontCharacterRefersTextBack(text[2]) == text[1]);
+    text[1]->clusterIndex = 1;
+    Require(sceFontCharacterRefersTextNext(text[0]) == text[2] && sceFontCharacterRefersTextBack(text[2]) == text[0]);
+    text[1]->clusterIndex = 0;
+    text[1]->synthetic = 1;
+    Require(sceFontCharacterRefersTextNext(text[0]) == text[2] && sceFontCharacterRefersTextBack(text[2]) == text[0]);
+    Require(sceFontCharacterRefersTextNext(text[2]) == nullptr && sceFontCharacterRefersTextBack(text[0]) == nullptr);
+    Require(sceFontCharacterRefersTextNext(nullptr) == nullptr && sceFontCharacterRefersTextBack(nullptr) == nullptr);
+}
+
 int main() {
     CreateValidation();
     CreateFailures();
@@ -313,6 +359,7 @@ int main() {
     Clusters();
     SegmentedRuns();
     DepthLimit();
+    CharacterQueries();
     std::puts("Font words tests passed");
     return 0;
 }

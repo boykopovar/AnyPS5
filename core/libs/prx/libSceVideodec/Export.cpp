@@ -118,12 +118,25 @@ int CopyPicture(const SceVideodec2::OutputInfo& output, const Geometry& geometry
     const auto sourcePitch = static_cast<std::uint64_t>(output.framePitchInBytes);
     const auto* source = static_cast<const std::uint8_t*>(output.frameBuffer);
     auto* destination = static_cast<std::uint8_t*>(frameBuffer->frameBuffer);
-    for (std::uint32_t row = 0; row < geometry.height; ++row)
-        std::memcpy(destination + static_cast<std::uint64_t>(row) * geometry.pitch, source + static_cast<std::uint64_t>(row) * sourcePitch, geometry.width);
+    if (!GuestCopyOutRows_nid_no_patch(destination, geometry.pitch, source, sourcePitch, geometry.width, geometry.height)) return VideodecErrorFrameBufferPointer;
     const auto* sourceChroma = source + sourcePitch * geometry.height;
     auto* destinationChroma = destination + static_cast<std::uint64_t>(geometry.pitch) * geometry.height;
-    for (std::uint32_t row = 0; row < geometry.height / 2; ++row)
-        std::memcpy(destinationChroma + static_cast<std::uint64_t>(row) * geometry.pitch, sourceChroma + static_cast<std::uint64_t>(row) * sourcePitch, geometry.width);
+    if (!GuestCopyOutRows_nid_no_patch(destinationChroma, geometry.pitch, sourceChroma, sourcePitch, geometry.width, geometry.height / 2)) return VideodecErrorFrameBufferPointer;
+    return 0;
+}
+
+int PublishPicture(std::uint64_t handle, const SceVideodec2::OutputInfo& output, const FrameBuffer& frameBuffer, PictureInfo* picture, PictureInfo& localPicture) {
+    SceVideodec2::Internal::PictureHeader header{};
+    if (output.isValid) Videodec2PictureHeader_nid_no_patch(handle, output.frameBuffer, &header);
+    const auto geometry = Measure(output, header);
+    if (output.isValid) {
+        const auto copyError = CopyPicture(output, geometry, &frameBuffer);
+        if (copyError != 0) return copyError;
+    }
+    FillPictureInfo(geometry, output, &localPicture);
+    localPicture.ptsData = header.pts;
+    localPicture.attachedData = header.attached;
+    if (!GuestCopyOut_nid_no_patch(picture, &localPicture, sizeof(localPicture))) return VideodecErrorArgumentPointer;
     return 0;
 }
 
@@ -133,16 +146,28 @@ extern "C" {
 
 int APS5_VABI sceVideodecCreateDecoder(const ConfigInfo* config, const ResourceInfo* resource, Ctrl* ctrl) {
     if (config == nullptr || resource == nullptr || ctrl == nullptr) return VideodecErrorArgumentPointer;
-    if (config->thisSize < sizeof(ConfigInfo) || resource->thisSize < sizeof(ResourceInfo)) return VideodecErrorStructSize;
-    const auto decoderConfig = MapConfig(*config);
+    std::uint64_t configSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&configSize, config, sizeof(configSize))) return VideodecErrorArgumentPointer;
+    std::uint64_t resourceSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&resourceSize, resource, sizeof(resourceSize))) return VideodecErrorArgumentPointer;
+    if (configSize < sizeof(ConfigInfo) || resourceSize < sizeof(ResourceInfo)) return VideodecErrorStructSize;
+    ConfigInfo localConfig{};
+    if (!GuestCopyIn_nid_no_patch(&localConfig, config, sizeof(localConfig))) return VideodecErrorArgumentPointer;
+    ResourceInfo localResource{};
+    if (!GuestCopyIn_nid_no_patch(&localResource, resource, sizeof(localResource))) return VideodecErrorArgumentPointer;
+    Ctrl localCtrl{};
+    localCtrl.thisSize = sizeof(Ctrl);
+    localCtrl.version = 1;
+    localCtrl.handle = nullptr;
+    const auto decoderConfig = MapConfig(localConfig);
     SceVideodec2::DecoderMemoryInfo decoderMemory{};
     decoderMemory.thisSize = sizeof(SceVideodec2::DecoderMemoryInfo);
-    decoderMemory.cpuMemorySize = resource->cpuMemorySize;
-    decoderMemory.cpuMemory = resource->cpuMemory;
-    decoderMemory.cpuGpuMemorySize = resource->cpuGpuMemorySize;
-    decoderMemory.cpuGpuMemory = resource->cpuGpuMemory;
-    decoderMemory.maxFrameBufferSize = resource->maxFrameBufferSize;
-    decoderMemory.frameBufferAlignment = resource->frameBufferAlignment;
+    decoderMemory.cpuMemorySize = localResource.cpuMemorySize;
+    decoderMemory.cpuMemory = localResource.cpuMemory;
+    decoderMemory.cpuGpuMemorySize = localResource.cpuGpuMemorySize;
+    decoderMemory.cpuGpuMemory = localResource.cpuGpuMemory;
+    decoderMemory.maxFrameBufferSize = localResource.maxFrameBufferSize;
+    decoderMemory.frameBufferAlignment = localResource.frameBufferAlignment;
     try {
         sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&decoderConfig, &decoderMemory);
 
@@ -158,52 +183,72 @@ int APS5_VABI sceVideodecCreateDecoder(const ConfigInfo* config, const ResourceI
         std::lock_guard lock(decodersMutex);
         decoders.emplace(decoder, decoder);
     }
-    ctrl->thisSize = sizeof(Ctrl);
-    ctrl->handle = decoder;
-    ctrl->version = 1;
+    localCtrl.handle = decoder;
+    if (!GuestCopyOut_nid_no_patch(ctrl, &localCtrl, sizeof(localCtrl))) {
+        {
+            std::lock_guard lock(decodersMutex);
+            decoders.erase(decoder);
+        }
+        delete decoder;
+        sceVideodec2DeleteDecoder_nid_postfix(handle);
+        return VideodecErrorArgumentPointer;
+    }
     return 0;
 }
 
 int APS5_VABI sceVideodecDecode(Ctrl* ctrl, const SceVideodec2::InputData* input, FrameBuffer* frameBuffer, PictureInfo* picture) {
     if (ctrl == nullptr || input == nullptr || picture == nullptr) return VideodecErrorArgumentPointer;
     if (frameBuffer == nullptr) return VideodecErrorFrameBufferPointer;
-    if (ctrl->thisSize < sizeof(Ctrl)) return VideodecErrorStructSize;
-    if (input->thisSize < sizeof(SceVideodec2::InputData)) return VideodecErrorStructSize;
-    if (picture->thisSize < sizeof(PictureInfo)) return VideodecErrorStructSize;
-    if (frameBuffer->thisSize < sizeof(FrameBuffer)) return VideodecErrorStructSize;
-    auto* decoder = FindDecoder(ctrl->handle);
+    std::uint64_t ctrlSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&ctrlSize, ctrl, sizeof(ctrlSize))) return VideodecErrorArgumentPointer;
+    std::uint64_t inputSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&inputSize, input, sizeof(inputSize))) return VideodecErrorArgumentPointer;
+    std::uint64_t pictureSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&pictureSize, picture, sizeof(pictureSize))) return VideodecErrorArgumentPointer;
+    std::uint64_t frameBufferInfoSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&frameBufferInfoSize, frameBuffer, sizeof(frameBufferInfoSize))) return VideodecErrorFrameBufferPointer;
+    if (ctrlSize < sizeof(Ctrl)) return VideodecErrorStructSize;
+    if (inputSize < sizeof(SceVideodec2::InputData)) return VideodecErrorStructSize;
+    if (pictureSize < sizeof(PictureInfo)) return VideodecErrorStructSize;
+    if (frameBufferInfoSize < sizeof(FrameBuffer)) return VideodecErrorStructSize;
+    Ctrl localCtrl{};
+    if (!GuestCopyIn_nid_no_patch(&localCtrl, ctrl, sizeof(localCtrl))) return VideodecErrorArgumentPointer;
+    SceVideodec2::InputData localInput{};
+    if (!GuestCopyIn_nid_no_patch(&localInput, input, sizeof(localInput))) return VideodecErrorArgumentPointer;
+    PictureInfo localPicture{};
+    if (!GuestCopyIn_nid_no_patch(&localPicture, picture, sizeof(localPicture))) return VideodecErrorArgumentPointer;
+    FrameBuffer localFrameBuffer{};
+    if (!GuestCopyIn_nid_no_patch(&localFrameBuffer, frameBuffer, sizeof(localFrameBuffer))) return VideodecErrorFrameBufferPointer;
+    auto* decoder = FindDecoder(localCtrl.handle);
     if (decoder == nullptr) return VideodecErrorHandle;
-    if (input->auData == nullptr) return VideodecErrorAuPointer;
-    if (input->auSize == 0) return VideodecErrorAuSize;
-    if (frameBuffer->frameBuffer == nullptr) return VideodecErrorFrameBufferPointer;
+    if (localInput.auData == nullptr) return VideodecErrorAuPointer;
+    if (localInput.auSize == 0) return VideodecErrorAuSize;
+    if (localFrameBuffer.frameBuffer == nullptr) return VideodecErrorFrameBufferPointer;
     SceVideodec2::FrameBuffer target{};
     target.thisSize = sizeof(SceVideodec2::FrameBuffer);
     target.frameBuffer = decoder->picture.data();
     target.frameBufferSize = decoder->picture.size();
     SceVideodec2::OutputInfo output{sizeof(SceVideodec2::OutputInfo)};
     try {
-        sceVideodec2Decode_nid_postfix(decoder->handle, input, &target, &output);
+        sceVideodec2Decode_nid_postfix(decoder->handle, &localInput, &target, &output);
 
     } catch (const std::exception&) {
         return VideodecErrorDecodeAu;
     }
-    SceVideodec2::Internal::PictureHeader header{};
-    if (output.isValid) Videodec2PictureHeader_nid_no_patch(decoder->handle, output.frameBuffer, &header);
-    const auto geometry = Measure(output, header);
-    FillPictureInfo(geometry, output, picture);
-    picture->ptsData = header.pts;
-    picture->attachedData = header.attached;
-    if (!output.isValid) return 0;
-    return CopyPicture(output, geometry, frameBuffer);
+    return PublishPicture(decoder->handle, output, localFrameBuffer, picture, localPicture);
 }
 
 int APS5_VABI sceVideodecDeleteDecoder(Ctrl* ctrl) {
     if (ctrl == nullptr) return VideodecErrorArgumentPointer;
-    if (ctrl->thisSize < sizeof(Ctrl)) return VideodecErrorStructSize;
+    std::uint64_t ctrlSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&ctrlSize, ctrl, sizeof(ctrlSize))) return VideodecErrorArgumentPointer;
+    if (ctrlSize < sizeof(Ctrl)) return VideodecErrorStructSize;
+    Ctrl localCtrl{};
+    if (!GuestCopyIn_nid_no_patch(&localCtrl, ctrl, sizeof(localCtrl))) return VideodecErrorArgumentPointer;
     Decoder* decoder = nullptr;
     {
         std::lock_guard lock(decodersMutex);
-        const auto found = decoders.find(ctrl->handle);
+        const auto found = decoders.find(localCtrl.handle);
         if (found == decoders.end()) return VideodecErrorHandle;
         decoder = found->second;
         decoders.erase(found);
@@ -222,12 +267,24 @@ int APS5_VABI sceVideodecDeleteDecoder(Ctrl* ctrl) {
 int APS5_VABI sceVideodecFlush(Ctrl* ctrl, FrameBuffer* frameBuffer, PictureInfo* picture) {
     if (ctrl == nullptr || picture == nullptr) return VideodecErrorArgumentPointer;
     if (frameBuffer == nullptr) return VideodecErrorFrameBufferPointer;
-    if (ctrl->thisSize < sizeof(Ctrl)) return VideodecErrorStructSize;
-    if (picture->thisSize < sizeof(PictureInfo)) return VideodecErrorStructSize;
-    if (frameBuffer->thisSize < sizeof(FrameBuffer)) return VideodecErrorStructSize;
-    auto* decoder = FindDecoder(ctrl->handle);
+    std::uint64_t ctrlSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&ctrlSize, ctrl, sizeof(ctrlSize))) return VideodecErrorArgumentPointer;
+    std::uint64_t pictureSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&pictureSize, picture, sizeof(pictureSize))) return VideodecErrorArgumentPointer;
+    std::uint64_t frameBufferInfoSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&frameBufferInfoSize, frameBuffer, sizeof(frameBufferInfoSize))) return VideodecErrorFrameBufferPointer;
+    if (ctrlSize < sizeof(Ctrl)) return VideodecErrorStructSize;
+    if (pictureSize < sizeof(PictureInfo)) return VideodecErrorStructSize;
+    if (frameBufferInfoSize < sizeof(FrameBuffer)) return VideodecErrorStructSize;
+    Ctrl localCtrl{};
+    if (!GuestCopyIn_nid_no_patch(&localCtrl, ctrl, sizeof(localCtrl))) return VideodecErrorArgumentPointer;
+    PictureInfo localPicture{};
+    if (!GuestCopyIn_nid_no_patch(&localPicture, picture, sizeof(localPicture))) return VideodecErrorArgumentPointer;
+    FrameBuffer localFrameBuffer{};
+    if (!GuestCopyIn_nid_no_patch(&localFrameBuffer, frameBuffer, sizeof(localFrameBuffer))) return VideodecErrorFrameBufferPointer;
+    auto* decoder = FindDecoder(localCtrl.handle);
     if (decoder == nullptr) return VideodecErrorHandle;
-    if (frameBuffer->frameBuffer == nullptr) return VideodecErrorFrameBufferPointer;
+    if (localFrameBuffer.frameBuffer == nullptr) return VideodecErrorFrameBufferPointer;
     SceVideodec2::FrameBuffer target{};
     target.thisSize = sizeof(SceVideodec2::FrameBuffer);
     target.frameBuffer = decoder->picture.data();
@@ -239,20 +296,17 @@ int APS5_VABI sceVideodecFlush(Ctrl* ctrl, FrameBuffer* frameBuffer, PictureInfo
     } catch (const std::exception&) {
         return VideodecErrorDecodeAu;
     }
-    SceVideodec2::Internal::PictureHeader header{};
-    if (output.isValid) Videodec2PictureHeader_nid_no_patch(decoder->handle, output.frameBuffer, &header);
-    const auto geometry = Measure(output, header);
-    FillPictureInfo(geometry, output, picture);
-    picture->ptsData = header.pts;
-    picture->attachedData = header.attached;
-    if (!output.isValid) return 0;
-    return CopyPicture(output, geometry, frameBuffer);
+    return PublishPicture(decoder->handle, output, localFrameBuffer, picture, localPicture);
 }
 
 int APS5_VABI sceVideodecReset(Ctrl* ctrl) {
     if (ctrl == nullptr) return VideodecErrorArgumentPointer;
-    if (ctrl->thisSize < sizeof(Ctrl)) return VideodecErrorStructSize;
-    auto* decoder = FindDecoder(ctrl->handle);
+    std::uint64_t ctrlSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&ctrlSize, ctrl, sizeof(ctrlSize))) return VideodecErrorArgumentPointer;
+    if (ctrlSize < sizeof(Ctrl)) return VideodecErrorStructSize;
+    Ctrl localCtrl{};
+    if (!GuestCopyIn_nid_no_patch(&localCtrl, ctrl, sizeof(localCtrl))) return VideodecErrorArgumentPointer;
+    auto* decoder = FindDecoder(localCtrl.handle);
     if (decoder == nullptr) return VideodecErrorHandle;
     try {
         sceVideodec2Reset_nid_postfix(decoder->handle);
@@ -262,15 +316,42 @@ int APS5_VABI sceVideodecReset(Ctrl* ctrl) {
     }
     return 0;
 }
-int APS5_VABI sceVideodecMapMemory(void) {
+int APS5_VABI sceVideodecMapMemory(Ctrl* ctrl, const void* memory) {
+    if (ctrl == nullptr || memory == nullptr) return VideodecErrorArgumentPointer;
+    std::uint64_t ctrlSize = 0;
+    if (GuestCopyIn_nid_no_patch(&ctrlSize, ctrl, sizeof(ctrlSize))) {
+        if (ctrlSize != sizeof(Ctrl)) return VideodecErrorStructSize;
+        std::uint64_t memorySize = 0;
+        if (GuestCopyIn_nid_no_patch(&memorySize, memory, sizeof(memorySize))) {
+            if (memorySize != 0x20 && memorySize != 0x28 && memorySize != 0x48) return VideodecErrorStructSize;
+            void* handle = nullptr;
+            if (GuestCopyIn_nid_no_patch(&handle, &ctrl->handle, sizeof(handle))) {
+                if (handle == nullptr) return VideodecErrorHandle;
+                unsigned char fields[0x1c]{};
+                if (memorySize != 0x20 && GuestCopyIn_nid_no_patch(fields, static_cast<const unsigned char*>(memory) + 0x8, sizeof(fields))) {
+                    std::uint32_t flags = 0;
+                    std::memcpy(&flags, fields + 0x18, sizeof(flags));
+                    if (flags != 0) return VideodecErrorApiFail;
+                }
+            }
+        }
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceVideodecQueryResourceInfo(const ConfigInfo* config, ResourceInfo* resource) {
     if (config == nullptr || resource == nullptr) return VideodecErrorArgumentPointer;
-    if (config->thisSize < sizeof(ConfigInfo) || resource->thisSize < sizeof(ResourceInfo)) return VideodecErrorStructSize;
-    const auto decoderConfig = MapConfig(*config);
+    std::uint64_t configSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&configSize, config, sizeof(configSize))) return VideodecErrorArgumentPointer;
+    std::uint64_t resourceSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&resourceSize, resource, sizeof(resourceSize))) return VideodecErrorArgumentPointer;
+    if (configSize < sizeof(ConfigInfo) || resourceSize < sizeof(ResourceInfo)) return VideodecErrorStructSize;
+    ConfigInfo localConfig{};
+    if (!GuestCopyIn_nid_no_patch(&localConfig, config, sizeof(localConfig))) return VideodecErrorArgumentPointer;
+    ResourceInfo localResource{};
+    if (!GuestCopyIn_nid_no_patch(&localResource, resource, sizeof(localResource))) return VideodecErrorArgumentPointer;
+    const auto decoderConfig = MapConfig(localConfig);
     SceVideodec2::DecoderMemoryInfo decoderMemory{};
     decoderMemory.thisSize = sizeof(SceVideodec2::DecoderMemoryInfo);
     try {
@@ -279,10 +360,13 @@ int APS5_VABI sceVideodecQueryResourceInfo(const ConfigInfo* config, ResourceInf
     } catch (const std::exception&) {
         return VideodecErrorConfigInfo;
     }
-    resource->cpuMemorySize = decoderMemory.cpuMemorySize;
-    resource->cpuGpuMemorySize = decoderMemory.cpuGpuMemorySize;
-    resource->maxFrameBufferSize = decoderMemory.maxFrameBufferSize;
-    resource->frameBufferAlignment = decoderMemory.frameBufferAlignment;
+    localResource.cpuMemorySize = decoderMemory.cpuMemorySize;
+    localResource.cpuGpuMemorySize = decoderMemory.cpuGpuMemorySize;
+    localResource.maxFrameBufferSize = decoderMemory.maxFrameBufferSize;
+    localResource.frameBufferAlignment = decoderMemory.frameBufferAlignment;
+    if (!GuestCopyOut_nid_no_patch(resource, &localResource, sizeof(localResource))) {
+        return VideodecErrorArgumentPointer;
+    }
     return 0;
 }
 

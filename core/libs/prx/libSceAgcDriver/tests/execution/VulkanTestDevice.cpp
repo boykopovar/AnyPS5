@@ -1,4 +1,10 @@
 #include "VulkanTestDevice.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -20,6 +26,20 @@ void SetVariable(const char* name, const char* value) {
 void Require(const bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
+
+#ifdef _WIN32
+bool HighIntegrity() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    alignas(TOKEN_MANDATORY_LABEL) unsigned char label[sizeof(TOKEN_MANDATORY_LABEL) + SECURITY_MAX_SID_SIZE];
+    DWORD size = 0;
+    const bool queried = GetTokenInformation(token, TokenIntegrityLevel, label, sizeof(label), &size) != FALSE;
+    CloseHandle(token);
+    if (!queried) return false;
+    const PSID sid = reinterpret_cast<const TOKEN_MANDATORY_LABEL*>(label)->Label.Sid;
+    return *GetSidSubAuthority(sid, *GetSidSubAuthorityCount(sid) - 1u) >= SECURITY_MANDATORY_HIGH_RID;
+}
+#endif
 
 Outcome Open(std::string& message) {
     message.clear();
@@ -61,6 +81,12 @@ int NoDriverTests() {
     SetVariable("ANYPS5_GPU", "");
     std::string message;
     const auto optional = Open(message);
+#ifdef _WIN32
+    if (optional == Outcome::Device && HighIntegrity()) {
+        std::cout << "skipped, the Vulkan loader ignores VK_DRIVER_FILES in an elevated process and opened " << message << '\n';
+        return VulkanTestSkipped;
+    }
+#endif
     Require(optional == Outcome::Skipped, "without a Vulkan driver the optional device was not skipped: " + message);
 
     SetVariable("ANYPS5_REQUIRE_VULKAN", "1");

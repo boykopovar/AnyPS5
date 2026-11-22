@@ -11,7 +11,10 @@ int APS5_VABI sceNpTrophy2CreateHandle(int* handle) {
     if (handle == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    *handle = NP_TROPHY2_HANDLE_DEFAULT;
+    const int created = NP_TROPHY2_HANDLE_DEFAULT;
+    if (!GuestCopyOut_nid_no_patch(handle, &created, sizeof(created))) {
+        APS5_INVALID_ARG_EX;
+    }
     return SCE_NP_TROPHY2_OK;
 }
 

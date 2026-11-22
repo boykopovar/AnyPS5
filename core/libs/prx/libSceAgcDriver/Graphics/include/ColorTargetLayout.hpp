@@ -25,11 +25,16 @@ enum class ColorTileMode : std::uint32_t {
     GcnThin1D = 0x100,
     GcnDisplay1D = 0x101,
     GcnDisplay2D = 0x102,
-    GcnThin2D = 0x103
+    GcnThin2D = 0x103,
+    GcnLinear = 0x104
 };
 
 constexpr bool ColorTileModeIsGcn(ColorTileMode mode) {
-    return mode == ColorTileMode::GcnThin1D || mode == ColorTileMode::GcnDisplay1D || mode == ColorTileMode::GcnDisplay2D || mode == ColorTileMode::GcnThin2D;
+    return mode == ColorTileMode::GcnThin1D || mode == ColorTileMode::GcnDisplay1D || mode == ColorTileMode::GcnDisplay2D || mode == ColorTileMode::GcnThin2D || mode == ColorTileMode::GcnLinear;
+}
+
+constexpr bool ColorTileModeIsLinear(ColorTileMode mode) {
+    return mode == ColorTileMode::Linear || mode == ColorTileMode::GcnLinear;
 }
 
 constexpr bool ColorTileModeIsXor(ColorTileMode mode) {
@@ -37,7 +42,7 @@ constexpr bool ColorTileModeIsXor(ColorTileMode mode) {
 }
 
 constexpr std::uint32_t ColorTileModeBlockBytes(ColorTileMode mode) {
-    return mode == ColorTileMode::Linear ? 256u : mode == ColorTileMode::Standard4KB || mode == ColorTileMode::S4KBX || mode == ColorTileMode::D4KBX ? 4096u : 65536u;
+    return ColorTileModeIsLinear(mode) ? 256u : mode == ColorTileMode::Standard4KB || mode == ColorTileMode::S4KBX || mode == ColorTileMode::D4KBX ? 4096u : 65536u;
 }
 
 constexpr TextureTileMode ColorTextureTileMode(ColorTileMode mode) {
@@ -45,7 +50,7 @@ constexpr TextureTileMode ColorTextureTileMode(ColorTileMode mode) {
     if (mode == ColorTileMode::GcnDisplay1D) return TextureTileMode::kGcnDisplay1D;
     if (mode == ColorTileMode::GcnDisplay2D) return TextureTileMode::kGcnDisplay2D;
     if (mode == ColorTileMode::GcnThin2D) return TextureTileMode::kGcnThin2D;
-    return mode == ColorTileMode::Linear ? TextureTileMode::kLinear : mode == ColorTileMode::Standard4KB ? TextureTileMode::kStandard4KB : mode == ColorTileMode::Standard64KB ? TextureTileMode::kStandard64KB : mode == ColorTileMode::S4KBX ? TextureTileMode::kS4KBX : mode == ColorTileMode::D4KBX ? TextureTileMode::kD4KBX : mode == ColorTileMode::D64KBX ? TextureTileMode::kD64KBX : mode == ColorTileMode::Z64KBX ? TextureTileMode::kZ64KBX : TextureTileMode::kR64KBX;
+    return ColorTileModeIsLinear(mode) ? TextureTileMode::kLinear : mode == ColorTileMode::Standard4KB ? TextureTileMode::kStandard4KB : mode == ColorTileMode::Standard64KB ? TextureTileMode::kStandard64KB : mode == ColorTileMode::S4KBX ? TextureTileMode::kS4KBX : mode == ColorTileMode::D4KBX ? TextureTileMode::kD4KBX : mode == ColorTileMode::D64KBX ? TextureTileMode::kD64KBX : mode == ColorTileMode::Z64KBX ? TextureTileMode::kZ64KBX : TextureTileMode::kR64KBX;
 }
 
 ColorTileMode DecodeColorTileMode(std::uint32_t attrib3);

@@ -150,6 +150,24 @@ static void CheckPassedSockets(const int (&pair)[2]) {
     Require(close_nid_postfix(first[1]) == 0 && close_nid_postfix(second[1]) == 0);
 }
 
+static void CheckPassedFreshStream(const int (&pair)[2]) {
+    const int fresh = socket_nid_postfix(2, Stream, 0);
+    Require(fresh >= 0);
+    std::size_t length = 0;
+    auto control = RightsControl({fresh}, length);
+    Require(SendWith(pair[0], "new", control.data(), length) == 3);
+    Require(close_nid_postfix(fresh) == 0);
+    const auto received = ReceiveWith(pair[1], Space(sizeof(int)));
+    Require(received.bytes == 3);
+    RequireRecord(received, 1);
+    const int stream = ReceivedDescriptor(received, 0);
+    *__error_nid_postfix() = 0;
+    Require(send_nid_postfix(stream, "early", 5, 0) == -1 && *__error_nid_postfix() == 57);
+    Require(sendto_nid_postfix(stream, "early", 5, 0, nullptr, 0) == -1 && *__error_nid_postfix() == 57);
+    Require(write_nid_postfix(stream, "early", 5) == -1 && *__error_nid_postfix() == 57);
+    Require(close_nid_postfix(stream) == 0);
+}
+
 static std::size_t OpenHostDescriptors() {
     std::size_t open = 0;
     for (int descriptor = 0; descriptor < 4096; ++descriptor) {
@@ -292,6 +310,7 @@ int main() {
     Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
     CheckPassedPipe(pair);
     CheckPassedSockets(pair);
+    CheckPassedFreshStream(pair);
     CheckTruncatedControl(pair);
     CheckFaultedReceive(pair);
     CheckFaultedHeader(pair);

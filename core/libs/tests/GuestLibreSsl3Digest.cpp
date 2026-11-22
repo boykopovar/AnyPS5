@@ -36,15 +36,28 @@ int main() {
     unsigned char digest[24];
     std::memset(digest, 0xee, sizeof(digest));
     Require(MD5_nid_postfix(abc, 3, digest) == digest && Hex(digest, 16) == "900150983cd24fb0d6963f7d28e17f72" && digest[16] == 0xee);
+    std::memset(digest, 0xee, sizeof(digest));
+    Require(MD5_nid_postfix(abc, 0, digest) == digest && Hex(digest, 16) == "d41d8cd98f00b204e9800998ecf8427e" && digest[16] == 0xee);
     Require(MD5_nid_postfix(nullptr, 0, digest) == digest && Hex(digest, 16) == "d41d8cd98f00b204e9800998ecf8427e");
     Require(MD5_nid_postfix(many, million.size(), digest) == digest && Hex(digest, 16) == "7707d6ae4e027c70eea2a935c2296f21");
     std::memset(digest, 0xee, sizeof(digest));
     Require(SHA1_nid_postfix(abc, 3, digest) == digest && Hex(digest, 20) == "a9993e364706816aba3e25717850c26c9cd0d89d" && digest[20] == 0xee);
+    std::memset(digest, 0xee, sizeof(digest));
+    Require(SHA1_nid_postfix(abc, 0, digest) == digest && Hex(digest, 20) == "da39a3ee5e6b4b0d3255bfef95601890afd80709" && digest[20] == 0xee);
     Require(SHA1_nid_postfix(nullptr, 0, digest) == digest && Hex(digest, 20) == "da39a3ee5e6b4b0d3255bfef95601890afd80709");
     Require(SHA1_nid_postfix(many, million.size(), digest) == digest && Hex(digest, 20) == "34aa973cd4c4daa4f61eeb2bdbad27316534016f");
     RequireInvalidArgument([&] { MD5_nid_postfix(abc, 3, nullptr); });
+    RequireInvalidArgument([&] { MD5_nid_postfix(nullptr, 1, digest); });
     RequireInvalidArgument([&] { SHA1_nid_postfix(abc, 3, nullptr); });
     RequireInvalidArgument([&] { SHA1_nid_postfix(nullptr, 1, digest); });
+
+    Require(EVP_MD_block_size_nid_postfix(EVP_md5_nid_postfix()) == 64);
+    Require(EVP_MD_block_size_nid_postfix(EVP_sha1_nid_postfix()) == 64);
+    Require(EVP_MD_block_size_nid_postfix(EVP_sha224_nid_postfix()) == 64);
+    Require(EVP_MD_block_size_nid_postfix(EVP_sha256_nid_postfix()) == 64);
+    Require(EVP_MD_block_size_nid_postfix(EVP_sha384_nid_postfix()) == 128);
+    Require(EVP_MD_block_size_nid_postfix(EVP_sha512_nid_postfix()) == 128);
+    Require(EVP_MD_block_size_nid_postfix(nullptr) == -1);
 
     std::puts("libSceLibreSsl3 digest tests passed");
 }

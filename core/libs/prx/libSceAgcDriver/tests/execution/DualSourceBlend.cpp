@@ -20,6 +20,7 @@
 #else
 #include <sys/mman.h>
 #endif
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -62,7 +63,7 @@ constexpr std::array<Color, 4> Destinations{{
     {0.5f, 0.25f, 0.75f, 0.5f}, {1.0f, 0.0f, 0.125f, 0.25f}, {0.0625f, 0.875f, 0.5f, 1.0f}, {0.25f, 0.5f, 0.375f, 0.75f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 8> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 64>, 16> Programs{};
 std::size_t programCount = 0;
 
 std::uint16_t Half(float value) {
@@ -181,15 +182,15 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block) {
     return color;
 }
 
-VkPipelineColorBlendAttachmentState Blend(VkBlendFactor source, VkBlendFactor destination, VkBlendFactor sourceAlpha, VkBlendFactor destinationAlpha) {
+VkPipelineColorBlendAttachmentState Blend(VkBlendFactor source, VkBlendFactor destination, VkBlendFactor sourceAlpha, VkBlendFactor destinationAlpha, VkBlendOp colorOperation = VK_BLEND_OP_ADD, VkBlendOp alphaOperation = VK_BLEND_OP_ADD) {
     VkPipelineColorBlendAttachmentState blend{};
     blend.blendEnable = VK_TRUE;
     blend.srcColorBlendFactor = source;
     blend.dstColorBlendFactor = destination;
-    blend.colorBlendOp = VK_BLEND_OP_ADD;
+    blend.colorBlendOp = colorOperation;
     blend.srcAlphaBlendFactor = sourceAlpha;
     blend.dstAlphaBlendFactor = destinationAlpha;
-    blend.alphaBlendOp = VK_BLEND_OP_ADD;
+    blend.alphaBlendOp = alphaOperation;
     blend.colorWriteMask = 0xf;
     return blend;
 }
@@ -323,13 +324,21 @@ int main() {
         Block block(layout.Bytes());
         const Color first{0.25f, 0.5f, 0.125f, 0.5f};
         const Color second{0.5f, 0.25f, 1.0f, 0.75f};
-        const std::array<BlendCase, 3> cases{{
+        const std::array<BlendCase, 7> cases{{
             {"ONE + SRC1_COLOR", Blend(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC1_COLOR, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC1_COLOR),
                 [](float s, float t, float d, float) { return s + t * d; }, [](float s, float t, float d) { return s + t * d; }},
             {"SRC1_ALPHA + ONE_MINUS_SRC1_ALPHA", Blend(VK_BLEND_FACTOR_SRC1_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA, VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA),
                 [](float s, float, float d, float a) { return s * a + d * (1.0f - a); }, [](float, float t, float d) { return d * (1.0f - t); }},
             {"ONE_MINUS_SRC1_COLOR + ZERO", Blend(VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR, VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_SRC1_ALPHA, VK_BLEND_FACTOR_ZERO),
                 [](float s, float t, float, float) { return s * (1.0f - t); }, [](float s, float t, float) { return s * t; }},
+            {"dual-source color and MIN alpha", Blend(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC1_COLOR, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_OP_ADD, VK_BLEND_OP_MIN),
+                [](float s, float t, float d, float) { return s + t * d; }, [](float s, float, float d) { return std::min(s, d); }},
+            {"dual-source color and MAX alpha", Blend(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC1_COLOR, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_OP_ADD, VK_BLEND_OP_MAX),
+                [](float s, float t, float d, float) { return s + t * d; }, [](float s, float, float d) { return std::max(s, d); }},
+            {"MIN color and dual-source alpha", Blend(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC1_ALPHA, VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_MIN),
+                [](float s, float, float d, float) { return std::min(s, d); }, [](float s, float t, float) { return s * t; }},
+            {"MAX color and dual-source alpha", Blend(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC1_ALPHA, VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_MAX),
+                [](float s, float, float d, float) { return std::max(s, d); }, [](float s, float t, float) { return s * t; }},
         }};
         for (const bool compressed : {false, true}) {
             for (const auto& test : cases) {

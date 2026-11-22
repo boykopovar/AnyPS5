@@ -2,12 +2,19 @@
 set -u
 dir=${ANYPS5_COMPILE_SLOT_DIR:?}
 slots=${ANYPS5_COMPILE_SLOTS:?}
+command -v flock > /dev/null || { echo "compile_slot.sh: flock is required" >&2; exit 2; }
 while :; do
   for ((i = 0; i < slots; i++)); do
-    [ -e "$dir/slot-$i" ] || : >> "$dir/slot-$i"
-    exec {fd}<"$dir/slot-$i"
+    [ -e "$dir/slot-$i" ] || : >> "$dir/slot-$i" || { echo "compile_slot.sh: cannot create $dir/slot-$i" >&2; exit 2; }
+    exec {fd}<"$dir/slot-$i" || { echo "compile_slot.sh: cannot open $dir/slot-$i" >&2; exit 2; }
     if flock -n "$fd"; then
       exec "$@"
+    else
+      status=$?
+      if ((status != 1)); then
+        echo "compile_slot.sh: flock failed on $dir/slot-$i (status $status)" >&2
+        exit "$status"
+      fi
     fi
     exec {fd}>&-
   done

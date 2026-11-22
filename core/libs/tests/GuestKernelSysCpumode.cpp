@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <initializer_list>
 
 namespace {
 
@@ -34,9 +35,12 @@ int main() {
     }
     Require(sceKernelSetCpumodeGame(1) == 0, "mode 1 was refused");
     Require(sceKernelGetCpumodeGame(&mode) == 0 && mode == 1, "mode 1 was not reported back");
-    Require(Throws([] { sceKernelSetCpumodeGame(8); }), "an unmeasured mode did not throw");
-    Require(Throws([] { sceKernelSetCpumodeGame(-1); }), "a negative mode did not throw");
+    for (const int refused : {8, 9, 0x7fffffff, -1, -2, static_cast<int>(0x80000000u)}) {
+        Require(sceKernelSetCpumodeGame(refused) == invalid, "a mode outside 0 and 1 was not refused with EINVAL");
+        Require(sceKernelGetCpumodeGame(&mode) == 0 && mode == 1, "a refused mode changed the game CPU mode");
+    }
     Require(Throws([] { sceKernelGetCpumodeGame(nullptr); }), "a null output did not throw");
+    Require(sceKernelGetCpumodeGame(reinterpret_cast<int*>(0x10)) == static_cast<int>(0x8002000Eu), "unwritable mode did not return EFAULT");
     std::puts("game CPU mode tests passed");
     return 0;
 }

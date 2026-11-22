@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include <string>
@@ -52,12 +53,16 @@ extern "C" int APS5_VABI sceKernelSendNotificationRequest(int device, const void
     if (device != 0 || flags != 0)
         return notSupported;
 
-    std::int32_t type;
-    std::memcpy(&type, request, sizeof(type));
-    if ((type != 0 && type != systemTextType) || static_cast<const unsigned char*>(request)[messageOffset - 1] != 0)
+    std::array<std::uint8_t, requestSize> localRequest{};
+    if (!GuestCopyIn_nid_no_patch(localRequest.data(), request, requestSize))
+        return badAddress;
+
+    std::int32_t type = 0;
+    std::memcpy(&type, localRequest.data(), sizeof(type));
+    if ((type != 0 && type != systemTextType) || localRequest[messageOffset - 1] != 0)
         return notSupported;
 
-    const auto* message = static_cast<const char*>(request) + messageOffset;
+    const auto* message = reinterpret_cast<const char*>(localRequest.data() + messageOffset);
     const auto* end = static_cast<const char*>(std::memchr(message, '\0', messageCapacity));
     if (end == nullptr)
         return invalidArgument;

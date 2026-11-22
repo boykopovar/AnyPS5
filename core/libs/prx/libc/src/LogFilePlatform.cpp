@@ -1,4 +1,5 @@
 #include "prx/libc/include/LogFile.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
@@ -42,6 +43,13 @@ std::string Describe(unsigned long code) {
 
 bool Valid(HANDLE handle) {
     return handle != nullptr && handle != INVALID_HANDLE_VALUE;
+}
+
+int Translation(int descriptor) {
+    const int translation = _setmode(descriptor, _O_BINARY);
+    if (translation == -1) return _O_BINARY;
+    _setmode(descriptor, translation);
+    return translation;
 }
 
 std::wstring Widen(const std::string& text) {
@@ -107,6 +115,7 @@ Handle KeepStandard(int standard) {
 }
 
 bool Divert(int standard, Handle write) {
+    const int translation = Translation(standard);
     HANDLE copy = nullptr;
     if (!DuplicateHandle(GetCurrentProcess(), reinterpret_cast<HANDLE>(write), GetCurrentProcess(), &copy, 0, TRUE, DUPLICATE_SAME_ACCESS)) return false;
     const int descriptor = _open_osfhandle(reinterpret_cast<intptr_t>(copy), _O_BINARY | _O_WRONLY);
@@ -115,8 +124,9 @@ bool Divert(int standard, Handle write) {
         return false;
     }
     const int result = _dup2(descriptor, standard);
-    _close(descriptor);
+    if (descriptor != standard) _close(descriptor);
     if (result != 0) return false;
+    _setmode(standard, translation);
     const HANDLE installed = reinterpret_cast<HANDLE>(_get_osfhandle(standard));
     if (!SetStdHandle(StandardId(standard), installed)) return false;
     g_diverted[standard] = installed;
@@ -131,6 +141,7 @@ void RestoreStandard(int standard, Handle original) {
         SetStdHandle(StandardId(standard), nullptr);
         return;
     }
+    const int translation = Translation(standard);
     HANDLE copy = nullptr;
     if (!DuplicateHandle(GetCurrentProcess(), reinterpret_cast<HANDLE>(original), GetCurrentProcess(), &copy, 0, TRUE, DUPLICATE_SAME_ACCESS)) return;
     const int descriptor = _open_osfhandle(reinterpret_cast<intptr_t>(copy), _O_BINARY | _O_WRONLY);
@@ -140,7 +151,9 @@ void RestoreStandard(int standard, Handle original) {
     }
     const int result = _dup2(descriptor, standard);
     _close(descriptor);
-    if (result == 0) SetStdHandle(StandardId(standard), reinterpret_cast<HANDLE>(_get_osfhandle(standard)));
+    if (result != 0) return;
+    _setmode(standard, translation);
+    SetStdHandle(StandardId(standard), reinterpret_cast<HANDLE>(_get_osfhandle(standard)));
 }
 
 bool IsInteractive(Handle handle) {
@@ -273,9 +286,11 @@ void PauseMicroseconds(long microseconds) {
 }
 
 void WriteStandardDirect(int standard, const char* text, std::size_t length) {
+    const int kept = standard == StandardError ? HostStandardError_nid_no_patch() : -1;
+    const int descriptor = kept >= 0 ? kept : standard;
     std::size_t done = 0;
     while (done < length) {
-        const ssize_t result = ::write(standard, text + done, length - done);
+        const ssize_t result = ::write(descriptor, text + done, length - done);
         if (result < 0 && errno == EINTR) continue;
         if (result <= 0) break;
         done += static_cast<std::size_t>(result);

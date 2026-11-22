@@ -2,9 +2,14 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
+#include <algorithm>
+#include <cstdarg>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 namespace {
 // Guest FreeBSD errno numbering, not the host CRT's numbering.
@@ -62,14 +67,18 @@ const char* ExtendedMessage(int error) {
 }
 
 void Describe(int error, char (&text)[128]) {
-    if (error == 0) std::snprintf(text, sizeof(text), "No error");
-    else if (NamedByStrerror(error)) std::snprintf(text, sizeof(text), "%s", messages[error]);
-    else if (const char* extended = ExtendedMessage(error)) std::snprintf(text, sizeof(text), "%s", extended);
+    if (const char* fixed = StrerrorText_nid_no_patch(error)) std::snprintf(text, sizeof(text), "%s", fixed);
     else std::snprintf(text, sizeof(text), "error_code=0x%08x", static_cast<unsigned>(error));
 }
 }
 
 extern "C" {
+const char* APS5_VABI StrerrorText_nid_no_patch(int error) {
+    if (error == 0) return "No error";
+    if (NamedByStrerror(error)) return messages[error];
+    return ExtendedMessage(error);
+}
+
 char* APS5_VABI strerror_nid_postfix(int error) {
     thread_local char buffer[128];
     Describe(error, buffer);
@@ -83,8 +92,13 @@ int APS5_VABI strerror_r_nid_postfix(int error, char* buffer, std::size_t length
     char text[128];
     Describe(error, text);
     *__error_nid_postfix() = saved;
-    std::strncpy(buffer, text, length - 1);
-    buffer[length - 1] = '\0';
+    const std::size_t used = std::min(std::strlen(text), length - 1);
+    bool written = GuestCopyOut_nid_no_patch(buffer, text, used);
+    constexpr char zeros[256] = {};
+    for (std::size_t offset = used; written && offset < length; offset += sizeof(zeros)) {
+        written = GuestCopyOut_nid_no_patch(buffer + offset, zeros, std::min(sizeof(zeros), length - offset));
+    }
+    if (!written) throw std::invalid_argument("strerror_r: an unwritable buffer, which the console writes through");
     return 0;
 }
 
@@ -95,8 +109,27 @@ void APS5_VABI perror_nid_postfix(const char* prefix) {
     strerror_r_nid_postfix(saved, message, sizeof(message));
     _Stderr_nid_postfix.Orientation(-1);
     auto* stream = GetNativeStream(&_Stderr_nid_postfix);
-    if (prefix && *prefix) std::fprintf(stream, "%s: %s\n", prefix, message);
+    std::string copied;
+    if (prefix && CopyGuestString_nid_no_patch(prefix, 65536, copied) == 0 && !copied.empty()) std::fprintf(stream, "%s: %s\n", copied.c_str(), message);
     else std::fprintf(stream, "%s\n", message);
     *__error_nid_postfix() = saved;
+}
+
+[[noreturn]] void APS5_VABI _ZNSt3__122__libcpp_verbose_abortEPKcz_nid_postfix(const char* format, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+#else
+    std::va_list args;
+    va_start(args, format);
+#endif
+    vfprintf_nid_postfix(&_Stderr_nid_postfix, format, reinterpret_cast<VaList*>(args));
+#ifdef _WIN32
+    __builtin_sysv_va_end(args);
+#else
+    va_end(args);
+#endif
+    fflush_nid_postfix(&_Stderr_nid_postfix);
+    std::abort();
 }
 }

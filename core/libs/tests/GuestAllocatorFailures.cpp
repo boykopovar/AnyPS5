@@ -3,12 +3,14 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <exception>
 #include <limits>
+#include <stdexcept>
 #ifdef __linux__
 #include <sys/resource.h>
 #endif
@@ -134,6 +136,35 @@ static void CheckCallocAndReallocContents() {
     free_nid_postfix(fresh);
 }
 
+static void CheckLibcxxSortRangeValidation() {
+    std::array<std::uint32_t, 5> values{42, 7, 99, 1, 17};
+    try {
+        _ZNSt3__16__sortIRNS_6__lessIjjEEPjEEvT0_S5_T__nid_postfix(values.data(), values.data() + values.size(), nullptr);
+        const std::array<std::uint32_t, 5> expected{1, 7, 17, 42, 99};
+        if (values != expected) report("libcxx sort valid array", "did not sort elements in place");
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "libcxx sort valid array: threw %s\n", error.what());
+        ++failures;
+    }
+
+    auto* badBegin = reinterpret_cast<std::uint32_t*>(0x1000);
+    auto* badEnd = reinterpret_cast<std::uint32_t*>(0x1000 + (std::uintptr_t{1} << 42));
+    bool threwInvalidArgument = false;
+    try {
+        _ZNSt3__16__sortIRNS_6__lessIjjEEPjEEvT0_S5_T__nid_postfix(badBegin, badEnd, nullptr);
+    } catch (const std::invalid_argument&) {
+        threwInvalidArgument = true;
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "libcxx sort huge unmapped range: threw %s instead of std::invalid_argument\n", error.what());
+        ++failures;
+        return;
+    } catch (...) {
+        report("libcxx sort huge unmapped range", "threw a non-standard exception instead of std::invalid_argument");
+        return;
+    }
+    if (!threwInvalidArgument) report("libcxx sort huge unmapped range", "did not throw std::invalid_argument");
+}
+
 int main() {
     void* api[10]{};
     ApplicationHeapRegister_nid_no_patch(api);
@@ -142,8 +173,9 @@ int main() {
     expectNull("malloc(SIZE_MAX - 0x1008e)", Untouched, [] { return malloc_nid_postfix(LastPlainFailure + 1); });
     expectNull("malloc(SIZE_MAX - 0x1008f)", InvalidArgument, [] { return malloc_nid_postfix(LastPlainFailure); });
     expectNull("malloc(PTRDIFF_MAX + 1)", InvalidArgument, [] { return malloc_nid_postfix(HalfPlusOne); });
-    expectNull("calloc(SIZE_MAX, 2)", Untouched, [] { return calloc_nid_postfix(Max, 2); });
-    expectNull("calloc(2^33, 2^33)", Untouched, [] { return calloc_nid_postfix(std::size_t{1} << 33, std::size_t{1} << 33); });
+    expectNull("calloc(SIZE_MAX, 2)", NoMemory, [] { return calloc_nid_postfix(Max, 2); });
+    expectNull("calloc(2^33, 2^33)", NoMemory, [] { return calloc_nid_postfix(std::size_t{1} << 33, std::size_t{1} << 33); });
+    expectNull("calloc(SIZE_MAX / 2 + 1, 2)", NoMemory, [] { return calloc_nid_postfix(HalfPlusOne, 2); });
     expectNull("calloc(1, SIZE_MAX - 0x1008e)", Untouched, [] { return calloc_nid_postfix(1, LastPlainFailure + 1); });
     expectNull("calloc(PTRDIFF_MAX + 1, 1)", InvalidArgument, [] { return calloc_nid_postfix(HalfPlusOne, 1); });
     expectNull("realloc(NULL, SIZE_MAX)", Untouched, [] { return realloc_nid_postfix(nullptr, Max); });
@@ -298,9 +330,17 @@ int main() {
         if (untouched != &failures) report(check.what, "touched the output");
     }
 
+    void* empty = &failures;
+    *__error_nid_postfix() = Untouched;
+    if (posix_memalign_nid_postfix(&empty, 16, 0) != 0) report("posix_memalign(16, 0)", "returned an error number");
+    else if (empty == nullptr || empty == &failures) report("posix_memalign(16, 0)", "returned no block");
+    if (*__error_nid_postfix() != Untouched) report("posix_memalign(16, 0)", "changed errno");
+    if (empty != &failures) free_nid_postfix(empty);
+
     free_nid_postfix(expectBlock("calloc(3, 5)", [] { return calloc_nid_postfix(3, 5); }));
     free_nid_postfix(expectBlock("calloc(0, 5)", [] { return calloc_nid_postfix(0, 5); }));
     CheckCallocAndReallocContents();
+    CheckLibcxxSortRangeValidation();
     free_nid_postfix(expectBlock("aligned_alloc(128, 1)", [] { return aligned_alloc_nid_postfix(128, 1); }));
     free_nid_postfix(expectBlock("memalign(4096, 1)", [] { return memalign_nid_postfix(4096, 1); }));
     void* first = expectBlock("malloc(0)", [] { return malloc_nid_postfix(0); });

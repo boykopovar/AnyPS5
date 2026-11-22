@@ -7,9 +7,11 @@
 
 int main() {
     constexpr std::int32_t unsupported = static_cast<std::int32_t>(0x8002002D);
+    constexpr std::int32_t notInitialized = static_cast<std::int32_t>(0x81A10004);
     const std::uint32_t param[16]{0x2000000, 0x26c};
     if (sceTextToSpeech2Initialize(reinterpret_cast<const TextToSpeechInitParameter*>(param)) != unsupported ||
-        sceTextToSpeech2Initialize(nullptr) != unsupported) {
+        sceTextToSpeech2Initialize(nullptr) != unsupported ||
+        sceTextToSpeech2InitializeInt() != unsupported) {
         std::puts("TextToSpeech2: initialization did not report the unsupported operation");
         std::abort();
     }
@@ -32,6 +34,15 @@ int main() {
         sceTextToSpeech2Speak(nullptr) != unsupported || sceTextToSpeech2Terminate() != unsupported ||
         sceTextToSpeech2GetSystemStatus(nullptr) != unsupported) {
         std::puts("TextToSpeech2: later calls did not report the unsupported operation");
+        std::abort();
+    }
+
+    if (sceTextToSpeech2OpenInt() != notInitialized ||
+        sceTextToSpeech2SynthesizeInt() != notInitialized ||
+        sceTextToSpeech2GetAudioInt() != notInitialized ||
+        sceTextToSpeech2ConvertTextInt() != notInitialized ||
+        sceTextToSpeech2RegisterTextConversionItem() != notInitialized) {
+        std::puts("TextToSpeech2: uninitialized Int or text-conversion exports did not return SCE_TEXT_TO_SPEECH2_ERROR_NOT_INITIALIZED");
         std::abort();
     }
     std::puts("TextToSpeech2 tests passed");

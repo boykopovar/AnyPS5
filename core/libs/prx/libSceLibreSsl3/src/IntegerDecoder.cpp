@@ -8,6 +8,7 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <stdexcept>
 
 
 namespace {
@@ -18,6 +19,7 @@ constexpr int NestedAsn1Error = 58;
 constexpr int LengthMismatch = 62;
 constexpr int MallocFailure = 65;
 constexpr int BadObjectHeader = 102;
+constexpr int HeaderTooLong = 123;
 constexpr int TooLong = 155;
 constexpr int WrongTag = 168;
 constexpr int TypeNotPrimitive = 231;
@@ -118,7 +120,7 @@ void FreeInteger(void* value) {
     auto& integer = *static_cast<Asn1String*>(value);
     if (!(integer.flags & 0x10)) {
         if (integer.data) {
-            if (integer.length < 0) NotImplemented_nid_no_patch(__func__);
+            if (integer.length < 0) throw std::invalid_argument("ASN1_STRING: negative length");
             ClearAndFree(integer.data, static_cast<std::size_t>(integer.length));
         }
     }
@@ -133,9 +135,41 @@ void FreeInteger(void* value) {
 
 extern "C" {
 
+int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int64_t* length,
+                                        int* tag, int* tagClass, std::int64_t maximum) {
+    if (!input || !length || !tag || !tagClass || maximum < 0 || (!*input && maximum != 0))
+        throw std::invalid_argument("ASN1_get_object: invalid buffer or output");
+    *tagClass = 0;
+    *tag = 0;
+    *length = 0;
+    std::span<const unsigned char> remaining(*input, static_cast<std::size_t>(maximum));
+    std::uint8_t parsedClass;
+    std::uint32_t parsedTag;
+    bool constructed;
+    bool indefinite;
+    std::size_t parsedLength;
+    if (!ReadIdentifier(remaining, parsedClass, constructed, parsedTag)
+        || !ReadLength(remaining, indefinite, parsedLength) || (indefinite && !constructed)
+        || parsedTag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+        PutError(HeaderTooLong);
+        return 0x80;
+    }
+    int result = (constructed ? 0x20 : 0) | (indefinite ? 1 : 0);
+    if (parsedLength > remaining.size()
+        || parsedLength > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        PutError(TooLong);
+        result |= 0x80;
+    }
+    *tagClass = parsedClass << 6;
+    *tag = static_cast<int>(parsedTag);
+    *length = static_cast<std::int64_t>(parsedLength);
+    *input = remaining.data();
+    return result;
+}
+
 void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char** input, std::int64_t length) {
     if (length < 0) return nullptr;
-    if (!input || !*input) NotImplemented_nid_no_patch(__func__);
+    if (!input || !*input) throw std::invalid_argument("d2i_ASN1_INTEGER: null input");
     std::span<const unsigned char> remaining(*input, static_cast<std::size_t>(length));
     auto content = ReadInteger(remaining);
     if (!content || content->size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) return nullptr;

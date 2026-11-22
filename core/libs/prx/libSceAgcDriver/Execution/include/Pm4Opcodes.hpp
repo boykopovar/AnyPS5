@@ -47,6 +47,7 @@ inline constexpr Opcode Opcodes[] = {
     {0x48, "EVENT_WRITE_EOS"},
     {0x49, "RELEASE_MEM"},
     {0x50, "DMA_DATA"},
+    {0x51, "CONTEXT_REG_RMW"},
     {0x58, "ACQUIRE_MEM"},
     {0x59, "REWIND"},
     {0x63, "SET_SH_REG_INDIRECT"},

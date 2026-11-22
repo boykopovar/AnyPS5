@@ -1,6 +1,8 @@
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <cstdint>
+#include <stdexcept>
+#include <string>
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestTime.hpp"
@@ -28,16 +30,32 @@ std::int64_t wrappingAdd(std::int64_t left, std::int64_t right) {
     return static_cast<std::int64_t>(static_cast<std::uint64_t>(left) + static_cast<std::uint64_t>(right));
 }
 
+Xtime LoadXtime(const Xtime* value, const char* function) {
+    Xtime local{};
+    if (value == nullptr || !GuestCopyIn_nid_no_patch(&local, value, sizeof(local))) throw std::invalid_argument(std::string(function) + ": unreadable time");
+    return local;
+}
+
 }  // namespace
 
 extern "C" {
 
 GuestTm* APS5_VABI gmtime_r_nid_postfix(const std::int64_t* timer, GuestTm* result) {
-    return gmtime_s_nid_postfix(timer, result);
+    if (timer == nullptr || result == nullptr || gmtime_s_nid_postfix(timer, result) == nullptr) return nullptr;
+    result->tm_isdst = 0;
+    return result;
 }
 
 GuestTm* APS5_VABI localtime_r_nid_postfix(const std::int64_t* timer, GuestTm* result) {
+    if (timer == nullptr || result == nullptr) return nullptr;
     return localtime_s_nid_postfix(timer, result);
+}
+
+char* APS5_VABI ctime_r_nid_postfix(const std::int64_t* timer, char* buffer) {
+    if (buffer == nullptr) throw std::invalid_argument("ctime_r: null buffer");
+    GuestTm local{};
+    if (localtime_r_nid_postfix(timer, &local) == nullptr) return nullptr;
+    return asctime_r_nid_postfix(&local, buffer);
 }
 
 std::int64_t APS5_VABI timegm_nid_postfix(GuestTm* time) {
@@ -48,6 +66,7 @@ std::int64_t APS5_VABI timegm_nid_postfix(GuestTm* time) {
     const std::int64_t seconds = days * secondsPerDay + std::int64_t{time->tm_hour} * 3600 + std::int64_t{time->tm_min} * 60 + time->tm_sec;
     GuestTm normalized{};
     if (gmtime_s_nid_postfix(&seconds, &normalized) == nullptr) return -1;
+    normalized.tm_isdst = 0;
     *time = normalized;
     return seconds;
 }
@@ -55,21 +74,23 @@ std::int64_t APS5_VABI timegm_nid_postfix(GuestTm* time) {
 int APS5_VABI xtime_get_nid_postfix(Xtime* time, int base) {
     if (time == nullptr || base != timeUtc) return 0;
     const std::int64_t micros = _Xtime_get_ticks_nid_postfix();
-    time->sec = floorDivide(micros, 1000000);
-    time->nsec = (micros - time->sec * 1000000) * 1000;
-    return timeUtc;
+    Xtime now{};
+    now.sec = floorDivide(micros, 1000000);
+    now.nsec = (micros - now.sec * 1000000) * 1000;
+    return GuestCopyOut_nid_no_patch(time, &now, sizeof(now)) ? timeUtc : 0;
 }
 
 Xtime APS5_VABI _Xtime_to_ts_nid_postfix(const Xtime* time) {
-    return *time;
+    return LoadXtime(time, "_Xtime_to_ts");
 }
 
 Xtime APS5_VABI _Xtime_diff_to_ts_nid_postfix(const Xtime* target) {
+    const Xtime limit = LoadXtime(target, "_Xtime_diff_to_ts");
     Xtime now{};
     xtime_get_nid_postfix(&now, timeUtc);
 
-    std::int64_t seconds = wrappingAdd(target->sec, target->nsec / nanosPerSecond);
-    std::int64_t nanos = target->nsec % nanosPerSecond;
+    std::int64_t seconds = wrappingAdd(limit.sec, limit.nsec / nanosPerSecond);
+    std::int64_t nanos = limit.nsec % nanosPerSecond;
     if (nanos < 0) {
         nanos += nanosPerSecond;
         seconds = wrappingAdd(seconds, -1);
@@ -82,6 +103,35 @@ Xtime APS5_VABI _Xtime_diff_to_ts_nid_postfix(const Xtime* target) {
     nanos -= now.nsec;
     if (seconds < 0 || (seconds == 0 && nanos == 0)) return {0, 0};
     return {seconds, nanos};
+}
+
+std::int64_t APS5_VABI _ZNSt8__sce_v222_Xtime_diff_to_millis2EPK8timespecS2__nid_postfix(const Xtime* target, const Xtime* now) {
+    const Xtime limit = LoadXtime(target, "std::__sce_v2::_Xtime_diff_to_millis2");
+    const Xtime current = LoadXtime(now, "std::__sce_v2::_Xtime_diff_to_millis2");
+    constexpr std::uint64_t billion = nanosPerSecond;
+    std::uint64_t seconds = static_cast<std::uint64_t>(limit.sec);
+    std::uint64_t nanos = static_cast<std::uint64_t>(limit.nsec);
+    if (static_cast<std::int64_t>(nanos) < 0) {
+        const std::uint64_t lowest = 0 - billion;
+        const std::uint64_t whole = nanos < lowest ? (lowest - nanos - 1) / billion + 1 : 0;
+        seconds -= whole + 1;
+        nanos += (whole + 1) * billion;
+    }
+    if (static_cast<std::int64_t>(nanos) >= nanosPerSecond) {
+        const std::uint64_t whole = ((nanos >= 2 * billion - 1 ? nanos - (2 * billion - 1) : 0) + billion - 1) / billion;
+        seconds += whole + 1;
+        nanos -= (whole + 1) * billion;
+    }
+    if (static_cast<std::int64_t>(nanos) < current.nsec) {
+        seconds += ~static_cast<std::uint64_t>(current.sec);
+        nanos += billion;
+    } else {
+        seconds -= static_cast<std::uint64_t>(current.sec);
+    }
+    nanos -= static_cast<std::uint64_t>(current.nsec);
+    if (static_cast<std::int64_t>(seconds) < 0 || (seconds == 0 && static_cast<std::int64_t>(nanos) <= 0)) return 0;
+    const std::int64_t millis = static_cast<std::int64_t>(nanos + 999999) / 1000000;
+    return static_cast<std::int64_t>(static_cast<std::uint64_t>(millis) + seconds * 1000);
 }
 
 }

@@ -14,6 +14,7 @@
 #include <iterator>
 #include <mutex>
 #include <random>
+#include <set>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -140,6 +141,12 @@ std::size_t TaskCount() {
     return static_cast<std::size_t>(std::distance(std::filesystem::directory_iterator("/proc/self/task"), std::filesystem::directory_iterator{}));
 }
 
+std::set<std::string> Tasks() {
+    std::set<std::string> tasks;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc/self/task")) tasks.insert(entry.path().filename().string());
+    return tasks;
+}
+
 bool WaitForTaskCount(std::size_t count) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (TaskCount() != count) {
@@ -226,11 +233,12 @@ void CheckDeliveryThreadStartsAtRegistration() {
     Check(sceSaveDataRegisterEventCallback(nullptr, &tag) == SaveDataErrorParameter, "a null callback is PARAMETER in the delivery thread check");
     Check(TaskCount() == before, counted("a refused registration starts no delivery thread"));
     Check(sceSaveDataRegisterEventCallback(First, &tag) == 0, "the first callback registers in the delivery thread check");
-    Check(TaskCount() == before + 1, counted("the first registration starts one delivery thread"));
+    Check(WaitForTaskCount(before + 1), counted("the first registration starts one delivery thread"));
+    const auto delivery = Tasks();
     Check(sceSaveDataRegisterEventCallback(Second, &tag) == 0, "the second callback registers in the delivery thread check");
     Check(sceSaveDataUnregisterEventCallback() == 0, "the second callback unregisters in the delivery thread check");
     Check(sceSaveDataRegisterEventCallback(First, &tag) == 0, "the first callback registers again in the delivery thread check");
-    Check(TaskCount() == before + 1, counted("a replacing registration and one after an unregister reuse the delivery thread"));
+    Check(WaitForTaskCount(before + 1) && Tasks() == delivery, counted("a replacing registration and one after an unregister reuse the delivery thread"));
     {
         Watchdog watchdog("the terminate that joins the delivery thread");
         Check(sceSaveDataTerminate() == 0, "SaveData terminates after the delivery thread check");
@@ -272,6 +280,21 @@ void CheckUmountWithBackupDelivery(int* firstTag) {
     Check(WaitForCalls(before + 1), "umountWithBackup's completion reaches the callback within 5 s");
     Check(CallCount() == before + 1, "umountWithBackup is delivered once");
     if (CallCount() >= before + 1) CheckDelivered(before, 1, firstTag, 1, "mounted", "the umountWithBackup event");
+}
+
+void CheckUmount2WithBackupDelivery(int* firstTag) {
+    auto dirName = DirName("mounted2");
+    SaveDataMount3 mount{};
+    mount.user_id = User;
+    mount.dir_name = &dirName;
+    mount.mount_mode = MountReadWrite | MountCreate2;
+    SaveDataMountResult mounted{};
+    Check(sceSaveDataMount3(&mount, &mounted) == 0, "the umount2 save mounts");
+    const auto before = CallCount();
+    Check(sceSaveDataUmount2(0x10000u, &mounted.mount_point) == 0, "umount2(0x10000) succeeds");
+    Check(WaitForCalls(before + 1), "umount2(0x10000)'s completion reaches the callback within 5 s");
+    Check(CallCount() == before + 1, "umount2(0x10000) is delivered once");
+    if (CallCount() >= before + 1) CheckDelivered(before, 1, firstTag, 1, "mounted2", "the umount2 backup event");
 }
 
 void CheckUnregister(int* firstTag, int* secondTag) {
@@ -454,6 +477,7 @@ int main() {
     CheckRegistration();
     CheckBackupDelivery(&firstTag);
     CheckUmountWithBackupDelivery(&firstTag);
+    CheckUmount2WithBackupDelivery(&firstTag);
     CheckUnregister(&firstTag, &secondTag);
     CheckTerminateFromCallback();
     CheckIdleTerminateAndRestart(&firstTag);

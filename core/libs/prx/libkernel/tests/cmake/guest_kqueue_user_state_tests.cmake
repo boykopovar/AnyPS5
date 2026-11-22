@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_kqueue_user_state_tests ${LIBS_INCLUDE_DIR}/tests/GuestKqueueUserState.cpp)
+    target_include_directories(guest_kqueue_user_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kqueue_user_state_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kqueue_user_state_tests)
+    add_test(NAME guest_kqueue_user_state COMMAND guest_kqueue_user_state_tests)
+    set_tests_properties(guest_kqueue_user_state PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kqueue_user_state PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()

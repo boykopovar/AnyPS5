@@ -11,7 +11,9 @@
 #include <array>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -25,7 +27,7 @@ void reject(TAction action) {
     throw std::runtime_error("Invalid conversion was accepted");
 }
 
-std::vector<std::uint8_t> fixture(const std::string& needed = {}, const std::string& soname = {}) {
+std::vector<std::uint8_t> fixture(const std::string& needed = {}, const std::string& soname = {}, const std::string& moduleName = {}) {
     std::vector<std::uint8_t> bytes(0x3000);
     const std::array<std::uint8_t, 7> magic{0x7f, 'E', 'L', 'F', 2, 1, 1};
     std::copy(magic.begin(), magic.end(), bytes.begin());
@@ -54,7 +56,8 @@ std::vector<std::uint8_t> fixture(const std::string& needed = {}, const std::str
     for (std::size_t index = 3; index < 8; ++index) header(index, 0x6fffff01, 0, 0, 0);
     bytes[0x1000] = 0xc3;
     const std::size_t sonameOffset = needed.empty() ? 1 : needed.size() + 2;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> tags{{5, 0x2600}, {10, soname.empty() ? sonameOffset : sonameOffset + soname.size() + 1}, {6, 0x2620}, {11, 24}, {7, 0x2700}, {8, 0}, {9, 24}, {4, 0x2680}};
+    const std::size_t moduleNameOffset = soname.empty() ? sonameOffset : sonameOffset + soname.size() + 1;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> tags{{5, 0x2600}, {10, moduleName.empty() ? moduleNameOffset : moduleNameOffset + moduleName.size() + 1}, {6, 0x2620}, {11, 24}, {7, 0x2700}, {8, 0}, {9, 24}, {4, 0x2680}};
     if (!needed.empty()) {
         std::copy(needed.begin(), needed.end(), bytes.begin() + 0x2601);
         tags.push_back({1, 1});
@@ -62,6 +65,10 @@ std::vector<std::uint8_t> fixture(const std::string& needed = {}, const std::str
     if (!soname.empty()) {
         std::copy(soname.begin(), soname.end(), bytes.begin() + 0x2600 + static_cast<std::ptrdiff_t>(sonameOffset));
         tags.push_back({14, sonameOffset});
+    }
+    if (!moduleName.empty()) {
+        std::copy(moduleName.begin(), moduleName.end(), bytes.begin() + 0x2600 + static_cast<std::ptrdiff_t>(moduleNameOffset));
+        tags.push_back({0x6100000d, (std::uint64_t{1} << 48) | moduleNameOffset});
     }
     tags.push_back({0, 0});
     header(2, 2, 6, 0x2000, tags.size() * 16);
@@ -151,6 +158,25 @@ void backupCopies() {
     source.Modules.push_back({"virtual/title/sce_module/libSceFace.prx.esbak", fixture({}, "libSceFaceOld.prx")});
     const auto output = Relinker::Conversion(progress).Convert(std::move(source), {});
     require(output.Modules.size() == 2 && progress.Messages.find("Skipping backup copy") == std::string::npos, "A module with another SONAME was skipped as a backup copy");
+    for (const auto target : {Relinker::TargetSystem::Windows, Relinker::TargetSystem::Linux}) {
+        TestProgress unnamed;
+        Relinker::ConversionOptions options;
+        options.Target = target;
+        auto modules = input();
+        modules.Modules.push_back({"virtual/title/sce_module/libSceJobManager.prx", fixture({}, {}, "libSceJobManager")});
+        modules.Modules.push_back({"virtual/title/sce_module/libSceJobManager.prx.esbak", fixture({}, {}, "libSceJobManager")});
+        const auto converted = Relinker::Conversion(unnamed).Convert(std::move(modules), options);
+        require(converted.Modules.size() == 1 && converted.Modules.front().Path.generic_string() == "virtual/output/app0/sce_module/libSceJobManager.prx.guest.prx", "A backup copy without a SONAME was converted");
+        require(unnamed.Messages.find("Skipping backup copy: sce_module/libSceJobManager.prx.esbak (same module names as sce_module/libSceJobManager.prx)\n") != std::string::npos, "A skipped backup copy without a SONAME was not reported");
+    }
+    TestProgress other;
+    auto modules = input();
+    modules.Modules.push_back({"virtual/title/sce_module/libSceJobManager.prx", fixture({}, {}, "libSceJobManager")});
+    modules.Modules.push_back({"virtual/title/sce_module/libSceJobManager.prx.esbak", fixture({}, {}, "libSceJobManagerOld")});
+    modules.Modules.push_back({"virtual/title/sce_module/plugin.prx", fixture()});
+    modules.Modules.push_back({"virtual/title/sce_module/plugin.prx.esbak", fixture()});
+    const auto kept = Relinker::Conversion(other).Convert(std::move(modules), {});
+    require(kept.Modules.size() == 4 && other.Messages.find("Skipping backup copy") == std::string::npos, "A module without a SONAME was skipped as a backup copy of a module with other or no module names");
 }
 
 void runtimeLifecyclePolicy() {
@@ -400,6 +426,49 @@ bool exports(const std::vector<std::uint8_t>& pe, std::string_view name) {
     return false;
 }
 
+bool zeroFilled(const std::vector<std::uint8_t>& pe, std::uint32_t address) {
+    const auto header = Io::ReadU32(pe, 0x3c);
+    const auto sections = header + 24 + Io::ReadU16(pe, header + 20);
+    for (std::size_t index = 0; index < Io::ReadU16(pe, header + 6); ++index) {
+        const auto at = sections + index * 40;
+        const auto start = Io::ReadU32(pe, at + 12);
+        if (address >= start && address - start < std::max(Io::ReadU32(pe, at + 8), Io::ReadU32(pe, at + 16))) return Io::ReadU32(pe, at + 16) == 0;
+    }
+    throw std::runtime_error("Unmapped PE address");
+}
+
+std::vector<std::string> deferredNames(const std::vector<std::uint8_t>& pe, std::uint32_t wanted) {
+    const auto directory = fileOffset(pe, Io::ReadU32(pe, Io::ReadU32(pe, 0x3c) + 24 + 112));
+    const auto names = fileOffset(pe, Io::ReadU32(pe, directory + 32));
+    const auto ordinals = fileOffset(pe, Io::ReadU32(pe, directory + 36));
+    const auto functions = fileOffset(pe, Io::ReadU32(pe, directory + 28));
+    for (std::size_t index = 0; index < Io::ReadU32(pe, directory + 24); ++index) {
+        if (std::string_view(reinterpret_cast<const char*>(pe.data() + fileOffset(pe, Io::ReadU32(pe, names + index * 4)))) != Relinker::GuestInitializeExport) continue;
+        const auto address = Io::ReadU32(pe, functions + Io::ReadU16(pe, ordinals + index * 2) * 4);
+        std::vector<std::string> result;
+        if (zeroFilled(pe, address)) return result;
+        const auto table = fileOffset(pe, address);
+        auto position = table + 8 + static_cast<std::size_t>(Io::ReadU32(pe, table + 4)) * 4;
+        for (int block = 0; block < 2; ++block) {
+            const auto magic = Io::ReadU32(pe, position);
+            if (magic != Relinker::GuestDeferredDependenciesMagic && magic != Relinker::GuestDeferredSweepMagic) break;
+            const auto count = Io::ReadU32(pe, position + 4);
+            position += 8;
+            for (std::uint32_t listed = 0; listed < count; ++listed) {
+                const std::string name(reinterpret_cast<const char*>(pe.data() + position));
+                if (magic == wanted) result.push_back(name);
+                position += name.size() + 1;
+            }
+        }
+        return result;
+    }
+    throw std::runtime_error("No deferred initialization table");
+}
+
+std::vector<std::string> deferredDependencies(const std::vector<std::uint8_t>& pe) { return deferredNames(pe, Relinker::GuestDeferredDependenciesMagic); }
+
+std::vector<std::string> deferredSweep(const std::vector<std::uint8_t>& pe) { return deferredNames(pe, Relinker::GuestDeferredSweepMagic); }
+
 void runtimeDirectories() {
     TestProgress progress;
     const Relinker::Conversion converter(progress);
@@ -414,6 +483,41 @@ void runtimeDirectories() {
         const auto output = converter.Convert(std::move(source), options);
         require(output.Modules.size() == 1, "Module was not converted");
         require(exports(output.Modules.front().Bytes, Relinker::GuestInitializeExport) == (std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module the executable needs");
+    }
+    for (const auto* directory : {"sce_module", "sce_modules", "prx", "Media/Modules"}) {
+        auto source = input();
+        const auto parent = source.ModuleRoot / directory;
+        const auto plugins = source.ModuleRoot / "Media/Plugins";
+        source.Modules.push_back({plugins / "plugin.prx", fixture("needed.prx")});
+        source.Modules.push_back({parent / "needed.prx", fixture()});
+        source.RuntimeDirectories.push_back(plugins);
+        source.RuntimeDirectories.push_back(parent);
+        const auto output = converter.Convert(std::move(source), options);
+        require(output.Modules.size() == 2, "Modules were not converted");
+        for (const auto& module : output.Modules) {
+            const bool plugin = module.SourcePath.filename() == "plugin.prx";
+            require(exports(module.Bytes, Relinker::GuestInitializeExport) == (plugin || std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module another runtime module needs");
+            if (plugin) {
+                const auto listed = deferredDependencies(module.Bytes);
+                require(listed == (std::string_view(directory) == "Media/Modules" ? std::vector<std::string>{"needed.prx.guest.prx"} : std::vector<std::string>{}), "Wrong deferred dependencies of a plugin");
+            } else if (exports(module.Bytes, Relinker::GuestInitializeExport)) require(deferredDependencies(module.Bytes).empty(), "A module without dependencies lists some");
+        }
+    }
+    {
+        auto source = input();
+        const auto plugins = source.ModuleRoot / "Media/Plugins";
+        source.Modules.push_back({plugins / "core.prx", fixture("common.prx")});
+        source.Modules.push_back({plugins / "common.prx", fixture()});
+        source.Modules.push_back({plugins / "other.prx", fixture()});
+        source.RuntimeDirectories.push_back(plugins);
+        const auto output = converter.Convert(std::move(source), options);
+        require(output.Modules.size() == 3, "Modules were not converted");
+        for (const auto& module : output.Modules) {
+            const auto name = module.SourcePath.filename().string();
+            require(exports(module.Bytes, Relinker::GuestInitializeExport), "A plugin was not deferred");
+            require(deferredSweep(module.Bytes) == std::vector<std::string>{"common.prx.guest.prx"}, ("Wrong sweep list of " + name).c_str());
+            require(deferredDependencies(module.Bytes) == (name == "core.prx" ? std::vector<std::string>{"common.prx.guest.prx"} : std::vector<std::string>{}), ("Wrong dependencies of " + name).c_str());
+        }
     }
 }
 

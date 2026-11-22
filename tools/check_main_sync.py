@@ -13,7 +13,9 @@ BASES = base_ref.CANDIDATES
 
 
 def git(repo, *args, check=True):
-    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+    result.stdout = result.stdout.decode("utf-8", errors="replace")
+    result.stderr = result.stderr.decode("utf-8", errors="replace")
     if check and result.returncode:
         raise RuntimeError(f"git {' '.join(args[:2])} failed: {result.stderr.strip()}")
     return result
@@ -29,7 +31,7 @@ def names(repo, *args):
 
 def resolve_base(repo, name):
     for candidate in (name,) if name else BASES:
-        if git(repo, "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}", check=False).returncode == 0:
+        if git(repo, "rev-parse", "--verify", "--quiet", f"{candidate}^0", check=False).returncode == 0:
             return candidate
     raise RuntimeError(f"no base ref found ({name or ', '.join(BASES)}); fetch the upstream remote first")
 
@@ -117,10 +119,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         def fetch(ref):
+            ref = ref.removeprefix("refs/remotes/")
             remote, _, branch = ref.partition("/")
             if not branch:
                 parser.error("--fetch needs a remote-tracking base such as upstream/main")
-            git(args.repo, "fetch", "--quiet", remote, branch)
+            git(args.repo, "fetch", "--quiet", "--refmap=", "--", remote, f"+refs/heads/{branch}:refs/remotes/{ref}")
 
         if args.fetch:
             if args.base:
@@ -128,7 +131,9 @@ def main(argv=None):
             else:
                 remotes = set(lines(args.repo, "remote"))
                 for candidate in BASES:
-                    remote, _, branch = candidate.partition("/")
+                    if not candidate.startswith("refs/remotes/"):
+                        continue
+                    remote, _, branch = candidate.removeprefix("refs/remotes/").partition("/")
                     if branch and remote in remotes:
                         fetch(candidate)
                         break

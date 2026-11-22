@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -45,6 +46,26 @@ class HostOnlyTargets(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_selects_current_reply_even_if_an_old_index_has_a_later_mtime(self):
+        build = self.fixture([self.target("host_tests")])
+        reply = build / ".cmake/api/v1/reply"
+        stale = reply / "index-0000.json"
+        stale.write_text("{}", encoding="utf-8")
+        os.utime(reply / "index-0001.json", (10, 10))
+        os.utime(stale, (20, 20))
+        _, targets = build_mingw_host_only_tests.read_reply(build)
+        self.assertIn("host_tests", targets)
+
+    def test_newer_error_index_prevents_using_previous_configuration(self):
+        build = self.fixture([self.target("host_tests")])
+        reply = build / ".cmake/api/v1/reply"
+        (reply / "error-0000.json").write_text("{}", encoding="utf-8")
+        _, targets = build_mingw_host_only_tests.read_reply(build)
+        self.assertIn("host_tests", targets)
+        (reply / "error-0002.json").write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "error-0002.json"):
+            build_mingw_host_only_tests.read_reply(build)
+
     def test_selects_core_libs_test_executables_without_guest_libc(self):
         host = self.target("host_tests")
         guest = self.target("guest_tests", dependencies=("libc-id",),
@@ -62,6 +83,13 @@ class HostOnlyTargets(unittest.TestCase):
                             fragment="C:/build/core/libs/libs/implib/liblibc.dll.a")
         source_root = Path(self.temporary.name).resolve()
         self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, {guest["id"]: guest}), [])
+
+    def test_tests_folder_above_the_checkout_does_not_select_a_non_test_executable(self):
+        source_root = (Path(self.temporary.name) / "tests" / "repo").resolve()
+        utility = self.target("not_a_test", source="core/libs/nid/src/main.cpp")
+        host = self.target("host_tests")
+        targets = {item["id"]: item for item in (utility, host)}
+        self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, targets), ["host_tests"])
 
     def test_libc_link_does_not_accept_similarly_named_libraries(self):
         for fragment in ("/build/notliblibc.dll.a", "/build/liblibc.dll.a.extra", "/build/liblibc.prx"):
@@ -275,6 +303,127 @@ class HostOnlyTargets(unittest.TestCase):
             ["guest_sigvec_modules_tests"],
         )
 
+    def test_selects_host_tests_when_transitive_dependency_source_changes(self):
+        host_a = self.target("host_a", dependencies=("static_helper",))
+        host_b = self.target("host_b", dependencies=("static_helper",))
+        unrelated = self.target("unrelated", dependencies=("unrelated_helper",), source="core/libs/tests/Unrelated.cpp")
+        static_helper = self.target(
+            "static_helper",
+            target_type="STATIC_LIBRARY",
+            source="core/libs/tests/StaticHelper.cpp",
+            dependencies=("object_helper",),
+        )
+        static_helper["paths"]["source"] = "core/libs/tests"
+        helper_order = self.target(
+            "helper_order",
+            target_type="UTILITY",
+            source="core/libs/tests/BuildInput.txt",
+            dependencies=("object_helper",),
+        )
+        object_helper = self.target(
+            "object_helper",
+            target_type="OBJECT_LIBRARY",
+            source="core/libs/src/Helper.cpp",
+        )
+        unrelated_helper = self.target(
+            "unrelated_helper",
+            target_type="STATIC_LIBRARY",
+            source="core/libs/tests/UnrelatedHelper.cpp",
+        )
+        unrelated_helper["paths"]["source"] = "core/libs/tests"
+        build_dir = self.fixture([host_a, host_b, unrelated, static_helper, helper_order, object_helper, unrelated_helper])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(
+                source_root, targets, ["core/libs/src/Helper.cpp"]
+            ),
+            ["host_a", "host_b"],
+        )
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(
+                source_root, targets, ["core/libs/tests/StaticHelper.cpp"]
+            ),
+            ["host_a", "host_b"],
+        )
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(
+                source_root, targets, ["core/libs/tests/UnrelatedHelper.cpp"]
+            ),
+            ["unrelated"],
+        )
+
+    def test_ignores_order_only_product_and_utility_sources(self):
+        for kind in ("UTILITY", "SHARED_LIBRARY", "MODULE_LIBRARY"):
+            with self.subTest(kind=kind):
+                host = self.target("host_tests", dependencies=("order",))
+                order = self.target("order", target_type=kind, source="core/libs/prx/libkernel/Source.cpp",
+                                    dependencies=("hidden",))
+                hidden = self.target("hidden", target_type="OBJECT_LIBRARY", source="core/libs/src/Hidden.cpp")
+                root = Path(self.temporary.name).resolve()
+                targets = {item["id"]: item for item in (host, order, hidden)}
+                for changed in ("core/libs/prx/libkernel/Source.cpp", "core/libs/src/Hidden.cpp"):
+                    self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(root, targets, [changed]), [])
+                self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(
+                    root, targets, ["core/libs/tests/HostOnly.cpp"]), ["host_tests"])
+
+    def test_interface_sources_are_reached_and_invalid_source_paths_are_controlled(self):
+        host = self.target("host_tests", dependencies=("helper",))
+        helper = self.target("helper", target_type="INTERFACE_LIBRARY", source="core/libs/tests/Interface.cpp")
+        helper["paths"]["source"] = "core/libs/tests"
+        root = Path(self.temporary.name).resolve()
+        targets = {item["id"]: item for item in (host, helper)}
+        self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(
+            root, targets, ["core/libs/tests/Interface.cpp"]), ["host_tests"])
+        for entry in ({}, {"path": None}, {"path": []}, {"path": ""}, None):
+            with self.subTest(entry=entry):
+                helper["sources"] = [entry]
+                with self.assertRaisesRegex(ValueError, "source"):
+                    build_mingw_host_only_tests.host_only_test_targets(root, targets, ["core/libs/tests/Interface.cpp"])
+
+    def test_dependency_cycle_terminates(self):
+        host = self.target("cyclic_tests", dependencies=("cycle_a",))
+        cycle_a = self.target(
+            "cycle_a",
+            target_type="STATIC_LIBRARY",
+            source="core/libs/tests/CycleA.cpp",
+            dependencies=("cycle_b",),
+        )
+        cycle_a["paths"]["source"] = "core/libs/tests"
+        cycle_b = self.target(
+            "cycle_b",
+            target_type="OBJECT_LIBRARY",
+            source="core/libs/src/CycleB.cpp",
+            dependencies=("cycle_a",),
+        )
+        build_dir = self.fixture([host, cycle_a, cycle_b])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(
+                source_root, targets, ["core/libs/src/CycleB.cpp"]
+            ),
+            ["cyclic_tests"],
+        )
+
+    def test_fails_when_target_dependency_is_missing(self):
+        host = self.target("host_tests", dependencies=("missing_id",))
+        build_dir = self.fixture([host])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        with self.assertRaisesRegex(ValueError, "missing_id"):
+            build_mingw_host_only_tests.host_only_test_targets(
+                source_root, targets, ["core/libs/tests/HostOnly.cpp"]
+            )
+
+    def test_invalid_dependency_entries_raise_controlled_errors(self):
+        source_root = Path(self.temporary.name).resolve()
+        for dependencies in (None, "helper", [None], ["helper"], [{"id": ["helper"]}], [{}]):
+            with self.subTest(dependencies=dependencies):
+                host = self.target("host_tests")
+                host["dependencies"] = dependencies
+                with self.assertRaisesRegex(ValueError, "dependency"):
+                    build_mingw_host_only_tests.host_only_test_targets(
+                        source_root, {"host_tests": host}, ["core/libs/tests/HostOnly.cpp"]
+                    )
+
     def test_selects_only_changed_host_test_sources(self):
         first = self.target("first_tests")
         second = self.target("second_tests", source="core/libs/tests/Second.cpp")
@@ -284,6 +433,15 @@ class HostOnlyTargets(unittest.TestCase):
             source_root, targets, ["core/libs/tests/Second.cpp"]
         )
         self.assertEqual(selected, ["second_tests"])
+
+    def test_list_only_reads_the_first_changed_path_after_a_bom(self):
+        build = self.fixture([self.target("host_tests")])
+        changed = Path(self.temporary.name) / "changed.txt"
+        changed.write_bytes(b"\xef\xbb\xbfcore/libs/tests/HostOnly.cpp\r\n")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(build_mingw_host_only_tests.main([str(build), str(changed), "--list-only"]), 0)
+        self.assertIn("host_tests", output.getvalue().splitlines())
 
     def test_cmake_or_header_changes_check_all_host_targets(self):
         first = self.target("first_tests")
@@ -303,12 +461,23 @@ class HostOnlyTargets(unittest.TestCase):
             ["first_tests", "second_tests"],
         )
 
+    def test_a_cmake_fragment_change_checks_all_host_targets(self):
+        first = self.target("first_tests")
+        second = self.target("second_tests", source="core/libs/tests/Second.cpp")
+        build_dir = self.fixture([first, second])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        fragment = "core/libs/prx/libSceAgcDriver/tests/cmake/agc_frame_limit_tests.cmake"
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(source_root, targets, [fragment]),
+            ["first_tests", "second_tests"],
+        )
+
     def test_build_wide_inputs_check_all_host_targets(self):
         first = self.target("first_tests")
         second = self.target("second_tests", source="core/libs/tests/Second.cpp")
         build_dir = self.fixture([first, second])
         source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
-        for path in ("3rdparty/ZArchive", "cmake/Opus.cmake", "core/CMakeLists.txt", ".gitmodules"):
+        for path in ("3rdparty/ZArchive", "cmake/Opus.cmake", ".gitmodules"):
             with self.subTest(path=path):
                 self.assertEqual(
                     build_mingw_host_only_tests.host_only_test_targets(source_root, targets, [path]),
@@ -435,7 +604,7 @@ class WindowsPullRequestGateTests(unittest.TestCase):
     def test_build_wide_inputs_start_the_windows_pull_request_job(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/build.yml").read_text(encoding="utf-8")
         gate = workflow.split("mingwHostTests: ", 1)[1].split("),", 1)[0]
-        for item in ("'core/CMakeLists.txt'", "'cmake/'", "'3rdparty/'", "'.gitmodules'",
+        for item in ("'CMakeLists.txt'", "'cmake/'", "'3rdparty/'", "'.gitmodules'",
                      "'tools/select_tests.py'", "'tools/configure_seed.py'"):
             with self.subTest(item=item):
                 self.assertIn(item, gate)

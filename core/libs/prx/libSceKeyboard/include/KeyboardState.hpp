@@ -13,13 +13,16 @@ struct KeyboardInputEvent {
 };
 
 namespace Keyboard {
+bool IsInitialized();
 int Initialize();
 int Open(int userId, std::int32_t type, std::int32_t index);
 int Close(std::int32_t handle);
 int Read(std::int32_t handle, KeyboardData* data, std::int32_t num);
 int ReadState(std::int32_t handle, KeyboardData* data);
 int GetConnection(std::int32_t handle, bool* connected);
+int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId);
 int DisconnectAll();
+int GetHandle(std::int32_t userId, std::int32_t type, std::int32_t index);
 int GetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint32_t led, std::uint32_t modifierKey, std::uint16_t keyCode, KeyboardCharData* charData);
 void Publish(const KeyboardInputEvent& event);
 }

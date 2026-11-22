@@ -56,20 +56,37 @@ struct Source {
     std::int64_t probed = -1;
     bool throwOnRead = false;
     bool throwOnClose = false;
+    std::size_t gapStart = 0;
+    std::size_t gapSize = 0;
 };
 
 std::size_t ReadBytes(Source& source, void* buffer, std::size_t size, std::size_t count) {
     if (source.throwOnRead) throw std::runtime_error("read callback");
     if (source.probe) source.probed = sceVorbisDecStreams(source.probe);
     if (size == 0) return 0;
-    const std::size_t items = std::min(count, (source.bytes->size() - source.position) / size);
-    if (items != 0) std::memcpy(buffer, source.bytes->data() + source.position, items * size);
-    source.position += items * size;
+    const std::size_t items = std::min(count, (source.bytes->size() + source.gapSize - source.position) / size);
+    auto* out = static_cast<unsigned char*>(buffer);
+    std::size_t remaining = items * size;
+    while (remaining != 0) {
+        std::size_t chunk = remaining;
+        if (source.position < source.gapStart) {
+            chunk = std::min(chunk, source.gapStart - source.position);
+            std::memcpy(out, source.bytes->data() + source.position, chunk);
+        } else if (source.position < source.gapStart + source.gapSize) {
+            chunk = std::min(chunk, source.gapStart + source.gapSize - source.position);
+            std::memset(out, 0, chunk);
+        } else {
+            std::memcpy(out, source.bytes->data() + (source.position - source.gapSize), chunk);
+        }
+        source.position += chunk;
+        out += chunk;
+        remaining -= chunk;
+    }
     return items;
 }
 
 int SeekBytes(Source& source, std::int64_t offset, int whence) {
-    const auto size = static_cast<std::int64_t>(source.bytes->size());
+    const auto size = static_cast<std::int64_t>(source.bytes->size() + source.gapSize);
     const std::int64_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ? static_cast<std::int64_t>(source.position) : size;
     if (offset < -base || offset > size - base) return -1;
     source.position = static_cast<std::size_t>(base + offset);
@@ -158,7 +175,8 @@ void AppendPage(std::vector<unsigned char>& out, const ogg_page& page) {
     out.insert(out.end(), page.body, page.body + page.body_len);
 }
 
-void EncodeLink(std::vector<unsigned char>& out, int serial, int channels, long rate, long samples, const char* title) {
+void EncodeLink(std::vector<unsigned char>& out, int serial, int channels, long rate, long samples, const char* title,
+                void (*configureHeader)(vorbis_info&) = nullptr) {
     vorbis_info info;
     vorbis_info_init(&info);
     Require(vorbis_encode_init_vbr(&info, channels, rate, 0.1f) == 0);
@@ -175,7 +193,10 @@ void EncodeLink(std::vector<unsigned char>& out, int serial, int channels, long 
     ogg_packet identification;
     ogg_packet comments;
     ogg_packet codebooks;
-    vorbis_analysis_headerout(&dsp, &comment, &identification, &comments, &codebooks);
+    const vorbis_info encoderInfo = info;
+    if (configureHeader) configureHeader(info);
+    Require(vorbis_analysis_headerout(&dsp, &comment, &identification, &comments, &codebooks) == 0);
+    info = encoderInfo;
     ogg_stream_packetin(&stream, &identification);
     ogg_stream_packetin(&stream, &comments);
     ogg_stream_packetin(&stream, &codebooks);
@@ -339,6 +360,38 @@ void TestSeekable(const std::vector<unsigned char>& stream) {
     Require(sceVorbisDecClear(vf) == 0 && source.closes == 1);
     Require(ov_clear(&reference) == 0 && referenceSource.closes == 1);
     Require(source.probed == 0 && guest.Untouched() && probe.Untouched());
+}
+
+void TestWideStreamPositions(const std::vector<unsigned char>& stream, std::size_t gapSize) {
+    Source compact{&stream};
+    OggVorbis_File reference{};
+    Require(ov_open_callbacks(&compact, &reference, nullptr, 0, HostSeekableCallbacks) == 0);
+    const auto lastPage = ov_raw_total(&reference, 0);
+    Require(lastPage > 0 && static_cast<std::size_t>(lastPage) + 4 <= stream.size());
+    Require(std::memcmp(stream.data() + lastPage, "OggS", 4) == 0);
+
+    Source source{&stream};
+    source.gapStart = static_cast<std::size_t>(lastPage);
+    source.gapSize = gapSize;
+    const auto wideLastPage = lastPage + static_cast<std::int64_t>(source.gapSize);
+    GuestFile guest;
+    void* vf = guest.Get();
+    Require(sceVorbisDecOpenCallbacks(&source, vf, nullptr, 0, SeekableCallbacks) == 0);
+    Require(sceVorbisDecSeekable(vf) == 1 && sceVorbisDecRawTotal(vf, 0) == wideLastPage);
+    const auto bits = (wideLastPage - reference.dataoffsets[0]) * 8;
+    Require(ov_time_total(&reference, 0) == 1.0);
+    Require(sceVorbisDecBitrate(vf, 0) == bits);
+    Require(sceVorbisDecBitrate(vf, -1) == static_cast<std::int64_t>(static_cast<float>(bits)));
+    Require(sceVorbisDecPcmTotal(vf, 0) == FirstSamples);
+    Require(RequireSameRead(vf, reference) > 0);
+    Require(sceVorbisDecRawSeek(vf, wideLastPage) == 0 && ov_raw_seek(&reference, lastPage) == 0);
+    Require(sceVorbisDecRawTell(vf) == ov_raw_tell(&reference) + static_cast<std::int64_t>(gapSize));
+    Require(sceVorbisDecPcmTell(vf) == ov_pcm_tell(&reference));
+    Require(RequireSameRead(vf, reference) >= 0);
+    Require(sceVorbisDecRawSeek(vf, 0) == 0 && ov_raw_seek(&reference, 0) == 0);
+    Require(RequireSameRead(vf, reference) > 0);
+    Require(sceVorbisDecClear(vf) == 0 && source.closes == 1);
+    Require(ov_clear(&reference) == 0 && guest.Untouched());
 }
 
 void TestStreaming(const std::vector<unsigned char>& stream) {
@@ -519,6 +572,14 @@ void TestNeverOpened() {
     Require(Throws<std::invalid_argument>([] { sceVorbisDecStreams(nullptr); }));
     Require(Throws<std::invalid_argument>([] { sceVorbisDecInfo(nullptr, 0); }));
     Require(Throws<std::invalid_argument>([] { sceVorbisDecPcmSeek(nullptr, 0); }));
+    Require(Throws<std::invalid_argument>([] { sceVorbisDecComment(nullptr, 0); }));
+    Require(Throws<std::invalid_argument>([] { sceVorbisDecPcmTell(nullptr); }));
+    Require(Throws<std::invalid_argument>([] { sceVorbisDecTimeTotal(nullptr, 0); }));
+    Require(Throws<std::invalid_argument>([] { sceVorbisDecTimeTell(nullptr); }));
+    Require(Throws<std::invalid_argument>([] { sceVorbisDecPcmTotal(nullptr, 0); }));
+    Require(Throws<std::invalid_argument>([] { sceVorbisDecBitrate(nullptr, 0); }));
+    float** nullPcm = nullptr;
+    Require(Throws<std::invalid_argument>([&] { sceVorbisDecReadFloat(nullptr, &nullPcm, 64, &bitstream); }));
 }
 
 void TestFailedOpens(const std::vector<unsigned char>& stream) {
@@ -589,11 +650,82 @@ void TestThrowingCallbacks(const std::vector<unsigned char>& stream) {
     Require(guest.Untouched());
 }
 
+void TestStreamingBitrates() {
+    std::vector<unsigned char> stream;
+    EncodeLink(stream, FirstSerial, FirstChannels, FirstRate, FirstSamples, "wide rates", [](vorbis_info& header) {
+        header.rate = 2000000000;
+        header.bitrate_upper = 2000000000;
+        header.bitrate_nominal = 0;
+        header.bitrate_lower = 1500000000;
+    });
+    GuestFile guest;
+    Source source{&stream};
+    Require(sceVorbisDecOpenCallbacks(&source, guest.Get(), nullptr, 0, StreamingCallbacks) == 0);
+    Require(sceVorbisDecBitrate(guest.Get(), 0) == 1750000000);
+    Require(sceVorbisDecBitrate(guest.Get(), -1) == 1750000000);
+
+    Source referenceSource{&stream};
+    OggVorbis_File reference{};
+    Require(ov_open_callbacks(&referenceSource, &reference, nullptr, 0, HostStreamingCallbacks) == 0);
+    bool wide = false;
+    while (RequireSameRead(guest.Get(), reference) > 0) {
+        if (reference.samptrack == 0) continue;
+        const auto expected = static_cast<std::int64_t>(reference.bittrack / reference.samptrack * reference.vi->rate + 0.5);
+        Require(sceVorbisDecBitrateInstant(guest.Get()) == expected);
+        Require(sceVorbisDecBitrateInstant(guest.Get()) == OV_FALSE);
+        if (expected > INT32_MAX) {
+            wide = true;
+            break;
+        }
+        Require(ov_bitrate_instant(&reference) == expected);
+    }
+    Require(wide);
+    Require(sceVorbisDecClear(guest.Get()) == 0 && ov_clear(&reference) == 0);
+}
+
+void TestBitrateHalfTies() {
+    constexpr long rate = 8192;
+    constexpr long samples = 16 * rate;
+    std::array<bool, 2> tested{};
+    for (int candidate = 0; candidate < 16 && !(tested[0] && tested[1]); ++candidate) {
+        std::vector<unsigned char> stream;
+        EncodeLink(stream, 1 + candidate * 97000000, 1, rate, samples, "bitrate");
+        Source host{&stream};
+        OggVorbis_File reference{};
+        Require(ov_open_callbacks(&host, &reference, nullptr, 0, HostSeekableCallbacks) == 0);
+        Require(ov_time_total(&reference, 0) == 16.0);
+        const auto bytes = reference.offsets[1] - reference.dataoffsets[0];
+        Require(ov_clear(&reference) == 0);
+        if (bytes % 2 == 0) continue;
+        const auto lower = bytes / 2;
+        const auto parity = lower % 2;
+        if (tested[parity]) continue;
+
+        GuestFile guest;
+        Source source{&stream};
+        Require(sceVorbisDecOpenCallbacks(&source, guest.Get(), nullptr, 0, SeekableCallbacks) == 0);
+        const auto expected = lower + parity;
+        for (const int link : {-1, 0}) {
+            const auto bitrate = sceVorbisDecBitrate(guest.Get(), link);
+            if (bitrate != expected)
+                std::fprintf(stderr, "Bitrate for link %d: %lld, expected %lld from %lld bytes in 16 seconds\n",
+                             link, static_cast<long long>(bitrate), static_cast<long long>(expected),
+                             static_cast<long long>(bytes));
+            Require(bitrate == expected);
+        }
+        Require(sceVorbisDecClear(guest.Get()) == 0);
+        tested[parity] = true;
+    }
+    Require(tested[0] && tested[1]);
+}
+
 }
 
 int main() {
     std::vector<unsigned char> stream;
     EncodeLink(stream, FirstSerial, FirstChannels, FirstRate, FirstSamples, "first");
+    TestWideStreamPositions(stream, std::size_t{1} << 31);
+    TestWideStreamPositions(stream, std::size_t{1} << 32);
     EncodeLink(stream, SecondSerial, SecondChannels, SecondRate, SecondSamples, "second");
 
     TestSeekable(stream);
@@ -604,6 +736,8 @@ int main() {
     TestNeverOpened();
     TestFailedOpens(stream);
     TestThrowingCallbacks(stream);
+    TestStreamingBitrates();
+    TestBitrateHalfTies();
 
     Require(Throws<std::runtime_error>([] { sceVorbisDecGetDecodePriority(); }));
     Require(Throws<std::runtime_error>([] { sceVorbisDecSetDecodePriority(); }));

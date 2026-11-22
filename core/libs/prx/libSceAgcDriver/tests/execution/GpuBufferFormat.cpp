@@ -17,6 +17,8 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <unordered_set>
+#include <spirv/unified1/spirv.hpp>
 
 namespace {
 
@@ -635,6 +637,22 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, Guest
     return ShaderRecompiler::Recompile(request);
 }
 
+std::size_t PrivateArrays(std::span<const std::uint32_t> words) {
+    std::unordered_set<std::uint32_t> arrays;
+    std::unordered_set<std::uint32_t> pointers;
+    std::size_t variables = 0;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        Require(count != 0u && count <= words.size() - cursor, "gpu buffer format: malformed SPIR-V");
+        const auto op = words[cursor] & 0xffffu;
+        if (op == spv::OpTypeArray && count >= 4u) arrays.insert(words[cursor + 1]);
+        if (op == spv::OpTypePointer && count >= 4u && words[cursor + 2] == spv::StorageClassPrivate && arrays.contains(words[cursor + 3])) pointers.insert(words[cursor + 1]);
+        if (op == spv::OpVariable && count >= 4u && words[cursor + 3] == spv::StorageClassPrivate && pointers.contains(words[cursor + 1])) ++variables;
+        cursor += count;
+    }
+    return variables;
+}
+
 void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& shader, GuestBlock& guest, std::uint32_t records, std::uint32_t word3) {
     auto descriptor = guest.Descriptor();
     descriptor[0] = records;
@@ -654,6 +672,9 @@ int main() {
         if (!device) return VulkanTestSkipped;
         GuestBlock guest;
         const auto shader = Compile(*device, guest);
+        const auto privateArrays = PrivateArrays(shader.spirv);
+        if (std::getenv("APS5_PRIVATE_BUFFER_FORMAT_TABLE") == nullptr) Require(privateArrays == 0u, "gpu buffer format: a run-time buffer format is looked up through a Private array, which drivers keep in per-invocation local memory");
+        else Require(privateArrays == 1u, "gpu buffer format: APS5_PRIVATE_BUFFER_FORMAT_TABLE did not bring the Private format table back");
         for (const auto& test : Cases) {
             Run(*device, shader, guest, test.records, test.word3);
             for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
