@@ -119,8 +119,8 @@ struct AlignedBuffer {
 
 extern "C" std::int64_t PKImageEncode_Transcode_impl_nid_no_patch(void* encoder, void* converter, void* rectangle) {
 
-    JxrGuestGuid fromFormat = GUID_PKPixelFormatDontCare;
-    JxrGuestGuid toFormat = GUID_PKPixelFormatDontCare;
+    JxrGuestGuid fromFormat = GUID_PKPixelFormatDontCare_nid_no_patch;
+    JxrGuestGuid toFormat = GUID_PKPixelFormatDontCare_nid_no_patch;
 
     const auto converterBeforeFrom = ConverterFields(converter, __func__);
     ValidateCallback(converterBeforeFrom.getSourcePixelFormat, __func__);

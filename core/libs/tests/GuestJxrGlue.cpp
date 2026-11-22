@@ -154,8 +154,8 @@ void PrepareTranscode(std::vector<std::byte>& encoder, std::vector<std::byte>& c
 std::array<std::byte, 64>* writeSourceConverter = nullptr;
 std::array<std::byte, 160>* writeSourceEncoder = nullptr;
 void* writeSourceRectangle = nullptr;
-JxrGuestGuid writeSourceFrom = GUID_PKPixelFormat32bppRGB;
-JxrGuestGuid writeSourceTo = GUID_PKPixelFormat32bppRGB;
+JxrGuestGuid writeSourceFrom = GUID_PKPixelFormat32bppRGB_nid_no_patch;
+JxrGuestGuid writeSourceTo = GUID_PKPixelFormat32bppRGB_nid_no_patch;
 std::int64_t writeSourceFirstResult = 0;
 std::int64_t writeSourceSecondResult = 0;
 std::int64_t writeSourceCopyResult = 1;
@@ -217,7 +217,7 @@ std::int64_t APS5_VABI WriteSourceGetTargetReplacement(void*, JxrGuestGuid* form
 std::int64_t APS5_VABI WriteSourceGetTarget(void*, JxrGuestGuid* format) {
     ++writeSourceSecondCalls;
     if (writeSourceSecondResult < 0) return writeSourceSecondResult;
-    *format = GUID_PKPixelFormat24bppRGB;
+    *format = GUID_PKPixelFormat24bppRGB_nid_no_patch;
     return writeSourceSecondResult;
 }
 
@@ -261,8 +261,8 @@ void PrepareWriteSource() {
     writeSourceSecondResult = 0;
     writeSourceCopyResult = 1;
     writeSourceWriteResult = 9;
-    writeSourceFrom = GUID_PKPixelFormat32bppRGB;
-    writeSourceTo = GUID_PKPixelFormat32bppRGB;
+    writeSourceFrom = GUID_PKPixelFormat32bppRGB_nid_no_patch;
+    writeSourceTo = GUID_PKPixelFormat32bppRGB_nid_no_patch;
     WriteField(writeSourceConverter->data(), 24,
                CallbackAddress(static_cast<std::int64_t(APS5_VABI*)(void*, JxrGuestGuid*)>(&WriteSourceGetSource)));
     WriteField(writeSourceConverter->data(), 16,
@@ -297,8 +297,8 @@ void TestWriteSource() {
     Require(writeSourceFirstCalls == 1 && writeSourceSecondCalls == 1);
 
     PrepareWriteSource();
-    writeSourceTo = GUID_PKPixelFormat32bppRGB;
-    WriteField(encoder.data(), 136, GUID_PKPixelFormat24bppRGB);
+    writeSourceTo = GUID_PKPixelFormat32bppRGB_nid_no_patch;
+    WriteField(encoder.data(), 136, GUID_PKPixelFormat24bppRGB_nid_no_patch);
     Require(PKImageEncode_WriteSource_nid_postfix(encoder.data(), converter.data(), nullptr) == -106);
     Require(writeSourceFirstCalls == 1 && writeSourceSecondCalls == 1 && writeSourceCopyCalls == 0);
 
@@ -494,29 +494,29 @@ void TestInitializeConvert() {
     std::array<std::byte, sizeof(void*)> previousReleaseField{};
     std::memcpy(previousReleaseField.data(), converter.beforeDecoder + 8 * sizeof(void*), previousReleaseField.size());
 
-    const auto rgb = GUID_PKPixelFormat24bppRGB;
+    const auto rgb = GUID_PKPixelFormat24bppRGB_nid_no_patch;
     Require(PKFormatConverter_InitializeConvert_nid_postfix(&converter, rgb, nullptr, rgb) == 0);
     Require(ConverterCallback(converter) == previousCallback && std::memcmp(&converter.pixelFormat, &rgb, sizeof(rgb)) == 0);
     Require(converter.decoder == previousDecoder);
     Require(std::memcmp(converter.beforeDecoder, originalCallbackFields.data(), originalCallbackFields.size()) == 0);
     Require(std::memcmp(converter.beforeDecoder + 8 * sizeof(void*), previousReleaseField.data(), previousReleaseField.size()) == 0);
 
-    const auto floatRgb = GUID_PKPixelFormat128bppRGBFloat;
-    const auto floatRgba = GUID_PKPixelFormat128bppRGBAFloat;
+    const auto floatRgb = GUID_PKPixelFormat128bppRGBFloat_nid_no_patch;
+    const auto floatRgba = GUID_PKPixelFormat128bppRGBAFloat_nid_no_patch;
     Require(PKFormatConverter_InitializeConvert_nid_postfix(&converter, floatRgb, nullptr, floatRgba) == 0);
     Require(ConverterCallback(converter) == previousCallback && std::memcmp(&converter.pixelFormat, &floatRgba, sizeof(floatRgba)) == 0);
 
-    const auto dontCare = GUID_PKPixelFormatDontCare;
-    const auto rgb555 = GUID_PKPixelFormat16bppRGB555;
-    const auto rgb565 = GUID_PKPixelFormat16bppRGB565;
-    const auto bgra = GUID_PKPixelFormat32bppBGRA;
+    const auto dontCare = GUID_PKPixelFormatDontCare_nid_no_patch;
+    const auto rgb555 = GUID_PKPixelFormat16bppRGB555_nid_no_patch;
+    const auto rgb565 = GUID_PKPixelFormat16bppRGB565_nid_no_patch;
+    const auto bgra = GUID_PKPixelFormat32bppBGRA_nid_no_patch;
     for (const auto& format : {rgb555, rgb565, bgra}) {
         Require(PKFormatConverter_InitializeConvert_nid_postfix(&converter, dontCare, nullptr, format) == 0);
         Require(ConverterCallback(converter) == previousCallback && std::memcmp(&converter.pixelFormat, &format, sizeof(format)) == 0);
     }
 
-    const auto gray16 = GUID_PKPixelFormat16bppGray;
-    const auto rgba = GUID_PKPixelFormat32bppRGBA;
+    const auto gray16 = GUID_PKPixelFormat16bppGray_nid_no_patch;
+    const auto rgba = GUID_PKPixelFormat32bppRGBA_nid_no_patch;
     Require(PKFormatConverter_InitializeConvert_nid_postfix(&converter, gray16, nullptr, rgba) == -106);
     Require(ConverterCallback(converter) == previousCallback && std::memcmp(&converter.pixelFormat, &rgba, sizeof(rgba)) == 0);
 
@@ -549,8 +549,8 @@ void TestInitializeConvert() {
     Require(converter.decoder == nullptr);
 
     RequireThrows([] {
-        PKFormatConverter_InitializeConvert_nid_postfix(nullptr, GUID_PKPixelFormat24bppRGB,
-                                                        nullptr, GUID_PKPixelFormat24bppBGR);
+        PKFormatConverter_InitializeConvert_nid_postfix(nullptr, GUID_PKPixelFormat24bppRGB_nid_no_patch,
+                                                        nullptr, GUID_PKPixelFormat24bppBGR_nid_no_patch);
     });
 }
 
@@ -584,13 +584,13 @@ void TestFormatConverterInitialize() {
     std::uint64_t previousCallback = 0x9182736455aabbcc;
     std::memcpy(convertBytes, &previousCallback, sizeof(previousCallback));
 
-    getPixelFormatValue = GUID_PKPixelFormat24bppRGB;
+    getPixelFormatValue = GUID_PKPixelFormat24bppRGB_nid_no_patch;
     mutateDecoderInGetPixelFormat = true;
     getPixelFormatResult = -0x100000003LL;
     getPixelFormatCalls = 0;
     const auto untouched = converter;
     Require(PKFormatConverter_Initialize_nid_postfix(&converter, decoder.data(), nullptr,
-            GUID_PKPixelFormat24bppBGR) == getPixelFormatResult);
+            GUID_PKPixelFormat24bppBGR_nid_no_patch) == getPixelFormatResult);
     Require(getPixelFormatCalls == 1 && getPixelFormatDecoder == decoder.data());
     Require(std::memcmp(&converter, &untouched, sizeof(converter)) == 0);
     std::uint64_t decoderMutation = 0;
@@ -599,16 +599,16 @@ void TestFormatConverterInitialize() {
 
     getPixelFormatCalls = 0;
     Require(PKFormatConverter_Initialize_nid_postfix(nullptr, decoder.data(), nullptr,
-            GUID_PKPixelFormat24bppBGR) == getPixelFormatResult);
+            GUID_PKPixelFormat24bppBGR_nid_no_patch) == getPixelFormatResult);
     Require(getPixelFormatCalls == 1);
 
     getPixelFormatResult = 5;
     getPixelFormatCalls = 0;
     Require(PKFormatConverter_Initialize_nid_postfix(&converter, decoder.data(), nullptr,
-            GUID_PKPixelFormat24bppBGR) == 0);
+            GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
     Require(getPixelFormatCalls == 1 && getPixelFormatDecoder == decoder.data());
     Require(converter.decoder == decoder.data());
-    Require(std::memcmp(&converter.pixelFormat, &GUID_PKPixelFormat24bppBGR, 16) == 0);
+    Require(std::memcmp(&converter.pixelFormat, &GUID_PKPixelFormat24bppBGR_nid_no_patch, 16) == 0);
     JxrGuestFormatConvert convert = nullptr;
     std::memcpy(&convert, convertBytes, sizeof(convert));
     Require(convert != nullptr);
@@ -618,10 +618,10 @@ void TestFormatConverterInitialize() {
     Require(pixels[0] == 3 && pixels[1] == 2 && pixels[2] == 1);
     for (std::size_t index = 3; index < pixels.size(); ++index) Require(pixels[index] == 0xa5);
 
-    getPixelFormatValue = GUID_PKPixelFormat32bppRGBA;
+    getPixelFormatValue = GUID_PKPixelFormat32bppRGBA_nid_no_patch;
     getPixelFormatCalls = 0;
     Require(PKFormatConverter_Initialize_nid_postfix(&converter, decoder.data(), nullptr,
-            GUID_PKPixelFormat32bppBGRA) == 0);
+            GUID_PKPixelFormat32bppBGRA_nid_no_patch) == 0);
     Require(getPixelFormatCalls == 1 && converter.decoder == decoder.data());
     std::memcpy(&convert, convertBytes, sizeof(convert));
     std::array<std::uint8_t, 8> rgba{4, 5, 6, 7, 0xcc, 0xcc, 0xcc, 0xcc};
@@ -629,26 +629,26 @@ void TestFormatConverterInitialize() {
     Require(rgba[0] == 6 && rgba[1] == 5 && rgba[2] == 4 && rgba[3] == 7);
     for (std::size_t index = 4; index < rgba.size(); ++index) Require(rgba[index] == 0xcc);
 
-    getPixelFormatValue = GUID_PKPixelFormat24bppRGB;
+    getPixelFormatValue = GUID_PKPixelFormat24bppRGB_nid_no_patch;
     converter.decoder = reinterpret_cast<void*>(std::uintptr_t{0x1234});
     converter.pixelFormat = {};
     const auto decoderBeforeFailure = converter.decoder;
     std::uint64_t callbackBeforeFailure = 0;
     std::memcpy(&callbackBeforeFailure, convertBytes, sizeof(callbackBeforeFailure));
     Require(PKFormatConverter_Initialize_nid_postfix(&converter, decoder.data(), nullptr,
-            GUID_PKPixelFormat128bppRGBFloat) < 0);
+            GUID_PKPixelFormat128bppRGBFloat_nid_no_patch) < 0);
     Require(converter.decoder == decoderBeforeFailure);
-    Require(std::memcmp(&converter.pixelFormat, &GUID_PKPixelFormat128bppRGBFloat, 16) == 0);
+    Require(std::memcmp(&converter.pixelFormat, &GUID_PKPixelFormat128bppRGBFloat_nid_no_patch, 16) == 0);
     Require(std::memcmp(convertBytes, &callbackBeforeFailure, sizeof(callbackBeforeFailure)) == 0);
 
     RequireThrows([] {
         PKFormatConverter_Initialize_nid_postfix(nullptr, nullptr, nullptr,
-                                                  GUID_PKPixelFormat24bppRGB);
+                                                  GUID_PKPixelFormat24bppRGB_nid_no_patch);
     });
     alignas(8) std::array<std::byte, 64> nullCallbackDecoder{};
     RequireThrows([&] {
         PKFormatConverter_Initialize_nid_postfix(&converter, nullCallbackDecoder.data(), nullptr,
-                                                  GUID_PKPixelFormat24bppRGB);
+                                                  GUID_PKPixelFormat24bppRGB_nid_no_patch);
     });
 }
 
@@ -657,7 +657,7 @@ void TestTranscodeBuffered() {
     std::vector<std::byte> converter(262144);
     std::vector<std::byte> decoder(262144);
     std::array<std::byte, 16> rectangle{};
-    transcodeFormat = GUID_PKPixelFormat8bppGray;
+    transcodeFormat = GUID_PKPixelFormat8bppGray_nid_no_patch;
     PrepareTranscode(encoder, converter, decoder, rectangle, false);
     transcodeOrder.clear();
     copyResult = 0;
@@ -695,7 +695,7 @@ void TestTranscodeBuffered() {
     Require((transcodeOrder == std::vector<int>{1, 2, 3}));
     Require(frees == freesBefore + 3);
 
-    auto incompatible = GUID_PKPixelFormatBlackWhite;
+    auto incompatible = GUID_PKPixelFormatBlackWhite_nid_no_patch;
     Store(encoder.data(), 136, incompatible);
     transcodeOrder.clear();
     const auto mismatchFrees = frees;
@@ -703,9 +703,9 @@ void TestTranscodeBuffered() {
     Require((transcodeOrder == std::vector<int>{1, 2}));
     Require(frees == mismatchFrees);
     const std::array<std::pair<JxrGuestGuid, std::uint32_t>, 3> formats{{
-        {GUID_PKPixelFormatBlackWhite, 1},
-        {GUID_PKPixelFormat12bppYCC420, 12},
-        {GUID_PKPixelFormat16bppYCC422, 8}}};
+        {GUID_PKPixelFormatBlackWhite_nid_no_patch, 1},
+        {GUID_PKPixelFormat12bppYCC420_nid_no_patch, 12},
+        {GUID_PKPixelFormat16bppYCC422_nid_no_patch, 8}}};
     for (const auto& [format, expectedStride] : formats) {
         transcodeFormat = format;
         PrepareTranscode(encoder, converter, decoder, rectangle, false);
@@ -722,7 +722,7 @@ void TestTranscodeWmp() {
     std::vector<std::byte> converter(262144);
     std::vector<std::byte> decoder(262144);
     std::array<std::byte, 16> rectangle{};
-    transcodeFormat = GUID_PKPixelFormat8bppGray;
+    transcodeFormat = GUID_PKPixelFormat8bppGray_nid_no_patch;
     PrepareTranscode(encoder, converter, decoder, rectangle, true);
     transcodeOrder.clear();
     transcodeResult = 41;

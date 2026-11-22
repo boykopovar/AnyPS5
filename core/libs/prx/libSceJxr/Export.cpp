@@ -201,10 +201,10 @@ std::int64_t APS5_VABI GetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::siz
 
 std::int64_t APS5_VABI PKCodecFactory_CreateCodec_nid_postfix(const std::uint32_t* iid, void** codec) {
     if (!iid || !codec) APS5_INVALID_ARG_EX;
-    if (*iid == IID_PKImageWmpEncode) {
+    if (*iid == IID_PKImageWmpEncode_nid_no_patch) {
         return PKImageEncode_Create_WMP_nid_postfix(reinterpret_cast<Jxr::ImageEncode**>(codec));
     }
-    if (*iid == IID_PKImageWmpDecode) {
+    if (*iid == IID_PKImageWmpDecode_nid_no_patch) {
         return PKImageDecode_Create_WMP_nid_postfix(codec);
     }
     return WmpErrUnsupportedFormat;
