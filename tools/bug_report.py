@@ -16,6 +16,7 @@ from performance_compare import unique_json_object
 IPV4_OCTET = r"(?!25[6-9]|2[6-9][0-9]|[3-9][0-9]{2})\d{1,3}"
 IPV4 = re.compile(rf"\b(?:{IPV4_OCTET}\.){{3}}{IPV4_OCTET}\b")
 RUNTIME_LOG_APPEND = re.compile(rb"\[log\] ANYPS5_LOG_FILE: appending to this file, process [0-9]+\r?\n")
+LOG_ENCODING_HINT = "Use a fresh ANYPS5_LOG_FILE or omit the log"
 
 
 def redact(text, *, home, user, host):
@@ -94,15 +95,17 @@ def host_text():
 
 def redact_log(path, identity):
     data = Path(path).read_bytes()
+    if data.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+        raise ValueError(f"log uses unsupported UTF-32 encoding. {LOG_ENCODING_HINT}")
     if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
         append = RUNTIME_LOG_APPEND.search(data)
-        prefix = data[:append.start()] if append else data
+        boundary = append.start() if append else len(data)
+        prefix = data[:boundary]
+        tail = data[boundary:]
         as_utf8 = prefix.decode("utf-8", errors="replace")
-        if redact(as_utf8, **identity) != as_utf8:
-            raise ValueError("log has ambiguous encoding. Use a fresh ANYPS5_LOG_FILE or omit the log")
-        text = prefix.decode("utf-16", errors="replace")
-        if append:
-            text += data[append.start():].decode("utf-8", errors="replace")
+        if b"\x00" in tail or redact(as_utf8, **identity) != as_utf8:
+            raise ValueError(f"log has ambiguous encoding. {LOG_ENCODING_HINT}")
+        text = prefix.decode("utf-16", errors="replace") + tail.decode("utf-8", errors="replace")
     else:
         text = data.decode("utf-8", errors="replace")
     return redact(text.replace("\r\n", "\n").replace("\r", "\n"), **identity)

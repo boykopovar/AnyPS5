@@ -1,3 +1,4 @@
+import codecs
 import contextlib
 import io
 import json
@@ -176,6 +177,14 @@ class BundleTests(unittest.TestCase):
             bug_report.make_bundle(self.report, out, log=self.log, **self.identity)
         self.assertFalse(out.exists())
 
+    def test_truncated_utf16_log_is_decoded_before_redaction(self):
+        line = "opened /home/ana/title.elf on serverfestivo from 192.0.2.42\r\n"
+        self.log.write_bytes(codecs.BOM_UTF16_LE + line.encode("utf-16-le") + b"x")
+        out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(bundle.read("anyps5.log").decode("utf-8"),
+                             "opened ~/title.elf on <host> from <ip>\n\ufffd")
+
     def test_escaped_home_paths_are_redacted_in_nested_json(self):
         cases = (
             ("windows", r"C:\Profiles\example", r"\games\title.elf"),
@@ -314,6 +323,34 @@ class MainTests(unittest.TestCase):
         with zipfile.ZipFile(target) as bundle:
             self.assertEqual(sorted(bundle.namelist()), ["README.txt", "anyps5-report.json", "anyps5-settings.txt", "anyps5.log", "host.txt"])
             self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), "opened ~/title.elf on <host>\n")
+
+    def test_utf16_append_after_runtime_is_reported_without_bundle(self):
+        note = b"[log] ANYPS5_LOG_FILE: appending to this file, process 42\n"
+        line = "opened /home/ana/title.elf on serverfestivo from 192.0.2.42\r\n"
+        self.log.write_bytes(codecs.BOM_UTF16_LE + b"\r\x00\n\x00" + note + b"runtime output\n"
+                             + line.encode("utf-16-le"))
+        target = self.root / "mixed.zip"
+        code, out, err = self.run_main(["--report", str(self.report), "--log", str(self.log), "--out", str(target)])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("bug_report: log has ambiguous encoding", err)
+        self.assertNotIn("192.0.2.42", err)
+        self.assertNotIn("Traceback", err)
+        self.assertFalse(target.exists())
+
+    def test_utf32_log_is_reported_without_bundle(self):
+        line = "opened /home/ana/title.elf on serverfestivo from 192.0.2.42\r\n"
+        for encoding, bom in (("utf-32-le", codecs.BOM_UTF32_LE), ("utf-32-be", codecs.BOM_UTF32_BE)):
+            with self.subTest(encoding=encoding):
+                self.log.write_bytes(bom + line.encode(encoding))
+                target = self.root / f"{encoding}.zip"
+                code, out, err = self.run_main(["--report", str(self.report), "--log", str(self.log), "--out", str(target)])
+                self.assertEqual(code, 1)
+                self.assertEqual(out, "")
+                self.assertIn("bug_report: log uses unsupported UTF-32 encoding", err)
+                self.assertNotIn("192.0.2.42", err)
+                self.assertNotIn("Traceback", err)
+                self.assertFalse(target.exists())
 
     def test_bundle_redacts_environment_settings_once(self):
         target = self.root / "bundle.zip"
