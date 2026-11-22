@@ -492,6 +492,8 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 
 ## Test selection tools
 
+Changed-test selection uses the configured CMake target sources. Windows CI replaces AGC execution fixtures outside `ANYPS5_AGC_EXECUTION_TESTS` with stub sources, so a change to an omitted `.cpp` can pass the changed-test job without running that fixture. To run it locally, configure a full build with `-DBUILD_TESTING=ON`. Set `-DANYPS5_AGC_EXECUTION_TESTS=` to build every AGC execution fixture, or set it to the fixture's source file stem. Build the test target and run the matching CTest. [Windows Build workflow](../../.github/workflows/build.yml)
+
 - `tools/build_changed_guest_tests.py <build_dir> [changed_paths] [--output-log FILE]` builds and runs the changed guest and host-only `core/libs` tests.
 - `tools/build_mingw_host_only_tests.py <build_dir> [changed_paths] [--list-only]` builds the `core/libs` test executables that do not link guest libc. `--list-only` prints them without building.
 
