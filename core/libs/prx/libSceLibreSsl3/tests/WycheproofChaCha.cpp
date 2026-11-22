@@ -105,7 +105,7 @@ void CheckWycheproofVector(const LibreSsl3WycheproofChaCha::Vector& vector) {
     const bool expectedValid = vector.expectedValid == 1;
 
     Context encryptCtx;
-    Require(EVP_EncryptInit_ex_nid_postfix(encryptCtx.get(), EVP_chacha20_poly1305_nid_postfix(), nullptr, key.data(), iv.data()) == 1);
+    Require(EVP_EncryptInit_ex_nid_postfix(encryptCtx.get(), EVP_chacha20_poly1305_nid_postfix(), nullptr, nullptr, nullptr) == 1);
 
     int ivLength = 0;
     const int setIvLenEncrypt = EVP_CIPHER_CTX_ctrl_nid_postfix(encryptCtx.get(), SetIvLength, static_cast<int>(iv.size()), &ivLength);
@@ -113,6 +113,8 @@ void CheckWycheproofVector(const LibreSsl3WycheproofChaCha::Vector& vector) {
         Require(!expectedValid);
         return;
     }
+
+    Require(EVP_EncryptInit_ex_nid_postfix(encryptCtx.get(), nullptr, nullptr, key.data(), iv.data()) == 1);
 
     int aadOk = 1;
     if (!aad.empty()) {
@@ -146,7 +148,7 @@ void CheckWycheproofVector(const LibreSsl3WycheproofChaCha::Vector& vector) {
     }
 
     Context decryptCtx;
-    Require(EVP_DecryptInit_ex_nid_postfix(decryptCtx.get(), EVP_chacha20_poly1305_nid_postfix(), nullptr, key.data(), iv.data()) == 1);
+    Require(EVP_DecryptInit_ex_nid_postfix(decryptCtx.get(), EVP_chacha20_poly1305_nid_postfix(), nullptr, nullptr, nullptr) == 1);
 
     ivLength = 0;
     const int setIvLenDecrypt = EVP_CIPHER_CTX_ctrl_nid_postfix(decryptCtx.get(), SetIvLength, static_cast<int>(iv.size()), &ivLength);
@@ -154,6 +156,8 @@ void CheckWycheproofVector(const LibreSsl3WycheproofChaCha::Vector& vector) {
         Require(!expectedValid);
         return;
     }
+
+    Require(EVP_DecryptInit_ex_nid_postfix(decryptCtx.get(), nullptr, nullptr, key.data(), iv.data()) == 1);
 
     int setTagOk = 1;
     if (!expectedTag.empty()) {
