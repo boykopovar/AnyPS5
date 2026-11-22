@@ -1156,16 +1156,19 @@ public:
             clearAspects = 0u;
             pendingClear = 0u;
         }
-        if (!GuestMemory::UnchangedSinceAll(sampling.initial) && sampling.refusal.empty()) {
-            auto& metadata = sampling.initial[1];
-            bool planesUnchanged = metadata.bytes != 0u;
+        if (!GuestMemory::UnchangedSinceAll(sampling.initial) && sampling.refusal.empty() && target.htileAddress != 0u && sampling.initial.size() > 1u && sampling.initial[1].address == target.htileAddress && sampling.initial[1].bytes != 0u) {
+            bool planesUnchanged = true;
             for (std::size_t index = 0u; index < sampling.initial.size(); ++index) {
                 const auto& plane = sampling.initial[index];
                 if (index != 1u && plane.bytes != 0u && !GuestMemory::UnchangedSince(plane.address, plane.bytes, plane.generation)) planesUnchanged = false;
             }
             if (planesUnchanged) {
-                Require(expandedHtilePlane(metadata), "guest writes over native multisample depth are not implemented");
-                metadata.generation = GuestMemory::CollectWritesUncached(metadata.address, metadata.bytes);
+                auto current = sampling.initial;
+                current[1].generation = GuestMemory::CollectWritesUncached(current[1].address, current[1].bytes);
+                Require(expandedHtilePlane(current[1]), "guest writes over native multisample depth are not implemented");
+                for (const auto& range : current) GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                Require(GuestMemory::UnchangedSinceAll(current), "CPU writes raced native multisample depth HTILE expansion");
+                sampling.initial = current;
                 RebasePublication(1u);
             }
         }
