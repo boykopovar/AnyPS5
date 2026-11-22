@@ -4450,7 +4450,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     // The state is copied only when a mask must change.
     auto& masked = prepared.masked;
     masked = maskedState(state, inputs.fragmentOutputs);
-    if (std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied; })) recipeOut = nullptr;
+    if (std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied || binding.stagedTemporary != nullptr || binding.dump != nullptr; })) recipeOut = nullptr;
     for (std::size_t index = 0; index < targets.size(); ++index) {
         if (!targets[index].proxied) continue;
         if (!masked.has_value()) masked = state;
