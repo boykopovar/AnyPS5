@@ -806,6 +806,17 @@ class CTestIndexFileTests(unittest.TestCase):
             self.assertIn("No tests were found", result.stderr)
             self.assertNotEqual(result.returncode, 0)
 
+    def test_ctest_fails_if_saved_indices_match_no_registered_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text(
+                f'add_test(available "{Path(sys.executable).as_posix()}" --version)\n', encoding="utf-8")
+            (root / "select.tests").write_text("0,0,0,2\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
+                                    capture_output=True, text=True)
+            self.assertIn("No tests were found", result.stderr)
+            self.assertNotEqual(result.returncode, 0)
+
     def test_empty_selection_can_succeed_with_registered_tests(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
