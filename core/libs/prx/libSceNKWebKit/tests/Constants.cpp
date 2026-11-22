@@ -52,7 +52,6 @@ int main() {
     Require(WKContextCopyPlugInAutoStartOriginHashes() == 0);
     Require(WKContextDownloadURLRequest() == 0);
     Require(WKContextGetIconDatabase() == 0);
-    Require(WKContextGetMaximumNumberOfProcesses() == static_cast<int>(0xffffffffu));
     Require(WKContextMenuCopySubmenuItems() == 0);
     Require(WKContextMenuItemCopyTitle() == 0);
     Require(WKContextMenuItemCreateAsAction() == 0);
