@@ -111,7 +111,7 @@ int APS5_VABI sceFreeTypeOtUnknown_ZhtAXOoLNyo_nid_no_patch() {
 APS5_EXPORT("ZhtAXOoLNyo", sceFreeTypeOtUnknown_ZhtAXOoLNyo_nid_no_patch);
 
 void APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch(FreeType::GuestGlyphRec* glyph, std::uint32_t mode, FreeType::GuestBBox* box) {
-    FT_Glyph_Get_CBox_nid_postfix(glyph, mode, box);
+    FreeTypeGlyphGetCBox_nid_no_patch(glyph, mode, box);
 }
 APS5_EXPORT("avLzN0tTxLI", sceFreeTypeOtGlyphGetCBox_nid_no_patch);
 
