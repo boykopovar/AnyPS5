@@ -4793,7 +4793,6 @@ int APS5_VABI _ZNK7WebCore11XPathResult12booleanValueEv();
 int APS5_VABI _ZNK7WebCore11XPathResult14snapshotLengthEv();
 int APS5_VABI _ZNK7WebCore11XPathResult15singleNodeValueEv();
 int APS5_VABI _ZNK7WebCore11XPathResult20invalidIteratorStateEv();
-int APS5_VABI _ZNK7WebCore12BlobDataItem6lengthEv();
 int APS5_VABI _ZNK7WebCore12CSSMediaRule5mediaEv();
 int APS5_VABI _ZNK7WebCore12CSSStyleRule12selectorTextEv();
 int APS5_VABI _ZNK7WebCore12DOMTokenList5valueEv();
