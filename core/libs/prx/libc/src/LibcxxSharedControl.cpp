@@ -59,8 +59,8 @@ extern "C" {
 void* APS5_VABI _ZNSt3__119__shared_weak_count4lockEv_nid_postfix(void* self) {
     const auto owners = Owners(self, offsetof(ControlBlock, sharedOwners));
     auto count = owners.load();
-    while (count != -1) {
-        if (count < -1 || count == std::numeric_limits<std::int64_t>::max())
+    while (count >= 0) {
+        if (count == std::numeric_limits<std::int64_t>::max())
             throw std::invalid_argument("invalid libc++ shared owner count");
         if (owners.compare_exchange_weak(count, count + 1)) return self;
     }
@@ -69,9 +69,14 @@ void* APS5_VABI _ZNSt3__119__shared_weak_count4lockEv_nid_postfix(void* self) {
 
 void APS5_VABI _ZNSt3__119__shared_weak_count14__release_weakEv_nid_postfix(void* self) {
     const auto owners = Owners(self, offsetof(ControlBlock, weakOwners));
-    const auto count = owners.load(std::memory_order_acquire);
-    if (count < 0) throw std::invalid_argument("invalid libc++ weak owner count");
-    if (count == 0 || owners.fetch_sub(1, std::memory_order_acq_rel) == 0) Finalize(self);
+    auto count = owners.load(std::memory_order_acquire);
+    while (count >= 0) {
+        if (owners.compare_exchange_weak(count, count - 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
+            if (count == 0) Finalize(self);
+            return;
+        }
+    }
+    throw std::invalid_argument("invalid libc++ weak owner count");
 }
 
 const void* APS5_VABI _ZNKSt3__119__shared_weak_count13__get_deleterERKSt9type_info_nid_postfix(const void*, const std::type_info*) {

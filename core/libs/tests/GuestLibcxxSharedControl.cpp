@@ -59,6 +59,9 @@ void CheckLock() {
     control.sharedOwners = -1;
     Require(_ZNSt3__119__shared_weak_count4lockEv_nid_postfix(&control) == nullptr && control.sharedOwners == -1,
             "weak lock resurrected an expired shared owner");
+    control.sharedOwners = -2;
+    Require(_ZNSt3__119__shared_weak_count4lockEv_nid_postfix(&control) == nullptr && control.sharedOwners == -2,
+            "weak lock promoted a negative shared owner count");
 }
 
 void CheckRelease() {
@@ -68,6 +71,13 @@ void CheckRelease() {
             "non-final weak release must retain the control block");
     _ZNSt3__119__shared_weak_count14__release_weakEv_nid_postfix(&control);
     Require(control.callbacks.load() == 1, "final weak release did not call the derived callback exactly once");
+    bool rejected = false;
+    try {
+        _ZNSt3__119__shared_weak_count14__release_weakEv_nid_postfix(&control);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected && control.callbacks.load() == 1, "duplicate weak release finalized retained storage twice");
 
     constexpr unsigned ThreadCount = 8;
     ControlBlock concurrent{Vtable.data(), -1, ThreadCount - 1};
