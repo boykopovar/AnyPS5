@@ -188,6 +188,44 @@ void cache() {
     }
 }
 
+struct SnapshotGrowth {
+    std::uint32_t calls = 0;
+};
+
+bool APS5_VABI initializeDuringGrowth(CommandBuffer* buffer, std::uint32_t, void* data) {
+    auto& growth = *static_cast<SnapshotGrowth*>(data);
+    ++growth.calls;
+    check(sceAgcInit(13) == 0, "ACB growth initialization failed");
+    buffer->cursor_down = buffer->top;
+    return true;
+}
+
+void snapshot(bool initialized, std::size_t capacity) {
+    if (initialized) check(sceAgcInit(8) == 0, "initial ACB snapshot setup failed");
+    const auto flags = initialized ? 0x8083u : 0x83u;
+    const auto instance = initialized ? 0xffffffffu : 0u;
+    Storage expected;
+    const auto* reference = sceAgcAcbResetQueue(&expected.buffer, flags, instance);
+    check((reference != nullptr) == initialized, "ACB snapshot reference return differs");
+    prefix(expected, (initialized ? 0xce000000u : 0xce200000u) | flags, initialized ? 8u : 0u);
+    if (initialized) suffix(expected, 0xce800000u);
+    else check(expected.count() == 6 && expected.words[4] == 0xc0004600u && expected.words[5] == 0x407u, "empty ACB snapshot reference differs");
+    Storage actual;
+    actual.buffer.cursor_down = actual.words.data() + capacity;
+    SnapshotGrowth growth;
+    actual.buffer.callback = initializeDuringGrowth;
+    actual.buffer.user_data = &growth;
+    const auto* result = sceAgcAcbResetQueue(&actual.buffer, flags, instance);
+    check(growth.calls == 1, "ACB snapshot reset did not exercise one initialization callback");
+    check(actual.count() == expected.count() && std::equal(expected.words.begin(), expected.words.begin() + expected.count(), actual.words.begin()), "ACB growth initialization mixed reset state snapshots");
+    check((result != nullptr) == initialized, "ACB snapshot reset return differs after growth");
+    check(actual.words[actual.count()] == 0xa5a5a5a5u, "ACB snapshot reset changed its tail guard");
+    Storage active;
+    check(sceAgcAcbResetQueue(&active.buffer, 0x8001u, 0xffffffffu) == active.words.data(), "ACB growth callback did not publish an active context");
+    prefix(active, 0xce008001u, 13);
+    suffix(active, 0xce800000u);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -199,6 +237,8 @@ int main(int argc, char** argv) {
         else if (mode == "zero") zeroVersion();
         else if (mode == "growth") growth();
         else if (mode == "cache") cache();
+        else if (mode.starts_with("snapshot-empty-")) snapshot(false, static_cast<std::size_t>(std::stoul(mode.substr(15))));
+        else if (mode.starts_with("snapshot-initialized-")) snapshot(true, static_cast<std::size_t>(std::stoul(mode.substr(21))));
         else throw std::runtime_error("unknown queue-reset test mode");
         LibcRunShutdown_nid_postfix();
         std::puts("queue reset passed");
