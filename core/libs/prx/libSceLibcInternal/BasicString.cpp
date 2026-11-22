@@ -178,6 +178,31 @@ void TidyWide(String* string) {
     SetWideSize(string, 0);
 }
 
+std::size_t CapacityFor(const String* string, std::size_t size) {
+    if (size > MaxSize) _ZNKSs5_XlenEv_nid_postfix(string);
+    const std::size_t rounded = size | GuestLocale::StringCapacityMask;
+    if (rounded < size || rounded > MaxSize) return size;
+    std::size_t capacity = rounded;
+    if (string->capacity > GuestLocale::StringInlineCapacity && string->capacity / 2 > rounded / 3) {
+        if (string->capacity > MaxSize - string->capacity / 2) _ZSt11_Xbad_allocv_nid_postfix();
+        capacity = string->capacity + string->capacity / 2;
+    }
+    return capacity;
+}
+
+char* Allocate(const String* string, std::size_t capacity) {
+    if (capacity > MaxSize) _ZNKSs5_XlenEv_nid_postfix(string);
+    const std::size_t bytes = capacity + 1;
+    if (bytes >= GuestStringStorage::LargeAllocation && bytes > NoPosition - GuestStringStorage::AllocationPadding) _ZSt11_Xbad_allocv_nid_postfix();
+    return static_cast<char*>(GuestStringStorage::Allocate(bytes));
+}
+
+void Tidy(String* string) {
+    if (string->capacity > GuestLocale::StringInlineCapacity) GuestStringStorage::Deallocate(string->pointer, string->capacity + 1);
+    string->capacity = GuestLocale::StringInlineCapacity;
+    SetSize(string, 0);
+}
+
 void ReserveForInsert(String* string, std::size_t size) {
     if (size > MaxSize) _ZNKSs5_XlenEv_nid_postfix(string);
     if (size <= string->capacity) return;
@@ -353,6 +378,30 @@ void APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(String* self
     self->pointer = data;
     self->capacity = capacity;
     SetWideSize(self, oldLength);
+}
+
+void APS5_VABI _ZNSs5_CopyEmm_nid_postfix(String* self, std::size_t newSize, std::size_t oldLength) {
+    if (self == nullptr) throw std::invalid_argument("basic_string<char>::_Copy: null string");
+    if (oldLength > self->size || oldLength > newSize || newSize <= GuestLocale::StringInlineCapacity)
+        throw std::invalid_argument("basic_string<char>::_Copy: the new size must exceed the inline buffer and hold the kept length");
+    std::size_t capacity = CapacityFor(self, newSize);
+    char* data = nullptr;
+    try {
+        data = Allocate(self, capacity);
+    } catch (...) {
+        capacity = newSize;
+        try {
+            data = Allocate(self, capacity);
+        } catch (...) {
+            Tidy(self);
+            throw;
+        }
+    }
+    std::memcpy(data, Data(self), oldLength);
+    if (self->capacity > GuestLocale::StringInlineCapacity) GuestStringStorage::Deallocate(self->pointer, self->capacity + 1);
+    self->pointer = data;
+    self->capacity = capacity;
+    SetSize(self, oldLength);
 }
 
 String* APS5_VABI _ZNSs6insertEmmc_nid_postfix(String* self, std::size_t position, std::size_t count, char character) {

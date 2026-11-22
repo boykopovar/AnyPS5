@@ -321,59 +321,17 @@ int APS5_VABI sceLibcInternalPending3_066_nid_no_patch() {
 }
 APS5_EXPORT("VKdXFE7ualw", sceLibcInternalPending3_066_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending3_067_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("SmtBNDda5qU", sceLibcInternalPending3_067_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending3_078_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("G9LB1YD5-xc", sceLibcInternalPending3_078_nid_no_patch);
-
 int APS5_VABI sceLibcInternalPending3_079_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 APS5_EXPORT("J-0I2PtiZc4", sceLibcInternalPending3_079_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending3_091_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("BNZq-mRvDS8", sceLibcInternalPending3_091_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending3_092_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("wEU8oFtBXT8", sceLibcInternalPending3_092_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending3_103_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("GGqIV4cjzzI", sceLibcInternalPending3_103_nid_no_patch);
-
 int APS5_VABI sceLibcInternalPending3_104_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 APS5_EXPORT("bZ0oEGQUKO8", sceLibcInternalPending3_104_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending3_113_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("k8zgjeBmpVY", sceLibcInternalPending3_113_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending3_114_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("tCihLs4UJxQ", sceLibcInternalPending3_114_nid_no_patch);
 
 int APS5_VABI _ZNKSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE5_FputES3_RSt8ios_basecPKcm_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);

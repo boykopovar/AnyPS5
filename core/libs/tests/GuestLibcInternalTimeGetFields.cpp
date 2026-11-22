@@ -259,8 +259,6 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
     Require(Throws([&] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE5_InitERKSt8_Locinfo_nid_postfix(nullptr, &info); }), "char time_put _Init null self throws");
     Require(Throws([&] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE5_InitERKSt8_Locinfo_nid_postfix(&tmpPutChar.base, nullptr); }), "char time_put _Init null locinfo throws");
     Require(Throws([] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED0Ev_nid_postfix(nullptr); }), "char time_put D0 null throws");
-    Require(Throws([] { libSceLibcInternalInventory_197_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
-    Require(Throws([] { libSceLibcInternalInventory_198_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
     Require(NotImplementedCalls_nid_no_patch() > before, "B2 error paths reported");
 
     if (hasLibrary) {
@@ -279,7 +277,6 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
         const auto nidPutInit = ResolveExport<InitFn>("_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE5_InitERKSt8_Locinfo_nid_postfix");
         const auto nidPutC1Refs = ResolveExport<RefsCtorFn>("_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1Em_nid_postfix");
         const auto nidPutD0 = ResolveExport<DtorFn>("_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED0Ev_nid_postfix");
-        const auto nidWidePutInit = ResolveExport<InitFn>("_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix");
 
         GuestLocale::Implementation classicLoc{{nullptr, 1, 0}, nullptr, 0, 5, false, "C"};
         GuestLocale::Implementation* classicPtr = &classicLoc;
@@ -306,9 +303,6 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
         nidPutInit(&charPut->base, &info);
         Require(std::memcmp(&charPut->names, expectedTimes, sizeof(*expectedTimes)) == 0, "NID time_put<char> _Init");
         nidPutD0(&charPut->base);
-
-        GuestLocale::Facet widePutFacet{};
-        Require(Throws([&] { nidWidePutInit(&widePutFacet, &info); }), "NID ZolDcuDSD0Q still throws");
     }
 
     _ZNSt8_LocinfoD1Ev_nid_postfix(&info);

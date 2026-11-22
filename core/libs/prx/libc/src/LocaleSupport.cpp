@@ -895,6 +895,10 @@ extern "C" GuestLocale::String* LibcAssignWideCString_nid_no_patch(GuestLocale::
     return AssignWideCString(result, source);
 }
 
+extern "C" const GuestLocale::FacetVtable* LibcWideNumpunctVtable_nid_no_patch() {
+    return &g_wideNumpunctVtable.facet;
+}
+
 extern "C" GuestLocale::String* LibcCopyString_nid_no_patch(GuestLocale::String* result, const GuestLocale::String* source) {
     return CopyStringUnits(result, source, 1, GuestLocale::StringInlineCapacity, GuestStringMaxSize);
 }
