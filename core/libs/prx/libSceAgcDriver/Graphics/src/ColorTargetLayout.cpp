@@ -132,6 +132,9 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
             pitch = (width + pitchAlignment - 1u) / pitchAlignment * pitchAlignment;
             break;
         }
+        case ColorTileMode::GcnLinearGeneral:
+            pitch = width;
+            break;
         case ColorTileMode::S4KBX:
         case ColorTileMode::D4KBX:
         case ColorTileMode::Z64KBX:
