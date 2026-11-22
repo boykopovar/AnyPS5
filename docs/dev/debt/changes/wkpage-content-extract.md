@@ -1,6 +1,6 @@
 # libSceNKWebKit
 
-## add Functional
+## add Silent stubs
 
 - [WKPage content extraction and profiling controls](../../../core/libs/prx/libSceNKWebKit/src/PageContentExtract.cpp) (libSceNKWebKit) - `WKPageGetContentsAsString`, `WKPageGetContentsAsMHTMLData`, `WKPageGetSelectionAsWebArchiveData`, `WKPageRenderTreeExternalRepresentation`, `WKPageGetBytecodeProfile` and `WKPageGetSamplingProfilerOutput` invoke completion callbacks with empty content strings or data on valid open pages; web process frame serialization and JavaScriptCore sampling/bytecode profiler extraction remain unmodeled.
 
