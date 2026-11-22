@@ -400,6 +400,18 @@ public:
         GuestAllocations::Mutation().Add(data, BlockBytes, true, true, true);
     }
 
+    ~LowBlock() {
+        if (data == nullptr) return;
+        GuestAllocations::Mutation().Remove(data);
+#if defined(_WIN32) || defined(__APPLE__)
+        GuestArena::GuestArenaReset_nid_postfix(data, BlockBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(data, BlockBytes);
+#else
+        munmap(data, BlockBytes);
+        if (AgcDriver::GuestMemory::WriteWatched()) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(data, BlockBytes);
+#endif
+    }
+
     LowBlock(const LowBlock&) = delete;
     LowBlock& operator=(const LowBlock&) = delete;
 
@@ -472,12 +484,7 @@ void SubmitOnChipDraw(const LowBlock& block) {
     AgcDriver::GuestMemory::FlushGpuWrites(color, ColorBytes);
 }
 
-void RequireRewrittenConstants() {
-    const LowBlock block;
-    if (!block.Usable()) {
-        std::printf("GCN tessellation: the constant buffer rewrites are skipped, no guest block below the 40-bit GCN color base range (0x%llx)\n", static_cast<unsigned long long>(block.At(0)));
-        return;
-    }
+void RequireRewrittenConstants(const LowBlock& block) {
     std::memcpy(block.Bytes(IndicesOffset), Indices.data(), sizeof(Indices));
     const auto pixelAt = [&](std::uint32_t x, std::uint32_t y) {
         const auto* pixel = block.Bytes((static_cast<std::size_t>(y) * Width + x) * 4u);
@@ -520,9 +527,20 @@ int main() {
         ExpectConstantsRequired(target, ShaderStage::TessellationEvaluation, GcnDomainOnChipInputs, domainUsers, 0u);
         ShaderRecompiler::SetGcnGuestShaders(false);
         device.reset();
+        const LowBlock block;
+        if (!block.Usable()) {
+            std::printf("GCN tessellation: skipped, no guest block below the 40-bit GCN color base range (0x%llx) for the constant buffer rewrites\n", static_cast<unsigned long long>(block.At(0)));
+            return VulkanTestSkipped;
+        }
         AgcDriver::DriverDetail::Driver::Get().WaitForPipelineJournal();
         ShaderRecompiler::SetGcnGuestShaders(true);
-        RequireRewrittenConstants();
+        try {
+            RequireRewrittenConstants(block);
+        } catch (...) {
+            ShaderRecompiler::SetGcnGuestShaders(false);
+            AgcDriverShutdown_nid_postfix();
+            throw;
+        }
         ShaderRecompiler::SetGcnGuestShaders(false);
         AgcDriverShutdown_nid_postfix();
         std::puts("GCN tessellation tests passed");
