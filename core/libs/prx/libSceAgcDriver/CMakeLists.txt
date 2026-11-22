@@ -1091,6 +1091,17 @@ target_link_libraries(agc_compute_pipeline_replay PRIVATE libSceAgcDriver libc)
 set_target_properties(agc_compute_pipeline_replay PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_compute_pipeline_replay)
 
+add_executable(agc_pipeline_journal_replay EXCLUDE_FROM_ALL tools/PipelineJournalReplay.cpp)
+target_include_directories(agc_pipeline_journal_replay PRIVATE
+        ${LIBS_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+        ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
+        ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR}
+)
+target_link_libraries(agc_pipeline_journal_replay PRIVATE libSceAgcDriver libc ${CMAKE_DL_LIBS})
+set_target_properties(agc_pipeline_journal_replay PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_pipeline_journal_replay)
+
 add_library(agc_oracle_support STATIC tools/OracleCodeObject.cpp tools/OracleDispatch.cpp)
 target_include_directories(agc_oracle_support PUBLIC
         ${LIBS_INCLUDE_DIR}
