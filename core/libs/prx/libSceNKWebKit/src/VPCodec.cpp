@@ -127,7 +127,10 @@ bool operator==(const String& string, const char* text) {
     return true;
 }
 
-bool IsWhitespace(char16_t c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
+bool IsWhitespace(char16_t c) {
+    if (c <= 0xFF) return c == ' ' || (c >= '\t' && c <= '\r');
+    return c == 0x1680 || (c >= 0x2000 && c <= 0x200A) || c == 0x2028 || c == 0x205F || c == 0x3000;
+}
 
 std::optional<uint8_t> ParseInteger(View view) {
     unsigned position = 0;
@@ -271,21 +274,10 @@ std::optional<VPCodecConfigurationRecord> ParseVPCodecParameters(View codecView)
     VPCodecConfigurationRecord configuration;
 
     configuration.codecName = (*nextElement).ToString();
-    ++nextElement;
-
-    if (configuration.codecName == "vp8" || configuration.codecName == "vp9") {
-        if (nextElement == codecSplit.end())
-            return configuration;
-
-        auto codecString = codecView.ToString();
-        if (codecString == "vp8.0" || codecString == "vp9.0")
-            return configuration;
-    }
-
     if (configuration.codecName != "vp08" && configuration.codecName != "vp09")
         return std::nullopt;
 
-    if (nextElement == codecSplit.end())
+    if (++nextElement == codecSplit.end())
         return std::nullopt;
 
     auto profile = ParseInteger(*nextElement);
@@ -355,13 +347,22 @@ std::optional<VPCodecConfigurationRecord> ParseVPCodecParameters(View codecView)
     if (++nextElement != codecSplit.end())
         return std::nullopt;
 
+    const bool unspecified = configuration.colorPrimaries == VPConfigurationColorPrimaries::Unspecified
+        || configuration.transferCharacteristics == VPConfigurationTransferCharacteristics::Unspecified
+        || configuration.matrixCoefficients == VPConfigurationMatrixCoefficients::Unspecified;
+    if (unspecified)
+        throw std::logic_error("WebCore::parseVPCodecParameters: the 3.20 result for an Unspecified colour field is unknown");
+
     return configuration;
 }
 
 }  // namespace
 
-std::optional<WebCore::VPCodecConfigurationRecord> APS5_VABI _ZN7WebCore22parseVPCodecParametersEN3WTF10StringViewE(NKWebKit::WtfAbi::StringView input) {
+WebCore::LegacyOptionalVPCodecConfigurationRecord APS5_VABI _ZN7WebCore22parseVPCodecParametersEN3WTF10StringViewE(NKWebKit::WtfAbi::StringView input) {
     if (!input.data && input.length)
         throw std::invalid_argument("null VP codec StringView storage");
-    return ParseVPCodecParameters({input, 0, input.length});
+    auto parsed = ParseVPCodecParameters({input, 0, input.length});
+    if (!parsed)
+        return WebCore::LegacyOptionalVPCodecConfigurationRecord{};
+    return WebCore::LegacyOptionalVPCodecConfigurationRecord{true, *parsed};
 }

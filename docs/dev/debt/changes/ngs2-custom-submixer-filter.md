@@ -1,0 +1,13 @@
+# libSceNgs2.native
+
+## change [NGS2 custom sampler rack]
+
+- [NGS2 custom sampler rack](../../../core/libs/prx/libSceNgs2.native/src/Custom.cpp) (libSceNgs2.native, rack 0x4001) - throws: a filter param naming a module other than a filter, a filter type 1 to 11 in a module after another module (our filter runs first); Gain throws at creation, so a filter naming Gain can't occur. Module 0x13, param `0x40001300 | index`: PS5 layout (u64 mask 0x8, type 0x10, 0x30 bytes), no size check, location 1, types 0 to 11, per PS5 libSceNgs2.native firmware 3.20 and 4.03 on a PC, not a console (ngs2-oracle-m12, m18). PPSA15552 sends type 9 ([trace](https://github.com/boykopovar/AnyPS5/pull/4417#issuecomment-6152733807))
+
+## change [NGS2 custom filter module, PS4 library]
+
+- [NGS2 custom filter module, PS4 library](../../../core/libs/prx/libSceNgs2.native/src/Custom.cpp) (libSceNgs2, racks 0x4001 and 0x4002) - gaps: a type 1 to 10 after another module throws on a custom sampler though PS4 11.00 accepts and applies it at that position (our filter runs first; main played PS4 type 1 there, so this throw is new); a param naming a module other than a filter throws (not run). On a custom submixer the module filters at its position (see NGS2 custom filter module on a custom submixer). PS4 11.00 libSceNgs2.sprx on a PC (ngs2-oracle-m20 RESULTS20, 21): [shadPS4's 40-byte layout](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/ngs2/ngs2_custom.h), size 0x28, the PS5 layout at 0x30 as PPSA15552 sends it (unmeasured on the PS5 `libSceNgs2.sprx`), else 0x804A030A, index past the modules 0x804A0308 first, a cross-kind id 0x804A0308 at every size run, types 1 to 10 filter, 11+ off, fc floor 0.001 x rate
+
+## add Functional
+
+- [NGS2 custom filter module on a custom submixer](../../../core/libs/prx/libSceNgs2.native/src/Custom.cpp) (libSceNgs2.native and libSceNgs2, rack 0x4002, module 0x13) - the module copies its source buffer to its destination buffer and runs the sampler filter's biquad (same coefficients, block-of-four arithmetic and channel bypass mask) on the destination in module order, also in submixers with several buffers. Its parameter takes the custom sampler's layouts and checks; type 0 (and 11+ in the PS4 library) switches it off, so the module copies only. The PS4 11.00 module filters at the module position (ngs2-oracle-m20); the PS5 libSceNgs2.native output on a custom submixer, the coefficient change point and whether a setup or a STOP clears the history are not measured; here the history clears at PLAY and coefficients apply from the next render. Rise of the Ronin (PPSA04540) creates custom submixers with up to four buffers and 0x13 modules routed between them (#8039).

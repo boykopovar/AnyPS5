@@ -9,7 +9,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-import jsonschema
+try:
+    import jsonschema
+except ModuleNotFoundError:
+    print("error: jsonschema is required to validate run report dumps (see tools/requirements-run-report.txt)", file=sys.stderr)
+    sys.exit(2)
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = json.loads((ROOT / "docs/run-report.schema.json").read_text(encoding="utf-8"))
@@ -31,7 +35,13 @@ def main():
     for report in reports:
         raw = report.read_bytes()
         errors = [f"size {len(raw)} exceeds {MAX_BYTES}"] if len(raw) > MAX_BYTES else []
-        errors += [f"{'/'.join(map(str, error.absolute_path))}: {error.message}" for error in validator.iter_errors(json.loads(raw))]
+        try:
+            document = json.loads(raw)
+        except (ValueError, RecursionError) as error:
+            errors.append(f"invalid JSON: {error}")
+        else:
+            errors.extend(f"{'/'.join(map(str, error.absolute_path))}: {error.message}"
+                          for error in validator.iter_errors(document))
         print(f"{'FAIL' if errors else 'PASS'} {report.name}")
         for error in errors:
             print(f"  {error}")

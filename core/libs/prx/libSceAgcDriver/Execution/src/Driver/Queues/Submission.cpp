@@ -30,9 +30,24 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
-void noteIndirectSegment(Submission& submission, std::size_t start, const std::uint32_t* target, std::size_t words) {
+bool pendingWriteOver(const std::uint32_t* target, std::size_t words) {
+    const auto address = reinterpret_cast<std::uint64_t>(target);
+    const auto bytes = words * sizeof(std::uint32_t);
+    return Graphics::Recorder::SnapshotWriteOverlaps(address, bytes) || (DrawPipeline::Active() && DrawPipeline::Queue0().Busy() && DrawPipeline::Queue0().Overlaps(address, bytes));
+}
+
+struct SegmentCopyStart {
+    std::uint64_t generation;
+    bool underWrite;
+};
+
+SegmentCopyStart startSegmentCopy(const std::uint32_t* target, std::size_t words) {
+    return {GuestMemory::TrackerGeneration(), pendingWriteOver(target, words)};
+}
+
+void noteIndirectSegment(Submission& submission, std::size_t start, const std::uint32_t* target, std::size_t words, const SegmentCopyStart& copied) {
     if (submission.commands.size() - start != words || !std::equal(submission.commands.begin() + static_cast<std::ptrdiff_t>(start), submission.commands.end(), target)) return;
-    submission.indirectSegments.push_back({start, target, words});
+    submission.indirectSegments.push_back({start, target, words, nullptr, copied.generation, copied.underWrite || pendingWriteOver(target, words)});
 }
 
 void collectLabelDwords(std::span<const std::uint32_t> packet, std::set<std::uint64_t>& dwords) {
@@ -234,11 +249,12 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
             if (targetWords != 0) {
                 GuestMemory::CheckRange(target, targetWords * sizeof(std::uint32_t), alignof(std::uint32_t));
                 const auto start = submission.commands.size();
+                const auto copied = startSegmentCopy(target, targetWords);
                 if (copySegment(submission, target, targetWords, budget, depth + 1)) {
                     require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
                     return true;
                 }
-                noteIndirectSegment(submission, start, target, targetWords);
+                noteIndirectSegment(submission, start, target, targetWords, copied);
                 if (guarded.empty()) return false;
             }
             cursor += count;
@@ -270,11 +286,12 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
                 return false;
             }
             const auto start = submission.commands.size();
+            const auto copied = startSegmentCopy(target, targetWords);
             if (copySegment(submission, target, targetWords, budget, depth + 1)) {
                 require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
                 return true;
             }
-            noteIndirectSegment(submission, start, target, targetWords);
+            noteIndirectSegment(submission, start, target, targetWords, copied);
             cursor += count;
             continue;
         }
@@ -308,7 +325,7 @@ bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
         const auto* recorder = Graphics::Recorder::Active();
         return recorder != nullptr && recorder->PendingWriterSerial(address, bytes) != 0;
     }();
-    if (!pipelineWrites && !finisherWrites && !recordedWrites) return false;
+    if (!pipelineWrites && !finisherWrites && !recordedWrites && !segment.copiedUnderWrite && !GuestMemory::DriverStoredOver(address, bytes, segment.copiedAt)) return false;
     if (pipelineWrites) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
     if (finisherWrites) DrawFinisher::Get().Drain();
     std::vector<std::uint32_t> words(segment.words);
@@ -494,9 +511,8 @@ bool Driver::awaitedUnchanged(const AwaitedSlot& slot, const AwaitedFields& fiel
 
 bool Driver::awaitedSatisfied(const AwaitedFields& fields) {
     const auto bytes = static_cast<std::uint32_t>(fields.shape >> 32u);
-    if (bytes == 0) return (std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(fields.address)).load(std::memory_order_acquire) & Pm4::RewindValid) != 0;
-    const std::uint64_t value = bytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(fields.address) : *reinterpret_cast<const volatile std::uint32_t*>(fields.address);
-    return Pm4::WaitCompares(static_cast<std::uint32_t>(fields.shape), fields.reference, fields.mask, value);
+    if (bytes == 0) return (Pm4::LoadLabel(fields.address, 4) & Pm4::RewindValid) != 0;
+    return Pm4::WaitCompares(static_cast<std::uint32_t>(fields.shape), fields.reference, fields.mask, Pm4::LoadLabel(fields.address, bytes == 8 ? 8 : 4));
 }
 
 std::optional<Driver::AwaitedFields> Driver::blockedOn(const AwaitedSlot& slot, std::uint64_t awaited) {
@@ -1106,16 +1122,14 @@ void Driver::noteHeldAtSubmit(Submission& submission, std::size_t cursor) {
     const auto wait = Pm4::DecodeWait(packet);
     const auto address = wait.address;
     const std::size_t bytes = wait.bytes;
-    if (address % 4 != 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return;
+    if (address % bytes != 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return;
     const auto worker = workers.find(submission.queue);
     for (std::size_t offset = 0; offset < bytes; offset += 4) {
         const auto dword = address + offset;
         if (std::find(submission.labelWrites.begin(), submission.labelWrites.end(), dword) != submission.labelWrites.end()) return;
         if (worker != workers.end() && worker->second.unfinishedWrites.contains(dword)) return;
     }
-    std::uint64_t value = *reinterpret_cast<const volatile std::uint32_t*>(address);
-    if (bytes == 8) value |= static_cast<std::uint64_t>(*reinterpret_cast<const volatile std::uint32_t*>(address + 4)) << 32u;
-    if (Pm4::WaitComparesValue(packet, value)) submission.heldAtSubmit.insert(cursor);
+    if (Pm4::WaitComparesValue(packet, Pm4::LoadLabel(address, bytes))) submission.heldAtSubmit.insert(cursor);
 }
 
 void Driver::forgetUnfinishedWrites(QueueWorker& worker, const Submission& submission) {

@@ -6,6 +6,8 @@ import { apply, current, locales, set as setLocale, translate } from "./i18n.mjs
 const $ = id => document.getElementById(id);
 let locale = current();
 apply(locale);
+let releaseRequest;
+let releaseVersion = 0;
 let worker;
 let selectedInputs = [];
 let summaries = [];
@@ -19,7 +21,8 @@ let downloadUrl;
 let logs = [];
 let release;
 const canSaveZip = typeof window.showSaveFilePicker === "function" && window.isSecureContext;
-const canStream = typeof window.showDirectoryPicker === "function" && window.isSecureContext;
+const folderLocks = window.navigator?.locks;
+const canStream = typeof window.showDirectoryPicker === "function" && typeof folderLocks?.request === "function" && window.isSecureContext;
 const supported = window.isSecureContext && window.Worker && window.WebAssembly && window.ReadableStream && window.WritableStream && window.crypto?.subtle;
 $("save").querySelector('[value="disk"]').disabled = !canStream;
 $("save").querySelector('[value="zip"]').disabled = !canSaveZip;
@@ -42,6 +45,22 @@ function sum(values) {
 
 function updateLocaleButton() {
   $("locale").textContent = locale.toUpperCase();
+}
+
+function renderSelection() {
+  const multi = selectedInputs.length > 1;
+  $("archive-name").textContent = multi ? translate(locale, "batchArchiveName", { count: selectedInputs.length }) : selectedInputs[0].name;
+  $("app-list").replaceChildren(...selectedInputs.map((input, index) => {
+    const item = document.createElement("li");
+    const name = document.createElement("strong");
+    name.textContent = input.name;
+    const details = document.createElement("span");
+    const summary = summaries[index];
+    details.textContent = translate(locale, "appListDetails", { files: summary.files, size: bytes(summary.totalBytes), modules: summary.modules });
+    item.append(name, details);
+    return item;
+  }));
+  $("app-list").hidden = !multi;
 }
 
 function update() {
@@ -154,6 +173,8 @@ async function fail(value) {
       log: logs
     }
   };
+  releaseVersion++;
+  releaseRequest = null;
   worker?.terminate();
   worker = null;
   working = true;
@@ -212,18 +233,7 @@ async function onMessage({ data }, currentWorker) {
       working = false;
       $("selection").hidden = false;
       $("drop").hidden = true;
-      $("archive-name").textContent = selectedInputs.length > 1 ? translate(locale, "batchArchiveName", { count: selectedInputs.length }) : selectedInputs[0].name;
-      $("app-list").replaceChildren(...selectedInputs.map((input, index) => {
-        const item = document.createElement("li");
-        const name = document.createElement("strong");
-        name.textContent = input.name;
-        const details = document.createElement("span");
-        const summary = summaries[index];
-        details.textContent = translate(locale, "appListDetails", { files: summary.files, size: bytes(summary.totalBytes), modules: summary.modules });
-        item.append(name, details);
-        return item;
-      }));
-      $("app-list").hidden = selectedInputs.length < 2;
+      renderSelection();
       const warningItems = [];
       for (let index = 0; index < summaries.length; index++) {
         for (const message of summaries[index].warnings) {
@@ -274,6 +284,7 @@ async function onMessage({ data }, currentWorker) {
       await sink.write(data.bytes);
       if (currentWorker === worker) currentWorker.postMessage({ type: "written" });
     } else if (data.type === "complete") {
+      $("cancel").hidden = true;
       if (sink) {
         await sink.close();
         if (currentWorker !== worker) return;
@@ -282,7 +293,6 @@ async function onMessage({ data }, currentWorker) {
       working = false;
       $("done").hidden = false;
       $("status").hidden = true;
-      $("cancel").hidden = true;
       const unit = data.mode === "disk" ? translate(locale, "resultUnitFiles") : "ZIP";
       $("result-info").textContent = data.apps > 1
         ? translate(locale, "resultInfoBatch", { apps: data.apps, size: bytes(data.size), unit, release: data.release })
@@ -348,6 +358,7 @@ async function selectInputs(inputs) {
       if (currentWorker === worker) return fail(event.message || (() => translate(locale, "workerStopped")));
     };
     currentWorker.postMessage({ type: "inspect", inputs, locale });
+    loadReleaseInfo();
   } catch (error) {
     await fail(error.message);
   }
@@ -356,6 +367,7 @@ async function selectInputs(inputs) {
 $("choose").onclick = () => { $("file").value = ""; $("file").click(); };
 $("change").onclick = () => {
   if (working) return;
+  const restoreFocus = document.activeElement === $("change");
   worker?.terminate();
   worker = null;
   if (downloadUrl) { URL.revokeObjectURL(downloadUrl); downloadUrl = null; }
@@ -369,6 +381,7 @@ $("change").onclick = () => {
   $("acknowledge").checked = false;
   $("drop").hidden = false;
   update();
+  if (restoreFocus) $("choose").focus();
 };
 $("choose-folder").onclick = () => { $("folder").value = ""; $("folder").click(); };
 $("folder").onchange = () => {
@@ -389,7 +402,9 @@ $("drop").ondrop = event => {
   selectInputs([...event.dataTransfer.files].map(file => ({ name: file.name, file })));
 };
 for (const id of ["save", "target", "acknowledge"]) $(id).addEventListener("change", update);
-$("cancel").onclick = () => fail(() => translate(locale, "cancelled"));
+$("cancel").onclick = () => {
+  if (!$("cancel").hidden) return fail(() => translate(locale, "cancelled"));
+};
 async function createZipSink(name, current) {
   try {
     const handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: "ZIP archive", accept: { "application/zip": [".zip"] } }] });
@@ -416,13 +431,14 @@ $("convert").onclick = async () => {
     const target = document.querySelector('input[name="target"]:checked').value;
     if ($("save").value === "zip") {
       const name = selectedInputs.length > 1 ? `anyps5-${target}-apps.zip` : `${selectedInputs[0].name.replace(/\.zip$/iu, "")}-${target}.zip`;
-      sink = await createZipSink(name, () => currentWorker === worker);
-      if (sink === null) return;
+      const writable = await createZipSink(name, () => currentWorker === worker);
+      if (writable === null) return;
+      sink = writable;
     } else if ($("save").value === "disk") {
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
       const parent = await window.showDirectoryPicker({ mode: "readwrite" });
       if (currentWorker !== worker) return;
-      const transaction = await OutputDirectoryTransaction.create(parent, name, locale);
+      const transaction = await OutputDirectoryTransaction.create(parent, name, folderLocks, locale);
       if (currentWorker !== worker) {
         await transaction.discard();
         return;
@@ -449,16 +465,29 @@ $("locale").onclick = () => {
   locale = locales[(index + 1) % locales.length].code;
   setLocale(locale);
   updateLocaleButton();
+  if (inspectionComplete && selectedInputs.length > 1) renderSelection();
   update();
 };
 updateLocaleButton();
 update();
 lock(false);
-if (supported) fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw localizedError(() => translate(locale, "cannotLoadReleaseInfo", { status: response.status, hint: response.status === 404 ? translate(locale, "cannotLoadReleaseInfoHint") : "" })); return response.json(); }).then(value => {
-  if (!value.tag || !["windows", "linux"].every(target => Number.isSafeInteger(value.platforms?.[target]?.expandedBytes))) throw localizedError(() => translate(locale, "invalidReleaseInfo"));
-  release = value;
-  update();
-}).catch(error => fail(error instanceof TypeError ? () => translate(locale, "cannotReachReleaseInfo") : error));
+function loadReleaseInfo() {
+  if (release || releaseRequest) return;
+  const version = ++releaseVersion;
+  releaseRequest = fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw localizedError(() => translate(locale, "cannotLoadReleaseInfo", { status: response.status, hint: response.status === 404 ? translate(locale, "cannotLoadReleaseInfoHint") : "" })); return response.json(); }).then(value => {
+    if (version !== releaseVersion) return;
+    if (!value || typeof value !== "object" || typeof value.tag !== "string" || !/^v[0-9A-Za-z][0-9A-Za-z._-]*$/u.test(value.tag) || value.tag.endsWith(".") || !["windows", "linux"].every(target => {
+      const size = value.platforms?.[target]?.expandedBytes;
+      return Number.isSafeInteger(size) && size >= 0 && size <= 512 * 1024 * 1024;
+    })) throw localizedError(() => translate(locale, "invalidReleaseInfo"));
+    release = value;
+    update();
+  }).catch(error => {
+    if (version === releaseVersion) return fail(error instanceof TypeError ? () => translate(locale, "cannotReachReleaseInfo") : error);
+  }).finally(() => { if (version === releaseVersion) releaseRequest = null; });
+}
+
+if (supported) loadReleaseInfo();
 
 if (!("webkitdirectory" in $("folder"))) {
   $("choose-folder").disabled = true;
