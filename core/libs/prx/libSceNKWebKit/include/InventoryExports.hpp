@@ -4711,8 +4711,6 @@ int APS5_VABI _ZNK7WebCore11HTMLElement21canonicalEnterKeyHintEv();
 int APS5_VABI _ZNK7WebCore11HTMLElement3dirEv();
 int APS5_VABI _ZNK7WebCore11HTMLElement5titleEv();
 int APS5_VABI _ZNK7WebCore11HTMLElement9translateEv();
-int APS5_VABI _ZNK7WebCore11HistoryItem11originalURLEv();
-int APS5_VABI _ZNK7WebCore11HistoryItem3urlEv();
 int APS5_VABI _ZNK7WebCore11HistoryItem4copyEv();
 int APS5_VABI _ZNK7WebCore11MediaPlayer11currentTimeEv();
 int APS5_VABI _ZNK7WebCore11MediaPlayer11initialTimeEv();
