@@ -84,6 +84,7 @@ public:
     static bool MetadataPassesPipelined();
     static void CountPipelinedMetadataPass();
     static std::uint64_t PipelinedMetadataPasses();
+    static std::uint64_t CommitClockReads();
 private:
     struct Item {
         Commit commit;

@@ -16,6 +16,8 @@ import unwrap_self
 SELF = b"\x4f\x15\x3d\x1d" + b"\0" * 60
 ELF = b"\x7fELF" + b"\0" * 12 + b"\x18\xfe" + b"\0" * 46
 EXECUTABLE = b"\x7fELF" + b"\0" * 12 + b"\x10\xfe" + b"\0" * 46
+PAYLOAD = b"\x7fELF" + b"\0" * 12 + b"\x03\x00" + b"\0" * 46
+REFUSAL = "FAIL: Forbidden syscall instruction at code offset 0x52c7; it is a ps5-payload-dev SDK syscall stub"
 
 
 def fake_unwrap(source, destination, verbose=False):
@@ -79,6 +81,17 @@ class AuditDumpTests(unittest.TestCase):
         path = self.dump / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
+
+    def test_empty_standard_module_directories_are_preserved(self):
+        for name in audit_dump.STANDARD_DIRECTORIES:
+            with self.subTest(name=name):
+                dump = self.root / ("dump-" + name)
+                (dump / name).mkdir(parents=True)
+                (dump / "eboot.bin").write_bytes(SELF)
+                source = self.root / ("source-" + name)
+                directories, extra = audit_dump.prepare(dump, source, log=lambda text: None)
+                self.assertTrue((source / name).is_dir())
+                self.assertEqual((directories, extra), ([], []))
 
     def test_every_module_location_is_staged_and_the_extra_ones_become_module_dirs(self):
         self.module("sce_module/libc.prx")
@@ -257,6 +270,94 @@ class AuditDumpTests(unittest.TestCase):
         output = work / "output"
         self.assertEqual(argv[:2], [str(output / "app.libc.prx.guest.prx.registry.json"), str(output / "app.registry.json")])
         self.assertEqual(argv[2:], ["--libs", "libs-a", "--libs", "libs-b", "--modules", str(work / "source" / "sce_module"), "--json", "report.json"])
+
+    def refusing(self, work, name, diagnostic=REFUSAL):
+        commands = []
+
+        def relink(command, **options):
+            commands.append(list(command))
+            output = Path(command[-1]).parent
+            (output / "app.libc.prx.guest.prx.registry.json").write_text("[]")
+            refused = work / "source" / name
+            if refused.exists():
+                (output / "app.stale.registry.json").write_text("[]")
+                return subprocess.CompletedProcess(command, 2, "", f"{diagnostic}\nInput: {refused}\n")
+            (output / "app.registry.json").write_text("[]")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        return commands, relink
+
+    def run_refusing(self, work, name, diagnostic=REFUSAL):
+        commands, relink = self.refusing(work, name, diagnostic)
+        errors = io.StringIO()
+        printed = io.StringIO()
+        with mock.patch.object(subprocess, "run", side_effect=relink), \
+                mock.patch.object(audit_dump.import_audit, "main", return_value=0) as audit, \
+                contextlib.redirect_stderr(errors), contextlib.redirect_stdout(printed):
+            code = audit_dump.main([str(self.dump), "--relinker", str(self.relinker), "--libs", "libs", "--work", str(work)])
+        return code, commands, audit, printed.getvalue(), errors.getvalue()
+
+    def test_a_payload_the_relinker_refuses_is_skipped_and_the_conversion_repeats(self):
+        self.module("sce_module/libc.prx")
+        self.module("lapy.elf", PAYLOAD)
+        work = self.root / "work"
+        code, commands, audit, printed, errors = self.run_refusing(work, "lapy.elf")
+        self.assertEqual(code, 0)
+        self.assertEqual(errors, "")
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(commands[0][1:4], ["--registry", "--module-dir", "."])
+        self.assertNotIn("--module-dir", commands[1])
+        self.assertFalse((work / "source" / "lapy.elf").exists())
+        self.assertIn("skipped lapy.elf: Forbidden syscall instruction at code offset 0x52c7; "
+                      "it is a ps5-payload-dev SDK syscall stub", printed)
+        output = work / "output"
+        argv = audit.call_args.args[0]
+        self.assertEqual(argv[:2], [str(output / "app.libc.prx.guest.prx.registry.json"), str(output / "app.registry.json")])
+        self.assertEqual(argv[2:], ["--libs", "libs", "--modules", str(work / "source" / "sce_module")])
+
+    def test_a_refused_payload_leaves_the_other_modules_beside_eboot_in_place(self):
+        self.module("plugin.prx")
+        self.module("lapy.elf", PAYLOAD)
+        work = self.root / "work"
+        code, commands, audit, printed, errors = self.run_refusing(work, "lapy.elf")
+        self.assertEqual(code, 0)
+        self.assertEqual(commands[1][1:4], ["--registry", "--module-dir", "."])
+        self.assertTrue((work / "source" / "plugin.prx").is_file())
+        self.assertIn("--modules", audit.call_args.args[0])
+
+    def test_a_refused_module_with_a_module_suffix_still_fails(self):
+        self.module("sce_module/odd.prx", PAYLOAD)
+        work = self.root / "work"
+        code, commands, audit, printed, errors = self.run_refusing(work, "sce_module/odd.prx")
+        self.assertEqual(code, 2)
+        self.assertEqual(len(commands), 1)
+        self.assertIn("relinker exited with 2", errors)
+        self.assertIn("Forbidden syscall instruction", errors)
+        self.assertTrue((work / "source" / "sce_module" / "odd.prx").is_file())
+        audit.assert_not_called()
+
+    def test_another_refusal_of_a_file_found_by_its_header_still_fails(self):
+        self.module("sce_module/libc.prx")
+        self.module("lapy.elf", PAYLOAD)
+        work = self.root / "work"
+        code, commands, audit, printed, errors = self.run_refusing(work, "lapy.elf", "FAIL: Unsupported relocation type 99")
+        self.assertEqual(code, 2)
+        self.assertEqual(len(commands), 1)
+        self.assertIn("Unsupported relocation type 99", errors)
+        self.assertTrue((work / "source" / "lapy.elf").is_file())
+        audit.assert_not_called()
+
+    def test_a_forbidden_syscall_that_is_not_an_sdk_stub_still_fails(self):
+        self.module("sce_module/libc.prx")
+        self.module("lapy.elf", PAYLOAD)
+        work = self.root / "work"
+        refusal = "FAIL: Forbidden syscall instruction at code offset 0x1a0: syscall number 20"
+        code, commands, audit, printed, errors = self.run_refusing(work, "lapy.elf", refusal)
+        self.assertEqual(code, 2)
+        self.assertEqual(len(commands), 1)
+        self.assertIn("Forbidden syscall instruction at code offset 0x1a0: syscall number 20", errors)
+        self.assertTrue((work / "source" / "lapy.elf").is_file())
+        audit.assert_not_called()
 
     def test_the_modules_beside_eboot_are_audited_without_the_executable(self):
         self.module("sce_module/libc.prx")
@@ -591,6 +692,17 @@ class AuditDumpTests(unittest.TestCase):
         for relative in (".", "eboot.bin", "report.json", "new/directory/report.json"):
             with self.subTest(relative=relative):
                 self.assert_report_rejected(self.dump / relative, "JSON output overlaps the input dump")
+
+    def test_json_outputs_inside_cleared_work_directories_are_rejected_before_cleanup(self):
+        work = self.root / "report-work"
+        for child in ("source", "output"):
+            with self.subTest(child=child):
+                directory = work / child / "previous"
+                directory.mkdir(parents=True)
+                report = directory / "report.json"
+                report.write_bytes(b"previous report")
+                self.assert_report_rejected(report, "JSON output overlaps a work directory that will be cleared")
+                self.assertEqual(report.read_bytes(), b"previous report")
 
     def test_json_output_directory_or_missing_parent_is_rejected_before_staging(self):
         directory = self.root / "report-dir"

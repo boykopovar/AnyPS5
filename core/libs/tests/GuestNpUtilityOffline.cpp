@@ -355,6 +355,28 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntCreateRequest(&request) == NotInitialized, "sceNpServiceChecker2IntCreateRequest", "a request was created after finalization");
 }
 
+void CheckTitleMetadataRequests() {
+    constexpr int TitleMetadataNotFound = static_cast<int>(0x8055AA09u);
+    Require(sceNpTitleMetadataIntAbortRequest(1) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "an abort was accepted before initialization");
+    Require(sceNpTitleMetadataIntDeleteRequest(1) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "a delete was accepted before initialization");
+    const std::int32_t req1 = sceNpTitleMetadataIntCreateRequest();
+    Require(req1 == 1, "sceNpTitleMetadataIntCreateRequest", "the first request is not id 1");
+    const std::int32_t req2 = sceNpTitleMetadataIntCreateRequest();
+    Require(req2 == 2, "sceNpTitleMetadataIntCreateRequest", "the second request is not id 2");
+    Require(sceNpTitleMetadataIntAbortRequest(req2 + 100) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "an unknown request was accepted");
+    Require(sceNpTitleMetadataIntAbortRequest(0) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "request id 0 was accepted");
+    Require(sceNpTitleMetadataIntAbortRequest(-1) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "request id -1 was accepted");
+    Require(sceNpTitleMetadataIntDeleteRequest(req2 + 100) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "an unknown request was deleted");
+    Require(sceNpTitleMetadataIntDeleteRequest(0) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "request id 0 was deleted");
+    Require(sceNpTitleMetadataIntDeleteRequest(-1) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "request id -1 was deleted");
+    Require(sceNpTitleMetadataIntAbortRequest(req1) == 0, "sceNpTitleMetadataIntAbortRequest", "aborting request 1 failed");
+    Require(sceNpTitleMetadataIntDeleteRequest(req1) == 0, "sceNpTitleMetadataIntDeleteRequest", "deleting aborted request 1 failed");
+    Require(sceNpTitleMetadataIntDeleteRequest(req1) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "duplicate delete of request 1 was accepted");
+    Require(sceNpTitleMetadataIntDeleteRequest(req2) == 0, "sceNpTitleMetadataIntDeleteRequest", "deleting request 2 failed");
+    Require(sceNpTitleMetadataIntAbortRequest(req2) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "request 2 was found after state reset");
+    Require(sceNpTitleMetadataIntDeleteRequest(req2) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "duplicate delete of request 2 was accepted");
+}
+
 void CheckLookupNet() {
     constexpr int NotInitialized = static_cast<int>(0x80550702u);
     constexpr int InsufficientArgumentNet = static_cast<int>(0x8055070Cu);
@@ -394,8 +416,14 @@ void CheckLookupNet() {
     Require(secondRequest == 2, "sceNpLookupNetCreateRequest", "the second request is not id 2");
     Require(sceNpLookupNetSetTimeout(999, 1, 0, 0, 0, 0) == InvalidIdNet, "sceNpLookupNetSetTimeout", "an unknown id was taken");
     Require(sceNpLookupNetSetTimeout(firstContext, -1, 0, 0, 0, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative retry count was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 0, -1, 0, 0, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative resolve timeout was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 0, 0, -1, 0, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative connect timeout was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 0, 0, 0, -1, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative send timeout was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 0, 0, 0, 0, -1) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative receive timeout was taken");
     Require(sceNpLookupNetSetTimeout(firstContext, 1, 0, 0, 0, 0) == 0, "sceNpLookupNetSetTimeout", "a valid timeout was refused");
     Require(sceNpLookupNetNpId(999, selfNpId, npId, nullptr) == InvalidIdNet, "sceNpLookupNetNpId", "an unknown request was taken");
+    Require(sceNpLookupNetNpId(firstRequest, selfNpId, npId, selfNpId) == InvalidArgument, "sceNpLookupNetNpId", "a non-null option was taken");
+    Require(sceNpLookupNetNpId(firstRequest, nullptr, nullptr, selfNpId) == InvalidArgument, "sceNpLookupNetNpId", "a non-null option was not refused before the null arguments");
     Require(sceNpLookupNetNpId(firstRequest, nullptr, npId, nullptr) == InsufficientArgumentNet, "sceNpLookupNetNpId", "a null online ID was taken");
     Require(sceNpLookupNetNpId(firstRequest, selfNpId, nullptr, nullptr) == InsufficientArgumentNet, "sceNpLookupNetNpId", "a null NpId output was taken");
     Require(sceNpLookupNetNpId(firstRequest, selfNpId, npId, nullptr) == SignedOut, "sceNpLookupNetNpId", "the lookup did not return SIGNED_OUT");
@@ -641,6 +669,7 @@ int main() {
     CheckNpUtilityLifecycles();
     CheckNpUtilityPayloads();
     CheckServiceChecker2();
+    CheckTitleMetadataRequests();
     CheckLookup();
     CheckWordFilter();
     CheckLookupAsync();

@@ -47,6 +47,53 @@ def check_pad(pad):
     pad_text(pad, 1)
 
 
+def pad_record_signature(path):
+    info = path.stat()
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def prepare_pad_recording(work, env):
+    work = work.resolve()
+    if not env.get("APS5_PAD_RECORD"):
+        directory = Path(env.get("APS5_TRACE_DIR") or work)
+        if not directory.is_absolute():
+            directory = work / directory
+        env["APS5_PAD_RECORD"] = str(directory / "pad-record.txt")
+    path = Path(env["APS5_PAD_RECORD"])
+    if not path.is_absolute():
+        path = work / path
+    try:
+        previous = pad_record_signature(path)
+    except FileNotFoundError:
+        previous = None
+    return path, previous
+
+
+def pad_record_ready(path, previous):
+    try:
+        if pad_record_signature(path) == previous:
+            return False
+        with path.open(encoding="utf-8") as recording:
+            header = recording.readline(64)
+            sample = recording.readline(256)
+        if header != "APS5_PAD_RECORDING 1\n" or not re.fullmatch(r"[0-9]+ [0-9a-fA-F]+(?: [0-9]+){6}\n", sample):
+            return False
+        fields = sample.split()
+        values = [int(value, 16 if index == 1 else 10) for index, value in enumerate(fields)]
+        return values[0] <= 2**64 - 1 and values[1] <= 2**32 - 1 and all(value <= 255 for value in values[2:])
+    except (OSError, UnicodeError, ValueError):
+        return False
+
+
+def note_unqueued_pad(pad, queued, elapsed, stream):
+    if pad and queued is None:
+        reason = "minimum input delay not reached" if elapsed < pad.get("after_s", PAD_AFTER_SECONDS) else "no fresh controller sample observed"
+        target = stream if stream is not None else sys.stderr
+        target = getattr(target, "buffer", target)
+        target.write(f"[pad-input] timeline not queued: {reason}\n".encode())
+        target.flush()
+
+
 def inside(path, roots=()):
     pure = PurePosixPath(path)
     if "\\" in path or ":" in path or pure.is_absolute() or not pure.parts or ".." in pure.parts:
@@ -93,7 +140,7 @@ def load_titles(path):
             fields[name] = value
         return fields
 
-    titles = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
+    titles = json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=unique_fields)
     for title_id, entry in titles.items():
         if not TITLE_ID.fullmatch(title_id):
             raise ValueError(f"{path}: {title_id} is not a title ID")
@@ -159,7 +206,7 @@ def warning_counts(text):
 
 def read_summary(path):
     lines = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []:
+    for line in path.read_text(encoding="utf-8", errors="replace").split("\n") if path.is_file() else []:
         try:
             decoded = json.loads(line)
         except ValueError:
@@ -195,9 +242,9 @@ def read_report(path):
     unsupported = [entry for entry in unsupported if isinstance(entry, dict)] if isinstance(unsupported, list) else unsupported
     return {"averageFps": run.get("averageFps"),
             "frameMs": section(run, "frameMs") or None,
-            "shaders": {name: shaders.get(name) for name in SHADER_COUNTS} if coverage.get("shaders") else None,
-            "missing": functions if coverage.get("missing") and isinstance(functions, list) else None,
-            "unsupported": unsupported if coverage.get("unsupported") and isinstance(unsupported, list) else None,
+            "shaders": {name: shaders.get(name) for name in SHADER_COUNTS} if coverage.get("shaders") is True else None,
+            "missing": functions if coverage.get("missing") is True and isinstance(functions, list) else None,
+            "unsupported": unsupported if coverage.get("unsupported") is True and isinstance(unsupported, list) else None,
             "truncated": {"functions": truncated.get("functions", 0), "unsupported": truncated.get("unsupported", 0)}}
 
 
@@ -376,6 +423,11 @@ def names(entries):
     return ", ".join(label(entry) for entry in entries)
 
 
+def markdown_cell(value):
+    escaped = value.replace("\\", "\\\\").replace("|", "\\|")
+    return " ".join(escaped.splitlines())
+
+
 def render_compare(compared):
     columns = ["Title", "ID", "Measure", "Before", "Now"]
     lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
@@ -408,7 +460,8 @@ def render_compare(compared):
                 details.append(f"{title['name']} ({title_id}), {label.lower()} {unit}: "
                                f"only before: {before}; only now: {now}; in both: {both}")
         for label, values in measures:
-            lines.append("| " + " | ".join([title["name"], title_id, label, display(values["before"]), display(values["now"])]) + " |")
+            row = [title["name"], title_id, label, display(values["before"]), display(values["now"])]
+            lines.append("| " + " | ".join(map(markdown_cell, row)) + " |")
     return lines + [""] + details
 
 
@@ -445,11 +498,11 @@ def render_markdown(summary, previous=None):
         runs = title["runs"]
         error = next((entry["first_error"] for entry in runs if entry["outcome"] != "rendering" and entry["first_error"]), "")
         row = [title["name"], title_id, title["version"], cell(runs, "cold"), cell(runs, "warm"), f"{runs[-1]['fps']:.1f}",
-               error[:120].replace("|", "\\|")]
+               error[:120]]
         if previous:
             old = previous["titles"].get(title_id)
             row.append(worst(old["runs"]) if old else "new")
-        lines.append("| " + " | ".join(row) + " |")
+        lines.append("| " + " | ".join(map(markdown_cell, row)) + " |")
     if previous and (compared := compare_runs(summary, previous)):
         lines += ["", *render_compare(compared)]
     return "\n".join(lines + [""])
@@ -557,7 +610,8 @@ def is_module(path):
 
 
 def stage_inputs(package, entry, source):
-    (source / "sce_module").mkdir(parents=True)
+    if not (package / "sce_modules").is_dir():
+        (source / "sce_module").mkdir(parents=True)
     unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
     executables = [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
     for directory in dict.fromkeys([*STANDARD_MODULE_DIRS, *module_dirs(entry)]):
@@ -782,11 +836,18 @@ def validate_layout(args, found, ids, titles, source, platform, packages=None):
         check_work_directories(work, args.out, protected_directories, checks)
 
 
+def remove_read_only(function, path, error):
+    if os.name != "nt" or linked_path(Path(path)):
+        raise error[1] if isinstance(error, tuple) else error
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
+
+
 def reset_work(work):
     if linked_path(work):
         raise OSError(f"unsafe linked work directory: {work}")
     if work.exists():
-        shutil.rmtree(work)
+        shutil.rmtree(work, **{"onexc" if sys.version_info >= (3, 12) else "onerror": remove_read_only})
     work.mkdir(parents=True)
 
 
@@ -921,11 +982,27 @@ class Session:
             return bool(self.process_ids())
         try:
             os.killpg(self.process.pid, 0)
-            return True
         except PermissionError:
             return True
         except ProcessLookupError:
             return False
+        return self.process.returncode is None or self.group_running()
+
+    def group_running(self):
+        try:
+            if os.readlink("/proc/self") != str(os.getpid()):
+                return True
+            entries = [entry for entry in os.listdir("/proc") if entry.isdigit()]
+        except OSError:
+            return True
+        for entry in entries:
+            try:
+                state, _, group = Path("/proc", entry, "stat").read_bytes().rpartition(b")")[2].split()[:3]
+                if int(group) == self.process.pid and state not in (b"Z", b"X"):
+                    return True
+            except (OSError, ValueError):
+                pass
+        return False
 
     def image_path(self, handle):
         size = wintypes.DWORD(32768)
@@ -978,7 +1055,9 @@ FRAME_ENV = {"APS5_DUMP_FRAMES": "100000", "APS5_DUMP_FRAMES_EVERY": "30", "APS5
 
 
 def collect_frames(work, destination):
-    frames = sorted(work.glob("frame_*.bmp"), key=lambda path: int(path.stem.split("_")[1]))
+    numbered = (path for path in work.glob("frame_*.bmp")
+                if re.fullmatch(r"frame_[0-9]+", path.stem) and path.is_file())
+    frames = sorted(numbered, key=lambda path: int(path.stem.split("_")[1]))
     keep = {frames[0], frames[len(frames) // 2], frames[-1]} if frames else set()
     destination.mkdir(parents=True, exist_ok=True)
     kept = []
@@ -1003,17 +1082,19 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     if pad:
         pad_file.unlink(missing_ok=True)
         env["APS5_PAD_INPUT_FILE"] = str(pad_file)
+        recording = prepare_pad_recording(work, env)
     started = time.monotonic()
     with (run_dir / "stdout.log").open("wb") as stdout, (run_dir / "stderr.log").open("wb") as stderr:
         session = Session([str(executable)], work, env, stdout, stderr, owned=work)
         try:
             while session.alive() and time.monotonic() - started < seconds:
-                if pad and queued is None and time.monotonic() - started >= pad.get("after_s", PAD_AFTER_SECONDS):
+                if pad and queued is None and time.monotonic() - started >= pad.get("after_s", PAD_AFTER_SECONDS) and pad_record_ready(*recording):
                     pad_timeline.queue_timeline(pad_file, pad_text(pad, pad_input.next_sequence(pad_file)))
                     queued = round(time.monotonic() - started, 1)
                 session.send_new_windows_to_back()
                 time.sleep(0.1 if time.monotonic() - started < 10 else 0.5)
             elapsed = round(time.monotonic() - started, 1)
+            note_unqueued_pad(pad, queued, elapsed, stderr)
             alive, ended = session.alive(), time.time()
             exit_code = None if alive else session.exit_code()
             if alive:
@@ -1044,6 +1125,7 @@ def performance_phase(executable, work, env, console, seconds, pad=None, capture
     if pad:
         pad_file.unlink(missing_ok=True)
         env = dict(env, APS5_PAD_INPUT_FILE=str(pad_file))
+        recording = prepare_pad_recording(work, env)
     session = Session([str(executable)], work, env, console.stdout, console.stderr, owned=work, interactive=True)
     started = time.monotonic()
     result = {"state": "pending", "reason": "capture window has not completed", "warnings": []}
@@ -1052,7 +1134,7 @@ def performance_phase(executable, work, env, console, seconds, pad=None, capture
     observed_processes = {session.process.pid}
     try:
         while session.alive() and time.monotonic() - started < seconds:
-            if pad and queued is None and time.monotonic() - started >= pad.get("after_s", PAD_AFTER_SECONDS):
+            if pad and queued is None and time.monotonic() - started >= pad.get("after_s", PAD_AFTER_SECONDS) and pad_record_ready(*recording):
                 pad_timeline.queue_timeline(pad_file, pad_text(pad, pad_input.next_sequence(pad_file)))
                 queued = round(time.monotonic() - started, 1)
             if capture:
@@ -1075,6 +1157,7 @@ def performance_phase(executable, work, env, console, seconds, pad=None, capture
             time.sleep(0.25)
         alive = session.alive()
         elapsed = round(time.monotonic() - started, 3)
+        note_unqueued_pad(pad, queued, elapsed, console.stderr)
         exit_code = None if alive else session.exit_code()
         if alive:
             requested_close = True
@@ -1212,7 +1295,20 @@ def last_line(text):
 
 
 def write_summary(output, summary):
-    (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    text = json.dumps(summary, indent=2, default=str)
+    target = output / "summary.json"
+    try:
+        metadata = target.lstat()
+    except FileNotFoundError:
+        mode = None
+    else:
+        mode = stat.S_IMODE(metadata.st_mode) if stat.S_ISREG(metadata.st_mode) else None
+    with tempfile.TemporaryDirectory(prefix=".summary-", dir=output) as directory:
+        staged = Path(directory) / "summary.json"
+        staged.write_text(text, encoding="utf-8")
+        if mode is not None:
+            staged.chmod(mode)
+        staged.replace(target)
 
 
 def run_cli(argv, capture_resources):
@@ -1227,7 +1323,7 @@ def run_cli(argv, capture_resources):
     parser.add_argument("--runs", type=positive, help="runs per title (default: 2 smoke, 1 performance)")
     parser.add_argument("--seconds", type=positive, help="run length for every title (default: the title's, else 60)")
     parser.add_argument("--note", default="", help="free text for the report, e.g. 'main + #6814'")
-    parser.add_argument("--compare", type=Path, help="summary.json of an earlier run; the comparison uses the last run of each title in both")
+    parser.add_argument("--compare", type=Path, help="summary.json of an earlier smoke run; the comparison uses the last run of each title in both")
     parser.add_argument("--json", action="store_true", help="with --compare, print the comparison as JSON instead of the table")
     parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
     parser.add_argument("--content", type=Path, help="directory holding the files that titles.json names with \"content\"")
@@ -1240,6 +1336,7 @@ def run_cli(argv, capture_resources):
     parser.add_argument("--warmup-seconds", type=positive, help="warm-up duration before each capture (default: 60)")
     args = parser.parse_args(argv)
     validate_performance_args(parser, args)
+    args.ids = list(dict.fromkeys(args.ids))
     args.runs = args.runs or (1 if args.profile == "performance" else 2)
     if args.smoke and args.ids:
         parser.error("--smoke takes no title IDs")
@@ -1250,6 +1347,8 @@ def run_cli(argv, capture_resources):
         previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
     except (OSError, ValueError) as error:
         parser.error(f"--compare: {error}")
+    if isinstance(previous, dict) and previous.get("format") == "anyps5-performance-capture/1":
+        parser.error(f"--compare requires a smoke-run summary, got a performance capture summary: {args.compare}")
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     try:
         titles = load_titles(args.titles)
@@ -1272,7 +1371,10 @@ def run_cli(argv, capture_resources):
         validate_layout(args, found, ids, titles, source, platform, packages=packages)
     except (OSError, RuntimeError, ValueError) as error:
         parser.error(f"unsafe title-run layout: {error}")
-    locks = {title_id: lock_work(args.out.resolve() / "work" / f"{title_id}.lock") for title_id in ids}
+    locks = {}
+    for title_id in ids:
+        handle = lock_work(args.out.resolve() / "work" / f"{title_id}.lock")
+        locks[title_id] = capture_resources.enter_context(handle) if handle is not None else None
     busy = [title_id for title_id, handle in locks.items() if handle is None]
     if busy:
         raise SystemExit(f"already running in {args.out.resolve() / 'work'}: {', '.join(busy)}")
