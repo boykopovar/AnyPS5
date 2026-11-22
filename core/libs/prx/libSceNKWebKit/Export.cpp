@@ -9727,18 +9727,6 @@ int APS5_VABI WKPageGetSourceForFrame() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageGoBack() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageGoForward() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageGoToBackForwardListItem() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageHandleImeEvent() {
     NotImplemented_nid_no_patch(__func__);
 }
