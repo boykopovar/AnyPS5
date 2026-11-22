@@ -1,3 +1,27 @@
+/* The test vectors are adapted for AnyPS5 from Project Wycheproof,
+ * testvectors_v1/aes_cbc_pkcs5_test.json, aes_cmac_test.json at commit
+ * 65ca494727a52944c204441c860b039e6786b99b
+ * (https://github.com/C2SP/wycheproof/tree/65ca494727a52944c204441c860b039e6786b99b/testvectors_v1).
+ * Altered: all 216 CBC and 311 CMAC tests are run; valid CBC tests must decrypt and encrypt to the
+ * listed values and invalid ones (bad padding and empty ciphertexts) must fail in
+ * EVP_DecryptFinal_ex with an error queued; valid CMAC tags must match, invalid ones must not, and
+ * keys of an invalid size must be refused by CMAC_Init. The files have no acceptable tests.
+ *
+ * Copyright 2016-2026 The Wycheproof Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Cmac.hpp"
@@ -160,7 +184,6 @@ void TestCbcEncrypt() {
 void TestCbcInvalidPadding() {
     for (const auto& vector : LibreSslWycheproofCbcCmac::CbcVectors) {
         if (vector.expectedValid != 0) continue;
-        if (vector.ctHex[0] == '\0') continue;
 
         const auto key = Hex(vector.keyHex);
         const auto iv = Hex(vector.ivHex);
@@ -174,7 +197,8 @@ void TestCbcInvalidPadding() {
 
         std::vector<unsigned char> output(ct.size() + 16);
         int written = 0;
-        Require(EVP_DecryptUpdate_nid_postfix(context.get(), output.data(), &written, ct.data(), static_cast<int>(ct.size())) == 1, "decrypt update");
+        const unsigned char none = 0;
+        Require(EVP_DecryptUpdate_nid_postfix(context.get(), output.data(), &written, ct.empty() ? &none : ct.data(), static_cast<int>(ct.size())) == 1, "decrypt update");
         int finalWritten = 0;
         ERR_clear_error_nid_postfix();
         const int result = EVP_DecryptFinal_ex_nid_postfix(context.get(), output.data() + written, &finalWritten);
