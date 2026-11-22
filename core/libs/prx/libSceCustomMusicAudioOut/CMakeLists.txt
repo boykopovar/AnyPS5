@@ -1,5 +1,6 @@
 add_library(libSceCustomMusicAudioOut SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceCustomMusicAudioOut PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceCustomMusicAudioOut PRIVATE libSceAudioOut)
 configure_windows_unwind(libSceCustomMusicAudioOut)
 
 if(BUILD_TESTING)
@@ -22,4 +23,6 @@ if(BUILD_TESTING)
         set_tests_properties(guest_custom_music_volume_rounding PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceCustomMusicAudioOut>")
     endif()
+    set_tests_properties(guest_custom_music_audio_out guest_custom_music_volume_rounding PROPERTIES
+        ENVIRONMENT "SDL_AUDIODRIVER=dummy" TIMEOUT 10)
 endif()
