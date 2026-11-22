@@ -222,6 +222,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
 
+    add_test_executable(guest_libressl3_wycheproof_hmac_hkdf_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/WycheproofHmacHkdf.cpp)
+    target_include_directories(guest_libressl3_wycheproof_hmac_hkdf_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_wycheproof_hmac_hkdf_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_wycheproof_hmac_hkdf_tests)
+    add_test(NAME guest_libressl3_wycheproof_hmac_hkdf COMMAND guest_libressl3_wycheproof_hmac_hkdf_tests)
+    set_tests_properties(guest_libressl3_wycheproof_hmac_hkdf PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_wycheproof_hmac_hkdf PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+
     add_test_executable(guest_libressl3_ecdsa_sig_tests NO_RUNTIME_DLL_STAGING ${CMAKE_CURRENT_SOURCE_DIR}/tests/EcdsaSig.cpp)
     target_include_directories(guest_libressl3_ecdsa_sig_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl3_ecdsa_sig_tests PRIVATE ${CMAKE_DL_LIBS})
