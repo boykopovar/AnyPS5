@@ -1,6 +1,6 @@
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
-
+#include <cmath>
 
 extern "C" {
 
