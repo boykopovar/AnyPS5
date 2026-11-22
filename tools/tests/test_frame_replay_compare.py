@@ -507,6 +507,16 @@ class ProcessTests(unittest.TestCase):
         self.assertTrue(any("synthetic containment failure" in error for error in result["io_errors"]))
         self.assertTrue((self.root / "containment" / "process.json").is_file())
 
+    @unittest.skipUnless(os.name == "nt", "Windows process containment")
+    def test_guard_failure_stops_before_launch_and_retains_process_receipt(self):
+        with mock.patch.object(runner.processes, "guard", side_effect=runner.processes.GateError("synthetic guard failure")):
+            with mock.patch.object(runner.subprocess, "Popen", side_effect=AssertionError("replay started before guard")) as launch:
+                result = runner.execute_replay_trial(["replay"], self.root / "guard-failure", dict(os.environ), 1, 1024)
+        launch.assert_not_called()
+        self.assertIsNone(result["returncode"])
+        self.assertIn("synthetic guard failure", result["io_errors"])
+        self.assertTrue((self.root / "guard-failure" / "process.json").is_file())
+
     def test_wait_interrupt_cleans_owned_child_and_retains_receipt(self):
         sleep = time.sleep
         interruptions = []

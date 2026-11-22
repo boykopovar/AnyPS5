@@ -9,6 +9,7 @@
 #include <cstring>
 #include <limits>
 #include <random>
+#include <stdexcept>
 
 namespace {
 
@@ -486,6 +487,78 @@ void CheckLongDouble() {
 
 } // namespace
 
+template <typename TCall>
+void RequireRejected(TCall call, const char* message) {
+    *__error_nid_postfix() = 71;
+    bool rejected = false;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected && *__error_nid_postfix() == 71, message);
+}
+
+template <typename T, typename TGetw, typename TSetw, typename TAddh, typename TMulh, typename TLdexpx, typename TMovx, typename TAddx, typename TSubx, typename TMulx, typename TInvx, typename TSqrtx, typename TSetn>
+void CheckGuestPointerFamily(TGetw getw, TSetw setw, TAddh addh, TMulh mulh, TLdexpx ldexpx, TMovx movx, TAddx addx, TSubx subx, TMulx mulx, TInvx invx, TSqrtx sqrtx, TSetn setn) {
+    auto* unmapped = reinterpret_cast<T*>(std::uintptr_t{0x10});
+    const T value[4] = {T(1), T(0), T(0), T(0)};
+    T words[4] = {T(1), T(0), T(0), T(0)};
+    T scratch[16] = {};
+    RequireRejected([&] { getw(unmapped, 4); }, "getw rejects unmapped words");
+    RequireRejected([&] { setw(unmapped, 4, T(1)); }, "setw rejects unmapped words");
+    RequireRejected([&] { setn(unmapped, 4, 3); }, "setn rejects unmapped words");
+    RequireRejected([&] { addh(unmapped, 4, T(1)); }, "addh rejects unmapped words");
+    RequireRejected([&] { mulh(unmapped, 4, T(3)); }, "mulh rejects unmapped words");
+    RequireRejected([&] { ldexpx(unmapped, 4, 1); }, "ldexpx rejects unmapped words");
+    RequireRejected([&] { movx(unmapped, 4, value); }, "movx rejects an unmapped destination");
+    RequireRejected([&] { movx(words, 4, unmapped); }, "movx rejects an unmapped source");
+    RequireRejected([&] { addx(words, 4, unmapped, 4); }, "addx rejects unmapped addend words");
+    RequireRejected([&] { subx(unmapped, 4, value, 4); }, "subx rejects unmapped words");
+    RequireRejected([&] { mulx(words, 4, unmapped, 4, scratch); }, "mulx rejects unmapped factor words");
+    RequireRejected([&] { mulx(words, 4, unmapped, -1, scratch); }, "mulx with a negative count rejects an unmapped first factor word");
+    RequireRejected([&] { invx(unmapped, 4, scratch); }, "invx rejects unmapped words");
+    RequireRejected([&] { sqrtx(unmapped, 4, scratch); }, "sqrtx rejects unmapped words");
+    Require(Same(words[0], value[0]) && Same(words[1], value[1]) && Same(words[2], value[2]) && Same(words[3], value[3]), "rejected calls leave the words alone");
+
+    Require(getw(unmapped, 0) == T(0), "getw of no words reads nothing");
+    Require(addh(unmapped, 4, T(0)) == unmapped, "addh of zero reads nothing");
+    Require(addh(unmapped, 0, T(1)) == unmapped && mulh(unmapped, 0, T(1)) == unmapped && setw(unmapped, -1, T(1)) == unmapped, "no words reads nothing");
+    Require(mulx(unmapped, 4, unmapped, 0, unmapped) == unmapped && movx(unmapped, 0, unmapped) == unmapped, "no factor or no words reads nothing");
+    Require(addx(words, 4, unmapped, 0) == words && subx(words, 4, unmapped, -2) == words, "no addend words reads no addend");
+    Require(invx(words, 4, unmapped) == words && sqrtx(words, 4, unmapped) == words, "the scratch argument is not read");
+    const T one[4] = {T(1), T(0), T(0), T(0)};
+    Require(getw(one, 4) == T(1), "getw reads its words");
+
+    T aliased[4] = {T(3), T(0), T(0), T(0)};
+    subx(aliased, 4, aliased, 4);
+    Require(aliased[0] == T(0), "subx of an array from itself reads the words as they change");
+}
+
+void CheckGuestPointers() {
+    CheckGuestPointerFamily<float>(_FXp_getw_nid_postfix, _FXp_setw_nid_postfix, _FXp_addh_nid_postfix, _FXp_mulh_nid_postfix, _FXp_ldexpx_nid_postfix, _FXp_movx_nid_postfix,
+        _FXp_addx_nid_postfix, _FXp_subx_nid_postfix, _FXp_mulx_nid_postfix, _FXp_invx_nid_postfix, _FXp_sqrtx_nid_postfix, _FXp_setn_nid_postfix);
+    CheckGuestPointerFamily<long double>(_LXp_getw_nid_postfix, _LXp_setw_nid_postfix, _LXp_addh_nid_postfix, _LXp_mulh_nid_postfix, _LXp_ldexpx_nid_postfix, _LXp_movx_nid_postfix,
+        _LXp_addx_nid_postfix, _LXp_subx_nid_postfix, _LXp_mulx_nid_postfix, _LXp_invx_nid_postfix, _LXp_sqrtx_nid_postfix, _LXp_setn_nid_postfix);
+
+    auto* unmappedFloat = reinterpret_cast<float*>(std::uintptr_t{0x10});
+    auto* unmappedDouble = reinterpret_cast<double*>(std::uintptr_t{0x10});
+    auto* unmappedLong = reinterpret_cast<long double*>(std::uintptr_t{0x10});
+    auto* unmappedError = reinterpret_cast<int*>(std::uintptr_t{0x10});
+    RequireRejected([&] { _FDtento_nid_postfix(unmappedFloat, 3, nullptr); }, "_FDtento rejects an unmapped accumulator");
+    RequireRejected([&] { _Dtento_nid_postfix(unmappedDouble, 3, nullptr); }, "_Dtento rejects an unmapped accumulator");
+    RequireRejected([&] { _LDtento_nid_postfix(unmappedLong, 3, nullptr); }, "_LDtento rejects an unmapped accumulator");
+    float accumulator[3] = {1.0f, 0.0f, 0.0f};
+    RequireRejected([&] { _FDtento_nid_postfix(accumulator, 2, unmappedError); }, "_FDtento rejects unmapped error flags before scaling");
+    RequireRejected([&] { _FDtento_nid_postfix(accumulator, -60, unmappedError); }, "_FDtento rejects unmapped error flags before setting a range error");
+    Require(accumulator[0] == 1.0f, "a rejected _FDtento leaves its accumulator alone");
+    int error = 4;
+    float underflow[3] = {1.0f, 0.0f, 0.0f};
+    Require(_FDtento_nid_postfix(underflow, -60, &error) == 0.0f && error == 5, "_FDtento adds its range flag to the error flags");
+    double scaled[3] = {1.5, 0.0, 0.0};
+    Require(_Dtento_nid_postfix(scaled, 2, nullptr) == 150.0 && scaled[0] == 150.0, "_Dtento scales its accumulator");
+}
+
 int main() {
     CheckFloatSetw();
     CheckFloatSetn();
@@ -497,6 +570,7 @@ int main() {
     CheckFloatSqrtx();
     CheckDtento();
     CheckLongDouble();
+    CheckGuestPointers();
     std::puts("libc internal extended precision: ok");
     return 0;
 }

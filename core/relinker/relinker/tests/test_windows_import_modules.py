@@ -848,8 +848,8 @@ def main():
                     assert not log.exists(), (runtime, log)
 
                     image = executable('a.prx', 'shared', extra_symbols=('absent#A#B',))
-                    image[0x4000:0x400d] = (b'\xff\x15' + struct.pack('<i', 0x4a20 - 0x4006)
-                                            + b'\xff\x15' + struct.pack('<i', 0x4a28 - 0x400c) + b'\xc3')
+                    image[0x4000:0x4015] = (b'\x48\x83\xec\x08\xff\x15' + struct.pack('<i', 0x4a20 - 0x400a)
+                                            + b'\xff\x15' + struct.pack('<i', 0x4a28 - 0x4010) + b'\x48\x83\xc4\x08\xc3')
                     executable_path, log = convert_stdio_case(f'gui-dll-{runtime}-preloaded-runtime-stub-after-crt',
                                                               image=image, lazy_binding=True)
                     log.write_text('stale previous run', encoding='utf-8')
