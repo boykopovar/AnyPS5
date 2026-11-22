@@ -411,6 +411,21 @@ void TestGatedCallsInsideReprojectionSession() {
     const Hmd2::ReprojectionBufferedParameter buffered{};
     Require(Throws([&] { sceHmd2ReprojectionSetParamWithBuffer(0, 1, &buffered, 0); }), "buffered parameter submission inside a reprojection session did not throw");
     Require(Throws([] { sceHmd2ReprojectionSetParamWithBuffer(16, 0, nullptr, 0); }), "buffered parameter submission with a null parameter inside a reprojection session did not throw");
+    Hmd2::MirroringOption localOption{};
+    Require(sceHmd2ReprojectionSetMirroringOption(nullptr) == Hmd2::ParameterNull, "mirroring option with a null parameter inside a reprojection session");
+    Require(sceHmd2ReprojectionSetMirroringOption(reinterpret_cast<const Hmd2::MirroringOption*>(0x10)) == Hmd2::ParameterNull, "mirroring option with an unmapped parameter inside a reprojection session");
+    localOption.mode = 2;
+    Require(sceHmd2ReprojectionSetMirroringOption(&localOption) == Hmd2::ParameterInvalid, "mirroring option with a mode above one inside a reprojection session");
+    localOption.mode = 1;
+    for (std::size_t index = 0; index < std::size(localOption.reserved); ++index) {
+        localOption.reserved[index] = 1;
+        Require(sceHmd2ReprojectionSetMirroringOption(&localOption) == Hmd2::ParameterInvalid, "mirroring option with a nonzero reserved field inside a reprojection session");
+        localOption.reserved[index] = 0;
+    }
+    for (const std::uint32_t mode : {0u, 1u}) {
+        localOption.mode = mode;
+        Require(Throws([&] { sceHmd2ReprojectionSetMirroringOption(&localOption); }), "a valid mirroring option inside a reprojection session did not throw");
+    }
 }
 
 void TestReprojection() {
