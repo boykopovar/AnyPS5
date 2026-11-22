@@ -99,6 +99,7 @@
 #include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
+#include "prx/libSceNKWebKit/include/PalKillRingExports.hpp"
 #include "prx/libSceNKWebKit/include/BmallocIsoHeapExports.hpp"
 #include "prx/libSceNKWebKit/include/GraphemeClusterExports.hpp"
 #include "prx/libSceNKWebKit/include/YarrRegularExpressionExports.hpp"
