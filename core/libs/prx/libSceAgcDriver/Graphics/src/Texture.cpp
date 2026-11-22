@@ -5772,7 +5772,7 @@ void StorageTexture::cancelStoredSaves() {
 }
 
 void StorageTexture::releaseUnheldOriginal() {
-    if (original.capacity() == 0 || std::any_of(layerOriginal.begin(), layerOriginal.end(), [](bool held) { return held; })) return;
+    if (original.capacity() == 0 || std::any_of(layerOriginal.begin(), layerOriginal.end(), [](bool held) { return held; }) || std::any_of(savedTicket.begin(), savedTicket.end(), [](std::uint64_t t) { return t != 0; })) return;
     std::vector<std::byte>().swap(original);
     comparedRanges = {};
 }
@@ -7940,9 +7940,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             if (from >= to) continue;
             const bool edge = from != at || to != at + block;
             const auto index = static_cast<std::size_t>((at - spanBegin) / block);
-            const bool kept = keptAtUnwatchHolds(from, layer);
+            const bool isFirstStoreOnUnwatched = !tracked && layerGeneration[layer] == 0;
+            const bool kept = isFirstStoreOnUnwatched ? false : keptAtUnwatchHolds(from, layer);
             const bool written = kept || unknown || (changedBlocks[index] == GuestMemory::BlockWritten && (compared[layer] || !edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(layer, at))) && !cpuLeftUnchanged(layer, from, to, edge));
-            if (written && (!drawn.rect || (layerTracked && !kept && !unknown && cpuBlocks[index] == 0))) {
+            if (written && !isFirstStoreOnUnwatched && (!drawn.rect || (layerTracked && !kept && !unknown && cpuBlocks[index] == 0))) {
                 skippedAny = true;
                 skippedLayer[layer] = true;
                 keptBlocks.emplace_back(from, layer);
