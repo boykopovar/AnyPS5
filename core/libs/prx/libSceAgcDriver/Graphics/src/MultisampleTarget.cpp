@@ -1112,6 +1112,7 @@ private:
             fmaskCopy.compared = !WatchedAfterSettle(context, range.address, range.bytes) && ComparedHostImportCovers(context, range.address, range.bytes);
             Require(fmaskCopy.compared || GuestMemory::Watched(range.address, range.bytes), "native FMASK contents require watched guest memory");
             if (!fmaskCopy.compared) {
+                GuestMemory::MaterializeKnownZero(range.address, range.bytes);
                 range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
                 Require(range.generation != 0, "native FMASK contents have no write generation");
             }
