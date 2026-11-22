@@ -76,6 +76,7 @@ void TestConvertCase(const LibreSslRegressBn::ConvertCase& tc) {
     Bignum* a = FromHex(tc.hex);
     Require(BN_num_bits_nid_postfix(a) == tc.numBits);
     Require(BN_is_negative_nid_postfix(a) == tc.neg);
+    Require(ERR_get_error_nid_postfix() == 0);
 
     std::vector<unsigned char> bin(tc.binLen);
     Require(BN_bn2bin_nid_postfix(a, bin.data()) == tc.binLen);
@@ -86,6 +87,7 @@ void TestConvertCase(const LibreSslRegressBn::ConvertCase& tc) {
         unsigned char lo = (expectedLow >= '0' && expectedLow <= '9') ? expectedLow - '0' : (expectedLow >= 'a' && expectedLow <= 'f') ? expectedLow - 'a' + 10 : expectedLow - 'A' + 10;
         Require(bin[i] == (hi << 4 | lo));
     }
+    Require(ERR_get_error_nid_postfix() == 0);
 
     Bignum* b = BN_bin2bn_nid_postfix(bin.data(), tc.binLen, nullptr);
     Require(b != nullptr);
@@ -97,6 +99,7 @@ void TestConvertCase(const LibreSslRegressBn::ConvertCase& tc) {
     Require(BN_is_negative_nid_postfix(dup) == 0);
     Require(BN_num_bits_nid_postfix(dup) == tc.numBits);
     BN_free_nid_postfix(dup);
+    Require(ERR_get_error_nid_postfix() == 0);
 
     std::string expectedPrinted;
     if (tc.binLen == 0) {
@@ -116,6 +119,7 @@ void TestConvertCase(const LibreSslRegressBn::ConvertCase& tc) {
     if (tc.neg) signedExpected = "-" + signedExpected;
     Require(Printed(a) == signedExpected);
     Require(Printed(b) == expectedPrinted);
+    Require(ERR_get_error_nid_postfix() == 0);
 
     BN_free_nid_postfix(a);
     BN_free_nid_postfix(b);
