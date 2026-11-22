@@ -158,8 +158,8 @@ void TestFirmwareSignatures() {
     const int deviceHq = sceAudioInDeviceHqOpen(user, 0, 128, 48000, 2);
     Require(deviceHq >= handleBase && sceAudioInClose(deviceHq) == 0);
 
-    Require(sceAudioInIsSharedDevice(8) == invalidHandle);
-    Require(sceAudioInIsSharedDevice(-1) == invalidHandle);
+    Require(sceAudioInIsSharedDevice(8) == invalidState);
+    Require(sceAudioInIsSharedDevice(-1) == invalidState);
     Require(sceAudioInIsSharedDevice(0) == invalidState);
     const int shared = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
     Require(shared >= handleBase);

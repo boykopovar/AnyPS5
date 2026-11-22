@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## change [X509_get0_pubkey]
+
+- [X509_get0_pubkey](../../../core/libs/prx/libSceLibreSsl3/src/X509PublicKeyAccessors.cpp) - PS5 layout and console behaviour unverified. The encoded field is assumed to be a complete SPKI, but LibreSSL 4.0.0 [x509_cmp.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_cmp.c) `X509_get0_pubkey` and [asn1/x_pubkey.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_pubkey.c) `X509_PUBKEY_get0` call the algorithm's type-specific `pub_decode` on the BIT STRING contents, so raw key bits do not decode. A null cached key with data is copied via `GuestCopyIn_nid_no_patch` (errno kept), decoded by `d2i_PUBKEY_nid_postfix` and cached via `GuestCopyOut_nid_no_patch`; a failed decode returns null with queued errors, another thread's cached key wins. Null data with positive length and unreadable or unwritable guest memory throw. Closes when: compared with the console.

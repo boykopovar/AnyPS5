@@ -1,5 +1,6 @@
 #include <elfpatcher/macos/MacOsMachOPatcher.hpp>
 #include <elfpatcher/macos/MacOsImage.hpp>
+#include <domain/ImportModule.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
 #include <elfpatcher/windows/WindowsRelocationBuilder.hpp>
@@ -48,7 +49,7 @@ std::vector<std::string> ReadNeededLibraries(const Domain::SysVDynamicSection& d
 std::string MachODependency(const std::string& name, const std::string& origin) {
     if (name.starts_with("$ORIGIN")) return MachOLoadPath(name, origin);
     if (name.find('/') != std::string::npos) throw Domain::RelinkerException("Unsupported dependency path: " + name);
-    return "@rpath/" + name;
+    return "@rpath/" + Domain::NeededLibraryName(name);
 }
 
 MacOsMachOPatcher::MacOsMachOPatcher(const std::optional<std::uint64_t> fixedBase, std::function<void(std::string_view)> message, const bool traceImports, const bool functionSymbolRoots, std::string identifier) : fixedBase(fixedBase), message(std::move(message)), traceImports(traceImports), functionSymbolRoots(functionSymbolRoots), identifier(std::move(identifier)) {
@@ -101,11 +102,16 @@ std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sou
             input.Traced.push_back({import.TargetRva, import.Name, import.Library});
     }
     input.TraceImports = traceImports;
-    for (const auto& library : needed)
-        input.Dylibs.push_back(MachODependency(library, "@executable_path"));
+    for (const auto& library : needed) {
+        auto dylib = MachODependency(library, "@executable_path");
+        if (std::find(input.Dylibs.begin(), input.Dylibs.end(), dylib) == input.Dylibs.end()) input.Dylibs.push_back(std::move(dylib));
+    }
+    const bool kernel = std::find(input.Dylibs.begin(), input.Dylibs.end(), "@rpath/libkernel.prx") != input.Dylibs.end();
     for (const auto* library : {"@rpath/libkernel.prx", "@rpath/libc.prx"})
         if (std::find(input.Dylibs.begin(), input.Dylibs.end(), library) == input.Dylibs.end())
             input.Dylibs.push_back(library);
+    if (kernel && std::find(input.Dylibs.begin(), input.Dylibs.end(), "@rpath/libkernel_sys.prx") == input.Dylibs.end())
+        input.Dylibs.push_back("@rpath/libkernel_sys.prx");
     input.RunPaths = MachORunPaths(runPath, "@executable_path");
     input.EntryRva = image.GetEntryRva();
     input.Trampolines = &trampolines;

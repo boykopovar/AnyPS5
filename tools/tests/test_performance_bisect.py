@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import math
+import os
 import subprocess
 import sys
 import tempfile
@@ -365,8 +366,10 @@ target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'mach
                       "{build_dir}", "{result_dir}", "{commit}"]]}
         output = root / "report.json"
         original_worktrees = performance_bisect.git(self.repo, "worktree", "list", "--porcelain")
+        self.addCleanup(os.chdir, Path.cwd())
+        os.chdir(root)
         with patch.object(performance_bisect, "TOOLS_DIR", tools):
-            report = performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, output, root)
+            report = performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, output, Path("."))
         self.assertEqual(report["first_bad"]["commit"], self.commits[4])
         self.assertEqual(report["previous_good"]["commit"], self.commits[3])
         self.assertEqual(report["tested_commits"], 5)
@@ -738,6 +741,23 @@ class FocusedInputEdgeTests(unittest.TestCase):
             path = self.write_summary(Path(directory), summary)
             with self.assertRaisesRegex(ValueError, "missing machine"):
                 performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
+    def test_sample_requires_content_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            summary = self.sample_fixture()
+            title = summary["titles"]["PPSA00000"]
+            path = self.write_summary(root, summary)
+            sample = performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+            self.assertEqual(sample["identity"]["content_version"], "01.00")
+
+            del title["version"]
+            for fields in ({}, {"version": ""}, {"version": " \t"}, {"version": None}, {"version": 1}):
+                with self.subTest(fields=fields):
+                    summary["titles"]["PPSA00000"] = dict(title, **fields)
+                    path = self.write_summary(root, summary)
+                    with self.assertRaisesRegex(ValueError, "missing a valid content version"):
+                        performance_bisect.sample_summary(path, "PPSA00000", GOOD)
 
 
     def test_summary_uses_middle_pair_for_even_sample_count(self):
