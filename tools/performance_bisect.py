@@ -8,6 +8,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+from fractions import Fraction
 from pathlib import Path
 
 
@@ -140,7 +141,8 @@ def summarize(samples, max_spread_pct):
 
 
 def is_regression(fps, baseline_fps, threshold_pct):
-    return fps <= baseline_fps * (1 - threshold_pct / 100)
+    baseline = Fraction(str(baseline_fps))
+    return (baseline - Fraction(str(fps))) * 100 >= baseline * Fraction(str(threshold_pct))
 
 
 def require_same_identity(baseline, measured):
