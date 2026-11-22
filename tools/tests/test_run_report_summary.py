@@ -118,6 +118,15 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("Unsupported shader instructions: unknown occurrences across 2 instructions", summary)
         self.assertNotIn("\x1b", summary)
 
+    def test_rejects_non_boolean_coverage_flags(self):
+        for flag in ("milestones", "missing", "shaders", "unsupported"):
+            for value in ("false", "true", 0, 1, None, []):
+                with self.subTest(flag=flag, value=value):
+                    report = self.report("stop-none.json")
+                    report["coverage"][flag] = value
+                    with self.assertRaisesRegex(ValueError, f"coverage\\.{flag}"):
+                        render(report)
+
     def test_rejects_other_report_formats(self):
         with self.assertRaisesRegex(ValueError, "AnyPS5 run report"):
             render({"format": "other", "version": 1})

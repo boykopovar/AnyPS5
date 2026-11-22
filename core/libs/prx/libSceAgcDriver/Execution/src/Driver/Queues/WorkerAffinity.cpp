@@ -85,6 +85,7 @@ struct CoreSwitches {
 struct Reservation {
     CpuTopology::CpuSet set;
     unsigned long thread = 0;
+    std::vector<std::uint32_t> allowed;
 };
 
 constexpr std::size_t CommitterSlot = 0;
@@ -187,7 +188,7 @@ void Reserve(std::size_t slot, const char* role, std::optional<unsigned> logical
         const bool selected = setSelected(GetCurrentThread(), &id, 1) != 0;
 #else
         own->thread = CurrentThread();
-        const bool selected = PinTo(0, {own->set.id});
+        const bool selected = PinTo(0, own->allowed.empty() ? std::vector<std::uint32_t>{own->set.id} : own->allowed);
 #endif
         std::fprintf(stderr, "[affinity] %s tid=%lu -> core %u logical %u, kept from its previous thread (thread %s)\n", role, CpuTopology::ThreadId(nullptr), static_cast<unsigned>(own->set.core), static_cast<unsigned>(own->set.logical), selected ? "set" : "failed");
         return;
@@ -227,8 +228,19 @@ void Reserve(std::size_t slot, const char* role, std::optional<unsigned> logical
     }
     const char* processState = process ? "set" : "failed";
 #else
-    own = Reservation{reservation->chosen, CurrentThread()};
-    const bool thread = PinTo(0, {reservation->chosen.id});
+    const auto allowed = logical.has_value() ? std::vector<std::uint32_t>{reservation->chosen.id} : CpuTopology::ReservedThreadCpus(sets, *reservation);
+    own = Reservation{reservation->chosen, CurrentThread(), allowed};
+    const bool thread = PinTo(0, allowed);
+    for (auto& other : reservations) {
+        if (!other.has_value() || &other == &own) continue;
+        std::erase_if(other->allowed, [&](std::uint32_t cpu) {
+            for (const auto& set : sets) {
+                if (set.id == cpu) return set.group == reservation->chosen.group && set.core == reservation->chosen.core;
+            }
+            return false;
+        });
+        if (OwnThread(other->thread)) static_cast<void>(PinTo(static_cast<pid_t>(other->thread), other->allowed.empty() ? std::vector<std::uint32_t>{other->set.id} : other->allowed));
+    }
     if (DIR* tasks = opendir("/proc/self/task"); tasks != nullptr) {
         while (const dirent* entry = readdir(tasks)) {
             char* end = nullptr;
