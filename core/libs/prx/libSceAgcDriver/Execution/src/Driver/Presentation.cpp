@@ -62,6 +62,11 @@ void Driver::UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<I
     outputs.erase(it);
 }
 
+bool Driver::VideoOutputRegistered(std::uint32_t handle) {
+    std::lock_guard lock(mutex);
+    return outputs.contains(handle);
+}
+
 void Driver::AttachWindow(const PresentationWindow& window) {
     CheckFailure();
     std::unique_lock replacing(deviceReplacement);
