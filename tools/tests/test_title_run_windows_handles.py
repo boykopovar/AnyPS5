@@ -305,14 +305,19 @@ class WindowsSessionLifetimeTests(unittest.TestCase):
                     self.assertEqual(set(native.closed), native.allocated)
                     self.assertEqual(len(native.closed), len(set(native.closed)))
 
-    def test_failed_construction_retries_wait_before_releasing_job(self):
-        native = WindowsSessionNative()
-        native.assign_ok = False
-        native.process.wait = unittest.mock.Mock(side_effect=[OSError("wait failed"), 1])
-        with native.installed(), self.assertRaises(OSError):
-            native.session()
-        self.assertEqual(native.process.wait.call_count, 2)
-        self.assertEqual(set(native.closed), native.allocated)
+    def test_failed_construction_retries_wait_with_or_without_a_job_handle(self):
+        for create_ok in (False, True):
+            for error in (OSError("wait failed"), KeyboardInterrupt()):
+                with self.subTest(create_ok=create_ok, error=type(error)):
+                    native = WindowsSessionNative()
+                    native.create_ok = create_ok
+                    native.assign_ok = False
+                    native.process.wait = unittest.mock.Mock(side_effect=[error, 1])
+                    with native.installed(), self.assertRaises(type(error)):
+                        native.session()
+                    self.assertTrue(native.process.killed)
+                    self.assertEqual(native.process.wait.call_count, 2)
+                    self.assertEqual(set(native.closed), native.allocated)
 
     def test_failed_construction_releases_resources_after_last_wait(self):
         native = WindowsSessionNative()

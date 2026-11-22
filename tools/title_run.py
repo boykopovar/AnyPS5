@@ -1144,7 +1144,7 @@ def finish_session(session):
     try:
         session.kill()
     except BaseException:
-        if os.name == "nt" and (session.job is not None or session.handles):
+        if os.name == "nt" and (not session.released or session.job is not None or session.handles):
             try:
                 session.kill()
             finally:
