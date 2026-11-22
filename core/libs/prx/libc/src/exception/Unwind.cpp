@@ -952,6 +952,13 @@ const std::uintptr_t* UnwindCursorSlots_nid_no_patch() {
     return CursorSlots;
 }
 
+bool LibcUnwindHasFrame_nid_no_patch(std::uintptr_t returnAddress) {
+    _Unwind_Context context {};
+    context.registers[16] = returnAddress;
+    LibcUnwind::Frame frame {};
+    return LibcUnwind::DecodeFrame(context, frame);
+}
+
 extern "C" {
 _Unwind_Reason_Code APS5_VABI _Unwind_RaiseException_nid_postfix(_Unwind_Exception* exception) {
     _Unwind_Context start;
@@ -1063,6 +1070,10 @@ _Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn tra
 
 const std::uintptr_t* UnwindCursorSlots_nid_no_patch() {
     return nullptr;
+}
+
+bool LibcUnwindHasFrame_nid_no_patch(std::uintptr_t) {
+    return false;
 }
 
 extern "C" {
