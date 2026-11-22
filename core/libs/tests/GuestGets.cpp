@@ -2,6 +2,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -139,7 +140,7 @@ void CheckThreads() {
 int main(int argc, char** argv) {
     Require(argc == 3, "expected libc path and scratch file");
 #ifdef _WIN32
-    const auto library = LoadLibraryA(argv[1]);
+    const auto library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     Require(library != nullptr, "load libc");
     readLine = reinterpret_cast<Gets>(GetProcAddress(library, "gets_nid_postfix"));
 #else
