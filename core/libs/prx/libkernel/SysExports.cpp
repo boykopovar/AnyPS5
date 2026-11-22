@@ -31,7 +31,7 @@ int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* categoryType) 
 
 int APS5_VABI sceKernelIsNeoMode(void) {
     std::uint32_t attribute = 0;
-    if (!GetAppParamSfoAttribute_nid_no_patch(&attribute)) NotImplemented_nid_no_patch(__func__);
+    if (!GetAppParamSfoAttribute_nid_no_patch(&attribute)) return 0;
     return (attribute & ParamSfoAttributeSupportNeoMode) != 0 ? 1 : 0;
 }
 

@@ -131,7 +131,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (mode == "--param-json") {
-            Require(Throws("sceKernelIsNeoMode not implemented"), "a title with param.json did not throw");
+            Require(sceKernelIsNeoMode() == 0, "a title with param.json is in Neo mode");
+            Require(sceKernelIsNeoMode() == 0, "a second call changed the answer");
             return 0;
         }
         if (mode == "--no-metadata") {
