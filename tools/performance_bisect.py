@@ -1,4 +1,5 @@
 import argparse
+import errno
 import json
 import math
 import os
@@ -8,6 +9,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+from fractions import Fraction
 from pathlib import Path
 
 import title_run_provenance
@@ -108,13 +110,13 @@ def sample_summary(path, title_id, commit):
     titles = summary.get("titles")
     title = titles.get(title_id) if isinstance(titles, dict) else None
     if not isinstance(title, dict):
-        raise ValueError(f"{path}: title runner summary is missing title data")
+        raise ValueError(f"{path}: title runner summary is missing machine or title data")
     run_list = title.get("runs")
     if not isinstance(run_list, list) or len(run_list) != 1 or not isinstance(run_list[0], dict):
         raise ValueError(f"{path}: expected exactly one measured title run")
     run = run_list[0]
     fps = run.get("fps")
-    if run.get("outcome") != "rendering" or type(fps) not in (int, float) or not math.isfinite(fps) or fps <= 0:
+    if run.get("outcome") != "rendering" or type(fps) not in (int, float) or not 0 < fps <= sys.float_info.max:
         raise ValueError(f"{path}: title did not render with a finite positive FPS measurement")
     native = title_run_provenance.qualification(run, {"commit": commit, "dirty": False})
     if native["status"] != "matched":
@@ -154,7 +156,8 @@ def summarize(samples, max_spread_pct):
 
 
 def is_regression(fps, baseline_fps, threshold_pct):
-    return fps <= baseline_fps * (1 - threshold_pct / 100)
+    baseline = Fraction(str(baseline_fps))
+    return (baseline - Fraction(str(fps))) * 100 >= baseline * Fraction(str(threshold_pct))
 
 
 def require_same_identity(baseline, measured):
@@ -246,6 +249,16 @@ def measure_commit(repo, worktree, results_root, recipe, commit):
     return result
 
 
+def _hardlinks_unavailable(error):
+    if isinstance(error, NotImplementedError):
+        return True
+    unsupported = {
+        getattr(errno, name, None)
+        for name in ("EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EMLINK")
+    } - {None}
+    return error.errno in unsupported or getattr(error, "winerror", None) in (1, 5)
+
+
 def write_report(path, report):
     output = Path(path)
     if output.exists():
@@ -257,7 +270,15 @@ def write_report(path, report):
                                          prefix=output.name + ".", suffix=".tmp", delete=False) as file:
             temporary = Path(file.name)
             file.write(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
-        os.link(temporary, output)
+        try:
+            os.link(temporary, output)
+        except (OSError, NotImplementedError) as error:
+            if not _hardlinks_unavailable(error):
+                raise
+            if output.exists():
+                raise ValueError(f"report already exists: {output}") from error
+            os.replace(temporary, output)
+            temporary = None
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

@@ -1068,7 +1068,6 @@ int APS5_VABI sceIcuLegacyUnknown_S1K09W3LZCM_nid_no_patch();
 int APS5_VABI _ZN6icu_6810UStringSetD2Ev_nid_postfix();
 int APS5_VABI _ZN6icu_6817StringTrieBuilder18writeBranchSubNodeEiiii_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_S4ykVJc3FuQ_nid_no_patch();
-int APS5_VABI _ZN6icu_6815Normalizer2Impl7combineEPKti_nid_postfix();
 int APS5_VABI ures_getLocaleByType_nid_postfix();
 std::int32_t APS5_VABI ustr_hashICharsN_nid_postfix(const char* s, std::int32_t length);
 int APS5_VABI _ZN6icu_6817StringEnumerationD2Ev_nid_postfix();

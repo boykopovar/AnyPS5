@@ -1,4 +1,5 @@
 from pathlib import Path
+import errno
 import json
 import math
 import os
@@ -161,6 +162,16 @@ class SummaryValidationTests(unittest.TestCase):
                 with self.subTest(native=native), self.assertRaisesRegex(ValueError, "native"):
                     performance_bisect.sample_summary(path, "PPSA00000", GOOD)
 
+    def test_sample_rejects_a_non_object_title_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.json"
+            summary = {"build": {"commit": GOOD[:7], "dirty": False}, "machine": IDENTITY}
+            for catalog in (None, [], "PPSA00000", 1):
+                with self.subTest(catalog=catalog):
+                    path.write_text(json.dumps(dict(summary, titles=catalog)), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "missing machine or title data"):
+                        performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
     def test_sample_requires_clean_expected_commit_and_rendering_result(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "summary.json"
@@ -185,7 +196,7 @@ class SummaryValidationTests(unittest.TestCase):
             summary = {"build": {"commit": GOOD[:7], "dirty": False}, "machine": IDENTITY,
                        "titles": {"PPSA00000": {"name": "Example", "version": "01.00",
                                                    "runs": [{"outcome": "stalled", "fps": 60}]}}}
-            for outcome, fps in (("stalled", 60), ("incomplete", 60), ("rendering", math.inf), ("rendering", 0)):
+            for outcome, fps in (("stalled", 60), ("incomplete", 60), ("rendering", math.inf), ("rendering", 0), ("rendering", 10**309)):
                 summary["titles"]["PPSA00000"]["runs"] = [{"outcome": outcome, "fps": fps}]
                 path.write_text(json.dumps(summary), encoding="utf-8")
                 with self.subTest(outcome=outcome, fps=fps), self.assertRaisesRegex(ValueError, "did not render"):
@@ -208,6 +219,10 @@ class MeasurementStabilityTests(unittest.TestCase):
     def test_regression_requires_the_declared_slowdown_threshold(self):
         self.assertFalse(performance_bisect.is_regression(58, 60, 5))
         self.assertTrue(performance_bisect.is_regression(57, 60, 5))
+
+    def test_regression_counts_a_decimal_value_at_the_threshold(self):
+        self.assertTrue(performance_bisect.is_regression(43.7, 46.0, 5.0))
+        self.assertFalse(performance_bisect.is_regression(43.7000000001, 46.0, 5.0))
 
     def test_candidate_identity_must_match_baseline(self):
         with self.assertRaisesRegex(ValueError, "identity changed"):
@@ -346,6 +361,28 @@ class ReportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "already exists"):
                 performance_bisect.write_report(path, {"result": "overwrite"})
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "first bad"})
+
+    def test_report_falls_back_to_replace_when_hardlinks_are_unavailable(self):
+        for failure in (PermissionError(errno.EACCES, "denied"), NotImplementedError(), OSError(errno.ENOTSUP, "unsupported")):
+            with self.subTest(failure=type(failure).__name__):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "nested" / "report.json"
+                    with patch("os.link", side_effect=failure):
+                        performance_bisect.write_report(path, {"result": "first bad"})
+                    self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "first bad"})
+                    self.assertEqual([item.name for item in path.parent.iterdir()], ["report.json"])
+                    with self.assertRaisesRegex(ValueError, "already exists"):
+                        performance_bisect.write_report(path, {"result": "overwrite"})
+                    self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "first bad"})
+
+    def test_report_reraises_unexpected_link_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nested" / "report.json"
+            with patch("os.link", side_effect=OSError(errno.ENOSPC, "no space")):
+                with self.assertRaises(OSError):
+                    performance_bisect.write_report(path, {"result": "first bad"})
+            self.assertFalse(path.exists())
+            self.assertEqual(list(path.parent.iterdir()), [])
 
 
 class EndpointValidationTests(unittest.TestCase):
