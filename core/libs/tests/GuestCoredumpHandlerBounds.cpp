@@ -107,7 +107,7 @@ int main() {
         setWorkers.reserve(8);
         for (int i = 0; i < 8; ++i) {
             setWorkers.emplace_back([&, i] {
-                while (!startSet.load(std::memory_order_acquire)) {}
+                while (!startSet.load(std::memory_order_acquire)) { std::this_thread::yield(); }
                 for (int iter = 0; iter < 50; ++iter) {
                     if (sceCoredumpSetUserDataType(static_cast<std::int32_t>(i * 1000 + iter)) != 0) {
                         errorCount.fetch_add(1, std::memory_order_relaxed);
@@ -133,7 +133,7 @@ int main() {
         for (int i = 0; i < 8; ++i) {
             regWorkers.emplace_back([&, i] {
                 readyReg.fetch_add(1, std::memory_order_release);
-                while (!startReg.load(std::memory_order_acquire)) {}
+                while (!startReg.load(std::memory_order_acquire)) { std::this_thread::yield(); }
                 const int rc = sceCoredumpRegisterCoredumpHandler(
                     reinterpret_cast<std::uint64_t>(&DummyHandler),
                     0x4000,
@@ -147,7 +147,7 @@ int main() {
                 }
             });
         }
-        while (readyReg.load(std::memory_order_acquire) < 8) {}
+        while (readyReg.load(std::memory_order_acquire) < 8) { std::this_thread::yield(); }
         startReg.store(true, std::memory_order_release);
         for (auto& w : regWorkers) {
             w.join();
@@ -166,7 +166,7 @@ int main() {
         for (int i = 0; i < 8; ++i) {
             unregWorkers.emplace_back([&] {
                 readyUnreg.fetch_add(1, std::memory_order_release);
-                while (!startUnreg.load(std::memory_order_acquire)) {}
+                while (!startUnreg.load(std::memory_order_acquire)) { std::this_thread::yield(); }
                 const int rc = sceCoredumpUnregisterCoredumpHandler();
                 if (rc == 0) {
                     unregOkCount.fetch_add(1, std::memory_order_relaxed);
@@ -177,7 +177,7 @@ int main() {
                 }
             });
         }
-        while (readyUnreg.load(std::memory_order_acquire) < 8) {}
+        while (readyUnreg.load(std::memory_order_acquire) < 8) { std::this_thread::yield(); }
         startUnreg.store(true, std::memory_order_release);
         for (auto& w : unregWorkers) {
             w.join();
