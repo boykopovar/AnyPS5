@@ -197,6 +197,8 @@ public:
     std::vector<bool> pageBoxVisibility;
     bool containsAnyFormElements = false;
     bool containsAnyFormControls = false;
+    bool isFocused = false;
+    bool hasOpener = false;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
