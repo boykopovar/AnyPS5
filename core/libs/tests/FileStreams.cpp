@@ -597,7 +597,7 @@ static void CheckReadErrnoAndStatus(const char* path) {
         if (descriptors[1] >= 0) ::close(descriptors[1]);
     }
 #ifdef __linux__
-    for (int reader = 0; reader < 4; ++reader) {
+    for (int reader = 0; reader < 6; ++reader) {
         int descriptors[2];
         Require(::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors) == 0);
         const int flags = ::fcntl(descriptors[0], F_GETFL);
@@ -626,6 +626,8 @@ static void CheckReadErrnoAndStatus(const char* path) {
         case 1: Require(fgetc_nid_postfix(&stream) == EOF); break;
         case 2: Require(getc_unlocked_nid_postfix(&stream) == EOF); break;
         case 3: Require(fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), &stream) == nullptr); break;
+        case 4: Require(ungetc_nid_postfix('x', &stream) == EOF); break;
+        case 5: Require(ungetwc_nid_postfix(u'x', &stream) == -1); break;
         }
         Require(errno == 35, "Read transition leaked native errno");
         Require(ferror_nid_postfix(&stream) != 0 && feof_nid_postfix(&stream) == 0);
@@ -950,8 +952,16 @@ static void CheckUpdateStreamReadsAfterWrites(const std::string& base) {
         Require(std::strcmp(buffer.data(), "234") == 0, "fgets after fwrite on an r+ stream read other bytes");
     });
     CheckReadAfterWrite(path, "r+b", overwritten, [](FileStream* stream) {
+        errno = 35;
         Require(ungetc_nid_postfix('Z', stream) == 'Z', "ungetc after fwrite on an r+ stream");
+        Require(errno == 35, "ungetc after fwrite on an r+ stream changed errno");
         Require(fgetc_nid_postfix(stream) == 'Z' && fgetc_nid_postfix(stream) == '2', "ungetc after fwrite on an r+ stream pushed back other bytes");
+    });
+    CheckReadAfterWrite(path, "r+b", overwritten, [](FileStream* stream) {
+        errno = 35;
+        Require(ungetwc_nid_postfix(u'Z', stream) == u'Z', "ungetwc after fwrite on an r+ stream");
+        Require(errno == 35, "ungetwc after fwrite on an r+ stream changed errno");
+        Require(fgetwc_nid_postfix(stream) == u'Z' && fgetwc_nid_postfix(stream) == u'2', "ungetwc after fwrite on an r+ stream pushed back other bytes");
     });
     CheckReadAfterWrite(path, "r+b", overwritten, [](FileStream* stream) {
         std::array<char, 4> buffer{};
