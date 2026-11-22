@@ -518,6 +518,14 @@ class DebtSplitTests(unittest.TestCase):
                         self.assertEqual(cm.exception.code, 2)
                         self.assertIn("not a git repository", stderr.getvalue())
 
+    def test_main_reports_missing_git_executable(self):
+        with patch.object(debt_split.subprocess, "run", side_effect=FileNotFoundError(2, "No such file or directory", "git")):
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                with self.assertRaises(SystemExit) as cm:
+                    debt_split.main(["split"])
+                self.assertEqual(cm.exception.code, 2)
+                self.assertIn("cannot run git", stderr.getvalue())
+
 
     def test_split_keeps_the_note_and_sub_headings_of_an_existing_debt_file(self):
         self.write("docs/dev/debt/libSceA.md", "# libSceA technical debt\n\nA hand-written note that must stay.\n\n"

@@ -1,11 +1,14 @@
 #include "prx/libScePad/include/InputCommandFile.hpp"
+#include "prx/libScePad/include/PadAudioHapticQueue.hpp"
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
 void Check(bool condition) {
@@ -18,6 +21,21 @@ int main() {
     const auto write = [&](const std::string& text) { std::ofstream(path) << text; };
     try {
         write("1 16384 300\n");
+#ifdef _WIN32
+        {
+            std::FILE* reader = Pad::Detail::OpenInputCommandFile(path);
+            Check(reader != nullptr);
+            auto replacement = path;
+            replacement += L".next";
+            std::ofstream(replacement) << "2 8 300\n";
+            Check(::ReplaceFileW(path.c_str(), replacement.c_str(), nullptr, 0, nullptr, nullptr) != 0);
+            char old[16]{};
+            Check(std::fgets(old, sizeof(old), reader) != nullptr);
+            Check(std::string_view(old).starts_with("1 16384 300"));
+            Check(std::fclose(reader) == 0);
+            write("1 16384 300\n");
+        }
+#endif
         Pad::InputCommandFile input(path);
         Check(input.Buttons(0) == 0);
         write("APS5_PAD_TIMELINE 1 2 3\n200 100 18432\n500 200 16\n800 100 0\n");
@@ -185,6 +203,18 @@ int main() {
             write("3 0 300 touch(1919," + std::to_string(y) + ",127,0)\n");
             const auto lifted = touch.Poll(200000);
             Check(lifted.hasTouch && lifted.touchY == y && lifted.touchId == 127 && !lifted.touchActive);
+        }
+        {
+            constexpr std::uint64_t capacity = PadAudioHapticQueue::MaxBlocksPerSource;
+            PadAudioHapticQueue queue;
+            for (std::uint64_t i = 0; i <= capacity; ++i) {
+                const std::uint8_t large = i == 0 ? 11 : (i == 1 ? 22 : (i == capacity ? 33 : 44));
+                const std::uint8_t small = i == 0 ? 55 : (i == 1 ? 66 : (i == capacity ? 77 : 88));
+                queue.Queue(1, i, i + 1, large, small);
+            }
+            Check(queue.Read(0) == std::array<std::uint8_t, 2>{0, 0});
+            Check(queue.Read(1) == std::array<std::uint8_t, 2>{22, 66});
+            Check(queue.Read(capacity) == std::array<std::uint8_t, 2>{33, 77});
         }
         std::filesystem::remove(path);
         std::cout << "Controller timeline runtime cases passed\n";
