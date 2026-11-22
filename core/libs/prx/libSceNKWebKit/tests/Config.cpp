@@ -4,6 +4,7 @@
 #include "prx/libSceNKWebKit/src/Types.hpp"
 
 #include <stdexcept>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -98,11 +99,24 @@ static void TestContextConfiguration() {
 
     const void* copiedLangs = WKContextConfigurationCopyOverrideLanguages(config);
     Require(copiedLangs != nullptr);
-    const auto* copiedArray = static_cast<const NKWebKit::Array*>(copiedLangs);
-    Require(copiedArray->elements.size() == 2);
-    Require(static_cast<const NKWebKit::String*>(copiedArray->elements[0].Get())->Utf8() == "en-US");
-    Require(static_cast<const NKWebKit::String*>(copiedArray->elements[1].Get())->Utf8() == "ja-JP");
+    Require(WKGetTypeID(copiedLangs) == static_cast<std::uint32_t>(NKWebKit::ObjectType::Array));
+    Require(static_cast<const NKWebKit::Array*>(copiedLangs)->elements.empty());
+    const void* otherLangs = WKContextConfigurationCopyOverrideLanguages(nullptr);
+    Require(otherLangs != nullptr);
+    Require(otherLangs != copiedLangs);
+    Require(static_cast<const NKWebKit::Array*>(otherLangs)->elements.empty());
+    WKRelease(otherLangs);
     WKRelease(copiedLangs);
+    Require(langArray->elements.size() == 2);
+    WKContextConfigurationSetOverrideLanguages(nullptr, NKWebKit::ToRef(langArray));
+    WKContextConfigurationSetOverrideLanguages(config, nullptr);
+    bool rejectedLangs = false;
+    try {
+        WKContextConfigurationSetOverrideLanguages(config, config);
+    } catch (const std::invalid_argument&) {
+        rejectedLangs = true;
+    }
+    Require(rejectedLangs);
 
     const void* bundleStr = NKWebKit::ToRef(NKWebKit::String::FromUtf8("/app0/bundle.prx"));
     WKContextConfigurationSetInjectedBundlePath(config, bundleStr);
@@ -174,10 +188,52 @@ static void TestPageConfiguration() {
     WKRelease(config);
 }
 
+using CopyDataStorePath = const void* (APS5_VABI*)(const void*);
+using SetDataStorePath = void (APS5_VABI*)(const void*, const void*);
+
+struct DataStorePath {
+    CopyDataStorePath copy;
+    SetDataStorePath set;
+    const char* initial;
+};
+
+static const DataStorePath dataStorePaths[] = {
+    {WKWebsiteDataStoreConfigurationCopyApplicationCacheDirectory, WKWebsiteDataStoreConfigurationSetApplicationCacheDirectory, "/app0/applications"},
+    {WKWebsiteDataStoreConfigurationCopyNetworkCacheDirectory, WKWebsiteDataStoreConfigurationSetNetworkCacheDirectory, "/app0/WebKitCache"},
+    {WKWebsiteDataStoreConfigurationCopyIndexedDBDatabaseDirectory, WKWebsiteDataStoreConfigurationSetIndexedDBDatabaseDirectory, "/app0/indexeddb"},
+    {WKWebsiteDataStoreConfigurationCopyLocalStorageDirectory, WKWebsiteDataStoreConfigurationSetLocalStorageDirectory, "/app0/local"},
+    {WKWebsiteDataStoreConfigurationCopyWebSQLDatabaseDirectory, WKWebsiteDataStoreConfigurationSetWebSQLDatabaseDirectory, "/app0/websql"},
+    {WKWebsiteDataStoreConfigurationCopyCacheStorageDirectory, WKWebsiteDataStoreConfigurationSetCacheStorageDirectory, "/app0/CacheStorage"},
+    {WKWebsiteDataStoreConfigurationCopyMediaKeysStorageDirectory, WKWebsiteDataStoreConfigurationSetMediaKeysStorageDirectory, "/app0/mediakeys"},
+    {WKWebsiteDataStoreConfigurationCopyResourceLoadStatisticsDirectory, WKWebsiteDataStoreConfigurationSetResourceLoadStatisticsDirectory, "/app0/itp"},
+    {WKWebsiteDataStoreConfigurationCopyServiceWorkerRegistrationDirectory, WKWebsiteDataStoreConfigurationSetServiceWorkerRegistrationDirectory, "/app0/serviceworkers"},
+    {WKWebsiteDataStoreConfigurationCopyCookieStorageFile, WKWebsiteDataStoreConfigurationSetCookieStorageFile, ""},
+};
+
+static bool CopiedStringIs(const void* copied, const std::string& expected) {
+    if (copied == nullptr) return false;
+    const auto* string = static_cast<const NKWebKit::String*>(copied);
+    const bool matches = WKGetTypeID(copied) == static_cast<std::uint32_t>(NKWebKit::ObjectType::String) && !string->null &&
+                         string->Utf8() == expected;
+    WKRelease(copied);
+    return matches;
+}
+
 static void TestWebsiteDataStoreConfiguration() {
     const void* config = WKWebsiteDataStoreConfigurationCreate();
     Require(config != nullptr);
     Require(WKGetTypeID(config) == static_cast<std::uint32_t>(NKWebKit::ObjectType::WebsiteDataStoreConfiguration));
+
+    Require(CopiedStringIs(WKWebsiteDataStoreConfigurationCopyApplicationCacheDirectory(config), "/app0/applications"));
+    Require(CopiedStringIs(WKWebsiteDataStoreConfigurationCopyNetworkCacheDirectory(config), "/app0/WebKitCache"));
+    Require(CopiedStringIs(WKWebsiteDataStoreConfigurationCopyIndexedDBDatabaseDirectory(config), "/app0/indexeddb"));
+    Require(CopiedStringIs(WKWebsiteDataStoreConfigurationCopyLocalStorageDirectory(config), "/app0/local"));
+    Require(CopiedStringIs(WKWebsiteDataStoreConfigurationCopyWebSQLDatabaseDirectory(config), "/app0/websql"));
+    Require(CopiedStringIs(WKWebsiteDataStoreConfigurationCopyCacheStorageDirectory(config), "/app0/CacheStorage"));
+    Require(CopiedStringIs(WKWebsiteDataStoreConfigurationCopyMediaKeysStorageDirectory(config), "/app0/mediakeys"));
+    Require(CopiedStringIs(WKWebsiteDataStoreConfigurationCopyResourceLoadStatisticsDirectory(config), "/app0/itp"));
+    Require(CopiedStringIs(WKWebsiteDataStoreConfigurationCopyServiceWorkerRegistrationDirectory(config), "/app0/serviceworkers"));
+    Require(CopiedStringIs(WKWebsiteDataStoreConfigurationCopyCookieStorageFile(config), ""));
 
     Require(WKWebsiteDataStoreConfigurationGetPerOriginStorageQuota(config) == 1000ULL * 1024ULL * 1024ULL);
     WKWebsiteDataStoreConfigurationSetPerOriginStorageQuota(config, 2048);
@@ -245,6 +301,42 @@ static void TestWebsiteDataStoreConfiguration() {
     const void* c10 = WKWebsiteDataStoreConfigurationCopyCookieStorageFile(config);
     Require(static_cast<const NKWebKit::String*>(c10)->Utf8() == "/data/cache");
     WKRelease(c10);
+
+    const void* fresh = WKWebsiteDataStoreConfigurationCreate();
+    Require(fresh != config);
+    const std::size_t pathCount = sizeof(dataStorePaths) / sizeof(dataStorePaths[0]);
+    for (std::size_t i = 0; i < pathCount; ++i) {
+        Require(CopiedStringIs(dataStorePaths[i].copy(fresh), dataStorePaths[i].initial));
+    }
+    for (std::size_t i = 0; i < pathCount; ++i) {
+        const std::string own = "/data/" + std::to_string(i);
+        const void* ownStr = NKWebKit::ToRef(NKWebKit::String::FromUtf8(own.c_str()));
+        dataStorePaths[i].set(fresh, ownStr);
+        WKRelease(ownStr);
+        for (std::size_t j = 0; j < pathCount; ++j) {
+            const std::string expected = j <= i ? "/data/" + std::to_string(j) : std::string(dataStorePaths[j].initial);
+            Require(CopiedStringIs(dataStorePaths[j].copy(fresh), expected));
+        }
+    }
+    WKRelease(fresh);
+
+    const void* emptyStr = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(std::u16string()));
+    const void* nullStr = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>());
+    for (std::size_t i = 0; i < pathCount; ++i) {
+        const void* cleared = WKWebsiteDataStoreConfigurationCreate();
+        dataStorePaths[i].set(cleared, emptyStr);
+        Require(CopiedStringIs(dataStorePaths[i].copy(cleared), ""));
+        dataStorePaths[i].set(cleared, pathStr);
+        Require(CopiedStringIs(dataStorePaths[i].copy(cleared), "/data/cache"));
+        dataStorePaths[i].set(cleared, nullStr);
+        Require(CopiedStringIs(dataStorePaths[i].copy(cleared), ""));
+        for (std::size_t j = 0; j < pathCount; ++j) {
+            if (j != i) Require(CopiedStringIs(dataStorePaths[j].copy(cleared), dataStorePaths[j].initial));
+        }
+        WKRelease(cleared);
+    }
+    WKRelease(nullStr);
+    WKRelease(emptyStr);
 
     WKRelease(pathStr);
     WKRelease(config);
@@ -403,7 +495,32 @@ static void TestPageGroup() {
     Require(group != nullptr);
     Require(WKGetTypeID(group) == static_cast<std::uint32_t>(NKWebKit::ObjectType::PageGroup));
 
-    Require(WKPageGroupGetPreferences(group) == nullptr);
+    const void* prefs = WKPageGroupGetPreferences(group);
+    Require(prefs != nullptr);
+    Require(WKGetTypeID(prefs) == static_cast<std::uint32_t>(NKWebKit::ObjectType::Preferences));
+    Require(WKPageGroupGetPreferences(group) == prefs);
+    Require(WKPreferencesGetPluginsEnabled(prefs));
+    Require(WKPreferencesGetStorageBlockingPolicy(prefs) == kWKAllowAllStorage);
+    Require(WKPreferencesGetJavaScriptEnabled(prefs));
+    {
+        const void* other = WKPageGroupCreateWithIdentifier(nullptr);
+        const void* otherPrefs = WKPageGroupGetPreferences(other);
+        Require(otherPrefs != nullptr);
+        Require(otherPrefs != prefs);
+        Require(WKPreferencesGetPluginsEnabled(otherPrefs));
+        WKPreferencesSetPluginsEnabled(otherPrefs, false);
+        Require(!WKPreferencesGetPluginsEnabled(otherPrefs));
+        Require(WKPreferencesGetPluginsEnabled(prefs));
+        WKRelease(other);
+    }
+    {
+        const void* replacement = WKPreferencesCreate();
+        WKPreferencesSetJavaScriptEnabled(replacement, false);
+        WKPageGroupSetPreferences(group, replacement);
+        WKRelease(replacement);
+        Require(WKPageGroupGetPreferences(group) == replacement);
+        Require(!WKPreferencesGetJavaScriptEnabled(WKPageGroupGetPreferences(group)));
+    }
 
     const void* ucc = WKPageGroupGetUserContentController(group);
     Require(ucc != nullptr);
@@ -421,12 +538,30 @@ static void TestPageGroup() {
     Require(list->elements.size() == 2);
     Require(!WKUserScriptGetMainFrameOnly(list->elements[0].Get()));
     Require(WKUserScriptGetMainFrameOnly(list->elements[1].Get()));
+    Require(WKUserScriptGetInjectionTime(list->elements[0].Get()) == 0);
+    Require(WKUserScriptGetInjectionTime(list->elements[1].Get()) == 0);
     WKRelease(scripts);
 
     WKPageGroupRemoveAllUserScripts(group);
     const void* scripts2 = WKUserContentControllerCopyUserScripts(ucc);
     Require(static_cast<const NKWebKit::Array*>(scripts2)->elements.empty());
     WKRelease(scripts2);
+
+    WKPageGroupAddUserScript(group, jssrc, nullptr, nullptr, nullptr, 1, 1);
+    for (const std::uint32_t outOfRange : {2u, 7u, 0x100u, 0x80000001u, 0xFFFFFFFFu}) {
+        WKPageGroupAddUserScript(group, jssrc, nullptr, nullptr, nullptr, outOfRange, outOfRange);
+    }
+    const void* timedScripts = WKUserContentControllerCopyUserScripts(ucc);
+    const auto* timedList = static_cast<const NKWebKit::Array*>(timedScripts);
+    Require(timedList->elements.size() == 6);
+    Require(WKUserScriptGetInjectionTime(timedList->elements[0].Get()) == 1);
+    Require(WKUserScriptGetMainFrameOnly(timedList->elements[0].Get()));
+    for (std::size_t index = 1; index < timedList->elements.size(); ++index) {
+        Require(WKUserScriptGetInjectionTime(timedList->elements[index].Get()) == 0);
+        Require(!WKUserScriptGetMainFrameOnly(timedList->elements[index].Get()));
+    }
+    WKRelease(timedScripts);
+    WKPageGroupRemoveAllUserScripts(group);
 
     WKRelease(src);
     WKRelease(jssrc);

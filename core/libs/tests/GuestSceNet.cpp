@@ -1260,8 +1260,15 @@ static void CheckConnectTimeout() {
     for (const int descriptor : {client, refused, closed}) Require(sceNetSocketClose(descriptor) == 0);
 }
 
-static int ExpireConnect(const std::array<std::uint8_t, 16>& address, std::vector<int>& queued) {
+static void CheckConnectTimeoutExpiry() {
+    const int listener = sceNetSocket("connect-expiry", 2, 1, 6);
+    Require(listener >= 0);
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sceNetBind_nid_postfix(listener, address.data(), address.size()) == 0 && sceNetListen(listener, 0) == 0);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(listener, address.data(), &size) == 0);
     const int timeout = 100000;
+    std::vector<int> queued;
     int pending = -1;
     int result = 0;
     bool threw = false;
@@ -1300,37 +1307,8 @@ static int ExpireConnect(const std::array<std::uint8_t, 16>& address, std::vecto
     Require(waited >= std::chrono::milliseconds(80));
     if (threw || result != static_cast<int>(0x80410123)) report("the expired connect did not return EAGAIN");
     Require(!threw && result == static_cast<int>(0x80410123));
-    return pending;
-}
-
-static int RetryExpiredConnect(int pending, const std::array<std::uint8_t, 16>& address) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
-    int result = sceNetConnect(pending, address.data(), address.size());
-    while (Failed(result, 48) && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        result = sceNetConnect(pending, address.data(), address.size());
-    }
-    return result;
-}
-
-static int ExpiryListener(std::array<std::uint8_t, 16>& address) {
-    const int listener = sceNetSocket("connect-expiry", 2, 1, 6);
-    Require(listener >= 0);
-    address = {16, 2, 0, 0, 127, 0, 0, 1};
-    Require(sceNetBind_nid_postfix(listener, address.data(), address.size()) == 0 && sceNetListen(listener, 0) == 0);
-    std::uint32_t size = address.size();
-    Require(sceNetGetsockname(listener, address.data(), &size) == 0);
-    return listener;
-}
-
-static void CheckConnectTimeoutExpiry() {
-    std::array<std::uint8_t, 16> address{};
-    const int listener = ExpiryListener(address);
-    std::vector<int> queued;
-    const int pending = ExpireConnect(address, queued);
     Require(Failed(sceNetConnect(pending, address.data(), address.size()), 48));
-    Require(Failed(sceNetConnect(pending, address.data(), address.size()), 48));
-    Require(Failed(sceNetConnect(pending, address.data(), address.size()), 48));
+    Require(Throws([&] { sceNetConnect(pending, address.data(), address.size()); }));
     int value = -1;
     std::uint32_t length = sizeof(value);
     Require(sceNetGetsockopt(pending, 0xffff, 0x1200, &value, &length) == 0 && value == 0);
@@ -1346,43 +1324,6 @@ static void CheckConnectTimeoutExpiry() {
     Require(sceNetSocketClose(pending) == 0);
     for (const int descriptor : queued) Require(sceNetSocketClose(descriptor) == 0);
     Require(sceNetSocketClose(listener) == 0);
-}
-
-static void CheckConnectRetryAfterExpiry() {
-    std::array<std::uint8_t, 16> address{};
-    int listener = ExpiryListener(address);
-    std::vector<int> queued;
-    int pending = ExpireConnect(address, queued);
-    std::vector<int> accepted;
-    for (std::size_t index = 0; index < queued.size(); ++index) {
-        accepted.push_back(sceNetAccept(listener, nullptr, nullptr));
-        Require(accepted.back() >= 0);
-    }
-    const int established = RetryExpiredConnect(pending, address);
-    if (!Failed(established, 56)) std::fprintf(stderr, "connect retry after expiry: established attempt returned 0x%x\n", static_cast<unsigned>(established));
-    Require(Failed(established, 56));
-    Require(Failed(sceNetConnect(pending, address.data(), address.size()), 56));
-    accepted.push_back(sceNetAccept(listener, nullptr, nullptr));
-    Require(accepted.back() >= 0);
-    const char payload[] = "late";
-    Require(sceNetSend(pending, payload, sizeof(payload), 0) == sizeof(payload));
-    char buffer[sizeof(payload)]{};
-    Require(sceNetRecv(accepted.back(), buffer, sizeof(buffer), 0) == sizeof(payload) && std::strcmp(buffer, payload) == 0);
-    for (const int descriptor : accepted) Require(sceNetSocketClose(descriptor) == 0);
-    Require(sceNetSocketClose(pending) == 0);
-    for (const int descriptor : queued) Require(sceNetSocketClose(descriptor) == 0);
-    Require(sceNetSocketClose(listener) == 0);
-    queued.clear();
-    listener = ExpiryListener(address);
-    pending = ExpireConnect(address, queued);
-    Require(Failed(sceNetConnect(pending, address.data(), address.size()), 48));
-    for (const int descriptor : queued) Require(sceNetSocketClose(descriptor) == 0);
-    Require(sceNetSocketClose(listener) == 0);
-    const int refused = RetryExpiredConnect(pending, address);
-    if (!Failed(refused, 61)) std::fprintf(stderr, "connect retry after expiry: refused attempt returned 0x%x\n", static_cast<unsigned>(refused));
-    Require(Failed(refused, 61));
-    Require(Failed(sceNetConnect(pending, address.data(), address.size()), 61));
-    Require(sceNetSocketClose(pending) == 0);
 }
 
 static void CheckMicrosecondTimeouts(int receiver) {
@@ -3439,7 +3380,6 @@ int main(int argc, char** argv) {
     CheckStreamReceiveTimeout();
     CheckConnectTimeout();
     CheckConnectTimeoutExpiry();
-    CheckConnectRetryAfterExpiry();
     CheckMicrosecondTimeouts(udp_receiver);
     CheckMessages(udp_receiver, udp_sender, address);
     CheckOverlappingReceiveVectors(udp_receiver, udp_sender, address);

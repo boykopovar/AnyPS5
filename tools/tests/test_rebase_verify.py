@@ -199,6 +199,27 @@ class RebaseVerifyTests(unittest.TestCase):
         problems = self.verify()
         self.assertTrue(any("an added line is missing" in problem and "NEW" in problem for problem in problems), problems)
 
+    def test_submodule_revision_is_checked_regardless_of_diff_config(self):
+        path = "dependencies/example"
+        expected = self.base
+        unexpected = self.git("rev-parse", "main")
+        for branch in ("old", "new"):
+            self.git("checkout", "-q", branch)
+            self.git("update-index", "--add", "--cacheinfo", f"160000,{expected},{path}")
+            self.git("commit", "-q", "--amend", "--no-edit")
+        self.assertEqual(self.verify(), [])
+
+        self.git("update-index", "--cacheinfo", f"160000,{unexpected},{path}")
+        self.git("commit", "-q", "--amend", "--no-edit")
+        for style, ignore in (("short", "none"), ("log", "none"), ("diff", "none"), ("short", "all")):
+            with self.subTest(style=style, ignore=ignore):
+                self.git("config", "diff.submodule", style)
+                self.git("config", "diff.ignoreSubmodules", ignore)
+                self.assertEqual(self.verify(), [
+                    f"{path}: an added line is missing (1x): Subproject commit {expected}",
+                    f"{path}: a line is added that the branch did not add (1x): Subproject commit {unexpected}",
+                ])
+
     def test_a_line_added_twice_is_reported(self):
         self.write("f.txt", "a\nNEW\nNEW\nb\nc\ntail\n")
         self.git("commit", "-q", "-a", "--amend", "--no-edit")
