@@ -577,5 +577,18 @@ void APS5_VABI WKContextWarmInitialProcess(const void* contextRef);
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, void (*callback)(const void*, const void*, void*));
+void APS5_VABI WKBundleSetClient(const void* bundleRef, const void* client);
+void APS5_VABI WKBundleSetFrameFlatteningEnabled(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetSpatialNavigationEnabled(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetAllowFileAccessFromFileURLs(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetJavaScriptCanAccessClipboard(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetAllowStorageAccessFromFileURLS(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetAllowUniversalAccessFromFileURLs(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetPopupBlockingEnabled(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetAsynchronousSpellCheckingEnabled(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetAuthorAndUserStylesEnabled(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetMinimumLogicalFontSize(const void* bundleRef, int size);
+void APS5_VABI WKBundleSetDatabaseQuota(const void* bundleRef, std::uint64_t quota);
+void APS5_VABI WKBundleSetUserStyleSheetLocation(const void* bundleRef, const void* locationRef);
 
 }

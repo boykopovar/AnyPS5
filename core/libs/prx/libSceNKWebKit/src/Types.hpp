@@ -169,6 +169,23 @@ public:
     bool isContentEditable = false;
 };
 
+class Bundle final : public ObjectOf<ObjectType::Bundle> {
+public:
+    const void* client = nullptr;
+    bool frameFlatteningEnabled = false;
+    bool spatialNavigationEnabled = false;
+    bool allowFileAccessFromFileURLs = false;
+    bool javaScriptCanAccessClipboard = false;
+    bool allowStorageAccessFromFileURLs = false;
+    bool allowUniversalAccessFromFileURLs = false;
+    bool popupBlockingEnabled = false;
+    bool asynchronousSpellCheckingEnabled = false;
+    bool authorAndUserStylesEnabled = true;
+    int minimumLogicalFontSize = 0;
+    std::uint64_t databaseQuota = 0;
+    Retained<String> userStyleSheetLocation;
+};
+
 class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
 public:
     Retained<String> name;
