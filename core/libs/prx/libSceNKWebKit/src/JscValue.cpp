@@ -136,6 +136,18 @@ bool APS5_VABI JSValueIsStrictEqual(JSContextRef ctx, JSValueRef a, JSValueRef b
 bool APS5_VABI JSValueIsInstanceOfConstructor(JSContextRef ctx, JSValueRef value, JSObjectRef constructor, JSValueRef* exception) {
     if (!ctx || !constructor || (value && !value->alive) || !constructor->alive) return false;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    const CallbackObjectData* data = mutCtx->group->FindCallbackData(constructor);
+    if (!data && !JS_IsFunction(mutCtx->qctx, constructor->qval)) return false;
+    if (data && data->jsClass && !data->isDirectFunction && !data->isDirectConstructor) {
+        JSValue method = JS_GetProperty(mutCtx->qctx, constructor->qval, mutCtx->group->hasInstanceAtom);
+        if (JS_IsException(method)) {
+            CapturePendingException(mutCtx, exception);
+            return false;
+        }
+        const bool absent = JS_IsUndefined(method) || JS_IsNull(method);
+        JS_FreeValue(mutCtx->qctx, method);
+        if (absent) return false;
+    }
     const int res = JS_IsInstanceOf(mutCtx->qctx, ValueOrNull(value), constructor->qval);
     if (res < 0) {
         CapturePendingException(mutCtx, exception);
@@ -201,6 +213,7 @@ JSStringRef APS5_VABI JSValueCreateJSONString(JSContextRef ctx, JSValueRef value
     JSValue space = JS_NewInt32(mutCtx->qctx, static_cast<std::int32_t>(std::min(indent, 10u)));
     JSValue strVal = JS_JSONStringify(mutCtx->qctx, ValueOrNull(value), JS_UNDEFINED, space);
     JS_FreeValue(mutCtx->qctx, space);
+    if (exception) *exception = nullptr;
     if (JS_IsException(strVal)) {
         CapturePendingException(mutCtx, exception);
         return nullptr;
