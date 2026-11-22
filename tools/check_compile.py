@@ -125,13 +125,32 @@ def compilation_database(text, source, skip_empty_commands=False):
     return commands
 
 
+def ninja_for_build(build):
+    try:
+        lines = (build / "CMakeCache.txt").read_text(encoding="utf-8-sig", errors="replace").splitlines()
+    except OSError:
+        lines = ()
+    values = {}
+    for line in lines:
+        key, separator, value = line.partition("=")
+        name = key.partition(":")[0]
+        if separator and name in ("CMAKE_GENERATOR", "CMAKE_MAKE_PROGRAM"):
+            values[name] = value
+    program = values.get("CMAKE_MAKE_PROGRAM", "")
+    if values.get("CMAKE_GENERATOR") in ("Ninja", "Ninja Multi-Config") and program and not program.endswith("-NOTFOUND"):
+        executable = shutil.which(program)
+        if executable is not None:
+            return executable
+    return shutil.which("ninja")
+
+
 def entries(build):
     if not build.is_dir():
         raise ValueError(f"{build} is not a directory; configure the build first")
     manifest = build / "compile_commands.json"
     if manifest.is_file():
         return compilation_database(manifest.read_text(encoding="utf-8-sig"), manifest)
-    ninja = shutil.which("ninja")
+    ninja = ninja_for_build(build)
     if ninja is None:
         raise ValueError(f"no {manifest} and ninja is not on PATH")
     result = capture([ninja, "-C", str(build), "-t", "compdb", "-x"], encoding=ninja_encoding(ninja))
