@@ -43,6 +43,15 @@ bool ReadRefused() {
     return false;
 }
 
+std::string ReadRefusal() {
+    try {
+        Pad::ReadState(0);
+    } catch (const std::runtime_error& error) {
+        return error.what();
+    }
+    return {};
+}
+
 bool Replayed(const PadData& data) {
     return data.buttons == 0x4000 && data.left_stick_x == 255 && data.left_stick_y == 0 && data.right_stick_x == 128 && data.right_stick_y == 128 &&
         data.analog_buttons_l2 == 0 && data.analog_buttons_r2 == 200;
@@ -75,6 +84,16 @@ int main() {
 
     SetPath("APS5_PAD_REPLAY", directory / "missing.aps5pad");
     Require(ReadRefused(), "a missing APS5_PAD_REPLAY file did not stop the controller read");
+    const auto surviving = directory / "surviving-record.aps5pad";
+    std::ofstream(surviving, std::ios::binary) << "previous recording";
+    SetPath("APS5_PAD_RECORD", surviving);
+    const std::string missingReplayRefusal = ReadRefusal();
+    Require(!missingReplayRefusal.empty() && missingReplayRefusal.find("APS5_PAD_REPLAY") != std::string::npos && missingReplayRefusal.find("cannot compare") == std::string::npos,
+        "a missing APS5_PAD_REPLAY with an existing APS5_PAD_RECORD was not refused as a replay read failure");
+    std::stringstream survivingContents;
+    survivingContents << std::ifstream(surviving, std::ios::binary).rdbuf();
+    Require(survivingContents.str() == "previous recording", "the refused recording attempt modified the existing recording file");
+    SetPath("APS5_PAD_RECORD", std::filesystem::path{});
     SetPath("APS5_PAD_REPLAY", replay);
     SetPath("APS5_PAD_RECORD", directory / "missing-directory" / "record.aps5pad");
     Require(ReadRefused(), "an unwritable APS5_PAD_RECORD path did not stop the controller read");
@@ -96,6 +115,10 @@ int main() {
 #endif
     std::ofstream(record, std::ios::binary) << "previous recording";
     SetPath("APS5_PAD_RECORD", record);
+    std::error_code removed;
+    std::filesystem::remove(replay, removed);
+    const std::string deletedReplayRefusal = ReadRefusal();
+    Require(deletedReplayRefusal.empty(), "recording to an existing APS5_PAD_RECORD was refused while APS5_PAD_REPLAY pointed at a deleted replay file");
 
     PadInputState pressed = live;
     pressed.buttons = 0x2000;

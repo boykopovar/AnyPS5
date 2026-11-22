@@ -419,7 +419,7 @@ void ApplyRecording(PadData& data, std::uint64_t now) {
         auto path = EnvironmentPath(L"APS5_PAD_RECORD", "APS5_PAD_RECORD");
         if (!replayPath.empty() && !path.empty()) {
             std::error_code error;
-            if (std::filesystem::exists(path, error) && std::filesystem::equivalent(path, replayPath, error)) {
+            if (std::filesystem::exists(path, error) && std::filesystem::exists(replayPath, error) && std::filesystem::equivalent(path, replayPath, error)) {
                 throw std::runtime_error("APS5_PAD_RECORD and APS5_PAD_REPLAY refer to the same file: '" + path.string() + "'");
             }
             if (error) {
