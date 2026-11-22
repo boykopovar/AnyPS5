@@ -61,25 +61,26 @@ JSValue OrdinaryToPrimitive(JSContext* qctx, JSValueConst object, bool preferStr
     return JS_ThrowTypeError(qctx, "No default value");
 }
 
-JSValue ToPrimitiveClosure(JSContext* qctx, JSValueConst thisVal, int argc, JSValueConst* argv, int magic, void* opaque) {
-    (void)magic;
-    auto* data = static_cast<CallbackObjectData*>(opaque);
-    if (!data || !data->ctx || !data->handle || !data->jsClass) return JS_UNDEFINED;
-    OpaqueJSContext* ctx = data->ctx;
-    JSType hint = kJSTypeNumber;
-    if (argc > 0 && JS_IsString(argv[0])) {
-        const char* hintStr = JS_ToCString(qctx, argv[0]);
-        if (hintStr) {
-            if (std::strcmp(hintStr, "string") == 0) {
-                hint = kJSTypeString;
-            }
-            JS_FreeCString(qctx, hintStr);
-        }
+JSValue CallbackToPrimitive(JSContext* qctx, JSValueConst thisVal, int argc, JSValueConst* argv, int forGlobalObject) {
+    auto* group = static_cast<OpaqueJSContextGroup*>(JS_GetRuntimeOpaque(JS_GetRuntime(qctx)));
+    CallbackObjectData* data = group && JS_IsObject(thisVal) ? group->FindCallbackDataByPtr(JS_VALUE_GET_PTR(thisVal)) : nullptr;
+    const bool usable = data && data->ctx && data->handle && ObjectClass(data) && !data->isGlobalInterceptor;
+    if (!usable || (data->handle == data->ctx->globalObject) != (forGlobalObject != 0)) {
+        return JS_ThrowTypeError(qctx, "JSCallbackObject[Symbol.toPrimitive] method called on incompatible |this| value.");
     }
-    OpaqueJSValue* targetHandle = JS_IsObject(thisVal) ? ctx->group->BorrowHandle(ctx, thisVal) : data->handle;
+    if (argc < 1 || !JS_IsString(argv[0])) return JS_ThrowTypeError(qctx, "Primitive hint is not a string.");
+    const char* hintStr = JS_ToCString(qctx, argv[0]);
+    if (!hintStr) return JS_EXCEPTION;
+    const bool preferString = std::strcmp(hintStr, "string") == 0;
+    const bool knownHint = preferString || std::strcmp(hintStr, "default") == 0 || std::strcmp(hintStr, "number") == 0;
+    JS_FreeCString(qctx, hintStr);
+    if (!knownHint) return JS_ThrowTypeError(qctx, "Expected primitive hint to match one of 'default', 'number', 'string'.");
+    OpaqueJSContext* ctx = data->ctx;
+    const JSType hint = preferString ? kJSTypeString : kJSTypeNumber;
+    OpaqueJSValue* targetHandle = data->handle;
     CallbackPinScope pinScope(ctx->group);
     pinScope.Pin(targetHandle);
-    for (OpaqueJSClass* cls = data->jsClass; cls; cls = cls->parentClass) {
+    for (OpaqueJSClass* cls = ObjectClass(data); cls; cls = cls->parentClass) {
         if (cls->convertToType) {
             JSValueRef exc = nullptr;
             JSValueRef res = cls->convertToType(ctx, targetHandle, hint, &exc);
@@ -178,16 +179,6 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                 }
                 return 1;
             }
-        }
-    } else if (prop == group->toPrimitiveAtom) {
-        if (ObjectClass(data) && ObjectClass(data)->HasConvertToType()) {
-            if (desc) {
-                desc->flags = JS_PROP_CONFIGURABLE;
-                desc->value = JS_NewCClosure(qctx, &ToPrimitiveClosure, "[Symbol.toPrimitive]", nullptr, 1, 0, data);
-                desc->getter = JS_UNDEFINED;
-                desc->setter = JS_UNDEFINED;
-            }
-            return 1;
         }
     } else if (prop == group->hasInstanceAtom) {
         if (ObjectClass(data)) {
@@ -1052,8 +1043,14 @@ OpaqueJSValue* MakeCallbackObject(OpaqueJSContext* ctx, OpaqueJSClass* jsClass, 
         JS_SetPrototype(ctx->qctx, handle->qval, proto->qval);
     }
 
+    if (jsClass->HasConvertToType()) DefineToPrimitive(ctx, cbData->propStore, false);
     RunClassInitialize(ctx, handle, jsClass);
     return handle;
+}
+
+void DefineToPrimitive(OpaqueJSContext* ctx, JSValueConst target, bool forGlobalObject) {
+    JSValue function = JS_NewCFunctionMagic(ctx->qctx, &CallbackToPrimitive, "[Symbol.toPrimitive]", 1, JS_CFUNC_generic_magic, forGlobalObject ? 1 : 0);
+    JS_DefinePropertyValue(ctx->qctx, target, ctx->group->toPrimitiveAtom, function, JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
 }
 
 bool IsObjectCallable(const OpaqueJSContext* ctx, OpaqueJSValue* object) {

@@ -598,6 +598,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
         }
         JS_SetPrototype(qctx, globalObject->qval, globalExoticInterceptor);
 
+        if (globalObjectClass->HasConvertToType()) DefineToPrimitive(this, globalObject->qval, true);
         RunClassInitialize(this, globalObject, globalObjectClass);
     }
 }
