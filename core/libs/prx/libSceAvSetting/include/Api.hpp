@@ -24,7 +24,7 @@ int APS5_VABI sceAvControlAddCallbacksForResourceArbitrator(void* argument1);
 int APS5_VABI sceAvControlRemoveCallbacks(void);
 int APS5_VABI sceAvControlCheckCallback(void);
 int APS5_VABI sceAvControlWaitCallback(void);
-int APS5_VABI sceAvControlSetColorMode(void);
+int APS5_VABI sceAvControlSetColorMode(std::uint32_t mode);
 int APS5_VABI sceAvControlCheckMonitorInfoCapability(void);
 int APS5_VABI sceAvControlCheckVideoOutMode(void);
 int APS5_VABI sceAvControlSetCheckoutputMode(void);

@@ -136,9 +136,9 @@ int APS5_VABI sceAvControlWaitCallback(void) {
     return static_cast<int>(0x802A0011);
 }
 
-int APS5_VABI sceAvControlSetColorMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvControlSetColorMode(std::uint32_t mode) {
+    if (mode == 1 || mode > 5) return Error0002;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvControlCheckMonitorInfoCapability(void) {
@@ -578,7 +578,7 @@ int APS5_VABI sceAvSettingIsSuspendedProcessOutputModeAvailable() {
     return static_cast<int>(0x802A00FF);
 }
 
-int APS5_VABI sceAvSettingIsSuspendedProcessOutputModeAvailable2() {
+int APS5_VABI sceAvSettingIsSuspendedProcessOutputModeAvailable2(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

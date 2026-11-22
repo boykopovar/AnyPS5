@@ -175,6 +175,11 @@ void CheckConsoleMeasuredGetters(void* buffer) {
     Expect(sceAvSettingDriverUpdateStatus(buffer), static_cast<int>(0x802A0011u), "SettingDriverUpdateStatus answers the no-callback constant");
     Expect(sceAvSettingIsSupportedVideoOutModeByHdmiMonitorInfo(nullptr), Error0002, "IsSupportedVideoOutMode checks the monitor-info pointer");
     Expect(sceAvSettingIsSupportedVideoOutModeByHdmiMonitorInfo(buffer), NotInitialized, "IsSupportedVideoOutMode reports not initialized");
+    Expect(sceAvControlSetColorMode(1), Error0002, "SetColorMode rejects 1");
+    Expect(sceAvControlSetColorMode(6), Error0002, "SetColorMode accepts 0 and 2 to 5 only");
+    Expect(sceAvControlSetColorMode(2), NotInitialized, "SetColorMode reports not initialized");
+    Expect(sceAvControlSetColorMode(0), NotInitialized, "SetColorMode accepts 0");
+    Expect(sceAvControlSetColorMode(5), NotInitialized, "SetColorMode accepts the upper bound 5");
 }
 
 void CheckControlSetters() {
