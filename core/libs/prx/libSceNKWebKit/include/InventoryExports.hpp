@@ -1248,15 +1248,7 @@ int APS5_VABI _ZN3WTF21MemoryPressureHandler33setShouldUsePeriodicMemoryMonitorE
 int APS5_VABI _ZN3WTF21MemoryPressureHandler7installEv();
 int APS5_VABI _ZN3WTF21MemoryPressureHandler9singletonEv();
 int APS5_VABI _ZN3WTF21sentenceBreakIteratorENS_10StringViewE();
-int APS5_VABI _ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE();
 int APS5_VABI _ZN3WTF22CrossThreadTaskHandler21setCompletionCallbackEONS_8FunctionIFvvEEE();
-int APS5_VABI _ZN3WTF22CrossThreadTaskHandler4killEv();
-int APS5_VABI _ZN3WTF22CrossThreadTaskHandler8postTaskEONS_15CrossThreadTaskE();
-int APS5_VABI _ZN3WTF22CrossThreadTaskHandlerC1EPKcNS0_25AutodrainedPoolForRunLoopE();
-int APS5_VABI _ZN3WTF22CrossThreadTaskHandlerC2EPKcNS0_25AutodrainedPoolForRunLoopE();
-int APS5_VABI _ZN3WTF22CrossThreadTaskHandlerD0Ev();
-int APS5_VABI _ZN3WTF22CrossThreadTaskHandlerD1Ev();
-int APS5_VABI _ZN3WTF22CrossThreadTaskHandlerD2Ev();
 int APS5_VABI _ZN3WTF22TextBreakIteratorCache9singletonEv();
 int APS5_VABI _ZN3WTF24AutomaticThreadCondition4waitERNS_4LockE();
 int APS5_VABI _ZN3WTF24AutomaticThreadCondition7waitForERNS_4LockENS_7SecondsE();
