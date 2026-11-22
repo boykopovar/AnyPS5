@@ -1286,6 +1286,13 @@ void guardReads(std::uint64_t address, std::size_t bytes) {
     RequireNoMultisampleTarget(address, bytes, "a CPU read");
 }
 
+void checkMultisampleColorRead(std::uint64_t address, std::size_t bytes, const char* access, bool retire);
+
+void guardObservation(std::uint64_t address, std::size_t bytes) {
+    RequireNoResidentDepthRead_nid_no_patch(address, bytes);
+    checkMultisampleColorRead(address, bytes, "a depth baseline read", false);
+}
+
 struct RecordedSingleClear {
     std::uint64_t surface = 0;
     std::uint32_t pipeBankXor = 0;
@@ -1622,7 +1629,7 @@ std::shared_ptr<MultisampleTarget> snapshotTarget(const Context& context, const 
 
 void InstallResidentImageReadGuard_nid_no_patch() {
     static std::once_flag installed;
-    std::call_once(installed, [] { GuestMemory::SetReadGuard(&guardReads); });
+    std::call_once(installed, [] { GuestMemory::SetReadGuards(&guardReads, &guardObservation); });
     UpdateResidentImageUnmapObserver_nid_no_patch();
 }
 
@@ -2354,7 +2361,9 @@ void ReportGuardSpanMiss(const char* list, std::uint64_t address, std::uint64_t 
     NoteGuardSpans(GuardSpanEvent::Missed);
 }
 
-void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access) {
+namespace {
+
+void checkMultisampleColorRead(std::uint64_t address, std::size_t bytes, const char* access, bool retire) {
     if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire) || !mayOverlapGuarded(address, bytes)) return;
     const auto overlaps = [&](const GuardedRange& range) { return address < range.address + range.bytes && range.address < address + bytes; };
     const auto refuse = [&](const GuardedRange& range) {
@@ -2382,7 +2391,7 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
             if (!canRetire(range)) refuse(range);
             retirable = true;
         }
-        if (!retirable) return;
+        if (!retirable || !retire) return;
     }
     std::unique_lock lock(guardedMutex());
     std::vector<std::shared_ptr<std::atomic<bool>>> retired;
@@ -2395,6 +2404,12 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
     if (std::erase_if(guarded(), [&](const auto& range) { return std::find(retired.begin(), retired.end(), range.active) != retired.end(); }) != 0) guardedGeneration().fetch_add(1, std::memory_order_release);
     if (!retired.empty()) moveGuardSpans();
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
+}
+
+}
+
+void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access) {
+    checkMultisampleColorRead(address, bytes, access, true);
 }
 
 void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& active) {

@@ -3601,7 +3601,8 @@ unsigned long long CodeOffset(const void* address) {
 
 namespace {
 std::atomic<void (*)(std::uint64_t, std::size_t)> flushHook{nullptr};
-std::atomic<void (*)(std::uint64_t, std::size_t)> readGuard{nullptr};
+std::atomic<ReadGuard> readGuard{nullptr};
+std::atomic<ReadGuard> observationGuard{nullptr};
 
 void PrepareHostRead(std::uintptr_t address, std::size_t bytes) {
     if (const auto guard = readGuard.load(std::memory_order_acquire)) guard(address, bytes);
@@ -3618,8 +3619,15 @@ auto CurrentFlushHook() -> void (*)(std::uint64_t, std::size_t) {
     return flushHook.load(std::memory_order_acquire);
 }
 
-void SetReadGuard(void (*guard)(std::uint64_t address, std::size_t bytes)) {
-    readGuard.store(guard, std::memory_order_release);
+void SetReadGuard(ReadGuard guard) {
+    SetReadGuards(guard, guard);
+}
+
+void SetReadGuards(ReadGuard access, ReadGuard observation) {
+    static std::mutex registration;
+    const std::lock_guard lock(registration);
+    observationGuard.store(observation, std::memory_order_release);
+    readGuard.store(access, std::memory_order_release);
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(&PrepareHostRead);
 }
 
@@ -3890,7 +3898,7 @@ void ReadCommittedUnsynced(std::uint64_t address, std::span<std::byte> destinati
 void ReadCommittedCheckedUnsynced(std::uint64_t address, std::span<std::byte> destination) {
     if (destination.empty()) return;
     require(address <= std::numeric_limits<std::uintptr_t>::max() && destination.size() <= std::numeric_limits<std::uintptr_t>::max() - address, "address range overflow");
-    GuardRead(address, destination.size());
+    if (const auto guard = observationGuard.load(std::memory_order_acquire)) guard(address, destination.size());
     const TimedAccess timed(CounterRead, destination.size());
     CountReadCaller(__builtin_return_address(0));
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)

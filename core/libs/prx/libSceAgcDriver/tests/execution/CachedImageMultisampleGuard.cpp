@@ -255,6 +255,8 @@ void CheckStoredImage(AgcDriver::VulkanDevice& device, bool draw, ShaderRecompil
     };
     drawTarget();
     requireGuarded("the overlapped target is not guarded before the store");
+    std::array<std::byte, 4> baseline{};
+    requireRefused([&] { AgcDriver::GuestMemory::ReadCommittedCheckedUnsynced(target.address + BlockBytes / 2u, baseline); }, "depth baseline observation accepted an unclaimed multisample range");
     if (!stores || fmask) {
         requireRefused([&] { revalidate(); }, "a cached storage image that does not store over the guarded memory was accepted");
         requireRefused([&] { build(); }, "a fresh storage image that does not store over the guarded memory was accepted");

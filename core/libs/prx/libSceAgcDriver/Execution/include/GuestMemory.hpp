@@ -292,7 +292,9 @@ unsigned long long CodeOffset(const void* address);
 // calls FlushGpuWrites itself.
 void SetFlushHook(void (*hook)(std::uint64_t address, std::size_t bytes));
 auto CurrentFlushHook() -> void (*)(std::uint64_t address, std::size_t bytes);
-void SetReadGuard(void (*guard)(std::uint64_t address, std::size_t bytes));
+using ReadGuard = void (*)(std::uint64_t address, std::size_t bytes);
+void SetReadGuard(ReadGuard guard);
+void SetReadGuards(ReadGuard access, ReadGuard observation);
 void GuardRead(std::uint64_t address, std::size_t bytes);
 void FlushGpuWrites(std::uint64_t address, std::size_t bytes);
 void PrepareHostWrite(std::uintptr_t address, std::size_t bytes);
