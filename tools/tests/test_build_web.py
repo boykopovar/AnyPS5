@@ -29,6 +29,12 @@ def library_zip(entries):
 
 
 class LibraryPublicationTests(unittest.TestCase):
+    def test_load_release_rejects_duplicate_metadata_fields(self):
+        for data, key in ((b'{"tag_name":"v1","tag_name":"v2"}', "tag_name"),
+                          (b'{"assets":[{"size":1,"size":2}]}', "size")):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, f"duplicate JSON field.*{key}"):
+                build_web.load_release(io.BytesIO(data))
+
     def test_browser_unsafe_paths_do_not_publish_library_archives(self):
         valid = library_zip([("libs/libc.prx", b"valid")])
         for name in ("libs/NUL.prx", "libs/file:stream.prx", "libs/trailing./libc.prx",
