@@ -1229,6 +1229,51 @@ void SelectNextProto() {
     Require(errno == 71, "unwritable outputLength rollback preserves errno");
 }
 
+struct Barrier {
+    std::atomic<std::size_t> count{0};
+    std::atomic<bool> released{false};
+
+    void arrive(std::size_t total) {
+        std::size_t arrived = count.fetch_add(1) + 1;
+        while (!released.load()) {
+            if (arrived == total) {
+                released.store(true);
+                break;
+            }
+        }
+    }
+};
+
+void ConcurrentConnectionConstruction() {
+    constexpr int Threads = 8;
+    constexpr int Iterations = 100;
+    Barrier startBarrier;
+    std::atomic<int> successCount{0};
+    std::vector<std::thread> threads;
+
+    for (int t = 0; t < Threads; ++t) {
+        threads.emplace_back([&, t] {
+            startBarrier.arrive(Threads);
+            for (int i = 0; i < Iterations; ++i) {
+                bool isServer = (t + i) % 2 == 0;
+                Connection conn(isServer);
+                if (!isServer) {
+                    conn.SetHostname(TestHost);
+                } else {
+                    conn.UseCertificate(
+                        reinterpret_cast<const unsigned char*>(ServerCertificate), sizeof(ServerCertificate) - 1,
+                        reinterpret_cast<const unsigned char*>(ServerKey), sizeof(ServerKey) - 1
+                    );
+                }
+                successCount.fetch_add(1);
+            }
+        });
+    }
+
+    for (auto& th : threads) th.join();
+    Require(successCount.load() == Threads * Iterations, "concurrent connection construction failed");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -1265,6 +1310,7 @@ int main(int argc, char** argv) {
             Shutdown();
             ShutdownBeforeHandshake();
             AbruptClose();
+            ConcurrentConnectionConstruction();
         }
         if (transport) {
             const auto run = [](const char* name, void (*test)()) {
