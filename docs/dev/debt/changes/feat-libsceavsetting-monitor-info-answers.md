@@ -1,0 +1,5 @@
+# libSceAvSetting
+
+## change [sceAvSettingGetHdmiMonitorInfo, sceAvSettingGetHdmiRawEdid,
+
+- [sceAvSettingGetHdmiMonitorInfo, sceAvSettingGetHdmiRawEdid, sceAvSettingGetMorpheusPuStatus, sceAvSettingGetNativeHdmiMonitorInfo, sceAvSettingGetRawHdmiMonitorInfo](../../../core/libs/prx/libSceAvSetting/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAvSetting.c); measured on a PS5 Pro payload process (13.60): `sceAvSettingGetHdmiMonitorInfo` and `sceAvSettingGetNativeHdmiMonitorInfo` answer `0x802A0002` for a null second argument and ignore the first (pointer or id not distinguished), `sceAvSettingGetHdmiRawEdid` and `sceAvSettingGetRawHdmiMonitorInfo` check their first argument instead, and with writable destinations all four answer `0x802A001A` without writing; `sceAvSettingGetMorpheusPuStatus` answers `0x802A001A` for four nulls and is declared without parameters. `sceAvSettingInit` still throws, so post-initialization answers are unknown.

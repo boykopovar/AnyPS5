@@ -124,6 +124,15 @@ void CheckConsoleMeasuredGetters(void* buffer) {
         threw = true;
     }
     Require(threw, "GetPuTypeByMonitorInfo still throws for writable pointers");
+    Expect(sceAvSettingGetHdmiMonitorInfo(0, nullptr), Error0002, "SettingGetHdmiMonitorInfo checks the second argument");
+    Expect(sceAvSettingGetHdmiMonitorInfo(0, buffer), NotInitialized, "SettingGetHdmiMonitorInfo ignores its first argument and reports not initialized");
+    Expect(sceAvSettingGetHdmiRawEdid(nullptr), Error0002, "SettingGetHdmiRawEdid checks the first argument");
+    Expect(sceAvSettingGetHdmiRawEdid(buffer), NotInitialized, "SettingGetHdmiRawEdid reports not initialized");
+    Expect(sceAvSettingGetMorpheusPuStatus(), NotInitialized, "GetMorpheusPuStatus reports not initialized without checking arguments");
+    Expect(sceAvSettingGetNativeHdmiMonitorInfo(0, nullptr), Error0002, "SettingGetNativeHdmiMonitorInfo checks the second argument");
+    Expect(sceAvSettingGetNativeHdmiMonitorInfo(0, buffer), NotInitialized, "SettingGetNativeHdmiMonitorInfo ignores its first argument and reports not initialized");
+    Expect(sceAvSettingGetRawHdmiMonitorInfo(nullptr), Error0002, "SettingGetRawHdmiMonitorInfo checks the first argument");
+    Expect(sceAvSettingGetRawHdmiMonitorInfo(buffer), NotInitialized, "SettingGetRawHdmiMonitorInfo reports not initialized");
 }
 
 void CheckControlSetters() {
