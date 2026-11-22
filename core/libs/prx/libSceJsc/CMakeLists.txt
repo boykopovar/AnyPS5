@@ -79,6 +79,15 @@ if(BUILD_TESTING)
         set_tests_properties(jsc_wtf_file_system PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(jsc_wtf_file_system_path_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/WtfFileSystemPath.cpp)
+    target_include_directories(jsc_wtf_file_system_path_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(jsc_wtf_file_system_path_tests PRIVATE libSceJsc libkernel libc)
+    configure_windows_unwind(jsc_wtf_file_system_path_tests)
+    add_test(NAME jsc_wtf_file_system_path COMMAND jsc_wtf_file_system_path_tests)
+    if(WIN32)
+        set_tests_properties(jsc_wtf_file_system_path PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     if(WIN32)
         set_tests_properties(guest_jsc_string PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")

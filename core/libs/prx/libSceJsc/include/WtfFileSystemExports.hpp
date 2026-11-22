@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceJsc/include/WtfBase64Exports.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -38,5 +39,6 @@ extern "C" {
 
 int APS5_VABI _ZN3WTF14FileSystemImpl12readFromFileEiPci(int handle, char* data, int length);
 Jsc::WtfAbi::OptionalInt32 APS5_VABI _ZN3WTF14FileSystemImpl15getFileDeviceIdERKNS_7CStringE(const Jsc::WtfAbi::CString* fsFile);
+Jsc::WtfAbi::StringImpl** APS5_VABI _ZN3WTF14FileSystemImpl24pathByAppendingComponentERKNS_6StringES3_(Jsc::WtfAbi::StringImpl** result, const Jsc::WtfAbi::String* path, const Jsc::WtfAbi::String* component);
 
 }
