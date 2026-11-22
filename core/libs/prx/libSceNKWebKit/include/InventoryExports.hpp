@@ -4672,7 +4672,6 @@ int APS5_VABI _ZNK3WTF10AtomString23convertToASCIILowercaseEv();
 int APS5_VABI _ZNK3WTF10AtomString23convertToASCIIUppercaseEv();
 int APS5_VABI _ZNK3WTF10StringView16GraphemeClusters8IteratordeEv();
 int APS5_VABI _ZNK3WTF10StringView16GraphemeClusters8IteratoreqERKS2_();
-int APS5_VABI _ZNK3WTF14MediaTimeRange12toJSONStringEv();
 int APS5_VABI _ZNK3WTF15AutomaticThread19hasUnderlyingThreadERKNS_14AbstractLockerE();
 int APS5_VABI _ZNK3WTF15AutomaticThread4nameEv();
 int APS5_VABI _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE();
