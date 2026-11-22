@@ -215,15 +215,15 @@ int main() {
                         Require(refWritten > 0);
 
                         Require(guestWritten == refWritten);
-                        Require(std::memcmp(guestOutput.data(), refOutput.data(), guestWritten) == 0);
+                        Require(guestOutput == refOutput);
 
                         std::vector<std::uint8_t> nativeDecoded(stride * height);
                         std::int32_t nativeWidth = 0, nativeHeight = 0;
                         const int64_t nativeDecodeResult = JxrWmpLossyFormatsReferenceDecode(
-                            guestOutput.data(), guestWritten, nativeDecoded.data(), stride, &nativeWidth, &nativeHeight);
+                            guestOutput.data(), guestOutput.size(), nativeDecoded.data(), stride, &nativeWidth, &nativeHeight);
 
                         std::vector<std::uint8_t> guestDecoded(stride * height);
-                        auto* guestDecodeStream = MemoryStream(guestOutput, guestWritten);
+                        auto* guestDecodeStream = MemoryStream(guestOutput, guestOutput.size());
                         auto* guestDecoder = CreateDecoder();
                         bool guestFailed = guestDecoder->initialize(guestDecoder, guestDecodeStream) != 0;
                         std::int32_t decWidth = 0, decHeight = 0;
