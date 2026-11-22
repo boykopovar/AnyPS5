@@ -243,6 +243,7 @@ int main() {
 
     auto* boundaryPixels = reinterpret_cast<std::uint8_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - 64);
     CHECK_THROWS_AS(std::runtime_error, encoder->writePixels(encoder, Height, nullptr, Stride));
+    CHECK_THROWS_AS(std::runtime_error, encoder->writePixels(encoder, Height, static_cast<std::uint8_t*>(pages.unmapped), 0));
     CHECK_THROWS_AS(std::runtime_error, encoder->writePixels(encoder, Height, static_cast<std::uint8_t*>(pages.unmapped), Stride));
     CHECK_THROWS_AS(std::runtime_error, encoder->writePixels(encoder, Height, boundaryPixels, Stride));
     CHECK(encoder->writePixels(encoder, Height, sourcePixels.data(), Stride) == 0);
@@ -272,6 +273,7 @@ int main() {
     CHECK(bandedEncoder->setSize(bandedEncoder, Width, Height) == 0);
     CHECK(bandedEncoder->writePixelsBandedBegin(bandedEncoder, nullptr) == 0);
     CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, nullptr, Stride, 0));
+    CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, static_cast<std::uint8_t*>(pages.unmapped), 0, 0));
     CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, static_cast<std::uint8_t*>(pages.unmapped), Stride, 0));
     CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, boundaryPixels, Stride, 0));
     CHECK(bandedEncoder->release(&bandedEncoder) == 0 && bandedEncoder == nullptr);
@@ -314,6 +316,7 @@ int main() {
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, pages.unmapped, decodedPixels.data(), Stride));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, boundaryRect, decodedPixels.data(), Stride));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, nullptr, Stride));
+    CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, static_cast<std::uint8_t*>(pages.unmapped), 0));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, static_cast<std::uint8_t*>(pages.unmapped), Stride));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, static_cast<std::uint8_t*>(pages.readOnly), Stride));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, boundaryPixels, Stride));

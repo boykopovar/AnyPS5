@@ -46,8 +46,8 @@ void RequireGuestAddressRange(const void* pointer, std::size_t size, const char*
 }
 
 std::size_t CheckedPixelBufferSize(std::uint64_t lines, std::uint64_t stride, const char* function) {
-    if (lines == 0 || stride == 0) return 0;
-    if (lines > std::numeric_limits<std::size_t>::max() / stride)
+    if (lines == 0) return 0;
+    if (stride == 0 || lines > std::numeric_limits<std::size_t>::max() / stride)
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return static_cast<std::size_t>(lines * stride);
 }
@@ -146,7 +146,7 @@ std::int64_t APS5_VABI EncodeInitialize(Jxr::ImageEncode* encoder, Jxr::Stream* 
         CopyInGuestBytes(localParameters.data(), parameters, size, "PKImageEncode_Initialize_WMP");
         return JxrWmpEncodeInitialize_nid_no_patch(encoder, stream, localParameters.data(), size);
     }
-    return JxrWmpEncodeInitialize_nid_no_patch(encoder, stream, parameters, size);
+    return JxrWmpEncodeInitialize_nid_no_patch(encoder, stream, nullptr, size);
 }
 
 std::int64_t APS5_VABI EncodeTerminate(Jxr::ImageEncode* encoder) {
