@@ -568,6 +568,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     group->refCount.fetch_add(1, std::memory_order_relaxed);
     qctx = JS_NewContext(group->rt);
     JS_SetContextOpaque(qctx, this);
+    InstallRegExpLegacyProperties(qctx);
     group->contexts.push_back(this);
     for (auto& [ptr, data] : group->callbackDataByPtr) {
         if (data && !data->ctx) data->ctx = this;

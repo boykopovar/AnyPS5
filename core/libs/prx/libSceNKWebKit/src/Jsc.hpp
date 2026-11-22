@@ -249,6 +249,7 @@ std::string AtomToUtf8(JSContext* qctx, JSAtom atom);
 
 void CapturePendingException(OpaqueJSContext* ctx, JSValueRef* exception);
 void SetExceptionValue(OpaqueJSContext* ctx, JSValueRef* exception, JSValue excVal);
+void InstallRegExpLegacyProperties(JSContext* qctx);
 void RegisterCallbackClasses(OpaqueJSContextGroup* group);
 void RunClassInitialize(OpaqueJSContext* ctx, OpaqueJSValue* objHandle, OpaqueJSClass* jsClass);
 void RunClassFinalize(CallbackObjectData* data);
