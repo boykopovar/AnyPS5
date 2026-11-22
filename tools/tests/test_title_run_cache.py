@@ -113,6 +113,13 @@ class CachePolicyContextTests(unittest.TestCase):
         self.assertEqual(compared["context"]["status"], "matched")
         self.assertEqual(compared["context"]["before"]["runCachePolicies"], compared["context"]["now"]["runCachePolicies"])
 
+    def test_comparison_escapes_recorded_cache_paths_once(self):
+        configured = policy(extra={"ANYPS5_SHADER_CACHE_DIR": "external|cache"},
+                            status="overridden", overrides=["ANYPS5_SHADER_CACHE_DIR"])
+        compared = self.compared(recorded([configured]), recorded([configured]))
+        markdown = "\n".join(title_run.render_compare({"PPSA00001": compared}))
+        self.assertIn(r'"ANYPS5_SHADER_CACHE_DIR": "external\|cache"', markdown)
+
     def test_each_changed_cache_control_prevents_a_matched_claim(self):
         cases = [("ANYPS5_SHADER_CACHE_DIR", "/external"), ("MESA_SHADER_CACHE_DIR", "/external"),
                  ("__GL_SHADER_DISK_CACHE_PATH", "/external"), ("ANYPS5_SHADER_CACHE_DIR", ""),

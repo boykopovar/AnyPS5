@@ -541,7 +541,7 @@ def context_display(value):
         if value and all(isinstance(machine, dict) and all(field in machine for field in MACHINE_FIELDS) for machine in value):
             return "; ".join(f"run {index}: " + ", ".join(f"{field} {display(machine[field])}" for field in MACHINE_FIELDS)
                              for index, machine in enumerate(value, 1))
-        return "; ".join(json.dumps(item, sort_keys=True).replace("|", "\\|") if isinstance(item, dict) else display(item) for item in value) if value else "none"
+        return "; ".join(json.dumps(item, sort_keys=True) if isinstance(item, dict) else display(item) for item in value) if value else "none"
     return display(value)
 
 
