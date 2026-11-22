@@ -425,6 +425,12 @@ void APS5_VABI WKPageGetContentsAsString(const void* pageRef, void* context, voi
 void APS5_VABI WKPageGetSamplingProfilerOutput(const void* pageRef, void* context, void (*callback)(const void*, const void*, void*));
 void APS5_VABI WKPageGetSelectionAsWebArchiveData(const void* pageRef, void* context, void (*callback)(const void*, const void*, void*));
 void APS5_VABI WKPageRenderTreeExternalRepresentation(const void* pageRef, void* context, void (*callback)(const void*, const void*, void*));
+const void* APS5_VABI WKPageCopyRelatedPages(const void* pageRef);
+std::int32_t APS5_VABI WKPageGetProcessIdentifier(const void* pageRef);
+void APS5_VABI WKPageListenForLayoutMilestones(const void* pageRef, std::uint32_t milestones);
+void APS5_VABI WKPageSetMockCameraOrientation(const void* pageRef, std::uint32_t orientation);
+void APS5_VABI WKPageTerminate(const void* pageRef);
+void APS5_VABI WKPageUpdateWebsitePolicies(const void* pageRef, const void* websitePoliciesRef);
 const void* APS5_VABI WKPointCreate(NKWebKit::PointValue point);
 std::uint32_t APS5_VABI WKPointGetTypeID();
 NKWebKit::PointValue APS5_VABI WKPointGetValue(const void* pointRef);
