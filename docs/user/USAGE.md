@@ -325,7 +325,7 @@ The Windows executable has no `DYNAMIC_BASE` and prefers to load with its lowest
 
 For an executable that assumes its image starts at `0x400000`, as Ruffle (PPSA68091), VLC (PPSA85300) and XPSemu (PPSA97358) do when they read their `app0/imports.txt`, use `relinker --macos --macos-fixed-base 0x400000 source/input.elf app` on macOS. Use this option only when the executable requires a fixed address; without it, macOS output places the lowest ELF load page at `0x140010000`. Linux output places virtual address 0 at `0x400000` without an option, inside the 40-bit window that a title's own `sceLibcMspaceCreate` checks; `--linux-fixed-base` selects another address, and with `--lazy-binding` the executable stays position independent.
 
-The same base is applied to executables selected with `--executable`; bundled PRX modules are not rebased.
+The `--linux-fixed-base` and `--macos-fixed-base` addresses also apply to executables selected with `--executable`; `--windows-fixed-base` applies only to the main executable, and the others keep the preferred base with relocations. Bundled PRX modules are not rebased.
 
 Paths are relative to the output executable:
 
