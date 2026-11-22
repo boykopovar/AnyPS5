@@ -94,6 +94,13 @@ bool TryWriteGuestValue(T* pointer, const T& value) {
     return ok;
 }
 
+template <typename T>
+bool TryPublishGuestValue(T* pointer, const T& value, const T& previous) {
+    if (TryWriteGuestValue(pointer, value)) return true;
+    static_cast<void>(TryWriteGuestValue(pointer, previous));
+    return false;
+}
+
 void RequireWritableStringImpl(StringImpl* impl, const char* function) {
     if (!impl) return;
     static_cast<void>(ReadGuestValue(impl, function));
@@ -151,6 +158,7 @@ void APS5_VABI _ZN7WebCore13QualifiedNameC1ERKN3WTF10AtomStringES4_S4_(Qualified
     if (!self || !prefix || !localName || !namespaceURI)
         throw std::invalid_argument("QualifiedName requires a target and three atom strings");
 
+    const QualifiedName previous = ReadGuestValue(self, __func__);
     RequireWritableGuestValue(self, __func__);
     const Components key {
         ReadAtomStringImpl(prefix, __func__),
@@ -165,7 +173,7 @@ void APS5_VABI _ZN7WebCore13QualifiedNameC1ERKN3WTF10AtomStringES4_S4_(Qualified
     if (existing != cache.entries.end() && existing->second->m_refCount) {
         ++existing->second->m_refCount;
         const QualifiedName published { existing->second };
-        if (!TryWriteGuestValue(self, published)) {
+        if (!TryPublishGuestValue(self, published, previous)) {
             --existing->second->m_refCount;
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         }
@@ -179,7 +187,7 @@ void APS5_VABI _ZN7WebCore13QualifiedNameC1ERKN3WTF10AtomStringES4_S4_(Qualified
     auto* impl = static_cast<QualifiedNameImpl*>(_ZN3WTF10fastMallocEm(sizeof(QualifiedNameImpl)));
     *impl = QualifiedNameImpl { 1, 0, Retain(key.prefix), Retain(key.localName), Retain(key.namespaceURI), nullptr };
     const QualifiedName published { impl };
-    if (!TryWriteGuestValue(self, published)) {
+    if (!TryPublishGuestValue(self, published, previous)) {
         NKWebKit::WtfAbi::Release(impl->m_namespace);
         NKWebKit::WtfAbi::Release(impl->m_localName);
         NKWebKit::WtfAbi::Release(impl->m_prefix);

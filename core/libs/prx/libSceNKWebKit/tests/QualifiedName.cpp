@@ -285,6 +285,7 @@ struct GuardedPages {
     std::size_t pageSize = 0;
     void* unmapped = nullptr;
     void* readOnly = nullptr;
+    void* boundary = nullptr;
 
     GuardedPages() {
 #ifdef _WIN32
@@ -297,6 +298,10 @@ struct GuardedPages {
         Require(readOnly != nullptr);
         std::memset(readOnly, 0, pageSize);
         SetPageProtection(readOnly, pageSize, true, false);
+        boundary = VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(boundary != nullptr);
+        std::memset(boundary, 0, pageSize * 2);
+        SetPageProtection(static_cast<std::byte*>(boundary) + pageSize, pageSize, false, false);
 #else
         pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
         unmapped = mmap(nullptr, pageSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -305,6 +310,10 @@ struct GuardedPages {
         Require(readOnly != MAP_FAILED);
         std::memset(readOnly, 0, pageSize);
         SetPageProtection(readOnly, pageSize, true, false);
+        boundary = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(boundary != MAP_FAILED);
+        std::memset(boundary, 0, pageSize * 2);
+        SetPageProtection(static_cast<std::byte*>(boundary) + pageSize, pageSize, false, false);
 #endif
     }
 
@@ -312,9 +321,11 @@ struct GuardedPages {
 #ifdef _WIN32
         VirtualFree(unmapped, 0, MEM_RELEASE);
         VirtualFree(readOnly, 0, MEM_RELEASE);
+        VirtualFree(boundary, 0, MEM_RELEASE);
 #else
         munmap(unmapped, pageSize);
         munmap(readOnly, pageSize);
+        munmap(boundary, pageSize * 2);
 #endif
     }
 };
@@ -380,9 +391,29 @@ void TestGuestPointers() {
     RequireThrowsAs<std::runtime_error>([&] { _ZN7WebCore13QualifiedName17QualifiedNameImplD1Ev(&roMember); }, __LINE__);
     Require(localName.string.impl->refCount == 2);
 
+    auto* splitBytes = static_cast<std::uint8_t*>(pages.boundary) + pages.pageSize - 4;
+    const std::uint8_t sentinelPrefix[4] { 0x5AU, 0xA5U, 0x3CU, 0xC3U };
+    const std::uint8_t sentinelSuffix[4] { 0x12U, 0x34U, 0x56U, 0x78U };
+    std::memcpy(splitBytes, sentinelPrefix, sizeof(sentinelPrefix));
+    auto* splitName = reinterpret_cast<QualifiedName*>(splitBytes);
+    RequireThrowsAs<std::runtime_error>([&] { _ZN7WebCore13QualifiedNameC1ERKN3WTF10AtomStringES4_S4_(splitName, &prefix, &localName, &ns); }, __LINE__);
+    RequireThrowsAs<std::runtime_error>([&] { _ZN7WebCore13QualifiedNameC2ERKN3WTF10AtomStringES4_S4_(splitName, &prefix, &localName, &ns); }, __LINE__);
+    Require(std::memcmp(splitBytes, sentinelPrefix, sizeof(sentinelPrefix)) == 0);
+    Require(prefix.string.impl->refCount == 2 && localName.string.impl->refCount == 2 && ns.string.impl->refCount == 2);
+
+    SetPageProtection(static_cast<std::byte*>(pages.boundary) + pages.pageSize, pages.pageSize, true, true);
+    std::memcpy(splitBytes + 4, sentinelSuffix, sizeof(sentinelSuffix));
+    SetPageProtection(static_cast<std::byte*>(pages.boundary) + pages.pageSize, pages.pageSize, true, false);
+    RequireThrowsAs<std::runtime_error>([&] { _ZN7WebCore13QualifiedNameC1ERKN3WTF10AtomStringES4_S4_(splitName, &prefix, &localName, &ns); }, __LINE__);
+    Require(std::memcmp(splitBytes, sentinelPrefix, sizeof(sentinelPrefix)) == 0);
+    Require(std::memcmp(splitBytes + 4, sentinelSuffix, sizeof(sentinelSuffix)) == 0);
+
     QualifiedName valid = Construct(prefix, localName, ns);
     Require(valid.m_impl && valid.m_impl->m_refCount == 1);
     RequireThrowsAs<std::runtime_error>([&] { _ZN7WebCore13QualifiedNameC1ERKN3WTF10AtomStringES4_S4_(roName, &prefix, &localName, &ns); }, __LINE__);
+    RequireThrowsAs<std::runtime_error>([&] { _ZN7WebCore13QualifiedNameC1ERKN3WTF10AtomStringES4_S4_(splitName, &prefix, &localName, &ns); }, __LINE__);
+    Require(std::memcmp(splitBytes, sentinelPrefix, sizeof(sentinelPrefix)) == 0);
+    Require(std::memcmp(splitBytes + 4, sentinelSuffix, sizeof(sentinelSuffix)) == 0);
     Require(valid.m_impl->m_refCount == 1);
     Deref(valid);
     Require(prefix.string.impl->refCount == 2 && localName.string.impl->refCount == 2 && ns.string.impl->refCount == 2);
