@@ -85,6 +85,15 @@ def pad_record_ready(path, previous):
         return False
 
 
+def note_unqueued_pad(pad, queued, elapsed, stream):
+    if pad and queued is None:
+        reason = "minimum input delay not reached" if elapsed < pad.get("after_s", PAD_AFTER_SECONDS) else "no fresh controller sample observed"
+        target = stream if stream is not None else sys.stderr
+        target = getattr(target, "buffer", target)
+        target.write(f"[pad-input] timeline not queued: {reason}\n".encode())
+        target.flush()
+
+
 def inside(path, roots=()):
     pure = PurePosixPath(path)
     if "\\" in path or ":" in path or pure.is_absolute() or not pure.parts or ".." in pure.parts:
@@ -1079,6 +1088,7 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
                 session.send_new_windows_to_back()
                 time.sleep(0.1 if time.monotonic() - started < 10 else 0.5)
             elapsed = round(time.monotonic() - started, 1)
+            note_unqueued_pad(pad, queued, elapsed, stderr)
             alive, ended = session.alive(), time.time()
             exit_code = None if alive else session.exit_code()
             if alive:
@@ -1141,6 +1151,7 @@ def performance_phase(executable, work, env, console, seconds, pad=None, capture
             time.sleep(0.25)
         alive = session.alive()
         elapsed = round(time.monotonic() - started, 3)
+        note_unqueued_pad(pad, queued, elapsed, console.stderr)
         exit_code = None if alive else session.exit_code()
         if alive:
             requested_close = True
