@@ -406,7 +406,7 @@ export const messages = {
         "keepEditing": "Seguir editando",
         "discard": "Descartar cambios",
         "faq0Question": "¿Cómo asigno una tecla?",
-        "faq0Answer": "Elige un grupo y Añadir entrada. Usa Capturar o la lista. Puedes asignar varias entradas a una acción.",
+        "faq0Answer": "Elige un grupo, selecciona Añadir entrada y luego Capturar, o elige una tecla de la lista. Las entradas de una misma acción son alternativas.",
         "faq1Question": "¿Dónde guardo el archivo INI?",
         "faq1Answer": "Pon anyps5-input.ini junto al ejecutable generado del juego. Para otra ruta, usa ANYPS5_INPUT_CONFIG.",
         "faq2Question": "¿Por qué no se captura una tecla?",
