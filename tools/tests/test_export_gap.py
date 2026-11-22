@@ -945,6 +945,12 @@ class ExportGapTests(unittest.TestCase):
             with self.assertRaises(export_gap.GapError):
                 export_gap.parse_export_table(missing)
 
+    def test_joined_lines_removes_backslash_continuations(self):
+        self.assertEqual(export_gap.joined_lines("a \\\nb"), "a b")
+        self.assertEqual(export_gap.joined_lines("a \\\r\nb"), "a b")
+        self.assertEqual(export_gap.joined_lines("a\nb\\c"), "a\nb\\c")
+
+
 class RecordProvidedTests(unittest.TestCase):
     def test_no_patch_cut_registers_the_base_name(self):
         provided = {}
