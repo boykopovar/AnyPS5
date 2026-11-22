@@ -5232,7 +5232,10 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     // key leaves to a hit repeated; a failure removes the template from the cache (the batch keeps
     // it) and the caller rebuilds.
     auto resources = recipe.templateRef.lock();
-    if (resources == nullptr) return miss(DrawRecipeMiss::TemplateGone);
+    if (resources == nullptr) {
+        resources = SharedResourceCache().Find(recipe.key);
+        if (resources == nullptr || !resources->Reusable() || resources->SpaceReuse()) return miss(DrawRecipeMiss::TemplateGone);
+    }
     Require(resources->Reusable(), "draw recipe over a non-reusable template");
     const auto proofStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const bool proved = resources->ProveCurrent(shaders, &result.proof);
