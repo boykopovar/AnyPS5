@@ -965,7 +965,14 @@ int main() {
     Require(sceFontSetFontsOpenMode(nullptr, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
     Require(sceFontSetFontsOpenMode(&invalidLibrary, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
     Require(sceFontSetFontsOpenMode(library, 3) == SCE_FONT_ERROR_INVALID_PARAMETER);
-    for (const auto mode : {0, 1, 2}) Require(sceFontSetFontsOpenMode(library, mode) == SCE_FONT_OK);
+    Require(nativeLibrary->open_mode == 0);
+    for (const auto mode : {0, 1, 2}) {
+        Require(sceFontSetFontsOpenMode(library, mode) == SCE_FONT_OK);
+        Require(nativeLibrary->open_mode == mode);
+    }
+    Require(sceFontSetFontsOpenMode(library, 1) == SCE_FONT_OK);
+    Require(sceFontSetFontsOpenMode(library, 3) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(nativeLibrary->open_mode == 1);
     int setting = -1;
     Require(sceFontGetScriptLanguage(font, 3, &setting) == SCE_FONT_ERROR_INVALID_PARAMETER && setting == 0);
     Require(sceFontSetScriptLanguage(font, 3, 7) == SCE_FONT_ERROR_INVALID_PARAMETER);

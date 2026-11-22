@@ -466,6 +466,7 @@ int APS5_VABI sceFontSetFontsOpenMode(FontLibrary library, std::uint32_t openMod
     auto* lib = static_cast<FontLibNative*>(library);
     if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
     if (openMode > 2) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    lib->open_mode = openMode;
     return SCE_FONT_OK;
 }
 

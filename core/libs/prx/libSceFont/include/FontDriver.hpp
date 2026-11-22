@@ -193,7 +193,9 @@ struct FontLibNative {
     std::uint64_t sysfont_flags;
     FontHandle* list_head_ptr;
     FontHandle list_head;
-    std::uint8_t reserved_0xe8[0x18];
+    std::uint8_t reserved_0xe8[0x10];
+    std::uint32_t open_mode;
+    std::uint8_t reserved_0xfc[0x04];
 };
 
 using DriverPixelResolutionFunction = std::uint32_t (APS5_VABI*)();
@@ -342,6 +344,7 @@ static_assert(offsetof(FontLibNative, workspace) == 0xC0);
 static_assert(offsetof(FontLibNative, sysfont_flags) == 0xD0);
 static_assert(offsetof(FontLibNative, list_head_ptr) == 0xD8);
 static_assert(offsetof(FontLibNative, list_head) == 0xE0);
+static_assert(offsetof(FontLibNative, open_mode) == 0xF8);
 static_assert(sizeof(SysDriver) == 0x120);
 static_assert(offsetof(SysDriver, pixel_resolution) == 0x10);
 static_assert(offsetof(SysDriver, open) == 0x38);
