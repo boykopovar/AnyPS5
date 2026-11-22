@@ -203,6 +203,18 @@ class AnalysisTests(unittest.TestCase):
                 path.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
                 self.assertEqual(title_run.read_summary(path), dict(identity, presents=400, fps=20.0))
 
+    def test_unicode_separators_inside_title_names_keep_periodic_measurements(self):
+        path = self.root / "aps5-summary.jsonl"
+        identity = {"gpu": "GPU", "driver": "Driver", "os": "OS"}
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=repr(separator)):
+                title = f"Main title{separator}Subtitle"
+                intervals = [dict(identity, title=title, interval_start_s=start, interval_end_s=start + 10,
+                                  presents=presents, window={"ms": 10000})
+                             for start, presents in ((0, 300), (10, 500))]
+                path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in intervals), encoding="utf-8")
+                self.assertEqual(title_run.read_summary(path), dict(identity, presents=800, fps=40.0))
+
     def test_empty_periodic_window_does_not_fall_back_to_capture_frames(self):
         path = self.root / "aps5-summary.jsonl"
         interval = {"interval_start_s": 0, "interval_end_s": 10, "presents": 0, "window": {"ms": 10000}}
@@ -866,6 +878,20 @@ class PreparationTests(unittest.TestCase):
             target = self.root / f"input{index}"
             title_run.stage_inputs(source, entry, target)
             self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*.*")), expected)
+
+    def test_plural_module_dir_is_staged_without_singular_fallback(self):
+        package_root = package(self.root / "pkg", "PPSA00001")
+        modules = package_root / "sce_modules"
+        modules.mkdir()
+        elf = b"\x7fELF" + bytes(60)
+        (package_root / "eboot.bin").write_bytes(elf)
+        (modules / "helper.prx").write_bytes(elf)
+        staged = self.root / "input"
+
+        title_run.stage_inputs(package_root, {}, staged)
+
+        self.assertEqual((staged / "sce_modules/helper.prx").read_bytes(), elf)
+        self.assertFalse((staged / "sce_module").exists())
 
     def test_module_dirs_keep_every_module_and_empty_directories(self):
         source = package(self.root / "pkg", "PPSA00001")
@@ -1627,6 +1653,15 @@ class RunReportTests(unittest.TestCase):
         self.assertIsNone(report["shaders"])
         self.assertIsNone(report["missing"])
         self.assertIsNone(report["unsupported"])
+
+    def test_non_boolean_coverage_flags_are_not_collected(self):
+        for flag in ("missing", "shaders", "unsupported"):
+            for value in ("false", "true", 0, 1, None, []):
+                with self.subTest(flag=flag, value=value):
+                    coverage = {"milestones": True, "missing": True, "shaders": True, "unsupported": True, "imageFormats": True, "descriptors": True}
+                    coverage[flag] = value
+                    report = self.read(self.report(coverage=coverage))
+                    self.assertIsNone(report[flag], f"coverage.{flag}={value!r} should not be collected")
 
     def test_null_fps_is_kept_as_null(self):
         document = self.report()
