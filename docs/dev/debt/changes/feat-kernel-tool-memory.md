@@ -2,7 +2,7 @@
 
 ## change [sceKernelAllocateToolMemory, sceKernelAvailableToolMemorySize, sceKernelMapToolMemory, sceKernelReleaseToolMemory, sceKernelGetToolMemoryRange and sceKernelSetProcessProperty]
 
-- [sceKernelSetProcessProperty](../../../core/libs/prx/libkernel/SysExports.cpp) (libkernel and libkernel_sys) - a throwing import-resolution declaration; firmware 4.03 copies a 32-byte record the caller points at plus four further 64-bit values into a syscall record headed by the constant `0x4ffffffff`, and rejects a null record pointer with `SCE_KERNEL_ERROR_EINVAL` (PPSA31544's `fakelib/libSceAgcDriver.sprx` passes the `Sce.Debug:Gnm` and `SceGnmDumpArea` keys). What the property controls and which fields the kernel validates are unmeasured
+- [sceKernelSetProcessProperty](../../../core/libs/prx/libkernel/SysExports.cpp) (libkernel and libkernel_sys) - verified against firmware 4.03's `libkernel.sprx`: `(const void* name, int64_t, int64_t, int64_t, int64_t)` copies the 32-byte record `name` points at plus the four values into a syscall record headed by `0x4ffffffff`; a null `name` returns `SCE_KERNEL_ERROR_EINVAL`. The shared export calls `KernelSetProcessProperty_nid_no_patch` in [Process.cpp](../../../core/libs/prx/libkernel/System/src/Process.cpp), which stores `{name32, value[4]}` in one process map and returns `SCE_KERNEL_ERROR_EFAULT` for an unreadable name. What the property controls, whether a duplicate key replaces, and the `0x5ffffffff`-record sibling `sceKernelSetProcessPropertyString` are unmeasured; the `sceDebugGetProcessPropertyForCoredump` reader remains a stub
 
 ## add Functional
 
