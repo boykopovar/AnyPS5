@@ -29,6 +29,12 @@ def library_zip(entries):
 
 
 class LibraryPublicationTests(unittest.TestCase):
+    def test_load_release_rejects_duplicate_metadata_fields(self):
+        for data, key in ((b'{"tag_name":"v1","tag_name":"v2"}', "tag_name"),
+                          (b'{"assets":[{"size":1,"size":2}]}', "size")):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, f"duplicate JSON field.*{key}"):
+                build_web.load_release(io.BytesIO(data))
+
     def test_browser_unsafe_paths_do_not_publish_library_archives(self):
         valid = library_zip([("libs/libc.prx", b"valid")])
         for name in ("libs/NUL.prx", "libs/file:stream.prx", "libs/trailing./libc.prx",
@@ -181,7 +187,10 @@ class LibraryPublicationTests(unittest.TestCase):
         with patch.object(build_web, "MAX_EXPANDED_BYTES", 4096, create=True):
             self.publish(payload, payload)
         report = json.loads(self.manifest.read_text(encoding="utf-8"))
-        self.assertTrue(all(asset["expandedBytes"] == 4096 for asset in report["platforms"].values()))
+        self.assertEqual(
+            {platform: asset["expandedBytes"] for platform, asset in report["platforms"].items()},
+            {"windows": 4096, "linux": 4096},
+        )
 
     def test_file_ancestors_are_rejected_before_publication(self):
         valid = library_zip([("libs/libc.prx", b"valid")])

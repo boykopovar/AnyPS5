@@ -616,6 +616,11 @@ int main(int argc, char** argv) {
         Require(sceHttpUriUnescape(escaped, nullptr, size, row[0]) == 0);
         Require(Equal(escaped, row[1]) && escaped[size] == 'Z');
     }
+    std::memset(escaped, 'Z', sizeof(escaped));
+    required = 55;
+    Require(sceHttpUriUnescape(escaped, &required, sizeof(escaped), reinterpret_cast<const char*>(0x10)) == invalidValue && required == 55 && escaped[0] == 'Z');
+    Require(sceHttpUriUnescape(reinterpret_cast<char*>(0x10), &required, sizeof(escaped), "a%20b") == invalidValue && required == 55);
+    Require(sceHttpUriUnescape(escaped, reinterpret_cast<std::size_t*>(0x10), sizeof(escaped), "a%20b") == invalidValue && Equal(escaped, "a b"));
     for (const char* malformed : {"%", "%1", "%1g", "%gg", "%+1", "%-1", "% 1", "abc%", "%%41", "%4%41"}) {
         std::memset(escaped, 'Z', sizeof(escaped));
         required = 77;
@@ -958,6 +963,11 @@ int main(int argc, char** argv) {
     errno = 71;
     Require(sceHttpUriSweepPath(reinterpret_cast<char*>(0x10), "/foo", 5) == invalidValue && errno == 71);
     Require(sceHttpUriSweepPath(sweptPath, reinterpret_cast<const char*>(0x10), 5) == invalidValue && errno == 71);
+    Require(sceHttpUriSweepPath(sweptPath, reinterpret_cast<const char*>(0x10), std::size_t{1} << 40) == invalidValue && errno == 71);
+    std::string longPath(70000, 'a');
+    longPath[0] = '/';
+    std::string longSwept(longPath.size() + 1, 'x');
+    Require(sceHttpUriSweepPath(longSwept.data(), longPath.c_str(), longPath.size() + 1) == 0 && std::strcmp(longSwept.c_str(), longPath.c_str()) == 0);
     Require(sweep("foo/../bar", "foo/../bar"));
     Require(sweep("/foo/../bar", "/bar"));
     Require(sweep("/foo/./bar", "/foo/bar"));

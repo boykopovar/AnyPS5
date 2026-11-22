@@ -1,4 +1,5 @@
 import gzip
+import argparse
 import json
 import os
 import subprocess
@@ -62,6 +63,24 @@ class TimelineTests(unittest.TestCase):
                 self.assertIn(expected, page)
                 self.assertNotIn("Driver.Present", page)
 
+    def test_cli_default_window_includes_events_after_the_last_slice(self):
+        trailing_events = [
+            {"name": "present", "ph": "i", "ts": 12000, "tid": 2, "args": {"present": 1}},
+            {"name": "trace buffer full", "ph": "i", "ts": 13000, "tid": 2, "args": {"events_lost": 8}},
+            {"name": "presenter folded", "ph": "C", "ts": 14000, "tid": 2, "args": {"ms": 2}},
+        ]
+        path = Path(self.tmp.name) / "capture.json"
+        out = path.with_suffix(".html")
+        for event in trailing_events:
+            with self.subTest(event=event["name"]):
+                path.write_text(json.dumps(document(self.items + [event])), encoding="utf-8")
+                done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "-o", str(out),
+                                       "--thread", "queue worker", "--from-ms", "10"],
+                                      capture_output=True, text=True, timeout=5)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                window_end_ms = event["ts"] / 1000
+                self.assertIn(f"window 10.000 to {window_end_ms:.3f} ms, 0 threads, 0 bars", out.read_text(encoding="utf-8"))
+
     def test_cli_reports_event_loss_in_plain_and_compressed_captures(self):
         capture = document(self.items + [
             {"name": "thread_name", "ph": "M", "tid": 3, "args": {"name": "<worker&>"}},
@@ -117,7 +136,7 @@ class TimelineTests(unittest.TestCase):
         text = out.read_text(encoding="utf-8")
         self.assertIn("Incomplete trace: 8 events lost", text)
         self.assertIn("tid 9: buffer full at 1.500 ms; 8 events lost across the capture", text)
-        self.assertIn("0 threads, 0 bars", text)
+        self.assertIn("window 0.000 to 1.500 ms, 0 threads, 0 bars", text)
 
     def test_layout_places_bars_and_gives_tiny_slices_a_pixel(self):
         items = [complete(1, "Driver.Packet", 0, 5000), complete(1, "Tiny", 6000, 1)]
@@ -137,7 +156,8 @@ class TimelineTests(unittest.TestCase):
         items = names + [complete(tid, "Shader.Prepare", 0, 8000) for tid in (1, 2)]
         laid = trace_timeline.layout(trace_timeline.window_slices(trace_digest.Trace(items), 0, 10000), 0, 10000, 1000)
         self.assertEqual(laid["threads"], ["shader prepare", "shader prepare"])
-        self.assertEqual(sorted(bar["y"] for bar in laid["bars"]), [0, trace_timeline.ROW_HEIGHT])
+        self.assertEqual(sorted((bar["tid"], bar["y"]) for bar in laid["bars"]),
+                         [(1, 0), (2, trace_timeline.ROW_HEIGHT)])
         path = Path(self.tmp.name) / "a.json"
         path.write_text(json.dumps(items), encoding="utf-8")
         out = Path(self.tmp.name) / "a.html"
@@ -147,12 +167,25 @@ class TimelineTests(unittest.TestCase):
         text = out.read_text(encoding="utf-8")
         self.assertIn("2 threads, 2 bars", text)
         self.assertEqual(text.count(">shader prepare</text>"), 2)
+        for tid in (1, 2):
+            self.assertIn(f"<title>Shader.Prepare (8.000 ms), tid {tid}</title>", text)
 
     def test_layout_keeps_the_longest_slices_and_counts_the_rest(self):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000, max_slices=1)
         self.assertEqual(len(laid["bars"]), 1)
         self.assertEqual(laid["bars"][0]["ms"], 6.0)
         self.assertEqual(laid["left_out"], 2)
+
+    def test_layout_preserves_tied_slice_order_at_the_limit(self):
+        items = [complete(1, f"slice {index}", index * 100, duration)
+                 for index, duration in enumerate((2000, 5000, 3000, 5000, 3000, 5000))]
+        slices = trace_timeline_slices(items)
+        for limit in (0, 1, 2, 3, 4, 6, 8):
+            with self.subTest(limit=limit):
+                laid = trace_timeline.layout(slices, 0, 10000, 1000, max_slices=limit)
+                expected = sorted(slices, key=lambda entry: -entry["dur"])[:limit]
+                self.assertEqual([bar["name"] for bar in laid["bars"]], [entry["name"] for entry in expected])
+                self.assertEqual(laid["left_out"], len(slices) - len(expected))
 
     def test_svg_escapes_slice_names(self):
         laid = trace_timeline.layout(trace_timeline_slices([complete(1, "<script>", 0, 1000)]), 0, 2000, 1000)
@@ -230,6 +263,17 @@ class TimelineTests(unittest.TestCase):
                 self.assertIn(option, done.stderr)
                 self.assertFalse(out.exists())
 
+    def test_the_cli_rejects_a_width_that_overflows_layout(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        out = path.with_suffix(".html")
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "--width", str(10**309)],
+                              capture_output=True, text=True, timeout=15)
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertIn("--width", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertFalse(out.exists())
+
     def test_the_cli_reports_a_non_ascii_output_path_as_utf8(self):
         directory = Path(self.tmp.name) / "界"
         directory.mkdir()
@@ -302,6 +346,29 @@ class TimelineTests(unittest.TestCase):
 
 def trace_timeline_slices(items):
     return trace_timeline.window_slices(trace_of(items), 0, 10**12)
+
+
+class ArgumentValueTests(unittest.TestCase):
+    def test_nonnegative_number_accepts_values_from_zero_below_1e300(self):
+        self.assertEqual(trace_timeline.nonnegative_number('0.5'), 0.5)
+        self.assertEqual(trace_timeline.nonnegative_number('1'), 1.0)
+        for value in ('-1', 'abc', '1e300', 'nan', 'inf'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace_timeline.nonnegative_number(value)
+
+    def test_positive_integer_accepts_one_and_up(self):
+        self.assertEqual(trace_timeline.positive_integer('3'), 3)
+        for value in ('0', '-2', 'x', '1.5'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace_timeline.positive_integer(value)
+
+
+class PageTests(unittest.TestCase):
+    def test_page_escapes_title_and_notes_and_keeps_the_svg(self):
+        text = trace_timeline.page('<svg id="s"></svg>', '<b>T</b>', ['a < b'])
+        self.assertIn('<title>&lt;b&gt;T&lt;/b&gt;</title>', text)
+        self.assertIn('<li>a &lt; b</li>', text)
+        self.assertIn('<svg id="s"></svg></body>', text)
 
 
 if __name__ == "__main__":

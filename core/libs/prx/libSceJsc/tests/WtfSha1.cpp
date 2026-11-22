@@ -1,16 +1,23 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceJsc/libSceJsc.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+using Jsc::WtfAbi::OptionalSHA1Digest;
+using Jsc::WtfAbi::PersistenceAllocator;
+using Jsc::WtfAbi::PersistenceDecoder;
+using Jsc::WtfAbi::PersistenceEncoder;
 using Jsc::WtfAbi::SHA1;
 using Jsc::WtfAbi::SHA1Digest;
 
@@ -68,13 +75,55 @@ bool IsReset(const SHA1& sha1) {
     return sha1.cursor == 0 && sha1.totalBytes == 0;
 }
 
-template<typename Function> bool ThrowsInvalidArgument(Function function) {
+template<typename ExceptionType, typename Function> bool ThrowsException(Function function) {
     try {
         function();
-    } catch (const std::invalid_argument&) {
+    } catch (const ExceptionType&) {
         return true;
     }
     return false;
+}
+
+template<typename Function> bool ThrowsInvalidArgument(Function function) {
+    return ThrowsException<std::invalid_argument>(function);
+}
+
+void ResetEncoder(PersistenceEncoder& encoder, const SHA1& sha1, unsigned size = 0) {
+    std::memset(&encoder, 0xA5, sizeof(encoder));
+    encoder.buffer = encoder.inlineBuffer;
+    encoder.capacity = sizeof(encoder.inlineBuffer);
+    encoder.size = size;
+    encoder.sha1 = sha1;
+}
+
+struct TestAllocatorState {
+    std::size_t allocateCalls = 0;
+    std::size_t deallocateCalls = 0;
+    std::size_t lastAllocateSize = 0;
+    void* lastFreed = nullptr;
+    bool failNext = false;
+    std::vector<void*> liveAllocations;
+};
+
+TestAllocatorState* activeAllocatorState = nullptr;
+
+void* TestAllocate(std::size_t size) {
+    ++activeAllocatorState->allocateCalls;
+    activeAllocatorState->lastAllocateSize = size;
+    if (activeAllocatorState->failNext) return nullptr;
+    void* ptr = std::malloc(size);
+    if (ptr) activeAllocatorState->liveAllocations.push_back(ptr);
+    return ptr;
+}
+
+void TestDeallocate(void* ptr) {
+    ++activeAllocatorState->deallocateCalls;
+    activeAllocatorState->lastFreed = ptr;
+    auto& live = activeAllocatorState->liveAllocations;
+    const auto it = std::find(live.begin(), live.end(), ptr);
+    Check(it != live.end(), __LINE__);
+    live.erase(it);
+    std::free(ptr);
 }
 
 }
@@ -120,6 +169,187 @@ int main() {
         for (auto byte : digest) Check(byte == 0xA5, __LINE__);
         Check(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(nullptr, &digest); }), __LINE__);
         Check(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, nullptr); }), __LINE__);
+    }
+
+    const auto encoded = Sequence(0, 25, 7, 3);
+    {
+        PersistenceDecoder decoder{encoded.data(), encoded.data() + 2, encoded.data() + encoded.size(), Make(cases[0])};
+        const OptionalSHA1Digest result = _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(&decoder);
+        Check(result.hasValue, __LINE__);
+        Check(std::memcmp(result.value.data(), encoded.data() + 2, 20) == 0, __LINE__);
+        Check(decoder.buffer == encoded.data() && decoder.bufferPosition == encoded.data() + 22, __LINE__);
+        Check(decoder.sha1.cursor == 24 && decoder.sha1.totalBytes == 24, __LINE__);
+        const std::uint8_t salt[4] = {101, 0, 0, 0};
+        Check(std::memcmp(decoder.sha1.buffer, salt, 4) == 0, __LINE__);
+        SHA1Digest checksum;
+        _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&decoder.sha1, &checksum);
+        Check(Hex(checksum) == "6FED4A05DD4D2D6D8271FAE31449335D648D60A9", __LINE__);
+    }
+
+    {
+        Case pending{InitialHash, Sequence(0, 50, 1, 0), 50, nullptr};
+        PersistenceDecoder decoder{encoded.data(), encoded.data() + 2, encoded.data() + 22, Make(pending)};
+        const OptionalSHA1Digest result = _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(&decoder);
+        Check(result.hasValue && decoder.bufferPosition == decoder.bufferEnd, __LINE__);
+        Check(decoder.sha1.cursor == 10 && decoder.sha1.totalBytes == 74, __LINE__);
+        SHA1Digest checksum;
+        _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&decoder.sha1, &checksum);
+        Check(Hex(checksum) == "32A66B256525A031D02A2F31DCC62AB1099703EF", __LINE__);
+    }
+
+    {
+        PersistenceDecoder decoder{encoded.data(), encoded.data() + 6, encoded.data() + encoded.size(), Make(cases[1])};
+        const auto before = decoder;
+        const OptionalSHA1Digest result = _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(&decoder);
+        Check(!result.hasValue, __LINE__);
+        for (auto byte : result.value) Check(byte == 0, __LINE__);
+        Check(std::memcmp(&before, &decoder, sizeof(decoder)) == 0, __LINE__);
+    }
+
+    {
+        PersistenceDecoder decoder{encoded.data(), encoded.data(), encoded.data() + encoded.size(), Make(cases[0])};
+        decoder.sha1.cursor = 64;
+        const auto before = decoder;
+        Check(ThrowsInvalidArgument([&] { _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(&decoder); }), __LINE__);
+        Check(std::memcmp(&before, &decoder, sizeof(decoder)) == 0, __LINE__);
+        decoder.sha1.cursor = 0;
+        decoder.bufferPosition = decoder.bufferEnd + 1;
+        Check(ThrowsInvalidArgument([&] { _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(&decoder); }), __LINE__);
+        Check(ThrowsInvalidArgument([&] { _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(nullptr); }), __LINE__);
+    }
+
+    SHA1Digest digest;
+    std::memcpy(digest.data(), encoded.data() + 2, digest.size());
+
+    {
+        PersistenceEncoder encoder;
+        ResetEncoder(encoder, Make(cases[0]));
+        _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(&encoder, &digest);
+        Check(encoder.buffer == encoder.inlineBuffer, __LINE__);
+        Check(encoder.capacity == sizeof(encoder.inlineBuffer), __LINE__);
+        Check(encoder.size == digest.size(), __LINE__);
+        Check(std::memcmp(encoder.buffer, digest.data(), digest.size()) == 0, __LINE__);
+        Check(encoder.sha1.cursor == 24 && encoder.sha1.totalBytes == 24, __LINE__);
+        const std::uint8_t salt[4] = {101, 0, 0, 0};
+        Check(std::memcmp(encoder.sha1.buffer, salt, 4) == 0, __LINE__);
+        SHA1Digest checksum;
+        _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&encoder.sha1, &checksum);
+        Check(Hex(checksum) == "6FED4A05DD4D2D6D8271FAE31449335D648D60A9", __LINE__);
+
+        PersistenceDecoder decoder{encoder.buffer, encoder.buffer, encoder.buffer + encoder.size, Make(cases[0])};
+        const OptionalSHA1Digest decoded = _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(&decoder);
+        Check(decoded.hasValue && decoded.value == digest, __LINE__);
+        Check(decoder.bufferPosition == decoder.bufferEnd, __LINE__);
+        SHA1Digest decodedChecksum;
+        _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&decoder.sha1, &decodedChecksum);
+        Check(decodedChecksum == checksum, __LINE__);
+    }
+
+    {
+        Case pending{InitialHash, Sequence(0, 50, 1, 0), 50, nullptr};
+        PersistenceEncoder encoder;
+        ResetEncoder(encoder, Make(pending), 4076);
+        for (unsigned i = 0; i < 4076; ++i) encoder.inlineBuffer[i] = static_cast<std::uint8_t>(i);
+        _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(&encoder, &digest);
+        Check(encoder.buffer == encoder.inlineBuffer && encoder.capacity == 4096 && encoder.size == 4096, __LINE__);
+        Check(std::memcmp(encoder.buffer + 4076, digest.data(), digest.size()) == 0, __LINE__);
+        Check(encoder.sha1.cursor == 10 && encoder.sha1.totalBytes == 74, __LINE__);
+        SHA1Digest checksum;
+        _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&encoder.sha1, &checksum);
+        Check(Hex(checksum) == "32A66B256525A031D02A2F31DCC62AB1099703EF", __LINE__);
+    }
+
+    {
+        PersistenceEncoder encoder;
+        ResetEncoder(encoder, Make(cases[0]), 4080);
+        for (unsigned i = 0; i < 4080; ++i) encoder.inlineBuffer[i] = static_cast<std::uint8_t>(i * 3 + 1);
+        const SHA1 sha1Before = encoder.sha1;
+        Check(ThrowsException<std::runtime_error>([&] {
+            _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(&encoder, &digest);
+        }), __LINE__);
+        Check(encoder.buffer == encoder.inlineBuffer && encoder.capacity == 4096 && encoder.size == 4080, __LINE__);
+        Check(std::memcmp(&encoder.sha1, &sha1Before, sizeof(sha1Before)) == 0, __LINE__);
+    }
+
+    {
+        TestAllocatorState state;
+        activeAllocatorState = &state;
+        const PersistenceAllocator allocator{&TestAllocate, &TestDeallocate};
+        RegisterPersistenceAllocator_nid_no_patch(&allocator);
+
+        PersistenceEncoder encoder;
+        ResetEncoder(encoder, Make(cases[0]), 4080);
+        for (unsigned i = 0; i < 4080; ++i) encoder.inlineBuffer[i] = static_cast<std::uint8_t>(i * 3 + 1);
+
+        _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(&encoder, &digest);
+        Check(state.allocateCalls == 1 && state.lastAllocateSize == 8192, __LINE__);
+        Check(state.deallocateCalls == 0, __LINE__);
+        Check(encoder.buffer != encoder.inlineBuffer && encoder.capacity == 8192 && encoder.size == 4100, __LINE__);
+        for (unsigned i = 0; i < 4080; ++i) Check(encoder.buffer[i] == static_cast<std::uint8_t>(i * 3 + 1), __LINE__);
+        Check(std::memcmp(encoder.buffer + 4080, digest.data(), digest.size()) == 0, __LINE__);
+
+        std::uint8_t* firstHeapBuffer = encoder.buffer;
+        encoder.size = 8180;
+        for (unsigned i = 4100; i < 8180; ++i) encoder.buffer[i] = static_cast<std::uint8_t>(i * 5 + 2);
+        const SHA1Digest* aliasedDigest = reinterpret_cast<const SHA1Digest*>(encoder.buffer + 100);
+        const SHA1Digest expectedAliased = *aliasedDigest;
+        _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(&encoder, aliasedDigest);
+        Check(state.allocateCalls == 2 && state.lastAllocateSize == 16384, __LINE__);
+        Check(state.deallocateCalls == 1 && state.lastFreed == firstHeapBuffer, __LINE__);
+        Check(encoder.buffer != firstHeapBuffer && encoder.capacity == 16384 && encoder.size == 8200, __LINE__);
+        Check(std::memcmp(encoder.buffer + 8180, expectedAliased.data(), expectedAliased.size()) == 0, __LINE__);
+
+        std::uint8_t* secondHeapBuffer = encoder.buffer;
+        encoder.size = encoder.capacity;
+        state.failNext = true;
+        const SHA1 sha1BeforeFail = encoder.sha1;
+        Check(ThrowsException<std::bad_alloc>([&] {
+            _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(&encoder, &digest);
+        }), __LINE__);
+        Check(encoder.buffer == secondHeapBuffer && encoder.capacity == 16384 && encoder.size == 16384, __LINE__);
+        Check(std::memcmp(&encoder.sha1, &sha1BeforeFail, sizeof(sha1BeforeFail)) == 0, __LINE__);
+
+        TestDeallocate(secondHeapBuffer);
+        Check(state.liveAllocations.empty(), __LINE__);
+        RegisterPersistenceAllocator_nid_no_patch(nullptr);
+        activeAllocatorState = nullptr;
+    }
+
+    {
+        PersistenceEncoder encoder;
+        ResetEncoder(encoder, Make(cases[0]));
+        Check(ThrowsInvalidArgument([&] {
+            _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(nullptr, &digest);
+        }), __LINE__);
+        Check(ThrowsInvalidArgument([&] {
+            _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(&encoder, nullptr);
+        }), __LINE__);
+
+        encoder.sha1.cursor = 64;
+        const SHA1 sha1Cursor = encoder.sha1;
+        Check(ThrowsInvalidArgument([&] {
+            _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(&encoder, &digest);
+        }), __LINE__);
+        Check(encoder.size == 0 && std::memcmp(&encoder.sha1, &sha1Cursor, sizeof(sha1Cursor)) == 0, __LINE__);
+
+        encoder.sha1.cursor = 0;
+        encoder.buffer = nullptr;
+        Check(ThrowsInvalidArgument([&] {
+            _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(&encoder, &digest);
+        }), __LINE__);
+
+        encoder.buffer = encoder.inlineBuffer;
+        encoder.size = encoder.capacity + 1;
+        Check(ThrowsInvalidArgument([&] {
+            _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(&encoder, &digest);
+        }), __LINE__);
+
+        encoder.capacity = std::numeric_limits<unsigned>::max();
+        encoder.size = std::numeric_limits<unsigned>::max() - 19;
+        Check(ThrowsException<std::length_error>([&] {
+            _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(&encoder, &digest);
+        }), __LINE__);
+        Check(encoder.size == std::numeric_limits<unsigned>::max() - 19, __LINE__);
     }
     return 0;
 }

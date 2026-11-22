@@ -75,6 +75,42 @@ static void CheckLdexpSpecialValues() {
     Require(ldexp_nid_postfix(0x1p-1074, 1074) == 1.);
 }
 
+static void CheckLdexpRoundingModes() {
+    static constexpr struct {
+        std::uint64_t bits;
+        int exponent;
+        std::uint64_t expected;
+        int exceptions;
+        int error;
+    } cases[] = {
+        {0x3ff0000000000000ull, 1024, 0x7ff0000000000000ull, FE_OVERFLOW | FE_INEXACT, ERANGE},
+        {0xbff0000000000000ull, 1024, 0xfff0000000000000ull, FE_OVERFLOW | FE_INEXACT, ERANGE},
+        {0x0000000000000001ull, 2098, 0x7ff0000000000000ull, FE_OVERFLOW | FE_INEXACT, ERANGE},
+        {0x3ff0000000000000ull, -1080, 0x0000000000000000ull, FE_UNDERFLOW | FE_INEXACT, ERANGE},
+        {0xbff0000000000000ull, -1080, 0x8000000000000000ull, FE_UNDERFLOW | FE_INEXACT, ERANGE},
+        {0x4008000000000000ull, -1075, 0x0000000000000002ull, 0, 0},
+        {0x4014000000000000ull, -1075, 0x0000000000000002ull, 0, 0},
+        {0x3ff8000000000000ull, -1074, 0x0000000000000002ull, 0, 0},
+        {0x3ff0000000000001ull, -1023, 0x0008000000000000ull, 0, 0},
+        {0x3ff0000000000000ull, 3, 0x4020000000000000ull, 0, 0},
+    };
+    const int savedError = errno;
+    const int saved = std::fegetround();
+    for (const int mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
+        for (const auto& item : cases) {
+            Require(std::fesetround(mode) == 0 && std::feclearexcept(FE_ALL_EXCEPT) == 0);
+            errno = 97;
+            const std::uint64_t result = std::bit_cast<std::uint64_t>(ldexp_nid_postfix(std::bit_cast<double>(item.bits), item.exponent));
+            const int exceptions = std::fetestexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT);
+            const int error = errno;
+            Require(std::fesetround(saved) == 0);
+            Require(result == item.expected && exceptions == item.exceptions && error == (item.error != 0 ? item.error : 97));
+        }
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    errno = savedError;
+}
+
 static void CheckSquareRoot() {
     Require(sqrt_nid_postfix(4.) == 2. && sqrtf_nid_postfix(6.25f) == 2.5f);
     Require(std::bit_cast<std::uint64_t>(sqrt_nid_postfix(2.)) == 0x3ff6a09e667f3bcdull);
@@ -775,6 +811,26 @@ struct RestoreFloatingPointState {
     RestoreFloatingPointState() { Require(std::fegetenv(&environment) == 0); }
     ~RestoreFloatingPointState() { Require(std::fesetenv(&environment) == 0); errno = error; }
 };
+
+static void CheckExp2OverflowRounding() {
+    const RestoreFloatingPointState saved;
+    constexpr int modes[] = {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO};
+    for (const int mode : modes) {
+        Require(std::fesetround(mode) == 0);
+        errno = 0;
+        Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+        const double result = exp2_nid_postfix(1024.0);
+        Require(errno == ERANGE);
+        Require(std::isinf(result) && result > 0);
+        Require(std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
+        errno = 0;
+        Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+        const float resultf = exp2f_nid_postfix(128.0f);
+        Require(errno == ERANGE);
+        Require(std::isinf(resultf) && resultf > 0);
+        Require(std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
+    }
+}
 
 static void CheckNearbyintEnvironment() {
     const RestoreFloatingPointState saved;
@@ -2951,6 +3007,26 @@ static void CheckHyperbolic() {
     errno = 0;
     Require(std::isinf(_Cosh_nid_postfix(infinity, 1.0)) && std::isnan(_Cosh_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 1.0)) && errno == 0);
     Require(Near(_Cosh_nid_postfix(710.0, 1.0), std::bit_cast<double>(0x7fe3e21a464507f9ull), 1e-15) && errno == 0);
+    Require(_Sinh_nid_postfix(0.0, 2.0) == 0.0 && !std::signbit(_Sinh_nid_postfix(0.0, 2.0)) && std::signbit(_Sinh_nid_postfix(-0.0, 2.0)));
+    Require(Near(_Sinh_nid_postfix(1.0, 2.0), 2.3504023872876028, 1e-15));
+    Require(Near(_Sinh_nid_postfix(-1.0, 2.0), -2.3504023872876028, 1e-15));
+    Require(Near(_Sinh_nid_postfix(20.0, 0.5), 121291298.85244757, 1e-15));
+    Require(Near(_Sinh_nid_postfix(711.0, 1e-300), 0x1.2190c08e2f1a4p+28, 1e-15));
+    Require(Near(_Sinh_nid_postfix(-711.0, 1e-300), -0x1.2190c08e2f1a4p+28, 1e-15));
+    Require(_Sinh_nid_postfix(720.0, 0.0) == 0.0 && !std::signbit(_Sinh_nid_postfix(720.0, 0.0)));
+    Require(std::signbit(_Sinh_nid_postfix(-720.0, 0.0)) && std::signbit(_Sinh_nid_postfix(720.0, -0.0)));
+    errno = 0;
+    Require(std::isinf(_Sinh_nid_postfix(710.0, 2.0)) && errno == ERANGE);
+    errno = 0;
+    Require(std::isinf(_Sinh_nid_postfix(-710.0, 2.0)) && std::signbit(_Sinh_nid_postfix(-710.0, 2.0)) && errno == ERANGE);
+    errno = 0;
+    Require(std::isnan(_Sinh_nid_postfix(infinity, 0.0)) && errno == EDOM);
+    errno = 0;
+    Require(std::isnan(_Sinh_nid_postfix(0.0, infinity)) && errno == EDOM);
+    errno = 0;
+    Require(std::isinf(_Sinh_nid_postfix(infinity, 1.0)) && std::signbit(_Sinh_nid_postfix(-infinity, 2.0)) && std::isinf(_Sinh_nid_postfix(1.0, infinity)));
+    Require(std::isnan(_Sinh_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 1.0)) && std::isnan(_Sinh_nid_postfix(1.0, std::numeric_limits<double>::quiet_NaN())) && errno == 0);
+    Require(Near(_Sinh_nid_postfix(710.0, 1.0), std::bit_cast<double>(0x7fe3e21a464507f9ull), 1e-15) && errno == 0);
     Require(sinh_nid_postfix(0.) == 0. && std::signbit(sinh_nid_postfix(-0.)));
     Require(cosh_nid_postfix(0.) == 1. && coshf_nid_postfix(0.f) == 1.f);
     Require(asinh_nid_postfix(0.) == 0. && std::signbit(asinh_nid_postfix(-0.)) && std::signbit(asinhf_nid_postfix(-0.f)));
@@ -4553,6 +4629,80 @@ static void CheckTanhfConsoleBits() {
     }
 }
 
+static void CheckTanhfEnvironment() {
+    const unsigned saved = _mm_getcsr();
+    constexpr unsigned inexact = _MM_EXCEPT_INEXACT;
+    constexpr unsigned denormal = _MM_EXCEPT_DENORM;
+    constexpr struct {
+        unsigned magnitude;
+        unsigned result;
+        unsigned flags;
+    } cases[] = {
+        {0, 0, 0}, {1, 1, denormal | inexact}, {0x007fffff, 0x007fffff, denormal | inexact},
+        {0x00800000, 0x00800000, inexact}, {0x397fffff, 0x397fffff, inexact},
+        {0x41100000, 0x3f800000, 0}, {0x41100001, 0x3f800000, 0},
+        {0x7f7fffff, 0x3f800000, 0}, {0x7f800000, 0x3f800000, 0},
+    };
+    for (const auto& item : cases) {
+        for (unsigned sign : {0u, 0x80000000u}) {
+            for (unsigned rounding : {0u, 0x2000u, 0x4000u, 0x6000u}) {
+                for (unsigned mode : {0u, 0x40u, 0x8000u, 0x8040u}) {
+                    const unsigned control = 0x1f80u | _MM_EXCEPT_DIV_ZERO | rounding | mode;
+                    const unsigned raised = (mode & 0x40u) && (item.flags & denormal) ? 0u : item.flags;
+                    *__error_nid_postfix() = 1234;
+                    _mm_setcsr(control);
+                    const float result = tanhf_nid_postfix(std::bit_cast<float>(item.magnitude | sign));
+                    const unsigned status = _mm_getcsr();
+                    Require(std::bit_cast<std::uint32_t>(result) == (item.result | sign));
+                    Require(status == (control | raised) && *__error_nid_postfix() == 1234);
+                }
+            }
+        }
+    }
+    _mm_setcsr(saved);
+}
+
+static void CheckAsinfAtanfEnvironment() {
+    const unsigned saved = _mm_getcsr();
+    constexpr unsigned inexact = _MM_EXCEPT_INEXACT;
+    constexpr unsigned denormal = _MM_EXCEPT_DENORM;
+    constexpr struct {
+        unsigned magnitude;
+        unsigned result;
+        unsigned flags;
+    } cases[] = {
+        {0, 0, 0},
+        {1, 1, denormal | inexact},
+        {0x007fffff, 0x007fffff, denormal | inexact},
+        {0x00800000, 0x00800000, inexact},
+        {0x397fffff, 0x397fffff, inexact},
+    };
+    for (const auto& item : cases) {
+        for (unsigned sign : {0u, 0x80000000u}) {
+            for (unsigned rounding : {0u, 0x2000u, 0x4000u, 0x6000u}) {
+                for (unsigned mode : {0u, 0x40u, 0x8000u, 0x8040u}) {
+                    const unsigned control = 0x1f80u | _MM_EXCEPT_DIV_ZERO | rounding | mode;
+                    const unsigned raised = (mode & 0x40u) && (item.flags & denormal) ? 0u : item.flags;
+                    *__error_nid_postfix() = 1234;
+                    _mm_setcsr(control);
+                    const float asinfResult = asinf_nid_postfix(std::bit_cast<float>(item.magnitude | sign));
+                    const unsigned asinfStatus = _mm_getcsr();
+                    Require(std::bit_cast<std::uint32_t>(asinfResult) == (item.result | sign));
+                    Require(asinfStatus == (control | raised) && *__error_nid_postfix() == 1234);
+
+                    *__error_nid_postfix() = 1234;
+                    _mm_setcsr(control);
+                    const float atanfResult = atanf_nid_postfix(std::bit_cast<float>(item.magnitude | sign));
+                    const unsigned atanfStatus = _mm_getcsr();
+                    Require(std::bit_cast<std::uint32_t>(atanfResult) == (item.result | sign));
+                    Require(atanfStatus == (control | raised) && *__error_nid_postfix() == 1234);
+                }
+            }
+        }
+    }
+    _mm_setcsr(saved);
+}
+
 static void CheckExpm1fConsoleBits() {
     constexpr struct {
         std::uint32_t input;
@@ -4690,6 +4840,20 @@ static void CheckAsinEdgeFlags() {
         errno = 0;
         std::feclearexcept(FE_ALL_EXCEPT);
         Require(std::isnan(asin_nid_postfix(input)) && errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
+    }
+}
+
+static void CheckTinyInverseTrigFlags() {
+    for (const auto function : {asin_nid_postfix, atan_nid_postfix}) {
+        for (const double input : {0.0, -0.0, 0x1p-30, -0x1p-30,
+                                   std::numeric_limits<double>::denorm_min(), -std::numeric_limits<double>::denorm_min()}) {
+            const auto bits = std::bit_cast<std::uint64_t>(input);
+            const int expected = (bits << 1) == 0 ? 0 : FE_INEXACT;
+            errno = 1234;
+            std::feclearexcept(FE_ALL_EXCEPT);
+            const auto result = std::bit_cast<std::uint64_t>(function(input));
+            Require(result == bits && errno == 1234 && std::fetestexcept(FE_ALL_EXCEPT) == expected);
+        }
     }
 }
 
@@ -5171,8 +5335,10 @@ int main() {
     Require(exp2_nid_postfix(-3.) == 0.125);
     Require(ldexp_nid_postfix(0.75, 4) == 12.);
     CheckLdexpSpecialValues();
+    CheckLdexpRoundingModes();
     CheckSquareRoot();
     CheckExp2Errno();
+    CheckExp2OverflowRounding();
     CheckFloorAndCeilWithDenormalsAreZero();
     CheckExactOperations();
     CheckIlogbReadsTheBits();
@@ -5187,6 +5353,7 @@ int main() {
     CheckAsinConsoleBits();
     CheckAcosEdgeFlags();
     CheckAsinEdgeFlags();
+    CheckTinyInverseTrigFlags();
     CheckPowConsoleBits();
     CheckPowRangeFlags();
     CheckLogConsoleBits();
@@ -5236,6 +5403,8 @@ int main() {
     CheckLog2EdgeFlags();
     CheckAsinl();
     CheckTanhfConsoleBits();
+    CheckTanhfEnvironment();
+    CheckAsinfAtanfEnvironment();
     CheckExpm1fConsoleBits();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);

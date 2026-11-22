@@ -536,6 +536,7 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("APS5_EXPORT", report)
             self.assertIn("libSceAmpr", report)
             self.assertIn("Caller.cpp:2", report)
+            self.assertIn("may need a renamed helper bound with APS5_EXPORT", report)
 
     def test_self_call_line_counts_spliced_lines(self):
         nid = nid_names.compute_nid("sceExampleSelfCall")
@@ -828,6 +829,26 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("APS5_EXPORT", report)
             self.assertIn("libSceAmpr", report)
 
+    def test_nested_mangled_names_are_reported_without_requiring_a_helper(self):
+        for name in ("_ZN3Foo3barEv", "_ZNK3Foo3barEv", "_ZNSt6vectorIiE3fooEv",
+                     "_ZNSs5eraseEmm", "_ZNSs6appendERKSsmm", "_ZNSbIwSt11char_traitsIwESaIwEE5eraseEmm",
+                     "_ZNKSs5_XlenEv", "_ZNKR3Foo3barEv", "_ZNO3Foo3barEv",
+                     "_ZNSaIcE8allocateEm", "_ZNSi3getEv", "_ZNSo3putEc", "_ZNSd3fooEv"):
+            with self.subTest(name=name):
+                nid = nid_names.compute_nid(name)
+                with tempfile.TemporaryDirectory() as directory:
+                    root, prx, tables = tree(directory)
+                    write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+                    write_table(tables, MODULE, [nid])
+                    db = write_db(directory, [(nid, name)])
+                    out = Path(directory) / "out.txt"
+                    code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+                    self.assertEqual(code, 0)
+                    self.assertEqual(out.read_text(encoding="utf-8").split(), [nid])
+                    self.assertIn("C++ mangled name", report)
+                    self.assertIn("may use a renamed helper bound with APS5_EXPORT", report)
+                    self.assertNotIn(f"missing {nid} {name}", report)
+
     def test_non_identifier_name_needs_renamed_helper(self):
         name = "sceExample.dot-name"
         nid = nid_names.compute_nid(name)
@@ -893,6 +914,10 @@ class ExportGapTests(unittest.TestCase):
     def test_mangled_and_identifier_reasons(self):
         self.assertTrue(export_gap.is_mangled("_Z3foo"))
         self.assertFalse(export_gap.is_mangled("_Zx"))
+        self.assertFalse(export_gap.is_mangled("_ZNonsense"))
+        self.assertFalse(export_gap.is_mangled("_ZNSx"))
+        self.assertFalse(export_gap.is_mangled("_ZNS"))
+        self.assertFalse(export_gap.is_mangled("_ZNStq"))
         self.assertFalse(export_gap.is_mangled("foo"))
         self.assertEqual(export_gap.helper_reason("_Z3foo"), "is a C++ mangled name")
         self.assertEqual(export_gap.helper_reason("1abc"), "is not a valid C identifier")
@@ -945,6 +970,37 @@ class ExportGapTests(unittest.TestCase):
             with self.assertRaises(export_gap.GapError):
                 export_gap.parse_export_table(missing)
 
+    def test_joined_lines_removes_backslash_continuations(self):
+        self.assertEqual(export_gap.joined_lines("a \\\nb"), "a b")
+        self.assertEqual(export_gap.joined_lines("a \\\r\nb"), "a b")
+        self.assertEqual(export_gap.joined_lines("a\nb\\c"), "a\nb\\c")
+
+
+class RecordProvidedTests(unittest.TestCase):
+    def test_no_patch_cut_registers_the_base_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch_cut")
+        self.assertEqual(provided, {"sceFoo": "literally as sceFoo under sceFoo_nid_no_patch_cut"})
+
+    def test_no_patch_registers_the_full_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch", "libX")
+        self.assertEqual(provided, {"sceFoo_nid_no_patch": "libX literally as sceFoo_nid_no_patch"})
+
+    def test_plain_and_postfixed_names_register_the_computed_nid(self):
+        nid = nid_names.compute_nid("sceFoo")
+        plain, postfixed = {}, {}
+        export_gap.record_provided(plain, "sceFoo")
+        export_gap.record_provided(postfixed, "sceFoo_nid_postfix", "libX")
+        self.assertEqual(plain, {nid: "under its own name sceFoo"})
+        self.assertEqual(postfixed, {nid: "libX under sceFoo_nid_postfix for sceFoo"})
+
+    def test_first_origin_wins(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo", "first")
+        export_gap.record_provided(provided, "sceFoo", "second")
+        self.assertEqual(list(provided.values()), ["first under its own name sceFoo"])
+
 class MaskCodeTests(unittest.TestCase):
     def test_comments_are_blanked_and_layout_is_preserved(self):
         source = "int a; // note\nint b; /* block\nmore */ int c;\n"
@@ -962,6 +1018,68 @@ class MaskCodeTests(unittest.TestCase):
         self.assertNotIn("hidden", masked)
         self.assertTrue(masked.startswith("call("))
         self.assertTrue(masked.endswith(");\n"))
+
+
+class MaskDirectivesTests(unittest.TestCase):
+    def test_directive_lines_and_continuations_are_blanked(self):
+        source = "#define X 1 \\\n  continued\nint a;\n  #if Y\nint b;\n"
+        masked = export_gap.mask_directives(source)
+        self.assertEqual(len(masked), len(source))
+        self.assertEqual(masked.splitlines()[2], "int a;")
+        self.assertEqual(masked.splitlines()[4], "int b;")
+        for blanked in (0, 1, 3):
+            self.assertEqual(masked.splitlines()[blanked].strip(), "")
+        self.assertNotIn("continued", masked)
+
+    def test_text_without_directives_is_unchanged(self):
+        source = "int a;\r\nint b = 1 \\\n  + 2;\r\n"
+        self.assertEqual(export_gap.mask_directives(source), source)
+
+
+class RecordProvidedTests(unittest.TestCase):
+    def test_no_patch_cut_registers_the_base_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch_cut")
+        self.assertEqual(provided, {"sceFoo": "literally as sceFoo under sceFoo_nid_no_patch_cut"})
+
+    def test_no_patch_registers_the_full_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch", "libX")
+        self.assertEqual(provided, {"sceFoo_nid_no_patch": "libX literally as sceFoo_nid_no_patch"})
+
+    def test_plain_and_postfixed_names_register_the_computed_nid(self):
+        nid = nid_names.compute_nid("sceFoo")
+        plain, postfixed = {}, {}
+        export_gap.record_provided(plain, "sceFoo")
+        export_gap.record_provided(postfixed, "sceFoo_nid_postfix", "libX")
+        self.assertEqual(plain, {nid: "under its own name sceFoo"})
+        self.assertEqual(postfixed, {nid: "libX under sceFoo_nid_postfix for sceFoo"})
+
+    def test_first_origin_wins(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo", "first")
+        export_gap.record_provided(provided, "sceFoo", "second")
+        self.assertEqual(list(provided.values()), ["first under its own name sceFoo"])
+
+
+class LoadConsoleNidsTests(unittest.TestCase):
+    def test_export_table_that_is_not_a_directory_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "tables"
+            with self.assertRaisesRegex(export_gap.GapError, "not a directory"):
+                export_gap.load_console_nids([MODULE], str(missing), None)
+
+    def test_module_without_a_table_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(export_gap.GapError, "export table not found"):
+                export_gap.load_console_nids([MODULE], directory, None)
+
+    def test_without_a_table_directory_every_module_gets_a_copy_of_the_nids_file(self):
+        with patch.object(export_gap, "parse_nids_file", return_value=["AAAAAAAAAAA", "BBBBBBBBBBB"]) as parse:
+            console = export_gap.load_console_nids(["libA", "libB"], None, "nids.txt")
+        parse.assert_called_once_with("nids.txt")
+        self.assertEqual(console, {"libA": ["AAAAAAAAAAA", "BBBBBBBBBBB"], "libB": ["AAAAAAAAAAA", "BBBBBBBBBBB"]})
+        self.assertIsNot(console["libA"], console["libB"])
 
 
 if __name__ == "__main__":
