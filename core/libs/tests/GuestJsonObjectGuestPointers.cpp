@@ -216,8 +216,22 @@ int main() {
 
     CHECK_THROWS(_ZN3sce4Json6ObjectD1Ev(nullptr));
     CHECK_THROWS(_ZN3sce4Json6ObjectD1Ev(badObject));
-    CHECK_THROWS(_ZN3sce4Json6ObjectD1Ev(roObject));
-    CHECK_THROWS(_ZN3sce4Json6ObjectD2Ev(roObject));
+    _ZN3sce4Json6ObjectD1Ev(roObject);
+    _ZN3sce4Json6ObjectD2Ev(roObject);
+    CHECK(roObject->items == nullptr);
+
+    auto* roLiveObject = static_cast<Object*>(pages.scratch);
+    SetPageWritable(pages.scratch, pages.pageSize, true);
+    _ZN3sce4Json6ObjectC1Ev(roLiveObject);
+    CHECK(roLiveObject->items != nullptr);
+    const auto liveWithRoObject = trace.live.size();
+    SetPageWritable(pages.scratch, pages.pageSize, false);
+    CHECK_THROWS(_ZN3sce4Json6ObjectD1Ev(roLiveObject));
+    CHECK_THROWS(_ZN3sce4Json6ObjectD2Ev(roLiveObject));
+    CHECK(roLiveObject->items != nullptr && trace.live.size() == liveWithRoObject);
+    SetPageWritable(pages.scratch, pages.pageSize, true);
+    _ZN3sce4Json6ObjectD1Ev(roLiveObject);
+    CHECK(roLiveObject->items == nullptr && trace.live.size() == baselineLive);
 
     CHECK_THROWS(_ZN3sce4Json6ObjectaSERKS1_(nullptr, &valid));
     CHECK_THROWS(_ZN3sce4Json6ObjectaSERKS1_(badObject, &valid));

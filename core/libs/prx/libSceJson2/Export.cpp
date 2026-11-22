@@ -3019,6 +3019,7 @@ void APS5_VABI _ZN3sce4Json6ObjectC1ERKS1_(Object* self, const Object* other) {
 }
 void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object* self) {
     auto object = LoadGuest<Object>(self, __func__);
+    if (!object.items) return;
     RequireGuestObjectWritable<Object>(self, __func__);
     Destroy(object, self, __func__);
 }
