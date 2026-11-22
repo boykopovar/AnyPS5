@@ -566,6 +566,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     JSValue objCtor = JS_GetPropertyStr(qctx, rawGlobal, "Object");
     JSValue objProto = JS_GetPropertyStr(qctx, objCtor, "prototype");
     JS_FreeValue(qctx, objCtor);
+    DefineConsoleObject(this, rawGlobal);
     JS_SetClassProto(qctx, group->callbackObjectClassId, JS_DupValue(qctx, objProto));
     JS_SetClassProto(qctx, group->callbackCallableClassId, objProto);
     globalObject = group->ToHandle(this, rawGlobal);

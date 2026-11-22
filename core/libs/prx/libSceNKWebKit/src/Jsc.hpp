@@ -236,6 +236,7 @@ void RegisterCallbackClasses(OpaqueJSContextGroup* group);
 void RunClassInitialize(OpaqueJSContext* ctx, OpaqueJSValue* objHandle, OpaqueJSClass* jsClass);
 void RunClassFinalize(CallbackObjectData* data);
 OpaqueJSValue* GetOrCreateClassPrototype(OpaqueJSContext* ctx, OpaqueJSClass* jsClass);
+void DefineConsoleObject(OpaqueJSContext* ctx, JSValueConst global);
 OpaqueJSValue* MakeCallbackObject(OpaqueJSContext* ctx, OpaqueJSClass* jsClass, void* data);
 bool IsObjectCallable(const OpaqueJSContext* ctx, OpaqueJSValue* object);
 
