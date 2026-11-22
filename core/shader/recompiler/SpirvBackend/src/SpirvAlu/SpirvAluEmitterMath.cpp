@@ -1772,6 +1772,8 @@ std::uint32_t EmitWqmU64(SpirvEmitterState& state, std::uint32_t value) {
 }
 
 std::uint32_t EmitLaneId(SpirvEmitterState& state) {
+    if (state.program.Resources().stage == IrShaderStage::Compute && state.laneCount == 1u && state.hostSubgroupSize < state.program.WaveSize())
+        return Binary(state, spv::OpBitwiseAnd, TypeU32(state), EmitLocalInvocationIndex(state), ConstantU32(state, state.program.WaveSize() - 1u));
     if (state.program.Resources().stage != IrShaderStage::TessellationControl) return EmitSubgroupLocalInvocationId(state);
     const auto variable = InputVariableForKind(state, StageInputKind::InvocationId);
     if (variable == 0) FailEmit("stage input InvocationId was not declared");
