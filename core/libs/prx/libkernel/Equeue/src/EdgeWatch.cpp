@@ -44,10 +44,7 @@ Watch::~Watch() {
 
 bool Watch::TakeEdge() {
     epoll_event ready{};
-    int result;
-    do {
-        result = ::epoll_wait(m_descriptor, &ready, 1, 0);
-    } while (result < 0 && errno == EINTR);
+    const int result = ::epoll_wait(m_descriptor, &ready, 1, 0);
     if (result < 0) {
         throw std::runtime_error("kevent: EV_CLEAR: retrieving host event failed, host errno " + std::to_string(errno));
     }
