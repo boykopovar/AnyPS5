@@ -203,6 +203,43 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("already provided", report)
             self.assertIn("sceExamplePostfixBase_nid_postfix", report)
 
+    def test_c_linkage_postfix_functions_without_vabi_are_provided(self):
+        definitions = [
+            'extern "C" [[noreturn]] void abort_nid_postfix() { std::abort(); }',
+            'extern "C" { [[noreturn]] void __stack_chk_fail_nid_postfix() { std::abort(); } }',
+            'namespace Runtime { extern "C" int Named_nid_postfix() { return 1; } }',
+            'extern "C" { namespace Runtime { int Nested_nid_postfix() { return 1; } } }',
+            'extern "C" [[gnu::visibility("default")]] int Visible_nid_postfix() { return 1; }',
+            'extern "C" { namespace { int Anonymous_nid_postfix() { return 1; } } }',
+            'namespace { extern "C" int Explicit_nid_postfix() { return 1; } }',
+        ]
+        names = ["abort", "__stack_chk_fail", "Named", "Nested", "Visible", "Anonymous", "Explicit"]
+        for source, name in zip(definitions, names):
+            with self.subTest(name=name):
+                self.assertTrue(provides_with(source, nid_of(name)))
+
+    def test_non_exported_postfix_functions_do_not_hide_gaps(self):
+        sources = [
+            'int Missing_nid_postfix() { return 1; }',
+            'extern "C" int Missing_nid_postfix();',
+            'extern "C" { int Missing_nid_postfix(); }',
+            'extern "C" { static int Missing_nid_postfix() { return 1; } }',
+            'namespace { int Missing_nid_postfix() { return 1; } }',
+            'extern "C" { struct Record { int Missing_nid_postfix() { return 1; } }; }',
+            'extern "C" { extern "C++" { int Missing_nid_postfix() { return 1; } } }',
+            'extern "C" { extern "C++" int Missing_nid_postfix() { return 1; } }',
+            'extern "C" { int Caller() { return Missing_nid_postfix(); } }',
+            'extern "C" { int Caller(int value = Missing_nid_postfix()) { return value; } }',
+            'extern "C" { [[gnu::visibility("hidden")]] int Missing_nid_postfix() { return 1; } }',
+            'namespace [[gnu::visibility("hidden")]] Runtime { extern "C" int Missing_nid_postfix() { return 1; } }',
+            'extern "C" { namespace [[gnu::visibility("hidden")]] Runtime { int Missing_nid_postfix() { return 1; } } }',
+            'extern "C" { const char* text = R"(int Missing_nid_postfix() { return 1; })"; }',
+            '#define DEFINITION extern "C" int Missing_nid_postfix() { return 1; }\n',
+        ]
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertFalse(provides_with(source, nid_of("Missing")))
+
     def test_gap_report_distinguishes_data_definitions_from_declarations(self):
         names = ["Exported", "Declared", "Private"]
         nids = [nid_of(name) for name in names]

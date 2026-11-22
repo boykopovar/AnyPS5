@@ -212,6 +212,67 @@ def record_provided(provided, name, origin=None):
         provided.setdefault(nid, f"{prefix}under {name} for {base}")
 
 
+def c_linkage_postfix_function(statement, c_linkage):
+    if statement[:2] == ["extern", '"C++"']:
+        return None
+    if not c_linkage and statement[:2] != ["extern", '"C"']:
+        return None
+    brackets = 0
+    for index, token in enumerate(statement):
+        if token == "[":
+            brackets += 1
+        elif token == "]":
+            brackets -= 1
+        elif token == "(" and brackets == 0:
+            if index < 2 or re.fullmatch(r"[A-Za-z_]\w*_nid_postfix", statement[index - 1]) is None:
+                return None
+            prefix = statement[:index - 1]
+            if any(item in prefix for item in ("static", "inline", "constexpr", "consteval", "=", '"hidden"', "APS5_VABI")) or prefix[-1] == "::":
+                return None
+            return statement[index - 1]
+    return None
+
+
+def c_linkage_postfix_functions(text):
+    if "_nid_postfix" not in text:
+        return
+    scopes, groups, statement = [False], [], []
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    for match in DIRECTIVE_TOKEN.finditer(joined_lines(text)):
+        if match.group("directive") is not None or match.group("comment") is not None:
+            continue
+        token = match.group()
+        if scopes[-1] is None:
+            if token == "{":
+                scopes.append(None)
+            elif token == "}":
+                scopes.pop()
+            continue
+        if token == "{" and not groups:
+            if statement in (["extern", '"C"'], ["extern", '"C++"']):
+                scopes.append(statement[1] == '"C"')
+            elif statement[:1] == ["namespace"] or statement[:2] == ["inline", "namespace"]:
+                scopes.append(None if '"hidden"' in statement else scopes[-1])
+            else:
+                name = c_linkage_postfix_function(statement, scopes[-1])
+                if name is not None:
+                    yield name
+                scopes.append(None)
+            statement = []
+        elif token == "}" and not groups:
+            if len(scopes) > 1:
+                scopes.pop()
+            statement = []
+        elif token == ";" and not groups:
+            statement = []
+        else:
+            statement.append(token)
+            if token in pairs:
+                groups.append(pairs[token])
+            elif groups and token == groups[-1]:
+                groups.pop()
+
+
 def collect_source_exports(texts):
     macros = macro_definitions(texts)
     provided = {}
@@ -219,6 +280,8 @@ def collect_source_exports(texts):
     for (_, text), masked in zip(texts, masked_texts):
         for match in nid_names.DEFINITION.finditer(masked):
             record_provided(provided, match.group(1))
+        for name in c_linkage_postfix_functions(text):
+            record_provided(provided, name, "defined with C linkage without APS5_VABI")
         for name in nid_names.source_assembly_definitions(text):
             record_provided(provided, name, "defined in assembly")
         if nid_names.NID_POSTFIX in text:
