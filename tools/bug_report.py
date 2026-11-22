@@ -28,8 +28,10 @@ def redact(text, *, home, user, host):
     if user and len(user) >= 2:
         text = re.sub(r"(?<![\w-])" + re.escape(user) + r"(?![\w-])", "<user>", text,
                       flags=re.IGNORECASE if windows_home else 0)
-    if host and len(host) >= 2:
-        text = re.sub(r"(?<![\w-])" + re.escape(host) + r"(?![\w-])", "<host>", text, flags=re.IGNORECASE)
+    host = (host or "").rstrip(".")
+    for name in dict.fromkeys((host, host.split(".")[0])):
+        if len(name) >= 2:
+            text = re.sub(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", "<host>", text, flags=re.IGNORECASE)
     return IPV4.sub("<ip>", text)
 
 
@@ -120,7 +122,7 @@ def identities():
         user = getpass.getuser()
     except Exception:
         user = ""
-    return {"home": str(Path.home()), "user": user, "host": socket.gethostname().split(".")[0]}
+    return {"home": str(Path.home()), "user": user, "host": socket.gethostname()}
 
 
 def main(argv=None):
