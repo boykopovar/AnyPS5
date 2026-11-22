@@ -86,7 +86,7 @@ void FillTexture() {
     }
 }
 
-std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, float firstCoordinateScale, std::uint32_t swizzle = 0xfacu) {
+std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, float firstCoordinateScale, std::uint32_t swizzle = 0xfacu, bool spillImageData = false) {
     const auto& target = device.Target();
     Pixels.fill(std::byte{0});
 
@@ -126,6 +126,12 @@ std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_
         target,
         PixelPushLayout(vertexPush, target)
     };
+    if (spillImageData) {
+        const auto full = ShaderRecompiler::Recompile(fragment);
+        const auto bytes = full.shaderDataDwords * static_cast<std::uint32_t>(sizeof(std::uint32_t));
+        Require(bytes > 0u && bytes <= fragment.layout.pushConstantSizeBytes, "the fixture's complete image data does not fit its fragment slot");
+        fragment.layout.pushConstantSizeBytes = bytes - sizeof(std::uint32_t);
+    }
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
     Require(!target.registrationModules || pixelResult.registrationModule, "line swizzle did not exercise its requested registration module");
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
@@ -210,6 +216,10 @@ int main() {
             const auto artifact = Draw(*device, PixelCode, scale, swizzle);
             Require(!device->Target().registrationModules || artifact == original, "constant swizzle changes did not reuse their registered fragment artifact");
             Check(0u, swizzle);
+        }
+        if (device->Target().registrationModules) {
+            Draw(*device, PixelCode, scale, 0xfa9u, true);
+            Check(0u, 0xfa9u);
         }
         const auto restored = Draw(*device, PixelCode, scale);
         Require(!device->Target().registrationModules || restored == original, "line swizzle did not restore its original registered artifact");

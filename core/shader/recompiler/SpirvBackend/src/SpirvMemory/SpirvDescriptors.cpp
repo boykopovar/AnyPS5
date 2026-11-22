@@ -1,4 +1,5 @@
 #include "SpirvBackend/SpirvMemory/SpirvDescriptors.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
@@ -55,13 +56,9 @@ std::uint32_t DescriptorElementPointer(SpirvEmitterState& state, std::uint32_t r
 }
 
 std::uint32_t RuntimeImageDword(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t member) {
-    const auto index = ConstantU32(state, resource);
-    const auto dword = Binary(state, spv::OpIAdd, TypeU32(state), ConstantU32(state, state.program.Metadata().bindings.ImageMetadataDword() + member), Binary(state, spv::OpIMul, TypeU32(state), index, ConstantU32(state, sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t))));
-    const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.shaderDataStorageVariable, ConstantU32(state, 0u), dword);
-    const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
-    return value;
+    constexpr auto metadataDwords = sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t);
+    const auto first = state.program.Metadata().bindings.ImageMetadataDword();
+    return EmitShaderDataDwordLoad(state, first + resource * metadataDwords + member);
 }
 
 std::uint32_t RuntimeMipCount(SpirvEmitterState& state, std::uint32_t resource) {
