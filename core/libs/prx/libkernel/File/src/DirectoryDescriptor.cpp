@@ -94,6 +94,35 @@ std::mutex g_mutex;
 std::map<int, std::shared_ptr<DirectoryState>> g_directories;
 std::atomic<std::size_t> g_directoryCount{0};
 
+#ifdef __APPLE__
+std::mutex g_leftoversMutex;
+std::map<int, std::shared_ptr<File::HostDirectoryLeftovers>> g_leftovers;
+std::atomic<std::size_t> g_leftoversCount{0};
+
+void ForgetHostDirectoryLeftovers(int fd) {
+    if (g_leftoversCount.load(std::memory_order_relaxed) == 0) return;
+    std::lock_guard lock(g_leftoversMutex);
+    g_leftovers.erase(fd);
+    g_leftoversCount.store(g_leftovers.size(), std::memory_order_relaxed);
+}
+
+void DuplicateHostDirectoryLeftovers(int from, int to) {
+    if (g_leftoversCount.load(std::memory_order_relaxed) == 0) return;
+    std::lock_guard lock(g_leftoversMutex);
+    const auto found = g_leftovers.find(from);
+    if (found == g_leftovers.end()) g_leftovers.erase(to);
+    else g_leftovers[to] = found->second;
+    g_leftoversCount.store(g_leftovers.size(), std::memory_order_relaxed);
+}
+
+void DiscardHostDirectoryLeftovers(int fd) {
+    const auto leftovers = File::FindHostDirectoryLeftovers(fd);
+    if (!leftovers) return;
+    std::lock_guard lock(leftovers->mutex);
+    leftovers->entries.clear();
+}
+#endif
+
 int DirectoryError(const std::error_code& code) {
 #ifdef _WIN32
     if (code.category() == std::system_category())
@@ -387,6 +416,9 @@ std::optional<std::filesystem::path> DirectoryDescriptorPath(int fd) {
 }
 
 void ForgetDirectoryDescriptor(int fd) {
+#ifdef __APPLE__
+    ForgetHostDirectoryLeftovers(fd);
+#endif
     if (g_directoryCount.load(std::memory_order_relaxed) == 0) return;
     std::lock_guard lock(g_mutex);
     g_directories.erase(fd);
@@ -394,6 +426,9 @@ void ForgetDirectoryDescriptor(int fd) {
 }
 
 void DuplicateDirectoryDescriptor(int from, int to) {
+#ifdef __APPLE__
+    DuplicateHostDirectoryLeftovers(from, to);
+#endif
     if (g_directoryCount.load(std::memory_order_relaxed) == 0) return;
     std::lock_guard lock(g_mutex);
     const auto found = g_directories.find(from);
@@ -403,6 +438,9 @@ void DuplicateDirectoryDescriptor(int from, int to) {
 }
 
 std::optional<std::int64_t> SeekDirectoryDescriptor(int fd, std::int64_t offset, int whence) {
+#ifdef __APPLE__
+    if (whence != 1 || offset != 0) DiscardHostDirectoryLeftovers(fd);
+#endif
     const auto state = Find(fd);
     if (!state) return std::nullopt;
     std::lock_guard lock(state->mutex);
@@ -481,6 +519,28 @@ int ReadDirectoryDescriptor(int fd, char* buf, int nbytes, std::int64_t* base) {
     state->cursor = cursor;
     return static_cast<int>(used);
 }
+
+#ifdef __APPLE__
+std::shared_ptr<HostDirectoryLeftovers> FindHostDirectoryLeftovers(int fd) {
+    if (g_leftoversCount.load(std::memory_order_relaxed) == 0) return nullptr;
+    std::lock_guard lock(g_leftoversMutex);
+    const auto found = g_leftovers.find(fd);
+    return found == g_leftovers.end() ? nullptr : found->second;
+}
+
+void KeepHostDirectoryLeftovers(int fd, std::vector<char> entries, std::int64_t base) {
+    auto leftovers = FindHostDirectoryLeftovers(fd);
+    if (!leftovers) {
+        leftovers = std::make_shared<HostDirectoryLeftovers>();
+        std::lock_guard lock(g_leftoversMutex);
+        g_leftovers[fd] = leftovers;
+        g_leftoversCount.store(g_leftovers.size(), std::memory_order_relaxed);
+    }
+    std::lock_guard lock(leftovers->mutex);
+    leftovers->entries = std::move(entries);
+    leftovers->base = base;
+}
+#endif
 
 }
 

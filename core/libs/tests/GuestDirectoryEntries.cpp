@@ -21,6 +21,9 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include <sys/mount.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -127,9 +130,142 @@ static void CheckLargeDirectoryPaging() {
 }
 #endif
 
+#ifdef __APPLE__
+static std::filesystem::path MakeDirectory(const char* prefix, int count) {
+    const auto root = std::filesystem::path(std::string(prefix) +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    for (int i = 0; i < count; ++i) {
+        std::ofstream file(root / ("paged-entry-" + std::to_string(i)));
+        Require(static_cast<bool>(file));
+    }
+    return root;
+}
+
+static std::vector<std::string> Names(const char* buffer, int bytes) {
+    std::vector<std::string> names;
+    for (int offset = 0; offset < bytes;) {
+        std::uint16_t recordLength = 0;
+        std::memcpy(&recordLength, buffer + offset + 4, sizeof(recordLength));
+        Require(recordLength != 0 && offset + recordLength <= bytes);
+        const std::string name(buffer + offset + 8);
+        if (name.rfind("._", 0) != 0) names.push_back(name);
+        offset += recordLength;
+    }
+    return names;
+}
+
+static void CheckPagingWithBufferSize(int bufferSize) {
+    constexpr int FileCount = 1500;
+    const auto root = MakeDirectory("anyps5-macos-paging-test-", FileCount);
+    const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    std::vector<char> buffer(static_cast<std::size_t>(bufferSize));
+    std::map<std::string, int> seen;
+    for (;;) {
+        std::int64_t base = -1;
+        const int read = sceKernelGetdirentries(directory, buffer.data(), bufferSize, &base);
+        Require(read >= 0 && read <= bufferSize);
+        if (read == 0) break;
+        for (const auto& name : Names(buffer.data(), read)) ++seen[name];
+    }
+    Require(seen.size() == FileCount + 2);
+    Require(seen["."] == 1 && seen[".."] == 1);
+    for (int i = 0; i < FileCount; ++i) Require(seen["paged-entry-" + std::to_string(i)] == 1);
+    Require(sceKernelClose(directory) == 0);
+    std::filesystem::remove_all(root);
+}
+
+static void CheckRemovingEachBatch() {
+    constexpr int FileCount = 1200;
+    const auto root = MakeDirectory("anyps5-macos-remove-batch-test-", FileCount);
+    struct statfs volume{};
+    Require(statfs(root.c_str(), &volume) == 0);
+    const std::string type(volume.f_fstypename);
+    if (type != "apfs" && type != "msdos" && type != "exfat") {
+        std::filesystem::remove_all(root);
+        return;
+    }
+    const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    std::array<char, 1024> buffer{};
+    std::map<std::string, int> seen;
+    int batches = 0;
+    for (;;) {
+        const int read = sceKernelGetdents(directory, buffer.data(), static_cast<int>(buffer.size()));
+        Require(read >= 0);
+        if (read == 0) break;
+        ++batches;
+        for (const auto& name : Names(buffer.data(), read)) {
+            ++seen[name];
+            if (name != "." && name != "..") Require(std::filesystem::remove(root / name));
+        }
+    }
+    Require(batches > 2);
+    Require(seen.size() == FileCount + 2);
+    for (const auto& [name, count] : seen) Require(count == 1);
+    Require(std::filesystem::is_empty(root));
+    Require(sceKernelClose(directory) == 0);
+    std::filesystem::remove_all(root);
+}
+
+static void CheckSeekingToReturnedBase() {
+    const auto root = MakeDirectory("anyps5-macos-seek-base-test-", 400);
+    const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    std::array<char, 512> first{};
+    std::array<char, 512> again{};
+    std::int64_t base = -1;
+    Require(sceKernelGetdirentries(directory, first.data(), static_cast<int>(first.size()), &base) > 0 && base == 0);
+    std::int64_t secondBase = -1;
+    const int second = sceKernelGetdirentries(directory, first.data(), static_cast<int>(first.size()), &secondBase);
+    Require(second > 0 && secondBase != 0);
+    Require(sceKernelGetdirentries(directory, again.data(), static_cast<int>(again.size()), &base) > 0 && base != secondBase);
+    Require(sceKernelLseek(directory, secondBase, 0) == secondBase);
+    std::int64_t replayBase = -1;
+    Require(sceKernelGetdirentries(directory, again.data(), static_cast<int>(again.size()), &replayBase) == second);
+    Require(replayBase == secondBase && Names(first.data(), second) == Names(again.data(), second));
+    Require(sceKernelClose(directory) == 0);
+    std::filesystem::remove_all(root);
+}
+
+static void CheckBufferBelowHostMinimum() {
+    const auto root = MakeDirectory("anyps5-macos-small-buffer-test-", 3);
+    int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    std::array<char, 20> buffer{};
+    Require(sceKernelGetdents(directory, buffer.data(), static_cast<int>(buffer.size())) == 12);
+    Require(std::strcmp(buffer.data() + 8, ".") == 0);
+    Require(sceKernelLseek(directory, 0, 0) == 0);
+    Require(sceKernelGetdents(directory, buffer.data(), static_cast<int>(buffer.size())) == 12);
+    Require(std::strcmp(buffer.data() + 8, ".") == 0);
+    const int duplicate = dup_nid_postfix(directory);
+    Require(duplicate >= 0);
+    Require(sceKernelGetdents(duplicate, buffer.data(), 12) == 12);
+    Require(std::strcmp(buffer.data() + 8, "..") == 0);
+    Require(sceKernelClose(duplicate) == 0);
+    std::map<std::string, int> seen{{".", 1}, {"..", 1}};
+    std::array<char, 64> rest{};
+    int read = 0;
+    while ((read = sceKernelGetdents(directory, rest.data(), static_cast<int>(rest.size()))) > 0) {
+        for (const auto& name : Names(rest.data(), read)) ++seen[name];
+    }
+    Require(read == 0 && seen.size() == 5);
+    for (const auto& [name, count] : seen) Require(count == 1);
+    Require(sceKernelClose(directory) == 0);
+    std::filesystem::remove_all(root);
+}
+#endif
+
 int main() {
 #if defined(__linux__) && !defined(__EMSCRIPTEN__)
     CheckLargeDirectoryPaging();
+#endif
+#ifdef __APPLE__
+    for (const int size : {28, 48, 100, 512, 4096, 128 * 1024}) CheckPagingWithBufferSize(size);
+    CheckRemovingEachBatch();
+    CheckSeekingToReturnedBase();
+    CheckBufferBelowHostMinimum();
 #endif
     const auto root = std::filesystem::path("anyps5-directory-entries-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
