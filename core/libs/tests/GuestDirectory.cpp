@@ -268,9 +268,10 @@ int main() {
     Require(TrimTrailingSeparators_nid_no_patch("/") == "/");
     Require(TrimTrailingSeparators_nid_no_patch("a/b///") == "a/b");
 #ifdef _WIN32
-    const std::string utf8UncRoot("//\xC3\xA9/");
-    Require(TrimTrailingSeparators_nid_no_patch(utf8UncRoot) == utf8UncRoot);
-    Require(TrimTrailingSeparators_nid_no_patch(utf8UncRoot + "sub///") == utf8UncRoot + "sub");
+    Require(TrimTrailingSeparators_nid_no_patch("C:/") == "C:/");
+    Require(TrimTrailingSeparators_nid_no_patch("C:/sub///") == "C:/sub");
+    const std::string utf8UncPath("//\xC3\xA9/sub///");
+    Require(TrimTrailingSeparators_nid_no_patch(utf8UncPath) == "//\xC3\xA9/sub");
 #endif
     std::filesystem::remove_all(root / std::filesystem::path(folder));
     if (links) {
