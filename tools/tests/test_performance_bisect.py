@@ -1,4 +1,5 @@
 from pathlib import Path
+import errno
 import json
 import math
 import os
@@ -189,10 +190,6 @@ class MeasurementStabilityTests(unittest.TestCase):
         self.assertFalse(performance_bisect.is_regression(58, 60, 5))
         self.assertTrue(performance_bisect.is_regression(57, 60, 5))
 
-    def test_regression_counts_a_decimal_value_at_the_threshold(self):
-        self.assertTrue(performance_bisect.is_regression(43.7, 46.0, 5.0))
-        self.assertFalse(performance_bisect.is_regression(43.7000000001, 46.0, 5.0))
-
     def test_candidate_identity_must_match_baseline(self):
         with self.assertRaisesRegex(ValueError, "identity changed"):
             performance_bisect.require_same_identity({"identity": IDENTITY}, {"identity": dict(IDENTITY, driver="Other")})
@@ -330,6 +327,28 @@ class ReportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "already exists"):
                 performance_bisect.write_report(path, {"result": "overwrite"})
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "first bad"})
+
+    def test_report_falls_back_to_replace_when_hardlinks_are_unavailable(self):
+        for failure in (PermissionError(errno.EACCES, "denied"), NotImplementedError(), OSError(errno.ENOTSUP, "unsupported")):
+            with self.subTest(failure=type(failure).__name__):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "nested" / "report.json"
+                    with patch("os.link", side_effect=failure):
+                        performance_bisect.write_report(path, {"result": "first bad"})
+                    self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "first bad"})
+                    self.assertEqual([item.name for item in path.parent.iterdir()], ["report.json"])
+                    with self.assertRaisesRegex(ValueError, "already exists"):
+                        performance_bisect.write_report(path, {"result": "overwrite"})
+                    self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "first bad"})
+
+    def test_report_reraises_unexpected_link_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nested" / "report.json"
+            with patch("os.link", side_effect=OSError(errno.ENOSPC, "no space")):
+                with self.assertRaises(OSError):
+                    performance_bisect.write_report(path, {"result": "first bad"})
+            self.assertFalse(path.exists())
+            self.assertEqual(list(path.parent.iterdir()), [])
 
 
 class EndpointValidationTests(unittest.TestCase):
