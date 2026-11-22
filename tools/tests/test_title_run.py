@@ -1955,16 +1955,32 @@ class HostIsIntelTests(unittest.TestCase):
 
     def test_native_apple_silicon_does_not_need_a_hardware_query(self):
         system = SimpleNamespace(name="posix", uname=lambda: SimpleNamespace(machine="arm64"))
-        with patch.object(title_run.subprocess, "run") as query:
+        with patch.object(ctypes, "CDLL") as library:
             self.assertFalse(self.check(system, platform="darwin"))
-        query.assert_not_called()
+        library.assert_not_called()
 
-    def test_x86_64_macos_queries_hardware_for_rosetta(self):
+    def test_x86_64_macos_checks_process_translation(self):
         system = SimpleNamespace(name="posix", uname=lambda: SimpleNamespace(machine="x86_64"))
-        for hardware, intel in (("1\n", False), ("0\n", True), ("", True)):
-            with self.subTest(hardware=hardware), patch.object(title_run.subprocess, "run", return_value=SimpleNamespace(stdout=hardware)) as query:
+
+        def query(name, value_ptr, size_ptr, new_value, new_size):
+            self.assertEqual(name, b"sysctl.proc_translated")
+            self.assertIsNone(new_value)
+            self.assertEqual(new_size, 0)
+            ctypes.cast(value_ptr, ctypes.POINTER(ctypes.c_int)).contents.value = translated
+            ctypes.cast(size_ptr, ctypes.POINTER(ctypes.c_size_t)).contents.value = size
+            return result
+
+        size_of_int = ctypes.sizeof(ctypes.c_int)
+        cases = ((0, 0, 0, size_of_int, True), (0, 0, 1, size_of_int, False),
+                 (0, 0, 2, size_of_int, False), (0, 0, 0, 0, False),
+                 (-1, errno.ENOENT, -1, size_of_int, True), (-1, errno.EIO, 0, size_of_int, False))
+        for result, error, translated, size, intel in cases:
+            with self.subTest(result=result, error=error, translated=translated, size=size), \
+                    patch.object(ctypes, "CDLL") as library, patch.object(ctypes, "get_errno", return_value=error):
+                library.return_value.sysctlbyname.side_effect = query
                 self.assertIs(self.check(system, platform="darwin"), intel)
-                query.assert_called_once_with(["/usr/sbin/sysctl", "-in", "hw.optional.arm64"], capture_output=True, text=True)
+                library.assert_called_once_with(None, use_errno=True)
+                library.return_value.sysctlbyname.assert_called_once()
 
     def test_linux_reads_proc_cpuinfo(self):
         system = SimpleNamespace(name="posix")

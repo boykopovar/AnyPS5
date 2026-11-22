@@ -1,6 +1,7 @@
 import argparse
 import contextlib
 import datetime
+import errno
 import json
 import os
 import re
@@ -123,8 +124,16 @@ def host_is_intel():
     if sys.platform == "darwin":
         if os.uname().machine != "x86_64":
             return False
-        hardware = subprocess.run(["/usr/sbin/sysctl", "-in", "hw.optional.arm64"], capture_output=True, text=True)
-        return hardware.stdout.strip() != "1"
+        import ctypes
+
+        translated = ctypes.c_int(-1)
+        size = ctypes.c_size_t(ctypes.sizeof(translated))
+        sysctl = ctypes.CDLL(None, use_errno=True).sysctlbyname
+        sysctl.argtypes = (ctypes.c_char_p, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t)
+        result = sysctl(b"sysctl.proc_translated", ctypes.byref(translated), ctypes.byref(size), None, 0)
+        if result == -1:
+            return ctypes.get_errno() == errno.ENOENT
+        return result == 0 and size.value == ctypes.sizeof(translated) and translated.value == 0
     try:
         return "GenuineIntel" in Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="ignore")
     except OSError:
