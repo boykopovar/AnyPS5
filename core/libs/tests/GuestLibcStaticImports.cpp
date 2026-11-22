@@ -1,7 +1,9 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <atomic>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
@@ -148,7 +150,43 @@ void TestThrdSleep() {
 
 }
 
+static void TestLibcxxRegexDot() {
+    struct Node {
+        const void* vtable;
+        const void* successor;
+    };
+    struct State {
+        std::int32_t action;
+        std::uint32_t padding;
+        const char* first;
+        const char* current;
+        const char* end;
+        std::array<std::byte, 48> submatchesAndLoops;
+        const void* node;
+        std::uint64_t flags;
+    };
+    static_assert(offsetof(State, current) == 0x10 && offsetof(State, end) == 0x18);
+    static_assert(offsetof(State, node) == 0x50 && offsetof(State, flags) == 0x58);
+
+    const Node successor{};
+    const Node matcher{nullptr, &successor};
+    std::array<std::byte, 48> preserved;
+    preserved.fill(std::byte{0x5a});
+    for (int byte = 0; byte <= 256; ++byte) {
+        const char input = static_cast<char>(byte);
+        const char* const end = &input + (byte < 256);
+        const bool consumes = byte < 256 && byte != '\r' && byte != '\n';
+        State state{0, 0x4321, &input, &input, end, preserved, &matcher, 0x12345678};
+        _ZNKSt3__123__match_any_but_newlineIcE6__execERNS_7__stateIcEE_nid_postfix(&matcher, &state);
+        Require(state.action == (consumes ? -995 : -993));
+        Require(state.current == &input + consumes && state.node == (consumes ? &successor : nullptr));
+        Require(state.padding == 0x4321 && state.first == &input && state.end == end);
+        Require(state.submatchesAndLoops == preserved && state.flags == 0x12345678);
+    }
+}
+
 int main() {
+    TestLibcxxRegexDot();
     TestNearbyintf();
     TestMtxTrylock();
     TestThrdSleep();
