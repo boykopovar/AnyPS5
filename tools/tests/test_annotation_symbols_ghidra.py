@@ -81,6 +81,41 @@ class GhidraSymbolsTests(unittest.TestCase):
                 if address == EXPORT_ADDRESS:
                     self.assertIn(f"{EXPORT_NAME} {EXPORT_ADDRESS:#x} f", rows)
 
+    def unwind_image(self, addresses, encoding=b"\x01\x1b\x03\x3b"):
+        image = bytearray(build_module(relocations=()))
+        base = DATA_ADDRESS + 0x500
+        size = 12 + 8 * len(addresses)
+        struct.pack_into("<H", image, 56, 4)
+        struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 0x6474e550, 4, 0x2500, base, base, size, size, 4)
+        struct.pack_into("<4siI", image, 0x2500, encoding, 0xfc, len(addresses))
+        for index, address in enumerate(addresses):
+            struct.pack_into("<ii", image, 0x250c + 8 * index, address - base, 0x110 + index * 16)
+        return image
+
+    def test_unwind_index_labels_unnamed_code_ranges_offline(self):
+        source = self.root / "ranges.prx"
+        source.write_bytes(self.unwind_image([CODE_ADDRESS, CODE_ADDRESS, EXPORT_ADDRESS, DATA_ADDRESS, 0x9000]))
+        result = self.cli(source, "--no-names")
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        rows = result.stdout.splitlines()
+        self.assertEqual([row for row in rows if row.startswith("unwind_")], ["unwind_1000 0x1000 l"])
+        self.assertTrue(any(row.endswith("0x100b f") for row in rows))
+
+    def test_unwind_index_skips_unsupported_encoding(self):
+        image = self.unwind_image([CODE_ADDRESS], encoding=b"\x01\x1b\x03\xff")
+        rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({}))
+        self.assertFalse(any(row.startswith("unwind_") for row in rows))
+
+    def test_truncated_unwind_index_fails_before_printing_a_map(self):
+        image = self.unwind_image([CODE_ADDRESS])
+        struct.pack_into("<I", image, 0x2508, 2)
+        source = self.root / "truncated.prx"
+        source.write_bytes(image)
+        result = self.cli(source, "--no-names")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unwind search table exceeds", result.stderr)
+        self.assertEqual(result.stdout, "")
+
     def test_header_entry_point_without_symbols(self):
         source = self.root / "stripped.elf"
         for address, flags, file_size, expected in ((CODE_ADDRESS, 5, 12, ["elf_entry 0x1000 f"]),
