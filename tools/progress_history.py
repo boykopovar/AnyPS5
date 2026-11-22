@@ -65,15 +65,16 @@ def measure(sha):
         progress.shader_scan.RECOMPILER.rstrip("/"),
         progress.shader_scan.AGC_DRIVER.rstrip("/"),
     ]
-    tree = git("ls-tree", "-r", "--name-only", sha, "--", *candidate_paths).decode("utf-8").splitlines()
-    tree = set(tree)
-    required_paths = candidate_paths[:2]
-    if any(not any(name == path or name.startswith(path + "/") for name in tree) for path in required_paths):
+    tree = git("ls-tree", "-r", "-z", "--name-only", sha, "--", *candidate_paths).split(b"\0")
+    present = set()
+    for path in candidate_paths:
+        encoded = path.encode("utf-8")
+        prefix = encoded + b"/"
+        if any(name == encoded or name.startswith(prefix) for name in tree):
+            present.add(path)
+    if not all(path in present for path in candidate_paths[:2]):
         return None
-    paths = required_paths + [
-        path for path in candidate_paths[2:]
-        if any(name == path or name.startswith(path + "/") for name in tree)
-    ]
+    paths = [path for path in candidate_paths if path in present]
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         archive = tarfile.open(fileobj=io.BytesIO(git("archive", sha, "--", *paths)))
