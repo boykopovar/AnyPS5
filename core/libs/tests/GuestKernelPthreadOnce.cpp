@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -292,8 +293,14 @@ static void APS5_VABI FaultInit() {
 
 static OnceFaultPages* gFreezeDuringInitPages = nullptr;
 static int gFreezeDuringInitCalls = 0;
+static std::atomic<bool> gFreezeEntered{false};
+static std::atomic<bool> gFreezeRelease{false};
 static void APS5_VABI FreezeDuringInit() {
     ++gFreezeDuringInitCalls;
+    gFreezeEntered.store(true, std::memory_order_release);
+    while (!gFreezeRelease.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
     gFreezeDuringInitPages->ProtectReadOnly();
 }
 
@@ -358,11 +365,33 @@ static void TestFaultArguments() {
     *sceControl = 0;
     gFreezeDuringInitPages = &scePages;
     gFreezeDuringInitCalls = 0;
+    gFreezeEntered.store(false, std::memory_order_relaxed);
+    gFreezeRelease.store(false, std::memory_order_relaxed);
+    int waiterResult = 0;
+    std::thread waiter([&] {
+        while (!gFreezeEntered.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        std::thread releaser([] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            gFreezeRelease.store(true, std::memory_order_release);
+        });
+        waiterResult = scePthreadOnce(sceControl, FaultInit);
+        releaser.join();
+    });
     errno = 71;
     Require(scePthreadOnce(sceControl, FreezeDuringInit) == SCE_KERNEL_ERROR_EFAULT);
     Require(errno == 71);
+    waiter.join();
+    Require(waiterResult == SCE_KERNEL_ERROR_EFAULT);
     Require(gFreezeDuringInitCalls == 1);
+    Require(gFaultInitCalls == 1);
     Require(*sceControl == 2);
+
+    errno = 71;
+    Require(scePthreadOnce(sceControl, FaultInit) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    Require(gFaultInitCalls == 1);
     gFreezeDuringInitPages = nullptr;
     scePages.ProtectReadWrite();
 }

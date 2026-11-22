@@ -27,6 +27,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <string>
@@ -1737,6 +1738,7 @@ int APS5_VABI scePthreadSetprio(Pthread thread, int prio) {
 
 static std::mutex sceOnceMutex;
 static std::condition_variable sceOnceChanged;
+static std::unordered_set<int32_t*> sceOnceRunning;
 
 static bool ReadSceOnceState(const int32_t* once, int32_t& state) {
     const int savedErrno = errno;
@@ -1753,9 +1755,11 @@ static bool WriteSceOnceState(int32_t* once, int32_t state) {
 }
 
 static void APS5_VABI ResetOnce(void* once) {
+    auto* const control = static_cast<int32_t*>(once);
     {
         std::lock_guard lock(sceOnceMutex);
-        WriteSceOnceState(static_cast<int32_t*>(once), 0);
+        WriteSceOnceState(control, 0);
+        sceOnceRunning.erase(control);
     }
     sceOnceChanged.notify_all();
 }
@@ -1766,15 +1770,20 @@ int APS5_VABI scePthreadOnce(int32_t* once, void (APS5_VABI* init)(void)) {
     constexpr int32_t Done = 1;
     constexpr int32_t Running = 2;
     std::unique_lock lock(sceOnceMutex);
-    int32_t state = Never;
-    bool readable = true;
     sceOnceChanged.wait(lock, [&] {
-        readable = ReadSceOnceState(once, state);
-        return !readable || state != Running;
+        return !sceOnceRunning.contains(once);
     });
-    if (!readable) return SCE_KERNEL_ERROR_EFAULT;
+    int32_t state = Never;
+    if (!ReadSceOnceState(once, state)) return SCE_KERNEL_ERROR_EFAULT;
+    if (state == Running) return SCE_KERNEL_ERROR_EFAULT;
     if (state != Never) return SCE_OK;
-    if (!WriteSceOnceState(once, Running)) return SCE_KERNEL_ERROR_EFAULT;
+    sceOnceRunning.insert(once);
+    if (!WriteSceOnceState(once, Running)) {
+        sceOnceRunning.erase(once);
+        lock.unlock();
+        sceOnceChanged.notify_all();
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     lock.unlock();
     CleanupHandler reset{};
     void* const mark = ThreadCancel::CleanupMark();
@@ -1790,6 +1799,7 @@ int APS5_VABI scePthreadOnce(int32_t* once, void (APS5_VABI* init)(void)) {
     ThreadCancel::CleanupRestore(mark);
     lock.lock();
     const bool updated = WriteSceOnceState(once, Done);
+    sceOnceRunning.erase(once);
     lock.unlock();
     sceOnceChanged.notify_all();
     return updated ? SCE_OK : SCE_KERNEL_ERROR_EFAULT;
