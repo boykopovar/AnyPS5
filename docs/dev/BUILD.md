@@ -47,7 +47,11 @@ git submodule update --init --recursive
 git diff --name-only -z --output=changed.txt origin/main...HEAD
 python3 tools/select_tests.py dump build test-graph.json
 python3 tools/select_tests.py select build test-graph.json changed.txt
-ninja -C build -f select.ninja selected
+if [ -f build/select.ninja ]; then
+  ninja -C build -f select.ninja selected
+else
+  cmake --build build
+fi
 python3 tools/select_tests.py ctest build --output-on-failure
 ```
 
