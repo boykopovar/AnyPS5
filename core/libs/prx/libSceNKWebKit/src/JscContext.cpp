@@ -569,6 +569,9 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     qctx = JS_NewContext(group->rt);
     JS_SetContextOpaque(qctx, this);
     group->contexts.push_back(this);
+    for (auto& [ptr, data] : group->callbackDataByPtr) {
+        if (data && !data->ctx) data->ctx = this;
+    }
 
     JSValue rawGlobal = JS_GetGlobalObject(qctx);
     dateConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Date");
@@ -644,6 +647,13 @@ OpaqueJSContext::~OpaqueJSContext() {
     auto it = std::find(group->contexts.begin(), group->contexts.end(), this);
     if (it != group->contexts.end()) {
         group->contexts.erase(it);
+    }
+    OpaqueJSContext* heir = group->DefaultContext();
+    for (auto& [ptr, data] : group->callbackDataByPtr) {
+        if (data && data->ctx == this) data->ctx = heir;
+    }
+    for (OpaqueJSValue* handle : group->allHandles) {
+        if (handle && handle->ctx == this) handle->ctx = heir;
     }
     if (qctx) {
         JS_FreeValue(qctx, dateConstructor);
