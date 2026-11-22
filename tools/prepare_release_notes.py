@@ -37,6 +37,15 @@ def release_body(notes):
     )
 
 
+def unique_release_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Generated release notes response has a duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
 def prepare_notes(source, body, full, check=False):
     paths = (source, body, full)
     for index, first in enumerate(paths):
@@ -45,7 +54,7 @@ def prepare_notes(source, body, full, check=False):
                     (first.exists() and second.exists() and first.samefile(second))):
                 raise ValueError("Release note input and outputs must be distinct files")
     try:
-        payload = json.loads(source.read_text(encoding="utf-8-sig"))
+        payload = json.loads(source.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_release_object)
     except RecursionError as error:
         raise ValueError("Generated release notes response is too deeply nested") from error
     if not isinstance(payload, dict) or "body" not in payload:
