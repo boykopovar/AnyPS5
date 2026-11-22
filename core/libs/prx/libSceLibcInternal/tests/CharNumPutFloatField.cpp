@@ -56,10 +56,12 @@ struct NarrowStream {
     char* putEnd = nullptr;
     std::string accepted;
     bool fail = false;
+    std::size_t overflowCalls = 0;
 };
 
 int APS5_VABI NarrowOverflow(GuestLocale::Streambuf* self, int character) {
     auto* stream = reinterpret_cast<NarrowStream*>(self);
+    ++stream->overflowCalls;
     if (stream->fail) return -1;
     stream->accepted.push_back(static_cast<char>(character));
     return character & 0xff;
@@ -162,8 +164,11 @@ void CheckErrors() {
     ios.locale = classic;
     auto stream = MakeNarrow(true);
     const char digits[] = "1.5";
+    ios.width = 6;
     const GuestLocale::OutputIterator out = FloatPut(nullptr, GuestLocale::OutputIterator{false, &stream.buffer}, &ios, '*', digits, 3);
     Require(out.failed, "char _Fput marks iterator failed when overflow fails");
+    Require(stream.overflowCalls == 1, "char _Fput stops writing after overflow failure");
+    Require(ios.width == 0, "char _Fput clears width after overflow failure");
     Require(Throws([&] { FloatPut(nullptr, GuestLocale::OutputIterator{false, &stream.buffer}, nullptr, '*', digits, 3); }), "char _Fput rejects null stream");
     GuestLocale::IosBase noLocale{};
     Require(Throws([&] { FloatPut(nullptr, GuestLocale::OutputIterator{false, &stream.buffer}, &noLocale, '*', digits, 3); }), "char _Fput rejects stream without locale");

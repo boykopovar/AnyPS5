@@ -476,15 +476,15 @@ GuestLocale::OutputIterator PutField(GuestLocale::OutputIterator out, GuestLocal
     std::size_t fillCount = width <= 0 || static_cast<std::size_t>(width) <= text.size() ? 0 : static_cast<std::size_t>(width) - text.size();
     const std::int32_t adjust = stream->flags & IosAdjustField;
     if (adjust != IosLeft && adjust != IosInternal) {
-        for (; fillCount != 0; --fillCount) PutCharacter(out, fill);
+        for (; !out.failed && fillCount != 0; --fillCount) PutCharacter(out, fill);
     }
-    for (std::size_t index = 0; index < prefix; ++index) PutCharacter(out, text[index]);
+    for (std::size_t index = 0; !out.failed && index < prefix; ++index) PutCharacter(out, text[index]);
     if (adjust == IosInternal) {
-        for (; fillCount != 0; --fillCount) PutCharacter(out, fill);
+        for (; !out.failed && fillCount != 0; --fillCount) PutCharacter(out, fill);
     }
-    for (std::size_t index = prefix; index < text.size(); ++index) PutCharacter(out, text[index]);
+    for (std::size_t index = prefix; !out.failed && index < text.size(); ++index) PutCharacter(out, text[index]);
     stream->width = 0;
-    for (; fillCount != 0; --fillCount) PutCharacter(out, fill);
+    for (; !out.failed && fillCount != 0; --fillCount) PutCharacter(out, fill);
     return out;
 }
 
