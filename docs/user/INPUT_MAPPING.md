@@ -1,6 +1,6 @@
 # Controller, keyboard and mouse input
 
-AnyPS5 accepts SDL-mapped game controllers as well as its built-in keyboard and mouse bindings. Up to 4 controllers are supported simultaneously. The first connected controller is assigned to Player 1 and composed with keyboard and mouse input; additional controllers are sequentially assigned to Players 2, 3, and 4 (matching `libSceUserService` users). Xbox-style controllers and PlayStation controllers recognized by SDL use the standard PS button layout; sticks and analog triggers are passed through, and controllers can be connected or disconnected dynamically while the game is running. AnyPS5 uses its built-in input bindings when no configuration file is present. To change input bindings, create `anyps5-input.ini` beside the generated game executable. Set `ANYPS5_INPUT_CONFIG` to use a file at another path. Both the game directory and that path may contain any characters, such as `ü` or `日本`. With `ANYPS5_PAD_PORT0_STATE=controller`, keyboard and mouse input reaches the game only while a controller is bound to Player 1; see [Controller connection and user 0](USAGE.md#controller-connection-and-user-0).
+AnyPS5 accepts SDL-mapped game controllers as well as its built-in keyboard and mouse bindings. Up to 4 controllers are supported simultaneously. By default, controllers fill Players 1 through 4 in discovery order (matching `libSceUserService` users). Only the controller in the Player 1 slot is combined with keyboard and mouse input. See [stable player assignment](#stable-player-assignment) to reserve slots by serial. Xbox-style controllers and PlayStation controllers recognized by SDL use the standard PS button layout; sticks and analog triggers are passed through, and controllers can be connected or disconnected dynamically while the game is running. AnyPS5 uses its built-in input bindings when no configuration file is present. To change input bindings, create `anyps5-input.ini` beside the generated game executable. Set `ANYPS5_INPUT_CONFIG` to use a file at another path. Both the game directory and that path may contain any characters, such as `ü` or `日本`. With `ANYPS5_PAD_PORT0_STATE=controller`, keyboard and mouse input reaches the game only while a controller is bound to Player 1; see [Controller connection and user 0](USAGE.md#controller-connection-and-user-0).
 
 For an Xbox-layout controller, A/B/X/Y map to Cross/Circle/Square/Triangle, LB/RB map to L1/R1, and LT/RT map to analog L2/R2. Start maps to Options. D-pad and stick-click buttons are supported. On a PlayStation controller, touchpad clicks and the positions of up to two fingers on the touchpad are forwarded. On other controllers, View (Back) presses the touchpad at its center.
 
@@ -172,7 +172,7 @@ By default, connected controllers fill the first free player slot in SDL's disco
 For example, to bind two controllers and leave the other player slots automatic:
 
 ```sh
-ANYPS5_PAD_PLAYER_1_SERIAL=ABC123 ANYPS5_PAD_PLAYER_2_SERIAL=XYZ789 ./AnyPS5
+ANYPS5_PAD_PLAYER_1_SERIAL=ABC123 ANYPS5_PAD_PLAYER_2_SERIAL=XYZ789 ./app.elf
 ```
 
 Serials may differ when a controller is connected through another transport or exposed by a different SDL backend. Check the connection log for the exact value reported by the current host.
