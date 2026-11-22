@@ -2,7 +2,7 @@
 
 ## change [expl, sinhl, coshl and tanhl]
 
-- [sinhl, coshl and tanhl](../../../core/libs/prx/libc/src/Math.cpp) (libc) follow FreeBSD msun's ld80 `e_sinhl.c`, `e_coshl.c` and `s_tanhl.c` over a port of [`s_expl.c`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/s_expl.c) with `k_expl.h` (release/11.4.0), and match that source built on the host bit for bit (30 million inputs at 64-bit and 5 million at 53-bit precision), so they no longer depend on the host's math library. Unverified against the console's `libc.prx`: the 11.4.0 source is the only evidence. msun never touches `errno` (glibc sets `ERANGE`); the port keeps that. They run at the caller's x87 precision.
+- [sinhl, coshl and tanhl](../../../core/libs/prx/libc/src/Math.cpp) (libc) follow FreeBSD msun's ld80 `e_sinhl.c`, `e_coshl.c` and `s_tanhl.c` over a port of [`s_expl.c`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/s_expl.c) with `k_expl.h` (release/11.4.0), and match that source built on the host bit for bit (30 million inputs at 64-bit and 5 million at 53-bit precision), so they no longer depend on the host's math library. Unverified against the console's `libc.prx`: the 11.4.0 source is the only evidence. msun never touches `errno` (glibc sets `ERANGE`); the port keeps that. They run at the caller's x87 precision. sinhl returns x unchanged for |x| < 2^-32 without raising `FE_INEXACT`, as the SDK 5.00 `libc.prx` module does ([#22838](https://github.com/boykopovar/AnyPS5/issues/22838)), where msun's `e_sinhl.c` raises it on purpose; other ranges and other SDK builds are not verified.
 
 ## change [expm1l]
 
