@@ -2559,8 +2559,20 @@ int APS5_VABI sceUserServiceGetPbtcTuesdayDuration(void) {
 }
 
 int APS5_VABI sceUserServiceGetUserWithHearingAssist(std::int32_t* userId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ if (userId == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ const std::int32_t no_user = -1;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(userId, &no_user, sizeof(no_user));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetNpOnlineId(void) {

@@ -130,6 +130,7 @@ int main() {
     Require(sceUserServiceGetAccessibilityVibration(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceGetAccessibilityKeyremapEnable(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceGetAccessibilityZoom(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserWithHearingAssist(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     const UserServiceInitParam init_param{USER_SERVICE_THREAD_PRIORITY_MIN};
     Require(sceUserServiceInitialize(&init_param) == USER_SERVICE_OK);
 
@@ -140,6 +141,11 @@ int main() {
     Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_OK);
     Require(initialUser == USER_SERVICE_INITIAL_USER_ID);
+
+    Require(sceUserServiceGetUserWithHearingAssist(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    std::int32_t hearingAssistUser = 0x5A5A5A5A;
+    Require(sceUserServiceGetUserWithHearingAssist(&hearingAssistUser) == USER_SERVICE_OK);
+    Require(hearingAssistUser == -1);
 
     Require(sceUserServiceGetRegisteredUserIdList(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     UserServiceRegisteredUserIdList registered{};
