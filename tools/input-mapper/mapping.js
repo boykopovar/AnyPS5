@@ -52,6 +52,13 @@ export function inputFilename(titleId) {
     return `anyps5-input.${titleId}.ini`;
 }
 
+export function inputTitleId(filename) {
+    const match = /^anyps5-input(?:\.([^.]+))?\.ini$/u.exec(filename);
+    if (!match) return undefined;
+    const titleId = match[1] ?? '';
+    return inputFilename(titleId) === filename ? titleId : undefined;
+}
+
 export function typesForAction(action) {
     if (!actions.includes(action)) return [];
     if (emulatorActions.includes(action)) return ['KEY', 'PAD'];

@@ -5,7 +5,6 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -14,7 +13,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <map>
 #include <stdexcept>
 #include <string>
 
@@ -30,51 +28,32 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 
-static std::map<void*, std::size_t> guestAllocations;
-
 static void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
-    void* pointer = std::malloc(size);
-    if (pointer) guestAllocations[pointer] = size;
-    return pointer;
+    return std::malloc(size);
 }
 
 static void APS5_VABI Free_nid_no_patch(void* pointer) {
-    Require(guestAllocations.erase(pointer) == 1);
     std::free(pointer);
 }
 
 static void* APS5_VABI Calloc_nid_no_patch(std::size_t count, std::size_t size) {
-    void* pointer = std::calloc(count, size);
-    if (pointer) guestAllocations[pointer] = count * size;
-    return pointer;
+    return std::calloc(count, size);
 }
 
 static void* APS5_VABI Reallocate_nid_no_patch(void* pointer, std::size_t size) {
-    void* resized = std::realloc(pointer, size);
-    if (!resized) return nullptr;
-    guestAllocations.erase(pointer);
-    guestAllocations[resized] = size;
-    return resized;
+    return std::realloc(pointer, size);
 }
 
-static void* APS5_VABI Align(std::size_t alignment, std::size_t size) {
-    void* pointer = nullptr;
-    if (posix_memalign(&pointer, alignment, size)) return nullptr;
-    guestAllocations[pointer] = size;
-    return pointer;
+static void* APS5_VABI UnexpectedAlign(std::size_t, std::size_t) {
+    std::abort();
 }
 
-static void* APS5_VABI Realign_nid_no_patch(void* pointer, std::size_t size, std::size_t alignment) {
-    void* resized = Align(alignment, size);
-    if (!resized) return nullptr;
-    std::memcpy(resized, pointer, std::min(size, guestAllocations[pointer]));
-    Free_nid_no_patch(pointer);
-    return resized;
+static void* APS5_VABI UnexpectedRealign(void*, std::size_t, std::size_t) {
+    std::abort();
 }
 
-static int APS5_VABI PosixAlign_nid_no_patch(void** pointer, std::size_t alignment, std::size_t size) {
-    *pointer = Align(alignment, size);
-    return *pointer ? 0 : 12;
+static int APS5_VABI UnexpectedPosixAlign(void**, std::size_t, std::size_t) {
+    std::abort();
 }
 
 static SharedBuffer* Allocate() {
@@ -137,7 +116,6 @@ static void TestMapsAFileIntoTheBuffer(const std::filesystem::path& root) {
     _ZN7WebCore12SharedBufferD1Ev(buffer);
     _ZN3WTF8fastFreeEPv(buffer);
     Require(sceKernelVirtualQuery(mapping, 0, &mapped, sizeof(mapped)) != 0);
-    Require(guestAllocations.empty());
 }
 
 static void TestBaseConstructor(const std::filesystem::path& root) {
@@ -152,7 +130,6 @@ static void TestBaseConstructor(const std::filesystem::path& root) {
 
     _ZN7WebCore12SharedBufferD2Ev(buffer);
     _ZN3WTF8fastFreeEPv(buffer);
-    Require(guestAllocations.empty());
 }
 
 static void TestEmptyMapping() {
@@ -165,7 +142,6 @@ static void TestEmptyMapping() {
 
     _ZN7WebCore12SharedBufferD1Ev(buffer);
     _ZN3WTF8fastFreeEPv(buffer);
-    Require(guestAllocations.empty());
 }
 
 static void TestMissingFileMapsNothing() {
@@ -177,7 +153,6 @@ static void TestMissingFileMapsNothing() {
     Require(Size(buffer) == 0 && _ZNK7WebCore12SharedBuffer7isEmptyEv(buffer));
     _ZN7WebCore12SharedBufferD2Ev(buffer);
     _ZN3WTF8fastFreeEPv(buffer);
-    Require(guestAllocations.empty());
 }
 
 static void TestSharedSegmentAndClear(const std::filesystem::path& root) {
@@ -210,7 +185,6 @@ static void TestSharedSegmentAndClear(const std::filesystem::path& root) {
 
     _ZN7WebCore12SharedBufferD1Ev(mapped);
     _ZN3WTF8fastFreeEPv(mapped);
-    Require(guestAllocations.empty());
 }
 
 static void TestCopySharesTheMapping(const std::filesystem::path& root) {
@@ -234,7 +208,6 @@ static void TestCopySharesTheMapping(const std::filesystem::path& root) {
 
     _ZN7WebCore12SharedBufferD2Ev(mapped);
     _ZN3WTF8fastFreeEPv(mapped);
-    Require(guestAllocations.empty());
 }
 
 static void TestNullArguments() {
@@ -254,9 +227,7 @@ static void TestNullArguments() {
         threw = true;
     }
     Require(threw);
-    Require(guestAllocations.size() == 1);
     _ZN3WTF8fastFreeEPv(buffer);
-    Require(guestAllocations.empty());
 }
 
 int main() {
@@ -265,9 +236,9 @@ int main() {
         reinterpret_cast<void*>(&Free_nid_no_patch),
         reinterpret_cast<void*>(&Calloc_nid_no_patch),
         reinterpret_cast<void*>(&Reallocate_nid_no_patch),
-        reinterpret_cast<void*>(&Align),
-        reinterpret_cast<void*>(&Realign_nid_no_patch),
-        reinterpret_cast<void*>(&PosixAlign_nid_no_patch),
+        reinterpret_cast<void*>(&UnexpectedAlign),
+        reinterpret_cast<void*>(&UnexpectedRealign),
+        reinterpret_cast<void*>(&UnexpectedPosixAlign),
     };
     ApplicationHeapRegister_nid_no_patch(heapApi.data());
 
@@ -286,6 +257,5 @@ int main() {
 
     RemovePathAlias_nid_no_patch("/nkwebkit-sharedbuffer");
     std::filesystem::remove_all(root);
-    Require(guestAllocations.empty());
     return 0;
 }
