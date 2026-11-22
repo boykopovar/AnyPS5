@@ -9662,18 +9662,6 @@ int APS5_VABI WKPageGetBackingScaleFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageGetBytecodeProfile() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageGetContentsAsMHTMLData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageGetContentsAsString() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageGetContext() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9703,15 +9691,7 @@ int APS5_VABI WKPageGetProcessIdentifier() {
 }
 
 
-int APS5_VABI WKPageGetSamplingProfilerOutput() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageGetScaleFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageGetSelectionAsWebArchiveData() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9864,10 +9844,6 @@ int APS5_VABI WKPageReload() {
 }
 
 int APS5_VABI WKPageReloadWithoutContentBlockers() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRenderTreeExternalRepresentation() {
     NotImplemented_nid_no_patch(__func__);
 }
 
