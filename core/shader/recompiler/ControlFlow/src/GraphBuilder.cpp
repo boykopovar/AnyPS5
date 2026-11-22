@@ -2516,6 +2516,37 @@ std::optional<TableCallContinuation> ContinueTableCall(const RdnaProgram& progra
     return continuation;
 }
 
+namespace {
+
+void leaveBeforeCallees(std::vector<std::uint32_t>& code, std::uint32_t linkedWord, std::uint32_t exitWord) {
+    const auto linked = RdnaInstructionDecoder{}.Decode(code);
+    const auto ends = [&](std::uint32_t index) {
+        for (std::uint32_t steps = 0; steps < 16u && index < linked.instructions.size(); ++steps) {
+            const auto& instruction = linked.instructions[index];
+            if (instruction.op == RdnaOpcode::SEndpgm) return true;
+            if (instruction.op == RdnaOpcode::SBranch) {
+                index = instructionIndexOfProgramCounter(linked, instruction.branchTarget);
+                continue;
+            }
+            if (instruction.family != RdnaInstructionFamily::SOPC) return false;
+            ++index;
+        }
+        return false;
+    };
+    const auto call = std::ranges::find_if(linked.instructions, [&](const RdnaInstruction& instruction) { return instruction.programCounter >= linkedWord * 4u && instruction.op == RdnaOpcode::SCallB64; });
+    if (call == linked.instructions.end()) return;
+    auto redirected = code;
+    for (const auto& instruction : linked.instructions) {
+        if (instruction.programCounter < linkedWord * 4u || instruction.programCounter >= call->programCounter || !IsConditionalBranchOpcode(instruction.op) || instruction.branchTarget <= instruction.programCounter) continue;
+        if (!ends(instructionIndexOfProgramCounter(linked, instruction.branchTarget))) continue;
+        const auto word = instruction.programCounter / 4u;
+        redirected[word] = branchWord(redirected[word] & 0xffff0000u, word, exitWord);
+    }
+    if (RdnaInstructionDecoder{}.Decode(redirected).instructions.size() == linked.instructions.size()) code = std::move(redirected);
+}
+
+}
+
 SplitTableCallPrograms BuildTableCallContinuation(const RdnaProgram& program, const TableCall& call, std::span<const TableCallee> callees, const TableCallContinuation& continuation) {
     using SplitStateAbi::Action;
     using SplitStateAbi::Area;
@@ -2577,6 +2608,7 @@ SplitTableCallPrograms BuildTableCallContinuation(const RdnaProgram& program, co
         auto linked = LinkCalls(servedProgram, {}, {}, calls, linkedCallees);
         for (const auto fallback : linked.fallbacks) linked.code[fallback / 4u] = EndProgramWord;
         replaceInstruction(linked.code, program, returnProgramCounter, EndProgramWord);
+        leaveBeforeCallees(linked.code, go + 2u, go + 1u);
         programs.callees.push_back(plan(std::move(linked.code), callee.target, {
             {startStub * 4u, false, Action::LoadTarget, Area::Exit},
             {go * 4u, false, Action::LoadState, Area::Exit},
