@@ -104,11 +104,11 @@ int main() {
 
     const void* location = WKStringCreateWithUTF8CString("file:///styles/custom.css");
     WKBundleSetUserStyleSheetLocation(bundleRef, location);
-    Require(bundle->userStyleSheetLocation != nullptr);
+    Require(bundle->userStyleSheetLocation.Get() != nullptr);
     Require(WKStringIsEqualToUTF8CString(bundle->userStyleSheetLocation.Get(), "file:///styles/custom.css"));
 
     WKBundleSetUserStyleSheetLocation(bundleRef, nullptr);
-    Require(!bundle->userStyleSheetLocation);
+    Require(bundle->userStyleSheetLocation.Get() == nullptr);
 
     const void* dummyObj = location;
     RequireThrows([&] { WKBundleSetClient(nullptr, &dummyClient); });
