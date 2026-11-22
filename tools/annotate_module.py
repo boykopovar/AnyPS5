@@ -631,7 +631,10 @@ def main(argv=None):
         elif symbols_only:
             db = nid_names.read_db(db_path) if args.db or db_path.exists() else {}
         else:
-            db = nid_names.load_db(db_path)
+            try:
+                db = nid_names.load_db(db_path)
+            except ValueError as error:
+                raise ModuleError(str(error)) from error
         namer = Namer(db)
         if args.symbols_ghidra:
             for line in ghidra_symbols(Module(Path(args.module).read_bytes()), namer):
