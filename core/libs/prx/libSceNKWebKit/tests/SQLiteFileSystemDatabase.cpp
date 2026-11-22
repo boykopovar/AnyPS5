@@ -67,12 +67,12 @@ void WriteFile(const std::filesystem::path& path, const std::string& contents) {
     Require(output.good());
 }
 
-void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size == 0 ? 1 : size); }
-void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
-void* APS5_VABI HeapCallocate(std::size_t count, std::size_t size) {
+void* APS5_VABI TestHeapAllocate(std::size_t size) { return std::malloc(size == 0 ? 1 : size); }
+void APS5_VABI TestHeapFree(void* pointer) { std::free(pointer); }
+void* APS5_VABI TestHeapCallocate(std::size_t count, std::size_t size) {
     return std::calloc(count == 0 ? 1 : count, size == 0 ? 1 : size);
 }
-void* APS5_VABI HeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size == 0 ? 1 : size); }
+void* APS5_VABI TestHeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size == 0 ? 1 : size); }
 void* APS5_VABI UnexpectedAlign(std::size_t, std::size_t) { std::abort(); }
 void* APS5_VABI UnexpectedRealign(void*, std::size_t, std::size_t) { std::abort(); }
 int APS5_VABI UnexpectedPosixAlign(void**, std::size_t, std::size_t) { std::abort(); }
@@ -81,10 +81,10 @@ int APS5_VABI UnexpectedPosixAlign(void**, std::size_t, std::size_t) { std::abor
 
 int main() {
     std::array<void*, 10> heapApi{
-        reinterpret_cast<void*>(HeapAllocate),
-        reinterpret_cast<void*>(HeapFree),
-        reinterpret_cast<void*>(HeapCallocate),
-        reinterpret_cast<void*>(HeapReallocate),
+        reinterpret_cast<void*>(TestHeapAllocate),
+        reinterpret_cast<void*>(TestHeapFree),
+        reinterpret_cast<void*>(TestHeapCallocate),
+        reinterpret_cast<void*>(TestHeapReallocate),
         reinterpret_cast<void*>(UnexpectedAlign),
         reinterpret_cast<void*>(UnexpectedRealign),
         reinterpret_cast<void*>(UnexpectedPosixAlign),
