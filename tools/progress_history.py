@@ -147,9 +147,11 @@ def load_cache(path, signature):
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=progress.unique_json_keys)
     except RecursionError as error:
         raise ValueError(f"{path}: history cache JSON is too deeply nested") from error
+    except ValueError as error:
+        raise ValueError(f"{path}: {error}") from error
     if not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] != 2 or not isinstance(data.get("rules"), str) or not isinstance(data.get("commits"), dict):
         raise ValueError(f"{path}: invalid history cache")
     if data["rules"] != signature:

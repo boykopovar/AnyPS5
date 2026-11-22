@@ -136,6 +136,26 @@ for (const directories of [[], ["Title/", "Title/sce_module/", "__MACOSX/", "__M
   } finally { await archive.close(); }
 }
 
+for (const prefix of ["__macosx", "__MacOsX"]) {
+  for (const directories of [[], ["Title/", "Title/sce_module/", `${prefix}/`, `${prefix}/Title/`, `${prefix}/Title/sce_module/`]]) {
+    const archive = new Archive(await zipped([
+      ...directories.map(name => [name, true]),
+      ...app,
+      [`${prefix}/Title/._main.elf`, false, metadata],
+      [`${prefix}/Title/sce_module/._provider.prx`, false, metadata],
+      [`${prefix}/._Title`, false, metadata]
+    ]));
+    try {
+      const summary = await archive.inspect(() => {});
+      assert.equal(summary.root, "Title/");
+      assert.equal(summary.files, 2);
+      assert.equal(summary.modules, 1);
+      assert.deepEqual(archive.files.filter(item => !item.entry.directory).map(item => item.name), ["main.elf", "sce_module/provider.prx"]);
+      assert(!archive.files.some(item => item.name.toLowerCase().startsWith("__macosx")));
+    } finally { await archive.close(); }
+  }
+}
+
 const wrongMagic = metadata.slice();
 wrongMagic[3] = 0;
 const wrongVersion = metadata.slice();

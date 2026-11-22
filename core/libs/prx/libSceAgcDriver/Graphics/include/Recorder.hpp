@@ -216,6 +216,25 @@ public:
     bool HasCompletions() const;
     void Keep(std::shared_ptr<void> object, std::size_t bytes = 0);
     void KeepThroughHold(std::shared_ptr<void> object);
+    void ReserveRetention(std::size_t additional);
+    template<typename T>
+    void Retain(const std::shared_ptr<T>& object) {
+        if (object == nullptr) return;
+        if (open == nullptr) ensureOpen();
+        prepareRetention();
+        const auto mask = retention.size() - 1;
+        auto index = retentionHash(object.get()) & mask;
+        while (retention[index].epoch == retentionEpoch) {
+            const auto& kept = open->kept[retention[index].index];
+            if (kept.get() == object.get() && !kept.owner_before(object) && !object.owner_before(kept)) return;
+            index = (index + 1) & mask;
+        }
+        const auto keptIndex = open->kept.size();
+        open->kept.push_back(object);
+        retention[index] = {object.get(), retentionEpoch, keptIndex};
+        ++retentionCount;
+    }
+
     void KeepBytes(const void* owner, std::size_t bytes);
     enum class UploadScratch : std::uint8_t { Tiled = 0, Linear, Count };
     std::shared_ptr<DeviceBuffer> UploadScratchBuffer(UploadScratch kind, std::size_t bytes);
@@ -369,7 +388,7 @@ public:
     void Sync();
     void CountSamples();
     bool CountingSamples() const { return countingSamples; }
-    bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules);
+    bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 8> rules);
     bool RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter = 0);
     struct BoundWords {
         VkBuffer buffer = VK_NULL_HANDLE;
@@ -1067,6 +1086,18 @@ private:
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
     std::unique_ptr<Batch> open;
+    struct RetentionSlot {
+        const void* object = nullptr;
+        std::uint64_t epoch = 0;
+        std::size_t index = 0;
+    };
+    std::vector<RetentionSlot> retention;
+    std::size_t retentionCount = 0;
+    std::uint64_t retentionEpoch = 0;
+    void prepareRetention(std::size_t additional = 1);
+    static std::size_t retentionHash(const void* object) {
+        return static_cast<std::size_t>((reinterpret_cast<std::uintptr_t>(object) >> 4u) * 0x9e3779b97f4a7c15ull >> 32u);
+    }
     std::uint64_t passGeneration = 0;
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;
