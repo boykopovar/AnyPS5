@@ -857,7 +857,7 @@ void TestArgumentErrors() {
     LibreSsl3X509Crl* const first = output;
     const unsigned char* second = der.data();
     Require(d2i_X509_CRL_nid_postfix(&output, &second, static_cast<std::int64_t>(der.size())) == output);
-    Require(output != nullptr && output != first);
+    Require(output != nullptr);
     Require(second == der.data() + der.size());
     Require(allocations.size() == retained);
     X509_CRL_free_nid_postfix(output);
@@ -879,6 +879,88 @@ void TestReferenceCountedFree() {
     Require(allocations.empty());
     X509_CRL_free_nid_postfix(nullptr);
     DrainErrors();
+}
+
+void TestReusedOutput() {
+    const Bytes der = BuildCrl(Join({TbsHead(), UtcTime("240201000000Z")}));
+    const Bytes truncated(der.begin(), der.end() - 1);
+    Bytes wrongTag = der;
+    wrongTag[0] = 0x31;
+    const Bytes inner = BuildCrl(Join({TbsHead(), Tlv(0x04, Bytes{0x00})}));
+    const std::int64_t size = static_cast<std::int64_t>(der.size());
+
+    LibreSsl3X509Crl* first = Parse(der);
+    Require(first != nullptr);
+    const std::size_t live = allocations.size();
+    first->references = 2;
+    LibreSsl3X509Crl* output = first;
+    const unsigned char* input = truncated.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, static_cast<std::int64_t>(truncated.size())) == nullptr);
+    Require(output == nullptr);
+    Require(input == truncated.data());
+    Require(allocations.size() == live);
+    Require(first->references == 1);
+    Require(ERR_get_error_nid_postfix() != 0);
+    DrainErrors();
+
+    output = first;
+    input = wrongTag.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, size) == nullptr);
+    Require(output == nullptr);
+    Require(input == wrongTag.data());
+    Require(allocations.empty());
+    DrainErrors();
+
+    LibreSsl3X509Crl* kept = Parse(der);
+    Require(kept != nullptr);
+    Require(allocations.size() == live);
+    kept->references = 2;
+    output = kept;
+    input = inner.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, static_cast<std::int64_t>(inner.size())) == nullptr);
+    Require(output == nullptr);
+    Require(input == inner.data());
+    Require(allocations.size() == live);
+    Require(kept->references == 1);
+    DrainErrors();
+
+    kept->references = 2;
+    output = kept;
+    input = der.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, 0) == nullptr);
+    Require(output == nullptr);
+    Require(input == der.data());
+    Require(allocations.size() == live);
+    Require(kept->references == 1);
+    DrainErrors();
+
+    output = kept;
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, -1) == nullptr);
+    Require(output == kept);
+    Require(input == der.data());
+    Require(allocations.size() == live);
+    Require(kept->references == 1);
+    DrainErrors();
+
+    output = nullptr;
+    input = truncated.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, static_cast<std::int64_t>(truncated.size())) == nullptr);
+    Require(output == nullptr);
+    Require(allocations.size() == live);
+    DrainErrors();
+
+    kept->references = 2;
+    output = kept;
+    input = der.data();
+    LibreSsl3X509Crl* replaced = d2i_X509_CRL_nid_postfix(&output, &input, size);
+    Require(replaced != nullptr && replaced == output && replaced != kept);
+    Require(input == der.data() + der.size());
+    Require(allocations.size() == 2 * live);
+    Require(kept->references == 1);
+    X509_CRL_free_nid_postfix(replaced);
+    X509_CRL_free_nid_postfix(kept);
+    Require(allocations.empty());
+    RequireQueue({});
 }
 
 void TestAllocationFailures() {
@@ -1257,6 +1339,7 @@ int main() {
     TestTimes();
     TestArgumentErrors();
     TestReferenceCountedFree();
+    TestReusedOutput();
     TestAllocationFailures();
     TestNonMinimalLengths();
     TestRejectedNameValues();

@@ -70,6 +70,15 @@ int main() {
         Check(frame.stickMask == 2, "only the right stick is marked as scripted");
         Check(!script.Sample(5500000).hasSticks, "stick released");
 
+        Pad::InputScript shortPulses;
+        shortPulses.SetScript(Pad::InputScript::ParseText("100 cross 10\n120 circle 10\n"));
+        shortPulses.Start(1000000);
+        Pad::InputScript::Report pulseReport;
+        Check(shortPulses.Sample(1095000, &pulseReport).buttons == 0 && pulseReport.fired.empty(), "before a short pulse");
+        Check(shortPulses.Sample(1110000, &pulseReport).buttons == 0 && pulseReport.fired.empty(), "an unsampled pulse is not reported as fired");
+        Check(shortPulses.Sample(1120000, &pulseReport).buttons == Circle && pulseReport.fired.size() == 1 &&
+            pulseReport.fired[0].label == "circle", "the next sampled pulse still logs");
+
         Pad::InputScript looping;
         looping.SetScript(Pad::InputScript::ParseText("0 cross 100\n"));
         looping.SetLoopMs(900);
