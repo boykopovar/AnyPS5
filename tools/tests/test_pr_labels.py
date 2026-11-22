@@ -271,12 +271,14 @@ class NumbersTests(unittest.TestCase):
 
 class LabelTests(unittest.TestCase):
     def test_tooling_perf_is_labeled_without_asking_for_a_capture(self):
-        for title in ("perf(tools): x", "perf(ci): x", "perf(build): x", "perf(Tools): x", "perf( tools ): x"):
+        for title in ("perf(tools): x", "perf(ci): x", "perf(build): x", "perf(Tools): x", "perf( tools ): x",
+                      "perf(tools, ci): x", "perf(build,ci): x", "perf(build, ci, tools)!: x"):
             with self.subTest(title=title):
                 self.assertEqual(pr_labels.labels_for(pr(title, TEMPLATE)), ({"perf"}, set()))
 
     def test_runtime_perf_still_needs_a_capture(self):
-        for title in ("perf: x", "perf!: x", "perf(agc): x", "perf(libc): x", "perf(toolsy): x"):
+        for title in ("perf: x", "perf!: x", "perf(agc): x", "perf(libc): x", "perf(toolsy): x",
+                      "perf(tools, agc): x", "perf(tools, ): x", "perf(, ci): x"):
             with self.subTest(title=title):
                 self.assertEqual(pr_labels.labels_for(pr(title, TEMPLATE)), ({"perf", "perf numbers missing"}, set()))
 
@@ -465,6 +467,19 @@ class MainTests(unittest.TestCase):
         self.assertEqual(result, "success\n")
         self.assertEqual(len(calls), 2)
         sleep_mock.assert_called_once_with(0.01)
+
+    def test_gh_retries_broken_responses_and_windows_connection_timeouts(self):
+        for message in ("stream error: stream ID 1; CANCEL; received from peer", "unexpected EOF",
+                        "connectex: A connection attempt failed because the connected party "
+                        "did not properly respond after a period of time"):
+            with self.subTest(message=message):
+                failed = subprocess.CompletedProcess([], 1, stdout="", stderr=message)
+                success = subprocess.CompletedProcess([], 0, stdout="success\n", stderr="")
+                with patch.object(pr_labels.subprocess, "run", side_effect=[failed, success]) as run, \
+                        patch.object(pr_labels.time, "sleep") as sleep_mock:
+                    self.assertEqual(pr_labels.gh("api", "repos/owner/repo/pulls", delay=0.01), "success\n")
+                self.assertEqual(run.call_count, 2)
+                sleep_mock.assert_called_once_with(0.01)
 
     def test_gh_fails_immediately_on_non_transient_error(self):
         calls = []

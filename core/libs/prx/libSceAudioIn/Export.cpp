@@ -283,9 +283,9 @@ int32_t APS5_VABI sceAudioInAsyncOpen(int32_t userId, uint32_t type, uint32_t in
 }
 
 int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t handle) {
+    const std::uint32_t index = static_cast<std::uint32_t>(handle) & 0xffu;
     std::lock_guard lock(g_mutex);
-    Port* port;
-    if (const int error = findPort(handle, &port)) return error;
+    if (index >= g_ports.size() || !g_ports[index].used) return AUDIO_IN_ERROR_INVALID_STATE;
     return 0;
 }
 
@@ -327,10 +327,9 @@ int APS5_VABI sceAudioInSetUsbGain(void) {
 
 int APS5_VABI sceAudioInIsSharedDevice(int handle) {
     const std::uint32_t index = static_cast<std::uint32_t>(handle) & 0xffu;
-    if (index >= g_ports.size()) return AUDIO_IN_ERROR_INVALID_HANDLE;
     {
         std::lock_guard lock(g_mutex);
-        if (!g_ports[index].used) return AUDIO_IN_ERROR_INVALID_STATE;
+        if (index >= g_ports.size() || !g_ports[index].used) return AUDIO_IN_ERROR_INVALID_STATE;
     }
     NotImplemented_nid_no_patch(__func__);
     return 0;
