@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+import subprocess
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -88,6 +89,14 @@ class GeneratorTests(unittest.TestCase):
             self.generate(header_text(codes))
         self.assertEqual(refused.exception.code, 2)
         self.assertFalse((self.root / "IcuScriptNames.hpp").exists())
+
+    def test_unwritable_header_destination_is_a_clean_cli_error(self):
+        output = self.root / "IcuScriptNames.hpp"
+        output.mkdir()
+        with self.assertRaises(SystemExit) as error:
+            self.generate(header_text(range(SCRIPT_COUNT)))
+        self.assertEqual(error.exception.code, 2)
+        self.assertTrue(output.is_dir())
 
 
 class SameFileTests(unittest.TestCase):

@@ -18,9 +18,9 @@ def main():
     parser.add_argument("header", type=Path)
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
-    if same_input_output(args.header, args.output):
-        parser.error("output must be separate from the ICU header")
     try:
+        if same_input_output(args.header, args.output):
+            parser.error("output must be separate from the ICU header")
         source = args.header.read_bytes().replace(b"\r\n", b"\n")
     except OSError as error:
         parser.error(str(error))
@@ -38,7 +38,10 @@ def main():
     for start in range(0, len(names), 10):
         lines.append("    " + ", ".join(names[start:start + 10]) + ",")
     lines += ["};", "", "}", ""]
-    args.output.write_bytes("\n".join(lines).encode("ascii"))
+    try:
+        args.output.write_bytes("\n".join(lines).encode("ascii"))
+    except OSError as error:
+        parser.error(str(error))
 
 
 if __name__ == "__main__":
