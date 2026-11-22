@@ -409,7 +409,7 @@ Run the helper in a second terminal. Commands are polled at most every 100 ms du
 
 Set `APS5_NO_PAD_INPUT` to any value, an empty one included, to make the window ignore its keyboard and mouse events. The keyboard and mouse bindings, the mouse stick and the window keys (F10, F11 and F12 among them) then do nothing. Controllers and the `APS5_PAD_INPUT_FILE` commands are not affected.
 
-On Windows, set `APS5_NO_WGI` to any value to turn off SDL's Windows Gaming Input controller backend. AnyPS5 turns off DirectInput there in every case, and this variable is read once when the video output driver is created.
+On Windows, AnyPS5 disables SDL's DirectInput controller backend by default. Set `SDL_DIRECTINPUT_ENABLED=1` to enable it for controllers that need DirectInput. Windows Gaming Input is enabled by default. Set `APS5_NO_WGI` to any value to disable it when the video output driver starts. An explicit `SDL_JOYSTICK_WGI` setting takes precedence, so `SDL_JOYSTICK_WGI=1` keeps it enabled.
 
 ### Host microphone selection
 
