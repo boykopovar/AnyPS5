@@ -409,6 +409,11 @@ void TestRsaFreeGuestValidation() {
     *__error_nid_postfix() = 64;
     Throws([straddlingRsa] { RSA_free_nid_disambig1_nid_postfix(straddlingRsa); });
     Require(*__error_nid_postfix() == 64);
+    *__error_nid_postfix() = 65;
+    Throws([straddlingRsa] { RSA_check_key_nid_postfix(straddlingRsa); });
+    Require(*__error_nid_postfix() == 65);
+    Throws([] { RSA_check_key_nid_postfix(reinterpret_cast<const LibreSsl3Rsa*>(std::uintptr_t{1})); });
+    Require(*__error_nid_postfix() == 65);
 
 #ifdef _WIN32
     Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
