@@ -159,7 +159,7 @@ function renderError() {
   }
 }
 
-async function fail(value) {
+async function fail(value, { keepInspection = false } = {}) {
   if (failing) return;
   failing = true;
   errorState = {
@@ -173,6 +173,15 @@ async function fail(value) {
       log: logs
     }
   };
+  if (keepInspection) {
+    $("error").hidden = false;
+    $("cancel").hidden = true;
+    working = false;
+    failing = false;
+    lock(false);
+    update();
+    return;
+  }
   releaseVersion++;
   releaseRequest = null;
   worker?.terminate();
@@ -424,7 +433,9 @@ async function createZipSink(name, current) {
 $("convert").onclick = async () => {
   if ($("convert").disabled) return;
   const currentWorker = worker;
+  let preparingOutput = true;
   working = true;
+  $("error").hidden = true;
   lock(true);
   update();
   try {
@@ -446,11 +457,16 @@ $("convert").onclick = async () => {
       outputTransaction = transaction;
       outputDirectory = transaction.directory;
     }
+    preparingOutput = false;
     $("status").hidden = false;
     $("cancel").hidden = false;
     $("error").hidden = true;
     currentWorker.postMessage({ type: "convert", target, toIntel: $("intel").checked, mode: $("save").value, locale });
   } catch (error) {
+    if (currentWorker === worker && preparingOutput && error.name !== "AbortError") {
+      await fail(error, { keepInspection: true });
+      return;
+    }
     if (currentWorker !== worker) return;
     if (error.name === "AbortError") { working = false; lock(false); update(); }
     else await fail(error);
