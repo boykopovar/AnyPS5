@@ -51,7 +51,19 @@ void ExpectThrow(TCall&& call, int line) {
 
 struct Trace {
     std::map<void*, std::size_t> live;
+    void* protectPage = nullptr;
+    std::size_t protectSize = 0;
+    bool protectReadOnly = false;
 };
+
+void SetPageWritable(void* page, std::size_t size, bool writable) {
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    CHECK(VirtualProtect(page, size, writable ? PAGE_READWRITE : PAGE_READONLY, &oldProtect) != 0);
+#else
+    CHECK(mprotect(page, size, writable ? (PROT_READ | PROT_WRITE) : PROT_READ) == 0);
+#endif
+}
 
 void* APS5_VABI TrackAllocate(void*, std::size_t bytes, void* context) {
     auto& trace = *static_cast<Trace*>(context);
@@ -59,6 +71,10 @@ void* APS5_VABI TrackAllocate(void*, std::size_t bytes, void* context) {
     CHECK(memory != nullptr);
     std::memset(memory, 0, bytes);
     trace.live.emplace(memory, bytes);
+    if (trace.protectReadOnly && trace.protectPage) {
+        trace.protectReadOnly = false;
+        SetPageWritable(trace.protectPage, trace.protectSize, false);
+    }
     return memory;
 }
 
@@ -204,16 +220,69 @@ int main() {
     CHECK_THROWS(_ZNK3sce4Json5Array3endEv(roIter, &valid));
     CHECK_THROWS(_ZNK3sce4Json5Array3endEv(&probeResult, badArray));
     CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(badIter, &valid, &beginIter, &val1));
+    CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(straddleIter, &valid, &beginIter, &val1));
     CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(roIter, &valid, &beginIter, &val1));
     CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(&probeResult, badArray, &beginIter, &val1));
     CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(&probeResult, &valid, badIter, &val1));
     CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(&probeResult, &valid, &beginIter, badValue));
     CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(&probeResult, &valid, &beginIter, straddleValue));
     CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(badIter, &valid, &beginIter));
+    CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(straddleIter, &valid, &beginIter));
     CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(roIter, &valid, &beginIter));
     CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(&probeResult, badArray, &beginIter));
     CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(&probeResult, &valid, badIter));
     CHECK(trace.live.size() == afterIters);
+
+    auto* flipIter = reinterpret_cast<ArrayIterator*>(pages.base);
+    trace.protectPage = pages.base;
+    trace.protectSize = pages.pageSize;
+    Array absent{};
+
+    trace.protectReadOnly = true;
+    CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(flipIter, &absent, &beginIter, &val1));
+    SetPageWritable(pages.base, pages.pageSize, true);
+    CHECK(trace.live.size() == afterIters);
+
+    trace.protectReadOnly = true;
+    CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(flipIter, &absent, &beginIter));
+    SetPageWritable(pages.base, pages.pageSize, true);
+    CHECK(trace.live.size() == afterIters);
+
+    trace.protectReadOnly = true;
+    CHECK_THROWS(_ZNK3sce4Json5Array5beginEv(flipIter, &valid));
+    SetPageWritable(pages.base, pages.pageSize, true);
+    CHECK(trace.live.size() == afterIters);
+
+    trace.protectReadOnly = true;
+    CHECK_THROWS(_ZNK3sce4Json5Array3endEv(flipIter, &valid));
+    SetPageWritable(pages.base, pages.pageSize, true);
+    CHECK(trace.live.size() == afterIters);
+
+    trace.protectReadOnly = true;
+    CHECK_THROWS(_ZN3sce4Json5Array8iteratorC1Ev(flipIter));
+    SetPageWritable(pages.base, pages.pageSize, true);
+    CHECK(trace.live.size() == afterIters);
+
+    trace.protectReadOnly = true;
+    CHECK_THROWS(_ZN3sce4Json5Array8iteratorC1ERKS2_(flipIter, &beginIter));
+    SetPageWritable(pages.base, pages.pageSize, true);
+    CHECK(trace.live.size() == afterIters);
+
+    Array publishFail{};
+    _ZN3sce4Json5ArrayC1Ev(&publishFail);
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&publishFail, &val1);
+    ArrayIterator pfBegin{};
+    _ZNK3sce4Json5Array5beginEv(&pfBegin, &publishFail);
+    trace.protectReadOnly = true;
+    CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(flipIter, &publishFail, &pfBegin, &val2));
+    SetPageWritable(pages.base, pages.pageSize, true);
+    trace.protectReadOnly = true;
+    CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(flipIter, &publishFail, &pfBegin));
+    SetPageWritable(pages.base, pages.pageSize, true);
+    _ZN3sce4Json5Array8iteratorD1Ev(&pfBegin);
+    _ZN3sce4Json5ArrayD1Ev(&publishFail);
+    CHECK(trace.live.size() == afterIters);
+    trace.protectPage = nullptr;
 
     CHECK_THROWS(_ZN3sce4Json5Array8iteratorC1Ev(badIter));
     CHECK_THROWS(_ZN3sce4Json5Array8iteratorC1Ev(roIter));

@@ -2834,30 +2834,45 @@ void APS5_VABI _ZN3sce4Json5Array10push_frontERKNS0_5ValueE(Array* self, const V
     PrependArray(&array, &item, value);
 }
 
+struct ScopedArrayIteratorState {
+    ArrayIteratorState* state = nullptr;
+
+    explicit ScopedArrayIteratorState(ArrayIteratorState* allocated = nullptr) : state(allocated) {}
+    ScopedArrayIteratorState(const ScopedArrayIteratorState&) = delete;
+    ScopedArrayIteratorState& operator=(const ScopedArrayIteratorState&) = delete;
+    ~ScopedArrayIteratorState() {
+        if (state) Release(state);
+    }
+
+    void Reset() {
+        if (!state) return;
+        Release(state);
+        state = nullptr;
+    }
+
+    void Publish(ArrayIterator* destination, const char* function) {
+        const ArrayIterator out{state};
+        StoreGuest(destination, out, function);
+        state = nullptr;
+    }
+};
+
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(ArrayIterator* result, Array* self, const ArrayIterator* position, const Value* value) {
     StoreGuest(result, ArrayIterator{}, __func__);
     const auto array = LoadGuest<Array>(self, __func__);
-    ArrayIterator out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
     if (out.state) out.state->position = nullptr;
-    StoreGuest(result, out, __func__);
-    if (!array.items) return result;
+    if (!array.items) {
+        out.Publish(result, __func__);
+        return result;
+    }
     ArrayIterator pos{};
     const bool hasPos = position && GuestCopyIn_nid_no_patch(&pos, position, sizeof(pos));
     ArrayIteratorState posState{};
     const bool hasPosState = hasPos && pos.state && GuestCopyIn_nid_no_patch(&posState, pos.state, sizeof(posState));
-    if (!hasPosState || !posState.position || !array.items->head) {
-        Release(out.state);
-        out.state = nullptr;
-        StoreGuest(result, out, __func__);
-        NotImplemented_nid_no_patch(__func__);
-    }
+    if (!hasPosState || !posState.position || !array.items->head) NotImplemented_nid_no_patch(__func__);
     Value item{};
-    if (!GuestCopyIn_nid_no_patch(&item, value, sizeof(item))) {
-        Release(out.state);
-        out.state = nullptr;
-        StoreGuest(result, out, __func__);
-        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    }
+    if (!GuestCopyIn_nid_no_patch(&item, value, sizeof(item))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     ArrayLink* inserted;
     if (!ModernValues()) inserted = InsertArrayLink(*array.items, posState.position, item, value);
     else {
@@ -2870,8 +2885,8 @@ ArrayIterator* APS5_VABI _ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE
         if (!operation.Finish()) TransferPayload(inserted->value, copy.value);
     }
     if (inserted) { if (out.state) out.state->position = inserted; }
-    else { Release(out.state); out.state = nullptr; }
-    StoreGuest(result, out, __func__);
+    else out.Reset();
+    out.Publish(result, __func__);
     return result;
 }
 
@@ -2885,25 +2900,19 @@ void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Val
 ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, const Array* self) {
     StoreGuest(result, ArrayIterator{}, __func__);
     const auto array = LoadGuest<Array>(self, __func__);
-    ArrayIterator out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
     if (out.state) out.state->position = array.items && array.items->head ? array.items->head->next : nullptr;
-    if (array.items && (!array.items->head || !array.items->head->next)) {
-        Release(out.state);
-        out.state = nullptr;
-    }
-    StoreGuest(result, out, __func__);
+    if (array.items && (!array.items->head || !array.items->head->next)) out.Reset();
+    out.Publish(result, __func__);
     return result;
 }
 ArrayIterator* APS5_VABI _ZNK3sce4Json5Array3endEv(ArrayIterator* result, const Array* self) {
     StoreGuest(result, ArrayIterator{}, __func__);
     const auto array = LoadGuest<Array>(self, __func__);
-    ArrayIterator out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
     if (out.state) out.state->position = array.items ? array.items->head : nullptr;
-    if (array.items && !array.items->head) {
-        Release(out.state);
-        out.state = nullptr;
-    }
-    StoreGuest(result, out, __func__);
+    if (array.items && !array.items->head) out.Reset();
+    out.Publish(result, __func__);
     return result;
 }
 bool APS5_VABI _ZNK3sce4Json5Array5emptyEv(const Array* self) {
@@ -2939,20 +2948,17 @@ void APS5_VABI _ZN3sce4Json5Array8pop_backEv(Array* self) {
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array5eraseERKNS1_8iteratorE(ArrayIterator* result, Array* self, const ArrayIterator* position) {
     StoreGuest(result, ArrayIterator{}, __func__);
     const auto array = LoadGuest<Array>(self, __func__);
-    ArrayIterator out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
     if (out.state) out.state->position = nullptr;
-    StoreGuest(result, out, __func__);
-    if (!array.items) return result;
+    if (!array.items) {
+        out.Publish(result, __func__);
+        return result;
+    }
     ArrayIterator pos{};
     const bool hasPos = position && GuestCopyIn_nid_no_patch(&pos, position, sizeof(pos));
     ArrayIteratorState posState{};
     const bool hasPosState = hasPos && pos.state && GuestCopyIn_nid_no_patch(&posState, pos.state, sizeof(posState));
-    if (!hasPosState || !posState.position || posState.position == array.items->head) {
-        Release(out.state);
-        out.state = nullptr;
-        StoreGuest(result, out, __func__);
-        NotImplemented_nid_no_patch(__func__);
-    }
+    if (!hasPosState || !posState.position || posState.position == array.items->head) NotImplemented_nid_no_patch(__func__);
     auto* link = posState.position;
     auto* next = link->next;
     next->previous = link->previous;
@@ -2962,11 +2968,8 @@ ArrayIterator* APS5_VABI _ZN3sce4Json5Array5eraseERKNS1_8iteratorE(ArrayIterator
     --array.items->count;
     if (next) {
         if (out.state) out.state->position = next;
-    } else {
-        Release(out.state);
-        out.state = nullptr;
-    }
-    StoreGuest(result, out, __func__);
+    } else out.Reset();
+    out.Publish(result, __func__);
     return result;
 }
 
@@ -3018,9 +3021,9 @@ void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(ArrayIterator* self, const Ar
     ArrayIteratorState sourceState{};
     if (source.state) sourceState = LoadGuest<ArrayIteratorState>(source.state, __func__);
     StoreGuest(self, ArrayIterator{}, __func__);
-    ArrayIterator out{source.state ? static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState))) : nullptr};
+    ScopedArrayIteratorState out{source.state ? static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState))) : nullptr};
     if (out.state) *out.state = sourceState;
-    StoreGuest(self, out, __func__);
+    out.Publish(self, __func__);
 }
 void APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(ArrayIterator* self, std::size_t count) {
     const auto local = LoadGuest<ArrayIterator>(self, __func__);
@@ -3557,9 +3560,9 @@ ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratoraSERKS2_(ArrayIterator* self
 
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1Ev(ArrayIterator* self) {
     StoreGuest(self, ArrayIterator{}, __func__);
-    ArrayIterator out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
     if (out.state) out.state->position = nullptr;
-    StoreGuest(self, out, __func__);
+    out.Publish(self, __func__);
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(ObjectIterator* self, int) {
