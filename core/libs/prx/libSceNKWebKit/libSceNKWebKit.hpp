@@ -77,6 +77,7 @@
 #include "prx/libSceNKWebKit/include/HEVCCodecParameters.hpp"
 #include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfAutomaticThreadExports.hpp"
 #include "prx/libSceNKWebKit/include/InterfaceBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/DOMExceptionExports.hpp"
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
