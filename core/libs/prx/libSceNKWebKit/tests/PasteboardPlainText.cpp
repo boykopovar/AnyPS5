@@ -1,7 +1,6 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libSceNKWebKit/src/PasteboardAbi.hpp"
-#include "prx/libSceNKWebKit/src/PasteboardModel.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 
 #include <array>
@@ -11,15 +10,13 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
 using NKWebKit::WebCoreAbi::CanSmartReplace;
 using NKWebKit::WebCoreAbi::CannotSmartReplace;
-using NKWebKit::WebCoreAbi::FindPasteboardEntry;
-using NKWebKit::WebCoreAbi::ModulePasteboardStore;
 using NKWebKit::WebCoreAbi::Pasteboard;
-using NKWebKit::WebCoreAbi::PasteboardEntry;
 using NKWebKit::WebCoreAbi::PasteboardUniquePtr;
 using NKWebKit::WtfAbi::String;
 
@@ -40,8 +37,24 @@ String Make16(const char16_t* text, unsigned length) {
     return _ZN3WTF10StringImpl6createEPKDsj(text, length);
 }
 
-PasteboardEntry* Stored(const char16_t* type) {
-    return FindPasteboardEntry(ModulePasteboardStore().entries, std::u16string_view(type, std::char_traits<char16_t>::length(type)));
+std::u16string Units(const String& value) {
+    std::u16string result;
+    const auto view = NKWebKit::WtfAbi::ViewOf(value.impl);
+    for (unsigned index = 0; index < view.length; ++index) result.push_back(NKWebKit::WtfAbi::CodeUnitAt(view, index));
+    return result;
+}
+
+std::u16string Read(Pasteboard& pasteboard, const char* type) {
+    String typeString = Make(type);
+    return Units(_ZN7WebCore10Pasteboard10readStringERKN3WTF6StringE(&pasteboard, &typeString));
+}
+
+std::vector<std::u16string> ReadAll(Pasteboard& pasteboard, const char* type) {
+    String typeString = Make(type);
+    auto strings = _ZN7WebCore10Pasteboard14readAllStringsERKN3WTF6StringE(&pasteboard, &typeString);
+    std::vector<std::u16string> result;
+    for (unsigned index = 0; index < strings.size; ++index) result.push_back(Units(strings[index]));
+    return result;
 }
 
 void WritePlainText(Pasteboard& pasteboard, const char16_t* text, unsigned length, NKWebKit::WebCoreAbi::SmartReplaceOption option) {
@@ -76,38 +89,35 @@ void TestFactoryReturnsDistinctHandles() {
 void TestPlainTextLandsUnderItsOwnType() {
     Pasteboard pasteboard;
     WritePlainText(pasteboard, "plain", CannotSmartReplace);
-    PasteboardEntry* entry = Stored(u"text/plain;charset=utf-8");
-    Require(entry != nullptr);
-    Require(entry->value == u"plain");
-    Require(Stored(u"text/plain") == nullptr);
-    Require(Stored(u"text/html") == nullptr);
+    Require(Read(pasteboard, "text/plain;charset=utf-8") == u"plain");
+    Require(ReadAll(pasteboard, "text/plain;charset=utf-8") == std::vector<std::u16string>{u"plain"});
+    Require(Read(pasteboard, "text/plain").empty());
+    Require(Read(pasteboard, "text/html").empty());
 }
 
 void TestPlainTextUsesUTF16() {
     Pasteboard pasteboard;
     const char16_t text[] = {0x65E5, 0xD800, 0xDE00, 0xDFFF, 0x0000};
     WritePlainText(pasteboard, text, 5, CannotSmartReplace);
-    PasteboardEntry* entry = Stored(u"text/plain;charset=utf-8");
-    Require(entry != nullptr);
-    Require(entry->value == std::u16string(text, 5));
+    Require(Read(pasteboard, "text/plain;charset=utf-8") == std::u16string(text, 5));
 }
 
 void TestPlainTextOverwrites() {
     Pasteboard pasteboard;
     WritePlainText(pasteboard, "first", CannotSmartReplace);
     WritePlainText(pasteboard, "second", CanSmartReplace);
-    Require(ModulePasteboardStore().entries.size() == 1);
-    PasteboardEntry* entry = Stored(u"text/plain;charset=utf-8");
-    Require(entry != nullptr);
-    Require(entry->value == u"second");
+    Require(ReadAll(pasteboard, "text/plain;charset=utf-8") == std::vector<std::u16string>{u"second"});
+    Require(Read(pasteboard, "text/plain;charset=utf-8") == u"second");
 }
 
 void TestPlainTextEmptyValue() {
     Pasteboard pasteboard;
+    WritePlainText(pasteboard, "before-empty", CannotSmartReplace);
+    Require(Read(pasteboard, "text/plain;charset=utf-8") == u"before-empty");
     WritePlainText(pasteboard, "", CannotSmartReplace);
-    PasteboardEntry* entry = Stored(u"text/plain;charset=utf-8");
-    Require(entry != nullptr);
-    Require(entry->value.empty());
+    Require(Read(pasteboard, "text/plain;charset=utf-8").empty());
+    Require(ReadAll(pasteboard, "text/plain;charset=utf-8").empty());
+    Require(pasteboard.changeCount == 2);
 }
 
 void TestPlainTextAdvancesChangeCount() {
@@ -116,6 +126,16 @@ void TestPlainTextAdvancesChangeCount() {
     WritePlainText(pasteboard, "a", CannotSmartReplace);
     WritePlainText(pasteboard, "b", CannotSmartReplace);
     Require(pasteboard.changeCount == 2);
+}
+
+void TestPlainTextPreservesOtherTypes() {
+    Pasteboard pasteboard;
+    String type = Make("text/html");
+    String html = Make("<p>preserved</p>");
+    _ZN7WebCore10Pasteboard11writeStringERKN3WTF6StringES4_(&pasteboard, &type, &html);
+    WritePlainText(pasteboard, "plain-after-html", CannotSmartReplace);
+    Require(Read(pasteboard, "text/html") == u"<p>preserved</p>");
+    Require(Read(pasteboard, "text/plain;charset=utf-8") == u"plain-after-html");
 }
 
 void TestNullArgumentsThrow() {
@@ -156,6 +176,7 @@ int main() {
     TestPlainTextOverwrites();
     TestPlainTextEmptyValue();
     TestPlainTextAdvancesChangeCount();
+    TestPlainTextPreservesOtherTypes();
     TestNullArgumentsThrow();
     return 0;
 }
