@@ -210,18 +210,18 @@ int APS5_VABI FT_Glyph_Copy_nid_postfix(GuestGlyphRec* source, GuestGlyphRec** t
     return 0;
 }
 
-void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(GuestGlyphRec* glyph, std::uint32_t mode, GuestBBox* box) {
+void APS5_VABI FreeTypeGlyphGetCBox_nid_no_patch(GuestGlyphRec* glyph, std::uint32_t mode, GuestBBox* box) {
     if (!box) return;
     *box = {};
     if (!glyph || !glyph->clazz) return;
     std::lock_guard lock(glyphMutex);
-    auto& owner = Find(glyph, __func__, false);
+    auto& owner = Find(glyph, "FT_Glyph_Get_CBox_nid_postfix", false);
     if (owner.isBitmap) {
         const auto& image = owner.bitmap;
         const auto fits = [](std::int32_t bearing) {
             return bearing >= std::numeric_limits<std::int32_t>::min() / 64 && bearing <= std::numeric_limits<std::int32_t>::max() / 64;
         };
-        if (!fits(image.left) || !fits(image.top)) NotImplemented_nid_no_patch(__func__);
+        if (!fits(image.left) || !fits(image.top)) NotImplemented_nid_no_patch("FT_Glyph_Get_CBox_nid_postfix");
         box->xMin = static_cast<std::int64_t>(image.left) * 64;
         box->xMax = box->xMin + static_cast<std::int64_t>(image.bitmap.width * std::uint32_t{64});
         box->yMax = static_cast<std::int64_t>(image.top) * 64;
@@ -244,6 +244,10 @@ void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(GuestGlyphRec* glyph, std::uint32_t
         box->xMax >>= 6;
         box->yMax >>= 6;
     }
+}
+
+void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(GuestGlyphRec* glyph, std::uint32_t mode, GuestBBox* box) {
+    FreeTypeGlyphGetCBox_nid_no_patch(glyph, mode, box);
 }
 
 void APS5_VABI FT_Done_Glyph_nid_postfix(GuestGlyphRec* glyph) {

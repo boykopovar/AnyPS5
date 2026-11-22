@@ -13,6 +13,39 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import rebase_verify
 
+REBASE_VERIFY_TEST_SHARDS = 3
+
+
+def iter_test_cases(suite):
+    for test in suite:
+        if isinstance(test, unittest.TestSuite):
+            yield from iter_test_cases(test)
+        else:
+            yield test
+
+
+def discovered_test_cases():
+    suite = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
+    return sorted(iter_test_cases(suite), key=lambda test: test.id())
+
+
+def rebase_verify_test_shard(shard, shard_count=REBASE_VERIFY_TEST_SHARDS):
+    if shard_count <= 0 or shard < 0 or shard >= shard_count:
+        raise ValueError("shard index must be within the shard count")
+    tests = discovered_test_cases()
+    return unittest.TestSuite(test for index, test in enumerate(tests) if index % shard_count == shard)
+
+
+class TestShardTests(unittest.TestCase):
+    def test_shards_discover_each_case_once(self):
+        discovered = [test.id() for test in discovered_test_cases()]
+        sharded = [test.id() for shard in range(REBASE_VERIFY_TEST_SHARDS)
+                   for test in iter_test_cases(rebase_verify_test_shard(shard))]
+        self.assertEqual(sorted(sharded), sorted(discovered))
+        self.assertEqual(len(sharded), len(set(sharded)))
+        self.assertTrue(all(len(list(iter_test_cases(rebase_verify_test_shard(shard)))) > 0
+                            for shard in range(REBASE_VERIFY_TEST_SHARDS)))
+
 
 def run_git(root, *arguments):
     environment = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1"}
@@ -491,4 +524,16 @@ class ModeDifferencesTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--shard":
+        if len(sys.argv) != 3 or "/" not in sys.argv[2]:
+            print("usage: test_rebase_verify.py --shard INDEX/COUNT", file=sys.stderr)
+            raise SystemExit(2)
+        try:
+            shard_index, shard_count = (int(part) for part in sys.argv[2].split("/", 1))
+            suite = rebase_verify_test_shard(shard_index, shard_count)
+        except ValueError as error:
+            print(f"invalid shard: {error}", file=sys.stderr)
+            raise SystemExit(2)
+        result = unittest.TextTestRunner().run(suite)
+        raise SystemExit(0 if result.wasSuccessful() else 1)
     unittest.main()

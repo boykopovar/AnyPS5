@@ -20,6 +20,7 @@ target_sources(libSceIcu PRIVATE Availability.cpp StringHash.cpp InvariantChars.
 target_sources(libSceIcu PRIVATE CollatorAvailability.cpp)
 target_sources(libSceIcu PRIVATE Locale.cpp LocaleMap.cpp DefaultLocale.cpp)
 target_sources(libSceIcu PRIVATE UtcTime.cpp)
+target_sources(libSceIcu PRIVATE NormalizerCombine.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_icu_utc_time_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/UtcTime.cpp)
@@ -1025,6 +1026,34 @@ if(BUILD_TESTING)
     set_tests_properties(guest_icu_resource_utf8 PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_icu_resource_utf8 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+target_sources(libSceIcu PRIVATE KeywordList.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_keyword_list_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/KeywordList.cpp)
+    target_include_directories(guest_icu_keyword_list_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_keyword_list_tests PRIVATE libSceIcu libc icu_common)
+    configure_windows_unwind(guest_icu_keyword_list_tests)
+    add_test(NAME guest_icu_keyword_list COMMAND guest_icu_keyword_list_tests)
+    set_tests_properties(guest_icu_keyword_list PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_keyword_list PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_normalizer_combine_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/NormalizerCombine.cpp)
+    target_include_directories(guest_icu_normalizer_combine_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_normalizer_combine_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_normalizer_combine_tests)
+    add_test(NAME guest_icu_normalizer_combine COMMAND guest_icu_normalizer_combine_tests)
+    set_tests_properties(guest_icu_normalizer_combine PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_normalizer_combine PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
