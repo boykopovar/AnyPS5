@@ -87,15 +87,13 @@ void TestEngineGetId() {
 
     UnreadablePage unreadable;
     errno = 71;
-    bool threwNotImplemented = false;
+    bool threwUnreadable = false;
     try {
         static_cast<void>(ENGINE_get_id_nid_postfix(unreadable.Address()));
     } catch (const std::invalid_argument&) {
-        Require(false);
-    } catch (const std::runtime_error&) {
-        threwNotImplemented = true;
+        threwUnreadable = true;
     }
-    Require(threwNotImplemented && errno == 71);
+    Require(threwUnreadable && errno == 71);
 }
 
 }

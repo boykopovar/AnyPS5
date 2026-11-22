@@ -8,14 +8,6 @@
 
 namespace {
 
-template <typename T>
-void CopyGuestInPreservingErrno(const void* guestAddress, T& hostValue, const char* caller) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&hostValue, guestAddress, sizeof(T));
-    errno = savedErrno;
-    if (!copied) NotImplemented_nid_no_patch(caller);
-}
-
 constexpr int EngineLibrary = 38;
 constexpr int UnnamedFunction = 0xfff;
 constexpr int PassedNullParameter = 67;
@@ -67,7 +59,10 @@ void* APS5_VABI ENGINE_get_first_nid_postfix(void) {
 const char* APS5_VABI ENGINE_get_id_nid_postfix(const void* engine) {
     if (engine == nullptr) throw std::invalid_argument(std::string(__func__) + ": null engine");
     const char* id = nullptr;
-    CopyGuestInPreservingErrno(engine, id, __func__);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&id, engine, sizeof(id));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(__func__) + ": unreadable engine");
     return id;
 }
 

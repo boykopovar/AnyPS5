@@ -228,25 +228,16 @@ int main() {
     Require(ENGINE_get_id_nid_postfix(lastReadableSlot) == expectedId, "ENGINE_get_id reads exact page-end slot");
     Require(errno == 44, "ENGINE_get_id preserves errno at page boundary");
 
-    errno = 45;
-    RequireThrowsInvalidArgument([&] { ENGINE_get_id_nid_postfix(nullptr); }, "ENGINE_get_id rejects null engine");
-    Require(errno == 45, "ENGINE_get_id preserves errno on null engine");
-
-    const void* const unreadableEngines[] = {
+    const void* const invalidEngines[] = {
+        nullptr,
         reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)),
         guarded.base + guarded.pageSize,
         guarded.base + guarded.pageSize - 4,
     };
-    for (const void* unreadableEngine : unreadableEngines) {
+    for (const void* invalidEngine : invalidEngines) {
         errno = 45;
-        bool threwRuntime = false;
-        try {
-            ENGINE_get_id_nid_postfix(unreadableEngine);
-        } catch (const std::runtime_error&) {
-            threwRuntime = true;
-        }
-        Require(threwRuntime, "ENGINE_get_id reports unreadable engine via NotImplemented");
-        Require(errno == 45, "ENGINE_get_id preserves errno on unreadable engine");
+        RequireThrowsInvalidArgument([&] { ENGINE_get_id_nid_postfix(invalidEngine); }, "ENGINE_get_id rejects null or unreadable engine");
+        Require(errno == 45, "ENGINE_get_id preserves errno on rejected engine");
     }
     Require(ERR_peek_error_nid_postfix() == 0, "ENGINE_get_id pushes no error");
 
