@@ -1259,6 +1259,12 @@ const char* APS5_VABI strchr_nid_postfix(const char* s, int c);
 char* APS5_VABI index_nid_postfix(const char* s, int c);
 char* APS5_VABI strrchr_nid_postfix(const char* s, int c);
 char* APS5_VABI rindex_nid_postfix(const char* s, int c);
+void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6assignEPKc_nid_postfix(
+    void* string, const char* source);
+void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6assignEPKcm_nid_postfix(
+    void* string, const char* source, std::uint64_t count);
+void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6assignEmc_nid_postfix(
+    void* string, std::uint64_t count, char value);
 void APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE7reserveEm_nid_postfix(
     void* string, std::uint64_t requested);
 void APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEED2Ev_nid_postfix(void* string);

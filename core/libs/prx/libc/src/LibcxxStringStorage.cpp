@@ -23,6 +23,7 @@ constexpr std::uint64_t LongFlag = 1u;
 constexpr std::uint64_t AllocationAlignment = 16u;
 constexpr std::uint64_t MaxSize = UINT64_MAX - AllocationAlignment - 1u;
 constexpr char AppendInaccessible[] = "basic_string::append: inaccessible string storage";
+constexpr char AssignInaccessible[] = "basic_string::assign: inaccessible string storage";
 using GuestAllocation = std::unique_ptr<void, decltype(&_ZdlPv_nid_postfix)>;
 
 Representation ReadString(const void* string) {
@@ -67,24 +68,88 @@ GuestAllocation AllocateLongStorage(std::uint64_t bytes) {
     return GuestAllocation(_Znwm_nid_postfix(static_cast<std::size_t>(bytes)), &_ZdlPv_nid_postfix);
 }
 
+void FillLongStorage(char* destination, std::size_t count, char value, const char* failure) {
+    std::array<char, 4096> buffer;
+    buffer.fill(value);
+    for (std::size_t written = 0; written < count;) {
+        const auto step = std::min(buffer.size(), count - written);
+        if (!GuestCopyOut_nid_no_patch(destination + written, buffer.data(), step)) {
+            _ZSt18_Xinvalid_argumentPKc_nid_postfix(failure);
+        }
+        written += step;
+    }
+}
+
 void WriteAppendBytes(char* destination, const char* source, std::size_t count, char value) {
     if (source) {
         CopyLongStorage(destination, source, count, AppendInaccessible);
     } else {
-        std::array<char, 4096> buffer;
-        buffer.fill(value);
-        for (std::size_t written = 0; written < count;) {
-            const auto step = std::min(buffer.size(), count - written);
-            if (!GuestCopyOut_nid_no_patch(destination + written, buffer.data(), step)) {
-                _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::append: unwritable string storage");
-            }
-            written += step;
-        }
+        FillLongStorage(destination, count, value, "basic_string::append: unwritable string storage");
     }
     constexpr char terminator = '\0';
     if (!GuestCopyOut_nid_no_patch(destination + count, &terminator, sizeof(terminator))) {
         _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::append: unwritable string terminator");
     }
+}
+
+void WriteAssignment(char* destination, const char* source, std::size_t count, char value) {
+    if (source) CopyLongStorage(destination, source, count, AssignInaccessible);
+    else FillLongStorage(destination, count, value, AssignInaccessible);
+    constexpr char terminator = '\0';
+    if (!GuestCopyOut_nid_no_patch(destination + count, &terminator, sizeof(terminator))) {
+        _ZSt18_Xinvalid_argumentPKc_nid_postfix(AssignInaccessible);
+    }
+}
+
+void* Assign(void* string, const char* source, std::uint64_t count, char value = '\0') {
+    if (count > MaxSize) _ZSt14_Xlength_errorPKc_nid_postfix("basic_string");
+    if (count >= SIZE_MAX) throw std::bad_alloc();
+    auto representation = ReadString(string);
+    const bool isLong = (representation[0] & LongFlag) != 0;
+    auto fields = isLong ? ReadLongString(representation) : LongString{};
+    if (!isLong && (representation[0] >> 1u) > InlineCapacity) {
+        _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string: invalid short size");
+    }
+    const auto capacity = isLong ? (fields.taggedCapacity & ~LongFlag) - 1u : InlineCapacity;
+    auto* previous = reinterpret_cast<char*>(static_cast<std::uintptr_t>(fields.address));
+    const auto bytes = static_cast<std::size_t>(count);
+    if (count > capacity) {
+        const auto grown = capacity <= MaxSize / 2u ? capacity * 2u : MaxSize;
+        const auto allocated = AllocationSize(std::max(grown, count));
+        auto allocation = AllocateLongStorage(allocated);
+        auto* destination = static_cast<char*>(allocation.get());
+        WriteAssignment(destination, source, bytes, value);
+        const LongString replacement{allocated | LongFlag, count, reinterpret_cast<std::uintptr_t>(destination)};
+        if (!GuestCopyOut_nid_no_patch(string, &replacement, sizeof(replacement))) {
+            _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::assign: unwritable representation");
+        }
+        allocation.release();
+        _ZdlPv_nid_postfix(previous);
+        return string;
+    }
+    if (isLong) {
+        if (count >= UINTPTR_MAX - fields.address || !GuestWritable_nid_no_patch(string, representation.size())) {
+            _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::assign: unwritable representation");
+        }
+        WriteAssignment(previous, source, bytes, value);
+        fields.size = count;
+        representation = std::bit_cast<Representation>(fields);
+    } else {
+        auto* destination = representation.data() + 1;
+        if (source) {
+            if (count && !GuestCopyIn_nid_no_patch(destination, source, bytes)) {
+                _ZSt18_Xinvalid_argumentPKc_nid_postfix(AssignInaccessible);
+            }
+        } else {
+            std::fill_n(destination, bytes, static_cast<unsigned char>(value));
+        }
+        representation[0] = static_cast<unsigned char>(count << 1u);
+        destination[bytes] = 0;
+    }
+    if (!GuestCopyOut_nid_no_patch(string, representation.data(), representation.size())) {
+        _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::assign: unwritable representation");
+    }
+    return string;
 }
 
 void* Append(void* string, const char* source, std::uint64_t count, char value = '\0') {
@@ -189,6 +254,23 @@ extern "C" void APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9alloc
     if ((representation[0] & LongFlag) == 0) return;
     const auto fields = ReadLongString(representation);
     _ZdlPv_nid_postfix(reinterpret_cast<void*>(static_cast<std::uintptr_t>(fields.address)));
+}
+
+extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6assignEPKc_nid_postfix(
+    void* string, const char* source) {
+    if (!source) _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::assign: null source");
+    return Assign(string, source, strlen_nid_postfix(source));
+}
+
+extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6assignEPKcm_nid_postfix(
+    void* string, const char* source, std::uint64_t count) {
+    if (count && !source) _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::assign: null source");
+    return Assign(string, source, count);
+}
+
+extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6assignEmc_nid_postfix(
+    void* string, std::uint64_t count, char value) {
+    return Assign(string, nullptr, count, value);
 }
 
 extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6appendEPKc_nid_postfix(
