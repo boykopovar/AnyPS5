@@ -70,6 +70,7 @@ const uint8_t* APS5_VABI xmlDictLookup_nid_postfix(void* dict, const uint8_t* na
 void APS5_VABI xmlFreeDoc_nid_postfix(NKWebKit::GuestDoc* cur);
 void APS5_VABI xmlFreeParserCtxt_nid_postfix(NKWebKit::GuestParserCtxt* ctxt);
 NKWebKit::GuestEntity* APS5_VABI xmlGetDocEntity_nid_postfix(const NKWebKit::GuestDoc* doc, const uint8_t* name);
+int APS5_VABI xmlGetExternalEntityLoader_nid_postfix();
 NKWebKit::GuestEntity* APS5_VABI xmlGetPredefinedEntity_nid_postfix(const uint8_t* name);
 void APS5_VABI xmlInitParser_nid_postfix();
 int APS5_VABI xmlParseChunk_nid_postfix(NKWebKit::GuestParserCtxt* ctxt, const char* chunk, int size, int terminate);
@@ -80,6 +81,7 @@ void APS5_VABI xmlSAX2EndDocument_nid_postfix(void* ctx);
 void APS5_VABI xmlSAX2EntityDecl_nid_postfix(void* ctx, const uint8_t* name, int type, const uint8_t* publicId, const uint8_t* systemId, const uint8_t* content);
 void APS5_VABI xmlSAX2InternalSubset_nid_postfix(void* ctx, const uint8_t* name, const uint8_t* ExternalID, const uint8_t* SystemID);
 void APS5_VABI xmlSAX2StartDocument_nid_postfix(void* ctx);
+int APS5_VABI xmlSetExternalEntityLoader_nid_postfix();
 void APS5_VABI xmlStopParser_nid_postfix(NKWebKit::GuestParserCtxt* ctxt);
 uint8_t* APS5_VABI xmlStrdup_nid_postfix(const uint8_t* cur);
 uint8_t* APS5_VABI xmlStrndup_nid_postfix(const uint8_t* cur, int len);

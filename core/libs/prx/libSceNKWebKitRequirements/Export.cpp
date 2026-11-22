@@ -54,6 +54,14 @@ void APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_disambig1_nid_postfix(Ubs
 
 
 
+int APS5_VABI xmlGetExternalEntityLoader_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI xmlSetExternalEntityLoader_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI wpe_loader_get_loaded_implementation_library_name() {
     NotImplemented_nid_no_patch(__func__);
 }

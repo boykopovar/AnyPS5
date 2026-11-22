@@ -1,0 +1,5 @@
+# libSceNKWebKitRequirements
+
+## add Known export names; ABI prototypes unverified
+
+- [xmlGetExternalEntityLoader and xmlSetExternalEntityLoader](../../../core/libs/prx/libSceNKWebKitRequirements/Export.cpp) have unverified PS5 prototypes and external-entity callback behavior. Their parameterless `int` import-resolution declarations both throw through `NotImplemented_nid_no_patch`; no guest callback bridge or default loader representation is implemented. The names in [libxml2 v2.9.14](https://github.com/GNOME/libxml2/blob/7846b0a677f8d3ce72486125fa281e92ac9970e8/xmlIO.c#L4033-L4058) hash to `91UMyKyTO14` and `hjleKaq5H8o`, respectively, present as unresolved function exports in the [public inventory labelled 13.60](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/09d034130dce708a5efa1b0a3100ead30d9558cd/data/firmware-13.60/libscenkwebkitrequirements-e1791fbd7a.jsonl). The inventory's firmware label is not independently authenticated; a name/NID match does not verify a guest ABI or native callback compatibility.
