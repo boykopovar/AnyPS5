@@ -563,6 +563,9 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     dateConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Date");
     errorConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Error");
     regExpConstructor = JS_GetPropertyStr(qctx, rawGlobal, "RegExp");
+    JSValue reflect = JS_GetPropertyStr(qctx, rawGlobal, "Reflect");
+    reflectSet = JS_GetPropertyStr(qctx, reflect, "set");
+    JS_FreeValue(qctx, reflect);
     JSValue objCtor = JS_GetPropertyStr(qctx, rawGlobal, "Object");
     JSValue objProto = JS_GetPropertyStr(qctx, objCtor, "prototype");
     JS_FreeValue(qctx, objCtor);
@@ -638,6 +641,7 @@ OpaqueJSContext::~OpaqueJSContext() {
         JS_FreeValue(qctx, dateConstructor);
         JS_FreeValue(qctx, errorConstructor);
         JS_FreeValue(qctx, regExpConstructor);
+        JS_FreeValue(qctx, reflectSet);
         JS_FreeContext(qctx);
         qctx = nullptr;
     }
