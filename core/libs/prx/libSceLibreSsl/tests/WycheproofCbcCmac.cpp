@@ -106,7 +106,6 @@ std::array<unsigned char, 16> CmacFinal(LibreSslCmac* context) {
 void TestCbcDecrypt() {
     for (const auto& vector : LibreSslWycheproofCbcCmac::CbcVectors) {
         if (vector.expectedValid != 1) continue;
-        if (vector.msgHex[0] == '\0') continue;
 
         const auto key = Hex(vector.keyHex);
         const auto iv = Hex(vector.ivHex);
@@ -134,7 +133,6 @@ void TestCbcDecrypt() {
 void TestCbcEncrypt() {
     for (const auto& vector : LibreSslWycheproofCbcCmac::CbcVectors) {
         if (vector.expectedValid != 1) continue;
-        if (vector.msgHex[0] == '\0') continue;
 
         const auto key = Hex(vector.keyHex);
         const auto iv = Hex(vector.ivHex);
@@ -148,8 +146,9 @@ void TestCbcEncrypt() {
         Require(EVP_EncryptInit_ex_nid_postfix(context.get(), reinterpret_cast<const LibreSslEvpCipher*>(method), nullptr, key.data(), iv.data()) == 1, "encrypt init");
 
         std::vector<unsigned char> output(msg.size() + 16);
+        const unsigned char none = 0;
         int written = 0;
-        Require(EVP_EncryptUpdate_nid_postfix(context.get(), output.data(), &written, msg.data(), static_cast<int>(msg.size())) == 1, "encrypt update");
+        Require(EVP_EncryptUpdate_nid_postfix(context.get(), output.data(), &written, msg.empty() ? &none : msg.data(), static_cast<int>(msg.size())) == 1, "encrypt update");
         int finalWritten = 0;
         Require(EVP_EncryptFinal_ex_nid_postfix(context.get(), output.data() + written, &finalWritten) == 1, "encrypt final");
         written += finalWritten;
