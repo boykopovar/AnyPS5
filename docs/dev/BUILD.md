@@ -215,7 +215,7 @@ A ThreadSanitizer build runs its tests with `TSAN_OPTIONS=suppressions=$PWD/tool
 After configuring a build directory, use `tools/check_compile.py` to check the given source files. The tool reads their compile commands from `compile_commands.json` or Ninja, preserving compilation options while dropping object and dependency output options. It handles `-MF`, `-MT`, `-MQ` and `-MJ` with separate or attached values so that unused output options do not cause false failures under `-Werror`.
 
 ```sh
-python3 tools/check_compile.py --build build-relinker core/relinker/main.cpp
+python3 tools/check_compile.py --build build-relinker core/relinker/cli/src/CliArgs.cpp
 ```
 
 Real compile errors still fail. Syntax checks do not replace a full build and test run.
