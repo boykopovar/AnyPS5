@@ -258,6 +258,50 @@ class InvalidSummaries(CaptureFixture):
 
 
 class InvalidTraces(CaptureFixture):
+    def test_malformed_native_event_streams_cannot_complete_a_capture(self):
+        self.summary["trace_dropped"] = True
+        self.write_summary()
+        events = self.trace["traceEvents"]
+        loss = {"name": "trace buffer full", "ph": "i", "ts": 1, "pid": 42, "tid": 1,
+                "args": {"events_lost": 1}}
+        folded = {"name": "presenter folded", "ph": "C", "ts": 1, "pid": 42, "tid": 1, "args": {"ms": 1}}
+        other_thread = dict(events[1], tid=2, args={"name": "other"})
+        cases = [
+            ("process TID 1", 0, {"tid": 1}, []),
+            ("process TID 9", 0, {"tid": 9}, []),
+            ("process time negative", 0, {"ts": -1}, []),
+            ("process time positive", 0, {"ts": 1}, []),
+            ("thread TID zero", 1, {"tid": 0}, []),
+            ("thread time negative", 1, {"ts": -1}, []),
+            ("thread time positive", 1, {"ts": 1}, []),
+            ("duplicate thread name record", None, {}, [events[1]]),
+            ("conflicting thread name record", None, {}, [dict(events[1], args={"name": "other"})]),
+            ("orphaned slice", 2, {"tid": 2}, []),
+            ("orphaned counter", None, {}, [dict(folded, tid=2)]),
+            ("orphaned present", 4, {"tid": 2}, []),
+            ("orphaned loss", None, {}, [dict(loss, tid=2)]),
+            ("unsupported metadata", None, {}, [dict(events[1], name="display_mode")]),
+            ("unsupported instant", None, {}, [dict(loss, name="other")]),
+            ("missing folded duration", None, {}, [dict(folded, args={})]),
+            ("negative folded duration", None, {}, [dict(folded, args={"ms": -1})]),
+            ("unrelated folded field", None, {}, [dict(folded, args={"duration": 1})]),
+            ("extra folded field", None, {}, [dict(folded, args={"ms": 1, "extra": 2})]),
+            ("different presenter within the window", 4, {"tid": 2}, [other_thread]),
+            ("empty loss marker", None, {}, [dict(loss, args={"events_lost": 0})]),
+            ("duplicate loss marker", None, {}, [loss, loss]),
+            ("unrepresentable loss count", None, {}, [dict(loss, args={"events_lost": 2**64})]),
+            ("unrepresentable thread ID", 1, {"tid": 2**64}, []),
+        ]
+        for name, index, changes, extra in cases:
+            with self.subTest(name=name):
+                evidence = copy.deepcopy(events)
+                if index is not None:
+                    evidence[index].update(changes)
+                self.write_trace({"traceEvents": [*evidence, *extra]})
+                result = self.capture_fixture()
+                self.assertEqual(result["state"], "invalid", result)
+                self.assertNotIn("artifacts", result)
+
     def test_invalid_trace(self):
         self.write_summary()
         for raw in (b"not gzip", gzip.compress(b"{}"), gzip.compress(b'{"traceEvents":[],"traceEvents":[]}'),

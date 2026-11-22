@@ -178,26 +178,53 @@ def validate_trace(raw, summary, process):
         raise ValueError("native trace exceeds its event limit")
     trace = trace_digest.Trace(document)
     process_names, presents = [], []
+    threads, activity_threads, presenters, loss_threads = set(), set(), set(), set()
     for event in events:
         if type(event.get("pid")) is not int or event["pid"] != process:
             raise ValueError("native trace process identity differs from its filename")
-        if type(event.get("tid")) is not int or event["tid"] < 0:
-            raise ValueError("native trace thread identity must be a nonnegative integer")
+        tid = event.get("tid")
+        if type(tid) is not int or not 0 <= tid <= UINT64_MAX:
+            raise ValueError("native trace thread identity must fit uint64")
         if type(event.get("ts")) not in (int, float) or not math.isfinite(event["ts"]):
             raise ValueError("native trace timestamp must be finite")
-        if not isinstance(event.get("args", {}), dict):
+        args = event.get("args", {})
+        if not isinstance(args, dict):
             raise ValueError("native trace event args must be an object")
-        if event.get("ph") not in ("M", "X", "i", "C"):
+        phase, name = event.get("ph"), event.get("name")
+        if phase not in ("M", "X", "i", "C"):
             raise ValueError("native trace contains an unsupported event phase")
-        if event.get("name") == "process_name" and event.get("ph") == "M":
-            process_names.append(event.get("args", {}).get("name"))
-        if event.get("name") == "present" and event.get("ph") == "i":
-            present = event.get("args", {}).get("present")
+        if phase == "M":
+            if event["ts"] != 0:
+                raise ValueError("native trace metadata must be at the trace origin")
+            if name == "process_name" and tid == 0:
+                process_names.append(args.get("name"))
+            elif name == "thread_name" and tid != 0 and tid not in threads:
+                threads.add(tid)
+            else:
+                raise ValueError("native trace has invalid or duplicate process/thread metadata")
+            continue
+        activity_threads.add(tid)
+        if phase == "C":
+            if args.keys() != {"ms"} or args["ms"] < 0:
+                raise ValueError("native folded counter must contain a nonnegative ms value")
+        elif phase == "i" and name == "present":
+            presenters.add(tid)
+            present = args.get("present")
             if type(present) is not int or not 0 <= present <= UINT64_MAX:
                 raise ValueError("native trace present identity must fit uint64")
             presents.append((event["ts"], present))
+        elif phase == "i" and name == "trace buffer full":
+            if tid in loss_threads or not 0 < args["events_lost"] <= UINT64_MAX:
+                raise ValueError("native trace loss marker must be unique per thread and carry a positive uint64 count")
+            loss_threads.add(tid)
+        elif phase == "i":
+            raise ValueError("native trace contains an unsupported instant event")
     if process_names != ["AnyPS5"]:
         raise ValueError("native trace must name one AnyPS5 process")
+    if activity_threads - threads:
+        raise ValueError("native trace contains events for an undeclared thread")
+    if len(presenters) > 1:
+        raise ValueError("native trace must use a single presenter thread")
     if len(presents) != summary["presents"]:
         raise ValueError("native trace present count differs from its summary")
     first = summary["window"]["first_present"]
