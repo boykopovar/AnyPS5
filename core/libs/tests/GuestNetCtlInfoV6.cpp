@@ -22,11 +22,8 @@
 #include <stdexcept>
 #include <vector>
 
-static bool ClobberWriteErrno(void* destination, const void* source, std::size_t size) {
+static void ClobberWriteErrno(std::uintptr_t, std::size_t) {
     errno = EIO;
-    if (!destination) return false;
-    std::memcpy(destination, source, size);
-    return true;
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
