@@ -1,3 +1,26 @@
+/* The test vectors are adapted for AnyPS5 from Project Wycheproof,
+ * testvectors_v1/rsa_signature_2048_sha256_test.json, rsa_signature_3072_sha256_test.json at commit
+ * 65ca494727a52944c204441c860b039e6786b99b
+ * (https://github.com/C2SP/wycheproof/tree/65ca494727a52944c204441c860b039e6786b99b/testvectors_v1).
+ * Altered: all 518 tests of both files are run through EVP_PKEY_verify with PKCS #1 v1.5 padding;
+ * valid tests must verify and invalid tests must not. The one acceptable test of each file (tcId 8,
+ * a DigestInfo without the NULL parameter) must be rejected, as LibreSSL's RSA_verify rejects it.
+ *
+ * Copyright 2016-2026 The Wycheproof Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyMethod.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyState.hpp"
