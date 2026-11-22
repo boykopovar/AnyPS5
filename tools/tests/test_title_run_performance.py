@@ -186,15 +186,75 @@ class PerformancePhaseTests(PerformanceFixture, unittest.TestCase):
         session.exit_code.return_value = 0
         session.alive.side_effect = [True, True, False, False]
         clock = itertools.count(0, 0.25)
-        with mock.patch.object(self.runner, "Session", return_value=session) as constructor, \
+        recording = self.work / "pad-record.txt"
+
+        def launch(*args, **kwargs):
+            recording.write_text("APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0\n", encoding="utf-8")
+            return session
+
+        with mock.patch.object(self.runner, "Session", side_effect=launch) as constructor, \
                 mock.patch.object(self.runner.time, "monotonic", side_effect=clock.__next__), \
                 mock.patch.object(performance_capture, "inspect_capture", return_value={"state": "complete", "process_id": 1}), \
                 mock.patch.object(self.runner.pad_timeline, "queue_timeline") as queued:
-            result = self.runner.performance_phase(self.executable, self.work, {}, self.console, 5, pad, self.capture)
+            result = self.runner.performance_phase(self.executable, self.work, {"APS5_PAD_RECORD": str(recording)}, self.console, 5, pad, self.capture)
         self.assertEqual(constructor.call_args.args[2]["APS5_PAD_INPUT_FILE"], str(self.work / "pad-input.txt"))
         self.assertFalse((self.work / "pad-input.txt").exists())
         queued.assert_called_once()
         self.assertIsNotNone(result["pad_queued_s"])
+
+
+class PadPhaseReadinessTests(PerformanceFixture, unittest.TestCase):
+    def run_phase(self, ready_after, recording=None):
+        self.console.stderr = io.BytesIO()
+        clock = [0.0]
+        state = {"closed": False, "recorded": False}
+        self.phase_index = getattr(self, "phase_index", 0) + 1
+        trace_dir = self.root / f"phase{self.phase_index}"
+        trace_dir.mkdir()
+        env = {"APS5_TRACE_DIR": str(trace_dir)}
+        if recording is not None:
+            env["APS5_PAD_RECORD"] = str(recording)
+        path = recording or trace_dir / "pad-record.txt"
+        session = mock.Mock()
+        session.process.pid = 1
+        session.images = {}
+        session.exit_code.return_value = 0
+
+        def alive():
+            if ready_after is not None and not state["recorded"] and clock[0] >= ready_after:
+                path.write_text("APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0\n", encoding="utf-8")
+                state["recorded"] = True
+            return not state["closed"]
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        session.alive.side_effect = alive
+        session.close.side_effect = lambda: state.update(closed=True)
+        pad = {"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]}
+        with mock.patch.object(self.runner, "Session", return_value=session) as constructor, \
+                mock.patch.object(self.runner.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(self.runner.time, "sleep", side_effect=sleep):
+            result = self.runner.performance_phase(self.executable, self.work, env, self.console, 1, pad)
+        return result, constructor.call_args.args[2]
+
+    def test_phase_waits_for_the_first_controller_read(self):
+        result, env = self.run_phase(0.5)
+        self.assertGreaterEqual(result["pad_queued_s"], 0.5)
+        self.assertTrue(Path(env["APS5_PAD_RECORD"]).is_file())
+        self.assertNotIn(b"timeline not queued", self.console.stderr.getvalue())
+
+    def test_phase_without_a_controller_read_queues_nothing(self):
+        result, _ = self.run_phase(None)
+        self.assertIsNone(result["pad_queued_s"])
+        self.assertIn(b"no fresh controller sample observed", self.console.stderr.getvalue())
+
+    def test_restart_does_not_reuse_the_warmup_recording(self):
+        recording = self.work / "shared-record.txt"
+        warmup, _ = self.run_phase(0, recording)
+        capture, _ = self.run_phase(None, recording)
+        self.assertIsNotNone(warmup["pad_queued_s"])
+        self.assertIsNone(capture["pad_queued_s"])
 
 
 class PerformanceRunTests(PerformanceFixture, unittest.TestCase):

@@ -24,9 +24,12 @@
 #include <chrono>
 #include <climits>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include <mbedtls/aes.h>
 
 namespace LibreSslTls {
 
@@ -204,6 +207,22 @@ std::string Terminated(const unsigned char* data, std::size_t size, const char* 
     return std::string(reinterpret_cast<const char*>(data), size);
 }
 
+void EnsureMbedTlsInitialized() {
+    static std::once_flag flag;
+    std::call_once(flag, [] {
+        mbedtls_aes_context ctx;
+        mbedtls_aes_init(&ctx);
+        unsigned char key[16] = {0};
+        unsigned char input[16] = {0};
+        unsigned char output[16] = {0};
+        int result = mbedtls_aes_setkey_enc(&ctx, key, 128);
+        if (result == 0) result = mbedtls_aes_crypt_ecb(&ctx, MBEDTLS_AES_ENCRYPT, input, output);
+        mbedtls_aes_free(&ctx);
+        if (result != 0) Fail("mbedtls AES initialization failed", result);
+        mbedtls_ssl_list_ciphersuites();
+    });
+}
+
 }
 
 int ToSslError(Result result) {
@@ -282,6 +301,7 @@ struct Connection::State {
     }
 
     void Seed() {
+        EnsureMbedTlsInitialized();
         if (int result = mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, nullptr, 0)) Fail("random generator seeding failed", result);
         if (int result = mbedtls_ssl_config_defaults(&config, server ? MBEDTLS_SSL_IS_SERVER : MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT))
             Fail("configuration defaults failed", result);
