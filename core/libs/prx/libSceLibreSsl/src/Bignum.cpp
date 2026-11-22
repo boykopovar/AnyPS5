@@ -399,7 +399,10 @@ int APS5_VABI BN_print_nid_postfix(LibreSsl::Bio* bio, const Bignum* a) {
 Bignum* APS5_VABI BN_mod_inverse_nid_postfix(Bignum* r, const Bignum* a, const Bignum* n, BignumContext*) {
     const Int value = Load(Checked(a, __func__));
     const Int modulus = Load(Checked(n, __func__));
-    if (modulus.mag.empty()) return nullptr;
+    if (modulus.mag.empty()) {
+        LibreSslPutError_nid_no_patch(3, 0xfff, 103);
+        return nullptr;
+    }
     Mag inverse;
     if (!InverseMod(value, modulus.mag, inverse)) {
         LibreSslPutError_nid_no_patch(3, 0xfff, 108);
