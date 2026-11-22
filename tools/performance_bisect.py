@@ -67,10 +67,10 @@ def load_recipe(path):
     if type(repetitions) is not int or repetitions < 3:
         raise ValueError("recipe.repetitions must be an integer of at least 3")
     regression_pct = recipe.get("regression_pct", 5)
-    if type(regression_pct) not in (int, float) or not math.isfinite(regression_pct) or not 0 < regression_pct < 100:
+    if type(regression_pct) not in (int, float) or not 0 < regression_pct < 100:
         raise ValueError("recipe.regression_pct must be between 0 and 100")
     max_spread_pct = recipe.get("max_spread_pct", 3)
-    if type(max_spread_pct) not in (int, float) or not math.isfinite(max_spread_pct) or not 0 < max_spread_pct < 100:
+    if type(max_spread_pct) not in (int, float) or not 0 < max_spread_pct < 100:
         raise ValueError("recipe.max_spread_pct must be between 0 and 100")
     titles = recipe.get("titles", str(TOOLS_DIR / "titles.json"))
     if not isinstance(titles, str):
