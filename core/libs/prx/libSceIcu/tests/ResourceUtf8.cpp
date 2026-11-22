@@ -117,8 +117,17 @@ int main() {
     length = 2;
     char tooSmall[4] = {'z', 'z', 'z', 'z'};
     result = ures_getUTF8String_nid_postfix(multibyteResource, tooSmall, &length, 1, &status);
-    Require(result == tooSmall && status == 15 && length == 4 && tooSmall[0] == 'z' && tooSmall[3] == 'z',
-        "ures_getUTF8String wrote into a buffer it could not fill");
+    Require(result == tooSmall && status == 15 && length == 4 && tooSmall[0] == '\xc3' && tooSmall[1] == '\xbf' &&
+            tooSmall[2] == 'z' && tooSmall[3] == 'z',
+        "ures_getUTF8String did not write the characters that fit");
+
+    status = 0;
+    length = 3;
+    tooSmall[0] = tooSmall[1] = tooSmall[2] = tooSmall[3] = 'z';
+    result = ures_getUTF8String_nid_postfix(multibyteResource, tooSmall, &length, 1, &status);
+    Require(result == tooSmall && status == 15 && length == 4 && tooSmall[0] == '\xc3' && tooSmall[1] == '\xbf' &&
+            tooSmall[2] == 'z' && tooSmall[3] == 'z',
+        "ures_getUTF8String wrote part of a character that did not fit");
 
     status = 0;
     length = 0;

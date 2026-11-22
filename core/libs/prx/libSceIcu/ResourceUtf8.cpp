@@ -11,6 +11,8 @@
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libc/include/General.hpp"
 #include "unicode/ustring.h"
+#include "unicode/utf16.h"
+#include "unicode/utf8.h"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -139,6 +141,19 @@ bool ItemByIndex(const std::uint8_t* root, std::uint32_t resource, std::int32_t 
     return false;
 }
 
+std::size_t FittingPrefix(const std::vector<char16_t>& units, std::int32_t capacity) {
+    std::size_t written = 0;
+    const auto count = static_cast<std::int32_t>(units.size());
+    for (std::int32_t index = 0; index < count;) {
+        UChar32 character;
+        U16_NEXT(units.data(), index, count, character);
+        const auto bytes = static_cast<std::size_t>(U8_LENGTH(character));
+        if (written + bytes > static_cast<std::size_t>(capacity)) break;
+        written += bytes;
+    }
+    return written;
+}
+
 void Terminated(std::int32_t* status, std::int32_t incoming, int savedErrno, const char* caller) {
     if (incoming != StringNotTerminated) return;
     const std::int32_t zero = 0;
@@ -189,6 +204,9 @@ const char* ToUtf8(const std::vector<char16_t>& units, char* dest, std::int32_t*
     const bool wrote = hostStatus == U_ZERO_ERROR || static_cast<std::int32_t>(hostStatus) == StringNotTerminated;
     if (wrote && copied > 0) {
         CopyOut(dest + offset, buffer.data(), static_cast<std::size_t>(copied), savedErrno, caller);
+    } else if (hostStatus == U_BUFFER_OVERFLOW_ERROR) {
+        const std::size_t written = FittingPrefix(units, writeCapacity);
+        if (written > 0) CopyOut(dest + offset, buffer.data(), written, savedErrno, caller);
     }
     if (length) CopyOut(length, &utf8Length, sizeof(utf8Length), savedErrno, caller);
     if (hostStatus != U_ZERO_ERROR) {
