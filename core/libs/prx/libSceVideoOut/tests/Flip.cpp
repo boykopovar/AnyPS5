@@ -33,6 +33,9 @@
 #ifdef _WIN32
 #include <SDL.h>
 #endif
+#ifdef __APPLE__
+#include <crt_externs.h>
+#endif
 
 #undef main
 
@@ -462,6 +465,13 @@ void testUnregisteredBuffer() {
     check(sceVideoOutUnregisterBuffers(handle, -1) == VIDEO_OUT_ERROR_INVALID_VALUE, "a negative set was unregistered");
     check(sceVideoOutUnregisterBuffers(handle, 1) == VIDEO_OUT_ERROR_INVALID_VALUE, "an unused set was unregistered");
     check(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
+    VideoOutBufferAttribute2 changed = attribute;
+    changed.width = 32;
+    for (const int set : {0, 3, 4, 100, -1}) {
+        check(sceVideoOutSubmitChangeBufferAttribute2(handle, set, &changed, nullptr) == VIDEO_OUT_ERROR_INVALID_INDEX, "an attribute change of an unregistered or out of range set did not return its invalid index error");
+    }
+    int option = 0;
+    check(sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &changed, &option) == VIDEO_OUT_ERROR_INVALID_OPTION, "an attribute change with an option did not return its invalid option error before the registration check");
     std::array<uint32_t, 6> flip{0xc004105c, static_cast<uint32_t>(handle), 0, 1, 7, 0};
     Packet flipPacket{flip.data(), 6, 0, {}};
     check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "a GPU flip of an unregistered buffer was rejected at submit");
@@ -474,6 +484,7 @@ void testUnregisteredBuffer() {
     }
     AgcDriverWaitIdle_nid_postfix();
     sceVideoOutClose(handle);
+    check(sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &changed, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an attribute change on a closed handle did not return its invalid handle error");
     LibcRunShutdown_nid_postfix();
 }
 
@@ -1469,6 +1480,7 @@ void testFreshHandleCalls() {
     const std::uint32_t image[64 * 64] = {};
     check(sceVideoOutCursorEnable(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "a cursor was enabled without an image address");
     check(sceVideoOutCursorSetPosition(handle, 0, 100, 100) == 0, "the cursor position was refused");
+    check(sceVideoOutCursorSetHotSpot(handle, 0, 10, 10) == 0, "the cursor hot spot was refused");
     check(sceVideoOutCursorSet2xMagnify(handle, 0, true) == 0, "2x cursor magnification was refused");
     check(sceVideoOutCursorSet2xMagnify(handle, 0, false) == 0, "2x cursor magnification reset was refused");
     check(sceVideoOutCursorSetImageAddress(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "a null cursor image address was accepted");
@@ -1497,6 +1509,7 @@ void testFreshHandleCalls() {
     check(sceVideoOutCursorEnable(-1, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle was checked after the cursor image address");
     check(sceVideoOutCursorEnable(-1, 0, image) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a cursor was enabled on an invalid handle");
     check(sceVideoOutCursorSetPosition(-1, 0, 100, 100) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor was positioned");
+    check(sceVideoOutCursorSetHotSpot(-1, 0, 10, 10) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor hot spot was set");
     check(sceVideoOutCursorSet2xMagnify(-1, 0, true) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor was magnified");
     check(sceVideoOutCursorSet2xMagnify(-1, 0, false) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor magnification reset was accepted");
     check(sceVideoOutCursorSetImageAddress(-1, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor image was set");
@@ -1508,6 +1521,7 @@ void testFreshHandleCalls() {
     check(sceVideoOutCursorSet2xMagnify(handle, 0, false) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a closed handle's cursor magnification was cleared");
     check(sceVideoOutCursorDisable(handle, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a closed handle's cursor was disabled");
     check(sceVideoOutCursorSetPosition(handle, 0, 100, 100) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a closed handle's cursor was positioned");
+    check(sceVideoOutCursorSetHotSpot(handle, 0, 10, 10) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a closed handle's cursor hot spot was set");
     check(sceVideoOutCursorEnable(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a closed handle's cursor was enabled");
     check(sceVideoOutCursorSetImageAddress(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a closed handle's cursor image was set");
     check(sceVideoOutGetFlipStatus(handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == VIDEO_OUT_ERROR_INVALID_HANDLE, "closed handle flip status was accepted");
@@ -1672,11 +1686,9 @@ int runTests(int argc, char** argv) {
 
 int main(int argc, char** argv) {
 #ifdef __APPLE__
-    static int arguments;
-    static char** values;
-    arguments = argc;
-    values = argv;
-    Aps5StartGuest_nid_no_patch([](void*, void*) { std::exit(runTests(arguments, values)); }, nullptr);
+    static_cast<void>(argc);
+    static_cast<void>(argv);
+    Aps5StartGuest_nid_no_patch([](void*, void*) { std::exit(runTests(*_NSGetArgc(), *_NSGetArgv())); }, nullptr);
 #else
     return runTests(argc, argv);
 #endif

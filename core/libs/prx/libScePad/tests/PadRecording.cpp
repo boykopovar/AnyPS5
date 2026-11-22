@@ -59,6 +59,11 @@ int main() {
 
         Check(!Pad::ParseRecording("0 0 128 128 128 128 0 0\n"), "a recording without its header was accepted");
         Check(!Pad::ParseRecording("APS5_PAD_RECORDING 2\n0 0 128 128 128 128 0 0\n"), "a recording of another version was accepted");
+        for (const char* row : {"0a 128 128 128 128 0 0", "12F 128 128 128 128 0 0", "0ff 128 128 128 128 0 0"}) {
+            Check(!Pad::ParseRecording(std::string(Pad::RecordingHeader) + "\n" + row + "\n"), "a timestamp and buttons without a separator were accepted");
+        }
+        const auto spaced = Pad::ParseRecording("APS5_PAD_RECORDING 1\n  0   4000  128 128 128 128  0 0\n");
+        Check(spaced && spaced->size() == 1 && spaced->front().ms == 0 && spaced->front().state == cross, "space-separated fields were not read");
         Check(!Pad::ParseRecording("APS5_PAD_RECORDING 1\n5 0 128 128 128 128 0\n"), "a line with a missing field was accepted");
         Check(!Pad::ParseRecording("APS5_PAD_RECORDING 1\n5 0 128 128 128 300 0 0\n"), "a stick position past 255 was accepted");
         Check(!Pad::ParseRecording("APS5_PAD_RECORDING 1\n5 0 128 128 128 128 0 0 7\n"), "a line with an extra field was accepted");
@@ -70,6 +75,8 @@ int main() {
         Check(Refused([&] { Pad::RecordingWriter unwritable(path / "missing-directory" / "recording"); }), "an unwritable recording path did not stop the recording");
         std::ofstream(path, std::ios::binary | std::ios::trunc) << "0 4000 128 128 128 128 0 0\n";
         Check(Refused([&] { Pad::RecordingPlayer headerless(path); }), "a recording without its header was replayed");
+        std::ofstream(path, std::ios::binary | std::ios::trunc) << "APS5_PAD_RECORDING 1\n0a 128 128 128 128 0 0\n";
+        Check(Refused([&] { Pad::RecordingPlayer joined(path); }), "a recording with joined fields was replayed");
         std::ofstream(path, std::ios::binary | std::ios::trunc) << "APS5_PAD_RECORDING 1\n";
         Pad::RecordingPlayer empty(path);
         Check(empty.Active() && empty.At(1000) == idle && empty.At(9000000) == idle, "an empty recording did not replay the idle state");

@@ -1,6 +1,8 @@
 #if defined(__linux__) && defined(__x86_64__)
 #include "prx/libc/include/CallTrace.hpp"
+#include "prx/libc/include/CrashText.hpp"
 #include "prx/libc/include/LogFile.hpp"
+#include "prx/libc/include/specifics/linux/GuestFaultCopy.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -201,6 +203,12 @@ void Report(int signal, const siginfo_t* info, const ucontext_t* context) {
     line.Text("  rip ");
     DescribeAddress(line, rip);
     line.Write();
+    if (signal == SIGILL) {
+        std::uint8_t bytes[8];
+        std::size_t available = sizeof(bytes);
+        while (available != 0 && !ReadMemory(rip, bytes, available)) --available;
+        if (const char* name = crash_text::AmdOnlyInstruction(bytes, available)) line.Text("  ").Text(name).Text(" is an AMD-only instruction this CPU lacks: relink with --to-intel, which converts the executable and its modules but not code generated at run time").Write();
+    }
     if (signal == SIGSEGV && info->si_code == SI_KERNEL && registers[REG_TRAPNO] == 13) {
         std::uint8_t trap[2];
         if (ReadMemory(rip, trap, sizeof(trap)) && trap[0] == 0xcd && registers[REG_ERR] == ((static_cast<greg_t>(trap[1]) << 3) | 2)) {
@@ -274,6 +282,7 @@ void ReportCallTrace() {
 }
 
 void OnFatalSignal(int signal, siginfo_t* info, void* context) {
+    if (GuestFaultCopy::Resume(info, context)) return;
     const int savedErrno = errno;
     if (!g_reporting.exchange(true, std::memory_order_acq_rel)) {
         Report(signal, info, static_cast<const ucontext_t*>(context));

@@ -74,14 +74,16 @@ std::array<unsigned char, 4> Convert(std::array<unsigned char, 4> color, GLenum 
     return color;
 }
 
-void Upload(Image& image, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels, int size) {
-    if (!pixels || !width || !height) return;
+bool Upload(Image& image, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels, int size) {
+    if (!pixels || !width || !height) return true;
     auto& c = Current_nid_no_patch();
     std::size_t alignment = static_cast<std::size_t>(c.state[0x0cf5][0]);
     std::size_t stride = (std::size_t(width) * size + alignment - 1) & ~(alignment - 1);
-    auto* bytes = static_cast<const unsigned char*>(pixels);
+    std::vector<unsigned char> bytes(std::size_t(height - 1) * stride + std::size_t(width) * size);
+    if (!GuestCopyIn_nid_no_patch(bytes.data(), pixels, bytes.size())) return false;
     for (GLsizei row = 0; row < height; ++row) for (GLsizei col = 0; col < width; ++col)
-        image.color[std::size_t(y + row) * image.width + x + col] = Decode(bytes + std::size_t(row) * stride + std::size_t(col) * size, format, type);
+        image.color[std::size_t(y + row) * image.width + x + col] = Decode(bytes.data() + std::size_t(row) * stride + std::size_t(col) * size, format, type);
+    return true;
 }
 
 bool Parameter(GLenum name, GLint value) {
@@ -320,7 +322,7 @@ void APS5_VABI glTexImage2D_nid_postfix(GLenum target, GLint level, GLint intern
     try {
         Image image;
         image.Allocate(width, height, format);
-        Upload(image, 0, 0, width, height, format, type, pixels, size);
+        if (!Upload(image, 0, 0, width, height, format, type, pixels, size)) { Error_nid_no_patch(0x0501); return; }
         BoundTexture(index)->images[{target, level}] = std::move(image);
     } catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); }
 }
@@ -337,7 +339,9 @@ void APS5_VABI glTexSubImage2D_nid_postfix(GLenum target, GLint level, GLint x, 
     if (it == texture->images.end()) { Error_nid_no_patch(0x0502); return; }
     if (!Region(it->second, level, x, y, width, height)) return;
     if (format != it->second.format) { Error_nid_no_patch(0x0502); return; }
-    Upload(it->second, x, y, width, height, format, type, pixels, size);
+    try {
+        if (!Upload(it->second, x, y, width, height, format, type, pixels, size)) Error_nid_no_patch(0x0501);
+    } catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); }
 }
 
 void APS5_VABI glGenRenderbuffers_nid_postfix(GLsizei count, GLuint* names) {
@@ -564,10 +568,17 @@ void APS5_VABI glReadPixels_nid_postfix(GLint x, GLint y, GLsizei width, GLsizei
     std::int64_t lastColumn = std::min<std::int64_t>(width, std::int64_t(image->width) - x);
     std::int64_t firstRow = std::max<std::int64_t>(0, -std::int64_t(y));
     std::int64_t lastRow = std::min<std::int64_t>(height, std::int64_t(image->height) - y);
-    for (auto row = firstRow; row < lastRow; ++row) for (auto col = firstColumn; col < lastColumn; ++col) {
-        auto color = Convert(image->color[std::size_t(y + row) * image->width + std::size_t(x + col)], image->format);
-        std::memcpy(bytes + std::size_t(row) * stride + std::size_t(col) * 4, color.data(), 4);
-    }
+    if (firstRow >= lastRow || firstColumn >= lastColumn) return;
+    const std::size_t span = std::size_t(lastColumn - firstColumn) * 4;
+    try {
+        std::vector<unsigned char> rows(std::size_t(lastRow - firstRow) * span);
+        for (auto row = firstRow; row < lastRow; ++row) for (auto col = firstColumn; col < lastColumn; ++col) {
+            auto color = Convert(image->color[std::size_t(y + row) * image->width + std::size_t(x + col)], image->format);
+            std::memcpy(rows.data() + std::size_t(row - firstRow) * span + std::size_t(col - firstColumn) * 4, color.data(), 4);
+        }
+        auto* first = bytes + std::size_t(firstRow) * stride + std::size_t(firstColumn) * 4;
+        if (!GuestCopyOutRows_nid_no_patch(first, stride, rows.data(), span, span, std::size_t(lastRow - firstRow))) Error_nid_no_patch(0x0501);
+    } catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); }
 }
 
 void APS5_VABI glCopyTexImage2D_nid_postfix(GLenum target, GLint level, GLenum format, GLint x, GLint y, GLsizei width, GLsizei height, GLint border) {
