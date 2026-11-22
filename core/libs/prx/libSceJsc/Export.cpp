@@ -516,10 +516,6 @@ int APS5_VABI _ZN7bmalloc9Allocator16allocateSlowCaseEmNS_13FailureActionE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI JSWeakObjectMapCreate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC27threadSpecificAssemblerDataEv() {
     NotImplemented_nid_no_patch(__func__);
 }

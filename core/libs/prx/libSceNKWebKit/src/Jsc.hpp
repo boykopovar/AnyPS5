@@ -247,6 +247,8 @@ JSAtom JsStringToAtom(JSContext* qctx, const GuestJSString* str);
 GuestJSString* AtomToJsString(JSContext* qctx, JSAtom atom);
 std::string AtomToUtf8(JSContext* qctx, JSAtom atom);
 
+OpaqueJSWeakObjectMap* CreateWeakObjectMap(OpaqueJSContext* ctx, void* privateData, JSWeakMapDestroyedCallback callback);
+
 void CapturePendingException(OpaqueJSContext* ctx, JSValueRef* exception);
 void SetExceptionValue(OpaqueJSContext* ctx, JSValueRef* exception, JSValue excVal);
 void RegisterCallbackClasses(OpaqueJSContextGroup* group);
