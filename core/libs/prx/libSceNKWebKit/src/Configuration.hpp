@@ -52,6 +52,9 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    std::vector<std::string> loadedSubresourceDomains;
+    bool userMediaStateCleared = false;
+    bool wheelEventTestMonitorCleared = false;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
@@ -83,7 +86,6 @@ public:
     bool clientWouldBenefitFromAutomaticProcessPrewarming = false;
     bool usesWebProcessCache = false;
     bool shouldConfigureJSCForTesting = false;
-    std::vector<std::u16string> overrideLanguages;
 
     Retained<ProcessPoolConfiguration> Duplicate() const {
         auto copy = Make<ProcessPoolConfiguration>();
@@ -102,7 +104,6 @@ public:
         copy->clientWouldBenefitFromAutomaticProcessPrewarming = clientWouldBenefitFromAutomaticProcessPrewarming;
         copy->usesWebProcessCache = usesWebProcessCache;
         copy->shouldConfigureJSCForTesting = shouldConfigureJSCForTesting;
-        copy->overrideLanguages = overrideLanguages;
         return copy;
     }
 };
@@ -131,6 +132,9 @@ public:
     std::vector<std::string> emptyDocumentSchemes;
     std::vector<std::string> secureSchemes;
     std::vector<std::string> fontAllowList;
+    bool initialProcessWarmed = false;
+    bool useSeparateServiceWorkerProcess = false;
+    bool currentModifierStateCleared = false;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {

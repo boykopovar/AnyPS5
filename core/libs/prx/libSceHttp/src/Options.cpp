@@ -8,7 +8,9 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace {
 
@@ -90,6 +92,17 @@ bool SetHttpCookieEnabled(int id, int enable) {
     const auto found = g_objectOptions.find(id);
     if (found == g_objectOptions.end()) return false;
     found->second.cookieEnabled = enable;
+    return true;
+}
+
+bool SetHttpProxy(int id, int httpConf, int wlanConf, std::string host, std::uint16_t port) {
+    std::lock_guard lock(g_optionsMutex);
+    const auto found = g_objectOptions.find(id);
+    if (found == g_objectOptions.end()) return false;
+    found->second.proxyHttpConf = httpConf;
+    found->second.proxyWlanConf = wlanConf;
+    found->second.proxyHost = std::move(host);
+    found->second.proxyPort = port;
     return true;
 }
 

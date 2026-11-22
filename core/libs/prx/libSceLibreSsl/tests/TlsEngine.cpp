@@ -1,10 +1,22 @@
+#include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl/include/TlsEngine.hpp"
 #include "prx/libSceLibreSsl/tests/FakeSocket.hpp"
 #include "prx/libkernel/include/Api.hpp"
-#ifndef _WIN32
+#include "prx/libc/include/GuestArena.hpp"
 #include <cerrno>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
 #include <csignal>
 #include <pthread.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 #include <mbedtls/x509.h>
@@ -984,13 +996,13 @@ void SignalInterruptsBlockingRead() {
 #endif
 
 void ConsultsNativeOwnerTransfer() {
-    Gate release;
+    Gate first;
+    Gate second;
     Scenario scenario;
     scenario.server = [&](Connection& tls, int) {
-        release.Wait("the client never opened the gate");
+        first.Wait("the client never opened the first gate");
         WriteAll(tls, "one", 3);
-        release.open = false;
-        release.Wait("the client never reopened the gate");
+        second.Wait("the client never opened the second gate");
         WriteAll(tls, "two", 3);
         std::array<std::uint8_t, 4> ping{};
         ReadExact(tls, ping.data(), ping.size());
@@ -1006,10 +1018,9 @@ void ConsultsNativeOwnerTransfer() {
         Require(fake->calls > 0 && fake->sendCalls > 0, "the engine moved the handshake through NativeOwner::transfer, not the raw socket");
         std::array<char, 8> out{};
         std::size_t transferred = 0;
-        release.Open();
+        first.Open();
         Require(Retry([&] { return tls.Read(out.data(), out.size(), transferred, false); }) == Result::Done && transferred == 3, "the first read");
         const int callsAfterFirstRead = fake->calls;
-        release.open = false;
 
         fake->failNext = HostInterruptedCode;
         transferred = 1;
@@ -1025,7 +1036,7 @@ void ConsultsNativeOwnerTransfer() {
         Require(tls.SystemError() == HostInterruptedCode && tls.LastDirection() == LibreSslTls::Direction::Write, "the interrupted send is visible as errno EINTR");
         Require(Retry([&] { return tls.Write(payload.data(), payload.size(), transferred); }) == Result::Done && transferred == payload.size(), "the interrupted write completes when retried");
 
-        release.Open();
+        second.Open();
         Require(Retry([&] { return tls.Read(out.data(), out.size(), transferred, false); }) == Result::Done && transferred == 3 && std::memcmp(out.data(), "two", 3) == 0,
             "the read completes when retried");
         bool complete = false;
@@ -1105,6 +1116,164 @@ void ReassignedSocket() {
     Run(scenario);
 }
 
+class ReadOnlyBytePage {
+public:
+    explicit ReadOnlyBytePage(unsigned char initialValue) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = static_cast<unsigned char*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr, "read-only byte page allocation");
+        data[0] = initialValue;
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "read-only byte page protection");
+#else
+        bytes = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "read-only byte page mapping");
+        data = static_cast<unsigned char*>(mapped);
+        data[0] = initialValue;
+        Require(mprotect(data, bytes, PROT_READ) == 0, "read-only byte page protection");
+#endif
+    }
+
+    ~ReadOnlyBytePage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    unsigned char* Byte() { return data; }
+
+private:
+    unsigned char* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+std::uintptr_t watchedReadAddress = 0;
+std::size_t watchedReadCount = 0;
+
+void CountWatchedRead(std::uintptr_t address, std::size_t bytes) {
+    if (address == watchedReadAddress && bytes == 1)
+        ++watchedReadCount;
+}
+
+struct ReadHookGuard {
+    explicit ReadHookGuard(void (*hook)(std::uintptr_t, std::size_t)) {
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(hook);
+    }
+    ~ReadHookGuard() {
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    }
+    ReadHookGuard(const ReadHookGuard&) = delete;
+    ReadHookGuard& operator=(const ReadHookGuard&) = delete;
+};
+
+void SelectNextProto() {
+    unsigned char peer[] = {2, 'h', '3', 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+    unsigned char supported[] = {8, 'h', 't', 't', 'p', '/', '1', '.', '1', 2, 'h', '2'};
+    unsigned char sentinel = 0;
+    unsigned char* output = &sentinel;
+    unsigned char outputLength = 0xff;
+    ReadHookGuard readHook(CountWatchedRead);
+
+    watchedReadAddress = reinterpret_cast<std::uintptr_t>(peer + 3);
+    watchedReadCount = 0;
+    errno = 71;
+    Require(SSL_select_next_proto_nid_postfix(&output, &outputLength, peer, sizeof(peer), supported, sizeof(supported)) == 1,
+        "negotiated protocol selection returns 1");
+    Require(output == peer + 4 && outputLength == 2, "negotiated selection picks the first peer-offered match");
+    Require(watchedReadCount == 1, "negotiated selection reads matched length byte once");
+    Require(errno == 71, "negotiated protocol selection preserves errno");
+
+    unsigned char peerOther[] = {2, 'h', '3'};
+    output = &sentinel;
+    outputLength = 0xff;
+    watchedReadAddress = reinterpret_cast<std::uintptr_t>(supported);
+    watchedReadCount = 0;
+    errno = 71;
+    Require(SSL_select_next_proto_nid_postfix(&output, &outputLength, peerOther, sizeof(peerOther), supported, sizeof(supported)) == 2,
+        "non-overlapping lists return NoOverlap");
+    Require(output == supported + 1 && outputLength == 8, "NoOverlap falls back to the first supported entry");
+    Require(watchedReadCount == 2, "NoOverlap fallback reads supported length byte on fallback");
+    Require(errno == 71, "NoOverlap fallback preserves errno");
+
+    unsigned char emptyPeer[] = {0};
+    unsigned char emptySupported[] = {0};
+    output = &sentinel;
+    outputLength = 0xff;
+    watchedReadAddress = reinterpret_cast<std::uintptr_t>(emptyPeer);
+    watchedReadCount = 0;
+    errno = 71;
+    Require(SSL_select_next_proto_nid_postfix(&output, &outputLength, emptyPeer, sizeof(emptyPeer), emptySupported, sizeof(emptySupported)) == 1,
+        "zero-length protocol entries negotiate");
+    Require(output == emptyPeer + 1 && outputLength == 0, "zero-length match writes zero outputLength");
+    Require(watchedReadCount == 1, "zero-length negotiation reads matched length byte once");
+    Require(errno == 71, "zero-length negotiation preserves errno");
+
+    ReadOnlyBytePage readOnlyLengthPage(0x5a);
+    unsigned char* rollbackTarget = &sentinel;
+    watchedReadAddress = 0;
+    watchedReadCount = 0;
+    errno = 71;
+    RequireThrows<std::runtime_error>(
+        [&] {
+            SSL_select_next_proto_nid_postfix(&rollbackTarget, readOnlyLengthPage.Byte(), peer, sizeof(peer), supported, sizeof(supported));
+        },
+        "unwritable outputLength throws");
+    Require(rollbackTarget == &sentinel, "unwritable outputLength rolls back *output");
+    Require(*readOnlyLengthPage.Byte() == 0x5a, "unwritable outputLength stays unchanged");
+    Require(errno == 71, "unwritable outputLength rollback preserves errno");
+}
+
+struct Barrier {
+    std::atomic<std::size_t> count{0};
+    std::atomic<bool> released{false};
+
+    void arrive(std::size_t total) {
+        std::size_t arrived = count.fetch_add(1) + 1;
+        while (!released.load()) {
+            if (arrived == total) {
+                released.store(true);
+                break;
+            }
+        }
+    }
+};
+
+void ConcurrentConnectionConstruction() {
+    constexpr int Threads = 8;
+    constexpr int Iterations = 100;
+    Barrier startBarrier;
+    std::atomic<int> successCount{0};
+    std::vector<std::thread> threads;
+
+    for (int t = 0; t < Threads; ++t) {
+        threads.emplace_back([&, t] {
+            startBarrier.arrive(Threads);
+            for (int i = 0; i < Iterations; ++i) {
+                bool isServer = (t + i) % 2 == 0;
+                Connection conn(isServer);
+                if (!isServer) {
+                    conn.SetHostname(TestHost);
+                } else {
+                    conn.UseCertificate(
+                        reinterpret_cast<const unsigned char*>(ServerCertificate), sizeof(ServerCertificate) - 1,
+                        reinterpret_cast<const unsigned char*>(ServerKey), sizeof(ServerKey) - 1
+                    );
+                }
+                successCount.fetch_add(1);
+            }
+        });
+    }
+
+    for (auto& th : threads) th.join();
+    Require(successCount.load() == Threads * Iterations, "concurrent connection construction failed");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -1131,6 +1300,7 @@ int main(int argc, char** argv) {
             ServerWithoutCertificate();
             EofDuringHandshake();
             ServerNameOnly();
+            SelectNextProto();
         }
         if (data) {
             RoundTrip();
@@ -1140,21 +1310,27 @@ int main(int argc, char** argv) {
             Shutdown();
             ShutdownBeforeHandshake();
             AbruptClose();
+            ConcurrentConnectionConstruction();
         }
         if (transport) {
-            NonBlockingRead();
-            WriteBackPressure();
-            BlockingTransport();
-            NonBlockingTransport();
-            ReceiveTimeout();
-            SendTimeout();
-            LargeRecordSendTimeout();
+            const auto run = [](const char* name, void (*test)()) {
+                std::fprintf(stderr, "running TLS transport case %s\n", name);
+                std::fflush(stderr);
+                test();
+            };
+            run("NonBlockingRead", NonBlockingRead);
+            run("WriteBackPressure", WriteBackPressure);
+            run("BlockingTransport", BlockingTransport);
+            run("NonBlockingTransport", NonBlockingTransport);
+            run("ReceiveTimeout", ReceiveTimeout);
+            run("SendTimeout", SendTimeout);
+            run("LargeRecordSendTimeout", LargeRecordSendTimeout);
 #ifndef _WIN32
-            SignalInterruptsBlockingRead();
+            run("SignalInterruptsBlockingRead", SignalInterruptsBlockingRead);
 #endif
-            ConsultsNativeOwnerTransfer();
-            ClosedDescriptor();
-            ReassignedSocket();
+            run("ConsultsNativeOwnerTransfer", ConsultsNativeOwnerTransfer);
+            run("ClosedDescriptor", ClosedDescriptor);
+            run("ReassignedSocket", ReassignedSocket);
         }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "failed: %s\n", error.what());

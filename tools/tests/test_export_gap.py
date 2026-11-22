@@ -536,6 +536,7 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("APS5_EXPORT", report)
             self.assertIn("libSceAmpr", report)
             self.assertIn("Caller.cpp:2", report)
+            self.assertIn("may need a renamed helper bound with APS5_EXPORT", report)
 
     def test_self_call_line_counts_spliced_lines(self):
         nid = nid_names.compute_nid("sceExampleSelfCall")
@@ -828,6 +829,26 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("APS5_EXPORT", report)
             self.assertIn("libSceAmpr", report)
 
+    def test_nested_mangled_names_are_reported_without_requiring_a_helper(self):
+        for name in ("_ZN3Foo3barEv", "_ZNK3Foo3barEv", "_ZNSt6vectorIiE3fooEv",
+                     "_ZNSs5eraseEmm", "_ZNSs6appendERKSsmm", "_ZNSbIwSt11char_traitsIwESaIwEE5eraseEmm",
+                     "_ZNKSs5_XlenEv", "_ZNKR3Foo3barEv", "_ZNO3Foo3barEv",
+                     "_ZNSaIcE8allocateEm", "_ZNSi3getEv", "_ZNSo3putEc", "_ZNSd3fooEv"):
+            with self.subTest(name=name):
+                nid = nid_names.compute_nid(name)
+                with tempfile.TemporaryDirectory() as directory:
+                    root, prx, tables = tree(directory)
+                    write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+                    write_table(tables, MODULE, [nid])
+                    db = write_db(directory, [(nid, name)])
+                    out = Path(directory) / "out.txt"
+                    code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+                    self.assertEqual(code, 0)
+                    self.assertEqual(out.read_text(encoding="utf-8").split(), [nid])
+                    self.assertIn("C++ mangled name", report)
+                    self.assertIn("may use a renamed helper bound with APS5_EXPORT", report)
+                    self.assertNotIn(f"missing {nid} {name}", report)
+
     def test_non_identifier_name_needs_renamed_helper(self):
         name = "sceExample.dot-name"
         nid = nid_names.compute_nid(name)
@@ -893,6 +914,10 @@ class ExportGapTests(unittest.TestCase):
     def test_mangled_and_identifier_reasons(self):
         self.assertTrue(export_gap.is_mangled("_Z3foo"))
         self.assertFalse(export_gap.is_mangled("_Zx"))
+        self.assertFalse(export_gap.is_mangled("_ZNonsense"))
+        self.assertFalse(export_gap.is_mangled("_ZNSx"))
+        self.assertFalse(export_gap.is_mangled("_ZNS"))
+        self.assertFalse(export_gap.is_mangled("_ZNStq"))
         self.assertFalse(export_gap.is_mangled("foo"))
         self.assertEqual(export_gap.helper_reason("_Z3foo"), "is a C++ mangled name")
         self.assertEqual(export_gap.helper_reason("1abc"), "is not a valid C identifier")

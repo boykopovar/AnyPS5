@@ -39,6 +39,12 @@ build-fuzz/tests/relinker_conversion_fuzzer build-fuzz/fuzz-corpus -fork=2 -max_
 git submodule update --init --recursive
 ```
 
+### Self-hosted Linux checkout recovery
+
+The self-hosted Linux `Build` job in [`.github/workflows/build.yml`](../../.github/workflows/build.yml) is designed to recover from an interrupted recursive checkout. Before checkout it removes stale Git lock files. If `actions/checkout` fails, it removes only submodules that have a worktree but no valid `HEAD` (and their matching `.git/modules` directories), then retries the recursive checkout. If no specific broken submodule can be identified safely, it empties the workspace and retries instead.
+
+That retry is a repair path, not a substitute for a healthy runner seed. If the same runner repeatedly spends most of its job timeout fetching recorded submodule commits, or repeatedly returns with half-cloned submodules, take it out of rotation and reseed its AnyPS5 workspace with a complete recursive checkout at the recorded commits before returning it to service. This avoids carrying one interrupted checkout into every later job while preserving the shared compiler and shader caches outside `GITHUB_WORKSPACE`.
+
 ## Selective test builds
 
 [`tools/select_tests.py`](../../tools/select_tests.py) selects the tests whose build inputs a change touches, so a pull request can build and run only those tests. Configure and build a full tree with `-DBUILD_TESTING=ON` (`dump` needs the header dependencies that only exist once the objects are built), then:
@@ -47,7 +53,11 @@ git submodule update --init --recursive
 git diff --name-only -z --output=changed.txt origin/main...HEAD
 python3 tools/select_tests.py dump build test-graph.json
 python3 tools/select_tests.py select build test-graph.json changed.txt
-ninja -C build -f select.ninja selected
+if [ -f build/select.ninja ]; then
+  ninja -C build -f select.ninja selected
+else
+  cmake --build build
+fi
 python3 tools/select_tests.py ctest build --output-on-failure
 ```
 
@@ -57,7 +67,7 @@ python3 tools/select_tests.py ctest build --output-on-failure
 
 ## Requirements
 
-- x86-64, Git, CMake 3.21 or newer (the test build's CMake scripts use `file(COPY_FILE)`, added in CMake 3.21; `CMakeLists.txt` declares 3.20), Ninja, C++20.
+- x86-64, Git, CMake 3.22.1 or newer for the default full build with bundled dependencies, 3.24 or newer on macOS (bundled glslang, SPIRV-Tools and Vulkan-Headers declare 3.22.1, bundled SDL's Apple configuration 3.24, and the test build's CMake scripts use `file(COPY_FILE)`, added in CMake 3.21; `CMakeLists.txt` declares 3.20), Ninja, C++20.
 - Linux display refresh queries require SDL's XRandR support (`libxrandr-dev` on Debian/Ubuntu; `libXrandr-devel` on Fedora). Bundled SDL configuration fails without it. Keep `SDL_X11_XRANDR` enabled.
 - Linux: GCC, G++ (`gcc-c++` on Fedora), binutils. SDL's X11 backend requires X11 and Xext development headers (`libx11-dev` and `libxext-dev` on Debian/Ubuntu; `libX11-devel` and `libXext-devel` on Fedora). SDL's Wayland backend requires the Wayland, xkbcommon and EGL development files (`libwayland-dev`, `libxkbcommon-dev` and `libegl-dev` on Debian/Ubuntu; `wayland-devel`, `libxkbcommon-devel` and `mesa-libEGL-devel` on Fedora), and `libdecor-0-dev` (`libdecor-devel`) for window decorations on GNOME. SDL loads both backends at run time and prefers Wayland when `WAYLAND_DISPLAY` is set; `SDL_VIDEODRIVER=x11` selects X11 (XWayland). Titles that bundle their own SDL read `SDL_VIDEODRIVER` too, and some of them fail to start with `x11`. Without the Wayland files configuration still succeeds, and the build uses X11 only. Audio output needs SDL's PipeWire, PulseAudio or ALSA backend, built from their development files (`libpipewire-0.3-dev`, `libpulse-dev` and `libasound2-dev` on Debian/Ubuntu; `pipewire-devel`, `pulseaudio-libs-devel` and `alsa-lib-devel` on Fedora). SDL loads them at run time. Without any of them SDL keeps only its silent dummy and disk drivers, so configuration fails.
 - Fedora: if CMake reports `Could NOT find Threads`, install `glibc-static` and `libstdc++-static` with `sudo dnf install glibc-static libstdc++-static`, then rerun configuration. The project enables static executable linking, and FFmpeg's thread check needs these libraries.
@@ -76,9 +86,11 @@ The Release workflow builds the web converter and the Linux and Windows librarie
 
 Pages downloads the converter and both library archives from one release selected through GitHub's latest-release API. `release.json` records the same tag and commit. Missing, corrupt or mismatched assets fail the Pages job before deployment. Releases made before the web asset was added need a new release; Pages does not combine them with a converter built from `main`.
 
-Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-wasm --release`; `--libraries` is an alias for this mode.
+Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-web-release --release`. Release staging replaces the selected build directory's `web/` directory. `--libraries` is an alias for `--release`.
 
-`tools/prepare_release_notes.py --input <notes> --body <body> --full <full>` prepares GitHub release notes that fit GitHub's release-body size limit (`BODY_LIMIT` bytes in the script): the short body goes to `--body` and the full notes to `--full`. With `--check` it writes nothing and exits with status 1 when either output is missing or stale.
+Run this command from a Git checkout that contains the commit recorded in the release's converter ZIP. If a shallow checkout is missing that commit, fetch the matching release tag from the upstream repository first.
+
+`tools/prepare_release_notes.py --input <notes> --body <body> --full <full>` prepares GitHub release notes that fit the release-body limit (`BODY_LIMIT` characters in the script): the short body goes to `--body` and the full notes to `--full`. With `--check` it writes nothing and exits with status 1 when either output is missing or stale.
 
 ## Commands
 
@@ -211,7 +223,7 @@ A ThreadSanitizer build runs its tests with `TSAN_OPTIONS=suppressions=$PWD/tool
 After configuring a build directory, use `tools/check_compile.py` to check the given source files. The tool reads their compile commands from `compile_commands.json` or Ninja, preserving compilation options while dropping object and dependency output options. It handles `-MF`, `-MT`, `-MQ` and `-MJ` with separate or attached values so that unused output options do not cause false failures under `-Werror`.
 
 ```sh
-python3 tools/check_compile.py --build build-relinker core/relinker/main.cpp
+python3 tools/check_compile.py --build build-relinker core/relinker/cli/src/CliArgs.cpp
 ```
 
 Real compile errors still fail. Syntax checks do not replace a full build and test run.
@@ -491,6 +503,8 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 - `tools/compile_database_inventory.py <database>` groups the raw records of a saved compilation database without invoking a compiler or build tool.
 
 ## Test selection tools
+
+Changed-test selection uses the configured CMake target sources. Windows CI replaces AGC execution fixtures outside `ANYPS5_AGC_EXECUTION_TESTS` with stub sources, so a change to an omitted `.cpp` can pass the changed-test job without running that fixture. To run it locally, configure a full build with `-DBUILD_TESTING=ON`. Set `-DANYPS5_AGC_EXECUTION_TESTS=` to build every AGC execution fixture, or set it to the fixture's source file stem. Build the test target and run the matching CTest. [Windows Build workflow](../../.github/workflows/build.yml)
 
 - `tools/build_changed_guest_tests.py <build_dir> [changed_paths] [--output-log FILE]` builds and runs the changed guest and host-only `core/libs` tests.
 - `tools/build_mingw_host_only_tests.py <build_dir> [changed_paths] [--list-only]` builds the `core/libs` test executables that do not link guest libc. `--list-only` prints them without building.
