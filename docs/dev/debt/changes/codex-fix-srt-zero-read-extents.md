@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [Unbounded guest buffer reads](../../../core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp) still use finite SSBO bindings. The base-element extension covers only nonempty linear zero-stride `OOB_SELECT` 2 buffers proved to have only read-only, non-atomic, descriptor-formatted base reads with full unpacked 32-bit component coverage. SRT-backed offset words, including constant logical right-shifts and masks, are accepted only when the captured words prove every required offset bit zero, the snapshot has no null-root reads and the proof slots are not poisoned. Offsets not proved zero, packed or typed loads, raw vector accesses and buffers written or updated atomically can still be clipped to the descriptor-derived range; scalar loads keep their separate range rules. The mode's `NUM_RECORDS == 0` bounds rule follows [RDNA 2 ISA section 8.1, Table 35](https://docs.amd.com/v/u/en-US/rdna2-shader-instruction-set-architecture), not a measurement on the console's gfx1013.

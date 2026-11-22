@@ -225,9 +225,9 @@ int APS5_VABI sceLibcInternalPending4_120_nid_no_patch() {
 }
 APS5_EXPORT("Yl10kSufa5k", sceLibcInternalPending4_120_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_123_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+[[noreturn]] void APS5_VABI sceLibcInternalPending4_123_nid_no_patch(const char* message, const GuestLocale::String* path1,
+    const GuestLocale::String* path2, LibcException::ErrorCode code) {
+    FilesystemErrorTwoPaths_nid_no_patch(message, path1, path2, code);
 }
 APS5_EXPORT("Wut42WAe7Rw", sceLibcInternalPending4_123_nid_no_patch);
 
@@ -617,14 +617,16 @@ int APS5_VABI _CStrftime_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _CStrxfrm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+size_t APS5_VABI _CStrxfrm_nid_postfix(char* destination, const char* source, size_t count) {
+    size_t result = 0;
+    result = strxfrm_nid_postfix(destination, source, count);
+    return result;
 }
 
-int APS5_VABI _CWcsxfrm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+size_t APS5_VABI _CWcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, size_t count) {
+    size_t result = 0;
+    result = wcsxfrm_nid_postfix(destination, source, count);
+    return result;
 }
 
 int APS5_VABI _Closreg_nid_postfix() {

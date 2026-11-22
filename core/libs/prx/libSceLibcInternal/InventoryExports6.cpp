@@ -1,5 +1,6 @@
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
+#include "prx/libSceLibcInternal/include/TimeGetFields.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -379,9 +380,8 @@ int APS5_VABI sceLibcInternalUnknown6_109_zpy7LnTL5p0_nid_no_patch() {
 }
 APS5_EXPORT("zpy7LnTL5p0", sceLibcInternalUnknown6_109_zpy7LnTL5p0_nid_no_patch);
 
-int APS5_VABI sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(void* self, const void* info, std::size_t refs) {
+    _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1ERKSt8_Locinfom_nid_postfix(static_cast<GuestLocale::Facet*>(self), static_cast<const GuestLocale::LocinfoStorage*>(info), refs);
 }
 APS5_EXPORT("IuFImJ5+kTk", sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch);
 

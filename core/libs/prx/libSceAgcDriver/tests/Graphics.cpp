@@ -3999,6 +3999,24 @@ void gcnColorSliceTests() {
         const auto target = DecodeColorBuffer(queue.context, 0);
         Require(target.address == base + slice * GcnSliceBytes && target.bytes == GcnSliceBytes, "a GCN color view of one array slice does not address that slice");
     }
+    for (const std::uint32_t slice : {0u, 1u}) {
+        for (const std::uint32_t exports : {0u, (1u << 18u) - 1u, ~(1u << 18u)}) {
+            queue.context[0x207] = exports;
+            queue.context[0x31b] = slice | (2u << 13u);
+            const auto target = DecodeColorBuffer(queue.context, 0);
+            Require(target.address == base + slice * GcnSliceBytes && target.bytes == GcnSliceBytes && target.layers == 1u, "a GCN color view of several slices without a vertex render target index does not draw into its first slice");
+        }
+    }
+    queue.context.erase(0x207);
+    queue.context[0x31b] = 1u | (2u << 13u);
+    Require(DecodeColorBuffer(queue.context, 0).address == base + GcnSliceBytes, "a GCN color view of several slices decoded without PA_CL_VS_OUT_CNTL does not draw into its first slice");
+    queue.context[0x207] = 1u << 18u;
+    expectFailure([&] { static_cast<void>(DecodeColorBuffer(queue.context, 0)); }, "GCN layered rendering into several array slices through the vertex render target index is not implemented");
+    queue.context[0x31b] = 1u | (1u << 13u);
+    Require(DecodeColorBuffer(queue.context, 0).address == base + GcnSliceBytes, "a GCN color view of one slice is refused for a vertex render target index");
+    queue.context[0x207] = 0;
+    queue.context[0x31b] = 2u | (1u << 13u);
+    expectFailure([&] { static_cast<void>(DecodeColorBuffer(queue.context, 0)); }, "the color view ends before its first slice");
 }
 
 void cmaskTests() {
@@ -4764,7 +4782,7 @@ void multisampleTests() {
     queue.context[0x2f8] = 0;
     queue.context[0x0] = 0;
     queue.context[0x202] = 0xcc0020;
-    expectFailure([&] { DecodeColorMetadataPass(queue); }, "multisampled color target");
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "fast-clear eliminate of a multisampled target without a CMASK address");
     queue.context[0x31c] |= 0x10000000u;
     queue.context[0x325] = 0;
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "multisampled DCC targets require pipe-aligned single-layer SW_64KB_R_X");
@@ -4785,6 +4803,15 @@ void multisampleTests() {
     Require(fmaskPass->targets[0].dccControl == 0x00100038u, "FMASK decompress lost its DCC control");
     queue.context[0x31e] |= 0x80u;
     Require(DecodeColorMetadataPass(queue)->targets[0].dccControl == 0x001000b8u, "FMASK decompress hid an unsupported DCC control from the importer");
+    queue.context[0x318] = static_cast<std::uint32_t>(resolvedAddress >> 8u);
+    queue.context[0x390] = static_cast<std::uint32_t>(resolvedAddress >> 40u);
+    queue.context[0x31e] = 0x00100038u;
+    queue.context[0x3b8] = 0x4dc6c000u;
+    queue.context[0x202] = 0x00cc0020;
+    const auto eliminatePass = DecodeColorMetadataPass(queue);
+    Require(eliminatePass.has_value() && eliminatePass->mode == ColorMetadataPass::Mode::EliminateFastClear && eliminatePass->targets.size() == 1 && eliminatePass->targets[0].samples == 4 && eliminatePass->targets[0].cmaskAddress == cmaskAddress && eliminatePass->targets[0].cmaskFastClear && eliminatePass->targets[0].dccAddress != 0, "a fast-clear eliminate of a 4x multisampled target with CMASK and DCC did not decode");
+    queue.context[0x202] = 0x00cc0060;
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "CB DCC decompress over a multisampled color target");
     queue = makeState();
     queue.context[0x0] = 0;
     queue.context[0x202] = 0x00cc0050;
@@ -13826,6 +13853,11 @@ void meshArgumentTests() {
     Require(same(ResolveMeshArguments(record(200, 3, 150), rules(triangles, 300)), {2, 3, 1, 150, 150}), "count clamped to the index buffer");
     Require(same(ResolveMeshArguments(record(9, 1, 300), rules(triangles, 300)), {0, 0, 0, 0, 300}), "first index past the index buffer draws nothing");
     Require(same(ResolveMeshArguments(record(2, 1, 0), rules(triangles, 300)), {0, 0, 0, 2, 0}), "no complete triangle draws nothing");
+    const auto autoRules = [&](const ShaderRecompiler::MeshConfiguration& mesh) { return AgcDriver::Graphics::MeshArgumentRulesFor(context, mesh, AgcDriver::Pm4::DrawParameters{0, 0, 0, 1, 0, false}); };
+    Require(same(ResolveMeshArguments(record(99, 2, 0), autoRules(triangles)), {2, 2, 1, 99, 0}), "a non-indexed record keeps its vertex count");
+    Require(same(ResolveMeshArguments(record(99, 2, 0xfffffff0u), autoRules(triangles)), {2, 2, 1, 99, 0}), "a non-indexed record's start vertex neither clamps nor offsets it");
+    Require(same(ResolveMeshArguments(record(2, 1, 5), autoRules(triangles)), {0, 0, 0, 2, 0}), "a non-indexed record with no complete triangle draws nothing");
+    Require(same(ResolveMeshArguments(record(200, 3, 150), AgcDriver::Graphics::MeshArgumentRulesFor(context, triangles, AgcDriver::Pm4::DrawParameters{0, 300, 2, 1, 0, true})), {2, 3, 1, 150, 150}), "an indexed draw keeps its index buffer clamp");
     Require(same(ResolveMeshArguments(record(10, 1, 0), rules(strip, 64)), {1, 1, 1, 10, 0}), "eight strip triangles are one group");
     Require(same(ResolveMeshArguments(record(11, 1, 0), rules(strip, 64)), {2, 1, 1, 11, 0}), "a ninth strip triangle starts a group");
     Require(same(ResolveMeshArguments(record(10, 1, 0), rules(fan, 64)), {1, 1, 1, 10, 0}), "eight fan triangles are one group");

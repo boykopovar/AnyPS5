@@ -97,11 +97,36 @@ def own(prs, sha):
     return {n: pr for n, pr in prs.items() if pr["sha"] not in ancestors}
 
 
-def without_own_pull_request(prs, name):
-    matching = [number for number, pr in prs.items() if pr.get("branch") == name]
+def without_own_pull_request(prs, name, repository=None):
+    if repository is None:
+        return prs
+    matching = [number for number, pr in prs.items()
+                if pr.get("branch") == name and pr.get("head_repo", "").casefold() == repository.casefold()]
     if len(matching) == 1:
         del prs[matching[0]]
     return prs
+
+
+def push_head(name):
+    ref = f"refs/heads/{name}"
+    try:
+        rows = git("for-each-ref", "--format=%(refname)%09%(push:remotename)%09%(push:remoteref)", ref)
+        for row in rows.splitlines():
+            fields = row.split("\t")
+            if len(fields) != 3:
+                return name, None
+            local, remote, destination = fields
+            if local != ref or not remote or not destination.startswith("refs/heads/"):
+                continue
+            urls = git("remote", "get-url", "--push", "--all", remote).splitlines()
+            if len(urls) == 1:
+                match = re.fullmatch(r"(?:https?://github\.com/|git@github\.com:|ssh://git@github\.com(?::22)?/)"
+                                     r"([\w.-]+/[\w.-]+?)(?:\.git)?/?", urls[0], re.IGNORECASE)
+                if match:
+                    return destination.removeprefix("refs/heads/"), match[1]
+    except subprocess.CalledProcessError:
+        pass
+    return name, None
 
 
 def gh(*args, attempts=3, delay=0.5):
@@ -236,6 +261,7 @@ def open_prs(base):
             "ref": f"refs/pr/{pr['number']}",
             "sha": pr["head"]["sha"],
             "branch": pr["head"]["ref"],
+            **({"head_repo": head_repo["full_name"]} if (head_repo := pr["head"].get("repo")) else {}),
             "author": pr["user"]["login"],
             "title": pr.get("title") or "",
             "depends": depends_on(pr["body"]),
@@ -939,7 +965,8 @@ def main(argv=None):
             return 0
         if args.branch:
             sha = branch_sha
-            prs = without_own_pull_request(own(prs, sha), args.branch)
+            head_branch, head_repo = push_head(args.branch)
+            prs = without_own_pull_request(own(prs, sha), head_branch, head_repo)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)
         current_exports = base_exports(BASE_REF)
