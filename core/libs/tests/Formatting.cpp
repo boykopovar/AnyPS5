@@ -1090,6 +1090,13 @@ static void CheckLargeWidths() {
     Require(format("%5000.4500d", -7) == 5000 && big[498] == ' ' && big[499] == '-' && big[500] == '0' && big[4999] == '7');
     Require(format("%#05000x", 255u) == 5000 && big[0] == '0' && big[1] == 'x' && big[2] == '0' && big[4998] == 'f' && big[4999] == 'f');
     Require(format("%5000s", "ab") == 5000 && big[4997] == ' ' && big[4998] == 'a' && big[4999] == 'b');
+    std::string longText(5000, 'x');
+    Require(format("%.4999s|", longText.c_str()) == 5000 && big[4998] == 'x' && big[4999] == '|');
+    Require(format("%-5100.5000s|", longText.c_str()) == 5101 && big[4999] == 'x' && big[5000] == ' ' && big[5100] == '|');
+    char mutableText[100];
+    std::memset(mutableText, 'a', 99);
+    mutableText[99] = 0;
+    Require(format("%.5000s", mutableText) == 99 && big[98] == 'a' && big[99] == 0);
     Require(format("%.2147483647s|", "ab") == 3 && std::strcmp(big.data(), "ab|") == 0);
     char small[16];
     for (const std::size_t capacity : {std::size_t{0}, std::size_t{1}, sizeof(small)}) {

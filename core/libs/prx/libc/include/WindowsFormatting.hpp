@@ -128,12 +128,6 @@ inline bool SplitLargeSpec(const std::string& format, LargeSpec& result) {
     return !result.tail.empty() && (result.width > hostSpecLimit || result.precision > hostSpecLimit);
 }
 
-inline unsigned long long LargePrecision(unsigned long long precision, const char* text) {
-    unsigned long long length = 0;
-    while (length < precision && text[length]) ++length;
-    return length;
-}
-
 template<class T> unsigned long long LargePrecision(unsigned long long precision, T) {
     return precision < clampedPrecision ? precision : clampedPrecision;
 }
@@ -174,18 +168,26 @@ public:
         for (const char flag : large.flags)
             if (flag != '-' && flag != '0') core += flag;
         unsigned long long extraZeros = 0;
-        if (large.hasPrecision) {
-            const unsigned long long inner = LargePrecision(large.precision, value);
-            if (integer && large.precision > inner) extraZeros = large.precision - inner;
-            core += "." + std::to_string(inner);
+        std::string body;
+        if constexpr (std::is_convertible_v<T, const char*>) {
+            const char* text = value ? value : "(null)";
+            size_t length = 0;
+            while ((!large.hasPrecision || length < large.precision) && text[length]) ++length;
+            body.assign(text, length);
+        } else {
+            if (large.hasPrecision) {
+                const unsigned long long inner = LargePrecision(large.precision, value);
+                if (integer && large.precision > inner) extraZeros = large.precision - inner;
+                core += "." + std::to_string(inner);
+            }
+            core += large.tail;
+            const int size = std::snprintf(nullptr, 0, core.c_str(), value);
+            if (size < 0) throw std::runtime_error("Formatting conversion failed");
+            std::vector<char> text(static_cast<size_t>(size) + 1);
+            if (std::snprintf(text.data(), text.size(), core.c_str(), value) != size)
+                throw std::runtime_error("Inconsistent formatting conversion");
+            body.assign(text.data(), static_cast<size_t>(size));
         }
-        core += large.tail;
-        const int size = std::snprintf(nullptr, 0, core.c_str(), value);
-        if (size < 0) throw std::runtime_error("Formatting conversion failed");
-        std::vector<char> text(static_cast<size_t>(size) + 1);
-        if (std::snprintf(text.data(), text.size(), core.c_str(), value) != size)
-            throw std::runtime_error("Inconsistent formatting conversion");
-        const std::string body(text.data(), static_cast<size_t>(size));
         size_t digits = 0;
         if (integer) {
             if (digits < body.size() && std::strchr("+- ", body[digits])) ++digits;
