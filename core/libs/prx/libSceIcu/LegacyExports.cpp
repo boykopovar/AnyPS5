@@ -1143,8 +1143,21 @@ int APS5_VABI _ZN6icu_6810UStringSetD1Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_getVersionNumberInternal_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+const char* APS5_VABI ures_getVersionNumberInternal_nid_postfix(const UResourceBundle* resourceBundle) {
+    if (!resourceBundle) return nullptr;
+    const auto base = reinterpret_cast<std::uintptr_t>(resourceBundle);
+    constexpr auto versionOffset = 16;
+    if (base > std::numeric_limits<std::uintptr_t>::max() - versionOffset) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    const char* version = nullptr;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&version, reinterpret_cast<const void*>(base + versionOffset), sizeof(version));
+    errno = savedErrno;
+    if (!readable || !version) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    return version;
 }
 
 void APS5_VABI uprv_deleteUObject_nid_postfix(void* object) {
@@ -1459,8 +1472,28 @@ int APS5_VABI sceIcuLegacyUnknown_7sukzrX_minus_FQ4_nid_no_patch() {
 }
 APS5_EXPORT("7sukzrX-FQ4", sceIcuLegacyUnknown_7sukzrX_minus_FQ4_nid_no_patch);
 
-int APS5_VABI ures_getVersion_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI ures_getVersion_nid_postfix(const UResourceBundle* resB, std::uint8_t* versionInfo) {
+    if (!resB) return;
+    if (!versionInfo) NotImplemented_nid_no_patch(__func__);
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(versionInfo, 4)) {
+        errno = savedErrno;
+        NotImplemented_nid_no_patch(__func__);
+    }
+    errno = savedErrno;
+    const char* version = ures_getVersionNumberInternal_nid_postfix(resB);
+    char versionStr[32]{};
+    for (std::size_t i = 0; i < sizeof(versionStr); ++i) {
+        const int loopErrno = errno;
+        const bool charReadable = GuestCopyIn_nid_no_patch(&versionStr[i], version + i, 1);
+        errno = loopErrno;
+        if (!charReadable) {
+            NotImplemented_nid_no_patch(__func__);
+        }
+        if (versionStr[i] == '\0') break;
+    }
+    versionStr[sizeof(versionStr) - 1] = '\0';
+    u_versionFromString(versionInfo, versionStr);
 }
 
 int APS5_VABI uprv_getStaticCurrencyName_nid_postfix() {
@@ -4943,8 +4976,8 @@ int APS5_VABI sceIcuLegacyUnknown_UhSI5QqNY7M_nid_no_patch() {
 }
 APS5_EXPORT("UhSI5QqNY7M", sceIcuLegacyUnknown_UhSI5QqNY7M_nid_no_patch);
 
-int APS5_VABI ures_getVersionNumber_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+const char* APS5_VABI ures_getVersionNumber_nid_postfix(const UResourceBundle* resourceBundle) {
+    return ures_getVersionNumberInternal_nid_postfix(resourceBundle);
 }
 
 int APS5_VABI _ZN6icu_6823StringCharacterIteratorC2Ev_nid_postfix() {
@@ -8952,7 +8985,23 @@ int APS5_VABI sceIcuLegacyUnknown_vo6bvI_plus_oYEw_nid_no_patch() {
 }
 APS5_EXPORT("vo6bvI+oYEw", sceIcuLegacyUnknown_vo6bvI_plus_oYEw_nid_no_patch);
 
-int APS5_VABI ures_getVersionByKey_nid_postfix() {
+void APS5_VABI ures_getVersionByKey_nid_postfix(const UResourceBundle* res, const char* key, std::uint8_t* ver, std::int32_t* status) {
+    if (!status) APS5_INVALID_ARG_EX;
+    std::int32_t currentStatus = 0;
+    const int savedErrno = errno;
+    const bool statusReadable = GuestCopyIn_nid_no_patch(&currentStatus, status, sizeof(currentStatus));
+    errno = savedErrno;
+    if (!statusReadable) APS5_INVALID_ARG_EX;
+    if (currentStatus > 0) return;
+    const bool statusWritable = GuestWritable_nid_no_patch(status, sizeof(*status));
+    errno = savedErrno;
+    if (!statusWritable) APS5_INVALID_ARG_EX;
+    if (!res) {
+        *status = U_ILLEGAL_ARGUMENT_ERROR;
+        return;
+    }
+    (void)key;
+    (void)ver;
     NotImplemented_nid_no_patch(__func__);
 }
 
