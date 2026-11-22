@@ -338,6 +338,34 @@ class MainTests(unittest.TestCase):
         self.assertNotIn("Traceback", err)
         self.assertFalse(target.exists())
 
+    def test_append_marker_requires_a_complete_utf16_prefix(self):
+        note = b"[log] ANYPS5_LOG_FILE: appending to this file, process 42\n"
+        for encoding, bom in (("utf-16-le", codecs.BOM_UTF16_LE), ("utf-16-be", codecs.BOM_UTF16_BE)):
+            for damaged in (b"x", "\ud800".encode(encoding, errors="surrogatepass")):
+                with self.subTest(encoding=encoding, damaged=damaged):
+                    self.log.write_bytes(bom + "header\r\n".encode(encoding) + damaged + note)
+                    target = self.root / f"{encoding}-{len(damaged)}.zip"
+                    code, out, err = self.run_main(["--report", str(self.report), "--log", str(self.log), "--out", str(target)])
+                    self.assertEqual((code, out), (1, ""))
+                    self.assertIn("bug_report: log has ambiguous encoding", err)
+                    self.assertNotIn("Traceback", err)
+                    self.assertFalse(target.exists())
+
+    def test_aligned_append_marker_in_utf16_cannot_hide_a_username(self):
+        note = b"[log] ANYPS5_LOG_FILE: appending to this file, process 42\n"
+        encoded_marker = note + b" " * (len(note) % 2)
+        user = "木水"
+        for encoding, bom in (("utf-16-le", codecs.BOM_UTF16_LE), ("utf-16-be", codecs.BOM_UTF16_BE)):
+            with self.subTest(encoding=encoding):
+                self.log.write_bytes(bom + "header\r\n".encode(encoding) + encoded_marker + f"、{user}。".encode(encoding))
+                target = self.root / f"embedded-{encoding}.zip"
+                with patch.object(bug_report, "identities", return_value={"home": "", "user": user, "host": ""}):
+                    code, out, err = self.run_main(["--report", str(self.report), "--log", str(self.log), "--out", str(target)])
+                self.assertEqual((code, out), (1, ""))
+                self.assertIn("bug_report: log has ambiguous encoding", err)
+                self.assertNotIn(user, err)
+                self.assertFalse(target.exists())
+
     def test_utf32_log_is_reported_without_bundle(self):
         line = "opened /home/ana/title.elf on serverfestivo from 192.0.2.42\r\n"
         for encoding, bom in (("utf-32-le", codecs.BOM_UTF32_LE), ("utf-32-be", codecs.BOM_UTF32_BE)):

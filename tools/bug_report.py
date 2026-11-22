@@ -103,9 +103,19 @@ def redact_log(path, identity):
         prefix = data[:boundary]
         tail = data[boundary:]
         as_utf8 = prefix.decode("utf-8", errors="replace")
+        ambiguous = f"log has ambiguous encoding. {LOG_ENCODING_HINT}"
         if b"\x00" in tail or redact(as_utf8, **identity) != as_utf8:
-            raise ValueError(f"log has ambiguous encoding. {LOG_ENCODING_HINT}")
-        text = prefix.decode("utf-16", errors="replace") + tail.decode("utf-8", errors="replace")
+            raise ValueError(ambiguous)
+        try:
+            text = prefix.decode("utf-16", errors="strict" if append else "replace")
+        except UnicodeDecodeError:
+            raise ValueError(ambiguous) from None
+        if append:
+            encoding = "utf-16-le" if data.startswith(codecs.BOM_UTF16_LE) else "utf-16-be"
+            as_utf16 = tail.decode(encoding, errors="replace")
+            if redact(as_utf16, **identity) != as_utf16:
+                raise ValueError(ambiguous)
+            text += tail.decode("utf-8", errors="replace")
     else:
         text = data.decode("utf-8", errors="replace")
     return redact(text.replace("\r\n", "\n").replace("\r", "\n"), **identity)
