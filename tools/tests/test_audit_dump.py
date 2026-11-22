@@ -592,6 +592,17 @@ class AuditDumpTests(unittest.TestCase):
             with self.subTest(relative=relative):
                 self.assert_report_rejected(self.dump / relative, "JSON output overlaps the input dump")
 
+    def test_json_outputs_inside_cleared_work_directories_are_rejected_before_cleanup(self):
+        work = self.root / "report-work"
+        for child in ("source", "output"):
+            with self.subTest(child=child):
+                directory = work / child / "previous"
+                directory.mkdir(parents=True)
+                report = directory / "report.json"
+                report.write_bytes(b"previous report")
+                self.assert_report_rejected(report, "JSON output overlaps a work directory that will be cleared")
+                self.assertEqual(report.read_bytes(), b"previous report")
+
     def test_json_output_directory_or_missing_parent_is_rejected_before_staging(self):
         directory = self.root / "report-dir"
         directory.mkdir()

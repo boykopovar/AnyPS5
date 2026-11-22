@@ -189,11 +189,14 @@ def main(argv=None):
                 dump_inputs.extend((directory, *modules_of(directory)))
     except (OSError, RuntimeError) as error:
         parser.error(f"{dump}: cannot enumerate dump inputs before cleanup: {error}")
+    report_locations = ()
     if args.json:
         report = Path(args.json)
         try:
             overlaps = report_overlaps_dump(report, dump)
-            relinker_alias = comparison_path(report) == comparison_path(relinker) or (report.exists() and report.samefile(relinker))
+            report_path = comparison_path(report)
+            report_locations = (Path(os.path.abspath(report)), report_path, comparison_path(report.parent) / report.name)
+            relinker_alias = report_path == comparison_path(relinker) or (report.exists() and report.samefile(relinker))
         except (OSError, RuntimeError) as error:
             parser.error(f"{report}: cannot check JSON output against the input dump: {error}")
         if relinker_alias:
@@ -212,6 +215,10 @@ def main(argv=None):
                 generated_path = comparison_path(generated)
             except (OSError, RuntimeError) as error:
                 parser.error(f"{generated}: cannot check work directory against the input dump: {error}")
+            generated_spelling = Path(os.path.abspath(generated))
+            if any(location.is_relative_to(generated_spelling) or location.is_relative_to(generated_path)
+                   for location in report_locations):
+                parser.error(f"{report}: JSON output overlaps a work directory that will be cleared: {generated}")
             if dump_path.is_relative_to(generated_path) or generated_path.is_relative_to(dump_path):
                 parser.error(f"{generated}: work directory overlaps the input dump")
             for input_path in (Path(args.relinker), *(Path(library) for library in args.libs), *dump_inputs):
@@ -220,7 +227,6 @@ def main(argv=None):
                 except (OSError, RuntimeError) as error:
                     parser.error(f"{input_path}: cannot check work directory against input: {error}")
                 supplied = Path(os.path.abspath(input_path))
-                generated_spelling = Path(os.path.abspath(generated))
                 if (supplied.is_relative_to(generated_spelling) or resolved.is_relative_to(generated_path)
                         or input_path in dump_directories and generated_path.is_relative_to(resolved)):
                     parser.error(f"{generated}: work directory contains input {input_path}")
