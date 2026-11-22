@@ -438,6 +438,37 @@ for (const outcome of ["error", "handle", "writable", "directory"]) {
   });
 }
 
+test("cancelling a conversion returns keyboard focus to the ZIP chooser", async t => {
+  const { get, workers } = await setup(t, "cancel-focus");
+  await selected(get, workers, "first.zip");
+  await get("convert").onclick();
+  assert.equal(get("cancel").hidden, false);
+  document.activeElement = get("cancel");
+  get("choose").focus = () => {
+    assert.equal(get("drop").hidden, false);
+    assert.equal(get("choose").disabled, false);
+    document.activeElement = get("choose");
+  };
+  await get("cancel").onclick();
+  assert.equal(document.activeElement, get("choose"));
+});
+
+test("cancel cleanup preserves focus moved to the language switch", async t => {
+  const cleanup = deferred();
+  const { get, workers } = await setup(t, "cancel-cleanup-focus", {
+    showSaveFilePicker: async () => ({ async createWritable() { return { abort: () => cleanup.promise }; } })
+  });
+  await selected(get, workers, "first.zip");
+  await get("convert").onclick();
+  document.activeElement = get("cancel");
+  get("choose").focus = () => { assert.fail("focus should stay on the language switch"); };
+  const cancelling = get("cancel").onclick();
+  document.activeElement = get("locale");
+  cleanup.resolve();
+  await cancelling;
+  assert.equal(document.activeElement, get("locale"));
+});
+
 for (const type of ["write", "close-file", "complete"]) {
   for (const reject of [false, true]) {
     test(`late ${type} ${reject ? "failure" : "success"} cannot acknowledge or complete a new job`, async t => {
