@@ -56,7 +56,7 @@ constexpr int GuestNonBlocking = 0x1200;
 constexpr short PollIn = 1;
 constexpr short PollOut = 4;
 
-enum class ServerMode { Exchange, DelayedExchange, HandshakeOnly, Reset };
+enum class ServerMode { Exchange, DelayedExchange, HandshakeOnly, Reset, PendingWrite };
 
 void Require(bool condition, int line) {
     if (condition) return;
@@ -74,6 +74,9 @@ struct Server {
     mbedtls_pk_context key;
     mbedtls_ssl_config config;
     std::uint16_t port = 0;
+    std::atomic<bool> sawCloseNotify{false};
+    std::atomic<bool> clientStalled{false};
+    std::atomic<bool> clientWriteRejected{false};
 
     Server() {
         mbedtls_net_init(&listener);
@@ -112,7 +115,29 @@ struct Server {
         mbedtls_net_free(&listener);
     }
 
+    static void Await(const std::atomic<bool>& flag) {
+        for (int attempt = 0; attempt < 5000 && !flag; ++attempt) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
+    static bool AwaitCloseNotify(mbedtls_ssl_context& ssl) {
+        std::array<unsigned char, 16384> buffer{};
+        int retries = 0;
+        for (;;) {
+            const int count = mbedtls_ssl_read(&ssl, buffer.data(), buffer.size());
+            if (count == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) return true;
+            if (count > 0) continue;
+            if (count != MBEDTLS_ERR_SSL_WANT_READ && count != MBEDTLS_ERR_SSL_WANT_WRITE) return false;
+            if (++retries > 500) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+
     std::thread Spawn(ServerMode mode) {
+        sawCloseNotify = false;
+        clientStalled = false;
+        clientWriteRejected = false;
         return std::thread([this, mode]() {
             mbedtls_net_context client;
             mbedtls_ssl_context ssl;
@@ -139,6 +164,9 @@ struct Server {
 #endif
                             client.fd = -1;
                         }
+                    } else if (mode == ServerMode::PendingWrite) {
+                        Await(clientStalled);
+                        Await(clientWriteRejected);
                     } else {
                         std::array<unsigned char, 4> request{};
                         std::size_t received = 0;
@@ -156,6 +184,7 @@ struct Server {
                             mbedtls_ssl_close_notify(&ssl);
                         }
                     }
+                    sawCloseNotify = AwaitCloseNotify(ssl);
                 }
             }
             mbedtls_ssl_free(&ssl);
@@ -223,8 +252,9 @@ void TestHandshakeAndExchange(Server& server) {
 
     tls_free_nid_postfix(client);
     tls_config_free_nid_postfix(config);
-    Check(close_nid_postfix(sock) == 0);
     thread.join();
+    Check(server.sawCloseNotify);
+    Check(close_nid_postfix(sock) == 0);
 }
 
 void TestImplicitHandshakeAndNoVerifyName(Server& server, const char* servername) {
@@ -250,8 +280,9 @@ void TestImplicitHandshakeAndNoVerifyName(Server& server, const char* servername
 
     tls_free_nid_postfix(client);
     tls_config_free_nid_postfix(config);
-    Check(close_nid_postfix(sock) == 0);
     thread.join();
+    Check(server.sawCloseNotify);
+    Check(close_nid_postfix(sock) == 0);
 }
 
 void TestNonBlockingPoll(Server& server) {
@@ -315,8 +346,63 @@ void TestNonBlockingPoll(Server& server) {
 
     tls_free_nid_postfix(client);
     tls_config_free_nid_postfix(config);
-    Check(close_nid_postfix(sock) == 0);
     thread.join();
+    Check(server.sawCloseNotify);
+    Check(close_nid_postfix(sock) == 0);
+}
+
+void TestCloseWithPendingWrite(Server& server) {
+    auto thread = server.Spawn(ServerMode::PendingWrite);
+    const int sock = OpenGuestSocket(server.port);
+    const int nonBlocking = 1;
+    Check(setsockopt_nid_postfix(sock, GuestSocketLevel, GuestNonBlocking,
+        &nonBlocking, sizeof(nonBlocking)) == 0);
+
+    TlsConfig* config = MakeConfig(RootPem, sizeof(RootPem) - 1);
+    TlsContext* client = tls_client_nid_postfix();
+    Check(client != nullptr);
+    Check(tls_configure_nid_postfix(client, config) == 0);
+    Check(tls_connect_socket_nid_postfix(client, sock, "localhost") == 0);
+
+    for (;;) {
+        const int result = tls_handshake_nid_postfix(client);
+        if (result == 0) break;
+        Check(result == WantPollIn || result == WantPollOut);
+        WaitSocket(sock, result);
+    }
+
+    std::array<char, 16384> payload{};
+    int stalls = 0;
+    for (int attempt = 0; attempt < 20000 && stalls < 200; ++attempt) {
+        const auto result = tls_write_nid_postfix(client, payload.data(), payload.size());
+        if (result == WantPollOut) {
+            ++stalls;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } else {
+            Check(result == static_cast<std::int64_t>(payload.size()));
+            stalls = 0;
+        }
+    }
+    Check(stalls >= 200);
+    server.clientStalled = true;
+
+    Check(tls_close_nid_postfix(client) == WantPollOut);
+    Check(tls_write_nid_postfix(client, payload.data(), payload.size()) == -1);
+    Check(tls_error_nid_postfix(client) != nullptr);
+    server.clientWriteRejected = true;
+
+    for (;;) {
+        const int result = tls_close_nid_postfix(client);
+        if (result == 0) break;
+        Check(result == WantPollIn || result == WantPollOut);
+        WaitSocket(sock, result);
+    }
+
+    tls_free_nid_postfix(client);
+    tls_config_free_nid_postfix(config);
+    thread.join();
+    Check(server.sawCloseNotify);
+    Check(close_nid_postfix(sock) == 0);
 }
 
 void TestErrors(Server& server) {
@@ -484,10 +570,11 @@ void RunPingPongWithConfig(Server& server, TlsConfig* config) {
     Check(tls_close_nid_postfix(client) == 0);
 
     tls_free_nid_postfix(client);
+    thread.join();
+    Check(server.sawCloseNotify);
     CheckCallerOwnsSocket(sock, true);
     Check(close_nid_postfix(sock) == 0);
     CheckCallerOwnsSocket(sock, false);
-    thread.join();
 }
 
 void RunSystemCaSuccess(Server& server) {
@@ -628,6 +715,7 @@ int main() {
     TestImplicitHandshakeAndNoVerifyName(server, "mismatch.example");
     TestImplicitHandshakeAndNoVerifyName(server, nullptr);
     TestNonBlockingPoll(server);
+    TestCloseWithPendingWrite(server);
     TestErrors(server);
     TestSystemCaFallback(server);
     TestReset(server);

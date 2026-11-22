@@ -38,6 +38,7 @@ constexpr int NP_ERROR_IPC_ALREADY_INITIALIZED = static_cast<int>(0x80559D00);
 constexpr int NP_ERROR_IPC_NOT_INITIALIZED = static_cast<int>(0x80559D01);
 constexpr int NP_ERROR_ONLINE_ID_MISMATCH = static_cast<int>(0x80550609);
 constexpr int NP_ERROR_INVALID_NP_ID = static_cast<int>(0x80550605);
+constexpr int RTC_ERROR_INVALID_POINTER = static_cast<int>(0x80B50002);
 constexpr std::size_t NP_ID_OPT_OFFSET = 0x14;
 constexpr std::size_t NP_ID_PLATFORM_OFFSET = 0x18;
 constexpr std::size_t NP_ID_TERMINATOR_FLAG_OFFSET = 0x1C;
@@ -1156,8 +1157,11 @@ int APS5_VABI sceNpRtcFormatRFC3339(char* text, std::size_t size, const RtcTick*
     if (size < NP_RFC3339_BUFFER_MIN) return NP_ERROR_BUFFER_TOO_SMALL;
     const int result = sceRtcFormatRFC3339(text, utc, timeZoneMinutes);
     if (result < 0) return result;
-    text[size - 1] = 0;
-    return 0;
+    const char terminator = 0;
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(text + size - 1, &terminator, sizeof(terminator));
+    errno = savedErrno;
+    return written ? 0 : RTC_ERROR_INVALID_POINTER;
 }
 
 int APS5_VABI sceNpUserGetUserIdList(int* users, std::size_t capacity, int* count) {
@@ -1325,10 +1329,16 @@ int APS5_VABI sceNpUtilCmpAccountId(std::uint64_t left, std::uint64_t right) {
 
 int APS5_VABI sceNpCmpNpId(const void* npId1, const void* npId2) {
     if (!npId1 || !npId2) return NP_ERROR_NULL_ARGUMENT;
-    const auto* left = static_cast<const std::uint8_t*>(npId1);
-    const auto* right = static_cast<const std::uint8_t*>(npId2);
+    NpIdFull leftId {};
+    NpIdFull rightId {};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&leftId, npId1, sizeof(leftId)) && GuestCopyIn_nid_no_patch(&rightId, npId2, sizeof(rightId));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_NULL_ARGUMENT;
+    const auto* left = reinterpret_cast<const std::uint8_t*>(&leftId);
+    const auto* right = reinterpret_cast<const std::uint8_t*>(&rightId);
     if (left[NP_ID_TERMINATOR_FLAG_OFFSET] != 1 || right[NP_ID_TERMINATOR_FLAG_OFFSET] != 1) return NP_ERROR_INVALID_NP_ID;
-    if (std::strncmp(static_cast<const char*>(npId1), static_cast<const char*>(npId2), NP_ONLINE_ID_MAX) != 0) return NP_ERROR_ONLINE_ID_MISMATCH;
+    if (std::strncmp(leftId.handle.data, rightId.handle.data, NP_ONLINE_ID_MAX) != 0) return NP_ERROR_ONLINE_ID_MISMATCH;
     if (NpIdWord(left, NP_ID_OPT_OFFSET) != NpIdWord(right, NP_ID_OPT_OFFSET)) return NP_ERROR_ONLINE_ID_MISMATCH;
     if (NpIdWord(left, NP_ID_PLATFORM_OFFSET) == NpIdWord(right, NP_ID_PLATFORM_OFFSET)) return 0;
     if (left[NP_ID_PLATFORM_OFFSET] == 0 || right[NP_ID_PLATFORM_OFFSET] == 0) return 0;
@@ -1978,12 +1988,17 @@ int APS5_VABI _ZN3sce2np9RefObject7ReleaseEv(NpRefObject* self) {
 
 int APS5_VABI sceNpUtilParseTitleId(NpCommunicationId* parts, const char* titleId) {
     if (titleId == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
-    const std::size_t length = std::strlen(titleId);
-    if (length < 10 || length >= NP_TITLE_ID_SIZE || titleId[9] != '_') return NP_UTIL_ERROR_OUT_OF_RANGE;
-    NpCommunicationId value{};
-    std::memcpy(value.data, titleId, sizeof(value.data));
-    value.num = static_cast<std::uint8_t>(std::strtol(titleId + 10, nullptr, 10));
+    std::string text;
     const int savedErrno = errno;
+    const int textError = CopyGuestString_nid_no_patch(titleId, NP_TITLE_ID_SIZE, text);
+    errno = savedErrno;
+    if (textError == 63) return NP_UTIL_ERROR_OUT_OF_RANGE;
+    if (textError != 0) return NP_ERROR_INVALID_ARGUMENT_UTIL;
+    const std::size_t length = text.size();
+    if (length < 10 || length >= NP_TITLE_ID_SIZE || text[9] != '_') return NP_UTIL_ERROR_OUT_OF_RANGE;
+    NpCommunicationId value{};
+    std::memcpy(value.data, text.data(), sizeof(value.data));
+    value.num = static_cast<std::uint8_t>(std::strtol(text.c_str() + 10, nullptr, 10));
     const bool copied = GuestCopyOut_nid_no_patch(parts, &value, sizeof(value));
     errno = savedErrno;
     if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
@@ -2060,9 +2075,13 @@ int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKc(NpCommIdObject* out, const char*
 }
 
 int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKcm(NpCommIdObject* out, const char* text, std::size_t length) {
-    if (length != NP_TITLE_ID_LENGTH || !IsCommIdText(text)) return NP_ERROR_TITLE_ID_INVALID;
+    if (length != NP_TITLE_ID_LENGTH) return NP_ERROR_TITLE_ID_INVALID;
     char copy[NP_TITLE_ID_LENGTH + 1] = {};
-    std::memcpy(copy, text, NP_TITLE_ID_LENGTH);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(copy, text, NP_TITLE_ID_LENGTH);
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
+    if (!IsCommIdText(copy)) return NP_ERROR_TITLE_ID_INVALID;
     return NpResult(sceNpUtilParseTitleId(&out->commId, copy));
 }
 

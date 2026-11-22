@@ -50,6 +50,9 @@ struct Session {
     bool connected = false;
     bool handshaken = false;
     bool closed = false;
+    bool closing = false;
+    bool pendingOutput = false;
+    bool closeNotifyQueued = false;
     bool failed = false;
     int hostError = 0;
     mbedtls_entropy_context entropy;
@@ -77,7 +80,10 @@ struct Session {
 
     static int Send(void* argument, const unsigned char* buffer, std::size_t length) {
         auto& session = *static_cast<Session*>(argument);
-        return MbedSocketIo::Send(session.socketOwner, session.socket, session.hostError, buffer, length);
+        const int result = MbedSocketIo::Send(session.socketOwner, session.socket, session.hostError, buffer, length);
+        if (result >= 0) session.pendingOutput = static_cast<std::size_t>(result) < std::min<std::size_t>(length, INT_MAX);
+        else if (result == MBEDTLS_ERR_SSL_WANT_WRITE) session.pendingOutput = true;
+        return result;
     }
 
     static int Receive(void* argument, unsigned char* buffer, std::size_t length) {
@@ -204,6 +210,10 @@ std::int64_t Handshake(TlsContext* context, Session& session) {
         TlsTransportSetError_nid_no_patch(context, "connection is failed");
         return -1;
     }
+    if (session.closing) {
+        TlsTransportSetError_nid_no_patch(context, "connection is closing");
+        return -1;
+    }
     if (session.handshaken) {
         TlsTransportSetError_nid_no_patch(context, "handshake already completed");
         return -1;
@@ -238,7 +248,22 @@ int TlsTransportClose_nid_no_patch(TlsContext* context) {
         return 0;
     }
     session->hostError = 0;
-    const int result = mbedtls_ssl_close_notify(&session->ssl);
+    session->closing = true;
+    int result = 0;
+    if (session->pendingOutput && !session->closeNotifyQueued) {
+        result = mbedtls_ssl_close_notify(&session->ssl);
+        if (result == MBEDTLS_ERR_SSL_WANT_READ) return static_cast<int>(WantPollIn);
+        if (result == MBEDTLS_ERR_SSL_WANT_WRITE) return static_cast<int>(WantPollOut);
+        if (result != 0) {
+            session->closed = true;
+            session->socketOwner.reset();
+            session->socket = static_cast<std::uintptr_t>(-1);
+            SetError(context, *session, result, "shutdown");
+            return -1;
+        }
+    }
+    if (!session->closeNotifyQueued) session->closeNotifyQueued = true;
+    result = mbedtls_ssl_close_notify(&session->ssl);
     if (result == MBEDTLS_ERR_SSL_WANT_READ) return static_cast<int>(WantPollIn);
     if (result == MBEDTLS_ERR_SSL_WANT_WRITE) return static_cast<int>(WantPollOut);
     session->closed = true;
@@ -379,6 +404,10 @@ std::int64_t TlsTransportWrite_nid_no_patch(TlsContext* context, const void* buf
     std::unique_lock lock(session->mutex);
     if (session->closed || session->failed) {
         TlsTransportSetError_nid_no_patch(context, session->failed ? "connection is failed" : "connection is closed");
+        return -1;
+    }
+    if (session->closing) {
+        TlsTransportSetError_nid_no_patch(context, "connection is closing");
         return -1;
     }
     if (!session->handshaken) {
