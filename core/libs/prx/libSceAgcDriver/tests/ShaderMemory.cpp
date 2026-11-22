@@ -486,6 +486,10 @@ void verifyLayerSpecializationRelease() {
         specializationId = first.specializationId;
         words = first.spirv.Copy();
     }
+    if (std::getenv("APS5_KEEP_SPECIALIZED_MIB") != nullptr) {
+        require(!released.Expired(), "layer module release: APS5_KEEP_SPECIALIZED_MIB did not keep the released SPIR-V words");
+        return;
+    }
     require(released.Expired(), "layer module release: the metadata retained unused SPIR-V words");
     const auto again = Recompile(request);
     require(again.specialization == expected, "layer module release: rebuilding the words lost the layer constants");
