@@ -58,6 +58,7 @@
 #include "prx/libSceNKWebKit/include/PropertyDescriptorExports.hpp"
 #include "prx/libSceNKWebKit/include/ScriptExecutableExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfBitVector.hpp"
+#include "prx/libSceNKWebKit/include/WtfObjectDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/UserGestureExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
