@@ -699,6 +699,15 @@ class ScriptRegistrationTests(unittest.TestCase):
                                     "tools/tests/test_env.py": "", "tools/tests/test_later.py": ""}),
                          ["tools/tests/test_env.py", "tools/tests/test_later.py", "tools/tests/test_name.py"])
 
+    def test_folded_workflow_run_registers_a_script_on_the_following_line(self):
+        script = "tools/tests/test_folded.py"
+        for scalar, separator, missing in ((">-", "\n", []), (">2-", "\n", []), ("|", "\n", [script]), (">", "\n\n", [script]),
+                                            (">", "\n  ", [script])):
+            with self.subTest(scalar=scalar, separator=separator):
+                workflow = (f"jobs:\n  t:\n    steps:\n      - run: {scalar}\n"
+                            f"          python3{separator}          {script}\n")
+                self.assertEqual(self.unrun({".github/workflows/ci.yml": workflow, script: ""}), missing)
+
 
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("ctest") and shutil.which("ninja"),
                      "CMake, CTest and Ninja are required")
@@ -1036,6 +1045,12 @@ class ScriptClassSelectionTests(unittest.TestCase):
     def test_workflow_class_selection_is_checked(self):
         self.assertEqual(self.unselected({
             ".github/workflows/ci.yml": "jobs:\n  t:\n    steps:\n      - run: python3 \"./tools/tests/test_a.py\" ATests && echo BTests\n",
+            "tools/tests/test_a.py": self.CASES}), {"tools/tests/test_a.py": ["BTests"]})
+
+    def test_folded_workflow_class_selection_is_checked(self):
+        self.assertEqual(self.unselected({
+            ".github/workflows/ci.yml": ("jobs:\n  t:\n    steps:\n      - run: >-\n"
+                                         "          python3 tools/tests/test_a.py\n          ATests\n"),
             "tools/tests/test_a.py": self.CASES}), {"tools/tests/test_a.py": ["BTests"]})
 
     def test_cli_fails_when_a_class_is_never_selected(self):
