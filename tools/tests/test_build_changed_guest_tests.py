@@ -509,6 +509,33 @@ class Main(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in build.glob("ran-*")), sorted(f"ran-{index}" for index in range(11)))
         self.assertFalse((build / "unrelated").exists())
 
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ctest"), "CMake and CTest are required")
+    def test_changed_fixture_setup_runs_its_consumer(self):
+        build = Path(self.temporary.name)
+        python = Path(sys.executable).as_posix()
+        cmake = Path(shutil.which("cmake")).as_posix()
+        (build / "CTestTestfile.cmake").write_text(
+            f'add_test(setup "{python}" -c "open(\'fixture\', \'w\').close()")\n'
+            'set_tests_properties(setup PROPERTIES FIXTURES_SETUP artifact)\n'
+            f'add_test(consumer "{cmake}" -E false)\n'
+            'set_tests_properties(consumer PROPERTIES FIXTURES_REQUIRED artifact)\n'
+            f'add_test(unrelated "{cmake}" -E touch unrelated)\n', encoding="utf-8")
+        real_run = subprocess.run
+
+        def execute(cmd, **kwargs):
+            if cmd[0] == "cmake":
+                return run_result()
+            return real_run(cmd, **{**kwargs, "capture_output": True, "text": True})
+
+        target = {"name": "fixture_target", "artifacts": [{"path": python}]}
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            with self.assertRaises(subprocess.CalledProcessError) as failure:
+                build_changed_guest_tests.run(build, ["fixture_target"],
+                                              build_changed_guest_tests.target_artifact_names(target))
+        self.assertIn("consumer", failure.exception.stdout)
+        self.assertTrue((build / "fixture").exists())
+        self.assertFalse((build / "unrelated").exists())
+
     @unittest.skipUnless(shutil.which("ctest"), "CTest is required to run the selected tests")
     def test_changed_host_fixture_runs_its_cases_and_propagates_failure(self):
         host = self.target("host_tests", source="core/libs/tests/Host.cpp")
@@ -721,6 +748,22 @@ class CtestResolutionsTests(unittest.TestCase):
     def test_selection_matches_the_owner_or_a_referenced_target(self):
         self.assertEqual(self.resolve(self.ctest_entries(), selected={"beta"}), {"b1": ("beta", 2), "c1": ("alpha", 4)})
         self.assertEqual(self.resolve(self.ctest_entries(), selected=set()), {})
+
+    def test_fixture_consumers_can_set_up_fixtures_and_build_wrapped_tools(self):
+        tests = [
+            {"name": "first", "command": ["bin/alpha.exe"],
+             "properties": [{"name": "FIXTURES_SETUP", "value": ["first_artifact"]}]},
+            {"name": "second", "properties": [{"name": "FIXTURES_REQUIRED", "value": ["first_artifact"]},
+                                               {"name": "FIXTURES_SETUP", "value": ["second_artifact"]}]},
+            {"name": "third", "command": ["cmake", "-P", "verify.cmake"],
+             "properties": [{"name": "FIXTURES_REQUIRED", "value": ["second_artifact"]}]},
+            {"name": "unrelated", "command": ["cmake", "-P", "verify.cmake"]},
+        ]
+        tool = (Path.cwd() / "bin/beta.exe").as_posix()
+        registered = {"second": ["cmake", f"-DTOOL={tool}", "-P", "verify.cmake"]}
+        with mock.patch.object(build_changed_guest_tests, "registered_test_commands", return_value=registered):
+            self.assertEqual(self.resolve(tests, selected={"alpha"}),
+                             {"first": ("alpha", 1), "second": ("beta", 2), "third": (None, 3)})
 
     def test_document_without_tests_resolves_nothing(self):
         self.assertEqual(self.resolve([]), {})

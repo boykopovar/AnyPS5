@@ -1,4 +1,5 @@
 import argparse
+from collections import defaultdict
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_mingw_host_only_tests as host_only
 from check_test_registration import testfile_commands
-from select_tests import chunks
+from select_tests import chunks, paths
 
 BROAD_CHANGES = {
     "CMakeLists.txt",
@@ -161,13 +162,32 @@ def test_owner(command, targets_by_name):
     return None
 
 
+def fixture_consumers(tests, selected):
+    setups = {}
+    consumers = defaultdict(list)
+    for index, test in enumerate(tests, 1):
+        properties = {item["name"]: item["value"] for item in test.get("properties", [])}
+        setups[index] = properties.get("FIXTURES_SETUP", [])
+        for fixture in properties.get("FIXTURES_REQUIRED", []):
+            consumers[fixture].append(index)
+    added = set()
+    pending = list(selected)
+    while pending:
+        for fixture in setups[pending.pop()]:
+            for consumer in consumers[fixture]:
+                if consumer not in selected and consumer not in added:
+                    added.add(consumer)
+                    pending.append(consumer)
+    return sorted(added)
+
+
 def ctest_resolutions(build_dir, targets_by_name, selected=None):
     result = subprocess.run(
         ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
         capture_output=True, text=True, encoding="utf-8", check=True)
-    document = json.loads(result.stdout)
+    tests = json.loads(result.stdout).get("tests", [])
     resolutions = {}
-    for index, test in enumerate(document.get("tests", []), 1):
+    for index, test in enumerate(tests, 1):
         command = [str(part) for part in test.get("command", [])]
         owner = test_owner(command, targets_by_name)
         references = {
@@ -176,6 +196,18 @@ def ctest_resolutions(build_dir, targets_by_name, selected=None):
         }
         if owner is not None and (selected is None or owner in selected or references & selected):
             resolutions[test["name"]] = (owner, index)
+
+    added = fixture_consumers(tests, {index for _, index in resolutions.values()})
+    needs_commands = any(not tests[index - 1].get("command") for index in added)
+    registered = registered_test_commands(build_dir) if needs_commands else {}
+    for index in added:
+        test = tests[index - 1]
+        name = test["name"]
+        command = test.get("command") or registered.get(name, [])
+        owner = test_owner(command, targets_by_name)
+        if owner is None:
+            owner = test_owner(list(paths(command[1:])), targets_by_name)
+        resolutions[name] = (owner, index)
     return resolutions
 
 
@@ -197,10 +229,11 @@ def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None
             subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
         selected_names = set(selected)
         resolutions = ctest_resolutions(build_dir, targets_by_name, selected_names)
-        additional = sorted(({owner for owner, _ in resolutions.values()} | set(script_owners)) - selected_names, key=str.casefold)
+        owners = {owner for owner, _ in resolutions.values() if owner is not None}
+        additional = sorted((owners | set(script_owners)) - selected_names, key=str.casefold)
         for batch in chunks(additional):
             subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
-        missing = sorted(selected_names - {owner for owner, _ in resolutions.values()})
+        missing = sorted(selected_names - owners)
         if missing:
             raise ValueError("no ctest registration resolved for: " + ", ".join(missing))
         run_ctest(build_dir, sorted({index for _, index in resolutions.values()} | set(scripts)), output_log)
