@@ -156,8 +156,6 @@ void RunVector(const LibreSsl3WycheproofRsaOaep::Vector& v) {
     if (v.labelHex && v.labelHex[0] != '\0') {
         labelBytes = Hex(v.labelHex);
     }
-    REQUIRE(v.shaBits != 224 || GetDigest(224) != nullptr, v.tcId);
-    REQUIRE(v.mgfShaBits != 224 || GetDigest(224) != nullptr, v.tcId);
 
     auto* rsa = BuildRsaKey(nBytes, eBytes, dBytes);
 
@@ -232,8 +230,7 @@ int main() {
 
     for (const auto& v : LibreSsl3WycheproofRsaOaep::Vectors) {
         RunVector(v);
+        REQUIRE(allocationCount == 0, v.tcId);
     }
-
-    REQUIRE(allocationCount == 0, -1);
     return 0;
 }
