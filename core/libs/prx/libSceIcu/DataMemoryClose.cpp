@@ -10,8 +10,11 @@
 // https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/udatamem.cpp
 
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cmemory.h>
+#include <cerrno>
 #include <cstring>
+#include <stdexcept>
 #include <udatamem.h>
 
 #if defined(_WIN32)
@@ -25,27 +28,33 @@ extern "C" {
 void APS5_VABI udata_close_nid_postfix(UDataMemory* data) {
     if (!data) return;
 
+    const int savedErrno = errno;
+    UDataMemory local{};
+    const bool readable = GuestCopyIn_nid_no_patch(&local, data, sizeof(local));
+    errno = savedErrno;
+    if (!readable) throw std::invalid_argument(__func__);
+
 #if defined(_WIN32)
-    if (data->map) {
-        UnmapViewOfFile(data->pHeader);
-        CloseHandle(data->map);
-        data->pHeader = nullptr;
-        data->map = nullptr;
+    if (local.map) {
+        UnmapViewOfFile(local.pHeader);
+        CloseHandle(local.map);
+        local.pHeader = nullptr;
+        local.map = nullptr;
     }
 #else
-    if (data->map) {
-        const auto length = static_cast<char*>(data->map) - static_cast<char*>(data->mapAddr);
-        munmap(data->mapAddr, static_cast<std::size_t>(length));
-        data->pHeader = nullptr;
-        data->map = nullptr;
-        data->mapAddr = nullptr;
+    if (local.map) {
+        const auto length = static_cast<char*>(local.map) - static_cast<char*>(local.mapAddr);
+        munmap(local.mapAddr, static_cast<std::size_t>(length));
+        local.pHeader = nullptr;
+        local.map = nullptr;
+        local.mapAddr = nullptr;
     }
 #endif
 
-    if (data->heapAllocated) {
+    if (local.heapAllocated) {
         uprv_free(data);
     } else {
-        std::memset(data, 0, sizeof(*data));
+        std::memset(data, 0, sizeof(local));
         data->length = -1;
     }
 }

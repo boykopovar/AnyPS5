@@ -49,6 +49,16 @@ void RequireInitialized(const UDataMemory& data) {
     Require(std::memcmp(&data, &expected, sizeof(data)) == 0);
 }
 
+void ThrowUnreadable() {
+    const std::uint64_t unreadable = 0x1;
+    IcuRecoveredTest::RequireThrows([&] { udata_close_nid_postfix(reinterpret_cast<UDataMemory*>(unreadable)); });
+    errno = 0x7f;
+    IcuRecoveredTest::RequireThrows([&] { udata_close_nid_postfix(reinterpret_cast<UDataMemory*>(~0ull)); });
+    Require(errno == 0x7f);
+    IcuRecoveredTest::RequireThrows([&] { udata_close_nid_postfix(reinterpret_cast<UDataMemory*>(0x1ull)); });
+    Require(errno == 0x7f);
+}
+
 void Null() {
     errno = EDOM;
     udata_close_nid_postfix(nullptr);
@@ -178,6 +188,7 @@ void Heap() {
 
 void Run() {
     Null();
+    ThrowUnreadable();
     Stack();
     Parity();
     Mapping();
