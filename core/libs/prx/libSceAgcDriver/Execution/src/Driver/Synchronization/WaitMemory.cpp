@@ -509,7 +509,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         if (!stuckReported && std::chrono::steady_clock::now() - entered > std::chrono::milliseconds(10 * waitTimeoutMs())) {
             stuckReported = true;
             const std::uint64_t reference = wide ? packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u) : packet[4];
-            const std::uint64_t current = awaitedBytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(awaited) : *reinterpret_cast<const volatile std::uint32_t*>(awaited);
+            const std::uint64_t current = Pm4::LoadLabel(awaited, awaitedBytes);
             std::fprintf(stderr, "[gpu] queue 0x%x WAIT_REG_MEM%s at 0x%llx still waiting after %dms (function %u ref 0x%llx value 0x%llx)\n", queue, wide ? "_64" : "", static_cast<unsigned long long>(awaited), 10 * waitTimeoutMs(), packet[1] & 7u,
                          static_cast<unsigned long long>(reference), static_cast<unsigned long long>(current));
             PrintLaterWrites(following);
