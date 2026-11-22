@@ -201,6 +201,7 @@ def main():
             result, output = convert(case, windows)
             assert result.returncode == 0 and output.exists(), (result.stdout, result.stderr)
             assert "Skipping backup copy" not in result.stdout, result.stdout
+            assert "Using sce_module/libSceFace.prx.esbak for SELF container sce_module/libSceFace.prx" in result.stdout, result.stdout
             assert {path.name for path in (case / "app0").rglob("*.guest.prx")} == {"libSceFace.prx.guest.prx"}
 
             case = work / f"{windows}-ambiguous"
