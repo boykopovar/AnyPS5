@@ -34,6 +34,7 @@ constexpr std::int32_t FailBit = 0x2;
 constexpr std::int32_t DecFlag = 0x10;
 constexpr std::int32_t OctFlag = 0x20;
 constexpr std::int32_t HexFlag = 0x40;
+constexpr std::int32_t BoolAlphaFlag = 0x8000;
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -820,8 +821,170 @@ void CheckGetcat() {
     _ZNSt6locale7_Locimp7_AddfacEPNS_5facetEm_nid_postfix(&copy, facet, id);
     Require(copy.facetCount > id && copy.facets[id] == facet, "facet registered in locale _Locimp");
 
+    CustomCharNumpunct boolPunct{{{&g_customCharNumpunctVtable.facet, 1, 0}, "", '.', ',', "false", "true"}};
+    _ZNSt6locale7_Locimp7_AddfacEPNS_5facetEm_nid_postfix(
+        &copy, &boolPunct.base.base, _ZNSt8numpunctIcE2idE_nid_postfix);
+    Require(
+        copy.facetCount > _ZNSt8numpunctIcE2idE_nid_postfix &&
+            copy.facets[_ZNSt8numpunctIcE2idE_nid_postfix] == &boolPunct.base.base,
+        "bool tests register the numpunct facet");
+
     GuestLocale::Implementation* copyPtr = &copy;
     auto ios = MakeIos(DecFlag, &copyPtr);
+
+    {
+        auto sb = MakeCharStreambuf("0", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = true;
+        Export<NumGetExport<bool>>("OWO5cpNw3NA")(facet, BeginIterator(&sb.base), EndIterator(), &ios, &state, &value);
+        Require(!value && state == EofBit, "num_get::get(bool) parses numeric false");
+    }
+    {
+        auto sb = MakeCharStreambuf("1", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = false;
+        Export<NumGetExport<bool>>("OWO5cpNw3NA")(facet, BeginIterator(&sb.base), EndIterator(), &ios, &state, &value);
+        Require(value && state == EofBit, "num_get::get(bool) parses numeric true");
+    }
+    {
+        auto sb = MakeCharStreambuf("2", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = false;
+        Export<NumGetExport<bool>>("OWO5cpNw3NA")(facet, BeginIterator(&sb.base), EndIterator(), &ios, &state, &value);
+        Require(value && state == (FailBit | EofBit), "num_get::get(bool) rejects numeric values above one");
+    }
+    {
+        auto boolIos = MakeIos(BoolAlphaFlag, &copyPtr);
+        auto sb = MakeCharStreambuf("false", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = true;
+        Export<NumGetExport<bool>>("OWO5cpNw3NA")(facet, BeginIterator(&sb.base), EndIterator(), &boolIos, &state, &value);
+        Require(!value && state == EofBit, "num_get::get(bool) parses boolalpha false");
+    }
+    {
+        auto boolIos = MakeIos(BoolAlphaFlag, &copyPtr);
+        auto sb = MakeCharStreambuf("true", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = false;
+        Export<NumGetExport<bool>>("OWO5cpNw3NA")(facet, BeginIterator(&sb.base), EndIterator(), &boolIos, &state, &value);
+        Require(value && state == EofBit, "num_get::get(bool) parses boolalpha true");
+    }
+    {
+        auto boolIos = MakeIos(BoolAlphaFlag, &copyPtr);
+        auto sb = MakeCharStreambuf("truX", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = true;
+        const auto result = Export<NumGetExport<bool>>("OWO5cpNw3NA")(
+            facet, BeginIterator(&sb.base), EndIterator(), &boolIos, &state, &value);
+        Require(!value && state == FailBit && ViewOf<char>(result).value == 'X',
+            "num_get::get(bool) stops at a failed boolalpha match");
+    }
+
+    {
+        auto sb = MakeCharStreambuf("-1", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = false;
+        Export<NumGetExport<bool>>("OWO5cpNw3NA")(
+            facet, BeginIterator(&sb.base), EndIterator(), &ios, &state, &value);
+        Require(value && state == (FailBit | EofBit),
+            "num_get::get(bool) rejects numeric minus one");
+    }
+    {
+        auto sb = MakeCharStreambuf("X", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = true;
+        const auto result = Export<NumGetExport<bool>>("OWO5cpNw3NA")(
+            facet, BeginIterator(&sb.base), EndIterator(), &ios, &state, &value);
+        Require(!value && state == FailBit && ViewOf<char>(result).value == 'X',
+            "num_get::get(bool) leaves invalid numeric input unread");
+    }
+    {
+        auto boolIos = MakeIos(BoolAlphaFlag, &copyPtr);
+        auto sb = MakeCharStreambuf("true!", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = false;
+        const auto result = Export<NumGetExport<bool>>("OWO5cpNw3NA")(
+            facet, BeginIterator(&sb.base), EndIterator(), &boolIos, &state, &value);
+        Require(value && state == 0 && ViewOf<char>(result).value == '!',
+            "num_get::get(bool) leaves text after boolalpha true unread");
+    }
+    {
+        auto boolIos = MakeIos(BoolAlphaFlag, &copyPtr);
+        auto sb = MakeCharStreambuf("false", false);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = true;
+        Export<NumGetExport<bool>>("OWO5cpNw3NA")(
+            facet, BeginIterator(&sb.base), EndIterator(), &boolIos, &state, &value);
+        Require(!value && state == EofBit,
+            "num_get::get(bool) parses boolalpha through virtual stream reads");
+    }
+    {
+        boolPunct.base.falsename = "a";
+        boolPunct.base.truename = "ab";
+
+        auto boolIos = MakeIos(BoolAlphaFlag, &copyPtr);
+        auto sb = MakeCharStreambuf("ab", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = false;
+        Export<NumGetExport<bool>>("OWO5cpNw3NA")(
+            facet, BeginIterator(&sb.base), EndIterator(), &boolIos, &state, &value);
+        Require(value && state == EofBit,
+            "num_get::get(bool) prefers the continuing true name");
+    }
+    {
+        auto boolIos = MakeIos(BoolAlphaFlag, &copyPtr);
+        auto sb = MakeCharStreambuf("aX", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = true;
+        const auto result = Export<NumGetExport<bool>>("OWO5cpNw3NA")(
+            facet, BeginIterator(&sb.base), EndIterator(), &boolIos, &state, &value);
+        Require(!value && state == 0 && ViewOf<char>(result).value == 'X',
+            "num_get::get(bool) accepts a completed false prefix");
+    }
+    {
+        boolPunct.base.falsename = "";
+        boolPunct.base.truename = "yes";
+
+        auto boolIos = MakeIos(BoolAlphaFlag, &copyPtr);
+        auto sb = MakeCharStreambuf("", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = true;
+        Export<NumGetExport<bool>>("OWO5cpNw3NA")(
+            facet, BeginIterator(&sb.base), EndIterator(), &boolIos, &state, &value);
+        Require(!value && state == EofBit,
+            "num_get::get(bool) accepts an empty false name");
+    }
+    {
+        boolPunct.base.falsename = "same";
+        boolPunct.base.truename = "same";
+
+        auto boolIos = MakeIos(BoolAlphaFlag, &copyPtr);
+        auto sb = MakeCharStreambuf("same", true);
+        AttachCharStreambuf(sb);
+        std::int32_t state = 0;
+        bool value = true;
+        Export<NumGetExport<bool>>("OWO5cpNw3NA")(
+            facet, BeginIterator(&sb.base), EndIterator(), &boolIos, &state, &value);
+        Require(!value && state == (FailBit | EofBit),
+            "num_get::get(bool) rejects ambiguous equal names");
+
+        boolPunct.base.falsename = "false";
+        boolPunct.base.truename = "true";
+    }
+
     {
         auto sb = MakeCharStreambuf("65535", true);
         AttachCharStreambuf(sb);
