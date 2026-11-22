@@ -101,12 +101,26 @@ int QueueTransfer(void* queue, void* data, const void* source, bool push, bool b
         if (tracked) RemoveWaitRecord(records, record);
         if (!state->_alive) return ULT_ERROR_STATE;
     }
-    if (push) {
-        const auto slot = pool._free;
-        const int savedErrno = errno;
-        const bool copied = GuestCopyIn_nid_no_patch(pool._data.data() + slot * pool._dataSize, source, state->_dataSize);
+    const auto slot = push ? pool._free : state->_head;
+    auto& available = push ? pool._spaceAvailable : state->_dataAvailable;
+    const int savedErrno = errno;
+    bool copied;
+    try {
+        copied = push ? GuestCopyIn_nid_no_patch(pool._data.data() + slot * pool._dataSize, source, state->_dataSize)
+                      : GuestCopyOut_nid_no_patch(data, pool._data.data() + slot * pool._dataSize, state->_dataSize);
+    } catch (...) {
         errno = savedErrno;
-        if (!copied) return ULT_ERROR_NULL;
+        lock.unlock();
+        available.notify_one();
+        throw;
+    }
+    errno = savedErrno;
+    if (!copied) {
+        lock.unlock();
+        available.notify_one();
+        return ULT_ERROR_NULL;
+    }
+    if (push) {
         pool._free = pool._next[slot];
         pool._next[slot] = UINT32_MAX;
         if (state->_tail == UINT32_MAX) state->_head = slot;
@@ -114,11 +128,6 @@ int QueueTransfer(void* queue, void* data, const void* source, bool push, bool b
         state->_tail = slot;
         ++state->_queuedItems;
     } else {
-        const auto slot = state->_head;
-        const int savedErrno = errno;
-        const bool copied = GuestCopyOut_nid_no_patch(data, pool._data.data() + slot * pool._dataSize, state->_dataSize);
-        errno = savedErrno;
-        if (!copied) return ULT_ERROR_NULL;
         state->_head = pool._next[slot];
         if (state->_head == UINT32_MAX) state->_tail = UINT32_MAX;
         pool._next[slot] = pool._free;
