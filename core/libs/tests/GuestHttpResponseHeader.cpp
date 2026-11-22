@@ -63,6 +63,13 @@ static void CheckGuardPage() {
     Require(sceHttpParseResponseHeader(pages + pageSize, 0, "x", &value, &length) == static_cast<int>(0x80432025));
     pages[pageSize - 1] = 'X';
     Require(sceHttpParseResponseHeader(pages + pageSize - 1, 1, "x", &value, &length) == static_cast<int>(0x80432025));
+    constexpr int invalidValue = static_cast<int>(0x804321FE);
+    value = header;
+    length = 123;
+    Require(sceHttpParseResponseHeader(header, text.size(), "x", reinterpret_cast<const char**>(pages + pageSize), &length) == invalidValue);
+    Require(length == 123);
+    Require(sceHttpParseResponseHeader(header, text.size(), "x", &value, reinterpret_cast<std::size_t*>(pages + pageSize)) == invalidValue);
+    Require(value == header);
 #ifdef _WIN32
     Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
 #else

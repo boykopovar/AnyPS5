@@ -519,12 +519,13 @@ int APS5_VABI sceHttpParseResponseHeader(const char* header, std::size_t headerL
         start = newline + 1;
     }
     if (!found) return notFound;
+    if (!GuestWritable_nid_no_patch(fieldValue, sizeof(*fieldValue)) || !GuestWritable_nid_no_patch(valueLen, sizeof(*valueLen))) return invalidValue;
 
     const auto continues = [&input, headerLen](std::size_t next) { return next < headerLen && (input[next] == ' ' || input[next] == '\t'); };
-    const auto empty = [fieldValue, valueLen] {
-        *fieldValue = nullptr;
-        *valueLen = 0;
-        return 0;
+    const auto empty = [fieldValue, valueLen, invalidValue] {
+        const char* value = nullptr;
+        const std::size_t length = 0;
+        return GuestCopyOut_nid_no_patch(fieldValue, &value, sizeof(value)) && GuestCopyOut_nid_no_patch(valueLen, &length, sizeof(length)) ? 0 : invalidValue;
     };
     while (start < headerLen) {
         const std::size_t lineFeed = input[start] == '\r' && start + 1 < headerLen && input[start + 1] == '\n' ? start + 1 : start;
@@ -553,8 +554,9 @@ int APS5_VABI sceHttpParseResponseHeader(const char* header, std::size_t headerL
     if (end > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
         throw std::out_of_range("sceHttpParseResponseHeader: value end exceeds int");
     }
-    *fieldValue = header + start;
-    *valueLen = end - start;
+    const char* value = header + start;
+    const std::size_t length = end - start;
+    if (!GuestCopyOut_nid_no_patch(fieldValue, &value, sizeof(value)) || !GuestCopyOut_nid_no_patch(valueLen, &length, sizeof(length))) return invalidValue;
     return static_cast<int>(end);
 }
 
