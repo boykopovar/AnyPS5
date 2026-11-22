@@ -295,6 +295,11 @@ void APS5_VABI _ZNSt8messagesIcEC2Em_nid_postfix(void* self, std::size_t referen
 void APS5_VABI _ZNSt8messagesIwEC1EPKcm_nid_postfix(void* self, const char* localeName, std::size_t references);
 void APS5_VABI _ZNSt8messagesIwEC1ERKSt8_Locinfom_nid_postfix(void* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
 void APS5_VABI _ZNSt8messagesIwEC2Em_nid_postfix(void* self, std::size_t references);
+void APS5_VABI _ZNSt8messagesIcEC1Em_nid_postfix(void* self, std::size_t references);
+void APS5_VABI _ZNSt8messagesIcEC2EPKcm_nid_postfix(void* self, const char* localeName, std::size_t references);
+void APS5_VABI _ZNSt8messagesIwEC1Em_nid_postfix(void* self, std::size_t references);
+void APS5_VABI _ZNSt8messagesIwEC2EPKcm_nid_postfix(void* self, const char* localeName, std::size_t references);
+void APS5_VABI _ZNSt8messagesIwEC2ERKSt8_Locinfom_nid_postfix(void* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
 GuestLocale::OutputIterator APS5_VABI _ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basece_nid_postfix(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::IosBase* stream, char fill, long double units);
 GuestLocale::OutputIterator APS5_VABI _ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basecRKSs_nid_postfix(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::IosBase* stream, char fill, const GuestLocale::String* digits);
 GuestLocale::OutputIterator APS5_VABI _ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_bRSt8ios_basewe_nid_postfix(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::IosBase* stream, std::uint16_t fill, long double units);

@@ -55,9 +55,9 @@ bool Load(LibreSslX509Store* store, const char* file, const char* directory) {
 
 }
 
-extern "C" int APS5_VABI SSL_CTX_set_default_verify_paths_nid_postfix(LibreSsl3SslCtx* context) {
+extern "C" int APS5_VABI SSL_CTX_set_default_verify_paths_nid_postfix(LibreSslCtx* context) {
     if (!context) return 0;
-    LibreSsl3SslCtx guestContext{};
+    LibreSslCtx guestContext{};
     const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&guestContext, context, sizeof(guestContext));
     errno = savedErrno;

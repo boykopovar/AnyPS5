@@ -18,6 +18,7 @@ import nid_names
 PT_LOAD = 1
 PT_DYNAMIC = 2
 PT_INTERP = 3
+PT_GNU_EH_FRAME = 0x6474e550
 PF_X = 1
 PF_W = 2
 DT_NULL = 0
@@ -40,6 +41,7 @@ STT_GNU_IFUNC = 10
 SHN_COMMON = 0xFFF2
 GHIDRA_MAX_NAME_LENGTH = 2000
 DT_GNU_HASH = 0x6ffffef5
+DT_TLSDESC_PLT = 0x6ffffef6
 DT_FLAGS_1 = 0x6ffffffb
 DF_1_PIE = 0x8000000
 R_X86_64_64 = 1
@@ -52,6 +54,7 @@ R_X86_64_COPY = 5
 R_X86_64_IRELATIVE = 37
 DYNAMIC_VALUE_TAGS = {
     12: "DT_INIT", 13: "DT_FINI",
+    DT_TLSDESC_PLT: "DT_TLSDESC_PLT",
     25: "DT_INIT_ARRAY", 27: "DT_INIT_ARRAYSZ", 26: "DT_FINI_ARRAY", 28: "DT_FINI_ARRAYSZ",
     32: "DT_PREINIT_ARRAY", 33: "DT_PREINIT_ARRAYSZ",
     DT_HASH: "DT_HASH", DT_STRTAB: "DT_STRTAB", DT_SYMTAB: "DT_SYMTAB",
@@ -76,6 +79,7 @@ class Module:
     def __init__(self, data):
         self.data = data
         self.loads = []
+        self.unwind_headers = []
         self.dynamic = None
         self.has_interpreter = False
         self.read_headers()
@@ -119,6 +123,8 @@ class Module:
             kind, flags, offset, vaddr, _, filesz, _, _ = self.unpack("<IIQQQQQQ", phoff + index * phentsize)
             if kind == PT_LOAD:
                 self.loads.append((vaddr, offset, filesz, flags))
+            elif kind == PT_GNU_EH_FRAME and filesz:
+                self.unwind_headers.append((vaddr, offset, filesz))
             elif kind == PT_INTERP:
                 self.has_interpreter = True
             elif kind == PT_DYNAMIC and self.dynamic is None:
@@ -307,6 +313,30 @@ class Module:
                         continue
                 yield address, "elf_%s_array_%d" % (name, index)
 
+    def unwind_starts(self):
+        for base, offset, size in self.unwind_headers:
+            if size < 4 or offset + size > len(self.data):
+                raise ModuleError("truncated PT_GNU_EH_FRAME")
+            if self.data[offset:offset + 4] != b"\x01\x1b\x03\x3b":
+                continue
+            if size < 12 or self.address(base, size) != offset:
+                raise ModuleError("invalid PT_GNU_EH_FRAME mapping")
+            frame_delta, count = self.unpack("<iI", offset + 4)
+            if count > (size - 12) // 8:
+                raise ModuleError("unwind search table exceeds PT_GNU_EH_FRAME")
+            frame = base + 4 + frame_delta
+            if count:
+                self.address(frame, 4)
+            for index in range(count):
+                pc_delta, fde_delta = self.unpack("<ii", offset + 12 + index * 8)
+                pc, fde = base + pc_delta, base + fde_delta
+                if fde < frame:
+                    raise ModuleError("unwind search table points before .eh_frame")
+                self.address(fde, 4)
+                if any(flags & PF_X and start <= pc < start + length and file_offset + pc - start < len(self.data)
+                       for start, file_offset, length, flags in self.loads):
+                    yield pc
+
     def code_segments(self):
         segments = []
         for vaddr, offset, size, flags in sorted(self.loads):
@@ -338,7 +368,7 @@ def ghidra_symbols(module, namer):
                                                      offset + address - start < len(module.data)
                                                      for start, offset, size, flags in module.loads):
             rows.add((address, True, name, name))
-    for tag, name in ((12, "elf_init"), (13, "elf_fini")):
+    for tag, name in ((12, "elf_init"), (13, "elf_fini"), (DT_TLSDESC_PLT, "elf_tlsdesc_plt")):
         address = module.tags.get(tag)
         if address is None or address in exported_functions:
             continue
@@ -365,6 +395,11 @@ def ghidra_symbols(module, namer):
                                                      for start, offset, size, flags in module.loads):
             name = "irelative_resolver_%x" % address
             rows.add((address, True, name, name))
+    named_addresses = {address for address, _, _, _ in rows}
+    for address in module.unwind_starts():
+        if address not in named_addresses:
+            name = "unwind_%x" % address
+            rows.add((address, False, name, name))
     names, functions, lines = set(), set(), []
     for address, function, resolved, symbol in sorted(rows, key=lambda row: (row[0], not row[1], row[2] == row[3].split("#", 1)[0], row[2], row[3])):
         stem = re.sub(r"[^A-Za-z0-9_]", "_", resolved)
@@ -385,6 +420,7 @@ def ghidra_symbols(module, namer):
 
 
 OBJDUMP_NAMES = ("objdump", "gobjdump", "x86_64-linux-gnu-objdump", "x86_64-elf-objdump")
+OBJDUMP_REQUIRED = "GNU binutils objdump with x86-64 support is required (tried %s)" % ", ".join(OBJDUMP_NAMES)
 
 
 @functools.cache
@@ -393,23 +429,33 @@ def gnu_objdump():
         path = shutil.which(name)
         if path is None:
             continue
-        result = subprocess.run([path, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if result.returncode == 0 and result.stdout.startswith("GNU objdump"):
-            return path
+        try:
+            result = subprocess.run([path, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if result.returncode != 0 or not result.stdout.startswith("GNU objdump"):
+                continue
+            probe = run_objdump(path, b"\xc3", 0)
+            if probe.returncode == 0 and re.search(r"^[ \t]*0:[ \t]+retq?[ \t]*$", probe.stdout, re.M):
+                return path
+        except OSError:
+            continue
     return None
 
 
-def disassemble(code, vaddr):
-    objdump = gnu_objdump()
-    if objdump is None:
-        raise ModuleError("GNU binutils objdump was not found as any of %s" % ", ".join(OBJDUMP_NAMES))
+def run_objdump(objdump, code, vaddr):
     objdump = str(Path(objdump).absolute())
     with tempfile.TemporaryDirectory() as directory:
         blob = Path(directory) / "text.bin"
         blob.write_bytes(code)
         command = [objdump, "-D", "--disassemble-zeroes", "-b", "binary", "-m", "i386:x86-64", "--no-show-raw-insn",
                    "--adjust-vma=%d" % vaddr, blob.name]
-        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=directory)
+        return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=directory)
+
+
+def disassemble(code, vaddr):
+    objdump = gnu_objdump()
+    if objdump is None:
+        raise ModuleError(OBJDUMP_REQUIRED)
+    result = run_objdump(objdump, code, vaddr)
     if result.returncode != 0:
         raise ModuleError("objdump failed: %s" % result.stderr.strip())
     return result.stdout.splitlines()
@@ -554,15 +600,15 @@ def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         description="Annotated disassembly of a relinked guest module (no section headers). Writes PREFIX.imports.txt, "
                     "PREFIX.exports.txt and PREFIX.asm, with imports, PLT stubs, GOT references and exports named "
-                    "through the NID database. Disassembly requires GNU binutils objdump (objdump, or gobjdump from "
-                    "Homebrew binutils); offline symbol exports need no objdump.")
+                    "through the NID database. Disassembly requires GNU binutils objdump with x86-64 support. "
+                    "Offline symbol exports need no objdump.")
     parser.add_argument("module", help="relinked guest module, for example libc.prx.guest.prx")
     parser.add_argument("--out", help="output prefix (default: the module path)")
     parser.add_argument("--db", help="NID database CSV (symbol exports read local files only; disassembly downloads to a cache dir by default)")
     parser.add_argument("--no-names", action="store_true", help="print NIDs without loading the database")
     formats = parser.add_mutually_exclusive_group()
     formats.add_argument("--symbols-json", action="store_true", help="inspect imports and exports as JSON offline without objdump or output files")
-    formats.add_argument("--symbols-ghidra", action="store_true", help="print an offline Ghidra ImportSymbolsScript map; omits TLS and unallocated common symbols; needs no objdump")
+    formats.add_argument("--symbols-ghidra", action="store_true", help="print an offline Ghidra ImportSymbolsScript map with labels for indexed unwind ranges; omits TLS and unallocated common symbols; needs no objdump")
     args = parser.parse_args(argv)
     if (args.symbols_json or args.symbols_ghidra) and args.out is not None:
         mode = "--symbols-json" if args.symbols_json else "--symbols-ghidra"
@@ -577,7 +623,7 @@ def main(argv=None):
     args = parse_arguments(sys.argv[1:] if argv is None else argv)
     symbols_only = args.symbols_json or args.symbols_ghidra
     if not symbols_only and gnu_objdump() is None:
-        sys.exit("GNU binutils objdump is required but none of %s in PATH is GNU objdump" % ", ".join(OBJDUMP_NAMES))
+        sys.exit(OBJDUMP_REQUIRED)
     try:
         db_path = Path(args.db) if args.db else nid_names.DEFAULT_CACHE
         if args.no_names:
