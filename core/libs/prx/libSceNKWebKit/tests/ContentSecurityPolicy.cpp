@@ -19,8 +19,13 @@ using NKWebKit::WebCoreAbi::ContentSecurityPolicyClient;
 using NKWebKit::WebCoreAbi::ContentSecurityPolicyClientVtable;
 using NKWebKit::WebCoreAbi::LegacyContentSecurityPolicyHeader;
 using NKWebKit::WebCoreAbi::LegacyContentSecurityPolicyResponseHeaders;
+using NKWebKit::WebCoreAbi::LegacyCSPInfo;
+using NKWebKit::WebCoreAbi::LegacyFormData;
 using NKWebKit::WebCoreAbi::LegacyResourceRequestBase;
+using NKWebKit::WebCoreAbi::LegacySecurityOrigin;
+using NKWebKit::WebCoreAbi::LegacySecurityOriginVector;
 using NKWebKit::WebCoreAbi::LegacySecurityOriginData;
+using NKWebKit::WebCoreAbi::LegacySecurityPolicyViolationEventInit;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
 using NKWebKit::WtfAbi::URL;
@@ -66,24 +71,69 @@ static URL Parse(std::string_view text) {
     return url;
 }
 
+struct RecordedViolation {
+    std::string documentURI;
+    std::string referrer;
+    std::string blockedURI;
+    std::string violatedDirective;
+    std::string effectiveDirective;
+    std::string originalPolicy;
+    std::string sourceFile;
+    bool sourceFileIsNull;
+    unsigned statusCode;
+    int lineNumber;
+    int columnNumber;
+    bool flags;
+};
+
+struct RecordedReport {
+    std::string url;
+    std::string body;
+    unsigned refCount;
+    unsigned bytesCapacity;
+    unsigned elementsCapacity;
+};
+
 struct TestClient {
     ContentSecurityPolicyClient base;
     std::vector<std::string> messages;
     std::vector<unsigned> sources;
     std::vector<unsigned> levels;
     std::vector<std::uint64_t> requestIdentifiers;
+    std::vector<std::string> announced;
+    std::vector<RecordedViolation> violations;
+    std::vector<RecordedReport> reports;
+    std::vector<LegacyFormData*> taken;
+    bool setSourceFile = false;
+    bool takeReport = false;
 };
-
-static void APS5_VABI UnexpectedObjectCall(ContentSecurityPolicyClient*, void*) {
-    std::abort();
-}
 
 static void APS5_VABI UnexpectedDestructor(ContentSecurityPolicyClient*) {
     std::abort();
 }
 
-static void APS5_VABI UnexpectedReport(ContentSecurityPolicyClient*, URL*, void*) {
-    std::abort();
+static void APS5_VABI WillSendReport(ContentSecurityPolicyClient* self, LegacyCSPInfo* info) {
+    auto* client = reinterpret_cast<TestClient*>(self);
+    client->announced.push_back(Narrow(info->documentURI.impl));
+    if (!client->setSourceFile) return;
+    info->sourceFile = Make("https://example.com/script.js");
+    info->lineNumber = 12;
+    info->columnNumber = 34;
+}
+
+static void APS5_VABI EnqueueViolation(ContentSecurityPolicyClient* self, LegacySecurityPolicyViolationEventInit* init) {
+    auto* client = reinterpret_cast<TestClient*>(self);
+    client->violations.push_back(RecordedViolation{Narrow(init->documentURI.impl), Narrow(init->referrer.impl), Narrow(init->blockedURI.impl), Narrow(init->violatedDirective.impl), Narrow(init->effectiveDirective.impl), Narrow(init->originalPolicy.impl), Narrow(init->sourceFile.impl), init->sourceFile.impl == nullptr, init->statusCode, init->lineNumber, init->columnNumber, init->bubbles || init->cancelable || init->composed});
+}
+
+static void APS5_VABI SendReport(ContentSecurityPolicyClient* self, URL* url, LegacyFormData** report) {
+    auto* client = reinterpret_cast<TestClient*>(self);
+    LegacyFormData* data = *report;
+    if (data->elementsSize != 1 || data->elements[0].index != 0 || data->identifier != 0 || data->alwaysStream || data->boundary || data->containsPasswordData || data->hasLengthInBytes) std::abort();
+    client->reports.push_back(RecordedReport{Narrow(url->impl), std::string(data->elements[0].buffer, data->elements[0].size), data->refCount, data->elements[0].capacity, data->elementsCapacity});
+    if (!client->takeReport) return;
+    client->taken.push_back(data);
+    *report = nullptr;
 }
 
 static void APS5_VABI AddConsoleMessage(ContentSecurityPolicyClient* self, std::uint8_t source, std::uint8_t level, const String* message, std::uint64_t requestIdentifier) {
@@ -94,7 +144,7 @@ static void APS5_VABI AddConsoleMessage(ContentSecurityPolicyClient* self, std::
     client->requestIdentifiers.push_back(requestIdentifier);
 }
 
-static const ContentSecurityPolicyClientVtable clientVtable = {UnexpectedObjectCall, UnexpectedDestructor, UnexpectedDestructor, AddConsoleMessage, UnexpectedReport, UnexpectedObjectCall};
+static const ContentSecurityPolicyClientVtable clientVtable = {WillSendReport, UnexpectedDestructor, UnexpectedDestructor, AddConsoleMessage, SendReport, EnqueueViolation};
 
 struct Header {
     std::string text;
@@ -503,6 +553,345 @@ static void TestUpgradeInsecureRequests() {
     Require(Throws<std::invalid_argument>([&] { _ZNK7WebCore21ContentSecurityPolicy30upgradeInsecureRequestIfNeededERN3WTF3URLENS0_19InsecureRequestTypeE(policy.get(), nullptr, 0); }));
 }
 
+enum class Kind { Script, Connect, Child };
+
+static bool Allowed(Policy& policy, std::string_view text, bool redirect = false, Kind kind = Kind::Script) {
+    URL url = text.empty() ? URL{} : Parse(text);
+    bool allowed = false;
+    if (kind == Kind::Script)
+        allowed = _ZNK7WebCore21ContentSecurityPolicy21allowScriptFromSourceERKN3WTF3URLENS0_24RedirectResponseReceivedE(policy.get(), &url, redirect);
+    else if (kind == Kind::Connect)
+        allowed = _ZNK7WebCore21ContentSecurityPolicy20allowConnectToSourceERKN3WTF3URLENS0_24RedirectResponseReceivedE(policy.get(), &url, redirect);
+    else
+        allowed = _ZNK7WebCore21ContentSecurityPolicy27allowChildContextFromSourceERKN3WTF3URLENS0_24RedirectResponseReceivedE(policy.get(), &url, redirect);
+    NKWebKit::WtfAbi::Release(url.impl);
+    return allowed;
+}
+
+static bool Matches(std::string_view sources, std::string_view url, bool redirect = false, std::string_view self = "https://example.com/") {
+    Policy policy(self);
+    policy.Receive({{"script-src " + std::string(sources), true}});
+    Require(policy.client.messages.empty());
+    const bool allowed = Allowed(policy, url, redirect);
+    Require(policy.client.messages.size() == (allowed ? 0u : 1u));
+    Require(policy.client.violations.size() == (allowed ? 0u : 1u));
+    Require(policy.client.reports.empty());
+    return allowed;
+}
+
+static void TestSourceMatching() {
+    {
+        Policy none;
+        Require(Allowed(none, "http://anything.example/a.js"));
+        Require(none.client.messages.empty() && none.client.announced.empty() && none.client.violations.empty());
+    }
+    Require(Matches("'self'", "https://example.com/a.js"));
+    Require(!Matches("'self'", "http://example.com/a.js"));
+    Require(!Matches("'self'", "https://example.com:444/a.js"));
+    Require(!Matches("'self'", "https://other.example/a.js"));
+    Require(Matches("'self'", "https://example.com/a.js", false, "http://example.com/"));
+    Require(Matches("'self'", "http://example.com:8080/a.js", false, "http://example.com:8080/"));
+    Require(!Matches("'self'", "http://example.com/a.js", false, "http://example.com:8080/"));
+    Require(!Matches("'self'", "https://example.com/a.js", false, "data:text/html,x"));
+    Require(Matches("https://cdn.example", "https://cdn.example/x"));
+    Require(Matches("https://cdn.example", "https://CDN.example/x"));
+    Require(Matches("https://CDN.Example", "https://cdn.example/x"));
+    Require(!Matches("https://cdn.example", "http://cdn.example/x"));
+    Require(!Matches("https://cdn.example", "https://cdn.example:8443/x"));
+    Require(!Matches("https://cdn.example", "https://cdn.example.org/x"));
+    Require(!Matches("https://cdn.example", "https://a.cdn.example/x"));
+    Require(Matches("http://cdn.example", "https://cdn.example/x"));
+    Require(Matches("HTTP://cdn.example", "https://cdn.example/x"));
+    Require(Matches("cdn.example", "https://cdn.example/x"));
+    Require(!Matches("cdn.example", "http://cdn.example/x"));
+    Require(Matches("cdn.example", "https://cdn.example/x", false, "http://example.com/"));
+    Require(Matches("*.cdn.example", "https://a.cdn.example/x"));
+    Require(Matches("*.cdn.example", "https://a.b.cdn.example/x"));
+    Require(Matches("*.cdn.example", "https://cdn.example/x"));
+    Require(!Matches("*.cdn.example", "https://xcdn.example/x"));
+    Require(Matches("https://*", "https://anything.example/x"));
+    Require(!Matches("https://*", "http://anything.example/x"));
+    Require(Matches("https://cdn.example:8443", "https://cdn.example:8443/x"));
+    Require(!Matches("https://cdn.example:8443", "https://cdn.example/x"));
+    Require(Matches("https://cdn.example:*", "https://cdn.example:8443/x"));
+    Require(Matches("https://cdn.example:*", "https://cdn.example/x"));
+    Require(Matches("http://cdn.example:80", "https://cdn.example/x"));
+    Require(Matches("http://cdn.example:80", "http://cdn.example/x"));
+    Require(!Matches("http://cdn.example:80", "http://cdn.example:81/x"));
+    Require(Matches("https://cdn.example:443", "https://cdn.example/x"));
+    Require(!Matches("https://cdn.example:444", "https://cdn.example/x"));
+    Require(Matches("cdn.example:80", "http://cdn.example/x", false, "http://example.com/"));
+    Require(Matches("https://cdn.example/js/", "https://cdn.example/js/a.js"));
+    Require(Matches("https://cdn.example/js/", "https://cdn.example/js/"));
+    Require(!Matches("https://cdn.example/js/", "https://cdn.example/js"));
+    Require(!Matches("https://cdn.example/js/", "https://cdn.example/other/a.js"));
+    Require(Matches("https://cdn.example/js/", "https://cdn.example/other/a.js", true));
+    Require(!Matches("https://other.example/js/", "https://cdn.example/js/a.js", true));
+    Require(Matches("https://cdn.example/js/app.js", "https://cdn.example/js/app.js"));
+    Require(Matches("https://cdn.example/js/app.js", "https://cdn.example/js/app.js?x=1#f"));
+    Require(!Matches("https://cdn.example/js/app.js", "https://cdn.example/js/app.jsx"));
+    Require(!Matches("https://cdn.example/js/app.js", "https://cdn.example/js/APP.js"));
+    Require(Matches("https://cdn.example/a%20b/", "https://cdn.example/a%20b/c"));
+    Require(Matches("https://cdn.example/caf%C3%A9/", "https://cdn.example/caf%c3%a9/x"));
+    Require(!Matches("https://cdn.example/caf%C3%A9/", "https://cdn.example/caf%C3%A8/x"));
+    Require(Matches("https://cdn.example/%FF%41/", "https://cdn.example/%EF%BF%BDA/x"));
+    Require(Matches("https://cdn.example/%E2%41/", "https://cdn.example/%EF%BF%BD/x"));
+    Require(Matches("https://cdn.example/%E2%28%A1/", "https://cdn.example/%EF%BF%BD(%EF%BF%BD/x"));
+    Require(Matches("https://cdn.example/%F0%9F%98%80/", "https://cdn.example/%F0%9F%98%80/x"));
+    Require(!Matches("https://cdn.example/%F0%9F%98%80/", "https://cdn.example/%EF%98%80/x"));
+    Require(Matches("https://cdn.example/%E2%82%28/", "https://cdn.example/%EF%BF%BD(/x"));
+    Require(!Matches("https://cdn.example/%E2%82%28/", "https://cdn.example/%EF%BF%BD%EF%BF%BD(/x"));
+    Require(Matches("https://cdn.example/%E2A/", "https://cdn.example/%EF%BF%BD/x"));
+    Require(!Matches("https://cdn.example/%E2A/", "https://cdn.example/%EF%BF%BDA/x"));
+    Require(!Matches("https://cdn.example/%E2%41/", "https://cdn.example/%EF%BF%BDA/x"));
+    Require(Matches("https://cdn.example/%ED%A0%80/", "https://cdn.example/%EF%BF%BD%EF%BF%BD%EF%BF%BD/x"));
+    Require(Matches("https://cdn.example/100%/", "https://cdn.example/100%/x"));
+    Require(Matches("https://cdn.example/a%2/", "https://cdn.example/a%2/x"));
+    Require(Matches("https:", "https://anything.example/x"));
+    Require(!Matches("https:", "http://anything.example/x"));
+    Require(Matches("http:", "https://anything.example/x"));
+    Require(Matches("data:", "data:text/javascript,1"));
+    Require(!Matches("https:", "data:text/javascript,1"));
+    Require(Matches("*", "https://anything.example/x"));
+    Require(Matches("*", "http://anything.example/x"));
+    Require(Matches("*", "ws://anything.example/x"));
+    Require(Matches("*", "wss://anything.example/x"));
+    Require(!Matches("*", "data:text/javascript,1"));
+    Require(!Matches("*", "custom://host/x"));
+    Require(Matches("*", "custom://host/x", false, "custom://self/"));
+    Require(!Matches("'none'", "https://example.com/a.js"));
+    Require(!Matches("'unsafe-inline' 'unsafe-eval' 'nonce-abc'", "https://example.com/a.js"));
+    Require(!Matches("*", ""));
+    Require(!Matches("'self'", "", false, "data:text/html,x"));
+    Require(Matches("'self'", "https://example.com/a.js", false, "blob:https://example.com/1234-5678"));
+    Require(!Matches("'self'", "https://other.example/a.js", false, "blob:https://example.com/1234-5678"));
+    {
+        Policy blob("blob:https://example.com:8443/1234-5678");
+        Require(Narrow(blob.get()->selfSourceProtocol.impl) == "https");
+        Policy custom("custom://self/");
+        Require(Narrow(custom.get()->selfSourceProtocol.impl) == "custom");
+    }
+    {
+        Policy policy;
+        policy.Receive({{"script-src 'none'", true}});
+        const String scheme = Make("ByPass");
+        _ZN7WebCore20LegacySchemeRegistry49registerURLSchemeAsBypassingContentSecurityPolicyERKN3WTF6StringE(scheme);
+        Require(Allowed(policy, "bypass://host/x"));
+        Require(Allowed(policy, "bypass://host/x", false, Kind::Connect));
+        Require(policy.client.messages.empty());
+        _ZN7WebCore20LegacySchemeRegistry57removeURLSchemeRegisteredAsBypassingContentSecurityPolicyERKN3WTF6StringE(scheme);
+        Require(!Allowed(policy, "bypass://host/x"));
+    }
+}
+
+static void TestViolationMessages() {
+    {
+        Policy policy;
+        policy.Receive({{"default-src 'self'", true}});
+        Require(!Allowed(policy, "https://other.example/a.js"));
+        Require(Only(policy.client.messages, "Refused to load https://other.example/a.js because it appears in neither the script-src directive nor the default-src directive of the Content Security Policy."));
+        Require(policy.client.sources[0] == 8 && policy.client.levels[0] == 2 && policy.client.requestIdentifiers[0] == 0);
+        Require(policy.client.violations[0].violatedDirective == "default-src 'self'" && policy.client.violations[0].effectiveDirective == "script-src");
+    }
+    {
+        Policy policy;
+        policy.Receive({{"default-src 'none'; connect-src 'self'; child-src https://workers.example", true}});
+        Require(Allowed(policy, "https://example.com/api", false, Kind::Connect));
+        Require(Allowed(policy, "https://workers.example/w.js", false, Kind::Child));
+        Require(!Allowed(policy, "wss://example.com/socket", false, Kind::Connect));
+        Require(!Allowed(policy, "https://example.com/w.js", false, Kind::Child));
+        Require(!Allowed(policy, "https://example.com/a.js"));
+        Require(policy.client.messages.size() == 3);
+        Require(policy.client.messages[0] == "Refused to connect to wss://example.com/socket because it does not appear in the connect-src directive of the Content Security Policy.");
+        Require(policy.client.messages[1] == "Refused to load https://example.com/w.js because it does not appear in the child-src directive of the Content Security Policy.");
+        Require(policy.client.messages[2] == "Refused to load https://example.com/a.js because it appears in neither the script-src directive nor the default-src directive of the Content Security Policy.");
+        Require(policy.client.violations[0].effectiveDirective == "connect-src" && policy.client.violations[1].effectiveDirective == "child-src");
+    }
+    {
+        Policy policy;
+        policy.Receive({{"script-src 'self'; report-uri /r", false}, {"script-src https:", true}});
+        Require(Allowed(policy, "https://other.example/a.js"));
+        Require(Only(policy.client.messages, "[Report Only] Refused to load https://other.example/a.js because it does not appear in the script-src directive of the Content Security Policy."));
+        Require(policy.client.reports.size() == 1);
+        Require(!Allowed(policy, "http://other.example/a.js"));
+        Require(policy.client.messages.size() == 3 && policy.client.violations.size() == 3);
+        Require(policy.client.messages[2] == "Refused to load http://other.example/a.js because it does not appear in the script-src directive of the Content Security Policy.");
+    }
+    {
+        Policy policy;
+        policy.Receive({{"script-src *", true}});
+        URL empty{};
+        Require(!_ZNK7WebCore21ContentSecurityPolicy21allowScriptFromSourceERKN3WTF3URLENS0_24RedirectResponseReceivedE(policy.get(), &empty, false));
+        Require(Only(policy.client.messages, "Refused to load because it does not appear in the script-src directive of the Content Security Policy."));
+        Require(policy.client.announced[0].empty() && policy.client.violations[0].blockedURI.empty());
+    }
+    {
+        Policy silenced;
+        silenced.Receive({{"script-src 'none'; report-uri /r", true}});
+        silenced.get()->isReportingEnabled = false;
+        Require(!Allowed(silenced, "https://example.com/a.js"));
+        Require(silenced.client.messages.empty() && silenced.client.announced.empty() && silenced.client.violations.empty() && silenced.client.reports.empty());
+        silenced.get()->isReportingEnabled = true;
+    }
+    {
+        Policy noClient("https://example.com/", false);
+        noClient.Receive({{"script-src 'none'; report-uri /r", true}});
+        Require(!Allowed(noClient, "https://example.com/a.js"));
+    }
+    Policy policy;
+    URL url{};
+    Require(Throws<std::invalid_argument>([&] { _ZNK7WebCore21ContentSecurityPolicy21allowScriptFromSourceERKN3WTF3URLENS0_24RedirectResponseReceivedE(nullptr, &url, false); }));
+    Require(Throws<std::invalid_argument>([&] { _ZNK7WebCore21ContentSecurityPolicy21allowScriptFromSourceERKN3WTF3URLENS0_24RedirectResponseReceivedE(policy.get(), nullptr, false); }));
+    Require(Throws<std::invalid_argument>([&] { _ZNK7WebCore21ContentSecurityPolicy20allowConnectToSourceERKN3WTF3URLENS0_24RedirectResponseReceivedE(nullptr, &url, false); }));
+    Require(Throws<std::invalid_argument>([&] { _ZNK7WebCore21ContentSecurityPolicy27allowChildContextFromSourceERKN3WTF3URLENS0_24RedirectResponseReceivedE(policy.get(), nullptr, false); }));
+}
+
+static void TestViolationReports() {
+    const std::string header = "script-src http://example.com/js/; report-uri /csp https://reports.example/r";
+    {
+        Policy policy("http://example.com/page");
+        policy.Receive({{header, true}}, true, 418, "http://ref.example/");
+        Require(!Allowed(policy, "http://evil.example/x.js?token=1#frag"));
+        Require(policy.client.announced.size() == 1 && policy.client.announced[0] == "http://evil.example/x.js?token=1#frag");
+        Require(policy.client.violations.size() == 1);
+        const RecordedViolation& violation = policy.client.violations[0];
+        Require(violation.documentURI == "http://evil.example/x.js?token=1#frag");
+        Require(violation.referrer == "http://ref.example/");
+        Require(violation.blockedURI == "http://evil.example");
+        Require(violation.violatedDirective == "script-src http://example.com/js/");
+        Require(violation.effectiveDirective == "script-src");
+        Require(violation.originalPolicy == header);
+        Require(violation.sourceFileIsNull && violation.statusCode == 418 && violation.lineNumber == 0 && violation.columnNumber == 0 && !violation.flags);
+        Require(policy.client.reports.size() == 2);
+        Require(policy.client.reports[0].url == "http://example.com/csp");
+        Require(policy.client.reports[1].url == "https://reports.example/r");
+        const std::string body = "{\"csp-report\":{\"document-uri\":\"http://evil.example/x.js?token=1#frag\",\"referrer\":\"http://ref.example/\",\"violated-directive\":\"script-src http://example.com/js/\",\"effective-directive\":\"script-src\",\"original-policy\":\"" + header + "\",\"blocked-uri\":\"http://evil.example\",\"status-code\":418}}";
+        Require(policy.client.reports[0].body == body && policy.client.reports[1].body == body);
+        Require(policy.client.reports[0].refCount == 2 && policy.client.reports[1].refCount == 2);
+        Require(policy.client.reports[0].bytesCapacity == body.size() && policy.client.reports[0].elementsCapacity == 16);
+        Require(!Allowed(policy, "http://user:pass@example.com/other/a.js?q=1#f"));
+        Require(policy.client.violations[1].blockedURI == "http://example.com/other/a.js?q=1");
+        Require(!Allowed(policy, "data:text/javascript,1"));
+        Require(policy.client.violations[2].blockedURI == "data");
+        Require(!Allowed(policy, "http://example.com:8080/a.js"));
+        Require(policy.client.violations[3].blockedURI == "http://example.com:8080");
+    }
+    {
+        Policy policy("http://example.com/page");
+        policy.client.setSourceFile = true;
+        policy.client.takeReport = true;
+        policy.Receive({{"script-src 'none'; report-uri r", true}}, true, 200);
+        Require(!Allowed(policy, "http://example.com/a.js"));
+        const RecordedViolation& violation = policy.client.violations[0];
+        Require(violation.sourceFile == "https://example.com/script.js" && violation.lineNumber == 12 && violation.columnNumber == 34);
+        Require(violation.referrer.empty() && violation.statusCode == 200);
+        Require(policy.client.reports.size() == 1 && policy.client.reports[0].url == "http://example.com/r");
+        Require(policy.client.reports[0].body == "{\"csp-report\":{\"document-uri\":\"http://example.com/a.js\",\"referrer\":\"\",\"violated-directive\":\"script-src 'none'\",\"effective-directive\":\"script-src\",\"original-policy\":\"script-src 'none'; report-uri r\",\"blocked-uri\":\"http://example.com/a.js\",\"status-code\":200,\"source-file\":\"https://example.com/script.js\",\"line-number\":12,\"column-number\":34}}");
+        Require(policy.client.reports[0].bytesCapacity == policy.client.reports[0].body.size());
+        Require(policy.client.taken.size() == 1 && policy.client.taken[0]->refCount == 1);
+        auto* kept = reinterpret_cast<NKWebKit::WebCoreAbi::FormData*>(policy.client.taken[0]);
+        _ZN7WebCore8FormDataD1Ev(kept);
+        _ZN3WTF8fastFreeEPv(kept);
+    }
+    {
+        Policy secure;
+        secure.Receive({{"script-src 'none'; report-uri /r", true}}, true, 404, "a\"b\\c\n\x01");
+        Require(!Allowed(secure, "https://example.com/a.js"));
+        Require(secure.client.violations[0].statusCode == 0);
+        Require(secure.client.reports[0].body.find("\"referrer\":\"a\\\"b\\\\c\\n\\u0001\",") != std::string::npos);
+        Require(secure.client.reports[0].body.find("\"status-code\":0}}") != std::string::npos);
+        Require(secure.client.reports[0].bytesCapacity == secure.client.reports[0].body.size());
+    }
+    {
+        Policy upperCase("custom://HOST/");
+        upperCase.Receive({{"script-src 'none'", true}});
+        Require(!Allowed(upperCase, "custom://host/a.js?q#f"));
+        Require(upperCase.client.violations[0].blockedURI == "custom://host/a.js?q");
+    }
+    {
+        Policy tiny;
+        tiny.Receive({{"script-src 'none'", true}});
+        Require(!Allowed(tiny, "https://example.com/a.js"));
+        Require(tiny.client.violations.size() == 1 && tiny.client.reports.empty());
+    }
+}
+
+struct TestOrigin {
+    LegacySecurityOrigin origin{};
+    String protocol;
+    String host;
+
+    TestOrigin(std::string_view protocolText, std::string_view hostText, int port = -1) : protocol(Make(protocolText)), host(Make(hostText)) {
+        origin.refCount = 1;
+        origin.protocol = protocol.impl;
+        origin.host = host.impl;
+        origin.hasPort = port >= 0;
+        origin.port = port >= 0 ? static_cast<std::uint16_t>(port) : 0;
+    }
+};
+
+static bool FrameAllowed(Policy& policy, std::initializer_list<TestOrigin*> ancestors, bool overridePolicy = false) {
+    std::vector<LegacySecurityOrigin*> pointers;
+    for (TestOrigin* ancestor : ancestors) pointers.push_back(&ancestor->origin);
+    LegacySecurityOriginVector vector{pointers.data(), static_cast<unsigned>(pointers.size()), static_cast<unsigned>(pointers.size())};
+    URL url = Parse("https://example.com/framed");
+    const bool allowed = _ZNK7WebCore21ContentSecurityPolicy19allowFrameAncestorsERKN3WTF6VectorINS1_6RefPtrINS_14SecurityOriginENS1_13DumbPtrTraitsIS4_EEEELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEERKNS1_3URLEb(policy.get(), &vector, &url, overridePolicy);
+    NKWebKit::WtfAbi::Release(url.impl);
+    return allowed;
+}
+
+static void TestFrameAncestors() {
+    TestOrigin self("https", "example.com");
+    TestOrigin parent("https", "parent.example");
+    TestOrigin parentWithPort("https", "parent.example", 8443);
+    TestOrigin stranger("https", "stranger.example");
+    TestOrigin plain("http", "parent.example");
+    TestOrigin file("file", "");
+    TestOrigin separated("file", "");
+    separated.origin.enforcesFilePathSeparation = true;
+    TestOrigin unique("https", "parent.example");
+    unique.origin.isUnique = true;
+    Policy policy;
+    policy.Receive({{"frame-ancestors 'self' https://parent.example file:", true}});
+    Require(FrameAllowed(policy, {}));
+    Require(FrameAllowed(policy, {&self}));
+    Require(FrameAllowed(policy, {&parent, &self}));
+    Require(FrameAllowed(policy, {&file}));
+    Require(policy.client.messages.empty());
+    Require(!FrameAllowed(policy, {&parent, &stranger}));
+    Require(Only(policy.client.messages, "Refused to load https://example.com/framed because it does not appear in the frame-ancestors directive of the Content Security Policy."));
+    Require(policy.client.violations.size() == 1 && policy.client.violations[0].effectiveDirective == "frame-ancestors");
+    Require(policy.client.violations[0].violatedDirective == "frame-ancestors 'self' https://parent.example file:");
+    Require(policy.client.violations[0].blockedURI == "https://example.com/framed");
+    Require(!FrameAllowed(policy, {&parentWithPort}));
+    Require(!FrameAllowed(policy, {&plain}));
+    Require(!FrameAllowed(policy, {&unique}));
+    Require(!FrameAllowed(policy, {&separated}));
+    Require(policy.client.messages.size() == 5);
+    Require(FrameAllowed(policy, {&stranger}, true));
+    Require(policy.client.messages.size() == 5);
+    {
+        Policy withPort;
+        withPort.Receive({{"frame-ancestors https://parent.example:8443", true}});
+        Require(FrameAllowed(withPort, {&parentWithPort}));
+        Require(!FrameAllowed(withPort, {&parent}));
+    }
+    {
+        Policy without;
+        without.Receive({{"default-src 'none'", true}});
+        Require(FrameAllowed(without, {&stranger}));
+        Require(without.client.messages.empty());
+    }
+    LegacySecurityOriginVector empty{nullptr, 0, 0};
+    LegacySecurityOrigin* missing = nullptr;
+    LegacySecurityOriginVector withNull{&missing, 1, 1};
+    URL url{};
+    Require(Throws<std::invalid_argument>([&] { _ZNK7WebCore21ContentSecurityPolicy19allowFrameAncestorsERKN3WTF6VectorINS1_6RefPtrINS_14SecurityOriginENS1_13DumbPtrTraitsIS4_EEEELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEERKNS1_3URLEb(nullptr, &empty, &url, false); }));
+    Require(Throws<std::invalid_argument>([&] { _ZNK7WebCore21ContentSecurityPolicy19allowFrameAncestorsERKN3WTF6VectorINS1_6RefPtrINS_14SecurityOriginENS1_13DumbPtrTraitsIS4_EEEELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEERKNS1_3URLEb(policy.get(), nullptr, &url, false); }));
+    Require(Throws<std::invalid_argument>([&] { _ZNK7WebCore21ContentSecurityPolicy19allowFrameAncestorsERKN3WTF6VectorINS1_6RefPtrINS_14SecurityOriginENS1_13DumbPtrTraitsIS4_EEEELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEERKNS1_3URLEb(policy.get(), &empty, nullptr, false); }));
+    Require(Throws<std::invalid_argument>([&] { _ZNK7WebCore21ContentSecurityPolicy19allowFrameAncestorsERKN3WTF6VectorINS1_6RefPtrINS_14SecurityOriginENS1_13DumbPtrTraitsIS4_EEEELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEERKNS1_3URLEb(policy.get(), &withNull, &url, false); }));
+}
+
 int main() {
     TestConstruction();
     TestHeaders();
@@ -510,6 +899,10 @@ int main() {
     TestSourceListMessages();
     TestPluginTypesAndSandbox();
     TestUpgradeInsecureRequests();
+    TestSourceMatching();
+    TestViolationMessages();
+    TestViolationReports();
+    TestFrameAncestors();
     std::puts("libSceNKWebKit ContentSecurityPolicy tests passed");
     return 0;
 }

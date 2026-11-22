@@ -15,17 +15,26 @@ struct Source;
 
 }  // namespace NKWebKit::Csp
 
+namespace NKWebKit {
+
+bool SchemeShouldBypassContentSecurityPolicy(const WtfAbi::StringImpl* scheme);
+
+}  // namespace NKWebKit
+
 namespace NKWebKit::WebCoreAbi {
 
 struct ContentSecurityPolicyClient;
+struct LegacyCSPInfo;
+struct LegacyFormData;
+struct LegacySecurityPolicyViolationEventInit;
 
 struct ContentSecurityPolicyClientVtable {
-    void (APS5_VABI* willSendCSPViolationReport)(ContentSecurityPolicyClient* self, void* info);
+    void (APS5_VABI* willSendCSPViolationReport)(ContentSecurityPolicyClient* self, LegacyCSPInfo* info);
     void (APS5_VABI* completeDestructor)(ContentSecurityPolicyClient* self);
     void (APS5_VABI* deletingDestructor)(ContentSecurityPolicyClient* self);
     void (APS5_VABI* addConsoleMessage)(ContentSecurityPolicyClient* self, std::uint8_t source, std::uint8_t level, const WtfAbi::String* message, std::uint64_t requestIdentifier);
-    void (APS5_VABI* sendCSPViolationReport)(ContentSecurityPolicyClient* self, WtfAbi::URL* url, void* report);
-    void (APS5_VABI* enqueueSecurityPolicyViolationEvent)(ContentSecurityPolicyClient* self, void* init);
+    void (APS5_VABI* sendCSPViolationReport)(ContentSecurityPolicyClient* self, WtfAbi::URL* url, LegacyFormData** report);
+    void (APS5_VABI* enqueueSecurityPolicyViolationEvent)(ContentSecurityPolicyClient* self, LegacySecurityPolicyViolationEventInit* init);
 };
 
 struct ContentSecurityPolicyClient {
@@ -76,7 +85,133 @@ struct ContentSecurityPolicy {
     alignas(8) unsigned char cachedResponseHeaders[sizeof(LegacyContentSecurityPolicyResponseHeaders)];
 };
 
+struct LegacyCSPInfo {
+    WtfAbi::String documentURI;
+    WtfAbi::String sourceFile;
+    int lineNumber{0};
+    int columnNumber{0};
+};
+
+struct LegacySecurityPolicyViolationEventInit {
+    bool bubbles{false};
+    bool cancelable{false};
+    bool composed{false};
+    WtfAbi::String documentURI;
+    WtfAbi::String referrer;
+    WtfAbi::String blockedURI;
+    WtfAbi::String violatedDirective;
+    WtfAbi::String effectiveDirective;
+    WtfAbi::String originalPolicy;
+    WtfAbi::String sourceFile;
+    unsigned short statusCode{0};
+    int lineNumber{0};
+    int columnNumber{0};
+};
+
+struct LegacyFormDataElement {
+    char* buffer;
+    unsigned capacity;
+    unsigned size;
+    unsigned char otherAlternatives[24];
+    signed char index;
+};
+
+struct LegacyFormData {
+    unsigned refCount;
+    LegacyFormDataElement* elements;
+    unsigned elementsCapacity;
+    unsigned elementsSize;
+    std::int64_t identifier;
+    bool alwaysStream;
+    char* boundary;
+    unsigned boundaryCapacity;
+    unsigned boundarySize;
+    bool containsPasswordData;
+    alignas(8) bool hasLengthInBytes;
+    std::uint64_t lengthInBytes;
+};
+
+struct LegacySecurityOrigin {
+    unsigned refCount;
+    WtfAbi::StringImpl* protocol;
+    WtfAbi::StringImpl* host;
+    bool hasPort;
+    std::uint16_t port;
+    WtfAbi::StringImpl* domain;
+    WtfAbi::StringImpl* filePath;
+    bool isUnique;
+    bool universalAccess;
+    bool domainWasSetInDOM;
+    bool canLoadLocalResources;
+    int storageBlockingPolicy;
+    bool enforcesFilePathSeparation;
+    bool needsStorageAccessFromFileURLsQuirk;
+    bool isPotentiallyTrustworthy;
+    bool isLocal;
+};
+
+struct LegacySecurityOriginVector {
+    LegacySecurityOrigin** buffer;
+    unsigned capacity;
+    unsigned size;
+};
+
+static_assert(sizeof(LegacyCSPInfo) == 24);
+static_assert(offsetof(LegacyCSPInfo, documentURI) == 0);
+static_assert(offsetof(LegacyCSPInfo, sourceFile) == 8);
+static_assert(offsetof(LegacyCSPInfo, lineNumber) == 16);
+static_assert(offsetof(LegacyCSPInfo, columnNumber) == 20);
+static_assert(sizeof(LegacySecurityPolicyViolationEventInit) == 80);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, bubbles) == 0);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, cancelable) == 1);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, composed) == 2);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, documentURI) == 8);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, referrer) == 16);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, blockedURI) == 24);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, violatedDirective) == 32);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, effectiveDirective) == 40);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, originalPolicy) == 48);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, sourceFile) == 56);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, statusCode) == 64);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, lineNumber) == 68);
+static_assert(offsetof(LegacySecurityPolicyViolationEventInit, columnNumber) == 72);
+static_assert(sizeof(LegacyFormDataElement) == 48);
+static_assert(offsetof(LegacyFormDataElement, buffer) == 0);
+static_assert(offsetof(LegacyFormDataElement, capacity) == 8);
+static_assert(offsetof(LegacyFormDataElement, size) == 12);
+static_assert(offsetof(LegacyFormDataElement, index) == 40);
+static_assert(sizeof(LegacyFormData) == 80);
+static_assert(offsetof(LegacyFormData, refCount) == 0);
+static_assert(offsetof(LegacyFormData, elements) == 8);
+static_assert(offsetof(LegacyFormData, elementsCapacity) == 16);
+static_assert(offsetof(LegacyFormData, elementsSize) == 20);
+static_assert(offsetof(LegacyFormData, identifier) == 24);
+static_assert(offsetof(LegacyFormData, alwaysStream) == 32);
+static_assert(offsetof(LegacyFormData, boundary) == 40);
+static_assert(offsetof(LegacyFormData, boundaryCapacity) == 48);
+static_assert(offsetof(LegacyFormData, boundarySize) == 52);
+static_assert(offsetof(LegacyFormData, containsPasswordData) == 56);
+static_assert(offsetof(LegacyFormData, hasLengthInBytes) == 64);
+static_assert(offsetof(LegacyFormData, lengthInBytes) == 72);
+static_assert(sizeof(LegacySecurityOrigin) == 64);
+static_assert(offsetof(LegacySecurityOrigin, refCount) == 0);
+static_assert(offsetof(LegacySecurityOrigin, protocol) == 8);
+static_assert(offsetof(LegacySecurityOrigin, host) == 16);
+static_assert(offsetof(LegacySecurityOrigin, hasPort) == 24);
+static_assert(offsetof(LegacySecurityOrigin, port) == 26);
+static_assert(offsetof(LegacySecurityOrigin, domain) == 32);
+static_assert(offsetof(LegacySecurityOrigin, filePath) == 40);
+static_assert(offsetof(LegacySecurityOrigin, isUnique) == 48);
+static_assert(offsetof(LegacySecurityOrigin, universalAccess) == 49);
+static_assert(offsetof(LegacySecurityOrigin, domainWasSetInDOM) == 50);
+static_assert(offsetof(LegacySecurityOrigin, canLoadLocalResources) == 51);
+static_assert(offsetof(LegacySecurityOrigin, storageBlockingPolicy) == 52);
+static_assert(offsetof(LegacySecurityOrigin, enforcesFilePathSeparation) == 56);
+static_assert(offsetof(LegacySecurityOrigin, isLocal) == 59);
+static_assert(sizeof(LegacySecurityOriginVector) == 16);
+
 constexpr unsigned kURLValidBit = 1u << 0;
+constexpr unsigned kURLProtocolIsInHTTPFamilyBit = 1u << 1;
 constexpr unsigned kURLPortLengthShift = 3;
 constexpr unsigned kURLPortLengthMask = 7;
 

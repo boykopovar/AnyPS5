@@ -5,6 +5,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace NKWebKit::Csp {
@@ -110,6 +111,27 @@ struct DirectiveList {
     std::vector<std::u16string> reportURIs;
 };
 
+struct MatchedURL {
+    bool isEmpty = true;
+    bool isValid = false;
+    bool protocolIsInHTTPFamily = false;
+    std::u16string protocol;
+    std::u16string host;
+    std::u16string path;
+    std::optional<std::uint16_t> port;
+};
+
+struct SelfSource {
+    std::u16string protocol;
+    Source source;
+};
+
+enum class SourceKind { Script, Connect, ChildContext };
+
+std::u16string DecodeURLEscapeSequences(std::u16string_view text);
+bool IsDefaultPortForProtocol(std::uint16_t port, std::u16string_view protocol);
+const SourceListDirective* ViolatedDirectiveForSource(const DirectiveList& directives, SourceKind kind, const MatchedURL& url, bool didReceiveRedirectResponse, const SelfSource& self);
+const SourceListDirective* ViolatedDirectiveForFrameAncestorOrigins(const DirectiveList& directives, const std::vector<MatchedURL>& ancestorOrigins, const SelfSource& self);
 std::unique_ptr<DirectiveList> ParseDirectiveList(PolicyHost& host, const std::u16string& header, HeaderType type);
 
 }  // namespace NKWebKit::Csp

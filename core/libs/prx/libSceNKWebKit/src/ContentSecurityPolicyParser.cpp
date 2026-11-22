@@ -183,6 +183,89 @@
    package by Ronald Tschalär Copyright (C) 1996-1999.
 */
 
+// Derived from https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/WebCore/page/csp/ContentSecurityPolicySource.cpp
+/*
+ * Copyright (C) 2011 Google, Inc. All rights reserved.
+ * Copyright (C) 2016 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY GOOGLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+// Derived from https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/WebCore/platform/text/DecodeEscapeSequences.h
+/*
+ * Copyright (C) 2011 Daniel Bates (dbates@intudata.com). All Rights Reserved.
+ * Copyright (c) 2012 Google, inc.  All Rights Reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of Google Inc. nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+// Derived from https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/WebCore/platform/text/TextCodecUTF8.cpp
+/*
+ * Copyright (C) 2004-2017 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ */
+
 #include "prx/libSceNKWebKit/src/ContentSecurityPolicyParser.hpp"
 
 #include <cstddef>
@@ -517,6 +600,183 @@ bool IsSourceListNone(Buffer buffer) {
     return buffer.AtEnd();
 }
 
+bool IsASCIIHexDigit(char16_t c) {
+    return IsASCIIDigit(c) || ((c | 0x20) >= u'a' && (c | 0x20) <= u'f');
+}
+
+unsigned ToASCIIHexValue(char16_t c) {
+    return c < u'A' ? static_cast<unsigned>(c - u'0') : static_cast<unsigned>(c - u'A' + 10) & 0xF;
+}
+
+int NonASCIISequenceLength(std::uint8_t firstByte) {
+    if (firstByte >= 0xC2 && firstByte <= 0xDF) return 2;
+    if (firstByte >= 0xE0 && firstByte <= 0xEF) return 3;
+    if (firstByte >= 0xF0 && firstByte <= 0xF4) return 4;
+    return 0;
+}
+
+constexpr int kNonCharacter = -1;
+constexpr char16_t kReplacementCharacter = 0xFFFD;
+
+int DecodeNonASCIISequence(const std::uint8_t* sequence, int& length) {
+    if (length == 2) {
+        if (sequence[1] < 0x80 || sequence[1] > 0xBF) {
+            length = 1;
+            return kNonCharacter;
+        }
+        return ((sequence[0] << 6) + sequence[1]) - 0x00003080;
+    }
+    if (length == 3) {
+        switch (sequence[0]) {
+        case 0xE0:
+            if (sequence[1] < 0xA0 || sequence[1] > 0xBF) {
+                length = 1;
+                return kNonCharacter;
+            }
+            break;
+        case 0xED:
+            if (sequence[1] < 0x80 || sequence[1] > 0x9F) {
+                length = 1;
+                return kNonCharacter;
+            }
+            break;
+        default:
+            if (sequence[1] < 0x80 || sequence[1] > 0xBF) {
+                length = 1;
+                return kNonCharacter;
+            }
+        }
+        if (sequence[2] < 0x80 || sequence[2] > 0xBF) {
+            length = 2;
+            return kNonCharacter;
+        }
+        return ((sequence[0] << 12) + (sequence[1] << 6) + sequence[2]) - 0x000E2080;
+    }
+    switch (sequence[0]) {
+    case 0xF0:
+        if (sequence[1] < 0x90 || sequence[1] > 0xBF) {
+            length = 1;
+            return kNonCharacter;
+        }
+        break;
+    case 0xF4:
+        if (sequence[1] < 0x80 || sequence[1] > 0x8F) {
+            length = 1;
+            return kNonCharacter;
+        }
+        break;
+    default:
+        if (sequence[1] < 0x80 || sequence[1] > 0xBF) {
+            length = 1;
+            return kNonCharacter;
+        }
+    }
+    if (sequence[2] < 0x80 || sequence[2] > 0xBF) {
+        length = 2;
+        return kNonCharacter;
+    }
+    if (sequence[3] < 0x80 || sequence[3] > 0xBF) {
+        length = 3;
+        return kNonCharacter;
+    }
+    return ((sequence[0] << 18) + (sequence[1] << 12) + (sequence[2] << 6) + sequence[3]) - 0x03C82080;
+}
+
+Text DecodeUTF8(const std::vector<std::uint8_t>& bytes) {
+    Text decoded;
+    const std::uint8_t* source = bytes.data();
+    const std::uint8_t* const end = source + bytes.size();
+    while (source < end) {
+        if (*source < 0x80) {
+            decoded.push_back(*source++);
+            continue;
+        }
+        int count = NonASCIISequenceLength(*source);
+        int character = kNonCharacter;
+        if (count) {
+            if (count > end - source) {
+                decoded.push_back(kReplacementCharacter);
+                break;
+            }
+            character = DecodeNonASCIISequence(source, count);
+        }
+        if (character == kNonCharacter) {
+            decoded.push_back(kReplacementCharacter);
+            source += count ? count : 1;
+            continue;
+        }
+        source += count;
+        if (character > 0xFFFF) {
+            decoded.push_back(static_cast<char16_t>(0xD7C0 + (character >> 10)));
+            decoded.push_back(static_cast<char16_t>(0xDC00 + (character & 0x3FF)));
+        } else {
+            decoded.push_back(static_cast<char16_t>(character));
+        }
+    }
+    return decoded;
+}
+
+constexpr std::size_t kEscapeSequenceSize = 3;
+
+std::size_t FindEndOfEscapedRun(View string, std::size_t startPosition, std::size_t endPosition) {
+    std::size_t runEnd = startPosition;
+    int numberOfTrailingCharacters = 0;
+    while (runEnd < endPosition) {
+        if (string[runEnd] == u'%') {
+            if (endPosition - runEnd >= kEscapeSequenceSize && IsASCIIHexDigit(string[runEnd + 1]) && IsASCIIHexDigit(string[runEnd + 2])) {
+                runEnd += kEscapeSequenceSize;
+                numberOfTrailingCharacters = 0;
+            } else {
+                break;
+            }
+        } else if (string[runEnd] >= 0x40 && string[runEnd] <= 0x7F && numberOfTrailingCharacters < 2) {
+            runEnd += 1;
+            numberOfTrailingCharacters += 1;
+        } else {
+            break;
+        }
+    }
+    return runEnd;
+}
+
+Text DecodeEscapedRun(View run) {
+    std::vector<std::uint8_t> buffer;
+    buffer.reserve(run.size());
+    while (!run.empty()) {
+        if (run[0] == u'%') {
+            buffer.push_back(static_cast<std::uint8_t>((ToASCIIHexValue(run[1]) << 4) | ToASCIIHexValue(run[2])));
+            run = run.substr(kEscapeSequenceSize);
+        } else {
+            buffer.push_back(static_cast<std::uint8_t>(run[0]));
+            run = run.substr(1);
+        }
+    }
+    return DecodeUTF8(buffer);
+}
+
+Text DecodeEscapedText(View string) {
+    Text result;
+    const std::size_t length = string.size();
+    std::size_t decodedPosition = 0;
+    std::size_t searchPosition = 0;
+    std::size_t encodedRunPosition;
+    while ((encodedRunPosition = string.find(u'%', searchPosition)) != View::npos) {
+        const std::size_t encodedRunEnd = FindEndOfEscapedRun(string, encodedRunPosition, length);
+        searchPosition = encodedRunEnd;
+        if (encodedRunEnd == encodedRunPosition) {
+            ++searchPosition;
+            continue;
+        }
+        const Text decoded = DecodeEscapedRun(string.substr(encodedRunPosition, encodedRunEnd - encodedRunPosition));
+        if (decoded.empty()) continue;
+        result.append(string.substr(decodedPosition, encodedRunPosition - decodedPosition));
+        result.append(decoded);
+        decodedPosition = encodedRunEnd;
+    }
+    result.append(string.substr(decodedPosition, length - decodedPosition));
+    return result;
+}
+
 struct ParsedHost {
     Text value;
     bool hasWildcard = false;
@@ -686,7 +946,7 @@ private:
         const char16_t* begin = buffer.position;
         SkipWhile<IsPathComponentCharacter>(buffer);
         if (buffer.HasCharactersRemaining()) ReportInvalidPathCharacter(host, list.directiveName, Between(begin, buffer.end), *buffer.position);
-        return Between(begin, buffer.position);
+        return DecodeEscapedText(View(begin, static_cast<std::size_t>(buffer.position - begin)));
     }
 
     std::optional<ParsedPort> ParsePort(Buffer buffer) {
@@ -1019,6 +1279,110 @@ private:
 };
 
 }  // namespace
+
+namespace {
+
+bool EqualIgnoringASCIICase(View text, View other) {
+    if (text.size() != other.size()) return false;
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        if (ToASCIILower(text[index]) != ToASCIILower(other[index])) return false;
+    }
+    return true;
+}
+
+bool ProtocolIs(const MatchedURL& url, std::string_view protocol) {
+    return url.isValid && EqualLettersIgnoringASCIICase(url.protocol, protocol);
+}
+
+bool ProtocolMatchesSelf(const SelfSource& self, const MatchedURL& url) {
+    if (EqualLettersIgnoringASCIICase(self.protocol, "http")) return url.protocolIsInHTTPFamily;
+    return EqualIgnoringASCIICase(url.protocol, self.protocol);
+}
+
+bool SchemeMatches(const Source& source, const MatchedURL& url, const SelfSource& self) {
+    if (source.scheme.empty()) return ProtocolMatchesSelf(self, url);
+    if (EqualLettersIgnoringASCIICase(source.scheme, "http")) return url.protocolIsInHTTPFamily;
+    return EqualIgnoringASCIICase(url.protocol, source.scheme);
+}
+
+bool WildcardMatches(View host, View hostWithWildcard) {
+    const std::size_t hostLength = host.size();
+    const std::size_t hostWithWildcardLength = hostWithWildcard.size();
+    return hostLength > hostWithWildcardLength
+        && EqualIgnoringASCIICase(host.substr(hostLength - hostWithWildcardLength), hostWithWildcard)
+        && host[hostLength - hostWithWildcardLength - 1] == u'.';
+}
+
+bool HostMatches(const Source& source, const MatchedURL& url) {
+    return EqualIgnoringASCIICase(url.host, source.host) || (source.hostHasWildcard && WildcardMatches(url.host, source.host));
+}
+
+bool PathMatches(const Source& source, const MatchedURL& url) {
+    if (source.path.empty()) return true;
+    const Text path = DecodeEscapedText(url.path);
+    if (source.path.back() == u'/') return path.size() >= source.path.size() && path.compare(0, source.path.size(), source.path) == 0;
+    return path == source.path;
+}
+
+bool PortMatches(const Source& source, const MatchedURL& url) {
+    if (source.portHasWildcard) return true;
+    const std::optional<std::uint16_t> port = url.port;
+    if (port == source.port) return true;
+    if ((source.port && IsDefaultPortForProtocol(*source.port, u"http")) && ((!port && ProtocolIs(url, "https")) || (port && IsDefaultPortForProtocol(*port, u"https")))) return true;
+    if (!port) return IsDefaultPortForProtocol(*source.port, url.protocol);
+    if (!source.port) return IsDefaultPortForProtocol(*port, url.protocol);
+    return false;
+}
+
+bool SourceMatches(const Source& source, const MatchedURL& url, bool didReceiveRedirectResponse, const SelfSource& self) {
+    if (!SchemeMatches(source, url, self)) return false;
+    if (source.host.empty()) return true;
+    return HostMatches(source, url) && PortMatches(source, url) && (didReceiveRedirectResponse || PathMatches(source, url));
+}
+
+bool IsProtocolAllowedByStar(const MatchedURL& url, const SelfSource& self) {
+    return url.protocolIsInHTTPFamily || ProtocolIs(url, "ws") || ProtocolIs(url, "wss") || ProtocolMatchesSelf(self, url);
+}
+
+bool SourceListMatches(const SourceList& list, const MatchedURL& url, bool didReceiveRedirectResponse, const SelfSource& self) {
+    if (list.allowStar && IsProtocolAllowedByStar(url, self)) return true;
+    if (list.allowSelf && SourceMatches(self.source, url, false, self)) return true;
+    for (const Source& entry : list.list) {
+        if (SourceMatches(entry, url, didReceiveRedirectResponse, self)) return true;
+    }
+    return false;
+}
+
+bool Allows(const SourceListDirective& directive, const MatchedURL& url, bool didReceiveRedirectResponse, const SelfSource& self) {
+    if (url.isEmpty) return false;
+    return SourceListMatches(directive.sourceList, url, didReceiveRedirectResponse, self);
+}
+
+const SourceListDirective* OperativeDirective(const DirectiveList& directives, const SourceListDirective* directive) {
+    return directive ? directive : directives.defaultSrc.get();
+}
+
+}  // namespace
+
+std::u16string DecodeURLEscapeSequences(std::u16string_view text) {
+    return DecodeEscapedText(text);
+}
+
+const SourceListDirective* ViolatedDirectiveForSource(const DirectiveList& directives, SourceKind kind, const MatchedURL& url, bool didReceiveRedirectResponse, const SelfSource& self) {
+    const SourceListDirective* own = kind == SourceKind::Script ? directives.scriptSrc.get() : kind == SourceKind::Connect ? directives.connectSrc.get() : directives.childSrc.get();
+    const SourceListDirective* operativeDirective = OperativeDirective(directives, own);
+    if (!operativeDirective || Allows(*operativeDirective, url, didReceiveRedirectResponse, self)) return nullptr;
+    return operativeDirective;
+}
+
+const SourceListDirective* ViolatedDirectiveForFrameAncestorOrigins(const DirectiveList& directives, const std::vector<MatchedURL>& ancestorOrigins, const SelfSource& self) {
+    const SourceListDirective* directive = directives.frameAncestors.get();
+    if (!directive) return nullptr;
+    for (const MatchedURL& origin : ancestorOrigins) {
+        if (!origin.isValid || !Allows(*directive, origin, false, self)) return directive;
+    }
+    return nullptr;
+}
 
 std::unique_ptr<DirectiveList> ParseDirectiveList(PolicyHost& host, const std::u16string& header, HeaderType type) {
     auto directives = std::make_unique<DirectiveList>();
