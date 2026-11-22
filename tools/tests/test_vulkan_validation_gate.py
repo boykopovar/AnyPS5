@@ -745,6 +745,29 @@ class ContainmentTests(unittest.TestCase):
                     self.kill(child)
                     self.assertTrue(self.is_dead(child, 2.0))
 
+    def test_replay_comparison_guard_kills_child_before_trial_containment(self):
+        tools_dir = str(Path(__file__).resolve().parents[1])
+        script = self.root / "replay_guard_probe.py"
+        script.write_text(
+            "import os, sys, time\nfrom pathlib import Path\n"
+            f"sys.path.insert(0, {tools_dir!r})\nimport frame_replay_compare as replay\n"
+            "def stop_before_job(pid):\n"
+            "    Path(sys.argv[1]).write_text(f'{pid}\\n', encoding='utf-8')\n"
+            "    deadline = time.monotonic() + 15\n"
+            "    while time.monotonic() < deadline and not Path(sys.argv[2]).exists():\n"
+            "        time.sleep(.01)\n"
+            "    os._exit(19)\n"
+            "replay.processes.contain = stop_before_job\n"
+            "replay.execute_replay_trial([sys.executable, '-c', 'pass'], Path(sys.argv[3]), os.environ.copy(), 5, 1024)\n",
+            encoding="utf-8")
+        pid_file, release = self.root / "replay.pid", self.root / "replay.release"
+        probe = subprocess.Popen([sys.executable, str(script), str(pid_file), str(release), str(self.root / "trial")])
+        self.watch(probe.pid)
+        child = self.watch(self.read_pid(pid_file))
+        release.touch()
+        self.assertEqual(probe.wait(timeout=10), 19)
+        self.assertTrue(self.is_dead(child, 2.0), "suspended replay survived comparison runner exit")
+
     def test_unexpected_resume_suspend_count_fails_and_kills_child(self):
         spawned = []
         real_popen = subprocess.Popen

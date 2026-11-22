@@ -214,15 +214,7 @@ int APS5_VABI WKContextResumeDownload() {
     return 0;
 }
 
-int APS5_VABI WKFrameCanShowMIMEType() {
-    return 0;
-}
-
 int APS5_VABI WKFrameCreateFrameInfo() {
-    return 0;
-}
-
-int APS5_VABI WKFrameIsFrameSet() {
     return 0;
 }
 

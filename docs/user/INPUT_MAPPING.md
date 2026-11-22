@@ -64,7 +64,7 @@ Three more actions control the host's output volume: `VolumeDown` (F5), `VolumeU
 
 ### Default bindings
 
-Without an `anyps5-input.ini`, or for actions the file does not mention, these bindings apply:
+Each action keeps its built-in bindings unless the shared file or the current title's [per-game profile](#per-game-profiles) overrides it.
 
 | Action | Keyboard and mouse |
 |--------|--------------------|
@@ -165,6 +165,18 @@ Vibration is not part of the input mapping file. The host-side strength of a con
 
 The identification pulse that tells players' controllers apart is set with `ANYPS5_PAD_IDENTIFY`, described in [Controller identification pulse](USAGE.md#controller-identification-pulse).
 
+## Stable player assignment
+
+By default, connected controllers fill the first free player slot in SDL's discovery order. To keep a controller on the same player after reconnecting or restarting, set `ANYPS5_PAD_PLAYER_1_SERIAL` through `ANYPS5_PAD_PLAYER_4_SERIAL` to the exact SDL serial for each player. Set `ANYPS5_PAD_LOG_CONTROLLER_SERIAL=1` to include serials in the connection log while configuring this; serial logging is off by default. SDL may not expose a serial for every controller or backend. Such controllers, and controllers whose serial is not configured, use the first free unreserved player slot. A configured slot stays reserved while its controller is disconnected, so other controllers do not take that player's place. Assigning the same serial to multiple players stops startup with an error.
+
+For example, to bind two controllers and leave the other player slots automatic:
+
+```sh
+ANYPS5_PAD_PLAYER_1_SERIAL=ABC123 ANYPS5_PAD_PLAYER_2_SERIAL=XYZ789 ./AnyPS5
+```
+
+Serials may differ when a controller is connected through another transport or exposed by a different SDL backend. Check the connection log for the exact value reported by the current host.
+
 ## Analog keyboard input
 
 `StickModifier` has no built-in binding. While a key or mouse button bound to it is held, the keyboard stick bindings tilt the stick by `StickModifierScale` of its range instead of fully, for walking or fine aim. Controller sticks and the mouse stick are not affected, and opposite keys still cancel each other.
@@ -197,7 +209,7 @@ While the `Shake` input is held (X by default), the controller reports its accel
 
 ## Per-game profiles
 
-A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
+A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. With `ANYPS5_INPUT_CONFIG` unset, you can use the profile beside the game executable without creating `anyps5-input.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
 
 For example, a profile that gives one title a lower mouse sensitivity and Cross on F:
 
@@ -228,7 +240,7 @@ MouseCurve = 1.3
 
 Earlier versions sampled the mouse every 33 ms and tilted the stick at least halfway for any movement. `MouseDeadzoneOffset = 0.5`, `MouseSmoothingMs = 0` and `MouseDecayMs = 33` come close to that behavior.
 
-An invalid line stops the game when video output starts, with an error that names the file and line number. If the file named by `ANYPS5_INPUT_CONFIG` does not exist, or the configuration file cannot be read, the game stops with an error. With no `anyps5-input.ini` and no `ANYPS5_INPUT_CONFIG`, the built-in mapping is used.
+An invalid line stops the game when video output starts, with an error that names the file and line number. If the file named by `ANYPS5_INPUT_CONFIG` does not exist, or the configuration file cannot be read, the game stops with an error.
 
 ## Web configurator
 

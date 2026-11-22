@@ -240,6 +240,41 @@ class CtestSkipPolicyTests(unittest.TestCase):
                         if "skipped, flaky" in report:
                             self.assertIn("error: guest_probe skipped: skipped, flaky", result.stdout)
 
+    def test_skip_without_a_stated_reason_names_the_output_it_saw(self):
+        reports = (
+            ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>[time] scheduler tick raised to 0.5 ms (was 0.50 ms, now 0.50 ms, timed waits fine, timers fire 37 us late)</system-out>',
+             "the test stated no reason; its output starts with: [time] scheduler tick raised to 0.5 ms"),
+            ('<skipped message="SKIP_REGULAR_EXPRESSION_MATCHED"/>', "the test stated no reason and wrote no output"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, expected in reports:
+                junit.write_text(f'<testsuite><testcase name="guest_video_out_colorimetry_metadata_bounds">{report}</testcase></testsuite>', encoding="utf-8")
+                for job in ("linux", "windows"):
+                    with self.subTest(job=job, report=report):
+                        result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                                                capture_output=True, encoding="utf-8")
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertIn(f"error: guest_video_out_colorimetry_metadata_bounds skipped: {expected}", result.stdout)
+
+    def test_stated_reason_is_quoted_unchanged(self):
+        reports = (
+            ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>host CPU has SSE2\nskipped, flaky</system-out>', "skipped, flaky"),
+            ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>SKIP: Windows symbolic-link privileges unavailable</system-out>',
+             "SKIP: Windows symbolic-link privileges unavailable"),
+            ('<skipped message="SKIP_RETURN_CODE=77"/><system-err>pad_identify_wiring: skipped, host joysticks take the pad slots</system-err>',
+             "pad_identify_wiring: skipped, host joysticks take the pad slots"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, expected in reports:
+                with self.subTest(report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"],
+                                            capture_output=True, encoding="utf-8")
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(f"error: guest_probe skipped: {expected}", result.stdout)
+
     def test_ctest_status_preserves_high_refresh_policy(self):
         reason = "skipped, current display does not provide 120 Hz"
         reports = (
