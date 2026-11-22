@@ -33,6 +33,7 @@ long g_newBudget = -1;
 std::map<uint64_t, uint64_t> g_releaseClaims;
 std::mutex g_mapHoldLock;
 std::vector<std::pair<uint64_t, uint64_t>> g_mapHolds;
+std::atomic_bool g_directMemoryInitialized{false};
 
 int g_failures = 0;
 
@@ -383,6 +384,10 @@ const Case kCases[] = {
 };
 
 }
+
+void DirectMemoryTouch() noexcept { g_directMemoryInitialized.store(true, std::memory_order_release); }
+
+bool DirectMemoryIsInitialized() noexcept { return g_directMemoryInitialized.load(std::memory_order_acquire); }
 
 void CreateDirectMemoryBacking(int64_t, size_t) {
     if (g_fault == Fault::BackingBadAlloc) throw std::bad_alloc();
