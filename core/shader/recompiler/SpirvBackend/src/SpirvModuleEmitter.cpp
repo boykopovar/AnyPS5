@@ -232,7 +232,7 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
     }
     if (state.splitState && (kind == StageInputKind::WorkgroupId || kind == StageInputKind::GlobalInvocationId)) {
         const auto counts = [&](std::uint32_t axis) { return LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupCountDword + axis)); };
-        const auto linear = EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupBaseDword)), EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u));
+        const auto linear = EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupBaseDword)), SplitSliceGroup(state));
         auto divided = linear;
         for (std::uint32_t axis = 0; axis < component; ++axis) divided = EmitBinaryU32(state, spv::OpUDiv, divided, counts(axis));
         const auto group = component == 2u ? divided : EmitBinaryU32(state, spv::OpUMod, divided, counts(component));
@@ -2025,7 +2025,7 @@ void EmitProgram(SpirvEmitterState& state) {
     if (state.splitState) {
         const auto count = [&](std::uint32_t axis) { return LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupCountDword + axis)); };
         const auto groups = EmitBinaryU32(state, spv::OpIMul, EmitBinaryU32(state, spv::OpIMul, count(0u), count(1u)), count(2u));
-        const auto linear = EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupBaseDword)), EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u));
+        const auto linear = EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupBaseDword)), SplitSliceGroup(state));
         const auto outside = state.module.AllocateId();
         state.module.AddFunction(spv::OpUGreaterThanEqual, TypeBool(state), outside, linear, groups);
         const auto stop = state.module.AllocateId();

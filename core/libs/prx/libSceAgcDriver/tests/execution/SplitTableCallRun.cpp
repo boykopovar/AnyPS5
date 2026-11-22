@@ -173,7 +173,7 @@ void RunLinked(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTar
     Check("linked", expectedOf);
 }
 
-void RunContinued(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, const ShaderRecompiler::SplitTableCallPrograms& programs) {
+void RunContinued(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, const ShaderRecompiler::SplitTableCallPrograms& programs, bool gpuRounds = false) {
     Prepare();
     Require(programs.continuation, "the loop caller's programs do not continue across dispatches");
     std::vector<const ShaderRecompiler::SplitTableCallProgram*> parts{&programs.entry};
@@ -186,8 +186,16 @@ void RunContinued(AgcDriver::VulkanDevice& device, const ShaderRecompiler::Spirv
     }
     const auto capacity = SliceGroups * Lanes;
     for (std::uint32_t slice = 0; slice * SliceGroups < Groups; ++slice) {
-        const auto run = [&](std::size_t part, bool readTargets) {
-            device.SetSplitSlice(AgcDriver::VulkanDevice::SplitSlice{capacity, slice * SliceGroups, SliceGroups, ShaderRecompiler::SplitStateAbi::TotalSlots(programs.stateVectors), readTargets, ShaderRecompiler::SplitStateAbi::TargetSlot(programs.stateVectors)});
+        const auto run = [&](std::size_t part, bool readTargets, std::int32_t listed = -1, const std::vector<std::uint64_t>* select = nullptr, bool selectBegin = false) {
+            AgcDriver::VulkanDevice::SplitSlice current{capacity, slice * SliceGroups, SliceGroups, ShaderRecompiler::SplitStateAbi::TotalSlots(programs.stateVectors), readTargets, ShaderRecompiler::SplitStateAbi::TargetSlot(programs.stateVectors)};
+            if (gpuRounds) {
+                current.listTargets = AgcDriver::VulkanDevice::SplitSelectMaxTargets;
+                current.lanesPerGroup = Lanes;
+                current.listed = listed;
+                if (select != nullptr) current.selectTargets = *select;
+                current.selectBegin = selectBegin;
+            }
+            device.SetSplitSlice(current);
             device.Dispatch(results[part], Groups, 1, 1, {}, 0x740000u + part * 0x1000u);
             device.SetSplitSlice(std::nullopt);
             std::vector<std::size_t> called;
@@ -208,8 +216,22 @@ void RunContinued(AgcDriver::VulkanDevice& device, const ShaderRecompiler::Spirv
         auto called = run(0, true);
         for (std::uint32_t round = 0; !called.empty(); ++round) {
             Require(round < 8u, "continued lanes still call after 8 rounds");
-            for (const auto part : called) static_cast<void>(run(part, false));
-            called = run(parts.size() - 1u, true);
+            if (!gpuRounds || round == 0u) {
+                for (const auto part : called) static_cast<void>(run(part, false));
+                called = run(parts.size() - 1u, true);
+                continue;
+            }
+            std::vector<std::uint64_t> selected;
+            for (const auto part : called) selected.push_back(Callees()[part - 1u].target);
+            constexpr std::uint32_t Batch = 4u;
+            for (std::uint32_t gpuRound = 0; gpuRound < Batch; ++gpuRound) {
+                for (std::size_t index = 0; index < called.size(); ++index) static_cast<void>(run(called[index], false, static_cast<std::int32_t>(index), index == 0u ? &selected : nullptr, index == 0u && gpuRound == 0u));
+                const auto read = run(parts.size() - 1u, gpuRound + 1u == Batch, static_cast<std::int32_t>(called.size()));
+                if (gpuRound + 1u == Batch) {
+                    Require(device.SplitTargets()[ShaderRecompiler::SplitStateAbi::RoundDword] != 0u, "a GPU-selected batch of continued rounds ran no round");
+                    called = read;
+                }
+            }
         }
     }
     device.WaitIdle();
@@ -295,7 +317,9 @@ int main() {
             std::string loopRefusal;
             const auto continuation = ShaderRecompiler::ContinueTableCall(loopProgram, loopCalls[0], Callees(), Vectors, loopRefusal);
             Require(continuation.has_value(), "the loop caller cannot continue: " + loopRefusal);
-            RunContinued(*device, target, ShaderRecompiler::BuildTableCallContinuation(loopProgram, loopCalls[0], Callees(), *continuation));
+            const auto continued = ShaderRecompiler::BuildTableCallContinuation(loopProgram, loopCalls[0], Callees(), *continuation);
+            RunContinued(*device, target, continued);
+            RunContinued(*device, target, continued, true);
             std::printf("wave%u on host subgroup %u passed\n", lanes, target.subgroupSize);
         }
         std::puts("split table call run tests passed");

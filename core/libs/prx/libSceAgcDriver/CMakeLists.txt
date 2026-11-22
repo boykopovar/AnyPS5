@@ -226,6 +226,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcSplitSelectShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/SplitSelect.comp)
+set(agcSplitSelectShaderSpv ${agcTextureDetileGeneratedDir}/SplitSelect.spv)
+set(agcSplitSelectShaderHeader ${agcTextureDetileGeneratedDir}/SplitSelect_spv.h)
+add_custom_command(
+        OUTPUT "${agcSplitSelectShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcSplitSelectShaderSpv}" "${agcSplitSelectShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcSplitSelectShaderSpv} -DOUTPUT=${agcSplitSelectShaderHeader}
+        -DSYMBOL=SPLIT_SELECT_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcSplitSelectShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcSampleCounterShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/SampleCounter.comp)
 set(agcSampleCounterShaderSpv ${agcTextureDetileGeneratedDir}/SampleCounter.spv)
 set(agcSampleCounterShaderHeader ${agcTextureDetileGeneratedDir}/SampleCounter_spv.h)
@@ -505,6 +518,7 @@ set(agcDriverSources
         ${agcTextureDetileImageShaderHeader}
         ${agcTextureRepackShaderHeader}
         ${agcDispatchArgumentsShaderHeader}
+        ${agcSplitSelectShaderHeader}
         ${agcTextureDetileWordsShaderHeader}
         ${agcTextureDetileImageWordsShaderHeader}
         ${agcSampleCounterShaderHeader}
