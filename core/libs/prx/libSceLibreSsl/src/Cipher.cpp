@@ -56,6 +56,7 @@ int APS5_VABI SSL_CIPHER_get_bits_nid_postfix(const void* cipher, std::int32_t* 
         std::int32_t bits = 0;
         CopyGuestInPreservingErrno(bytes + offsetof(Cipher, algorithmBits), bits, __func__);
         CopyGuestOutPreservingErrno(algorithmBits, bits, __func__);
+        CopyGuestInPreservingErrno(bytes + offsetof(Cipher, strengthBits), strength, __func__);
     }
     return strength;
 }
