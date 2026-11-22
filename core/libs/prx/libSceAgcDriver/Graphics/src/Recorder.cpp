@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
@@ -2255,6 +2256,11 @@ void Recorder::ensureOpen() {
         dropStaleHoldKept();
         batch->kept.insert(batch->kept.end(), holdKept.begin(), holdKept.end());
         open = std::move(batch);
+        retentionCount = 0;
+        if (++retentionEpoch == 0) {
+            for (auto& slot : retention) slot = {};
+            ++retentionEpoch;
+        }
         open->predictedSerial = submissions + 1;
         try {
             if (open->queue == 0) WriteCheckpointSerial(context, open->commands, open->predictedSerial, open->queue);
@@ -3240,7 +3246,7 @@ bool Recorder::DumpSamples(VkDeviceAddress target, std::uint64_t address, std::u
     return true;
 }
 
-bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules) {
+bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 8> rules) {
     constexpr std::uint32_t PushBytes = 48;
     if (meshArgumentState == 0) {
         meshArgumentState = -1;
@@ -3276,7 +3282,7 @@ bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress rec
         VkDeviceAddress record;
         VkDeviceAddress arguments;
         std::array<std::uint32_t, 8> rules;
-    } parameters{record, arguments, {rules[0], rules[1], rules[2], rules[3], rules[4], rules[5], rules[6], 0u}};
+    } parameters{record, arguments, {rules[0], rules[1], rules[2], rules[3], rules[4], rules[5], rules[6], rules[7]}};
     static_assert(sizeof(parameters) == PushBytes);
     function(cmdPushConstants, "vkCmdPushConstants")(commands, meshArgumentLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
     function(cmdDispatch, "vkCmdDispatch")(commands, 1, 1, 1);
@@ -3579,6 +3585,36 @@ std::shared_ptr<DeviceBuffer> Recorder::UploadScratchBuffer(UploadScratch kind, 
         Keep(scratch, bytes);
     }
     return scratch;
+}
+
+void Recorder::ReserveRetention(std::size_t additional) {
+    ensureOpen();
+    if (additional > open->kept.max_size() - open->kept.size()) throw std::length_error("recorded owner count exceeds the batch capacity");
+    prepareRetention(additional);
+    const auto needed = open->kept.size() + additional;
+    if (needed <= open->kept.capacity()) return;
+    const auto grown = open->kept.capacity() <= open->kept.max_size() / 2 ? open->kept.capacity() * 2 : open->kept.max_size();
+    open->kept.reserve(std::max(needed, grown));
+}
+
+void Recorder::prepareRetention(std::size_t additional) {
+    if (additional > retention.max_size() / 2 - retentionCount) throw std::length_error("recorded owner lookup exceeds the batch capacity");
+    const auto needed = (retentionCount + additional) * 2;
+    if (needed <= retention.size()) return;
+    auto capacity = std::max<std::size_t>(64, retention.size());
+    while (capacity < needed) {
+        if (capacity > retention.max_size() / 2) throw std::length_error("recorded owner lookup exceeds the batch capacity");
+        capacity *= 2;
+    }
+    std::vector<RetentionSlot> grown(capacity);
+    const auto mask = grown.size() - 1;
+    for (const auto& slot : retention) {
+        if (slot.epoch != retentionEpoch) continue;
+        auto index = retentionHash(slot.object) & mask;
+        while (grown[index].epoch == retentionEpoch) index = (index + 1) & mask;
+        grown[index] = slot;
+    }
+    retention.swap(grown);
 }
 
 void Recorder::Keep(std::shared_ptr<void> object, std::size_t bytes) {
@@ -4705,6 +4741,10 @@ void Recorder::HoldNextSubmit(VkSemaphore semaphore, std::uint64_t value) {
     submitHoldValue = value;
 }
 
+bool Recorder::SubmitHeld() const {
+    return submitHold != VK_NULL_HANDLE || (heldSerial != 0 && unsignaled(heldSerial));
+}
+
 void Recorder::FailNextSubmitsForTest(unsigned count) {
     injectedSubmitFailures.store(count, std::memory_order_relaxed);
 }
@@ -4802,6 +4842,7 @@ void Recorder::Submit() {
     if (batch->guestWork) LibcRunReportMilestone_nid_no_patch(2);
     batch->submitted = true;
     batch->serial = ++submissions;
+    if (hold != VK_NULL_HANDLE) heldSerial = batch->serial;
     batch->submittedAt = std::chrono::steady_clock::now();
     CaptureTrace::Log("submit-confirmed batch=%llu tokens=%s", static_cast<unsigned long long>(batch->serial), tokensStr.c_str());
     if (DrawProfiled()) {
