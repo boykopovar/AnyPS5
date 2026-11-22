@@ -79,10 +79,14 @@ int main(int argc, char** argv) {
         Header header{};
         std::ifstream input(source, std::ios::binary);
         input.read(reinterpret_cast<char*>(&header), sizeof(header));
-        if (!input || header.magic != 0x4c4a5041u || header.format != 19 || header.abi != ShaderRecompiler::RuntimeAbi::Version) throw std::runtime_error("journal format/runtime ABI mismatch");
+        if (!input || header.magic != 0x4c4a5041u || header.abi != ShaderRecompiler::RuntimeAbi::Version) throw std::runtime_error("journal header/runtime ABI mismatch");
         if (header.source != ShaderRecompiler::ShaderDiskCache::SourceVersion()) throw std::runtime_error("journal source version mismatch");
         if (!std::filesystem::create_directories(root)) throw std::runtime_error("private cache root already exists");
+#ifdef _WIN32
+        if (_wputenv_s(L"ANYPS5_SHADER_CACHE_DIR", root.wstring().c_str()) != 0) throw std::runtime_error("could not set private shader cache directory");
+#else
         Environment("ANYPS5_SHADER_CACHE_DIR", root.string().c_str());
+#endif
         Environment("ANYPS5_NO_SHADER_CACHE", "0");
         Environment("APS5_NO_PIPELINE_JOURNAL", "0");
         Environment("APS5_PIPELINE_JOURNAL_ENTRIES", argv[3]);
