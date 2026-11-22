@@ -469,6 +469,10 @@ bool APS5_VABI BeginArrayElement(GenericKeyedDecoder* self) {
     return true;
 }
 
+void APS5_VABI EndArrayElement(GenericKeyedDecoder* self) {
+    EndObject(self);
+}
+
 void APS5_VABI EndArray(GenericKeyedDecoder* self) {
     State& state = StateOf(self);
     if (state.arrayStack.empty()) throw std::out_of_range("WebCore::KeyedDecoder: empty array stack");
@@ -495,7 +499,7 @@ const KeyedDecoderVtableStorage vtable = {
         &EndObject,
         &BeginArray,
         &BeginArrayElement,
-        &EndObject,
+        &EndArrayElement,
         &EndArray,
     },
 };
