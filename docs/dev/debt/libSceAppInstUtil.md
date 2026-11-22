@@ -6,7 +6,7 @@
 
 | Name | NID |
 | --- | --- |
-| `Unknown` | `2WQuFX8yYXg` |
+| `sceAppInstUtilGetWorkspaceCopyStatus` | `2WQuFX8yYXg` |
 | `Unknown` | `4vqRxwpIE1M` |
 | `Unknown` | `9QIC1kZpSG4` |
 | `Unknown` | `K73u2VX0JFo` |
@@ -14,15 +14,15 @@
 | `Unknown` | `N6H7LMfZD5Q` |
 | `Unknown` | `NXqdUFpinmo` |
 | `Unknown` | `QMjuGVPtjUY` |
-| `Unknown` | `R-OUApMZ1d8` |
+| `sceAppInstUtilGetContentIdFromPkg` | `R-OUApMZ1d8` |
 | `Unknown` | `T9h6l8bFKGE` |
-| `Unknown` | `X5Q7QxodFcg` |
+| `sceAppInstUtilRequestUnInstallContentList` | `X5Q7QxodFcg` |
 | `Unknown` | `XWjOLtdgxa4` |
 | `Unknown` | `Y+ln-TkY+hA` |
 | `Unknown` | `Zv+26GDSKcQ` |
 | `Unknown` | `ecad2GAw55Y` |
 | `Unknown` | `gFlBHjtrMDI` |
-| `Unknown` | `gP27iU+aZFw` |
+| `sceAppInstUtilUnInstallContentList` | `gP27iU+aZFw` |
 | `Unknown` | `grC16befiso` |
 | `Unknown` | `j80u95nZ+3A` |
 | `Unknown` | `j9qjbjMifhQ` |

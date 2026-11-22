@@ -901,13 +901,12 @@ extern "C" {
 
 
 
-int APS5_VABI libSceAppInstUtilUnknown_2WQuFX8yYXg_nid_no_patch(const void* argument1, const void* argument2, const void* argument3) {
+int APS5_VABI sceAppInstUtilGetWorkspaceCopyStatus(const void* argument1, const void* argument2, const void* argument3) {
     if (argument1 == nullptr || argument2 == nullptr || argument3 == nullptr) return ErrorNullArgument;
     if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("2WQuFX8yYXg", libSceAppInstUtilUnknown_2WQuFX8yYXg_nid_no_patch);
 
 int APS5_VABI libSceAppInstUtilUnknown_4vqRxwpIE1M_nid_no_patch(const void* argument1, const void* argument2) {
     if (argument1 == nullptr || argument2 == nullptr) return ErrorNullArgument;
@@ -957,13 +956,12 @@ int APS5_VABI libSceAppInstUtilUnknown_QMjuGVPtjUY_nid_no_patch(const void* argu
 }
 APS5_EXPORT("QMjuGVPtjUY", libSceAppInstUtilUnknown_QMjuGVPtjUY_nid_no_patch);
 
-int APS5_VABI libSceAppInstUtilUnknown_R_minus_OUApMZ1d8_nid_no_patch(const void* argument1, const void* argument2, const void* argument3) {
+int APS5_VABI sceAppInstUtilGetContentIdFromPkg(const void* argument1, const void* argument2, const void* argument3) {
     if (argument1 == nullptr || argument2 == nullptr || argument3 == nullptr) return ErrorNullArgument;
     if (!ServiceInitialized()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("R-OUApMZ1d8", libSceAppInstUtilUnknown_R_minus_OUApMZ1d8_nid_no_patch);
 
 int APS5_VABI libSceAppInstUtilUnknown_T9h6l8bFKGE_nid_no_patch() {
     if (!ServiceInitialized()) return ErrorNotInitialized;
@@ -972,10 +970,9 @@ int APS5_VABI libSceAppInstUtilUnknown_T9h6l8bFKGE_nid_no_patch() {
 }
 APS5_EXPORT("T9h6l8bFKGE", libSceAppInstUtilUnknown_T9h6l8bFKGE_nid_no_patch);
 
-int APS5_VABI libSceAppInstUtilUnknown_X5Q7QxodFcg_nid_no_patch() {
+int APS5_VABI sceAppInstUtilRequestUnInstallContentList() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("X5Q7QxodFcg", libSceAppInstUtilUnknown_X5Q7QxodFcg_nid_no_patch);
 
 int APS5_VABI libSceAppInstUtilUnknown_XWjOLtdgxa4_nid_no_patch() {
     if (!ServiceInitialized()) return ErrorNotInitialized;
@@ -1014,10 +1011,9 @@ int APS5_VABI libSceAppInstUtilUnknown_gFlBHjtrMDI_nid_no_patch() {
 }
 APS5_EXPORT("gFlBHjtrMDI", libSceAppInstUtilUnknown_gFlBHjtrMDI_nid_no_patch);
 
-int APS5_VABI libSceAppInstUtilUnknown_gP27iU_plus_aZFw_nid_no_patch() {
+int APS5_VABI sceAppInstUtilUnInstallContentList() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("gP27iU+aZFw", libSceAppInstUtilUnknown_gP27iU_plus_aZFw_nid_no_patch);
 
 int APS5_VABI libSceAppInstUtilUnknown_grC16befiso_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
