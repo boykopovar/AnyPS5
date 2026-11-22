@@ -1,0 +1,21 @@
+{
+    "strategy": "additive",
+    "usePoolBundle": false,
+    "featureFilters": {
+        "brkitr_rules": "include",
+        "brkitr_dictionaries": "include",
+        "brkitr_tree": "include",
+        "locales_tree": "include",
+        "cnvalias": "include",
+        "ulayout": "include",
+        "uemoji": "include",
+        "normalization": "include",
+        "misc": "include"
+    },
+    "resourceFilters": [
+        {
+            "categories": ["locales_tree"],
+            "rules": ["-/*", "+/%%Parent", "+/%%ALIAS"]
+        }
+    ]
+}
