@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -25,6 +26,36 @@ class ResolveCliPathTests(unittest.TestCase):
             with self.assertRaises(ValueError) as error:
                 runner.resolve_cli_path(loop)
             self.assertIn("symbolic link loop", str(error.exception))
+
+
+class CaseLogTests(unittest.TestCase):
+    def test_retry_preserves_the_first_case_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            helper = root / "tests/job_manager_reference.prx"
+            helper.parent.mkdir()
+            helper.write_bytes(b"helper")
+            args = mock.Mock(build=root, module=None, host=True, relinker=root / "relinker",
+                             toolchain=None, cases=["memory", "memory"], timeout=1, suite=None)
+            runs = iter([(1, b"first failure"), (0, b"retry passed")])
+
+            def process(command, **kwargs):
+                if command[0] == str(args.relinker):
+                    Path(command[-1]).write_bytes(b"reference")
+                    return subprocess.CompletedProcess(command, 0, b"", b"")
+                if "env" not in kwargs:
+                    return subprocess.CompletedProcess(command, 0, b"", b"")
+                code, output = next(runs)
+                return subprocess.CompletedProcess(command, code, output, b"")
+
+            with mock.patch.object(runner.subprocess, "run", side_effect=process), \
+                    mock.patch.object(runner, "read_host_imports", return_value=[]), \
+                    mock.patch.object(runner, "stage_libraries"), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(runner.run(args, root), 1)
+            cases = json.loads((root / "results.json").read_text(encoding="utf-8"))["cases"]
+            self.assertEqual((root / "memory.log").read_bytes(), b"first failure")
+            self.assertEqual([(case["status"], (root / case["log"]).read_bytes()) for case in cases],
+                             [("failed", b"first failure"), ("passed", b"retry passed")])
 
 
 class RuntimeEnvironmentTests(unittest.TestCase):

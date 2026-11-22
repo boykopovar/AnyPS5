@@ -473,7 +473,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     if (!windows) for (std::size_t begin = 0; begin <= runPath.size();) {
         const auto end = std::min(runPath.find(':', begin), runPath.size());
         const auto component = std::string_view(runPath).substr(begin, end - begin);
-        if (component != "$ORIGIN" && !component.starts_with("$ORIGIN/") && !component.starts_with('/')) throw Domain::RelinkerException("Guest Linux run path must be absolute or begin with $ORIGIN");
+        if (component != "$ORIGIN" && !component.starts_with("$ORIGIN/") && !component.starts_with('/')) throw Domain::RelinkerException("Guest run path must be absolute or begin with $ORIGIN");
         begin = end + 1;
     }
     const auto outputDirectory = outputPath.parent_path().lexically_normal();
@@ -599,14 +599,27 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
 }
 
 
-std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, const bool functionSymbolRoots) {
-    std::map<std::size_t, std::string> sonames;
-    const auto soname = [&](std::size_t index) -> const std::string& {
-        const auto [found, inserted] = sonames.try_emplace(index);
-        if (inserted) found->second = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true, functionSymbolRoots).Soname;
+std::vector<BackupCopy> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, const bool functionSymbolRoots) {
+    struct Identity {
+        std::string Soname;
+        std::vector<std::string> ModuleNames;
+    };
+    std::map<std::size_t, Identity> identities;
+    const auto identity = [&](std::size_t index) -> const Identity& {
+        const auto [found, inserted] = identities.try_emplace(index);
+        if (inserted) {
+            auto image = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true, functionSymbolRoots);
+            found->second = {std::move(image.Soname), std::move(image.ModuleNames)};
+        }
         return found->second;
     };
-    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> skipped;
+    const auto match = [&](std::size_t copy, std::size_t original) -> const char* {
+        const auto& left = identity(copy);
+        const auto& right = identity(original);
+        if (!left.Soname.empty() || !right.Soname.empty()) return left.Soname == right.Soname ? "same SONAME" : nullptr;
+        return !left.ModuleNames.empty() && left.ModuleNames == right.ModuleNames ? "same module names" : nullptr;
+    };
+    std::vector<BackupCopy> skipped;
     std::vector<bool> copies(modules.size());
     for (std::size_t copy = 0; copy < modules.size(); ++copy) {
         const auto& path = modules[copy].Path;
@@ -615,9 +628,10 @@ std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBacku
             const auto& kept = modules[original].Path;
             const auto prefix = Io::Utf8Path(kept.filename());
             if (kept.parent_path() != path.parent_path() || prefix.size() >= name.size() || !name.starts_with(prefix)) continue;
-            if (soname(copy).empty() || soname(copy) != soname(original)) continue;
+            const auto* matched = match(copy, original);
+            if (matched == nullptr) continue;
             copies[copy] = true;
-            skipped.emplace_back(path, kept);
+            skipped.push_back({path, kept, matched});
             break;
         }
     }
