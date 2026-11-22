@@ -366,7 +366,8 @@ int SetWithAlteredReceiver(JSContext* qctx, CallbackObjectData* data, JSValueCon
     }
     JSValue key = JS_AtomToValue(qctx, prop);
     JSValueConst arguments[4] = {target, key, value, receiver};
-    JSValue stored = JS_Call(qctx, data->ctx->reflectSet, JS_UNDEFINED, 4, arguments);
+    auto* running = static_cast<OpaqueJSContext*>(JS_GetContextOpaque(qctx));
+    JSValue stored = JS_Call(qctx, (running ? running : data->ctx)->reflectSet, JS_UNDEFINED, 4, arguments);
     JS_FreeValue(qctx, key);
     JS_FreeValue(qctx, target);
     if (JS_IsException(stored)) return -1;

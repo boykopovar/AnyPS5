@@ -282,9 +282,29 @@ void TestTheGlobalObject() {
     JSClassRelease(jsClass);
 }
 
+void TestAnObjectOfAReleasedContext() {
+    JSContextGroupRef group = JSContextGroupCreate();
+    JSGlobalContextRef first = JSGlobalContextCreateInGroup(group, nullptr);
+    JSGlobalContextRef second = JSGlobalContextCreateInGroup(group, nullptr);
+    JSClassRef jsClass = MakeClass(false);
+    SetGlobal(second, "target", JSObjectMake(first, jsClass, nullptr));
+    JSGlobalContextRelease(first);
+    JSGarbageCollect(second);
+    Eval(second, "var filler = []; for (var i = 0; i < 4096; i++) filler.push({ index: i }, function () { return i; });");
+    ResetCounts();
+    Require(EvalBool(second, "var heir = Object.create(target); heir.handled = 2; heir.other = 3;"
+                             "Object.prototype.hasOwnProperty.call(heir, 'handled') && heir.handled === 2 && heir.other === 3"));
+    Require(EvalBool(second, "Reflect.set(target, 'handled', 4, filler) && filler.handled === 4"));
+    Require(setPropertyCalls == 0);
+    JSClassRelease(jsClass);
+    JSGlobalContextRelease(second);
+    JSContextGroupRelease(group);
+}
+
 }  // namespace
 
 int main() {
+    TestAnObjectOfAReleasedContext();
     TestAnObject(false);
     TestAnObject(true);
     TestTheGlobalObject();
