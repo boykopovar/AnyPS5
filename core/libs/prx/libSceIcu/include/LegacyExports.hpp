@@ -2013,7 +2013,7 @@ int APS5_VABI udata_closeSwapper_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_uFVdaafMFT0_nid_no_patch();
 int APS5_VABI _ZNK6icu_6813UnicodeString8unescapeEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_uJbTUKDL3hE_nid_no_patch();
-int APS5_VABI uloc_openKeywordList_nid_postfix();
+UEnumeration* APS5_VABI uloc_openKeywordList_nid_postfix(const char*, std::int32_t, std::int32_t*);
 int APS5_VABI sceIcuLegacyUnknown_uM7LE3DSVGc_nid_no_patch();
 int APS5_VABI _ZNK6icu_6824ICUResourceBundleFactory12handleCreateERKNS_6LocaleEiPKNS_10ICUServiceER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6817DictionaryMatcherD1Ev_nid_postfix();
