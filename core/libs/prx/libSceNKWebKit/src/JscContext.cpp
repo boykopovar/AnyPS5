@@ -281,6 +281,9 @@ OpaqueJSContextGroup::OpaqueJSContextGroup() {
 
 OpaqueJSContextGroup::~OpaqueJSContextGroup() {
     shuttingDown = true;
+    for (auto& [ptr, data] : callbackDataByPtr) {
+        if (data) RunClassFinalize(data);
+    }
     for (auto* handle : allHandles) {
         if (!handle) continue;
         if (!JS_IsUndefined(handle->qweak)) {
@@ -295,7 +298,6 @@ OpaqueJSContextGroup::~OpaqueJSContextGroup() {
     }
     for (auto& [ptr, data] : callbackDataByPtr) {
         if (!data) continue;
-        RunClassFinalize(data);
         if (!JS_IsUndefined(data->propStore)) {
             JS_FreeValueRT(rt, data->propStore);
             data->propStore = JS_UNDEFINED;
