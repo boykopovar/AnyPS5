@@ -19,6 +19,16 @@ IDENTITY = {"os": "Linux", "gpu": "GPU", "driver": "Driver", "cpu": "CPU",
 
 
 class RecipeTests(unittest.TestCase):
+    def test_build_command_with_null_byte_is_rejected_during_recipe_load(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            recipe = self.make_recipe(root)
+            recipe["build_commands"][0].append("bad\0arg")
+            path = root / "recipe.json"
+            path.write_text(json.dumps(recipe), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"build_commands\[0\].*null byte"):
+                performance_bisect.load_recipe(path)
+
     def make_recipe(self, root):
         game = root / "game"
         game.mkdir()

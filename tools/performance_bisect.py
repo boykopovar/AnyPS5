@@ -46,6 +46,8 @@ def load_recipe(path):
     for number, command in enumerate(commands, 1):
         if not isinstance(command, list) or not command or any(not isinstance(item, str) or not item for item in command):
             raise ValueError(f"recipe.build_commands[{number - 1}] must be a non-empty argument list")
+        if any("\0" in item for item in command):
+            raise ValueError(f"recipe.build_commands[{number - 1}] must not contain a null byte")
     build_dir = recipe.get("build_dir", "build")
     if not isinstance(build_dir, str) or not build_dir or Path(build_dir).anchor or ".." in Path(build_dir).parts or Path(build_dir) == Path("."):
         raise ValueError("recipe.build_dir must be a non-root relative path inside the worktree")
