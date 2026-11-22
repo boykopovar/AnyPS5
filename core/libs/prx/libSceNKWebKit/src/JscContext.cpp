@@ -13,17 +13,18 @@ bool g_remoteInspectionEnabledByDefault = true;
 
 int InterruptHandler(JSRuntime* rt, void* opaque) {
     auto* group = static_cast<OpaqueJSContextGroup*>(opaque);
-    if (!group || !group->hasTimeLimit) return 0;
+    if (!group || !group->hasTimeLimit || !group->deadlineArmed) return 0;
     const auto now = std::chrono::steady_clock::now();
     if (now < group->deadline) return 0;
+    group->deadlineArmed = false;
     if (group->terminateCallback) {
         OpaqueJSContext* ctx = group->activeContext ? group->activeContext : group->DefaultContext();
         if (!group->terminateCallback(ctx, group->terminateContext)) {
             group->RefreshDeadline();
+            group->deadlineArmed = true;
             return 0;
         }
     }
-    group->hasTimeLimit = false;
     return 1;
 }
 
@@ -281,6 +282,9 @@ OpaqueJSContextGroup::OpaqueJSContextGroup() {
 
 OpaqueJSContextGroup::~OpaqueJSContextGroup() {
     shuttingDown = true;
+    for (auto& [ptr, data] : callbackDataByPtr) {
+        if (data) RunClassFinalize(data);
+    }
     for (auto* handle : allHandles) {
         if (!handle) continue;
         if (!JS_IsUndefined(handle->qweak)) {
@@ -295,7 +299,6 @@ OpaqueJSContextGroup::~OpaqueJSContextGroup() {
     }
     for (auto& [ptr, data] : callbackDataByPtr) {
         if (!data) continue;
-        RunClassFinalize(data);
         if (!JS_IsUndefined(data->propStore)) {
             JS_FreeValueRT(rt, data->propStore);
             data->propStore = JS_UNDEFINED;
@@ -550,14 +553,30 @@ void OpaqueJSContextGroup::RefreshDeadline() {
     }
 }
 
+void OpaqueJSContextGroup::EnterVm() {
+    if (vmEntryDepth++ != 0 || !hasTimeLimit) return;
+    RefreshDeadline();
+    deadlineArmed = true;
+}
+
+void OpaqueJSContextGroup::ExitVm() {
+    if (--vmEntryDepth == 0) deadlineArmed = false;
+}
+
 OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globalObjectClass)
     : group(grp), remoteInspectionEnabled(g_remoteInspectionEnabledByDefault) {
     group->refCount.fetch_add(1, std::memory_order_relaxed);
     qctx = JS_NewContext(group->rt);
     JS_SetContextOpaque(qctx, this);
     group->contexts.push_back(this);
+    for (auto& [ptr, data] : group->callbackDataByPtr) {
+        if (data && !data->ctx) data->ctx = this;
+    }
 
     JSValue rawGlobal = JS_GetGlobalObject(qctx);
+    dateConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Date");
+    errorConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Error");
+    regExpConstructor = JS_GetPropertyStr(qctx, rawGlobal, "RegExp");
     JSValue objCtor = JS_GetPropertyStr(qctx, rawGlobal, "Object");
     JSValue objProto = JS_GetPropertyStr(qctx, objCtor, "prototype");
     JS_FreeValue(qctx, objCtor);
@@ -629,7 +648,17 @@ OpaqueJSContext::~OpaqueJSContext() {
     if (it != group->contexts.end()) {
         group->contexts.erase(it);
     }
+    OpaqueJSContext* heir = group->DefaultContext();
+    for (auto& [ptr, data] : group->callbackDataByPtr) {
+        if (data && data->ctx == this) data->ctx = heir;
+    }
+    for (OpaqueJSValue* handle : group->allHandles) {
+        if (handle && handle->ctx == this) handle->ctx = heir;
+    }
     if (qctx) {
+        JS_FreeValue(qctx, dateConstructor);
+        JS_FreeValue(qctx, errorConstructor);
+        JS_FreeValue(qctx, regExpConstructor);
         JS_FreeContext(qctx);
         qctx = nullptr;
     }
@@ -708,7 +737,10 @@ void APS5_VABI JSContextGroupSetExecutionTimeLimit(JSContextGroupRef group, doub
     mutGroup->terminateCallback = callback;
     mutGroup->terminateContext = callbackContext;
     mutGroup->hasTimeLimit = true;
-    mutGroup->RefreshDeadline();
+    if (mutGroup->vmEntryDepth > 0) {
+        mutGroup->RefreshDeadline();
+        mutGroup->deadlineArmed = true;
+    }
 }
 
 void APS5_VABI JSContextGroupClearExecutionTimeLimit(JSContextGroupRef group) {
@@ -925,9 +957,7 @@ JSValueRef APS5_VABI JSEvaluateScript(JSContextRef ctx, JSStringRef script, JSOb
     if (!ctx || !script) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     ActiveContextScope activeScope(mutCtx->group, mutCtx);
-    if (mutCtx->group->hasTimeLimit) {
-        mutCtx->group->RefreshDeadline();
-    }
+    VmEntryScope vmScope(mutCtx->group);
 
     const std::string code = JsStringToUtf8(script);
     const std::string url = sourceURL ? JsStringToUtf8(sourceURL) : std::string();
@@ -1004,9 +1034,7 @@ JSValueRef APS5_VABI JSScriptEvaluate(JSContextRef ctx, JSScriptRef script, JSVa
     }
 
     ActiveContextScope activeScope(mutCtx->group, mutCtx);
-    if (mutCtx->group->hasTimeLimit) {
-        mutCtx->group->RefreshDeadline();
-    }
+    VmEntryScope vmScope(mutCtx->group);
 
     JSEvalOptions options{};
     options.version = JS_EVAL_OPTIONS_VERSION;
@@ -1054,13 +1082,13 @@ JSWeakRef APS5_VABI JSWeakCreate(JSContextGroupRef group, JSObjectRef object) {
     return weak;
 }
 
-void APS5_VABI JSWeakRetain(JSWeakRef weak) {
-    if (!weak) return;
+void APS5_VABI JSWeakRetain(JSContextGroupRef group, JSWeakRef weak) {
+    if (!group || !weak) return;
     weak->refCount.fetch_add(1, std::memory_order_relaxed);
 }
 
-void APS5_VABI JSWeakRelease(JSWeakRef weak) {
-    if (!weak) return;
+void APS5_VABI JSWeakRelease(JSContextGroupRef group, JSWeakRef weak) {
+    if (!group || !weak) return;
     if (weak->refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
         if (weak->group && !weak->group->shuttingDown) {
             auto& vec = weak->group->weakRefs;

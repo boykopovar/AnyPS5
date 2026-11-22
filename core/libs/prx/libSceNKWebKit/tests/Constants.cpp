@@ -67,9 +67,7 @@ int main() {
     Require(WKContextMenuItemGetUserData() == 0);
     Require(WKContextMenuItemSeparatorItem() == 0);
     Require(WKContextResumeDownload() == 0);
-    Require(WKFrameCanShowMIMEType() == 0);
     Require(WKFrameCreateFrameInfo() == 0);
-    Require(WKFrameIsFrameSet() == 0);
     Require(WKIconDatabaseCopyIconDataForPageURL() == 0);
     Require(WKIconDatabaseCopyIconURLForPageURL() == 0);
     Require(WKKeyValueStorageManagerDeleteAllEntries() == 0);
