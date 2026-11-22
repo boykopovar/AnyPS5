@@ -181,8 +181,12 @@ std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
     bool canHandleHTTPSServerTrustEvaluation = true;
     Retained<String> customWebContentServiceBundleIdentifier;
     std::uint32_t terminatedNetworkProcessesCount = 0;
-mutable Retained<IconDatabase> iconDatabase;
+    mutable Retained<IconDatabase> iconDatabase;
     std::optional<std::u16string> iconDatabasePath;
+    Retained<Object> injectedBundleInitializationUserData;
+    Retained<Object> lastInjectedBundleMessageName;
+    Retained<Object> lastInjectedBundleMessageBody;
+    bool injectedBundleClientConfigured = false;
 };
 
 class WebsiteDataStoreConfiguration final : public ObjectOf<ObjectType::WebsiteDataStoreConfiguration> {
