@@ -385,6 +385,42 @@ extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allo
     return ReplaceRange(string, position, removed, nullptr, count, value);
 }
 
+extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6insertEmPKc_nid_postfix(
+    void* string, std::uint64_t position, const char* source) {
+    if (!source) _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::insert: null source");
+    return ReplaceRange(string, position, 0, source, strlen_nid_postfix(source));
+}
+
+extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6insertEmPKcm_nid_postfix(
+    void* string, std::uint64_t position, const char* source, std::uint64_t count) {
+    if (count && !source) _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::insert: null source");
+    return ReplaceRange(string, position, 0, source, count);
+}
+
+extern "C" char* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6insertENS_11__wrap_iterIPKcEEc_nid_postfix(
+    void* string, const char* position, char value) {
+    const auto representation = ReadString(string);
+    auto* inlineData = static_cast<char*>(string) + 1;
+    auto start = reinterpret_cast<std::uintptr_t>(inlineData);
+    std::uint64_t size = representation[0] >> 1u;
+    if (representation[0] & LongFlag) {
+        const auto fields = ReadLongString(representation);
+        start = static_cast<std::uintptr_t>(fields.address);
+        size = fields.size;
+    }
+    const auto address = reinterpret_cast<std::uintptr_t>(position);
+    if (address < start || address - start > size) {
+        _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::insert: invalid iterator");
+    }
+    const auto offset = address - start;
+    ReplaceRange(string, offset, 0, nullptr, 1, value);
+    const auto result = ReadString(string);
+    auto* data = result[0] & LongFlag
+        ? reinterpret_cast<char*>(static_cast<std::uintptr_t>(ReadLongString(result).address))
+        : inlineData;
+    return data + offset;
+}
+
 extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6appendEPKc_nid_postfix(
     void* string, const char* source) {
     if (!source) _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::append: null source");

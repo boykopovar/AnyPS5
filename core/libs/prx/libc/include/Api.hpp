@@ -1269,6 +1269,12 @@ void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE7
     void* string, std::uint64_t position, std::uint64_t removed, const char* source, std::uint64_t count);
 void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE7replaceEmmmc_nid_postfix(
     void* string, std::uint64_t position, std::uint64_t removed, std::uint64_t count, char value);
+void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6insertEmPKc_nid_postfix(
+    void* string, std::uint64_t position, const char* source);
+void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6insertEmPKcm_nid_postfix(
+    void* string, std::uint64_t position, const char* source, std::uint64_t count);
+char* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6insertENS_11__wrap_iterIPKcEEc_nid_postfix(
+    void* string, const char* position, char value);
 void APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE7reserveEm_nid_postfix(
     void* string, std::uint64_t requested);
 void APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEED2Ev_nid_postfix(void* string);
