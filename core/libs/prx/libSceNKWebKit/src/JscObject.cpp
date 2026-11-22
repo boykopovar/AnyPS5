@@ -379,14 +379,42 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
     return 0;
 }
 
+int SetWithAlteredReceiver(JSContext* qctx, CallbackObjectData* data, JSValueConst obj, JSAtom prop, JSValueConst value, JSValueConst receiver) {
+    JSValue target = JS_UNDEFINED;
+    if (!JS_IsUndefined(data->propStore)) {
+        const int hasOwn = JS_GetOwnProperty(qctx, nullptr, data->propStore, prop);
+        if (hasOwn < 0) return -1;
+        if (hasOwn > 0) target = JS_DupValue(qctx, data->propStore);
+    }
+    if (JS_IsUndefined(target)) {
+        JSValue proto = JS_GetPrototype(qctx, obj);
+        if (JS_IsException(proto)) return -1;
+        target = JS_NewObjectProto(qctx, proto);
+        JS_FreeValue(qctx, proto);
+        if (JS_IsException(target)) return -1;
+    }
+    JSValue key = JS_AtomToValue(qctx, prop);
+    JSValueConst arguments[4] = {target, key, value, receiver};
+    auto* running = static_cast<OpaqueJSContext*>(JS_GetContextOpaque(qctx));
+    JSValue stored = JS_Call(qctx, (running ? running : data->ctx)->reflectSet, JS_UNDEFINED, 4, arguments);
+    JS_FreeValue(qctx, key);
+    JS_FreeValue(qctx, target);
+    if (JS_IsException(stored)) return -1;
+    const int result = JS_ToBool(qctx, stored);
+    JS_FreeValue(qctx, stored);
+    return result;
+}
+
 int CallbackExoticSetProperty(JSContext* qctx, JSValueConst obj, JSAtom prop, JSValueConst value, JSValueConst receiver, int flags) {
-    (void)receiver;
     auto* group = static_cast<OpaqueJSContextGroup*>(JS_GetRuntimeOpaque(JS_GetRuntime(qctx)));
     if (!group || group->shuttingDown) return 0;
     CallbackObjectData* data = group->FindCallbackDataByPtr(JS_VALUE_GET_PTR(obj));
     if (!data || !data->ctx || !data->handle) return 0;
     OpaqueJSContext* ctx = data->ctx;
     OpaqueJSValue* targetHandle = data->handle;
+    if (!JS_IsObject(receiver) || JS_VALUE_GET_PTR(receiver) != JS_VALUE_GET_PTR(targetHandle->qval)) {
+        return SetWithAlteredReceiver(qctx, data, obj, prop, value, receiver);
+    }
 
     JSValue atomVal = JS_AtomToValue(qctx, prop);
     const bool isSymbol = JS_IsSymbol(atomVal);
