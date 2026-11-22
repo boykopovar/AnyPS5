@@ -1277,6 +1277,7 @@ JSObjectRef APS5_VABI JSObjectMakeDate(JSContextRef ctx, std::size_t argumentCou
     if (!ctx) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     std::vector<JSValueConst> args(argumentCount);
+    VmEntryScope vmScope(mutCtx->group);
     for (std::size_t i = 0; i < argumentCount; ++i) {
         args[i] = ArgumentValue(arguments, i);
     }
@@ -1292,6 +1293,7 @@ JSObjectRef APS5_VABI JSObjectMakeError(JSContextRef ctx, std::size_t argumentCo
     if (!ctx) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     std::vector<JSValueConst> args(argumentCount);
+    VmEntryScope vmScope(mutCtx->group);
     for (std::size_t i = 0; i < argumentCount; ++i) {
         args[i] = ArgumentValue(arguments, i);
     }
@@ -1307,6 +1309,7 @@ JSObjectRef APS5_VABI JSObjectMakeRegExp(JSContextRef ctx, std::size_t argumentC
     if (!ctx) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     std::vector<JSValueConst> args(argumentCount);
+    VmEntryScope vmScope(mutCtx->group);
     for (std::size_t i = 0; i < argumentCount; ++i) {
         args[i] = ArgumentValue(arguments, i);
     }
@@ -1343,6 +1346,7 @@ JSObjectRef APS5_VABI JSObjectMakeDeferredPromise(JSContextRef ctx, JSObjectRef*
 JSValueRef APS5_VABI JSObjectGetPrototype(JSContextRef ctx, JSObjectRef object) {
     if (!ctx || !object || !object->alive) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     if (object == mutCtx->globalObject && !JS_IsUndefined(mutCtx->globalExoticInterceptor)) {
         JSValue proto = JS_GetPrototype(mutCtx->qctx, mutCtx->globalExoticInterceptor);
         return mutCtx->group->ToHandle(mutCtx, proto);
@@ -1358,6 +1362,7 @@ JSValueRef APS5_VABI JSObjectGetPrototype(JSContextRef ctx, JSObjectRef object) 
 void APS5_VABI JSObjectSetPrototype(JSContextRef ctx, JSObjectRef object, JSValueRef value) {
     if (!ctx || !object || !object->alive || (value && !value->alive)) return;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     JSValueConst protoVal = (value && value->isObjectHandle) ? value->qval : JS_NULL;
     JSValue target = (object == mutCtx->globalObject && !JS_IsUndefined(mutCtx->globalExoticInterceptor)) ? mutCtx->globalExoticInterceptor : object->qval;
     if (JS_SetPrototype(mutCtx->qctx, target, protoVal) < 0) {
@@ -1368,6 +1373,7 @@ void APS5_VABI JSObjectSetPrototype(JSContextRef ctx, JSObjectRef object, JSValu
 bool APS5_VABI JSObjectHasProperty(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName) {
     if (!ctx || !object || !propertyName || !object->alive) return false;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     JSAtom atom = JsStringToAtom(mutCtx->qctx, propertyName);
     if (atom == JS_ATOM_NULL) {
         if (JS_HasException(mutCtx->qctx)) {
@@ -1387,6 +1393,7 @@ bool APS5_VABI JSObjectHasProperty(JSContextRef ctx, JSObjectRef object, JSStrin
 JSValueRef APS5_VABI JSObjectGetProperty(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSValueRef* exception) {
     if (!ctx || !object || !propertyName || !object->alive) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     JSAtom atom = JsStringToAtom(mutCtx->qctx, propertyName);
     if (atom == JS_ATOM_NULL) {
         CapturePendingException(mutCtx, exception);
@@ -1404,6 +1411,7 @@ JSValueRef APS5_VABI JSObjectGetProperty(JSContextRef ctx, JSObjectRef object, J
 void APS5_VABI JSObjectSetProperty(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSValueRef value, JSPropertyAttributes attributes, JSValueRef* exception) {
     if (!ctx || !object || !propertyName || !object->alive) return;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     JSAtom atom = JsStringToAtom(mutCtx->qctx, propertyName);
     if (atom == JS_ATOM_NULL) {
         CapturePendingException(mutCtx, exception);
@@ -1440,6 +1448,7 @@ void APS5_VABI JSObjectSetProperty(JSContextRef ctx, JSObjectRef object, JSStrin
 bool APS5_VABI JSObjectDeleteProperty(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSValueRef* exception) {
     if (!ctx || !object || !propertyName || !object->alive) return false;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     JSAtom atom = JsStringToAtom(mutCtx->qctx, propertyName);
     if (atom == JS_ATOM_NULL) {
         CapturePendingException(mutCtx, exception);
@@ -1457,6 +1466,7 @@ bool APS5_VABI JSObjectDeleteProperty(JSContextRef ctx, JSObjectRef object, JSSt
 JSValueRef APS5_VABI JSObjectGetPropertyAtIndex(JSContextRef ctx, JSObjectRef object, unsigned propertyIndex, JSValueRef* exception) {
     if (!ctx || !object || !object->alive) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     JSValue val = JS_GetPropertyUint32(mutCtx->qctx, object->qval, propertyIndex);
     if (JS_IsException(val)) {
         CapturePendingException(mutCtx, exception);
@@ -1468,6 +1478,7 @@ JSValueRef APS5_VABI JSObjectGetPropertyAtIndex(JSContextRef ctx, JSObjectRef ob
 void APS5_VABI JSObjectSetPropertyAtIndex(JSContextRef ctx, JSObjectRef object, unsigned propertyIndex, JSValueRef value, JSValueRef* exception) {
     if (!ctx || !object || !object->alive) return;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     JSValue val = JS_DupValue(mutCtx->qctx, StoredValue(value));
     const int res = JS_SetPropertyValue(mutCtx->qctx, object->qval, JS_NewUint32(mutCtx->qctx, propertyIndex), val, 0);
     if (res < 0) {
@@ -1478,6 +1489,7 @@ void APS5_VABI JSObjectSetPropertyAtIndex(JSContextRef ctx, JSObjectRef object, 
 JSValueRef APS5_VABI JSObjectGetPropertyForKey(JSContextRef ctx, JSObjectRef object, JSValueRef propertyKey, JSValueRef* exception) {
     if (!ctx || !object || !object->alive || (propertyKey && !propertyKey->alive)) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     JSValue val = JS_GetPropertyValue(mutCtx->qctx, object->qval, JS_DupValue(mutCtx->qctx, ValueOrNull(propertyKey)));
     if (JS_IsException(val)) {
         CapturePendingException(mutCtx, exception);
@@ -1489,6 +1501,7 @@ JSValueRef APS5_VABI JSObjectGetPropertyForKey(JSContextRef ctx, JSObjectRef obj
 void APS5_VABI JSObjectSetPropertyForKey(JSContextRef ctx, JSObjectRef object, JSValueRef propertyKey, JSValueRef value, JSPropertyAttributes attributes, JSValueRef* exception) {
     if (!ctx || !object || !object->alive || (propertyKey && !propertyKey->alive)) return;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     JSAtom atom = JS_ValueToAtom(mutCtx->qctx, ValueOrNull(propertyKey));
     if (atom == JS_ATOM_NULL) {
         CapturePendingException(mutCtx, exception);
@@ -1524,6 +1537,7 @@ void APS5_VABI JSObjectSetPropertyForKey(JSContextRef ctx, JSObjectRef object, J
 bool APS5_VABI JSObjectDeletePropertyForKey(JSContextRef ctx, JSObjectRef object, JSValueRef propertyKey, JSValueRef* exception) {
     if (!ctx || !object || !object->alive || (propertyKey && !propertyKey->alive)) return false;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     JSAtom atom = JS_ValueToAtom(mutCtx->qctx, ValueOrNull(propertyKey));
     if (atom == JS_ATOM_NULL) {
         CapturePendingException(mutCtx, exception);
@@ -1612,6 +1626,7 @@ JSValueRef APS5_VABI JSObjectCallAsFunction(JSContextRef ctx, JSObjectRef object
     for (std::size_t i = 0; i < argumentCount; ++i) {
         args[i] = ArgumentValue(arguments, i);
     }
+    VmEntryScope vmScope(mutCtx->group);
     JSValue res = JS_Call(mutCtx->qctx, object->qval, thisVal, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(res)) {
         CapturePendingException(mutCtx, exception);
@@ -1641,6 +1656,7 @@ JSObjectRef APS5_VABI JSObjectCallAsConstructor(JSContextRef ctx, JSObjectRef ob
     for (std::size_t i = 0; i < argumentCount; ++i) {
         args[i] = ArgumentValue(arguments, i);
     }
+    VmEntryScope vmScope(mutCtx->group);
     JSValue res = JS_CallConstructor(mutCtx->qctx, object->qval, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(res)) {
         CapturePendingException(mutCtx, exception);
@@ -1655,6 +1671,7 @@ JSObjectRef APS5_VABI JSObjectCallAsConstructor(JSContextRef ctx, JSObjectRef ob
 JSPropertyNameArrayRef APS5_VABI JSObjectCopyPropertyNames(JSContextRef ctx, JSObjectRef object) {
     if (!ctx || !object || !object->alive) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     OpaqueJSPropertyNameAccumulator acc;
 
     JSValue cur = JS_DupValue(mutCtx->qctx, object->qval);
@@ -1707,8 +1724,9 @@ JSPropertyNameArrayRef APS5_VABI JSObjectCopyPropertyNames(JSContextRef ctx, JSO
                     }
                 }
                 JS_FreePropertyEnum(mutCtx->qctx, tab, len);
-            } else if (JS_HasException(mutCtx->qctx)) {
+            } else {
                 JS_FreeValue(mutCtx->qctx, JS_GetException(mutCtx->qctx));
+                break;
             }
         }
         JSValue next = JS_GetPrototype(mutCtx->qctx, cur);

@@ -13,17 +13,18 @@ bool g_remoteInspectionEnabledByDefault = true;
 
 int InterruptHandler(JSRuntime* rt, void* opaque) {
     auto* group = static_cast<OpaqueJSContextGroup*>(opaque);
-    if (!group || !group->hasTimeLimit) return 0;
+    if (!group || !group->hasTimeLimit || !group->deadlineArmed) return 0;
     const auto now = std::chrono::steady_clock::now();
     if (now < group->deadline) return 0;
+    group->deadlineArmed = false;
     if (group->terminateCallback) {
         OpaqueJSContext* ctx = group->activeContext ? group->activeContext : group->DefaultContext();
         if (!group->terminateCallback(ctx, group->terminateContext)) {
             group->RefreshDeadline();
+            group->deadlineArmed = true;
             return 0;
         }
     }
-    group->hasTimeLimit = false;
     return 1;
 }
 
@@ -552,6 +553,16 @@ void OpaqueJSContextGroup::RefreshDeadline() {
     }
 }
 
+void OpaqueJSContextGroup::EnterVm() {
+    if (vmEntryDepth++ != 0 || !hasTimeLimit) return;
+    RefreshDeadline();
+    deadlineArmed = true;
+}
+
+void OpaqueJSContextGroup::ExitVm() {
+    if (--vmEntryDepth == 0) deadlineArmed = false;
+}
+
 OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globalObjectClass)
     : group(grp), remoteInspectionEnabled(g_remoteInspectionEnabledByDefault) {
     group->refCount.fetch_add(1, std::memory_order_relaxed);
@@ -716,7 +727,10 @@ void APS5_VABI JSContextGroupSetExecutionTimeLimit(JSContextGroupRef group, doub
     mutGroup->terminateCallback = callback;
     mutGroup->terminateContext = callbackContext;
     mutGroup->hasTimeLimit = true;
-    mutGroup->RefreshDeadline();
+    if (mutGroup->vmEntryDepth > 0) {
+        mutGroup->RefreshDeadline();
+        mutGroup->deadlineArmed = true;
+    }
 }
 
 void APS5_VABI JSContextGroupClearExecutionTimeLimit(JSContextGroupRef group) {
@@ -933,9 +947,7 @@ JSValueRef APS5_VABI JSEvaluateScript(JSContextRef ctx, JSStringRef script, JSOb
     if (!ctx || !script) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     ActiveContextScope activeScope(mutCtx->group, mutCtx);
-    if (mutCtx->group->hasTimeLimit) {
-        mutCtx->group->RefreshDeadline();
-    }
+    VmEntryScope vmScope(mutCtx->group);
 
     const std::string code = JsStringToUtf8(script);
     const std::string url = sourceURL ? JsStringToUtf8(sourceURL) : std::string();
@@ -1012,9 +1024,7 @@ JSValueRef APS5_VABI JSScriptEvaluate(JSContextRef ctx, JSScriptRef script, JSVa
     }
 
     ActiveContextScope activeScope(mutCtx->group, mutCtx);
-    if (mutCtx->group->hasTimeLimit) {
-        mutCtx->group->RefreshDeadline();
-    }
+    VmEntryScope vmScope(mutCtx->group);
 
     JSEvalOptions options{};
     options.version = JS_EVAL_OPTIONS_VERSION;

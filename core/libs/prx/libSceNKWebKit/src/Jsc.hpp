@@ -121,6 +121,8 @@ struct OpaqueJSContextGroup {
     bool hasTimeLimit = false;
     double timeLimitSeconds = 0.0;
     std::chrono::steady_clock::time_point deadline{};
+    bool deadlineArmed = false;
+    int vmEntryDepth = 0;
     JSShouldTerminateCallback terminateCallback = nullptr;
     void* terminateContext = nullptr;
     OpaqueJSContext* activeContext = nullptr;
@@ -139,6 +141,21 @@ struct OpaqueJSContextGroup {
     void CollectGarbage();
     void DrainMicrotasks(OpaqueJSContext* ctx);
     void RefreshDeadline();
+    void EnterVm();
+    void ExitVm();
+};
+
+struct VmEntryScope {
+    OpaqueJSContextGroup* group;
+
+    explicit VmEntryScope(OpaqueJSContextGroup* grp) : group(grp) {
+        if (group) group->EnterVm();
+    }
+    VmEntryScope(const VmEntryScope&) = delete;
+    VmEntryScope& operator=(const VmEntryScope&) = delete;
+    ~VmEntryScope() {
+        if (group) group->ExitVm();
+    }
 };
 
 struct OpaqueJSContext {
