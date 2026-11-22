@@ -144,6 +144,17 @@ class BundleTests(unittest.TestCase):
             self.assertEqual(bundle.read("anyps5-settings.txt").decode("utf-8"),
                              "APS5_TRACE_DIR=capture\\udcff\n")
 
+    def test_utf16_log_is_decoded_before_redaction(self):
+        line = "[sce] opened /home/ana/games/title.elf on serverfestivo from 192.0.2.42\r\n"
+        expected = "[sce] opened ~/games/title.elf on <host> from <ip>\n"
+        for encoding, bom in (("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff")):
+            with self.subTest(encoding=encoding):
+                self.log.write_bytes(bom + line.encode(encoding))
+                out = self.root / f"{encoding}.zip"
+                bug_report.make_bundle(self.report, out, log=self.log, **self.identity)
+                with zipfile.ZipFile(out) as bundle:
+                    self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), expected)
+
     def test_escaped_home_paths_are_redacted_in_nested_json(self):
         cases = (
             ("windows", r"C:\Profiles\example", r"\games\title.elf"),

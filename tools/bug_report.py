@@ -1,5 +1,7 @@
 import argparse
+import codecs
 import getpass
+from io import TextIOWrapper
 import json
 import os
 import platform
@@ -102,7 +104,10 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None, e
     if profile is not None and profile.is_file():
         members["anyps5-input-profile.ini"] = redact(profile.read_text(encoding="utf-8", errors="replace"), **identity)
     if log is not None and Path(log).is_file():
-        members["anyps5.log"] = redact(Path(log).read_text(encoding="utf-8", errors="replace"), **identity)
+        with Path(log).open("rb") as raw:
+            encoding = "utf-16" if raw.peek(2)[:2] in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE) else "utf-8"
+            with TextIOWrapper(raw, encoding=encoding, errors="replace") as source:
+                members["anyps5.log"] = redact(source.read(), **identity)
     if input_config is not None and Path(input_config).is_file():
         members["anyps5-input.ini"] = redact(Path(input_config).read_text(encoding="utf-8", errors="replace"), **identity)
     if environ is not None:
