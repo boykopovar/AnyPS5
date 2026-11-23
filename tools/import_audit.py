@@ -492,11 +492,16 @@ def macho_uleb(data, offset, end, path):
 
 def macho_exports(path, data):
     tries = []
-    for kind, offset, _ in macho_commands(path, data):
-        if kind == 0x80000022:
-            tries.append(unpack("<II", data, offset + 40, path, "Mach-O dyld info command"))
+    for kind, offset, length in macho_commands(path, data):
+        if kind in (0x22, 0x80000022):
+            fields = 40
         elif kind == 0x80000033:
-            tries.append(unpack("<II", data, offset + 8, path, "Mach-O exports trie command"))
+            fields = 8
+        else:
+            continue
+        if length < fields + 8:
+            raise AuditError(f"{path}: Mach-O load command 0x{kind:x} is too short for its export range")
+        tries.append(unpack("<II", data, offset + fields, path, "Mach-O export offset and size"))
     tries = [trie for trie in tries if trie[1]]
     if len(tries) > 1:
         raise AuditError(f"{path}: Mach-O image has more than one export trie")
@@ -1128,13 +1133,15 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
             resolved_nid = hashed_nid(nid)
             providers, guest_providers = resolve(resolved_nid, record)
             record["symbol_mismatch"] = bool(library) and library not in modules and bool(providers) and resolved_nid != nid
-        kind = classify(resolved_nid, library, providers, stubs, guest_providers, partial)
+        named_host = system_library(library)
+        selected = [named_host] if named_host in windows_libraries and named_host in providers else providers
+        kind = classify(resolved_nid, library, selected, stubs, guest_providers, partial)
         record["class"] = kind
         record["providers"] = providers
         if kind != "absent":
             record["unsearched_providers"] = []
-        record["library_mismatch"] = kind in ("implemented", "partial", "stub") and bool(library) and system_library(library) not in providers and "libc.prx" not in providers
-        record["name"] = next((stubs[(provider, resolved_nid)] for provider in providers if (provider, resolved_nid) in stubs), None) if kind in ("partial", "stub") else None
+        record["library_mismatch"] = kind in ("implemented", "partial", "stub") and bool(library) and named_host not in providers and "libc.prx" not in providers
+        record["name"] = next((stubs[(provider, resolved_nid)] for provider in selected if (provider, resolved_nid) in stubs), None) if kind in ("partial", "stub") else None
     ordered = sorted(records.values(), key=lambda record: (record["class"], record["library"] or "", record.get("module") or "", record["nid"]))
     check_conservation(len(imports) + sum(len(symbols) for symbols, _ in (module_imports or {}).values()), ordered)
     missing = defaultdict(int)

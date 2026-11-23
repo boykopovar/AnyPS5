@@ -1,4 +1,4 @@
-file(STRINGS "${EXECUTABLES}" executables)
+file(STRINGS "${EXECUTABLES}" executables ENCODING UTF-8)
 if(NOT executables)
     message(FATAL_ERROR "no executables listed in ${EXECUTABLES}")
 endif()

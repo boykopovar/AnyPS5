@@ -1,0 +1,5 @@
+# libSceNKWebKit
+
+## add Functional
+
+- [JSClassCreate prototypes and tags](../../../core/libs/prx/libSceNKWebKit/src/JscObject.cpp) (libSceNKWebKit) - not checked on a console. As in the pinned [JSClassRef.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/JavaScriptCore/API/JSClassRef.cpp#L103-L196), a class has an unnamed prototype class that holds its static functions unless it is created with `kJSClassAttributeNoAutomaticPrototype`, in which case its objects keep `Object.prototype` whatever its parent; `version` is not read; the last static entry of a name wins; `Symbol.toStringTag` comes after own properties and is the name of the most derived class, or `CallbackObject`. Gaps: a static name that is not valid UTF-8 is kept where WebKit drops it; the global object of an unnamed class has no tag where WebKit answers `CallbackGlobalObject`; WebKit also calls the class callbacks for symbol keys, with the symbol's description as the name, and this port does not
