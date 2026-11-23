@@ -12,23 +12,9 @@
 
 namespace HttpGuest {
 
-inline bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
-}
-
-inline bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
-}
-
 template <typename T>
 bool Store(T* destination, const T& value) {
-    return CopyOut(destination, &value, sizeof(T));
+    return GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
 }
 
 inline bool CopyText(const char* source, std::size_t limit, std::string& destination) {
@@ -37,7 +23,7 @@ inline bool CopyText(const char* source, std::size_t limit, std::string& destina
     auto address = reinterpret_cast<std::uintptr_t>(source);
     while (destination.size() < limit) {
         const std::size_t count = std::min({sizeof(chunk), static_cast<std::size_t>(0x1000 - address % 0x1000), limit - destination.size()});
-        if (address > UINTPTR_MAX - count || !CopyIn(chunk, reinterpret_cast<const void*>(address), count)) return false;
+        if (address > UINTPTR_MAX - count || !GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), count)) return false;
         if (const void* end = std::memchr(chunk, 0, count)) {
             destination.append(chunk, static_cast<const char*>(end) - chunk);
             return true;

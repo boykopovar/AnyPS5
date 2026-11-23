@@ -1587,6 +1587,10 @@ long double APS5_VABI lgammal_nid_postfix(long double x) {
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
 float APS5_VABI tgammaf_nid_postfix(float x) { return GuestTgammaf(x); }
 double APS5_VABI tgamma_nid_postfix(double x) {
+    if (std::isgreater(x, 171.63)) {
+        static volatile double zero = 0.0;
+        return x / zero;
+    }
     const int savedErrno = errno;
     const double result = std::tgamma(x);
     errno = std::isfinite(x) && x < 0.0 && std::trunc(x) == x ? EDOM : savedErrno;

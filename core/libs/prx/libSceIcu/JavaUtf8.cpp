@@ -46,24 +46,15 @@ int Encoded(char16_t unit) {
     return unit != 0 && unit <= 0x7f ? 1 : unit <= 0x7ff ? 2 : 3;
 }
 
-bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return copied;
-}
-
 void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller, const char* what) {
-    const int saved = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = saved;
     if (!copied) throw std::invalid_argument(std::string(caller) + ": unwritable " + what);
 }
 
 std::int32_t ReadStatus(const std::int32_t* status, const char* caller) {
     Icu::RequireStatus(status);
     std::int32_t value = 0;
-    if (!CopyIn(&value, status, sizeof(value))) throw std::invalid_argument(std::string(caller) + ": unreadable status");
+    if (!GuestCopyIn_nid_no_patch(&value, status, sizeof(value))) throw std::invalid_argument(std::string(caller) + ": unreadable status");
     return value;
 }
 
@@ -85,7 +76,7 @@ std::vector<T> CopySource(const T* source, std::int32_t length, const char* call
         if (counted) count = std::min(count, limit - bytes.size());
         const std::size_t offset = bytes.size();
         bytes.resize(offset + count);
-        if (!CopyIn(bytes.data() + offset, reinterpret_cast<const void*>(address), count))
+        if (!GuestCopyIn_nid_no_patch(bytes.data() + offset, reinterpret_cast<const void*>(address), count))
             throw std::invalid_argument(std::string(caller) + ": unreadable source");
         address += count;
         if (counted) continue;

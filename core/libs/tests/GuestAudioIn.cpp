@@ -125,7 +125,7 @@ void TestValidation() {
     port = sceAudioInAsyncOpen(user, 0, 0, 128, 48000, 0x10);
     gain = 0.5f;
     Require(port > 0 && sceAudioInGetGain(port, &gain) == 0 && gain == 1.0f && sceAudioInGetRerouteCount(port) == 0 && sceAudioInClose(port) == 0);
-    Require(sceAudioInIsPadEmbeddedMic(1) == static_cast<int32_t>(0x80260101));
+    Require(sceAudioInIsPadEmbeddedMic(1) == static_cast<int32_t>(0x80260109));
     const int mic = sceAudioInOpen(user, 0, 0, 256, 48000, 0x10);
     Require(mic > 0 && sceAudioInIsPadEmbeddedMic(mic) == 0 && sceAudioInClose(mic) == 0);
     Require(sceAudioInIsPadEmbeddedMic(mic) == static_cast<int32_t>(0x80260109));
@@ -157,9 +157,26 @@ void TestFirmwareSignatures() {
     Require(sceAudioInDeviceHqOpen(user, 0, 512, 48000, 2) == invalidSize);
     const int deviceHq = sceAudioInDeviceHqOpen(user, 0, 128, 48000, 2);
     Require(deviceHq >= handleBase && sceAudioInClose(deviceHq) == 0);
+    const int exPort = sceAudioInOpenEx(user, 0, 0, 999, 256, 16000, 0x12);
+    Require(exPort >= handleBase && sceAudioInClose(exPort) == 0);
+    Require(sceAudioInOpenEx(user, 0, 1, 0, 256, 48000, 2) == invalidParam);
+    const int hqExPort = sceAudioInHqOpenEx(user, 0, 0, 55, 256, 48000, 2);
+    Require(hqExPort >= handleBase && sceAudioInClose(hqExPort) == 0);
+    const int devPort = sceAudioInDeviceIdOpen(user, 3, 1234, 128, 48000, 0);
+    Require(devPort >= handleBase && sceAudioInClose(devPort) == 0);
+    const int devAsyncPort = sceAudioInDeviceIdAsyncOpen(user, 2, 5678, 256, 16000, 1);
+    Require(devAsyncPort >= handleBase && sceAudioInClose(devAsyncPort) == 0);
+    const int devIdHqPort = sceAudioInDeviceIdHqOpen(user, 1, 9999, 128, 48000, 2);
+    Require(devIdHqPort >= handleBase && sceAudioInClose(devIdHqPort) == 0);
+    Require(sceAudioInDeviceHqOpen(user, 0, 128, 24000, 0) == invalidFreq);
+    Require(sceAudioInDeviceHqOpen(user, 0, 64, 48000, 0) == invalidSize);
+    const int devHqPort = sceAudioInDeviceHqOpen(user, 42, 256, 48000, 0x10);
+    Require(devHqPort >= handleBase && sceAudioInClose(devHqPort) == 0);
+    const int devExPort = sceAudioInDeviceOpenEx(user, 0, 77, 88, 128, 48000, 2);
+    Require(devExPort >= handleBase && sceAudioInClose(devExPort) == 0);
 
-    Require(sceAudioInIsSharedDevice(8) == invalidHandle);
-    Require(sceAudioInIsSharedDevice(-1) == invalidHandle);
+    Require(sceAudioInIsSharedDevice(8) == invalidState);
+    Require(sceAudioInIsSharedDevice(-1) == invalidState);
     Require(sceAudioInIsSharedDevice(0) == invalidState);
     const int shared = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
     Require(shared >= handleBase);
@@ -175,10 +192,11 @@ void TestFirmwareSignatures() {
     Require(sceAudioInSetMicLevel(9, 0, 101, 0, 0) == invalidParam);
     Require(sceAudioInSetMicLevel(5, 0, 0, 0, 0) == invalidDevice);
     Require(sceAudioInSetMicLevel(0, 0, 0, 0, 0) == invalidDevice);
-    Require(sceAudioInSetDeviceMuteStatus(5, 0, 1) == invalidDevice);
-    Require(sceAudioInSetDeviceMuteStatus(8, 0, 1) == invalidDevice);
-    Require(sceAudioInSetDeviceMuteStatus(-1, 0, 1) == invalidDevice);
-    Require(sceAudioInSetUserMute(5, 0, 0) == invalidDevice);
+    for (const int badMuteType : {0, 5, 8, 9, 10, 20, -1}) {
+        Require(sceAudioInSetDeviceMuteStatus(badMuteType, 0, 0) == invalidDevice);
+        Require(sceAudioInSetDeviceMuteStatus(badMuteType, 0, 1) == invalidDevice);
+        Require(sceAudioInSetUserMute(badMuteType, 0, 0) == invalidDevice);
+    }
 
     Require(sceAudioInVmicCreate(user, 512, 44100, 0) == invalidSize);
     Require(sceAudioInVmicCreate(user, 256, 44100, 0) == invalidFreq);

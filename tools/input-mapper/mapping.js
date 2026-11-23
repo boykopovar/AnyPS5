@@ -52,15 +52,31 @@ export function inputFilename(titleId) {
     return `anyps5-input.${titleId}.ini`;
 }
 
+export function inputTitleId(filename) {
+    const match = /^anyps5-input(?:\.([^.]+))?\.ini$/u.exec(filename);
+    if (!match) return undefined;
+    const titleId = match[1] ?? '';
+    return inputFilename(titleId) === filename ? titleId : undefined;
+}
+
 export function typesForAction(action) {
     if (!actions.includes(action)) return [];
     if (emulatorActions.includes(action)) return ['KEY', 'PAD'];
     return padButtons.has(action) ? ['KEY', 'MOUSE', 'WHEEL'] : ['KEY', 'MOUSE'];
 }
 
+export function asciiTrim(value) {
+    return value.replace(/^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/gu, '');
+}
+
+export function asciiUpper(value) {
+    return value.replace(/[a-z]+/gu, letters => letters.toUpperCase());
+}
+
 export function canonicalValue(value, choices) {
     if (typeof value !== 'string') return undefined;
-    return choices.find(choice => choice.toUpperCase() === value.trim().toUpperCase());
+    const wanted = asciiUpper(asciiTrim(value));
+    return choices.find(choice => asciiUpper(choice) === wanted);
 }
 
 export function canonicalChord(value) {
