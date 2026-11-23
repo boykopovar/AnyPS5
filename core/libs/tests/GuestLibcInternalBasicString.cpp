@@ -15,6 +15,7 @@
 #include <functional>
 #include <limits>
 #include <new>
+#include <stdexcept>
 #include <string>
 
 struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base; };
@@ -25,6 +26,8 @@ using GuestWhat = const char* (APS5_VABI *)(const void*);
 extern "C" {
 extern const TypeRecord _ZTISt12out_of_range_nid_postfix;
 extern const TypeRecord _ZTISt12length_error_nid_postfix;
+extern const TypeRecord _ZTISt12system_error_nid_postfix;
+extern const TypeRecord _ZTINSt8ios_base7failureE_nid_postfix;
 
 void APS5_VABI SceV2Catch(Thrower thrower, const void* argument);
 
@@ -36,14 +39,21 @@ int SceV2Selector = 0;
 namespace {
 
 char caught[128];
+std::size_t inspectBytes = 0;
+LibcException::SystemErrorObject inspectedSystem{};
 long live = 0;
 bool failNextAllocation = false;
+int failedAllocations = 0;
 std::size_t lastAllocationSize = 0;
 
 void* APS5_VABI TestAllocate(std::size_t size) {
     lastAllocationSize = size;
     if (failNextAllocation) {
         failNextAllocation = false;
+        throw std::bad_alloc();
+    }
+    if (failedAllocations > 0) {
+        --failedAllocations;
         throw std::bad_alloc();
     }
     ++live;
@@ -81,6 +91,7 @@ extern "C" void APS5_VABI SceV2Inspect(void* object) {
     const auto* vtable = *static_cast<const void* const* const*>(object);
     const auto what = reinterpret_cast<GuestWhat>(const_cast<void*>(vtable[2]));
     std::snprintf(caught, sizeof(caught), "%s|%s", static_cast<const TypeRecord*>(vtable[-1])->name, what(object));
+    std::memcpy(&inspectedSystem, object, inspectBytes);
 }
 
 namespace {
@@ -128,13 +139,17 @@ void APS5_VABI Invoke(const void* call) {
     (*static_cast<const std::function<void()>*>(call))();
 }
 
-void RequireThrow(const std::function<void()>& call, int selector, const char* expected, const char* message) {
-    SceV2CatchType = &_ZTISt12out_of_range_nid_postfix;
-    SceV2OtherType = &_ZTISt12length_error_nid_postfix;
+void RequireThrowAs(const std::function<void()>& call, const void* catchType, const void* otherType, int selector, const char* expected, const char* message) {
+    SceV2CatchType = catchType;
+    SceV2OtherType = otherType;
     SceV2Selector = 0;
     caught[0] = 0;
     SceV2Catch(Invoke, &call);
     Require(SceV2Selector == selector && std::strcmp(caught, expected) == 0, message);
+}
+
+void RequireThrow(const std::function<void()>& call, int selector, const char* expected, const char* message) {
+    RequireThrowAs(call, &_ZTISt12out_of_range_nid_postfix, &_ZTISt12length_error_nid_postfix, selector, expected, message);
 }
 
 void RequireOutOfRange(const std::function<void()>& call, const char* message) {
@@ -149,6 +164,33 @@ void CheckReporters() {
     String string = Empty();
     RequireOutOfRange([&] { _ZNKSs5_XranEv_nid_postfix(&string); }, "_Xran throws out_of_range");
     RequireLengthError([&] { _ZNKSs5_XlenEv_nid_postfix(&string); }, "_Xlen throws length_error");
+    RequireOutOfRange([&] { _ZNKSbIwSt11char_traitsIwESaIwEE5_XranEv_nid_postfix(&string); }, "wide _Xran throws out_of_range");
+    RequireLengthError([&] { _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix(&string); }, "wide _Xlen throws length_error");
+}
+
+void CheckIosFailureDoraise() {
+    LibcException::SystemErrorObject failure{};
+    const LibcException::ErrorCode code{3, 5, _ZSt16generic_categoryv_nid_postfix()};
+    _ZNSt12system_errorC2ESt10error_codePKc_nid_postfix(&failure, code, "stream");
+    const std::string expected = std::string("NSt8ios_base7failureE|") + _ZNKSt12system_error4whatEv_nid_postfix(&failure.base);
+    const auto raise = [&] { _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix(&failure); };
+    inspectBytes = sizeof(LibcException::SystemErrorObject);
+    RequireThrowAs(raise, &_ZTINSt8ios_base7failureE_nid_postfix, &_ZTISt12out_of_range_nid_postfix, 2, expected.c_str(),
+        "ios_base::failure::_Doraise throws ios_base::failure with the same message");
+    Require(inspectedSystem.base.message == failure.base.message, "ios_base::failure::_Doraise shares the message");
+    Require(inspectedSystem.code.reserved == 3 && inspectedSystem.code.value == 5 && inspectedSystem.code.category == code.category,
+        "ios_base::failure::_Doraise copies the error code");
+    RequireThrowAs(raise, &_ZTISt12system_error_nid_postfix, &_ZTISt12out_of_range_nid_postfix, 2, expected.c_str(),
+        "ios_base::failure::_Doraise is caught as system_error");
+    inspectBytes = 0;
+    bool rejected = false;
+    try {
+        _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected, "ios_base::failure::_Doraise rejects a null object");
+    _ZNSt12system_errorD2Ev_nid_postfix(&failure.base);
 }
 
 void CheckAssignCharacters() {
@@ -490,6 +532,54 @@ void CheckWideCapacityAndAliases() {
     ReleaseWide(terminator);
 }
 
+void CheckWideCopy() {
+    const std::uint16_t five[]{'a', 'b', 'c', 'd', 'e'};
+    String fromInline = MakeWide(five, 5);
+    const long inlineLive = live;
+    _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(&fromInline, 8, 5);
+    Require(WideHolds(fromInline, five, 5) && fromInline.capacity == 15 && live == inlineLive + 1,
+        "wide _Copy moves an inline string to a heap buffer rounded up to fifteen units");
+    ReleaseWide(fromInline);
+
+    std::array<std::uint16_t, 31> text{};
+    for (std::size_t index = 0; index < text.size(); ++index) text[index] = static_cast<std::uint16_t>('A' + index % 26);
+    String geometric = MakeWideHeap(text.data(), text.size(), 31);
+    const long geometricLive = live;
+    _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(&geometric, 32, 31);
+    Require(WideHolds(geometric, text.data(), text.size()) && geometric.capacity == 46 && live == geometricLive,
+        "wide _Copy grows by half the old capacity and releases the old buffer");
+    ReleaseWide(geometric);
+
+    String kept = MakeWideHeap(text.data(), 10, 15);
+    _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(&kept, 20, 4);
+    Require(WideHolds(kept, text.data(), 4) && kept.capacity == 23,
+        "wide _Copy keeps only the requested length and terminates it");
+    ReleaseWide(kept);
+
+    String retried = MakeWideHeap(text.data(), 10, 15);
+    const long retriedLive = live;
+    failedAllocations = 1;
+    lastAllocationSize = 0;
+    _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(&retried, 20, 10);
+    Require(failedAllocations == 0 && lastAllocationSize == 21 * sizeof(std::uint16_t) && WideHolds(retried, text.data(), 10)
+        && retried.capacity == 20 && live == retriedLive,
+        "wide _Copy retries a failed allocation at the requested size");
+    ReleaseWide(retried);
+
+    String failed = MakeWideHeap(text.data(), 10, 15);
+    const long failedLive = live;
+    failedAllocations = 2;
+    bool caughtBadAlloc = false;
+    try {
+        _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(&failed, 20, 10);
+    } catch (const std::bad_alloc&) {
+        caughtBadAlloc = true;
+    }
+    const std::uint16_t none[]{0};
+    Require(caughtBadAlloc && failedAllocations == 0 && WideHolds(failed, none, 0) && failed.capacity == 7 && live == failedLive - 1,
+        "wide _Copy discards the storage and rethrows when the retry fails too");
+}
+
 void CheckWideBoundaryAndFailures() {
     std::array<std::uint16_t, 2032> belowBoundary{};
     std::array<std::uint16_t, 2040> atBoundary{};
@@ -559,6 +649,7 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
     const long before = live;
     CheckReporters();
+    CheckIosFailureDoraise();
     CheckAssignCharacters();
     CheckAssignPointer();
     CheckAssignSubstring();
@@ -569,6 +660,7 @@ int main() {
     CheckNarrowInsertGrowth();
     CheckWideCapacityAndAliases();
     CheckWideBoundaryAndFailures();
+    CheckWideCopy();
     Require(live == before, "every string allocation is released");
     std::puts("libc internal basic_string: ok");
     return 0;

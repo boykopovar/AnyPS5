@@ -1,7 +1,9 @@
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -312,6 +314,158 @@ class GitDiffPathTests(unittest.TestCase):
         self.git("commit", "-q", "-m", "test fixture")
         return self.git("rev-parse", "HEAD").strip()
 
+    @contextmanager
+    def in_repository(self):
+        previous = os.getcwd()
+        try:
+            os.chdir(self.root)
+            yield
+        finally:
+            os.chdir(previous)
+
+    def scan(self, base, head, author=None):
+        self.git("update-ref", "refs/pr/base", base)
+        with self.in_repository():
+            pr = {"ref": head, "author": author, "depends": set()}
+            pr_overlap.scan(pr)
+            probed = pr_overlap.probe(pr)
+            findings = pr_overlap.main_export_findings({1: pr}, pr_overlap.base_exports(base))
+            return pr, probed, findings
+
+    def relocation(self, old, new, source, alias_name):
+        nid = nid_names.compute_nid(alias_name)
+        library = pr_overlap.library_for_path(new)
+        self.write(old, source)
+        self.write(f"{library}/Existing.cpp", f'int APS5_VABI sceExisting() {{ return 0; }}\nAPS5_EXPORT("{nid}", sceExisting);\n')
+        base = self.commit()
+        (self.root / new).parent.mkdir(parents=True, exist_ok=True)
+        self.git("mv", old, new)
+        head = self.commit()
+        self.assertIn("rename from ", self.git("diff", "--find-renames", "-U0", base, head))
+        return base, head, nid
+
+    def test_unchanged_library_move_reports_an_existing_target_nid(self):
+        base, head, nid = self.relocation(
+            "core/libs/prx/libOld/Move.cpp", "core/libs/prx/libNew/Move.cpp",
+            "int APS5_VABI sceMoved() { return 0; }\n", "sceMoved")
+        pr, probed, findings = self.scan(base, head)
+        self.assertIn(("core/libs/prx/libNew", nid), pr["added_exports"])
+        self.assertIn(("core/libs/prx/libOld", nid), pr["removed_exports"])
+        self.assertIn(("core/libs/prx/libNew", nid), probed[1][1])
+        self.assertIn("sceMoved", findings.get(1, {}))
+
+    def test_partly_edited_library_move_keeps_unchanged_export_identities(self):
+        self.git("config", "diff.renames", "true")
+        self.git("config", "diff.renameLimit", "1000")
+        padding = "".join(f"int padding{i} = {i};\n" for i in range(30))
+        source = padding + "int APS5_VABI sceChanged() { return 0; }\nint APS5_VABI sceUnchanged() { return 0; }\n"
+        second_source = padding.replace("padding", "otherPadding") + "int APS5_VABI sceOther() { return 0; }\n"
+        self.write("core/libs/prx/libOld/Other.cpp", second_source)
+        destination = "core/libs/prx/libNew/Moved.cpp"
+        base, _, nid = self.relocation("core/libs/prx/libOld/Move.cpp", destination, source, "sceUnchanged")
+        self.git("mv", "core/libs/prx/libOld/Other.cpp", "core/libs/prx/libNew/Second.cpp")
+        self.write(destination, source.replace("sceChanged() { return 0; }", "sceChanged() { return 1; }"))
+        self.write("core/libs/prx/libNew/Second.cpp", second_source.replace("return 0", "return 1"))
+        head = self.commit()
+        self.assertEqual(self.git("diff", "-U0", base, head).count("rename from "), 2)
+        for limit in ("1000", "1"):
+            with self.subTest(rename_limit=limit):
+                self.git("config", "diff.renameLimit", limit)
+                pr, probed, findings = self.scan(base, head)
+                self.assertEqual(pr["exports"], {"sceChanged", "sceOther"})
+                self.assertEqual(probed[1], (pr["exports"], pr["added_exports"]))
+                self.assertIn(("core/libs/prx/libNew", nid), pr["added_exports"])
+                self.assertIn(("core/libs/prx/libOld", nid), pr["removed_exports"])
+                self.assertIn("sceUnchanged", findings.get(1, {}))
+
+    def test_library_move_preserves_literal_wildcards_and_unicode_separators(self):
+        old = "core/libs/prx/libOld/part b/[ab]/Move.cpp"
+        library = "core/libs/prx/libNew\u2028Name"
+        base, head, nid = self.relocation(old, f"{library}/part b/[ab]/Move.cpp",
+                                          "int APS5_VABI sceMoved() { return 0; }\n", "sceMoved")
+        pr, probed, findings = self.scan(base, head)
+        self.assertIn((library, nid), pr["added_exports"])
+        self.assertIn((library, nid), probed[1][1])
+        self.assertIn("sceMoved", findings.get(1, {}))
+
+    def test_unchanged_same_library_move_does_not_claim_an_export_overlap(self):
+        old = "core/libs/prx/libOne/Old.cpp"
+        self.write(old, "int APS5_VABI sceKept() { return 0; }\n")
+        base = self.commit()
+        self.git("mv", old, "core/libs/prx/libOne/New.cpp")
+        head = self.commit()
+        pr, probed, findings = self.scan(base, head)
+        self.assertEqual(pr["exports"], set())
+        self.assertEqual(pr["added_exports"], {})
+        self.assertEqual(pr["removed_exports"], {})
+        self.assertEqual(probed[1], (set(), {}))
+        self.assertEqual(findings, {})
+        self.git("checkout", "-q", "--detach", base)
+        self.write(old, "int APS5_VABI sceKept() { return 1; }\n")
+        other, _, _ = self.scan(base, self.commit(), "other")
+        with self.in_repository():
+            self.assertIsNone(pr_overlap.overlaps({0: pr, 1: other}, 0, 1))
+
+    def test_unchanged_library_move_does_not_overlap_an_independent_export(self):
+        old = "core/libs/prx/libOld/Move.cpp"
+        destination = "core/libs/prx/libNew/Move.cpp"
+        independent = "core/libs/prx/libOther/Independent.cpp"
+        self.write(old, "int APS5_VABI sceKept() { return 0; }\n")
+        self.write(independent, "int APS5_VABI sceKept() { return 1; }\n")
+        base = self.commit()
+        (self.root / destination).parent.mkdir()
+        self.git("mv", old, destination)
+        head = self.commit()
+        self.assertIn("rename from ", self.git("diff", "--find-renames", base, head))
+        self.git("checkout", "-q", "--detach", base)
+        self.write(independent, "int APS5_VABI sceKept() { return 2; }\n")
+        peer = self.commit()
+        key = ("core/libs/prx/libNew", nid_names.compute_nid("sceKept"))
+        for setting in ("true", "false", "copies"):
+            with self.subTest(diff_renames=setting):
+                self.git("config", "diff.renames", setting)
+                pr, probed, _ = self.scan(base, head, "mover")
+                self.assertIn(key, pr["added_exports"])
+                self.assertEqual(probed[1], (pr["exports"], pr["added_exports"]))
+                other, _, _ = self.scan(base, peer, "editor")
+                with self.in_repository():
+                    self.assertIsNone(pr_overlap.overlaps({0: pr, 1: other}, 0, 1))
+
+    def test_copy_detection_keeps_new_export_overlap(self):
+        self.git("config", "diff.renames", "copies")
+        original = "core/libs/prx/libOld/Original.cpp"
+        copy = "core/libs/prx/libNew/Copy.cpp"
+        independent = "core/libs/prx/libOther/Independent.cpp"
+        source = "int APS5_VABI sceCopied() { return 0; }\n"
+        self.write(original, source)
+        self.write(independent, source.replace("return 0", "return 2"))
+        base = self.commit()
+        self.write(original, source + "int unrelated = 1;\n")
+        self.write(copy, source)
+        head = self.commit()
+        self.assertIn("C100\t", self.git("diff", "--name-status", base, head))
+
+        self.git("checkout", "-q", "--detach", base)
+        self.write(independent, source.replace("return 0", "return 3"))
+        other, _, _ = self.scan(base, self.commit(), "editor")
+        pr, probed, _ = self.scan(base, head, "copier")
+        self.assertEqual(pr["exports"], {"sceCopied"})
+        self.assertEqual(probed[1], (pr["exports"], pr["added_exports"]))
+        key = ("core/libs/prx/libNew", nid_names.compute_nid("sceCopied"))
+        self.assertIn(key, pr["added_exports"])
+        with self.in_repository():
+            self.assertEqual(pr_overlap.overlaps({0: pr, 1: other}, 0, 1)["exports"], {"sceCopied"})
+
+    def test_test_callback_move_between_libraries_remains_excluded(self):
+        base, head, _ = self.relocation("core/libs/prx/libOld/tests/Move.cpp", "core/libs/prx/libNew/tests/Move.cpp",
+                                         "int APS5_VABI sceMoved() { return 0; }\n", "sceMoved")
+        pr, probed, findings = self.scan(base, head)
+        self.assertEqual(pr["exports"], set())
+        self.assertEqual(pr["added_exports"], {})
+        self.assertEqual(pr["removed_exports"], {})
+        self.assertEqual(probed[1], (set(), {}))
+        self.assertEqual(findings, {})
+
     def check_alias_duplicate(self, library, name, quoted):
         original = "int APS5_VABI sceOriginal() { return 0; }\n"
         self.write(f"{library}/Original.cpp", original)
@@ -345,7 +499,7 @@ class GitDiffPathTests(unittest.TestCase):
         self.git("mv", old, new)
         self.write(new, padding + "int APS5_VABI sceMoved() { return 1; }\n")
         head = self.commit()
-        diff = self.git("diff", "-U0", base, head)
+        diff = self.git("diff", "--find-renames", "-U0", base, head)
         self.assertIn("rename from ", diff)
         key = nid_names.compute_nid("sceMoved")
         self.assertIn(("core/libs/prx/libOld", key), pr_overlap.source_changed_exports(diff, "-"))

@@ -233,6 +233,23 @@ void TestDeletingDestructor() {
     Require(frees == before + 2 && lastFreed == app);
 }
 
+void TestBuild() {
+    const std::vector<std::uint8_t> packet = Packet(30, 0x54455354u, 8);
+    WebRtcRtcpApp app = Default();
+    Require(ParsePacket(app, packet));
+    WebRtcBuffer built;
+    std::memset(&built, 0xA5, sizeof(built));
+    Require(_ZNK6webrtc4rtcp10RtcpPacket5BuildEv_nid_postfix(&built, &app) == &built);
+    Require(built.size == packet.size() && built.capacity == packet.size() && built.data != nullptr);
+    Require(std::equal(packet.begin(), packet.end(), built.data));
+    _ZdaPv_nid_postfix(built.data);
+    _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(&app);
+    RequireInvalidArgument([&] { _ZNK6webrtc4rtcp10RtcpPacket5BuildEv_nid_postfix(nullptr, &app); });
+    RequireInvalidArgument([&] { _ZNK6webrtc4rtcp10RtcpPacket5BuildEv_nid_postfix(&built, nullptr); });
+    const void* const* empty = nullptr;
+    RequireInvalidArgument([&] { _ZNK6webrtc4rtcp10RtcpPacket5BuildEv_nid_postfix(&built, &empty); });
+}
+
 void TestNullConstructorThrows() {
     RequireInvalidArgument([] { _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(nullptr); });
 }
@@ -258,5 +275,6 @@ int main() {
     TestCreateSendsAFullBuffer();
     TestDeletingDestructor();
     TestNullConstructorThrows();
+    TestBuild();
     return 0;
 }
