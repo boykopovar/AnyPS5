@@ -710,7 +710,7 @@ SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
     if (descriptor.gcnPitch != 0) return describeGcnSurface(descriptor);
     SurfaceGeometry geometry;
     if (descriptor.samples != 1u && descriptor.tileMode != TextureTileMode::kLinear) {
-        Require(descriptor.samples == 2u || descriptor.samples == 4u || descriptor.samples == 8u || descriptor.samples == 16u, "multisampled surface fragment count is not implemented");
+        Require(descriptor.samples == 2u || descriptor.samples == 4u || descriptor.samples == 8u, "multisampled surface fragment count is not implemented");
         Require(descriptor.dimension == TextureDimension::k2DMsaa && descriptor.baseArray == 0u && descriptor.depthOrLastArray == 0u, "multisampled surface dimension or array range is not implemented");
         Require(descriptor.mipCount == 1u && descriptor.allocatedMipCount == 1u && descriptor.baseLevel == 0u && descriptor.lastLevel == 0u, "multisampled surface mip levels are not implemented");
         Require(descriptor.width != 0u && descriptor.width <= 16384u && descriptor.height != 0u && descriptor.height <= 16384u, "invalid multisampled surface extent");

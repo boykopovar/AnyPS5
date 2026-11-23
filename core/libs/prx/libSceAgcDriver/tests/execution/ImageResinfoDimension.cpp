@@ -119,7 +119,7 @@ int main() {
         Check(*device, QueryCube, Descriptor(TypeCube, 6u), "cube", {Size, Size, 6u, 1u}, {Size, Size, 0u, 1u});
         Check(*device, Query3D, Descriptor(Type3D, 4u), "3D", {Size, Size, 4u, 1u}, {Size, Size, 4u, 1u});
         Check(*device, Query2DArray, Descriptor(Type2DArray, 3u), "2D array", {Size, Size, 3u, 1u}, {Size, Size, 0u, 1u});
-        for (std::uint32_t log2Fragments = 1; log2Fragments <= 4; ++log2Fragments) {
+        for (std::uint32_t log2Fragments = 1; log2Fragments <= 3; ++log2Fragments) {
             const auto fragments = std::to_string(1u << log2Fragments) + "-fragment 2D MSAA";
             const auto msaa = Descriptor(Type2DMsaa, 1u, log2Fragments);
             CheckMsaa(*device, Query2DMsaa, msaa, fragments);

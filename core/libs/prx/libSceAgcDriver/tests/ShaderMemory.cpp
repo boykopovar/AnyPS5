@@ -12924,10 +12924,11 @@ void verifyMsaaDimensionQueryModes() {
     query.dimensionQueryOnly = true;
     query.cubeFaceCompatible = false;
     const auto modes = ResourceMaterializer::RuntimeImageModes(query);
-    for (const std::uint32_t log2Fragments : {1u, 2u, 3u, 4u}) {
+    for (const std::uint32_t log2Fragments : {1u, 2u, 3u}) {
         const auto selected = ResourceMaterializer::RuntimeImageMode(query, msaaDescriptor(log2Fragments), modes);
-        require(modes[selected].dimension == RdnaImageDimension::Dim2DMsaa && !modes[selected].cube, "a dimension query of a 2, 4, 8 or 16-fragment 2D MSAA T# under DIM 2D did not select a multisampled 2D runtime mode");
+        require(modes[selected].dimension == RdnaImageDimension::Dim2DMsaa && !modes[selected].cube, "a dimension query of a 2, 4 or 8-fragment 2D MSAA T# under DIM 2D did not select a multisampled 2D runtime mode");
     }
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(query, msaaDescriptor(4u), modes)); }, "image descriptor is invalid", "a dimension query of a 16-fragment 2D MSAA T# was accepted");
     require(modes[ResourceMaterializer::RuntimeImageMode(query, msaaDescriptor(0u), modes)].dimension == RdnaImageDimension::Dim2D, "a dimension query of a one-fragment 2D MSAA T# under DIM 2D did not select the 2D runtime mode");
     auto read = query;
     read.dimensionQueryOnly = false;
