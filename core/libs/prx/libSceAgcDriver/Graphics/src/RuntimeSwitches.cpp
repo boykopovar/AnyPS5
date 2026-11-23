@@ -35,10 +35,14 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_STAGE_POOL_REUSE",
     "APS5_INDEX_IN_PLACE_BEHIND_WRITER",
     "APS5_WIDE_LIBRARY_KEYS",
+    "APS5_LEAN_FRONT",
+    "APS5_LEAN_LIST_DIRECT",
 };
+static_assert(SwitchNames.back() != nullptr, "every runtime switch needs a name");
 
 struct SwitchValues {
     std::array<std::atomic<bool>, SwitchCount> set{};
+    std::atomic<std::uint64_t> generation{1};
     SwitchValues() {
         const std::array<bool, SwitchCount> environment{
             std::getenv("APS5_NO_BARRIER_BATCH") != nullptr,
@@ -59,6 +63,8 @@ struct SwitchValues {
             std::getenv("APS5_NO_STAGE_POOL_REUSE") != nullptr,
             std::getenv("APS5_INDEX_IN_PLACE_BEHIND_WRITER") != nullptr,
             std::getenv("APS5_WIDE_LIBRARY_KEYS") != nullptr,
+            std::getenv("APS5_LEAN_FRONT") != nullptr,
+            std::getenv("APS5_LEAN_LIST_DIRECT") != nullptr,
         };
         for (std::size_t index = 0; index < SwitchCount; ++index) set[index].store(environment[index], std::memory_order_relaxed);
     }
@@ -102,7 +108,22 @@ bool Set(RuntimeSwitch id) {
 }
 
 void Assign(RuntimeSwitch id, bool set) {
-    Values().set.at(static_cast<std::size_t>(id)).store(set, std::memory_order_relaxed);
+    auto& values = Values();
+    if (values.set.at(static_cast<std::size_t>(id)).exchange(set, std::memory_order_relaxed) == set) return;
+    values.generation.fetch_add(1, std::memory_order_release);
+}
+
+std::uint64_t Generation() {
+    return Values().generation.load(std::memory_order_acquire);
+}
+
+SwitchSnapshot Snapshot() {
+    auto& values = Values();
+    SwitchSnapshot snapshot;
+    for (std::size_t index = 0; index < SwitchCount; ++index) {
+        if (values.set[index].load(std::memory_order_relaxed)) snapshot.Assign(static_cast<RuntimeSwitch>(index), true);
+    }
+    return snapshot;
 }
 
 std::optional<RuntimeSwitch> Find(std::string_view name) {

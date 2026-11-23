@@ -84,6 +84,39 @@ std::uint64_t RegisterStateKey(const QueueState& queue, bool allUserWords, bool 
 }
 
 
+std::uint64_t RegisterShapeKey(const QueueState& queue) {
+    const auto& masks = registerMasks();
+    auto shape = (0xcbf29ce484222325ull ^ queue.context.Fingerprint(masks[static_cast<std::size_t>(Graphics::RegisterBank::Context)])) * 0x100000001b3ull;
+    shape = (shape ^ queue.shader.Fingerprint(masks[static_cast<std::size_t>(Graphics::RegisterBank::Shader)])) * 0x100000001b3ull;
+    shape = (shape ^ queue.userConfig.Fingerprint(masks[static_cast<std::size_t>(Graphics::RegisterBank::UserConfig)])) * 0x100000001b3ull;
+    return shape;
+}
+
+DrawShaderSet ReadDrawShaderSet(const QueueState& queue, const ShaderRegistry& registry) {
+    DrawShaderSet set;
+    for (std::size_t index = 0; index < DrawShaderSet::Bases.size(); ++index) {
+        const auto base = DrawShaderSet::Bases[index];
+        const auto low = queue.shader.find(base);
+        const auto high = queue.shader.find(base + 1);
+        if (low == queue.shader.end() || high == queue.shader.end()) continue;
+        set.present[index] = true;
+        set.low[index] = low->second;
+        set.high[index] = high->second;
+        const auto address = (static_cast<std::uint64_t>(low->second) << 8u) | (static_cast<std::uint64_t>(high->second & 0xffu) << 40u);
+        auto& mixes = set.mixes[index];
+        auto it = registry.upper_bound(address);
+        if (it == registry.begin()) {
+            mixes.push_back(1);
+            continue;
+        }
+        --it;
+        set.registered[index] = true;
+        for (const auto& snapshot : it->second) mixes.push_back(reinterpret_cast<std::uintptr_t>(snapshot.get()));
+        mixes.push_back(address - it->first);
+    }
+    return set;
+}
+
 std::uint64_t DrawShaderSetKey(const QueueState& queue, const ShaderRegistry& registry) {
     std::uint64_t key = 0xcbf29ce484222325ull;
     const auto mix = [&](std::uint64_t value) { key = (key ^ value) * 0x100000001b3ull; };
