@@ -31,6 +31,9 @@ set_target_properties(atrac9_vibration PROPERTIES POSITION_INDEPENDENT_CODE ON C
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/AjmLibrary.cmake)
 add_sce_ajm_library(libSceAjm.native ${CMAKE_CURRENT_SOURCE_DIR}/src/DriverQueries.cpp)
+if(MINGW)
+    target_link_options(libSceAjm.native PRIVATE LINKER:--exclude-libs,ALL)
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(atrac9_gradient_tests tests/Atrac9Gradient.c ${LIBATRAC9_DIR}/bit_reader.c)
