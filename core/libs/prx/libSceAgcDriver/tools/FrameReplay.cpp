@@ -1775,39 +1775,46 @@ void configureEnvironment(const Options& options) {
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
-    int count = 0;
-    wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &count);
-    if (wide == nullptr || count != argc) return usage();
-    const std::vector<std::filesystem::path> paths(wide, wide + count);
+    int wideCount = 0;
+    wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &wideCount);
+    if (wide == nullptr) return usage();
+    const std::vector<std::filesystem::path> paths(wide, wide + wideCount);
     LocalFree(wide);
 #else
     const std::vector<std::filesystem::path> paths(argv, argv + argc);
 #endif
+    std::vector<std::string> arguments;
+    for (const auto& path : paths) {
+        std::string argument;
+        for (const auto unit : path.native()) argument.push_back(static_cast<unsigned>(unit) < 0x80 ? static_cast<char>(unit) : '\x7f');
+        arguments.push_back(std::move(argument));
+    }
+    const int count = static_cast<int>(arguments.size());
     Options options;
     if (const char* fault = std::getenv("APS5_REPLAY_RESET_FAULT_FOR_TEST"); fault != nullptr) options.resetFault = std::string_view(fault) == "owners" ? ResetFault::KeepOwners : std::string_view(fault) == "bytes" ? ResetFault::WrongByte : std::string_view(fault) == "omit" ? ResetFault::OmitOwners : std::string_view(fault) == "remap" ? ResetFault::Remap : ResetFault::None;
-    for (int index = 1; index < argc; ++index) {
-        const std::string_view argument = argv[index];
+    for (int index = 1; index < count; ++index) {
+        const std::string_view argument = arguments[index];
         if (argument == "--no-pace") options.pace = false;
         else if (argument == "--no-release") options.release = false;
         else if (argument == "--no-synthesize") options.synthesize = false;
-        else if (argument == "--pace-timeout-ms" && index + 1 < argc) options.paceTimeout = std::chrono::milliseconds(std::strtoll(argv[++index], nullptr, 10));
-        else if (argument == "--release-after-ms" && index + 1 < argc) options.releaseAfter = std::chrono::milliseconds(std::strtoll(argv[++index], nullptr, 10));
+        else if (argument == "--pace-timeout-ms" && index + 1 < count) options.paceTimeout = std::chrono::milliseconds(std::strtoll(arguments[++index].c_str(), nullptr, 10));
+        else if (argument == "--release-after-ms" && index + 1 < count) options.releaseAfter = std::chrono::milliseconds(std::strtoll(arguments[++index].c_str(), nullptr, 10));
         else if (argument == "--strict") options.strict = true;
         else if (argument == "--verify-reset") options.verifyReset = true;
-        else if (argument == "--repeat" && index + 1 < argc) options.repeat = std::max<std::size_t>(1, std::strtoull(argv[++index], nullptr, 10));
+        else if (argument == "--repeat" && index + 1 < count) options.repeat = std::max<std::size_t>(1, std::strtoull(arguments[++index].c_str(), nullptr, 10));
         else if (argument == "--shaders") options.shaders = true;
-        else if (argument == "--shader-code" && index + 1 < argc) {
+        else if (argument == "--shader-code" && index + 1 < count) {
             options.shaders = true;
             options.shaderCode = paths[++index];
         }
-        else if (argument == "--submits" && index + 1 < argc) {
-            const std::string_view value = argv[++index];
+        else if (argument == "--submits" && index + 1 < count) {
+            const std::string_view value = arguments[++index];
             const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), options.submits);
             if (error != std::errc{} || end != value.data() + value.size() || options.submits == 0) return usage();
         } else if (argument == "--trace-serials") options.traceSerials = true;
         else if (argument == "--cold-pipelines") options.coldPipelines = true;
-        else if (argument == "--dump" && index + 1 < argc) options.dumps.push_back(parseDump(paths[++index]));
-        else if (argument == "--frames" && index + 1 < argc) options.frames = paths[++index];
+        else if (argument == "--dump" && index + 1 < count) options.dumps.push_back(parseDump(paths[++index]));
+        else if (argument == "--frames" && index + 1 < count) options.frames = paths[++index];
         else if (!argument.starts_with("-") && options.directory.empty()) options.directory = paths[index];
         else return usage();
     }
