@@ -199,6 +199,20 @@ void CheckUntrapped() {
     Require(resolved.load() == 0, "untrapped accesses ran the resolver");
 }
 
+void CheckRemap() {
+    Region region(2);
+    Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(), region.page), "a read-write page was not trapped");
+    Require(Protection(region.base) == PROT_NONE, "the trapped page stayed accessible");
+    void* remapped = mmap(region.base, region.page, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    Require(remapped == region.base, "cannot map a read-only page over the trapped one");
+    GuestWriteWatchRegister_nid_postfix(region.base, region.page);
+    Require(Protection(region.base) == PROT_READ, "registering a new read-only mapping over a trapped page changed its protection");
+    Require(region.ReadFromThread(5) == 0, "a read of the new mapping did not see its bytes");
+    Require(resolved.load() == 0, "registering a new mapping over a trapped page ran the resolver");
+    Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(1), region.page), "the page next to the new mapping was not trapped");
+    GuestWriteWatchReleaseReads_nid_postfix(region.Address(1), region.page);
+}
+
 void CheckUnknown() {
     Region region(2, PROT_READ);
     Require(!GuestWriteWatchTrapReads_nid_postfix(region.Address(), region.page), "a read-only mapping was trapped");
@@ -260,7 +274,7 @@ void CheckThreads() {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected trap, release, protect, host, unknown, unregister, threads, holder, trapped, generation or untrapped");
+        Require(argc == 2, "expected trap, release, protect, host, unknown, unregister, threads, holder, trapped, generation, untrapped or remap");
         if (!GuestWriteWatchAvailable_nid_postfix()) {
             std::puts("the userfaultfd write watch is not available");
             return Skipped;
@@ -281,6 +295,7 @@ int main(int argc, char** argv) {
         else if (mode == "trapped") CheckTrapped();
         else if (mode == "generation") CheckGeneration();
         else if (mode == "untrapped") CheckUntrapped();
+        else if (mode == "remap") CheckRemap();
         else throw std::runtime_error("unknown mode");
         return 0;
     } catch (const std::exception& error) {
