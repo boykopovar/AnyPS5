@@ -2931,6 +2931,24 @@ void testWaitRegMemPipelineDrain() {
     check(AgcDriver::DriverDetail::DrawPipeline::Queue0().Outstanding() == 0, "pipeline should be idle after overlapping wait drain");
 }
 
+void testPooledCommitReusesItsSlotAndReleasesItsCaptures() {
+    using AgcDriver::DriverDetail::DrawPipeline;
+    auto& pipeline = DrawPipeline::Queue0();
+    std::vector<const void*> slots;
+    const auto enqueue = [&](std::shared_ptr<int> keep) {
+        pipeline.EnqueuePooled(DrawPipeline::CommitKind::Other, [keep = std::move(keep), &slots] { slots.push_back(&keep); }, {});
+        pipeline.Drain(DrawPipeline::DrainReason::Flush);
+        pipeline.ReleaseRetired();
+    };
+    auto first = std::make_shared<int>(1);
+    const std::weak_ptr<int> firstWatch = first;
+    enqueue(std::move(first));
+    check(firstWatch.expired(), "a pooled commit kept its captures after the pipeline released its item");
+    enqueue(std::make_shared<int>(2));
+    check(slots.size() == 2, "the pooled commits did not both run");
+    check(slots[0] == slots[1], "a second pooled commit of the same type did not reuse the slot the first one released");
+}
+
 void testWaitRegMem64ZeroHighMaskDrain() {
     alignas(8) static std::uint32_t qword[2] = {42, 0};
     const auto base = reinterpret_cast<std::uintptr_t>(&qword[0]);
@@ -3115,6 +3133,7 @@ int main(int argc, char** argv) {
         testWaitRegMemMasking();
         testWaitRegMemAcquiresPublishedData();
         testWaitRegMemPipelineDrain();
+        testPooledCommitReusesItsSlotAndReleasesItsCaptures();
         testWaitRegMem64ZeroHighMaskDrain();
         testWaitRegMemMisalignedBehindBusyPipeline();
         testPredicatedIndirectBufferKeepsBusyPipeline();

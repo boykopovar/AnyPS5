@@ -57,6 +57,11 @@ struct ClearOnExit {
     ~ClearOnExit() { items.clear(); }
 };
 
+std::vector<std::vector<DrawPipeline::Range>>& spareWriteLists() {
+    struct Storage {};
+    return HostThreadLocal<std::vector<std::vector<DrawPipeline::Range>>, Storage>();
+}
+
 }
 
 namespace {
@@ -436,6 +441,25 @@ void DrawPipeline::enqueue(Item item) {
     }
     lock.unlock();
     if (wakeCommitter) wake.notify_one();
+    keepSpareWrites(reclaim);
+}
+
+void DrawPipeline::keepSpareWrites(std::vector<Item>& reclaimed) {
+    auto& spares = spareWriteLists();
+    for (auto& item : reclaimed) {
+        if (spares.size() >= Depth()) return;
+        if (item.writes.capacity() == 0) continue;
+        item.writes.clear();
+        spares.push_back(std::move(item.writes));
+    }
+}
+
+std::vector<DrawPipeline::Range> DrawPipeline::SpareWrites() {
+    auto& spares = spareWriteLists();
+    if (spares.empty()) return {};
+    auto writes = std::move(spares.back());
+    spares.pop_back();
+    return writes;
 }
 
 void DrawPipeline::report(std::chrono::steady_clock::time_point now) {

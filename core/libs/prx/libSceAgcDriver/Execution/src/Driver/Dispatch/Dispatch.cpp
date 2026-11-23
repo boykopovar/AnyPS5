@@ -15,6 +15,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <atomic>
@@ -568,13 +569,15 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     bool lateItem = false;
     bool recipeLess = false;
     if (pipelineCandidate) {
-        std::vector<ShaderRecompiler::MemoryRegion> reads;
+        struct EntryReadsStorage {};
+        auto& reads = HostThreadLocal<std::vector<DrawPipeline::Range>, EntryReadsStorage>();
+        reads.clear();
         bool entryFound = false;
         {
             std::lock_guard cacheLock(dispatchCacheMutex);
             if (const auto found = dispatchCache.find(key); found != dispatchCache.end()) {
                 entryFound = true;
-                for (const auto& variant : found->second->variants) appendEntryRegions(*variant, reads);
+                for (const auto& variant : found->second->variants) reads.insert(reads.end(), variant->runs.begin(), variant->runs.end());
             }
         }
         if (!entryFound && queueMisses) {
@@ -584,7 +587,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         } else if (verifyDataHits()) {
             NoteItemFallback(ItemFallback::Verify);
         } else {
-            readsClear = std::none_of(reads.begin(), reads.end(), [](const auto& region) { return DrawPipeline::Queue0().Overlaps(region.guestAddress, region.bytes.size()); });
+            readsClear = reads.empty() || !DrawPipeline::Queue0().OverlapsAny(reads);
             if (!readsClear) NoteItemFallback(ItemFallback::Reads);
         }
         if (!readsClear && !lateItem && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
@@ -616,7 +619,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     if (readsClear) {
         if (cached && keepVariant != nullptr && keepVariant->recipe.load(std::memory_order_acquire) != nullptr) {
             bool bounded = false;
-            itemWrites = DispatchWriteRanges(*compiledResult, bounded);
+            itemWrites = DispatchWriteRanges(*compiledResult, bounded, DrawPipeline::SpareWrites());
             pipelined = bounded;
             if (!bounded) NoteItemFallback(ItemFallback::Writes);
         } else if (queueMisses && cached && keepVariant != nullptr) {
@@ -820,7 +823,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
         if (queued) {
             bool bounded = false;
-            itemWrites = DispatchWriteRanges(*compiledResult, bounded);
+            itemWrites = DispatchWriteRanges(*compiledResult, bounded, DrawPipeline::SpareWrites());
             pipelined = bounded;
             if (!bounded) NoteItemFallback(ItemFallback::Writes);
         }
@@ -840,7 +843,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         const auto queueId = submission.queue;
         itemCommits.fetch_add(1, std::memory_order_relaxed);
-        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, attach, prepareThreads, dataHit, epoch, htileClearCompletion, htileMask] {
+        DrawPipeline::Queue0().EnqueuePooled(DrawPipeline::CommitKind::Dispatch, [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, attach, prepareThreads, dataHit, epoch, htileClearCompletion, htileMask] {
             DrawPipeline::FollowEpoch(epoch);
             GuestMemory::SetCurrentPacket(0x15, queueId);
             const auto& compiledCommit = *result;

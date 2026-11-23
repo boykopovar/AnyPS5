@@ -444,7 +444,7 @@ int main() {
             {"recipe auto draw", [](std::size_t count) { return Draws(*Vertices, *Target, count); }, false, {43.0, 8462.0, 42}, {46.3, 8649.0, 45}},
             {"indexed draw, guest indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, IndexBlock->At(0)); }, false, {45.1, 8722.0, 44}, {48.3, 8909.0, 47}},
             {"indexed draw, image indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, reinterpret_cast<std::uintptr_t>(ImageIndices.data())); }, false, {45.4, 10757.0, 44}, {48.6, 10930.0, 47}},
-            {"compute dispatch", [](std::size_t count) { return Dispatches(*Table, *Output, count); }, true, {11.3, 1354.0, 10}, {14.6, 1778.0, 13}},
+            {"compute dispatch", [](std::size_t count) { return Dispatches(*Table, *Output, count); }, true, {11.3, 1354.0, 10}, {11.3, 1354.0, 10}},
         }};
         const auto draws = static_cast<std::size_t>(std::max(1, std::atoi(std::getenv("APS5_DRAW_ALLOCATIONS_DRAWS") != nullptr ? std::getenv("APS5_DRAW_ALLOCATIONS_DRAWS") : "256")));
         const auto only = std::getenv("APS5_DRAW_ALLOCATIONS_SHAPE");
