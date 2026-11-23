@@ -1,5 +1,5 @@
 import { abortAndDiscardOutput, OutputDirectoryTransaction } from "./output-directory.mjs";
-import { batchMemoryEstimate } from "./batch.mjs";
+import { batchMemoryEstimate, MEMORY_LIMIT, memoryEstimate } from "./batch.mjs";
 import { failureReport } from "./failure-report.mjs";
 import { apply, current, locales, set as setLocale, translate } from "./i18n.mjs";
 
@@ -21,7 +21,8 @@ let downloadUrl;
 let logs = [];
 let release;
 const canSaveZip = typeof window.showSaveFilePicker === "function" && window.isSecureContext;
-const canStream = typeof window.showDirectoryPicker === "function" && window.isSecureContext;
+const folderLocks = window.navigator?.locks;
+const canStream = typeof window.showDirectoryPicker === "function" && typeof folderLocks?.request === "function" && window.isSecureContext;
 const supported = window.isSecureContext && window.Worker && window.WebAssembly && window.ReadableStream && window.WritableStream && window.crypto?.subtle;
 $("save").querySelector('[value="disk"]').disabled = !canStream;
 $("save").querySelector('[value="zip"]').disabled = !canSaveZip;
@@ -77,14 +78,18 @@ function update() {
   const conversionBlocked = conversionTooLarge || iconTooLarge;
   let estimate = null;
   let estimateOverflow = false;
-  if (inspected && libraryBytes !== undefined) {
-    try { estimate = batchMemoryEstimate(summaries, target, libraryBytes, locale); }
+  if (libraryBytes !== undefined) {
+    try {
+      estimate = inspected
+        ? batchMemoryEstimate(summaries, target, libraryBytes, locale)
+        : memoryEstimate(0, 0, libraryBytes, 0, locale);
+    }
     catch (error) {
       if (!(error instanceof Error) || error.message !== translate(locale, "unsupportedFileSize")) throw error;
       estimateOverflow = true;
     }
   }
-  const tooLarge = estimateOverflow || (estimate !== null && estimate > 256 * 1024 * 1024);
+  const tooLarge = estimateOverflow || (estimate !== null && estimate > MEMORY_LIMIT);
   $("save").querySelector('[value="memory"]').disabled = Boolean(tooLarge);
   const memoryBlocked = $("save").value === "memory" && tooLarge;
   if (inspected) {
@@ -108,7 +113,7 @@ function update() {
     : iconTooLarge ? translate(locale, "iconTooLargeHint")
     : conversionTooLarge ? translate(locale, "conversionTooLargeHint", { target })
     : estimateOverflow ? translate(locale, "estimateOverflow")
-    : memoryBlocked ? translate(locale, "memoryBlockedHint")
+    : tooLarge ? translate(locale, "memoryBlockedHint")
     : translate(locale, "browserDefault");
   const hasWarnings = inspected && summaries.some(summary => summary.warnings.length > 0);
   $("convert").disabled = !supported || working || !inspected || !release || conversionBlocked || memoryBlocked || folderBlocked || (hasWarnings && !$("acknowledge").checked);
@@ -158,7 +163,7 @@ function renderError() {
   }
 }
 
-async function fail(value) {
+async function fail(value, { keepInspection = false } = {}) {
   if (failing) return;
   failing = true;
   errorState = {
@@ -172,6 +177,15 @@ async function fail(value) {
       log: logs
     }
   };
+  if (keepInspection) {
+    $("error").hidden = false;
+    $("cancel").hidden = true;
+    working = false;
+    failing = false;
+    lock(false);
+    update();
+    return;
+  }
   releaseVersion++;
   releaseRequest = null;
   worker?.terminate();
@@ -192,6 +206,7 @@ async function fail(value) {
   errorState.appended = await abortAndDiscardOutput(transaction, activeSink, locale);
   $("error").hidden = false;
   $("status").hidden = true;
+  const restoreFocus = document.activeElement === $("cancel");
   $("cancel").hidden = true;
   $("drop").hidden = false;
   $("selection").hidden = true;
@@ -202,6 +217,7 @@ async function fail(value) {
   failing = false;
   lock(false);
   update();
+  if (restoreFocus) $("choose").focus();
 }
 
 async function onMessage({ data }, currentWorker) {
@@ -283,6 +299,7 @@ async function onMessage({ data }, currentWorker) {
       await sink.write(data.bytes);
       if (currentWorker === worker) currentWorker.postMessage({ type: "written" });
     } else if (data.type === "complete") {
+      const focusDownload = data.blob && document.activeElement === $("cancel");
       $("cancel").hidden = true;
       if (sink) {
         await sink.close();
@@ -319,6 +336,7 @@ async function onMessage({ data }, currentWorker) {
       worker = null;
       lock(false);
       update();
+      if (focusDownload) $("download").focus();
     } else if (data.type === "error") await fail(data.message);
   } catch (error) {
     if (currentWorker === worker) await fail(error);
@@ -423,12 +441,15 @@ async function createZipSink(name, current) {
 $("convert").onclick = async () => {
   if ($("convert").disabled) return;
   const currentWorker = worker;
+  let preparingOutput = true;
   working = true;
+  $("error").hidden = true;
   lock(true);
   update();
   try {
     const target = document.querySelector('input[name="target"]:checked').value;
     if ($("save").value === "zip") {
+      $("cancel").hidden = false;
       const name = selectedInputs.length > 1 ? `anyps5-${target}-apps.zip` : `${selectedInputs[0].name.replace(/\.zip$/iu, "")}-${target}.zip`;
       const writable = await createZipSink(name, () => currentWorker === worker);
       if (writable === null) return;
@@ -437,7 +458,7 @@ $("convert").onclick = async () => {
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
       const parent = await window.showDirectoryPicker({ mode: "readwrite" });
       if (currentWorker !== worker) return;
-      const transaction = await OutputDirectoryTransaction.create(parent, name, locale);
+      const transaction = await OutputDirectoryTransaction.create(parent, name, folderLocks, locale);
       if (currentWorker !== worker) {
         await transaction.discard();
         return;
@@ -445,14 +466,23 @@ $("convert").onclick = async () => {
       outputTransaction = transaction;
       outputDirectory = transaction.directory;
     }
+    preparingOutput = false;
     $("status").hidden = false;
     $("cancel").hidden = false;
     $("error").hidden = true;
     currentWorker.postMessage({ type: "convert", target, toIntel: $("intel").checked, mode: $("save").value, locale });
   } catch (error) {
+    if (currentWorker === worker && preparingOutput && error.name !== "AbortError") {
+      await fail(error, { keepInspection: true });
+      return;
+    }
     if (currentWorker !== worker) return;
-    if (error.name === "AbortError") { working = false; lock(false); update(); }
-    else await fail(error);
+    if (error.name === "AbortError") {
+      $("cancel").hidden = true;
+      working = false;
+      lock(false);
+      update();
+    } else await fail(error);
   }
 };
 $("theme").onclick = () => {

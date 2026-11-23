@@ -526,6 +526,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl3_ecdsa PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
+    add_test_executable(guest_libressl3_wycheproof_ecdsa_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/WycheproofEcdsa.cpp)
+    target_include_directories(guest_libressl3_wycheproof_ecdsa_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_wycheproof_ecdsa_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_wycheproof_ecdsa_tests)
+    add_test(NAME guest_libressl3_wycheproof_ecdsa COMMAND guest_libressl3_wycheproof_ecdsa_tests)
+    set_tests_properties(guest_libressl3_wycheproof_ecdsa PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_wycheproof_ecdsa PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
     if(WIN32)
         set_tests_properties(guest_libressl3_pkey_base_id PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
@@ -1168,6 +1178,21 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl3_default_verify_paths PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_libressl3_default_verify_paths PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/SslDoHandshake.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_ssl_do_handshake_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/SslDoHandshake.cpp)
+    target_include_directories(guest_libressl3_ssl_do_handshake_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_ssl_do_handshake_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_ssl_do_handshake_tests)
+    add_test(NAME guest_libressl3_ssl_do_handshake COMMAND guest_libressl3_ssl_do_handshake_tests)
+    set_tests_properties(guest_libressl3_ssl_do_handshake PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_ssl_do_handshake PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
 endif()
