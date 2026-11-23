@@ -24,6 +24,7 @@
 #include "prx/libSceNKWebKit/include/IsoBoxExports.hpp"
 #include "prx/libSceNKWebKit/include/BlobDataItemExports.hpp"
 #include "prx/libSceNKWebKit/include/TrackPrivateBaseExports.hpp"
+#include "prx/libSceNKWebKit/include/UserGestureIndicatorExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 #include "prx/libSceNKWebKit/include/LocalizedStringsExports.hpp"
 
