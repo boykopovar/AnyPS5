@@ -3,7 +3,6 @@
 #include FT_COLOR_H
 #include FT_PARAMETER_TAGS_H
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <limits>
 
@@ -19,10 +18,7 @@ FT_ULong HostTag(std::uint64_t tag) {
 }
 
 bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(destination, source, bytes);
 }
 
 }

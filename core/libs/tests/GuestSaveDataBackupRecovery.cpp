@@ -16,6 +16,7 @@
 #include <vector>
 #ifdef _WIN32
 #include <process.h>
+#include <windows.h>
 #else
 #include <spawn.h>
 #include <sys/wait.h>
@@ -90,7 +91,7 @@ void SetStep(const char* step, bool fail = false, int call = 1) {
     SaveDataSetFileStepHook_nid_no_patch(Step);
 }
 
-void BackUp(const char* version) {
+void BackUp(const char* version, bool expectRenameFailure = false) {
     auto name = Name();
     SaveDataMount3 request{};
     request.user_id = 7;
@@ -107,7 +108,7 @@ void BackUp(const char* version) {
     SaveDataEvent event{};
     Require(sceSaveDataGetEventResult(nullptr, &event) == 0);
     Require(event.type == 1 && event.user_id == 7 && std::strcmp(event.dir_name.data, "kept") == 0);
-    const bool failed = failStep && std::strcmp(stopStep, "backup.cleanup") != 0;
+    const bool failed = expectRenameFailure || (failStep && std::strcmp(stopStep, "backup.cleanup") != 0);
     Require(event.error_code == (failed ? Internal : 0));
     if (failStep) Require(calls != 0);
 }
@@ -152,6 +153,8 @@ int Child(int argc, char** argv) {
         SaveDataDelete request{};
         request.dir_name = &name;
         Require(sceSaveDataDelete(&request) == (std::strcmp(argv[3], "invalid") == 0 ? Internal : 0));
+    } else if (operation == "backup-locked") {
+        BackUp(argv[3], true);
     } else {
         throw std::runtime_error("unknown child operation");
     }
@@ -258,6 +261,20 @@ void RecoveryFailure(const std::string& executable) {
     Require(Tree(Backup) == previous && !std::filesystem::exists(Old));
     Require(Run(executable, {"check", "old"}) == 0);
     NoCopies();
+#ifdef _WIN32
+    const auto lockedBackup = Start(executable);
+    const HANDLE lock = CreateFileW(Backup.c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                   nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    Require(lock != INVALID_HANDLE_VALUE);
+    const int status = Run(executable, {"backup-locked", "new"});
+    Require(CloseHandle(lock) != 0);
+    Require(status == 0);
+    Require(Tree(Backup) == lockedBackup);
+    NoCopies();
+    Require(Run(executable, {"check", "old"}) == 0);
+    Require(Run(executable, {"backup", "new"}) == 0);
+    Require(Run(executable, {"check", "new"}) == 0);
+#endif
 }
 
 void Retry(const std::string& executable) {
