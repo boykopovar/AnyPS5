@@ -110,6 +110,7 @@
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
 #include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"
 #include "prx/libSceNKWebKit/include/EnclosingRectExports.hpp"
+#include "prx/libSceNKWebKit/include/TiledBackingStoreExports.hpp"
 #include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
 #include "prx/libSceNKWebKit/include/SVGPathStringBuilderExports.hpp"
 #include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
