@@ -16,8 +16,14 @@ std::uint32_t Driver::drawUserWord(const DrawProgram& program, std::int32_t sgpr
 void Driver::FoldDrawOffsets(const ShaderRecompiler::RecompileResult& result, const DrawProgram& program, Pm4::DrawParameters& parameters) {
     if (result.vertexOffsetSgpr >= 0) {
         const auto offset = drawUserWord(program, result.vertexOffsetSgpr);
-        require(offset <= std::numeric_limits<std::uint32_t>::max() - parameters.firstVertex, "draw vertex offset overflow");
-        parameters.firstVertex += offset;
+        if (parameters.indexed) {
+            const auto sum = static_cast<std::int64_t>(static_cast<std::int32_t>(parameters.firstVertex)) + static_cast<std::int32_t>(offset);
+            require(sum >= std::numeric_limits<std::int32_t>::min() && sum <= std::numeric_limits<std::int32_t>::max(), "draw vertex offset overflow");
+            parameters.firstVertex = static_cast<std::uint32_t>(static_cast<std::int32_t>(sum));
+        } else {
+            require(offset <= std::numeric_limits<std::uint32_t>::max() - parameters.firstVertex, "draw vertex offset overflow");
+            parameters.firstVertex += offset;
+        }
     }
     if (result.instanceOffsetSgpr >= 0) parameters.firstInstance = drawUserWord(program, result.instanceOffsetSgpr);
 }

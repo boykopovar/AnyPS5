@@ -1688,7 +1688,8 @@ const HostImport* InPlaceIndexBehindWriter(const Context& context, std::uint64_t
     if (meshStage) return leave(IndexBehindWriter::MeshStage, nullptr);
     if (primitiveRestart) return leave(IndexBehindWriter::PrimitiveRestart, nullptr);
     const std::uint32_t largestIndex = indexSize == 2 ? 0xffffu : std::numeric_limits<std::uint32_t>::max();
-    if (firstVertex > std::numeric_limits<std::uint32_t>::max() - largestIndex) return leave(IndexBehindWriter::VertexOffset, nullptr);
+    const auto vertexOffset = static_cast<std::int64_t>(static_cast<std::int32_t>(firstVertex));
+    if (vertexOffset < 0 || vertexOffset > static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max() - largestIndex)) return leave(IndexBehindWriter::VertexOffset, nullptr);
     if (AnyShadowedOverlaps(address, bytes)) return leave(IndexBehindWriter::UnitShadow, nullptr);
     if (PendingStorageOverlaps(address, bytes, nullptr)) return leave(IndexBehindWriter::PendingStorage, nullptr);
     if (recorder->PendingLabelIn(address, bytes) || recorder->CompletionLabelIn(address, bytes) || recorder->QueuedStoreOverlaps(address, bytes)) return leave(IndexBehindWriter::LabelOrStore, nullptr);

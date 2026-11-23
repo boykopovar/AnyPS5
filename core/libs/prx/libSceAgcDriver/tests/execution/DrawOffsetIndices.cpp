@@ -569,6 +569,41 @@ std::string Run(Fixture& fixture) {
         failures += fixture.Check("direct indexed draw, s16 1000, s17 40", bufferIndices, baseVertex, startInstance, true);
     }
     {
+        constexpr std::uint32_t indxOffset = 3;
+        constexpr std::uint32_t baseVertex = 0xfffffffdu;
+        constexpr std::uint32_t startInstance = 40;
+        const auto userData = fixture.UserData(baseVertex, startInstance);
+        const auto vertex = fixture.Vertex(VertexCode, userData);
+        const auto draw = FoldedDraw(vertex, userData, {indexAddress, Vertices, 2, Instances, 0, true, indxOffset, 0});
+        fixture.Place(0, bufferIndices, startInstance);
+        fixture.Draw(vertex, draw);
+        const std::array<std::uint32_t, Vertices> raw{bufferIndices[0] + indxOffset, bufferIndices[1] + indxOffset, bufferIndices[2] + indxOffset};
+        failures += fixture.Check("direct indexed draw, GE_INDX_OFFSET 3, s16 -3, s17 40", raw, baseVertex, startInstance, true);
+    }
+    {
+        constexpr std::uint32_t indxOffset = 0xfffffffdu;
+        constexpr std::uint32_t baseVertex = 3;
+        constexpr std::uint32_t startInstance = 40;
+        const auto userData = fixture.UserData(baseVertex, startInstance);
+        const auto vertex = fixture.Vertex(VertexCode, userData);
+        const auto draw = FoldedDraw(vertex, userData, {indexAddress, Vertices, 2, Instances, 0, true, indxOffset, 0});
+        fixture.Place(0, bufferIndices, startInstance);
+        fixture.Draw(vertex, draw);
+        const std::array<std::uint32_t, Vertices> raw{bufferIndices[0] + indxOffset, bufferIndices[1] + indxOffset, bufferIndices[2] + indxOffset};
+        failures += fixture.Check("direct indexed draw, GE_INDX_OFFSET -3, s16 3, s17 40", raw, baseVertex, startInstance, true);
+    }
+    for (const auto& [indxOffset, baseVertex] : {std::pair{0x7fffffffu, 1u}, std::pair{0x80000000u, 0xffffffffu}}) {
+        const std::string what = "direct indexed draw, GE_INDX_OFFSET " + std::to_string(static_cast<std::int32_t>(indxOffset)) + ", s16 " + std::to_string(static_cast<std::int32_t>(baseVertex));
+        const auto userData = fixture.UserData(baseVertex, 40);
+        const auto vertex = fixture.Vertex(VertexCode, userData);
+        try {
+            static_cast<void>(FoldedDraw(vertex, userData, {indexAddress, Vertices, 2, Instances, 0, true, indxOffset, 0}));
+            failures += what + ": a base vertex outside the signed 32-bit range was folded\n";
+        } catch (const std::exception& error) {
+            if (std::string(error.what()).find("draw vertex offset overflow") == std::string::npos) failures += what + ": rejected with " + error.what() + "\n";
+        }
+    }
+    {
         constexpr std::uint32_t baseVertex = 1000;
         constexpr std::uint32_t startInstance = 40;
         const auto userData = fixture.UserData(baseVertex, startInstance);

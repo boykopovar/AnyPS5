@@ -7466,8 +7466,10 @@ bool indexBehindWriterTests(const Device& device, Recorder& recorder) {
     IndexBehindWriter shortOutcome = IndexBehindWriter::Count;
     Require(InPlaceIndexBehindWriter(context, indices, 2, 4, false, false, 0, &shortOutcome) == nullptr && shortOutcome == IndexBehindWriter::Off, "an index range shorter than one index, which is skipped on the copy path, was bound behind a pending GPU writer");
     Require(attempt(context, indices, 4, false, 1).second == IndexBehindWriter::VertexOffset, "a 32-bit index range whose vertex offset can overflow was bound behind a pending GPU writer");
-    Require(attempt(context, indices, 2, false, 0xffff0000u).second == IndexBehindWriter::Taken, "a 16-bit index range whose vertex offset cannot overflow was not bound behind a pending GPU writer");
-    Require(attempt(context, indices, 2, false, 0xffff0001u).second == IndexBehindWriter::VertexOffset, "a 16-bit index range whose vertex offset can overflow was bound behind a pending GPU writer");
+    Require(attempt(context, indices, 2, false, 0x7fffffffu).second == IndexBehindWriter::Taken, "a 16-bit index range whose vertex offset cannot overflow was not bound behind a pending GPU writer");
+    Require(attempt(context, indices, 2, false, 0xffff0001u).second == IndexBehindWriter::VertexOffset, "a 16-bit index range with a negative vertex offset was bound behind a pending GPU writer");
+    Require(attempt(context, indices, 2, false, 0xfffffffdu).second == IndexBehindWriter::VertexOffset, "a 16-bit index range whose vertex offset of -3 can take its lowest indices below vertex 0 was bound behind a pending GPU writer");
+    Require(attempt(context, indices, 2, false, 0x80000000u).second == IndexBehindWriter::VertexOffset, "a 16-bit index range whose vertex offset of -2147483648 takes every index below vertex 0 was bound behind a pending GPU writer");
     Require(attempt(context, indices + 2, 4, false, 0).second == IndexBehindWriter::NoImport, "an index range misaligned for its format was bound behind a pending GPU writer");
     auto limited = context;
     limited.limits.maxDrawIndexedIndexValue = 0xffffffu;
@@ -7492,7 +7494,7 @@ bool indexBehindWriterTests(const Device& device, Recorder& recorder) {
     expect(IndexBehindWriter::IndexLimit, 1);
     expect(IndexBehindWriter::MeshStage, 1);
     expect(IndexBehindWriter::PrimitiveRestart, 1);
-    expect(IndexBehindWriter::VertexOffset, 2);
+    expect(IndexBehindWriter::VertexOffset, 4);
     expect(IndexBehindWriter::LabelOrStore, 1);
     expect(IndexBehindWriter::NoImport, 1);
     for (std::size_t index = 0; index < expectedCounts.size(); ++index) Require(countsAfter[index] - countsBefore[index] == expectedCounts[index], "the outcome counter " + std::to_string(index) + " of the index ranges behind a pending GPU writer counted " + std::to_string(countsAfter[index] - countsBefore[index]) + " instead of " + std::to_string(expectedCounts[index]));
