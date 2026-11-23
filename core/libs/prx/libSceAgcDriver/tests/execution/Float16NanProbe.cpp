@@ -153,6 +153,8 @@ int main(int argc, char** argv) {
         const auto exp2 = AgcDriver::ProbeFloat32HostExp2(*device, target, false);
         Require(exp2.compared == 254u, "f32 exp2 probe: wrong number of compared results");
         Require(exp2.mismatches == 0u, "f32 exp2 probe: range-reduced path changed an integer result");
+        const auto hostExp2 = AgcDriver::ProbeFloat32HostExp2(*device, target, true);
+        Require(target.float32HostExp2 == (hostExp2.mismatches == 0u) || std::getenv("APS5_NO_HOST_F32_EXP2") != nullptr, "f32 exp2 probe: the device target does not follow the host probe");
         if (!supports(spv::CapabilityFloat16) || !supports(spv::CapabilityRoundingModeRTE) || !supports(spv::CapabilityDenormPreserve)) {
             std::puts("f16 NaN probe: skipped, the device has no native f16 with RTE rounding and kept denormals");
             return VulkanTestSkipped;
