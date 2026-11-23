@@ -195,8 +195,8 @@ void* APS5_VABI sceAjmiBatchJobInlineBuffer_nid_no_patch(void* position, const v
 }
 APS5_EXPORT("4MsUK9kAnKg", sceAjmiBatchJobInlineBuffer_nid_no_patch);
 
-int APS5_VABI sceAjmiModuleUnregister() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiModuleUnregister(std::uint32_t context, std::uint32_t codec) {
+    return sceAjmModuleUnregister(context, codec);
 }
 
 int APS5_VABI sceAjmiBatchStartBuffer(std::uint32_t context, const std::uint8_t* batch, std::uint32_t batchSize, int priority, AjmBatchError* error, std::uint32_t* batchId) {
@@ -252,8 +252,8 @@ int APS5_VABI sceAjmiMemoryRegister() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiModuleRegister() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiModuleRegister(std::uint32_t context, std::uint32_t codec, std::int64_t reserved) {
+    return sceAjmModuleRegister(context, codec, reserved);
 }
 
 void* APS5_VABI sceAjmiBatchJobRunBufferRa_nid_no_patch(void* position, std::uint32_t instance, std::uint64_t flags, const void* input, std::size_t inputSize, void* output, std::size_t outputSize, void* sideband, std::size_t sidebandSize, void* returnAddress) {
