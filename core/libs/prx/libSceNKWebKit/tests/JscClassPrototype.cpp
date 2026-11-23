@@ -275,6 +275,25 @@ void TestToStringTag() {
     JSGlobalContextRelease(ctx);
 }
 
+void TestAssignOverPrototypeDataProperty() {
+    JSGlobalContextRef ctx = JSGlobalContextCreate(nullptr);
+    JSClassDefinition shared = kJSClassDefinitionEmpty;
+    shared.className = "Shared";
+    JSClassRef sharedClass = JSClassCreate(&shared);
+    Require(ctx != nullptr && sharedClass != nullptr);
+
+    SetGlobal(ctx, "first", JSObjectMake(ctx, sharedClass, nullptr));
+    Require(EvalBool(ctx, "Object.getPrototypeOf(first).value = 1; first.value === 1"));
+    for (int i = 0; i < 64; ++i) {
+        SetGlobal(ctx, "next", JSObjectMake(ctx, sharedClass, nullptr));
+        Require(EvalBool(ctx, "next.value = 2; next.value === 2 && Object.getPrototypeOf(next) === Object.getPrototypeOf(first)"));
+    }
+    Require(EvalBool(ctx, "first.value === 1 && Object.getPrototypeOf(first).value === 1"));
+
+    JSClassRelease(sharedClass);
+    JSGlobalContextRelease(ctx);
+}
+
 }
 
 int main() {
@@ -282,6 +301,7 @@ int main() {
     TestNoAutomaticPrototype();
     TestVersionAndDuplicateNames();
     TestToStringTag();
+    TestAssignOverPrototypeDataProperty();
     std::puts("libSceNKWebKit JSC class prototype tests passed");
     return 0;
 }
