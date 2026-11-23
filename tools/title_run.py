@@ -268,7 +268,8 @@ def read_summary(path):
                 errors["malformed_rows"] = errors.get("malformed_rows", 0) + 1
             continue
         if not isinstance(decoded, dict):
-            errors["non_object_rows"] = errors.get("non_object_rows", 0) + 1
+            if non_object_summary_row(decoded):
+                errors["non_object_rows"] = errors.get("non_object_rows", 0) + 1
             continue
         declared_format = decoded.get("format")
         if not SUMMARY_FIELDS.intersection(decoded) or (isinstance(declared_format, str) and declared_format not in ("", "aps5-bench/1")):
@@ -300,6 +301,14 @@ def read_summary(path):
         identity[key] = value if isinstance(value, str) else ""
     return {"presents": presents, "fps": round(fps, 1) if math.isfinite(fps) else 0.0, **identity,
             **({"native": list(native.values())} if native else {}), **({"native_errors": errors} if errors else {})}
+
+
+def non_object_summary_row(value):
+    summary_format = "aps5-bench/1"
+    if not isinstance(value, list):
+        return value == summary_format
+    return bool(value) and (value[0] == summary_format or any(
+        isinstance(item, dict) and item.get("format") == summary_format for item in value))
 
 
 def section(document, name):

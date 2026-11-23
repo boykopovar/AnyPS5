@@ -261,8 +261,6 @@ class AnalysisTests(unittest.TestCase):
                                  {"presents": 10, "fps": 10.0, "gpu": "Good", "driver": "", "os": ""})
                 if label in ("duplicate frames", "non-finite duration"):
                     self.assertEqual(errors, {"malformed_rows": 1})
-                elif label == "deep nesting":
-                    self.assertIn(errors, (None, {"non_object_rows": 1}))
                 else:
                     self.assertIsNone(errors)
 
@@ -560,18 +558,26 @@ time.sleep(60)
         self.assertNotIn("bbbbbbbbbbbb", json.dumps(run["native"]))
         self.assertIn("unknown", markdown)
 
-    def test_non_object_trace_records_cannot_certify_the_valid_intervals(self):
+    def test_protocol_tagged_non_object_rows_cannot_certify_the_valid_intervals(self):
         import performance_bisect
+        rows = ['"aps5-bench/1"', '["aps5-bench/1",null]',
+                '[{"format":"aps5-bench/1","commit":"bbbbbbbbbbbb","dirty":false}]']
         summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
-            {"commit": self.commit, "modified": False}, summary_rows=['[]', 'null', '7', '"not a summary object"'])
+            {"commit": self.commit, "modified": False}, summary_rows=rows)
         with self.assertRaisesRegex(ValueError, "native.*unknown"):
             performance_bisect.sample_summary(path, "PPSA00001", self.commit)
         self.assert_qualification(summary, "unknown")
-        self.assertEqual(run["native"]["summary_errors"], {"non_object_rows": 4})
+        self.assertEqual(run["native"]["summary_errors"], {"non_object_rows": len(rows)})
+        self.assertNotIn("bbbbbbbbbbbb", json.dumps(run["native"]))
+        self.assertIn("unknown", markdown)
 
     def test_ordinary_log_records_outside_the_summary_protocol_do_not_taint_native_identity(self):
         import performance_bisect
         logs = ['worker started', '[notification] ordinary message',
+                '[]', 'null', 'true', '7', '"worker ready"', '[1,2,3]',
+                '"status mentions aps5-bench/1"', '["info","aps5-bench/1"]',
+                '[{"format":"app-log","commit":"bbbbbbbbbbbb"}]',
+                '[{"details":{"format":"aps5-bench/1","commit":"bbbbbbbbbbbb"}}]',
                 '{"level":"info","message":"ordinary JSON log"}',
                 '{"format":"application-log","commit":"bbbbbbbbbbbb","dirty":false,"message":"source log"}',
                 '{"format":"aps5-log/1","commit":"bbbbbbbbbbbb","dirty":false,"message":"ordinary native log"}', '']
