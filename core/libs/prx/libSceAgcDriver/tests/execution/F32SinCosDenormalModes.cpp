@@ -216,8 +216,6 @@ std::optional<std::string> Run(AgcDriver::VulkanDevice& device, ShaderRecompiler
     return std::nullopt;
 }
 
-// A zero, one or NaN result is what tells a flushed input from a kept one and must match on the bits. Any other result goes through
-// the host's sin and cos, whose last bit differs between drivers, so it may be one ulp away.
 std::uint32_t Tolerance(std::uint32_t expected) {
     const std::uint32_t magnitude = expected & 0x7fffffffu;
     return magnitude == 0u || magnitude == 0x3f800000u || magnitude > 0x7f800000u ? 0u : 1u;
