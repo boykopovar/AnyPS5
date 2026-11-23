@@ -327,7 +327,7 @@ bool TranslationContext::float16Ternary(const RdnaInstruction& inst, IrOpcode op
         const IrU16 halfBits(ir.Emit(IrOpcode::BitCastU16F16, IrType::U16, {&half.Value()}));
         const IrU32 word(ir.Emit(IrOpcode::ConvertU32U16, IrType::U32, {&halfBits.Value()}));
         const IrU1 nan(ir.UGreaterThan(ir.BitwiseAnd(ir.BitCastU32(result.Value()), ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)));
-        write16Bits(inst.destination, IrU32(ir.Select(nan.Value(), clampF16Bits(inst.destination, fmaF16NanBits(bits)).Value(), word.Value())));
+        write16Bits(inst.destination, IrU32(ir.Select(nan.Value(), clampF16Bits(inst.destination, fmaF16NanBits(bits, measured)).Value(), word.Value())));
         return true;
     }
     if (mix) {
@@ -384,18 +384,23 @@ bool TranslationContext::float16NativeFma(const RdnaInstruction& inst, bool accu
         const IrU1 overflow(ir.LogicalAnd(infinite(result).Value(), ir.LogicalNot(infiniteSource.Value())));
         result = IrU32(ir.Select(overflow.Value(), ir.BitwiseOr(ir.BitwiseAnd(result.Value(), ir.Constant(0x8000u)), ir.Constant(0x7bffu)), result.Value()));
     }
-    if (!hostNans) result = IrU32(ir.Select(nan(result).Value(), fmaF16NanBits(sources).Value(), result.Value()));
+    if (!hostNans) result = IrU32(ir.Select(nan(result).Value(), fmaF16NanBits(sources, false).Value(), result.Value()));
     write16Bits(inst.destination, clampF16Bits(inst.destination, result));
     return true;
 }
 
-IrU32 TranslationContext::fmaF16NanBits(const std::array<IrU32, 3>& sources) {
+IrU32 TranslationContext::fmaF16NanBits(const std::array<IrU32, 3>& sources, bool flushInputs) {
+    // The product is invalid on the operands the multiply sees: with input flushing, Inf * denormal is Inf * 0 and gives 0xfe00 even
+    // when the addend is a NaN. The NaN that propagates still comes from the raw bits, since flushing never changes a NaN.
+    const auto effective = [&](const IrU32& value) { return flushInputs ? flushF16Input(value) : value; };
     const auto magnitude = [&](const IrU32& value) { return IrU32(ir.BitwiseAnd(value.Value(), ir.Constant(0x7fffu))); };
     const auto nan = [&](const IrU32& value) { return IrU1(ir.UGreaterThan(magnitude(value).Value(), ir.Constant(0x7c00u))); };
     const auto infZero = [&](const IrU32& inf, const IrU32& zero) {
         return IrU1(ir.LogicalAnd(ir.IEqual(magnitude(inf).Value(), ir.Constant(0x7c00u)), ir.IEqual(magnitude(zero).Value(), ir.Constant(0u))));
     };
-    const IrU1 invalidProduct(ir.LogicalOr(infZero(sources[0], sources[1]).Value(), infZero(sources[1], sources[0]).Value()));
+    const IrU32 lhs = effective(sources[0]);
+    const IrU32 rhs = effective(sources[1]);
+    const IrU1 invalidProduct(ir.LogicalOr(infZero(lhs, rhs).Value(), infZero(rhs, lhs).Value()));
     IrU32 result(ir.Constant(0xfe00u));
     result = IrU32(ir.Select(ir.LogicalAnd(nan(sources[2]).Value(), ir.LogicalNot(invalidProduct.Value())), quietNan16(sources[2]).Value(), result.Value()));
     result = IrU32(ir.Select(nan(sources[1]).Value(), quietNan16(sources[1]).Value(), result.Value()));

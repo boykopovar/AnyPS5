@@ -28,7 +28,10 @@ alignas(256) constexpr std::array<std::uint32_t, 19> Code{
     0xe0781000u, 0x80010a02u, 0xbf810000u,
 };
 
-constexpr std::array<std::array<std::uint32_t, 3>, Threads> Operands{{
+using Operand = std::array<std::uint32_t, 3>;
+using Row = std::array<std::uint32_t, Results>;
+
+constexpr std::array<Operand, Threads> Operands{{
     {0x7e00u, 0x3c00u, 0x3c00u},
     {0x3c00u, 0x7d01u, 0x3c00u},
     {0x3c00u, 0x3c00u, 0xfe55u},
@@ -43,7 +46,7 @@ constexpr std::array<std::array<std::uint32_t, 3>, Threads> Operands{{
     {0x7e55u, 0xfd01u, 0x3c00u},
 }};
 
-using Expected = std::array<std::array<std::uint32_t, Results>, Threads>;
+using Expected = std::array<Row, Threads>;
 
 constexpr Expected IeeeOff{{
     {0x7e00u, 0xfe00u, 0x7e00u, 0x7e00u},
@@ -75,6 +78,44 @@ constexpr Expected IeeeOn{{
     {0x7e55u, 0xfe55u, 0x7e55u, 0x7e55u},
 }};
 
+// Denormal multiplicands. With f16 input flushing (FLOAT_MODE bit 6 clear) Inf * denormal is Inf * 0, an invalid
+// product, so the result is 0xfe00 even when the addend is a NaN. With input denormals kept the addend NaN propagates.
+constexpr std::array<Operand, 6> FlushOperands{{
+    {0x7c00u, 0x0001u, 0x7e55u},
+    {0x0001u, 0x7c00u, 0x7d01u},
+    {0xfc00u, 0x83ffu, 0x7e55u},
+    {0x7c00u, 0x0001u, 0x3c00u},
+    {0x0001u, 0x0001u, 0x7e55u},
+    {0x7c00u, 0x0400u, 0x7e55u},
+}};
+
+constexpr std::array<Row, FlushOperands.size()> InputsFlushed{{
+    {0xfe00u, 0xfe00u, 0xfe00u, 0xfe00u},
+    {0xfe00u, 0xfe00u, 0xfe00u, 0xfe00u},
+    {0xfe00u, 0xfe00u, 0xfe00u, 0xfe00u},
+    {0xfe00u, 0xfe00u, 0xfe00u, 0xfe00u},
+    {0x7e55u, 0x7e55u, 0x7e55u, 0x7e55u},
+    {0x7e55u, 0x7e55u, 0x7e55u, 0x7e55u},
+}};
+
+constexpr std::array<Row, FlushOperands.size()> InputsKeptIeeeOff{{
+    {0x7e55u, 0x7e55u, 0x7e55u, 0x7e55u},
+    {0x7d01u, 0x7d01u, 0x7d01u, 0x7d01u},
+    {0x7e55u, 0x7e55u, 0x7e55u, 0x7e55u},
+    {0x7c00u, 0xfc00u, 0x7c00u, 0x7c00u},
+    {0x7e55u, 0x7e55u, 0x7e55u, 0x7e55u},
+    {0x7e55u, 0x7e55u, 0x7e55u, 0x7e55u},
+}};
+
+constexpr std::array<Row, FlushOperands.size()> InputsKeptIeeeOn{{
+    {0x7e55u, 0x7e55u, 0x7e55u, 0x7e55u},
+    {0x7f01u, 0x7f01u, 0x7f01u, 0x7f01u},
+    {0x7e55u, 0x7e55u, 0x7e55u, 0x7e55u},
+    {0x7c00u, 0xfc00u, 0x7c00u, 0x7c00u},
+    {0x7e55u, 0x7e55u, 0x7e55u, 0x7e55u},
+    {0x7e55u, 0x7e55u, 0x7e55u, 0x7e55u},
+}};
+
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
@@ -86,10 +127,10 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-void Run(AgcDriver::VulkanDevice& device, bool ieee) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        std::copy(Operands[tid].begin(), Operands[tid].end(), &Input[tid * Inputs]);
-        Input[tid * Inputs + 3u] = 0u;
+void Run(AgcDriver::VulkanDevice& device, std::span<const Operand> operands, std::uint32_t floatMode, bool ieee) {
+    Input.fill(0u);
+    for (std::uint32_t tid = 0; tid < operands.size(); ++tid) {
+        std::copy(operands[tid].begin(), operands[tid].end(), &Input[tid * Inputs]);
     }
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
@@ -106,18 +147,18 @@ void Run(AgcDriver::VulkanDevice& device, bool ieee) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xc0u, true, ieee, false};
+    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{floatMode, true, ieee, false};
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
     device.WaitIdle();
 }
 
-void Check(const Expected& expected, const char* mode) {
+void Check(std::span<const Operand> operands, std::span<const Row> expected, const std::string& mode) {
     constexpr const char* Names[Results] = {"v_fma_f16", "v_fma_f16 with -src0 and |src1|", "v_fma_f16 with mul:2", "v_fmac_f16"};
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+    for (std::uint32_t tid = 0; tid < operands.size(); ++tid) {
         for (std::uint32_t form = 0; form < Results; ++form) {
             const std::uint32_t actual = Output[tid * Results + form];
-            Require(actual == expected[tid][form], std::string(Names[form]) + " " + mode + " of " + Hex(Operands[tid][0]) + ", " + Hex(Operands[tid][1]) + ", " + Hex(Operands[tid][2]) + " is " + Hex(actual) + ", expected " + Hex(expected[tid][form]));
+            Require(actual == expected[tid][form], std::string(Names[form]) + " " + mode + " of " + Hex(operands[tid][0]) + ", " + Hex(operands[tid][1]) + ", " + Hex(operands[tid][2]) + " is " + Hex(actual) + ", expected " + Hex(expected[tid][form]));
         }
     }
 }
@@ -128,10 +169,19 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device, false);
-        Check(IeeeOff, "with IEEE mode off");
-        Run(*device, true);
-        Check(IeeeOn, "with IEEE mode on");
+        Run(*device, Operands, 0xc0u, false);
+        Check(Operands, IeeeOff, "with IEEE mode off");
+        Run(*device, Operands, 0xc0u, true);
+        Check(Operands, IeeeOn, "with IEEE mode on");
+        for (const bool ieee : {false, true}) {
+            const std::string suffix = ieee ? " and IEEE mode on" : " and IEEE mode off";
+            for (const std::uint32_t floatMode : {0x00u, 0x80u}) {
+                Run(*device, FlushOperands, floatMode, ieee);
+                Check(FlushOperands, InputsFlushed, "with FLOAT_MODE " + Hex(floatMode) + suffix);
+            }
+            Run(*device, FlushOperands, 0x40u, ieee);
+            Check(FlushOperands, ieee ? InputsKeptIeeeOn : InputsKeptIeeeOff, "with FLOAT_MODE 0x40" + suffix);
+        }
         std::puts("f16 fma NaN propagation tests passed");
         return 0;
     } catch (const std::exception& error) {
