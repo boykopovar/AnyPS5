@@ -288,8 +288,6 @@ int APS5_VABI WKPageIsMockRealtimeMediaSourceCenterEnabled();
 int APS5_VABI WKPageIsPlayingAudio();
 int APS5_VABI WKPageLoadAlternateHTMLStringWithUserData();
 int APS5_VABI WKPageLoadAlternateHTMLString();
-int APS5_VABI WKPageLoadData();
-int APS5_VABI WKPageLoadDataWithUserData();
 int APS5_VABI WKPageLoadFileWithUserData();
 int APS5_VABI WKPageLoadHTMLString();
 int APS5_VABI WKPageLoadHTMLStringWithUserData();

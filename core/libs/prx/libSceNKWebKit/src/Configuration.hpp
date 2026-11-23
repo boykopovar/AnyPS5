@@ -94,6 +94,11 @@ public:
     bool allowsRemoteInspection = false;
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
+    std::optional<std::vector<std::uint8_t>> loadedData;
+    std::optional<std::u16string> loadedMIMEType;
+    std::optional<std::u16string> loadedEncoding;
+    Retained<URL> loadedBaseURL;
+    const void* loadUserData = nullptr;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};

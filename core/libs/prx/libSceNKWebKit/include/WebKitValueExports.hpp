@@ -465,6 +465,8 @@ const void* APS5_VABI WKPageCopyTitle(const void* pageRef);
 const void* APS5_VABI WKPageCopyActiveURL(const void* pageRef);
 const void* APS5_VABI WKPageCopyProvisionalURL(const void* pageRef);
 const void* APS5_VABI WKPageCopyCommittedURL(const void* pageRef);
+void APS5_VABI WKPageLoadData(const void* pageRef, const void* dataRef, const void* MIMETypeRef, const void* encodingRef, const void* baseURLRef);
+void APS5_VABI WKPageLoadDataWithUserData(const void* pageRef, const void* dataRef, const void* MIMETypeRef, const void* encodingRef, const void* baseURLRef, const void* userDataRef);
 double APS5_VABI WKPageGetEstimatedProgress(const void* pageRef);
 const void* APS5_VABI WKPageCopyApplicationNameForUserAgent(const void* pageRef);
 void APS5_VABI WKPageSetApplicationNameForUserAgent(const void* pageRef, const void* applicationNameRef);
