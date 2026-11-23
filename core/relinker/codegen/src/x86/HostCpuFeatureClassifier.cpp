@@ -50,6 +50,7 @@ bool isAvx1Vector256(const std::uint8_t map, const std::uint8_t prefix, const st
     if (map == Map0F38 && prefix == Prefix66) {
         switch (opcode) {
         case 0x0C: case 0x0D: case 0x0E: case 0x0F: case 0x17:
+            return true;
         case 0x18: case 0x19:
             return !registerForm;
         case 0x1A:
