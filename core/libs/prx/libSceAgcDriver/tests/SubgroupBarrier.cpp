@@ -130,6 +130,79 @@ void verifyDriverQuirk() {
     }
 }
 
+void verifyMeshSoftwareBarrierDriver() {
+    const auto affected = VK_MAKE_API_VERSION(0, 2, 0, 331);
+    require(AgcDriver::MeshSoftwareControlBarriersRequired(VK_DRIVER_ID_AMD_PROPRIETARY, affected), "AMD proprietary Vulkan 2.0.331 did not enable mesh software control barriers");
+    require(!AgcDriver::MeshSoftwareControlBarriersRequired(VK_DRIVER_ID_AMD_PROPRIETARY, affected - 1u), "the AMD mesh barrier workaround matched the preceding driver version");
+    require(!AgcDriver::MeshSoftwareControlBarriersRequired(VK_DRIVER_ID_AMD_PROPRIETARY, affected + 1u), "the AMD mesh barrier workaround matched the following driver version");
+    require(!AgcDriver::MeshSoftwareControlBarriersRequired(VK_DRIVER_ID_MESA_RADV, affected), "the AMD mesh barrier workaround matched RADV");
+    require(!AgcDriver::MeshSoftwareControlBarriersRequired(VK_DRIVER_ID_NVIDIA_PROPRIETARY, affected), "the AMD mesh barrier workaround matched NVIDIA");
+}
+
+struct MeshBarrierOps {
+    std::uint32_t control = 0;
+    std::uint32_t atomicLoad = 0;
+    std::uint32_t atomicIAdd = 0;
+    std::uint32_t atomicStore = 0;
+    std::uint32_t loopMerge = 0;
+};
+
+MeshBarrierOps recompileMeshBarrier(bool software) {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 8> hidden{};
+    static constexpr std::array<std::uint32_t, 8> capabilities{
+        spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64,
+        spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess,
+        spv::CapabilityClipDistance, spv::CapabilityGroupNonUniform, spv::CapabilityMeshShadingEXT
+    };
+    static constexpr std::array<std::string_view, 3> extensions{
+        "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_EXT_mesh_shader"
+    };
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Mesh, 0x26267000u, BranchedLdsStep, 0, {}};
+    request.context.waveSize = 64u;
+    request.context.userData = hidden;
+    request.context.vertex = ShaderVertexStageInfo{};
+    request.context.vertex->paClVsOutCntl = (1u << 18u) | (1u << 21u);
+    request.graphics = GraphicsCompileContext{0u, {}, MeshConfiguration{4u, 4u, 12u, 12u, 4u, 128u, 1024u, 0u, 4u}, std::nullopt, {}};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010400u;
+    request.target.subgroupSize = 64u;
+    request.target.bdaAbiVersion = 1u;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+    request.target.maxWorkgroupInvocations = 1024u;
+    request.target.maxWorkgroupSharedMemoryBytes = 32768u;
+    request.target.mesh = MeshTargetLimits{{128u, 1u, 1u}, 128u, 32768u, 256u, 256u, 128u, 32768u, 1u, 1u};
+    request.target.meshSoftwareControlBarriers = software;
+    request.layout = {0u, 0u, 0u, 128u};
+    request.useCache = true;
+    const auto result = Recompile(request);
+    MeshBarrierOps ops;
+    const auto& words = result.spirv.Words();
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        switch (static_cast<spv::Op>(words[at] & 0xffffu)) {
+        case spv::OpControlBarrier: ++ops.control; break;
+        case spv::OpAtomicLoad: ++ops.atomicLoad; break;
+        case spv::OpAtomicIAdd: ++ops.atomicIAdd; break;
+        case spv::OpAtomicStore: ++ops.atomicStore; break;
+        case spv::OpLoopMerge: ++ops.loopMerge; break;
+        default: break;
+        }
+    }
+    return ops;
+}
+
+void verifyMeshSoftwareBarrierEmission() {
+    const auto normal = recompileMeshBarrier(false);
+    require(normal.control >= 2u, "the mesh barrier fixture did not emit both its guest and wrapper control barriers");
+    require(normal.atomicIAdd == 0u && normal.atomicLoad == 0u && normal.atomicStore == 0u, "the normal mesh barrier fixture unexpectedly used software barrier atomics");
+    const auto software = recompileMeshBarrier(true);
+    require(software.control == 2u, "the software mesh barrier path did not retain only the two unconditional wrapper control barriers");
+    require(software.atomicLoad >= 2u && software.atomicIAdd >= 2u && software.atomicStore >= 1u && software.loopMerge >= 1u, "the software mesh barrier path did not emit the cyclic atomic rendezvous");
+}
+
 void verifyLdsMemoryBarrierScope() {
     const std::array<std::pair<const char*, std::span<const std::uint32_t>>, 3> programs{{{"ds_write_b16", LdsHalfStore}, {"ds_add_u32", LdsAtomicAdd}, {"ds_max_f32", LdsAtomicMax}}};
     for (const auto& [name, code] : programs) {
@@ -189,6 +262,8 @@ void verifyDeviceAtomicMemoryBarrierSemantics() {
 int main() {
     try {
         verifyDriverQuirk();
+        verifyMeshSoftwareBarrierDriver();
+        verifyMeshSoftwareBarrierEmission();
         verifyLdsLockFenceDrivers();
         verifyEmittedBarriers();
         verifyLdsMemoryBarrierScope();
