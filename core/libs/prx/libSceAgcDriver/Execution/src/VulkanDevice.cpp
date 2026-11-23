@@ -5182,6 +5182,7 @@ bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stage
 }
 
 bool VulkanDevice::PrebuildGraphicsLibrariesOnFirstVisit(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders) {
+    if (Graphics::DefersPipelineBuild(shaders)) return false;
     std::uint64_t key = 0xcbf29ce484222325ull;
     for (const auto& shader : shaders) key = (key ^ (shader.program != nullptr ? shader.program->variantId : 0ull)) * 0x100000001b3ull;
     {
