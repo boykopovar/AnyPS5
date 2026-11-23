@@ -44,6 +44,13 @@ bool IsDccClear(DccKeys keys);
 std::optional<std::uint8_t> LandedUniformMetadataByte(std::uint64_t address, std::size_t bytes);
 DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
 DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount);
+// What the keys read once the recorded GPU writes over the range land, without syncing: the
+// uniform landed byte when every pending writer is a known fill (or copy) covering the range,
+// Unreadable when they are mixed, partial, or a writer that is not a known fill. When nothing is
+// pending this is CurrentDccKeys. Used by the mipmapped color-target fast clear to take the GPU
+// clear when the pending key fill is the clear code itself (order is kept: the clear is recorded
+// after the fill in the same queue).
+DccKeys LandedDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount);
 std::optional<DccKeys> KnownPendingDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
 std::optional<std::uint8_t> CurrentUniformMetadataByte(std::uint64_t address, std::size_t bytes);
 // Stores "uncompressed" keys over the surface's metadata on the CPU (a guest memory write: it waits

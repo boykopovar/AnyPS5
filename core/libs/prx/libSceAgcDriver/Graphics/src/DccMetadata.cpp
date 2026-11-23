@@ -594,6 +594,23 @@ DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, st
     return currentDccKeys(metaAddress, keyCount, memoized);
 }
 
+DccKeys LandedDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount) {
+    Require(keyCount >= DccKeyBytes(surfaceBytes), "a DCC key range covers fewer keys than one per 256 surface bytes");
+    if (metaAddress == 0 || keyCount == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) {
+        return CurrentDccKeys(metaAddress, surfaceBytes, keyCount);
+    }
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || !recorder->PendingWriteOverlaps(metaAddress, keyCount)) {
+        return CurrentDccKeys(metaAddress, surfaceBytes, keyCount);
+    }
+    // Recorded writes over the keys are still landing: answer from them without syncing. A shadow
+    // (another image's result over the keys) means the landed bytes are not what the writes say.
+    if (AnyShadowedOverlaps(metaAddress, keyCount)) return DccKeys::Unreadable;
+    const auto landed = KeysAfterPendingWrites(*recorder, metaAddress, keyCount);
+    if (landed.mixed || landed.unknown || landed.value < 0) return DccKeys::Unreadable;
+    return ByteKeys(static_cast<std::uint8_t>(landed.value));
+}
+
 std::optional<std::uint8_t> CurrentUniformMetadataByte(std::uint64_t address, std::size_t bytes) {
     if (address == 0 || bytes == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return std::nullopt;
     if (GuestMemory::GpuMutex().HeldByThisThread()) {

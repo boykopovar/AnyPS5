@@ -7221,12 +7221,13 @@ bool StorageTexture::ClearMip(const std::array<std::byte, 16>& texel, std::uint3
         refusal = "pattern";
         return false;
     }
-    if (descriptor.dccAddress != 0) {
+    if (descriptor.dccAddress != 0 && !verifiedCodeClear) {
         // A recorded key write still landing is not in the bytes yet: refuse (the caller stores on
-        // the CPU, as before). With a verified code clear the slice may still hold its code: the
-        // caller read it uniform and passed its exact texel, which the fill records (the
+        // the CPU, as before). The verified-code path skips both checks: the caller read the
+        // landed code (LandedDccKeys, from the pending fills themselves, no sync) and passed its
+        // exact texel, and the clear is recorded after the fill in the same queue (the
         // register-clear flow does the same, which the keys' own scan cannot see through).
-        if (Recorder::SnapshotWriteOverlaps(descriptor.dccAddress, static_cast<std::size_t>(guestBytes / 256)) || (!verifiedCodeClear && TextureClearKeys(descriptor, guestBytes) != DccKeys::Uncompressed)) {
+        if (Recorder::SnapshotWriteOverlaps(descriptor.dccAddress, static_cast<std::size_t>(guestBytes / 256)) || TextureClearKeys(descriptor, guestBytes) != DccKeys::Uncompressed) {
             refusal = "keys";
             return false;
         }

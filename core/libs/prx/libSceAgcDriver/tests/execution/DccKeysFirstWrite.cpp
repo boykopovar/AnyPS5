@@ -1149,6 +1149,194 @@ void RunMipmappedClearDraw(AgcDriver::VulkanDevice& device, std::uint8_t* block)
 #endif
 }
 
+// A recorded key fill of the clear code that has not landed yet: the bind takes the GPU clear
+// from the landed code (no sync, no CPU store at bind), and after everything lands the keys are
+// uncompressed and the blended draw saw the clear colour.
+void RunMipmappedClearPendingClearFill(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+#ifndef _WIN32
+    auto* texels = block;
+    auto* keys = block + MipDrawKeysOffset;
+    const auto meta = AddressOf(keys);
+    // Stale texels; every key uncompressed (0xff) -- the pending fill below leaves the viewed
+    // mip's slice the 0000 clear code. The CURRENT bytes are not the clear code: the bind must
+    // take the clear from the landed value, not the current one.
+    std::memset(texels, 0x55, 2 * 65536);
+    std::memset(keys, 0xff, std::size_t{MipDrawLevels} * 4096u);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(AddressOf(texels) >> 8u);
+    cx[0x390] = static_cast<std::uint32_t>(AddressOf(texels) >> 40u);
+    cx[0x31b] = 0;
+    cx[0x31c] = 0x10028028u;
+    cx[0x31d] = 0;
+    cx[0x3b0] = ((MipDrawLevels - 1u) << 28u) | ((MipDrawSide - 1u) << 14u) | (MipDrawSide - 1u);
+    cx[0x3b8] = 0x9000000u | (TileRenderTarget64KB << 14u) | (1u << 30u);
+    cx[0x325] = static_cast<std::uint32_t>(meta >> 8u);
+    cx[0x3a8] = static_cast<std::uint32_t>(meta >> 40u);
+    const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    Require(color.mipCount == MipDrawLevels && color.dccAddress == meta + MipDrawMip0OffsetKeys,
+            "the pending-fill target lost its key slice");
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    // A recorded fill of the clear code over the viewed mip's keys, still in flight at bind.
+    const auto slice = meta + MipDrawMip0OffsetKeys;
+    const std::array<std::uint32_t, 4> zeroPattern{0u, 0u, 0u, 0u};
+    Require(device.FillBuffer(slice, MipDrawMip0Keys, zeroPattern), "the pending clear-code fill was not recorded");
+    // A second pending fill over the small mips' keys (a key reset still in flight, as the game
+    // re-issues its key fills every frame): the unverified path's pending-write check spans the
+    // surface's key extent from the chain base, so this is what refuses the GPU clear there and
+    // forces the CPU store at bind (the in-game cost).
+    const std::array<std::uint32_t, 4> smallMipPattern{0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu};
+    Require(device.FillBuffer(meta, 512, smallMipPattern), "the pending small-mip key fill was not recorded");
+    MipDrawBlended(device, color);
+    // No sync at bind: the recorded fill has not been made to land -- the guest's key bytes are
+    // still the pre-fill 0xff, not the fill's 0x00 (the bind answered from the landed value).
+    {
+        const auto* keyBytes = reinterpret_cast<const std::uint8_t*>(slice);
+        Require(std::all_of(keyBytes, keyBytes + MipDrawMip0Keys, [](std::uint8_t b) { return b == 0xffu; }),
+                "the bind of a mipmapped DCC target with a pending clear-code key fill synced the fill (the guest keys changed before any wait)");
+    }
+    device.WaitIdle();
+    // The bind took the GPU clear from the landed code: the guest texels were not written at
+    // bind (the clear is on the image, the bytes follow at the write-back).
+    {
+        const auto* before = reinterpret_cast<const std::uint8_t*>(color.address);
+        Require(std::all_of(before, before + color.bytes, [](std::uint8_t b) { return b == 0x55u; }),
+                "the bind of a mipmapped DCC target with a pending clear-code key fill wrote into guest memory (it must take the GPU clear from the landed code)");
+    }
+    AgcDriver::Graphics::StorageTexture::FlushPending(color.address, color.bytes, nullptr, "pending-fill read-back");
+    device.WaitIdle();
+    const auto layout = AgcDriver::Graphics::ColorTargetLayout(MipDrawSide, MipDrawSide, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+    std::vector<std::byte> stored(color.bytes);
+    AgcDriver::GuestMemory::Read(color.address, stored, 4);
+    for (std::uint32_t y = 0; y < MipDrawSide; ++y) {
+        for (std::uint32_t x = 0; x < MipDrawSide; ++x) {
+            const auto offset = layout.Offset(x, y);
+            const bool inside = x < MipDrawScissor;
+            const int expected = inside ? 128 : 0;
+            for (std::size_t channel = 0; channel < 4; ++channel) {
+                const int actual = static_cast<int>(stored[offset + channel]);
+                Require(std::abs(actual - expected) <= 1, "pending-fill mipmapped clear: " + (inside ? std::string("inside") : std::string("outside")) + " the scissor at (" + std::to_string(x) + ", " + std::to_string(y) + ") holds " + std::to_string(actual) + ", expected " + std::to_string(expected) + " (a 0.5 premultiplied draw over the 0000 clear, not the stale 0x55 texels)");
+            }
+        }
+    }
+    std::vector<std::byte> keyBytes(MipDrawMip0Keys);
+    AgcDriver::GuestMemory::Read(meta + MipDrawMip0OffsetKeys, keyBytes, 1);
+    Require(std::ranges::all_of(keyBytes, [](std::byte key) { return key == std::byte{0xff}; }),
+            "after a pending clear-code key fill and the GPU clear, the viewed mip's keys must be uncompressed");
+#else
+    static_cast<void>(device);
+    static_cast<void>(block);
+#endif
+}
+
+// A recorded key fill of 0xff (uncompressed) that has not landed yet: the bind must NOT clear
+// (the landed keys are uncompressed, so there is no clear to materialize).
+void RunMipmappedClearPendingUncompressedFill(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+#ifndef _WIN32
+    auto* texels = block;
+    auto* keys = block + MipDrawKeysOffset;
+    const auto meta = AddressOf(keys);
+    std::memset(texels, 0x55, 2 * 65536);
+    std::memset(keys, 0xff, std::size_t{MipDrawLevels} * 4096u);
+    std::memset(keys + MipDrawMip0OffsetKeys, 0x00, MipDrawMip0Keys);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(AddressOf(texels) >> 8u);
+    cx[0x390] = static_cast<std::uint32_t>(AddressOf(texels) >> 40u);
+    cx[0x31b] = 0;
+    cx[0x31c] = 0x10028028u;
+    cx[0x31d] = 0;
+    cx[0x3b0] = ((MipDrawLevels - 1u) << 28u) | ((MipDrawSide - 1u) << 14u) | (MipDrawSide - 1u);
+    cx[0x3b8] = 0x9000000u | (TileRenderTarget64KB << 14u) | (1u << 30u);
+    cx[0x325] = static_cast<std::uint32_t>(meta >> 8u);
+    cx[0x3a8] = static_cast<std::uint32_t>(meta >> 40u);
+    const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    // A recorded fill of 0xff over the viewed mip's keys, still in flight at bind.
+    const auto slice = meta + MipDrawMip0OffsetKeys;
+    const std::array<std::uint32_t, 4> ffPattern{0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu};
+    Require(device.FillBuffer(slice, MipDrawMip0Keys, ffPattern), "the pending 0xff fill was not recorded");
+    MipDrawBlended(device, color);
+    device.WaitIdle();
+    // The landed keys are 0xff (uncompressed), so there is no clear: the blended draw (0.5 white
+    // over 0.5 of the destination) saw the stale 0x55 texels: 170 inside the scissor, 0x55 outside.
+    // (The slice currently holds the 0000 clear code on disk; the code must use the LANDED value.)
+    AgcDriver::Graphics::StorageTexture::FlushPending(color.address, color.bytes, nullptr, "pending-uncompressed read-back");
+    device.WaitIdle();
+    const auto layout = AgcDriver::Graphics::ColorTargetLayout(MipDrawSide, MipDrawSide, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+    std::vector<std::byte> stored(color.bytes);
+    AgcDriver::GuestMemory::Read(color.address, stored, 4);
+    for (std::uint32_t y = 0; y < MipDrawSide; ++y) {
+        for (std::uint32_t x = 0; x < MipDrawSide; ++x) {
+            const auto offset = layout.Offset(x, y);
+            const int expected = x < MipDrawScissor ? 170 : 0x55;
+            for (std::size_t channel = 0; channel < 4; ++channel) {
+                const int actual = static_cast<int>(stored[offset + channel]);
+                Require(std::abs(actual - expected) <= 1, "a pending 0xff key fill must not materialize a clear: (" + std::to_string(x) + ", " + std::to_string(y) + ") holds " + std::to_string(actual) + ", expected " + std::to_string(expected) + " (the stale 0x55 content under the 0.5 draw, not the clear)");
+            }
+        }
+    }
+#else
+    static_cast<void>(device);
+    static_cast<void>(block);
+#endif
+}
+
+// A recorded PARTIAL key fill (a clear code over half the slice, 0xff over the other half) that
+// has not landed yet: the landed keys are mixed, so the bind must take the fallback path (still
+// correct).
+void RunMipmappedClearPendingPartialFill(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+#ifndef _WIN32
+    auto* texels = block;
+    auto* keys = block + MipDrawKeysOffset;
+    const auto meta = AddressOf(keys);
+    // Stale texels; every key uncompressed (0xff) -- the pending fill below leaves the first half
+    // of the viewed mip's slice a clear code and the second half still 0xff (mixed when landed).
+    std::memset(texels, 0x55, 2 * 65536);
+    std::memset(keys, 0xff, std::size_t{MipDrawLevels} * 4096u);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(AddressOf(texels) >> 8u);
+    cx[0x390] = static_cast<std::uint32_t>(AddressOf(texels) >> 40u);
+    cx[0x31b] = 0;
+    cx[0x31c] = 0x10028028u;
+    cx[0x31d] = 0;
+    cx[0x3b0] = ((MipDrawLevels - 1u) << 28u) | ((MipDrawSide - 1u) << 14u) | (MipDrawSide - 1u);
+    cx[0x3b8] = 0x9000000u | (TileRenderTarget64KB << 14u) | (1u << 30u);
+    cx[0x325] = static_cast<std::uint32_t>(meta >> 8u);
+    cx[0x3a8] = static_cast<std::uint32_t>(meta >> 40u);
+    const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    // A recorded PARTIAL fill: clear code over the first half of the slice, 0xff over the second
+    // half. The landed keys are mixed, so the bind takes the fallback path.
+    const auto slice = meta + MipDrawMip0OffsetKeys;
+    const std::array<std::uint32_t, 4> zeroPattern{0u, 0u, 0u, 0u};
+    Require(device.FillBuffer(slice, MipDrawMip0Keys / 2, zeroPattern), "the pending partial fill was not recorded");
+    MipDrawBlended(device, color);
+    device.WaitIdle();
+    // The landed keys are mixed, so the bind took the fallback path (no clear): the draw is over
+    // the stale texels -- 170 inside the scissor, 0x55 outside.
+    AgcDriver::Graphics::StorageTexture::FlushPending(color.address, color.bytes, nullptr, "pending-partial read-back");
+    device.WaitIdle();
+    const auto layout = AgcDriver::Graphics::ColorTargetLayout(MipDrawSide, MipDrawSide, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+    std::vector<std::byte> stored(color.bytes);
+    AgcDriver::GuestMemory::Read(color.address, stored, 4);
+    for (std::uint32_t y = 0; y < MipDrawSide; ++y) {
+        for (std::uint32_t x = 0; x < MipDrawSide; ++x) {
+            const auto offset = layout.Offset(x, y);
+            const int expected = x < MipDrawScissor ? 170 : 0x55;
+            for (std::size_t channel = 0; channel < 4; ++channel) {
+                const int actual = static_cast<int>(stored[offset + channel]);
+                Require(std::abs(actual - expected) <= 1, "a pending partial key fill must not materialize a clear: (" + std::to_string(x) + ", " + std::to_string(y) + ") holds " + std::to_string(actual) + ", expected " + std::to_string(expected) + " (the stale 0x55 content under the 0.5 draw)");
+            }
+        }
+    }
+#else
+    static_cast<void>(device);
+    static_cast<void>(block);
+#endif
+}
+
 void RunMipmappedTarget(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
 #ifndef _WIN32
     constexpr std::uint32_t ChainSide = 64;
@@ -1248,6 +1436,15 @@ int main(int argc, char** argv) {
         std::optional<GuestBlock> clearChain;
         clearChain.emplace(false, false, MipDrawBlockBytes);
         RunMipmappedClearDraw(*device, clearChain->Data());
+        std::optional<GuestBlock> pendingClear;
+        pendingClear.emplace(false, false, MipDrawBlockBytes);
+        RunMipmappedClearPendingClearFill(*device, pendingClear->Data());
+        std::optional<GuestBlock> pendingUncompressed;
+        pendingUncompressed.emplace(false, false, MipDrawBlockBytes);
+        RunMipmappedClearPendingUncompressedFill(*device, pendingUncompressed->Data());
+        std::optional<GuestBlock> pendingPartial;
+        pendingPartial.emplace(false, false, MipDrawBlockBytes);
+        RunMipmappedClearPendingPartialFill(*device, pendingPartial->Data());
 #ifdef _WIN32
         shared.emplace(true, true);
         RunSharedImport(*device, shared->Data());

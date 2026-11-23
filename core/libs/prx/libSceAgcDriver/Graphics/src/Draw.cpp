@@ -2223,29 +2223,37 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
 bool materializeMipClear(const Context& context, const ColorTarget& color, std::shared_ptr<StorageTexture>& resident) {
     if (color.dccAddress == 0 || color.mipCount <= 1 || color.mipTail) return false;
     const auto keyCount = std::max<std::size_t>(colorKeyCount(color, color.bytes), 1u);
-    const auto keys = CurrentDccKeys(color.dccAddress, color.bytes, keyCount);
+    // The keys may still be landing (a recorded key fill is in flight). Answer from the landed
+    // value without syncing: when every pending writer is a fill that leaves one fillable clear
+    // code over the slice, take the GPU clear (the clear is recorded after the fill in the same
+    // queue, so order is kept). When they leave 0xff there is no clear; when they are mixed,
+    // partial, or an unknown writer, fall back to the current keys (the previous behaviour).
+    const auto landed = LandedDccKeys(color.dccAddress, color.bytes, keyCount);
+    DccKeys keys;
+    bool verified;
+    if (landed == DccKeys::Unreadable) {
+        keys = CurrentDccKeys(color.dccAddress, color.bytes, keyCount);
+        verified = false;
+    } else {
+        keys = landed;
+        verified = true;
+    }
     if (!IsDccClear(keys) || keys == DccKeys::ClearSingle || (keys == DccKeys::ClearRegister && color.elementBytes > 8u)) return false;
     const auto texel = clearTexel(color, keys);
-    // TEMP-PROF: count GPU-clear vs CPU-fallback to see if the GPU path is triggered in-game.
-    static std::atomic<int> gpuClears{0}, cpuFalls{0}, refusals{0};
     if (resident != nullptr) {
-        // The fill records the exact clear the slice's code names (the verified-code path; a
-        // pending key write still refuses it), and the slice is expanded once the fill is in.
+        // The fill records the exact clear the slice's code names; `verified` lifts the pending-
+        // key-write refusal (the caller read the landed code), and the slice is expanded once the
+        // fill is in.
         const char* refusal = nullptr;
-        if (resident->ClearMip(texel, color.mip, true, refusal)) {
-            const auto n = gpuClears.fetch_add(1, std::memory_order_relaxed);
-            if (n % 200 == 0) std::fprintf(stderr, "[MIPCLEAR-PROF] gpuClears=%d cpuFalls=%d refusals=%d (color 0x%llx mip %u/%u)\n", n + 1, cpuFalls.load(), refusals.load(), static_cast<unsigned long long>(color.address), color.mip, color.mipCount);
+        if (resident->ClearMip(texel, color.mip, verified, refusal)) {
             MarkDccUncompressed(context, color.dccAddress, color.bytes, keyCount);
             return true;
         }
-        const auto r = refusals.fetch_add(1, std::memory_order_relaxed);
-        if (r % 200 == 0) std::fprintf(stderr, "[MIPCLEAR-PROF] ClearMip REFUSED (%s) gpuClears=%d cpuFalls=%d\n", refusal, gpuClears.load(), cpuFalls.load());
         MarkDccUncompressed(context, color.dccAddress, color.bytes, keyCount);
     }
-    // No resident image, or it refused the clear (a pending key write, an unencodable pattern, a
-    // tail mip): the CPU store; the keys are already uncompressed, so write the captured clear.
-    const auto c = cpuFalls.fetch_add(1, std::memory_order_relaxed);
-    if (c % 200 == 0) std::fprintf(stderr, "[MIPCLEAR-PROF] CPU fallback (resident %p) gpuClears=%d cpuFalls=%d refusals=%d (color 0x%llx mip %u/%u)\n", static_cast<void*>(resident.get()), gpuClears.load(), c + 1, refusals.load(), static_cast<unsigned long long>(color.address), color.mip, color.mipCount);
+    // No resident image, or it refused the clear (an unencodable pattern, a tail mip, an unknown
+    // pending writer): the CPU store; the keys are already uncompressed, so write the captured
+    // clear.
     StorageTexture::FlushPending(color.address, color.bytes, nullptr, "fast-clear materialization");
     writeTexels(color, texel);
     return true;
