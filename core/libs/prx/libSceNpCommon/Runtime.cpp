@@ -771,7 +771,7 @@ int APS5_VABI sceNpDbgDumpText(const char* text, int length) {
         if (!copied) break;
         const void* end = std::memchr(chunk, 0, count);
         const std::size_t used = end != nullptr ? static_cast<std::size_t>(static_cast<const char*>(end) - chunk) : count;
-        std::fwrite(chunk, 1, used, stdout);
+        if (std::fwrite(chunk, 1, used, stdout) != used) return -1;
         printed += used;
         if (end != nullptr) break;
     }
