@@ -263,6 +263,17 @@ class TimelineTests(unittest.TestCase):
                 self.assertIn(option, done.stderr)
                 self.assertFalse(out.exists())
 
+    def test_the_cli_rejects_a_width_that_overflows_layout(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        out = path.with_suffix(".html")
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "--width", str(10**309)],
+                              capture_output=True, text=True, timeout=15)
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertIn("--width", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertFalse(out.exists())
+
     def test_the_cli_reports_a_non_ascii_output_path_as_utf8(self):
         directory = Path(self.tmp.name) / "界"
         directory.mkdir()

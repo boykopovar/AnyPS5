@@ -12,15 +12,17 @@ export class OutputDirectoryTransaction {
     this.#locale = locale;
   }
 
-  static async create(parent, name, locale = "en") {
-    try {
-      await parent.getDirectoryHandle(name);
-    } catch (error) {
-      if (error.name !== "NotFoundError") throw error;
-      const directory = await parent.getDirectoryHandle(name, { create: true });
-      return new OutputDirectoryTransaction(parent, name, directory, locale);
-    }
-    throw new Error(translate(locale, "folderAlreadyExists", { name }));
+  static create(parent, name, locks, locale = "en") {
+    return locks.request("anyps5-output-directory", async () => {
+      try {
+        await parent.getDirectoryHandle(name);
+      } catch (error) {
+        if (error.name !== "NotFoundError") throw error;
+        const directory = await parent.getDirectoryHandle(name, { create: true });
+        return new OutputDirectoryTransaction(parent, name, directory, locale);
+      }
+      throw new Error(translate(locale, "folderAlreadyExists", { name }));
+    });
   }
 
   commit() {

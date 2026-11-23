@@ -82,6 +82,15 @@ if(BUILD_TESTING)
             set_tests_properties(${test} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
+    add_test(NAME agc_driver_target_memo_recipe_views COMMAND agc_driver_target_memo_tests --r3 recipe-views)
+    set_tests_properties(agc_driver_target_memo_recipe_views PROPERTIES
+            TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1;APS5_PROFILE_DRAW=1"
+            PASS_REGULAR_EXPRESSION "recipe views: pass attachment memo on.*target state memo tests passed"
+            FAIL_REGULAR_EXPRESSION "differ from the full lookup")
+    if(WIN32)
+        set_tests_properties(agc_driver_target_memo_recipe_views PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     if(NOT WIN32)
         add_test(NAME agc_driver_target_memo_watched_imports COMMAND agc_driver_target_memo_tests)
         set_tests_properties(agc_driver_target_memo_watched_imports PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
