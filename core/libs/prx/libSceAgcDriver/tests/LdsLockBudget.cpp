@@ -57,6 +57,42 @@ std::uint64_t workgroupBytes(std::span<const std::uint32_t> words) {
     return bytes;
 }
 
+std::uint64_t namedWorkgroupBytes(std::span<const std::uint32_t> words, std::string_view name) {
+    std::map<std::uint32_t, std::span<const std::uint32_t>> types;
+    std::map<std::uint32_t, std::uint32_t> constants;
+    std::uint32_t named = 0;
+    std::uint32_t pointer = 0;
+    for (std::size_t offset = 5; offset < words.size();) {
+        const auto count = words[offset] >> 16u;
+        require(count != 0u && count <= words.size() - offset, "malformed SPIR-V instruction");
+        const auto instruction = words.subspan(offset, count);
+        const auto opcode = static_cast<spv::Op>(instruction[0] & 0xffffu);
+        if (opcode == spv::OpTypeInt || opcode == spv::OpTypeFloat || opcode == spv::OpTypeVector || opcode == spv::OpTypeArray || opcode == spv::OpTypeStruct || opcode == spv::OpTypePointer) types.emplace(instruction[1], instruction);
+        if (opcode == spv::OpConstant) constants.emplace(instruction[2], instruction[3]);
+        if (opcode == spv::OpName && std::string_view(reinterpret_cast<const char*>(instruction.data() + 2)) == name) named = instruction[1];
+        if (opcode == spv::OpVariable && instruction[2] == named && instruction[3] == spv::StorageClassWorkgroup) pointer = instruction[1];
+        offset += count;
+    }
+    require(named != 0u, "named Workgroup variable is missing");
+    require(pointer != 0u, "named variable is not Workgroup storage");
+    const std::function<std::uint64_t(std::uint32_t)> size = [&](std::uint32_t id) -> std::uint64_t {
+        const auto type = types.at(id);
+        switch (static_cast<spv::Op>(type[0] & 0xffffu)) {
+        case spv::OpTypeInt: case spv::OpTypeFloat: return type[2] / 8u;
+        case spv::OpTypeVector: return size(type[2]) * type[3];
+        case spv::OpTypeArray: return size(type[2]) * constants.at(type[3]);
+        case spv::OpTypeStruct: {
+            std::uint64_t bytes = 0;
+            for (const auto member : type.subspan(2)) bytes += size(member);
+            return bytes;
+        }
+        default: throw std::runtime_error("unexpected named Workgroup variable type");
+        }
+    };
+    const auto pointerType = types.at(pointer);
+    require((pointerType[0] & 0xffffu) == spv::OpTypePointer, "named Workgroup variable is not a pointer");
+    return size(pointerType[3]);
+}
 std::set<std::uint32_t> compareExchangeWidths(std::span<const std::uint32_t> words) {
     std::map<std::uint32_t, std::uint32_t> widths;
     std::set<std::uint32_t> found;
@@ -118,8 +154,9 @@ void verify(std::uint32_t waveSize, std::uint32_t limit, bool int64Atomics) {
 }
 
 void verifyNarrowReadFirstLaneBudget() {
-    static constexpr std::array<std::uint32_t, 5> code{
-        0x7e020280u, 0xd8340000u, 0x00000100u, 0x7e100501u, 0xbf810000u
+    static constexpr std::array<std::uint32_t, 8> code{
+        0x7e020200u, 0xd8340000u, 0x00000100u, 0x7e100501u,
+        0x7e040208u, 0xd8340000u, 0x00000200u, 0xbf810000u
     };
     static constexpr std::array<std::uint32_t, 4> capabilities{
         spv::CapabilityShader, spv::CapabilityGroupNonUniform,
@@ -148,9 +185,11 @@ void verifyNarrowReadFirstLaneBudget() {
     const auto fits = compile(combinedBoundary);
     require(fits.workgroupMemoryDwords == 0u, "narrow readfirstlane budget: guest LDS left Workgroup memory at the combined boundary");
     require(workgroupBytes(fits.spirv.Words()) <= combinedBoundary, "narrow readfirstlane budget: combined-boundary module exceeds its Workgroup limit");
+    require(namedWorkgroupBytes(fits.spirv.Words(), "wave32_readfirstlane_exchange") == exchangeDwords * 4u, "narrow readfirstlane budget: combined-boundary module lost the 528-byte exchange");
     const auto spills = compile(32768u);
     require(spills.workgroupMemoryDwords == ((ldsDwords + 2u) & ~1u), "narrow readfirstlane budget: guest LDS did not move to device memory when the exchange would exceed 32 KiB");
     require(workgroupBytes(spills.spirv.Words()) <= 32768u, "narrow readfirstlane budget: 32 KiB module still exceeds its Workgroup limit");
+    require(namedWorkgroupBytes(spills.spirv.Words(), "wave32_readfirstlane_exchange") == exchangeDwords * 4u, "narrow readfirstlane budget: spilled module lost the 528-byte exchange");
 }
 
 alignas(256) std::array<std::uint8_t, 32768> Texture{};
