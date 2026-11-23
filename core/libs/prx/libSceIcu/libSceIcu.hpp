@@ -33,6 +33,7 @@
 #include "Bidi.hpp"
 #include "CharsetDetection.hpp"
 #include "Normalization.hpp"
+#include "Normalizer2Accessors.hpp"
 #include "CodePoints.hpp"
 #include "Identified.hpp"
 
