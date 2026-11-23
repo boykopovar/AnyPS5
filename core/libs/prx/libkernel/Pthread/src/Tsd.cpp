@@ -94,9 +94,7 @@ int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t
     for (int index = 0; index < MAX_KEYS; ++index) {
         if (g_keys[index].sequence.load(std::memory_order_relaxed) == FREE_KEY) {
             const PthreadKey created = index + 1;
-            const int savedErrno = errno;
             const bool stored = GuestCopyOut_nid_no_patch(key, &created, sizeof(created));
-            errno = savedErrno;
             if (!stored) return SCE_KERNEL_ERROR_EFAULT;
             g_keys[index].destructor = reinterpret_cast<GuestKeyDestructor>(destructor);
             g_keys[index].sequence.store(++g_lastSequence, std::memory_order_release);
