@@ -379,7 +379,7 @@ static void TestAllowLists() {
         response.Methods(invalid);
         Require(Fails(Validate(request, response), std::string("Header Access-Control-Allow-Methods has an invalid value: ") + invalid));
     }
-    for (const char* valid : {"", " ", ",", ",,", " , ,", "PUT", " PUT ", "\tPUT\r\n", "PUT,", ",PUT", "DELETE , PUT", "DELETE,,PUT", "!#$%&'*+-.^_`|~,PUT", "a, PUT"}) {
+    for (const char* valid : {"PUT, ", "PUT,\t", "PUT,  \t ", " ,PUT, ", "PUT, ,", "\t", "", " ", ",", ",,", " , ,", "PUT", " PUT ", "\tPUT\r\n", "PUT,", ",PUT", "DELETE , PUT", "DELETE,,PUT", "!#$%&'*+-.^_`|~,PUT", "a, PUT"}) {
         Clear();
         Request request("PUT");
         Response response;
