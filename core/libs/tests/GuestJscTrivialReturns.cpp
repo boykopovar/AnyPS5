@@ -1,9 +1,11 @@
 #include "prx/libSceJsc/include/Api.hpp"
+#include "prx/libSceJsc/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -22,6 +24,23 @@ void RequireUnchanged(const std::array<unsigned char, 64>& bytes) {
 } // namespace
 
 int main() {
+    using InventoryStub = int (APS5_VABI*)();
+    for (const InventoryStub stub : {
+             libSceJscInventory_TYvNAgirhfM_nid_no_patch,
+             libSceJscInventory_4AXLxzY843A_nid_no_patch,
+             libSceJscInventory_AnZ5fEIIS40_nid_no_patch,
+             libSceJscInventory_GtiYvkQcGr4_nid_no_patch,
+             libSceJscInventory_RD9UWM_plus_gJiI_nid_no_patch,
+             libSceJscInventory_xu3rtZhKLb0_nid_no_patch,
+         }) {
+        try {
+            stub();
+        } catch (const std::runtime_error&) {
+            continue;
+        }
+        std::abort();
+    }
+
     using Destructor = void (APS5_VABI *)(void*);
     for (const Destructor destructor : {
              _ZN3JSC2VM10ClientDataD1Ev,
