@@ -343,6 +343,22 @@ int main() {
     CHECK_THROWS(_ZN3sce4Json6Object8iteratorD1Ev(roIter));
     CHECK_THROWS(_ZN3sce4Json6Object8iteratorD2Ev(roIter));
 
+    auto* roLiveIter = static_cast<ObjectIterator*>(pages.scratch);
+    SetPageWritable(pages.scratch, pages.pageSize, true);
+    CHECK(_ZNK3sce4Json6Object5beginEv(roLiveIter, &valid) == roLiveIter);
+    const auto savedRoIterState = roLiveIter->state;
+    CHECK(savedRoIterState != nullptr);
+    const auto liveWithRoIterator = trace.live;
+    SetPageWritable(pages.scratch, pages.pageSize, false);
+    CHECK_THROWS(_ZN3sce4Json6Object8iteratorD1Ev(roLiveIter));
+    CHECK(roLiveIter->state == savedRoIterState && trace.live == liveWithRoIterator);
+    CHECK_THROWS(_ZN3sce4Json6Object8iteratorD2Ev(roLiveIter));
+    CHECK(roLiveIter->state == savedRoIterState && trace.live == liveWithRoIterator);
+    CHECK(_ZNK3sce4Json6Object8iteratordeEv(roLiveIter) == _ZNK3sce4Json6Object8iteratordeEv(&beginIter));
+    SetPageWritable(pages.scratch, pages.pageSize, true);
+    _ZN3sce4Json6Object8iteratorD1Ev(roLiveIter);
+    CHECK(roLiveIter->state == nullptr && trace.live.size() == baselineLive);
+
     CHECK_THROWS(_ZN3sce4Json6Object8iteratorppEv(nullptr));
     CHECK_THROWS(_ZN3sce4Json6Object8iteratorppEv(badIter));
     CHECK_THROWS(_ZN3sce4Json6Object8iteratorppEv(&badStateIter));
