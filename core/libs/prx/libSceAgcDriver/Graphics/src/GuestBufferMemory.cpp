@@ -4263,7 +4263,7 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
         const auto end = static_cast<std::uint64_t>(address) + bytes;
         auto& imports = Imports();
         if (releaseParkedImports(imports, address, end)) retiredImport = true;
-        const auto lease = GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix();
+        const auto lease = UnitShadowEnabled() ? GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix() : GuestAllocations::Lease{};
         {
             std::lock_guard importsLock(imports.mutex);
             for (auto it = imports.imports.begin(); it != imports.imports.end();) {
@@ -4329,7 +4329,7 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
                 synced = true;
                 drained = true;
             }
-            const auto lease = GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix();
+            const auto lease = UnitShadowEnabled() ? GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix() : GuestAllocations::Lease{};
             {
                 std::lock_guard importsLock(imports.mutex);
                 for (auto it = imports.imports.begin(); it != imports.imports.end();) {
