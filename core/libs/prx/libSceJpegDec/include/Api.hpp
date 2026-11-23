@@ -8,6 +8,7 @@ int32_t APS5_VABI sceJpegDecCreate(const JpegDecCreateParam* param, void* memory
 int32_t APS5_VABI sceJpegDecDecode(void* handle, const JpegDecDecodeParam* param, JpegDecImageInfo* imageInfo);
 int32_t APS5_VABI sceJpegDecDelete(void* handle);
 int32_t APS5_VABI sceJpegDecParseHeader(const JpegDecParseParam* param, JpegDecImageInfo* imageInfo);
+int32_t APS5_VABI JpegDecParseHeader_nid_no_patch(const JpegDecParseParam* param, JpegDecImageInfo* imageInfo);
 int32_t APS5_VABI sceJpegDecQueryMemorySize(const JpegDecCreateParam* param);
 int32_t APS5_VABI sceJpegDecDecodeWithInputControl(void* handle, const JpegDecInputControlParam* param, JpegDecImageInfo* imageInfo);
 

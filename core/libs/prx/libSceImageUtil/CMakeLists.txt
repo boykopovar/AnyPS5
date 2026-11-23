@@ -1,0 +1,16 @@
+add_library(libSceImageUtil SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceImageUtil PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceImageUtil PRIVATE libSceJpegDec)
+configure_windows_unwind(libSceImageUtil)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_image_util_tests ${LIBS_INCLUDE_DIR}/tests/GuestImageUtil.cpp)
+    target_include_directories(guest_image_util_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_image_util_tests PRIVATE libSceImageUtil decoder_jpeg libc)
+    configure_windows_unwind(guest_image_util_tests)
+    add_test(NAME guest_image_util COMMAND guest_image_util_tests)
+    if(WIN32)
+        set_tests_properties(guest_image_util PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImageUtil>")
+    endif()
+endif()
