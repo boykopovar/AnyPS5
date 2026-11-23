@@ -407,6 +407,7 @@ def syntax_arguments(arguments, directory, source):
     index = 1
     positional = False
     syntax_added = False
+    source_added = False
     while index < len(arguments):
         argument = arguments[index]
         if not syntax_added and argument.startswith("-"):
@@ -447,11 +448,18 @@ def syntax_arguments(arguments, directory, source):
             candidate = Path(argument)
             if not candidate.is_absolute():
                 candidate = directory / candidate
-            if real(candidate) == wanted:
+            candidate = real(candidate)
+            if candidate == wanted:
+                if not syntax_added:
+                    trimmed.append("-fsyntax-only")
+                    syntax_added = True
+                if not source_added:
+                    trimmed.append(str(wanted))
+                    source_added = True
                 index += 1
                 continue
             if positional:
-                trimmed.append(str(real(candidate)))
+                trimmed.append(str(candidate))
                 index += 1
                 continue
         elif (argument not in WITHOUT_VALUE and not argument.startswith(JOINED_OPTIONS) and "=" not in argument and index + 1 < len(arguments)
@@ -461,7 +469,8 @@ def syntax_arguments(arguments, directory, source):
         index += 1
     if not syntax_added:
         trimmed.append("-fsyntax-only")
-    trimmed.append(str(wanted))
+    if not source_added:
+        trimmed.append(str(wanted))
     return trimmed
 
 
