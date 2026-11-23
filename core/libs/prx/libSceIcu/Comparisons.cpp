@@ -22,6 +22,7 @@ public:
 
 private:
     static constexpr std::size_t PageBytes = 0x1000;
+    static constexpr std::size_t FirstChunkUnits = 16;
 
     void Load(std::size_t index) {
         const auto address = reinterpret_cast<std::uintptr_t>(base_);
@@ -29,19 +30,20 @@ private:
             throw std::invalid_argument("ICU: unreadable string");
         }
         const auto at = address + index * sizeof(char16_t);
-        const std::size_t units = std::max<std::size_t>((PageBytes - at % PageBytes) / sizeof(char16_t), 1);
-        const int savedErrno = errno;
+        const std::size_t pageUnits = std::max<std::size_t>((PageBytes - at % PageBytes) / sizeof(char16_t), 1);
+        const std::size_t units = std::min(pageUnits, chunkUnits_);
         const bool copied = GuestCopyIn_nid_no_patch(buffer_.data(), reinterpret_cast<const void*>(at), units * sizeof(char16_t));
-        errno = savedErrno;
         if (!copied) throw std::invalid_argument("ICU: unreadable string");
         start_ = index;
         count_ = units;
+        chunkUnits_ = std::min(chunkUnits_ * 2, buffer_.size());
     }
 
     const char16_t* base_;
-    std::array<char16_t, PageBytes / sizeof(char16_t)> buffer_{};
+    std::array<char16_t, PageBytes / sizeof(char16_t)> buffer_;
     std::size_t start_ = 0;
     std::size_t count_ = 0;
+    std::size_t chunkUnits_ = FirstChunkUnits;
 };
 
 std::int32_t Length(const char16_t* text) {

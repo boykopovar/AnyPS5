@@ -65,7 +65,8 @@ def write_known(path, known, findings, ran_cases):
     for case, (kind, _) in findings.items():
         rows[case] = (kind, known.get(case, (kind, ""))[1])
     lines = [f"{case}\t{kind}\t{reason}".rstrip("\t") for case, (kind, reason) in sorted(rows.items())]
-    path.write_text("".join(line + "\n" for line in lines), encoding="utf-8", newline="\n")
+    with path.open("w", encoding="utf-8", newline="\n") as output:
+        output.write("".join(line + "\n" for line in lines))
 
 
 def text(value):

@@ -1,5 +1,6 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -96,17 +97,30 @@ std::int64_t APS5_VABI attachISRead_nid_postfix(Jxr::BitIo* io, Jxr::Stream* str
 }
 
 std::int64_t APS5_VABI attachISWrite_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream) {
-    State(io, __func__);
-    Require(stream && stream->getPosition, __func__, "missing stream position callback");
-    stream->getPosition(stream, &io->referenceOffset);
+    Require(io != nullptr, __func__, "null bit state");
+    Jxr::BitIo guestIo{};
+    const bool copiedIo = GuestCopyIn_nid_no_patch(&guestIo, io, sizeof(guestIo));
+    Require(copiedIo, __func__, "unreadable bit state");
+    Require(stream != nullptr, __func__, "null stream");
+    Jxr::Stream guestStream{};
+    const bool copiedStream = GuestCopyIn_nid_no_patch(&guestStream, stream, sizeof(guestStream));
+    Require(copiedStream && guestStream.getPosition != nullptr, __func__, "missing stream position callback");
     const auto address = reinterpret_cast<std::uintptr_t>(io);
     Require(address >= 8192, __func__, "bit state address underflows the packet buffer");
-    io->start = reinterpret_cast<std::uint8_t*>(address - 8192);
-    io->current = io->start;
-    io->accumulator = 0;
-    io->bitsUsed = 0;
-    io->mask = ~8192;
-    io->stream = stream;
+    guestStream.getPosition(stream, &io->referenceOffset);
+    guestIo.start = reinterpret_cast<std::uint8_t*>(address - 8192);
+    guestIo.current = guestIo.start;
+    guestIo.accumulator = 0;
+    guestIo.bitsUsed = 0;
+    guestIo.mask = ~8192;
+    guestIo.stream = stream;
+    const int ioWriteErrno = errno;
+    const bool wroteIo = GuestCopyOut_nid_no_patch(
+        &io->accumulator,
+        &guestIo.accumulator,
+        offsetof(Jxr::BitIo, referenceOffset) - offsetof(Jxr::BitIo, accumulator));
+    errno = ioWriteErrno;
+    Require(wroteIo, __func__, "unwritable bit state");
     return 0;
 }
 
@@ -143,8 +157,18 @@ std::uint32_t APS5_VABI flushToByte_nid_postfix(Jxr::BitIo* io) {
 
 void APS5_VABI putBit16z_nid_postfix(Jxr::BitIo* io, std::uint32_t value, std::uint32_t bits) {
     Require(bits >= 32 || (value >> bits) == 0, __func__, "value wider than the bit count");
-    Write(io, bits, 16, __func__);
-    if (bits == 0 && io->bitsUsed == 0) return;
+    Require(io != nullptr, __func__, "null bit state");
+    Jxr::BitIo guestIo{};
+    const bool copied = GuestCopyIn_nid_no_patch(&guestIo, io, sizeof(guestIo));
+    Require(copied, __func__, "unreadable bit state");
+    Require(guestIo.current != nullptr, __func__, "null current pointer");
+    Require(bits <= 16, __func__, "bit count over the jxrlib limit");
+    Require(guestIo.bitsUsed < 16, __func__, "write position outside the 16-bit word");
+    Require(reinterpret_cast<std::uintptr_t>(guestIo.current) % alignof(std::uint16_t) == 0, __func__,
+            "unaligned write position");
+    if (bits == 0 && guestIo.bitsUsed == 0) return;
+    const bool writable = GuestCopyOut_nid_no_patch(io, &guestIo, sizeof(guestIo));
+    Require(writable, __func__, "unwritable bit state");
     JxrPutBit16z_nid_no_patch(io, value, bits);
 }
 
@@ -163,8 +187,17 @@ void APS5_VABI putBit32_nid_postfix(Jxr::BitIo* io, std::uint32_t value, std::ui
 }
 
 void APS5_VABI fillToByte_nid_postfix(Jxr::BitIo* io) {
-    Write(io, 0, 16, __func__);
-    if (io->bitsUsed == 0) return;
+    Require(io != nullptr, __func__, "null bit state");
+    Jxr::BitIo guestIo{};
+    const bool copied = GuestCopyIn_nid_no_patch(&guestIo, io, sizeof(guestIo));
+    Require(copied, __func__, "unreadable bit state");
+    Require(guestIo.current != nullptr, __func__, "null current pointer");
+    Require(guestIo.bitsUsed < 16, __func__, "write position outside the 16-bit word");
+    Require(reinterpret_cast<std::uintptr_t>(guestIo.current) % alignof(std::uint16_t) == 0, __func__,
+            "unaligned write position");
+    if (guestIo.bitsUsed == 0) return;
+    const bool writable = GuestCopyOut_nid_no_patch(io, &guestIo, sizeof(guestIo));
+    Require(writable, __func__, "unwritable bit state");
     JxrFillToByte_nid_no_patch(io);
 }
 

@@ -519,8 +519,8 @@ bool delayWrap(PadKeyboardState& state, int stepRow, int stepColumn, bool repeat
 
 void move(PadKeyboardState& state, int stepRow, int stepColumn, bool repeatHint, double now) {
     const auto layout = layoutOf(state);
-    int row = state.cursorRow;
-    int column = state.cursorColumn;
+    auto [row, column] = visibleCell(state);
+    if (row < 0 || column < 0) return;
     const PadKey* origin = keyAt(layout, row, column);
     bool wrapped = false;
     for (int step = 0; step < layout.rows * Columns; ++step) {

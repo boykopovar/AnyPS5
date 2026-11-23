@@ -24,10 +24,18 @@ struct Extension {
 static_assert(sizeof(Extension) == 24);
 
 std::unordered_map<void*, std::size_t> allocations;
+std::size_t allocationAttempts = 0;
+std::size_t failOnAllocationAttempt = 0;
 
 void Require(bool condition, std::source_location location = std::source_location::current());
 
+bool ShouldFailAllocation() {
+    ++allocationAttempts;
+    return failOnAllocationAttempt != 0 && allocationAttempts == failOnAllocationAttempt;
+}
+
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
+    if (ShouldFailAllocation()) return nullptr;
     void* result = std::malloc(size);
     Require(result != nullptr);
     allocations.emplace(result, size);
@@ -41,6 +49,7 @@ void APS5_VABI Free_nid_no_patch(void* pointer) {
 }
 
 void* APS5_VABI Callocate_nid_no_patch(std::size_t count, std::size_t size) {
+    if (ShouldFailAllocation()) return nullptr;
     void* result = std::calloc(count, size);
     Require(result != nullptr);
     allocations.emplace(result, count * size);
@@ -49,6 +58,7 @@ void* APS5_VABI Callocate_nid_no_patch(std::size_t count, std::size_t size) {
 
 void* APS5_VABI Reallocate_nid_no_patch(void* pointer, std::size_t size) {
     if (!pointer) return Allocate_nid_no_patch(size);
+    if (ShouldFailAllocation()) return nullptr;
     Require(allocations.erase(pointer) == 1);
     void* result = std::realloc(pointer, size);
     Require(result != nullptr);
@@ -129,6 +139,138 @@ Extension* MakeStaticExtension(unsigned char* data) {
     return extension;
 }
 
+void FreeCertificateExtensions(LibreSsl3ExtensionsX509* x509) {
+    const LibreSsl3Stack* const stackView = X509_get0_extensions_nid_postfix(x509);
+    if (!stackView) return;
+    auto* const stack = const_cast<LibreSslStack*>(reinterpret_cast<const LibreSslStack*>(stackView));
+    for (int index = 0; index < stack->num; ++index) {
+        X509_EXTENSION_free_nid_postfix(stack->data[index]);
+    }
+    sk_free_nid_postfix(stack);
+    const_cast<LibreSsl3ExtensionsCertInfo*>(x509->certInfo)->extensions = nullptr;
+}
+
+void PopulateAtCapacity(LibreSsl3ExtensionsX509* x509) {
+    constexpr std::array<unsigned char, 3> bytes{0x11, 0x22, 0x33};
+    for (unsigned char byte : bytes) {
+        Extension* extension = MakeExtension(byte);
+        Require(X509_add_ext_nid_postfix(x509, extension, -1) == 1);
+        X509_EXTENSION_free_nid_postfix(extension);
+    }
+    const LibreSsl3Stack* const stack = X509_get0_extensions_nid_postfix(x509);
+    Require(X509_get_ext_count_nid_postfix(x509) == 3);
+    Require(stack != nullptr && stack->numAlloc == 4);
+}
+
+void TestEmptyStackAllocationRollback() {
+    Extension* source = MakeExtension(0x5a);
+    LibreSsl3ExtensionsCertInfo probeCert{};
+    LibreSsl3ExtensionsX509 probeX509{};
+    probeX509.certInfo = &probeCert;
+    allocationAttempts = 0;
+    failOnAllocationAttempt = 0;
+    Require(X509_add_ext_nid_postfix(&probeX509, source, -1) == 1);
+    const std::size_t totalAllocations = allocationAttempts;
+    Require(totalAllocations > 0);
+    FreeCertificateExtensions(&probeX509);
+
+    for (std::size_t failIndex = 1; failIndex <= totalAllocations; ++failIndex) {
+        LibreSsl3ExtensionsCertInfo cert{};
+        LibreSsl3ExtensionsX509 x509{};
+        x509.certInfo = &cert;
+        const std::size_t baselineLive = allocations.size();
+        Require(X509_get_ext_count_nid_postfix(&x509) == 0);
+        Require(X509_get0_extensions_nid_postfix(&x509) == nullptr);
+
+        allocationAttempts = 0;
+        failOnAllocationAttempt = failIndex;
+        Require(X509_add_ext_nid_postfix(&x509, source, -1) == 0);
+        failOnAllocationAttempt = 0;
+
+        Require(X509_get_ext_count_nid_postfix(&x509) == 0);
+        Require(X509_get0_extensions_nid_postfix(&x509) == nullptr);
+        Require(allocations.size() == baselineLive);
+        Require(source->object != nullptr && source->value != nullptr && source->value->data[0] == 0x5a);
+
+        Require(X509_add_ext_nid_postfix(&x509, source, -1) == 1);
+        Require(X509_get_ext_count_nid_postfix(&x509) == 1);
+        const LibreSsl3Stack* const stack = X509_get0_extensions_nid_postfix(&x509);
+        Require(stack != nullptr && stack->num == 1 && stack->data[0] != nullptr);
+        const auto* const added = reinterpret_cast<const Extension*>(stack->data[0]);
+        Require(added != source && added->value->data[0] == 0x5a);
+        FreeCertificateExtensions(&x509);
+        Require(allocations.size() == baselineLive);
+    }
+
+    X509_EXTENSION_free_nid_postfix(source);
+    Require(allocations.empty());
+}
+
+void TestGrowthAllocationRollback() {
+    Extension* source = MakeExtension(0x7c);
+    LibreSsl3ExtensionsCertInfo probeCert{};
+    LibreSsl3ExtensionsX509 probeX509{};
+    probeX509.certInfo = &probeCert;
+    PopulateAtCapacity(&probeX509);
+    allocationAttempts = 0;
+    failOnAllocationAttempt = 0;
+    Require(X509_add_ext_nid_postfix(&probeX509, source, 1) == 1);
+    const std::size_t totalAllocations = allocationAttempts;
+    Require(totalAllocations > 0);
+    Require(X509_get_ext_count_nid_postfix(&probeX509) == 4);
+    Require(X509_get0_extensions_nid_postfix(&probeX509)->numAlloc == 8);
+    FreeCertificateExtensions(&probeX509);
+
+    LibreSsl3ExtensionsCertInfo cert{};
+    LibreSsl3ExtensionsX509 x509{};
+    x509.certInfo = &cert;
+    PopulateAtCapacity(&x509);
+
+    for (std::size_t failIndex = 1; failIndex <= totalAllocations; ++failIndex) {
+        const int countBefore = X509_get_ext_count_nid_postfix(&x509);
+        const LibreSsl3Stack* const stackBefore = X509_get0_extensions_nid_postfix(&x509);
+        Require(countBefore == 3 && stackBefore != nullptr && stackBefore->numAlloc == 4);
+        char** const dataBefore = stackBefore->data;
+        Require(allocations.contains(dataBefore));
+        const std::array<void*, 3> elementsBefore{stackBefore->data[0], stackBefore->data[1], stackBefore->data[2]};
+        const std::size_t baselineLive = allocations.size();
+
+        allocationAttempts = 0;
+        failOnAllocationAttempt = failIndex;
+        Require(X509_add_ext_nid_postfix(&x509, source, 1) == 0);
+        failOnAllocationAttempt = 0;
+
+        Require(X509_get_ext_count_nid_postfix(&x509) == countBefore);
+        Require(X509_get0_extensions_nid_postfix(&x509) == stackBefore);
+        Require(stackBefore->data == dataBefore);
+        Require(stackBefore->numAlloc == 4);
+        Require(allocations.contains(dataBefore));
+        for (int index = 0; index < 3; ++index) Require(stackBefore->data[index] == elementsBefore[index]);
+        Require(reinterpret_cast<const Extension*>(stackBefore->data[0])->value->data[0] == 0x11);
+        Require(reinterpret_cast<const Extension*>(stackBefore->data[1])->value->data[0] == 0x22);
+        Require(reinterpret_cast<const Extension*>(stackBefore->data[2])->value->data[0] == 0x33);
+        Require(allocations.size() == baselineLive);
+        Require(source->object != nullptr && source->value != nullptr && source->value->data[0] == 0x7c);
+    }
+
+    const LibreSsl3Stack* const stackBefore = X509_get0_extensions_nid_postfix(&x509);
+    const std::array<void*, 3> elementsBefore{stackBefore->data[0], stackBefore->data[1], stackBefore->data[2]};
+    Require(X509_add_ext_nid_postfix(&x509, source, 1) == 1);
+    Require(X509_get_ext_count_nid_postfix(&x509) == 4);
+    const LibreSsl3Stack* const stackAfter = X509_get0_extensions_nid_postfix(&x509);
+    Require(stackAfter == stackBefore && stackAfter->numAlloc == 8);
+    Require(stackAfter->data[0] == elementsBefore[0]);
+    Require(reinterpret_cast<const Extension*>(stackAfter->data[1]) != source && stackAfter->data[1] != elementsBefore[0] &&
+            stackAfter->data[1] != elementsBefore[1] && stackAfter->data[1] != elementsBefore[2]);
+    Require(reinterpret_cast<const Extension*>(stackAfter->data[1])->value->data[0] == 0x7c);
+    Require(stackAfter->data[2] == elementsBefore[1]);
+    Require(stackAfter->data[3] == elementsBefore[2]);
+
+    FreeCertificateExtensions(&x509);
+    X509_EXTENSION_free_nid_postfix(source);
+    Require(allocations.empty());
+}
+
 }
 
 int main() {
@@ -193,5 +335,8 @@ int main() {
     X509_EXTENSION_free_nid_postfix(stack->data[3]);
     sk_free_nid_postfix(stack);
     Require(allocations.empty());
+
+    TestEmptyStackAllocationRollback();
+    TestGrowthAllocationRollback();
     std::puts("libSceLibreSsl3 X509 extension stack tests passed");
 }

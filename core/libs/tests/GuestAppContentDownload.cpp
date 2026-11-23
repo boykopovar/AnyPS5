@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
     const std::uint32_t sdkVersion = 0x01500000;
     std::memcpy(process.data() + 16, &sdkVersion, sizeof(sdkVersion));
     const auto original = std::filesystem::current_path();
-    const auto directory = original / ("appcontent-download-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto directory = original / ("appcontent-download-test-" + std::to_string(quotaMiB) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(directory), "could not create test directory");
     std::filesystem::current_path(directory);
     std::filesystem::create_directories("app0/sce_sys");

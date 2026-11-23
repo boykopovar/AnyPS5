@@ -81,18 +81,14 @@ void* Reallocate(FT_Memory memory, long current, long size, void* block) {
 
 void WriteSourcePos(GuestStreamRec* source, unsigned long pos) {
     const std::uint64_t value = pos;
-    const int savedErrno = errno;
     GuestCopyOut_nid_no_patch(&source->pos, &value, sizeof(source->pos));
-    errno = savedErrno;
 }
 
 unsigned long SourceRead(FT_Stream stream, unsigned long offset, unsigned char* buffer, unsigned long count) {
     auto* state = static_cast<State*>(stream->descriptor.pointer);
     WriteSourcePos(state->source, stream->pos);
     GuestStreamRec sourceRec{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&sourceRec, state->source, sizeof(sourceRec));
-    errno = savedErrno;
     if (!copied || !sourceRec.read) {
         state->fault = true;
         return 0;
@@ -167,9 +163,7 @@ void Publish(GuestStreamRec* stream, const State& state) {
     localStream.memory = state.guestMemory;
     localStream.read = state.output.read ? OutputRead : nullptr;
     localStream.close = state.output.close ? OutputClose : nullptr;
-    const int savedErrno = errno;
     GuestCopyOut_nid_no_patch(stream, &localStream, sizeof(localStream));
-    errno = savedErrno;
 }
 
 template <typename TOpen>
