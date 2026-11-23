@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <string>
 
@@ -89,6 +90,38 @@ int main() {
     const std::size_t absentOutput = secondOutput + 0x54;
     Require(translated[absentOutput] == 0xff && translated[absentOutput + 0x17] == 0xff, "Ac6aYjr1pY8 marks unavailable second-table entries");
     Require(translated[absentOutput + 0x18] == 0 && translated[absentOutput + 0x4b] == 0xff && translated[absentOutput + 0x4c] == 0, "Ac6aYjr1pY8 leaves unavailable entry metrics zero and copies its sentinel fields");
+    std::array<std::uint8_t, 0x1308> sink{};
+    sink.fill(0x5a);
+    int copies = 0;
+    std::size_t copiedBytes = 0;
+    const auto copyRecord = [&](void* destination, const void* source, std::size_t size) {
+        ++copies;
+        copiedBytes = size;
+        std::memcpy(destination, source, size);
+        return true;
+    };
+    const auto copyRefused = [&](void*, const void*, std::size_t) {
+        ++copies;
+        errno = 99;
+        return false;
+    };
+    const auto fetchRaw = [&](SceVcodec::Internal::StatusRequest& destination) {
+        destination = raw;
+        return 0;
+    };
+    const auto fetchFailed = [](SceVcodec::Internal::StatusRequest&) { return ErrorPermission; };
+    Require(SceVcodec::Internal::TranslateStatus(sink.data(), fetchRaw, copyRecord) == 0, "Ac6aYjr1pY8 returns the request status after copying");
+    Require(copies == 1 && copiedBytes == 0x1308, "Ac6aYjr1pY8 copies the whole output structure once");
+    SceVcodec::Internal::StatusOutput expected{};
+    SceVcodec::Internal::ConvertStatus(raw, expected);
+    Require(std::memcmp(sink.data(), expected.data(), expected.size()) == 0, "Ac6aYjr1pY8 copies the converted output");
+    copies = 0;
+    Require(SceVcodec::Internal::TranslateStatus(nullptr, fetchRaw, copyRecord) == 0 && copies == 0, "Ac6aYjr1pY8 with a null output copies nothing");
+    Require(SceVcodec::Internal::TranslateStatus(sink.data(), fetchFailed, copyRecord) == ErrorPermission && copies == 0, "Ac6aYjr1pY8 returns a failed request status without copying");
+    errno = 71;
+    Require(SceVcodec::Internal::TranslateStatus(sink.data(), fetchRaw, copyRefused) == ErrorInvalidArgument, "Ac6aYjr1pY8 maps a refused output copy to 0x80BF0001");
+    Require(errno == 71, "Ac6aYjr1pY8 keeps errno across a refused output copy");
+
     Set64(raw, 0x1b48, 0);
     Set32(raw, secondTable + 0x18, 0);
     SceVcodec::Internal::ConvertStatus(raw, translated);

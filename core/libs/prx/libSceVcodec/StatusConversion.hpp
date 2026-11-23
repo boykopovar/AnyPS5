@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -9,6 +10,7 @@ namespace SceVcodec::Internal {
 
 inline constexpr std::size_t StatusRequestSize = 0x1b50;
 inline constexpr std::size_t StatusOutputSize = 0x1308;
+inline constexpr int StatusCopyError = static_cast<int>(0x80bf0001);
 
 using StatusRequest = std::array<std::uint8_t, StatusRequestSize>;
 using StatusOutput = std::array<std::uint8_t, StatusOutputSize>;
@@ -91,6 +93,21 @@ inline void ConvertStatus(const StatusRequest& request, StatusOutput& output) {
         std::memcpy(output.data() + destination + 0x3c, request.data() + source + 0x60, 0x10);
         std::memcpy(output.data() + destination + 0x4c, request.data() + source + 0x70, 8);
     }
+}
+
+template <typename Fetch, typename CopyOut>
+int TranslateStatus(void* output, Fetch&& fetch, CopyOut&& copyOut) {
+    StatusRequest raw{};
+    const int status = fetch(raw);
+    if (status < 0 || output == nullptr) return status;
+
+    StatusOutput translated{};
+    ConvertStatus(raw, translated);
+
+    const int savedErrno = errno;
+    const bool copied = copyOut(output, translated.data(), translated.size());
+    errno = savedErrno;
+    return copied ? status : StatusCopyError;
 }
 
 }

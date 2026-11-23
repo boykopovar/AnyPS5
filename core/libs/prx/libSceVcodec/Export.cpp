@@ -183,20 +183,15 @@ int APS5_VABI sceVcodecSetHwBudgetType(std::uint32_t budget, std::uint32_t first
 }
 
 int APS5_VABI libSceVcodecUnknown_Ac6aYjr1pY8_nid_no_patch(void* output) {
-    Request request{};
-    const int status = Control<StatusCommand>(request);
-    if (status < 0 || output == nullptr) return status;
-
-    SceVcodec::Internal::StatusRequest raw{};
-    std::memcpy(raw.data(), request.fields, raw.size());
-    SceVcodec::Internal::StatusOutput translated{};
-    SceVcodec::Internal::ConvertStatus(raw, translated);
-
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(output, translated.data(), translated.size());
-    errno = savedErrno;
-    if (!copied) return ErrorInvalidArgument;
-    return status;
+    return SceVcodec::Internal::TranslateStatus(
+        output,
+        [](SceVcodec::Internal::StatusRequest& raw) {
+            Request request{};
+            const int status = Control<StatusCommand>(request);
+            std::memcpy(raw.data(), request.fields, raw.size());
+            return status;
+        },
+        [](void* destination, const void* source, std::size_t size) { return GuestCopyOut_nid_no_patch(destination, source, size); });
 }
 APS5_EXPORT("Ac6aYjr1pY8", libSceVcodecUnknown_Ac6aYjr1pY8_nid_no_patch);
 
