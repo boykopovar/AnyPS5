@@ -2601,6 +2601,8 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
 #else
     constexpr bool dmaBufOnly = false;
 #endif
+    static constexpr const char* readTrapped = "read-trapped pages";
+    if (!dmaBufOnly) step = readTrapped;
     if (!dmaBufOnly) GuestMemory::ImportWatched(base, bytes, [&] {
         step = watchedDmaBuf == watchedHostPointer ? createImport(context, entry, result, state.dmaBufImportsCoherent) : createHostPointerImport(context, entry, result);
 #ifdef _WIN32
@@ -2612,6 +2614,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
 #endif
         return step == nullptr;
     }, watchedHostPointer);
+    if (step == readTrapped) return nullptr;
 #ifndef _WIN32
     if (dmaBufOnly) {
         const bool hostFallback = GuestArena::GuestArenaSharedBackingHostFallback_nid_no_patch(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));

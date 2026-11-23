@@ -100,6 +100,7 @@ void GuestArenaReleaseHostRegion_nid_no_patch(const void* pointer, std::size_t b
 bool GuestArenaArmOwned_nid_no_patch(std::uintptr_t address, std::size_t bytes, std::uint64_t* words, std::size_t count, unsigned flags);
 bool GuestArenaOwnedUnchanged_nid_no_patch(std::uintptr_t address, std::size_t bytes, const std::uint64_t* words, std::size_t count);
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes);
+bool GuestArenaTryBeginHostWrite_nid_no_patch(void* pointer, std::size_t bytes);
 void GuestArenaEndHostWrite_nid_postfix(void* pointer, std::size_t bytes);
 void GuestArenaSetHostWriteHook_nid_no_patch(void (*hook)(std::uintptr_t address, std::size_t bytes));
 void GuestArenaSetHostReadHook_nid_no_patch(void (*hook)(std::uintptr_t address, std::size_t bytes));
@@ -109,7 +110,10 @@ void GuestArenaPrepareHostRead_nid_no_patch(const void* pointer, std::size_t byt
 
 class HostWrite {
 public:
+    struct TryTag {};
+    static constexpr TryTag Try{};
     HostWrite(void* pointer, std::size_t bytes) : pointer(pointer), bytes(bytes), open(GuestArenaBeginHostWrite_nid_postfix(pointer, bytes)) {}
+    HostWrite(void* pointer, std::size_t bytes, TryTag) : pointer(pointer), bytes(bytes), open(GuestArenaTryBeginHostWrite_nid_no_patch(pointer, bytes)) {}
     ~HostWrite() {
         if (open) GuestArenaEndHostWrite_nid_postfix(pointer, bytes);
     }

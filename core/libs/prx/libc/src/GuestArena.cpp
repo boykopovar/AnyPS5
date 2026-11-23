@@ -1016,6 +1016,15 @@ bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
 #endif
 }
 
+bool GuestArenaTryBeginHostWrite_nid_no_patch(void* pointer, std::size_t bytes) {
+#if defined(__APPLE__)
+    if (const auto hook = hostWriteHook.load(std::memory_order_acquire); hook != nullptr && bytes != 0) hook(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+    return GuestWriteWatch::GuestWriteWatchTryBeginHostWrite_nid_postfix(pointer, bytes);
+#else
+    return GuestArenaBeginHostWrite_nid_postfix(pointer, bytes);
+#endif
+}
+
 #ifdef _WIN32
 bool GuestArenaBeginHostImport_nid_no_patch(void* pointer, std::size_t bytes) {
     return WindowsMappings::Get().BeginHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes, false);

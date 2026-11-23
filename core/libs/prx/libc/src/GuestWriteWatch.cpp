@@ -623,12 +623,34 @@ public:
         begin = pageStart(begin);
         end = pageEnd(end);
         if (end <= begin) return;
-        withoutTraps(begin, end, true, [&] {
-            _hostWrites.emplace_back(begin, end);
-            forEachPage(begin, end, [&](std::uintptr_t page, std::uint8_t& state) {
-                if ((state & Protected) != 0) ::mprotect(reinterpret_cast<void*>(page), _page, state & ProtectionMask);
-                state = static_cast<std::uint8_t>((state & (ProtectionMask | Fresh)) | Written);
-            });
+        withoutTraps(begin, end, true, [&] { openHostWrite(begin, end); });
+    }
+
+    bool TryBeginHostWrite(std::uintptr_t begin, std::uintptr_t end) {
+        if (!_available || end <= begin) return true;
+        begin = pageStart(begin);
+        end = pageEnd(end);
+        if (end <= begin) return true;
+        std::vector<std::uintptr_t> trapped;
+        {
+            const Lock lock(_lock);
+            if (!trapCovers(begin, end) && !resolvingCovers(begin, end, Owner::Others)) {
+                untrap(begin, end);
+                openHostWrite(begin, end);
+                return true;
+            }
+            for (const auto& [first, last] : _traps)
+                if (first < end && begin < last) trapped.push_back(pageStart(std::max(first, begin)));
+        }
+        for (const auto page : trapped) resolveDetached(page);
+        return false;
+    }
+
+    void openHostWrite(std::uintptr_t begin, std::uintptr_t end) {
+        _hostWrites.emplace_back(begin, end);
+        forEachPage(begin, end, [&](std::uintptr_t page, std::uint8_t& state) {
+            if ((state & Protected) != 0) ::mprotect(reinterpret_cast<void*>(page), _page, state & ProtectionMask);
+            state = static_cast<std::uint8_t>((state & (ProtectionMask | Fresh)) | Written);
         });
     }
 
@@ -731,6 +753,7 @@ private:
     struct Slot {
         std::atomic<unsigned> state{Free};
         std::uintptr_t page = 0;
+        bool detached = false;
         semaphore_t done = MACH_PORT_NULL;
     };
 
@@ -905,6 +928,19 @@ private:
         return true;
     }
 
+    void resolveDetached(std::uintptr_t page) {
+        if (std::any_of(_slots.begin(), _slots.end(), [&](const Slot& slot) { return slot.state.load(std::memory_order_acquire) == Queued && slot.page == page; })) return;
+        for (auto& slot : _slots) {
+            unsigned expected = Free;
+            if (!slot.state.compare_exchange_strong(expected, Claimed, std::memory_order_acq_rel)) continue;
+            slot.page = page;
+            slot.detached = true;
+            slot.state.store(Queued, std::memory_order_release);
+            semaphore_signal(_wake);
+            return;
+        }
+    }
+
     void startResolver() {
         _resolving.reserve(ResolvingCapacity);
         _deferred.reserve(ResolvingCapacity);
@@ -935,6 +971,11 @@ private:
                 {
                     const Lock lock(_lock);
                     untrap(page, page + _page);
+                }
+                if (slot.detached) {
+                    slot.detached = false;
+                    slot.state.store(Free, std::memory_order_release);
+                    continue;
                 }
                 slot.state.store(Done, std::memory_order_release);
                 semaphore_signal(slot.done);
@@ -1298,6 +1339,17 @@ void GuestWriteWatchBeginHostWrite_nid_postfix(const void* pointer, std::size_t 
 #else
     static_cast<void>(pointer);
     static_cast<void>(bytes);
+#endif
+}
+
+bool GuestWriteWatchTryBeginHostWrite_nid_postfix(const void* pointer, std::size_t bytes) {
+#if defined(__APPLE__)
+    const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
+    return Watch::Get().TryBeginHostWrite(begin, begin + bytes);
+#else
+    static_cast<void>(pointer);
+    static_cast<void>(bytes);
+    return true;
 #endif
 }
 

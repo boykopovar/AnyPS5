@@ -2687,7 +2687,7 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
 #ifdef __APPLE__
         const OwnHostWrite own;
         std::optional<GuestArena::HostWrite> open;
-        if (importMayWriteGuest) open.emplace(reinterpret_cast<void*>(first), static_cast<std::size_t>(stop - first));
+        if (importMayWriteGuest && !open.emplace(reinterpret_cast<void*>(first), static_cast<std::size_t>(stop - first), GuestArena::HostWrite::Try).Open()) return false;
 #endif
 #ifndef __APPLE__
         static_cast<void>(importMayWriteGuest);
