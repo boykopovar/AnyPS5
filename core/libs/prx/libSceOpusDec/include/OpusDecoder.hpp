@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEOPUSDEC_INCLUDE_OPUSDECODER_HPP
 
 #include "prx/libc/include/General.hpp"
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -87,11 +88,14 @@ public:
         int samples;
         std::vector<std::int16_t> decoded;
         if (bytes == 0) {
-            samples = capacity / (decoder.channels * static_cast<int>(sizeof(std::int16_t)));
             const int plcFrameSamples = decoder.sampleRate / 400;
-            const int maximumFrameSamples = decoder.sampleRate * 120 / 1000;
-            if (samples < plcFrameSamples || samples > maximumFrameSamples || samples % plcFrameSamples != 0)
-                fail("invalid packet loss concealment duration");
+            opus_int32 lastDuration = 0;
+            if (opus_decoder_ctl(decoder.codec.get(), OPUS_GET_LAST_PACKET_DURATION(&lastDuration)) != OPUS_OK) fail("libopus did not report the last packet duration");
+            if (lastDuration == 0) lastDuration = decoder.sampleRate / 50;
+            const int fittingSamples = capacity / (decoder.channels * static_cast<int>(sizeof(std::int16_t)));
+            samples = std::min(static_cast<int>(lastDuration), fittingSamples);
+            samples -= samples % plcFrameSamples;
+            if (samples == 0) fail("PCM buffer is too small");
             decoded.resize(static_cast<std::size_t>(samples) * decoder.channels);
             samples = opus_decode(decoder.codec.get(), nullptr, 0, decoded.data(), samples, 0);
             if (samples < 0) fail("libopus rejected the packet loss concealment duration");
