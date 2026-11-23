@@ -850,8 +850,8 @@ int main() {
     Require(sceKernelStat(".", nullptr) == static_cast<int>(0x8002000eu));
     Require(sceKernelDebugOutText(-1, "text") == static_cast<int>(0x80020016u));
     std::uint64_t throttling[4] = {1, 2, 3, 4};
-    Require(sceKernelWriteThrottlingStatus(throttling) == 0);
-    Require(throttling[0] == 0xffffffffu && throttling[1] == 0 && throttling[2] == 0 && throttling[3] == 0);
+    Require(sceKernelWriteThrottlingStatus(throttling) == static_cast<int>(0x80020003u));
+    Require(throttling[0] == 1 && throttling[1] == 2 && throttling[2] == 3 && throttling[3] == 4);
     Require(sceKernelWriteThrottlingStatus(nullptr) == static_cast<int>(0x80020016u));
     Require(sceKernelWriteThrottlingStatus(reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<int>(0x8002000eu));
     Require(sceKernelDebugOutText(0, nullptr) == static_cast<int>(0x8002000eu));

@@ -1525,9 +1525,8 @@ int APS5_VABI sceKernelFdatasync(int fd) {
 
 int APS5_VABI sceKernelWriteThrottlingStatus(std::uint64_t* status) {
     if (status == nullptr) return SceErrorFromErrno(GUEST_EINVAL);
-    const std::uint64_t values[4]{std::numeric_limits<std::uint32_t>::max(), 0, 0, 0};
-    if (!GuestCopyOut_nid_no_patch(status, values, sizeof(values))) return SceErrorFromErrno(GUEST_EFAULT);
-    return 0;
+    if (!GuestWritable_nid_no_patch(status, 4 * sizeof(*status))) return SceErrorFromErrno(GUEST_EFAULT);
+    return SCE_KERNEL_ERROR_ESRCH;
 }
 
 #ifdef _WIN32
