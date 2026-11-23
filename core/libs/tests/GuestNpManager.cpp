@@ -1250,6 +1250,16 @@ void CheckUnknownFieldComparisons() {
     }
 }
 
+void CheckSilentStubs() {
+    const auto* const unreadableTitleId = reinterpret_cast<const NpTitleId*>(std::uintptr_t{0x10});
+    const auto* const unreadableTitleSecret = reinterpret_cast<const NpTitleSecret*>(std::uintptr_t{0x20});
+    const auto* const unreadablePremiumParam = reinterpret_cast<const void*>(std::uintptr_t{0x30});
+    Require(sceNpSetNpTitleId(nullptr, nullptr) == 0, "sceNpSetNpTitleId accepts null silent-stub inputs");
+    Require(sceNpSetNpTitleId(unreadableTitleId, unreadableTitleSecret) == 0, "sceNpSetNpTitleId must not read its silent-stub inputs");
+    Require(sceNpNotifyPremiumFeature(nullptr) == 0, "sceNpNotifyPremiumFeature accepts a null silent-stub parameter");
+    Require(sceNpNotifyPremiumFeature(unreadablePremiumParam) == 0, "sceNpNotifyPremiumFeature must not read its silent-stub parameter");
+}
+
 int main() {
     CheckNpOfflineGetters();
     CheckAsmLifecycle();
@@ -1280,6 +1290,7 @@ int main() {
     CheckManagerIntUserLookups();
     CheckManagerIntAuthorization();
     CheckPlusAndContentRestriction();
+    CheckSilentStubs();
     CheckUnknownFieldComparisons();
     NpId npId{};
     std::memset(&npId, 0x5a, sizeof(npId));
