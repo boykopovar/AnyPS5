@@ -550,6 +550,32 @@ void RunEdges() {
     edge.mask = ReadMask;
     edge.current = nullptr;
     RequireInvalidArgument([&] { getBit16_nid_postfix(&edge, 1); }, "null current pointer");
+
+    auto* unmappedIo = reinterpret_cast<Jxr::BitIo*>(std::uintptr_t{0x10000});
+    auto* unmappedStream = reinterpret_cast<Jxr::Stream*>(std::uintptr_t{0x10});
+    Jxr::Stream okStream{};
+    okStream.getPosition = &AttachmentPosition;
+    static const std::uint16_t roWord = 0;
+    static const Jxr::BitIo readOnlyIo{0, 0, 1, WriteMask, nullptr, const_cast<std::uint8_t*>(reinterpret_cast<const std::uint8_t*>(&roWord)), nullptr, 0};
+    errno = 71;
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(unmappedIo, &okStream); }, "unmapped io in attachISWrite");
+    Require(errno == 71, "attachISWrite unmapped io changed errno");
+    auto validIo = Attach(ring, 0, 0, 0);
+    errno = 71;
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(&validIo, unmappedStream); }, "unmapped stream in attachISWrite");
+    Require(errno == 71, "attachISWrite unmapped stream changed errno");
+    errno = 71;
+    RequireInvalidArgument([&] { putBit16z_nid_postfix(unmappedIo, 1, 1); }, "unmapped io in putBit16z");
+    Require(errno == 71, "putBit16z unmapped io changed errno");
+    errno = 71;
+    RequireInvalidArgument([&] { putBit16z_nid_postfix(const_cast<Jxr::BitIo*>(&readOnlyIo), 1, 1); }, "read-only io in putBit16z");
+    Require(errno == 71, "putBit16z read-only io changed errno");
+    errno = 71;
+    RequireInvalidArgument([&] { fillToByte_nid_postfix(unmappedIo); }, "unmapped io in fillToByte");
+    Require(errno == 71, "fillToByte unmapped io changed errno");
+    errno = 71;
+    RequireInvalidArgument([&] { fillToByte_nid_postfix(const_cast<Jxr::BitIo*>(&readOnlyIo)); }, "read-only io in fillToByte");
+    Require(errno == 71, "fillToByte read-only io changed errno");
 }
 
 } // namespace

@@ -1,0 +1,5 @@
+# libkernel
+
+## change [sceKernelGetAllowedSdkVersionOnSystem](../../../core/libs/prx/libkernel/System/src/SoftwareVersion.cpp) (libkernel)
+
+- [sceKernelGetAllowedSdkVersionOnSystem](../../../core/libs/prx/libkernel/System/src/SoftwareVersion.cpp) (libkernel) reports `0x01000fff` (the version with the 12 patch bits set); a payload process on a PS5 (12.70, `kernel_get_fw_version` `0x12700001`) got 0 and wrote `0x12700fff`, while `sceKernelGetSystemSwVersion` said `13.090.001` in the same process, and a PS5 Pro payload process (13.60, `0x13600007`) wrote `0x13600fff`. The pattern follows [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/98fd0689/src/core/libraries/kernel/kernel.cpp) and [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/main/src/SharpProspero/Interop/Kernel/KernelSystem.cs), read by Prospero Explorer (PPSA99109). Both processes answer a null pointer with `SCE_KERNEL_ERROR_EINVAL` (`0x80020016`) and leave the output untouched; 13.60 answers an unwritable pointer with `SCE_KERNEL_ERROR_EFAULT` (`0x8002000e`), matching the host-safety fallback here. A title process is unmeasured

@@ -141,7 +141,7 @@ namespace {
 
 constexpr FcBool FcTrue = 1;
 constexpr FcBool FcFalse = 0;
-using PatternOwner = std::unique_ptr<FcPattern, decltype([](FcPattern* p) { FcPatternDestroy(p); })>;
+using PatternOwner = std::unique_ptr<FcPattern, decltype([](FcPattern* p) { FcPatternDestroy_nid_postfix(p); })>;
 
 struct FcStrBuf {
     std::vector<FcChar8> storage;
@@ -195,13 +195,7 @@ FcChar8* FormatDowncase(const FcChar8* text) {
     return CopyText(FontconfigDowncase_nid_no_patch(reinterpret_cast<const char*>(text)));
 }
 const char* LastSlash(const FcChar8* text) {
-    const auto* value = reinterpret_cast<const char*>(text);
-    const auto* slash = std::strrchr(value, '/');
-#ifdef _WIN32
-    const auto* backslash = std::strrchr(value, '\\');
-    if (backslash && (!slash || backslash > slash)) slash = backslash;
-#endif
-    return slash;
+    return std::strrchr(reinterpret_cast<const char*>(text), '/');
 }
 FcChar8* FormatBasename(const FcChar8* text) {
     const auto* slash = LastSlash(text);
@@ -677,7 +671,7 @@ interpret_filter_in(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
 static FcBool
 interpret_filter_out(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
     if (!expect_char(c, '-')) return FcFalse;
-    PatternOwner subpat(FcPatternDuplicate(pat));
+    PatternOwner subpat(FcPatternDuplicate_nid_postfix(pat));
     if (!subpat) return FcFalse;
     do {
         if (!read_word(c)) return FcFalse;
@@ -754,7 +748,7 @@ interpret_enumerate(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
     const bool isLanguages = names.size() == 1 &&
         FcPatternGetLangSet(pat, names[0].c_str(), 0, &langset) == FcResultMatch;
     if (isLanguages) languages = FontconfigLanguages_nid_no_patch(langset, true);
-    PatternOwner subpat(FcPatternDuplicate(pat));
+    PatternOwner subpat(FcPatternDuplicate_nid_postfix(pat));
     if (!subpat) return FcFalse;
     const auto* saved = c->format;
     for (int index = 0;; ++index) {
@@ -779,7 +773,7 @@ interpret_enumerate(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
         c->format = saved;
         if (!interpret_subexpr(c, subpat.get(), buf)) return FcFalse;
     }
-    if (c->format == saved) return skip_subexpr(c);
+    if (c->format == saved) skip_subexpr(c);
     return FcTrue;
 }
 
@@ -791,7 +785,7 @@ interpret_simple(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
     int index = -1;
     if (consume_char(c, '[')) {
         char* end;
-        index = strtol(reinterpret_cast<const char*>(c->format), &end, 10);
+        index = static_cast<int>(strtoll(reinterpret_cast<const char*>(c->format), &end, 10));
         c->format = reinterpret_cast<const FcChar8*>(end);
         if (index < 0 || !expect_char(c, ']')) return FcFalse;
     }
@@ -1151,7 +1145,7 @@ interpret_percent (FcFormatContext *c,
     }
 
 
-    width = strtol ((const char *) c->format, (char **) &c->format, 10);
+    width = static_cast<int>(strtoll ((const char *) c->format, (char **) &c->format, 10));
 
     if (!expect_char (c, '{'))
 	return FcFalse;
