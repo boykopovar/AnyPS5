@@ -66,10 +66,6 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-bool IsNan16(std::uint32_t half) {
-    return (half & 0x7fffu) > 0x7c00u;
-}
-
 std::uint32_t Half(std::uint32_t combination, std::uint32_t operand) {
     return Halves[(combination >> (operand * 4u)) & 15u];
 }
@@ -146,7 +142,7 @@ Float16NanProbeResult ProbeFloat16HostNans(VulkanDevice& device, const ShaderRec
                         const std::uint32_t expectedHalf = (expected >> shift) & 0xffffu;
                         const std::uint32_t actualHalf = (actual >> shift) & 0xffffu;
                         ++result.compared;
-                        if (expectedHalf != actualHalf && !(IsNan16(expectedHalf) && IsNan16(actualHalf) && expectedHalf != 0xfe00u)) ++result.mismatches;
+                        if (expectedHalf != actualHalf) ++result.mismatches;
                     }
                 }
             }
