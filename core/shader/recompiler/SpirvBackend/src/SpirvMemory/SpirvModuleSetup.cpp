@@ -448,6 +448,9 @@ void DefineModule(SpirvEmitterState& state) {
     if (StageOf(state) == IrShaderStage::Mesh && std::ranges::any_of(state.outputs, [](const SpirvOutputBinding& output) { return output.kind == StageOutputKind::ViewportIndex; })) {
         state.module.EmitCapability(spv::CapabilityMultiViewport);
     }
+    if (InputVariableForKind(state, StageInputKind::ViewportIndex) != 0u) {
+        state.module.EmitCapability(spv::CapabilityMultiViewport);
+    }
     if (InputVariableForKind(state, StageInputKind::SampleId) != 0) {
         state.module.EmitCapability(spv::CapabilitySampleRateShading);
     }

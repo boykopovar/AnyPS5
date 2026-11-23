@@ -2408,8 +2408,23 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
                 if (std::isinf(pixel.psDepthExportMin) && std::isinf(pixel.psDepthExportMax)) {
                     state.module.AddFunction(spv::OpStore, state.depthVariable, f32);
                 } else {
+                    auto minimum = ConstantF32Value(state, pixel.psDepthExportMin);
+                    auto maximum = ConstantF32Value(state, pixel.psDepthExportMax);
+                    if (pixel.psDepthExportViewportRanges) {
+                        const auto viewportIndexInput = InputVariableForKind(state, StageInputKind::ViewportIndex);
+                        if (viewportIndexInput == 0u) throw std::logic_error("AGC depth export clamp has no viewport-index input");
+                        const auto viewportIndex = state.module.AllocateId();
+                        state.module.AddFunction(spv::OpLoad, TypeI32(state), viewportIndex, viewportIndexInput);
+                        minimum = ConstantF32Value(state, pixel.psDepthExportMinByViewport[0]);
+                        maximum = ConstantF32Value(state, pixel.psDepthExportMaxByViewport[0]);
+                        for (std::uint32_t index = 1; index < pixel.psDepthExportMinByViewport.size(); ++index) {
+                            const auto matchesViewport = Binary(state, spv::OpIEqual, TypeBool(state), viewportIndex, ConstantI32(state, static_cast<std::int32_t>(index)));
+                            minimum = Select(state, TypeF32(state), matchesViewport, ConstantF32Value(state, pixel.psDepthExportMinByViewport[index]), minimum);
+                            maximum = Select(state, TypeF32(state), matchesViewport, ConstantF32Value(state, pixel.psDepthExportMaxByViewport[index]), maximum);
+                        }
+                    }
                     const auto clamped = state.module.AllocateId();
-                    state.module.AddFunction(spv::OpExtInst, TypeF32(state), clamped, GlslStd450(state), GLSLstd450NClamp, f32, ConstantF32Value(state, pixel.psDepthExportMin), ConstantF32Value(state, pixel.psDepthExportMax));
+                    state.module.AddFunction(spv::OpExtInst, TypeF32(state), clamped, GlslStd450(state), GLSLstd450NClamp, f32, minimum, maximum);
                     state.module.AddFunction(spv::OpStore, state.depthVariable, clamped);
                 }
             }

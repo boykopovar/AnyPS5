@@ -96,6 +96,7 @@ std::uint32_t BuiltInForInput(StageInputKind kind) {
     case StageInputKind::FrontFacing: return spv::BuiltInFrontFacing;
     case StageInputKind::HelperInvocation: return spv::BuiltInHelperInvocation;
     case StageInputKind::Layer: return spv::BuiltInLayer;
+    case StageInputKind::ViewportIndex: return spv::BuiltInViewportIndex;
     case StageInputKind::SampleId: return spv::BuiltInSampleId;
     case StageInputKind::SampleMask: return spv::BuiltInSampleMask;
     case StageInputKind::BaryCoordSmooth: return spv::BuiltInBaryCoordKHR;
@@ -193,6 +194,9 @@ void DefineInputs(SpirvEmitterState& state) {
             state.inputs.push_back(SpirvInputBinding {{kind, 0u, components, name, false}});
         }
     };
+    if (StageOf(state) == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && state.inputInfo.pixel->psDepthExportViewportRanges) {
+        addBuiltin(StageInputKind::ViewportIndex, 1u, "gl_ViewportIndex");
+    }
     if (StageOf(state) == IrShaderStage::Compute) {
         for (const auto& block : state.program.Blocks()) {
             for (const IrValue* instruction : block->Instructions()) {
@@ -288,6 +292,7 @@ void DefineInputs(SpirvEmitterState& state) {
         case StageInputKind::InstanceIndex:
         case StageInputKind::BaseInstance:
         case StageInputKind::Layer:
+        case StageInputKind::ViewportIndex:
         case StageInputKind::SampleId:
             type = TypeI32(state);
             break;
@@ -328,7 +333,7 @@ void DefineInputs(SpirvEmitterState& state) {
             break;
         }
         input.variableId = DefineInterfaceVariable(state, type, spv::StorageClassInput, input.debugName.c_str());
-        if (input.kind == StageInputKind::Layer || input.kind == StageInputKind::SampleId || input.kind == StageInputKind::SampleMask) {
+        if (input.kind == StageInputKind::Layer || input.kind == StageInputKind::ViewportIndex || input.kind == StageInputKind::SampleId || input.kind == StageInputKind::SampleMask) {
             state.module.AddAnnotation(spv::OpDecorate, input.variableId, spv::DecorationFlat);
         }
         if (input.kind == StageInputKind::Parameter) {
