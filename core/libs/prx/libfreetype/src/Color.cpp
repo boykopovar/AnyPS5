@@ -2,7 +2,6 @@
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include FT_COLOR_H
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 
 namespace {
 
@@ -15,10 +14,7 @@ static_assert(sizeof(FT_Color) == sizeof(LegacyFreeType::GuestColor));
 
 template <typename T>
 bool WriteOut(T* destination, const T& value) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
 }
 
 }
@@ -41,10 +37,32 @@ std::int32_t APS5_VABI FT_Palette_Select_nid_postfix(FreeType::GuestFaceRec* fac
 }
 
 std::uint8_t APS5_VABI FT_Get_Color_Glyph_Layer_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t baseGlyph, std::uint32_t* glyphIndex, std::uint32_t* colorIndex, LegacyFreeType::GuestLayerIterator* iterator) {
-    if (!iterator) return FT_Get_Color_Glyph_Layer(HostFace(face), baseGlyph, glyphIndex, colorIndex, nullptr);
-    FT_LayerIterator native{iterator->num_layers, iterator->layer, iterator->p};
-    const FT_Bool found = FT_Get_Color_Glyph_Layer(HostFace(face), baseGlyph, glyphIndex, colorIndex, &native);
-    *iterator = {native.num_layers, native.layer, native.p};
+    if (!iterator) {
+        if (glyphIndex && !GuestWritable_nid_no_patch(glyphIndex, sizeof(*glyphIndex))) return 0;
+        if (colorIndex && !GuestWritable_nid_no_patch(colorIndex, sizeof(*colorIndex))) return 0;
+        std::uint32_t nativeGlyph = 0;
+        std::uint32_t nativeColor = 0;
+        const FT_Bool found = FT_Get_Color_Glyph_Layer(HostFace(face), baseGlyph, glyphIndex ? &nativeGlyph : nullptr, colorIndex ? &nativeColor : nullptr, nullptr);
+        if (found) {
+            if (glyphIndex) WriteOut(glyphIndex, nativeGlyph);
+            if (colorIndex) WriteOut(colorIndex, nativeColor);
+        }
+        return found;
+    }
+    if (glyphIndex && !GuestWritable_nid_no_patch(glyphIndex, sizeof(*glyphIndex))) return 0;
+    if (colorIndex && !GuestWritable_nid_no_patch(colorIndex, sizeof(*colorIndex))) return 0;
+    LegacyFreeType::GuestLayerIterator localIterator{};
+    if (!GuestCopyIn_nid_no_patch(&localIterator, iterator, sizeof(localIterator)) || !GuestWritable_nid_no_patch(iterator, sizeof(*iterator))) return 0;
+    FT_LayerIterator native{localIterator.num_layers, localIterator.layer, localIterator.p};
+    std::uint32_t nativeGlyph = 0;
+    std::uint32_t nativeColor = 0;
+    const FT_Bool found = FT_Get_Color_Glyph_Layer(HostFace(face), baseGlyph, glyphIndex ? &nativeGlyph : nullptr, colorIndex ? &nativeColor : nullptr, &native);
+    localIterator = {native.num_layers, native.layer, native.p};
+    WriteOut(iterator, localIterator);
+    if (found) {
+        if (glyphIndex) WriteOut(glyphIndex, nativeGlyph);
+        if (colorIndex) WriteOut(colorIndex, nativeColor);
+    }
     return found;
 }
 

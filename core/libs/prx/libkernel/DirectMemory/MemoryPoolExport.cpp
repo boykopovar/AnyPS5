@@ -12,6 +12,7 @@
 namespace {
 
 constexpr size_t kPoolBlockSize = 2ULL * 1024 * 1024;
+constexpr int DefinedProtection = 0x3F7;
 
 struct PoolState {
     std::mutex mutex;
@@ -88,7 +89,7 @@ int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries
    switch (e.op) {
     case 1: return PoolCommit(e.commit.addr, e.commit.len, e.commit.type, e.commit.prot);
     case 2: return PoolDecommit(e.decommit.addr, e.decommit.len);
-    case 3: return DoMprotect(e.protect.addr, static_cast<size_t>(e.protect.len), e.protect.prot);
+    case 3: return DoMprotect(e.protect.addr, static_cast<size_t>(e.protect.len), e.protect.prot & DefinedProtection);
     case 4: return DoMtypeprotect(e.type_protect.addr, static_cast<size_t>(e.type_protect.len), e.type_protect.type, e.type_protect.prot);
     default: return SCE_KERNEL_ERROR_EINVAL;
    }
@@ -96,9 +97,7 @@ int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries
   if (ret != 0) break;
  }
  if (num_entries_out != nullptr) {
-  const int savedErrno = errno;
   const bool copied = GuestCopyOut_nid_no_patch(num_entries_out, &done, sizeof(done));
-  errno = savedErrno;
   if (!copied) return SCE_KERNEL_ERROR_EFAULT;
  }
  return ret;
@@ -150,16 +149,12 @@ int APS5_VABI sceKernelMemoryPoolReserve(void* addr_in, size_t len, size_t align
  if (!addr_out || len == 0 || !PageAligned(len) || (alignment != 0 && !PageAligned(alignment))) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
- const int savedErrno = errno;
  const bool writable = GuestCopyOut_nid_no_patch(addr_out, &addr_in, sizeof(addr_in));
- errno = savedErrno;
  if (!writable) return SCE_KERNEL_ERROR_EFAULT;
  void* reserved = addr_in;
  const int ret = Guarded([&] { return DoReserveVirtual(&reserved, len, flags, alignment); });
  if (ret != 0) return ret;
- const int savedErrnoAfter = errno;
  const bool copied = GuestCopyOut_nid_no_patch(addr_out, &reserved, sizeof(reserved));
- errno = savedErrnoAfter;
  if (!copied) {
   munmap_nid_postfix(reserved, len);
   return SCE_KERNEL_ERROR_EFAULT;

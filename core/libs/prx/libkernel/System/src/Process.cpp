@@ -692,7 +692,12 @@ int APS5_VABI system_nid_postfix(const char* command) {
     return command == nullptr ? 1 : shellNotExecuted;
 }
 
-#ifndef _WIN32
+#ifdef _WIN32
+static KernelTimeval TimevalFromHundredNanoseconds(std::uint64_t ticks) {
+    const std::uint64_t micros = ticks / 10ULL;
+    return KernelTimeval{static_cast<std::int64_t>(micros / 1000000ULL), static_cast<std::int64_t>(micros % 1000000ULL)};
+}
+#else
 static GuestResourceUsage ResourceUsage(const struct rusage& native) {
     GuestResourceUsage result{};
     result.ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
@@ -728,7 +733,8 @@ int WaitProcess_nid_no_patch(int pid, int* status, int options, GuestResourceUsa
     }
 #ifdef _WIN32
     int encoded = 0;
-    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded, usage != nullptr);
+    ChildProcessTimes times{};
+    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded, usage != nullptr ? &times : nullptr);
     if (reaped == -2) {
         *__error_nid_postfix() = errnoNoChild;
         return -1;
@@ -738,6 +744,15 @@ int WaitProcess_nid_no_patch(int pid, int* status, int options, GuestResourceUsa
     if (status != nullptr && !WriteGuest(status, &encoded, sizeof(encoded))) {
         *__error_nid_postfix() = guestFault;
         return -1;
+    }
+    if (usage != nullptr) {
+        GuestResourceUsage resources{};
+        resources.ru_utime = TimevalFromHundredNanoseconds(times.user);
+        resources.ru_stime = TimevalFromHundredNanoseconds(times.kernel);
+        if (!WriteGuest(usage, &resources, sizeof(resources))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
     }
     return static_cast<int>(reaped);
 #else
@@ -1019,25 +1034,6 @@ static int SysarchFailure(int error) {
     return -1;
 }
 
-static int LocalDescriptorTable(int operation, void* parameters) {
-    constexpr int setLdt = 1;
-    constexpr std::uint32_t maxLdtSegment = 512;
-    unsigned char arguments[16];
-    if (!GuestCopyIn_nid_no_patch(arguments, parameters, sizeof(arguments))) return SysarchFailure(guestFault);
-    std::uint32_t start = 0;
-    std::uint64_t descriptors = 0;
-    std::uint32_t count = 0;
-    std::memcpy(&start, arguments, sizeof(start));
-    std::memcpy(&descriptors, arguments + 4, sizeof(descriptors));
-    std::memcpy(&count, arguments + 12, sizeof(count));
-    if (operation != setLdt) return 0;
-    if (descriptors != 0) {
-        if (count > maxLdtSegment) return SysarchFailure(guestInvalid);
-        NotImplemented_nid_no_patch("sysarch: I386_SET_LDT with descriptors");
-    }
-    return start != 0 && count == 0 ? SysarchFailure(guestInvalid) : 0;
-}
-
 static int IoPermission(int operation, void* parameters) {
     constexpr int setIoperm = 4;
     constexpr int guestPermission = 1;
@@ -1073,7 +1069,7 @@ int APS5_VABI sysarch(int operation, void* parameters) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
-    if (operation == i386GetLdt || operation == i386SetLdt) return LocalDescriptorTable(operation, parameters);
+    if (operation == i386GetLdt || operation == i386SetLdt) return SysarchFailure(guestInvalid);
     if (operation == i386GetIoperm || operation == i386SetIoperm) return IoPermission(operation, parameters);
     const bool i386 = operation == i386GetFsBase || operation == i386GetGsBase;
     if (!i386 && operation != getFsBase && operation != getGsBase && operation != setGsBase && operation != i386SetGsBase)
@@ -1142,6 +1138,11 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     }
     GuestResourceUsage result{};
     if (who == -1) {
+#ifdef _WIN32
+        const auto times = GetReapedChildProcessTimes_nid_no_patch();
+        result.ru_utime = TimevalFromHundredNanoseconds(times.user);
+        result.ru_stime = TimevalFromHundredNanoseconds(times.kernel);
+#endif
         if (!WriteGuest(usage, &result, sizeof(result))) {
             *__error_nid_postfix() = guestFault;
             return -1;

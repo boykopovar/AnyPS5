@@ -1,7 +1,9 @@
+#include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -26,6 +28,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <cstring>
+#include <exception>
 #include <iostream>
 #include <span>
 #include <string>
@@ -188,6 +191,37 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        if (argc == 2 && std::string_view(argv[1]) == "--cpu-write-after-memo-retire") {
+            if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(base, PlaneBytes)) return VulkanTestSkipped;
+            Fill(plane, 1.0f);
+            Require(draw(depth, writeHalf) == PlaneTexels, "the depth draw before a retire in the collect epoch did not cover the plane");
+            FillUnit(plane, 2, 0.75f);
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            Require(AgcDriver::GuestMemory::CollectWrites(base, PlaneBytes) != 0, "the plane the guest wrote into was not collected");
+            const auto vertexAddress = base + 2u * Block + 256u;
+            const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(vertexAddress), static_cast<std::uint32_t>((vertexAddress >> 32u) & 0xffffu) | (32u << 16u), 4u, 0x0004dfacu};
+            auto* table = reinterpret_cast<std::byte*>(plane) + 4u * Block + 4096u;
+            std::memcpy(table, descriptor.data(), sizeof(descriptor));
+            const std::array<std::uint32_t, 8> words{0, 0, 0, 0, PlaneWidth, PlaneHeight, 1, 0};
+            AgcDriver::Graphics::GuestTextureResource levels{};
+            levels.baseAddress = base;
+            levels.width = PlaneWidth;
+            levels.height = PlaneHeight;
+            levels.mipCount = 2;
+            levels.lastLevel = 1;
+            levels.dimension = AgcDriver::Graphics::TextureDimension::k2D;
+            levels.tileMode = AgcDriver::Graphics::TextureTileMode::kZ64KBX;
+            levels.format = 22;
+            Require(AgcDriver::Graphics::DepthSurfaceTexture(AgcDriver::VulkanDeviceTestAccess::ContextOf(*device), words, levels, {}) == nullptr, "a view with two levels of a plane the guest wrote was served by the depth surface");
+            device->WaitIdle();
+            Require(!AgcDriver::Graphics::DepthSurfaceAt(base), "a view with two levels of a plane the guest wrote left the depth surface live");
+            RequireUnit(plane, 2, 0.75f, UnitTexels, "the retire of a plane the guest wrote into before the collect, the written unit");
+            for (const std::size_t unit : {0u, 1u, 3u, 5u}) RequireUnit(plane, unit, 0.5f, Texels(unit), "the retire of a plane the guest wrote into, an untouched unit");
+            Require(std::memcmp(table, descriptor.data(), sizeof(descriptor)) == 0, "the retire of a depth surface overwrote CPU descriptors written after a memoized collect");
+            std::puts("depth plane CPU descriptors after a memoized collect survive the retire");
+            return 0;
+        }
+
         if (argc == 2 && std::string_view(argv[1]) == "--cpu-store-after-idle-flush") {
             Fill(plane, 1.0f);
             Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before the idle flush did not cover the plane");
@@ -295,6 +329,17 @@ int main(int argc, char** argv) {
         for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 0.5f, Texels(unit), "after a read of the whole plane");
         for (std::size_t unit = 3; unit < Units; ++unit) RequireUnit(plane, unit, 1.0f, UnitTexels - EdgeTexels, "after a read of the whole plane, the padding below the last row");
         Require(!AgcDriver::Graphics::DepthPlanesStale(), "a read of the whole plane left it stale");
+
+        Fill(plane, 1.0f);
+        Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before a reset flush did not cover the plane");
+        const auto owned = AgcDriver::Graphics::GpuOwnedRanges(base, PlaneBytes);
+        Require(std::ranges::any_of(owned, [&](const auto& range) { return range.first <= base && base < range.first + range.second; }), "a stale depth plane is not among the GPU-owned ranges a reset compares");
+        std::exception_ptr failure;
+        AgcDriverFlushGuestMemory_nid_no_patch(base, PlaneBytes, &failure);
+        if (failure) std::rethrow_exception(failure);
+        device->WaitIdle();
+        Require(AgcDriver::Graphics::ResidentOwnersOver(base, PlaneBytes, true) == 0, "a reset flush left the drawn depth plane newer on the GPU");
+        for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 0.5f, Texels(unit), "after a reset flush");
 
         if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(base, PlaneBytes)) {
             std::puts("guest memory is not write-watched here: guest writes into a partly stored plane are not exercised");

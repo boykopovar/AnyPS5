@@ -74,21 +74,30 @@ private:
 struct Format {
     const char* name;
     std::uint32_t format;
+    std::uint32_t bytes;
 };
 
-constexpr std::array<Format, 2> Formats{{
-    {"32_UINT", 20u},
-    {"32_FLOAT", 22u},
+constexpr std::array<Format, 4> Formats{{
+    {"32_UINT", 20u, 4u},
+    {"32_SINT", 21u, 4u},
+    {"32_FLOAT", 22u, 4u},
+    {"16_16_16_16_FLOAT", 71u, 8u},
 }};
 
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
+std::string Hex(std::uint64_t value) {
+    char text[24];
+    std::snprintf(text, sizeof(text), "0x%016llx", static_cast<unsigned long long>(value));
     return text;
 }
 
 std::uint32_t Value(std::uint32_t tid) {
     return 0x3f000000u + tid * 0x1357u;
+}
+
+std::uint64_t Wanted(const Format& format, std::uint32_t tid) {
+    const auto value = Value(tid);
+    if (format.bytes == 4u) return value;
+    return 0x3800u | ((value & 0x7fffffu) >> 13u);
 }
 
 std::array<std::uint32_t, 8> CubeDescriptor(const void* data, std::uint32_t format, std::uint32_t baseArray) {
@@ -109,9 +118,9 @@ AgcDriver::Graphics::SurfaceGeometry Geometry(const void* data, std::uint32_t fo
     return AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(CubeDescriptor(data, format, 0u)));
 }
 
-std::uint64_t TexelOffset(const AgcDriver::Graphics::SurfaceGeometry& geometry, std::uint32_t face, std::uint32_t x, std::uint32_t y) {
+std::uint64_t TexelOffset(const AgcDriver::Graphics::SurfaceGeometry& geometry, std::uint32_t face, std::uint32_t x, std::uint32_t y, std::uint32_t bytes) {
     const auto& mip = geometry.mips.at(0);
-    return geometry.GuestLayerOffset(face) + mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + x * 4u;
+    return geometry.GuestLayerOffset(face) + mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + x * bytes;
 }
 
 std::vector<std::uint8_t> Initial() {
@@ -159,12 +168,12 @@ void CheckTexels(const std::uint8_t* texels, const Format& format, std::uint32_t
     const auto label = std::string("image_store 2d through a ") + format.name + " cube T# with BASE_ARRAY " + std::to_string(baseArray);
     for (std::uint32_t y = 0; y < Size; ++y) {
         for (std::uint32_t x = 0; x < Size; ++x) {
-            const auto offset = TexelOffset(geometry, baseArray, x, y);
-            std::uint32_t actual = 0;
-            std::memcpy(&actual, texels + offset, 4u);
-            const auto wanted = Value(y * Size + x);
+            const auto offset = TexelOffset(geometry, baseArray, x, y, format.bytes);
+            std::uint64_t actual = 0;
+            std::memcpy(&actual, texels + offset, format.bytes);
+            const auto wanted = Wanted(format, y * Size + x);
             Require(actual == wanted, label + ": texel (" + std::to_string(x) + ", " + std::to_string(y) + ") of face " + std::to_string(baseArray) + " is " + Hex(actual) + ", expected " + Hex(wanted));
-            std::fill(written.begin() + static_cast<std::ptrdiff_t>(offset), written.begin() + static_cast<std::ptrdiff_t>(offset + 4u), true);
+            std::fill(written.begin() + static_cast<std::ptrdiff_t>(offset), written.begin() + static_cast<std::ptrdiff_t>(offset + format.bytes), true);
         }
     }
     for (std::size_t index = 0; index < TexelBytes; ++index) {

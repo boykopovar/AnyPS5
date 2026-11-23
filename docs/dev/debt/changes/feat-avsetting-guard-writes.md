@@ -1,0 +1,9 @@
+# libSceAvSetting
+
+## change [Additional callable exports]
+
+- [Additional callable exports](../../../core/libs/prx/libSceAvSetting/Export.cpp) - 18 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Fifteen of them still throw through `NotImplemented_nid_no_patch`; the other three are the guard writes under Recovered behavior. Unidentified names use literal NID aliases. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+## add Recovered behavior
+
+- [sceAvControlSetVideoOutSource and three guard writes](../../../core/libs/prx/libSceAvSetting/Export.cpp) (libSceAvSetting) - `sceAvControlSetVideoOutSource` writes its second argument into the word the first points at and returns for a null pointer: 13.40 0x7690, `test rdi,rdi; je; mov esi,(rdi); ret`, the same body as `sceAvSettingSetVideoOutSource` (0x7d10). `A143jTEYkNw` (0xf4a0) and `mp2s52Yr4pc` (0xf4b0) zero eight bytes and `cK+dKi9GYYA` (0xf490) zeroes sixteen, each returning for a null pointer. The writes use `GuestCopyOut_nid_no_patch`; an unreadable pointer is ignored, a host-safety fallback where the console faults. `uKjKHlMI-yA` (0xf4c0) has the same sixteen-byte body and is not declared here. Not measured on a console.

@@ -11,14 +11,12 @@ std::uint32_t sgprBase(std::uint64_t modifier) {
 
 }
 
-std::uint32_t DrawInitiator(std::uint64_t modifier, bool indexed, const char* function) {
-    CheckBits(modifier, 0x1ffffffffull, function);
+std::uint32_t DrawInitiator(std::uint64_t modifier, bool indexed) {
     const auto flags = (modifier & 0x100000000ull) != 0 ? 0u : static_cast<std::uint32_t>((modifier >> 3u) & 0x20u);
     return flags | (indexed ? 0u : 2u);
 }
 
-std::uint64_t DrawPatchOffsets(std::uint64_t modifier, const char* function) {
-    CheckBits(modifier, 0x1ffffffffull, function);
+std::uint64_t DrawPatchOffsets(std::uint64_t modifier) {
     const auto base = sgprBase(modifier);
     const auto vertex = (modifier & 1u) != 0 ? base + static_cast<std::uint32_t>((modifier >> 9u) & 0x1fu) : 0x280u;
     const auto instance = (modifier & 4u) != 0 ? base + static_cast<std::uint32_t>((modifier >> 19u) & 0x1fu) : 0x280u;

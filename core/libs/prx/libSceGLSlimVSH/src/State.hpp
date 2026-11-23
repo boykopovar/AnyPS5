@@ -162,9 +162,7 @@ bool ForEachGuestName(GLsizei count, const GLuint* guest, TVisit visit) {
     std::array<GLuint, 256> local{};
     for (GLsizei done = 0; done < count; done += static_cast<GLsizei>(local.size())) {
         const auto n = std::min(count - done, static_cast<GLsizei>(local.size()));
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(local.data(), guest + done, static_cast<std::size_t>(n) * sizeof(GLuint));
-        errno = savedErrno;
         if (!copied) return false;
         for (GLsizei i = 0; i < n; ++i) visit(local[i]);
     }

@@ -90,9 +90,9 @@ int
 X509_NAME_print(BIO *bp, const X509_NAME *name, int obase)
 {
 	char *s, *c, *b;
-	int ret = 0, l, i;
+	int ret = 0, i;
 
-	l = 80 - 2 - obase;
+	(void)obase;
 
 	b = X509_NAME_oneline(name, NULL, 0);
 	if (b == NULL)
@@ -117,12 +117,10 @@ X509_NAME_print(BIO *bp, const X509_NAME *name, int obase)
 				if (BIO_write(bp, ", ", 2) != 2)
 					goto err;
 			}
-			l--;
 		}
 		if (*s == '\0')
 			break;
 		s++;
-		l--;
 	}
 
 	ret = 1;
