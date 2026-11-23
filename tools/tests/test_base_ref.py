@@ -84,7 +84,7 @@ class ResolveTests(unittest.TestCase):
     def test_resolve_picks_main_when_no_upstream_ref_exists(self):
         with tempfile.TemporaryDirectory() as directory:
             self.make_repo(directory)
-            self.assertEqual(base_ref.resolve(Path(directory)), 'main')
+            self.assertEqual(base_ref.resolve(Path(directory)), 'refs/heads/main')
 
     def test_resolve_refuses_a_repository_with_no_base_branch(self):
         with tempfile.TemporaryDirectory() as directory:
