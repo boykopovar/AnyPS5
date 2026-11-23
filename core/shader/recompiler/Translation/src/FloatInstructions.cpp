@@ -390,8 +390,6 @@ bool TranslationContext::float16NativeFma(const RdnaInstruction& inst, bool accu
 }
 
 IrU32 TranslationContext::fmaF16NanBits(const std::array<IrU32, 3>& sources, bool flushInputs) {
-    // The product is invalid on the operands the multiply sees: with input flushing, Inf * denormal is Inf * 0 and gives 0xfe00 even
-    // when the addend is a NaN. The NaN that propagates still comes from the raw bits, since flushing never changes a NaN.
     const auto effective = [&](const IrU32& value) { return flushInputs ? flushF16Input(value) : value; };
     const auto magnitude = [&](const IrU32& value) { return IrU32(ir.BitwiseAnd(value.Value(), ir.Constant(0x7fffu))); };
     const auto nan = [&](const IrU32& value) { return IrU1(ir.UGreaterThan(magnitude(value).Value(), ir.Constant(0x7c00u))); };

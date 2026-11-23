@@ -78,8 +78,6 @@ constexpr Expected IeeeOn{{
     {0x7e55u, 0xfe55u, 0x7e55u, 0x7e55u},
 }};
 
-// Denormal multiplicands. With f16 input flushing (FLOAT_MODE bit 6 clear) Inf * denormal is Inf * 0, an invalid
-// product, so the result is 0xfe00 even when the addend is a NaN. With input denormals kept the addend NaN propagates.
 constexpr std::array<Operand, 6> FlushOperands{{
     {0x7c00u, 0x0001u, 0x7e55u},
     {0x0001u, 0x7c00u, 0x7d01u},
