@@ -571,7 +571,7 @@ int main() {
             CheckTiny("IEEE=1 all denormals flushed");
             for (std::uint32_t round = 1u; round < 4u; ++round) {
                 Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u | round, true, false, false}, TinyCode, TinyRows);
-                if (round != 2u) CheckTinyLegacy("round mode " + std::to_string(round), round);
+                CheckTinyLegacy("round mode " + std::to_string(round), round);
                 CheckTinyDirected(round);
             }
         }
