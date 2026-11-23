@@ -6463,10 +6463,6 @@ int APS5_VABI _ZNK7WebCore12SharedBuffer3endEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore27verifyVaryingRequestHeadersEPKNS_9CookieJarERKN3WTF6VectorISt4pairINS3_6StringES6_ELm0ENS3_15CrashOnOverflowELm16ENS3_10FastMallocEEERKNS_15ResourceRequestE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore16HTMLMediaElement49bestMediaElementForShowingPlaybackControlsManagerENS_19MediaElementSession23PlaybackControlsPurposeE() {
     NotImplemented_nid_no_patch(__func__);
 }

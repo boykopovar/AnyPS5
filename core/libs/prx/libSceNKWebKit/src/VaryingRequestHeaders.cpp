@@ -183,6 +183,11 @@ String RequestHeaderField(const LegacyResourceRequestBase& request, const String
     return _ZNK7WebCore13HTTPHeaderMap3getERKN3WTF6StringE(reinterpret_cast<const HTTPHeaderMap*>(&request.httpHeaderFields), name);
 }
 
+String HeaderValueForVary(const LegacyCookieJar* cookieJar, const LegacyResourceRequestBase& request, const String& headerName) {
+    if (Equals(headerName, "Cookie")) return CookieRequestHeaderFieldValue(cookieJar, request);
+    return RequestHeaderField(request, headerName);
+}
+
 }  // namespace
 
 extern "C" Vector<LegacyVaryingRequestHeader> APS5_VABI _ZN7WebCore28collectVaryingRequestHeadersEPKNS_9CookieJarERKNS_15ResourceRequestERKNS_16ResourceResponseE(
@@ -193,8 +198,23 @@ extern "C" Vector<LegacyVaryingRequestHeader> APS5_VABI _ZN7WebCore28collectVary
     Vector<LegacyVaryingRequestHeader> varyingRequestHeaders(varyingHeaderNames.size);
     for (unsigned index = 0; index < varyingHeaderNames.size; ++index) {
         const String headerName = StripWhiteSpace(varyingHeaderNames.buffer[index]);
-        const String headerValue = Equals(headerName, "Cookie") ? CookieRequestHeaderFieldValue(cookieJar, *request) : RequestHeaderField(*request, headerName);
+        const String headerValue = HeaderValueForVary(cookieJar, *request, headerName);
         varyingRequestHeaders.append(LegacyVaryingRequestHeader{headerName, headerValue});
     }
     return varyingRequestHeaders;
+}
+
+extern "C" bool APS5_VABI _ZN7WebCore27verifyVaryingRequestHeadersEPKNS_9CookieJarERKN3WTF6VectorISt4pairINS3_6StringES6_ELm0ENS3_15CrashOnOverflowELm16ENS3_10FastMallocEEERKNS_15ResourceRequestE(
+    const LegacyCookieJar* cookieJar, const Vector<LegacyVaryingRequestHeader>* varyingRequestHeaders, const LegacyResourceRequestBase* request) {
+    if (!varyingRequestHeaders) throw std::invalid_argument("null WTF::Vector of varying request headers");
+    if (!request) throw std::invalid_argument("null WebCore::ResourceRequest");
+    if (varyingRequestHeaders->size > varyingRequestHeaders->capacity) throw std::invalid_argument("invalid WTF::Vector size of varying request headers");
+    if (varyingRequestHeaders->size && !varyingRequestHeaders->buffer) throw std::invalid_argument("null WTF::Vector storage of varying request headers");
+    for (unsigned index = 0; index < varyingRequestHeaders->size; ++index) {
+        const LegacyVaryingRequestHeader& header = varyingRequestHeaders->buffer[index];
+        if (Equals(header.name, "*")) return false;
+        const String headerValue = HeaderValueForVary(cookieJar, *request, header.name);
+        if (!_ZN3WTF5equalEPKNS_10StringImplES2_(headerValue.impl, header.value.impl)) return false;
+    }
+    return true;
 }
