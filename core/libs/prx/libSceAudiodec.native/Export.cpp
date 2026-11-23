@@ -1,4 +1,5 @@
 #include "prx/libSceAudiodec.native/include/Api.hpp"
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
@@ -6,6 +7,10 @@
 #include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceAjm.native/include/Api.hpp"
+#include "prx/libSceAjmi/include/InventoryExports.hpp"
+#include "prx/libkernel/Pthread/include/Rwlock.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 
 namespace {
 
@@ -29,7 +34,59 @@ constexpr int AudiodecErrorInvalidPriority = static_cast<int>(0x807FF000u);
 constexpr int AudiodecErrorAlreadyRegistered = static_cast<int>(0x80930009u);
 constexpr int AudiodecErrorNotRegistered = static_cast<int>(0x8093000Au);
 
-alignas(8) unsigned char g_moduleContext[32]{};
+constexpr int AjmRetry = static_cast<int>(0x80931007u);
+constexpr int AjmInvalidInstance = static_cast<int>(0x80930003u);
+using ContextIds = std::array<std::uint32_t, 2>;
+
+template <typename Operation>
+int RetryService(Operation operation) {
+    int status;
+    while ((status = operation()) == AjmRetry) sceKernelUsleep_nid_postfix(1000);
+    return status;
+}
+
+struct ModuleStorage {
+    std::uint32_t prefix;
+    ContextIds ids;
+    std::uint32_t padding;
+    PthreadRwlock lock;
+    std::uint32_t flags[2];
+    std::uint32_t tail;
+};
+
+static_assert(offsetof(ModuleStorage, ids) == 4);
+static_assert(offsetof(ModuleStorage, lock) == 16);
+static_assert(offsetof(ModuleStorage, tail) == 32);
+
+struct ModuleContext {
+    ModuleStorage storage{};
+    int status;
+
+    ModuleContext() {
+        status = RetryService([&] { return sceAjmiInitialize(0, &storage.ids[0]); });
+        if (status < 0) return;
+        status = RetryService([&] { return sceAjmInitialize(0, &storage.ids[1]); });
+        if (status < 0) return;
+        status = scePthreadRwlockInit(&storage.lock, nullptr, nullptr);
+    }
+
+    ~ModuleContext() {
+        if (storage.lock) scePthreadRwlockDestroy(&storage.lock);
+        if (storage.ids[0]) RetryService([&] { return sceAjmFinalize(storage.ids[0]); });
+        if (storage.ids[1]) RetryService([&] { return sceAjmFinalize(storage.ids[1]); });
+    }
+
+    const unsigned char* data() const {
+        return reinterpret_cast<const unsigned char*>(&storage) + offsetof(ModuleStorage, ids);
+    }
+};
+
+ModuleContext& Module() {
+    const int savedErrno = errno;
+    static ModuleContext module;
+    errno = savedErrno;
+    return module;
+}
 
 template <typename T>
 bool ReadGuest(T& value, const T* source) {
@@ -47,7 +104,7 @@ bool WriteGuest(T* destination, const T& value) {
     return copied;
 }
 
-int DecodeInternal(void* context, std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priority, std::uint32_t decode2) {
+int DecodeInternal(const void* context, std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priority, std::uint32_t decode2) {
     if (context == nullptr) return AudiodecErrorArgument;
     if (ctrl == nullptr) return AudiodecErrorInvalidCtrlPointer;
     AudiodecCtrl localCtrl{};
@@ -71,6 +128,12 @@ int DecodeInternal(void* context, std::uint32_t handle, AudiodecCtrl* ctrl, std:
     static_cast<void>(decode2);
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int DecodeOnModule(std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priority, std::uint32_t decode2) {
+    auto& module = Module();
+    if (module.status < 0) return module.status;
+    return DecodeInternal(module.data(), handle, ctrl, priority, decode2);
 }
 
 }
@@ -115,7 +178,7 @@ int APS5_VABI sceAudiodecCreateDecoderEx(void* context, AudiodecCtrl* ctrl, std:
 }
 
 int APS5_VABI sceAudiodecDecode2(std::uint32_t handle, AudiodecCtrl* ctrl) {
-    return DecodeInternal(g_moduleContext, handle, ctrl, 40, 1);
+    return DecodeOnModule(handle, ctrl, 40, 1);
 }
 
 int APS5_VABI sceAudiodecDecode2Ex(void* context, std::uint32_t handle, AudiodecCtrl* ctrl) {
@@ -123,7 +186,7 @@ int APS5_VABI sceAudiodecDecode2Ex(void* context, std::uint32_t handle, Audiodec
 }
 
 int APS5_VABI sceAudiodecDecode2WithPriority(std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priority) {
-    return DecodeInternal(g_moduleContext, handle, ctrl, priority, 1);
+    return DecodeOnModule(handle, ctrl, priority, 1);
 }
 
 int APS5_VABI sceAudiodecDecode2WithPriorityEx(void* context, std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priority) {
@@ -135,7 +198,7 @@ int APS5_VABI sceAudiodecDecodeEx(void* context, std::uint32_t handle, AudiodecC
 }
 
 int APS5_VABI sceAudiodecDecodeWithPriority(std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priority) {
-    return DecodeInternal(g_moduleContext, handle, ctrl, priority, 0);
+    return DecodeOnModule(handle, ctrl, priority, 0);
 }
 
 int APS5_VABI sceAudiodecDecodeWithPriorityEx(void* context, std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priority) {
@@ -144,9 +207,17 @@ int APS5_VABI sceAudiodecDecodeWithPriorityEx(void* context, std::uint32_t handl
 
 int APS5_VABI sceAudiodecDeleteDecoderEx(void* context, std::uint32_t handle) {
     if (context == nullptr) return AudiodecErrorArgument;
-    static_cast<void>(handle);
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const auto codec = sceAjmInstanceCodecType(handle);
+    const bool native = codec == 0 || codec == 1 || codec == 2 || codec == 24;
+    const auto address = reinterpret_cast<std::uintptr_t>(context);
+    const unsigned offset = native ? 4 : 0;
+    if (address > UINTPTR_MAX - offset) return AudiodecErrorArgument;
+    std::uint32_t owner = 0;
+    if (!ReadGuest(owner, reinterpret_cast<const std::uint32_t*>(address + offset))) return AudiodecErrorArgument;
+    const int status = RetryService([&] {
+        return native ? sceAjmInstanceDestroy(owner, handle) : sceAjmiInstanceDestroy(owner, handle);
+    });
+    return status == AjmInvalidInstance ? AudiodecErrorInvalidHandle : status;
 }
 
 int APS5_VABI sceAudiodecGetAjmContext(const void* context, std::uint32_t* ajmiContext, std::uint32_t* ajmContext) {
@@ -166,10 +237,13 @@ int APS5_VABI sceAudiodecGetAjmContext(const void* context, std::uint32_t* ajmiC
 }
 
 int APS5_VABI sceAudiodecGetContext(void* out) {
-    if (out == nullptr) return AudiodecErrorArgument;
-    static_cast<void>(out);
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!GuestWritable_nid_no_patch(out, 32)) return AudiodecErrorArgument;
+    auto& module = Module();
+    if (module.status < 0) return module.status;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(out, module.data(), 32);
+    errno = savedErrno;
+    return copied ? 0 : AudiodecErrorArgument;
 }
 
 int APS5_VABI sceAudiodecInitialize(void* context) {
