@@ -1,11 +1,12 @@
 #include "prx/libSceFreeTypeOl/libSceFreeTypeOl.hpp"
 #include "FreeTypeFontFixture.hpp"
 #include "FontFixture.hpp"
-#include "prx/libSceFreeType/include/GuestList.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <utility>
 
 namespace {
 
@@ -25,6 +26,8 @@ struct State {
     int finishes;
     bool fail;
     bool checkRemoval = false;
+    GuestCMap* nested = nullptr;
+    bool throwDuringDone = false;
 };
 
 struct Map {
@@ -42,6 +45,8 @@ int APS5_VABI Init(GuestCMap* map, void* data) {
     return state->fail ? 0x42 : 0;
 }
 
+struct DoneError {};
+
 void APS5_VABI Done(GuestCMap* map) {
     auto& state = *reinterpret_cast<Map*>(map)->state;
     if (state.checkRemoval) {
@@ -49,6 +54,8 @@ void APS5_VABI Done(GuestCMap* map) {
         for (int i = 0; i < state.face->num_charmaps; ++i) REQUIRE(state.face->charmaps[i] != &map->charmap);
     }
     ++state.finishes;
+    if (auto* nested = std::exchange(state.nested, nullptr)) sceFreeTypeOlCMapDone_nid_no_patch(nested);
+    if (state.throwDuringDone) throw DoneError{};
 }
 
 std::uint32_t APS5_VABI Index(GuestCMap* map, std::uint32_t code) {
@@ -114,6 +121,44 @@ std::uint32_t* APS5_VABI VariantChars(GuestCMap*, GuestMemoryRec*, std::uint32_t
     return selector == 0xfe0f ? result : nullptr;
 }
 
+FT_Realloc_Func savedRealloc;
+int rejectedShrinks = 0;
+
+void* RejectShrink(FT_Memory memory, long oldSize, long newSize, void* block) {
+    if (newSize < oldSize) {
+        ++rejectedShrinks;
+        return nullptr;
+    }
+    return savedRealloc(memory, oldSize, newSize, block);
+}
+
+void CheckRemoval(GuestFaceRec* face, const GuestCMapClass& clazz, const GuestCharMapRec& description) {
+    const int initialCount = face->num_charmaps;
+    State outer{face, 0, 0, false, true};
+    State inner{face, 0, 0, false, true};
+    GuestCMap* map = nullptr;
+    REQUIRE(!sceFreeTypeOlCMapNew_nid_no_patch(&clazz, &outer, &description, &map));
+    REQUIRE(!sceFreeTypeOlCMapNew_nid_no_patch(&clazz, &inner, &description, &outer.nested));
+    REQUIRE(!FT_Set_Charmap_nid_postfix(face, &map->charmap));
+    auto* owner = static_cast<GuestFace*>(face->internal);
+    auto* memory = owner->host->memory;
+    savedRealloc = std::exchange(memory->realloc, RejectShrink);
+    sceFreeTypeOlCMapDone_nid_no_patch(map);
+    memory->realloc = savedRealloc;
+    REQUIRE(rejectedShrinks == 1 && !owner->charmapRemoval);
+    REQUIRE(outer.finishes == 0 && inner.finishes == 0 && face->num_charmaps == initialCount + 2);
+    REQUIRE(face->charmap == &map->charmap && FT_Get_Char_Index_nid_postfix(face, 'Z') == 1);
+    inner.throwDuringDone = true;
+    bool caught = false;
+    try {
+        sceFreeTypeOlCMapDone_nid_no_patch(map);
+    } catch (const DoneError&) {
+        caught = true;
+    }
+    REQUIRE(caught && !owner->charmapRemoval && face->num_charmaps == initialCount);
+    REQUIRE(!face->charmap && outer.finishes == 1 && inner.finishes == 1);
+}
+
 void CheckSelector(GuestFaceRec* face) {
     const SfntClass clazz{{sizeof(GuestCMap), nullptr, nullptr, nullptr, nullptr, VariantIndex, VariantDefault,
                                Variants, CharVariants, VariantChars}, 14, nullptr, ReadSfntInfo};
@@ -155,6 +200,8 @@ int main() {
     REQUIRE(sceFreeTypeOlCMapNew_nid_no_patch(&clazz, nullptr, nullptr, &map) == 6 && map == sentinel);
     GuestCharMapRec noFace{};
     REQUIRE(sceFreeTypeOlCMapNew_nid_no_patch(&clazz, nullptr, &noFace, &map) == 6 && map == sentinel);
+    CheckRemoval(face, clazz, description);
+    REQUIRE(!FT_Set_Charmap_nid_postfix(face, original));
     State state{face, 0, 0, true};
     REQUIRE(sceFreeTypeOlCMapNew_nid_no_patch(&clazz, &state, &description, &map) == 0x42);
     REQUIRE(!map && state.starts == 1 && state.finishes == 1 && face->num_charmaps == count);

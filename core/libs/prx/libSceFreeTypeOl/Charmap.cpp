@@ -19,14 +19,30 @@
 using namespace FreeType;
 
 #ifndef ANYPS5_FREETYPEOL_SYSTEM_DEPS
+namespace FreeType {
+
+struct CharmapRemoval {
+    GuestFace& owner;
+    FT_CMap native;
+    std::exception_ptr exception;
+    CharmapRemoval* previous;
+
+    CharmapRemoval(GuestFace& face, FT_CMap map)
+        : owner(face), native(map), previous(std::exchange(face.charmapRemoval, this)) {}
+    ~CharmapRemoval() { owner.charmapRemoval = previous; }
+    CharmapRemoval(const CharmapRemoval&) = delete;
+    CharmapRemoval& operator=(const CharmapRemoval&) = delete;
+};
+
+}
+
 namespace {
 
 struct Bridge {
     FT_CMapRec cmap;
     GuestFace* owner;
     GuestCMap* guest;
-    std::exception_ptr* pending;
-    bool removing;
+    std::exception_ptr* initializationException;
 };
 
 struct Initialization {
@@ -71,7 +87,7 @@ FT_Error Initialize(FT_CMap native, FT_Pointer data) {
     }
     bridge.guest = guest;
     source.guest = bridge.guest;
-    bridge.pending = &source.exception;
+    bridge.initializationException = &source.exception;
     try {
         const auto init = bridge.guest->clazz->init;
         const auto error = init ? init(bridge.guest, source.data) : FT_Err_Ok;
@@ -98,15 +114,20 @@ void Destroy(FT_CMap native) {
     const auto release = [memory = bridge.owner->host->memory](GuestCMap* guest) { memory->free(memory, guest); };
     const std::unique_ptr<GuestCMap, decltype(release)> storage(bridge.guest, release);
     bridge.owner->customCharmaps.erase(&native->charmap);
-    if (bridge.removing) FreeTypeSyncCharmaps_nid_no_patch(*bridge.owner);
+    auto* pending = bridge.initializationException;
+    auto* removal = bridge.owner->charmapRemoval;
+    if (removal && removal->native == native) {
+        pending = &removal->exception;
+        FreeTypeSyncCharmaps_nid_no_patch(*bridge.owner);
+    }
     if (const auto done = bridge.guest->clazz->done) {
-        if (!bridge.pending) {
+        if (!pending) {
             done(bridge.guest);
         } else {
             try {
                 done(bridge.guest);
             } catch (...) {
-                if (!*bridge.pending) *bridge.pending = std::current_exception();
+                if (!*pending) *pending = std::current_exception();
             }
         }
     }
@@ -272,7 +293,7 @@ int APS5_VABI sceFreeTypeOlCMapNew_nid_no_patch(const GuestCMapClass* clazz, voi
         return error;
     }
     auto& bridge = *reinterpret_cast<Bridge*>(created);
-    bridge.pending = nullptr;
+    bridge.initializationException = nullptr;
     FreeTypeSyncCharmaps_nid_no_patch(*owner);
     if (output) *output = init.guest;
     return FT_Err_Ok;
@@ -292,23 +313,15 @@ void APS5_VABI sceFreeTypeOlCMapDone_nid_no_patch(GuestCMap* cmap) {
     if (found == owner->charmapPointers.end()) return;
     const auto index = static_cast<std::size_t>(found - owner->charmapPointers.begin());
     auto* nativeMap = owner->host->charmaps[index];
-    auto* guestMap = &cmap->charmap;
     auto* native = reinterpret_cast<FT_CMap>(nativeMap);
-    std::exception_ptr exception;
-    auto* bridge = owner->customCharmaps.contains(nativeMap) ? reinterpret_cast<Bridge*>(native) : nullptr;
-    if (bridge) {
-        bridge->removing = true;
-        bridge->pending = &exception;
-    }
+    const auto builtin = owner->charmaps.find(nativeMap);
+    const auto count = owner->host->num_charmaps;
+    CharmapRemoval removal(*owner, native);
     FT_CMap_Done(native);
-    if (bridge && owner->customCharmaps.contains(nativeMap)) {
-        bridge->removing = false;
-        bridge->pending = nullptr;
-    }
+    if (builtin != owner->charmaps.end() && owner->host->num_charmaps < count)
+        owner->charmaps.erase(builtin);
     FreeTypeSyncCharmaps_nid_no_patch(*owner);
-    if (std::find(owner->charmapPointers.begin(), owner->charmapPointers.end(), guestMap) == owner->charmapPointers.end())
-        owner->charmaps.erase(nativeMap);
-    if (exception) std::rethrow_exception(exception);
+    if (removal.exception) std::rethrow_exception(removal.exception);
 #endif
 }
 APS5_EXPORT("h0n4Fb9j2R8", sceFreeTypeOlCMapDone_nid_no_patch);

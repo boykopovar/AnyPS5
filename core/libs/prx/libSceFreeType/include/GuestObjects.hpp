@@ -55,6 +55,8 @@ struct GuestStreamBridge {
 
 extern "C" void FreeTypeSyncCharmaps_nid_no_patch(GuestFace& face);
 
+struct CharmapRemoval;
+
 struct CharMapMemory {
     GuestMemoryRec guest{};
     FT_Memory host = nullptr;
@@ -74,6 +76,7 @@ struct GuestFace {
     std::vector<GuestBitmapSize> fixedSizes;
     std::map<FT_CharMap, GuestCMap> charmaps;
     CharMapMemory charmapMemory{};
+    CharmapRemoval* charmapRemoval = nullptr;
     const GuestCMapClass* nativeCharmapClass = nullptr;
     std::map<FT_CharMap, GuestCharMapRec*> customCharmaps;
     std::vector<GuestCharMapRec*> charmapPointers;
