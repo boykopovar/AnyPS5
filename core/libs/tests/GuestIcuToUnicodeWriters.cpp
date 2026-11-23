@@ -317,6 +317,15 @@ struct Guarded {
 #endif
     }
 
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0, "make first page read-only");
+#else
+        Require(mprotect(memory, page, PROT_READ) == 0, "make first page read-only");
+#endif
+    }
+
     void* Forbidden() const { return memory + page; }
 };
 
@@ -348,6 +357,38 @@ void GuardsCase() {
     status = 0;
     Unreadable([&] { Chars(reinterpret_cast<Icu::ConverterToUnicodeArgs*>(&args), source.data(), 33, 0, &status); });
     Require(args.target == output && status == 0 && Drain(converter.get()).empty(), "oversized native buffered remainder fails closed before state mutation");
+    for (int protectedField = 0; protectedField < 4; ++protectedField) {
+        Guarded page;
+        char16_t first = u'?';
+        std::int32_t offset = -1;
+        auto* text = protectedField == 0 ? reinterpret_cast<char16_t*>(page.memory) : &first;
+        auto* offsets = protectedField == 1 ? reinterpret_cast<std::int32_t*>(page.memory) : &offset;
+        auto writable = Arguments(converter.get(), text, text + 1, offsets);
+        auto* record = protectedField == 2 ? reinterpret_cast<UConverterToUnicodeArgs*>(page.memory) : &writable;
+        auto* error = protectedField == 3 ? reinterpret_cast<std::int32_t*>(page.memory) : &status;
+        *text = u'?';
+        *offsets = -1;
+        *record = writable;
+        *error = 0;
+        page.ReadOnly();
+        auto* guest = reinterpret_cast<Icu::ConverterToUnicodeArgs*>(record);
+        Unreadable([&] { Chars(guest, u"abc", 3, 4, error); });
+        Require(Drain(converter.get()).empty(), "refused write leaves no suffix in the converter");
+        Require(*text == u'?' && *offsets == -1 && record->target == text && record->offsets == offsets && *error == 0,
+                "refused write preserves output and cursors for retry");
+        writable = Arguments(converter.get(), &first, &first + 1, &offset);
+        status = 0;
+        Chars(reinterpret_cast<Icu::ConverterToUnicodeArgs*>(&writable), u"abc", 3, 4, &status);
+        Require(first == u'a' && offset == 4 && status == U_BUFFER_OVERFLOW_ERROR &&
+                Drain(converter.get()) == std::vector<char16_t>{u'b', u'c'}, "retry buffers and drains just one suffix");
+    }
+    Guarded readOnlyStatus;
+    auto* initialStatus = reinterpret_cast<std::int32_t*>(readOnlyStatus.memory);
+    *initialStatus = U_USING_DEFAULT_WARNING;
+    readOnlyStatus.ReadOnly();
+    args = Arguments(converter.get(), output, output + 1, nullptr);
+    Chars(reinterpret_cast<Icu::ConverterToUnicodeArgs*>(&args), u"Q", 1, 0, initialStatus);
+    Require(*output == u'Q' && *initialStatus == U_USING_DEFAULT_WARNING, "full write preserves a read-only warning");
     auto* forbiddenArgs = static_cast<Icu::ConverterToUnicodeArgs*>(guard.Forbidden());
     auto* forbiddenSource = static_cast<const char16_t*>(guard.Forbidden());
     auto* forbiddenStatus = static_cast<std::int32_t*>(guard.Forbidden());

@@ -119,6 +119,16 @@ void Write(Icu::ConverterToUnicodeArgs* guest, const char16_t* source, std::int3
     if (original.converter && remaining > UCNV_ERROR_BUFFER_LENGTH) NotImplemented_nid_no_patch(caller);
     const auto read = substitute ? 0 : original.converter ? count : produced;
     if (original.offsets) End(original.offsets, produced * sizeof(std::int32_t), caller);
+    auto* fields = reinterpret_cast<std::uint8_t*>(guest);
+    if (produced && (!GuestWritable_nid_no_patch(original.target, produced * sizeof(char16_t)) ||
+        !GuestWritable_nid_no_patch(fields + offsetof(UConverterToUnicodeArgs, target), sizeof(original.target)))) {
+        NotImplemented_nid_no_patch(caller);
+    }
+    if (original.offsets && produced && (!GuestWritable_nid_no_patch(original.offsets, produced * sizeof(std::int32_t)) ||
+        !GuestWritable_nid_no_patch(fields + offsetof(UConverterToUnicodeArgs, offsets), sizeof(original.offsets)))) {
+        NotImplemented_nid_no_patch(caller);
+    }
+    if (remaining && !GuestWritable_nid_no_patch(error, sizeof(*error))) NotImplemented_nid_no_patch(caller);
     try {
         Buffers buffers(source, original.target, read, produced, original.offsets != nullptr, caller);
         auto native = original;
@@ -136,7 +146,6 @@ void Write(Icu::ConverterToUnicodeArgs* guest, const char16_t* source, std::int3
         auto* newTarget = reinterpret_cast<char16_t*>(End(original.target, produced * sizeof(char16_t), caller));
         auto* newOffsets = original.offsets ?
             reinterpret_cast<std::int32_t*>(End(original.offsets, produced * sizeof(std::int32_t), caller)) : nullptr;
-        auto* fields = reinterpret_cast<std::uint8_t*>(guest);
         if (newOffsets != original.offsets) CopyOut(fields + offsetof(UConverterToUnicodeArgs, offsets), &newOffsets, sizeof(newOffsets), caller);
         if (newTarget != original.target) CopyOut(fields + offsetof(UConverterToUnicodeArgs, target), &newTarget, sizeof(newTarget), caller);
         status.Commit();
