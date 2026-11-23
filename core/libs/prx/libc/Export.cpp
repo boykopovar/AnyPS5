@@ -22,11 +22,13 @@ void APS5_VABI libc___cxa_finalize(void* dsoHandle) {
     CxaFinalize_nid_no_patch(dsoHandle);
 }
 
+APS5_EXPORT("S5WbPO54nD0", _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKcSE__nid_postfix);
 int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKcSE__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
+APS5_EXPORT("eMnBe5mZFLw", _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix);
 int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
