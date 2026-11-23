@@ -428,9 +428,29 @@ The summary's scope durations are wall time aggregated across threads. Nested sc
 
 The shader preparation threads are traced as well, `shader prepare`, with a buffer for 32,768 events each. A wait for the GPU mutex on a traced thread is a `GpuMutex.wait.<site>` slice (`dispatch`, `draw`, `present`, `flush` and so on, as on the `[lock]` line).
 
+A queue worker's `WAIT_REG_MEM` or `WAIT_REG_MEM_64` is also a `Driver.MemoryWait.<phase>.<exit>` slice, from the start of the wait to its end, on every queue. A wait that a worker lands before a guest read because another queue's label satisfied it (the `[landwait]` line) is a `Driver.LandingWait.<phase>.<exit>` slice. `<phase>` is `entry` when the wait ended before the worker published that it is blocked and `blocked` when it ended in the poll loop. `<exit>` names what satisfied the wait:
+
+- `recorder.queue_0x<q>`: the recorder's label table held the value; `<q>` is the queue that recorded the label, written as in the worker's thread name (`queue_0x0`, `queue_0x20`).
+- `store.queue_0x<q>`: a label store of queue `<q>` that the driver noted gave the value, whether or not it had reached memory.
+- `memory`: guest memory held the value and no noted label store gave it. That is a title CPU store, or a GPU write that the driver does not track as a label and that reached memory.
+- `held_at_submit`: memory already satisfied the wait when its submission arrived.
+- `settled` (landings only): the recorded writes to the address completed.
+
+A writer queue outside `0x0` to `0x58` is `queue_other`.
+
+A drain of queue 0's pipelined draws before a packet, the `Driver.Packet.pipeline_drain` stage, is also a `Driver.Packet.pipeline_drain.<reason>` slice. For a `WAIT_REG_MEM` the reason says whether a queued item writes the awaited address:
+
+- `awaited_queued_match` or `awaited_queued_mismatch`: the newest queued item that writes it holds a label value, and that value passes or fails the wait.
+- `awaited_queued_unknown`: a queued item writes it with no known value.
+- `awaited_not_queued`: no queued item writes it. The drain then serves only the order of queue 0's earlier work against another queue's held submission.
+
+The other reasons are `dispatch` (`DISPATCH_DIRECT`, `DISPATCH_INDIRECT`), `flip`, `rendering` (the rendering wait packet), `predication` (a predicated packet whose predicate a queued item writes) and `other`; the `[draw] pipelined` line has the drains by opcode. The reason is looked up before the drain, only while the trace records, and does not change when a drain happens.
+
+These slices lie inside the packet's `Driver.Packet.memory_wait` or `Driver.Packet.pipeline_drain` stage, so `phase_totals_ms` lists them next to it and `tools/trace_digest.py` does not count their time twice. The digest counts a slice whose name contains `wait` as wait time: a memory wait inside `Driver.Packet.memory_wait` adds nothing to it, while a landing inside another stage (a dispatch's guest read, for example) is now wait time instead of busy time. A drain slice is busy time, like its stage.
+
 The `gpu` track holds one `batch` slice per recorder batch, from the batch's timestamp pair. With `APS5_PROFILE_GPU=1` it also holds a slice per command class range, under the class names of the `[gputime]` line (`draw`, `copy`, `fill`, `present-blit`, ...); program ranges are left out. The track keeps up to the `APS5_TRACE_EVENTS` count of ranges (262,144 by default); more set `trace_dropped`. The GPU clock is mapped onto the CPU clock with calibrated timestamps (`VK_KHR_calibrated_timestamps` or the EXT version, enabled only when a trace switch is set) against the performance counter on Windows and `CLOCK_MONOTONIC` elsewhere, or `CLOCK_MONOTONIC_RAW` on a device that calibrates against no `CLOCK_MONOTONIC` (MoltenVK), taken when the window opens and when it closes, so the two clocks are matched at both ends of the window. A batch is added when the driver reads its timestamps, after its fence signals, so the batches of the last frames of the window, which complete after it closes, are missing. Without calibrated timestamps the trace has no `gpu` track, and the `[trace]` line says so.
 
-With any of the three switches set, the recorder writes a timestamp pair per batch for the whole run, as with `APS5_PROFILE_DRAW`. Without them, a `PerformanceTimer`, a GPU mutex acquisition and a read of batch timestamps each cost one more predictable branch.
+With any of the three switches set, the recorder writes a timestamp pair per batch for the whole run, as with `APS5_PROFILE_DRAW`. Without them, a `PerformanceTimer`, a GPU mutex acquisition, a memory wait, a pipeline drain before a packet and a read of batch timestamps each cost one more predictable branch.
 
 Set `APS5_TRACE_DRAW_PROGRAMS=1` (any value) to print one `[draw-programs]` line on stderr per draw, with the submission serial, the queue, and for each selected program its stage and role, the shader's code address and its entry address (`vertex/main=0x100000(entry=0x100040)`). It is for comparing the shaders a draw selects with shader-preparation failure logs; it reads no GPU state.
 

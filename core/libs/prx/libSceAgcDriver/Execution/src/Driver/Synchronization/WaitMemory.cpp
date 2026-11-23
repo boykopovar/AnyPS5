@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <cstdlib>
 #include <mutex>
@@ -15,10 +16,70 @@
 #endif
 #include "prx/libc/include/PreciseWait.hpp"
 #include <algorithm>
+#include <array>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
 namespace AgcDriver::DriverDetail {
+
+namespace {
+
+using WaitExitNames = std::array<std::array<char, 24>, SubmissionQueueEnd>;
+
+constexpr WaitExitNames NameWaitExits(std::string_view prefix) {
+    constexpr std::string_view digits = "0123456789abcdef";
+    WaitExitNames names{};
+    for (std::uint32_t queue = 0; queue < SubmissionQueueEnd; ++queue) {
+        auto& name = names[queue];
+        std::size_t length = 0;
+        for (const char character : prefix) name[length++] = character;
+        name[length++] = '0';
+        name[length++] = 'x';
+        if (queue >= 16) name[length++] = digits[queue >> 4u];
+        name[length++] = digits[queue & 15u];
+    }
+    return names;
+}
+
+constexpr WaitExitNames RecorderWaitExits = NameWaitExits("recorder.queue_");
+constexpr WaitExitNames StoreWaitExits = NameWaitExits("store.queue_");
+
+const char* RecorderWaitExit(std::uint32_t writer) {
+    return writer < RecorderWaitExits.size() ? RecorderWaitExits[writer].data() : "recorder.queue_other";
+}
+
+const char* StoreWaitExit(std::uint32_t writer) {
+    return writer < StoreWaitExits.size() ? StoreWaitExits[writer].data() : "store.queue_other";
+}
+
+class WaitAttribution {
+public:
+    explicit WaitAttribution(bool landing) : trace(PerformanceTrace::Recording() ? PerformanceTrace::Thread() : nullptr), landing(landing) {
+        if (trace != nullptr) begin = std::chrono::steady_clock::now();
+    }
+
+    WaitAttribution(const WaitAttribution&) = delete;
+    WaitAttribution& operator=(const WaitAttribution&) = delete;
+
+    ~WaitAttribution() {
+        if (trace == nullptr || exit == nullptr) return;
+        const char* scope = landing ? (blocked ? "Driver.LandingWait.blocked" : "Driver.LandingWait.entry") : (blocked ? "Driver.MemoryWait.blocked" : "Driver.MemoryWait.entry");
+        trace->Add(scope, exit, begin, std::chrono::steady_clock::now());
+    }
+
+    void Blocked() { blocked = true; }
+    void Exit(const char* name) { exit = name; }
+
+private:
+    TraceThread* trace;
+    bool landing;
+    bool blocked = false;
+    const char* exit = nullptr;
+    std::chrono::steady_clock::time_point begin{};
+};
+
+}
 
 void PollSleep() {
 #ifdef _WIN32
@@ -107,6 +168,7 @@ void Driver::landPendingWaits(std::uint32_t queue) {
 
 void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t queue, const PacketHistory& context, std::uint64_t received, bool heldAtSubmit, bool requireMemory) {
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
+    WaitAttribution attribution(requireMemory);
 
     auto start = std::chrono::steady_clock::now();
     auto lastDone = packetsDone.load();
@@ -157,7 +219,12 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     };
     const auto orderByStore = [&] {
         std::uint32_t writer = queue;
-        if (!requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) orderedBy(writer);
+        if (!requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
+            attribution.Exit(StoreWaitExit(writer));
+            orderedBy(writer);
+        } else {
+            attribution.Exit("memory");
+        }
     };
     GuestMemory::CheckRange(reinterpret_cast<const void*>(awaited), awaitedBytes, awaitedBytes);
     if (traceGpu) std::fprintf(stderr, "[gpu] %.1f queue 0x%x waits 0x%llx == 0x%x (now 0x%x)\n", TraceMs(), queue, static_cast<unsigned long long>(awaited), packet[4],
@@ -169,9 +236,11 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     }
     if (heldAtSubmit) {
         epochPoint.inherit = false;
+        attribution.Exit("held_at_submit");
         return;
     }
     if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
+        attribution.Exit(StoreWaitExit(writer));
         if (writer != queue) notePendingWait(packet, queue, received);
         orderedBy(writer);
         return;
@@ -211,6 +280,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             ++outcomes.fromRecorderLate;
             if (trace) traceLate("trusted", hit, refusal);
         }
+        attribution.Exit(RecorderWaitExit(hit->queue));
         ++(polling ? outcomes.fromRecorderPolling : outcomes.fromRecorder);
         if (unlockedHit) ++outcomes.fromRecorderUnlocked;
         if (hit->queue == queue) {
@@ -356,6 +426,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
 
     noteWaitFields(queue, packet);
     noteWaitBlocked(queue, awaited, true);
+    attribution.Blocked();
     struct BlockedWait {
         Driver& driver;
         std::uint32_t queue;
@@ -372,6 +443,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     auto lastProducerScan = std::chrono::steady_clock::now() - std::chrono::milliseconds(100);
     while (!memorySatisfied()) {
         if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
+            attribution.Exit(StoreWaitExit(writer));
             if (writer != queue) notePendingWait(packet, queue, received);
             orderedBy(writer);
             return;
@@ -393,7 +465,10 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         if (requireMemory && (polls & 15u) == 0) {
             std::unique_lock settleLock(GuestMemory::GpuMutex(), std::try_to_lock);
             if (settleLock.owns_lock()) {
-                if (const auto localDevice = device.Load(); localDevice != nullptr && localDevice->RecordedWritesSettled(awaited, awaitedBytes)) return;
+                if (const auto localDevice = device.Load(); localDevice != nullptr && localDevice->RecordedWritesSettled(awaited, awaitedBytes)) {
+                    attribution.Exit("settled");
+                    return;
+                }
             }
         }
         if (const auto done = packetsDone.load(); done != lastDone || (!requireMemory && packetsInFlight.load() != 0)) {
