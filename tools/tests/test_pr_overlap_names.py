@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import shutil
 import subprocess
@@ -6,6 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pr_overlap
@@ -189,6 +192,19 @@ class NamesLookupTests(unittest.TestCase):
         self.assertIn("main: no matching PS5 export", text)
         self.assertIn("open: no matching PS5 export changes", text)
         self.assertNotIn("open: none", text)
+
+    def test_names_from_a_subdirectory_matches_the_root(self):
+        outputs = {}
+        for subdirectory in (".", "core/libs/prx"):
+            os.chdir(Path(self.tmp.name, subdirectory))
+            stdout = io.StringIO()
+            with patch.object(pr_overlap, "open_prs", return_value=self.prs), patch.object(pr_overlap, "fetch"), \
+                    patch.object(pr_overlap, "progress"), contextlib.redirect_stdout(stdout):
+                self.assertEqual(pr_overlap.main(["--repo", "owner/project", "--names", "pending", "done"]), 0)
+            outputs[subdirectory] = stdout.getvalue()
+        self.assertIn("pending\n  main: core/libs/prx/libSceExample (stub)\n", outputs["."])
+        self.assertIn("done\n  main: core/libs/prx/libSceExample (implemented)\n", outputs["."])
+        self.assertEqual(outputs["core/libs/prx"], outputs["."])
 
     def test_names_excludes_the_other_modes(self):
         with self.assertRaises(SystemExit):
