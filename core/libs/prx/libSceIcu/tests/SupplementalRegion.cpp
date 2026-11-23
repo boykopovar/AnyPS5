@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
 #include "ucmndata.h"
 #include "udataswp.h"
 #include "uresdata.h"
@@ -124,6 +125,26 @@ int main(int argc, char** argv) {
 
     auto warned = Region("en_US", false, 8, StringNotTerminatedWarning);
     Require(warned.length == 2 && warned.status == ZeroError, "a not-terminated warning was not cleared");
+
+    static const std::int32_t readOnlyFailure = IllegalArgumentError;
+    static const std::int32_t readOnlyZero = ZeroError;
+    auto* failureStatus = const_cast<std::int32_t*>(&readOnlyFailure);
+    auto* zeroStatus = const_cast<std::int32_t*>(&readOnlyZero);
+    Require(!GuestWritable_nid_no_patch(failureStatus, sizeof(std::int32_t)) &&
+                !GuestWritable_nid_no_patch(zeroStatus, sizeof(std::int32_t)),
+            "the read-only statuses are writable");
+    char readOnlyRegion[8];
+    std::memset(readOnlyRegion, 'x', sizeof(readOnlyRegion));
+    Require(ulocimp_getRegionForSupplementalData_nid_postfix("en_US", 0, readOnlyRegion, 8, failureStatus) == 0,
+            "a read-only incoming failure did not return 0");
+    Require(readOnlyRegion[0] == 'x', "a read-only incoming failure wrote the buffer");
+    Require(ulocimp_getRegionForSupplementalData_nid_postfix("en_US@rg=gbzzzz", 0, readOnlyRegion, 8, zeroStatus) == 2,
+            "a read-only status that stays zero returned the wrong length");
+    Require(std::string(readOnlyRegion) == "GB", "a read-only status that stays zero returned the wrong region");
+    RequireThrows([&] { ulocimp_getRegionForSupplementalData_nid_postfix("en_US", 0, readOnlyRegion, 2, zeroStatus); },
+                  "a read-only status that needs the not-terminated warning did not throw");
+    RequireThrows([&] { ulocimp_getRegionForSupplementalData_nid_postfix("en_US", 0, readOnlyRegion, 1, zeroStatus); },
+                  "a read-only status that needs the overflow error did not throw");
 
     auto exact = Region("en_US", false, 2);
     Require(exact.length == 2, "an exact buffer returned the wrong length");

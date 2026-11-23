@@ -52,11 +52,13 @@ extern "C" {
 std::int32_t APS5_VABI ulocimp_getRegionForSupplementalData_nid_postfix(const char* localeID, std::int8_t inferRegion,
                                                                         char* region, std::int32_t regionCapacity,
                                                                         std::int32_t* status) {
-    if (!GuestWritable_nid_no_patch(status, sizeof(*status))) NotImplemented_nid_no_patch(__func__);
-    if (Failure(*status)) return 0;
+    std::int32_t incoming = 0;
+    if (!status || !GuestCopyIn_nid_no_patch(&incoming, status, sizeof(incoming))) NotImplemented_nid_no_patch(__func__);
+    if (Failure(incoming)) return 0;
     if (regionCapacity < 0 || !GuestWritable_nid_no_patch(region, static_cast<std::size_t>(regionCapacity)))
         NotImplemented_nid_no_patch(__func__);
 
+    std::int32_t local = incoming;
     char buffer[kRegionBufferLength] = {};
     std::int32_t keywordStatus = 0;
     std::int32_t length = uloc_getKeywordValue(localeID, "rg", buffer, kRegionBufferLength, &keywordStatus);
@@ -68,15 +70,15 @@ std::int32_t APS5_VABI ulocimp_getRegionForSupplementalData_nid_postfix(const ch
     }
 
     if (length == 0) {
-        length = uloc_getCountry(localeID, buffer, kRegionBufferLength, status);
-        if (Failure(*status)) {
+        length = uloc_getCountry(localeID, buffer, kRegionBufferLength, &local);
+        if (Failure(local)) {
             length = 0;
         } else if (length == 0 && inferRegion != 0) {
             std::int32_t likelyStatus = 0;
             const std::string likely = LikelySubtags(localeID, &likelyStatus);
             if (!Failure(likelyStatus)) {
-                length = uloc_getCountry(likely.c_str(), buffer, kRegionBufferLength, status);
-                if (Failure(*status)) length = 0;
+                length = uloc_getCountry(likely.c_str(), buffer, kRegionBufferLength, &local);
+                if (Failure(local)) length = 0;
             }
         }
     }
@@ -84,7 +86,10 @@ std::int32_t APS5_VABI ulocimp_getRegionForSupplementalData_nid_postfix(const ch
 
     buffer[length] = 0;
     if (regionCapacity > 0) std::strncpy(region, buffer, static_cast<std::size_t>(regionCapacity));
-    return u_terminateChars_nid_postfix(region, regionCapacity, length, status);
+    const std::int32_t result = u_terminateChars_nid_postfix(region, regionCapacity, length, &local);
+    if (local != incoming && !GuestCopyOut_nid_no_patch(status, &local, sizeof(local)))
+        NotImplemented_nid_no_patch(__func__);
+    return result;
 }
 
 }
