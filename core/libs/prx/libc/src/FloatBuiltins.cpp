@@ -622,7 +622,6 @@ double APS5_VABI cabs_nid_postfix(__complex__ double z) { return hypot_nid_postf
 float APS5_VABI cabsf_nid_postfix(__complex__ float z) { return hypotf_nid_postfix(__real__ z, __imag__ z); }
 long double APS5_VABI cabsl_nid_postfix(__complex__ long double z) { return hypotl_nid_postfix(__real__ z, __imag__ z); }
 
-
 __complex__ double APS5_VABI cacos_nid_postfix(__complex__ double z) {
     const auto result = std::acos(std::complex<double>(__real__ z, __imag__ z));
     return MakeComplex(result.real(), result.imag());
