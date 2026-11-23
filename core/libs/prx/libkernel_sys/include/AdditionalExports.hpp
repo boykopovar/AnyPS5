@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel_sys/include/CfiCheckFail.hpp"
 
+#include <cstddef>
 #include <cstdint>
 
 extern "C" {
@@ -41,7 +42,8 @@ int APS5_VABI __sys_opmc_set_ctr_nid_postfix();
 int APS5_VABI __sys_opmc_set_hw_nid_postfix();
 int APS5_VABI __sys_osem_close_nid_postfix();
 int APS5_VABI __sys_osem_open_nid_postfix();
-int APS5_VABI __sys_randomized_path_nid_postfix();
+int GuestRandomizedPath_nid_no_patch(const char* set, char* get, std::size_t* length);
+int APS5_VABI __sys_randomized_path_nid_postfix(const char* set, char* get, std::size_t* length);
 int APS5_VABI __sys_rdup_nid_postfix();
 int APS5_VABI __sys_regmgr_call_nid_postfix();
 int APS5_VABI __sys_resume_internal_hdd_nid_postfix();
