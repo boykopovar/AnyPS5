@@ -123,7 +123,12 @@ def stage_files(files, work, content):
                 missing.append(content_name)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.unlink(missing_ok=True)
+        try:
+            target.unlink(missing_ok=True)
+        except PermissionError as error:
+            if os.name != "nt" or linked_path(target) or not target.is_file() or target.stat().st_mode & stat.S_IWRITE:
+                raise
+            remove_read_only(os.unlink, target, error)
         if content_file is None:
             with target.open("w", encoding="utf-8", newline="\n") as output:
                 output.write(source["text"])
