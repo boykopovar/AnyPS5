@@ -686,7 +686,7 @@ long double FmaProductDominates(long double x, long double y, long double z, int
         std::feholdexcept(&environment);
         volatile long double product = x * y;
         long double result = product;
-        if (!std::fetestexcept(FE_INEXACT)) result = std::nextafter(result, toward);
+        if (!std::fetestexcept(FE_INEXACT)) result = nextafterl_nid_postfix(result, toward);
         std::feupdateenv(&environment);
         return result;
     };
@@ -711,11 +711,11 @@ long double FmaFarApart(long double x, long double y, long double z, int roundin
     case FE_TONEAREST:
         return z;
     case FE_TOWARDZERO:
-        return productPositive == (z > 0.0L) ? z : std::nextafter(z, 0.0L);
+        return productPositive == (z > 0.0L) ? z : nextafterl_nid_postfix(z, 0.0L);
     case FE_DOWNWARD:
-        return productPositive ? z : std::nextafter(z, -Infinity);
+        return productPositive ? z : nextafterl_nid_postfix(z, -Infinity);
     default:
-        return productPositive ? std::nextafter(z, Infinity) : z;
+        return productPositive ? nextafterl_nid_postfix(z, Infinity) : z;
     }
 }
 
@@ -730,15 +730,15 @@ long double FmaScaled(long double xs, long double ys, long double zs, int spread
     if (static_cast<int>(static_cast<unsigned>(spread) + exponent) > -16383) {
         volatile long double high = sum.hi;
         std::fesetround(rounding);
-        return std::ldexp(high + rest, spread);
+        return scalbnl_nid_postfix(high + rest, spread);
     }
-    const long double floor = std::ldexp(std::copysign(0x1p-16382L, sum.hi), -spread);
+    const long double floor = scalbnl_nid_postfix(std::copysign(0x1p-16382L, sum.hi), -spread);
     const ExtendedPair lifted = AddExact(sum.hi, floor);
     volatile long double high = lifted.hi;
     volatile long double low = lifted.lo + rest;
     volatile long double anchor = floor;
     std::fesetround(rounding);
-    return std::ldexp((high + low) - anchor, spread);
+    return scalbnl_nid_postfix((high + low) - anchor, spread);
 }
 
 }
@@ -865,7 +865,6 @@ long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double
     if (z == 0.0L) return x * y;
     if (!std::isfinite(x) || !std::isfinite(y)) return x * y + z;
     if (!std::isfinite(z)) return z;
-    ErrnoGuard guard;
     int xExponent = 0, yExponent = 0, zExponent = 0;
     const long double xs = std::frexp(x, &xExponent);
     const long double ys = std::frexp(y, &yExponent);
@@ -874,7 +873,7 @@ long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double
     const int spread = xExponent + yExponent - zExponent;
     if (spread > std::numeric_limits<long double>::digits * 2) return FmaProductDominates(x, y, z, rounding);
     if (spread < -std::numeric_limits<long double>::digits) return FmaFarApart(x, y, z, rounding);
-    return FmaScaled(xs, ys, std::ldexp(zs, -spread), xExponent + yExponent, rounding);
+    return FmaScaled(xs, ys, scalbnl_nid_postfix(zs, -spread), xExponent + yExponent, rounding);
 }
 
 double APS5_VABI rint_nid_postfix(double x) { return std::isnan(x) ? x + x : std::rint(x); }

@@ -73,10 +73,13 @@ private:
 
 struct Api {
     decltype(&sceAjmiInitialize) initialize;
+    decltype(&sceAjmiFinalize) finalize;
     decltype(&sceAjmiInstanceCreate) create;
     decltype(&sceAjmiInstanceDestroy) destroy;
     decltype(&sceAjmiBatchWait) wait;
     decltype(&sceAjmiBatchCancel) cancel;
+    decltype(&sceAjmiModuleRegister) moduleRegister;
+    decltype(&sceAjmiModuleUnregister) moduleUnregister;
 };
 
 struct BatchApi {
@@ -126,9 +129,31 @@ void CheckContexts(const Api& alias, const Api& native) {
     Require(alias.create(second, 0, 0, &instance.value) == 0);
     Require(native.destroy(second, instance.value) == 0);
     instance.Check();
+    errno = 71;
+    Require(alias.moduleRegister(first, 0, 1) == InvalidParameter);
+    Require(alias.moduleRegister(first, 0, -1) == InvalidParameter);
+    Require(alias.moduleRegister(first, 0, 0x100000000ll) == InvalidParameter);
+    Require(alias.moduleRegister(first, 0, 0) == 0);
+    Require(alias.moduleUnregister(first, 0) == 0);
+    Require(alias.moduleRegister(second, 0x24, 0) == 0);
+    Require(alias.moduleUnregister(second, 0x24) == 0);
+    Require(alias.moduleRegister(first, 1, 0) == 0);
+    Require(native.moduleUnregister(first, 1) == 0);
+    Require(native.moduleRegister(second, 1, 0) == 0);
+    Require(alias.moduleUnregister(second, 1) == 0);
+    Require(alias.finalize(first) == 0 && errno == 71);
+    Require(native.finalize(second) == 0);
+    Require(alias.finalize(third) == 0);
+    Require(alias.finalize(fourth) == 0);
+    Require(alias.finalize(0) == 0);
+    Require(native.finalize(0) == 0);
 }
 
-void CheckInstances(const Api& alias, const Api& native) {
+void CheckInstances(const Api& alias, const Api& native, decltype(&sceAjmiInstanceCodecType) codecType) {
+    Require(codecType(0) == 0);
+    Require(codecType(0x3fffu) == 0);
+    Require(codecType(0x4000u) == 1);
+    Require(codecType(0xffffffffu) == 0x3ffffu);
     const auto context = Context(alias);
     const auto other = Context(native);
     Guarded<std::uint32_t> first;
@@ -142,6 +167,7 @@ void CheckInstances(const Api& alias, const Api& native) {
     errno = 71;
     Require(alias.create(context, 0, 0, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidParameter && errno == 71);
     Require(alias.create(context, 24, 0x1002, &first.value) == 0);
+    Require(codecType(first.value) == 24);
     Require(native.create(other, 24, 0x1002, &second.value) == 0 && first.value != second.value);
     Require(native.destroy(other, first.value) == InvalidInstance);
     Require(alias.destroy(context, second.value) == InvalidInstance);
@@ -234,23 +260,30 @@ int main(int argc, char** argv) {
     Module aliasModule(directory / "libSceAjmi.prx");
     const Api alias{
         aliasModule.Import<decltype(Api::initialize)>(patched ? "QhA7rTjJbro" : "sceAjmiInitialize"),
+        aliasModule.Import<decltype(Api::finalize)>(patched ? "BD002VBfhuE" : "sceAjmiFinalize"),
         aliasModule.Import<decltype(Api::create)>(patched ? "ofRX8Vq0ss0" : "sceAjmiInstanceCreate"),
         aliasModule.Import<decltype(Api::destroy)>(patched ? "YtubBgSeNH0" : "sceAjmiInstanceDestroy"),
         aliasModule.Import<decltype(Api::wait)>(patched ? "JJ9g04D344Q" : "sceAjmiBatchWait"),
-        aliasModule.Import<decltype(Api::cancel)>(patched ? "6lWAGxD8NLs" : "sceAjmiBatchCancel")
+        aliasModule.Import<decltype(Api::cancel)>(patched ? "6lWAGxD8NLs" : "sceAjmiBatchCancel"),
+        aliasModule.Import<decltype(Api::moduleRegister)>(patched ? "dmwcwCeItmE" : "sceAjmiModuleRegister"),
+        aliasModule.Import<decltype(Api::moduleUnregister)>(patched ? "6fY-ci3au2U" : "sceAjmiModuleUnregister")
     };
     const Api native{
         nativeModule.Import<decltype(Api::initialize)>(patched ? "dl+4eHSzUu4" : "sceAjmInitialize"),
+        nativeModule.Import<decltype(Api::finalize)>(patched ? "MHur6qCsUus" : "sceAjmFinalize"),
         nativeModule.Import<decltype(Api::create)>(patched ? "AxoDrINp4J8" : "sceAjmInstanceCreate"),
         nativeModule.Import<decltype(Api::destroy)>(patched ? "RbLbuKv8zho" : "sceAjmInstanceDestroy"),
         nativeModule.Import<decltype(Api::wait)>(patched ? "-qLsfDAywIY" : "sceAjmBatchWait"),
-        nativeModule.Import<decltype(Api::cancel)>(patched ? "NVDXiUesSbA" : "sceAjmBatchCancel")
+        nativeModule.Import<decltype(Api::cancel)>(patched ? "NVDXiUesSbA" : "sceAjmBatchCancel"),
+        nativeModule.Import<decltype(Api::moduleRegister)>(patched ? "Q3dyFuwGn64" : "sceAjmModuleRegister"),
+        nativeModule.Import<decltype(Api::moduleUnregister)>(patched ? "Wi7DtlLV+KI" : "sceAjmModuleUnregister")
     };
     const std::string_view operation = argv[2];
     if (operation == "contexts") {
         CheckContexts(alias, native);
     } else if (operation == "instances") {
-        CheckInstances(alias, native);
+        const auto codecType = aliasModule.Import<decltype(&sceAjmiInstanceCodecType)>(patched ? "Uqtj4RSP-JQ" : "sceAjmiInstanceCodecType");
+        CheckInstances(alias, native, codecType);
     } else {
         Require(operation == "batches");
         const BatchApi batch{

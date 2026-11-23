@@ -1860,6 +1860,24 @@ int64_t APS5_VABI GuestNetSend_nid_no_patch(int s, const void* buf, size_t len, 
     return sceNetSend(s, buf, len, flags);
 }
 
+static bool GuestBufferReadable(const void* buffer, std::size_t length) {
+    if (length == 0) return true;
+    constexpr std::size_t page = 4096;
+    const auto* bytes = static_cast<const unsigned char*>(buffer);
+    unsigned char value;
+    for (std::size_t done = 0; done < length; done += page)
+        if (!GuestCopyIn_nid_no_patch(&value, bytes + done, 1)) return false;
+    return GuestCopyIn_nid_no_patch(&value, bytes + (length - 1), 1);
+}
+
+static bool ConnectedDatagramDestination(const Sock& socket, const sockaddr_storage& destination) {
+    if (socket.type != NET_SOCK_DGRAM) return false;
+    if (destination.ss_family == AF_INET6 && reinterpret_cast<const sockaddr_in6&>(destination).sin6_port == 0) return false;
+    sockaddr_storage peer{};
+    NativeLength length = sizeof(peer);
+    return ::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&peer), &length) == 0;
+}
+
 int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, const void* to, uint32_t tolen) {
     if (!message_flags_supported(flags, NET_MSG_DONTWAIT | NET_MSG_NOSIGNAL)) return fail(NET_EOPNOTSUPP);
     if (!buf && len) return fail(NET_EINVAL);
@@ -1896,6 +1914,7 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
         NativeLength destination_length = 0;
         if (!guest_to_native_address(address.data(), address_length, destination, destination_length)) return fail(NET_EINVAL);
         if (destination.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
+        if (ConnectedDatagramDestination(socket, destination)) return fail(GuestBufferReadable(buf, len) ? NET_EISCONN : NET_EFAULT);
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
             return ::sendto(socket.native->value, data, size, NATIVE_SEND_FLAGS | native_message_flags(flags),

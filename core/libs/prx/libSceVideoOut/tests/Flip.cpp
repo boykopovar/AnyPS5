@@ -157,6 +157,31 @@ void testLifetime(bool reopen) {
     LibcRunShutdown_nid_postfix();
 }
 
+void checkPs4FlipStatus(int handle) {
+    alignas(VideoOutFlipStatus) std::array<std::uint8_t, sizeof(VideoOutFlipStatus)> raw{};
+    raw.fill(0xaa);
+    check(sceVideoOutGetFlipStatus(handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == 0, "the PS4 flip status failed");
+    check(std::all_of(raw.begin() + sizeof(VideoOutFlipStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0xaa; }), "the PS4 flip status overflowed its 64 bytes");
+    VideoOutFlipStatusPs4 flip;
+    std::memcpy(&flip, raw.data(), sizeof(flip));
+    check(flip.count == 0 && flip.flipArg == -1 && flip.currentBuffer == -1 && flip.flipPendingNum == 0, "the PS4 flip status fields are wrong");
+}
+
+void checkPs4VblankStatus(int handle) {
+    alignas(VideoOutVblankStatus) std::array<std::uint8_t, sizeof(VideoOutVblankStatus)> raw{};
+    raw.fill(0xaa);
+    check(sceVideoOutGetVblankStatus(handle, reinterpret_cast<VideoOutVblankStatus*>(raw.data())) == 0, "the PS4 vblank status failed");
+    check(std::all_of(raw.begin() + sizeof(VideoOutVblankStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0xaa; }), "the PS4 vblank status overflowed its 32 bytes");
+}
+
+void testPs4InitialStatus() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    checkPs4FlipStatus(handle);
+    checkPs4VblankStatus(handle);
+    check(sceVideoOutClose(handle) == 0, "closing the PS4 video out handle failed");
+    LibcRunShutdown_nid_postfix();
+}
+
 void testPs4Buffers() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     std::vector<std::byte> allocation(2 * 65536 + 65535);
@@ -222,16 +247,8 @@ void testPs4Buffers() {
         const auto display = DescribeVideoOutBuffer(cfg->buffers[3], cfg->groups[2]);
         check(cfg->groups[2].attribute.tiling_mode == 0 && display.tilingMode == AgcDriver::DisplayTilingGcn && display.pitchInPixel == 128, "the PS4 tiled buffer is not a GCN display buffer padded to 128 pixels");
     }
-    std::array<std::uint8_t, sizeof(VideoOutFlipStatus)> raw{};
-    raw.fill(0xaa);
-    check(sceVideoOutGetFlipStatus(handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == 0, "the PS4 flip status failed");
-    check(std::all_of(raw.begin() + sizeof(VideoOutFlipStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0xaa; }), "the PS4 flip status overflowed its 64 bytes");
-    VideoOutFlipStatusPs4 flip;
-    std::memcpy(&flip, raw.data(), sizeof(flip));
-    check(flip.count == 0 && flip.flipArg == -1 && flip.currentBuffer == -1 && flip.flipPendingNum == 0, "the PS4 flip status fields are wrong");
-    raw.fill(0xaa);
-    check(sceVideoOutGetVblankStatus(handle, reinterpret_cast<VideoOutVblankStatus*>(raw.data())) == 0, "the PS4 vblank status failed");
-    check(std::all_of(raw.begin() + sizeof(VideoOutVblankStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0xaa; }), "the PS4 vblank status overflowed its 32 bytes");
+    checkPs4FlipStatus(handle);
+    checkPs4VblankStatus(handle);
     {
         const auto cfg = VideoOutDriver::Get().GetConfig(handle);
         check(sceVideoOutSubmitFlip(handle, 1, 1, 7) == 0, "the PS4 flip was not accepted");
@@ -356,6 +373,7 @@ void testPs4Buffers() {
     }
     sceVideoOutClose(handle);
     const int ps5Handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    alignas(VideoOutFlipStatus) std::array<std::uint8_t, sizeof(VideoOutFlipStatus)> raw{};
     raw.fill(0xaa);
     check(sceVideoOutGetFlipStatus(ps5Handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == 0, "the PS5 flip status failed");
     check(std::all_of(raw.begin() + sizeof(VideoOutFlipStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0; }), "the PS5 flip status did not fill its 128 bytes");
@@ -1622,7 +1640,7 @@ extern "C" [[noreturn]] void Aps5StartGuest_nid_no_patch(void (*entry)(void*, vo
 #endif
 
 int runTests(int argc, char** argv) {
-    VideoOutTestEnvironment environment;
+    VideoOutTestEnvironment environment(argc == 2 && std::string_view(argv[1]) == "ps4_initial_status");
 #ifdef _WIN32
     const bool wantsDisplay = !(argc == 2 && std::string(argv[1]) == "unavailable");
     if (wantsDisplay && std::getenv("ANYPS5_REQUIRE_DISPLAY") == nullptr) {
@@ -1661,6 +1679,7 @@ int runTests(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "deferred") testDeferredBuffer();
         else if (argc == 2 && std::string(argv[1]) == "unregistered") testUnregisteredBuffer();
         else if (argc == 2 && std::string(argv[1]) == "ps4") testPs4Buffers();
+        else if (argc == 2 && std::string(argv[1]) == "ps4_initial_status") testPs4InitialStatus();
         else if (argc == 2 && std::string(argv[1]) == "cpuflip") testCpuFlipOrder();
         else if (argc == 2 && std::string(argv[1]) == "resolution") testOutputResolution();
         else if (argc == 2 && std::string(argv[1]) == "resolution_override") testOutputResolutionOverride();
