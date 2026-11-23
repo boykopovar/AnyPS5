@@ -2,6 +2,11 @@
 #include "prx/libSceIcu/tests/NumberFormatOracle.hpp"
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <barrier>
@@ -10,6 +15,7 @@
 #include <cstring>
 #include <exception>
 #include <limits>
+#include <new>
 #include <string>
 #include <string_view>
 #include <stdexcept>
@@ -129,6 +135,12 @@ void Literal(UNumberFormat* guest, double number, std::u16string_view expected) 
         output[0] == 0xa55a && output[count + 2] == 0xa55a, "independent literal, terminator and tail");
 }
 
+std::uintptr_t failHostWrite;
+
+void FailFieldAllocation(std::uintptr_t address, std::size_t) {
+    if (address == failHostWrite) throw std::bad_alloc();
+}
+
 void Fields() {
     std::int32_t status = 0;
     auto* iterator = ufieldpositer_open_nid_postfix(&status);
@@ -168,6 +180,14 @@ void Fields() {
     const auto count = unum_formatDoubleForFields_nid_postfix(currency.guest, -1234.5,
         output.data(), output.size(), iterator, &status);
     Require(status <= 0 && count == 10 && std::u16string_view(output.data()) == u"-$1,234.50", "US currency with sign and grouping");
+    std::array<char16_t, 12> refused{};
+    failHostWrite = reinterpret_cast<std::uintptr_t>(refused.data());
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(FailFieldAllocation);
+    const auto failed = unum_formatDoubleForFields_nid_postfix(currency.guest, 9, refused.data(), refused.size(), iterator, &status);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    Require(failed == 0 && status == 7 && std::all_of(refused.begin(), refused.end(), [](char16_t c) { return c == 0; }),
+        "host staging allocation failure reports ICU allocation error and preserves guest text");
+    status = 0;
     auto* bad = reinterpret_cast<char16_t*>(static_cast<std::uintptr_t>(1));
     Refuses([&] { unum_formatDoubleForFields_nid_postfix(currency.guest, 9, bad, 24, iterator, &status); });
     Pair inexact(0, "en_US", u"0.00");
@@ -591,7 +611,76 @@ void Lifetime() {
     CloseRaces();
 }
 
+void WatchedFields() {
+    constexpr std::size_t bytes = 65536;
+    using namespace GuestArena;
+#ifndef _WIN32
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::fputs("field formatter write watch unavailable on this host; running direct guest memory cases\n", stderr);
+        return;
+    }
+#endif
+    auto* memory = static_cast<std::uint8_t*>(GuestArenaAllocate_nid_postfix(bytes, bytes));
+    Require(memory != nullptr, "allocate guest arena for watched field output");
+#ifdef _WIN32
+    const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+    Require(section != nullptr, "create guest arena shared section");
+    GuestArenaMap_nid_postfix(memory, bytes, section, 0, PAGE_READWRITE);
+    CloseHandle(section);
+#else
+    GuestArenaCommit_nid_postfix(memory, bytes, 0x04, bytes);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory, bytes);
+#endif
+    const auto collect = [&] {
+#ifdef _WIN32
+        std::array<void*, 32> pages{};
+        auto count = pages.size();
+        Require(GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(memory), bytes, pages.data(), &count, true),
+            "collect and arm shared guest writes");
+        return count != 0;
+#else
+        bool written = false;
+        Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(memory), bytes,
+            [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &written),
+            "collect and arm guest writes");
+        return written;
+#endif
+    };
+    Pair pair(1, "en_US");
+    std::int32_t local = 0;
+    auto* iterator = ufieldpositer_open_nid_postfix(&local);
+    Require(iterator != nullptr, "open formatter field iterator");
+    auto* output = reinterpret_cast<char16_t*>(memory + 16384);
+    auto* status = reinterpret_cast<std::int32_t*>(memory + 32768);
+    for (bool exact : {false, true}) {
+        std::fill_n(output, 9, char16_t{0xa55a});
+        *status = 0;
+        Require(collect() && !collect(), "reset and arm cross-page guest text and status");
+#ifdef _WIN32
+        MEMORY_BASIC_INFORMATION textInfo{}, statusInfo{};
+        Require(VirtualQuery(output, &textInfo, sizeof(textInfo)) == sizeof(textInfo) && textInfo.Protect == PAGE_READONLY &&
+            VirtualQuery(status, &statusInfo, sizeof(statusInfo)) == sizeof(statusInfo) && statusInfo.Protect == PAGE_READONLY,
+            "shared guest text and status are temporarily host read-only");
+#endif
+        const auto length = unum_formatDoubleForFields_nid_postfix(pair.guest, 1234, output, exact ? 5 : 8, iterator, status);
+        Require(length == 5 && *status == (exact ? -124 : 0) && std::u16string_view(output, 5) == u"1,234" &&
+            output[5] == (exact ? 0xa55a : 0) && output[6] == 0xa55a, "write watched numeric text and changed status only");
+        std::int32_t begin = -1, end = -1;
+        Require(ufieldpositer_next_nid_postfix(iterator, &begin, &end) == 6 && begin == 1 && end == 2 &&
+            ufieldpositer_next_nid_postfix(iterator, &begin, &end) == 0 && begin == 0 && end == 5,
+            "watched output preserves grouping and integer field ranges");
+        Require(collect(), "guest write tracking observes formatted output");
+    }
+    ufieldpositer_close_nid_postfix(iterator);
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, bytes);
+#endif
+    GuestArenaReset_nid_postfix(memory, bytes);
+    GuestArenaRelease_nid_postfix(memory, bytes);
+}
+
 void Memory() {
+    WatchedFields();
     constexpr std::size_t page = 0x4000;
     constexpr std::size_t bytes = 3 * page;
     std::int64_t physical = 0;

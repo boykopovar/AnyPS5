@@ -4,13 +4,16 @@
 #include "prx/libSceIcu/Enumeration.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <list>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -29,6 +32,7 @@ std::mutex RegistryMutex;
 std::unordered_map<const UNumberFormat*, std::shared_ptr<Entry>> Registry;
 std::vector<std::unique_ptr<UEnumeration>> Tokens;
 constexpr std::int32_t Unwritten = INT32_MIN;
+constexpr std::int32_t MemoryAllocationError = 7;
 
 template<class T>
 T* Offset(T* pointer, std::size_t count) {
@@ -127,6 +131,7 @@ void WriteField(UFieldPosition* pointer, const Backend::Field& value) {
 enum class Operation { Double, DoubleFields, Decimal, MissingDecimal, Symbol, Text };
 
 bool EarlyError(Operation operation, std::int32_t error) {
+    if (operation == Operation::DoubleFields && error == MemoryAllocationError) return true;
     if (operation == Operation::MissingDecimal) return error == Icu::IllegalArgument;
     if (error == Icu::UnsupportedError) return operation == Operation::DoubleFields || operation == Operation::Symbol || operation == Operation::Text;
     if (error == 0x10110) return operation == Operation::Decimal;
@@ -170,17 +175,23 @@ std::int32_t Output(Operation operation, char16_t* output, std::int32_t capacity
     if (length != secondLength || error != secondError || std::memcmp(&field, &secondField, sizeof(field))) NotImplemented_nid_no_patch(__func__);
     if (error > 0 && error != Icu::BufferOverflow && !EarlyError(operation, error)) NotImplemented_nid_no_patch(__func__);
     FieldAlias(position, field, status);
-    if (operation == Operation::DoubleFields && before != error && !GuestWritable_nid_no_patch(status, sizeof(*status))) {
-        NotImplemented_nid_no_patch(__func__);
-    }
+    std::list<GuestArena::HostWrite> accesses;
+    const auto holdWrite = [&](void* pointer, std::size_t bytes) {
+        if (operation != Operation::DoubleFields) return;
+        const auto& access = accesses.emplace_back(pointer, bytes);
+        if (!access.Open() || !GuestWritable_nid_no_patch(pointer, bytes)) NotImplemented_nid_no_patch(__func__);
+    };
+    if (before != error) holdWrite(status, sizeof(*status));
     for (std::size_t start = 0; start < count;) {
         if (first[start] != second[start]) { ++start; continue; }
         auto end = start + 1;
         while (end < count && first[end] == second[end]) ++end;
         auto* address = Offset(output, start);
         const auto bytes = (end - start) * sizeof(char16_t);
-        if (Overlap(address, bytes, status, 4) || (position && Overlap(address, bytes, position, 12)) ||
-            (operation == Operation::DoubleFields && !GuestWritable_nid_no_patch(address, bytes))) NotImplemented_nid_no_patch(__func__);
+        if (Overlap(address, bytes, status, 4) || (position && Overlap(address, bytes, position, 12))) {
+            NotImplemented_nid_no_patch(__func__);
+        }
+        holdWrite(address, bytes);
         start = end;
     }
     WriteField(position, field);
@@ -270,20 +281,28 @@ std::int32_t APS5_VABI unum_formatDoubleForFields_nid_postfix(const UNumberForma
     const std::lock_guard formatLock(owner->mutex);
     const auto iteratorLock = iterator ? Icu::LockFieldPositionIterator_nid_no_patch(iterator, __func__) :
                                         std::unique_lock<std::mutex>();
-    std::vector<Backend::Field> fields;
-    std::int32_t after = before;
-    const auto length = Output(Operation::DoubleFields, result, capacity, nullptr, status, before,
-        [&](char16_t* output, std::int32_t size, Backend::Field*, std::int32_t* error) {
-            const auto count = Backend::DoubleFields_nid_no_patch(owner->native.get(), number, output,
-                size, iterator ? &fields : nullptr, error);
-            after = *error;
-            return count;
-        });
-    if (iterator && (after <= 0 || after == Icu::BufferOverflow)) {
-        const auto error = Backend::SetFields_nid_no_patch(iterator, fields);
-        if (error > 0) WriteStatus(status, after, error);
+    try {
+        std::vector<Backend::Field> fields;
+        std::int32_t after = before;
+        const auto length = Output(Operation::DoubleFields, result, capacity, nullptr, status, before,
+            [&](char16_t* output, std::int32_t size, Backend::Field*, std::int32_t* error) {
+                const auto count = Backend::DoubleFields_nid_no_patch(owner->native.get(), number, output,
+                    size, iterator ? &fields : nullptr, error);
+                after = *error;
+                return count;
+            });
+        if (iterator && (after <= 0 || after == Icu::BufferOverflow)) {
+            const auto error = Backend::SetFields_nid_no_patch(iterator, fields);
+            if (error > 0) {
+                WriteStatus(status, after, error);
+                return 0;
+            }
+        }
+        return length;
+    } catch (const std::bad_alloc&) {
+        WriteStatus(status, before, MemoryAllocationError);
+        return 0;
     }
-    return length;
 }
 
 std::int32_t APS5_VABI unum_formatDecimal_nid_postfix(const UNumberFormat* format, const char* number, std::int32_t length,
