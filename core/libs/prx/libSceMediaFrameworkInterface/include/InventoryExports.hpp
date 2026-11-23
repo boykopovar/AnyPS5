@@ -183,3 +183,20 @@ int APS5_VABI libSceMediaFrameworkInterfaceUnknown_vzcDDgUCCrc_nid_no_patch();
 int APS5_VABI libSceMediaFrameworkInterfaceUnknown_zbDNeWDHhTc_nid_no_patch();
 
 }
+
+extern "C" {
+int APS5_VABI sceMediaFwAddEsvmDecoder2(void);
+int APS5_VABI sceMediaFwAudioSyncFlush(void);
+int APS5_VABI sceMediaFwChangeVideoOutputMode(void);
+int APS5_VABI sceMediaFwChangeVideoOutputMode2(void);
+int APS5_VABI sceMediaFwInitializeCdm(void);
+int APS5_VABI sceMediaFwMediaKeySystemAccessCreateMediaKeys2(void);
+int APS5_VABI sceMediaFwMediaKeysSetServerCertificate2(void);
+int APS5_VABI sceMediaFwRegisterSrcAllocateStateChangeCallback(void);
+int APS5_VABI sceMediaFwReleaseVideoFrame(void);
+int APS5_VABI sceMediaFwRequestMediaKeySystemAccess2(void);
+int APS5_VABI sceMediaFwSetAudioTagFeature(void);
+int APS5_VABI sceMediaFwSetUniversalEsvm(void);
+int APS5_VABI sceMediaFwSourceBufferCanSwitchToType(void);
+int APS5_VABI sceMediaFwSyncVideo(void);
+}

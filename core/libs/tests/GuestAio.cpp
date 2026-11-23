@@ -108,6 +108,23 @@ int main(int argc, char** argv) {
     const std::string seed = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     { std::ofstream stream(file, std::ios::binary); stream << seed; }
     static_assert(sizeof(KernelAioSchedulingParam) == 20);
+    std::array<KernelAioSchedulingParam, 3> defaults{};
+    defaults.fill({7, 7, 7, 7, 7});
+    sceKernelAioInitializeParam(defaults.data());
+    Check(defaults[0].schedulingWindowSize == 32 && defaults[0].delayedCountLimit == 32 && defaults[0].enableSplit == 1);
+    Check(defaults[0].splitSize == 0x100000 && defaults[0].splitChunkSize == 0x100000);
+    Check(defaults[1].schedulingWindowSize == 32 && defaults[1].delayedCountLimit == 32 && defaults[1].enableSplit == 1);
+    Check(defaults[1].splitSize == 0x100000 && defaults[1].splitChunkSize == 0x100000);
+    Check(defaults[2].schedulingWindowSize == 32 && defaults[2].delayedCountLimit == 32 && defaults[2].enableSplit == 0);
+    Check(defaults[2].splitSize == 0 && defaults[2].splitChunkSize == 0);
+    Check(sceKernelAioInitializeImpl(defaults.data(), 0x3c) == 0);
+    KernelAioSchedulingParam consoleParam{7, 7, 7, 7, 7};
+    Check(sceKernelAioSetParam(&consoleParam, 1, 1, 0, 0, 0) == 0);
+    Check(consoleParam.schedulingWindowSize == 1 && consoleParam.delayedCountLimit == 1 && consoleParam.enableSplit == 0);
+    Check(consoleParam.splitSize == 0 && consoleParam.splitChunkSize == 0);
+    Check(sceKernelAioSetParam(&consoleParam, 4, 4, 1, 4096, 4096) == 0);
+    Check(consoleParam.schedulingWindowSize == 4 && consoleParam.delayedCountLimit == 4 && consoleParam.enableSplit == 1);
+    Check(consoleParam.splitSize == 4096 && consoleParam.splitChunkSize == 4096);
     std::array<KernelAioSchedulingParam, 3> schedulingParams{};
     schedulingParams.fill({7, 7, 7, 7, 7});
     Check(sceKernelAioSetParam(&schedulingParams[1], 64, 16, 1, 0x200000, 0x40000) == 0);
@@ -454,6 +471,31 @@ int main(int argc, char** argv) {
     Check(sceKernelAioWaitRequests(unreadable, 2, kept, 1, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Check(kept[0] == 7 && kept[1] == 7);
     void* readOnly = MapReadOnlyPage();
+    const int submitFd = sceKernelOpen(file.string().c_str(), SCE_KERNEL_O_RDWR, 0);
+    Check(submitFd >= 0);
+    const auto fileContents = [&] {
+        std::ifstream stream(file, std::ios::binary);
+        return std::string{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+    };
+    const std::string beforeSubmits = fileContents();
+    for (void* bad : {static_cast<void*>(unreadable), readOnly}) {
+        for (const auto submit : {sceKernelAioSubmitReadCommands, sceKernelAioSubmitWriteCommands,
+                                 sceKernelAioSubmitReadCommandsMultiple, sceKernelAioSubmitWriteCommandsMultiple}) {
+            for (const std::int32_t size : {1, 2}) {
+                std::array<char, 4> marker = {'m', 'n', 'o', 'p'};
+                KernelAioResult markerResults[2] = {{-1, 0}, {-1, 0}};
+                KernelAioRwRequest markerRequests[2] = {
+                    {0, marker.size(), marker.data(), &markerResults[0], submitFd},
+                    {16, marker.size(), marker.data(), &markerResults[1], submitFd},
+                };
+                Check(submit(markerRequests, size, 1, static_cast<std::int32_t*>(bad)) == SCE_KERNEL_ERROR_EFAULT);
+                Check(std::string(marker.data(), marker.size()) == "mnop");
+                for (const auto& markerResult : markerResults) Check(markerResult.state == 0 && markerResult.return_value == -1);
+            }
+        }
+    }
+    Check(fileContents() == beforeSubmits);
+    Check(sceKernelClose(submitFd) == 0);
     for (void* bad : {static_cast<void*>(unreadable), readOnly}) {
         auto* badState = static_cast<std::int32_t*>(bad);
         const std::int32_t pollId = finished();

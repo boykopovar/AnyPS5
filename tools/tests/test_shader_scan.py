@@ -1,5 +1,7 @@
+import contextlib
 import importlib.util
 import hashlib
+import io
 import json
 import re
 import sys
@@ -152,10 +154,13 @@ class IsaTests(unittest.TestCase):
             table.write_text(progress.ISA_FORMS.read_text(encoding="utf-8"), encoding="utf-8")
             old = progress.ISA_FORMS
             progress.ISA_FORMS = table
+            out = io.StringIO()
             try:
-                self.assertEqual(progress.regenerate_isa_forms(xml), 0)
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(progress.regenerate_isa_forms(xml), 0)
             finally:
                 progress.ISA_FORMS = old
+            self.assertIn(f"{table}: ", out.getvalue())
             self.assertEqual(shader_scan.load_isa_forms(table), shader_scan.parse_isa_xml(ISA_XML))
             regenerated = table.read_text(encoding="utf-8")
             self.assertIn(hashlib.sha256(xml.read_bytes()).hexdigest(), regenerated)
@@ -231,6 +236,23 @@ class Gfx1013ProfileTests(unittest.TestCase):
 
 
 class ScanTests(unittest.TestCase):
+    def test_raw_literals_keep_braces_and_comment_markers_inside_the_string(self):
+        body = 'auto text = u8R"tag(" } // inside\n/* inside */ { \\ )tag"; return 7;'
+        source = f'int first() {{ {body} }} // removed\nint second() {{ return 2; }}'
+        stripped = shader_scan.strip_comments(source)
+        self.assertEqual(len(stripped), len(source))
+        self.assertEqual(shader_scan.function_body(stripped, "first").strip(), body)
+        self.assertEqual(shader_scan.function_body(stripped, "second").strip(), "return 2;")
+        self.assertNotIn("removed", stripped)
+
+    def test_digit_separators_keep_following_braces_and_comments_visible(self):
+        source = "int first() { return 0xDEAD'BEEF'CAFE'0001; } // removed\nint second() { return 1'000; }"
+        stripped = shader_scan.strip_comments(source)
+        self.assertNotIn("removed", stripped)
+        self.assertEqual(shader_scan.function_body(stripped, "first").strip(), "return 0xDEAD'BEEF'CAFE'0001;")
+        self.assertEqual(shader_scan.function_body(stripped, "second").strip(), "return 1'000;")
+        self.assertEqual(shader_scan.function_body("int letter() { return u8'}'; }", "letter").strip(), "return u8'}';")
+
     def test_known_answers_on_a_small_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             write_tree(directory)

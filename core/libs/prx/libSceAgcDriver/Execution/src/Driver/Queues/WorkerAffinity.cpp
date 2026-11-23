@@ -4,18 +4,23 @@
 #include "prx/libc/include/CpuTopology.hpp"
 #include "prx/libc/include/general/ThreadName.hpp"
 #include <array>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <optional>
 #include <vector>
 
 #ifdef _WIN32
 #include <tlhelp32.h>
-#elif defined(__linux__)
+#else
+#include <pthread.h>
+#ifdef __linux__
 #include <dirent.h>
 #include <string>
 #include <sched.h>
 #include <unistd.h>
+#endif
 #endif
 
 namespace AgcDriver::DriverDetail {
@@ -34,6 +39,19 @@ std::uint64_t WorkerAffinityMask() {
     return mask;
 }
 
+void NameDriverThread(const char* name) {
+#ifdef _WIN32
+    const HRESULT nameResult = ThreadName::SetCurrent(name);
+    if (FAILED(nameResult)) std::fprintf(stderr, "[thread-name] could not name %s (0x%08lx)\n", name, static_cast<unsigned long>(nameResult));
+#elif defined(__APPLE__)
+    const int nameResult = pthread_setname_np(name);
+    if (nameResult != 0) std::fprintf(stderr, "[thread-name] could not name %s (%s)\n", name, std::strerror(nameResult));
+#else
+    const int nameResult = pthread_setname_np(pthread_self(), name);
+    if (nameResult != 0) std::fprintf(stderr, "[thread-name] could not name %s (%s)\n", name, std::strerror(nameResult));
+#endif
+}
+
 #ifdef __linux__
 namespace {
 void NoteWorkerThread();
@@ -42,10 +60,6 @@ void NoteWorkerThread();
 
 void PinWorkerThread(const char* role) {
     TracyZone::NameThread(role);
-#ifdef _WIN32
-    const HRESULT nameResult = ThreadName::SetCurrent(role);
-    if (FAILED(nameResult)) std::fprintf(stderr, "[thread-name] could not name %s (0x%08lx)\n", role, static_cast<unsigned long>(nameResult));
-#endif
 #ifdef __linux__
     NoteWorkerThread();
 #endif
@@ -71,6 +85,7 @@ struct CoreSwitches {
 struct Reservation {
     CpuTopology::CpuSet set;
     unsigned long thread = 0;
+    std::vector<std::uint32_t> allowed;
 };
 
 constexpr std::size_t CommitterSlot = 0;
@@ -173,7 +188,7 @@ void Reserve(std::size_t slot, const char* role, std::optional<unsigned> logical
         const bool selected = setSelected(GetCurrentThread(), &id, 1) != 0;
 #else
         own->thread = CurrentThread();
-        const bool selected = PinTo(0, {own->set.id});
+        const bool selected = PinTo(0, own->allowed.empty() ? std::vector<std::uint32_t>{own->set.id} : own->allowed);
 #endif
         std::fprintf(stderr, "[affinity] %s tid=%lu -> core %u logical %u, kept from its previous thread (thread %s)\n", role, CpuTopology::ThreadId(nullptr), static_cast<unsigned>(own->set.core), static_cast<unsigned>(own->set.logical), selected ? "set" : "failed");
         return;
@@ -213,8 +228,19 @@ void Reserve(std::size_t slot, const char* role, std::optional<unsigned> logical
     }
     const char* processState = process ? "set" : "failed";
 #else
-    own = Reservation{reservation->chosen, CurrentThread()};
-    const bool thread = PinTo(0, {reservation->chosen.id});
+    const auto allowed = logical.has_value() ? std::vector<std::uint32_t>{reservation->chosen.id} : CpuTopology::ReservedThreadCpus(sets, *reservation);
+    own = Reservation{reservation->chosen, CurrentThread(), allowed};
+    const bool thread = PinTo(0, allowed);
+    for (auto& other : reservations) {
+        if (!other.has_value() || &other == &own) continue;
+        std::erase_if(other->allowed, [&](std::uint32_t cpu) {
+            for (const auto& set : sets) {
+                if (set.id == cpu) return set.group == reservation->chosen.group && set.core == reservation->chosen.core;
+            }
+            return false;
+        });
+        if (OwnThread(other->thread)) static_cast<void>(PinTo(static_cast<pid_t>(other->thread), other->allowed.empty() ? std::vector<std::uint32_t>{other->set.id} : other->allowed));
+    }
     if (DIR* tasks = opendir("/proc/self/task"); tasks != nullptr) {
         while (const dirent* entry = readdir(tasks)) {
             char* end = nullptr;

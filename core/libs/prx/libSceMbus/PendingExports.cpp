@@ -1,6 +1,8 @@
 #include "prx/libSceMbus/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
@@ -97,9 +99,7 @@ int APS5_VABI sceMbusConvertToLocalDeviceId(std::uint64_t deviceId, std::uint32_
     }
     if (deviceClass != nullptr) {
         const auto val = static_cast<std::uint32_t>(deviceId >> 48);
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(deviceClass, &val, sizeof(val));
-        errno = savedErrno;
         if (!copied) return invalidArgument;
     }
     return 0;
@@ -110,9 +110,7 @@ int APS5_VABI sceMbusConvertToLocalDeviceId2(std::uint64_t deviceId, std::uint32
     if (localId != nullptr) {
         constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
         const auto val = deviceId & 0xFFFFFFFFFFFFull;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(localId, &val, sizeof(val));
-        errno = savedErrno;
         if (!copied) return invalidArgument;
     }
     return 0;
@@ -124,9 +122,7 @@ int APS5_VABI sceMbusConvertToMbusDeviceId(std::uint64_t localId, std::uint32_t 
     const bool convertible = deviceClass == 0x10 || deviceClass == 0x20;
     if (deviceId != nullptr) {
         const auto val = convertible ? (static_cast<std::uint64_t>(deviceClass) << 48) | localId : 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(deviceId, &val, sizeof(val));
-        errno = savedErrno;
         if (!copied) return invalidArgument;
     }
     return convertible ? 0 : unconvertibleClass;
@@ -363,7 +359,16 @@ int APS5_VABI sceMbusEventBusStatusChangeUnsubscribe(std::uint64_t unusedSlot, s
 }
 
 void APS5_VABI sceMbusEventCallbackFuncsInit_(MbusEventCallbacks* callbacks, std::uint32_t size) {
-    if (callbacks != nullptr) std::memset(callbacks, 0, size);
+    if (callbacks == nullptr || size == 0) return;
+    constexpr std::array<std::byte, 256> zero{};
+    const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(callbacks);
+    if (address > UINTPTR_MAX - size) return;
+    const int savedErrno = errno;
+    for (std::size_t offset = 0; offset < size; offset += zero.size()) {
+        const std::size_t bytes = std::min<std::size_t>(size - offset, zero.size());
+        if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address + offset), zero.data(), bytes)) break;
+    }
+    errno = savedErrno;
 }
 
 int APS5_VABI sceMbusEventCreate_(std::uint32_t flags, MbusEvent* buffer, std::uint32_t capacity, const MbusEventCallbacks* callbacks, void* userData) {

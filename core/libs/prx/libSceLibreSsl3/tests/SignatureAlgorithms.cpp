@@ -3,10 +3,27 @@
 
 #include <array>
 #include <bit>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
+#include <stdexcept>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -151,6 +168,71 @@ void CreatedObjects() {
     OBJ_cleanup_nid_postfix();
 }
 
+class ReadOnlyPage {
+public:
+    explicit ReadOnlyPage(const void* initial = nullptr, std::size_t size = 0) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        _size = info.dwPageSize != 0 ? info.dwPageSize : 4096u;
+        _page = VirtualAlloc(nullptr, _size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(_page != nullptr);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(_page, _size, PAGE_READONLY, &oldProtect) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        _size = pageSize > 0 ? static_cast<std::size_t>(pageSize) : 4096u;
+        _page = mmap(nullptr, _size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(_page != MAP_FAILED);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        Require(mprotect(_page, _size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+        if (!_page) return;
+#ifdef _WIN32
+        VirtualFree(_page, 0, MEM_RELEASE);
+#else
+        munmap(_page, _size);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    int* IntPtr() const { return static_cast<int*>(_page); }
+
+private:
+    void* _page = nullptr;
+    std::size_t _size = 0;
+};
+
+void TestGuestOutputs() {
+    const int initialValue = -17019;
+    ReadOnlyPage roOut(&initialValue, sizeof(initialValue));
+    errno = 73;
+    Require(OBJ_find_sigid_algs_nid_postfix(999999, roOut.IntPtr(), roOut.IntPtr()) == 0);
+    Require(errno == 73);
+
+    Guarded digest;
+    Guarded key;
+    bool threwFirst = false;
+    errno = 73;
+    try { OBJ_find_sigid_algs_nid_postfix(668, roOut.IntPtr(), &key.value); }
+    catch (const std::runtime_error&) { threwFirst = true; }
+    Require(threwFirst && errno == 73 && key.value == -17019);
+    CheckGuard(key);
+
+    bool threwSecond = false;
+    errno = 73;
+    try { OBJ_find_sigid_algs_nid_postfix(668, &digest.value, roOut.IntPtr()); }
+    catch (const std::runtime_error&) { threwSecond = true; }
+    Require(threwSecond && errno == 73 && digest.value == -17019);
+    CheckGuard(digest);
+}
+
 }
 
 int main() {
@@ -174,6 +256,7 @@ int main() {
         state = state * 1664525u + 1013904223u;
         RunCase(std::bit_cast<int>(state));
     }
+    TestGuestOutputs();
     std::printf("signature mappings: %zu cases, %zu checks, %zu mappings, %zu custom objects\n",
         cases, checks, Expected.size(), customObjects);
 }

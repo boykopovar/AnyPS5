@@ -1,0 +1,5 @@
+# libkernel
+
+## change [madvise and posix_madvise]
+
+- [madvise and posix_madvise](../../../core/libs/prx/libkernel/DirectMemory/PosixMemory.cpp) (libkernel) accept `MADV_PROTECT` (10) as a no-op hint without modifying process protection. FreeBSD 11's `kern_madvise` (`sys/vm/vm_mmap.c`) handles it before the address check, ignores the address and length, and calls `kern_procctl(..., PROC_SPROTECT, PPROT_SET)`, which requires `PRIV_VM_MADV_PROTECT` and fails with `EPERM` without it. Returning 0 unconditionally assumes the calling process is privileged. `posix_madvise` returns error numbers directly without altering `errno`, validating against `PS5_PAGE_SIZE` user-map minimum. On a PS5 payload process (firmware 11.60), for advice 0 and a 16 KiB range, `madvise` failed with `EINVAL` for 0x1000, 0x2000, 0x3000, 0x3fff and 0x7fffffffe000 and returned 0 from 0x4000, 0x4001 and for unmapped ranges; the top edge, `MADV_PROTECT` and titles are not measured; that module does not export `posix_madvise`

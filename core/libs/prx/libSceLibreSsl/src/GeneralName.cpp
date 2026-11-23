@@ -216,6 +216,18 @@ void LibreSslAsn1StringFree_nid_no_patch(Asn1String* string) {
     FreeString(string);
 }
 
+void LibreSslAsn1ObjectFree_nid_no_patch(LibreSslAsn1Object* object) {
+    FreeObject(object);
+}
+
+void LibreSslAsn1TypeFree_nid_no_patch(void* type) {
+    FreeAny(static_cast<Asn1Type*>(type));
+}
+
+void LibreSslX509NameFree_nid_no_patch(void* name) {
+    FreeX509Name(static_cast<X509Name*>(name));
+}
+
 void LibreSslOcspResponseBytesFree_nid_no_patch(LibreSslOcspResponseBytes* bytes) {
     if (!bytes) return;
     CheckResponseBytes(bytes);

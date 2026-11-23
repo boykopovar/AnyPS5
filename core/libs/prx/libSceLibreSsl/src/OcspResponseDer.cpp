@@ -347,6 +347,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/include/OcspResponse.hpp"
+#include "prx/libSceLibreSsl/include/Asn1Der.hpp"
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -357,6 +358,7 @@
 #include <type_traits>
 #include <vector>
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 
 namespace {
 
@@ -393,11 +395,9 @@ constexpr int ObjectDynamic = 0x01;
 constexpr int ObjectDynamicData = 0x08;
 constexpr std::int64_t LongMax = std::numeric_limits<std::int64_t>::max();
 
-struct Header {
-    std::int64_t length;
-    bool indefinite;
-    bool constructed;
-};
+}
+
+namespace LibreSslDer {
 
 bool Fail(int reason) {
     LibreSslPutError_nid_no_patch(Asn1Library, AnyFunction, reason);
@@ -541,7 +541,7 @@ Asn1String* NewString(int type) {
     return string;
 }
 
-bool DecodeInteger(Asn1String*& slot, const unsigned char* content, std::int64_t length) {
+bool DecodeInteger(Asn1String*& slot, const unsigned char* content, std::int64_t length, int type) {
     Asn1String* target = slot;
     if (!target && !(target = NewString(IntegerType))) return false;
     auto* data = static_cast<unsigned char*>(malloc_nid_postfix(static_cast<std::size_t>(length) + 1));
@@ -584,7 +584,7 @@ bool DecodeInteger(Asn1String*& slot, const unsigned char* content, std::int64_t
     free_nid_postfix(target->data);
     target->data = data;
     target->length = static_cast<int>(length);
-    target->type = EnumeratedType | (target->type & NegativeType);
+    target->type = type | (target->type & NegativeType);
     slot = target;
     return true;
 }
@@ -622,14 +622,14 @@ bool DecodeObject(LibreSslAsn1Object*& slot, const unsigned char* content, std::
     return true;
 }
 
-bool DecodeOctetString(Asn1String*& slot, const unsigned char* content, std::int64_t length, unsigned char* collected) {
+bool DecodeOctetString(Asn1String*& slot, const unsigned char* content, std::int64_t length, unsigned char* collected, int type) {
     if (!slot) {
-        if (!(slot = NewString(OctetStringType))) {
+        if (!(slot = NewString(type))) {
             free_nid_postfix(collected);
             return Fail(MallocFailure);
         }
     } else {
-        slot->type = OctetStringType;
+        slot->type = type;
     }
     if (collected) {
         free_nid_postfix(slot->data);
@@ -653,6 +653,12 @@ bool DecodeOctetString(Asn1String*& slot, const unsigned char* content, std::int
     slot->data[length] = 0;
     return true;
 }
+
+}
+
+namespace {
+
+using namespace LibreSslDer;
 
 template<typename TValue> bool DecodePrimitive(TValue*& slot, const unsigned char*& in, std::int64_t available, int type) {
     const unsigned char* p = in;
@@ -680,8 +686,8 @@ template<typename TValue> bool DecodePrimitive(TValue*& slot, const unsigned cha
     }
     bool decoded = false;
     if constexpr (std::is_same_v<TValue, LibreSslAsn1Object>) decoded = DecodeObject(slot, content, length);
-    else if (type == EnumeratedType) decoded = DecodeInteger(slot, content, length);
-    else decoded = DecodeOctetString(slot, content, length, collected);
+    else if (type == EnumeratedType) decoded = DecodeInteger(slot, content, length, EnumeratedType);
+    else decoded = DecodeOctetString(slot, content, length, collected, OctetStringType);
     if (!decoded) return false;
     in = p;
     return true;
@@ -804,13 +810,19 @@ extern "C" {
 
 LibreSslOcspResponse* APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(LibreSslOcspResponse** response, const unsigned char** input, std::int64_t length) {
     if (!input) throw std::invalid_argument(std::string(__func__) + ": null input pointer");
-    if (!*input && length) throw std::invalid_argument(std::string(__func__) + ": null input");
-    LibreSslOcspResponse* decoded = nullptr;
-    LibreSslOcspResponse*& target = response ? *response : decoded;
-    if (DecodeResponseFields(target, *input, length)) return target;
-    OCSP_RESPONSE_free_nid_postfix(target);
-    target = nullptr;
-    return nullptr;
+    const unsigned char* cursor = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&cursor, input, sizeof(cursor))) NotImplemented_nid_no_patch(__func__);
+    if (!cursor && length) throw std::invalid_argument(std::string(__func__) + ": null input");
+    LibreSslOcspResponse* target = nullptr;
+    if (response && !GuestCopyIn_nid_no_patch(&target, response, sizeof(target))) NotImplemented_nid_no_patch(__func__);
+    const bool decodedOk = DecodeResponseFields(target, cursor, length);
+    if (!decodedOk) {
+        OCSP_RESPONSE_free_nid_postfix(target);
+        target = nullptr;
+    }
+    if (response && !GuestCopyOut_nid_no_patch(response, &target, sizeof(target))) NotImplemented_nid_no_patch(__func__);
+    if (decodedOk && !GuestCopyOut_nid_no_patch(input, &cursor, sizeof(cursor))) NotImplemented_nid_no_patch(__func__);
+    return target;
 }
 
 }

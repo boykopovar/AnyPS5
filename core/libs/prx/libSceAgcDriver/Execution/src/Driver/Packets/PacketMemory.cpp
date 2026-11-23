@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -13,6 +14,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include <algorithm>
+#include <bit>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -80,8 +82,8 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 const auto stamp = ++eventSerial;
                 if (localDevice != nullptr && submission.queue == 0 && Graphics::StorageTexture::StoreDrawnLinear("label") != 0) workOpen = true;
                 reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label->address, bytes, stamp, submission.queue) : 4;
-                if (reason == 1) GuestMemory::Write(label->address, bytes, 4);
-                if (reason == 0 || reason == 1 || reason == 5) {
+                if (reason == 1 || reason == 7) GuestMemory::Write(label->address, bytes, 4);
+                if (reason == 0 || reason == 1 || reason == 5 || reason == 7) {
                     noteLabelStore(label->address, bytes, stamp, submission.queue);
                     Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
                 }
@@ -98,7 +100,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 interruptDeferred = localDevice->AfterRecordedWork([this, queueId, context] { deliverGuestEopInterrupt(queueId, context); }, submission.queue == 0);
                 if (interruptDeferred && workOpen) localDevice->SubmitRecorded(submission.queue == 0);
                 wroteOnGpu = true;
-            } else if (reason == 1) {
+            } else if (reason == 1 || reason == 7) {
                 wroteOnGpu = true;
             }
         }
@@ -133,7 +135,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 const auto stamp = ++eventSerial;
                 const auto reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label->address, bytes, stamp, submission.queue) : 4;
                 wroteOnGpu = reason == 0 || reason == 5;
-                if (reason == 1) {
+                if (reason == 1 || reason == 7) {
 
                     GuestMemory::Write(label->address, bytes, 4);
                     wroteOnGpu = true;
@@ -199,15 +201,16 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 recordDeferredLabels(localDevice.get(), submission.queue);
                 const auto stamp = ++eventSerial;
                 const auto reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(store->address, bytes, stamp, submission.queue) : 4;
-                if (reason == 0 || reason == 1 || reason == 5) noteLabelStore(store->address, bytes, stamp, submission.queue);
+                if (reason == 0 || reason == 1 || reason == 5 || reason == 7) noteLabelStore(store->address, bytes, stamp, submission.queue, false);
                 if (reason == 0 || reason == 5) {
                     if (reason == 0) ++storesOnGpu;
                     else ++storesBehindCompletions;
                     wroteOnGpu = true;
                     drained = false;
-                } else if (reason == 1) {
+                } else if (reason == 1 || reason == 7 || (reason == 3 && opcode == 0x40 && Pm4::CopyDataSource(packet) == Pm4::CopyDataGpuClockSource && !localDevice->StoresPendingOver(store->address, bytes.size()))) {
                     GuestMemory::Write(store->address, bytes, 1);
-                    ++storesOnCpu;
+                    if (reason == 7) ++storesSyncedUnimported;
+                    else ++storesOnCpu;
                     wroteOnGpu = true;
                     drained = false;
                 }
@@ -261,7 +264,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         if (const auto localDevice = device.Load()) {
             recordDeferredLabels(localDevice.get(), submission.queue);
-            wroteOnGpu = localDevice->DumpSamplesOnGpu(Pm4::SampleDumpAddress(packet));
+            wroteOnGpu = localDevice->DumpSamplesOnGpu(Pm4::SampleDumpAddress(packet), queue.sampleDumpBlocks);
         }
     }
 
@@ -323,7 +326,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
     return drains;
 }
 
-void Driver::dumpSampleCounters(std::uint64_t address) {
+void Driver::dumpSampleCounters(std::uint64_t address, std::uint32_t blocks) {
     std::uint64_t samples = 0;
     {
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
@@ -334,18 +337,20 @@ void Driver::dumpSampleCounters(std::uint64_t address) {
         samples = recorder->SamplesTotal();
     }
     constexpr std::uint64_t ready = 1ull << 63u;
+    const auto first = static_cast<std::uint64_t>(std::countr_zero(blocks));
     for (std::uint64_t db = 0; db < Pm4::SampleDumpBlocks; ++db) {
-        const std::uint64_t value = ready | (db == 0 ? samples : 0u);
+        if (((blocks >> db) & 1u) == 0) continue;
+        const std::uint64_t value = ready | (db == first ? samples : 0u);
         GuestMemory::Write(address + db * Pm4::SampleDumpStride, std::as_bytes(std::span(&value, 1)).first(Pm4::SampleDumpBlockBytes), 8);
     }
 }
 
-bool Driver::enqueueSampleDumpPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue) {
+bool Driver::enqueueSampleDumpPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, std::uint32_t blocks) {
     static const bool ordered = std::getenv("APS5_PIPELINE_DRAIN_SAMPLE_DUMPS") == nullptr;
     if (!ordered || opcode != 0x46 || queue != 0 || packet.size() < 4 || !Pm4::SampleDump(packet) || !DrawPipeline::Active() || !deferredLabels().labels.empty()) return false;
     const auto address = Pm4::SampleDumpAddress(packet);
     if (address == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), Pm4::SampleDumpBytes, true)) return false;
-    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::SampleDump, [this, queue, address] {
+    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::SampleDump, [this, queue, address, blocks] {
         GuestMemory::SetCurrentPacket(0x46, queue);
         bool wrote = false;
         {
@@ -353,11 +358,11 @@ bool Driver::enqueueSampleDumpPacket(std::span<const std::uint32_t> packet, std:
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
             if (const auto localDevice = device.Load()) {
                 recordDeferredLabels(localDevice.get(), queue);
-                wrote = localDevice->DumpSamplesOnGpu(address);
+                wrote = localDevice->DumpSamplesOnGpu(address, blocks);
                 if (!wrote) localDevice->WaitIdle();
             }
         }
-        if (!wrote) dumpSampleCounters(address);
+        if (!wrote) dumpSampleCounters(address, blocks);
     }, {{address, address + Pm4::SampleDumpBytes}});
     ++sampleDumpsQueued;
     Graphics::Recorder::CountRecordedWork();
@@ -470,14 +475,15 @@ void Driver::commitStore(std::uint32_t queue, std::uint64_t address, std::span<c
         reason = localDevice->WriteLabelOnGpu(address, bytes, stamp, queue);
     }
     if (reason == 0 || reason == 5 || reason == 6) {
-        noteLabelStore(address, bytes, stamp, queue);
+        noteLabelStore(address, bytes, stamp, queue, false);
         if (reason == 0) ++storesOnGpu;
         else ++storesBehindCompletions;
     } else {
-        if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
+        if (reason != 1 && reason != 7 && localDevice != nullptr) localDevice->WaitIdle();
         GuestMemory::Write(address, bytes, 1);
-        noteLabelStore(address, bytes, stamp != 0 ? stamp : ++eventSerial, queue);
-        ++storesOnCpu;
+        noteLabelStore(address, bytes, stamp != 0 ? stamp : ++eventSerial, queue, false);
+        if (reason == 7) ++storesSyncedUnimported;
+        else ++storesOnCpu;
     }
     Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
 }
@@ -548,8 +554,9 @@ void Driver::commitLabel(std::uint32_t queue, std::uint64_t address, std::span<c
         if (localDevice != nullptr && queue == 0 && Graphics::StorageTexture::StoreDrawnLinear("label") != 0) workOpen = true;
         reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(address, bytes, stamp, queue) : 4;
         if (reason != 0 && reason != 5 && reason != 6) {
-            if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
+            if (reason != 1 && reason != 7 && localDevice != nullptr) localDevice->WaitIdle();
             GuestMemory::Write(address, bytes, 4);
+            KernelWakeSleepers_nid_no_patch();
         }
         noteLabelStore(address, bytes, stamp, queue);
         Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());

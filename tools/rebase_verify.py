@@ -1,17 +1,20 @@
 import argparse
+import codecs
 import collections
 import subprocess
 import sys
 from pathlib import Path
 
 CANDIDATES = ("upstream/main", "origin/main", "main")
+NO_NEWLINE = "\\ No newline at end of file"
 
 
-def git(root, *arguments):
+def git(root, *arguments, raw=False):
     result = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false", *arguments],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+                            capture_output=True, encoding=None if raw else "utf-8", errors=None if raw else "replace")
     if result.returncode:
-        raise RuntimeError(f"git {' '.join(arguments[:2])} failed: {result.stderr.strip()}")
+        stderr = result.stderr.decode("utf-8", "replace") if raw else result.stderr
+        raise RuntimeError(f"git {' '.join(arguments[:2])} failed: {stderr.strip()}")
     return result.stdout
 
 
@@ -19,7 +22,7 @@ def default_onto(root, name=None):
     if name:
         return name
     for candidate in CANDIDATES:
-        if subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}"],
+        if subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet", f"{candidate}^0"],
                           capture_output=True).returncode == 0:
             return candidate
     raise ValueError(f"no base branch found ({', '.join(CANDIDATES)}); fetch the upstream remote or pass --onto")
@@ -34,22 +37,34 @@ def commits(root, base, tip):
     return len(git(root, "rev-list", "--no-merges", f"{base}..{tip}").split())
 
 
+def patch_path(header, prefix):
+    path = header[4:].removesuffix("\t")
+    if path.startswith('"') and path.endswith('"'):
+        path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", "replace")
+    return path[len(prefix):] if path.startswith(prefix) else None
+
+
 def changed_lines(root, base, tip):
     added = collections.defaultdict(collections.Counter)
     deleted = collections.defaultdict(collections.Counter)
     old_path, new_path, in_hunk = None, None, False
-    for line in git(root, "diff", "-U0", "--no-renames", "--no-color", "--no-ext-diff", "--no-textconv",
-                    "--src-prefix=a/", "--dst-prefix=b/", base, tip).splitlines():
+    diff = git(root, "diff", "-U0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
+               "--ignore-submodules=none", "--submodule=short", "--src-prefix=a/", "--dst-prefix=b/", base, tip, raw=True)
+    lines = diff.decode("utf-8", "replace").split("\n")
+    for index, line in enumerate(lines):
         if line.startswith("diff --git "):
             old_path, new_path, in_hunk = None, None, False
         elif not in_hunk and line.startswith("--- "):
-            old_path = line[6:] if line.startswith("--- a/") else None
+            old_path = patch_path(line, "a/")
         elif not in_hunk and line.startswith("+++ "):
-            new_path = line[6:] if line.startswith("+++ b/") else None
+            new_path = patch_path(line, "b/")
         elif line.startswith("@@"):
             in_hunk = True
         elif in_hunk and line.startswith("+") and new_path is not None:
-            added[new_path][line[1:]] += 1
+            text = line[1:]
+            if lines[index + 1:index + 2] == [NO_NEWLINE]:
+                text += "\n" + NO_NEWLINE
+            added[new_path][text] += 1
         elif in_hunk and line.startswith("-") and old_path is not None:
             deleted[old_path][line[1:]] += 1
     return added, deleted
@@ -61,10 +76,106 @@ def differences(old, new, deleted=False):
         before, after = old.get(path, collections.Counter()), new.get(path, collections.Counter())
         for text, count in sorted((before - after).items()):
             description = "a deleted line is missing" if deleted else "an added line is missing"
-            problems.append(f"{path}: {description} ({count}x): {text[:100]}")
+            problems.append(f"{path}: {description} ({count}x): {shown(text)}")
         for text, count in sorted((after - before).items()):
             description = "a line is deleted that the branch did not delete" if deleted else "a line is added that the branch did not add"
-            problems.append(f"{path}: {description} ({count}x): {text[:100]}")
+            problems.append(f"{path}: {description} ({count}x): {shown(text)}")
+    return problems
+
+
+def text_only(lines):
+    return collections.Counter(text.partition("\n")[0] for text in lines.elements())
+
+
+def shown(text):
+    text, unterminated, _ = text.partition("\n")
+    return text[:100].replace("\r", "\\r") + (" (no newline at end of file)" if unterminated else "")
+
+
+def changed_modes(root, base, tip):
+    fields = git(root, "diff", "--raw", "-z", "--no-renames", "--no-relative", "--no-ext-diff",
+                 "--ignore-submodules=none", base, tip, "--", raw=True).split(b"\0")
+    modes = {}
+    for header, path in zip(fields[::2], fields[1::2]):
+        before, after = header[1:].split(maxsplit=2)[:2]
+        if before != after:
+            modes[path] = before.decode("ascii"), after.decode("ascii")
+    return modes
+
+
+def mode_differences(root, old_base, old, new_base, new):
+    old_modes = changed_modes(root, old_base, old)
+    new_modes = changed_modes(root, new_base, new)
+    upstream_modes = changed_modes(root, old_base, new_base) if old_modes and old_base != new_base else {}
+    problems = []
+    for path in sorted(old_modes.keys() | new_modes.keys()):
+        if path in old_modes:
+            before, expected = old_modes[path]
+            base_mode = upstream_modes.get(path, (before, before))[1]
+            actual = new_modes.get(path, (base_mode, base_mode))[1]
+        else:
+            expected, actual = new_modes[path]
+        if expected != actual:
+            name = path.decode("utf-8", "backslashreplace")
+            problems.append(f"{name}: file mode {actual}, expected {expected}")
+    return problems
+
+
+def binary_paths(root, base, tip):
+    data = git(root, "diff", "--numstat", "-z", "--no-renames", "--no-relative", "--no-ext-diff",
+               "--no-textconv", "--ignore-submodules=none", "--submodule=short", base, tip, "--", raw=True)
+    result = set()
+    for item in data.split(b"\0"):
+        if not item:
+            continue
+        added, deleted, path = item.split(b"\t", 2)
+        if added == deleted == b"-":
+            result.add(path)
+    return result
+
+
+def changed_blobs(root, base, tip):
+    data = git(root, "diff", "--raw", "-z", "--no-abbrev", "--no-renames", "--no-relative",
+               "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", base, tip, "--", raw=True)
+    fields = data.split(b"\0")
+    result = {}
+    for header, path in zip(fields[::2], fields[1::2]):
+        metadata = header[1:].split()
+        result[path] = metadata[2], metadata[3]
+    return result
+
+
+def binary_differences(root, old_base, old, new_base, new):
+    paths = binary_paths(root, old_base, old) | binary_paths(root, new_base, new)
+    if not paths:
+        return []
+    original = changed_blobs(root, old_base, old)
+    rebased = changed_blobs(root, new_base, new)
+    upstream = changed_blobs(root, old_base, new_base) if old_base != new_base else {}
+    problems = []
+    for path in sorted(paths):
+        name = path.decode("utf-8", "backslashreplace")
+        if path not in original:
+            problems.append(f"{name}: new binary change requires manual review")
+            continue
+        before, expected = original[path]
+        new_base_blob = upstream[path][1] if path in upstream else before
+        actual = rebased[path][1] if path in rebased else new_base_blob
+        if actual != expected:
+            problems.append(f"{name}: binary content differs; manual review required")
+    return problems
+
+
+def unchanged_base_content_differences(root, old_base, old, new_base, new):
+    original = changed_blobs(root, old_base, old)
+    rebased = changed_blobs(root, new_base, new)
+    problems = []
+    for path in sorted(original.keys() & rebased.keys()):
+        before, expected = original[path]
+        after, actual = rebased[path]
+        if before == after and expected != actual:
+            name = path.decode("utf-8", "backslashreplace")
+            problems.append(f"{name}: rebased content differs although the base content is unchanged")
     return problems
 
 
@@ -82,15 +193,22 @@ def verify(root, old, new, onto):
     problems += differences(old_added, new_added)
     upstream_added, upstream_deleted = changed_lines(root, old_base, new_base) if old_deleted else ({}, {})
     expected_deleted = {
-        path: lines - (upstream_deleted.get(path, collections.Counter()) - upstream_added.get(path, collections.Counter()))
+        path: lines - (upstream_deleted.get(path, collections.Counter()) - text_only(upstream_added.get(path, collections.Counter())))
         for path, lines in old_deleted.items()
     }
     problems += differences(expected_deleted, new_deleted, deleted=True)
+    problems += mode_differences(root, old_base, old, new_base, new)
+    problems += binary_differences(root, old_base, old, new_base, new)
+    if not problems:
+        problems += unchanged_base_content_differences(root, old_base, old, new_base, new)
     return old_base, count_old, count_new, problems
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="check that a rebased branch kept its added and deleted lines, authors and commits")
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+    parser = argparse.ArgumentParser(description="check that a rebased branch kept its added and deleted lines, Git-classified binary contents, file modes, authors and commits")
     parser.add_argument("old", help="the branch or commit before the rebase")
     parser.add_argument("new", help="the branch or commit after the rebase")
     parser.add_argument("--onto", help="the branch the new commits sit on (default: upstream/main, then origin/main, then main)")
@@ -105,9 +223,9 @@ def main(argv=None):
     for problem in problems:
         print(f"error: {problem}")
     if problems:
-        print(f"{len(problems)} difference(s): the rebase changed something other than conflict resolution")
+        print(f"{len(problems)} difference(s) require review")
         return 1
-    print("all added and deleted lines, authors and commits are kept")
+    print("all added and deleted lines, Git-classified binary contents, file modes, authors and commits are kept")
     return 0
 
 

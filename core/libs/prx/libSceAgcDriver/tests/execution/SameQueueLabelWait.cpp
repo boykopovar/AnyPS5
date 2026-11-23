@@ -3,6 +3,12 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
+#ifndef _WIN32
+#include <sys/mman.h>
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -11,6 +17,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -19,6 +26,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -32,6 +40,7 @@ alignas(256) std::array<std::uint32_t, 15> SpinCode{0xf4080200u, 0xfa000000u, 0x
 
 constexpr std::uint32_t SpinIterations = 1u << 20u;
 constexpr std::size_t BlockBytes = 65536;
+constexpr std::size_t FlagBytes = 2 * BlockBytes;
 constexpr std::uint32_t Waits = 16;
 constexpr std::uint32_t MaxAttempts = 12;
 
@@ -69,6 +78,49 @@ public:
     GuestBlock& operator=(const GuestBlock&) = delete;
 
     Slot& Data() { return *reinterpret_cast<Slot*>(block); }
+
+private:
+    std::uint8_t* block = nullptr;
+};
+
+class WatchedFlag {
+public:
+    WatchedFlag() {
+        if (!AgcDriver::GuestMemory::WriteWatched()) return;
+#ifdef _WIN32
+        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(FlagBytes, BlockBytes));
+        GuestArena::GuestArenaCommit_nid_postfix(block, FlagBytes, PAGE_READWRITE, FlagBytes);
+#else
+        void* raw = mmap(nullptr, FlagBytes + BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(raw != MAP_FAILED, "same-queue label wait: cannot map the watched block");
+        const auto begin = reinterpret_cast<std::uintptr_t>(raw);
+        const auto aligned = (begin + BlockBytes - 1) & ~(static_cast<std::uintptr_t>(BlockBytes) - 1);
+        if (aligned != begin) munmap(raw, aligned - begin);
+        if (aligned + FlagBytes != begin + FlagBytes + BlockBytes) munmap(reinterpret_cast<void*>(aligned + FlagBytes), begin + BlockBytes - aligned);
+        block = reinterpret_cast<std::uint8_t*>(aligned);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, FlagBytes);
+#endif
+        Require(AgcDriver::GuestMemory::Watched(reinterpret_cast<std::uint64_t>(block), FlagBytes), "same-queue label wait: the flag block is not write-watched");
+        GuestAllocations::Mutation().Add(block, FlagBytes, true, true, true);
+    }
+
+    ~WatchedFlag() {
+        if (block == nullptr) return;
+        GuestAllocations::Mutation().Remove(block);
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(block, FlagBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(block, FlagBytes);
+#else
+        munmap(block, FlagBytes);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, FlagBytes);
+#endif
+    }
+
+    WatchedFlag(const WatchedFlag&) = delete;
+    WatchedFlag& operator=(const WatchedFlag&) = delete;
+
+    volatile std::uint32_t* Flag() { return block == nullptr ? nullptr : reinterpret_cast<volatile std::uint32_t*>(block); }
+    volatile std::uint32_t* Done() { return reinterpret_cast<volatile std::uint32_t*>(block + BlockBytes); }
 
 private:
     std::uint8_t* block = nullptr;
@@ -133,6 +185,23 @@ std::uint64_t Run(Slot& slot, std::uint32_t value, bool wait) {
     return AgcDriver::GuestMemory::CollectEpochBumps() - before;
 }
 
+std::uint64_t RunFlag(WatchedFlag& flag, std::uint32_t waits) {
+    *flag.Done() = 0;
+    std::vector<std::uint32_t> words;
+    for (std::uint32_t index = 0; index < waits; ++index) WaitEqual(words, flag.Flag(), 1);
+    WriteData(words, flag.Done(), 1);
+    const auto before = AgcDriver::GuestMemory::CollectEpochBumps();
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    Require(sceAgcDriverSubmitAcb(0x20, &packet) == 0, "flag wait submit failed");
+    const auto start = std::chrono::steady_clock::now();
+    while (*flag.Done() == 0) {
+        Require(std::chrono::steady_clock::now() - start < std::chrono::seconds(10), "the flag wait submission did not finish");
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+    AgcDriverWaitIdle_nid_postfix();
+    return AgcDriver::GuestMemory::CollectEpochBumps() - before;
+}
+
 std::uint64_t RunLanded(Slot& slot, std::uint32_t value, bool wait) {
     slot.done = 0;
     slot.gate = 0;
@@ -162,15 +231,54 @@ std::uint64_t RunLanded(Slot& slot, std::uint32_t value, bool wait) {
     return AgcDriver::GuestMemory::CollectEpochBumps() - before;
 }
 
+void CpuLabelWake(Slot& slot) {
+    const auto submit = [&](std::uint32_t value) {
+        std::vector<std::uint32_t> words;
+        WriteData(words, &slot.done, value);
+        Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+        return sceAgcDriverSubmitAcb(0x20, &packet);
+    };
+    Require(submit(1) == 0, "CPU label wake warmup submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    bool woke = false;
+    for (std::uint32_t attempt = 0; attempt < 20 && !woke; ++attempt) {
+        const auto value = 1000 + attempt;
+        std::atomic<bool> ready{false};
+        int result = -1;
+        std::jthread worker([&] {
+            while (!ready.load(std::memory_order_acquire)) std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            result = submit(value);
+        });
+        KernelNoteGpuSubmit_nid_no_patch();
+        const auto began = std::chrono::steady_clock::now();
+        ready.store(true, std::memory_order_release);
+        SleepWake::Sleep(1000000);
+        const auto elapsed = std::chrono::steady_clock::now() - began;
+        const bool landed = slot.done == value;
+        worker.join();
+        AgcDriverWaitIdle_nid_postfix();
+        Require(result == 0 && slot.done == value, "the CPU label did not reach guest memory");
+        woke = landed && elapsed < std::chrono::microseconds(900);
+    }
+    Require(woke, "a completed CPU label did not wake the guest short sleep");
+    std::cout << "CPU label wakes the guest only after its bytes landed\n";
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         device.reset();
         GuestBlock block;
         auto& slot = block.Data();
+        if (argc == 2 && std::string_view(argv[1]) == "--cpu-label-wake-only") {
+            CpuLabelWake(slot);
+            AgcDriverShutdown_nid_postfix();
+            return 0;
+        }
         Run(slot, 1, false);
         std::uint64_t extra = ~std::uint64_t{0};
         for (std::uint32_t attempt = 0; attempt < MaxAttempts && extra >= Waits / 2; ++attempt) {
@@ -188,6 +296,30 @@ int main() {
             landedExtra = std::min(landedExtra, with > without ? with - without : 0);
         }
         Require(landedExtra < Waits / 2, "WAIT_REG_MEMs that found the labels their own queue released earlier in the submission already in memory started new collect epochs: " + std::to_string(landedExtra) + " extra bumps for " + std::to_string(Waits) + " waits");
+        WatchedFlag flag;
+        if (flag.Flag() == nullptr) {
+            std::cout << "write watching unavailable: waits on a CPU flag not tested\n";
+        } else {
+            *flag.Flag() = 1;
+            RunFlag(flag, 1);
+            std::uint64_t repeatedExtra = ~std::uint64_t{0};
+            for (std::uint32_t attempt = 0; attempt < 3; ++attempt) {
+                const auto without = RunFlag(flag, 0);
+                const auto with = RunFlag(flag, Waits);
+                std::cout << "flag attempt " << attempt << ": " << with << " bumps with " << Waits << " waits, " << without << " without\n";
+                repeatedExtra = std::min(repeatedExtra, with > without ? with - without : 0);
+            }
+            Require(repeatedExtra < Waits / 2, "WAIT_REG_MEMs on a CPU flag an earlier wait already saw with the same value, unwritten since, started new collect epochs: " + std::to_string(repeatedExtra) + " extra bumps for " + std::to_string(Waits) + " waits");
+            std::uint64_t rewrittenExtra = ~std::uint64_t{0};
+            for (std::uint32_t attempt = 0; attempt < 3; ++attempt) {
+                const auto without = RunFlag(flag, 0);
+                *flag.Flag() = 1;
+                const auto with = RunFlag(flag, 1);
+                std::cout << "rewritten flag attempt " << attempt << ": " << with << " bumps with one wait, " << without << " without\n";
+                rewrittenExtra = std::min(rewrittenExtra, with > without ? with - without : 0);
+            }
+            Require(rewrittenExtra >= 1, "a WAIT_REG_MEM on a CPU flag rewritten with the same value did not start a new collect epoch");
+        }
         std::cout << "same-queue label wait test passed\n";
         AgcDriverShutdown_nid_postfix();
         return 0;

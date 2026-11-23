@@ -97,6 +97,46 @@ void rejectFields(const Fields& f, std::string_view reason) {
 
 }
 
+static void RunRememberedRejectionTests() {
+    Fields invalid;
+    invalid.cornerSample = true;
+    const auto invalidWords = pack(invalid);
+    std::string thrown;
+    try {
+        DecodeTextureResource(invalidWords);
+    } catch (const std::runtime_error& error) {
+        thrown = error.what();
+    }
+    Require(!thrown.empty(), "a corner-sampled T# must be rejected");
+
+    const auto before = RememberedTextureRejectionCount();
+    const auto first = TryDecodeTextureResource(invalidWords);
+    Require(first.rejection != nullptr && *first.rejection == thrown, "TryDecodeTextureResource must report the decoder's own rejection message");
+    const auto remembered = RememberedTextureRejectionCount();
+    Require(remembered == (before >= RememberedTextureRejections ? 1u : before + 1u), "a rejected T# must be remembered once");
+    const auto repeat = TryDecodeTextureResource(invalidWords);
+    Require(repeat.rejection == first.rejection, "a repeated rejected T# must return the remembered rejection");
+    Require(RememberedTextureRejectionCount() == remembered, "a repeated rejected T# must not be remembered twice");
+
+    const auto valid = TryDecodeTextureResource(pack(Fields{}));
+    Require(valid.rejection == nullptr && valid.resource.baseAddress == DecodeTextureResource(pack(Fields{})).baseAddress, "a valid T# must decode as DecodeTextureResource does");
+    Require(RememberedTextureRejectionCount() == remembered, "a valid T# must not be remembered");
+
+    ShaderRecompiler::SetGcnGuestShaders(true);
+    const auto gcn = TryDecodeTextureResource(invalidWords);
+    ShaderRecompiler::SetGcnGuestShaders(false);
+    Require(gcn.rejection != nullptr && gcn.rejection != first.rejection, "the remembered rejection of an RDNA T# must not answer for the same words decoded as a PS4 T#");
+
+    for (std::uint64_t base = 1; base <= RememberedTextureRejections + 1u; ++base) {
+        Fields distinct = invalid;
+        distinct.base40 = base;
+        Require(TryDecodeTextureResource(pack(distinct)).rejection != nullptr, "a corner-sampled T# must be rejected at every base address");
+        Require(RememberedTextureRejectionCount() <= RememberedTextureRejections, "remembered T# rejections must stay within their bound");
+    }
+    const auto again = TryDecodeTextureResource(invalidWords);
+    Require(again.rejection != nullptr && *again.rejection == thrown, "a T# rejected again after the remembered rejections were dropped must report the same message");
+}
+
 static void RunR128TextureTests() {
     constexpr std::array<std::uint32_t, 8> streamed{0xa0c18800u, 0xcad00000u, 0x01ffc1ffu, 0x905b2facu, 0u, 0u, 0u, 0u};
     const auto view = DecodeTextureResource(streamed);
@@ -494,7 +534,8 @@ void RunGuestTextureResourceTests() {
     Fields singleSampleType = multisampled;
     singleSampleType.lastLevel = 0;
     singleSampleType.maxMip = 0;
-    rejectFields(singleSampleType, "same sample count");
+    const auto oneFragment = DecodeTextureResource(pack(singleSampleType));
+    Require(oneFragment.dimension == TextureDimension::k2D && oneFragment.samples == 1 && oneFragment.width == 297 && oneFragment.height == 297 && oneFragment.mipCount == 1, "a one-fragment multisampled descriptor did not decode as the single-sample 2D image it describes");
     Fields offsetLevel = multisampled;
     offsetLevel.baseLevel = 1;
     rejectFields(offsetLevel, "same sample count");
@@ -809,4 +850,21 @@ void RunGuestTextureResourceTests() {
     Require(gcnResult.baseAddress == 0x100000u, "a PS4 T# took MTYPE_L2 above its 38-bit base as address bits");
     Require(gcnNull, "a PS4 T# with a zero base and MTYPE_L2 set was not classified as null");
     Require(gcnAllocation && *gcnAllocation == gcnResult.baseAddress, "a PS4 T# with MTYPE_L2 set looked up its allocation at an address other than its 38-bit base");
+
+    const std::array<std::pair<std::uint32_t, TextureTileMode>, 4> gcnOneDArrayModes{{{5u, TextureTileMode::kGcnThin1D}, {9u, TextureTileMode::kGcnDisplay1D}, {13u, TextureTileMode::kGcnThin1D}, {14u, TextureTileMode::kGcnThin2D}}};
+    for (const auto& [tilingIndex, expectedMode] : gcnOneDArrayModes) {
+        const std::array<std::uint32_t, 8> gcnOneDArray{0x00001000u, 0x00a000c0u, 0x0000003fu, 0xc0000facu | (tilingIndex << 20u), 0x000fe000u, 3u << 13u, 0u, 0u};
+        auto gcnTwoDArray = gcnOneDArray;
+        gcnTwoDArray[3] = (gcnOneDArray[3] & 0x0fffffffu) | 0xd0000000u;
+        ShaderRecompiler::SetGcnGuestShaders(true);
+        const auto oneD = DecodeTextureResource(ShaderRecompiler::GcnImageWords(std::span<const std::uint32_t, 8>(gcnOneDArray)));
+        const auto twoD = DecodeTextureResource(ShaderRecompiler::GcnImageWords(std::span<const std::uint32_t, 8>(gcnTwoDArray)));
+        ShaderRecompiler::SetGcnGuestShaders(false);
+        Require(oneD.dimension == TextureDimension::k1DArray && oneD.tileMode == expectedMode && oneD.width == 64u && oneD.height == 1u && oneD.depthOrLastArray == 3u && oneD.gcnPitch == 128u, "a PS4 1D array T# with a tiled PS4 tile mode index decoded incorrectly");
+        const auto oneDGeometry = DescribeSurface(oneD);
+        const auto twoDGeometry = DescribeSurface(twoD);
+        Require(oneDGeometry.layers == 4u && oneDGeometry.layers == twoDGeometry.layers && oneDGeometry.layerBytes == twoDGeometry.layerBytes && oneDGeometry.guestBytes == twoDGeometry.guestBytes && oneDGeometry.mips.size() == twoDGeometry.mips.size() && oneDGeometry.mips[0].tiledSize == twoDGeometry.mips[0].tiledSize && oneDGeometry.mips[0].pitchBytes == twoDGeometry.mips[0].pitchBytes, "a PS4 1D array was not laid out like the height-1 2D array the PS4 tile mode table describes");
+    }
+
+    RunRememberedRejectionTests();
 }

@@ -1,4 +1,5 @@
 #include "prx/libSceOpusSilkEnc/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -13,6 +14,10 @@
 #include <opus.h>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (!value) {
@@ -175,7 +180,15 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(encodeFloat(ToState(wideMarker), floatPcm.data(), 960, packet.data(), 1500, 50) == EncoderError(0x15));
 
     Require(sceOpusSilkEncCtl(nullptr, 4000) == EncoderError(0x01));
+    errno = 71;
     Require(sceOpusSilkEncCtl(ToState(blank), 4000) == EncoderError(0x15));
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([&] { sceOpusSilkEncCtl(reinterpret_cast<OpusSilkEncoder*>(0x10), 4000); });
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([&] { sceOpusSilkEncEncodeWithPriority(reinterpret_cast<OpusSilkEncoder*>(0x10), pcm.data(), 960, packet.data(), 1500, 50); });
+    Require(errno == 71);
     Require(sceOpusSilkEncCtl(ToState(wideMarker), 4000) == EncoderError(0x15));
     for (const int request : std::array<int, 9>{0, -3, 3999, 4032, 4047, 11001, 11004, 2147483647, -2147483647 - 1})
         Require(sceOpusSilkEncCtl(ToState(marked), request) == EncoderError(0x07));
@@ -188,12 +201,25 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(sceOpusSilkEncGetAjmContext(nullptr, nullptr) == EncoderError(0x01));
     Require(sceOpusSilkEncGetAjmContext(ToState(blank), nullptr) == 0);
     Require(sceOpusSilkEncGetAjmContext(ToState(marked), nullptr) == 0);
+    Require(sceOpusSilkEncGetAjmContext(reinterpret_cast<const OpusSilkEncoder*>(0x10), nullptr) == 0);
     Require(ajmContext == 0x12345678u);
+    Require(sceOpusSilkEncGetAjmContext(ToState(blank), &ajmContext) == 0);
+    Require(ajmContext == 0);
+    SetWord(marked.data(), 0xF0, 0x6B7C8D9Eu);
+    std::array<std::uint32_t, 3> contextWords{0xBAD0C0DEu, 0u, 0xBAD0C0DEu};
+    Require(sceOpusSilkEncGetAjmContext(ToState(marked), &contextWords[1]) == 0);
+    Require(contextWords == std::array<std::uint32_t, 3>{0xBAD0C0DEu, 0x6B7C8D9Eu, 0xBAD0C0DEu});
+    errno = 71;
+    RequireThrows([&] { sceOpusSilkEncGetAjmContext(reinterpret_cast<const OpusSilkEncoder*>(0x10), &ajmContext); });
+    RequireThrows([&] { sceOpusSilkEncGetAjmContext(ToState(marked), reinterpret_cast<std::uint32_t*>(0x10)); });
+    Require(errno == 71);
 }
 
 } // namespace
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr std::uint32_t errorBase = 0x81770000u;
     constexpr std::size_t stateSize = 752;
     constexpr int callerApplication = OPUS_APPLICATION_VOIP;
@@ -280,7 +306,8 @@ int main() {
             const int frameSize = rate / 50;
             for (int frame = 0; frame < 4; ++frame) {
                 FillSine(samples.data(), frameSize, channels, rate, frame * frameSize);
-                const int bytes = sceOpusSilkEncEncode(ToState(matrixState), samples.data(), frameSize, packet, sizeof(packet));
+                const int bytes = frame % 2 == 0 ? sceOpusSilkEncEncode(ToState(matrixState), samples.data(), frameSize, packet, sizeof(packet))
+                                                 : sceOpusSilkEncEncodeWithPriority(ToState(matrixState), samples.data(), frameSize, packet, sizeof(packet), frame == 1 ? 20u : 100u);
                 Require(bytes > 2 && static_cast<int>(packet[0]) >> 3 < 12);
                 std::array<std::uint8_t, 1024> expected{};
                 const int expectedBytes = opus_encode(reference, samples.data(), frameSize, expected.data(), sizeof(expected));
@@ -359,4 +386,6 @@ int main() {
     ++instanceId;
     Require(sceOpusSilkEncDestroy(ToState(liveState)) == 0);
     RequireEarlyAnswers(callerApplication);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }

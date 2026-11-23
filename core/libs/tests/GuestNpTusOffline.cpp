@@ -136,6 +136,9 @@ void CheckTss(const char* name, int accepted, const std::function<int(int, int, 
     std::uint64_t offset = 4;
     option = TssOption{sizeof(TssOption), &offset, &offset, nullptr};
     Require(call(req, 15, buffer, 0x18, &option) == accepted, name, "a valid option was refused");
+    errno = 71;
+    Require(call(req, 15, buffer, 0x18, reinterpret_cast<const TssOption*>(0x10)) == InvalidArgument, name, "an unreadable option was taken");
+    Require(errno == 71, name, "errno was changed");
     Require(call(req, 0, buffer, 0x18, nullptr) == accepted, name, "slot id 0 without an option was refused");
     Require(call(9999, 0, buffer, 0x18, nullptr) == InvalidId, name, "an unknown request was not refused with INVALID_ID");
     int result = 0;
@@ -153,7 +156,25 @@ int main() {
     std::strcpy(virtualUsers[1].data, "second");
     context = sceNpTusCreateNpTitleCtxA(1, 1);
     if (context <= 0) return 1;
-    CheckAsync("sceNpTssGetSmallStorageAsync", [&](int req) { return sceNpTssGetSmallStorageAsync(req, buffer, 16, &length, nullptr); }, [&]() { int req = 9999; return sceNpTssGetSmallStorageAsync(9999, buffer, 16, &length, nullptr); }, [&](int req) { return sceNpTssGetSmallStorageAsync(req, buffer, 16, &length, &buffer); });
+    CheckAsync("sceNpTssGetSmallStorageAsync", [&](int req) { return sceNpTssGetSmallStorageAsync(req, buffer, 16, &length, nullptr); }, [&]() { int req = 9999; return sceNpTssGetSmallStorageAsync(9999, buffer, 16, &length, nullptr); }, nullptr);
+    {
+        const char* name = "sceNpTssGetSmallStorageAsync";
+        TssOption option{sizeof(TssOption), nullptr, nullptr, nullptr};
+        TssOption shortOption{sizeof(TssOption) - 8, nullptr, nullptr, nullptr};
+        Require(sceNpTssGetSmallStorageAsync(9999, buffer, 64 * 1024 + 1, &length, &shortOption) == InvalidAlignment, name, "the option size was not checked before the size and the request");
+        Require(sceNpTssGetSmallStorageAsync(9999, buffer, 64 * 1024 + 1, &length, &option) == InvalidArgument, name, "a valid option skipped the size check");
+        errno = 71;
+        Require(sceNpTssGetSmallStorageAsync(9999, buffer, 16, &length, reinterpret_cast<void*>(0x10)) == InvalidArgument, name, "an unreadable option was taken");
+        Require(errno == 71, name, "errno was changed");
+        const int req = NewRequest();
+        Require(sceNpTssGetSmallStorageAsync(req, buffer, 16, &length, &option) == 0, name, "an option of 0x20 bytes was refused");
+        int result = 0;
+        Require(sceNpTusWaitAsync(req, &result) == 0 && result == SignedOut, name, "the request with an option did not finish signed out");
+        sceNpTusDeleteRequest(req);
+        const int syncReq = NewRequest();
+        Require(sceNpTssGetSmallStorage(syncReq, buffer, 16, &length, &option) == SignedOut, "sceNpTssGetSmallStorage", "an option of 0x20 bytes was refused");
+        sceNpTusDeleteRequest(syncReq);
+    }
     CheckAsync("sceNpTusAddAndGetVariableAVUserAsync", [&](int req) { return sceNpTusAddAndGetVariableAVUserAsync(req, &virtualUser, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); }, [&]() { int req = 9999; return sceNpTusAddAndGetVariableAVUserAsync(9999, &virtualUser, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); }, [&](int req) { return sceNpTusAddAndGetVariableAVUserAsync(req, &virtualUser, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), &buffer); });
     CheckAsync("sceNpTusAddAndGetVariableAsync", [&](int req) { return sceNpTusAddAndGetVariableAsync(req, &npId, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); }, [&]() { int req = 9999; return sceNpTusAddAndGetVariableAsync(9999, &npId, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); }, [&](int req) { return sceNpTusAddAndGetVariableAsync(req, &npId, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), &buffer); });
     CheckAsync("sceNpTusAddAndGetVariableForCrossSaveAsync", [&](int req) { return sceNpTusAddAndGetVariableForCrossSaveAsync(req, 1, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); }, [&]() { int req = 9999; return sceNpTusAddAndGetVariableForCrossSaveAsync(9999, 1, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); }, [&](int req) { return sceNpTusAddAndGetVariableForCrossSaveAsync(req, 1, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), &buffer); });
@@ -304,6 +325,14 @@ int main() {
         const auto* unreadableUser = reinterpret_cast<const NpOnlineId*>(0x10);
         errno = 71;
         Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, unreadableSlots, 2, nullptr) == InvalidArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "unreadable slot ids were taken");
+        Require(sceNpTusDeleteMultiSlotDataAAsync(req, 1, unreadableSlots, 2, nullptr) == InvalidArgument, "sceNpTusDeleteMultiSlotDataAAsync", "unreadable slot ids were taken");
+        Require(sceNpTusDeleteMultiSlotDataAsync(req, npId, unreadableSlots, 2, nullptr) == InvalidArgument, "sceNpTusDeleteMultiSlotDataAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiSlotDataStatusAAsync(req, 1, unreadableSlots, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiSlotDataStatusAAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiSlotDataStatusAVUserAsync(req, &virtualUser, unreadableSlots, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiSlotDataStatusAVUserAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiSlotDataStatusAsync(req, npId, unreadableSlots, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiSlotDataStatusAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiSlotDataStatusForCrossSaveAsync(req, 1, unreadableSlots, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiSlotDataStatusForCrossSaveAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiSlotDataStatusForCrossSaveVUserAsync(req, &virtualUser, unreadableSlots, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiSlotDataStatusForCrossSaveVUserAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiSlotDataStatusVUserAsync(req, &virtualUser, unreadableSlots, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiSlotDataStatusVUserAsync", "unreadable slot ids were taken");
         Require(sceNpTusGetMultiUserVariableVUserAsync(req, unreadableUser, 1, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiUserVariableVUserAsync", "an unreadable virtual user array was taken");
         Require(sceNpTusGetMultiUserDataStatusAVUserAsync(req, unreadableUser, 1, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiUserDataStatusAVUserAsync", "an unreadable virtual user array was taken");
         Require(sceNpTusAddAndGetVariableVUserAsync(req, unreadableUser, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr) == InvalidArgument, "sceNpTusAddAndGetVariableVUserAsync", "an unreadable virtual user was taken");

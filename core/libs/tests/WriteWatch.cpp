@@ -355,6 +355,7 @@ struct TrapLog {
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> calls;
     std::vector<std::thread::id> threads;
     std::atomic<std::uint8_t> fill{0};
+    std::atomic<std::size_t> limit{0};
     std::atomic<std::ptrdiff_t> alias{0};
     std::atomic<bool> bracket{false};
 };
@@ -372,7 +373,7 @@ void ResolveTrap(std::uintptr_t begin, std::uintptr_t end) {
         log.threads.push_back(std::this_thread::get_id());
     }
     if (log.bracket) GuestWriteWatchBeginHostWrite_nid_postfix(reinterpret_cast<void*>(begin), end - begin);
-    std::memset(reinterpret_cast<void*>(begin + log.alias.load()), log.fill.load(), end - begin);
+    std::memset(reinterpret_cast<void*>(begin + log.alias.load()), log.fill.load(), log.limit.load() != 0 ? std::min<std::size_t>(log.limit.load(), end - begin) : end - begin);
     if (log.bracket) GuestWriteWatchEndHostWrite_nid_postfix(reinterpret_cast<void*>(begin), end - begin);
     GuestWriteWatchReleaseReads_nid_postfix(begin, end - begin);
 }
@@ -447,6 +448,36 @@ void CheckReadTrap() {
     Require(PageProtection(region.base + 6 * page) == PROT_NONE, "releasing one read trap gives back a page another one still traps");
     Require(ReadOnThread(region.base + 6 * page) == 0, "a page shared by two read traps does not keep the released trap's bytes");
     Require(TakeTrapCalls() == std::vector<std::pair<std::uintptr_t, std::uintptr_t>>{{region.Address(6) + half, region.Address(7) + half}}, "a read of a shared page does not resolve exactly the trap still set");
+
+    log.fill = 0x55;
+    const std::pair<std::uintptr_t, std::uintptr_t> left{region.Address(6), region.Address(7) + half};
+    const std::pair<std::uintptr_t, std::uintptr_t> right{region.Address(7) + half, region.Address(8)};
+    Require(GuestWriteWatchTrapReads_nid_postfix(left.first, left.second - left.first) && GuestWriteWatchTrapReads_nid_postfix(right.first, right.second - right.first), "cannot set two read traps sharing a page");
+    Require(ReadOnThread(region.base + 6 * page) == 0x55, "a read of a page one trap covers does not see the resolver's bytes");
+    Require(TakeTrapCalls(&threads) == std::vector<std::pair<std::uintptr_t, std::uintptr_t>>{left, right} && threads.size() == 2 && threads[0] == threads[1], "a resolver store into a page another trap covers does not resolve that trap after its own on the resolver thread");
+    Require(PageProtection(region.base + 7 * page) == (PROT_READ | PROT_WRITE), "a page whose traps were all resolved is not given back");
+    Require(ReadOnThread(region.base + 7 * page + half + 1) == 0x55 && TakeTrapCalls().empty(), "a resolved shared page resolves again");
+
+    log.limit = half;
+    Require(GuestWriteWatchTrapReads_nid_postfix(left.first, left.second - left.first) && GuestWriteWatchTrapReads_nid_postfix(right.first, right.second - right.first), "cannot set two read traps sharing a page");
+    Require(ReadOnThread(region.base + 6 * page) == 0x55, "a read of a page one trap covers does not see the resolver's bytes");
+    Require(TakeTrapCalls() == std::vector<std::pair<std::uintptr_t, std::uintptr_t>>{left}, "a read of a page one trap covers resolves a trap that only shares another of its pages");
+    Require(PageProtection(region.base + 7 * page) == PROT_NONE, "resolving a trap gives back a page another trap still covers");
+    log.fill = 0x66;
+    Require(ReadOnThread(region.base + 7 * page + half + 1) == 0x66 && TakeTrapCalls() == std::vector<std::pair<std::uintptr_t, std::uintptr_t>>{right}, "a read of a shared page does not resolve the trap still set exactly once");
+    log.limit = 0;
+
+    log.fill = 0x77;
+    const auto shared = region.Address(7) + half;
+    Require(GuestWriteWatchTrapReads_nid_postfix(left.first, left.second - left.first), "cannot set a read trap");
+    for (std::size_t index = 0; index <= 4096; ++index) Require(GuestWriteWatchTrapReads_nid_postfix(shared, index + 1), "cannot set a read trap");
+    Require(ReadOnThread(region.base + 6 * page) == 0x77, "a read of a page one trap covers does not see the resolver's bytes");
+    const auto overflow = TakeTrapCalls();
+    Require(overflow.size() == 4096 && overflow.front() == left && overflow.back() == std::pair<std::uintptr_t, std::uintptr_t>{shared, shared + 4095}, "a resolver store into a page 4097 other traps cover does not resolve the first 4095 of them on the same pass");
+    Require(PageProtection(region.base + 7 * page) == (PROT_READ | PROT_WRITE) && TakeTrapCalls().empty(), "a resolver store past the deferred limit does not leave the page accessible with the rest unresolved");
+    GuestWriteWatchBeginHostWrite_nid_postfix(region.base + 7 * page, 2 * page);
+    GuestWriteWatchEndHostWrite_nid_postfix(region.base + 7 * page, 2 * page);
+    Require(TakeTrapCalls() == std::vector<std::pair<std::uintptr_t, std::uintptr_t>>{{shared, shared + 4096}, {shared, shared + 4097}}, "a host write over traps left past the deferred limit does not resolve them");
 
     log.fill = 0x33;
     Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(8), page), "cannot set a read trap");

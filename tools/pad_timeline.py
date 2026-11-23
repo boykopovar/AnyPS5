@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 
-from pad_input import BUTTONS, next_sequence
+from pad_input import BUTTONS, COMMAND_FILE_BYTES, MAX_SEQUENCE, next_sequence, replace_command
 
 
 def load_timeline(path):
@@ -28,7 +28,7 @@ def integer(value, field, minimum, maximum):
 
 
 def compile_timeline(document, sequence, repeat=1, gap_ms=200):
-    integer(sequence, "sequence", 1, 2**64 - 1)
+    integer(sequence, "sequence", 1, MAX_SEQUENCE)
     integer(repeat, "repeat", 1, 4096)
     integer(gap_ms, "gap_ms", 0, 3600000)
     if not isinstance(document, dict) or set(document) != {"version", "events"}:
@@ -73,7 +73,11 @@ def compile_timeline(document, sequence, repeat=1, gap_ms=200):
     rows = [f"APS5_PAD_TIMELINE 1 {sequence} {len(events) * repeat}"]
     for iteration in range(repeat):
         rows.extend(f"{start + iteration * period} {duration} {buttons}{axes}" for start, duration, buttons, axes in events)
-    return "\n".join(rows) + "\n"
+    text = "\n".join(rows) + "\n"
+    size = len(text.encode("ascii"))
+    if size > COMMAND_FILE_BYTES:
+        raise ValueError(f"timeline command file is {size} bytes; the runtime reads at most {COMMAND_FILE_BYTES}")
+    return text
 
 
 def queue_timeline(path, text):
@@ -92,7 +96,7 @@ def queue_timeline(path, text):
                     os.fchown(output.fileno(), metadata.st_uid, metadata.st_gid)
                 os.fchmod(output.fileno(), stat.S_IMODE(metadata.st_mode))
             output.write(text)
-        os.replace(temporary, path)
+        replace_command(temporary, path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

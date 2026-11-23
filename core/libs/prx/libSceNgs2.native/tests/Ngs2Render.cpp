@@ -13,6 +13,7 @@
 #include <deque>
 #include <iterator>
 #include <numbers>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -1581,6 +1582,13 @@ static void TestUserData() {
         threw = true;
     }
     Require(threw);
+    threw = false;
+    try {
+        sceNgs2SystemGetUserData(system, reinterpret_cast<uintptr_t*>(0x10));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 
     Require(sceNgs2RackSetUserData(0x1234, 5) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
     Require(sceNgs2RackSetUserData(system, 5) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
@@ -1601,6 +1609,13 @@ static void TestUserData() {
     try {
         sceNgs2RackGetUserData(rack, nullptr);
 
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    threw = false;
+    try {
+        sceNgs2RackGetUserData(rack, reinterpret_cast<uintptr_t*>(0x10));
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -1657,7 +1672,7 @@ static void TestMasteringGain() {
             if (Ps4Library && channel == 3) continue;
             Require(outSurround[i * 6 + channel] == (i < 3 ? 0.0f : channel == 3 ? 0.125f : 0.25f));
         }
-        for (std::uint32_t channel = 0; channel < quadChannels; channel++) Require(outQuad[i * quadChannels + channel] == (i < 3 ? 0.0f : 0.25f));
+        for (std::uint32_t channel = 0; channel < quadChannels; channel++) Require(outQuad[i * quadChannels + channel] == (i < 3 ? 0.0f : channel == 3 ? 0.125f : 0.25f));
     }
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 
@@ -1682,15 +1697,6 @@ static int ControlMasteringEffect(uintptr_t voice, std::uint32_t id, std::uint16
     auto& param = reinterpret_cast<Ngs2MasteringVoiceEffectParam&>(bytes);
     param = {{size, 0, id}, enable, value};
     return sceNgs2VoiceControl(voice, &param.header);
-}
-
-static bool EffectNotImplemented(uintptr_t voice, std::uint32_t id, std::uint32_t enable, std::uint32_t value) {
-    try {
-        ControlMasteringEffect(voice, id, 16, enable, value);
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()).find("is not implemented") != std::string::npos;
-    }
-    return false;
 }
 
 static std::vector<float> RenderMasteringEffects(bool withParams) {
@@ -1731,13 +1737,182 @@ static void TestMasteringEffectParams() {
         Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER, 16, mode, 0) == SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE);
     }
     for (const std::uint32_t enable : {1u, 2u, 0xffffffffu}) {
-        Require(EffectNotImplemented(master, SCE_NGS2_MASTERING_VOICE_PARAM_LFE, enable, 40));
-        Require(EffectNotImplemented(master, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, enable, 0x3f800000));
+        Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LFE, 16, enable, 40) == SCE_NGS2_OK);
+        Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, 24, enable, 0x3f800000) == SCE_NGS2_OK);
     }
+    Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LFE, 16, 0, 0xffffffffu) == SCE_NGS2_OK);
+    bool threw = false;
+    try { ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LFE, 16, 1, 0xffffffffu); }
+    catch (const std::runtime_error&) { threw = true; }
+    Require(threw);
     Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, 16, 1, 0x7fc00000) == SCE_NGS2_OK);
     Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, 16, 0, 0x3f800000) == SCE_NGS2_OK);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
     Require(RenderMasteringEffects(true) == RenderMasteringEffects(false));
+}
+
+static int APS5_VABI WriteMasteringImpulse(Ngs2UserFxProcessContext* context) {
+    for (std::uint32_t channel = 0; channel < context->num_channels; channel++) context->channel_data[channel][0] = 1.0f;
+    return SCE_NGS2_OK;
+}
+
+static void TestMasteringLfe() {
+    constexpr auto lfe = SCE_NGS2_MASTERING_VOICE_PARAM_LFE;
+    enum class Update { None, BypassGrain, Setup, ChangeCutoff };
+    const auto render = [&](std::uint32_t channels, std::uint32_t rate, std::uint32_t cutoff, Update update = Update::None) {
+        const auto firstBuffer = usedBuffers;
+        const auto system = CreateSystem();
+        Require(sceNgs2SystemSetSampleRate(system, rate) == SCE_NGS2_OK);
+        const auto master = Mastering(system, channels);
+        const auto source = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER));
+        Control(source, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, channels, 0});
+        Control(source, SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX, Ngs2SubmixerVoiceUserFxParam{{}, WriteMasteringImpulse, 0, 0, 0});
+        Patch(source, master);
+        Event(source, SCE_NGS2_VOICE_EVENT_PLAY);
+        Require(ControlMasteringEffect(master, lfe, 16, 1, cutoff) == SCE_NGS2_OK);
+
+        std::vector<float> response(4096);
+        std::vector<float> output(Grain * channels);
+        const Ngs2RenderBufferInfo buffer{output.data(), output.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels};
+        for (std::size_t start = 0; start < response.size(); start += Grain) {
+            if (start == Grain) {
+                Event(source, SCE_NGS2_VOICE_EVENT_STOP_IMM);
+                if (update == Update::Setup) {
+                    Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, channels, 0});
+                    Event(master, SCE_NGS2_VOICE_EVENT_PLAY);
+                } else {
+                    if (update == Update::ChangeCutoff) cutoff = 120;
+                    Require(ControlMasteringEffect(master, lfe, 24, update == Update::BypassGrain ? 0u : 2u, cutoff) == SCE_NGS2_OK);
+                }
+            }
+            if (start == 2 * Grain) Require(ControlMasteringEffect(master, lfe, 16, 1, cutoff) == SCE_NGS2_OK);
+            Require(sceNgs2SystemRender(system, &buffer, 1) == SCE_NGS2_OK);
+            for (std::uint32_t i = 0; i < Grain; i++) {
+                response[start + i] = output[i * channels + 3];
+                for (std::uint32_t channel = 0; channel < channels; channel++) {
+                    if (channel != 3) Require(output[i * channels + channel] == (start + i == 0 ? 1.0f : 0.0f));
+                }
+            }
+        }
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+        ResetBuffers(firstBuffer);
+        return response;
+    };
+    const auto checkImpulse = [](const auto& response, std::array<float, 4> first, std::size_t peakIndex, float peak, double sum) {
+        for (std::size_t i = 0; i < first.size(); i++) Require(std::abs(response[i] - first[i]) < first[i] * 0.005f);
+        Require(static_cast<std::size_t>(std::max_element(response.begin(), response.end()) - response.begin()) == peakIndex);
+        Require(std::abs(response[peakIndex] - peak) < peak * 0.001f);
+        Require(std::abs(std::accumulate(response.begin(), response.end(), 0.0) - sum) < 0.002);
+    };
+    const auto low = render(6, 48000, 80);
+    const auto high = render(6, 48000, 81);
+    checkImpulse(low, {6.10e-10f, 4.87e-9f, 1.94e-8f, 5.32e-8f}, 276, 0.00452897f, 0.988);
+    checkImpulse(high, {3.07e-9f, 2.45e-8f, 9.75e-8f, 2.67e-7f}, 184, 0.00680154f, 0.989);
+    Require(render(4, 48000, 0) == low);
+    Require(render(8, 48000, 1000000000u) == high);
+    const auto highRate = render(6, 88200, 120);
+    Require(highRate != high && highRate == render(6, 96000, 120));
+    for (const auto rate : {11025u, 12000u, 22050u, 24000u, 44100u, 88200u, 176400u, 192000u}) {
+        const auto response = render(6, rate, 120);
+        const auto peak = std::max_element(response.begin(), response.end()) - response.begin();
+        Require(std::abs(peak - 184.0 * rate / 48000.0) < 3.0);
+    }
+    const auto switched = render(6, 48000, 80, Update::ChangeCutoff);
+    Require(std::equal(switched.begin(), switched.begin() + Grain, low.begin()));
+    Require(switched[Grain] > 0.0f && switched[2 * Grain] != low[2 * Grain]);
+    const auto reset = render(6, 48000, 80, Update::Setup);
+    Require(std::equal(low.begin(), low.begin() + Grain, reset.begin()));
+    Require(std::all_of(reset.begin() + Grain, reset.end(), [](float value) { return value == 0.0f; }));
+    const auto bypass = render(6, 48000, 80, Update::BypassGrain);
+    Require(std::all_of(bypass.begin() + Grain, bypass.begin() + 2 * Grain, [](float value) { return value == 0.0f; }));
+    Require(std::equal(bypass.begin() + 2 * Grain, bypass.end(), low.begin() + Grain));
+
+    for (const auto channels : {1u, 2u, 3u}) {
+        const auto system = CreateSystem();
+        const auto master = Mastering(system, channels);
+        Require(ControlMasteringEffect(master, lfe, 16, 1, 80) == SCE_NGS2_OK);
+        std::vector<float> output(Grain * channels);
+        const Ngs2RenderBufferInfo buffer{output.data(), output.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels};
+        bool threw = false;
+        try { sceNgs2SystemRender(system, &buffer, 1); } catch (const std::runtime_error&) { threw = true; }
+        Require(threw);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+}
+
+static void TestMasteringLimiter() {
+    constexpr auto limiter = SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER;
+    constexpr float threshold = 0.25f;
+    constexpr std::size_t numGrains = 4;
+    constexpr std::size_t channels = 2;
+    std::vector<std::int16_t> pcm(Grain * numGrains, 4096);
+    std::fill_n(pcm.begin(), Grain, 24576);
+    for (std::uint32_t i = 0; i < Grain; i++) {
+        pcm[Grain + i] = static_cast<std::int16_t>(24576.0 * std::sin(i * std::numbers::pi / 16.0));
+    }
+
+    std::fill_n(pcm.begin() + 3 * Grain, Grain, 24576);
+
+    const auto render = [&](float configuredThreshold, bool resetSetup = false) {
+        const auto system = CreateSystem();
+        const auto master = Mastering(system, channels);
+        const auto source = Sampler(system, pcm, 0);
+        const std::array levels{1.0f, 0.125f};
+        Control(source, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, levels.size(), levels.data()});
+        Control(source, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
+        Patch(source, master);
+        Event(source, SCE_NGS2_VOICE_EVENT_PLAY);
+        Require(ControlMasteringEffect(master, limiter, 16, 1, std::bit_cast<std::uint32_t>(configuredThreshold)) == SCE_NGS2_OK);
+
+        std::vector<float> output(pcm.size() * channels);
+        for (std::size_t grain = 0; grain < numGrains; grain++) {
+            if (grain == 3) {
+                if (resetSetup) {
+                    Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, channels, 0});
+                    Event(master, SCE_NGS2_VOICE_EVENT_PLAY);
+                } else {
+                    Require(ControlMasteringEffect(master, limiter, 16, 1, 0x7fc00000) == SCE_NGS2_OK);
+                }
+            }
+            const Ngs2RenderBufferInfo info{output.data() + grain * Grain * channels, Grain * channels * sizeof(float),
+                SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels};
+            Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        }
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+        return output;
+    };
+
+    const auto dry = render(NAN);
+    const auto wet = render(threshold);
+    const auto afterSetup = render(threshold, true);
+    const auto zero = render(0.0f);
+    Require(zero != dry);
+    Require(render(-1.0f) == zero);
+    Require(render(-INFINITY) == zero);
+    Require(render(2.0f) == render(1.0f));
+    Require(render(INFINITY) == render(1.0f));
+    double gain = 1.0;
+    const std::size_t activeSamples = (numGrains - 1) * Grain;
+    for (std::size_t start = 0; start < activeSamples; start += 32) {
+        double peak = 0.0;
+        for (std::size_t i = 0; i < 32 * channels; i++) {
+            peak = std::max(peak, std::abs(static_cast<double>(dry[start * channels + i])));
+        }
+        const double target = peak > threshold ? threshold / peak : 1.0;
+        const double timeSamples = target < gain ? 480.0 : 4800.0;
+        const double initialGain = gain;
+        for (std::size_t i = 0; i < 32; i++) {
+            gain = target + (initialGain - target) * std::exp(-static_cast<double>(i + 1) / timeSamples);
+            for (std::size_t channel = 0; channel < channels; channel++) {
+                const auto index = (start + i) * channels + channel;
+                Require(std::abs(wet[index] - dry[index] * gain) < 0.00003);
+            }
+        }
+        if (std::abs(gain - target) <= 0.01) gain = target;
+    }
+    Require(std::equal(afterSetup.begin(), afterSetup.begin() + activeSamples * channels, wet.begin()));
+    Require(std::equal(afterSetup.begin() + activeSamples * channels, afterSetup.end(), dry.begin() + activeSamples * channels));
+    Require(std::equal(wet.begin() + activeSamples * channels, wet.end(), dry.begin() + activeSamples * channels));
 }
 
 static void TestMasteringGainClampedLikePs5() {
@@ -2315,11 +2490,11 @@ static uintptr_t CustomMastering(uintptr_t system, std::uint32_t channels) {
 }
 
 static std::vector<float> MasterFrame(std::uint32_t channels, std::uint32_t channel, std::uint32_t outputChannels, float fbw,
-                                      const std::vector<std::int16_t>* amplitudes = nullptr, bool custom = false) {
+                                      const std::vector<std::int16_t>* amplitudes = nullptr, bool custom = false, float lfe = 1.0f) {
     const auto firstBuffer = usedBuffers;
     const auto system = CreateSystem();
     const auto master = custom ? CustomMastering(system, channels) : Mastering(system, channels);
-    if (!custom) Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, fbw, 1.0f});
+    if (!custom) Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, fbw, lfe});
     const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
     Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, channels, 48000, 0, 0, 0}});
     std::vector<std::int16_t> frames(Grain * channels, 0);
@@ -2700,6 +2875,21 @@ static void TestUnsetMatrix() {
     Require(sceNgs2SystemDestroy(stereoSystem, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestMasteringGainAfterRemap() {
+    const auto frame = [](std::uint32_t channels, std::uint32_t channel, std::uint32_t outputs) {
+        return MasterFrame(channels, channel, outputs, 2.0f, nullptr, false, 0.25f);
+    };
+    Require(frame(4, 3, 4) == (std::vector<float>{0, 0, 0, 0.125f}));
+    Require(frame(7, 3, 7) == (std::vector<float>{0, 0, 0, 0.125f, 0, 0, 0}));
+    Require(frame(6, 3, 8) == (std::vector<float>{0, 0, 0, 0.125f, 0, 0, 0, 0}));
+    Require(frame(8, 3, 6) == (std::vector<float>{0, 0, 0, 0.125f, 0, 0}));
+    Require(frame(2, 1, 6) == (std::vector<float>{0, 1.0f, 0, 0, 0, 0}));
+    const std::vector<std::int16_t> levels{1023, 2045, 4091, 0, 8191, 16381};
+    const float mapped = 1023.0f / 32768.0f * HalfPower + 2045.0f / 32768.0f * HalfPower +
+        4091.0f / 32768.0f + 8191.0f / 65536.0f + 16381.0f / 65536.0f;
+    Require(MasterFrame(6, 0, 1, 0.7f, &levels)[0] == mapped * 0.7f);
+}
+
 static void TestDefaultMapLikePs5() {
     const float half = 0.5f * HalfPower;
     Require(MixFrame(6, 4, 2) == (std::vector<float>{half, 0}) && MixFrame(6, 5, 2) == (std::vector<float>{0, half}));
@@ -2809,6 +2999,7 @@ static uintptr_t CustomSubmixerVoice(uintptr_t system) {
     custom.rack_option.max_matrices = 1;
     custom.rack_option.max_ports = 1;
     custom.num_buffers = 1;
+    custom.state_size = 16;
     custom.port[0].source_buffer_id = 0;
     option.max_channels = 8;
     option.max_inputs = 1;
@@ -2863,6 +3054,7 @@ static void TestOddChannelCountsLikePs4() {
         Ngs2CustomSubmixerRackOption customOption{};
         customOption.custom_rack_option.rack_option = {sizeof(customOption), {}, 0, 512, 1, 0, 1, 1};
         customOption.custom_rack_option.num_buffers = 1;
+        customOption.custom_rack_option.state_size = 16;
         customOption.max_channels = maxChannels;
         customOption.max_inputs = 1;
         auto customBuffer = query(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, customOption.custom_rack_option.rack_option);
@@ -3578,6 +3770,7 @@ static void TestPs4FilterParams() {
         custom.rack_option.max_matrices = 1;
         custom.rack_option.max_ports = 1;
         custom.num_buffers = 1;
+        custom.state_size = 16;
         custom.num_modules = 1;
         custom.module[0].module_id = SCE_NGS2_CUSTOM_MODULE_ID_FILTER;
         custom.port[0].source_buffer_id = 0;
@@ -3637,7 +3830,10 @@ int main() {
 
     TestSystemOptionFlags();
 
-    if (!Ps4Library) TestDefaultMapLikePs5();
+    if (!Ps4Library) {
+        TestMasteringGainAfterRemap();
+        TestDefaultMapLikePs5();
+    }
     else {
         TestDefaultMapLikePs4();
         TestOddChannelCountsLikePs4();
@@ -3657,7 +3853,11 @@ int main() {
     TestMutedPatchCycleRenders();
 
     TestMasteringGain();
-    if (!Ps4Library) TestMasteringEffectParams();
+    if (!Ps4Library) {
+        TestMasteringEffectParams();
+        TestMasteringLfe();
+        TestMasteringLimiter();
+    }
     TestMatrixLevelClamp();
 
     if (!Ps4Library) TestPortVolumeClampedLikePs5();
