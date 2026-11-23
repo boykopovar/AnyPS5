@@ -321,16 +321,19 @@ std::int64_t APS5_VABI scePfsPread(void* buffer, std::uint64_t size, std::uint64
     const void* table = AtOffset(header, tableCommand[1]);
     if (!table || !AtOffset(table, tableCommand[0])) return InvalidArgument;
     const bool version3 = layout.version == 3;
-    const auto entries = version3 ? tableCommand[0] / sizeof(PfsIndexEntry) : (std::uint64_t{layout.blockCount} + 1) / 2;
+    auto blockCount = (std::uint64_t{layout.blockCount} + 1) / 2;
     std::uint64_t index = offset / FullBlock;
     if (version3) {
-        if (const int code = FirstFileBlock(table, entries, offset, index); code != 0) return code;
+        const auto boundaries = tableCommand[0] / sizeof(PfsIndexEntry);
+        if (boundaries < 2 || tableCommand[0] % sizeof(PfsIndexEntry) != 0) return InvalidTable;
+        blockCount = boundaries - 1;
+        if (const int code = FirstFileBlock(table, boundaries, offset, index); code != 0) return code;
     }
     std::vector<std::uint8_t> bytes;
     auto position = offset;
     const auto end = offset + size;
     while (position < end) {
-        if (index >= entries || index > std::numeric_limits<int>::max()) return InvalidTable;
+        if (index >= blockCount || index > std::numeric_limits<int>::max()) return InvalidTable;
         BlockCommand block{};
         const int commandResult = scePfsGetSingleBlockReadCommand(header, table, static_cast<int>(index), &block);
         if (commandResult != 0) return commandResult;

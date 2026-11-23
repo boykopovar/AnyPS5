@@ -166,6 +166,21 @@ void StoredReads(std::uint16_t version, bool shortBlocks) {
         Require(std::memcmp(actual.data() + 1, data + read.offset, read.count) == 0);
         Require(actual.front() == 0xb5 && actual.back() == 0xb5);
     }
+    if (version == 3) {
+        std::array<std::uint64_t, 2> tableCommand{};
+        Require(scePfsGetBlockTableReadCommand(image.data(), tableCommand.data()) == 0);
+        Require(tableCommand[0] == 5 * sizeof(IndexEntry));
+        const auto first = ends[2] - 1;
+        std::vector<std::uint8_t> throughLast(dataSize - first);
+        Require(scePfsPread(throughLast.data(), throughLast.size(), first, image.data(), work.data()) == 0);
+        Require(std::memcmp(throughLast.data(), data + first, throughLast.size()) == 0);
+        auto extended = header;
+        ++extended.uncompressedSize;
+        put(0, extended);
+        std::array<std::uint8_t, 2> atEnd{};
+        Require(scePfsPread(atEnd.data(), 2, dataSize - 1, image.data(), work.data()) == InvalidTable);
+        put(0, header);
+    }
     if (version == 2 && shortBlocks) {
         std::array<std::uint64_t, 6> command{};
         Require(scePfsGetSingleBlockReadCommand(image.data(), image.data() + tableOffset, 3, command.data()) == 0);
