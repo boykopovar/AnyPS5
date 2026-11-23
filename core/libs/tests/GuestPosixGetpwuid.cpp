@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 static void Require(bool condition) { if (!condition) std::abort(); }
 
@@ -32,6 +33,8 @@ int main() {
     Require(getpwnam_nid_postfix("nobody") == nullptr);
     Require(getpwnam_nid_postfix("") == nullptr);
     Require(getpwnam_nid_postfix("Root") == nullptr);
+    const std::string longName(300, 'r');
+    Require(getpwnam_nid_postfix(longName.c_str()) == nullptr);
     Require(errno == E2BIG);
     bool threw = false;
     try {

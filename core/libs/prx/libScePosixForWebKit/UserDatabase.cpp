@@ -1,6 +1,7 @@
 #include "prx/libScePosixForWebKit/include/Api.hpp"
-#include <cstring>
+#include "prx/libc/include/General.hpp"
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -29,6 +30,7 @@ PosixForWebKitPasswd* APS5_VABI getpwuid_nid_postfix(std::uint32_t uid) {
 
 PosixForWebKitPasswd* APS5_VABI getpwnam_nid_postfix(const char* name) {
     if (name == nullptr) throw std::invalid_argument("getpwnam: null name");
-    if (std::strcmp(name, "root") != 0) return nullptr;
+    std::string copy;
+    if (CopyGuestString_nid_no_patch(name, 256, copy) != 0 || copy != "root") return nullptr;
     return getpwuid_nid_postfix(0);
 }
