@@ -130,6 +130,29 @@ void AuditFiles(const std::string& root) {
     Require(fchmod_nid_postfix(descriptor, 0604) == 0, "fchmod failed");
     Require(DescriptorMode(descriptor) == (RegularType | 0604), "fchmod 0604 must read back on the descriptor");
     Require(close_nid_postfix(descriptor) == 0, "close failed");
+
+    const std::string moved = root + "/moved";
+    const std::string replacement = root + "/replacement";
+    descriptor = Create(moved, SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, 0644);
+    Require(rename_nid_postfix(moved.c_str(), replacement.c_str()) == 0, "rename open file failed");
+    const int other = Create(moved, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, 0640);
+    Require(close_nid_postfix(other) == 0, "close failed");
+    Require(fchmod_nid_postfix(descriptor, 0400) == 0, "fchmod after rename failed");
+    Require(DescriptorMode(descriptor) == (RegularType | 0400), "fchmod after rename must change the open file");
+    Require(close_nid_postfix(descriptor) == 0, "close failed");
+    Require(PathMode(replacement) == (RegularType | 0400), "fchmod must follow the open file to its new name");
+    Require((GetFileAttributesA(replacement.c_str()) & FILE_ATTRIBUTE_READONLY) != 0, "fchmod 0400 must set the read-only attribute on the open file");
+    Require(PathMode(moved) == (RegularType | 0640), "fchmod must not change the file now at the old name");
+    Require((GetFileAttributesA(moved.c_str()) & FILE_ATTRIBUTE_READONLY) == 0, "fchmod must not change the attributes at the old name");
+    Require(chmod_nid_postfix(replacement.c_str(), 0600) == 0, "chmod renamed file back failed");
+
+    const std::string unlinked = root + "/unlinked";
+    descriptor = Create(unlinked, SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, 0644);
+    Require(unlink_nid_postfix(unlinked.c_str()) == 0, "unlink open file failed");
+    Require(fchmod_nid_postfix(descriptor, 0600) == 0, "fchmod on an unlinked open file failed");
+    Require(DescriptorMode(descriptor) == (RegularType | 0600), "fchmod on an unlinked open file must change its mode");
+    Require(close_nid_postfix(descriptor) == 0, "close failed");
+
     Require(sceKernelChmod_nid_postfix(secret.c_str(), 0400) == 0, "sceKernelChmod failed");
     Require(PathMode(secret) == (RegularType | 0400), "sceKernelChmod 0400 must read back 0100400");
     Require(chmod_nid_postfix(secret.c_str(), 0600) == 0, "chmod back to 0600 failed");

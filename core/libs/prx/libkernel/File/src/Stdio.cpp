@@ -192,9 +192,34 @@ static int NativeChmod(const std::filesystem::path& path, int mode) {
     const auto& finalTarget = pathError ? *target : verbatimTarget;
     return ChangeWindowsMode(finalTarget, mode);
 }
+static DWORD SetReadOnlyAttribute(HANDLE handle, bool readOnly) {
+    FILE_BASIC_INFO basic{};
+    if (!GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic))) return GetLastError();
+    DWORD attributes = readOnly ? basic.FileAttributes | FILE_ATTRIBUTE_READONLY : basic.FileAttributes & ~FILE_ATTRIBUTE_READONLY;
+    if (attributes == basic.FileAttributes) return ERROR_SUCCESS;
+    FILE_BASIC_INFO change{};
+    change.FileAttributes = attributes == 0 ? FILE_ATTRIBUTE_NORMAL : attributes;
+    const HANDLE writer = ReOpenFile(handle, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_FLAG_BACKUP_SEMANTICS);
+    if (writer == INVALID_HANDLE_VALUE) return GetLastError();
+    const bool changed = SetFileInformationByHandle(writer, FileBasicInfo, &change, sizeof(change));
+    const DWORD error = changed ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(writer);
+    return error;
+}
 static int NativeFchmod(int descriptor, int mode) {
-    const auto path = File::WindowsDescriptorPath_nid_no_patch(descriptor);
-    return path ? NativeChmod(*path, mode) : -1;
+    const auto handle = WindowsDescriptorHandle_nid_no_patch(descriptor);
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
+    }
+    DWORD error = SetReadOnlyAttribute(handle, (mode & _S_IWRITE) == 0);
+    if (error == ERROR_SUCCESS) error = File::WindowsPermissions::Store(handle, static_cast<std::uint16_t>(mode & 07777));
+    if (error != ERROR_SUCCESS) {
+        errno = WindowsOpenError_nid_no_patch(error);
+        return -1;
+    }
+    if (const auto path = HandlePath(handle)) RecordWrittenPath_nid_no_patch(*path);
+    return 0;
 }
 static bool PrepareSparseExtension(HANDLE handle, std::int64_t length) {
     LARGE_INTEGER size{};
