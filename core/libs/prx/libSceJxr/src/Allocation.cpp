@@ -37,18 +37,12 @@ namespace {
 constexpr std::int64_t WmpErrSuccess = 0;
 constexpr std::int64_t WmpErrOutOfMemory = -101;
 
-bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
-}
 }
 
 extern "C" std::int64_t APS5_VABI PKAlloc_nid_postfix(void** memory, std::size_t size) {
     if (memory == nullptr) throw std::invalid_argument("PKAlloc: null output pointer");
     void* const allocation = calloc_nid_postfix(1, size);
-    if (!CopyOut(memory, &allocation, sizeof(allocation))) {
+    if (!GuestCopyOut_nid_no_patch(memory, &allocation, sizeof(allocation))) {
         if (allocation) free_nid_postfix(allocation);
         throw std::invalid_argument("PKAlloc: unwritable output pointer");
     }
