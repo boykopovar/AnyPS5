@@ -1856,6 +1856,10 @@ int APS5_VABI EVP_DigestSignFinal_nid_postfix(LibreSsl3::DigestContext* ctx,
     if (method->flags & LibreSsl3PkeyMethodFlagSignatureContextCustom)
         NotImplemented_nid_no_patch("EVP_DigestSignFinal with a custom signature context");
     if (method->signatureContext) NotImplemented_nid_no_patch("EVP_DigestSignFinal with a signctx method");
+    if (!guest.digest) {
+        QueueEvpError(ReasonInputNotInitialized);
+        return 0;
+    }
     if (sigret == nullptr) {
         const auto size = guest.digest->digestSize;
         if (size < 0) return 0;

@@ -1269,6 +1269,36 @@ void DigestSignInitWithoutDigest() {
     ReleaseKey(key);
 }
 
+void DigestFinalWithoutDigestMethod() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* md = EVP_MD_CTX_new_nid_postfix();
+    Require(md != nullptr);
+    LibreSsl3PkeyContext* pctx = nullptr;
+    Require(EVP_DigestSignInit_nid_postfix(md, &pctx,
+        reinterpret_cast<const LibreSsl3::DigestMethod*>(EVP_sha256_nid_postfix()), nullptr, key) == 1);
+    Require(md->update(md, MessageBytes(), MessageLength) == 1);
+    const auto* digest = md->digest;
+    md->digest = nullptr;
+    std::array<unsigned char, 256> signature {};
+    std::size_t length = 0;
+    Require(EVP_DigestSignFinal_nid_postfix(md, nullptr, &length) == 0);
+    Require(length == 0);
+    ExpectErrors({EvpCode(111)});
+    length = signature.size();
+    Require(EVP_DigestSignFinal_nid_postfix(md, signature.data(), &length) == 0);
+    Require(length == signature.size());
+    ExpectErrors({EvpCode(111)});
+    unsigned int signatureLength = 1;
+    Require(EVP_SignFinal_nid_postfix(md, signature.data(), &signatureLength, key) == 0);
+    Require(signatureLength == 0);
+    ExpectErrors({EvpCode(111)});
+    Require(EVP_VerifyFinal_nid_postfix(md, Pkcs1Sha256Signature, 256, key) == 0);
+    ExpectErrors({EvpCode(111)});
+    md->digest = digest;
+    EVP_MD_CTX_free_nid_postfix(md);
+    ReleaseKey(key);
+}
+
 EcKey* NewEcKey(const char* privateScalar, int curve) {
     auto* key = EC_KEY_new_by_curve_name_nid_postfix(curve);
     Require(key != nullptr && key->group != nullptr);
@@ -1612,6 +1642,7 @@ int main() {
     DigestSignatures();
     SignFinalVerifyFinal();
     DigestSignInitWithoutDigest();
+    DigestFinalWithoutDigestMethod();
     EcdhDerivation();
     GuestOutputLengths();
     GuestContextPointers();
