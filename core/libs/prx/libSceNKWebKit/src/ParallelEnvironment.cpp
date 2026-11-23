@@ -65,6 +65,11 @@ std::vector<Worker*>& ThreadPool() {
     return *pool;
 }
 
+std::mutex& ThreadPoolLock() {
+    static std::mutex* const lock = new std::mutex;
+    return *lock;
+}
+
 void* APS5_VABI RunWorker(void* argument) {
     auto* worker = static_cast<Worker*>(argument);
     std::unique_lock lock(worker->lock);
@@ -98,11 +103,14 @@ void Construct(ParallelEnvironment* self, ParallelEnvironmentFunction threadFunc
     const int maxNumberOfCores = _ZN3WTF22numberOfProcessorCoresEv();
     if (!requestedJobNumber || requestedJobNumber > maxNumberOfCores) requestedJobNumber = maxNumberOfCores;
     const int maxNumberOfNewThreads = requestedJobNumber - 1;
-    std::vector<Worker*>& pool = ThreadPool();
     std::vector<Worker*> taken;
-    for (int index = 0; index < maxNumberOfCores && taken.size() < static_cast<unsigned>(maxNumberOfNewThreads); ++index) {
-        if (pool.size() < static_cast<unsigned>(index) + 1U) pool.push_back(new Worker);
-        if (TryLockFor(*pool[index], self)) taken.push_back(pool[index]);
+    {
+        std::lock_guard poolLock(ThreadPoolLock());
+        std::vector<Worker*>& pool = ThreadPool();
+        for (int index = 0; index < maxNumberOfCores && taken.size() < static_cast<unsigned>(maxNumberOfNewThreads); ++index) {
+            if (pool.size() < static_cast<unsigned>(index) + 1U) pool.push_back(new Worker);
+            if (TryLockFor(*pool[index], self)) taken.push_back(pool[index]);
+        }
     }
     const auto count = static_cast<unsigned>(taken.size());
     ParallelEnvironmentThread** buffer = nullptr;

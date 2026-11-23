@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <set>
 #include <stdexcept>
 #include <thread>
@@ -227,6 +228,29 @@ static void TestABusyWorker() {
     Require(parameters[0].calls.load() == 1 && parameters[1].calls.load() == 1);
 }
 
+static void TestSimultaneousConstruction() {
+    if (cores < 5) return;
+    for (int round = 0; round < 50; ++round) {
+        std::unique_ptr<Environment> environments[4];
+        std::atomic<bool> start{false};
+        std::thread threads[4];
+        for (int index = 0; index < 4; ++index)
+            threads[index] = std::thread([&, index] {
+                while (!start) std::this_thread::yield();
+                environments[index] = std::make_unique<Environment>(2);
+            });
+        start = true;
+        for (std::thread& thread : threads) thread.join();
+        std::set<NKWebKit::WtfAbi::ParallelEnvironmentThread*> workers;
+        for (auto& environment : environments) {
+            Require(environment->Jobs() == 2);
+            workers.insert(environment->Thread(0));
+        }
+        Require(workers.size() == 4);
+        for (auto& environment : environments) environment->Run();
+    }
+}
+
 static void TestInvalidArguments() {
     Parameter parameter;
     Require(ThrowsInvalidArgument([&] { construct(nullptr, &Work, sizeof(Parameter), 1); }));
@@ -272,6 +296,7 @@ int main() {
     TestTheRequestedNumber();
     TestSeveralEnvironments();
     TestABusyWorker();
+    TestSimultaneousConstruction();
     TestInvalidArguments();
     TestAnEnvironmentThatNeverRuns();
     std::puts("libSceNKWebKit parallel environment tests passed");
