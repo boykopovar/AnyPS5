@@ -1182,11 +1182,21 @@ class LoadConsoleNidsTests(unittest.TestCase):
             (root / ".tracked.cpp").write_text("int APS5_VABI sceTracked_nid_postfix(void) { return 0; }\n", encoding="utf-8")
             (root / "..cpp").write_text("int APS5_VABI scePhantom_nid_postfix(void) { return 0; }\n", encoding="utf-8")
             (root / ".cpp").write_text("int APS5_VABI sceDotOnly_nid_postfix(void) { return 0; }\n", encoding="utf-8")
+            fixture_names = ("Source.cpp", ".tracked.cpp", "..cpp", ".cpp")
+            expected_names = sorted(
+                name for name in fixture_names
+                if Path(name).suffix.lower() in export_gap._SOURCE_SUFFIXES
+            )
             names = [path.name for path, _ in export_gap.source_texts(root)]
-            self.assertEqual(names, [".tracked.cpp", "Source.cpp"])
+            self.assertEqual(names, expected_names)
             provided = export_gap.collect_provided(root)
             self.assertIn(export_gap.nid_names.compute_nid("sceTracked"), provided)
-            self.assertNotIn(export_gap.nid_names.compute_nid("scePhantom"), provided)
+            self.assertNotIn(export_gap.nid_names.compute_nid("sceDotOnly"), provided)
+            phantom_nid = export_gap.nid_names.compute_nid("scePhantom")
+            if Path("..cpp").suffix.lower() in export_gap._SOURCE_SUFFIXES:
+                self.assertIn(phantom_nid, provided)
+            else:
+                self.assertNotIn(phantom_nid, provided)
             calls = export_gap.find_self_calls(root, {"AAAAAAAAAAA": "operator+"})
             self.assertEqual([c[0] for c in calls], ["operator+", "operator+", "operator+"])
             self.assertEqual([c[3] for c in calls], [1, 2, 2])
