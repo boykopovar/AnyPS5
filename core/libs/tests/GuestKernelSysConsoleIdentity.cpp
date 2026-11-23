@@ -45,6 +45,7 @@ void CheckConsoleKind(bool ps4) {
     Require(sceKernelIsKratos() == 0, "the architecture must not be reported as Kratos");
     Require(sceKernelIsAuthenticTrinity() == 0, "the console must not be reported as Trinity hardware");
     Require(sceKernelIsCloudkit() == 0, "the console must not be reported as a cloud kit");
+    Require(sceKernelIsCloudkitForDecid() == 0, "the console must not be reported as a DECID cloud kit");
     if (ps4) {
         Require(sceKernelIsPs4Process() == 1, "a CUSA title must be reported as a PS4 process");
     } else {
