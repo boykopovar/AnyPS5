@@ -1,6 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libScePfs/libScePfs.hpp"
+#include <algorithm>
 #include <array>
+#include <vector>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -107,6 +109,63 @@ void Pread() {
     Require(scePfsPread(buffer.data(), 0xfffffffffffff000ULL, 0x1000, &header, work.data()) == OutOfRange);
     Require(errno == 71);
     for (std::uint8_t byte : buffer) Require(byte == 0xa5);
+}
+
+void StoredReads(std::uint16_t version, bool shortBlocks) {
+    constexpr std::uint64_t half = 0x20000;
+    std::array<std::uint64_t, 5> ends{0, 2 * half, 4 * half, 6 * half, 8 * half};
+    if (shortBlocks && version == 2) ends.back() -= half;
+    if (shortBlocks && version == 3) ends = {0, half, half + 1, 3 * half + 1, 4 * half + 6};
+    const auto dataSize = ends.back();
+    constexpr std::uint64_t tableOffset = 0x100;
+    constexpr std::uint64_t dataOffset = 0x1000;
+    std::vector<std::uint8_t> image(dataOffset + dataSize);
+    std::vector<std::uint8_t> work(scePfsGetWorkBufferSize());
+    const auto put = [&](std::size_t offset, const auto& value) {
+        std::memcpy(image.data() + offset, &value, sizeof(value));
+    };
+    PfsHeader header{};
+    header.magic = PfsMagic;
+    header.version = version;
+    header.blockCount = static_cast<std::uint32_t>(dataSize / half);
+    header.uncompressedSize = dataSize;
+    header.layoutTag = 2;
+    header.tableOffset = tableOffset;
+    if (version == 2) {
+        for (unsigned i = 0; i <= header.blockCount; ++i) put(tableOffset + i * 8, dataOffset + i * half);
+    } else {
+        header.indexCount = 2;
+        put(sizeof(header), IndexEntry{{(tableOffset << 16) | 3, 5ULL << 20}});
+        put(sizeof(header) + sizeof(IndexEntry), IndexEntry{{(dataOffset << 16) | 7, dataSize << 16}});
+        for (unsigned i = 0; i <= 4; ++i) {
+            const auto start = ends[i];
+            const auto firstSizeMinusOne = i == 4 ? 0 : std::min(ends[i + 1] - start, half) - 1;
+            put(tableOffset + i * sizeof(IndexEntry), IndexEntry{{start | (1ULL << 51) | (1ULL << 55), start | (firstSizeMinusOne << 44)}});
+        }
+    }
+    put(0, header);
+    auto* data = image.data() + dataOffset;
+    for (std::uint64_t i = 0; i < dataSize; ++i) data[i] = static_cast<std::uint8_t>(i * 13 + (i >> 8) * 901 + 7);
+
+    struct Read { unsigned block; std::uint64_t offset, count; };
+    const Read reads[] = {{0, 0, ends[1]}, {0, 3, 128}, {1, ends[1], 192},
+                          {2, ends[2] - 5, 20}, {1, 0, ends[2]}, {3, ends[3], ends[4] - ends[3]}};
+    for (const auto& read : reads) {
+        std::array<std::uint64_t, 6> command{};
+        Require(scePfsGetSingleBlockReadCommand(image.data(), image.data() + tableOffset, read.block, command.data()) == 0);
+        std::vector<std::uint8_t> actual(read.count + 2, 0xb5);
+        Require(scePfsPreadDecompressBlock(image.data() + command[1], actual.data() + 1, command.data(), read.count, read.offset, work.data()) == 0);
+        const auto blockStart = ends[read.block];
+        for (std::size_t i = 0; i < read.count; ++i) {
+            const auto position = read.offset + i;
+            Require(actual[i + 1] == (position >= blockStart && position < ends[read.block + 1] ? data[position] : 0xb5));
+        }
+        Require(actual.front() == 0xb5 && actual.back() == 0xb5);
+        std::fill(actual.begin(), actual.end(), 0xb5);
+        Require(scePfsPread(actual.data() + 1, read.count, read.offset, image.data(), work.data()) == 0);
+        Require(std::memcmp(actual.data() + 1, data + read.offset, read.count) == 0);
+        Require(actual.front() == 0xb5 && actual.back() == 0xb5);
+    }
 }
 
 void HeaderReadCommand() {
@@ -358,6 +417,10 @@ int main() {
     UncompressedSize();
     WorkBufferSize();
     Pread();
+    for (bool shortBlocks : {false, true}) {
+        StoredReads(2, shortBlocks);
+        StoredReads(3, shortBlocks);
+    }
     HeaderReadCommand();
     BlockTableReadCommand();
     BlockTableReadCommandV3();

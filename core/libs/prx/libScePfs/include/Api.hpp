@@ -11,7 +11,7 @@ int APS5_VABI scePfsGetSingleBlockReadCommand(const void* header, const void* bl
 int APS5_VABI scePfsGetUncompressedSize(const void* header, std::uint64_t* sizeOut);
 std::int64_t APS5_VABI scePfsGetWorkBufferSize(void);
 std::int64_t APS5_VABI scePfsPread(void* buffer, std::uint64_t size, std::uint64_t offset, const void* header, void* workBuffer);
-int APS5_VABI scePfsPreadDecompressBlock();
+int APS5_VABI scePfsPreadDecompressBlock(const void* source, void* destination, const void* command, std::uint64_t size, std::uint64_t offset, void* workBuffer);
 int APS5_VABI scePfsValidate(const void* header, int mode);
 
 }
