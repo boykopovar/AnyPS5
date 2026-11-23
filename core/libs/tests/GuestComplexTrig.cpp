@@ -47,5 +47,12 @@ int main() {
     Require(Near(clog_nid_postfix(Make(-1.0, 0.0)), 0.0, pi));
     Require(Near(cpow_nid_postfix(Make(2.0, 0.0), Make(2.0, 0.0)), 4.0, 0.0));
     Require(Near(cpow_nid_postfix(i, Make(2.0, 0.0)), -1.0, 0.0));
+    Require(Near(csqrt_nid_postfix(Make(-4.0, -0.0)), 0.0, -2.0));
+    const __complex__ double point = Make(0.5, 0.25);
+    Require(Near(casinh_nid_postfix(point), 0.49267568342077056, 0.2243284526346675));
+    Require(Near(catanh_nid_postfix(point), 0.5003700000525311, 0.3143981432077165));
+    const __complex__ double negative = Make(-0.5, -0.75);
+    Require(Near(casinh_nid_postfix(negative), -0.6063349998873513, -0.6822039655834323));
+    Require(Near(catanh_nid_postfix(negative), -0.3104282830771958, -0.7232206661240675));
     return 0;
 }
