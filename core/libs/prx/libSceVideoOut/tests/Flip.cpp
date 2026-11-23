@@ -1110,23 +1110,27 @@ void testHostPause() {
     check(waitForAudioPause(true), "the pause key did not pause the audio");
     const auto held = flipCount();
     std::uint64_t submitted = 0;
-    int refusals = 0;
-    for (int i = 0; i < 40; ++i) {
-        const int result = sceVideoOutSubmitFlip(handle, 0, 1, 100 + i);
-        if (result == 0) ++submitted;
-        else if (result == VIDEO_OUT_ERROR_FLIP_QUEUE_FULL) ++refusals;
-        else check(false, "a flip during the pause returned an unexpected error");
+    for (int i = 0; i < static_cast<int>(VIDEO_OUT_FLIP_QUEUE_CAPACITY); ++i) {
+        check(sceVideoOutSubmitFlip(handle, 0, 1, 100 + i) == 0, "a flip within the queue capacity was refused during the pause");
+        ++submitted;
     }
-    check(submitted == VIDEO_OUT_FLIP_QUEUE_CAPACITY && refusals == 40 - static_cast<int>(VIDEO_OUT_FLIP_QUEUE_CAPACITY), "the flip queue did not fill to its capacity during the pause");
+    check(submitted == VIDEO_OUT_FLIP_QUEUE_CAPACITY, "the flip queue did not fill to its capacity during the pause");
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     check(flipCount() == held, "a flip presented during the pause");
     {
         std::lock_guard lock(cfg->mutex);
         check(cfg->flipStatus.flipPendingNum == static_cast<int>(submitted), "the queued flips are not all pending during the pause");
     }
+    std::atomic<int> waitingResult{-1};
+    std::thread waiting([&] { waitingResult.store(sceVideoOutSubmitFlip(handle, 0, 1, 100 + static_cast<int>(submitted))); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    check(waitingResult.load() == -1, "a flip past the queue capacity returned during the pause");
 
     pushKey(windowId, SDL_SCANCODE_F9);
     check(waitForAudioPause(false), "the pause key did not resume the audio");
+    waiting.join();
+    check(waitingResult.load() == 0, "the flip that waited for room during the pause was refused after the resume");
+    ++submitted;
     check(waitForCount(held + submitted), "the queued flips did not present after the resume");
     {
         std::lock_guard lock(cfg->mutex);
