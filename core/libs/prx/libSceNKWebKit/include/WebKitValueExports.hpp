@@ -206,6 +206,15 @@ void APS5_VABI WKFramePolicyListenerUseInNewProcess(const void* policyListenerRe
 void APS5_VABI WKFramePolicyListenerUseInNewProcessWithPolicies(const void* policyListenerRef, const void* websitePoliciesRef);
 void APS5_VABI WKFramePolicyListenerUseWithPolicies(const void* policyListenerRef, const void* websitePoliciesRef);
 std::uint32_t APS5_VABI WKGeolocationManagerGetTypeID();
+struct WKGeolocationProviderBase {
+    int version;
+    const void* clientInfo;
+};
+const void* APS5_VABI WKContextGetGeolocationManager(const void* contextRef);
+void APS5_VABI WKGeolocationManagerSetProvider(const void* geolocationManagerRef, const WKGeolocationProviderBase* provider);
+void APS5_VABI WKGeolocationManagerProviderDidChangePosition(const void* geolocationManagerRef, const void* positionRef);
+void APS5_VABI WKGeolocationManagerProviderDidFailToDeterminePosition(const void* geolocationManagerRef);
+void APS5_VABI WKGeolocationManagerProviderDidFailToDeterminePositionWithErrorMessage(const void* geolocationManagerRef, const void* errorMessageRef);
 void APS5_VABI WKGeolocationPermissionRequestAllow(const void* permissionRequestRef);
 void APS5_VABI WKGeolocationPermissionRequestDeny(const void* permissionRequestRef);
 std::uint32_t APS5_VABI WKGeolocationPermissionRequestGetTypeID();

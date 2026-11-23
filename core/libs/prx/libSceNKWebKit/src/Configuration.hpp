@@ -115,6 +115,8 @@ public:
     }
 };
 
+class GeolocationManager;
+
 class ProcessPool final : public ObjectOf<ObjectType::ProcessPool> {
 public:
     ProcessPool() : configuration(Make<ProcessPoolConfiguration>()) {}
@@ -142,6 +144,7 @@ public:
     bool initialProcessWarmed = false;
     bool useSeparateServiceWorkerProcess = false;
     bool currentModifierStateCleared = false;
+    mutable Retained<GeolocationManager> geolocationManager;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
@@ -252,6 +255,21 @@ public:
     double speed = 0.0;
     bool providesFloorLevel = false;
     double floorLevel = 0.0;
+};
+
+class GeolocationManager final : public ObjectOf<ObjectType::GeolocationManager> {
+public:
+    Retained<GeolocationPosition> lastPosition;
+    bool hasPosition = false;
+    bool failed = false;
+    Retained<String> errorMessage;
+
+    int providerVersion = 0;
+    const void* providerClientInfo = nullptr;
+    void (*startUpdating)(const void*, const void*) = nullptr;
+    void (*stopUpdating)(const void*, const void*) = nullptr;
+    void (*setEnableHighAccuracy)(const void*, bool, const void*) = nullptr;
+    bool providerConfigured = false;
 };
 
 class PageGroup final : public ObjectOf<ObjectType::PageGroup> {

@@ -202,7 +202,6 @@ int APS5_VABI WKBundleSetWebNotificationPermission();
 int APS5_VABI WKContextCopyPlugInAutoStartOriginHashes();
 int APS5_VABI WKContextDownloadURLRequest();
 int APS5_VABI WKContextGetApplicationCacheManager();
-int APS5_VABI WKContextGetGeolocationManager();
 int APS5_VABI WKContextGetGlobalStatistics();
 int APS5_VABI WKContextGetIconDatabase();
 int APS5_VABI WKContextGetKeyValueStorageManager();
@@ -248,10 +247,6 @@ int APS5_VABI WKFrameGetWebArchive();
 int APS5_VABI WKFrameInfoCreateFrameHandleRef();
 
 int APS5_VABI WKFrameStopLoading();
-int APS5_VABI WKGeolocationManagerProviderDidChangePosition();
-int APS5_VABI WKGeolocationManagerProviderDidFailToDeterminePosition();
-int APS5_VABI WKGeolocationManagerProviderDidFailToDeterminePositionWithErrorMessage();
-int APS5_VABI WKGeolocationManagerSetProvider();
 int APS5_VABI WKHTTPCookieStoreDeleteAllCookies();
 int APS5_VABI WKHTTPCookieStoreSetCookieForHostname();
 int APS5_VABI WKHTTPCookieStoreSetHTTPCookieAcceptPolicy();
