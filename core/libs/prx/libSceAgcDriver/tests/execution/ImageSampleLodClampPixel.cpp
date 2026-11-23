@@ -29,9 +29,11 @@ constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::uint32_t MaxLod = 0xfffu;
 constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Type2D = 9;
+constexpr std::size_t TiledTexelsAlignment = 65536;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 alignas(256) std::array<std::uint8_t, 16384> Texels{};
-alignas(65536) std::array<std::uint8_t, 0x60000> TiledTexels{};
+std::array<std::uint8_t, 0x60000 + TiledTexelsAlignment - 1> TiledTexelsStorage{};
+std::uint8_t* TiledTexels = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(TiledTexelsStorage.data()) + TiledTexelsAlignment - 1) & ~(TiledTexelsAlignment - 1));
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -82,7 +84,7 @@ std::uint32_t SideOf(const Case& item) {
 
 std::array<std::uint32_t, 8> TextureDescriptor(const Case& item) {
     const auto side = SideOf(item);
-    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(item.tiled ? TiledTexels.data() : Texels.data()));
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(item.tiled ? TiledTexels : Texels.data()));
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (item.minLod << 8u) | (Format8888UNorm << 20u) | (((side - 1u) & 3u) << 30u),
@@ -102,7 +104,7 @@ std::uint32_t AllocatedLevels(const Case& item) {
 }
 
 void FillTexture(const Case& item) {
-    TiledTexels.fill(0xeeu);
+    std::fill_n(TiledTexels, 0x60000, 0xeeu);
     for (const auto& [level, offset] : TailSlots) {
         TiledTexels[offset] = static_cast<std::uint8_t>(level);
         TiledTexels[offset + 3u] = 255u;
