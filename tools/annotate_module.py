@@ -598,7 +598,10 @@ def annotate(module_path, prefix, namer):
     except ModuleError as error:
         print(f"{source}: skipping unwind labels: {error}", file=sys.stderr)
         unwind_labels = {}
-    branch_targets.update(unwind_labels)
+    if unwind_labels:
+        decoded = (int(head.group(1), 16) for line in listing if (head := LINE_ADDRESS.match(line)))
+        unwind_labels = {address: unwind_labels[address] for address in decoded if address in unwind_labels}
+        branch_targets.update(unwind_labels)
     write_lines(prefix + ".imports.txt", ["%#x %s %s" % (slot, slots[slot], namer.resolve(slots[slot])) for slot in sorted(slots)])
     write_lines(prefix + ".exports.txt", export_lines(exports, thread_local, namer))
     write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, branch_targets, namer, entry, unwind_labels))

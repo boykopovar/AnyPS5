@@ -501,6 +501,11 @@ class AnnotateModuleTests(unittest.TestCase):
         self.assertFalse(any("unwind_" in line for line in listing))
         self.assertTrue(instruction(listing, "call").endswith("; -> " + IMPORT_NAME))
 
+    def test_branch_annotation_requires_a_listed_unwind_target_instruction(self):
+        code = b"\xe8\x01\x00\x00\x00\xb8\x90\x90\x90\x90\xc3"
+        self.annotate(unwind_image([CODE_ADDRESS + 6], code=code, symbols=(), relocations=()))
+        self.assertNotIn("unwind_", self.read(".asm"))
+
     def test_bad_unwind_entry_omits_partial_labels_but_keeps_the_listing(self):
         image = unwind_image([CODE_ADDRESS, CODE_ADDRESS + 6], relocations=())
         struct.pack_into("<i", image, 0x2518, -1)

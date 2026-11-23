@@ -102,8 +102,8 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    put `x86_64-linux-gnu-objdump` on `PATH` if the host `objdump` cannot disassemble x86-64.
 
    On stripped modules, look for `unwind_<address>` in the assembly listing. These labels mark unnamed code ranges
-   from the ELF unwind index. Direct calls and jumps to a range start carry the same label. One function can have
-   several ranges.
+   from the ELF unwind index when the listing has an instruction at that address. Direct calls and jumps to a
+   labeled range start carry the same label. One function can have several ranges.
 
    To name symbols in Ghidra without disassembling or downloading a database:
 
