@@ -287,6 +287,9 @@ OpaqueJSContextGroup::OpaqueJSContextGroup() {
 
 OpaqueJSContextGroup::~OpaqueJSContextGroup() {
     shuttingDown = true;
+    const auto destroyedMaps = weakMaps;
+    weakMaps.clear();
+    for (auto* map : destroyedMaps) delete map;
     for (auto& [ptr, data] : callbackDataByPtr) {
         if (data) RunClassFinalize(data);
     }
@@ -746,6 +749,16 @@ OpaqueJSWeakObjectMap::~OpaqueJSWeakObjectMap() {
             group->weakMaps.erase(it);
         }
     }
+}
+
+OpaqueJSWeakObjectMap* CreateWeakObjectMap(OpaqueJSContext* ctx, void* privateData, JSWeakMapDestroyedCallback callback) {
+    if (!ctx || !ctx->group) throw std::invalid_argument("JSWeakObjectMapCreate: null context");
+    auto* map = new OpaqueJSWeakObjectMap();
+    map->group = ctx->group;
+    map->privateData = privateData;
+    map->destroyedCallback = callback;
+    ctx->group->weakMaps.push_back(map);
+    return map;
 }
 
 }  // namespace NKWebKit

@@ -32,6 +32,11 @@ bool APS5_VABI JSObjectHasPropertyForKey(const void* context, const void* object
     return Bridge(__func__).hasPropertyForKey(context, object, key, exception);
 }
 
+void* APS5_VABI JSWeakObjectMapCreate(const void* context, void* privateData, Jsc::WeakMapDestroyedCallback callback) {
+    if (!context) throw std::invalid_argument("JSWeakObjectMapCreate: null context");
+    return Bridge(__func__).createWeakObjectMap(context, privateData, callback);
+}
+
 void APS5_VABI _ZN3WTF13StringBuilder6resizeEj(Jsc::WtfAbi::StringBuilder* self, unsigned newSize) {
     if (!self) throw std::invalid_argument(__func__);
     Bridge(__func__).resizeStringBuilder(self, newSize);

@@ -45,7 +45,12 @@ void ResizeStringBuilder(Jsc::WtfAbi::StringBuilder* builder, unsigned newSize) 
     WtfAbi::Resize(*reinterpret_cast<WtfAbi::StringBuilder*>(builder), newSize);
 }
 
-constexpr Jsc::ApiBridge bridge{&MakeString, &HasPropertyForKey, &ResizeStringBuilder};
+void* CreateWeakObjectMapBridge(const void* context, void* privateData, Jsc::WeakMapDestroyedCallback callback) {
+    return NKWebKit::CreateWeakObjectMap(Context(context), privateData,
+        reinterpret_cast<JSWeakMapDestroyedCallback>(callback));
+}
+
+constexpr Jsc::ApiBridge bridge{&MakeString, &HasPropertyForKey, &ResizeStringBuilder, &CreateWeakObjectMapBridge};
 const bool bridgeRegistered = (RegisterApiBridge_nid_no_patch(&bridge), true);
 
 }

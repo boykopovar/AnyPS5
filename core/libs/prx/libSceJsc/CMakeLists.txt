@@ -182,6 +182,15 @@ if(BUILD_TESTING)
         set_tests_properties(jsc_proto_call_frame PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")
     endif()
+    add_test_executable(jsc_weak_object_map_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/WeakObjectMap.cpp)
+    target_include_directories(jsc_weak_object_map_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(jsc_weak_object_map_tests PRIVATE libSceJsc libc)
+    configure_windows_unwind(jsc_weak_object_map_tests)
+    add_test(NAME jsc_weak_object_map COMMAND jsc_weak_object_map_tests)
+    if(WIN32)
+        set_tests_properties(jsc_weak_object_map PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")
+    endif()
 endif()
 
 target_sources(libSceJsc PRIVATE src/WtfBitVector.cpp)
