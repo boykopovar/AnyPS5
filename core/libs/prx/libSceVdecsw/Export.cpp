@@ -80,6 +80,9 @@ struct ConsumedInput {
     std::uint32_t frames;
 };
 
+static_assert(sizeof(AvcPictureInfo) == sizeof(SceVideodec2::AvcPictureInfo) && offsetof(AvcPictureInfo, vui) == offsetof(SceVideodec2::AvcPictureInfo, aspectRatioInfoPresentFlag));
+static_assert(sizeof(HevcPictureInfo) == sizeof(SceVideodec2::HevcPictureInfo) && offsetof(HevcPictureInfo, presentFlags) == offsetof(SceVideodec2::HevcPictureInfo, vpsPresent));
+
 using PictureInfo = std::variant<AvcPictureInfo, HevcPictureInfo>;
 
 struct Picture {
@@ -120,6 +123,14 @@ std::shared_ptr<Decoder> frameOwner(const void* frameBuffer) {
 }
 
 PictureInfo pictureInfo(std::uint64_t handle, const SceVideodec2::OutputInfo& output) {
+    PictureInfo parsed;
+    if (output.codecType == CodecHevc) parsed.emplace<HevcPictureInfo>();
+    else if (output.codecType != CodecAvc) throw std::runtime_error("Vdecsw: picture info is only implemented for H.264 and HEVC");
+    const bool complete = std::visit([&](auto& info) {
+        return Videodec2CopyParsedPictureInfo_nid_no_patch(handle, output.frameBuffer, &info, sizeof(info));
+    }, parsed);
+    if (complete) return parsed;
+
     SceVideodec2::Internal::PictureHeader header{};
     Videodec2PictureHeader_nid_no_patch(handle, output.frameBuffer, &header);
     const auto& crop = header.crop;
@@ -151,7 +162,6 @@ PictureInfo pictureInfo(std::uint64_t handle, const SceVideodec2::OutputInfo& ou
         info.frameCropBottomOffset = info.confWinBottomOffset;
         return info;
     }
-    if (output.codecType != CodecAvc) throw std::runtime_error("Vdecsw: picture info is only implemented for H.264 and HEVC");
     const auto widthInMbs = (output.frameWidth + 15u) / 16u;
     const auto heightInMbs = (output.frameHeight + 15u) / 16u;
     AvcPictureInfo info{};

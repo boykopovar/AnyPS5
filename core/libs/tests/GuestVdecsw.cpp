@@ -1,6 +1,7 @@
 #include "prx/libSceVdecsw/libSceVdecsw.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -259,6 +260,11 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units) {
             checkGenericPictureInfo(output, info);
             const auto unit = DisplayOrderUnits[pictures];
             check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit && info.profileIdc == 100, "pictures out of display order");
+            const auto avc = std::bit_cast<SceVideodec2::AvcPictureInfo>(info);
+            check(avc.levelIdc == 10, "AVC level differs from the SPS");
+            check(avc.aspectRatioInfoPresentFlag == 1 && avc.aspectRatioIdc == 1 && avc.sarWidth == 1 && avc.sarHeight == 1, "AVC sample aspect ratio differs");
+            check(avc.timingInfoPresentFlag == 1 && avc.numUnitsInTick == 1 && avc.timeScale == 60, "AVC timing differs");
+            check(avc.auDelimiterPresentFlag == 1 && avc.sequenceParameterSetPresentFlag == (unit == 0) && avc.pictureParameterSetPresentFlag == (unit == 0), "AVC NAL presence differs");
             check(info.idrPictureFlag == (unit == 0 ? 1 : 0), "picture " + std::to_string(pictures) + " IDR flag differs from its nal_unit_type");
             check(info.picWidthInMbsMinus1 == Width / 16 - 1 && info.picHeightInMapUnitsMinus1 == CodedHeight / 16 - 1 && info.frameMbsOnlyFlag == 1 && info.frameCroppingFlag == 1 && info.frameCropLeftOffset == 0 && info.frameCropRightOffset == 0 && info.frameCropTopOffset == 0 && info.frameCropBottomOffset == (CodedHeight - Height) / 2, "picture geometry in the picture info is wrong");
             check(hashNv12(static_cast<const std::uint8_t*>(output.frameBuffer), output.framePitch, output.frameHeight) == PictureHashes[pictures], "picture " + std::to_string(pictures) + " differs from the reference");
@@ -319,6 +325,9 @@ void testHevc() {
             checkGenericPictureInfo(output, info);
             const auto unit = HevcDisplayOrderUnits[pictures];
             check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit, "HEVC pictures out of display order");
+            check(info.aspectRatioInfoPresentFlag == 1 && info.aspectRatioIdc == 1 && info.sarWidth == 1 && info.sarHeight == 1, "HEVC sample aspect ratio differs");
+            check(info.timingInfoPresentFlag == 1 && info.numUnitsInTick == 1 && info.timeScale == 30, "HEVC timing differs");
+            check(info.presentFlags[0] == (unit == 0) && info.presentFlags[1] == (unit == 0) && info.presentFlags[2] == (unit == 0), "HEVC VPS/SPS/PPS presence differs");
             check(info.idrPictureFlag == (pictures == 0 ? 1 : 0) && info.irapPictureFlag == (pictures == 0 ? 1 : 0), "HEVC random access flags differ");
             check(info.generalProfileIdc == 1 && info.generalLevelIdc == 30 && info.bitDepthLumaMinus8 == 0 && info.bitDepthChromaMinus8 == 0, "HEVC profile, level or bit depth differs");
             check(info.picWidthInLumaSamples == Width && info.picHeightInLumaSamples == Height && info.conformanceWindowFlag == 0 && info.frameCroppingFlag == 0, "HEVC picture geometry in the picture info is wrong");
