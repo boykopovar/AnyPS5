@@ -225,7 +225,7 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
         for (const auto& range : guarded) require(range.first >= next, "conditional execution range ends inside a packet");
     };
     for (std::size_t cursor = 0; cursor < words;) {
-        const auto header = guest[cursor];
+        const auto header = GuestMemory::LoadGuestWord(guest[cursor]);
         if (Pm4::FillerPacket(header)) {
             reach(cursor, cursor + 1);
             submission.commands.push_back(header);
@@ -234,18 +234,18 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
         }
         const auto count = (header & 0xc0000000u) == 0xc0000000u ? Pm4::PacketWords(header) : words - cursor;
         if ((header & 0xc0000000u) != 0xc0000000u || count > words - cursor) {
-            submission.commands.insert(submission.commands.end(), guest + cursor, guest + words);
+            GuestMemory::AppendGuestWords(submission.commands, guest + cursor, words - cursor);
             return false;
         }
         reach(cursor, cursor + count);
         const auto opcode = (header >> 8u) & 0xffu;
         if (opcode == 0x3fu && count == 14) {
-            const auto mode = guest[cursor + 1] & 3u;
+            const auto mode = GuestMemory::LoadGuestWord(guest[cursor + 1]) & 3u;
             require(mode == 1u || mode == 2u, "invalid COND_INDIRECT_BUFFER mode");
-            require(((guest[cursor + 1] >> 8u) & 7u) == 0u, "a COND_INDIRECT_BUFFER with a comparison is not implemented");
+            require(((GuestMemory::LoadGuestWord(guest[cursor + 1]) >> 8u) & 7u) == 0u, "a COND_INDIRECT_BUFFER with a comparison is not implemented");
             require(!Pm4::Predicated(header), "a predicated COND_INDIRECT_BUFFER is not implemented");
-            const auto* target = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(guest[cursor + 8] & ~3u) | (static_cast<std::uintptr_t>(guest[cursor + 9] & 0xffffu) << 32u));
-            const std::size_t targetWords = guest[cursor + 10] & 0xfffffu;
+            const auto* target = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(GuestMemory::LoadGuestWord(guest[cursor + 8]) & ~3u) | (static_cast<std::uintptr_t>(GuestMemory::LoadGuestWord(guest[cursor + 9]) & 0xffffu) << 32u));
+            const std::size_t targetWords = GuestMemory::LoadGuestWord(guest[cursor + 10]) & 0xfffffu;
             if (targetWords != 0) {
                 GuestMemory::CheckRange(target, targetWords * sizeof(std::uint32_t), alignof(std::uint32_t));
                 const auto start = submission.commands.size();
@@ -262,15 +262,15 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
         }
         if (opcode == 0x3fu) {
             require(count == 4, "invalid INDIRECT_BUFFER size");
-            const auto* target = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(guest[cursor + 1] & ~3u) | (static_cast<std::uintptr_t>(guest[cursor + 2] & 0xffffu) << 32u));
-            const std::size_t targetWords = guest[cursor + 3] & 0xfffffu;
-            const bool chain = (guest[cursor + 3] & (1u << 20u)) != 0;
+            const auto* target = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(GuestMemory::LoadGuestWord(guest[cursor + 1]) & ~3u) | (static_cast<std::uintptr_t>(GuestMemory::LoadGuestWord(guest[cursor + 2]) & 0xffffu) << 32u));
+            const std::size_t targetWords = GuestMemory::LoadGuestWord(guest[cursor + 3]) & 0xfffffu;
+            const bool chain = (GuestMemory::LoadGuestWord(guest[cursor + 3]) & (1u << 20u)) != 0;
             require(!chain || guarded.empty(), "a chained INDIRECT_BUFFER inside a conditional execution range is not implemented");
             GuestMemory::CheckRange(target, targetWords * sizeof(std::uint32_t), alignof(std::uint32_t));
             if (Pm4::Predicated(header)) {
                 require(!chain, "predicated command buffer chains are not implemented");
                 const auto start = submission.commands.size();
-                submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
+                GuestMemory::AppendGuestWords(submission.commands, guest + cursor, count);
                 require(!copySegment(submission, target, targetWords, budget, depth + 1), "a REWIND inside a predicated command buffer is not implemented");
                 for (auto inner = start + count; inner < submission.commands.size(); inner += Pm4::PacketWords(submission.commands[inner])) {
                     const auto innerHeader = submission.commands[inner];
@@ -305,8 +305,9 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
             submission.rewindWords = words - cursor;
             return true;
         }
-        if (opcode == 0x22u && count == 5) guarded.emplace_back(cursor + count + Pm4::ConditionalWords(std::span(guest + cursor, count)), submission.commands.size());
-        submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
+        const auto start = submission.commands.size();
+        GuestMemory::AppendGuestWords(submission.commands, guest + cursor, count);
+        if (opcode == 0x22u && count == 5) guarded.emplace_back(cursor + count + Pm4::ConditionalWords(std::span(submission.commands.data() + start, count)), start);
         cursor += count;
     }
     reach(words, words);

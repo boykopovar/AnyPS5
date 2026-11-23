@@ -323,7 +323,7 @@ void testConcurrentCopies(const std::filesystem::path& tool) {
     });
     for (std::size_t frame = 0; frame + 1 < Frames; ++frame) {
         const auto bytes = pattern(static_cast<std::uint8_t>(frame));
-        std::memcpy(layout.source, bytes.data(), bytes.size());
+        AgcDriver::GuestMemory::CopyToGuestBytes(layout.source, bytes.data(), bytes.size());
         copyFrame(layout.firstCommands, layout, layout.firstTarget);
         flip();
     }

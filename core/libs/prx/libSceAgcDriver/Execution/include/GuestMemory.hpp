@@ -33,6 +33,22 @@ Commitment DescribeCommitted(std::uint64_t address, std::size_t bytes, bool writ
 void CopyGuestBytes(void* destination, const void* source, std::size_t bytes);
 void CopyToGuestBytes(void* destination, const void* source, std::size_t bytes);
 bool GuestBytesEqual(const void* guest, const void* expected, std::size_t bytes);
+inline std::uint32_t LoadGuestWord(const std::uint32_t& word) {
+#ifdef ANYPS5_ENABLE_TSAN
+    return __atomic_load_n(&word, __ATOMIC_RELAXED);
+#else
+    return word;
+#endif
+}
+inline void AppendGuestWords(std::vector<std::uint32_t>& destination, const std::uint32_t* source, std::size_t words) {
+#if defined(ANYPS5_ENABLE_ASAN) || defined(ANYPS5_ENABLE_TSAN)
+    const auto at = destination.size();
+    destination.resize(at + words);
+    CopyGuestBytes(destination.data() + at, source, words * sizeof(std::uint32_t));
+#else
+    destination.insert(destination.end(), source, source + words);
+#endif
+}
 void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t alignment = 1);
 std::uint64_t ReadLabel(std::uint64_t address, std::size_t bytes);
 // Variants for resources in heaps the guest commits on demand (partially resident textures, GPU

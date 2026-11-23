@@ -75,11 +75,9 @@ std::uint32_t* WriteData(CommandBuffer* buffer, bool compute, std::uint8_t dst, 
     std::memcpy(snapshot, data, count * sizeof(std::uint32_t));
     const auto destination = compute ? static_cast<std::uint32_t>(dst) << 8u : ((dst & 1u) << 30u) | ((dst & 0x1eu) << 7u);
     auto* packet = Allocate(buffer, count + 4u, function);
-    packet[0] = Header(0x37u, count + 4u);
-    packet[1] = destination | (static_cast<std::uint32_t>(increment) << 16u) | (static_cast<std::uint32_t>(writeConfirm) << 20u) | (static_cast<std::uint32_t>(cachePolicy) << 25u);
-    packet[2] = static_cast<std::uint32_t>(address);
-    packet[3] = static_cast<std::uint32_t>(address >> 32u);
-    std::copy_n(snapshot, count, packet + 4);
+    const std::uint32_t head[] = {Header(0x37u, count + 4u), destination | (static_cast<std::uint32_t>(increment) << 16u) | (static_cast<std::uint32_t>(writeConfirm) << 20u) | (static_cast<std::uint32_t>(cachePolicy) << 25u), static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    StoreWords(packet, head, 4);
+    StoreWords(packet + 4, snapshot, count);
     return packet;
 }
 

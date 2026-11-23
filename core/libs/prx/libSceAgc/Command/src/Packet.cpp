@@ -147,12 +147,22 @@ std::uint32_t* Allocate(CommandBuffer* buffer, std::uint32_t count, const char* 
 }
 
 #ifdef ANYPS5_ENABLE_TSAN
-static void storePayload(std::uint32_t* destination, std::initializer_list<std::uint32_t> payload) {
-    for (const std::uint32_t value : payload) std::atomic_ref<std::uint32_t>(*destination++).store(value, std::memory_order_relaxed);
+void StoreWords(std::uint32_t* destination, const std::uint32_t* source, std::size_t count) {
+    for (std::size_t index = 0; index < count; ++index) std::atomic_ref<std::uint32_t>(destination[index]).store(source[index], std::memory_order_relaxed);
 }
 #else
-static void storePayload(std::uint32_t* destination, std::initializer_list<std::uint32_t> payload) {
-    std::copy(payload.begin(), payload.end(), destination);
+void StoreWords(std::uint32_t* destination, const std::uint32_t* source, std::size_t count) {
+    std::copy_n(source, count, destination);
+}
+#endif
+
+#ifdef ANYPS5_ENABLE_TSAN
+static void ClearWords(std::uint32_t* destination, std::size_t count) {
+    for (std::size_t index = 0; index < count; ++index) std::atomic_ref<std::uint32_t>(destination[index]).store(0u, std::memory_order_relaxed);
+}
+#else
+static void ClearWords(std::uint32_t* destination, std::size_t count) {
+    std::fill_n(destination, count, 0u);
 }
 #endif
 
@@ -161,8 +171,8 @@ std::uint32_t* Emit(CommandBuffer* buffer, std::uint32_t opcode, std::initialize
     const auto count = static_cast<std::uint32_t>(payload.size()) + 1u;
     const auto header = Header(opcode, count);
     auto* packet = Allocate(buffer, count, function);
-    packet[0] = header;
-    storePayload(packet + 1, payload);
+    StoreWords(packet, &header, 1);
+    StoreWords(packet + 1, payload.begin(), payload.size());
     return packet;
 }
 
@@ -174,8 +184,8 @@ void ValidatePacket(const std::uint32_t* packet, std::uint32_t opcode, std::uint
 std::uint32_t* WriteNop(CommandBuffer* buffer, std::uint32_t count, const char* function) {
     const auto header = count == 1 ? 0xffff1000u : Header(0x10u, count);
     auto* packet = Allocate(buffer, count, function);
-    packet[0] = header;
-    std::fill_n(packet + 1, count - 1u, 0u);
+    StoreWords(packet, &header, 1);
+    ClearWords(packet + 1, count - 1u);
     return packet;
 }
 
@@ -187,9 +197,9 @@ std::uint32_t* WriteRegisterRange(CommandBuffer* buffer, std::uint32_t opcode, s
         std::memcpy(snapshot.data(), values, static_cast<std::size_t>(count) * sizeof(std::uint32_t));
     }
     auto* packet = Allocate(buffer, count + 2u, function);
-    packet[0] = Header(opcode, count + 2u);
-    packet[1] = offset;
-    std::copy(snapshot.begin(), snapshot.end(), packet + 2);
+    const std::uint32_t head[] = {Header(opcode, count + 2u), offset};
+    StoreWords(packet, head, 2);
+    StoreWords(packet + 2, snapshot.data(), snapshot.size());
     return packet;
 }
 
