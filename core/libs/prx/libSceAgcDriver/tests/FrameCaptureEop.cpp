@@ -492,10 +492,12 @@ void testWaitingRecorderReportsProgress() {
     auto* const recorder = AgcDriver::FrameRecorder::Active();
     check(recorder != nullptr, "the frame recorder is not active");
     const char* trigger = std::getenv("APS5_FRAME_CAPTURE_TRIGGER");
-    check(trigger != nullptr && *trigger != '\0', "the waiting log test needs APS5_FRAME_CAPTURE_TRIGGER");
+    const bool triggerFile = trigger != nullptr && *trigger != '\0';
+    const char* scheduled = std::getenv("APS5_FRAME_CAPTURE_AT_FLIP");
+    check(triggerFile != (scheduled != nullptr && *scheduled != '\0'), "the waiting log test needs exactly one of APS5_FRAME_CAPTURE_TRIGGER and APS5_FRAME_CAPTURE_AT_FLIP");
     const std::filesystem::path directory(captureDirectory());
     std::filesystem::remove_all(directory);
-    { std::ofstream(trigger) << 1; }
+    if (triggerFile) std::ofstream(trigger) << 1;
     std::uint64_t waits = 0;
     AgcDriver::FrameRecorder::SetStartIdleWaitForTest([&] {
         ++waits;
@@ -505,15 +507,16 @@ void testWaitingRecorderReportsProgress() {
         ~Restore() { AgcDriver::FrameRecorder::SetStartIdleWaitForTest({}); }
     } restore;
     const auto log = capturedStandardError([&] { recorder->RewindTailFlips(650); });
-    std::filesystem::remove(trigger);
+    if (triggerFile) std::filesystem::remove(trigger);
     check(waits == 600, "the recorder did not try to start once per frame boundary until it gave up: " + std::to_string(waits) + " tries");
-    check(occurrences(log, "[frame-capture] waiting:") == 12, "the waiting recorder did not report at the first and every 50th boundary:\n" + log);
+    check(occurrences(log, "[frame-capture] waiting to start the capture:") == 12, "the waiting recorder did not report at the first and every 50th boundary:\n" + log);
     for (const auto attempt : {1u, 50u, 100u, 550u}) {
         check(log.find("at " + std::to_string(attempt) + " of up to 600 frame boundaries") != std::string::npos, "no waiting report at boundary " + std::to_string(attempt) + ":\n" + log);
     }
     check(log.find("at 2 of up to 600") == std::string::npos && log.find("at 600 of up to 600") == std::string::npos, "the waiting recorder reported between its intervals or at its last try:\n" + log);
     check(occurrences(log, "[frame-capture] giving up:") == 1, "the waiting recorder did not give up once after 600 boundaries:\n" + log);
-    check(log.find("giving up") > log.rfind("[frame-capture] waiting:"), "the waiting recorder reported after it gave up:\n" + log);
+    check(log.find("giving up") > log.rfind("[frame-capture] waiting to start the capture:"), "the waiting recorder reported after it gave up:\n" + log);
+    check(log.find("trigger") == std::string::npos, "the waiting recorder mentioned a trigger:\n" + log);
     check(log.find("[frame-capture] started") == std::string::npos && !std::filesystem::exists(directory / FrameCaptureWriter::MemoryName), "the capture started although the driver never went idle");
 }
 

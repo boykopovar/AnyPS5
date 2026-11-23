@@ -577,7 +577,7 @@ void FrameRecorder::start() {
             std::fprintf(stderr, "[frame-capture] giving up: the driver was not idle, or a guest call was still being accepted, at all of %llu frame boundaries\n", static_cast<unsigned long long>(startAttempts));
             state = State::Done;
         } else if (startAttempts == 1 || startAttempts % WaitingReportEvery == 0) {
-            std::fprintf(stderr, "[frame-capture] waiting: the trigger is set, but the driver was not idle, or a guest call was still being accepted, at %llu of up to %llu frame boundaries\n",
+            std::fprintf(stderr, "[frame-capture] waiting to start the capture: the driver was not idle, or a guest call was still being accepted, at %llu of up to %llu frame boundaries\n",
                     static_cast<unsigned long long>(startAttempts), static_cast<unsigned long long>(MaxStartAttempts));
         }
         return;
