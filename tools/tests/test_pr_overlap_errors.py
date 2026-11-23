@@ -186,6 +186,24 @@ class ErrorReportTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in sleep_mock.call_args_list], [0.01, 0.02])
         self.assertEqual(raised.exception.stderr, message)
 
+    def test_gh_retries_io_timeouts(self):
+        message = ('Get "https://api.github.com/repos/owner/project/pulls?state=open&base=main&per_page=100&page=6": '
+                   'dial tcp 192.0.2.1:443: i/o timeout')
+        failed = subprocess.CompletedProcess([], 1, stdout="", stderr=message)
+        success = subprocess.CompletedProcess([], 0, stdout='[{"number": 17}]\n', stderr="")
+        with patch.object(pr_overlap.subprocess, "run", side_effect=[failed, success]) as run_mock, \
+                patch.object(pr_overlap.time, "sleep") as sleep_mock:
+            self.assertEqual(pr_overlap.gh("api", "repos/owner/project/pulls", delay=0.01), '[{"number": 17}]\n')
+        self.assertEqual(run_mock.call_count, 2)
+        sleep_mock.assert_called_once_with(0.01)
+        with patch.object(pr_overlap.subprocess, "run", return_value=failed) as run_mock, \
+                patch.object(pr_overlap.time, "sleep") as sleep_mock:
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                pr_overlap.gh("api", "repos/owner/project/pulls", attempts=3, delay=0.01)
+        self.assertEqual(run_mock.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep_mock.call_args_list], [0.01, 0.02])
+        self.assertEqual(raised.exception.stderr, message)
+
     def test_gh_does_not_retry_windows_socket_permission_errors(self):
         message = ('dial tcp 192.0.2.1:443: connectex: An attempt was made to access a socket '
                    'in a way forbidden by its access permissions.')

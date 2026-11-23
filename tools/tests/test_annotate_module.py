@@ -528,6 +528,14 @@ class AnnotateModuleTests(unittest.TestCase):
         self.run_tool(build_module(), "--no-names")
         self.assertIn("; -> " + nid(IMPORT_NAME), self.read(".asm"))
 
+    def test_database_without_nid_records_is_reported(self):
+        db = self.root / "empty.csv"
+        db.write_text("# comment only\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            self.run_tool(build_module(), "--db", str(db))
+        self.assertEqual(raised.exception.code, "%s: %s: database contains no valid NID records" % (self.root / "module.prx", db))
+        self.assertEqual([], list(self.root.glob("out*")))
+
     def test_a_temporary_directory_outside_the_ansi_code_page_is_disassembled(self):
         temporary = self.root / "тест 界 \U0001f3ae"
         temporary.mkdir()
