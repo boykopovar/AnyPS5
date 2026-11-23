@@ -51,7 +51,11 @@ int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void) {
 
 int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_t unknown, const char* typeName, const char* what) {
     (void)unknown;
-    std::fprintf(stderr, "[coredump] uncaught C++ exception %p of type %s%s%s\n", exception, typeName ? typeName : "(unknown)", what ? ", what(): " : "", what ? what : "");
+    std::string type;
+    std::string message;
+    const bool typeCopied = CopyGuestString_nid_no_patch(typeName, 65536, type) == 0;
+    const bool whatCopied = CopyGuestString_nid_no_patch(what, 65536, message) == 0;
+    std::fprintf(stderr, "[coredump] uncaught C++ exception %p of type %s%s%s\n", exception, typeCopied ? type.c_str() : "(unknown)", whatCopied ? ", what(): " : "", message.c_str());
     return 0;
 }
 
