@@ -854,7 +854,7 @@ LibreSsl3EvpPkey* APS5_VABI PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(Li
             if (key != nullptr) {
                 LibreSsl3EvpPkey* previous = nullptr;
                 if (!CopyGuestInPreservingErrno(previous, key)
-                    || !GuestWritablePreservingErrno(key, sizeof(previous))) {
+                    || !GuestWritable_nid_no_patch(key, sizeof(previous))) {
                     EVP_PKEY_free_nid_disambig1_nid_postfix(ret);
                     throw std::invalid_argument("PEM_read_bio_PrivateKey: inaccessible key slot");
                 }
