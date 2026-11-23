@@ -244,7 +244,8 @@ static void* HostVectorEnd(void* out, const void* self, const std::int32_t eleme
 static void* HostIteratorAdvance(void* self, const std::size_t elementSize);
 static bool HostIteratorNotEqual(const void* self, const void* other);
 static std::uint64_t HostVectorSize(const void* self, const std::size_t elementSize, const char* function);
-static void ReleaseIntrusivePtr(IntrusivePtr* self, const std::size_t referenceCountOffset, const char* function);
+using IntrusivePtrDestroy = void (APS5_VABI*)(void*);
+static void ReleaseIntrusivePtr(IntrusivePtr* self, const std::size_t referenceCountOffset, const char* function, IntrusivePtrDestroy destroy = nullptr);
 static void* CopyMemberIntrusivePtr(void* out, const void* self, const std::size_t memberOffset, const std::size_t referenceCountOffset);
 static void* CopyOnlineId(void* out, const void* self, const std::size_t memberOffset);
 
@@ -1430,7 +1431,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12
 
 static_assert(sizeof(IntrusivePtr) == 0x18);
 
-using IntrusivePtrDestroy = void (APS5_VABI*)(void*);
 
 static void APS5_VABI DestroyString(void* object);
 static std::atomic_ref<std::int32_t> ReferenceCount(void* object, const std::size_t offset) {
@@ -1519,7 +1519,7 @@ static void CopyIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* source, con
 }
 
 static void ReleaseIntrusivePtr(IntrusivePtr* self, const std::size_t referenceCountOffset,
-                                const char* function, IntrusivePtrDestroy destroy = nullptr) {
+                                const char* function, IntrusivePtrDestroy destroy) {
     (void)function;
     if (VectorReferenceOffset(referenceCountOffset)) ForgetVectorHandle(self);
     if (!self->object) return;
