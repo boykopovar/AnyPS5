@@ -1101,10 +1101,18 @@ static void CheckLargeWidths() {
     char small[16];
     for (const std::size_t capacity : {std::size_t{0}, std::size_t{1}, sizeof(small)}) {
         std::memset(small, 'Z', sizeof(small));
-        Require(snprintf_nid_postfix(capacity ? small : nullptr, capacity, "%2147483647d", 1) == 2147483647);
-        if (capacity > 1) Require(small[capacity - 2] == ' ' && small[capacity - 1] == 0);
+        errno = EDOM;
+        const int length = capacity == sizeof(small) ? FormatList(small, capacity, "X%*d", INT_MAX - 1, 1)
+                                                    : snprintf_nid_postfix(capacity ? small : nullptr, capacity, "%2147483647d", 1);
+        Require(length == INT_MAX && errno == EDOM);
+        if (capacity == 1) Require(small[0] == 0 && small[1] == 'Z');
+        if (capacity > 1) Require(small[0] == 'X' && small[capacity - 2] == ' ' && small[capacity - 1] == 0);
     }
     Require(snprintf_nid_postfix(nullptr, 0, "%.2147483646d", 1) == 2147483646);
+#ifndef _WIN32
+    errno = 0;
+    Require(FormatList(nullptr, 0, "%*dX", INT_MAX, 1) == -1 && errno == EOVERFLOW);
+#endif
 #ifdef _WIN32
     for (const char* text : {"%2147483648d", "%99999999999d", "%.99999999999d", "%4294967296s", "%.4294967296s", "%-9999999999d"}) {
         bool rejected = false;
