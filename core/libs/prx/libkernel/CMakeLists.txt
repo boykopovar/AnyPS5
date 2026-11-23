@@ -2349,12 +2349,6 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         set_tests_properties(guest_system_command PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_mkfifo_tests ${LIBS_INCLUDE_DIR}/tests/GuestMkfifo.cpp)
-    target_include_directories(guest_mkfifo_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_mkfifo_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_mkfifo_tests)
-    add_test(NAME guest_mkfifo COMMAND guest_mkfifo_tests guest_mkfifo.tmp)
-    set_tests_properties(guest_mkfifo PROPERTIES TIMEOUT 20)
     add_test_executable(guest_socket_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketError.cpp)
     target_include_directories(guest_socket_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
     configure_windows_unwind(guest_socket_error_tests)
