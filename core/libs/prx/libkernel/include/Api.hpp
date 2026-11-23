@@ -797,6 +797,9 @@ int APS5_VABI sigaltstack_nid_postfix(const GuestStack* stack, GuestStack* previ
 int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet);
 int APS5_VABI SetSignalMaskCatching_nid_no_patch(const GuestSignalSet* set, GuestSignalSet* previousSet);
 int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet);
+int APS5_VABI sighold_nid_postfix(int guest);
+int APS5_VABI sigrelse_nid_postfix(int guest);
+int APS5_VABI sigignore_nid_postfix(int guest);
 int APS5_VABI pthread_sigmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet);
 int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet* set, void* info, const KernelTimespec* timeout);
 int APS5_VABI sigwaitinfo_nid_postfix(const GuestSignalSet* set, void* info);
