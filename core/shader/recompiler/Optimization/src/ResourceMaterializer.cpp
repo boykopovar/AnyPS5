@@ -1946,6 +1946,35 @@ void materializeSrtGuards(const IrResourcePlan& plan, ResourceSnapshot& snapshot
     }
 }
 
+bool snapshotValue(const IrValue* value, std::unordered_set<const IrValue*>& visited) {
+    if (value == nullptr) return true;
+    value = value->Resolve();
+    if (value->HasImmediate() || value->Opcode() == IrOpcode::ReadConst || !visited.insert(value).second) return true;
+    const auto opcode = value->Opcode();
+    if (opcode == IrOpcode::ReadConstBuffer || AddressOpcodeInfoOf(opcode).access != AddressAccess::None || BufferAccessOf(opcode) != BufferAccess::None || SharedAccessOf(opcode) != SharedAccess::None || ImageOpcodeInfoOf(opcode).access != ImageAccess::None) return false;
+    for (std::size_t index = 0; index < value->ArgumentCount(); ++index) {
+        if (!snapshotValue(value->Argument(index), visited)) return false;
+    }
+    return true;
+}
+
+bool snapshotSource(const IrResourcePlan& plan, std::uint32_t source) {
+    if (source >= plan.descriptorSources.size()) return false;
+    const auto& descriptor = plan.descriptorSources[source];
+    if (descriptor.tableColumn.has_value()) return false;
+    std::unordered_set<const IrValue*> visited;
+    for (std::uint32_t dword = 0; dword < descriptor.dwordCount; ++dword) {
+        if (!snapshotValue(descriptor.dwords[dword], visited)) return false;
+    }
+    return true;
+}
+
+bool offsetMayWrap(const StoreTable& table, std::uint64_t keys) {
+    if (!table.keyList.empty()) keys = std::min<std::uint64_t>(keys, static_cast<std::uint64_t>(table.keyList.back()) + 1u);
+    if (keys == 0u || (keys - 1u) * table.stride + table.registerAddend <= std::numeric_limits<std::uint32_t>::max()) return false;
+    return table.registerAddend != 0u || !std::has_single_bit(table.stride) || !table.keyList.empty();
+}
+
 void materializeStoreTables(const IrResourcePlan& plan, const SrtRuntime& runtime, const SrtWalker& walker, StoreTablesSnapshot& stores) {
     stores = {};
     stores.shader = runtime.shaderBase;
@@ -1982,6 +2011,7 @@ void materializeStoreTables(const IrResourcePlan& plan, const SrtRuntime& runtim
         DescriptorValue heap;
         if (table.source >= plan.descriptorSources.size() || !evaluate(table.source, heap)) return fail(StoreTableFallback::Unevaluated, table);
         std::uint64_t keys = static_cast<std::uint64_t>(table.maxKey) + 1u;
+        auto records = keys;
         if (table.direct) {
             if (heap.dwordCount != 4u) return fail(StoreTableFallback::NotBuffer, table);
             std::copy_n(heap.dwords.begin(), 4u, entry.descriptor.begin());
@@ -1994,14 +2024,16 @@ void materializeStoreTables(const IrResourcePlan& plan, const SrtRuntime& runtim
             if (holder.Type() != 0u) return fail(StoreTableFallback::NotBuffer, table);
             entry.base = holder.Base48();
             entry.size = holder.GetSize();
-            const auto records = entry.size > table.offset && table.stride != 0u ? (entry.size - table.offset + table.stride - 1u) / table.stride : 0u;
-            keys = std::min(keys, records);
+            records = entry.size > table.offset && table.stride != 0u ? (entry.size - table.offset + table.stride - 1u) / table.stride : 0u;
         }
         if (table.bounded) {
+            if (!snapshotSource(plan, table.boundSource)) return fail(StoreTableFallback::LiveBound, table);
             DescriptorValue limit;
             if (table.boundSource >= plan.descriptorSources.size() || !evaluate(table.boundSource, limit) || limit.dwordCount == 0u) return fail(StoreTableFallback::Unevaluated, table);
             keys = std::min<std::uint64_t>(keys, limit.dwords[0]);
         }
+        if (!table.direct && offsetMayWrap(table, keys)) return fail(StoreTableFallback::OffsetWraps, table);
+        keys = std::min(keys, records);
         if (!table.keyList.empty()) {
             for (const auto key : table.keyList) {
                 if (key < keys) entry.keyList.push_back(key);

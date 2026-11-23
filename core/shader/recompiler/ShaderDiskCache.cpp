@@ -804,7 +804,7 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
     reader.Value(invocation.storeTables.wantedKeys);
     reader.Value(invocation.storeTables.missPc);
     reader.Value(invocation.storeTables.miss);
-    if (invocation.storeTables.fallback > StoreTableFallback::Unevaluated) invocation.storeTables.fallback = StoreTableFallback::Unmatched;
+    if (invocation.storeTables.fallback > StoreTableFallback::LiveBound) invocation.storeTables.fallback = StoreTableFallback::Unmatched;
     if (invocation.storeTables.miss >= StoreTableMiss::Count) invocation.storeTables.miss = StoreTableMiss::None;
     reader.List(invocation.storeTables.tables, 62, [](Reader& in, StoreTableSnapshot& table) {
         in.Value(table.base);
@@ -1309,6 +1309,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
         out.Value(table.boundSource);
         out.Value(table.offset);
         out.Value(table.stride);
+        out.Value(table.registerAddend);
         out.Value(table.maxKey);
         out.Value(table.maxIndex);
         out.Value(table.maxOffset);
@@ -1491,11 +1492,12 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     reader.Value(plan.srtGuardOffset);
     reader.Values(plan.cleanFlatSlots);
     reader.Values(plan.pureFlatSlots);
-    reader.List(plan.storeTables, 39, [](Reader& in, StoreTable& table) {
+    reader.List(plan.storeTables, 43, [](Reader& in, StoreTable& table) {
         in.Value(table.source);
         in.Value(table.boundSource);
         in.Value(table.offset);
         in.Value(table.stride);
+        in.Value(table.registerAddend);
         in.Value(table.maxKey);
         in.Value(table.maxIndex);
         in.Value(table.maxOffset);

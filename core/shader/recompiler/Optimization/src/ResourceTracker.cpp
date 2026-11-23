@@ -119,7 +119,7 @@ std::uint32_t possibleU32Bits(const IrValue* value) {
     return possibleU32BitsDepth(value, 8u);
 }
 
-std::uint32_t possibleU32UpperBoundDepth(const IrValue* value, std::uint32_t depth) {
+std::uint32_t possibleU32UpperBoundDepth(const IrValue* value, std::uint32_t depth, std::uint32_t findBitUpper) {
     value = value->Resolve();
     if (value->HasImmediate()) {
         return value->Type() == IrType::U32 ? value->ImmediateU32() : std::numeric_limits<std::uint32_t>::max();
@@ -130,42 +130,48 @@ std::uint32_t possibleU32UpperBoundDepth(const IrValue* value, std::uint32_t dep
     };
     switch (value->Opcode()) {
         case IrOpcode::BitwiseAnd32:
-            return std::min(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u));
+            return std::min(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u, findBitUpper), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u, findBitUpper));
         case IrOpcode::BitwiseOr32:
-            return add(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u));
+            return add(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u, findBitUpper), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u, findBitUpper));
         case IrOpcode::ShiftLeftLogical32: {
             const IrValue* shift = value->Argument(1)->Resolve();
             if (!shift->HasImmediate() || shift->Type() != IrType::U32) return std::numeric_limits<std::uint32_t>::max();
             const auto bits = shift->ImmediateU32() & 31u;
-            const auto upper = possibleU32UpperBoundDepth(value->Argument(0), depth - 1u);
+            const auto upper = possibleU32UpperBoundDepth(value->Argument(0), depth - 1u, findBitUpper);
             return bits != 0u && upper > (std::numeric_limits<std::uint32_t>::max() >> bits) ? std::numeric_limits<std::uint32_t>::max() : upper << bits;
         }
         case IrOpcode::ReadFirstLane:
-            return value->ArgumentCount() >= 1u ? possibleU32UpperBoundDepth(value->Argument(0), depth - 1u) : std::numeric_limits<std::uint32_t>::max();
+            return value->ArgumentCount() >= 1u ? possibleU32UpperBoundDepth(value->Argument(0), depth - 1u, findBitUpper) : std::numeric_limits<std::uint32_t>::max();
         case IrOpcode::SelectU32:
-            return value->ArgumentCount() == 3u ? (possibleU32UpperBoundDepth(value->Argument(1), depth - 1u) | possibleU32UpperBoundDepth(value->Argument(2), depth - 1u)) : std::numeric_limits<std::uint32_t>::max();
+            return value->ArgumentCount() == 3u ? (possibleU32UpperBoundDepth(value->Argument(1), depth - 1u, findBitUpper) | possibleU32UpperBoundDepth(value->Argument(2), depth - 1u, findBitUpper)) : std::numeric_limits<std::uint32_t>::max();
         case IrOpcode::UMin32:
-            return value->ArgumentCount() == 2u ? std::min(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u)) : std::numeric_limits<std::uint32_t>::max();
+            return value->ArgumentCount() == 2u ? std::min(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u, findBitUpper), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u, findBitUpper)) : std::numeric_limits<std::uint32_t>::max();
         case IrOpcode::UMax32:
-            return value->ArgumentCount() == 2u ? std::max(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u)) : std::numeric_limits<std::uint32_t>::max();
+            return value->ArgumentCount() == 2u ? std::max(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u, findBitUpper), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u, findBitUpper)) : std::numeric_limits<std::uint32_t>::max();
         case IrOpcode::IAdd32:
-            return value->ArgumentCount() == 2u ? add(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u)) : std::numeric_limits<std::uint32_t>::max();
+            return value->ArgumentCount() == 2u ? add(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u, findBitUpper), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u, findBitUpper)) : std::numeric_limits<std::uint32_t>::max();
         case IrOpcode::Phi: {
             std::uint32_t upper = 0;
-            for (std::uint32_t index = 0; index < value->ArgumentCount(); ++index) upper |= possibleU32UpperBoundDepth(value->Argument(index), depth - 1u);
+            for (std::uint32_t index = 0; index < value->ArgumentCount(); ++index) upper |= possibleU32UpperBoundDepth(value->Argument(index), depth - 1u, findBitUpper);
             return upper;
         }
         case IrOpcode::FindILsb32:
         case IrOpcode::FindUMsb32:
-            return 31u;
+            return findBitUpper;
         default:
             return std::numeric_limits<std::uint32_t>::max();
     }
 }
 
 std::uint32_t possibleU32UpperBound(const IrValue* value) {
-    return possibleU32UpperBoundDepth(value, 8u);
+    return possibleU32UpperBoundDepth(value, 8u, 31u);
 }
+
+std::uint32_t storeU32UpperBound(const IrValue* value) {
+    return possibleU32UpperBoundDepth(value, 8u, StoreTableUnbounded);
+}
+
+constexpr std::uint32_t MaxFormatBytes = 16u;
 
 std::uint32_t byteExtent(const MemoryInfo& memory) {
     const auto bytes = std::max((memory.dataBits + 7u) / 8u, 1u);
@@ -605,12 +611,12 @@ private:
         return true;
     }
 
-    bool MatchAffineOffset(IrValue* value, IrValue*& key, std::uint32_t& stride, std::uint32_t& addend) const {
+    bool MatchAffineOffset(IrValue* value, IrValue*& key, std::uint32_t& stride, std::uint32_t& addend, bool stripInactive = true) const {
         value = value->Resolve();
         if (value->Opcode() == IrOpcode::ReadFirstLane && value->ArgumentCount() == 2u) {
             const auto* activeMask = value->Argument(1)->Resolve();
             value = value->Argument(0)->Resolve();
-            while (value->Opcode() == IrOpcode::SelectU32 && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(m_program.Resources(), activeMask, value->Argument(0))) {
+            while (stripInactive && value->Opcode() == IrOpcode::SelectU32 && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(m_program.Resources(), activeMask, value->Argument(0))) {
                 value = value->Argument(1)->Resolve();
             }
         }
@@ -2689,9 +2695,10 @@ private:
         };
         StoreTable table;
         table.pc = inst.Flags<MemoryFlags>().pc;
-        table.maxIndex = memory.kind == ResourceKind::Buffer && inst.ArgumentCount() > 1u ? possibleU32UpperBound(inst.Argument(1)) : 0u;
-        table.maxOffset = inst.ArgumentCount() > 2u ? add(possibleU32UpperBound(inst.Argument(2)), byteExtent(memory)) : byteExtent(memory);
-        table.maxSoffset = inst.ArgumentCount() > 3u ? possibleU32UpperBound(inst.Argument(3)) : 0u;
+        table.maxIndex = memory.kind == ResourceKind::Buffer && inst.ArgumentCount() > 1u ? storeU32UpperBound(inst.Argument(1)) : 0u;
+        const auto written = memory.formatted || memory.typed ? add(memory.offset, MaxFormatBytes) : byteExtent(memory);
+        table.maxOffset = inst.ArgumentCount() > 2u ? add(storeU32UpperBound(inst.Argument(2)), written) : written;
+        table.maxSoffset = inst.ArgumentCount() > 3u ? storeU32UpperBound(inst.Argument(3)) : 0u;
         table.scalar = memory.kind == ResourceKind::ScalarBuffer;
         return table;
     }
@@ -2707,13 +2714,23 @@ private:
         same->maxIndex = std::max(same->maxIndex, table.maxIndex);
         same->maxOffset = std::max(same->maxOffset, table.maxOffset);
         same->maxSoffset = std::max(same->maxSoffset, table.maxSoffset);
+        same->registerAddend = std::max(same->registerAddend, table.registerAddend);
         same->pc = std::min(same->pc, table.pc);
     }
 
-    static bool SameValue(const IrResourcePlan& plan, const IrValue* left, const IrValue* right) {
+    static bool SameValue(const IrValue* left, const IrValue* right) {
         left = left->Resolve();
         right = right->Resolve();
-        return left == right || EquivalentValue(plan, left, right);
+        return left == right || (left->HasImmediate() && right->HasImmediate() && left->Type() == right->Type() && left->ImmediateU64() == right->ImmediateU64());
+    }
+
+    static bool SameHandle(const IrValue* left, const IrValue* right) {
+        if (left == right) return true;
+        if (left->Opcode() != right->Opcode() || left->ArgumentCount() != right->ArgumentCount()) return false;
+        for (std::size_t index = 0; index < left->ArgumentCount(); ++index) {
+            if (!SameValue(left->Argument(index), right->Argument(index))) return false;
+        }
+        return true;
     }
 
     bool KeyBelow(const IrValue* condition, bool holds, const IrValue* key, IrValue*& bound) const {
@@ -2725,12 +2742,11 @@ private:
         if (condition->ArgumentCount() != 2u) return false;
         IrValue* left = condition->Argument(0)->Resolve();
         IrValue* right = condition->Argument(1)->Resolve();
-        const auto& plan = m_program.Resources();
         const auto op = condition->Opcode();
-        if (holds && op == IrOpcode::ULessThan32 && SameValue(plan, left, key)) bound = right;
-        else if (holds && op == IrOpcode::UGreaterThan32 && SameValue(plan, right, key)) bound = left;
-        else if (!holds && op == IrOpcode::UGreaterThanEqual32 && SameValue(plan, left, key)) bound = right;
-        else if (!holds && op == IrOpcode::ULessThanEqual32 && SameValue(plan, right, key)) bound = left;
+        if (holds && op == IrOpcode::ULessThan32 && SameValue(left, key)) bound = right;
+        else if (holds && op == IrOpcode::UGreaterThan32 && SameValue(right, key)) bound = left;
+        else if (!holds && op == IrOpcode::UGreaterThanEqual32 && SameValue(left, key)) bound = right;
+        else if (!holds && op == IrOpcode::ULessThanEqual32 && SameValue(right, key)) bound = left;
         else return false;
         return true;
     }
@@ -2756,8 +2772,24 @@ private:
         return false;
     }
 
-    bool LaneActiveAt(const IrValue* mask, const IrValue* condition) const {
-        return Detail::ActiveMaskImplies(m_program.Resources(), mask, condition) || SameValue(m_program.Resources(), mask, condition);
+    static bool LaneActiveAt(const IrValue* mask, const IrValue* condition) {
+        mask = mask->Resolve();
+        if (SameValue(mask, condition)) return true;
+        return mask->Opcode() == IrOpcode::LogicalAnd && mask->ArgumentCount() == 2u && (LaneActiveAt(mask->Argument(0), condition) || LaneActiveAt(mask->Argument(1), condition));
+    }
+
+    bool LoopCarried(const IrValue* phi) const {
+        for (std::size_t index = 0; index < phi->ArgumentCount(); ++index) {
+            if (BlockDominates(phi->Parent(), phi->PhiBlock(index))) return true;
+        }
+        return false;
+    }
+
+    static IrValue* StoreOffsetValue(IrValue* offset, const IrValue* storeMask) {
+        if (!ReadsUnderStoreMask(offset, storeMask)) return offset;
+        IrValue* value = offset->Resolve()->Argument(0)->Resolve();
+        while (value->Opcode() == IrOpcode::SelectU32 && value->ArgumentCount() == 3u && LaneActiveAt(storeMask, value->Argument(0))) value = value->Argument(1)->Resolve();
+        return value;
     }
 
     std::uint32_t LaneUpperBound(const IrValue* value, const IrValue* mask, std::unordered_set<const IrValue*>& visiting, std::uint32_t depth) const {
@@ -2766,17 +2798,17 @@ private:
         std::uint32_t bound = StoreTableUnbounded;
         if (Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && LaneActiveAt(mask, value->Argument(0))) {
             bound = LaneUpperBound(value->Argument(1), mask, visiting, depth - 1u);
-        } else if (value->IsPhi() && value->ArgumentCount() != 0u) {
+        } else if (value->IsPhi() && value->ArgumentCount() != 0u && !LoopCarried(value)) {
             bound = 0u;
             for (std::size_t index = 0; index < value->ArgumentCount() && bound != StoreTableUnbounded; ++index) bound = std::max(bound, LaneUpperBound(value->Argument(index), mask, visiting, depth - 1u));
         } else {
-            bound = possibleU32UpperBound(value);
+            bound = storeU32UpperBound(value);
         }
         visiting.erase(value);
         return bound;
     }
 
-    bool LaneValues(const IrValue* value, const IrValue* mask, std::vector<std::uint32_t>& values, std::unordered_set<const IrValue*>& visiting, std::uint32_t depth) const {
+    bool LaneValues(const IrValue* value, const IrValue* mask, const IrValue* storeMask, std::vector<std::uint32_t>& values, std::unordered_set<const IrValue*>& visiting, std::uint32_t depth) const {
         value = value->Resolve();
         if (value->HasImmediate()) {
             if (value->Type() != IrType::U32) return false;
@@ -2786,20 +2818,26 @@ private:
         if (depth == 0u || !visiting.insert(value).second) return false;
         bool known = false;
         if (Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u) {
-            known = mask != nullptr && LaneActiveAt(mask, value->Argument(0)) ? LaneValues(value->Argument(1), mask, values, visiting, depth - 1u) : LaneValues(value->Argument(1), mask, values, visiting, depth - 1u) && LaneValues(value->Argument(2), mask, values, visiting, depth - 1u);
+            known = mask != nullptr && LaneActiveAt(mask, value->Argument(0)) ? LaneValues(value->Argument(1), mask, storeMask, values, visiting, depth - 1u) : LaneValues(value->Argument(1), mask, storeMask, values, visiting, depth - 1u) && LaneValues(value->Argument(2), mask, storeMask, values, visiting, depth - 1u);
         } else if (value->IsPhi() && value->ArgumentCount() != 0u) {
+            if (LoopCarried(value)) mask = storeMask = nullptr;
             known = true;
-            for (std::size_t index = 0; index < value->ArgumentCount() && known; ++index) known = LaneValues(value->Argument(index), mask, values, visiting, depth - 1u);
+            for (std::size_t index = 0; index < value->ArgumentCount() && known; ++index) known = LaneValues(value->Argument(index), mask, storeMask, values, visiting, depth - 1u);
         } else if (mask == nullptr && value->Opcode() == IrOpcode::ReadFirstLane && value->ArgumentCount() == 2u) {
-            known = LaneValues(value->Argument(0), value->Argument(1)->Resolve(), values, visiting, depth - 1u);
+            known = LaneValues(value->Argument(0), ReadsUnderStoreMask(value, storeMask) ? value->Argument(1)->Resolve() : nullptr, storeMask, values, visiting, depth - 1u);
         }
         visiting.erase(value);
         return known;
     }
 
-    std::uint32_t FirstLaneUpperBound(const IrValue* key) const {
+    static bool ReadsUnderStoreMask(const IrValue* value, const IrValue* storeMask) {
+        value = value->Resolve();
+        return value->Opcode() == IrOpcode::ReadFirstLane && value->ArgumentCount() == 2u && value->Argument(1)->Resolve() == storeMask;
+    }
+
+    std::uint32_t FirstLaneUpperBound(const IrValue* key, const IrValue* storeMask) const {
         key = key->Resolve();
-        if (key->Opcode() != IrOpcode::ReadFirstLane || key->ArgumentCount() != 2u) return StoreTableUnbounded;
+        if (!ReadsUnderStoreMask(key, storeMask)) return StoreTableUnbounded;
         std::unordered_set<const IrValue*> visiting;
         return LaneUpperBound(key->Argument(0), key->Argument(1)->Resolve(), visiting, 8u);
     }
@@ -2815,10 +2853,11 @@ private:
         IrValue* base = nullptr;
         IrValue* offsetValue = nullptr;
         std::uint32_t first = 0;
+        std::uint32_t registerAddend = 0;
         bool address = false;
         for (std::uint32_t dword = 0; dword < 4u; dword++) {
-            IrValue* read = ResolveInvariantPhi(m_program.Resources(), handle->Argument(dword));
-            if (read == nullptr) return missed(StoreTableMiss::NotTableRead);
+            IrValue* read = handle->Argument(dword)->Resolve();
+            if (read->IsPhi()) return missed(StoreTableMiss::NotTableRead);
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             const bool addressRead = memory == nullptr && (memory = ScalarAddressMemory(*read, memoryIndex)) != nullptr;
@@ -2827,22 +2866,27 @@ private:
             IrValue* readBase = SplitImmediateAddend(read->Argument(1), readAddend);
             const auto position = static_cast<std::uint64_t>(memory->offset) + readAddend;
             IrValue* currentHandle = read->Argument(0)->Resolve();
+            if (((memory->offset | readAddend) & 3u) != 0u) return missed(StoreTableMiss::Unaligned);
             if (dword == 0u) {
                 if (position > 0x7fffffffu) return missed(StoreTableMiss::SplitRead);
                 heapHandle = currentHandle;
                 base = readBase;
                 offsetValue = readBase;
                 first = static_cast<std::uint32_t>(position);
+                registerAddend = readAddend;
                 address = addressRead;
                 continue;
             }
             if (addressRead != address || position != static_cast<std::uint64_t>(first) + dword * sizeof(std::uint32_t)) return missed(StoreTableMiss::SplitRead);
-            if (!SameValue(m_program.Resources(), base, readBase) || !SameValue(m_program.Resources(), heapHandle, currentHandle)) return missed(StoreTableMiss::SplitRead);
+            if (!SameValue(base, readBase) || !SameHandle(heapHandle, currentHandle)) return missed(StoreTableMiss::SplitRead);
+            registerAddend = std::max(registerAddend, readAddend);
         }
         IrValue* key = nullptr;
         std::uint32_t stride = 0;
         std::uint32_t addend = 0;
-        if (!MatchAffineOffset(offsetValue, key, stride, addend) || static_cast<std::uint64_t>(first) + addend > 0x7fffffffu) return missed(StoreTableMiss::NotAffine);
+        const IrValue* storeMask = inst.Argument(inst.ArgumentCount() - 1u)->Resolve();
+        if (!MatchAffineOffset(StoreOffsetValue(offsetValue, storeMask), key, stride, addend, false) || static_cast<std::uint64_t>(first) + addend > 0x7fffffffu) return missed(StoreTableMiss::NotAffine);
+        if (addend % sizeof(std::uint32_t) != 0u) return missed(StoreTableMiss::Unaligned);
         DescriptorSource heapSource;
         std::uint32_t heapIndex = 0;
         if (!MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) return missed(StoreTableMiss::NoSource);
@@ -2851,10 +2895,11 @@ private:
         table.address = address;
         table.offset = first + addend;
         table.stride = stride;
-        table.maxKey = std::min(possibleU32UpperBound(key), FirstLaneUpperBound(key));
+        table.registerAddend = registerAddend + addend;
+        table.maxKey = std::min(storeU32UpperBound(key), FirstLaneUpperBound(key, storeMask));
         std::vector<std::uint32_t> values;
         std::unordered_set<const IrValue*> visiting;
-        if (LaneValues(key, nullptr, values, visiting, 12u) && !values.empty()) {
+        if (LaneValues(key, nullptr, storeMask, values, visiting, 12u) && !values.empty()) {
             std::ranges::sort(values);
             table.maxKey = values.back();
             table.keyList = std::move(values);

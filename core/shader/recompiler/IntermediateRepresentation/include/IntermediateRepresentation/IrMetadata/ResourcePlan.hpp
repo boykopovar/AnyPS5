@@ -164,6 +164,7 @@ struct StoreTable {
     std::uint32_t boundSource = 0;
     std::uint32_t offset = 0;
     std::uint32_t stride = 0;
+    std::uint32_t registerAddend = 0;
     std::uint32_t maxKey = StoreTableUnbounded;
     std::uint32_t maxIndex = StoreTableUnbounded;
     std::uint32_t maxOffset = StoreTableUnbounded;

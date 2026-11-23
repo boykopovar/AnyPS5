@@ -12,11 +12,11 @@ inline constexpr std::uint32_t StoreTableUnbounded = 0xffffffffu;
 inline constexpr std::uint32_t StoreTableMaxKeys = 4096u;
 inline constexpr std::uint32_t StoreTableMaxListedKeys = 64u;
 
-enum class StoreTableFallback : std::uint32_t { None, Unmatched, TooMany, NotBuffer, Unevaluated };
+enum class StoreTableFallback : std::uint32_t { None, Unmatched, TooMany, NotBuffer, Unevaluated, OffsetWraps, LiveBound };
 
-enum class StoreTableMiss : std::uint32_t { None, NoStores, NotHandle, NotTableRead, SplitRead, NotAffine, NoSource, UnboundedKey, AddressStore, GcnShader, Count };
+enum class StoreTableMiss : std::uint32_t { None, NoStores, NotHandle, NotTableRead, SplitRead, NotAffine, NoSource, UnboundedKey, AddressStore, GcnShader, Unaligned, Count };
 
-inline constexpr std::array<const char*, static_cast<std::size_t>(StoreTableMiss::Count)> StoreTableMissNames{"none", "no stores", "not a V# handle", "V# not a table read", "V# dwords split", "key not affine", "table not evaluable", "unbounded key", "address store", "GCN shader"};
+inline constexpr std::array<const char*, static_cast<std::size_t>(StoreTableMiss::Count)> StoreTableMissNames{"none", "no stores", "not a V# handle", "V# not a table read", "V# dwords split", "key not affine", "table not evaluable", "unbounded key", "address store", "GCN shader", "table offset unaligned"};
 
 inline const char* StoreTableMissName(StoreTableMiss miss) {
     const auto index = static_cast<std::size_t>(miss);

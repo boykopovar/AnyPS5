@@ -281,9 +281,9 @@ VkDescriptorBufferInfo ShaderResources::wholeDwordRange(VkDescriptorBufferInfo i
 
 namespace {
 
-enum class StoreWindowOutcome : std::size_t { Bounded, Unmatched, TooMany, NotBuffer, Unevaluated, Disabled, PendingTable, Unmapped, InvalidType, Swizzled, UnboundedIndex, UnboundedOffset, TooWide, SelfWritten, Count };
+enum class StoreWindowOutcome : std::size_t { Bounded, Unmatched, TooMany, NotBuffer, Unevaluated, OffsetWraps, LiveBound, Disabled, PendingTable, Unmapped, InvalidType, Swizzled, UnboundedIndex, UnboundedOffset, TooWide, SelfWritten, Count };
 
-constexpr std::array<const char*, static_cast<std::size_t>(StoreWindowOutcome::Count)> StoreWindowOutcomeNames{"bounded", "unmatched", "too many", "not buffer", "unevaluated", "disabled", "pending table", "unmapped", "invalid type", "swizzled", "unbounded index", "unbounded offset", "too wide", "self-written"};
+constexpr std::array<const char*, static_cast<std::size_t>(StoreWindowOutcome::Count)> StoreWindowOutcomeNames{"bounded", "unmatched", "too many", "not buffer", "unevaluated", "offset wraps", "live bound", "disabled", "pending table", "unmapped", "invalid type", "swizzled", "unbounded index", "unbounded offset", "too wide", "self-written"};
 
 struct StoreWindowTotals {
     std::array<std::uint64_t, static_cast<std::size_t>(StoreWindowOutcome::Count)> outcomes{};
@@ -317,6 +317,8 @@ StoreWindowOutcome outcomeOf(ShaderRecompiler::StoreTableFallback fallback) {
         case ShaderRecompiler::StoreTableFallback::TooMany: return StoreWindowOutcome::TooMany;
         case ShaderRecompiler::StoreTableFallback::NotBuffer: return StoreWindowOutcome::NotBuffer;
         case ShaderRecompiler::StoreTableFallback::Unevaluated: return StoreWindowOutcome::Unevaluated;
+        case ShaderRecompiler::StoreTableFallback::OffsetWraps: return StoreWindowOutcome::OffsetWraps;
+        case ShaderRecompiler::StoreTableFallback::LiveBound: return StoreWindowOutcome::LiveBound;
         case ShaderRecompiler::StoreTableFallback::Unmatched: break;
     }
     return StoreWindowOutcome::Unmatched;
