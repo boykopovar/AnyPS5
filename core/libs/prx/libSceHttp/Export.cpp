@@ -522,9 +522,10 @@ int APS5_VABI sceHttpParseResponseHeader(const char* header, std::size_t headerL
     if (!found) return notFound;
 
     const auto continues = [&input, headerLen](std::size_t next) { return next < headerLen && (input[next] == ' ' || input[next] == '\t'); };
-    const auto empty = [fieldValue, valueLen] {
-        *fieldValue = nullptr;
-        *valueLen = 0;
+    const auto empty = [fieldValue, valueLen, invalidValue] {
+        const char* value = nullptr;
+        const std::size_t length = 0;
+        if (!HttpGuest::Store(fieldValue, value) || !HttpGuest::Store(valueLen, length)) return invalidValue;
         return 0;
     };
     while (start < headerLen) {
@@ -554,8 +555,9 @@ int APS5_VABI sceHttpParseResponseHeader(const char* header, std::size_t headerL
     if (end > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
         throw std::out_of_range("sceHttpParseResponseHeader: value end exceeds int");
     }
-    *fieldValue = header + start;
-    *valueLen = end - start;
+    const char* value = header + start;
+    const std::size_t length = end - start;
+    if (!HttpGuest::Store(fieldValue, value) || !HttpGuest::Store(valueLen, length)) return invalidValue;
     return static_cast<int>(end);
 }
 

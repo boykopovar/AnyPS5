@@ -102,6 +102,11 @@ int main() {
     Require(sceHttpParseResponseHeader("X: yes", 6, nullptr, &value, &length) == invalidValue);
     Require(sceHttpParseResponseHeader("X: yes", 6, "X", nullptr, &length) == invalidValue);
     Require(sceHttpParseResponseHeader("X: yes", 6, "X", &value, nullptr) == invalidValue);
+    Require(sceHttpParseResponseHeader("X: yes", 6, "X", reinterpret_cast<const char**>(0x10), &length) == invalidValue);
+    Require(sceHttpParseResponseHeader("X: yes", 6, "X", &value, reinterpret_cast<std::size_t*>(0x10)) == invalidValue);
+    Require(sceHttpParseResponseHeader("X:", 2, "X", reinterpret_cast<const char**>(0x10), &length) == invalidValue);
+    value = marker;
+    length = 456;
     Require(sceHttpParseResponseHeader("X: yes", 0, "X", &value, &length) == notFound);
     Require(sceHttpParseResponseHeader("X: yes", 1, "X", &value, &length) == notFound);
     Require(sceHttpParseResponseHeader("X: yes", 6, "Longer-Field", &value, &length) == notFound);
