@@ -984,10 +984,9 @@ constexpr std::uint32_t MipDrawSide = 128;
 constexpr std::uint32_t MipDrawLevels = 8;
 constexpr std::uint32_t MipDrawScissor = 64;
 // A 128x128 RGBA8 surface fills one 64 KiB pipe block exactly, so the viewed mip 0 is a full
-// block (the game's case), not a tail. AMD addrlib chain layout for the keys: every mip
-// (128x128 and smaller, 4-byte elements) is one 4096-key metadata block; the small mips come
-// first, mip 0 last.
-constexpr std::size_t MipDrawMip0OffsetKeys = std::size_t{MipDrawLevels - 1u} * 4096u;
+// block (the game's case), not a tail. AMD addrlib chain layout for the keys (HwlComputeDccInfo):
+// mips 1 to 7 are the mip tail and share one 4096-key block at offset 0; mip 0 follows it.
+constexpr std::size_t MipDrawMip0OffsetKeys = 4096u;
 constexpr std::size_t MipDrawMip0Keys = 4096;
 // The chain (mip 0's full block plus the tail mips' block) sits in the first two blocks; the
 // keys after it.
@@ -1376,7 +1375,26 @@ void RunMipmappedTarget(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
 #endif
 }
 
+// HwlComputeDccInfo (Mesa src/amd/addrlib/src/gfx10/gfx10addrlib.cpp): a 4096-key metadata block covers
+// 1 MiB of texels (512x512 at 4 bytes, 512x256 at 8 bytes); with a mip tail the tail levels share one
+// block at offset 0 and the levels above it follow from the smallest to mip 0.
+void RunMipKeyOffsets() {
+    using AgcDriver::Graphics::DccMipKeyOffset;
+    // 3200x1800, 8 bytes, 5 mips, no tail: mips 4, 3, 2, 1 take 1, 1, 4 and 16 blocks, so mip 0 starts at 22 blocks.
+    Require(DccMipKeyOffset(3200, 1800, 8, 5, 5, 0) == std::optional<std::size_t>{90112}, "mip 0 of the 3200x1800 chain does not start at key 90112");
+    Require(DccMipKeyOffset(3200, 1800, 8, 5, 5, 1) == std::optional<std::size_t>{6 * 4096}, "mip 1 of the 3200x1800 chain does not start after mips 4, 3 and 2");
+    Require(DccMipKeyOffset(3200, 1800, 8, 5, 5, 4) == std::optional<std::size_t>{0}, "the smallest mip of a chain without a tail does not start at key 0");
+    // 1024x1024, 4 bytes, 11 mips, tail from mip 4: the tail block, then mips 3, 2, 1 (one block each).
+    Require(DccMipKeyOffset(1024, 1024, 4, 11, 4, 0) == std::optional<std::size_t>{4 * 4096}, "mip 0 of a chain with a tail does not start after the tail block and mips 3 to 1");
+    Require(DccMipKeyOffset(1024, 1024, 4, 11, 4, 3) == std::optional<std::size_t>{4096}, "the lowest mip above the tail does not start right after the tail block");
+    Require(DccMipKeyOffset(1024, 1024, 4, 11, 4, 5) == std::optional<std::size_t>{0}, "a mip in the tail does not read the shared tail block at offset 0");
+    Require(!DccMipKeyOffset(1024, 1024, 4, 11, 4, 11).has_value(), "a level past the chain was given a key offset");
+    // 2048x1024, 8 bytes, 12 mips, tail from mip 5: tail block + mip 4 (128x64, 1) + mip 3 (1) + mip 2 (1) + mip 1 (1024x512: 2x2 = 4).
+    Require(DccMipKeyOffset(2048, 1024, 8, 12, 5, 0) == std::optional<std::size_t>{8 * 4096}, "mip 0 of the 2048x1024 8-byte chain does not start at 8 blocks");
+}
+
 int main(int argc, char** argv) {
+    RunMipKeyOffsets();
     try {
 #ifdef _WIN32
         _putenv_s("APS5_PROFILE_DRAW", "1");

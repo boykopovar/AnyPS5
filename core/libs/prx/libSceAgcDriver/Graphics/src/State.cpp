@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -2744,14 +2745,8 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             // applies -- start from the clear colour when the mip's keys are one clear code, mark them
             // uncompressed after drawing, keep stored texels for mixed keys. Arrays and 3D keep the chain
             // address only (their keys are not modeled).
-            if (color.dccPipeAligned && std::getenv("APS5_NO_DCC_MIP_FAST_CLEAR") == nullptr) {
-                std::size_t offset = 0;
-                for (std::uint32_t level = color.mipCount - 1u; level > color.mip; --level) {
-                    const auto w = std::max((color.surfaceExtent.width + (1u << level) - 1u) >> level, 1u);
-                    const auto h = std::max((color.surfaceExtent.height + (1u << level) - 1u) >> level, 1u);
-                    offset += DccMipKeySlice(w, h, color.elementBytes);
-                }
-                color.dccAddress = dccBase + offset;
+            if (color.dccPipeAligned && ColorTextureTileMode(color.tileMode) == TextureTileMode::kR64KBX && !RuntimeSwitches::Set(RuntimeSwitch::NoDccMipFastClear)) {
+                if (const auto offset = DccMipKeyOffset(color.surfaceExtent.width, color.surfaceExtent.height, color.elementBytes, color.mipCount, std::min(firstTailLevel, color.mipCount), color.mip)) color.dccAddress = dccBase + *offset;
             }
         } else {
             static bool reported = false;

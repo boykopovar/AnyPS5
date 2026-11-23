@@ -495,6 +495,15 @@ std::size_t DccMipKeySlice(std::uint32_t width, std::uint32_t height, std::uint3
     return static_cast<std::size_t>(pitch) * rows * MetaBlockKeys;
 }
 
+std::optional<std::size_t> DccMipKeyOffset(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, std::uint32_t mipCount, std::uint32_t firstTailLevel, std::uint32_t level) {
+    if (level >= mipCount) return std::nullopt;
+    if (level >= firstTailLevel) return std::size_t{0};
+    const auto shiftCeil = [](std::uint32_t extent, std::uint32_t shift) { return std::max<std::uint32_t>((extent + (1u << shift) - 1u) >> shift, 1u); };
+    std::size_t offset = firstTailLevel < mipCount ? 4096u : 0u;
+    for (auto above = firstTailLevel; above-- > level + 1u;) offset += DccMipKeySlice(shiftCeil(width, above), shiftCeil(height, above), elementBytes);
+    return offset;
+}
+
 namespace {
 
 // ReadDccKeys, saying in `memoized` whether the answer came from the pending-store memo rather

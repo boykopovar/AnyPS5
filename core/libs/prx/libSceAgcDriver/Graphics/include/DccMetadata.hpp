@@ -30,6 +30,10 @@ std::size_t DccKeyCount(const GuestTextureResource& surface, std::uint64_t surfa
 // so a mip's slice is (ceil(width/512) x ceil(height/block height) x 4096) keys. Mip chains place the small
 // mips first, each a whole number of blocks, mip 0 last.
 std::size_t DccMipKeySlice(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes);
+// The key offset of one mip of such a chain (HwlComputeDccInfo): the mip-tail levels share one
+// 4096-key block at offset 0, then the levels above the tail follow from the smallest to mip 0, each
+// sized by DccMipKeySlice of its ShiftCeil extent. A level in the tail answers 0 (the shared block).
+std::optional<std::size_t> DccMipKeyOffset(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, std::uint32_t mipCount, std::uint32_t firstTailLevel, std::uint32_t level);
 
 template<typename ReadFollowed, typename ReadNamed>
 bool KeysServeSurface(std::uint64_t followedDcc, DccKeys uploaded, DccKeys filled, std::uint64_t namedDcc, ReadFollowed&& readFollowed, ReadNamed&& readNamed) {

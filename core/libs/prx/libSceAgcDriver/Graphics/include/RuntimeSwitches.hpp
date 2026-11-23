@@ -30,6 +30,7 @@ enum class RuntimeSwitch : std::size_t {
     IndexInPlaceBehindWriter,
     WideLibraryKeys,
     NoWideTableCopyHle,
+    NoDccMipFastClear,
     Count,
 };
 
