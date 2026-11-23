@@ -78,6 +78,10 @@ void Creation() {
     cairo_scaled_font_get_font_options(font.get(), nil);
     Font failed(cairo_scaled_font_create(face, &matrix, &ctm, nil), cairo_scaled_font_destroy);
     Check(cairo_scaled_font_status(failed.get()) == 1, "nil font options produce no-memory font");
+    const CairoMatrix zero{};
+    Font nullCtmBeforeOptions(cairo_scaled_font_create(face, &zero, nullptr, nil), cairo_scaled_font_destroy);
+    Check(cairo_scaled_font_status(nullCtmBeforeOptions.get()) == 7,
+        "a zero font matrix is valid and null ctm precedes failed options");
     cairo_font_options_destroy(nil);
     Font nullOptions(cairo_scaled_font_create(face, &matrix, &ctm, nullptr), cairo_scaled_font_destroy);
     Check(cairo_scaled_font_status(nullOptions.get()) == 7, "null options produce null-pointer font");
@@ -90,7 +94,6 @@ void Creation() {
     Check(cairo_font_options_get_antialias(defaults) == CAIRO_ANTIALIAS_DEFAULT,
         "failed font query resets options to defaults");
     cairo_font_options_destroy(defaults);
-    const CairoMatrix zero{};
     auto degenerate = Create(zero);
     Check(cairo_scaled_font_status(degenerate.get()) == 0, "zero font matrix remains valid");
     auto* options = Options();
@@ -102,6 +105,10 @@ void Creation() {
     Check(cairo_scaled_font_status(nullCtm.get()) == 7, "null ctm produces null-pointer font");
     CairoMatrix undefined = matrix;
     undefined.xx = std::numeric_limits<double>::quiet_NaN();
+    Font nullFaceBeforeMatrix(cairo_scaled_font_create(nullptr, &undefined, &ctm, options), cairo_scaled_font_destroy);
+    Check(cairo_scaled_font_status(nullFaceBeforeMatrix.get()) == 7, "null face precedes an invalid font matrix");
+    Font nullMatrixBeforeCtm(cairo_scaled_font_create(face, nullptr, &undefined, options), cairo_scaled_font_destroy);
+    Check(cairo_scaled_font_status(nullMatrixBeforeCtm.get()) == 7, "null font matrix precedes an invalid ctm");
     Font invalidBeforeNull(cairo_scaled_font_create(face, &undefined, nullptr, options), cairo_scaled_font_destroy);
     Check(cairo_scaled_font_status(invalidBeforeNull.get()) == 5, "font matrix is validated before ctm");
     Font faceBeforeNull(cairo_scaled_font_create(cairo_scaled_font_get_font_face(bad.get()), nullptr, nullptr,

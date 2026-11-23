@@ -18,6 +18,13 @@ static_assert(sizeof(CairoTextCluster) == sizeof(cairo_text_cluster_t));
 static_assert(offsetof(CairoTextCluster, numGlyphs) == offsetof(cairo_text_cluster_t, num_glyphs));
 static_assert(sizeof(CairoMatrix) == sizeof(cairo_matrix_t));
 
+extern "C" {
+cairo_status_t _cairo_error(cairo_status_t status);
+double _cairo_matrix_compute_determinant(const cairo_matrix_t* matrix);
+cairo_bool_t _cairo_matrix_is_invertible(const cairo_matrix_t* matrix);
+cairo_scaled_font_t* _cairo_scaled_font_create_in_error(cairo_status_t status);
+}
+
 namespace {
 
 struct PreserveErrno {
@@ -58,13 +65,17 @@ int NullArguments(int* numGlyphs, int* numClusters, const char* function) {
 CairoScaledFont* CairoScaledFontCreate_nid_no_patch(CairoFontFace* face,
     const CairoMatrix* fontMatrix, const CairoMatrix* ctm,
     const CairoContextFontOptions* options, bool failedOptions) {
-    const cairo_matrix_t identity{1, 0, 0, 1, 0, 0};
     auto* backend = CairoFontFaceBackend_nid_no_patch(face, "cairo_scaled_font_create");
     if (!backend || !fontMatrix || !ctm) {
-        auto* native = backend ? backend :
-            aps5_cairo_toy_font_face_create(nullptr, CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-        const auto matrix = fontMatrix ? std::bit_cast<cairo_matrix_t>(*fontMatrix) : identity;
-        return reinterpret_cast<CairoScaledFont*>(aps5_cairo_scaled_font_create(native, &matrix, &identity, nullptr));
+        auto status = backend ? aps5_cairo_font_face_status(backend) : CAIRO_STATUS_NULL_POINTER;
+        if (status == CAIRO_STATUS_SUCCESS && fontMatrix) {
+            const auto matrix = std::bit_cast<cairo_matrix_t>(*fontMatrix);
+            if (_cairo_matrix_compute_determinant(&matrix) != 0 && !_cairo_matrix_is_invertible(&matrix)) {
+                status = _cairo_error(CAIRO_STATUS_INVALID_MATRIX);
+            }
+        }
+        if (status == CAIRO_STATUS_SUCCESS) status = CAIRO_STATUS_NULL_POINTER;
+        return reinterpret_cast<CairoScaledFont*>(_cairo_scaled_font_create_in_error(status));
     }
     const auto matrix = std::bit_cast<cairo_matrix_t>(*fontMatrix);
     const auto transform = std::bit_cast<cairo_matrix_t>(*ctm);
