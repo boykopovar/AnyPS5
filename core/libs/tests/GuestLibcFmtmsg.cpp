@@ -9,7 +9,12 @@
 #include <string>
 
 #ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
 #include <stdlib.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -40,17 +45,45 @@ void SetVerbosity(const char* value) {
 }
 
 std::filesystem::path g_capture;
+int g_savedStderr = -1;
 
 void BeginCapture() {
-    Require(std::freopen(g_capture.string().c_str(), "w", stderr) != nullptr);
+    std::fflush(stderr);
+#ifdef _WIN32
+    const int file = ::_open(g_capture.string().c_str(), _O_CREAT | _O_WRONLY | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE);
+    Require(file >= 0);
+    g_savedStderr = ::_dup(2);
+    Require(g_savedStderr >= 0 && ::_dup2(file, 2) == 0);
+    ::_close(file);
+#else
+    const int file = ::open(g_capture.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0600);
+    Require(file >= 0);
+    g_savedStderr = ::dup(2);
+    Require(g_savedStderr >= 0 && ::dup2(file, 2) == 2);
+    ::close(file);
+#endif
 }
 
 std::string EndCapture() {
     std::fflush(stderr);
-    std::ifstream input(g_capture);
+#ifdef _WIN32
+    Require(::_dup2(g_savedStderr, 2) == 0);
+    ::_close(g_savedStderr);
+#else
+    Require(::dup2(g_savedStderr, 2) == 2);
+    ::close(g_savedStderr);
+#endif
+    g_savedStderr = -1;
+    std::ifstream input(g_capture, std::ios::binary);
     std::stringstream text;
     text << input.rdbuf();
-    return text.str();
+    std::string result = text.str();
+    std::string normalized;
+    for (std::size_t index = 0; index < result.size(); ++index) {
+        if (result[index] == '\r' && index + 1 < result.size() && result[index + 1] == '\n') continue;
+        normalized += result[index];
+    }
+    return normalized;
 }
 
 }
