@@ -129,6 +129,11 @@ void AuditFiles(const std::string& root) {
     descriptor = Create(secret, SCE_KERNEL_O_RDONLY, 0);
     Require(fchmod_nid_postfix(descriptor, 0604) == 0, "fchmod failed");
     Require(DescriptorMode(descriptor) == (RegularType | 0604), "fchmod 0604 must read back on the descriptor");
+    Require(fchmod_nid_postfix(descriptor, 0400) == 0, "fchmod 0400 through a read-only descriptor failed");
+    Require(DescriptorMode(descriptor) == (RegularType | 0400), "fchmod 0400 must read back on a read-only descriptor");
+    Require((GetFileAttributesA(secret.c_str()) & FILE_ATTRIBUTE_READONLY) != 0, "fchmod 0400 must set the read-only attribute");
+    Require(fchmod_nid_postfix(descriptor, 0604) == 0, "fchmod back to 0604 through a read-only descriptor failed");
+    Require((GetFileAttributesA(secret.c_str()) & FILE_ATTRIBUTE_READONLY) == 0, "fchmod 0604 must clear the read-only attribute");
     Require(close_nid_postfix(descriptor) == 0, "close failed");
 
     const std::string moved = root + "/moved";
