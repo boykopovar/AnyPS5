@@ -59,6 +59,14 @@ else:
         self.assertEqual(removed_calls, {0, 3})
         self.assertEqual(removed_chunks, {1, 5})
 
+    def test_two_rejected_singletons_finish_with_two_trials(self):
+        minimizer = PredicateMinimizer({0, 1}, set())
+        with patch.object(minimizer, "predicate", side_effect=[False, False, frame_capture_minimize.TrialLimitReached]) as trial:
+            remaining, _, _, complete = minimizer.minimize([0, 1], set(), set(), True)
+        self.assertEqual([args[0][0] for args in trial.call_args_list], [{0}, {1}])
+        self.assertEqual(remaining, [0, 1])
+        self.assertTrue(complete)
+
     def test_requires_repeated_confirmation_and_positive_trial_limit(self):
         for arguments in (("--confirm-runs", "1"), ("--max-trials", "0"), ("--replay-timeout", "0")):
             with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
@@ -208,16 +216,33 @@ if command == 'inspect':
                 frame_capture_minimize.Minimizer.validate_entries(entries, "calls")
 
     def test_inspection_entries_accept_nonnegative_integer_indexes(self):
-        self.assertIsNone(frame_capture_minimize.Minimizer.validate_entries([{"index": 0, "kind": "submit"}], "calls"))
+        calls = [{"index": 0, "kind": "submit", "memory_group": None}]
+        self.assertIsNone(frame_capture_minimize.Minimizer.validate_entries(calls, "calls"))
 
     def test_inspection_entries_reject_duplicate_indexes(self):
+        calls = [{"index": 0, "kind": "submit", "memory_group": None},
+                 {"index": 0, "kind": "flip", "memory_group": None}]
         with self.assertRaisesRegex(RuntimeError, "duplicate index 0"):
-            frame_capture_minimize.Minimizer.validate_entries([{"index": 0, "kind": "submit"}, {"index": 0, "kind": "flip"}], "calls")
+            frame_capture_minimize.Minimizer.validate_entries(calls, "calls")
 
     def test_inspection_memory_entries_require_valid_groups(self):
         for entry in ({"index": 0, "kind": "memory"}, {"index": 0, "kind": "memory", "memory_group": -1}, {"index": 0, "kind": "memory", "memory_group": True}):
             with self.subTest(entry=entry), self.assertRaisesRegex(RuntimeError, "invalid memory group"):
                 frame_capture_minimize.Minimizer.validate_entries([entry], "calls")
+
+    def test_inspection_rejects_invalid_non_memory_groups_before_replay(self):
+        for fields in ({}, {"memory_group": 3}):
+            with self.subTest(fields=fields), tempfile.TemporaryDirectory() as directory:
+                calls = [{"index": 0, "kind": "frame-start", **fields}]
+                inspection = json.dumps({"calls": calls, "chunks": []})
+                args, _, _, output = self.empty_cli(Path(directory), filter_source=f"print({inspection!r})\n")
+                stderr = io.StringIO()
+                with patch.object(frame_capture_minimize.Minimizer, "replay_once", return_value=(True, "matched")) as replay:
+                    with contextlib.redirect_stderr(stderr):
+                        self.assertEqual(frame_capture_minimize.main(args), 2)
+                replay.assert_not_called()
+                self.assertIn("capture inspection calls[0] has an invalid memory group", stderr.getvalue())
+                self.assertFalse(output.exists())
 
     def test_inspection_chunks_require_valid_groups(self):
         for entry in ({"index": 0, "kind": "delta"}, {"index": 0, "kind": "range", "group": -1}, {"index": 0, "kind": "snapshot", "group": True}):
@@ -504,6 +529,42 @@ if command == 'inspect':
             arguments.extend(["--replay-timeout", "0"])
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 frame_capture_minimize.parse_args(arguments)
+
+    def test_native_filter_command_is_the_path_alone(self):
+        self.assertEqual(frame_capture_minimize.Minimizer.command(Path("filter")), [str(Path("filter"))])
+
+    def test_minimize_without_units_is_complete_and_unchanged(self):
+        minimizer = PredicateMinimizer([], [])
+        result = minimizer.minimize([], set(), set(), True)
+        self.assertEqual(result, ([], set(), set(), True))
+        self.assertEqual(minimizer.trials, 0)
+
+    def test_minimize_reports_incomplete_when_trial_budget_runs_out(self):
+        args = SimpleNamespace(max_trials=0, filter="filter", replay="replay", capture="capture", output="output")
+        minimizer = frame_capture_minimize.Minimizer(args, re.compile("failure"))
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            current, removed_calls, removed_chunks, complete = minimizer.minimize([0, 1, 2], set(), set(), True)
+        self.assertEqual((current, removed_calls, removed_chunks, complete), ([0, 1, 2], set(), set(), False))
+        self.assertIn("maximum trial count reached", stderr.getvalue())
+
+    def test_reducible_chunks_excludes_ranges_and_keeps_deltas_of_retained_groups(self):
+        description = {
+            "calls": [
+                {"index": 0, "memory_group": 1},
+                {"index": 1, "memory_group": 2},
+                {"index": 2, "memory_group": None},
+            ],
+            "chunks": [
+                {"index": 0, "kind": "range", "group": 1},
+                {"index": 1, "kind": "delta", "group": 1},
+                {"index": 2, "kind": "delta", "group": 2},
+                {"index": 3, "kind": "reference", "group": 2},
+            ],
+        }
+        units, removed_groups = frame_capture_minimize.Minimizer.reducible_chunks(description, {1})
+        self.assertEqual(units, [1, 3])
+        self.assertEqual(removed_groups, {2})
 
 if __name__ == "__main__":
     unittest.main()

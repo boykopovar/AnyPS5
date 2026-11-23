@@ -70,10 +70,10 @@ static float PZero(float x) {
     if (ix >= 0x41000000) {
         p = pR8;
         q = pS8;
-    } else if (ix >= 0x40f71c58) {
+    } else if (ix >= 0x409173eb) {
         p = pR5;
         q = pS5;
-    } else if (ix >= 0x4036db68) {
+    } else if (ix >= 0x4036d917) {
         p = pR3;
         q = pS3;
     } else {
@@ -123,10 +123,10 @@ static float QZero(float x) {
     if (ix >= 0x41000000) {
         p = qR8;
         q = qS8;
-    } else if (ix >= 0x40f71c58) {
+    } else if (ix >= 0x409173eb) {
         p = qR5;
         q = qS5;
-    } else if (ix >= 0x4036db68) {
+    } else if (ix >= 0x4036d917) {
         p = qR3;
         q = qS3;
     } else {
@@ -165,7 +165,7 @@ float APS5_VABI j0f_nid_postfix(float x) {
                 ss = z / cc;
         }
 
-        if (static_cast<std::uint32_t>(ix) > 0x80000000u)
+        if (ix > 0x58000000)
             z = (invsqrtpi * cc) / sqrtf_nid_postfix(x);
         else {
             u = PZero(x);
@@ -174,12 +174,12 @@ float APS5_VABI j0f_nid_postfix(float x) {
         }
         return z;
     }
-    if (ix < 0x39000000) {
+    if (ix < 0x3b000000) {
         if (huge + x > one) {
-            if (ix < 0x32000000)
+            if (ix < 0x39800000)
                 return one;
             else
-                return one - 0.25f * x * x;
+                return one - x * x / 4;
         }
     }
     z = x * x;
@@ -218,7 +218,7 @@ float APS5_VABI y0f_nid_postfix(float x) {
             else
                 ss = z / cc;
         }
-        if (static_cast<std::uint32_t>(ix) > 0x80000000u)
+        if (ix > 0x58000000)
             z = (invsqrtpi * ss) / sqrtf_nid_postfix(x);
         else {
             u = PZero(x);
@@ -227,7 +227,7 @@ float APS5_VABI y0f_nid_postfix(float x) {
         }
         return z;
     }
-    if (ix <= 0x32000000)
+    if (ix <= 0x39000000)
         return u00 + tpi * logf_nid_postfix(x);
     z = x * x;
     u = u00 + z * (u01 + z * (u02 + z * (u03 + z * (u04 + z * (u05 + z * u06)))));

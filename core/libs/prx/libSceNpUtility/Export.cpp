@@ -46,12 +46,16 @@ static constexpr int SCE_NP_SERVICE_CHECKER_ERROR_REQUEST_NOT_FOUND = static_cas
 static constexpr int SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055AD0B);
 static constexpr int SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055AA03);
 static constexpr int SCE_NP_TITLE_METADATA_ERROR_TOO_LONG = static_cast<int>(0x8055AA04);
+static constexpr int SCE_NP_TITLE_METADATA_ERROR_OUT_OF_MEMORY = static_cast<int>(0x8055AA05);
+static constexpr int SCE_NP_TITLE_METADATA_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x8055AA09);
 static constexpr int POLL_FINISHED = 0;
 static constexpr int POLL_RUNNING = 1;
 static constexpr std::size_t MAX_TITLE_CONTEXTS = 32;
 static constexpr std::size_t MAX_REQUESTS = 32;
 static constexpr std::size_t MAX_SERVICE_CHECKER2_REQUESTS = 0x1000;
 static constexpr std::uint32_t MAX_SERVICE_CHECKER2_REQUEST_ID = 0x7FFFFFFF;
+static constexpr std::size_t MAX_TITLE_METADATA_REQUESTS = 0x1000;
+static constexpr std::uint32_t MAX_TITLE_METADATA_REQUEST_ID = 0xFFFFFF;
 static constexpr int WORD_FILTER_TITLE_CTX_ID_OFFSET = 0x01000000;
 static constexpr int WORD_FILTER_REQUEST_ID_OFFSET = 0x02000000;
 static constexpr std::size_t WORD_FILTER_COMMENT_MAX_LENGTH = 0x400;
@@ -191,6 +195,13 @@ struct ServiceChecker1 {
     std::int32_t nextRequest = 1;
 };
 ServiceChecker1 serviceChecker1;
+
+struct TitleMetadataState {
+    std::mutex mutex;
+    std::unordered_set<std::int32_t> requests;
+    std::uint32_t nextRequest = 1;
+};
+TitleMetadataState titleMetadata;
 
 int AddTitleContext(Service& service) {
     std::lock_guard lock(service.mutex);
@@ -507,14 +518,16 @@ int APS5_VABI sceNpLookupCreateTitleCtxA(int userId) {
     return AddTitleContext(lookup);
 }
 int APS5_VABI sceNpLookupNetAbortRequest(std::int32_t requestId) {
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     return AbortRequest(lookupNet, requestId);
 }
 int APS5_VABI sceNpLookupNetCensorComment(std::int32_t requestId, const void* npId, const char* comment, const void* option) {
     if (!comment) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (const int error = CheckComment(comment)) return error;
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     if (!npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     return StartOffline(lookupNet, requestId);
 }
@@ -527,21 +540,25 @@ int APS5_VABI sceNpLookupNetConvertNpIdToJid() {
     return 0;
 }
 int APS5_VABI sceNpLookupNetCreateRequest(std::int32_t titleCtxId) {
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     return CreateRequest(lookupNet, titleCtxId, false);
 }
 int APS5_VABI sceNpLookupNetCreateTitleCtx(const void* selfNpId, const void* npId) {
     (void)selfNpId;
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     if (!npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     return AddTitleContext(lookupNet);
 }
 int APS5_VABI sceNpLookupNetDeleteRequest(std::int32_t requestId) {
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     return DeleteRequest(lookupNet, requestId);
 }
 int APS5_VABI sceNpLookupNetDeleteTitleCtx(std::int32_t titleCtxId) {
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     return DeleteTitleContext(lookupNet, titleCtxId);
 }
 int APS5_VABI sceNpLookupNetInit(void) {
@@ -566,8 +583,9 @@ int APS5_VABI sceNpLookupNetIsInit(std::int32_t* out) {
     return 0;
 }
 int APS5_VABI sceNpLookupNetNpId(std::int32_t requestId, const void* onlineId, void* npId, const void* option) {
-    (void)option;
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     if (!onlineId || !npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     return StartOffline(lookupNet, requestId);
 }
@@ -575,12 +593,15 @@ int APS5_VABI sceNpLookupNetSanitizeComment(std::int32_t requestId, const void* 
     if (!comment || !sanitizedComment) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (const int error = CheckComment(comment)) return error;
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     if (!npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     return StartOffline(lookupNet, requestId);
 }
 int APS5_VABI sceNpLookupNetSetTimeout(std::int32_t id, std::int32_t resolveRetry, std::int32_t resolveTimeout, std::int32_t connectTimeout, std::int32_t sendTimeout, std::int32_t receiveTimeout) {
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    if (resolveTimeout < 0 || connectTimeout < 0 || sendTimeout < 0 || receiveTimeout < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return SetTimeout(lookupNet, id, resolveRetry, static_cast<std::uint32_t>(resolveTimeout), static_cast<std::uint32_t>(connectTimeout), static_cast<std::uint32_t>(sendTimeout), static_cast<std::uint32_t>(receiveTimeout));
 }
 int APS5_VABI sceNpLookupNetTerm(void) {
@@ -719,16 +740,32 @@ int APS5_VABI sceNpServiceCheckerIntIsCached(std::int32_t requestId, std::uint8_
     if (!CopyOutPreservingErrno(cached, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT;
     return 0;
 }
-int APS5_VABI sceNpTitleMetadataIntAbortRequest() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpTitleMetadataIntAbortRequest(std::int32_t requestId) {
+    std::lock_guard lock(titleMetadata.mutex);
+    if (titleMetadata.requests.empty() || !titleMetadata.requests.contains(requestId)) {
+        return SCE_NP_TITLE_METADATA_ERROR_REQUEST_NOT_FOUND;
+    }
     return 0;
 }
-int APS5_VABI sceNpTitleMetadataIntCreateRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTitleMetadataIntCreateRequest(void) {
+    std::lock_guard lock(titleMetadata.mutex);
+    if (titleMetadata.requests.size() >= MAX_TITLE_METADATA_REQUESTS) {
+        return SCE_NP_TITLE_METADATA_ERROR_OUT_OF_MEMORY;
+    }
+    std::uint32_t id = titleMetadata.nextRequest;
+    while (titleMetadata.requests.contains(static_cast<std::int32_t>(id))) {
+        id = id >= MAX_TITLE_METADATA_REQUEST_ID ? 1 : id + 1;
+    }
+    const std::int32_t value = static_cast<std::int32_t>(id);
+    titleMetadata.nextRequest = id >= MAX_TITLE_METADATA_REQUEST_ID ? 1 : id + 1;
+    titleMetadata.requests.insert(value);
+    return value;
 }
-int APS5_VABI sceNpTitleMetadataIntDeleteRequest() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpTitleMetadataIntDeleteRequest(std::int32_t requestId) {
+    std::lock_guard lock(titleMetadata.mutex);
+    if (titleMetadata.requests.empty() || !titleMetadata.requests.erase(requestId)) {
+        return SCE_NP_TITLE_METADATA_ERROR_REQUEST_NOT_FOUND;
+    }
     return 0;
 }
 int APS5_VABI sceNpTitleMetadataIntGetInfo(std::uint32_t argument1, void* argument2, void* argument3) {

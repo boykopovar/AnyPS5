@@ -3,6 +3,7 @@
 #include "prx/libSceAmpr/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
@@ -755,7 +756,7 @@ void TestReadPastEndOfFileZeroFills() {
     std::filesystem::remove_all(directory);
 }
 
-void TestReadAtUnseekableOffsetThrows() {
+void TestReadAtUnseekableOffsetFails() {
     const char* path = "ampr_unseekable_offset.bin";
     { std::ofstream file(path, std::ios::binary); file << "data"; }
     std::uint32_t fileId = 0;
@@ -766,14 +767,10 @@ void TestReadAtUnseekableOffsetThrows() {
     alignas(8) std::array<std::uint8_t, sizeof(command)> memory{};
     std::memcpy(memory.data(), &command, sizeof(command));
     Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, sizeof(memory), 1, sizeof(memory), memory.data()};
-    bool rejected = false;
-    try {
-        sceKernelAprSubmitCommandBuffer(&buffer, 0);
-
-    } catch (const std::runtime_error& error) {
-        rejected = std::string(error.what()).find("returned 0 of 4 bytes") != std::string::npos;
-    }
-    Require(rejected);
+    std::uint32_t result = 0;
+    std::uint32_t id = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, &result, &id) == 0);
+    Require(result == 0 && sceKernelAprWaitCommandBuffer(id) == static_cast<int>(0x80020005u));
     std::remove(path);
 }
 
@@ -787,14 +784,72 @@ void TestResolveFailures() {
     Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 2, ids, sizes, &failed) == -1);
     Require(*__error_nid_postfix() == 2 && failed == 1 && ids[1] == 0xffffffffu && sizes[1] == 0);
     Require(sizes[0] == 4);
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 1, ids, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
+    const char* nullElements[]{paths[0], nullptr};
+    ids[0] = ids[1] = 123;
+    sizes[0] = sizes[1] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(nullElements, 2, ids, sizes, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 1 && ids[1] == 0xffffffffu && sizes[1] == 0);
+    const char* emptyElements[]{paths[0], ""};
+    ids[0] = ids[1] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIds(emptyElements, 2, ids, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 1 && ids[1] == 0xffffffffu);
     int results[]{123, 123};
     Require(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 2, ids, sizes, results) == 1);
     Require(results[0] == 0 && results[1] == static_cast<int>(0x80020002));
     Require(ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0);
-    for (const char* invalid : {"ampr_resolve_missing.bin/../ampr_resolve_existing.bin", "ampr_resolve_existing.bin/../ampr_resolve_existing.bin"}) {
+    for (const char* invalid : {"ampr_resolve_missing.bin/../ampr_resolve_existing.bin", "ampr_resolve_existing.bin/../ampr_resolve_existing.bin", "", static_cast<const char*>(nullptr)}) {
         Require(sceKernelAprResolveFilepathsToIds(&invalid, 1, ids, &failed) == -1);
         Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
     }
+    const char** const unreadableTable = reinterpret_cast<const char**>(0x10);
+    const char* unreadableEntry[]{reinterpret_cast<const char*>(0x10)};
+    const auto* const unreadablePrefix = reinterpret_cast<const char*>(0x10);
+    const auto faulted = [](int result) {
+        const bool fault = result == -1 && *__error_nid_postfix() == 14;
+        *__error_nid_postfix() = 0;
+        return fault;
+    };
+    Require(faulted(sceKernelAprResolveFilepathsToIds(unreadableTable, 1, ids, &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsForEach(unreadableEntry, 1, ids, results)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsAndFileSizes(unreadableEntry, 1, ids, sizes, &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsWithPrefixToIds(unreadablePrefix, paths, 1, ids, &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsWithPrefixToIdsForEach(unreadablePrefix, paths, 1, ids, results)));
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(unreadablePrefix, paths, 0, ids, &failed) == 0 && *__error_nid_postfix() == 0);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsForEach(unreadablePrefix, paths, 0, ids, results) == 0 && *__error_nid_postfix() == 0);
+    Require(faulted(sceKernelAprResolveFilepathsToIds(paths, 1, reinterpret_cast<std::uint32_t*>(0x10), &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 1, ids, reinterpret_cast<std::uint64_t*>(0x10), results)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsForEach(paths, 1, ids, reinterpret_cast<int*>(0x10))));
+    ids[1] = 123;
+    Require(faulted(sceKernelAprResolveFilepathsToIds(paths, 2, ids, reinterpret_cast<std::uint32_t*>(0x10))) && ids[1] == 0xffffffffu);
+    const std::string longPath(1025, 'a');
+    const char* longPaths[]{longPath.c_str()};
+    ids[0] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIds(longPaths, 1, ids, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
+    ids[0] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(longPath.c_str(), paths, 1, ids, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
+    ids[0] = 123;
+    sizes[0] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(longPaths, 1, ids, sizes, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu && sizes[0] == 0);
+    ids[0] = 123;
+    results[0] = 123;
+    Require(sceKernelAprResolveFilepathsToIdsForEach(longPaths, 1, ids, results) == 0);
+    Require(ids[0] == 0xffffffffu && results[0] == static_cast<int>(0x80020002));
     std::remove(paths[0]);
 }
 
@@ -810,14 +865,28 @@ void TestResolveForEachVariants() {
     Require(sceKernelAprResolveFilepathsToIdsForEach(paths, 2, ids, results) == 1);
     Require(ids[0] == expected && ids[1] == 0xffffffffu && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
     ids[0] = ids[1] = 123;
+    Require(sceKernelAprResolveFilepathsToIdsForEach(paths, 2, ids, nullptr) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu);
+    ids[0] = ids[1] = 123;
+    std::uint64_t sizes[]{123, 123};
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 2, ids, sizes, nullptr) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0);
+    ids[0] = ids[1] = 123;
     results[0] = results[1] = 123;
     Require(sceKernelAprResolveFilepathsWithPrefixToIdsForEach("ampr_", names, 2, ids, results) == 1);
     Require(ids[0] == expected && ids[1] == 0xffffffffu && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
-    std::uint64_t sizes[]{123, 123};
+    ids[0] = ids[1] = 123;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsForEach("ampr_", names, 2, ids, nullptr) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu);
+    sizes[0] = sizes[1] = 123;
     ids[0] = ids[1] = 123;
     results[0] = results[1] = 123;
     Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizesForEach("ampr_", names, 2, ids, sizes, results) == 1);
     Require(ids[0] == expected && ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0 && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
+    ids[0] = ids[1] = 123;
+    sizes[0] = sizes[1] = 123;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizesForEach("ampr_", names, 2, ids, sizes, nullptr) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0);
     std::remove(paths[0]);
 }
 
@@ -856,6 +925,13 @@ void TestPrefixedResolveWithoutSizes() {
     std::uint32_t untouched[]{0x123456};
     Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), names, 0, untouched, &failed) == 0);
     Require(untouched[0] == 0x123456 && failed == 1);
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(nullptr, names, 0, ids, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), nullptr, 0, ids, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), names, 0, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsToIds(nullptr, 0, ids, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsToIds(names, 0, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(names, 0, ids, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
     std::remove((prefix + "first.bin").c_str());
     std::remove((prefix + "second.bin").c_str());
 }
@@ -1564,6 +1640,18 @@ void RequireReadOnlyZeroPages(std::uint64_t address, std::uint64_t size) {
 #endif
 }
 
+void RequireZeroPagesOffGpu(std::uint64_t address, std::uint64_t size) {
+    for (std::uint64_t offset = 0; offset < size; offset += page) {
+        const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address + offset), false);
+        Require(range != nullptr && !range->gpu && !range->gpuWritable && !range->HostReadable());
+    }
+}
+
+bool GpuRegistered(std::uint64_t address) {
+    const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), false);
+    return range != nullptr && range->gpu;
+}
+
 void TestAmmPrt() {
     std::uint64_t start = 0;
     std::uint64_t end = 0;
@@ -1586,6 +1674,7 @@ void TestAmmPrt() {
     Require(Protection(prt) == 0x10 && Protection(prt + 3 * page) == 0x10);
     Require(At(prt) == 0 && At(prt + 4 * page - 8) == 0);
     RequireReadOnlyZeroPages(prt, 4 * page);
+    RequireZeroPagesOffGpu(prt, 4 * page);
     At(source) = 0x88;
 
     Recorder back;
@@ -1597,6 +1686,7 @@ void TestAmmPrt() {
     Require(sceAmprAmmCommandBufferRemapIntoPrt(&back.buffer, prt + 3 * page, source, page, cpuReadWrite, 0) == 0);
     SubmitAmm(back);
     Require(Protection(prt) == 0x10 && Protection(prt + page) == 0x03 && Protection(prt + 2 * page) == 0x33 && Protection(prt + 3 * page) == 0x03);
+    RequireZeroPagesOffGpu(prt, page);
     At(prt + page) = 0x71;
     At(prt + 2 * page) = 0x72;
     Require(At(prt + page) == 0x71 && At(prt + 2 * page) == 0x72 && At(prt + 3 * page) == 0x88 && At(prt) == 0);
@@ -1620,6 +1710,7 @@ void TestAmmPrt() {
     RequireZeroMappingObserved(prt + page, 2 * page, beforeRelease);
     Require(Protection(prt + page) == 0x10 && At(prt + page) == 0 && At(prt + 2 * page) == 0 && At(prt + 3 * page) == 0x88);
     RequireReadOnlyZeroPages(prt + page, 2 * page);
+    RequireZeroPagesOffGpu(prt + page, 2 * page);
 
     Recorder rebuild;
     Require(sceAmprAmmCommandBufferAllocatePaForPrt(&rebuild.buffer, prt, 3 * page, 0, cpuReadWrite) == 0);
@@ -1629,6 +1720,12 @@ void TestAmmPrt() {
         At(prt + index * page) = 0x90 + index;
     }
     Require(At(prt) == 0x90 && At(prt + page) == 0x91 && At(prt + 2 * page) == 0x92 && At(prt + 3 * page) == 0x88);
+
+    Recorder gpuPage;
+    Require(sceAmprAmmCommandBufferUnmapToPrt(&gpuPage.buffer, prt, page) == 0);
+    Require(sceAmprAmmCommandBufferAllocatePaForPrt(&gpuPage.buffer, prt, page, 0, cpuGpuReadWrite) == 0);
+    SubmitAmm(gpuPage);
+    Require(Protection(prt) == 0x33 && GpuRegistered(prt));
 
     const std::int64_t ammRejected = invalidArgument;
     Recorder empty;
@@ -2001,7 +2098,7 @@ int main() {
     TestConstructed();
     TestZeroFilledBuffer();
     TestReadPastEndOfFileZeroFills();
-    TestReadAtUnseekableOffsetThrows();
+    TestReadAtUnseekableOffsetFails();
     TestResolveFailures();
     TestResolveForEachVariants();
     TestPrefixedResolveWithoutSizes();

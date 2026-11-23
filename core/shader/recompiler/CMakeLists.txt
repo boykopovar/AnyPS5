@@ -276,6 +276,7 @@ function(add_shader_recompiler target runtimeTarget)
             ImageTableAbi::TableHeader
             FmaskLayoutOf
             IsFmaskTextureFormat
+            PipelineSpecialization::IsAtomicLockTable
             PipelineSpecialization::IsWorkgroupOffset
             PipelineSpecialization::WorkgroupOffsetBase
             PipelineSpecialization::WorkgroupOffsetWords
@@ -334,6 +335,13 @@ function(add_shader_recompiler target runtimeTarget)
             LinkUserDataCalls
             FindTableCalls
             LinkCalls
+            SplitTableCall
+            BuildSplitTableCallPrograms
+            ContinueTableCall
+            BuildTableCallContinuation
+            SplitStateAbi::TotalSlots
+            SplitStateAbi::TargetSlot
+            SplitStateAbi::SlotCount
             LoadStamp
             StoreStamp
             WriteFileAtomically

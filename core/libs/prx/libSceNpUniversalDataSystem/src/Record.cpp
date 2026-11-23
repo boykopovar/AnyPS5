@@ -126,8 +126,11 @@ int APS5_VABI sceNpUniversalDataSystemIntInitialize(const NpUniversalDataSystemI
     std::lock_guard<std::recursive_mutex> recordsLock(g_recordsMutex);
     if (g_initialized.load()) return kAlreadyInitialized;
     if (param == nullptr) return kInvalidArgument;
-    if (param->size != sizeof(NpUniversalDataSystemIntInitParam)) return kInvalidParamSize;
-    if (param->memory == nullptr) return kInvalidArgument;
+    NpUniversalDataSystemIntInitParam copy{};
+    const bool copied = GuestCopyIn_nid_no_patch(&copy, param, sizeof(copy));
+    if (!copied) return kInvalidArgument;
+    if (copy.size != sizeof(NpUniversalDataSystemIntInitParam)) return kInvalidParamSize;
+    if (copy.memory == nullptr) return kInvalidArgument;
     bool expected = false;
     if (!g_initialized.compare_exchange_strong(expected, true)) return kAlreadyInitialized;
     return 0;
@@ -160,10 +163,16 @@ int APS5_VABI sceNpUniversalDataSystemIntCreateRecordArray(void** record) {
     std::lock_guard<std::recursive_mutex> recordsLock(g_recordsMutex);
     if (!g_initialized.load()) return kNotInitialized;
     if (record == nullptr) return kInvalidArgument;
+    void* created = nullptr;
     try {
-        *record = g_arrays.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyArray>());
+        created = g_arrays.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyArray>());
     } catch (const std::bad_alloc&) {
         return kOutOfMemory;
+    }
+    const bool copied = GuestCopyOut_nid_no_patch(record, &created, sizeof(created));
+    if (!copied) {
+        g_arrays.Release(static_cast<NpUniversalDataSystemEventPropertyArray*>(created));
+        return kInvalidArgument;
     }
     return 0;
 }
@@ -172,10 +181,16 @@ int APS5_VABI sceNpUniversalDataSystemIntCreateRecordObject(void** record) {
     std::lock_guard<std::recursive_mutex> recordsLock(g_recordsMutex);
     if (!g_initialized.load()) return kNotInitialized;
     if (record == nullptr) return kInvalidArgument;
+    void* created = nullptr;
     try {
-        *record = g_objects.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
+        created = g_objects.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
     } catch (const std::bad_alloc&) {
         return kOutOfMemory;
+    }
+    const bool copied = GuestCopyOut_nid_no_patch(record, &created, sizeof(created));
+    if (!copied) {
+        g_objects.Release(static_cast<NpUniversalDataSystemEventPropertyObject*>(created));
+        return kInvalidArgument;
     }
     return 0;
 }
@@ -185,13 +200,18 @@ int APS5_VABI sceNpUniversalDataSystemIntCreateRecordData(const char* recordType
     if (!g_initialized.load()) return kNotInitialized;
     if (!ValidKey(recordType)) return kInvalidName;
     if (record == nullptr) return kInvalidArgument;
+    NpUniversalDataSystemEventPropertyObject* data = nullptr;
     try {
-        auto* data = g_objects.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
+        data = g_objects.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
         data->Set("recordType", std::string(recordType));
         data->Set("context", std::make_shared<NpUniversalDataSystemEventPropertyObject>());
-        *record = data;
     } catch (const std::bad_alloc&) {
         return kOutOfMemory;
+    }
+    const bool copied = GuestCopyOut_nid_no_patch(record, &data, sizeof(data));
+    if (!copied) {
+        g_objects.Release(data);
+        return kInvalidArgument;
     }
     return 0;
 }
@@ -228,9 +248,7 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordDataEstimateSize(const void* reco
     } else {
         return kNullRecord;
     }
-    const int savedErrno = errno;
     const bool written = GuestCopyOut_nid_no_patch(size, &estimated, sizeof(estimated));
-    errno = savedErrno;
     return written ? 0 : kInvalidArgument;
 }
 
@@ -327,7 +345,11 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetObject(void* record, cons
     const auto* source = FindObject(const_cast<void*>(value));
     if (source == nullptr) return kNullObject;
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyObject>(source->Clone());
-    if (valuePtr != nullptr) *valuePtr = child.get();
+    if (valuePtr != nullptr) {
+        auto* pointer = child.get();
+        const bool copied = GuestCopyOut_nid_no_patch(valuePtr, &pointer, sizeof(pointer));
+        if (!copied) return kInvalidArgument;
+    }
     array->Add(std::move(child));
     return 0;
 }
@@ -341,7 +363,11 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetArray(void* record, const
     const auto* source = FindArray(const_cast<void*>(value));
     if (source == nullptr) return kNullArray;
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyArray>(source->Clone());
-    if (valuePtr != nullptr) *valuePtr = child.get();
+    if (valuePtr != nullptr) {
+        auto* pointer = child.get();
+        const bool copied = GuestCopyOut_nid_no_patch(valuePtr, &pointer, sizeof(pointer));
+        if (!copied) return kInvalidArgument;
+    }
     array->Add(std::move(child));
     return 0;
 }
@@ -449,7 +475,11 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetObject(void* record, con
     const auto* source = FindObject(const_cast<void*>(value));
     if (source == nullptr) return kNullObject;
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyObject>(source->Clone());
-    if (valuePtr != nullptr) *valuePtr = child.get();
+    if (valuePtr != nullptr) {
+        auto* pointer = child.get();
+        const bool copied = GuestCopyOut_nid_no_patch(valuePtr, &pointer, sizeof(pointer));
+        if (!copied) return kInvalidArgument;
+    }
     object->Set(key, std::move(child));
     return 0;
 }
@@ -464,7 +494,11 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetArray(void* record, cons
     const auto* source = FindArray(const_cast<void*>(value));
     if (source == nullptr) return kNullArray;
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyArray>(source->Clone());
-    if (valuePtr != nullptr) *valuePtr = child.get();
+    if (valuePtr != nullptr) {
+        auto* pointer = child.get();
+        const bool copied = GuestCopyOut_nid_no_patch(valuePtr, &pointer, sizeof(pointer));
+        if (!copied) return kInvalidArgument;
+    }
     object->Set(key, std::move(child));
     return 0;
 }

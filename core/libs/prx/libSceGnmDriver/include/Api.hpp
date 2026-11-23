@@ -38,6 +38,9 @@ int APS5_VABI sceGnmGetOffChipTessellationBufferSize_nid_disambig1(void);
 bool APS5_VABI sceGnmDriverTraceInProgress_nid_disambig1(void);
 bool APS5_VABI sceGnmIsUserPaEnabled();
 bool APS5_VABI sceGnmDriverCaptureInProgress();
+int APS5_VABI sceGnmCreateWorkloadStream_nid_disambig1(std::uint64_t name, std::uint32_t* stream);
+int APS5_VABI sceGnmBeginWorkload_nid_disambig1(std::uint32_t stream, std::uint64_t* workload);
+int APS5_VABI sceGnmEndWorkload_nid_disambig1(std::uint64_t workload);
 int APS5_VABI sceGnmDriverTriggerCapture();
 int APS5_VABI sceGnmValidateCommandBuffers();
 bool APS5_VABI sceRazorIsLoaded();
@@ -75,7 +78,8 @@ int APS5_VABI sceGnmInsertThreadTraceMarker_nid_disambig1(void);
 int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(void);
 int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload_nid_disambig1(void);
 int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(void);
-int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(void);
-int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(void);
+int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(std::uint64_t workload, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes,
+    std::uint32_t handle, std::uint32_t index, std::uint32_t flipMode, std::int64_t flipArg);
+int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(std::uint64_t workload, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes);
 
 }

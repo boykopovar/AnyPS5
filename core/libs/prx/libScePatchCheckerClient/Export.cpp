@@ -29,13 +29,11 @@ int APS5_VABI scePatchCheckerDestroyHandler() {
 }
 
 int APS5_VABI scePatchCheckerDisableAutoDownload() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_PATCH_CHECKER_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI scePatchCheckerEnableAutoDownload() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_PATCH_CHECKER_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI scePatchCheckerGetApplicableTick() {
@@ -60,7 +58,6 @@ int APS5_VABI scePatchCheckerRequestCheckPatchByType() {
 }
 
 int APS5_VABI scePatchCheckerTerminate() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

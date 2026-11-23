@@ -1,20 +1,23 @@
 #include "FreeTypeFontFixture.hpp"
+#include "FontFixture.hpp"
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_MULTIPLE_MASTERS_H
 #include FT_OUTLINE_H
 #include FT_STROKER_H
 #include FT_TRIGONOMETRY_H
 #include FT_GLYPH_H
 #include FT_MODULE_H
+#include FT_RENDER_H
 #include FT_TYPE1_TABLES_H
+#include FT_SYNTHESIS_H
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <exception>
 #include <random>
 #include <vector>
 #ifdef _WIN32
@@ -37,7 +40,16 @@ struct Exports {
     decltype(&FT_Outline_Copy_nid_postfix) copy;
     decltype(&FT_Outline_Decompose_nid_postfix) decompose;
     decltype(&FT_Outline_Get_Bitmap_nid_postfix) outlineBitmap;
+    decltype(&FT_Set_Renderer_nid_postfix) setRenderer;
 };
+
+using SetCoordinates = decltype(&FT_Set_Var_Design_Coordinates_nid_postfix);
+struct VariationExports {
+    SetCoordinates mmBlend;
+    SetCoordinates mmDesign;
+    SetCoordinates varBlend;
+    SetCoordinates varDesign;
+} variations;
 
 struct StrokerExports {
     decltype(&FT_Init_FreeType_nid_postfix) init;
@@ -81,6 +93,9 @@ struct ForwardedExports {
     decltype(&FT_QRealloc_nid_postfix) qrealloc;
     decltype(&FT_Get_Module_nid_postfix) getModule;
     decltype(&FT_Remove_Module_nid_postfix) removeModule;
+    decltype(&FT_Open_Face_nid_postfix) open;
+    decltype(&FT_GlyphSlot_Oblique_nid_postfix) oblique;
+    decltype(&FT_GlyphSlot_Embolden_nid_postfix) embolden;
 };
 
 ForwardedExports forwarded;
@@ -138,6 +153,14 @@ void Libraries() {
     FreeType::GuestLibrary* library = nullptr;
     FT_Library native = nullptr;
     Require(forwarded.init(&library) == 0 && library && FT_Init_FreeType(&native) == 0, "initialize libraries");
+    auto* renderer = forwarded.getModule(library, "smooth");
+    auto* nativeRenderer = reinterpret_cast<FT_Renderer>(FT_Get_Module(native, "smooth"));
+    Require(renderer != nullptr && nativeRenderer != nullptr, "find the smooth renderer");
+    Require(ot.setRenderer(library, renderer, 0, nullptr) == FT_Set_Renderer(native, nativeRenderer, 0, nullptr),
+            "select the smooth renderer");
+    Require(FT_Get_Renderer(native, FT_GLYPH_FORMAT_OUTLINE) == nativeRenderer, "native renderer selected");
+    Require(ot.setRenderer(library, nullptr, 0, nullptr) == FT_Set_Renderer(native, nullptr, 0, nullptr),
+            "reject a missing renderer");
     for (FreeType::GuestLibrary* queried : {library, static_cast<FreeType::GuestLibrary*>(nullptr)}) {
         std::array<std::int32_t, 3> actual{-1, -1, -1};
         std::array<FT_Int, 3> expected{-1, -1, -1};
@@ -280,6 +303,80 @@ void Glyphs() {
     Require(forwarded.finish(library) == 0 && FT_Done_FreeType(native) == 0, "release glyph libraries");
 }
 
+void Synthesis() {
+    const std::vector<unsigned char> bytes = SquareGlyphFont('A', 700);
+    FreeType::GuestLibrary* library = nullptr;
+    FT_Library native = nullptr;
+    Require(forwarded.init(&library) == 0 && library && FT_Init_FreeType(&native) == 0, "initialize synthesis libraries");
+    FreeType::GuestOpenArgs args{};
+    args.flags = FT_OPEN_MEMORY;
+    args.memory_base = bytes.data();
+    args.memory_size = static_cast<std::int64_t>(bytes.size());
+    FreeType::GuestFaceRec* face = nullptr;
+    Require(forwarded.open(library, nullptr, 0, &face) == FT_Err_Invalid_Argument && face == nullptr, "open face without arguments");
+    Require(forwarded.open(nullptr, &args, 0, &face) == FT_Err_Invalid_Library_Handle && face == nullptr, "open face without library");
+    for (const bool embolden : {false, true}) {
+        Require(forwarded.open(library, &args, 0, &face) == 0 && face && face->glyph, "open memory face through FT_Open_Face");
+        FT_Face oracle = nullptr;
+        Require(FT_New_Memory_Face(native, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &oracle) == 0, "open synthesis oracle face");
+        Require(face->num_glyphs == oracle->num_glyphs, "glyph count");
+        Require(forwarded.pixelSizes(face, 18, 18) == 0 && FT_Set_Pixel_Sizes(oracle, 18, 18) == 0, "synthesis pixel sizes");
+        Require(forwarded.load(face, 1, FT_LOAD_DEFAULT) == 0 && FT_Load_Glyph(oracle, 1, FT_LOAD_DEFAULT) == 0, "load synthesis glyph");
+        Require(oracle->glyph->outline.n_points > 0, "synthesis glyph has an outline");
+        std::vector<FT_Vector> before(oracle->glyph->outline.points, oracle->glyph->outline.points + oracle->glyph->outline.n_points);
+        if (embolden) {
+            forwarded.embolden(face->glyph);
+            FT_GlyphSlot_Embolden(oracle->glyph);
+        } else {
+            forwarded.oblique(face->glyph);
+            FT_GlyphSlot_Oblique(oracle->glyph);
+        }
+        const FreeType::GuestGlyphSlotRec& actual = *face->glyph;
+        const FT_GlyphSlot expected = oracle->glyph;
+        Require(actual.advance.x == expected->advance.x && actual.advance.y == expected->advance.y, "synthesized advance");
+        Require(actual.metrics.width == expected->metrics.width && actual.metrics.height == expected->metrics.height, "synthesized metrics");
+        Require(actual.outline.n_points == expected->outline.n_points && actual.outline.n_contours == expected->outline.n_contours, "synthesized outline size");
+        for (int index = 0; index < expected->outline.n_points; ++index) {
+            Require(actual.outline.points[index].x == expected->outline.points[index].x && actual.outline.points[index].y == expected->outline.points[index].y, "synthesized outline points");
+        }
+        bool changed = expected->outline.n_points != static_cast<int>(before.size());
+        for (std::size_t index = 0; !changed && index < before.size(); ++index) {
+            changed = before[index].x != expected->outline.points[index].x || before[index].y != expected->outline.points[index].y;
+        }
+        Require(changed, "synthesis changed the outline");
+        Require(forwarded.doneFace(face) == 0 && FT_Done_Face(oracle) == 0, "release synthesis faces");
+        face = nullptr;
+    }
+    forwarded.oblique(nullptr);
+    forwarded.embolden(nullptr);
+    Require(forwarded.finish(library) == 0 && FT_Done_FreeType(native) == 0, "release synthesis libraries");
+}
+
+void Variations() {
+    const auto fvar = FontFixture::Words({1, 0, 16, 2, 1, 20, 0, 8, 0x7767, 0x6874, 0x0064, 0, 0x0190, 0, 0x0384, 0, 0, 256});
+    const auto gvar = FontFixture::Words({1, 0, 1, 0, 0, 0, 3, 0, 0, 28, 0, 0, 0, 0});
+    const auto bytes = FontFixture::BuildFont(3, {{"fvar", fvar}, {"gvar", gvar}});
+    FreeType::GuestLibrary* library = nullptr;
+    FreeType::GuestFaceRec* face = nullptr;
+    Require(forwarded.init(&library) == 0, "initialize variation library");
+    Require(forwarded.newMemoryFace(library, bytes.data(), bytes.size(), 0, &face) == 0, "open variable face");
+    std::int64_t design = 650 * 65536;
+    std::int64_t blend = 32768;
+    Require(variations.varDesign(face, 1, &design) == 0 && (face->face_flags & FT_FACE_FLAG_VARIATION), "apply design coordinates");
+    Require(variations.varBlend(face, 1, &blend) == 0, "apply blend coordinates");
+    Require(variations.varDesign(face, 0, nullptr) == 0 && !(face->face_flags & FT_FACE_FLAG_VARIATION), "reset design coordinates");
+    FT_Library native = nullptr;
+    FT_Face oracle = nullptr;
+    Require(FT_Init_FreeType(&native) == 0, "initialize native variation library");
+    Require(FT_New_Memory_Face(native, bytes.data(), bytes.size(), 0, &oracle) == 0, "open native variable face");
+    FT_Long nativeDesign = design;
+    Require(variations.mmDesign(face, 1, &design) == FT_Set_MM_Design_Coordinates(oracle, 1, &nativeDesign), "MM design result");
+    FT_Fixed nativeBlend = blend;
+    Require(variations.mmBlend(face, 1, &blend) == FT_Set_MM_Blend_Coordinates(oracle, 1, &nativeBlend), "MM blend result");
+    Require(FT_Done_Face(oracle) == 0 && FT_Done_FreeType(native) == 0, "release native variation face and library");
+    Require(forwarded.doneFace(face) == 0 && forwarded.finish(library) == 0, "release variation face and library");
+}
+
 using Events = std::vector<std::array<std::int64_t, 7>>;
 
 int Add(void* user, int kind, GuestVector first, GuestVector second = {}, GuestVector third = {}) {
@@ -382,36 +479,22 @@ void Strokers() {
                     FT_Stroker_GetBorderCounts(host, static_cast<FT_StrokerBorder>(border), &nativePointCount, &nativeContourCount), "border counts");
             Require(pointCount == nativePointCount && contourCount == nativeContourCount, "border count values");
             Require(border == FT_STROKER_BORDER_RIGHT || pointCount > 0, "left border has points");
-            if constexpr (sizeof(FT_Pos) == sizeof(std::int64_t)) {
-                std::vector<GuestVector> exportedPoints(pointCount);
-                std::vector<unsigned char> exportedTags(pointCount);
-                std::vector<std::uint16_t> exportedContours(contourCount);
-                GuestOutline exported{0, 0, exportedPoints.data(), exportedTags.data(), exportedContours.data(), 0};
-                std::vector<FT_Vector> expectedPoints(pointCount);
-                std::vector<unsigned char> expectedTags(pointCount);
-                std::vector<unsigned short> expectedContours(contourCount);
-                FT_Outline expected{0, 0, expectedPoints.data(), expectedTags.data(), expectedContours.data(), 0};
-                strokers.exportBorder(guest, border, &exported);
-                FT_Stroker_ExportBorder(host, static_cast<FT_StrokerBorder>(border), &expected);
-                Require(exported.n_points == expected.n_points && exported.n_contours == expected.n_contours && exported.n_points == pointCount, "exported counts");
-                for (std::uint32_t index = 0; index < pointCount; ++index) {
-                    Require(exportedPoints[index].x == expectedPoints[index].x && exportedPoints[index].y == expectedPoints[index].y, "exported points");
-                    Require(exportedTags[index] == expectedTags[index], "exported tags");
-                }
-                for (std::uint32_t index = 0; index < contourCount; ++index) Require(exportedContours[index] == expectedContours[index], "exported contours");
-            } else {
-                std::vector<GuestVector> exportedPoints(pointCount);
-                std::vector<unsigned char> exportedTags(pointCount);
-                std::vector<std::uint16_t> exportedContours(contourCount);
-                GuestOutline exported{0, 0, exportedPoints.data(), exportedTags.data(), exportedContours.data(), 0};
-                bool threw = false;
-                try {
-                    strokers.exportBorder(guest, border, &exported);
-                } catch (const std::exception&) {
-                    threw = true;
-                }
-                Require(threw, "32-bit FT_Pos export border throws");
+            std::vector<GuestVector> exportedPoints(pointCount);
+            std::vector<unsigned char> exportedTags(pointCount);
+            std::vector<std::uint16_t> exportedContours(contourCount);
+            GuestOutline exported{0, 0, exportedPoints.data(), exportedTags.data(), exportedContours.data(), 0};
+            std::vector<FT_Vector> expectedPoints(pointCount);
+            std::vector<unsigned char> expectedTags(pointCount);
+            std::vector<unsigned short> expectedContours(contourCount);
+            FT_Outline expected{0, 0, expectedPoints.data(), expectedTags.data(), expectedContours.data(), 0};
+            strokers.exportBorder(guest, border, &exported);
+            FT_Stroker_ExportBorder(host, static_cast<FT_StrokerBorder>(border), &expected);
+            Require(exported.n_points == expected.n_points && exported.n_contours == expected.n_contours && exported.n_points == pointCount, "exported counts");
+            for (std::uint32_t index = 0; index < pointCount; ++index) {
+                Require(exportedPoints[index].x == expectedPoints[index].x && exportedPoints[index].y == expectedPoints[index].y, "exported points");
+                Require(exportedTags[index] == expectedTags[index], "exported tags");
             }
+            for (std::uint32_t index = 0; index < contourCount; ++index) Require(exportedContours[index] == expectedContours[index], "exported contours");
             strokers.exportBorder(guest, border, nullptr);
         }
         strokers.done(guest);
@@ -456,6 +539,9 @@ int main(int argc, char** argv) {
     const bool forwards = true;
     void* dependency = library;
 #endif
+    Resolve(ot.setRenderer, library, patched, "Yu9oXRVmTTo", "sceFreeTypeOtSetRenderer_nid_no_patch");
+    Require(ot.setRenderer(nullptr, nullptr, 0, nullptr) == FT_Set_Renderer(nullptr, nullptr, 0, nullptr),
+            "reject a missing library");
     if (forwards) {
         Require(dependency != nullptr, "locate libSceFreeType");
         Resolve(forwarded.init, library, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");
@@ -479,10 +565,21 @@ int main(int argc, char** argv) {
         Resolve(forwarded.qrealloc, library, patched, "KVbmKCGGowg", "FT_QRealloc_nid_postfix");
         Resolve(forwarded.getModule, dependency, patched, "swrIPzOxcmM", "FT_Get_Module_nid_postfix");
         Resolve(forwarded.removeModule, library, patched, "5ipBcLYVc2k", "FT_Remove_Module_nid_postfix");
+        Resolve(forwarded.open, library, patched, "OeNH41MA2Vs", "FT_Open_Face_nid_postfix");
+        Resolve(forwarded.oblique, library, patched, "wBKAYO7yEXw", "FT_GlyphSlot_Oblique_nid_postfix");
+        Resolve(forwarded.embolden, library, patched, "73vg+nRH68g", "FT_GlyphSlot_Embolden_nid_postfix");
         Libraries();
         Reallocations();
         Glyphs();
+        Synthesis();
     }
+    Resolve(variations.mmBlend, library, patched, "zetC8Tp1S8w", "sceFreeTypeOtSetMMBlendCoordinates_nid_no_patch");
+    Resolve(variations.mmDesign, library, patched, "DAmwG6U7YIc", "sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch");
+    Resolve(variations.varBlend, library, patched, "ihIHD8BTNxI", "sceFreeTypeOtSetVarBlendCoordinates_nid_no_patch");
+    Resolve(variations.varDesign, library, patched, "yCEJIsjIOO8", "sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch");
+    for (auto setter : {variations.mmBlend, variations.mmDesign, variations.varBlend, variations.varDesign})
+        Require(setter(nullptr, 0, nullptr) == FT_Err_Invalid_Face_Handle, "reject missing variation face");
+    if (forwards) Variations();
     Resolve(ot.sin, library, patched, "L1uHkWTazkI", "FT_Sin_nid_postfix");
     Resolve(ot.tan, library, patched, "dojyaLKzKN0", "FT_Tan_nid_postfix");
     Resolve(ot.vectorUnit, library, patched, "3WpTQrvGUcU", "FT_Vector_Unit_nid_postfix");

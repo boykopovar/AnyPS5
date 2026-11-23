@@ -74,13 +74,13 @@ int main() {
 
     std::memset(out, 'x', sizeof(out));
     Require(wcstombs_nid_postfix(out, text, 0) == 0, "wcstombs zero capacity length");
-    Require(out[0] == 'x', "wcstombs zero capacity leaves output alone");
+    Require(out[0] == 'x', "wcstombs zero capacity leaves the output alone");
 
     std::memset(out, 'x', sizeof(out));
     Require(wcstombs_nid_postfix(out, text, 3) == 3, "wcstombs exact capacity length");
-    Require(std::memcmp(out, "abcxxxxx", 8) == 0, "wcstombs exact capacity leaves terminator untouched");
+    Require(std::memcmp(out, "abcxxxxx", 8) == 0, "wcstombs exact capacity leaves the terminator unwritten");
 
-    Require(wcstombs_nid_postfix(nullptr, text, 0) == 3, "wcstombs length query ignores capacity");
+    Require(wcstombs_nid_postfix(nullptr, text, 0) == 3, "wcstombs length query ignores the capacity");
     Require(wcstombs_nid_postfix(nullptr, text, 10) == 3, "wcstombs length query on ascii");
     Require(wcstombs_nid_postfix(nullptr, empty, 0) == 0, "wcstombs empty length query");
     Require(wcstombs_nid_postfix(nullptr, twoBytes, 0) == 4, "wcstombs length query counts 2-byte utf8");
@@ -88,17 +88,17 @@ int main() {
 
     std::memset(out, 'x', sizeof(out));
     Require(wcstombs_nid_postfix(out, twoBytes, sizeof(out)) == 4, "wcstombs converts 2-byte utf8");
-    Require(std::memcmp(out, "a\xc4\x80" "b\0xxx", 8) == 0, "wcstombs produces valid 2-byte utf8 sequence");
+    Require(std::memcmp(out, "a\xc4\x80" "b\0xxx", 8) == 0, "wcstombs produces a valid 2-byte utf8 sequence");
 
     std::memset(out, 'x', sizeof(out));
     Require(wcstombs_nid_postfix(out, threeBytes, sizeof(out)) == 5, "wcstombs converts 3-byte utf8");
-    Require(std::memcmp(out, "z\xe2\x82\xacw\0xx", 8) == 0, "wcstombs produces valid 3-byte utf8 sequence");
+    Require(std::memcmp(out, "z\xe2\x82\xacw\0xx", 8) == 0, "wcstombs produces a valid 3-byte utf8 sequence");
 
     std::memset(out, 'x', sizeof(out));
-    Require(wcstombs_nid_postfix(out, twoBytes, 2) == 1, "wcstombs stops before 2-byte character exceeding capacity");
-    Require(std::memcmp(out, "axxxxxxx", 8) == 0, "wcstombs does not write partial 2-byte character");
+    Require(wcstombs_nid_postfix(out, twoBytes, 2) == 2, "wcstombs fills the capacity with the lead byte of a 2-byte character that does not fit");
+    Require(std::memcmp(out, "a\xc4" "xxxxxx", 8) == 0, "wcstombs writes the bytes of the 2-byte character that fit");
 
     std::memset(out, 'x', sizeof(out));
-    Require(wcstombs_nid_postfix(out, threeBytes, 3) == 1, "wcstombs stops before 3-byte character exceeding capacity");
-    Require(out[0] == 'z' && std::memcmp(out + 1, "xxxxxxx", 7) == 0, "wcstombs does not write partial 3-byte character");
+    Require(wcstombs_nid_postfix(out, threeBytes, 3) == 3, "wcstombs fills the capacity inside a 3-byte character");
+    Require(out[0] == 'z' && std::memcmp(out + 1, "\xe2\x82" "xxxxx", 7) == 0, "wcstombs writes the bytes of the 3-byte character that fit");
 }
