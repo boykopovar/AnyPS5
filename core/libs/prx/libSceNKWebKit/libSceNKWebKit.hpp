@@ -2,6 +2,7 @@
 #include "prx/libSceNKWebKit/include/DoViCodecParameters.hpp"
 #include "prx/libSceNKWebKit/include/KeyedDecoderExports.hpp"
 #include "prx/libSceNKWebKit/include/ParallelEnvironmentExports.hpp"
+#include "prx/libSceNKWebKit/include/NicosiaSceneExports.hpp"
 #include "prx/libSceNKWebKit/include/SecurityPolicyExports.hpp"
 #include "prx/libSceNKWebKit/include/VaryingRequestHeadersExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreRegistrationSlotsExports.hpp"
