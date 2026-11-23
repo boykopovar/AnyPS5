@@ -100,6 +100,14 @@ const LibreSsl3SslMethod* APS5_VABI TLS_server_method_nid_postfix() {
     return TLS_method_nid_postfix();
 }
 
+void* LibreSslNewContext_nid_no_patch(const void* method);
+
+void* APS5_VABI libreSsl3NewContext_nid_no_patch(const void* method) {
+    if (method == TLS_method_nid_postfix()) NotImplemented_nid_no_patch("SSL_CTX_new with the libSceLibreSsl3 TLS_method");
+    return LibreSslNewContext_nid_no_patch(method);
+}
+APS5_EXPORT("lhgt7StD7RM", libreSsl3NewContext_nid_no_patch);
+
 void APS5_VABI SSL_set_info_callback_nid_postfix(LibreSsl3Ssl* ssl, LibreSsl3InfoCallback callback) {
     if (!ssl)
         throw std::invalid_argument("SSL_set_info_callback requires an SSL");

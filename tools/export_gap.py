@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Report the console system library exports an AnyPS5 library does not provide.
 
-Reads the export NIDs of the console library from a genstub style export table
-or from a file of NIDs, intersects them with the pinned NID name database and
+Reads the export NIDs of the console library from its ELF, a genstub style
+export table or a file of NIDs, intersects them with the pinned NID name database and
 with what the AnyPS5 library already defines, and writes the missing NIDs in
 the format tools/stubgen.py --nids takes.
 """
@@ -11,6 +11,7 @@ import re
 import sys
 from pathlib import Path
 
+import import_audit
 import nid_names
 import progress
 
@@ -29,7 +30,7 @@ MODULE_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 
 
 def is_mangled(name):
-    return name.startswith("_Z") and len(name) > 2 and name[2].isdigit()
+    return (name.startswith("_Z") and len(name) > 2 and name[2].isdigit()) or bool(re.match(r"^_ZN[KVrRO]*(?:[0-9]|St[0-9]|S[absiod])", name))
 
 
 def helper_reason(name):
@@ -304,7 +305,25 @@ def find_self_calls(module_dir, missing):
     return calls
 
 
-def load_console_nids(modules, export_table, nids_file):
+def parse_elf_nids(path):
+    data = Path(path).read_bytes()
+    if not data.startswith(b"\x7fELF"):
+        raise GapError(f"{path}: expected a console module in ELF format")
+    try:
+        names = import_audit.elf_exports(path, data)
+    except import_audit.AuditError as error:
+        raise GapError(str(error)) from error
+    nids = sorted(name for name in names if re.fullmatch(NID_PATTERN, name))
+    if not nids:
+        raise GapError(f"{path}: no NID-shaped dynamic exports found")
+    return nids
+
+
+def load_console_nids(modules, export_table, nids_file, elf=None):
+    if elf is not None:
+        if len(modules) != 1:
+            raise GapError("--elf requires a single --module")
+        return {modules[0]: parse_elf_nids(elf)}
     if export_table is not None:
         table_dir = Path(export_table)
         if not table_dir.is_dir():
@@ -337,7 +356,8 @@ def report_module(module, console_nids, provided, db):
         if reason is None:
             lines.append(f"missing {nid} {name}")
         else:
-            lines.append(f"{module}: {name} ({nid}) {reason} and needs a renamed helper bound with APS5_EXPORT, like libSceAmpr")
+            action = "may use a renamed helper bound with APS5_EXPORT" if is_mangled(name) else "needs a renamed helper bound with APS5_EXPORT"
+            lines.append(f"{module}: {name} ({nid}) {reason} and {action}, like libSceAmpr")
     for nid, name, how in already:
         if name is None:
             lines.append(f"already provided {nid} {how}")
@@ -358,7 +378,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="report the console exports an AnyPS5 library does not provide")
     parser.add_argument("--module", action="append", default=[], help="AnyPS5 library to report on, e.g. libScePad; repeat for several")
     parser.add_argument("--export-table", default=None, help="directory of genstub style export tables, one <module>.c file per library")
-    parser.add_argument("--nids", default=None, help="file with one export NID per line, an alternative to --export-table")
+    parser.add_argument("--nids", default=None, help="file with one export NID per line")
+    parser.add_argument("--elf", help="read NID-shaped dynamic exports from a single console module ELF")
     parser.add_argument("--out", default=None, help="write the missing NIDs to this file; without it they go to standard output")
     parser.add_argument("--db", default=None, help="NID name database file; the pinned database is used by default")
     args = parser.parse_args(argv)
@@ -366,15 +387,15 @@ def main(argv=None):
         modules = [normalize_module(name) for name in args.module]
         if not modules:
             raise GapError("--module is required")
-        if (args.export_table is None) == (args.nids is None):
-            raise GapError("exactly one of --export-table and --nids is required")
+        if sum(source is not None for source in (args.export_table, args.nids, args.elf)) != 1:
+            raise GapError("exactly one of --export-table, --nids and --elf is required")
         for module in modules:
             if not is_safe_module(module):
                 raise GapError(f"{module}: invalid module name")
             if not (PRX / module).is_dir():
                 raise GapError(f"{PRX / module}: no such library")
         if args.out is not None:
-            sources = [args.nids, args.db]
+            sources = [args.nids, args.elf, args.db]
             if args.export_table is not None:
                 sources.extend(Path(args.export_table) / (module + ".c") for module in modules)
             for source in filter(None, sources):
@@ -384,7 +405,9 @@ def main(argv=None):
             db = nid_names.load_db(Path(args.db) if args.db else nid_names.DEFAULT_CACHE)
         except (OSError, UnicodeError) as error:
             raise GapError(f"{args.db or nid_names.DEFAULT_CACHE}: cannot read NID database: {error}") from error
-        console = load_console_nids(modules, args.export_table, args.nids)
+        except ValueError as error:
+            raise GapError(str(error)) from error
+        console = load_console_nids(modules, args.export_table, args.nids, args.elf)
         report = []
         missing_nids = []
         seen = set()
@@ -396,9 +419,9 @@ def main(argv=None):
             report.extend(lines)
             for name, nid, rel, line, qual in calls:
                 if qual:
-                    report.append(f"{module}: {name} ({nid}) called at {rel}:{line} {qual}{name} needs a renamed helper bound with APS5_EXPORT, like libSceAmpr")
+                    report.append(f"{module}: {name} ({nid}) called at {rel}:{line} {qual}{name} may need a renamed helper bound with APS5_EXPORT, like libSceAmpr")
                 else:
-                    report.append(f"{module}: {name} ({nid}) called at {rel}:{line} needs a renamed helper bound with APS5_EXPORT, like libSceAmpr")
+                    report.append(f"{module}: {name} ({nid}) called at {rel}:{line} may need a renamed helper bound with APS5_EXPORT, like libSceAmpr")
             for nid, _ in missing:
                 if nid not in seen:
                     seen.add(nid)

@@ -62,6 +62,7 @@ struct Labels {
     alignas(256) volatile std::uint32_t gate = 0;
     alignas(256) volatile std::uint32_t first = 0;
     alignas(256) volatile std::uint32_t second = 0;
+    alignas(256) volatile std::uint32_t workload = 0;
 };
 
 class GuestBlock {
@@ -138,6 +139,29 @@ void TestFrameBoundaryWait() {
     Require(labels.second == 1, "the second submission did not run");
 }
 
+void TestWorkloadSubmit() {
+    constexpr int InvalidArgument = static_cast<int>(0x80d11000u);
+    GuestBlock block;
+    auto& labels = block.Data();
+    std::uint32_t stream = 0;
+    std::uint64_t workload = 0;
+    Require(sceGnmCreateWorkloadStream_nid_disambig1(0x6b726f77u, &stream) == 0 && sceGnmBeginWorkload_nid_disambig1(stream, &workload) == 0, "a workload could not be begun");
+    std::vector<std::uint32_t> words;
+    WriteData(words, &labels.workload, 7);
+    std::uint32_t* const buffers[1] = {words.data()};
+    const std::uint32_t bytes[1] = {static_cast<std::uint32_t>(words.size() * sizeof(std::uint32_t))};
+    Require(sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(workload, 1, buffers, bytes, nullptr, nullptr) == 0, "sceGnmSubmitCommandBuffersForWorkload failed");
+    Require(sceGnmEndWorkload_nid_disambig1(workload) == 0, "the workload could not be ended");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(labels.workload == 7, "the command buffer submitted for a workload did not run");
+    const std::uint32_t empty[1] = {0u};
+    Require(sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(workload, 1, nullptr, bytes, nullptr, nullptr) == sceGnmSubmitCommandBuffers(1, nullptr, bytes, nullptr, nullptr), "a workload submission without draw buffers did not fail as sceGnmSubmitCommandBuffers fails");
+    Require(sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(workload, 1, buffers, empty, nullptr, nullptr) == sceGnmSubmitCommandBuffers(1, buffers, empty, nullptr, nullptr), "a workload submission of an empty draw buffer did not fail as sceGnmSubmitCommandBuffers fails");
+    Require(sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(workload, 1, nullptr, bytes, nullptr, nullptr, 1, 0, 0, 0) == InvalidArgument, "a workload flip submission without draw buffers did not fail with the invalid-argument error");
+    Require(sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(workload, 1, buffers, empty, nullptr, nullptr, 1, 0, 0, 0) == sceGnmSubmitAndFlipCommandBuffers(1, buffers, empty, nullptr, nullptr, 1, 0, 0, 0), "a workload flip submission of an empty draw buffer did not fail as sceGnmSubmitAndFlipCommandBuffers fails");
+    Require(labels.workload == 7, "a refused workload submission ran");
+}
+
 void EnableSubmitWaitIdle() {
 #ifdef _WIN32
     _putenv_s("APS5_GNM_SUBMIT_WAIT_IDLE", "1");
@@ -160,7 +184,8 @@ int main(int argc, char** argv) {
         device.reset();
         EnableSubmitWaitIdle();
         TestFrameBoundaryWait();
-        std::puts("GnmDriver submission wait tests passed");
+        TestWorkloadSubmit();
+        std::puts("GnmDriver submission wait and workload submission tests passed");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

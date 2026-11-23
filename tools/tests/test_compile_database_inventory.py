@@ -5,12 +5,25 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import compile_database_inventory
 
 SCRIPT = 'compile_database_inventory.py'
 TOOLS = Path(__file__).resolve().parents[1]
 
 
 class Tests(unittest.TestCase):
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires a named pipe")
+    def test_named_pipe_is_rejected_before_reading(self):
+        path = self.root / "database.json"
+        os.mkfifo(path)
+        with patch.object(Path, "read_text", side_effect=AssertionError("unexpected read")), \
+                self.assertRaises(SystemExit) as status:
+            compile_database_inventory.main([str(path)])
+        self.assertEqual(status.exception.code, 2)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

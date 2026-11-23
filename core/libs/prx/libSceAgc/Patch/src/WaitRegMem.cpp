@@ -10,9 +10,15 @@
 
 namespace {
 
-void ValidateWriteData(const std::uint32_t* cmd, const char* function) {
+constexpr int InvalidPacket = static_cast<int>(0x8a6c000cu);
+
+bool IsWriteData(const std::uint32_t* cmd, const char* function) {
     Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(cmd), 4, function);
-    Agc::Command::Require(((cmd[0] >> 8u) & 0xffu) == 0x37u, function, "not a WRITE_DATA packet");
+    return ((cmd[0] >> 8u) & 0xffu) == 0x37u;
+}
+
+void ValidateWriteData(const std::uint32_t* cmd, const char* function) {
+    Agc::Command::Require(IsWriteData(cmd, function), function, "not a WRITE_DATA packet");
 }
 
 int SetWriteDataAddress(std::uint32_t* cmd, std::uint64_t address, bool compute, const char* function) {
@@ -78,6 +84,7 @@ int APS5_VABI sceAgcWaitRegMemPatchCompareFunction(std::uint32_t* cmd, std::uint
 }
 
 int APS5_VABI sceAgcWriteDataPatchSetAddressOrOffset(std::uint32_t* cmd, std::uint64_t address) {
+    if (!IsWriteData(cmd, __func__)) return InvalidPacket;
     return SetWriteDataAddress(cmd, address, false, __func__);
 }
 

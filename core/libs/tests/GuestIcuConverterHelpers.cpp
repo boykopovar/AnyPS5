@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "unicode/ucnv.h"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -51,16 +52,89 @@ void DefaultConverterLifecycle() {
     u_releaseDefaultConverter_nid_postfix(first);
     RequiresInvalidArgument([&] { u_releaseDefaultConverter_nid_postfix(first); }, "already returned converter must be rejected");
 
-    status = 1;
-    Require(!u_getDefaultConverter_nid_postfix(&status) && status == 1, "incoming failure leaves the cache untouched");
+    for (const std::int32_t incoming : {std::int32_t{-129}, INT32_MIN}) {
+        status = incoming;
+        auto* below = u_getDefaultConverter_nid_postfix(&status);
+        Require(below && status == incoming, "a status below the warning range is not a failure");
+        u_releaseDefaultConverter_nid_postfix(below);
+    }
+
+    for (const std::int32_t incoming : {1, 7, 27, 0x10000}) {
+        status = incoming;
+        auto* cached = u_getDefaultConverter_nid_postfix(&status);
+        Require(cached == first && status == incoming, "an incoming failure still takes the cached converter");
+        u_releaseDefaultConverter_nid_postfix(cached);
+    }
     status = 0;
     auto* reused = u_getDefaultConverter_nid_postfix(&status);
     Require(reused == first && status <= 0, "get, release, get reuses the cached converter");
+    for (const std::int32_t incoming : {1, 7}) {
+        status = incoming;
+        Require(!u_getDefaultConverter_nid_postfix(&status) && status == incoming,
+                "an incoming failure opens no converter while the cache is empty");
+    }
+    status = 0;
     auto* second = u_getDefaultConverter_nid_postfix(&status);
     Require(second && second != reused && status <= 0, "checked-out converters are distinct");
     u_releaseDefaultConverter_nid_postfix(second);
     u_flushDefaultConverter_nid_postfix();
     u_releaseDefaultConverter_nid_postfix(reused);
+    u_flushDefaultConverter_nid_postfix();
+    status = 1;
+    Require(!u_getDefaultConverter_nid_postfix(&status) && status == 1, "an incoming failure opens no converter after a flush");
+}
+
+UConverter* AcquireDefaultConverter() {
+    std::int32_t status = U_ZERO_ERROR;
+    auto* converter = u_getDefaultConverter_nid_postfix(&status);
+    Require(converter && status <= 0, "acquire the configured default converter");
+    return converter;
+}
+
+void DefaultConverterNames() {
+    const char* initialName = ucnv_getDefaultName_nid_postfix();
+    Require(initialName && *initialName, "initial default converter name");
+    const std::string platformName = initialName;
+    auto* initial = AcquireDefaultConverter();
+    const auto platformType = ucnv_getType(initial);
+    u_releaseDefaultConverter_nid_postfix(initial);
+
+    if constexpr (U_CHARSET_IS_UTF8) {
+        ucnv_setDefaultName_nid_postfix("UTF-16LE");
+        Require(std::strcmp(ucnv_getDefaultName_nid_postfix(), "UTF-8") == 0, "fixed UTF-8 default");
+        auto* fixed = AcquireDefaultConverter();
+        Require(ucnv_getType(fixed) == UCNV_UTF8, "fixed UTF-8 converter");
+        u_releaseDefaultConverter_nid_postfix(fixed);
+        return;
+    }
+
+    ucnv_setDefaultName_nid_postfix("UTF-8");
+    Require(std::strcmp(ucnv_getDefaultName_nid_postfix(), "UTF-8") == 0, "set UTF-8");
+    auto* previous = AcquireDefaultConverter();
+    Require(ucnv_getType(previous) == UCNV_UTF8, "acquire UTF-8");
+
+    const bool useLittleEndian = platformType != UCNV_UTF16_LittleEndian;
+    const char* canonicalName = useLittleEndian ? "UTF-16LE" : "UTF-16BE";
+    const std::string extendedName = std::string(useLittleEndian ? "utf-16le" : "utf-16be") + ",ignored=" + std::string(850, 'x');
+    const auto expectedType = useLittleEndian ? UCNV_UTF16_LittleEndian : UCNV_UTF16_BigEndian;
+    ucnv_setDefaultName_nid_postfix(extendedName.c_str());
+    Require(std::strcmp(ucnv_getDefaultName_nid_postfix(), canonicalName) == 0, "canonicalize the configured name");
+    u_releaseDefaultConverter_nid_postfix(previous);
+    auto* current = AcquireDefaultConverter();
+    Require(ucnv_getType(current) == expectedType, "old checkout cannot repopulate the cache");
+    u_releaseDefaultConverter_nid_postfix(current);
+
+    ucnv_setDefaultName_nid_postfix("anyps5-no-such-converter");
+    Require(std::strcmp(ucnv_getDefaultName_nid_postfix(), canonicalName) == 0, "unknown converter leaves the default name intact");
+    current = AcquireDefaultConverter();
+    Require(ucnv_getType(current) == expectedType, "unknown converter leaves the encoding intact");
+    u_releaseDefaultConverter_nid_postfix(current);
+
+    ucnv_setDefaultName_nid_postfix(nullptr);
+    auto* reset = AcquireDefaultConverter();
+    Require(ucnv_getType(reset) == platformType, "reset discards the cached converter");
+    Require(platformName == ucnv_getDefaultName_nid_postfix(), "reset restores the platform default name");
+    u_releaseDefaultConverter_nid_postfix(reset);
     u_flushDefaultConverter_nid_postfix();
 }
 
@@ -281,6 +355,7 @@ void SignatureGuestPointers() {
 
 int main() {
     DefaultConverterLifecycle();
+    DefaultConverterNames();
     NameMatching();
     Signatures();
     SignatureGuestPointers();
