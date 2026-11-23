@@ -641,6 +641,18 @@ std::string Run(Fixture& fixture) {
         }
         std::copy(wholeSlots.begin(), wholeSlots.end(), BufferTable.begin());
     }
+    {
+        const std::string what = "direct indexed quad-list draw with base vertex -3 and lowest index 0";
+        const auto userData = fixture.UserData(0xfffffffdu, 40);
+        const auto vertex = fixture.Vertex(VertexCode, userData);
+        const auto draw = FoldedDraw(vertex, userData, {reinterpret_cast<std::uintptr_t>(QuadIndices.data()), static_cast<std::uint32_t>(QuadIndices.size()), 2, Instances, 0, true, 0, 0});
+        try {
+            fixture.Draw(vertex, draw, false, false, true);
+            failures += what + ": accepted a draw that fetches below vertex 0\n";
+        } catch (const std::exception& error) {
+            if (std::string(error.what()).find("indexed draw vertex range overflow") == std::string::npos) failures += what + ": rejected with " + error.what() + "\n";
+        }
+    }
 
     const auto staleUserData = fixture.UserData(0x51u, 0x62u);
     const std::array<std::uint32_t, 5> indexedRecord{Vertices, Instances, 0, 700, 59455};

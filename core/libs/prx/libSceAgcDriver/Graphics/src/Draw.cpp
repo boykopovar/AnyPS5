@@ -2014,7 +2014,8 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
                 }
             };
             expand(readIndex);
-            Require(static_cast<std::int64_t>(maxIdx) + static_cast<std::int32_t>(draw.firstVertex) <= std::numeric_limits<std::uint32_t>::max(), "indexed draw vertex range overflow");
+            const auto offset = static_cast<std::int64_t>(static_cast<std::int32_t>(draw.firstVertex));
+            Require(static_cast<std::int64_t>(minIdx) + offset >= 0 && static_cast<std::int64_t>(maxIdx) + offset <= std::numeric_limits<std::uint32_t>::max(), "indexed draw vertex range overflow");
         } else {
             const std::uint32_t lastVertex = state.quadList ? primitives * 4u - 1u : primitives + 1u;
             Require(draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - lastVertex, "auto draw vertex range overflow");
