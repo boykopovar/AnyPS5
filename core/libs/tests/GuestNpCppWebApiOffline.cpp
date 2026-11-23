@@ -516,8 +516,12 @@ static void TestSessionManagerRemaining() {
     Require(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi41deletePlayerSessionJoinableSpecifiedUsersEiRKNS4_52ParameterToDeletePlayerSessionJoinableSpecifiedUsersERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE(nullptr) == kNotSignedIn, "deletePlayerSessionJoinableSpecifiedUsers is not signed out");
     Require(_ZN3sce2Np9CppWebApi14SessionManager2V150PutPlayerSessionsSessionIdLeaderRequestBodyFactory6createEPNS1_6Common10LibContextERKmPKcPNS5_12IntrusivePtrINS3_43PutPlayerSessionsSessionIdLeaderRequestBodyEEE(nullptr) == kNotSignedIn, "the leader request factory is not signed out");
 
-    _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession15setJoinDisabledERKb(nullptr, nullptr);
-    _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody13setMaxPlayersERKi(nullptr, nullptr);
+    const bool disabled = true;
+    _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession15setJoinDisabledERKb(sessionPlayer, &disabled);
+    Require(sessionPlayer[0x38] == 1 && sessionPlayer[0x39] == 1, "the disabled property was not stored");
+    const int maxPlayers = 4;
+    _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody13setMaxPlayersERKi(sessionPlayer, &maxPlayers);
+    Require(sessionPlayer[0x10] == 4 && sessionPlayer[0x14] == 1, "the maxPlayers property was not stored");
 }
 
 static void TestSmallInstantiations() {
