@@ -15,8 +15,8 @@ losses make the slice timings describe retained events only."""
 
 
 def compare(a_path, b_path, top=10):
-    a = trace_digest.digest(trace_digest.load_trace(a_path), None, None, 0, top)
-    b = trace_digest.digest(trace_digest.load_trace(b_path), None, None, 0, top)
+    a = trace_digest.digest(trace_digest.load_trace(a_path), None, None, 0, None)
+    b = trace_digest.digest(trace_digest.load_trace(b_path), None, None, 0, None)
 
     a_threads = {row["thread"]: row for row in a["threads"]}
     b_threads = {row["thread"]: row for row in b["threads"]}
