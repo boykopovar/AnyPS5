@@ -116,11 +116,13 @@
  */
 
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -279,6 +281,32 @@ int Fail() {
     return 0;
 }
 
+template <typename T>
+bool CopyGuestInPreservingErrno(T& destination, const T* source) {
+    return GuestPtr<const T>(source).CopyIn(destination);
+}
+
+template <typename T>
+bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
+    return GuestPtr<T>(destination).CopyOut(value);
+}
+
+template <typename T>
+T CopyIn(const T* source, const char* function) {
+    T value{};
+    if (!CopyGuestInPreservingErrno(value, source))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+std::int32_t* StoreReferences(LibreSslX509Store* store, const char* function) {
+    std::int32_t* const references = &store->references;
+    std::int32_t current{};
+    if (!CopyGuestInPreservingErrno(current, references) || !GuestWritable_nid_no_patch(references, sizeof(current)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return references;
+}
+
 }
 
 extern "C" {
@@ -289,27 +317,34 @@ LibreSslX509StoreContext* APS5_VABI X509_STORE_CTX_new_nid_postfix(void) {
 
 int APS5_VABI X509_STORE_CTX_init_nid_postfix(LibreSslX509StoreContext* context, LibreSslX509Store* store, LibreSsl3X509* leaf, LibreSslStack* untrusted) {
     if (!context) throw std::invalid_argument("X509_STORE_CTX_init: null context");
-    std::memset(context, 0, sizeof(*context));
-    context->error = InvalidCall;
-    context->store = store;
-    context->cert = leaf;
-    context->untrusted = untrusted;
-    if (store && store->callbacks[VerifyCallback])
-        context->callbacks[VerifyCallback] = store->callbacks[VerifyCallback];
+    if (!GuestWritable_nid_no_patch(context, sizeof(LibreSslX509StoreContext)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const LibreSslX509Store guestStore = store ? CopyIn(store, __func__) : LibreSslX509Store{};
+    LibreSslX509StoreContext initialised{};
+    initialised.error = InvalidCall;
+    initialised.store = store;
+    initialised.cert = leaf;
+    initialised.untrusted = untrusted;
+    if (store && guestStore.callbacks[VerifyCallback])
+        initialised.callbacks[VerifyCallback] = guestStore.callbacks[VerifyCallback];
     else
-        context->callbacks[VerifyCallback] = reinterpret_cast<void*>(InternalVerify);
-    if (store && store->callbacks[VerifyErrorCallback])
-        context->callbacks[VerifyErrorCallback] = store->callbacks[VerifyErrorCallback];
+        initialised.callbacks[VerifyCallback] = reinterpret_cast<void*>(InternalVerify);
+    if (store && guestStore.callbacks[VerifyErrorCallback])
+        initialised.callbacks[VerifyErrorCallback] = guestStore.callbacks[VerifyErrorCallback];
     else
-        context->callbacks[VerifyErrorCallback] = reinterpret_cast<void*>(NullCallback);
-    context->callbacks[IssuerCallback] = reinterpret_cast<void*>(GetIssuer);
-    context->callbacks[IssuedCallback] = reinterpret_cast<void*>(CheckIssued);
+        initialised.callbacks[VerifyErrorCallback] = reinterpret_cast<void*>(NullCallback);
+    initialised.callbacks[IssuerCallback] = reinterpret_cast<void*>(GetIssuer);
+    initialised.callbacks[IssuedCallback] = reinterpret_cast<void*>(CheckIssued);
     auto* const param = NewVerifyParam();
-    context->param = param;
+    initialised.param = param;
+    if (!CopyGuestOutPreservingErrno(context, initialised)) {
+        if (param) FreeVerifyParam(param);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     if (!param) return Fail();
     bool inherited = true;
     if (store)
-        inherited = Inherit(param, store->param);
+        inherited = Inherit(param, guestStore.param);
     else
         param->inheritanceFlags |= InheritDefault | InheritOnce;
     if (inherited) inherited = Inherit(param, &defaultParam);
@@ -319,11 +354,12 @@ int APS5_VABI X509_STORE_CTX_init_nid_postfix(LibreSslX509StoreContext* context,
 
 void APS5_VABI X509_STORE_CTX_free_nid_postfix(LibreSslX509StoreContext* context) {
     if (!context) return;
-    if (context->callbacks[CleanupCallback]) NotImplemented_nid_no_patch("X509_STORE_CTX_free: cleanup callback");
-    if (context->tree) NotImplemented_nid_no_patch("X509_STORE_CTX_free: policy tree");
-    if (context->chain) NotImplemented_nid_no_patch("X509_STORE_CTX_free: certificate chain");
-    if (context->exData) NotImplemented_nid_no_patch("X509_STORE_CTX_free: extra data");
-    auto* const param = context->parent ? nullptr : static_cast<LibreSslX509VerifyParam*>(context->param);
+    const auto guestContext = CopyIn(context, __func__);
+    if (guestContext.callbacks[CleanupCallback]) NotImplemented_nid_no_patch("X509_STORE_CTX_free: cleanup callback");
+    if (guestContext.tree) NotImplemented_nid_no_patch("X509_STORE_CTX_free: policy tree");
+    if (guestContext.chain) NotImplemented_nid_no_patch("X509_STORE_CTX_free: certificate chain");
+    if (guestContext.exData) NotImplemented_nid_no_patch("X509_STORE_CTX_free: extra data");
+    auto* const param = guestContext.parent ? nullptr : static_cast<LibreSslX509VerifyParam*>(guestContext.param);
     if (param) {
         CheckReleasable(param);
         FreeVerifyParam(param);
@@ -333,12 +369,12 @@ void APS5_VABI X509_STORE_CTX_free_nid_postfix(LibreSslX509StoreContext* context
 
 void* APS5_VABI X509_STORE_CTX_get0_param_nid_postfix(LibreSslX509StoreContext* context) {
     if (!context) throw std::invalid_argument("X509_STORE_CTX_get0_param: null context");
-    return context->param;
+    return CopyIn(context, __func__).param;
 }
 
 int APS5_VABI X509_STORE_up_ref_nid_postfix(LibreSslX509Store* store) {
     if (!store) throw std::invalid_argument("X509_STORE_up_ref: null store");
-    std::atomic_ref<std::int32_t> count(store->references);
+    std::atomic_ref<std::int32_t> count(*StoreReferences(store, __func__));
     auto previous = count.load();
     for (;;) {
         if (previous == std::numeric_limits<std::int32_t>::max()) throw std::overflow_error("X509_STORE_up_ref: reference count overflow");

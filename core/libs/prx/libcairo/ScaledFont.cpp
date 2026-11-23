@@ -29,9 +29,7 @@ cairo_scaled_font_t* Backend(CairoScaledFont* font) {
 }
 
 void CopyResult(void* destination, const void* source, std::size_t size, const char* name) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(name, __FILE__, __LINE__);
 }
 
@@ -89,6 +87,15 @@ void APS5_VABI cairo_scaled_font_text_extents(CairoScaledFont* font, const char*
     cairo_text_extents_t native{};
     aps5_cairo_scaled_font_text_extents(nativeFont, checkedUtf8, &native);
     CopyResult(extents, &native, sizeof(native), "cairo_scaled_font_text_extents: invalid output");
+}
+
+FreeType::GuestFaceRec* APS5_VABI cairo_ft_scaled_font_lock_face(CairoScaledFont* font) {
+    if (aps5_cairo_scaled_font_get_type(Backend(font)) == CAIRO_FONT_TYPE_FT) NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
+void APS5_VABI cairo_ft_scaled_font_unlock_face(CairoScaledFont* font) {
+    if (aps5_cairo_scaled_font_get_type(Backend(font)) == CAIRO_FONT_TYPE_FT) NotImplemented_nid_no_patch(__func__);
 }
 
 }

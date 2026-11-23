@@ -5,12 +5,25 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import compile_database_inventory
 
 SCRIPT = 'compile_database_inventory.py'
 TOOLS = Path(__file__).resolve().parents[1]
 
 
 class Tests(unittest.TestCase):
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires a named pipe")
+    def test_named_pipe_is_rejected_before_reading(self):
+        path = self.root / "database.json"
+        os.mkfifo(path)
+        with patch.object(Path, "read_text", side_effect=AssertionError("unexpected read")), \
+                self.assertRaises(SystemExit) as status:
+            compile_database_inventory.main([str(path)])
+        self.assertEqual(status.exception.code, 2)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -63,6 +76,17 @@ class Tests(unittest.TestCase):
             self.assertEqual(r.stdout,"")
         path.write_text("[]",encoding="utf-8")
         self.assertEqual(json.loads(self.run_tool(path).stdout),{"entries":0,"units":[]})
+
+    def test_non_string_output_is_rejected_before_printing_inventory(self):
+        path = self.root / "compile_commands.json"
+        for output in ("1e400", "null", "false", "[]", "{}"):
+            with self.subTest(output=output):
+                path.write_text('[{"directory":"dir","file":"a.c","command":"cc a.c","output":'
+                                + output + '}]', encoding="utf-8")
+                result = self.run_tool(path)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("entry 0: output must be a string", result.stderr)
 
     def test_optional_outputs_distinguish_identical_compile_actions(self):
         path = self.root / "compile_commands.json"

@@ -24,11 +24,12 @@ namespace EdgeWatch {
 #ifdef __linux__
 
 std::shared_ptr<Watch> Watch::Open(std::intptr_t hostDescriptor, std::intptr_t, bool write) {
+    auto watch = std::make_shared<Watch>(-1);
     const int descriptor = ::epoll_create1(EPOLL_CLOEXEC);
     if (descriptor < 0) {
         throw std::runtime_error("kevent: EV_CLEAR: epoll_create1 failed, host errno " + std::to_string(errno));
     }
-    auto watch = std::make_shared<Watch>(descriptor);
+    watch->m_descriptor = descriptor;
     epoll_event interest{};
     interest.events = EPOLLET | (write ? EPOLLOUT : (EPOLLIN | EPOLLRDHUP));
     if (::epoll_ctl(descriptor, EPOLL_CTL_ADD, static_cast<int>(hostDescriptor), &interest) != 0) {
@@ -38,12 +39,16 @@ std::shared_ptr<Watch> Watch::Open(std::intptr_t hostDescriptor, std::intptr_t, 
 }
 
 Watch::~Watch() {
-    ::close(m_descriptor);
+    if (m_descriptor >= 0) ::close(m_descriptor);
 }
 
 bool Watch::TakeEdge() {
     epoll_event ready{};
-    return ::epoll_wait(m_descriptor, &ready, 1, 0) > 0;
+    const int result = ::epoll_wait(m_descriptor, &ready, 1, 0);
+    if (result < 0) {
+        throw std::runtime_error("kevent: EV_CLEAR: retrieving host event failed, host errno " + std::to_string(errno));
+    }
+    return result > 0;
 }
 
 #elif defined(__APPLE__)

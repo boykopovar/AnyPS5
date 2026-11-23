@@ -62,7 +62,15 @@ void LikelySubtags() {
                                "abcdefghijkl_Arab", "ur_Arabx", "@x", ".x", "_US"}) {
         ExpectThrows(locale);
     }
-    ExpectThrows(nullptr);
+    try {
+        const auto expected = uloc_isRightToLeft_nid_postfix(uloc_getDefault());
+        if (uloc_isRightToLeft_nid_postfix(nullptr) != expected) {
+            std::fprintf(stderr, "uloc_isRightToLeft(null) differs from the default locale\n");
+            std::abort();
+        }
+    } catch (const std::exception&) {
+        ExpectThrows(nullptr);
+    }
 }
 
 }

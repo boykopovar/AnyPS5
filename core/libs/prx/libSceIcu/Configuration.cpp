@@ -16,6 +16,8 @@
 #include <mutex>
 #include <string>
 #include <utility>
+#include <cerrno>
+#include <stdexcept>
 
 namespace {
 
@@ -49,6 +51,38 @@ void Release(void* memory) {
 std::mutex DirectoryLock;
 std::string DataDirectory;
 std::string TimeZoneDirectory;
+
+bool CopySource(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool SourceLength(const char* source, std::size_t& length) {
+    char chunk[4096];
+    for (std::size_t offset = 0;;) {
+        const auto address = reinterpret_cast<std::uintptr_t>(source) + offset;
+        const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
+        if (!CopySource(chunk, source + offset, count)) return false;
+        if (const void* end = std::memchr(chunk, 0, count)) {
+            length = offset + static_cast<std::size_t>(static_cast<const char*>(end) - chunk);
+            return true;
+        }
+        offset += count;
+    }
+}
+
+char* DuplicateSource(const char* source, std::size_t length, const char* function) {
+    char* duplicate = static_cast<char*>(Allocate(length + 1));
+    if (!duplicate) return nullptr;
+    if (!CopySource(duplicate, source, length)) {
+        Release(duplicate);
+        throw std::invalid_argument(std::string(function) + ": unreadable source");
+    }
+    duplicate[length] = 0;
+    return duplicate;
+}
 
 }
 
@@ -96,12 +130,7 @@ const char* APS5_VABI u_getTimeZoneFilesDirectory_nid_postfix(std::int32_t* stat
 void APS5_VABI u_setTimeZoneFilesDirectory_nid_postfix(const char* path, std::int32_t* status) {
     if (Icu::Failure(status)) return;
     const std::lock_guard lock(DirectoryLock);
-    TimeZoneDirectory.clear();
-    if (!path) {
-        *status = Icu::IllegalArgument;
-        return;
-    }
-    TimeZoneDirectory = path;
+    TimeZoneDirectory = path ? path : "";
 }
 
 
@@ -142,21 +171,14 @@ void* APS5_VABI uprv_calloc_nid_postfix(std::size_t count, std::size_t size) {
 
 char* APS5_VABI uprv_strdup_nid_postfix(const char* source) {
     if (!source) APS5_INVALID_ARG_EX;
-    const std::size_t length = std::strlen(source) + 1;
-    char* duplicate = static_cast<char*>(Allocate(length));
-    if (duplicate) std::memcpy(duplicate, source, length);
-    return duplicate;
+    std::size_t length = 0;
+    if (!SourceLength(source, length)) throw std::invalid_argument(std::string(__func__) + ": unreadable source");
+    return DuplicateSource(source, length, __func__);
 }
 
 char* APS5_VABI uprv_strndup_nid_postfix(const char* source, std::int32_t count) {
     if (count < 0) return uprv_strdup_nid_postfix(source);
-    const std::size_t length = static_cast<std::size_t>(count);
-    char* duplicate = static_cast<char*>(Allocate(length + 1));
-    if (duplicate) {
-        if (length != 0) std::memcpy(duplicate, source, length);
-        duplicate[length] = 0;
-    }
-    return duplicate;
+    return DuplicateSource(source, static_cast<std::size_t>(count), __func__);
 }
 
 }

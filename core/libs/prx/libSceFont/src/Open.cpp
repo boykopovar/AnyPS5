@@ -483,13 +483,12 @@ int APS5_VABI sceFontCloseFont(FontHandle fontHandle) {
 }
 
 int APS5_VABI sceFontGetLibrary(FontHandle fontHandle, FontLibrary* pLibrary) {
-    if (!pLibrary) return SCE_FONT_ERROR_INVALID_PARAMETER;
     const auto* font = GetNativeFont(fontHandle);
     if (!font || font->magic != HANDLE_MAGIC) {
-        if (!CopyOutGuest(pLibrary, FontLibrary{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        if (pLibrary && !CopyOutGuest(pLibrary, FontLibrary{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
         return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     }
-    if (!CopyOutGuest(pLibrary, font->library)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!pLibrary || !CopyOutGuest(pLibrary, font->library)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 

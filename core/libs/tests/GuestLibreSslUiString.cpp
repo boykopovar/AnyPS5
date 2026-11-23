@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -83,9 +84,18 @@ static void TestInputFlags() {
     Require(UI_get_input_flags_nid_postfix(UiString(&string)) == -1);
 }
 
+static void TestGuestPointers() {
+    errno = 71;
+    RequireThrows([] { UI_get0_user_data_nid_postfix(reinterpret_cast<const LibreSslUi*>(0x10)); });
+    const auto* const unmapped = reinterpret_cast<const LibreSslUiString*>(0x10);
+    Require(UI_get_string_type_nid_postfix(unmapped) == 0 && UI_get_input_flags_nid_postfix(unmapped) == 0);
+    Require(errno == 71);
+}
+
 int main() {
     TestUserData();
     TestStringType();
     TestInputFlags();
+    TestGuestPointers();
     return 0;
 }

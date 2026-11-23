@@ -1,6 +1,7 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libSceFreeTypeOt/include/System.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +12,12 @@
 #include <random>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -308,6 +315,119 @@ void GuessForks() {
     FT_Stream_Close_nid_postfix(&stream);
 }
 
+template <class Call>
+bool RejectsKeepingErrno(Call call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::exception&) {
+        return errno == 71;
+    }
+    return false;
+}
+
+std::size_t PageSize() {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return info.dwPageSize;
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    return size > 0 ? static_cast<std::size_t>(size) : 4096;
+#endif
+}
+
+char* MapPages(std::size_t bytes) {
+#ifdef _WIN32
+    void* pages = VirtualAlloc(nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(pages != nullptr, "pages are mapped");
+#else
+    void* pages = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(pages != MAP_FAILED, "pages are mapped");
+#endif
+    return static_cast<char*>(pages);
+}
+
+void Protect(char* page, std::size_t bytes, bool readable) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, bytes, readable ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0, "a page is protected");
+#else
+    Require(mprotect(page, bytes, readable ? PROT_READ : PROT_NONE) == 0, "a page is protected");
+#endif
+}
+
+void UnmapPages(char* pages, std::size_t bytes) {
+#ifdef _WIN32
+    (void)bytes;
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(pages, bytes);
+#endif
+}
+
+void GuestPointers() {
+    const auto bytes = Pattern(10000);
+    Write("app0/large.bin", bytes);
+    const std::size_t pageSize = PageSize();
+    char* pages = MapPages(3 * pageSize);
+    char* readOnly = pages + pageSize;
+    char* guard = pages + 2 * pageSize;
+    constexpr char name[] = "/app0/large.bin";
+    char* path = guard - sizeof(name);
+    std::memcpy(path, name, sizeof(name));
+    std::memset(readOnly, 0x5A, 2 * sizeof(GuestStreamRec));
+    auto* readOnlyStream = reinterpret_cast<GuestStreamRec*>(readOnly);
+    auto* readOnlyResult = reinterpret_cast<GuestStreamRec**>(readOnly + sizeof(GuestStreamRec));
+    Protect(readOnly, pageSize, true);
+    Protect(guard, pageSize, false);
+    auto* unmappedStream = reinterpret_cast<GuestStreamRec*>(std::uintptr_t{0x10});
+    const auto* unmappedText = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    auto* unmappedBuffer = reinterpret_cast<std::uint8_t*>(std::uintptr_t{0x10});
+
+    Require(RejectsKeepingErrno([&] { FT_Stream_Open_nid_postfix(unmappedStream, "/app0/large.bin"); }), "an unmapped stream is refused");
+    Require(RejectsKeepingErrno([&] { FT_Stream_Open_nid_postfix(readOnlyStream, "/app0/large.bin"); }), "a read-only stream is refused");
+    Require(static_cast<unsigned char>(readOnly[0]) == 0x5A, "a read-only stream is untouched");
+    GuestStreamRec stream{};
+    Require(RejectsKeepingErrno([&] { FT_Stream_Open_nid_postfix(&stream, unmappedText); }), "an unmapped path is refused");
+    Require(!stream.descriptor && !stream.read && stream.pathname == unmappedText, "an unmapped path opens nothing");
+
+    Require(FT_Stream_Open_nid_postfix(&stream, path) == 0 && stream.size == bytes.size() && stream.pathname == path,
+            "a path that ends at a page end opens");
+    std::vector<std::uint8_t> buffer(bytes.size());
+    Require(stream.read(&stream, 0, buffer.data(), buffer.size()) == bytes.size() && buffer == bytes, "a read of several pages copies every byte");
+    std::uint8_t* last = reinterpret_cast<std::uint8_t*>(readOnly) - 10;
+    Require(stream.read(&stream, bytes.size() - 10, last, 100) == 10 && std::memcmp(last, bytes.data() + bytes.size() - 10, 10) == 0,
+            "a read is written only as far as the file goes");
+    Require(RejectsKeepingErrno([&] { stream.read(&stream, 16, unmappedBuffer, 4); }), "a read into an unmapped buffer is refused");
+    Require(RejectsKeepingErrno([&] { stream.read(&stream, 16, reinterpret_cast<std::uint8_t*>(readOnly), 4); }), "a read into a read-only buffer is refused");
+    Require(static_cast<unsigned char>(readOnly[0]) == 0x5A, "a read-only buffer is untouched");
+    Require(RejectsKeepingErrno([&] { stream.read(unmappedStream, 0, buffer.data(), 4); }), "a read of an unmapped stream is refused");
+    Require(RejectsKeepingErrno([&] { stream.close(unmappedStream); }), "a close of an unmapped stream is refused");
+    stream.close(&stream);
+    Require(!stream.descriptor && stream.size == 0 && !stream.base, "the stream closes");
+
+    Library owner;
+    GuestStreamOpenArgs args{};
+    args.flags = 0x4;
+    args.pathname = path;
+    GuestStreamRec* opened = nullptr;
+    Require(RejectsKeepingErrno([&] { FT_Stream_New_nid_postfix(&owner.library, &args, reinterpret_cast<GuestStreamRec**>(std::uintptr_t{0x10})); }),
+            "an unmapped result pointer is refused");
+    Require(RejectsKeepingErrno([&] { FT_Stream_New_nid_postfix(&owner.library, &args, readOnlyResult); }), "a read-only result pointer is refused");
+    Require(RejectsKeepingErrno([&] { FT_Stream_New_nid_postfix(reinterpret_cast<GuestRaccessLibrary*>(std::uintptr_t{0x10}), &args, &opened); }),
+            "an unmapped library is refused");
+    Require(RejectsKeepingErrno([&] { FT_Stream_New_nid_postfix(&owner.library, reinterpret_cast<const GuestStreamOpenArgs*>(std::uintptr_t{0x10}), &opened); }),
+            "unmapped arguments are refused");
+    Require(owner.recorder.allocs == 0 && !opened, "refused pointers allocate nothing");
+    Require(FT_Stream_New_nid_postfix(&owner.library, &args, &opened) == 0 && opened && opened->pathname == path && opened->size == bytes.size(),
+            "a new stream opens a path that ends at a page end");
+    FT_Stream_Close_nid_postfix(opened);
+    ft_mem_free_nid_postfix(&owner.recorder.memory, opened);
+    Require(owner.recorder.allocs == owner.recorder.frees, "the new stream is released");
+    UnmapPages(pages, 3 * pageSize);
+}
+
 }
 
 int main() {
@@ -318,6 +438,7 @@ int main() {
     OpenFile();
     NewStream();
     GuessForks();
+    GuestPointers();
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
     std::puts("Guest FreeType Ot system tests passed");

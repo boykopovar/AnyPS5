@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -15,6 +16,12 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -26,6 +33,66 @@ void Require(bool condition, const char* message, std::source_location location 
     if (condition) return;
     std::fprintf(stderr, "line %u: %s\n", location.line(), message);
     std::abort();
+}
+
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(data != nullptr, "read-only page allocation failed");
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0, "page size query failed");
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(data != nullptr && data != MAP_FAILED, "read-only page allocation failed");
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename T>
+    T* Set(const T& value) {
+        Require(sizeof(value) <= bytes, "read-only page too small");
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<T*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "read-only page protection failed");
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0, "read-only page protection failed");
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template <typename TCall>
+void Rejects(TCall call, const char* message, std::source_location location = std::source_location::current()) {
+    errno = EINVAL;
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::overflow_error&) {
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && errno == EINVAL, message, location);
 }
 
 template<class TObject>
@@ -60,6 +127,20 @@ void CheckRetain(TRetain retain, std::size_t referenceOffset) {
         Require(retain(&guarded.object) == (next > 1), "retain return value");
         Require(Same(guarded, expected), "retain changed bytes outside the reference count");
     }
+    Rejects([&] { retain(reinterpret_cast<TObject*>(0x10)); }, "retain of an unmapped object did not reject");
+    {
+        TObject value;
+        std::memset(&value, 0x6B, sizeof(value));
+        value.references = 3;
+        ReadOnlyPage page;
+        TObject* readOnly = page.Set(value);
+        page.Protect();
+        Rejects([&] { retain(readOnly); }, "retain of a read-only object did not reject");
+        Require(std::memcmp(readOnly, &value, sizeof(value)) == 0, "rejected retain changed a read-only object");
+    }
+    errno = EINVAL;
+    guarded.object.references = 5;
+    Require(retain(&guarded.object) == 1 && guarded.object.references == 6 && errno == EINVAL, "retain changed errno");
     std::memset(&guarded, 0x5A, sizeof(guarded));
     guarded.object.references = 1;
     auto expected = Bytes(guarded);
@@ -281,6 +362,46 @@ void CheckContextTimeout() {
     Require(SSL_CTX_set_timeout_nid_postfix(nullptr, 300) == 0, "null context");
 }
 
+void CheckContextQuicMethod() {
+    const LibreSsl3SslMethod tls{0, 0, 0x0303, 0x0301, 0x0304};
+    const LibreSsl3SslMethod dtls{1, 0, 0xfefd, 0x0302, 0x0303};
+    const int firstMethod = 1;
+    const int secondMethod = 2;
+    Guarded<LibreSsl3SslCtx> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    guarded.object.method = &tls;
+    guarded.object.quicMethod = nullptr;
+    auto expected = Bytes(guarded);
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, &firstMethod) == 1, "TLS context accepts a QUIC method");
+    Require(guarded.object.quicMethod == &firstMethod, "QUIC method stored");
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, &secondMethod) == 1, "QUIC method replaced");
+    Require(guarded.object.quicMethod == &secondMethod, "replacement stored");
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, nullptr) == 1, "QUIC method cleared");
+    Require(Same(guarded, expected), "QUIC method changed another field");
+    guarded.object.method = &dtls;
+    guarded.object.quicMethod = &firstMethod;
+    expected = Bytes(guarded);
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, &secondMethod) == 0, "DTLS context refuses a QUIC method");
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, nullptr) == 0, "DTLS context refuses a clear");
+    Require(Same(guarded, expected), "DTLS refusal changed the context");
+    guarded.object.method = nullptr;
+    expected = Bytes(guarded);
+    bool thrown = false;
+    try {
+        SSL_CTX_set_quic_method_nid_postfix(&guarded.object, &firstMethod);
+    } catch (const std::invalid_argument&) {
+        thrown = true;
+    }
+    Require(thrown && Same(guarded, expected), "context without a method throws without changes");
+    thrown = false;
+    try {
+        SSL_CTX_set_quic_method_nid_postfix(nullptr, &firstMethod);
+    } catch (const std::invalid_argument&) {
+        thrown = true;
+    }
+    Require(thrown, "null context throws");
+}
+
 void CheckClientRandom() {
     LibreSsl3Ssl3State state;
     std::array<unsigned char, sizeof(state)> stateBytes;
@@ -412,6 +533,28 @@ void CheckKeylogCallback() {
 
 } // namespace
 
+extern "C" void* APS5_VABI libreSsl3NewContext_nid_no_patch(const void* method);
+
+void CheckContextConstruction() {
+    bool refused = false;
+    try {
+        libreSsl3NewContext_nid_no_patch(TLS_method_nid_postfix());
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused, "SSL_CTX_new refuses the libSceLibreSsl3 TLS_method");
+    refused = false;
+    try {
+        libreSsl3NewContext_nid_no_patch(TLS_server_method_nid_postfix());
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused, "SSL_CTX_new refuses the libSceLibreSsl3 TLS_server_method");
+    auto* context = static_cast<LibreSslCtx*>(libreSsl3NewContext_nid_no_patch(TLS_client_method_nid_postfix()));
+    Require(context != nullptr, "SSL_CTX_new still builds a context from a libSceLibreSsl method");
+    SSL_CTX_free_nid_postfix(context);
+}
+
 int main() {
     void* api[10]{};
     ApplicationHeapRegister_nid_no_patch(api);
@@ -423,6 +566,8 @@ int main() {
     CheckVersionBounds();
     CheckClientRandom();
     CheckContextTimeout();
+    CheckContextQuicMethod();
+    CheckContextConstruction();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
     CheckTlsMethod();
     CheckX509Version();

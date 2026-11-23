@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -25,6 +26,75 @@ class ResolveCliPathTests(unittest.TestCase):
             with self.assertRaises(ValueError) as error:
                 runner.resolve_cli_path(loop)
             self.assertIn("symbolic link loop", str(error.exception))
+
+
+class CaseLogTests(unittest.TestCase):
+    def test_retry_preserves_the_first_case_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            helper = root / "tests/job_manager_reference.prx"
+            helper.parent.mkdir()
+            helper.write_bytes(b"helper")
+            args = mock.Mock(build=root, module=None, host=True, relinker=root / "relinker",
+                             toolchain=None, cases=["memory", "memory"], timeout=1, suite=None)
+            runs = iter([(1, b"first failure"), (0, b"retry passed")])
+
+            def process(command, **kwargs):
+                if command[0] == str(args.relinker):
+                    Path(command[-1]).write_bytes(b"reference")
+                    return subprocess.CompletedProcess(command, 0, b"", b"")
+                if "env" not in kwargs:
+                    return subprocess.CompletedProcess(command, 0, b"", b"")
+                code, output = next(runs)
+                return subprocess.CompletedProcess(command, code, output, b"")
+
+            with mock.patch.object(runner.subprocess, "run", side_effect=process), \
+                    mock.patch.object(runner, "read_host_imports", return_value=[]), \
+                    mock.patch.object(runner, "stage_libraries"), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(runner.run(args, root), 1)
+            cases = json.loads((root / "results.json").read_text(encoding="utf-8"))["cases"]
+            self.assertEqual((root / "memory.log").read_bytes(), b"first failure")
+            self.assertEqual([(case["status"], (root / case["log"]).read_bytes()) for case in cases],
+                             [("failed", b"first failure"), ("passed", b"retry passed")])
+
+
+class RuntimeEnvironmentTests(unittest.TestCase):
+    def test_library_search_path_has_no_empty_entry(self):
+        for existing in (None, "", "system-libraries"):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                build = root / "build"
+                helper = build / "tests/job_manager_reference.prx"
+                helper.parent.mkdir(parents=True)
+                helper.write_bytes(b"helper")
+                relinker = root / "relinker"
+                relinker.write_bytes(b"relinker")
+                output = root / "output"
+                output.mkdir()
+                args = mock.Mock(build=build, module=None, host=True, relinker=relinker, toolchain=None,
+                                 cases=["memory"], timeout=1, suite="all")
+                calls = []
+
+                def process(command, **kwargs):
+                    calls.append((command, kwargs))
+                    if Path(command[0]) == relinker:
+                        Path(command[-1]).write_bytes(b"reference")
+                    return mock.Mock(returncode=0, stdout=b"", stderr=b"")
+
+                values = {"PATH": "system-path"}
+                if existing is not None:
+                    values["LD_LIBRARY_PATH"] = existing
+                with mock.patch.dict(os.environ, values, clear=True), mock.patch.object(runner.sys, "platform", "linux"), \
+                        mock.patch.object(runner, "executable", return_value=bytearray(0x5000)), \
+                        mock.patch.object(runner, "read_host_imports", return_value=[]), \
+                        mock.patch.object(runner, "stage_libraries"), \
+                        mock.patch.object(runner.subprocess, "run", side_effect=process):
+                    self.assertEqual(runner.run(args, output), 0)
+                environment = calls[-1][1]["env"]
+                libraries = output / "libs"
+                self.assertEqual(environment["PATH"], str(libraries) + os.pathsep + "system-path")
+                self.assertEqual(environment["LD_LIBRARY_PATH"],
+                                 str(libraries) + (os.pathsep + existing if existing else ""))
 
 
 class DependencyStagingTests(unittest.TestCase):
