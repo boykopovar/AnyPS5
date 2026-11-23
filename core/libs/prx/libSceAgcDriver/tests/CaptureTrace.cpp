@@ -90,8 +90,12 @@ void PathDefault() {
 }
 
 void PathEmpty() {
+#ifdef _WIN32
+    const wchar_t* configured = _wgetenv(L"APS5_CAPTURE_TRACE_PATH");
+#else
     const char* configured = std::getenv("APS5_CAPTURE_TRACE_PATH");
-    Check(configured != nullptr && configured[0] == '\0',
+#endif
+    Check(configured != nullptr && configured[0] == 0,
           "this case requires an empty APS5_CAPTURE_TRACE_PATH");
     Check(AgcDriver::CaptureTracePath() == "capture-trace.log",
           "an empty APS5_CAPTURE_TRACE_PATH must select capture-trace.log");
@@ -111,6 +115,39 @@ void ExplicitWrites() {
           "the configured trace path did not receive the capture record");
     RemoveFile(configured);
 }
+
+#ifdef _WIN32
+std::filesystem::path UnpairedSurrogatePath(const std::filesystem::path& directory) {
+    const auto path = directory / std::wstring{L't', L'r', L'a', L'c', L'e', L'-', wchar_t(0xD800), L'.', L'l', L'o', L'g'};
+    Check(_wputenv_s(L"APS5_CAPTURE_TRACE_PATH", path.c_str()) == 0, "cannot set APS5_CAPTURE_TRACE_PATH");
+    return path;
+}
+
+void UnpairedSurrogateWrites() {
+    const auto configured = UnpairedSurrogatePath(std::filesystem::current_path());
+    RemoveFile(configured);
+    Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
+    AgcDriver::CaptureTrace::Log("capture-trace-surrogate label=%d", 5);
+    Check(WaitForRecord(configured, "capture-trace-surrogate label=5"),
+          "a native path with an unpaired surrogate did not receive the capture record");
+    RemoveFile(configured);
+}
+
+void UnpairedSurrogateOpenFailure() {
+    const auto configured = UnpairedSurrogatePath(std::filesystem::current_path() / "missing");
+    Check(!FileExists(configured.parent_path()), "the trace path parent must not exist");
+    Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
+    bool threw = false;
+    try {
+        AgcDriver::CaptureTrace::Log("capture-trace-surrogate-failure label=%d", 6);
+    } catch (const std::exception& error) {
+        threw = true;
+        std::cerr << "unexpected exception: " << error.what() << '\n';
+    }
+    Check(!threw, "an unopenable native trace path must not throw from Log");
+    Check(!FileExists(configured), "an unopenable native trace path must not create the requested file");
+}
+#endif
 
 void StopUnused() {
     const auto configured = RequiredPathVariable();
@@ -512,6 +549,8 @@ int main(int argc, char** argv) {
         else if (mode == "stop-drains") StopDrains();
 #ifdef _WIN32
         else if (mode == "dll-shutdown" && argc == 3) DllShutdown(argv[2]);
+        else if (mode == "unpaired-surrogate-writes") UnpairedSurrogateWrites();
+        else if (mode == "unpaired-surrogate-open-failure") UnpairedSurrogateOpenFailure();
 #endif
         else if (mode == "default-writes") DefaultWrites();
         else if (mode == "open-failure") OpenFailure();

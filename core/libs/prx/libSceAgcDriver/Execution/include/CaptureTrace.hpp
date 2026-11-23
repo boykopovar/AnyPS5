@@ -122,7 +122,11 @@ private:
         const auto path = CaptureTracePath();
         output.open(path, std::ios::binary);
         if (!output.is_open()) {
-            std::fprintf(stderr, "Capture trace open failed for %s\n", path.string().c_str());
+            try {
+                std::fprintf(stderr, "Capture trace open failed for %s\n", path.string().c_str());
+            } catch (...) {
+                std::fputs("Capture trace open failed\n", stderr);
+            }
             return;
         }
         active = true;

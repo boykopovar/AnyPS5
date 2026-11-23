@@ -63,6 +63,14 @@ if(BUILD_TESTING)
         configure_windows_unwind(agc_capture_trace_unload_fixture)
         add_dependencies(agc_capture_trace_tests agc_capture_trace_unload_fixture)
         file(MAKE_DIRECTORY "${agcCaptureTraceDirectory}/dll-shutdown")
+        foreach(mode unpaired-surrogate-writes unpaired-surrogate-open-failure)
+            string(REPLACE "-" "_" testMode "${mode}")
+            file(MAKE_DIRECTORY "${agcCaptureTraceDirectory}/${mode}")
+            add_test(NAME agc_capture_trace_${testMode} COMMAND agc_capture_trace_tests ${mode})
+            set_tests_properties(agc_capture_trace_${testMode} PROPERTIES ENVIRONMENT "APS5_CAPTURE_TRACE=1"
+                WORKING_DIRECTORY "${agcCaptureTraceDirectory}/${mode}"
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endforeach()
         add_test(NAME agc_capture_trace_dll_shutdown COMMAND agc_capture_trace_tests dll-shutdown $<TARGET_FILE:agc_capture_trace_unload_fixture>)
         set_tests_properties(agc_capture_trace_dll_shutdown PROPERTIES TIMEOUT 15
                 ENVIRONMENT "APS5_CAPTURE_TRACE=1;APS5_CAPTURE_TRACE_PATH=${agcCaptureTraceDirectory}/dll-shutdown/trace.log")
