@@ -196,6 +196,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/HashSearch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Mergesort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Heapsort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostErrno.cpp
@@ -1703,6 +1704,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_hostname PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_hostname PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_hash_search_tests ${LIBS_INCLUDE_DIR}/tests/GuestHashSearch.cpp)
+    target_include_directories(guest_hash_search_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_hash_search_tests PRIVATE libc)
+    configure_windows_unwind(guest_hash_search_tests)
+    add_test(NAME guest_hash_search COMMAND guest_hash_search_tests)
+    set_tests_properties(guest_hash_search PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_hash_search PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_vector_algorithms_tests ${LIBS_INCLUDE_DIR}/tests/GuestVectorAlgorithms.cpp)
