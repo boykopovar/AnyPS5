@@ -60,7 +60,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <new>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -104,19 +104,6 @@ std::size_t SegmentSize(const DataSegment& segment) {
 
 const char* SegmentData(const DataSegment& segment) {
     return _ZNK7WebCore12SharedBuffer11DataSegment4dataEv(&segment);
-}
-
-void ConstructFromMappedFile(SharedBuffer& buffer, WTF::MappedFileData& data) {
-    _ZN7WebCore12SharedBufferC2Ev(&buffer);
-    buffer.size = data.size;
-    auto* segment = static_cast<DataSegment*>(_ZN3WTF10fastMallocEm(sizeof(DataSegment)));
-    new (segment) DataSegment;
-    segment->refCount.store(1);
-    segment->storage.mappedFile.data = std::exchange(data.data, nullptr);
-    segment->storage.mappedFile.size = std::exchange(data.size, 0U);
-    segment->index = MappedFileIndex;
-    buffer.segments.buffer[0] = {0, segment};
-    buffer.segments.size = 1;
 }
 
 SharedBufferRef CreateFromReadingFile(const String& filePath) {
@@ -221,15 +208,17 @@ SharedBufferRef APS5_VABI _ZN7WebCore12SharedBuffer24createWithContentsOfFileERK
     const String& path = Checked(filePath, "WebCore::SharedBuffer::createWithContentsOfFile");
     bool mappingSuccess = false;
     WTF::MappedFileData mappedFileData{};
+    std::unique_ptr<WTF::MappedFileData, decltype(&_ZN3WTF14FileSystemImpl14MappedFileDataD1Ev)> mapping(
+        &mappedFileData, _ZN3WTF14FileSystemImpl14MappedFileDataD1Ev);
     _ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14MappedFileModeERb(&mappedFileData, path, SharedMapping, mappingSuccess);
     if (!mappingSuccess) {
-        _ZN3WTF14FileSystemImpl14MappedFileDataD1Ev(&mappedFileData);
+        mapping.reset();
         return CreateFromReadingFile(path);
     }
-    auto* buffer = static_cast<SharedBuffer*>(_ZN3WTF10fastMallocEm(sizeof(SharedBuffer)));
-    ConstructFromMappedFile(*buffer, mappedFileData);
-    _ZN3WTF14FileSystemImpl14MappedFileDataD1Ev(&mappedFileData);
-    return SharedBufferRef(buffer);
+    std::unique_ptr<SharedBuffer, decltype(&_ZN3WTF8fastFreeEPv)> buffer(
+        static_cast<SharedBuffer*>(_ZN3WTF10fastMallocEm(sizeof(SharedBuffer))), _ZN3WTF8fastFreeEPv);
+    _ZN7WebCore12SharedBufferC2EON3WTF14FileSystemImpl14MappedFileDataE(buffer.get(), &mappedFileData);
+    return SharedBufferRef(buffer.release());
 }
 
 SharedBufferRef APS5_VABI _ZN7WebCore12SharedBuffer21createFromReadingFileERKN3WTF6StringE(const String* filePath) {
