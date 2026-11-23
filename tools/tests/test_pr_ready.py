@@ -68,6 +68,24 @@ class BlockerTests(unittest.TestCase):
         checks = PASSING + [("intake", "completed", "failure"), ("labels", "in_progress", None), ("eligibility", "queued", None)]
         self.assertEqual(pr_ready.blockers(make(checks=checks)), [])
 
+    def test_the_conflict_label_job_does_not_block(self):
+        for state, conclusion in (("in_progress", None), ("completed", "cancelled"), ("completed", "failure")):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(pr_ready.blockers(make(checks=PASSING + [("pr", state, conclusion)])), [])
+
+    def test_each_bot_check_name_is_a_job_of_its_bot_workflow_only(self):
+        owners = {name: set() for name in pr_ready.BOT_CHECKS}
+        for workflow in (Path(__file__).resolve().parents[2] / ".github/workflows").glob("*.yml"):
+            text = workflow.read_text(encoding="utf-8")
+            if "\njobs:\n" not in text:
+                continue
+            for line in text.split("\njobs:\n", 1)[1].split("\n"):
+                name = line[2:].split(":", 1)[0]
+                if line.startswith("  ") and not line.startswith("   ") and line.rstrip().endswith(":") and name in owners:
+                    owners[name].add(workflow.name)
+        self.assertEqual(owners, {"intake": {"pr-intake.yml"}, "labels": {"pr-labels.yml"}, "eligibility": {"build.yml"},
+                                  "report": {"progress-report.yml"}, "pr": {"conflict-label-pr.yml"}})
+
     def test_a_failing_progress_report_does_not_block(self):
         self.assertEqual(pr_ready.blockers(make(checks=PASSING + [("report", "completed", "failure")])), [])
 
@@ -84,6 +102,16 @@ class BlockerTests(unittest.TestCase):
         self.assertTrue(pr_ready.built(make(checks=[("conventions", "completed", "success"),
                                                     ("relinker (ubuntu-latest, g++)", "completed", "success")])))
         self.assertFalse(pr_ready.built(make(checks=[("conventions", "completed", "success"), ("linux", "completed", "skipped")])))
+
+    def test_every_build_workflow_job_counts_as_a_build(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/build.yml").read_text(encoding="utf-8")
+        jobs = workflow.split("\njobs:\n", 1)[1]
+        names = {line[2:].split(":", 1)[0] for line in jobs.split("\n") if line.startswith("  ") and not line.startswith("   ")
+                 and line.rstrip().endswith(":")}
+        self.assertEqual(names - pr_ready.BOT_CHECKS, pr_ready.BUILD_CHECKS)
+        for name in ("pipe-write (macos-15)", "edge-watch (macos-15-intel)"):
+            with self.subTest(name=name):
+                self.assertTrue(pr_ready.built(make(checks=[("conventions", "completed", "success"), (name, "completed", "success")])))
 
     def test_the_newest_run_of_a_check_wins(self):
         data = node(checks=[("conventions", "completed", "success")])

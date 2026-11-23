@@ -94,8 +94,11 @@ class AbSplitTests(unittest.TestCase):
                                          capture_output=True, text=True, encoding="utf-8", timeout=5)
                     self.assertEqual(run.returncode, 0, run.stderr)
                     if flags:
-                        self.assertTrue(all(row["noise"] is None for row in json.loads(run.stdout)["metrics"]))
+                        rows = json.loads(run.stdout)["metrics"]
+                        self.assertEqual(rows, result["metrics"])
+                        self.assertTrue(all(row["noise"] is None for row in rows))
                     else:
+                        self.assertRegex(run.stdout, r"GPU busy ms/frame +105\.00 +130\.00 +\+25\.00 +\+23\.8% +-")
                         self.assertNotIn("(n 1)", run.stdout)
 
     def test_concatenated_runs_cannot_mix_phase_statistics(self):

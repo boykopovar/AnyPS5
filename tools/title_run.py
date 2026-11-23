@@ -47,6 +47,53 @@ def check_pad(pad):
     pad_text(pad, 1)
 
 
+def pad_record_signature(path):
+    info = path.stat()
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def prepare_pad_recording(work, env):
+    work = work.resolve()
+    if not env.get("APS5_PAD_RECORD"):
+        directory = Path(env.get("APS5_TRACE_DIR") or work)
+        if not directory.is_absolute():
+            directory = work / directory
+        env["APS5_PAD_RECORD"] = str(directory / "pad-record.txt")
+    path = Path(env["APS5_PAD_RECORD"])
+    if not path.is_absolute():
+        path = work / path
+    try:
+        previous = pad_record_signature(path)
+    except FileNotFoundError:
+        previous = None
+    return path, previous
+
+
+def pad_record_ready(path, previous):
+    try:
+        if pad_record_signature(path) == previous:
+            return False
+        with path.open(encoding="utf-8") as recording:
+            header = recording.readline(64)
+            sample = recording.readline(256)
+        if header != "APS5_PAD_RECORDING 1\n" or not re.fullmatch(r"[0-9]+ [0-9a-fA-F]+(?: [0-9]+){6}\n", sample):
+            return False
+        fields = sample.split()
+        values = [int(value, 16 if index == 1 else 10) for index, value in enumerate(fields)]
+        return values[0] <= 2**64 - 1 and values[1] <= 2**32 - 1 and all(value <= 255 for value in values[2:])
+    except (OSError, UnicodeError, ValueError):
+        return False
+
+
+def note_unqueued_pad(pad, queued, elapsed, stream):
+    if pad and queued is None:
+        reason = "minimum input delay not reached" if elapsed < pad.get("after_s", PAD_AFTER_SECONDS) else "no fresh controller sample observed"
+        target = stream if stream is not None else sys.stderr
+        target = getattr(target, "buffer", target)
+        target.write(f"[pad-input] timeline not queued: {reason}\n".encode())
+        target.flush()
+
+
 def inside(path, roots=()):
     pure = PurePosixPath(path)
     if "\\" in path or ":" in path or pure.is_absolute() or not pure.parts or ".." in pure.parts:
@@ -1035,17 +1082,19 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     if pad:
         pad_file.unlink(missing_ok=True)
         env["APS5_PAD_INPUT_FILE"] = str(pad_file)
+        recording = prepare_pad_recording(work, env)
     started = time.monotonic()
     with (run_dir / "stdout.log").open("wb") as stdout, (run_dir / "stderr.log").open("wb") as stderr:
         session = Session([str(executable)], work, env, stdout, stderr, owned=work)
         try:
             while session.alive() and time.monotonic() - started < seconds:
-                if pad and queued is None and time.monotonic() - started >= pad.get("after_s", PAD_AFTER_SECONDS):
+                if pad and queued is None and time.monotonic() - started >= pad.get("after_s", PAD_AFTER_SECONDS) and pad_record_ready(*recording):
                     pad_timeline.queue_timeline(pad_file, pad_text(pad, pad_input.next_sequence(pad_file)))
                     queued = round(time.monotonic() - started, 1)
                 session.send_new_windows_to_back()
                 time.sleep(0.1 if time.monotonic() - started < 10 else 0.5)
             elapsed = round(time.monotonic() - started, 1)
+            note_unqueued_pad(pad, queued, elapsed, stderr)
             alive, ended = session.alive(), time.time()
             exit_code = None if alive else session.exit_code()
             if alive:
@@ -1076,6 +1125,7 @@ def performance_phase(executable, work, env, console, seconds, pad=None, capture
     if pad:
         pad_file.unlink(missing_ok=True)
         env = dict(env, APS5_PAD_INPUT_FILE=str(pad_file))
+        recording = prepare_pad_recording(work, env)
     session = Session([str(executable)], work, env, console.stdout, console.stderr, owned=work, interactive=True)
     started = time.monotonic()
     result = {"state": "pending", "reason": "capture window has not completed", "warnings": []}
@@ -1084,7 +1134,7 @@ def performance_phase(executable, work, env, console, seconds, pad=None, capture
     observed_processes = {session.process.pid}
     try:
         while session.alive() and time.monotonic() - started < seconds:
-            if pad and queued is None and time.monotonic() - started >= pad.get("after_s", PAD_AFTER_SECONDS):
+            if pad and queued is None and time.monotonic() - started >= pad.get("after_s", PAD_AFTER_SECONDS) and pad_record_ready(*recording):
                 pad_timeline.queue_timeline(pad_file, pad_text(pad, pad_input.next_sequence(pad_file)))
                 queued = round(time.monotonic() - started, 1)
             if capture:
@@ -1107,6 +1157,7 @@ def performance_phase(executable, work, env, console, seconds, pad=None, capture
             time.sleep(0.25)
         alive = session.alive()
         elapsed = round(time.monotonic() - started, 3)
+        note_unqueued_pad(pad, queued, elapsed, console.stderr)
         exit_code = None if alive else session.exit_code()
         if alive:
             requested_close = True

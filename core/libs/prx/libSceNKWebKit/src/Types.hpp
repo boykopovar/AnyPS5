@@ -181,6 +181,10 @@ public:
     }
 };
 
+class Bundle final : public ObjectOf<ObjectType::Bundle> {
+public:
+};
+
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
 public:
     RectValue contentBounds{{0.0, 0.0}, {0.0, 0.0}};
@@ -189,6 +193,12 @@ public:
     SizeValue scrollOffset{0.0, 0.0};
     bool hasHorizontalScrollbar = false;
     bool hasVerticalScrollbar = false;
+    int numberOfPages = 1;
+    std::vector<bool> pageBoxVisibility;
+    bool containsAnyFormElements = false;
+    bool containsAnyFormControls = false;
+    bool isFocused = false;
+    bool hasOpener = false;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
@@ -367,6 +377,17 @@ public:
     bool clientConfigured = false;
 };
 
+class MessageListener final : public ObjectOf<ObjectType::MessageListener> {
+public:
+    bool replied = false;
+    Retained<Object> reply;
+
+    void SendReply(Retained<Object> replyObj) {
+        replied = true;
+        reply = std::move(replyObj);
+    }
+};
+
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
 public:
     bool decided = false;
@@ -494,6 +515,10 @@ public:
     double viewScaleFactor = 1.0;
     bool drawsBackground = true;
     bool isFullScreen = false;
+    bool isActive = false;
+    bool isFocused = false;
+    bool isVisible = false;
+    SizeValue size{ 0.0, 0.0 };
 };
 
 class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
