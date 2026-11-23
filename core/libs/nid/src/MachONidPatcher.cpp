@@ -40,6 +40,7 @@ constexpr std::uint32_t kImportFormatAddend = 2;
 constexpr std::uint32_t kImportFormatAddend64 = 3;
 
 constexpr std::uint64_t kPageSize = 0x1000;
+constexpr std::size_t kDylibCommandSize = 24;
 
 struct MachHeader64 {
     std::uint32_t Magic;
@@ -156,10 +157,38 @@ Image ParseImage(const std::vector<std::uint8_t>& binary) {
     RequireRange(binary, sizeof(MachHeader64), image.Header.CommandBytes);
     std::size_t cursor = sizeof(MachHeader64);
     const auto end = cursor + image.Header.CommandBytes;
+    bool hasChainedFixups = false;
     for (std::uint32_t index = 0; index < image.Header.CommandCount; ++index) {
         if (cursor + sizeof(LoadCommand) > end) throw std::runtime_error("load command out of bounds");
         const auto command = Read<LoadCommand>(binary, cursor);
-        if (command.Size < sizeof(LoadCommand) || command.Size % 8 != 0 || command.Size > end - cursor) throw std::runtime_error("invalid load command size");
+        std::size_t minimumSize = sizeof(LoadCommand);
+        switch (command.Cmd) {
+        case kLcSegment64:
+            minimumSize = sizeof(SegmentCommand64);
+            break;
+        case kLcDyldExportsTrie:
+            minimumSize = sizeof(LinkeditDataCommand);
+            break;
+        case kLcDyldChainedFixups:
+            if (hasChainedFixups) throw std::runtime_error("Mach-O image has more than one chained fixups command");
+            hasChainedFixups = true;
+            minimumSize = sizeof(LinkeditDataCommand);
+            break;
+        case kLcDyldInfo:
+        case kLcDyldInfoOnly:
+            minimumSize = sizeof(DyldInfoCommand);
+            break;
+        case kLcLoadDylib:
+        case kLcLoadWeakDylib:
+        case kLcReexportDylib:
+        case kLcLazyLoadDylib:
+        case kLcLoadUpwardDylib:
+            minimumSize = kDylibCommandSize;
+            break;
+        default:
+            break;
+        }
+        if (command.Size < minimumSize || command.Size % 8 != 0 || command.Size > end - cursor) throw std::runtime_error("invalid load command size");
         image.Commands.push_back(cursor);
         cursor += command.Size;
     }
@@ -412,6 +441,8 @@ void PatchChainedImports(std::vector<std::uint8_t>& binary, const Image& image, 
     }
     if (!fixups || fixups->DataSize == 0) return;
     RequireRange(binary, fixups->DataOffset, fixups->DataSize);
+    if (fixups->DataSize < sizeof(ChainedFixupsHeader))
+        throw std::runtime_error("chained fixups header out of bounds");
     const auto base = std::size_t{fixups->DataOffset};
     const auto header = Read<ChainedFixupsHeader>(binary, base);
     if (header.Version != 0) throw std::runtime_error("unsupported chained fixups version");
