@@ -203,6 +203,18 @@ public:
     bool shouldCloseOnWebView = true;
     std::optional<std::u16string> accessibleName;
     std::optional<std::u16string> textDirection;
+    std::uint64_t frameID = 0;
+    std::u16string innerText;
+    std::u16string layerTreeAsText;
+    std::string mimeType;
+    std::string suggestedFilename;
+    struct BackgroundColor {
+        double red = 1.0;
+        double green = 1.0;
+        double blue = 1.0;
+        double alpha = 1.0;
+    };
+    std::optional<BackgroundColor> backgroundColor;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
