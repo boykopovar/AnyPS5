@@ -56,6 +56,12 @@ void* AllocateAligned(std::size_t size, std::size_t alignment) {
     }
 }
 
+std::string AssertionText(const char* text) {
+    std::string copied;
+    if (CopyGuestString_nid_no_patch(text, 65536, copied) != 0) return "?";
+    return copied;
+}
+
 }
 
 extern "C" {
@@ -67,7 +73,7 @@ extern "C" {
 #endif
 
 [[noreturn]] void APS5_VABI _Assert_nid_postfix(const char* message, const char* location) {
-    std::fprintf(stderr, "[libc] guest assertion failed: %s (%s)\n", message ? message : "?", location ? location : "?");
+    std::fprintf(stderr, "[libc] guest assertion failed: %s (%s)\n", AssertionText(message).c_str(), AssertionText(location).c_str());
     std::fflush(stderr);
     std::abort();
 }
