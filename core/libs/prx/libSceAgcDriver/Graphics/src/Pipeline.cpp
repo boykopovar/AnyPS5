@@ -1712,26 +1712,55 @@ UnlockedPipelineBuildSlot& unlockedPipelineBuild() {
     return HostThreadLocal<UnlockedPipelineBuildSlot, UnlockedPipelineBuildStorage>();
 }
 
+void releaseUnlockedBuild() {
+    auto& builds = deferredBuilds();
+    {
+        std::lock_guard lock(builds.mutex);
+        --builds.running;
+    }
+    builds.idle.notify_all();
+}
+
+void dropPendingUnlockedBuild(UnlockedPipelineBuildSlot& slot) {
+    if (slot.pending == nullptr) return;
+    slot.pending.reset();
+    releaseUnlockedBuild();
+}
+
 }
 
 UnlockedPipelineBuild::UnlockedPipelineBuild() {
     auto& slot = unlockedPipelineBuild();
+    dropPendingUnlockedBuild(slot);
     slot.allowed = true;
-    slot.pending.reset();
 }
 
 UnlockedPipelineBuild::~UnlockedPipelineBuild() {
     auto& slot = unlockedPipelineBuild();
     slot.allowed = false;
-    slot.pending.reset();
+    dropPendingUnlockedBuild(slot);
+}
+
+void UnlockedPipelineBuild::Refuse() {
+    unlockedPipelineBuild().allowed = false;
 }
 
 std::shared_ptr<Pipeline> ResidentPipelineOrUnlockedBuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint64_t* storeHash) {
     auto& slot = unlockedPipelineBuild();
-    if (slot.allowed && slot.pending == nullptr && GuestMemory::GpuMutex().DepthOnThisThread() == 1) {
+    if (slot.allowed && GuestMemory::GpuMutex().DepthOnThisThread() == 1) {
+        if (slot.pending != nullptr) {
+            if (storeHash != nullptr) *storeHash = 0;
+            return nullptr;
+        }
         if (const auto hash = missingPipelineHash(context, state, vertexInput, resources, shaders, attachmentLayout)) {
             if (storeHash != nullptr) *storeHash = 0;
-            slot.pending = pipelineBuild(context, state, vertexInput, resources, shaders, attachmentLayout, *hash);
+            auto job = pipelineBuild(context, state, vertexInput, resources, shaders, attachmentLayout, *hash);
+            auto& builds = deferredBuilds();
+            {
+                std::lock_guard lock(builds.mutex);
+                ++builds.running;
+            }
+            slot.pending = std::move(job);
             return nullptr;
         }
     }
@@ -1743,6 +1772,9 @@ bool UnlockedPipelineBuild::Build() {
     slot.allowed = false;
     const auto job = std::move(slot.pending);
     if (job == nullptr) return false;
+    const struct Release {
+        ~Release() { releaseUnlockedBuild(); }
+    } release;
     PerformanceTimer timing("Vulkan.GraphicsPipelineUnlocked");
     try {
         buildPipeline(*job);

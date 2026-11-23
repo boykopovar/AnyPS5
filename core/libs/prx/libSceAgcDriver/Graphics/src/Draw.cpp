@@ -5008,6 +5008,7 @@ std::vector<std::uint32_t> DrawResourceContentKey(const Context& context, const 
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
     const DepthCopySourceScope depthCopySource(state.depthCopySource);
     if (state.stages.tessellationGeometry) {
+        UnlockedPipelineBuild::Refuse();
         drawTessellationGeometry(context, state, draw, shaders, snapshots, trace);
         return;
     }
@@ -5015,6 +5016,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         const auto limit = context.meshLimits.maxMeshOutputLayers;
         Require(limit != 0u && !state.depth, "mesh layer windows require a nonzero output limit and color-only layered rendering");
         Require(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->layerReplaySafe; }), "mesh layer windows refuse shaders with guest memory writes, clocks or unproven side effects");
+        UnlockedPipelineBuild::Refuse();
         if (recipeOut != nullptr) recipeOut->reset();
         for (std::uint32_t base = 0; base < state.renderLayers;) {
             auto window = state;

@@ -136,6 +136,7 @@ public:
     UnlockedPipelineBuild(const UnlockedPipelineBuild&) = delete;
     UnlockedPipelineBuild& operator=(const UnlockedPipelineBuild&) = delete;
     bool Build();
+    static void Refuse();
 };
 std::shared_ptr<Pipeline> ResidentPipelineOrUnlockedBuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint64_t* storeHash);
 std::shared_ptr<Pipeline> TouchCachedPipeline(const Context& context, std::uint64_t hash, const std::weak_ptr<Pipeline>& expected);
