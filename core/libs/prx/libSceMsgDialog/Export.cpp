@@ -1,6 +1,6 @@
 #include "prx/libSceMsgDialog/include/Api.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogParam.hpp"
-#include "prx/libSceIme/include/HostMessageBox.hpp"
+#include "prx/libSceMsgDialog/include/HostMessageBox.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include <atomic>
@@ -110,17 +110,16 @@ int APS5_VABI sceMsgDialogOpen(const void* param) {
  const MsgDialog::ParsedParam parsed = MsgDialog::ParseParam(param);
  Inspect(parsed);
  ModalDialogRequest hostRequest;
- if (HostBox::HostMessageBoxEnabled(std::getenv("ANYPS5_MSG_DIALOG_HOST"), kAppleBuild) && MsgDialog::BuildRequest(parsed, hostRequest)) {
+ if (MsgDialog::HostMessageBoxEnabled(std::getenv("ANYPS5_MSG_DIALOG_HOST"), kAppleBuild) && MsgDialog::BuildRequest(parsed, hostRequest)) {
   g_presented = false;
   g_pollsLeft = std::numeric_limits<int>::max();
   g_status = kStatusRunning;
   g.unlock();
-  HostBox::HostBoxAnswer answer;
-  const bool shown = ShowHostMessageBox_nid_postfix(parsed.text, hostRequest, answer);
+  const auto answer = MsgDialog::ShowHostMessageBox(parsed.text, hostRequest);
   g.lock();
-  if (shown) {
+  if (answer) {
    const std::size_t fallback = hostRequest.cancel != ModalDialogNoButton ? hostRequest.cancel : 0;
-   g_buttonId = MsgDialog::ButtonIdOf(answer.chosen ? *answer.chosen : fallback);
+   g_buttonId = MsgDialog::ButtonIdOf(answer->chosen ? *answer->chosen : fallback);
    g_status = kStatusFinished;
    APS5_HIT("MSGDIALOG", "open: buttons=%zu -> host box, button %d", hostRequest.buttons.size(), g_buttonId);
    return kErrOk;

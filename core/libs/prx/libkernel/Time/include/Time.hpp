@@ -26,6 +26,9 @@ extern "C" {
     void SetGuestTimezone_nid_no_patch(std::int32_t minutesWest, std::int32_t daylightTime);
     void ResetGuestTimezone_nid_no_patch();
 
+    void KernelPauseGuestClock_nid_no_patch();
+    void KernelResumeGuestClock_nid_no_patch();
+
     // Debug aid: APS5_TRACE_WAITS=1 aggregates blocking waits (event flags, semaphores, condition
     // variables, event queues) per guest call site and prints the sites that wait longest every 3 s,
     // with their timeout rate; a site that times out once per frame is a lost wake-up.

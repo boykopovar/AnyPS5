@@ -1,4 +1,4 @@
-#include "prx/libSceIme/include/HostMessageBox.hpp"
+#include "prx/libSceMsgDialog/include/HostMessageBox.hpp"
 #include "prx/libSceMsgDialog.native/libSceMsgDialog.native.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
@@ -71,8 +71,8 @@ int APS5_VABI sceMsgDialogOpen(const void* param) {
     ModalDialogRequest request;
     bool presented = MsgDialog::BuildRequest(parsed, request);
     request.owner = ModalDialogOwnerMsgDialog;
-    if (presented && HostBox::HostMessageBoxEnabled(std::getenv("ANYPS5_MSG_DIALOG_HOST"), kAppleBuild)) {
-        HostBox::HostBoxAnswer answer;
+    if (presented && MsgDialog::HostMessageBoxEnabled(std::getenv("ANYPS5_MSG_DIALOG_HOST"), kAppleBuild)) {
+        MsgDialog::HostBoxAnswer answer;
         if (ShowHostMessageBox_nid_postfix(parsed.text, request, answer)) {
             const std::size_t fallback = request.cancel != ModalDialogNoButton ? request.cancel : 0;
             g_buttonId = MsgDialog::ButtonIdOf(answer.chosen ? *answer.chosen : fallback);
