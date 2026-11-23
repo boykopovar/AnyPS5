@@ -36,6 +36,9 @@ EXPORT_PATHS = ("core/libs/prx/*.cpp", ":(exclude,icase)**/test/**", ":(exclude,
 _REPO_ROOTS = {}
 
 
+GIT_CONFIG = ("-c", "core.quotePath=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false")
+
+
 def _repository_root():
     cwd = Path.cwd()
     root = _REPO_ROOTS.get(cwd)
@@ -85,7 +88,7 @@ def git(*args):
                 except ValueError:
                     pass
     result = subprocess.run(
-        ["git", "-c", "core.quotePath=false", *args],
+        ["git", *GIT_CONFIG, *args],
         cwd=root,
         capture_output=True,
     )
@@ -308,7 +311,7 @@ def fetch_heads(base_sha, prs):
 
 def merge(*args):
     root = _repository_root()
-    result = subprocess.run(["git", "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", *args],
+    result = subprocess.run(["git", *GIT_CONFIG, "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", *args],
                             cwd=root, capture_output=True)
     lines = result.stdout.decode("utf-8", errors="replace").rstrip("\0").split("\0")
     if result.returncode not in (0, 1) or not lines[0]:

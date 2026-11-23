@@ -390,6 +390,21 @@ class UnicodePathTests(unittest.TestCase):
                 os.chdir(previous)
 
 
+class GitConfigTests(unittest.TestCase):
+    def test_git_commands_run_without_auto_gc_or_maintenance(self):
+        previous = os.getcwd()
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(["git", "init", "-q"], cwd=directory, check=True)
+            subprocess.run(["git", "config", "gc.auto", "6700"], cwd=directory, check=True)
+            try:
+                os.chdir(directory)
+                self.assertEqual(pr_overlap.git("config", "--get", "gc.auto").strip(), "0")
+                self.assertEqual(pr_overlap.git("config", "--get", "maintenance.auto").strip(), "false")
+                self.assertEqual(pr_overlap.git("config", "--get", "core.quotePath").strip(), "false")
+            finally:
+                os.chdir(previous)
+
+
 class SubdirectoryTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "fake gh is a shell script")
     def test_branch_report_from_a_subdirectory_matches_the_root(self):
