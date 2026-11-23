@@ -82,6 +82,7 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     const auto getRoomDataInternal = Resolve<RequestFn>("sceNpMatching2GetRoomDataInternal");
     const auto getPingInfo = Resolve<RequestFn>("sceNpMatching2SignalingGetPingInfo");
     const auto leaveRoom = Resolve<RequestFn>("sceNpMatching2LeaveRoom");
+    const auto joinRoomA = Resolve<RequestFn>("sceNpMatching2JoinRoomA");
     const auto sendRoomMessage = Resolve<RequestFn>("sceNpMatching2SendRoomMessage");
     const auto getServerId = Resolve<GetServerIdFn>("sceNpMatching2GetServerId");
     const auto getSlotMask = Resolve<SlotMaskFn>("sceNpMatching2GetRoomJoinedSlotMaskLocal");
@@ -132,7 +133,7 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     Require(getUserInfoList(context, zeroed, nullptr, &requestId) == InvalidServerId, "sceNpMatching2GetUserInfoList", "server id 0 did not return INVALID_SERVER_ID");
     errno = 71;
     Require(getUserInfoList(context, reinterpret_cast<const void*>(0x10), nullptr, &requestId) == InvalidArgument && errno == 71, "sceNpMatching2GetUserInfoList", "an unreadable request did not return INVALID_ARGUMENT with errno preserved");
-    for (const RequestFn request : {setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo, leaveRoom}) {
+    for (const RequestFn request : {setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo, leaveRoom, joinRoomA}) {
         errno = 71;
         Require(request(99, reinterpret_cast<const void*>(std::uintptr_t{0x10}), nullptr, &requestId) == InvalidArgument && errno == 71, "room request", "an unreadable request did not return INVALID_ARGUMENT");
         Require(request(context, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "room id 0 did not return INVALID_ROOM_ID");
