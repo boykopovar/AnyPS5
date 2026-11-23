@@ -10,6 +10,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -34,6 +35,10 @@ alignas(256) constexpr std::array<std::uint32_t, 10> BiasPixelCode{
     0x10040010, 0x06060300, 0x10060611, 0x7e020212, 0xf0940f08, 0x00610401, 0xbf8c3f70, 0xf800180f, 0x07060504, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 12> LodQueryPixelCode{
+    0x10040010, 0x06060300, 0x10060611, 0x7e020212, 0xf09c0f08, 0x00610402, 0xf1800308, 0x00610802, 0xbf8c3f70, 0xf800180f, 0x09080504, 0xbf810000,
+};
+
 constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
@@ -55,7 +60,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t width, std::uint32_
     };
 }
 
-void Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler) {
+void Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, std::span<const std::uint32_t> pixelCode = BiasPixelCode) {
     const auto& target = device.Target();
     Pixels.fill(std::byte{0});
     std::vector<std::uint32_t> vertexUserData(4, 0u);
@@ -85,9 +90,9 @@ void Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture,
     pixelUserData[16] = std::bit_cast<std::uint32_t>(0.37f);
     pixelUserData[17] = std::bit_cast<std::uint32_t>(0.21f);
     pixelUserData[18] = std::bit_cast<std::uint32_t>(0.0f);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(BiasPixelCode.data()), std::as_bytes(std::span(BiasPixelCode))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragment{
-        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(BiasPixelCode.data()), BiasPixelCode, 0, {}},
+        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
         {64, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
         target,
         PixelPushLayout(vertexPush, target)
@@ -128,14 +133,36 @@ void Check(const std::string& name, const std::array<std::uint8_t, 4>& expected 
     }
 }
 
+void CheckSingleTexelLodQuery(AgcDriver::VulkanDevice& device) {
+    constexpr std::array<std::uint32_t, 4> Normalized{0x00000092u, 0x00fff000u, 0x04000000u, 0u};
+    Draw(device, TextureDescriptor(1u, Type2D), Normalized, LodQueryPixelCode);
+    Check("a sample and image_get_lod sharing a normalized sampler", {Texel[0], Texel[1], 0u, 0u});
+    auto unnormalized = Normalized;
+    unnormalized[0] |= 1u << 15u;
+    std::string refusal;
+    try {
+        Draw(device, TextureDescriptor(1u, Type2D), unnormalized, LodQueryPixelCode);
+    } catch (const std::exception& error) {
+        refusal = error.what();
+    }
+    Require(refusal.find("unnormalized guest sampler is used by image_get_lod, which is not implemented") != std::string::npos,
+            "a sample and image_get_lod sharing a single-texel image keep their unnormalized sampler refused: " + refusal);
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
+        Require(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "--lod-query-only"), "usage: single-texel image tests [--lod-query-only]");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         std::fill(Texels.begin(), Texels.end(), 0xeeu);
         std::copy(Texel.begin(), Texel.end(), Texels.begin());
+        if (argc == 2) {
+            CheckSingleTexelLodQuery(*device);
+            std::puts("single-texel image LOD query sampler tests passed");
+            return 0;
+        }
         struct Case {
             const char* name;
             std::array<std::uint32_t, 4> sampler;
@@ -161,6 +188,7 @@ int main() {
             Draw(*device, TextureDescriptor(1u, type), forced);
             Check(std::string(type == Type2D ? "2D, " : "one-slice volume, ") + "a FORCE_DEGAMMA anisotropic sampler keeps its sRGB decode", DecodedTexel, 1u);
         }
+        CheckSingleTexelLodQuery(*device);
         std::string refusal;
         try {
             Draw(*device, TextureDescriptor(2u, Type2D), cases[2].sampler);
