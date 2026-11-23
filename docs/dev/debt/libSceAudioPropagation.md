@@ -8,10 +8,10 @@
 | --- | --- |
 | `sceAudioPropagationSourceQueryAudioPaths` | `yW8FldaufkU` |
 | `Unknown` | `TrQMW7ARZXY` |
-| `Unknown` | `ZSdiF+pXrF8` |
+| `sceAudioPropagationMaterialQueryInfo` | `ZSdiF+pXrF8` |
 | `Unknown` | `fOTrQvqzABM` |
-| `Unknown` | `fhMkXxnE8aw` |
-| `Unknown` | `laU0fM-tTsc` |
+| `sceAudioPropagationAudioPathQueryInfo` | `fhMkXxnE8aw` |
+| `sceAudioPropagationPortalQueryInfo` | `laU0fM-tTsc` |
 | `Unknown` | `mdH4mANi9GI` |
 | `Unknown` | `o0gGIp1vd6A` |
 

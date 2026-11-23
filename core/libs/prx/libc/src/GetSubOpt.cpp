@@ -29,48 +29,27 @@
 
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
 namespace {
-
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return ok;
-}
-
-bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return ok;
-}
-
-bool WritablePreservingErrno(void* destination, std::size_t bytes) {
-    const int saved = errno;
-    const bool ok = GuestWritable_nid_no_patch(destination, bytes);
-    errno = saved;
-    return ok;
-}
 
 std::string CopyGuestCString(const char* source, const char* func) {
     std::string result;
     const auto base = reinterpret_cast<std::uintptr_t>(source);
     std::size_t offset = 0;
     for (;;) {
-        if (offset > std::numeric_limits<std::uintptr_t>::max() - base) NotImplemented_nid_no_patch(func);
+        if (offset > std::numeric_limits<std::uintptr_t>::max() - base) throw std::runtime_error(func);
         const auto current = base + offset;
         const std::size_t toPageEnd = 4096 - (current % 4096);
         const std::size_t chunk = toPageEnd < 256 ? toPageEnd : 256;
         char buffer[256];
-        if (!CopyInPreservingErrno(buffer, reinterpret_cast<const void*>(current), chunk)) {
-            NotImplemented_nid_no_patch(func);
+        if (!GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(current), chunk)) {
+            throw std::runtime_error(func);
         }
         if (const auto* end = static_cast<const char*>(std::memchr(buffer, '\0', chunk))) {
             result.append(buffer, static_cast<std::size_t>(end - buffer));
@@ -88,28 +67,28 @@ extern "C" {
 char* suboptarg_nid_postfix = nullptr;
 
 int APS5_VABI getsubopt_nid_postfix(char** optionp, char* const* tokens, char** valuep) {
-    if (valuep && !WritablePreservingErrno(valuep, sizeof(*valuep))) NotImplemented_nid_no_patch(__func__);
+    if (valuep && !GuestWritable_nid_no_patch(valuep, sizeof(*valuep))) throw std::runtime_error(__func__);
     if (!optionp) {
         suboptarg_nid_postfix = nullptr;
         if (valuep) {
             char* nullValue = nullptr;
-            if (!CopyOutPreservingErrno(valuep, &nullValue, sizeof(nullValue))) NotImplemented_nid_no_patch(__func__);
+            if (!GuestCopyOut_nid_no_patch(valuep, &nullValue, sizeof(nullValue))) throw std::runtime_error(__func__);
         }
         return -1;
     }
 
     char* option = nullptr;
-    if (!CopyInPreservingErrno(&option, optionp, sizeof(option))) NotImplemented_nid_no_patch(__func__);
+    if (!GuestCopyIn_nid_no_patch(&option, optionp, sizeof(option))) throw std::runtime_error(__func__);
     if (!option) {
         suboptarg_nid_postfix = nullptr;
         if (valuep) {
             char* nullValue = nullptr;
-            if (!CopyOutPreservingErrno(valuep, &nullValue, sizeof(nullValue))) NotImplemented_nid_no_patch(__func__);
+            if (!GuestCopyOut_nid_no_patch(valuep, &nullValue, sizeof(nullValue))) throw std::runtime_error(__func__);
         }
         return -1;
     }
 
-    if (!WritablePreservingErrno(optionp, sizeof(*optionp))) NotImplemented_nid_no_patch(__func__);
+    if (!GuestWritable_nid_no_patch(optionp, sizeof(*optionp))) throw std::runtime_error(__func__);
     const std::string text = CopyGuestCString(option, __func__);
 
     std::size_t pos = 0;
@@ -118,10 +97,10 @@ int APS5_VABI getsubopt_nid_postfix(char** optionp, char* const* tokens, char** 
         suboptarg_nid_postfix = nullptr;
         if (valuep) {
             char* nullValue = nullptr;
-            if (!CopyOutPreservingErrno(valuep, &nullValue, sizeof(nullValue))) NotImplemented_nid_no_patch(__func__);
+            if (!GuestCopyOut_nid_no_patch(valuep, &nullValue, sizeof(nullValue))) throw std::runtime_error(__func__);
         }
         char* nextOption = option + pos;
-        if (!CopyOutPreservingErrno(optionp, &nextOption, sizeof(nextOption))) NotImplemented_nid_no_patch(__func__);
+        if (!GuestCopyOut_nid_no_patch(optionp, &nextOption, sizeof(nextOption))) throw std::runtime_error(__func__);
         return -1;
     }
 
@@ -154,15 +133,15 @@ int APS5_VABI getsubopt_nid_postfix(char** optionp, char* const* tokens, char** 
         while (pos < text.size() && (text[pos] == ',' || text[pos] == ' ' || text[pos] == '\t')) ++pos;
     }
 
-    if (writeSep1 && !WritablePreservingErrno(option + sep1Pos, 1)) NotImplemented_nid_no_patch(__func__);
-    if (writeSep2 && !WritablePreservingErrno(option + sep2Pos, 1)) NotImplemented_nid_no_patch(__func__);
+    if (writeSep1 && !GuestWritable_nid_no_patch(option + sep1Pos, 1)) throw std::runtime_error(__func__);
+    if (writeSep2 && !GuestWritable_nid_no_patch(option + sep2Pos, 1)) throw std::runtime_error(__func__);
 
     int match = -1;
     if (tokens) {
         const std::string_view suboption(text.data() + suboptionStart, suboptionEnd - suboptionStart);
         for (int index = 0;; ++index) {
             char* tokenPtr = nullptr;
-            if (!CopyInPreservingErrno(&tokenPtr, tokens + index, sizeof(tokenPtr))) NotImplemented_nid_no_patch(__func__);
+            if (!GuestCopyIn_nid_no_patch(&tokenPtr, tokens + index, sizeof(tokenPtr))) throw std::runtime_error(__func__);
             if (!tokenPtr) break;
             if (CopyGuestCString(tokenPtr, __func__) == suboption) {
                 match = index;
@@ -172,14 +151,14 @@ int APS5_VABI getsubopt_nid_postfix(char** optionp, char* const* tokens, char** 
     }
 
     const char nul = '\0';
-    if (writeSep1 && !CopyOutPreservingErrno(option + sep1Pos, &nul, 1)) NotImplemented_nid_no_patch(__func__);
-    if (writeSep2 && !CopyOutPreservingErrno(option + sep2Pos, &nul, 1)) NotImplemented_nid_no_patch(__func__);
+    if (writeSep1 && !GuestCopyOut_nid_no_patch(option + sep1Pos, &nul, 1)) throw std::runtime_error(__func__);
+    if (writeSep2 && !GuestCopyOut_nid_no_patch(option + sep2Pos, &nul, 1)) throw std::runtime_error(__func__);
     if (valuep) {
         char* outValue = hasValue ? option + valuePos : nullptr;
-        if (!CopyOutPreservingErrno(valuep, &outValue, sizeof(outValue))) NotImplemented_nid_no_patch(__func__);
+        if (!GuestCopyOut_nid_no_patch(valuep, &outValue, sizeof(outValue))) throw std::runtime_error(__func__);
     }
     char* nextOption = option + pos;
-    if (!CopyOutPreservingErrno(optionp, &nextOption, sizeof(nextOption))) NotImplemented_nid_no_patch(__func__);
+    if (!GuestCopyOut_nid_no_patch(optionp, &nextOption, sizeof(nextOption))) throw std::runtime_error(__func__);
     suboptarg_nid_postfix = option + suboptionStart;
     return match;
 }

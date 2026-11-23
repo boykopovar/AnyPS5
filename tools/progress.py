@@ -9,12 +9,38 @@ import xml.etree.ElementTree as ET
 import textwrap
 from fractions import Fraction
 from html import escape
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 
 tokenizer_spec = importlib.util.spec_from_file_location("anyps5_cpp_tokenizer", Path(__file__).with_name("nid_names.py"))
 tokenizer = importlib.util.module_from_spec(tokenizer_spec)
 tokenizer_spec.loader.exec_module(tokenizer)
 CPP_TOKEN = tokenizer.CPP_TOKEN
+LITERALS, _, CODE_TOKEN = CPP_TOKEN.pattern.rpartition("|(?P<code>")
+CODE_RUN = re.compile(LITERALS + "|(?P<code>(?:" + CODE_TOKEN[:-1] + r""")(?:(?![/"']|(?:u8|[uUL])?R?["'])(?:"""
+                      + CODE_TOKEN[:-1] + r"|\s+))*)")
+BRACE = re.compile(r"[{}]")
+_NON_CODE_TRIGGER = re.compile(r'//|/\*|"|\'')
+_RAW_BODY = re.compile(r'"(?P<delimiter>[^\s()\\]{0,16})\([\s\S]*?\)(?P=delimiter)"')
+_STRING_BODY = re.compile(r'"(?:\\[\s\S]|[^"\\])*"')
+_CHAR_BODY = re.compile(r"'(?:\\[\s\S]|[^'\\])*'")
+_CODE_TOKEN = re.compile(r"(?:[0-9]|\.[0-9])[A-Za-z0-9_.']*|[A-Za-z_][A-Za-z0-9_]*|\S")
+_PRE_TOKEN_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.'")
+_STRING_PREFIXES = frozenset(("u8", "u", "U", "L"))
+_RAW_PREFIXES = frozenset(("R", "u8R", "uR", "UR", "LR"))
+_BLANK_LINE_RUNS = re.compile(r"\n(?:[ \t]*\n)+")
+_ANON_NAMESPACE = re.compile(r"\bnamespace\s*\{")
+_CLASS_SCOPE = re.compile(r"\b(?:class|struct|union)\b[^;{}()]*\{")
+_STATIC_KW = re.compile(r"\bstatic\b")
+_BRACKET_DELIM = re.compile(r"[()\[\]{}]")
+_STMT_DELIM = re.compile(r"[{};]")
+_CV_QUAL = re.compile(r"\b(?:const|volatile)\b")
+_TYPE_KW = re.compile(r"\b(?:struct|class|union|enum|typename|register)\b")
+_SCOPE_SEP = re.compile(r"\s*::\s*")
+_OP_PAIR = re.compile(r"->|<<|>>|<=|>=")
+_IDENT = re.compile(r"[A-Za-z_]\w*")
+_RETURN_IDENT = re.compile(r"return\s+(\w+)\s*;")
+_WORD = re.compile(r"\w+")
+_ASM_MACROS = tuple(sorted(tokenizer.ASM_FUNCTION_MACROS))
 
 scan_spec = importlib.util.spec_from_file_location("anyps5_shader_scan", Path(__file__).with_name("shader_scan.py"))
 shader_scan = importlib.util.module_from_spec(scan_spec)
@@ -33,16 +59,18 @@ ISA_FORMS = Path(__file__).resolve().parent / "rdna2_isa_forms.txt"
 ISA_GFX1013 = Path(__file__).resolve().parent / "gfx1013_isa_forms.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
+STATIC_DECLARATION = re.compile(r"\bstatic\b[^;{}]*\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?;")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
 ASM_DEFINITION = re.compile(rf'\b(?:{"|".join(sorted(tokenizer.ASM_FUNCTION_MACROS))})\s*\(\s*"(\w+)"\s*\)')
 STUB = "NotImplemented_nid_no_patch"
 CALL = re.compile(r"\b(\w+)\s*\(")
 KEYWORDS = r"return|else|do|throw|co_return|co_await|co_yield|and|or|not|xor|bitand|bitor|compl"
+_KEYWORDS_SET = frozenset(KEYWORDS.split("|"))
 QUALIFIED = re.compile(rf"(?:\.|->|(?:\b(?!(?:{KEYWORDS})\b)\w+|>)\s*::)\s*$")
 CMAKE_SHARED = re.compile(r'^\s*include\(\s*"?\$\{CMAKE_CURRENT_SOURCE_DIR\}/\.\./([\w.-]+)/[\w.-]+\.cmake"?\s*\)', re.M)
 SOURCE_SHARED = re.compile(r'^\s*#\s*include\s*"prx/([\w.-]+)/[\w./-]+\.cpp"', re.M)
 STUB_WRAPPER = re.compile(
-    r"^[ \t]*(?:static\s+)?(?:\[\[noreturn\]\]\s+)?(?:(?!APS5_VABI)[\w:<>,\s*&])+?[\s*&]"
+    r"^(?=[\w:<>,\s*&\[\]]*\()[ \t]*(?:static\s+)?(?:\[\[noreturn\]\]\s+)?(?:(?!APS5_VABI)[\w:<>,\s*&])+?[\s*&]"
     r"(?!(?:if|while|for|switch|catch|return|else)\b)(\w+)\s*\([^;{]*\)\s*"
     r"(?:const\s*)?(?:noexcept\s*)?(?:->\s*[\w:<>*&\s]+?)?\{", re.M)
 DISCARD = re.compile(r"\(void\)\s*\w+\s*;")
@@ -107,30 +135,160 @@ def unique_json_keys(pairs):
     return result
 
 
+def _blank_span(span):
+    if "\n" not in span:
+        return " " * len(span)
+    return "\n".join(" " * len(line) for line in span.split("\n"))
+
+
+def _token_before(text, index, floor):
+    scan_start = index
+    while scan_start > floor and text[scan_start - 1] in _PRE_TOKEN_CHARS:
+        scan_start -= 1
+    if scan_start == index:
+        return None, None, index
+    last_start = index
+    last_token = None
+    for token in _CODE_TOKEN.finditer(text, scan_start):
+        if token.start() >= index:
+            break
+        if token.end() > index:
+            return token.start(), token.group(), token.end()
+        last_start = token.start()
+        last_token = token.group()
+        if token.end() == index:
+            return last_start, last_token, index
+    return None, None, index
+
+
 def blank(match):
     if match.group("code") is not None:
         return match.group()
     if match.group("comment") is None:
         return "LITERAL"
-    return re.sub(r"[^\n]", " ", match.group())
+    return _blank_span(match.group())
 
 
 def code(text):
-    return re.sub(r"\n(?:[ \t]*\n)+", "\n", CPP_TOKEN.sub(blank, text.replace("\\\n", "").replace("\\\r\n", "")))
+    if "\\\n" in text:
+        text = text.replace("\\\n", "")
+    if "\\\r\n" in text:
+        text = text.replace("\\\r\n", "")
+    out = []
+    pos = 0
+    cursor = 0
+    floor = 0
+    no_block_close = False
+    length = len(text)
+    while cursor < length:
+        trigger = _NON_CODE_TRIGGER.search(text, cursor)
+        if trigger is None:
+            break
+        index = trigger.start()
+        token = trigger.group()
+        if token == "//":
+            end = text.find("\n", index + 2)
+            if end == -1:
+                end = length
+            out.append(text[pos:index])
+            out.append(" " * (end - index))
+            pos = cursor = floor = end
+        elif token == "/*":
+            if no_block_close:
+                cursor = floor = index + 2
+                continue
+            close = text.find("*/", index + 2)
+            if close == -1:
+                no_block_close = True
+                cursor = floor = index + 2
+                continue
+            end = close + 2
+            out.append(text[pos:index])
+            out.append(_blank_span(text[index:end]))
+            pos = cursor = floor = end
+        elif token == '"':
+            tok_start, tok_text, tok_end = _token_before(text, index, floor)
+            if tok_end > index:
+                cursor = floor = tok_end
+                continue
+            if tok_text in _RAW_PREFIXES:
+                raw_match = _RAW_BODY.match(text, index)
+                if raw_match is not None:
+                    end = raw_match.end()
+                    out.append(text[pos:tok_start])
+                    out.append("LITERAL")
+                    pos = cursor = floor = end
+                    continue
+            str_match = _STRING_BODY.match(text, index)
+            if str_match is not None:
+                start = tok_start if tok_text in _STRING_PREFIXES else index
+                end = str_match.end()
+                out.append(text[pos:start])
+                out.append("LITERAL")
+                pos = cursor = floor = end
+            else:
+                cursor = floor = index + 1
+        else:
+            tok_start, tok_text, tok_end = _token_before(text, index, floor)
+            if tok_end > index:
+                cursor = floor = tok_end
+                continue
+            char_match = _CHAR_BODY.match(text, index)
+            if char_match is not None:
+                start = tok_start if tok_text in _STRING_PREFIXES else index
+                end = char_match.end()
+                out.append(text[pos:start])
+                out.append("LITERAL")
+                pos = cursor = floor = end
+            else:
+                cursor = floor = index + 1
+    if out:
+        out.append(text[pos:])
+        text = "".join(out)
+    return _BLANK_LINE_RUNS.sub("\n", text) if "\n" in text else text
+
 
 def body_end(text, start):
     depth = 0
-    for i in range(start, len(text)):
-        if text[i] == "{":
+    for brace in BRACE.finditer(text, start):
+        if brace.group() == "{":
             depth += 1
-        elif text[i] == "}":
+        else:
             depth -= 1
             if depth == 0:
-                return i
+                return brace.start()
     return len(text)
 
 
+def brace_spans(text, pattern):
+    finder = pattern.finditer(text) if isinstance(pattern, re.Pattern) else re.finditer(pattern, text)
+    return [(match.end() - 1, body_end(text, match.end() - 1)) for match in finder]
+
+
+class Linkage:
+    def __init__(self, text):
+        self.text = text
+        self.anonymous = brace_spans(text, _ANON_NAMESPACE) if "namespace" in text else []
+        self.classes = brace_spans(text, _CLASS_SCOPE) if ("class" in text or "struct" in text or "union" in text) else []
+        self.declared = ({match.group(1) for match in STATIC_DECLARATION.finditer(text)
+                          if self.namespace_scope(match.start())}
+                         if "static" in text and "APS5_VABI" in text else set())
+
+    def namespace_scope(self, start):
+        return not any(open_brace < start < close for open_brace, close in self.classes)
+
+    def internal(self, name, start):
+        if any(open_brace < start < close for open_brace, close in self.anonymous):
+            return True
+        if not self.namespace_scope(start):
+            return False
+        boundary = max(self.text.rfind(character, 0, start) for character in ";{}")
+        return name in self.declared or bool(_STATIC_KW.search(self.text, boundary + 1, start))
+
+
 def stub_calls(text):
+    if STUB not in text:
+        return {STUB}
     helpers = {}
     for match in STUB_WRAPPER.finditer(text):
         body = text[match.end() - 1:body_end(text, match.end() - 1)]
@@ -143,16 +301,369 @@ def stub_calls(text):
         calls |= found
 
 
+TYPE_DECLARATION = re.compile(r"\b(?:struct|class|union|enum(?:\s+class|\s+struct)?)\s+(?:\w+\s*::\s*)*(\w+)\s*"
+                              r"(?:final\s*)?(?::(?!:)([^{;]*))?[{;]")
+TYPE_ALIAS = re.compile(r"\busing\s+(\w+)\s*=\s*([^;]*);")
+TYPEDEF = re.compile(r"\btypedef\b([^;{}]*?)\b(\w+)\s*;")
+BRACED_NAME = re.compile(r"\}\s*(\w+)\s*;")
+CONVERSION = re.compile(r"\boperator\s+(?:(?:const|volatile)\s+)*(?:\w+\s*::\s*)*(\w+)\s*(?:<[^;{}]*>)?\s*[*&]")
+SIMPLE_TYPE = re.compile(r"\s*(?:typename\s+)?(?:\w+\s*::\s*)*(\w+)\s*")
+TEMPLATE_CLAUSE = re.compile(r"\btemplate\s*<([^{};]*)>")
+TEMPLATE_PARAMETER = re.compile(r"\b(?:typename|class)\b\s*(?:\.\.\.)?\s*(\w+)")
+DECLARATION = re.compile(r"(?<![\w.:>])((?:\w+\s*::\s*)*\w+)(\s*<[^<>;(){}]*>)?((?:\s*(?:\bconst\b|\bvolatile\b|\*|&))*)"
+                         r"\s*\b(\w+)(?=\s*(?:[=;,)({\[]|:(?!:)))")
+ARGUMENT = re.compile(r"([*&]?)\s*(\w+)")
+PARAMETER = re.compile(r"\s*((?:\w+\s*::\s*)*\w+)\s*([*&\s]*)(\w+)?\s*")
+STATEMENT_WORDS = frozenset(("return", "else", "do", "throw", "new", "delete", "case", "goto", "co_return", "co_await",
+                             "co_yield", "not", "and", "or", "xor", "bitand", "bitor", "compl", "sizeof", "alignof",
+                             "using", "namespace", "public", "private", "protected", "friend", "operator", "template",
+                             "typename", "struct", "class", "union", "enum", "if", "while", "for", "switch", "catch",
+                             "static_assert", "default"))
+INDEFINITE_TYPES = frozenset(("auto", "const", "volatile", "static", "inline", "constexpr", "constinit", "register",
+                              "extern", "mutable", "thread_local", "explicit", "virtual", "unsigned", "signed"))
+
+
+def closing(text, start):
+    depth = 0
+    for match in _BRACKET_DELIM.finditer(text, start):
+        if match.group() in "([{":
+            depth += 1
+        else:
+            depth -= 1
+            if depth == 0:
+                return match.start()
+    return len(text)
+
+
+class TypeIndex:
+    def __init__(self, texts):
+        self.parent, self.known, self.opaque = {}, set(), set()
+        for text in texts:
+            if "struct" in text or "class" in text or "union" in text or "enum" in text:
+                for match in TYPE_DECLARATION.finditer(text):
+                    self.known.add(match.group(1))
+                    if match.group(2):
+                        for base in _WORD.findall(match.group(2)):
+                            if base not in ("public", "protected", "private", "virtual"):
+                                self.join(match.group(1), base)
+            if "using" in text:
+                for match in TYPE_ALIAS.finditer(text):
+                    self.alias(match.group(1), match.group(2))
+            if "typedef" in text:
+                for match in TYPEDEF.finditer(text):
+                    self.alias(match.group(2), match.group(1))
+            if "}" in text:
+                self.opaque.update(match.group(1) for match in BRACED_NAME.finditer(text))
+            if "operator" in text:
+                self.opaque.update(match.group(1) for match in CONVERSION.finditer(text))
+        roots = {self.find(name) for name in self.known}
+        self.concrete = {name for name in self.parent if self.find(name) in roots} | self.known
+        self.concrete -= {name for name in self.concrete if self.find(name) in {self.find(o) for o in self.opaque}}
+
+    def find(self, name):
+        self.parent.setdefault(name, name)
+        while self.parent[name] != name:
+            self.parent[name] = self.parent[self.parent[name]]
+            name = self.parent[name]
+        return name
+
+    def join(self, first, second):
+        self.parent[self.find(first)] = self.find(second)
+
+    def alias(self, name, target):
+        simple = SIMPLE_TYPE.fullmatch(target)
+        if simple:
+            self.join(name, simple.group(1))
+        else:
+            self.opaque.add(name)
+
+    def related(self, first, second):
+        return self.find(first) == self.find(second)
+
+
+def split_arguments(text):
+    parts, depth, start = [], 0, 0
+    for i, character in enumerate(text):
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif character == "," and not depth:
+            parts.append(text[start:i])
+            start = i + 1
+    return parts + [text[start:]]
+
+
+def split_parameters(text):
+    parts, depth, angle, start, default, reliable = [], 0, 0, 0, None, True
+    for i, character in enumerate(text):
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif depth:
+            continue
+        elif default is not None:
+            reliable = reliable and character not in "<>"
+            if character == ",":
+                parts.append((default, True))
+                start, default = i + 1, None
+        elif character == "<":
+            angle += 1
+        elif character == ">" and angle:
+            angle -= 1
+        elif character == "=" and not angle:
+            default = text[start:i]
+        elif character == "," and not angle:
+            parts.append((text[start:i], False))
+            start = i + 1
+    parts.append((default, True) if default is not None else (text[start:], False))
+    return parts, reliable and not angle
+
+
+def parameter_type(declaration):
+    if "(" in declaration or "[" in declaration or "<" in declaration or "..." in declaration:
+        return None
+    plain = _CV_QUAL.sub(" ", declaration)
+    qualified = plain != declaration
+    plain = _TYPE_KW.sub(" ", plain)
+    match = PARAMETER.fullmatch(plain)
+    if not match:
+        return None
+    base = _SCOPE_SEP.split(match.group(1))[-1]
+    marks = match.group(2).replace(" ", "").replace("\t", "").replace("\n", "")
+    if "&&" in marks or (marks and set(marks) - {"*", "&"}):
+        return None
+    if "&" in marks:
+        return None if qualified or marks.count("&") > 1 else ("reference", base, marks.count("*"))
+    if "*" in marks:
+        return ("pointer", base, marks.count("*"))
+    return None
+
+
+class Definition:
+    def __init__(self, name, text, match, follow_qualified):
+        self.name, self.follow_qualified, self.start = name, follow_qualified, match.start()
+        self._text = text
+        self._match = match
+        self._parsed_signature = False
+        self._parameters = None
+        self._required = 0
+        self._maximum = 0
+        self._templates = None
+        self.signature = match.group()
+        self.body = text[match.end() - 1:body_end(text, match.end() - 1)]
+        self.calls, self.reaches, self.variables_cache = [], False, None
+
+    def _ensure_signature(self):
+        text = self._text
+        match = self._match
+        start = match.end(1)
+        opening = text.index("(", start)
+        parameters = text[opening + 1:closing(text, opening)]
+        self._parameters, self._required, self._maximum = [], 0, 0
+        if parameters.strip() not in ("", "void"):
+            declarations, reliable = split_parameters(parameters)
+            for declaration, has_default in declarations:
+                pack = "..." in declaration
+                self._parameters.append(None if pack else parameter_type(declaration))
+                self._required += not (pack or has_default)
+                self._maximum = float("inf") if pack or self._maximum == float("inf") else self._maximum + 1
+            if not reliable:
+                self._parameters, self._required, self._maximum = [], 0, float("inf")
+        boundary = max(text.rfind(character, 0, match.start(1)) for character in ";{}") + 1
+        self._templates = {parameter for clause in TEMPLATE_CLAUSE.findall(text, boundary, match.start(1))
+                           for parameter in TEMPLATE_PARAMETER.findall(clause)}
+        self._parsed_signature = True
+        self._text = None
+        self._match = None
+
+    @property
+    def parameters(self):
+        if not self._parsed_signature:
+            self._ensure_signature()
+        return self._parameters
+
+    @property
+    def required(self):
+        if not self._parsed_signature:
+            self._ensure_signature()
+        return self._required
+
+    @property
+    def maximum(self):
+        if not self._parsed_signature:
+            self._ensure_signature()
+        return self._maximum
+
+    @property
+    def templates(self):
+        if not self._parsed_signature:
+            self._ensure_signature()
+        return self._templates
+
+    def variables(self):
+        if self.variables_cache is None:
+            found = {}
+            for text in (self.signature, self.body):
+                for match in DECLARATION.finditer(text):
+                    base = _SCOPE_SEP.split(match.group(1))[-1]
+                    if base in STATEMENT_WORDS or base[0].isdigit():
+                        continue
+                    following = text[match.end():match.end() + 64].lstrip()
+                    kind = None
+                    if base not in INDEFINITE_TYPES and not match.group(2) and not following.startswith("["):
+                        kind = (base, match.group(3).count("*"))
+                    found.setdefault(match.group(4), set()).add(kind)
+            self.variables_cache = {name: next(iter(kinds)) if len(kinds) == 1 else None for name, kinds in found.items()}
+        return self.variables_cache
+
+    def argument(self, text):
+        match = ARGUMENT.fullmatch(text.strip())
+        if not match:
+            return None
+        kind = self.variables().get(match.group(2))
+        if kind is None:
+            return None
+        depth = kind[1] + {"*": -1, "&": 1, "": 0}[match.group(1)]
+        return (kind[0], depth) if depth >= 0 else None
+
+
+def accepts(definition, argument, parameter, types):
+    if parameter is None or argument is None:
+        return True
+    kind, base, depth = parameter
+    argument_base, argument_depth = argument
+    if argument_base not in types.concrete or (kind == "pointer" and not argument_depth):
+        return True
+    generic = base in definition.templates or base not in types.concrete
+    if generic:
+        return depth <= argument_depth
+    return depth == argument_depth and types.related(base, argument_base)
+
+
+def call_arguments(body, opening):
+    end = closing(body, opening)
+    inner = body[opening + 1:end]
+    top, depth = [], 0
+    for character in inner:
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif not depth:
+            top.append(character)
+    top = _OP_PAIR.sub(" ", "".join(top))
+    if "..." in top or ("<" in top and ">" in top):
+        return None
+    return [] if not inner.strip() else split_arguments(inner)
+
+
+def resolve(caller, arguments, candidates, types):
+    if arguments is None:
+        return candidates
+    count = len(arguments)
+    fitting = [c for c in candidates if c.required <= count <= c.maximum] or candidates
+    kinds = [caller.argument(argument) for argument in arguments]
+    typed = [c for c in fitting if all(accepts(c, kind, parameter, types)
+                                       for kind, parameter in zip(kinds, c.parameters))]
+    return typed or fitting
+
+
+def _is_qualified(body, pos):
+    end = pos
+    while end > 0 and body[end - 1].isspace():
+        end -= 1
+    if end == 0:
+        return False
+    ch = body[end - 1]
+    if ch == ".":
+        return True
+    if ch == ">":
+        return end >= 2 and body[end - 2] == "-"
+    if ch == ":" and end >= 2 and body[end - 2] == ":":
+        idx = end - 2
+        while idx > 0 and body[idx - 1].isspace():
+            idx -= 1
+        if idx == 0:
+            return False
+        if body[idx - 1] == ">":
+            return True
+        word_end = idx
+        while idx > 0 and (body[idx - 1].isalnum() or body[idx - 1] == "_"):
+            idx -= 1
+        return idx < word_end and body[idx:word_end] not in _KEYWORDS_SET
+    return False
+
+
+def reaching_definitions(texts, headers, asm_names):
+    exports, files = {}, []
+    has_stub = False
+    for text in texts:
+        if not has_stub and STUB in text:
+            has_stub = True
+        helpers = {}
+        for match in STUB_WRAPPER.finditer(text):
+            helpers.setdefault(match.group(1), []).append(Definition(match.group(1), text, match, True))
+        definitions = ([Definition(match.group(1), text, match, False) for match in DEFINITION.finditer(text)]
+                       if "APS5_VABI" in text else [])
+        for definition in definitions:
+            exports.setdefault(definition.name, []).append(definition)
+        files.append((helpers, definitions))
+    if not has_stub:
+        return files
+    types = None
+    nodes = []
+    for helpers, definitions in files:
+        local = [d for group in helpers.values() for d in group] + definitions
+        for definition in local:
+            body = definition.body
+            if "(" in body:
+                for call in CALL.finditer(body):
+                    name = call.group(1)
+                    if name != STUB and name not in helpers and name not in exports:
+                        continue
+                    if not definition.follow_qualified and _is_qualified(body, call.start()):
+                        continue
+                    if name == STUB:
+                        definition.calls.append(None)
+                        continue
+                    targets = helpers.get(name, [])
+                    if len(targets) > 1:
+                        if types is None:
+                            loaded_headers = headers() if callable(headers) else headers
+                            types = TypeIndex(texts + loaded_headers)
+                        targets = resolve(definition, call_arguments(body, call.end() - 1), targets, types)
+                    definition.calls.append((targets, exports.get(name, []) if name not in asm_names else []))
+            nodes.append(definition)
+    callers = {}
+    for node in nodes:
+        for call in node.calls:
+            for target in call[0] + call[1] if call else ():
+                callers.setdefault(id(target), []).append(node)
+    pending = list(nodes)
+    while pending:
+        node = pending.pop()
+        if node.reaches or not any(call is None or any(t.reaches for t in call[0]) or
+                                   (call[1] and all(t.reaches for t in call[1])) for call in node.calls):
+            continue
+        node.reaches = True
+        pending.extend(callers.get(id(node), ()))
+    return files
+
+
 def statements(body):
     depth, start, parts = 0, 1, []
-    for i, character in enumerate(body[1:], 1):
+    for match in _STMT_DELIM.finditer(body, 1):
+        character = match.group()
         if character == "{":
             depth += 1
         elif character == "}":
             depth -= 1
-        elif character == ";" and not depth:
-            parts.append(body[start:i + 1])
-            start = i + 1
+        elif not depth:
+            end = match.end()
+            parts.append(body[start:end])
+            start = end
     parts.append(body[start:])
     return parts
 
@@ -160,7 +671,7 @@ def statements(body):
 def template_open(tokens, index):
     before = tokens[index - 1] if index else ""
     after = tokens[index + 1] if index + 1 < len(tokens) else ""
-    return bool(re.fullmatch(r"[A-Za-z_]\w*", before)) and after not in ("<", "=")
+    return bool(_IDENT.fullmatch(before)) and after not in ("<", "=")
 
 
 def inert_parameters(signature):
@@ -180,42 +691,76 @@ def inert_parameters(signature):
             if nesting[-1] == {")": "(", "]": "[", "}": "{", ">": "<"}[token]:
                 nesting.pop()
         elif not default and not any(part in ("[", "{", "<") for part in nesting):
-            if re.fullmatch(r"[A-Za-z_]\w*", token):
+            if _IDENT.fullmatch(token):
                 parameters.add(token)
     return parameters
 
 
 def inert_statement(statement, wrappers, parameters):
     if EMPTY_RETURN.fullmatch(statement) or CONST_RETURN.fullmatch(statement) or BARE_THROW.fullmatch(statement):
-        returned = re.fullmatch(r"return\s+(\w+)\s*;", statement)
+        returned = _RETURN_IDENT.fullmatch(statement)
         return returned is None or returned.group(1) not in parameters
     call = WRAPPER_RETURN.fullmatch(statement)
     return bool(call) and call.group(1) in wrappers
 
 
-def inert_body(body, wrappers, signature):
-    parameters = inert_parameters(signature)
+def _classify_inert(body, wrappers, signature):
+    parameters = None
     terminals = 0
+    wrapper_target = None
     for statement in statements(body):
         statement = statement.strip()
         if not statement:
             continue
         if DISCARD.fullmatch(statement):
             continue
-        if terminals or not inert_statement(statement, wrappers, parameters):
-            return False
-        terminals += 1
-    return True
+        if terminals:
+            return False, None
+        if EMPTY_RETURN.fullmatch(statement) or CONST_RETURN.fullmatch(statement) or BARE_THROW.fullmatch(statement):
+            returned = _RETURN_IDENT.fullmatch(statement)
+            if returned is not None:
+                if parameters is None:
+                    parameters = inert_parameters(signature)
+                if returned.group(1) in parameters:
+                    return False, None
+            terminals = 1
+            continue
+        call = WRAPPER_RETURN.fullmatch(statement)
+        if call:
+            target = call.group(1)
+            if target in wrappers:
+                terminals = 1
+                continue
+            wrapper_target = target
+            terminals = 1
+            continue
+        return False, None
+    return wrapper_target is None, wrapper_target
 
 
-def inert_wrappers(text):
-    bodies = {m.group(1): (text[m.end() - 1:body_end(text, m.end() - 1)], m.group()) for m in STUB_WRAPPER.finditer(text)}
+def inert_body(body, wrappers, signature):
+    is_inert, _ = _classify_inert(body, wrappers, signature)
+    return is_inert
+
+
+def inert_wrappers(helpers):
     names = set()
-    while True:
-        found = {name for name, (body, signature) in bodies.items() if name not in names and inert_body(body, names, signature)}
+    pending = {}
+    for name, group in helpers.items():
+        latest = group[-1]
+        is_inert, target = _classify_inert(latest.body, names, latest.signature)
+        if is_inert:
+            names.add(name)
+        elif target is not None and target in helpers:
+            pending[name] = target
+    while pending:
+        found = [name for name, target in pending.items() if target in names]
         if not found:
-            return names
-        names |= found
+            break
+        for name in found:
+            names.add(name)
+            del pending[name]
+    return names
 
 
 def shared_source_owners(path):
@@ -226,15 +771,32 @@ def shared_source_owners(path):
     return list(dict.fromkeys(owner for owner in owners if owner != path.name and (path.parent / owner).is_dir()))
 
 
+def _scan_library_files(path, extensions):
+    found = []
+    stack = [os.fspath(path)]
+    while stack:
+        current = stack.pop()
+        with os.scandir(current) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name != "tests":
+                        stack.append(entry.path)
+                elif entry.name.endswith(extensions) and entry.is_file():
+                    found.append(entry.path)
+    return found
+
+
 def scan_library(path):
-    done, todo, inert, live = set(), set(), set(), set()
-    flavor = PureWindowsPath if os.name == "nt" else Path
-    path_flavored = flavor(str(path))
-    sources = [source.read_text(encoding="utf-8", errors="ignore") for source in path.rglob("*.cpp")
-               if "tests" not in flavor(str(source)).relative_to(path_flavored).parts]
+    done, todo, inert, live, assembled = set(), set(), set(), set(), set()
+    sources = []
+    for source_path in _scan_library_files(path, (".cpp",)):
+        with open(source_path, encoding="utf-8", errors="ignore") as handle:
+            sources.append(handle.read())
     texts = [code(source) for source in sources]
-    exported = {match.group(1) for text in texts for match in EXPORT.finditer(text)}
+    exported = {match.group(1) for text in texts if "APS5_EXPORT" in text for match in EXPORT.finditer(text)}
     for source in sources:
+        if not any(macro in source for macro in _ASM_MACROS):
+            continue
         definitions = {match.start(): match.group(1) for match in ASM_DEFINITION.finditer(source)}
         if not definitions:
             continue
@@ -242,23 +804,37 @@ def scan_library(path):
             if token.group("code") is None or token.start() not in definitions:
                 continue
             name = definitions[token.start()]
+            assembled.add(name)
             if not name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) or name in exported:
                 done.add(name)
                 live.add(name)
-    for text in texts:
-        calls = stub_calls(text)
-        wrappers = inert_wrappers(text)
-        for match in DEFINITION.finditer(text):
-            name = match.group(1)
+
+    def load_headers():
+        loaded = []
+        for header_path in _scan_library_files(path, (".h", ".hpp")):
+            with open(header_path, encoding="utf-8", errors="ignore") as handle:
+                loaded.append(code(handle.read()))
+        return loaded
+
+    for text, (helpers, definitions) in zip(texts, reaching_definitions(texts, load_headers, assembled)):
+        if not definitions:
+            continue
+        wrappers = inert_wrappers(helpers)
+        linkage = None
+        for definition in definitions:
+            name = definition.name
             if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) and name not in exported:
                 continue
-            body = text[match.end() - 1:body_end(text, match.end() - 1)]
-            if any(call.group(1) in calls and not QUALIFIED.search(body, 0, call.start())
-                   for call in CALL.finditer(body)):
+            if name not in exported:
+                if linkage is None:
+                    linkage = Linkage(text)
+                if linkage.internal(name, definition.start):
+                    continue
+            if definition.reaches:
                 todo.add(name)
                 continue
             done.add(name)
-            (inert if inert_body(body, wrappers, match.group()) else live).add(name)
+            (inert if inert_body(definition.body, wrappers, definition.signature) else live).add(name)
     todo -= done
     inert -= live
     group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
@@ -885,6 +1461,8 @@ def require_distinct_reports(output):
     for index, path in enumerate(paths):
         if not path.exists():
             continue
+        if not path.is_file():
+            raise ValueError(f"{path}: report destination must be a regular file")
         for other in paths[index + 1:]:
             if other.exists() and path.samefile(other):
                 raise ValueError(f"{path.name} and {other.name} in {output} are the same file")
@@ -989,6 +1567,11 @@ def validate_snapshot(snapshot):
         percent = data.get("percent")
         if isinstance(percent, bool) or not isinstance(percent, (int, float)) or not 0 <= percent <= 100:
             raise ValueError(f"{section}.percent must be a finite number between 0 and 100")
+        for field in ("done", "total"):
+            if field in data and (type(data[field]) is not int or data[field] < 0):
+                raise ValueError(f"{section}.{field} must be a non-negative integer")
+        if "done" in data and "total" in data and data["done"] > data["total"]:
+            raise ValueError(f"{section}.done must not exceed total")
         seen = set()
         for index, group in enumerate(groups):
             location = f"{section}.groups[{index}]"
@@ -1003,10 +1586,18 @@ def validate_snapshot(snapshot):
                 for field in ("done", "todo"):
                     if field in group and (type(group[field]) is not int or group[field] < 0):
                         raise ValueError(f"{location}.{field} must be a non-negative integer")
+            symbols = {}
             for field in ("done_names", "todo_names", "inert_names"):
                 values = group.get(field, [])
                 if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
                     raise ValueError(f"{location}.{field} must be a list of strings")
+                symbols[field] = set(values)
+                if len(symbols[field]) != len(values):
+                    raise ValueError(f"{location}.{field} contains duplicate symbols")
+            if symbols["done_names"] & symbols["todo_names"]:
+                raise ValueError(f"{location} lists symbols as both done and todo")
+            if "done_names" in group and not symbols["inert_names"] <= symbols["done_names"]:
+                raise ValueError(f"{location}.inert_names must be a subset of done_names")
 
 
 def regenerate_isa_forms(xml):

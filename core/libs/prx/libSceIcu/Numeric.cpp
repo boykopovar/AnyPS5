@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <bit>
+#include <cerrno>
 #include <cfloat>
 #include <cstdint>
 #include <limits>
@@ -95,15 +96,19 @@ double APS5_VABI uprv_fmin_nid_postfix(double x, double y) {
 std::int8_t APS5_VABI uprv_add32_overflow_nid_postfix(std::int32_t a, std::int32_t b, std::int32_t* res) {
     if (!res) APS5_INVALID_ARG_EX;
     const std::int64_t result = static_cast<std::int64_t>(a) + b;
-    *res = static_cast<std::int32_t>(result);
-    return result != *res;
+    const std::int32_t narrowed = static_cast<std::int32_t>(result);
+    const bool copied = GuestCopyOut_nid_no_patch(res, &narrowed, sizeof(narrowed));
+    if (!copied) APS5_INVALID_ARG_EX;
+    return result != narrowed;
 }
 
 std::int8_t APS5_VABI uprv_mul32_overflow_nid_postfix(std::int32_t a, std::int32_t b, std::int32_t* res) {
     if (!res) APS5_INVALID_ARG_EX;
     const std::int64_t result = static_cast<std::int64_t>(a) * b;
-    *res = static_cast<std::int32_t>(result);
-    return result != *res;
+    const std::int32_t narrowed = static_cast<std::int32_t>(result);
+    const bool copied = GuestCopyOut_nid_no_patch(res, &narrowed, sizeof(narrowed));
+    if (!copied) APS5_INVALID_ARG_EX;
+    return result != narrowed;
 }
 
 double APS5_VABI uprv_trunc_nid_postfix(double d) {

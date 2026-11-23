@@ -413,6 +413,14 @@ int main() {
     Require(metrics.width == 50.0f && metrics.height == 70.0f && metrics.Horizontal.bearingX == 10.0f && metrics.Horizontal.bearingY == 70.0f);
     Require(metrics.Vertical.bearingX == -25.0f && metrics.Vertical.bearingY == 15.0f && metrics.Vertical.advance == 100.0f);
     Require(sceFontGetCharGlyphMetrics(font, 'B', &metrics) == SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
+    Require(sceFontGetCharGlyphMetrics(font, 'A', nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetCharGlyphMetrics(font, 'A', reinterpret_cast<FontGlyphMetrics*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    Require(sceFontGetRenderCharGlyphMetrics(font, 'A', nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetRenderCharGlyphMetrics(font, 'A', reinterpret_cast<FontGlyphMetrics*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     FontHorizontalLayout layout{};
     Require(sceFontGetHorizontalLayout(font, &layout) == SCE_FONT_OK && layout.baselineOffset > 0.0f && layout.lineAdvance >= layout.baselineOffset);
     Require(sceFontGetHorizontalLayout(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);

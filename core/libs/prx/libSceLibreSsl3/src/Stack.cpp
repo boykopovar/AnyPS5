@@ -58,6 +58,9 @@
 
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 
@@ -88,19 +91,37 @@ LibreSslStack* APS5_VABI sk_new_nid_postfix(StackCompare compare) {
 
 int APS5_VABI sk_push_nid_postfix(LibreSslStack* stack, void* element) {
     if (!stack) throw std::invalid_argument("sk_push: null stack");
-    if (stack->num < 0) throw std::invalid_argument("sk_push: negative element count");
-    if (static_cast<long long>(stack->numAlloc) <= static_cast<long long>(stack->num) + 1) {
-        if (stack->numAlloc > std::numeric_limits<int>::max() / 2) throw std::length_error("sk_push: element array cannot double");
-        auto** const grown = static_cast<char**>(reallocarray_nid_postfix(stack->data, stack->numAlloc, 2 * sizeof(char*)));
-        if (!grown) return 0;
-        stack->data = grown;
-        stack->numAlloc *= 2;
+    LibreSslStack guestStack{};
+    if (!GuestCopyIn_nid_no_patch(&guestStack, stack, sizeof(guestStack)) || !GuestWritable_nid_no_patch(stack, sizeof(*stack))) {
+        throw std::invalid_argument("sk_push: invalid stack");
     }
-    if (!stack->data) throw std::invalid_argument("sk_push: null element array");
-    stack->data[stack->num] = static_cast<char*>(element);
-    ++stack->num;
-    stack->sorted = 0;
-    return stack->num;
+    if (guestStack.num < 0) throw std::invalid_argument("sk_push: negative element count");
+    if (static_cast<long long>(guestStack.numAlloc) <= static_cast<long long>(guestStack.num) + 1) {
+        if (guestStack.numAlloc > std::numeric_limits<int>::max() / 2) throw std::length_error("sk_push: element array cannot double");
+        if (guestStack.data && !GuestWritable_nid_no_patch(guestStack.data, sizeof(char*))) {
+            throw std::invalid_argument("sk_push: unwritable element array");
+        }
+        auto** const grown = static_cast<char**>(reallocarray_nid_postfix(guestStack.data, guestStack.numAlloc, 2 * sizeof(char*)));
+        if (!grown) return 0;
+        guestStack.data = grown;
+        guestStack.numAlloc *= 2;
+    } else {
+        if (!guestStack.data) throw std::invalid_argument("sk_push: null element array");
+        const auto base = reinterpret_cast<std::uintptr_t>(guestStack.data);
+        const auto offset = static_cast<std::size_t>(guestStack.num) * sizeof(char*);
+        if (base > std::numeric_limits<std::uintptr_t>::max() - offset - sizeof(char*) ||
+            !GuestWritable_nid_no_patch(reinterpret_cast<void*>(base + offset), sizeof(char*))) {
+            throw std::invalid_argument("sk_push: unwritable element array");
+        }
+    }
+    if (!guestStack.data) throw std::invalid_argument("sk_push: null element array");
+    guestStack.data[guestStack.num] = static_cast<char*>(element);
+    ++guestStack.num;
+    guestStack.sorted = 0;
+    if (!GuestCopyOut_nid_no_patch(stack, &guestStack, sizeof(guestStack))) {
+        throw std::invalid_argument("sk_push: unwritable stack");
+    }
+    return guestStack.num;
 }
 
 void APS5_VABI sk_free_nid_postfix(LibreSslStack* stack) {

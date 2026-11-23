@@ -69,7 +69,7 @@ extern "C" int APS5_VABI fpurge_nid_postfix(FileStream* stream) {
 #endif
     if (resume >= 0) {
         SeekDescriptor(native, resume);
-        for (const char byte : kept) std::ungetc(static_cast<unsigned char>(byte), native);
+        for (const char byte : kept) stream->PushBack(static_cast<unsigned char>(byte));
     }
     stream->GuestState().position = stream->GuestState().buffer;
     stream->SyncUnlockedStatus();
