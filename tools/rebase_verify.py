@@ -169,7 +169,7 @@ def binary_differences(root, old_base, old, new_base, new):
 
 
 def verify(root, old, new, onto):
-    old, new, onto_commit = (git(root, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}").strip()
+    old, new, onto_commit = (git(root, "rev-parse", "--verify", "--end-of-options", f"{ref}^0").strip()
                              for ref in (old, new, onto))
     old_base = git(root, "merge-base", old, onto_commit).strip()
     new_base = git(root, "merge-base", new, onto_commit).strip()
