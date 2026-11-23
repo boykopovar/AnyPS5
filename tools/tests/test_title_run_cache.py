@@ -48,6 +48,13 @@ class CachePolicyFactsTests(unittest.TestCase):
         self.assertEqual(module.recorded_cache_policy(policy("/one/driver-cache")),
                          module.recorded_cache_policy(policy("/two/driver-cache")))
 
+    def test_inherited_controls_compare_with_earlier_policy_records(self):
+        module = self.module()
+        extra = {"MESA_SHADER_CACHE_SIZE": "384M"}
+        old = policy(extra=extra, status="overridden")
+        new = policy(extra=extra, overrides=["MESA_SHADER_CACHE_SIZE"], status="overridden")
+        self.assertEqual(module.recorded_cache_policy(old), module.recorded_cache_policy(new))
+
     def test_explicit_empty_and_custom_controls_are_retained(self):
         module = self.module()
         cases = {"ANYPS5_SHADER_CACHE_DIR": "", "MESA_SHADER_CACHE_DIR": "/external",
@@ -190,7 +197,7 @@ class CacheCliFixture(unittest.TestCase):
         native = '''import json,os,struct,time
 from pathlib import Path, PurePosixPath
 root=Path(os.environ['FIXTURE_ROOT']).resolve()
-keys=('MESA_SHADER_CACHE_DIR','MESA_SHADER_CACHE_DISABLE','__GL_SHADER_DISK_CACHE_PATH','__GL_SHADER_DISK_CACHE','ANYPS5_SHADER_CACHE_DIR','ANYPS5_NO_SHADER_CACHE')
+keys=('MESA_SHADER_CACHE_SIZE','MESA_SHADER_CACHE_DIR','MESA_SHADER_CACHE_DISABLE','__GL_SHADER_DISK_CACHE_PATH','__GL_SHADER_DISK_CACHE','ANYPS5_SHADER_CACHE_DIR','ANYPS5_NO_SHADER_CACHE')
 settings={key:os.environ.get(key) for key in keys}
 markers={}
 for name in ('MESA_SHADER_CACHE_DIR','__GL_SHADER_DISK_CACHE_PATH','ANYPS5_SHADER_CACHE_DIR'):
@@ -302,15 +309,20 @@ class CachePolicyCliOverrideTests(CacheCliFixture):
 class CachePolicyCliFlagsTests(CacheCliFixture):
     def test_explicit_and_inherited_disable_requests_are_preserved(self):
         controls = {"MESA_SHADER_CACHE_DISABLE": "true", "__GL_SHADER_DISK_CACHE": "0", "ANYPS5_NO_SHADER_CACHE": "1"}
-        for name, extra, inherited in (("explicit", controls, {}), ("inherited", {}, {key: value for key, value in controls.items() if key != "ANYPS5_NO_SHADER_CACHE"})):
+        inherited_controls = {"MESA_SHADER_CACHE_SIZE": "384M", "MESA_SHADER_CACHE_DISABLE": "true", "__GL_SHADER_DISK_CACHE": "0"}
+        for name, extra, inherited in (("explicit", controls, {}), ("inherited", {}, inherited_controls)):
             with self.subTest(name=name):
-                summary, path, result, unused = self.run_cli(name, extra, inherited, previous=self.previous())
+                host = {**inherited, "MESA_SHADER_CACHE_DIR": "/ignored-host-directory", "ANYPS5_NO_SHADER_CACHE": "ignored"}
+                summary, path, result, unused = self.run_cli(name, extra, host, previous=self.previous())
                 run = summary["titles"]["PPSA00001"]["runs"][0]
                 observed = json.loads((path.parent / "PPSA00001/run1/cache-observed.json").read_text())
                 for key, value in (extra or inherited).items():
                     self.assertEqual(observed["settings"][key], value)
                 self.assertIn("cache_policy", run)
                 self.assertEqual(run["cache_policy"]["status"], "disable-requested")
+                self.assertEqual(run["cache_policy"]["overrides"], sorted(extra or inherited))
+                self.assertEqual(run["cache_policy"]["environment"]["MESA_SHADER_CACHE_DIR"],
+                                 run["cache_policy"]["driver_directory"])
                 self.assertNotEqual(json.loads(result.stdout)["titles"]["PPSA00001"]["context"]["status"], "matched")
                 self.assertIn("disable", path.with_suffix(".md").read_text().lower())
 

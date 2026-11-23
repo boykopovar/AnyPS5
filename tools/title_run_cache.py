@@ -27,7 +27,7 @@ def cache_policy_status(environment, overrides, directory, platform):
 
 def configured_cache_policy(environment, extra_env, work):
     settings = {name: value for name, value in environment.items() if cache_control(name)}
-    overrides = sorted(name for name in extra_env if cache_control(name))
+    overrides = sorted(name for name in settings if name not in DRIVER_PATHS or name in extra_env)
     directory = str(work / "driver-cache")
     return {"version": 1, "platform": sys.platform,
             "status": cache_policy_status(settings, overrides, directory, sys.platform),
@@ -48,6 +48,7 @@ def recorded_cache_policy(policy):
             or overrides != sorted(set(overrides))
             or policy["status"] != cache_policy_status(environment, overrides, policy["driver_directory"], policy["platform"])):
         return None
+    overrides = sorted(set(overrides).union(environment.keys() - set(DRIVER_PATHS)))
     settings = dict(environment)
     for name in DRIVER_PATHS:
         if name not in overrides and settings.get(name) == policy["driver_directory"]:
