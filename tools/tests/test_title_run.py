@@ -513,6 +513,32 @@ time.sleep(60)
         self.assert_qualification(summary, "unknown")
         self.assertEqual(run["native"]["summary_errors"], {"non_object_rows": 4})
 
+    def test_invalid_metrics_cannot_hide_conflicting_native_evidence(self):
+        import performance_bisect
+        invalid = json.dumps({"format": "aps5-bench/1", "commit": "b" * 12, "dirty": False,
+                              "presents": True, "window": {"ms": 1000}})
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, summary_rows=[invalid])
+        self.assert_qualification(summary, "conflicting")
+        self.assertEqual(run["fps"], 60.0)
+        self.assertEqual(len(run["native"]["summary"]), 2)
+        self.assertIn("conflicting", markdown)
+        with self.assertRaisesRegex(ValueError, "native.*conflicting"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
+    def test_duplicate_or_deep_protocol_rows_do_not_certify_matching_identity(self):
+        import performance_bisect
+        duplicate = '{"format":"aps5-bench/1","commit":"bbbbbbbbbbbb","dirty":false,"commit":"' + self.commit[:12] + '"}'
+        deep = '{"format":"aps5-bench/1","commit":"bbbbbbbbbbbb","dirty":false,"window":' + "[" * 1100 + "0" + "]" * 1100 + "}"
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, summary_rows=[duplicate, deep])
+        self.assert_qualification(summary, "unknown")
+        self.assertEqual(run["native"]["summary_errors"], {"malformed_rows": 2})
+        self.assertNotIn("bbbbbbbbbbbb", json.dumps(run["native"]))
+        self.assertIn("unknown", markdown)
+        with self.assertRaisesRegex(ValueError, "native.*unknown"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
     def test_ordinary_log_records_outside_the_summary_protocol_do_not_taint_native_identity(self):
         import performance_bisect
         logs = ['worker started', '[notification] ordinary message',
