@@ -12,6 +12,7 @@ struct DiagnosticSink {
     void (*imageFormat)(unsigned format, const char* name, int status, int usage) = nullptr;
     void (*descriptor)(int type, int status, int usage) = nullptr;
     void (*compileTime)(long long nanoseconds) = nullptr;
+    void (*profileLine)(const char* text) = nullptr;
 };
 
 inline std::atomic<const DiagnosticSink*>& DiagnosticSinkSlot() {

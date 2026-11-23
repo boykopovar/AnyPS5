@@ -263,6 +263,7 @@ const ShaderRecompiler::DiagnosticSink runReportSink{
     .imageFormat = LibcRunReportImageFormat_nid_no_patch,
     .descriptor = CountDescriptor,
     .compileTime = LibcRunReportShaderCompileTime_nid_no_patch,
+    .profileLine = [](const char* text) { AgcDriver::ProfilePrint_nid_no_patch("%s", text); },
 };
 [[maybe_unused]] const bool runReportSinkInstalled = (LibcRunReportSetDescriptorCounters_nid_no_patch(descriptorUse), ShaderRecompiler::SetDiagnosticSink(&runReportSink), true);
 

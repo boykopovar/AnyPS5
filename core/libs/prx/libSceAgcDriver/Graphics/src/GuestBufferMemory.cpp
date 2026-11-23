@@ -6833,7 +6833,7 @@ public:
         std::lock_guard lock(mutex);
         if (!stampsRequested) {
             Recorder::RequestBatchStamps();
-            policy.report = [](const std::string& line) { std::fprintf(stderr, "%s\n", line.c_str()); };
+            policy.report = [](const std::string& line) { AgcDriver::ProfilePrint_nid_no_patch("%s\n", line.c_str()); };
             stampsRequested = true;
         }
         const auto [frames, busyMs] = Recorder::FrameGpuBusy();

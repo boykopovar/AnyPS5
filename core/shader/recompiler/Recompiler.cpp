@@ -2145,6 +2145,18 @@ void verifyPatchedResult(const RecompileResult& patched, const RecompileResult& 
     if (const auto index = printed.fetch_add(1, std::memory_order_relaxed); index < 20u) std::fprintf(stderr, "[recompile] masked result memo mismatch %u: variant %016llx differs in its %s\n", index + 1u, static_cast<unsigned long long>(variantId), difference);
 }
 
+void printProfile(const char* format, auto... args) {
+    const auto size = std::snprintf(nullptr, 0, format, args...);
+    if (size < 0) throw std::runtime_error("profile line formatting failed");
+    std::string text(static_cast<std::size_t>(size), '\0');
+    std::snprintf(text.data(), text.size() + 1, format, args...);
+    if (const auto* sink = Diagnostics(); sink != nullptr && sink->profileLine != nullptr) {
+        sink->profileLine(text.c_str());
+        return;
+    }
+    std::fputs(text.c_str(), stderr);
+}
+
 void reportResultMemo() {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (!profile) return;
@@ -2165,10 +2177,10 @@ void reportResultMemo() {
     const auto patching = counters.patchNanoseconds.exchange(0, std::memory_order_relaxed);
     const auto mismatches = counters.mismatches.exchange(0, std::memory_order_relaxed);
     const auto total = static_cast<double>(hits + patched + misses);
-    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu patched, %llu misses (%.1f%% hits, %.1f%% patched), Populate %.1f us per miss / %.1f ms in total, patch %.1f us each / %.1f ms in total, %llu evictions, %llu patch mismatches, %llu trimmed; %llu results held, %.1f MiB\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(patched), static_cast<unsigned long long>(misses), total != 0.0 ? 100.0 * static_cast<double>(hits) / total : 0.0, total != 0.0 ? 100.0 * static_cast<double>(patched) / total : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, patched != 0 ? static_cast<double>(patching) / 1000.0 / static_cast<double>(patched) : 0.0, static_cast<double>(patching) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(mismatches), static_cast<unsigned long long>(trimmed), static_cast<unsigned long long>(counters.heldEntries.load(std::memory_order_relaxed)), static_cast<double>(counters.heldBytes.load(std::memory_order_relaxed)) / 1048576.0);
+    printProfile("[recompile] result memo (10 s): %llu hits, %llu patched, %llu misses (%.1f%% hits, %.1f%% patched), Populate %.1f us per miss / %.1f ms in total, patch %.1f us each / %.1f ms in total, %llu evictions, %llu patch mismatches, %llu trimmed; %llu results held, %.1f MiB\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(patched), static_cast<unsigned long long>(misses), total != 0.0 ? 100.0 * static_cast<double>(hits) / total : 0.0, total != 0.0 ? 100.0 * static_cast<double>(patched) / total : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, patched != 0 ? static_cast<double>(patching) / 1000.0 / static_cast<double>(patched) : 0.0, static_cast<double>(patching) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(mismatches), static_cast<unsigned long long>(trimmed), static_cast<unsigned long long>(counters.heldEntries.load(std::memory_order_relaxed)), static_cast<double>(counters.heldBytes.load(std::memory_order_relaxed)) / 1048576.0);
     auto& plans = resourcePlans();
     const auto interval = TakeResourcePlanInterval();
-    std::fprintf(stderr, "[recompile] resource plans (10 s): %llu reloaded, %llu evicted; %llu plans held, %.1f MiB of a %.1f MiB budget\n", static_cast<unsigned long long>(interval.reloads), static_cast<unsigned long long>(interval.evictions), static_cast<unsigned long long>(plans.heldPlans.load(std::memory_order_relaxed)), static_cast<double>(plans.heldBytes.load(std::memory_order_relaxed)) / 1048576.0, static_cast<double>(resourcePlanBudgetBytes().load(std::memory_order_relaxed)) / 1048576.0);
+    printProfile("[recompile] resource plans (10 s): %llu reloaded, %llu evicted; %llu plans held, %.1f MiB of a %.1f MiB budget\n", static_cast<unsigned long long>(interval.reloads), static_cast<unsigned long long>(interval.evictions), static_cast<unsigned long long>(plans.heldPlans.load(std::memory_order_relaxed)), static_cast<double>(plans.heldBytes.load(std::memory_order_relaxed)) / 1048576.0, static_cast<double>(resourcePlanBudgetBytes().load(std::memory_order_relaxed)) / 1048576.0);
 }
 
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
