@@ -8375,8 +8375,15 @@ void descriptorCacheTests() {
         Require(larger.set != rewritten.set && mock.variableDescriptorCount == 5u, "a recycled descriptor set served a larger variable image table than it was allocated for");
         const auto same = cache.AllocateRewritten(fittingLayout, fitting, true, 3u);
         Require(same.set == rewritten.set, "a recycled descriptor set was not reused for a variable image table of its own size");
+        AgcDriver::Graphics::DescriptorCache::SetAllocation taken;
+        Require(!cache.TakeRewritten(fittingLayout, 3u, taken) && taken.set == VK_NULL_HANDLE, "an empty recycle list served a set");
+        cache.Recycle(fittingLayout, same);
+        Require(!cache.TakeRewritten(fittingLayout, 5u, taken) && taken.set == VK_NULL_HANDLE, "a recycled set served another variable image count");
+        Require(!cache.TakeRewritten(fittingLayout, std::nullopt, taken) && taken.set == VK_NULL_HANDLE, "a recycled set served a layout without a variable image table");
+        Require(cache.TakeRewritten(fittingLayout, 3u, taken) && taken.set == same.set && taken.pool == same.pool && taken.variableCount == std::optional<std::uint32_t>(3u), "a recycled set was not taken back whole");
+        Require(!cache.TakeRewritten(fittingLayout, 3u, taken), "a taken set was served twice");
         cache.Free(larger);
-        cache.Free(same);
+        cache.Free(taken);
         expectFailure([&] { cache.Allocate(fittingLayout, fitting, false, 3u); }, "descriptor set exceeds the device's per-set descriptor limit");
         const std::array<VkDescriptorSetLayoutBinding, 1> excessiveBindings{{{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8193, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
         const std::array<VkDescriptorBindingFlags, 1> excessiveFlags{VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT};
