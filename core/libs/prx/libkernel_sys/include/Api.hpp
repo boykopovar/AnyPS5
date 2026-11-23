@@ -79,6 +79,7 @@ int APS5_VABI chroot_nid_postfix(const char* path);
 int APS5_VABI symlink_nid_postfix(const char* target, const char* created);
 int APS5_VABI openat_nid_postfix(int fd, const char* path, int flags, ...);
 int APS5_VABI mkdirat_nid_postfix(int fd, const char* path, std::uint16_t mode);
+int APS5_VABI mkfifoat_nid_postfix(int fd, const char* path, std::uint16_t mode);
 int APS5_VABI fchmodat_nid_postfix(int fd, const char* path, int mode, int flag);
 int APS5_VABI lchmod_nid_postfix(const char* path, std::uint16_t mode);
 int APS5_VABI lchflags_nid_postfix(const char* path, std::uint64_t flags);
