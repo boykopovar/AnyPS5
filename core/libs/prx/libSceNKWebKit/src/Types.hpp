@@ -284,6 +284,17 @@ public:
     Retained<Object> topOverhangImage;
     Retained<Object> bottomOverhangImage;
     std::uint64_t paintedObjectsCounterThreshold = 0;
+    Retained<String> compositionText;
+    int compositionFrom = 0;
+    int compositionLength = 0;
+    bool suppressCompositionUnderline = false;
+    Retained<Array> compositionHighlightData;
+    Retained<Array> compositionAnnotationData;
+    std::uint64_t newlineInQuotedContentCount = 0;
+    std::uint64_t pendingEditorStateUpdateFlushCount = 0;
+    Retained<Array> stringMatchesReplacementIndices;
+    Retained<String> stringMatchesReplacementText;
+    bool stringMatchesSelectionOnly = false;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {

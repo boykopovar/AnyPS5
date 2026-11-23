@@ -8373,14 +8373,6 @@ int APS5_VABI WKBundlePageClose() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageConfirmComposition() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageConfirmCompositionWithText() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageCopyGroupIdentifier() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8437,10 +8429,6 @@ int APS5_VABI WKBundlePageFindString() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageFlushPendingEditorStateUpdate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageForceRepaint() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8458,10 +8446,6 @@ int APS5_VABI WKBundlePageGetTextZoomFactor() {
 }
 
 int APS5_VABI WKBundlePageHasLocalDataForURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageInsertNewlineInQuotedContent() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8529,10 +8513,6 @@ int APS5_VABI WKBundlePageRemoveAllUserContent() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageReplaceStringMatches() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageResetApplicationCacheOriginQuota() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8549,9 +8529,6 @@ int APS5_VABI WKBundlePageSetApplicationCacheOriginQuota() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageSetComposition() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKBundlePageSetEditorClient() {
     NotImplemented_nid_no_patch(__func__);
