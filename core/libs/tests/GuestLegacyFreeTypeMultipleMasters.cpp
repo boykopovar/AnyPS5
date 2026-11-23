@@ -5,6 +5,7 @@
 #include FT_FREETYPE_H
 #include FT_MULTIPLE_MASTERS_H
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -147,6 +148,11 @@ int main() {
     Require(length == 2 && empty[0] == Untouched);
     Require(FT_Set_MM_WeightVector_nid_postfix(nullptr, 2, empty.data()) == FT_Err_Invalid_Face_Handle);
     Require(FT_Set_Named_Instance_nid_postfix(nullptr, 0) == FT_Err_Invalid_Face_Handle);
+    auto* const unmappedValues = reinterpret_cast<std::int64_t*>(0x10);
+    errno = 71;
+    Require(FT_Get_MM_Blend_Coordinates_nid_postfix(variableFaces.guest, 3, unmappedValues) == FT_Err_Invalid_Argument);
+    Require(FT_Get_MM_WeightVector_nid_postfix(variableFaces.guest, reinterpret_cast<std::uint32_t*>(0x10), empty.data()) == FT_Err_Invalid_Argument);
+    Require(errno == 71 && empty[0] == Untouched);
 
     Require(FT_Done_Face_nid_postfix(variableFaces.guest) == 0 && FT_Done_Face_nid_postfix(fixedFaces.guest) == 0);
     Require(FT_Done_Face(variableFaces.native) == 0 && FT_Done_Face(fixedFaces.native) == 0);

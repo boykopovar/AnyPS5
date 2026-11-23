@@ -158,6 +158,13 @@ struct PreparedShaderState {
         std::vector<std::uint64_t> callees;
         std::vector<std::vector<std::uint32_t>> code;
         std::shared_ptr<const ShaderRecompiler::LinkedCalls> linked;
+        std::vector<std::uint32_t> tableUserData;
+        std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> dependencies;
+
+        void AppendRegions(std::vector<ShaderRecompiler::MemoryRegion>& regions) const;
+        void VouchRegions(std::span<const ShaderRecompiler::MemoryRegion> regions, std::vector<VouchedRegions>& vouched) const;
+        static bool Restamp(const ShaderRecompiler::SrtGuestWords& block, ShaderMemory::PendingWriteQuery pending);
+        bool Overlaps(std::uint64_t address, std::size_t bytes) const;
     };
     std::vector<Entry> entries;
     std::vector<UserDataLink> userDataLinks;
@@ -351,8 +358,38 @@ ShaderRecompiler::RectListShaders PreparedRectangle(const ShaderSnapshot& snapsh
 ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, const std::shared_ptr<const ShaderSnapshot>& fragment, std::uint64_t vertexId, std::uint64_t fragmentId, const ShaderRecompiler::SpirvTarget& target);
 
 std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
-std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(ShaderMemory& memory, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::PreparedShaderInvocation& invocation);
+struct SplitTableCallParts;
+struct SplitTableCallPart {
+    std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
+    std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
+};
+std::shared_ptr<SplitTableCallParts> SplitTableCallPartsFor(const ShaderRecompiler::RecompileRequest& request, std::uint32_t vectorCount);
+std::size_t SplitTableCallPartCount(const SplitTableCallParts& parts);
+std::uint32_t SplitTableCallStateSlots(const SplitTableCallParts& parts);
+bool SplitTableCallContinues(const SplitTableCallParts& parts);
+std::optional<std::size_t> SplitTableCallPartOf(const SplitTableCallParts& parts, std::uint64_t target);
+std::uint32_t SplitTableCallTargetSlot(const SplitTableCallParts& parts);
+SplitTableCallPart CompileSplitTableCallPart(ShaderMemory& memory, SplitTableCallParts& parts, std::size_t part, const ShaderRecompiler::RecompileRequest& request);
+std::vector<SplitTableCallPart> CompileSplitTableCallParts(std::span<ShaderMemory* const> memories, SplitTableCallParts& parts, std::span<const std::size_t> which, const ShaderRecompiler::RecompileRequest& request);
+void ForEachSplitTableCallPart(std::size_t count, const std::function<void(std::size_t)>& work);
+struct OwnedRecompileRequest {
+    ShaderRecompiler::RecompileRequest request;
+    std::vector<std::uint32_t> code;
+    std::vector<std::byte> header;
+    std::vector<std::uint32_t> userData;
+    std::vector<std::uint32_t> fallbacks;
+    std::vector<std::uint32_t> splitState;
+    std::vector<std::vector<std::byte>> regionBytes;
+    std::vector<ShaderRecompiler::MemoryRegion> regions;
+    std::vector<std::vector<std::uint32_t>> linkedWords;
+    std::vector<std::vector<std::byte>> linkedHeaders;
+    std::vector<ShaderRecompiler::LinkedProgram> linked;
+};
+
+std::shared_ptr<OwnedRecompileRequest> OwnRecompileRequest(const ShaderRecompiler::RecompileRequest& source, ShaderRecompiler::MemoryRegionView memory);
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool deferPreparation = false, std::shared_ptr<const PreparedShaderState::UserDataLink>* linking = nullptr);
+std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground(const ShaderRecompiler::PreparedShaderInvocation& invocation, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, ShaderRecompiler::MemoryRegionView memory, std::uint64_t address);
+std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(ShaderMemory& memory, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::PreparedShaderInvocation& invocation, std::shared_ptr<const PreparedShaderState::UserDataLink>* linking = nullptr);
 bool StageLinksUserDataCallees(const ShaderSnapshot& snapshot, std::size_t codeOffset);
 
 }

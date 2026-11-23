@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,8 @@
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceGnmDriver/include/CommandStream.hpp"
+#include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/EmbeddedShaders.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
@@ -131,6 +134,38 @@ std::uint32_t* DefaultState(std::uint32_t* at, std::uint32_t scModeCntl1) {
     at = Emit(at, OpSetContextReg, {0x295, 0x100, 0x100, 4});
     return Emit(at, OpSetUconfigReg, {0x200, 0xe0000000u});
 }
+
+constexpr std::array<std::uint32_t, 124> BaseHardwareState350 = [] {
+    constexpr auto& neo = GnmNeo::HardwareState350;
+    static_assert(neo[7] == 0x219 && neo[10] == 0x21a);
+    static_assert(neo[119] == 0xc0026900u && neo[120] == 0xebu);
+    static_assert(neo[131] == 0xc0017900u && neo[132] == 0x40000258u);
+    std::array<std::uint32_t, 124> base{};
+    std::size_t out = 0;
+    for (std::size_t i = 0; i < 7; ++i) base[out++] = neo[i];
+    for (std::size_t i = 13; i < 119; ++i) base[out++] = neo[i];
+    for (std::size_t i = 123; i < 131; ++i) base[out++] = neo[i];
+    base[out++] = Header(OpSetContextReg, 2);
+    base[out++] = 0x2aa;
+    base[out++] = 0xff;
+    return base;
+}();
+
+constexpr std::array<std::uint32_t, 98> BaseContextState400 = [] {
+    constexpr auto& neo = GnmNeo::ContextState400;
+    static_assert(neo[88] == 0xc0026900u && neo[89] == 0xebu);
+    static_assert(neo[97] == 0xc0017900u && neo[98] == 0x40000258u);
+    std::array<std::uint32_t, 98> base{};
+    std::size_t out = 0;
+    for (std::size_t i = 0; i < 88; ++i) base[out++] = neo[i];
+    for (std::size_t i = 92; i < 97; ++i) base[out++] = neo[i];
+    base[out++] = Header(OpSetContextReg, 2);
+    base[out++] = 0x2aa;
+    base[out++] = 0xff;
+    base[out++] = 0xc09e1000u;
+    base[out++] = neo[101];
+    return base;
+}();
 
 struct FrameStart {
     std::uint32_t words[HwInitPacketWords]{};
@@ -499,6 +534,24 @@ std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState200_nid_disambig1(std:
     return HwInitPacketWords;
 }
 
+std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState350_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
+    if (!cmd) return static_cast<std::uint32_t>(-1);
+    if (size < HwInitPacketWords) return 0;
+    auto* at = std::copy(GnmNeo::ClearState.begin(), GnmNeo::ClearState.end(), cmd);
+    if (sceKernelIsNeoMode()) at = std::copy(GnmNeo::HardwareState350.begin(), GnmNeo::HardwareState350.end(), at);
+    else at = std::copy(BaseHardwareState350.begin(), BaseHardwareState350.end(), at);
+    Nop(at, static_cast<std::uint32_t>(cmd + HwInitPacketWords - at) - 1);
+    return HwInitPacketWords;
+}
+
+std::uint32_t APS5_VABI sceGnmDrawInitToDefaultContextState400_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
+    if (!cmd) return static_cast<std::uint32_t>(-1);
+    if (size != HwInitPacketWords) return 0;
+    if (sceKernelIsNeoMode()) std::copy(GnmNeo::ContextState400.begin(), GnmNeo::ContextState400.end(), cmd);
+    else std::copy(BaseContextState400.begin(), BaseContextState400.end(), cmd);
+    return HwInitPacketWords;
+}
+
 std::uint32_t APS5_VABI sceGnmDispatchInitDefaultHardwareState(std::uint32_t* cmd, std::uint32_t size) {
     if (size < HwInitPacketWords) return 0;
     auto* at = Emit(cmd, OpSetShReg, {0x216, 0xffffffffu}, true);
@@ -618,8 +671,14 @@ int APS5_VABI sceGnmDeleteEqEvent(KernelEqueue eq, std::uint64_t id) {
 }
 
 int APS5_VABI sceGnmGetEqEventType(const KernelEvent* ev) {
-    if (!ev || ev->filter != EvfiltGraphicsCore) throw std::runtime_error(std::string(__func__) + ": not a graphics event");
-    return static_cast<int>(ev->ident);
+    if (!ev) throw std::runtime_error(std::string(__func__) + ": not a graphics event");
+    KernelEvent local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, ev, sizeof(local));
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(std::string(__func__) + ": unreadable event");
+    if (local.filter != EvfiltGraphicsCore) throw std::runtime_error(std::string(__func__) + ": not a graphics event");
+    return static_cast<int>(local.ident);
 }
 
 int APS5_VABI sceGnmGetOffChipTessellationBufferSize_nid_disambig1(void) {
@@ -636,6 +695,25 @@ bool APS5_VABI sceGnmIsUserPaEnabled() {
 
 bool APS5_VABI sceGnmDriverCaptureInProgress() {
     return false;
+}
+
+int APS5_VABI sceGnmCreateWorkloadStream_nid_disambig1(std::uint64_t name, std::uint32_t* stream) {
+    if (name == 0 || !stream) return 3;
+    const std::uint32_t value = 1;
+    if (!GuestCopyOut_nid_no_patch(stream, &value, sizeof(value))) return 3;
+    return 0;
+}
+
+int APS5_VABI sceGnmBeginWorkload_nid_disambig1(std::uint32_t stream, std::uint64_t* workload) {
+    if (!workload) return 3;
+    const std::uint64_t value = stream < 0x10 ? 1 : 0;
+    if (!GuestCopyOut_nid_no_patch(workload, &value, sizeof(value))) return 3;
+    return stream < 0x10 ? 0 : 1;
+}
+
+int APS5_VABI sceGnmEndWorkload_nid_disambig1(std::uint64_t workload) {
+    if (workload == 0) return 2;
+    return ((workload >> 56) & 0xff) > 0xf ? 2 : 0;
 }
 
 int APS5_VABI sceGnmDriverTriggerCapture() {
@@ -794,9 +872,9 @@ int APS5_VABI sceGnmDestroyWorkloadStream_nid_disambig1(void) {
     return 0;
 }
 
-int APS5_VABI sceGnmDingDongForWorkload_nid_disambig1(std::uint32_t, std::uint32_t, std::uint64_t) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmDingDongForWorkload_nid_disambig1(std::uint32_t vqueueId, std::uint32_t nextOffsetDw, std::uint64_t) {
+    if (vqueueId == 0) return 0;
+    return sceGnmDingDong(vqueueId, nextOffsetDw);
 }
 
 int APS5_VABI sceGnmDrawIndexMultiInstanced_nid_disambig1(void) {
@@ -864,14 +942,13 @@ int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(void) {
     return 0;
 }
 
-int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(std::uint64_t, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes,
+    std::uint32_t handle, std::uint32_t index, std::uint32_t flipMode, std::int64_t flipArg) {
+    return sceGnmSubmitAndFlipCommandBuffers(count, dcbs, dcbBytes, ccbs, ccbBytes, handle, index, flipMode, flipArg);
 }
 
-int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(std::uint64_t, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes) {
+    return sceGnmSubmitCommandBuffers(count, dcbs, dcbBytes, ccbs, ccbBytes);
 }
 
 }

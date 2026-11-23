@@ -17,9 +17,15 @@ inline std::string_view ModuleSuffix(const std::string_view name) {
     return suffix == ModuleSuffixes.end() ? std::string_view{} : *suffix;
 }
 
+inline bool ConsoleModuleSuffix(const std::string_view name) {
+    const auto suffix = ModuleSuffix(name);
+    return !suffix.empty() && suffix != ".prx";
+}
+
 inline std::string NeededLibraryName(std::string name) {
     const auto suffix = ModuleSuffix(name);
     if (!suffix.empty() && suffix != ".prx") name.replace(name.size() - suffix.size(), suffix.size(), ".prx");
+    if (name == "libSceGnmDriver_padebug.prx") name = "libSceGnmDriver.prx";
     return name;
 }
 
@@ -63,7 +69,9 @@ inline std::string ImportModule(const std::string& symbol, const std::map<std::u
     if (ModuleSuffix(name).empty()) name += ".prx";
     if (std::find(dependencies.begin(), dependencies.end(), name) != dependencies.end()) return name;
     const auto normalized = ImportModuleName(name);
-    const auto lookup = normalized == "libmonosgen" ? std::string("libmonosgen-2_0") : normalized;
+    auto lookup = normalized;
+    if (lookup == "libmonosgen") lookup = "libmonosgen-2_0";
+    if (lookup == "libSceGnmDriver") lookup = "libSceGnmDriver_padebug";
     const auto findMatch = [&](const std::string& candidate) {
         std::string matched;
         for (const auto& dependency : dependencies) {

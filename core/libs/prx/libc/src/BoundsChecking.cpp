@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <limits>
 #include <cstring>
+#include <vector>
 
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
@@ -163,9 +164,16 @@ int APS5_VABI wcrtomb_s_nid_postfix(std::size_t* result, char* destination, std:
 }
 
 int APS5_VABI mbstowcs_s_nid_postfix(std::size_t* result, std::uint16_t* destination, std::size_t capacity, const char* source, std::size_t limit) {
+    const std::uint16_t terminator = 0;
+    const auto fault = [&] {
+        GuestCopyOut_nid_no_patch(result, &failed, sizeof(failed));
+        return violation("mbstowcs_s: bad argument", guestEinval);
+    };
+    const auto put = [&](std::size_t index, std::uint16_t value) { return GuestCopyOut_nid_no_patch(destination + index, &value, sizeof(value)); };
+    const auto report = [&](std::size_t value) { return GuestCopyOut_nid_no_patch(result, &value, sizeof(value)); };
     if (!result || !source || (!destination && capacity) || (destination && (!usableSize(capacity) || limit > rsizeMax))) {
-        if (result) *result = failed;
-        if (destination && usableSize(capacity)) destination[0] = 0;
+        if (result) report(failed);
+        if (destination && usableSize(capacity)) put(0, terminator);
         return violation("mbstowcs_s: bad argument", guestEinval);
     }
     alignas(8) unsigned char state[guestStateSize]{};
@@ -174,91 +182,86 @@ int APS5_VABI mbstowcs_s_nid_postfix(std::size_t* result, std::uint16_t* destina
         for (;; ++count) {
             std::uint16_t wide = 0;
             const std::size_t length = mbrtowc_nid_postfix(&wide, source, INT_MAX, state);
-            if (convertFailed(length)) {
-                *result = failed;
-                return guestEilseq;
-            }
+            if (convertFailed(length)) return report(failed) ? guestEilseq : fault();
             if (length == 0 && wide == 0) break;
             source += length;
         }
-        *result = count;
-        return 0;
+        return report(count) ? 0 : fault();
     }
     const std::size_t total = limit < capacity ? limit : capacity;
-    std::size_t index = 0;
-    while (index < total) {
-        const std::size_t length = mbrtowc_nid_postfix(destination + index, source, INT_MAX, state);
+    std::vector<std::uint16_t> converted;
+    const auto store = [&] { return GuestCopyOut_nid_no_patch(destination, converted.data(), converted.size() * sizeof(converted[0])); };
+    while (converted.size() < total) {
+        std::uint16_t wide = 0;
+        const std::size_t length = mbrtowc_nid_postfix(&wide, source, INT_MAX, state);
         if (convertFailed(length)) {
-            *result = failed;
-            destination[index] = 0;
-            return guestEilseq;
+            converted.push_back(terminator);
+            return report(failed) && store() ? guestEilseq : fault();
         }
-        if (length == 0 && destination[index] == 0) {
-            *result = index;
-            return 0;
-        }
+        converted.push_back(wide);
+        if (length == 0 && wide == 0) return report(converted.size() - 1) && store() ? 0 : fault();
         source += length;
-        ++index;
     }
-    if (index == capacity) {
-        *result = failed;
-        destination[0] = 0;
+    if (converted.size() == capacity) {
+        converted[0] = terminator;
+        if (!report(failed) || !store()) return fault();
         return violation("mbstowcs_s: buffer overflow", guestErange);
     }
-    *result = index;
-    destination[index] = 0;
-    return 0;
+    const std::size_t index = converted.size();
+    converted.push_back(terminator);
+    return report(index) && store() ? 0 : fault();
 }
 
 int APS5_VABI mbsrtowcs_s_nid_postfix(std::size_t* result, std::uint16_t* destination, std::size_t capacity, const char** source, std::size_t limit, void* state) {
-    if (!result || !source || !*source || !state || (!destination && capacity) || (destination && (!usableSize(capacity) || limit > rsizeMax))) {
-        if (destination && usableSize(capacity)) destination[0] = 0;
-        if (result) *result = failed;
+    const std::uint16_t terminator = 0;
+    const auto fault = [&] {
+        GuestCopyOut_nid_no_patch(result, &failed, sizeof(failed));
+        return violation("mbsrtowcs_s: bad argument", guestEinval);
+    };
+    const auto put = [&](std::size_t index, std::uint16_t value) { return GuestCopyOut_nid_no_patch(destination + index, &value, sizeof(value)); };
+    const auto report = [&](std::size_t value) { return GuestCopyOut_nid_no_patch(result, &value, sizeof(value)); };
+    const auto advance = [&](const char* value) { return GuestCopyOut_nid_no_patch(source, &value, sizeof(value)); };
+    const char* cursor = nullptr;
+    if (source && !GuestCopyIn_nid_no_patch(&cursor, source, sizeof(cursor))) return fault();
+    if (!result || !source || !cursor || !state || (!destination && capacity) || (destination && (!usableSize(capacity) || limit > rsizeMax))) {
+        if (destination && usableSize(capacity)) put(0, terminator);
+        if (result) report(failed);
         return violation("mbsrtowcs_s: bad argument", guestEinval);
     }
-    const char* cursor = *source;
     if (!destination) {
         std::size_t count = 0;
         for (;; ++count) {
             std::uint16_t wide = 0;
             const std::size_t length = mbrtowc_nid_postfix(&wide, cursor, INT_MAX, state);
-            if (convertFailed(length)) {
-                *result = failed;
-                return guestEilseq;
-            }
+            if (convertFailed(length)) return report(failed) ? guestEilseq : fault();
             if (length == 0 && wide == 0) break;
             cursor += length;
         }
-        *result = count;
-        return 0;
+        return report(count) ? 0 : fault();
     }
     const std::size_t total = limit < capacity ? limit : capacity;
-    std::size_t index = 0;
-    while (index < total) {
-        const std::size_t length = mbrtowc_nid_postfix(destination + index, cursor, INT_MAX, state);
+    std::vector<std::uint16_t> converted;
+    const auto store = [&] { return GuestCopyOut_nid_no_patch(destination, converted.data(), converted.size() * sizeof(converted[0])); };
+    while (converted.size() < total) {
+        std::uint16_t wide = 0;
+        const std::size_t length = mbrtowc_nid_postfix(&wide, cursor, INT_MAX, state);
         if (convertFailed(length)) {
-            *source = cursor;
-            destination[index] = 0;
-            *result = failed;
-            return guestEilseq;
+            converted.push_back(terminator);
+            return advance(cursor) && store() && report(failed) ? guestEilseq : fault();
         }
-        if (length == 0 && destination[index] == 0) {
-            *source = nullptr;
-            *result = index;
-            return 0;
-        }
+        converted.push_back(wide);
+        if (length == 0 && wide == 0) return store() && advance(nullptr) && report(converted.size() - 1) ? 0 : fault();
         cursor += length;
-        ++index;
     }
-    if (total != 0) *source = cursor;
-    if (index == capacity) {
-        destination[0] = 0;
-        *result = failed;
+    if (total != 0 && !advance(cursor)) return fault();
+    if (converted.size() == capacity) {
+        converted[0] = terminator;
+        if (!store() || !report(failed)) return fault();
         return violation("mbsrtowcs_s: buffer too small", guestErange);
     }
-    destination[index] = 0;
-    *result = index;
-    return 0;
+    const std::size_t index = converted.size();
+    converted.push_back(terminator);
+    return store() && report(index) ? 0 : fault();
 }
 
 char* APS5_VABI gets_s_nid_postfix(char* buffer, std::size_t size) {

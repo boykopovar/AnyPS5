@@ -1,4 +1,5 @@
 import argparse
+import html
 import json
 import re
 import sys
@@ -11,8 +12,9 @@ CTEST_SKIP = re.compile(r"SKIP_RETURN_CODE=\d+|SKIP_REGULAR_EXPRESSION_MATCHED",
 SANITIZERS = ("address", "undefined", "thread")
 REPORT_LINES = (
     re.compile(r"SUMMARY: \w+Sanitizer: .*"),
-    re.compile(r"(?:ERROR|WARNING): \w+Sanitizer: .*"),
+    re.compile(r"(?:ERROR|WARNING|FATAL): \w+Sanitizer: .*"),
     re.compile(r"^.*runtime error: .*", re.MULTILINE),
+    re.compile(r"^\w+Sanitizer:DEADLYSIGNAL\b", re.MULTILINE),
 )
 REPORT_LENGTH = 200
 
@@ -29,6 +31,8 @@ def results(path):
         if name in found:
             raise ValueError(f"{path}: testcase {name} is listed more than once")
         skipped, status = case.find("skipped"), case.get("status")
+        if status is not None and status not in ("run", "fail", "notrun", "disabled", "None"):
+            raise ValueError(f"{path}: invalid testcase status {status!r} for {name}")
         reason = (skipped.get("message") or "").strip() if skipped is not None else ""
         if case.find("failure") is not None or case.find("error") is not None:
             outcome = "failed"
@@ -86,6 +90,12 @@ def cell(text):
     return " ".join(text.split()).replace("|", "\\|")
 
 
+def detail_cell(text):
+    literal = html.escape(" ".join(text.split()), quote=False)
+    literal = re.sub(r"\\+(?=\|)", lambda match: "&#92;" * len(match[0]), literal)
+    return literal.replace("|", "\\|")
+
+
 def test_name(text):
     if not any(character in text for character in "|`\r\n"):
         return f"`{text}`"
@@ -104,14 +114,14 @@ def summarize(title, found, known=None, details=None):
              f"{len(found)} tests: {counts['passed']} passed, {counts['skipped']} skipped, {tally}.", ""]
     if failed and any(name in details for name in failed):
         lines += ["| Failed test | First sanitizer report |", "| - | - |"]
-        lines += [f"| {test_name(name)} | {cell(details.get(name, ''))} |" for name in failed] + [""]
+        lines += [f"| {test_name(name)} | {detail_cell(details.get(name, ''))} |" for name in failed] + [""]
     elif failed:
         lines += ["| Failed test |", "| - |"] + [f"| {test_name(name)} |" for name in failed] + [""]
     if expected:
-        lines += ["| Known failure | Reason |", "| - | - |"] + [f"| {test_name(name)} | {cell(known[name])} |" for name in expected] + [""]
+        lines += ["| Known failure | Reason |", "| - | - |"] + [f"| {test_name(name)} | {detail_cell(known[name])} |" for name in expected] + [""]
     recovered = sorted(name for name in known if found.get(name) == "passed")
     if recovered:
-        lines += ["| Listed as known but passed | Reason |", "| - | - |"] + [f"| {test_name(name)} | {cell(known[name])} |" for name in recovered] + [""]
+        lines += ["| Listed as known but passed | Reason |", "| - | - |"] + [f"| {test_name(name)} | {detail_cell(known[name])} |" for name in recovered] + [""]
     absent = sorted(name for name in known if name not in found)
     if absent:
         lines += ["| Listed as known but not in this run |", "| - |"] + [f"| {test_name(name)} |" for name in absent] + [""]

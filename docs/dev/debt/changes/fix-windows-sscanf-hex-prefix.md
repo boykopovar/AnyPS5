@@ -1,0 +1,5 @@
+# libc
+
+## change [The scanf family](../../../core/libs/prx/libc/include/WindowsScanning.hpp)
+
+- [The scanf family](../../../core/libs/prx/libc/include/WindowsScanning.hpp) (libc) returns 0 on Windows after input failure following only suppressed conversions (`sscanf("12", "%*d%d", &value)`). On Linux, `sscanf` and `vsscanf` run the shared scanner for every format and return 0 there too; `fscanf` with a format that has no narrow `%c` still goes to glibc, which returns `EOF`. Ordinary Windows stream conversions still accept a `0x` prefix without a hexadecimal digit and consume its `x`; string scans use the shared prefix rejection rule. Windows host-backed floating conversions consume a dangling exponent marker (`1e`), where FreeBSD stops before it. On Linux a float conversion of `0x.` or `nan(` follows the host glibc: glibc 2.44 makes both a matching failure, glibc 2.39 converts `0x.` to 0 and `nan(` to NaN and leaves the `(` for the next conversion; the console's result is not measured.

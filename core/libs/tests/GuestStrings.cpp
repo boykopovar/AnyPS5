@@ -10,14 +10,21 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <source_location>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 extern "C" char* suboptarg_nid_postfix;
 
-static void Require(bool condition) {
+static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
-        std::fputs("Guest string check failed\n", stderr);
+        std::fprintf(stderr, "%s:%u: guest string check failed in %s\n", location.file_name(), static_cast<unsigned>(location.line()), location.function_name());
         std::abort();
     }
 }
@@ -366,7 +373,45 @@ static void CheckStrtonum() {
     fails("-9999999999999999999999999999999999", LLONG_MIN, LLONG_MAX, "too small", 34);
     fails("9999999999999999999999999999999999", LLONG_MIN, LLONG_MAX, "too large", 34);
     *__error_nid_postfix() = 34;
-    Require(strtonum_nid_postfix("42", 0, 100, nullptr) == 42 && *__error_nid_postfix() == 34);
+    errno = 34;
+    Require(strtonum_nid_postfix("42", 0, 100, nullptr) == 42 && *__error_nid_postfix() == 34 && errno == 34);
+    std::size_t page = 0;
+    char* memory = nullptr;
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    page = info.dwPageSize;
+    memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    Require(size > 0);
+    page = static_cast<std::size_t>(size);
+    memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED);
+    Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    const std::array<const char**, 2> badErrors = {
+        reinterpret_cast<const char**>(std::uintptr_t{0x10}),
+        reinterpret_cast<const char**>(memory + page)
+    };
+    for (const char** badError : badErrors) {
+        *__error_nid_postfix() = 71;
+        errno = 71;
+        Require(strtonum_nid_postfix("42", 0, 100, badError) == 0);
+        Require(*__error_nid_postfix() == 14 && errno == 14);
+        *__error_nid_postfix() = 71;
+        errno = 71;
+        Require(strtonum_nid_postfix("invalid", 0, 100, badError) == 0);
+        Require(*__error_nid_postfix() == 14 && errno == 14);
+    }
+#ifdef _WIN32
+    VirtualFree(memory, 0, MEM_RELEASE);
+#else
+    munmap(memory, 2 * page);
+#endif
 }
 
 static void CheckStrnlenSBounds() {
@@ -850,5 +895,79 @@ int main() {
     Require(modeBuffer[0] == 'w');
     strmode_nid_postfix(0, modeBuffer);
     Require(std::memcmp(modeBuffer, "?--------- ", 11) == 0);
+    *__error_nid_postfix() = 71;
+    strmode_nid_postfix(0100644, reinterpret_cast<char*>(std::uintptr_t{0x10}));
+    Require(*__error_nid_postfix() == 71);
+    char modeRow[16];
+    std::memset(modeRow, '!', sizeof(modeRow));
+    strmode_nid_postfix(0106755, modeRow + 1);
+    Require(modeRow[0] == '!' && std::memcmp(modeRow + 1, "-rwsr-sr-x ", 12) == 0 && modeRow[13] == '!');
+    {
+        auto rejects = [](auto&& call) {
+            errno = 71;
+            try {
+                call();
+            } catch (const std::runtime_error&) {
+                Require(errno == 71);
+                return;
+            }
+            Require(false);
+        };
+        const std::size_t pageSize =
+#ifdef _WIN32
+            4096;
+#else
+            static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+#endif
+        void* roPage = nullptr;
+        char* roCursor = nullptr;
+#ifdef _WIN32
+        roPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(roPage != nullptr);
+#else
+        roPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(roPage != MAP_FAILED);
+#endif
+        std::memcpy(roPage, "ro,rw", 6);
+        roCursor = static_cast<char*>(roPage);
+        auto* roPtrSlot = reinterpret_cast<char**>(static_cast<char*>(roPage) + 64);
+        *roPtrSlot = roCursor;
+#ifdef _WIN32
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+        Require(mprotect(roPage, pageSize, PROT_READ) == 0);
+#endif
+        char* const roTokens[] = {const_cast<char*>("ro"), const_cast<char*>("rw"), nullptr};
+        char opts[] = "ro,rw";
+        char* cur = opts;
+        char* val = opts;
+        auto* badPtr = reinterpret_cast<char*>(std::uintptr_t{0x10});
+        auto* badPtrPtr = reinterpret_cast<char**>(std::uintptr_t{0x10});
+        auto* badTokens = reinterpret_cast<char* const*>(std::uintptr_t{0x10});
+        char* badTokArray[] = {badPtr, nullptr};
+        rejects([&] { getsubopt_nid_postfix(badPtrPtr, roTokens, &val); });
+        Require(val == opts);
+        rejects([&] { getsubopt_nid_postfix(&badPtr, roTokens, &val); });
+        Require(val == opts && badPtr == reinterpret_cast<char*>(std::uintptr_t{0x10}));
+        rejects([&] { getsubopt_nid_postfix(&cur, roTokens, badPtrPtr); });
+        Require(cur == opts && std::strcmp(opts, "ro,rw") == 0);
+        rejects([&] { getsubopt_nid_postfix(&cur, badTokens, &val); });
+        Require(cur == opts && val == opts && std::strcmp(opts, "ro,rw") == 0);
+        rejects([&] { getsubopt_nid_postfix(&cur, badTokArray, &val); });
+        Require(cur == opts && val == opts && std::strcmp(opts, "ro,rw") == 0);
+        rejects([&] { getsubopt_nid_postfix(roPtrSlot, roTokens, &val); });
+        Require(val == opts);
+        rejects([&] { getsubopt_nid_postfix(&cur, roTokens, roPtrSlot); });
+        Require(cur == opts && std::strcmp(opts, "ro,rw") == 0);
+        char* roOptCur = roCursor;
+        rejects([&] { getsubopt_nid_postfix(&roOptCur, roTokens, &val); });
+        Require(roOptCur == roCursor && val == opts);
+#ifdef _WIN32
+        VirtualFree(roPage, 0, MEM_RELEASE);
+#else
+        munmap(roPage, pageSize);
+#endif
+    }
     return CheckMemcpyOverlap() ? 0 : 1;
 }

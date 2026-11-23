@@ -768,3 +768,62 @@ int APS5_VABI libSceMediaFrameworkInterfaceUnknown_zbDNeWDHhTc_nid_no_patch() {
 APS5_EXPORT("zbDNeWDHhTc", libSceMediaFrameworkInterfaceUnknown_zbDNeWDHhTc_nid_no_patch);
 
 }
+
+extern "C" {
+int APS5_VABI sceMediaFwAddEsvmDecoder2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwAudioSyncFlush(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwChangeVideoOutputMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwChangeVideoOutputMode2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwInitializeCdm(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwMediaKeySystemAccessCreateMediaKeys2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwMediaKeysSetServerCertificate2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwRegisterSrcAllocateStateChangeCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwReleaseVideoFrame(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwRequestMediaKeySystemAccess2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwSetAudioTagFeature(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwSetUniversalEsvm(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwSourceBufferCanSwitchToType(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceMediaFwSyncVideo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+}

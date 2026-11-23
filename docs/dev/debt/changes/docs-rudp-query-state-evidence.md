@@ -1,0 +1,5 @@
+# libSceRudp
+
+## add Unknown function info
+
+- [sceRudpGetNumberOfPacketsToRead, sceRudpGetSizeReadable and sceRudpGetSizeWritable](../../../core/libs/prx/libSceRudp/Export.cpp) (libSceRudp) - connected-state behavior remains unverified. @BunnyFl's firmware 13.42 [run](https://github.com/boykopovar/AnyPS5/issues/13682#issuecomment-6932414678), using the real module under emulation with imports stubbed and not a console, gives `RUDP_ERROR_NOT_INITIALIZED` before initialization, `RUDP_ERROR_INVALID_ARGUMENT` for a negative id and `RUDP_ERROR_INVALID_CONTEXT_ID` for an unknown id. Created, bound, listening and activated contexts return 0 from `sceRudpGetNumberOfPacketsToRead` and `RUDP_ERROR_NOT_ACCEPTABLE` from both size queries, matching this implementation. The firmware workers first test context `+0x320` for `0x7be434cb` before a deeper stream path; which states set it was not established. Closes when: that path is measured on a connected context or PS5 hardware.

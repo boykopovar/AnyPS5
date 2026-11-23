@@ -47,6 +47,11 @@ int main() {
     Write<std::uint8_t>(Object.data(), 0x42, 1);
     Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V122RecordScoreRequestBody17needsTmpRankIsSetEv(model));
 
+    Write<std::int32_t>(Object.data(), 0x30, -2);
+    Write<std::uint32_t>(Object.data(), 0x34, 0x89abcdefu);
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V123RecordScoreResponseBody10getTmpRankEv(model) == -2);
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V123RecordScoreResponseBody16getTmpSerialRankEv(model) == 0x89abcdefu);
+
     Require(_ZNK3sce2Np9CppWebApi13InGameCatalog2V53Sku10getEndDateEv(model) == model + 0x88);
     Write<std::uint8_t>(Object.data(), 0xa8, 1);
     Require(_ZNK3sce2Np9CppWebApi13InGameCatalog2V53Sku12endDateIsSetEv(model));

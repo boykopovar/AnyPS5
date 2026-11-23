@@ -31,9 +31,12 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -45,27 +48,60 @@ bool IsHexDigit(unsigned char c) { return IsDigit(c) || (c >= 'a' && c <= 'f') |
 bool IsSpace(unsigned char c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
 bool IsLower(unsigned char c) { return c >= 'a' && c <= 'z'; }
 
+std::string CopyGuestText(const char* text, const char* caller) {
+    const int savedErrno = errno;
+    std::string copied;
+    constexpr std::size_t maxChunk = 64;
+    std::size_t offset = 0;
+    for (;;) {
+        char chunk[maxChunk]{};
+        std::size_t chunkSize = maxChunk;
+        bool readOk = false;
+        while (chunkSize > 0) {
+            if (GuestCopyIn_nid_no_patch(chunk, text + offset, chunkSize)) {
+                readOk = true;
+                break;
+            }
+            chunkSize /= 2;
+        }
+        if (!readOk) {
+            errno = savedErrno;
+            NotImplemented_nid_no_patch(caller);
+        }
+        for (std::size_t i = 0; i < chunkSize; ++i) {
+            if (chunk[i] == '\0') {
+                errno = savedErrno;
+                return copied;
+            }
+            copied.push_back(chunk[i]);
+        }
+        offset += chunkSize;
+    }
+}
+
 }
 
 extern "C" {
 
 int APS5_VABI inet_aton_nid_postfix(const char* text, std::uint32_t* address) {
     if (text == nullptr) throw std::invalid_argument("inet_aton: null text");
+    const std::string copied = CopyGuestText(text, __func__);
+    const char* cursor = copied.c_str();
     std::uint64_t value = 0;
     std::uint8_t parts[4] = {};
     std::uint8_t* part = parts;
     bool digit = false;
-    auto c = static_cast<unsigned char>(*text);
+    auto c = static_cast<unsigned char>(*cursor);
     for (;;) {
         if (!IsDigit(c)) return 0;
         value = 0;
         unsigned base = 10;
         digit = false;
         if (c == '0') {
-            c = static_cast<unsigned char>(*++text);
+            c = static_cast<unsigned char>(*++cursor);
             if (c == 'x' || c == 'X') {
                 base = 16;
-                c = static_cast<unsigned char>(*++text);
+                c = static_cast<unsigned char>(*++cursor);
             } else {
                 base = 8;
                 digit = true;
@@ -75,11 +111,11 @@ int APS5_VABI inet_aton_nid_postfix(const char* text, std::uint32_t* address) {
             if (IsDigit(c)) {
                 if (base == 8 && (c == '8' || c == '9')) return 0;
                 value = value * base + (c - '0');
-                c = static_cast<unsigned char>(*++text);
+                c = static_cast<unsigned char>(*++cursor);
                 digit = true;
             } else if (base == 16 && IsHexDigit(c)) {
                 value = (value << 4) | static_cast<std::uint64_t>(c + 10 - (c >= 'a' ? 'a' : 'A'));
-                c = static_cast<unsigned char>(*++text);
+                c = static_cast<unsigned char>(*++cursor);
                 digit = true;
             } else {
                 break;
@@ -88,7 +124,7 @@ int APS5_VABI inet_aton_nid_postfix(const char* text, std::uint32_t* address) {
         if (c != '.') break;
         if (part >= parts + 3 || value > 0xff) return 0;
         *part++ = static_cast<std::uint8_t>(value);
-        c = static_cast<unsigned char>(*++text);
+        c = static_cast<unsigned char>(*++cursor);
     }
     if (c != 0 && (c >= 0x80 || !IsSpace(c))) return 0;
     if (!digit) return 0;
@@ -111,7 +147,10 @@ int APS5_VABI inet_aton_nid_postfix(const char* text, std::uint32_t* address) {
     if (address != nullptr) {
         const auto host = static_cast<std::uint32_t>(value);
         const std::uint8_t network[4] = {static_cast<std::uint8_t>(host >> 24), static_cast<std::uint8_t>(host >> 16), static_cast<std::uint8_t>(host >> 8), static_cast<std::uint8_t>(host)};
-        if (!GuestCopyOut_nid_no_patch(address, network, sizeof(network))) return 0;
+        const int savedErrno = errno;
+        const bool ok = GuestCopyOut_nid_no_patch(address, network, sizeof(network));
+        errno = savedErrno;
+        if (!ok) return 0;
     }
     return 1;
 }
@@ -183,6 +222,8 @@ std::uint32_t APS5_VABI __inet_makeaddr_nid_postfix(std::uint32_t net, std::uint
 
 std::uint32_t APS5_VABI inet_network_nid_postfix(const char* text) {
     if (text == nullptr) throw std::invalid_argument("inet_network: null text");
+    const std::string copied = CopyGuestText(text, __func__);
+    const char* cursor = copied.c_str();
     std::uint32_t val = 0;
     std::uint32_t base = 10;
     std::uint32_t parts[4] = {};
@@ -193,43 +234,43 @@ again:
     val = 0;
     base = 10;
     digit = 0;
-    if (*text == '0') {
+    if (*cursor == '0') {
         digit = 1;
         base = 8;
-        text++;
+        cursor++;
     }
-    if (*text == 'x' || *text == 'X') {
+    if (*cursor == 'x' || *cursor == 'X') {
         base = 16;
-        text++;
+        cursor++;
     }
-    char c = *text;
+    char c = *cursor;
     while (c != '\0') {
         const auto uc = static_cast<unsigned char>(c);
         if (IsDigit(uc)) {
             if (base == 8 && (c == '8' || c == '9')) return 0xffffffffu;
             val = (val * base) + static_cast<std::uint32_t>(c - '0');
-            text++;
+            cursor++;
             digit = 1;
-            c = *text;
+            c = *cursor;
             continue;
         }
         if (base == 16 && IsHexDigit(uc)) {
             val = (val << 4) + static_cast<std::uint32_t>(uc + 10 - (IsLower(uc) ? 'a' : 'A'));
-            text++;
+            cursor++;
             digit = 1;
-            c = *text;
+            c = *cursor;
             continue;
         }
         break;
     }
     if (!digit) return 0xffffffffu;
     if (pp >= parts + 4 || val > 0xffu) return 0xffffffffu;
-    if (*text == '.') {
+    if (*cursor == '.') {
         *pp++ = val;
-        text++;
+        cursor++;
         goto again;
     }
-    if (*text != '\0' && !IsSpace(static_cast<unsigned char>(*text))) return 0xffffffffu;
+    if (*cursor != '\0' && !IsSpace(static_cast<unsigned char>(*cursor))) return 0xffffffffu;
     *pp++ = val;
     const std::ptrdiff_t n = pp - parts;
     if (n > 4) return 0xffffffffu;

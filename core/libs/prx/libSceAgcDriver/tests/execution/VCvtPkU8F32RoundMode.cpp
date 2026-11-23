@@ -31,6 +31,16 @@ alignas(256) std::array<std::uint32_t, 11> RoundModeCode{
     0xe0701000u, 0x80010a02u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 10> ClampCode{
+    0x34020084u, 0x34040082u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0xd55e800au, 0x02010104u, 0xe0701000u,
+    0x80010a02u, 0xbf810000u,
+};
+
+alignas(256) std::array<std::uint32_t, 11> ClampRoundModeCode{
+    0x34020084u, 0x34040082u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0xbfa40000u, 0xd55e800au, 0x02010104u,
+    0xe0701000u, 0x80010a02u, 0xbf810000u,
+};
+
 struct PackVector {
     std::uint32_t value;
     std::uint32_t denormalsFlushed[4];
@@ -138,10 +148,18 @@ int main() {
                     RoundModeCode[5] = 0xbfa40000u | rounding;
                     Run(*device, RoundModeCode, ShaderRecompiler::ShaderFloatMode{0xc0u | denormals << 4u, true, ieee, false});
                     Check(kept, rounding, ieee, field + " set by s_round_mode");
+                    for (const bool dx10 : {false, true}) {
+                        const std::string clamp = dx10 ? ", clamp, DX10_CLAMP=1" : ", clamp, DX10_CLAMP=0";
+                        Run(*device, ClampCode, ShaderRecompiler::ShaderFloatMode{0xc0u | denormals << 4u | rounding, dx10, ieee, false});
+                        Check(kept, rounding, ieee, field + clamp);
+                        ClampRoundModeCode[5] = 0xbfa40000u | rounding;
+                        Run(*device, ClampRoundModeCode, ShaderRecompiler::ShaderFloatMode{0xc0u | denormals << 4u, dx10, ieee, false});
+                        Check(kept, rounding, ieee, field + " set by s_round_mode" + clamp);
+                    }
                 }
             }
         }
-        std::puts("v_cvt_pk_u8_f32 round mode tests passed");
+        std::puts("v_cvt_pk_u8_f32 round mode and clamp tests passed");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
