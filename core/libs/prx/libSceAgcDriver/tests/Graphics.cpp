@@ -1030,6 +1030,8 @@ void msaaEnableClearOneSampleTargetTests() {
         Require(!AgcDriver::Graphics::PixelProgramSkipped(queue), "the PS_ITER_SAMPLE draw skipped its pixel program");
         requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target whose running pixel program has PS_ITER_SAMPLE and no sample index or coverage input");
         Require(!DecodeState(queue).perSampleShading, "a PS_ITER_SAMPLE program drawn as one sample still shades per sample");
+        queue.context[0x1b3] = queue.context[0x1b4] = 0x2001u;
+        requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target whose running pixel program reads PERSP_SAMPLE and ANCILLARY under PS_ITER_SAMPLE");
         for (const auto eqaa : {0x00040000u, 0x00050000u}) {
             queue = depthTarget(color);
             queue.context[0x201] = eqaa;
