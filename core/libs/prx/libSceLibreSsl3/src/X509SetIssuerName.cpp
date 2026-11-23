@@ -48,10 +48,10 @@ Asn1String* DuplicateString(const Asn1String* source) {
             free_nid_postfix(copy);
             return nullptr;
         }
-        CopyGuestBytes(data, source->data, static_cast<std::size_t>(source->length),
-            "X509_NAME_dup: unreadable string data");
         copy->data = data;
         copy->length = source->length;
+        CopyGuestBytes(data, source->data, static_cast<std::size_t>(source->length),
+            "X509_NAME_dup: unreadable string data");
     }
     return copy;
 }
@@ -61,12 +61,12 @@ Asn1Object_nid_no_patch* DuplicateObject(const Asn1Object_nid_no_patch* source) 
     if (!copy) return nullptr;
     *copy = *source;
     copy->flags = ObjectDynamic;
-    copy->shortName = nullptr;
-    copy->longName = nullptr;
     copy->data = nullptr;
     copy->length = 0;
     if (source->flags & DynamicStrings) {
         copy->flags |= DynamicStrings;
+        copy->shortName = nullptr;
+        copy->longName = nullptr;
         if (source->shortName) {
             const std::size_t length = std::strlen(source->shortName) + 1;
             auto* text = static_cast<char*>(malloc_nid_postfix(length));
@@ -199,11 +199,11 @@ Buffer* DuplicateBuffer(const Buffer* source) {
         free_nid_postfix(copy);
         return nullptr;
     }
-    CopyGuestBytes(data, source->data, static_cast<std::size_t>(source->length),
-        "X509_NAME_dup: unreadable encoded name buffer");
     copy->data = data;
     copy->length = source->length;
     copy->capacity = source->capacity;
+    CopyGuestBytes(data, source->data, static_cast<std::size_t>(source->length),
+        "X509_NAME_dup: unreadable encoded name buffer");
     return copy;
 }
 
@@ -222,10 +222,10 @@ LibreSslX509Name* DuplicateName(const LibreSslX509Name* source) {
                 X509_NAME_free_nid_no_patch(copy);
                 return nullptr;
             }
-            CopyGuestBytes(canonical, source->canonEnc, static_cast<std::size_t>(source->canonEnclen),
-                "X509_NAME_dup: unreadable canonical encoding");
             copy->canonEnc = canonical;
             copy->canonEnclen = source->canonEnclen;
+            CopyGuestBytes(canonical, source->canonEnc, static_cast<std::size_t>(source->canonEnclen),
+                "X509_NAME_dup: unreadable canonical encoding");
         }
     }
     if (source->entries) {
