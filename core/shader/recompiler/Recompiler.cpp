@@ -168,10 +168,20 @@ void ValidateRequestInputs(const RecompileRequest& request) {
     ValidateVertexStageInputs(stage, request.context, mesh, tessellation);
 }
 
-std::uint32_t DeviceMemoryLdsBytes(const RecompileRequest& request) {
+std::uint32_t DeviceMemoryLdsBytes(const RecompileRequest& request, std::uint32_t reservedWorkgroupBytes = 0u) {
     if (!request.context.compute.has_value()) return 0u;
     const auto bytes = static_cast<std::uint64_t>(request.context.compute->ldsSizeDwords) * 4u;
-    return bytes + 4u > request.target.maxWorkgroupSharedMemoryBytes ? static_cast<std::uint32_t>(bytes) : 0u;
+    return bytes + 4u + reservedWorkgroupBytes > request.target.maxWorkgroupSharedMemoryBytes ? static_cast<std::uint32_t>(bytes) : 0u;
+}
+
+std::uint32_t NarrowReadFirstLaneExchangeBytes(const RecompileRequest& request, const RdnaProgram& decoded) {
+    if (!request.context.compute.has_value() || request.context.waveSize != 32u || request.target.subgroupSize == 0u || request.target.subgroupSize >= 32u) return 0u;
+    if (!std::ranges::any_of(decoded.instructions, [](const RdnaInstruction& instruction) { return instruction.op == RdnaOpcode::VReadfirstlaneB32; })) return 0u;
+    const auto& size = request.context.compute->numThreads;
+    const std::uint64_t threads = static_cast<std::uint64_t>(std::max(size[0], 1u)) * std::max(size[1], 1u) * std::max(size[2], 1u);
+    if (threads <= request.target.subgroupSize) return 0u;
+    const auto waves = (threads + 31u) / 32u;
+    return static_cast<std::uint32_t>((threads + waves) * 4u);
 }
 
 bool HardwareFloat32Flush(const RecompileRequest& request) {
@@ -271,7 +281,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     const auto sharedVectors = GuestSharedVectorRegisters(request.context);
     translateOptions.sharedVectorBase = sharedVectors.base;
     translateOptions.sharedVectorCount = sharedVectors.count;
-    translateOptions.sharedMemoryBytes = DeviceMemoryLdsBytes(request);
+    translateOptions.sharedMemoryBytes = DeviceMemoryLdsBytes(request, NarrowReadFirstLaneExchangeBytes(request, decoded));
     const bool hostInterpolationFirst = stageKind == ShaderStageKind::Pixel && request.target.fragmentShaderBarycentricEnabled && request.target.hostInterpolationFirst;
     const bool emulatedBarycentrics = stageKind == ShaderStageKind::Pixel && request.graphics.has_value() && request.graphics->emulateBarycentrics;
     translateOptions.fragmentShaderBarycentricEnabled = emulatedBarycentrics || (request.target.fragmentShaderBarycentricEnabled && !hostInterpolationFirst);
