@@ -79,5 +79,19 @@ int main() {
 
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(reserved), page);
     Require(get_vm_map_timestamp_nid_postfix() != unmappedTimestamp);
+
+    void* block = std::malloc(page);
+    Require(block != nullptr);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, page, true, true, false);
+    }
+    const auto addedTimestamp = get_vm_map_timestamp_nid_postfix();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+    }
+    Require(get_vm_map_timestamp_nid_postfix() != addedTimestamp);
+    std::free(block);
     return 0;
 }
