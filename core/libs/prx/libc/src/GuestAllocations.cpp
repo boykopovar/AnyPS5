@@ -94,6 +94,7 @@ bool isRetiring(const Range& range) {
 }
 
 std::atomic<std::uint64_t> generation{1};
+std::atomic<std::uint64_t> mapGeneration{1};
 std::atomic<void (*)(std::uintptr_t, std::size_t)> invalidator{nullptr};
 std::atomic<bool (*)(std::uintptr_t, std::size_t)> pinWaiter{nullptr};
 std::atomic<void (*)(const Mapped&, std::uint64_t)> gpuMapObserver{nullptr};
@@ -120,10 +121,18 @@ struct MutationState {
     std::vector<std::pair<std::uintptr_t, std::size_t>> changed;
     std::vector<std::pair<std::uintptr_t, std::size_t>> gpuMapped;
     std::vector<std::pair<std::uintptr_t, std::size_t>> unpinned;
+    bool mapChanged = false;
 };
 
+void noteMapChange(void* mutation) {
+    if (mutation != nullptr) static_cast<MutationState*>(mutation)->mapChanged = true;
+}
+
 void recordChange(void* mutation, const void* pointer, std::size_t bytes) {
-    if (mutation != nullptr && bytes != 0) static_cast<MutationState*>(mutation)->changed.emplace_back(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+    if (mutation == nullptr || bytes == 0) return;
+    auto* state = static_cast<MutationState*>(mutation);
+    state->changed.emplace_back(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+    state->mapChanged = true;
 }
 
 #if !defined(_WIN32) && !defined(__APPLE__) && !defined(__EMSCRIPTEN__)
@@ -182,6 +191,7 @@ void* GuestAllocationsBegin_nid_postfix() {
 void GuestAllocationsEnd_nid_postfix(void* mutation) noexcept {
     auto* state = static_cast<MutationState*>(mutation);
     for (const auto& [address, bytes] : state->unpinned) renewBacking(address, bytes);
+    if (state->mapChanged) mapGeneration.fetch_add(1, std::memory_order_release);
     const auto ended = generation.fetch_add(1, std::memory_order_release) + 1;
     if (const auto callback = invalidator.load(std::memory_order_acquire)) {
         for (const auto& [address, bytes] : state->changed) callback(address, bytes);
@@ -216,11 +226,16 @@ std::uint64_t GuestAllocationsGeneration_nid_postfix() {
     return generation.load(std::memory_order_acquire);
 }
 
+std::uint64_t GuestAllocationsMapGeneration_nid_postfix() {
+    return mapGeneration.load(std::memory_order_acquire);
+}
+
 void GuestAllocationsSetInvalidator_nid_postfix(void (*callback)(std::uintptr_t, std::size_t)) {
     invalidator.store(callback, std::memory_order_release);
 }
 
 void GuestAllocationsInvalidate_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+    mapGeneration.fetch_add(1, std::memory_order_release);
     generation.fetch_add(1, std::memory_order_release);
     if (const auto callback = invalidator.load(std::memory_order_acquire)) callback(address, bytes);
 }
@@ -275,18 +290,23 @@ void registerImage(const void* image) {
 }
 }
 
-void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
+void GuestAllocationsRegisterMainImage_nid_postfix(void* mutation) {
     auto& state = registry();
     if (state.mainImageRegistered) return;
     const auto image = GetModuleHandleW(nullptr);
     require(image != nullptr, "cannot locate the main guest image");
+    const bool registered = state.registeredImages.contains(reinterpret_cast<std::uintptr_t>(image));
     registerImage(image);
     state.mainImageRegistered = true;
+    if (!registered) noteMapChange(mutation);
 }
 
-void GuestAllocationsRegisterImage_nid_postfix(void*, const void* image) {
+void GuestAllocationsRegisterImage_nid_postfix(void* mutation, const void* image) {
     require(image != nullptr, "cannot register a guest image without a base");
+    auto& state = registry();
+    if (state.registeredImages.contains(reinterpret_cast<std::uintptr_t>(image))) return;
     registerImage(image);
+    noteMapChange(mutation);
 }
 
 #else
@@ -378,7 +398,7 @@ std::uintptr_t registerImagePages(const ImagePages& collected) {
 }
 }
 
-void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
+void GuestAllocationsRegisterMainImage_nid_postfix(void* mutation) {
     auto& state = registry();
     if (state.mainImageRegistered) return;
     ImagePages collected{.main = true, .pageSize = static_cast<std::uint64_t>(::sysconf(_SC_PAGESIZE))};
@@ -390,9 +410,10 @@ void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
     require(!collected.pages.empty(), "main guest image has no loadable segments");
     registerImagePages(collected);
     state.mainImageRegistered = true;
+    noteMapChange(mutation);
 }
 
-void GuestAllocationsRegisterImage_nid_postfix(void*, const void* image) {
+void GuestAllocationsRegisterImage_nid_postfix(void* mutation, const void* image) {
     require(image != nullptr, "cannot register a guest image without a base");
     auto& state = registry();
     const auto base = reinterpret_cast<std::uintptr_t>(image);
@@ -407,6 +428,7 @@ void GuestAllocationsRegisterImage_nid_postfix(void*, const void* image) {
     require(!collected.pages.empty(), "guest image has no loadable segments");
     require(collected.pages.begin()->first == base, "guest image does not start at its base");
     state.registeredImages.emplace(base, registerImagePages(collected));
+    noteMapChange(mutation);
 }
 #endif
 

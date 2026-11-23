@@ -32,9 +32,15 @@ int main() {
     Require(mappedTimestamp != reservedTimestamp);
     Require(get_vm_map_timestamp_nid_postfix() == mappedTimestamp);
 
+    const auto registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    {
+        GuestAllocations::Mutation query;
+        Require(query.Covers(mapped, page));
+    }
+    Require(GuestAllocations::GuestAllocationsGeneration_nid_postfix() != registryGeneration);
+    Require(get_vm_map_timestamp_nid_postfix() == mappedTimestamp);
+
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), reserveBytes) == 0);
     Require(get_vm_map_timestamp_nid_postfix() != mappedTimestamp);
-    Require(static_cast<std::uint32_t>(get_vm_map_timestamp_nid_postfix()) ==
-            static_cast<std::uint32_t>(GuestAllocations::GuestAllocationsGeneration_nid_postfix()));
     return 0;
 }

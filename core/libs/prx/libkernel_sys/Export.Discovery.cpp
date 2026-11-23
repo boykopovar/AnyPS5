@@ -108,7 +108,7 @@ int APS5_VABI get_self_auth_info_nid_postfix(KernelAuthInfo* info) {
 }
 
 int APS5_VABI get_vm_map_timestamp_nid_postfix(void) {
-    return static_cast<int>(static_cast<std::uint32_t>(GuestAllocations::GuestAllocationsGeneration_nid_postfix()));
+    return static_cast<int>(static_cast<std::uint32_t>(GuestAllocations::GuestAllocationsMapGeneration_nid_postfix()));
 }
 
 int APS5_VABI ipmimgr_call_nid_postfix(void) {
