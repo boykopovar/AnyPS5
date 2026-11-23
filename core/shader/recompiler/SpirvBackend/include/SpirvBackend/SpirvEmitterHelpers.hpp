@@ -313,7 +313,7 @@ std::uint32_t AtomicUpdate(SpirvEmitterState& state, std::uint32_t pointer, Reso
 }
 
 template<typename TUpdate>
-std::uint32_t LockedDeviceUpdate(SpirvEmitterState& state, std::uint32_t lock, std::uint32_t type, std::uint32_t zero, TUpdate&& update) {
+std::uint32_t LockedDeviceUpdate(SpirvEmitterState& state, std::uint32_t lock, std::uint32_t type, std::uint32_t zero, TUpdate&& update, bool oneLanePerSubgroup = false) {
     const auto entry = state.currentLabel;
     const auto header = state.module.AllocateId();
     const auto body = state.module.AllocateId();
@@ -340,6 +340,16 @@ std::uint32_t LockedDeviceUpdate(SpirvEmitterState& state, std::uint32_t lock, s
     state.module.AddFunction(spv::OpSelectionMerge, pendingMerge, spv::SelectionControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, done, pendingMerge, pending);
     EmitLabel(state, pending);
+    auto attempt = pending;
+    const auto servedMerge = oneLanePerSubgroup ? state.module.AllocateId() : 0u;
+    if (oneLanePerSubgroup) {
+        const auto elected = state.module.AllocateId();
+        EmitSubgroupElect(state, elected);
+        attempt = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, servedMerge, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, elected, attempt, servedMerge);
+        EmitLabel(state, attempt);
+    }
     const auto previous = state.module.AllocateId();
     state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, lock, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, 1u), ConstantU32(state, 0u));
     const auto acquired = state.module.AllocateId();
@@ -355,14 +365,26 @@ std::uint32_t LockedDeviceUpdate(SpirvEmitterState& state, std::uint32_t lock, s
     const auto criticalExit = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, attemptMerge);
     EmitLabel(state, attemptMerge);
-    const auto served = state.module.AllocateId();
-    const auto servedResult = state.module.AllocateId();
-    state.module.AddFunction(spv::OpPhi, TypeBool(state), served, ConstantBool(state, true), criticalExit, ConstantBool(state, false), pending);
-    state.module.AddFunction(spv::OpPhi, type, servedResult, old, criticalExit, result, pending);
+    auto served = state.module.AllocateId();
+    auto servedResult = state.module.AllocateId();
+    state.module.AddFunction(spv::OpPhi, TypeBool(state), served, ConstantBool(state, true), criticalExit, ConstantBool(state, false), attempt);
+    state.module.AddFunction(spv::OpPhi, type, servedResult, old, criticalExit, result, attempt);
+    auto servedExit = attemptMerge;
+    if (oneLanePerSubgroup) {
+        state.module.AddFunction(spv::OpBranch, servedMerge);
+        EmitLabel(state, servedMerge);
+        const auto electedServed = state.module.AllocateId();
+        const auto electedResult = state.module.AllocateId();
+        state.module.AddFunction(spv::OpPhi, TypeBool(state), electedServed, served, attemptMerge, ConstantBool(state, false), pending);
+        state.module.AddFunction(spv::OpPhi, type, electedResult, servedResult, attemptMerge, result, pending);
+        served = electedServed;
+        servedResult = electedResult;
+        servedExit = servedMerge;
+    }
     state.module.AddFunction(spv::OpBranch, pendingMerge);
     EmitLabel(state, pendingMerge);
-    state.module.AddFunction(spv::OpPhi, TypeBool(state), doneNext, served, attemptMerge, done, body);
-    state.module.AddFunction(spv::OpPhi, type, resultNext, servedResult, attemptMerge, result, body);
+    state.module.AddFunction(spv::OpPhi, TypeBool(state), doneNext, served, servedExit, done, body);
+    state.module.AddFunction(spv::OpPhi, type, resultNext, servedResult, servedExit, result, body);
     const auto waiting = state.module.AllocateId();
     state.module.AddFunction(spv::OpLogicalNot, TypeBool(state), waiting, doneNext);
     const auto ballot = state.module.AllocateId();
