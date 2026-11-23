@@ -1,4 +1,4 @@
-import {actions, canonicalChord, canonicalValue, chordButtons, defaults, mouseValues, typesForAction, wheelValues} from './mapping.js';
+import {actions, canonicalChord, canonicalValue, chordButtons, defaults, mouseValues, padButtons, typesForAction, wheelValues} from './mapping.js';
 import {keyNames} from './keys.js';
 
 export const settings = [
@@ -14,15 +14,16 @@ export const settings = [
     {name: 'StickModifierScale', minimum: 0.05, maximum: 1},
     {name: 'KeyboardRampMs', minimum: 0, maximum: 2000},
     {name: 'TriggerRampMs', minimum: 0, maximum: 2000},
-    {name: 'MouseStickTarget', kind: 'stickTarget'}
+    {name: 'MouseStickTarget', kind: 'stickTarget'},
+    {name: 'ToggleActions', kind: 'padButtons'}
 ];
 
 const numberPattern = /^-?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/u;
-const sdlControllerButtons = [
+export const sdlControllerButtons = [
     'a', 'b', 'x', 'y', 'back', 'guide', 'start', 'leftstick', 'rightstick', 'leftshoulder', 'rightshoulder',
     'dpup', 'dpdown', 'dpleft', 'dpright', 'misc1', 'paddle1', 'paddle2', 'paddle3', 'paddle4', 'touchpad'
 ];
-const controllerDestinations = [...chordButtons, 'None'];
+export const controllerDestinations = [...chordButtons, 'None'];
 
 function parseControllerRemap(button, value, used) {
     const name = typeof button === 'string' ? button.trim() : '';
@@ -48,6 +49,16 @@ export function settingValue(setting, value) {
     }
     if (setting.kind === 'stickTarget') {
         if (canonicalValue(text, ['LEFT', 'RIGHT']) === undefined) return `${setting.name} must be LEFT or RIGHT.`;
+        return '';
+    }
+    if (setting.kind === 'padButtons') {
+        for (const part of text.split(',')) {
+            const name = part.trim();
+            if (!name) return `${setting.name} has an empty action name.`;
+            const action = canonicalValue(name, actions);
+            if (action === undefined) return `${setting.name}: unknown action '${name}'.`;
+            if (!padButtons.has(action)) return `${setting.name} only lists pad buttons, not '${action}'.`;
+        }
         return '';
     }
     const underflows = parsed === 0 && /[1-9]/u.test(text.split(/e/iu, 1)[0]);
@@ -198,7 +209,7 @@ export function parseIni(text) {
             errors.push({line: index + 1, message: 'Expected Action = TYPE:VALUE.'});
             return;
         }
-        const entry = {action: name, type: source.slice(0, colon), value: source.slice(colon + 1)};
+        const entry = {action: name.trim(), type: source.slice(0, colon), value: source.slice(colon + 1)};
         const result = validate([entry]);
         if (result.errors.length) {
             errors.push(...result.errors.map(error => ({line: index + 1, message: error.message})));
