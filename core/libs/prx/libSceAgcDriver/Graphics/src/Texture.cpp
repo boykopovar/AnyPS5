@@ -1686,6 +1686,135 @@ VkFormat UintStorageViewFormat(VkFormat format) {
     }
 }
 
+std::uint32_t Float16StorageComponents(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R16_SFLOAT: return 1u;
+        case VK_FORMAT_R16G16_SFLOAT: return 2u;
+        case VK_FORMAT_R16G16B16A16_SFLOAT: return 4u;
+        default: return 0u;
+    }
+}
+
+bool Float16TransfersKeepBits(const Context& context, VkFormat format) {
+    const auto components = Float16StorageComponents(format);
+    if (components == 0u) return true;
+    static AgcDriver::Mutex mutex;
+    static std::map<std::pair<VkDevice, VkFormat>, bool> known;
+    std::lock_guard lock(mutex);
+    if (const auto found = known.find({context.device, format}); found != known.end()) return found->second;
+
+    constexpr std::uint32_t width = 128u;
+    constexpr std::uint32_t height = 128u;
+    const auto bytes = static_cast<std::size_t>(width) * height * components * sizeof(std::uint16_t);
+    Buffer upload(context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    Buffer readback(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    constexpr std::array<std::uint16_t, 8> patterns{0x7d01u, 0xfd0au, 0x7e55u, 0xfeabu, 0x7c01u, 0xfc01u, 0x7fffu, 0xffffu};
+    for (std::size_t at = 0; at < bytes; at += sizeof(std::uint16_t)) {
+        const auto value = patterns[(at / sizeof(std::uint16_t)) % patterns.size()];
+        std::memcpy(upload.Bytes().data() + at, &value, sizeof(value));
+    }
+
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    struct Release {
+        const Context& context;
+        VkImage& image;
+        VkDeviceMemory& memory;
+        ~Release() {
+            if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
+            if (memory) MemoryAccounting::Free(context, memory);
+        }
+    } release{context, image, memory};
+
+    VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    info.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.format = format;
+    info.extent = {width, height, 1u};
+    info.mipLevels = 1u;
+    info.arrayLayers = 1u;
+    info.samples = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage fp16 storage transfer probe");
+    VkMemoryRequirements requirements{};
+    context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(MemoryAccounting::Allocate(context, allocation, "fp16 storage transfer probe", &memory), "vkAllocateMemory fp16 storage transfer probe");
+    Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory fp16 storage transfer probe");
+
+    CommandBatch batch(context);
+    const auto commands = batch.Handle();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u};
+    VkImageMemoryBarrier toDestination{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    toDestination.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toDestination.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    toDestination.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toDestination.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDestination.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDestination.image = image;
+    toDestination.subresourceRange = range;
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDestination);
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u};
+    region.imageExtent = {width, height, 1u};
+    context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, upload.Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1u, &region);
+    VkImageMemoryBarrier toSource = toDestination;
+    toSource.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toSource.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    toSource.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toSource.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSource);
+    context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.Handle(), 1u, &region);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    batch.SubmitAndWait();
+
+    const bool keeps = std::memcmp(upload.Bytes().data(), readback.Bytes().data(), bytes) == 0;
+    known.emplace(std::pair{context.device, format}, keeps);
+    return keeps;
+}
+
+VkFormat StorageImageFormatFor(const Context& context, VkFormat storageFormat) {
+    if (std::getenv("APS5_NO_FP16_UINT_STORAGE_BACKING") != nullptr || Float16TransfersKeepBits(context, storageFormat)) return storageFormat;
+    const auto uintFormat = UintStorageViewFormat(storageFormat);
+    Require(uintFormat != VK_FORMAT_UNDEFINED, "an fp16 storage transfer probe failed without a compatible UINT backing format");
+    return uintFormat;
+}
+
+std::uint16_t Float16Bits(float value) {
+    const auto bits = std::bit_cast<std::uint32_t>(value);
+    const std::uint32_t sign = (bits >> 16u) & 0x8000u;
+    const std::uint32_t exponent = (bits >> 23u) & 0xffu;
+    std::uint32_t mantissa = bits & 0x7fffffu;
+    if (exponent == 0xffu) {
+        if (mantissa == 0u) return static_cast<std::uint16_t>(sign | 0x7c00u);
+        auto payload = mantissa >> 13u;
+        if (payload == 0u) payload = 1u;
+        return static_cast<std::uint16_t>(sign | 0x7c00u | payload);
+    }
+    const auto halfExponent = static_cast<std::int32_t>(exponent) - 127 + 15;
+    if (halfExponent >= 31) return static_cast<std::uint16_t>(sign | 0x7c00u);
+    if (halfExponent <= 0) {
+        if (halfExponent < -10) return static_cast<std::uint16_t>(sign);
+        mantissa |= 0x800000u;
+        const auto shift = static_cast<std::uint32_t>(14 - halfExponent);
+        auto halfMantissa = mantissa >> shift;
+        const auto remainder = mantissa & ((1u << shift) - 1u);
+        const auto halfway = 1u << (shift - 1u);
+        if (remainder > halfway || (remainder == halfway && (halfMantissa & 1u) != 0u)) ++halfMantissa;
+        return static_cast<std::uint16_t>(sign | halfMantissa);
+    }
+    auto half = sign | (static_cast<std::uint32_t>(halfExponent) << 10u) | (mantissa >> 13u);
+    const auto remainder = mantissa & 0x1fffu;
+    if (remainder > 0x1000u || (remainder == 0x1000u && (half & 1u) != 0u)) ++half;
+    return static_cast<std::uint16_t>(half);
+}
+
 VkFormat StorageFormatFor(const Context& context, VkFormat format) {
     const auto storage = StorageFormatOrUndefined(context, format);
     if (storage == VK_FORMAT_UNDEFINED) Require(false, "guest storage texture format " + std::to_string(format) + " cannot be used as a storage image");
@@ -1816,6 +1945,9 @@ void StorageTexture::clearImage(VkCommandBuffer commands, VkClearColorValue valu
     if (imageFormat == VK_FORMAT_R8G8B8A8_UINT && storageFormat == VK_FORMAT_R32_UINT) {
         const auto bits = value.uint32[0];
         for (std::uint32_t component = 0; component < 4; ++component) value.uint32[component] = (bits >> (8 * component)) & 0xffu;
+    } else if (imageFormat == UintStorageViewFormat(storageFormat)) {
+        const auto components = Float16StorageComponents(storageFormat);
+        for (std::uint32_t component = 0; component < components; ++component) value.uint32[component] = Float16Bits(value.float32[component]);
     }
     context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &range);
 }
@@ -1826,7 +1958,7 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         Require(mipLevel < descriptor.mipCount, "storage texture mip level is outside the texture");
         const auto vkFormat = StorageFormatFor(context, ResolveTextureFormat(descriptor.format));
         storageFormat = vkFormat;
-        imageFormat = descriptor.format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float) && storageFormat == VK_FORMAT_R32_UINT ? VK_FORMAT_R8G8B8A8_UINT : storageFormat;
+        imageFormat = descriptor.format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float) && storageFormat == VK_FORMAT_R32_UINT ? VK_FORMAT_R8G8B8A8_UINT : StorageImageFormatFor(context, storageFormat);
 #ifdef APS5_DEBUG_LOG
         AGC_LOG_DEFERRED(stdout, "StorageTexture address=0x%llx %ux%u mips=%u mip=%u layers=%u base=%u dim=%d tile=%d format=%u vk=%d", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, mipLevel,
                      descriptor.depthOrLastArray, descriptor.baseArray, static_cast<int>(descriptor.dimension), static_cast<int>(descriptor.tileMode), descriptor.format, static_cast<int>(vkFormat));
