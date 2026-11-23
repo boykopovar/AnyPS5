@@ -2069,7 +2069,7 @@ int APS5_VABI _ZNK6icu_6815Normalizer2Impl9decomposeEitRNS_16ReorderingBufferER1
 int APS5_VABI _ZNK6icu_6811Normalizer216isNormalizedUTF8ENS_11StringPieceER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6823UCharsDictionaryMatcherD1Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_vo6bvI_plus_oYEw_nid_no_patch();
-void APS5_VABI ures_getVersionByKey_nid_postfix(const UResourceBundle* res, const char* key, std::uint8_t* ver, std::int32_t* status);
+int APS5_VABI ures_getVersionByKey_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_vrSTiBp7Bxc_nid_no_patch();
 int APS5_VABI _ZN6icu_6816LocaleKeyFactoryC1Ei_nid_postfix();
 int APS5_VABI _ZNK6icu_6816LocaleKeyFactory16updateVisibleIDsERNS_9HashtableER10UErrorCode_nid_postfix();

@@ -8986,24 +8986,7 @@ int APS5_VABI sceIcuLegacyUnknown_vo6bvI_plus_oYEw_nid_no_patch() {
 }
 APS5_EXPORT("vo6bvI+oYEw", sceIcuLegacyUnknown_vo6bvI_plus_oYEw_nid_no_patch);
 
-void APS5_VABI ures_getVersionByKey_nid_postfix(const UResourceBundle* res, const char* key, std::uint8_t* ver, std::int32_t* status) {
-    if (!status) APS5_INVALID_ARG_EX;
-    std::int32_t currentStatus = 0;
-    const int savedErrno = errno;
-    const bool statusReadable = GuestCopyIn_nid_no_patch(&currentStatus, status, sizeof(currentStatus));
-    errno = savedErrno;
-    if (!statusReadable) APS5_INVALID_ARG_EX;
-    if (currentStatus > 0) return;
-    if (!res) {
-        const std::int32_t errorVal = U_ILLEGAL_ARGUMENT_ERROR;
-        const int copyOutErrno = errno;
-        const bool copied = GuestCopyOut_nid_no_patch(status, &errorVal, sizeof(errorVal));
-        errno = copyOutErrno;
-        if (!copied) APS5_INVALID_ARG_EX;
-        return;
-    }
-    (void)key;
-    (void)ver;
+int APS5_VABI ures_getVersionByKey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

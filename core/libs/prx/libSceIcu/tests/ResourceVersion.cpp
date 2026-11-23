@@ -10,12 +10,9 @@
 
 namespace {
 
-constexpr std::int32_t IllegalArgument = 1;
-
 static_assert(std::is_same_v<decltype(&ures_getVersionNumberInternal_nid_postfix), const char* (APS5_VABI*)(const UResourceBundle*)>);
 static_assert(std::is_same_v<decltype(&ures_getVersionNumber_nid_postfix), const char* (APS5_VABI*)(const UResourceBundle*)>);
 static_assert(std::is_same_v<decltype(&ures_getVersion_nid_postfix), void (APS5_VABI*)(const UResourceBundle*, std::uint8_t*)>);
-static_assert(std::is_same_v<decltype(&ures_getVersionByKey_nid_postfix), void (APS5_VABI*)(const UResourceBundle*, const char*, std::uint8_t*, std::int32_t*)>);
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -49,24 +46,6 @@ void CheckNullArguments() {
     auto* unmapped = reinterpret_cast<std::uint8_t*>(std::uintptr_t{0x10});
     ures_getVersion_nid_postfix(nullptr, unmapped);
     Require(errno == 73, "unmapped version pointer errno");
-
-    std::int32_t status = 0;
-    ures_getVersionByKey_nid_postfix(nullptr, "Version", version, &status);
-    Require(status == IllegalArgument, "null bundle version by key status");
-    Require(version[0] == 0xaa, "null bundle version by key output untouched");
-
-    status = 0;
-    ures_getVersionByKey_nid_postfix(nullptr, nullptr, nullptr, &status);
-    Require(status == IllegalArgument, "null bundle null args status");
-
-    status = 17;
-    ures_getVersionByKey_nid_postfix(nullptr, "Version", version, &status);
-    Require(status == 17, "pre-failed status preserved");
-    Require(version[0] == 0xaa, "pre-failed output untouched");
-
-    RequireThrows([&] { ures_getVersionByKey_nid_postfix(nullptr, "Version", version, nullptr); }, "null status throws");
-    auto* unmappedStatus = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
-    RequireThrows([&] { ures_getVersionByKey_nid_postfix(nullptr, "Version", version, unmappedStatus); }, "unmapped status throws");
 }
 
 void CheckWildAndNullVersionHandling() {
@@ -76,10 +55,6 @@ void CheckWildAndNullVersionHandling() {
     RequireThrows([&] { ures_getVersionNumberInternal_nid_postfix(wildBundle); }, "wild bundle internal throws");
     RequireThrows([&] { ures_getVersionNumber_nid_postfix(wildBundle); }, "wild bundle number throws");
     RequireThrows([&] { ures_getVersion_nid_postfix(wildBundle, version); }, "wild bundle version throws");
-    RequireThrows([&] {
-        std::int32_t status = 0;
-        ures_getVersionByKey_nid_postfix(wildBundle, "Version", version, &status);
-    }, "wild bundle get by key throws");
 
     std::array<std::uint8_t, 200> bundleStorage{};
     auto* bundle = reinterpret_cast<UResourceBundle*>(bundleStorage.data());
@@ -88,15 +63,6 @@ void CheckWildAndNullVersionHandling() {
     RequireThrows([&] { ures_getVersionNumberInternal_nid_postfix(bundle); }, "stack bundle null fVersion internal throws");
     RequireThrows([&] { ures_getVersionNumber_nid_postfix(bundle); }, "stack bundle null fVersion number throws");
     RequireThrows([&] { ures_getVersion_nid_postfix(bundle, version); }, "stack bundle null fVersion version throws");
-    RequireThrows([&] {
-        std::int32_t status = 0;
-        ures_getVersionByKey_nid_postfix(bundle, "Version", version, &status);
-    }, "stack bundle get by key throws");
-
-    std::int32_t preFailedStatus = 17;
-    ures_getVersionByKey_nid_postfix(bundle, "Version", version, &preFailedStatus);
-    Require(preFailedStatus == 17, "pre-failed status preserved on non-null bundle");
-    Require(version[0] == 0x11, "pre-failed output untouched on non-null bundle");
 
     const char versionStr[] = "68.2.0.0";
     const char* verPtr = versionStr;
