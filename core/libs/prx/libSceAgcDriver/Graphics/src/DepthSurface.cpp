@@ -797,15 +797,11 @@ bool ProbeStencilShadowCopy(const Context& context, VkFormat format, std::uint32
             info.usage = usage;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            auto owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
             VkImage image = VK_NULL_HANDLE;
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage stencil shadow probe");
-            auto owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-            try {
-                owned->Allocate(context, info, "vkAllocateMemory stencil shadow probe");
-            } catch (...) {
-                context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-                throw;
-            }
+            owned->image = image;
+            owned->Allocate(context, info, "vkAllocateMemory stencil shadow probe");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory stencil shadow probe");
             return owned;
         };
