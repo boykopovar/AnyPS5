@@ -1838,7 +1838,7 @@ int APS5_VABI sceKernelIsCronos() {
 }
 
 int APS5_VABI sceKernelIsEcoChargeAvailable() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceKernelIsSpmemAvailable() {
