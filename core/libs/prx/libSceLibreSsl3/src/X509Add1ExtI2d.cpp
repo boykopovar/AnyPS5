@@ -392,9 +392,11 @@ int APS5_VABI X509_add1_ext_i2d_nid_postfix(LibreSsl3ExtensionsX509* certificate
     auto* info = const_cast<LibreSsl3ExtensionsCertInfo*>(certificate->certInfo);
     if (!info) throw std::invalid_argument(std::string(__func__) + ": null certificate info");
 
-    int position = X509_get_ext_by_NID_nid_postfix(reinterpret_cast<const LibreSsl3Certificate*>(certificate), nid, -1);
     LibreSslStack* stack = StackOf(certificate);
     const std::uint64_t operation = flags & OperationMask;
+    int position = -1;
+    if (operation != AppendOperation)
+        position = X509_get_ext_by_NID_nid_postfix(reinterpret_cast<const LibreSsl3Certificate*>(certificate), nid, -1);
 
     switch (operation) {
     case DefaultOperation:
@@ -404,7 +406,6 @@ int APS5_VABI X509_add1_ext_i2d_nid_postfix(LibreSsl3ExtensionsX509* certificate
         }
         break;
     case AppendOperation:
-        position = -1;
         break;
     case ReplaceOperation:
         break;

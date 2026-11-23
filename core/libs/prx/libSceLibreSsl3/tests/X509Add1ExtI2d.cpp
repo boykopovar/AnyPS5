@@ -100,6 +100,7 @@ constexpr int HoldInstructionCodeNid = 430;
 constexpr int InhibitAnyPolicyNid = 748;
 constexpr int SubjectAltNameNid = 85;
 constexpr int UndefinedNid = 0;
+constexpr int UnregisteredExtensionNid = 30000;
 
 constexpr std::uint64_t DefaultFlag = 0;
 constexpr std::uint64_t AppendFlag = 1;
@@ -431,6 +432,18 @@ void CheckFailures() {
 
 }
 
+void CheckAppendSkipsObjectLookup() {
+    Certificate certificate;
+    const unsigned char octets[] = {0xAA};
+    Asn1String value = StringValue(4, octets, 1);
+    ClearErrors();
+    Require(X509_add1_ext_i2d_nid_postfix(&certificate.x509, UnregisteredExtensionNid, &value, 0, AppendFlag) == 0);
+    Require(certificate.Count() == 0);
+    Require(ERR_get_error_nid_postfix() == ErrorCode(129));
+    Require(ERR_get_error_nid_postfix() == ErrorCode(144));
+    Require(ERR_get_error_nid_postfix() == 0);
+}
+
 int main() {
     std::array<void*, 7> api{
         reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch),
@@ -445,6 +458,7 @@ int main() {
     CheckObject();
     CheckNonce();
     CheckFlags();
+    CheckAppendSkipsObjectLookup();
     CheckUnsupportedOrdering();
     CheckFailures();
 
