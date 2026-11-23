@@ -243,6 +243,11 @@ static void CheckTimelocalDst() {
 #endif
     Require(forTimelocal.tm_isdst == 1, "timelocal normalized tm_isdst was not 1 in summer DST");
 
+    GuestTm universal{};
+    Require(gmtime_s_nid_postfix(&summerTimer, &universal) == &universal && universal.tm_isdst == -1, "gmtime_s set tm_isdst");
+    Require(mktime_nid_postfix(&universal) == summerTimer + 4 * 3600, "mktime of gmtime_s fields did not determine DST");
+    Require(gmtime_nid_postfix(&summerTimer)->tm_isdst == 0, "gmtime did not set tm_isdst to 0");
+
     GuestTm failure{};
     failure.tm_year = std::numeric_limits<int>::max();
     failure.tm_mon = std::numeric_limits<int>::max();
@@ -265,6 +270,7 @@ static void CheckTimegm() {
     for (const auto timer : timers) {
         GuestTm expected{};
         Require(gmtime_s_nid_postfix(&timer, &expected) == &expected, "gmtime conversion failed");
+        expected.tm_isdst = 0;
         GuestTm input = expected;
         input.tm_sec += 60;
         --input.tm_min;

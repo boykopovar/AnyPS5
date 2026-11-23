@@ -25,10 +25,14 @@
  */
 
 #include "prx/libSceJsc/include/WtfBitVectorExports.hpp"
+#include "prx/libc/include/Api.hpp"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <limits>
+#include <new>
 #include <stdexcept>
 
 namespace {
@@ -64,6 +68,16 @@ std::uintptr_t* Words(OutOfLineBits* bits) {
     return reinterpret_cast<std::uintptr_t*>(bits + 1);
 }
 
+OutOfLineBits* CreateOutOfLine(std::size_t numBits) {
+    if (numBits > std::numeric_limits<std::size_t>::max() - (BitsInPointer - 1))
+        throw std::length_error("WTF::BitVector::resizeOutOfLine: size overflows");
+    numBits = (numBits + BitsInPointer - 1) & ~static_cast<std::size_t>(BitsInPointer - 1);
+    const std::size_t size = sizeof(OutOfLineBits) + sizeof(std::uintptr_t) * (numBits / BitsInPointer);
+    void* memory = malloc_nid_postfix(size);
+    if (!memory) throw std::bad_alloc();
+    return new (memory) OutOfLineBits{numBits};
+}
+
 }
 
 extern "C" {
@@ -89,6 +103,30 @@ void APS5_VABI _ZN3WTF9BitVector10filterSlowERKS0_(BitVector* self, const BitVec
 
     for (unsigned i = NumWords(b); i < NumWords(a); ++i)
         Words(a)[i] = 0;
+}
+
+void APS5_VABI _ZN3WTF9BitVector15resizeOutOfLineEm(BitVector* self, std::size_t numBits) {
+    if (!self) throw std::invalid_argument("WTF::BitVector::resizeOutOfLine requires a vector");
+    if (numBits <= MaxInlineBits) throw std::invalid_argument("WTF::BitVector::resizeOutOfLine: size fits inline");
+    if (!IsInline(*self) && IsEmptyOrDeletedValue(*self))
+        throw std::invalid_argument("WTF::BitVector::resizeOutOfLine: empty or deleted vector");
+    OutOfLineBits* newBits = CreateOutOfLine(numBits);
+    const std::size_t newNumWords = NumWords(newBits);
+    if (IsInline(*self)) {
+        *Words(newBits) = CleanseInlineBits(self->bitsOrPointer);
+        std::memset(Words(newBits) + 1, 0, (newNumWords - 1) * sizeof(std::uintptr_t));
+    } else {
+        OutOfLineBits* oldBits = OutOfLine(*self);
+        if (numBits > oldBits->numBits) {
+            const std::size_t oldNumWords = NumWords(oldBits);
+            std::memcpy(Words(newBits), Words(oldBits), oldNumWords * sizeof(std::uintptr_t));
+            std::memset(Words(newBits) + oldNumWords, 0, (newNumWords - oldNumWords) * sizeof(std::uintptr_t));
+        } else {
+            std::memcpy(Words(newBits), Words(oldBits), newNumWords * sizeof(std::uintptr_t));
+        }
+        free_nid_postfix(oldBits);
+    }
+    self->bitsOrPointer = reinterpret_cast<std::uintptr_t>(newBits) >> 1;
 }
 
 }

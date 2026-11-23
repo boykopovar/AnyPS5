@@ -68,6 +68,34 @@ static void CheckRingBufCheckoutNullBlockSize() {
     _ZN3sce2np7RingBufD1Ev(&ring);
 }
 
+static void CheckRingBufNullSelfLifecycle() {
+    _ZN3sce2np7RingBufC1Ev(nullptr);
+    _ZN3sce2np7RingBufD1Ev(nullptr);
+    _ZN3sce2np7RingBuf4ctorEv(nullptr);
+    _ZN3sce2np7RingBuf7DestroyEv(nullptr);
+
+    std::array<std::uint8_t, 0x30> storage{};
+    NpRingBuf* ring = reinterpret_cast<NpRingBuf*>(storage.data());
+    std::memset(storage.data(), 0xAA, storage.size());
+    _ZN3sce2np7RingBufC1Ev(ring);
+    Require(ring->vtable != nullptr && ring->buf == nullptr && ring->readPointer == nullptr &&
+            ring->writePointer == nullptr && ring->size == 0 && ring->bufSize == 0);
+
+    std::memset(storage.data(), 0xAA, storage.size());
+    _ZN3sce2np7RingBuf4ctorEv(ring);
+    Require(ring->buf == nullptr && ring->readPointer == nullptr && ring->writePointer == nullptr &&
+            ring->size == 0 && ring->bufSize == 0);
+
+    std::memset(storage.data(), 0xAA, storage.size());
+    _ZN3sce2np7RingBuf7DestroyEv(ring);
+    Require(ring->buf == nullptr && ring->readPointer == nullptr && ring->writePointer == nullptr &&
+            ring->size == 0 && ring->bufSize == 0);
+
+    std::memset(storage.data(), 0xAA, storage.size());
+    _ZN3sce2np7RingBufD1Ev(ring);
+    Require(ring->vtable != nullptr);
+}
+
 int main() {
     constexpr int tooSmall = static_cast<int>(0x80558008);
     const std::array<unsigned char, 4> input{0, 0x7f, 0x80, 0xff};
@@ -96,4 +124,5 @@ int main() {
         }
     }
     CheckRingBufCheckoutNullBlockSize();
+    CheckRingBufNullSelfLifecycle();
 }

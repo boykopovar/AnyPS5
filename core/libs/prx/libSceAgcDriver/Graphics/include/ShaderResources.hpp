@@ -56,11 +56,11 @@ struct StorageTextureBudgetSnapshot {
     std::uint64_t selectedBudget = 0;
 };
 
-StorageTextureBudgetSnapshot CalculateStorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes);
+StorageTextureBudgetSnapshot CalculateStorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes, bool demand = false);
 std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory);
 std::uint64_t StorageTextureCeiling(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported);
-std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes);
-std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes, std::uint64_t storageBytes = 0);
+std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes, bool demand = false);
+std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes, std::uint64_t storageBytes = 0, bool demand = false);
 bool SampledBudgetReportDue(std::uint64_t reported, std::uint64_t budget, std::chrono::steady_clock::duration sinceReport);
 std::optional<std::uint32_t> LargestDeviceLocalHeap(const VkPhysicalDeviceMemoryProperties& memory);
 std::uint64_t StorageTextureCacheBudget(const Context& context);
@@ -241,6 +241,14 @@ public:
         DescriptorCache::SetAllocation fragmentAllocation;
         DescriptorCache::SetAllocation allocation;
         std::vector<Snapshot> snapshots;
+        struct InPlace {
+            std::size_t allocation;
+            VkBuffer buffer;
+            VkDeviceSize offset;
+            std::size_t bytes;
+        };
+        std::vector<InPlace> inPlace;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> inPlaceReads;
         ~DrawBindings();
     };
     struct MovedBuffer {
@@ -251,6 +259,7 @@ public:
         VkBuffer inPlace = VK_NULL_HANDLE;
         VkDeviceSize inPlaceOffset = 0;
         std::uint32_t adjustment = 0;
+        bool dispatchInPlace = false;
     };
     struct DrawUse {
         DrawUse() = default;
@@ -272,6 +281,7 @@ public:
         MoveRefusal refusal = MoveRefusal::None;
         std::size_t buffers = 0;
         std::size_t bytes = 0;
+        std::size_t inPlace = 0;
     };
     static const char* MoveRefusalName(MoveRefusal refusal);
     std::optional<std::vector<MovedBuffer>> MovedDispatchBuffers(const CompiledShader& shader, Recorder* recorder, std::size_t maxBytes, MoveProof& proof) const;
@@ -281,7 +291,7 @@ public:
     // Deferred completion: MarkGpuWrites registers the results the recorded work leaves on the GPU
     // (storage images stay there; buffer ranges are noted so CPU reads wait); WriteBackBuffers runs
     // once the work completed.
-    void MarkGpuWrites(Recorder& recorder);
+    void MarkGpuWrites(Recorder& recorder, const DrawBindings* bindings = nullptr);
     void WriteBackBuffers();
     // Whether WriteBackBuffers has anything the CPU must see (copied written buffers, BDA faults).
     bool NeedsCompletion() const { return (bda != nullptr && faultChecks) || guestMemory.HasCopiedWrites(); }
@@ -318,6 +328,7 @@ public:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> InPlaceReads() const { return guestMemory.InPlaceReads(); }
     void InPlaceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const { guestMemory.InPlaceReads(out); }
     std::vector<std::pair<VkImage, bool>> StorageImages() const;
+    void StorageImages(std::vector<std::pair<VkImage, bool>>& out) const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const { return guestMemory.DeviceReads(); }
     void DeviceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const { guestMemory.DeviceReads(out); }
     bool ReadsImage(const StorageTexture* image) const;
@@ -353,6 +364,7 @@ public:
     void PrecollectSurfaces() const;
     bool Reusable() const { return reusable; }
     void KeepStorageImageBytes(Recorder& recorder) const;
+    std::size_t RefreshStorageChangedOutsideWatch();
     const std::vector<std::uint64_t>& MultisampleSources() const { return multisampleSources; }
     static bool NeverReusable(std::span<const CompiledShader> shaders);
     static std::uint64_t DepthGuardRefusals();
@@ -646,6 +658,7 @@ private:
         bool sourceEligible = false;
         bool depthCompare = false;
         bool sourceRefreshed = false;
+        const StorageTexture* alias = nullptr;
     };
     // `serialBefore` is StorageTexture::PendingSerial() loaded before any check of this Revalidate;
     // `refreshed` the surfaces refreshOwnObjects resolved earlier in the same Revalidate (empty on
@@ -775,6 +788,7 @@ private:
     std::vector<bool> storageWritten;
     std::vector<bool> storageAtomic;
     std::vector<bool> storageAtomic64;
+    std::vector<bool> storageUint;
     std::vector<std::shared_ptr<Sampler>> samplers;
     std::shared_ptr<Sampler> paddingSampler;
     struct SamplerSource {

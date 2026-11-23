@@ -1,4 +1,5 @@
 #include "SceTypes.hpp"
+#include "prx/libSceAjm.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -54,7 +55,7 @@ void UseAfterStaticTeardown() {
     if (ajm.batchInitialize(buffer, sizeof(buffer), &info) != 0 || ajm.batchJobClearContext(&info, instance, &sideband) != 0) Fail("a batch cannot be built after static teardown");
     std::uint32_t batch = 0;
     AjmBatchError error{};
-    if (ajm.batchStart(context, &info, 0, &error, &batch) != 0) Fail("sceAjmBatchStart failed after static teardown");
+    if (ajm.batchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, &batch) != 0) Fail("sceAjmBatchStart failed after static teardown");
     if (sideband.result != 0) Fail("an instance created before exit is unknown after static teardown");
     if (ajm.batchWait(context, batch, 0, &error) != 0) Fail("sceAjmBatchWait does not find a batch started after static teardown");
     if (ajm.instanceDestroy(context, instance) != 0) Fail("sceAjmInstanceDestroy does not find the instance after static teardown");

@@ -203,14 +203,16 @@ int APS5_VABI _ZNSt8__sce_v210filesystem10_Copy_fileEPKcS2__nid_postfix(const ch
 }
 
 int APS5_VABI _ZNSt8__sce_v210filesystem8_StatvfsEPKcRNS0_10space_infoE_nid_postfix(const char*, std::uint64_t* space) {
-    space[0] = UINT64_MAX;
-    space[1] = UINT64_MAX;
-    space[2] = UINT64_MAX;
+    const std::uint64_t unknown[3] = {UINT64_MAX, UINT64_MAX, UINT64_MAX};
+    if (!GuestCopyOut_nid_no_patch(space, unknown, sizeof(unknown))) return BadAddress;
     return NoSystemCall;
 }
 
 int APS5_VABI _ZNSt8__sce_v210filesystem13_Current_set2EPKc_nid_postfix(const char* path) {
-    return std::strncmp(path, "/", 2) == 0 ? 0 : NotSupported;
+    char lead[2] = {};
+    if (!GuestCopyIn_nid_no_patch(lead, path, 1)) return BadAddress;
+    if (lead[0] == '/' && !GuestCopyIn_nid_no_patch(lead + 1, path + 1, 1)) return BadAddress;
+    return lead[0] == '/' && lead[1] == '\0' ? 0 : NotSupported;
 }
 
 }

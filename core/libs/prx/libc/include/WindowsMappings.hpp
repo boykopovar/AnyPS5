@@ -5,9 +5,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
-#ifdef APS5_COUNT_MAPPING_QUERIES
 #include <atomic>
-#endif
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
@@ -380,6 +378,7 @@ public:
         disown(address, end);
         forgetZero(address, end);
         ownedHostAccess.emplace(address, end);
+        if (store) ownedHostStores.emplace(address, end);
         for (auto it = first; it != views.end() && it->first < end; ++it) {
             auto& view = it->second;
             if (store) ++view.hostWrites;
@@ -403,6 +402,7 @@ public:
         const auto end = address + bytes;
         disown(address, end);
         eraseOwnedRange(ownedHostAccess, address, end);
+        if (store) eraseOwnedRange(ownedHostStores, address, end);
         for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < end; ++it) {
             if (store) --it->second.hostWrites;
             else --it->second.hostImports;
@@ -576,6 +576,10 @@ public:
         forgetZero(address, address + bytes);
     }
 
+    std::uint64_t KnownZeroMarks() const {
+        return zeroMarks.load(std::memory_order_acquire);
+    }
+
     void KnownZero(std::uintptr_t address, std::size_t bytes, void (*zero)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
         if (bytes == 0 || bytes > UINTPTR_MAX - address) return;
         const auto end = address + bytes;
@@ -632,6 +636,32 @@ public:
 
     bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All) {
         std::lock_guard lock(mutex);
+        const auto capacity = *count;
+        if (!collect(address, bytes, pages, count, clear, collection)) return false;
+        addHostWrites(address, address + bytes, pages, count, capacity);
+        return true;
+    }
+
+private:
+    void addHostWrites(std::uintptr_t address, std::uintptr_t end, void** pages, std::size_t* count, std::size_t capacity) const {
+        if (ownedHostStores.empty() || !overlapsOwnedRange(ownedHostStores, address, end)) return;
+        std::vector<std::uintptr_t> merged;
+        merged.reserve(*count);
+        for (std::size_t index = 0; index < *count; ++index) merged.push_back(reinterpret_cast<std::uintptr_t>(pages[index]));
+        const auto collected = merged.size();
+        for (const auto& [first, last] : ownedHostStores) {
+            const auto from = std::max(first, address) & ~std::uintptr_t{4095};
+            const auto to = std::min(last, end);
+            for (auto page = from; page < to; page += 4096) merged.push_back(std::max(page, address));
+        }
+        if (merged.size() == collected) return;
+        std::sort(merged.begin(), merged.end());
+        merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+        *count = std::min(merged.size(), capacity);
+        for (std::size_t index = 0; index < *count; ++index) pages[index] = reinterpret_cast<void*>(merged[index]);
+    }
+
+    bool collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection) {
         const auto capacity = *count;
         *count = 0;
         const auto end = address + bytes;
@@ -796,6 +826,30 @@ public:
 private:
     using OwnedRanges = std::multimap<std::uintptr_t, std::uintptr_t>;
 
+    class Lock {
+    public:
+        Lock() : pthread(std::getenv("APS5_MAPPINGS_PTHREAD_LOCK") != nullptr) {}
+        Lock(const Lock&) = delete;
+        Lock& operator=(const Lock&) = delete;
+
+        void lock() {
+            if (pthread) fallback.lock();
+            else AcquireSRWLockExclusive(&native);
+        }
+        bool try_lock() {
+            return pthread ? fallback.try_lock() : TryAcquireSRWLockExclusive(&native) != 0;
+        }
+        void unlock() {
+            if (pthread) fallback.unlock();
+            else ReleaseSRWLockExclusive(&native);
+        }
+
+    private:
+        SRWLOCK native = SRWLOCK_INIT;
+        std::mutex fallback;
+        bool pthread;
+    };
+
     static bool ownedRange(std::uintptr_t address, std::size_t bytes, std::size_t count) {
         if (address == 0 || bytes == 0 || address >= (std::uintptr_t{1} << 47) || bytes > (std::uintptr_t{1} << 47) - address) return false;
         return count == ((address + bytes - 1) / ownedBlockBytes - address / ownedBlockBytes + 1);
@@ -858,6 +912,7 @@ private:
     void markZero(std::uintptr_t start, std::uintptr_t end) {
         start = (start + 4095) & ~std::uintptr_t{4095};
         end &= ~std::uintptr_t{4095};
+        if (start >= end) return;
         while (start < end) {
             const auto chunk = start & ~(chunkBytes - 1);
             const auto stop = std::min(end, chunk + chunkBytes);
@@ -865,6 +920,7 @@ private:
             for (auto bit = (start - chunk) >> 12; bit < (stop - chunk) >> 12; ++bit) bits[bit >> 6] |= std::uint64_t{1} << (bit & 63);
             start = stop;
         }
+        zeroMarks.fetch_add(1, std::memory_order_release);
     }
 
     static void clearZeroBits(auto& bits, std::uintptr_t chunk, std::uintptr_t from, std::uintptr_t to) {
@@ -1673,6 +1729,7 @@ private:
     std::map<std::uintptr_t, std::uint16_t> ownedPending;
     OwnedRanges ownedPins;
     OwnedRanges ownedHostAccess;
+    OwnedRanges ownedHostStores;
     std::uint64_t nextOwned = 1;
     Ranges cleanRanges;
     Ranges collectableRanges;
@@ -1683,6 +1740,7 @@ private:
 #endif
     Ranges freshRanges;
     std::unordered_map<std::uintptr_t, std::array<std::uint64_t, chunkBytes / 4096 / 64>> zeroPages;
+    std::atomic<std::uint64_t> zeroMarks{0};
     std::map<std::uintptr_t, View> views;
 
     using Views = std::map<std::uintptr_t, View>;
@@ -1705,7 +1763,7 @@ private:
 #ifdef APS5_COUNT_MAPPING_QUERIES
     static inline std::atomic<std::uint64_t> queries{0};
 #endif
-    std::mutex mutex;
+    Lock mutex;
     HANDLE zeroSection = nullptr;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;

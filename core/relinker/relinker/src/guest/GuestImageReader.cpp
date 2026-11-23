@@ -2,6 +2,7 @@
 #include <relinker/guest/GuestImage.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/parsing/RelrRelocations.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <io/BufferUtils.hpp>
 #include <io/NativePath.hpp>
 #include <algorithm>
@@ -44,7 +45,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     constexpr std::uint32_t sceLibVersion = 0x6fffff01;
     constexpr std::uint32_t note = 4;
     for (const auto& header : image.Headers) {
-        if (header.Type == 0 || header.Type == sceComment || header.Type == sceLibVersion) continue;
+        if (header.Type == Elfpatcher::PT_GNU_STACK || header.Type == 0 || header.Type == sceComment || header.Type == sceLibVersion) continue;
         if (header.Type == note && header.MappedAddress == 0 && header.MemorySize == 0) continue;
         range(header.Offset, header.FileSize);
         if (header.Type == 1) {
@@ -198,7 +199,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::vector<std::string> neededLibraries;
     for (const auto offset : needed) neededLibraries.push_back(string(offset));
     const bool consoleFileNames = std::any_of(neededLibraries.begin(), neededLibraries.end(),
-        [](const std::string& name) { return Domain::NeededLibraryName(name) != name; });
+        [](const std::string& name) { return Domain::ConsoleModuleSuffix(name); });
     std::map<std::string, std::size_t> exports;
     for (std::uint64_t offset = 0; offset < symSize; offset += 24) {
         auto name = string(Io::ReadU32(bytes, symOffset + offset));
@@ -292,8 +293,8 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             if (relocation == 0) continue;
             if ((info >> 32) >= image.Symbols.size() || (plt && relocation != 7) || (relocation != 1 && relocation != 6 && relocation != 7 && relocation != 8 && relocation != 16 && relocation != 17 && relocation != 18)) fail("Unsupported relocation or symbol index");
             const auto& referencedSymbol = image.Symbols[info >> 32];
-            if (relocation != 8 && referencedSymbol.Section == 0 && (referencedSymbol.Info >> 4) != 2 && (referencedSymbol.Visibility & 3) != 0)
-                fail("Undefined non-weak symbol has non-default visibility: " + referencedSymbol.Name);
+            if (relocation != 8 && referencedSymbol.Section == 0 && (referencedSymbol.Info >> 4) == 0 && (referencedSymbol.Visibility & 3) != 0)
+                fail("Undefined local symbol has non-default visibility: " + referencedSymbol.Name);
             const auto target = Io::ReadU64(bytes, offset + index);
             const auto addend = Io::ReadU64(bytes, offset + index + 16);
             mapped(target, 8, 2);

@@ -19,6 +19,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 
 namespace {
@@ -204,7 +205,7 @@ int APS5_VABI sceVideoOutGetFlipStatus(int handle, VideoOutFlipStatus* status) t
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
-    if (cfg->ps4) {
+    if (cfg->ps4 || sceKernelIsPs4Process()) {
         const auto& current = cfg->flipStatus;
         VideoOutFlipStatusPs4 legacy{current.count, current.processTime, 0, current.flipArg, 0, 0, current.gcQueueNum, current.flipPendingNum, current.currentBuffer, 0};
         *reinterpret_cast<VideoOutFlipStatusPs4*>(status) = legacy;
@@ -226,7 +227,7 @@ int APS5_VABI sceVideoOutGetVblankStatus(int handle, VideoOutVblankStatus* statu
     }
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
-    if (cfg->ps4) {
+    if (cfg->ps4 || sceKernelIsPs4Process()) {
         const auto& current = cfg->vblankStatus;
         VideoOutVblankStatusPs4 legacy{current.count, current.processTime, 0, current.flags};
         *reinterpret_cast<VideoOutVblankStatusPs4*>(status) = legacy;
@@ -362,6 +363,13 @@ int APS5_VABI sceVideoOutCursorSetPosition(int32_t handle, int32_t index, uint32
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceVideoOutCursorSetHotSpot(int32_t handle, int32_t index, uint32_t, uint32_t) try {
+    if (const int error = cursorHandleError(__func__, handle, index)) return error;
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
 int APS5_VABI sceVideoOutCursorSet2xMagnify(int32_t handle, int32_t index, bool) try {
     if (const int error = cursorHandleError(__func__, handle, index)) return error;
     return 0;
@@ -472,11 +480,17 @@ int APS5_VABI sceVideoOutAdjustColor(int handle, const VideoOutColorSettings* se
     if (settings == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
+    VideoOutColorSettings localSettings{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localSettings, settings, sizeof(localSettings));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
-    // Output gamma is accepted but not yet applied to presentation.
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -500,6 +514,12 @@ int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(Video
     if (settings == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(settings, sizeof(VideoOutColorSpaceConversionSettings));
+    errno = savedErrno;
+    if (!writable) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     (void)lumaScale;
     (void)option;
     return 0;
@@ -507,6 +527,13 @@ int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(Video
 
 int APS5_VABI sceVideoOutAdjustColorSpaceConversion(int handle, const VideoOutColorSpaceConversionSettings* settings) try {
     if (settings == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    VideoOutColorSpaceConversionSettings localSettings{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localSettings, settings, sizeof(localSettings));
+    errno = savedErrno;
+    if (!copied) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
     auto cfg = VideoOutDriver::Get().GetConfig(handle);

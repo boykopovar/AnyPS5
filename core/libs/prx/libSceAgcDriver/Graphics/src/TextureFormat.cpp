@@ -90,6 +90,7 @@ constexpr FormatEntry kFormatLookup[] = {
     {134, VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, false},
     {135, VK_FORMAT_R5G5B5A1_UNORM_PACK16, 2, false},
     {136, VK_FORMAT_B4G4R4A4_UNORM_PACK16, 2, false},
+    {137, VK_FORMAT_R4G4_UNORM_PACK8, 1, false},
     {141, VK_FORMAT_D24_UNORM_S8_UINT, 4, false},
     {169, VK_FORMAT_BC1_RGBA_UNORM_BLOCK, 8, true},
     {170, VK_FORMAT_BC1_RGBA_SRGB_BLOCK, 8, true},
@@ -120,7 +121,7 @@ constexpr auto MakeFormatLookupTable() {
 constexpr auto kFormatLookupTable = MakeFormatLookupTable();
 
 std::uint32_t remapGuestFormat(std::uint32_t guestFormat) {
-    return guestFormat == 30 || guestFormat == 34 || guestFormat == 36 || guestFormat == 37 || guestFormat == 41 || guestFormat == 43 || guestFormat == 44 || guestFormat == 48 ? 20 : guestFormat;
+    return guestFormat == 30 || guestFormat == 34 || guestFormat == 36 || guestFormat == 37 || guestFormat == 41 || guestFormat == 43 || guestFormat == 44 || guestFormat == 48 || guestFormat == 131 ? 20 : guestFormat;
 }
 
 std::atomic<unsigned long long> formatUse[kMaxGuestFormat + 1];
@@ -262,11 +263,13 @@ VkComponentSwizzle TextureComponentChannel(std::uint32_t guestFormat, VkComponen
     constexpr std::array<VkComponentSwizzle, 4> bgra{VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_A};
     constexpr std::array<VkComponentSwizzle, 4> abgr{VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R};
     constexpr std::array<VkComponentSwizzle, 4> argb{VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B};
+    constexpr std::array<VkComponentSwizzle, 4> grba{VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
     switch (guestFormat) {
         case 133: return bgrb[index];
         case 134: return bgra[index];
         case 135: return abgr[index];
         case 136: return argb[index];
+        case 137: return grba[index];
         case 43: return bgra[index];
         default: return component;
     }

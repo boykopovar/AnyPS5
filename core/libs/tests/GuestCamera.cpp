@@ -153,6 +153,8 @@ void CheckFrames() {
     errno = 71;
     Require(sceCameraIsValidFrameData(1, reinterpret_cast<const CameraFrameData*>(0x10)) == ErrorParam, "validating unreadable frame rejected");
     Require(errno == 71, "errno preserved");
+    Require(sceCameraGetFrameData(1, reinterpret_cast<CameraFrameData*>(0x10)) == ErrorParam, "unwritable frame data must be rejected");
+    Require(errno == 71, "caller errno must be preserved on unwritable frame data");
 }
 
 void CheckClose() {
