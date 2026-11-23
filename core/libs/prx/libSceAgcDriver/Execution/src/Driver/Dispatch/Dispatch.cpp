@@ -63,10 +63,10 @@ void NotePipelineReady(std::uint64_t address) {
 bool AwaitPipelineAhead(VulkanDevice& device, const ShaderRecompiler::RecompileResult& shader) {
     auto& budget = ComputePipelineWaitBudget();
     const auto start = std::chrono::steady_clock::now();
-    const auto allowed = budget.Take(start);
-    if (allowed <= std::chrono::steady_clock::duration{}) return false;
-    const bool settled = device.AwaitComputePipelineAhead(shader, start + allowed);
-    budget.Spend(start, std::chrono::steady_clock::now());
+    const auto grant = budget.Take(start);
+    if (grant.allowed <= std::chrono::steady_clock::duration{}) return false;
+    const bool settled = device.AwaitComputePipelineAhead(shader, start + grant.allowed);
+    budget.Finish(grant, std::chrono::steady_clock::now());
     return settled;
 }
 

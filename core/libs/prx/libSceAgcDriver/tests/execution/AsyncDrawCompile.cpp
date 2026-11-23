@@ -49,20 +49,54 @@ bool Done() {
 
 }
 
+std::string Ms(std::chrono::steady_clock::duration duration) {
+    return std::to_string(std::chrono::duration_cast<std::chrono::microseconds>(duration).count() / 1000.0) + " ms";
+}
+
 void CheckSlidingWaitBudget() {
     using namespace std::chrono_literals;
     using Clock = std::chrono::steady_clock;
-    AgcDriver::DriverDetail::SlidingWaitBudget budget(2000ms, 10s, 4000ms);
+    using Budget = AgcDriver::DriverDetail::SlidingWaitBudget;
     const auto start = Clock::time_point{} + 100s;
-    Require(budget.Take(start) == 2000ms, "an unused compute pipeline wait budget did not allow a full wait");
-    budget.Spend(start, start + 2s);
-    Require(budget.Take(start + 2s) == 2000ms, "a compute pipeline wait budget with 2 of 4 s spent did not allow a full wait");
-    budget.Spend(start + 2s, start + 4s);
-    Require(budget.Take(start + 4s) == Clock::duration{}, "a compute pipeline wait budget allowed more than its total in 10 s");
-    Require(budget.Take(start + 11s) == 1000ms, "a compute pipeline wait budget did not count the waits that overlap the last 10 s (" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(budget.Take(start + 11s)).count()) + " ms allowed)");
-    Require(budget.Take(start + 14s) == 2000ms, "a compute pipeline wait budget kept waits older than 10 s");
-    budget.Spend(start + 14s, start + 14s);
-    Require(budget.Take(start + 14s) == 2000ms, "an empty wait was counted against the compute pipeline wait budget");
+    {
+        Budget budget(2000ms, 10s, 4000ms);
+        const auto first = budget.Take(start);
+        Require(first.allowed == 2000ms, "an unused compute pipeline wait budget did not allow a full wait (" + Ms(first.allowed) + ")");
+        budget.Finish(first, start + 2s);
+        const auto second = budget.Take(start + 2s);
+        Require(second.allowed == 2000ms, "a compute pipeline wait budget with 2 of 4 s spent did not allow a full wait (" + Ms(second.allowed) + ")");
+        budget.Finish(second, start + 4s);
+        Require(budget.Take(start + 4s).allowed == Clock::duration{}, "a compute pipeline wait budget allowed more than its total in 10 s");
+        const auto overlap = budget.Take(start + 11s);
+        Require(overlap.allowed == 1000ms, "a compute pipeline wait budget did not count the waits that overlap the last 10 s (" + Ms(overlap.allowed) + " allowed)");
+        budget.Finish(overlap, start + 11s);
+        const auto later = budget.Take(start + 14s);
+        Require(later.allowed == 2000ms, "a compute pipeline wait budget kept waits older than 10 s or counted an empty wait (" + Ms(later.allowed) + ")");
+    }
+    {
+        Budget budget(500ms, 10s, 1000ms);
+        const auto first = budget.Take(start);
+        budget.Finish(first, start + 500ms);
+        const auto second = budget.Take(start + 500ms);
+        const auto third = budget.Take(start + 999ms);
+        Require(second.allowed == 500ms, "a compute pipeline wait budget with 500 of 1000 ms spent did not allow the rest (" + Ms(second.allowed) + ")");
+        Require(third.allowed == Clock::duration{}, "two compute pipeline waits outstanding at once were both given the same remaining budget (" + Ms(third.allowed) + " for the second)");
+        budget.Finish(second, start + 600ms);
+        const auto fourth = budget.Take(start + 600ms);
+        Require(fourth.allowed == 400ms, "a wait that ended early did not return the rest of its reservation to the compute pipeline wait budget (" + Ms(fourth.allowed) + ")");
+        budget.Finish(third, start + 999ms);
+        budget.Finish(fourth, start + 600ms);
+    }
+    {
+        Budget budget(600ms, 10s, 1000ms);
+        const auto longer = budget.Take(start);
+        const auto shorter = budget.Take(start + 1ms);
+        Require(longer.allowed == 600ms && shorter.allowed == 400ms, "two outstanding compute pipeline waits did not split the budget (" + Ms(longer.allowed) + ", " + Ms(shorter.allowed) + ")");
+        budget.Finish(longer, start + 600ms);
+        budget.Finish(shorter, start + 2ms);
+        const auto after = budget.Take(start + 10s + 50ms);
+        Require(after.allowed == 450ms, "a compute pipeline wait that finished first but ended out of the window was not dropped from the budget (" + Ms(after.allowed) + " allowed, 450 ms expected)");
+    }
 }
 
 void CheckFailedBuildAhead() {

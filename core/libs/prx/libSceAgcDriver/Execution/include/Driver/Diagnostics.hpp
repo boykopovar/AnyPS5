@@ -5,7 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -39,16 +39,21 @@ std::chrono::milliseconds AsyncComputeWait();
 class SlidingWaitBudget {
 public:
     using Clock = std::chrono::steady_clock;
+    struct Grant {
+        std::uint64_t id = 0;
+        Clock::duration allowed{};
+    };
     SlidingWaitBudget(Clock::duration perWait, Clock::duration window, Clock::duration total);
-    Clock::duration Take(Clock::time_point now);
-    void Spend(Clock::time_point start, Clock::time_point end);
+    Grant Take(Clock::time_point now);
+    void Finish(const Grant& grant, Clock::time_point end);
 
 private:
     Clock::duration perWait;
     Clock::duration window;
     Clock::duration total;
     std::mutex mutex;
-    std::deque<std::pair<Clock::time_point, Clock::time_point>> spent;
+    std::uint64_t nextId = 1;
+    std::map<std::uint64_t, std::pair<Clock::time_point, Clock::time_point>> waits;
 };
 
 SlidingWaitBudget& ComputePipelineWaitBudget();

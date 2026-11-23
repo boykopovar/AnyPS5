@@ -134,20 +134,25 @@ std::chrono::milliseconds AsyncComputeWait() {
 
 SlidingWaitBudget::SlidingWaitBudget(Clock::duration perWait, Clock::duration window, Clock::duration total) : perWait(perWait), window(window), total(total) {}
 
-SlidingWaitBudget::Clock::duration SlidingWaitBudget::Take(Clock::time_point now) {
+SlidingWaitBudget::Grant SlidingWaitBudget::Take(Clock::time_point now) {
     std::lock_guard lock(mutex);
     const auto from = now - window;
-    while (!spent.empty() && spent.front().second <= from) spent.pop_front();
+    std::erase_if(waits, [from](const auto& wait) { return wait.second.second <= from; });
     Clock::duration used{};
-    for (const auto& [start, end] : spent) used += end - std::max(start, from);
+    for (const auto& [id, wait] : waits) used += wait.second - std::max(wait.first, from);
     if (used >= total) return {};
-    return std::min(perWait, total - used);
+    const auto allowed = std::min(perWait, total - used);
+    const auto id = nextId++;
+    waits.emplace(id, std::make_pair(now, now + allowed));
+    return {id, allowed};
 }
 
-void SlidingWaitBudget::Spend(Clock::time_point start, Clock::time_point end) {
-    if (end <= start) return;
+void SlidingWaitBudget::Finish(const Grant& grant, Clock::time_point end) {
     std::lock_guard lock(mutex);
-    spent.emplace_back(start, end);
+    const auto found = waits.find(grant.id);
+    if (found == waits.end()) return;
+    if (end <= found->second.first) waits.erase(found);
+    else found->second.second = end;
 }
 
 SlidingWaitBudget& ComputePipelineWaitBudget() {
