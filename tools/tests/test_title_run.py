@@ -196,6 +196,9 @@ class AnalysisTests(unittest.TestCase):
             "negative duration": '{"presents":20,"window":{"ms":-1000}}',
             "numeric overflow": '{"presents":' + str(10**309) + ',"window":{"ms":1000}}',
             "non-finite duration": '{"presents":20,"window":{"ms":1e999}}',
+            "oversized integer duration": '{"presents":20,"window":{"ms":' + str(10**400) + '}}',
+            "missing duration with presents": '{"presents":20,"window":{}}',
+            "zero duration with presents": '{"presents":20,"window":{"ms":0}}',
             "deep nesting": "[" * 20000 + "0" + "]" * 20000,
         }
         for label, invalid in cases.items():
@@ -203,6 +206,13 @@ class AnalysisTests(unittest.TestCase):
                 path.write_text(good + "\n" + invalid, encoding="utf-8")
                 self.assertEqual(title_run.read_summary(path),
                                  {"presents": 10, "fps": 10.0, "gpu": "Good", "driver": "", "os": ""})
+
+    def test_input_audit_ignores_non_text_telemetry_identity(self):
+        path = self.root / "aps5-summary.jsonl"
+        path.write_text(json.dumps({"presents": 10, "window": {"ms": 1000},
+                                    "gpu": ["GPU"], "driver": "Driver", "os": {"name": "OS"}}), encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path),
+                         {"presents": 10, "fps": 10.0, "gpu": "", "driver": "Driver", "os": ""})
 
     def test_input_audit_telemetry_bom_keeps_the_first_measurement(self):
         path = self.root / "aps5-summary.jsonl"
@@ -214,6 +224,7 @@ class AnalysisTests(unittest.TestCase):
         cases = {
             "duplicate report fields": '{"format":"anyps5-report","run":{},"run":{"averageFps":90}}',
             "nested report overflow": "[" * 20000 + "0" + "]" * 20000,
+            "non-finite report measurement": '{"format":"anyps5-report","run":{"averageFps":1e999}}',
         }
         for label, payload in cases.items():
             with self.subTest(label=label):
@@ -848,6 +859,10 @@ class PreparationTests(unittest.TestCase):
             ('{"titles":{"PPSA00001":false}}', "comparison title PPSA00001 must be an object with a name"),
             ('{"titles":{"PPSA00001":{"name":"Test","runs":[]}}}', "comparison title PPSA00001 needs recorded runs"),
             ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"unknown"}]}}}', "unrecognized outcome"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"rendering","fps":NaN}]}}}', "JSON numbers must be finite"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"rendering","report":[1]}]}}}', "report must be an object"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"rendering","report":{"shaders":[1]}}]}}}', "shaders must be an object"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"rendering","report":{"missing":[1]}}]}}}', "missing must be a list of objects"),
         )
         for text, message in cases:
             with self.subTest(message=message):

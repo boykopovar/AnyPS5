@@ -141,8 +141,14 @@ def load_json(text, source):
             fields[name] = value
         return fields
 
+    def finite_float(token):
+        value = float(token)
+        if not math.isfinite(value):
+            raise ValueError(f"{source}: JSON numbers must be finite")
+        return value
+
     try:
-        return json.loads(text, object_pairs_hook=unique_fields)
+        return json.loads(text, object_pairs_hook=unique_fields, parse_float=finite_float, parse_constant=finite_float)
     except RecursionError as error:
         raise ValueError(f"{source}: JSON is nested too deeply") from error
 
@@ -204,6 +210,7 @@ def relink_args(entry, platform, intel_host=False):
 ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission|Failed to load module:")
 WARNINGS = ("destroyed with GPU results pending", "guest memory changed while GPU results were pending")
 STALL_SECONDS = 20
+MAX_WINDOW_MS = int(sys.float_info.max)
 
 
 def first_error(text):
@@ -230,7 +237,7 @@ def read_summary(path):
         if type(frames) is not int or not 0 <= frames < 1 << 64 or not isinstance(window, dict):
             continue
         duration = window.get("ms", 0)
-        if type(duration) not in (int, float) or not 0 <= duration <= sys.float_info.max:
+        if type(duration) not in (int, float) or not 0 <= duration <= MAX_WINDOW_MS or (frames and duration == 0):
             continue
         lines.append(decoded)
     intervals = [line for line in lines if "interval_start_s" in line]
@@ -240,8 +247,11 @@ def read_summary(path):
     seconds = sum(line.get("window", {}).get("ms", 0) / 1000 for line in lines)
     fps = presents / seconds if seconds else 0.0
     last = lines[-1] if lines else {}
-    return {"presents": presents, "fps": round(fps, 1) if math.isfinite(fps) else 0.0,
-            "gpu": last.get("gpu", ""), "driver": last.get("driver", ""), "os": last.get("os", "")}
+    identity = {}
+    for key in ("gpu", "driver", "os"):
+        value = last.get(key)
+        identity[key] = value if isinstance(value, str) else ""
+    return {"presents": presents, "fps": round(fps, 1) if math.isfinite(fps) else 0.0, **identity}
 
 
 def section(document, name):
@@ -286,8 +296,22 @@ def validate_comparison(document):
         runs = title.get("runs")
         if not isinstance(runs, list) or not runs:
             raise ValueError(f"comparison title {title_id} needs recorded runs")
-        if any(not isinstance(run, dict) or run.get("outcome") not in OUTCOMES for run in runs):
-            raise ValueError(f"comparison title {title_id} has a run with an unrecognized outcome")
+        for run in runs:
+            if not isinstance(run, dict) or run.get("outcome") not in OUTCOMES:
+                raise ValueError(f"comparison title {title_id} has a run with an unrecognized outcome")
+            report = run.get("report")
+            if report is None:
+                continue
+            if not isinstance(report, dict):
+                raise ValueError(f"comparison title {title_id} has a run whose report must be an object")
+            for key in ("frameMs", "shaders", "truncated"):
+                value = report.get(key)
+                if value is not None and not isinstance(value, dict):
+                    raise ValueError(f"comparison title {title_id} report {key} must be an object")
+            for key in ("missing", "unsupported"):
+                value = report.get(key)
+                if value is not None and (not isinstance(value, list) or any(not isinstance(entry, dict) for entry in value)):
+                    raise ValueError(f"comparison title {title_id} report {key} must be a list of objects")
 
 
 def frame_is_uniform(path, tolerance=8):
