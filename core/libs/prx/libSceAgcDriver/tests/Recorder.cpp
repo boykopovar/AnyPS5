@@ -7148,6 +7148,50 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied
         Require(read.has_value() && read->kind == Recorder::ReadKind::DrawInput, "a vertex input bound in place behind a GPU write did not note its read");
         recorder.Sync();
         Require(!recorder.PendingReadOverlaps(vertices, 256), "an in-place vertex input's read outlived its batch");
+        if (std::getenv("APS5_LARGE_INPUT_IN_PLACE_MIB") != nullptr) {
+            std::cout << "APS5_LARGE_INPUT_IN_PLACE_MIB is set: large draw inputs not tested\n";
+            return;
+        }
+        constexpr std::size_t largeBytes = std::size_t{8} << 20;
+        void* largeBlock = AllocateWatched(largeBytes + 65536, 65536);
+        struct ReleaseLarge {
+            void* block;
+            ~ReleaseLarge() { ReleaseWatched(block, largeBytes + 65536); }
+        } releaseLarge{largeBlock};
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(largeBlock, largeBytes + 65536, true, true, true);
+        }
+        struct UnregisterLarge {
+            const Context& context;
+            void* block;
+            ~UnregisterLarge() {
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                HostImportFor(context, reinterpret_cast<std::uint64_t>(block), largeBytes + 65536);
+            }
+        } unregisterLarge{context, largeBlock};
+        const auto largeAddress = reinterpret_cast<std::uint64_t>(largeBlock);
+        if (HostImportFor(context, largeAddress, largeBytes + 65536) == nullptr) {
+            std::cout << "host import of the large watched block refused: large draw inputs not tested\n";
+            return;
+        }
+        const auto largeVertices = largeAddress + 4096;
+        recorder.Sync();
+        behind = false;
+        Require(InPlaceDrawInput(context, largeVertices, largeBytes - 65536, 4, &behind) == nullptr && !behind, "a draw input just below the large input size was bound in place where draw inputs are copied");
+        Require(!recorder.PendingReadOverlaps(largeVertices, largeBytes - 65536), "a copied draw input below the large input size noted an in-place read");
+        const auto* largeImport = InPlaceDrawInput(context, largeVertices, largeBytes, 4, &behind);
+        Require(largeImport != nullptr && largeImport->base <= largeVertices && largeVertices + largeBytes <= largeImport->base + largeImport->bytes, "a large vertex input free of pending GPU writes was copied where draw inputs are copied");
+        Require(!behind, "a large vertex input free of pending GPU writes was marked as ordered behind one");
+        Require(recorder.PendingReadOverlaps(largeVertices, largeBytes), "a large vertex input bound in place did not note its read");
+        recorder.Sync();
+        Require(!recorder.PendingReadOverlaps(largeVertices, largeBytes), "a large in-place vertex input's read outlived its batch");
+        recorder.NotePendingWrite(largeVertices, 16);
+        const auto* largeBehindImport = InPlaceDrawInput(context, largeVertices, largeBytes, 4, &behind);
+        Require(largeBehindImport != nullptr && behind && recorder.PendingWriteOverlaps(largeVertices, largeBytes), "a large vertex input under a pending GPU write was not bound in place behind it where draw inputs are copied");
         return;
     }
     const auto* import = InPlaceDrawInput(context, vertices, 256, 4);
