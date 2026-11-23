@@ -17,10 +17,7 @@ constexpr int UiTypeNone = 0;
 
 template <typename T>
 bool ReadField(const T* field, T& value) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&value, field, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(&value, field, sizeof(T));
 }
 
 }

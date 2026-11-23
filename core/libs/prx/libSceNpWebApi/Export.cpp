@@ -107,13 +107,6 @@ int nextObject() {
     return lastObject;
 }
 
-std::uint32_t compiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, process + 16, sizeof(version));
-    return version;
-}
-
 int createUserContext(int libCtxId, LibraryContext& library, int userId) {
     for (const auto& [id, user] : library.userContexts) {
         if (user.userId == userId) return SCE_NP_WEBAPI_ERROR_USER_CONTEXT_ALREADY_EXIST;
@@ -136,7 +129,7 @@ int registerServicePushEventCallback(int titleUserCtxId, int filterId, void* cal
     std::lock_guard lock(contextsMutex);
     const auto lookup = findUserContext(titleUserCtxId);
     if (lookup.error != 0) return lookup.error;
-    if (compiledSdkVersion() >= SDK_VERSION_2_50 && !lookup.library->servicePushEventFilters.contains(filterId)) return SCE_NP_WEBAPI_ERROR_SERVICE_PUSH_EVENT_FILTER_NOT_FOUND;
+    if (ApplicationCompiledSdkVersion() >= SDK_VERSION_2_50 && !lookup.library->servicePushEventFilters.contains(filterId)) return SCE_NP_WEBAPI_ERROR_SERVICE_PUSH_EVENT_FILTER_NOT_FOUND;
     if (!callback) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     const auto callbackId = nextObject();
     lookup.user->servicePushEventCallbacks.insert(callbackId);
@@ -260,7 +253,7 @@ int APS5_VABI sceNpWebApiCreateHandle(int libCtxId) {
     if (context == contexts.end()) return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
     const auto handle = nextObject();
     context->second.handles.insert(handle);
-    if (compiledSdkVersion() >= SDK_VERSION_3_00) context->second.timeoutCapableHandles.insert(handle);
+    if (ApplicationCompiledSdkVersion() >= SDK_VERSION_3_00) context->second.timeoutCapableHandles.insert(handle);
     return handle;
 }
 
@@ -281,14 +274,14 @@ int APS5_VABI sceNpWebApiCreateRequest(int titleUserCtxId, const char* apiGroup,
         if (!copyIn(&localContent, contentParameter, sizeof(localContent))) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
         if (localContent.contentLength != 0 && !localContent.contentType) return SCE_NP_WEBAPI_ERROR_INVALID_CONTENT_PARAMETER;
     }
-    if (method < 0 || (method > SCE_NP_WEBAPI_HTTP_METHOD_DELETE && compiledSdkVersion() >= SDK_VERSION_2_50)) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    if (method < 0 || (method > SCE_NP_WEBAPI_HTTP_METHOD_DELETE && ApplicationCompiledSdkVersion() >= SDK_VERSION_2_50)) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(contextsMutex);
     return createRequest(titleUserCtxId, false, requestId);
 }
 
 int APS5_VABI sceNpWebApiCreateServicePushEventFilter(int libCtxId, int handleId, const char* npServiceName, std::uint32_t npServiceLabel, const void* filterParam, std::size_t filterParamNum) {
     if (!npServiceName || !filterParam || filterParamNum == 0) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
-    if (npServiceLabel == SCE_NP_INVALID_SERVICE_LABEL && compiledSdkVersion() >= SDK_VERSION_2_00) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    if (npServiceLabel == SCE_NP_INVALID_SERVICE_LABEL && ApplicationCompiledSdkVersion() >= SDK_VERSION_2_00) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(contextsMutex);
     const auto context = contexts.find(libCtxId);
     if (context == contexts.end()) return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
@@ -405,11 +398,11 @@ int APS5_VABI sceNpWebApiRegisterExtdPushEventCallbackA(int titleUserCtxId, int 
 
 int APS5_VABI sceNpWebApiRegisterPushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg) {
     (void)userArg;
-    if (!callback && compiledSdkVersion() >= SDK_VERSION_1_00) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    if (!callback && ApplicationCompiledSdkVersion() >= SDK_VERSION_1_00) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(contextsMutex);
     const auto lookup = findUserContext(titleUserCtxId);
     if (lookup.error != 0) return lookup.error;
-    if (!lookup.library->pushEventFilters.contains(filterId) && compiledSdkVersion() >= SDK_VERSION_2_50) return SCE_NP_WEBAPI_ERROR_PUSH_EVENT_FILTER_NOT_FOUND;
+    if (!lookup.library->pushEventFilters.contains(filterId) && ApplicationCompiledSdkVersion() >= SDK_VERSION_2_50) return SCE_NP_WEBAPI_ERROR_PUSH_EVENT_FILTER_NOT_FOUND;
     const auto callbackId = nextObject();
     lookup.user->pushEventCallbacks.insert(callbackId);
     return callbackId;
@@ -417,7 +410,7 @@ int APS5_VABI sceNpWebApiRegisterPushEventCallback(int titleUserCtxId, int filte
 
 int APS5_VABI sceNpWebApiRegisterServicePushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg) {
     (void)userArg;
-    if (!callback && compiledSdkVersion() >= SDK_VERSION_1_00) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    if (!callback && ApplicationCompiledSdkVersion() >= SDK_VERSION_1_00) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     return registerServicePushEventCallback(titleUserCtxId, filterId, callback);
 }
 
@@ -501,8 +494,12 @@ void APS5_VABI sceNpWebApiCheckTimeout() {
     }
 }
 
-int APS5_VABI sceNpWebApiClearAllUnusedConnection() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApiClearAllUnusedConnection(int titleUserCtxId, bool keep) {
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findUserContext(titleUserCtxId);
+    if (lookup.error != 0) return lookup.error;
+    (void)keep;
+    return 0;
 }
 
 int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* target, bool keep) {
@@ -510,12 +507,13 @@ int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* t
     std::lock_guard lock(contextsMutex);
     const auto lookup = findUserContext(titleUserCtxId);
     if (lookup.error != 0) return lookup.error;
-    NotImplemented_nid_no_patch(__func__);
+    (void)keep;
+    return 0;
 }
 
 int APS5_VABI sceNpWebApiCreateMultipartRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, std::int64_t* requestId) {
     if (!apiGroup || !path) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
-    if (method < 0 || (method > SCE_NP_WEBAPI_HTTP_METHOD_DELETE && compiledSdkVersion() >= SDK_VERSION_2_50)) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    if (method < 0 || (method > SCE_NP_WEBAPI_HTTP_METHOD_DELETE && ApplicationCompiledSdkVersion() >= SDK_VERSION_2_50)) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(contextsMutex);
     return createRequest(titleUserCtxId, true, requestId);
 }
