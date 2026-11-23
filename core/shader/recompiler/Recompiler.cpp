@@ -1126,7 +1126,7 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
 void keepSpecializedWords(const SharedSpirv& spirv) {
     static const std::uint64_t budget = [] {
         const char* text = std::getenv("APS5_KEEP_SPECIALIZED_MIB");
-        if (text == nullptr) return 0ull;
+        if (text == nullptr) return std::uint64_t{0};
         char* end = nullptr;
         const auto mib = std::strtoull(text, &end, 0);
         if (end == text || *end != '\0') throw std::runtime_error("ShaderRecompiler: APS5_KEEP_SPECIALIZED_MIB must be a whole number of MiB");
