@@ -281,6 +281,7 @@ constexpr std::int64_t guestRlimitInfinity = std::numeric_limits<std::int64_t>::
 constexpr std::int64_t guestStackLimit = 0x200000;
 constexpr std::int64_t guestProcessLimit = 1604;
 constexpr std::int64_t guestProcessLimitPerUser = 1443;
+constexpr std::int64_t guestOpenFileLimitPerProcess = 12555;
 
 #ifdef _WIN32
 std::int64_t hostMemoryLimit() {
@@ -829,11 +830,11 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
     getrlimit_nid_postfix(resource, &current);
 
     if (resource == guestRlimitNofile) {
-        if (requested.rlim_max <= current.rlim_max && requested.rlim_cur <= requested.rlim_max) {
-            std::lock_guard lock(openFileLimitMutex);
-            guestOpenFileLimit = requested;
-            return 0;
-        }
+        requested.rlim_max = std::min(requested.rlim_max, guestOpenFileLimitPerProcess);
+        requested.rlim_cur = std::min(requested.rlim_cur, requested.rlim_max);
+        std::lock_guard lock(openFileLimitMutex);
+        guestOpenFileLimit = requested;
+        return 0;
     }
     if (resource == guestRlimitNproc) {
         requested.rlim_cur = std::clamp(requested.rlim_cur, std::int64_t{1}, guestProcessLimitPerUser);
