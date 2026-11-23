@@ -1023,7 +1023,7 @@ bool RetireShadowReadsRegistered(const HostImport& import) {
     auto& registry = Registry();
     std::lock_guard lock(registry.mutex);
     const auto shadow = find(registry, import);
-    if (shadow == nullptr) return false;
+    if (shadow == nullptr || shadow->liveUnits == 0) return false;
     for (std::uint64_t unit = 0; unit < shadow->Units(); ++unit) {
         if (!shadow->Live(unit)) continue;
         const auto [begin, end] = shadow->UnitRange(unit);
