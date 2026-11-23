@@ -2957,6 +2957,55 @@ static void CheckSockInfo6() {
     Require(RequireSockInfo6List(0x1000) == earlierAll);
 }
 
+static void CheckConnectPortZero() {
+    for (const int family : {2, 28}) {
+        const std::uint32_t addressSize = family == 2 ? 16 : 28;
+        std::array<std::uint8_t, 28> loopback{};
+        loopback[0] = static_cast<std::uint8_t>(addressSize);
+        loopback[1] = static_cast<std::uint8_t>(family);
+        if (family == 2) {
+            loopback[4] = 127;
+            loopback[7] = 1;
+        } else {
+            loopback[23] = 1;
+        }
+        const std::array<std::uint8_t, 28> portZero = loopback;
+        const int listener = sceNetSocket("port-zero-listener", family, 1, 6);
+        const int receiver = sceNetSocket("port-zero-receiver", family, 2, 17);
+        Require(listener >= 0 && receiver >= 0);
+        if (sceNetBind_nid_postfix(listener, loopback.data(), addressSize) != 0) {
+            Require(family == 28);
+            for (const int descriptor : {listener, receiver}) Require(sceNetSocketClose(descriptor) == 0);
+            continue;
+        }
+        std::uint32_t size = loopback.size();
+        Require(sceNetListen(listener, 4) == 0 && sceNetGetsockname(listener, loopback.data(), &size) == 0);
+        std::array<std::uint8_t, 28> datagram = portZero;
+        Require(sceNetBind_nid_postfix(receiver, datagram.data(), addressSize) == 0);
+        size = datagram.size();
+        Require(sceNetGetsockname(receiver, datagram.data(), &size) == 0);
+        std::array<std::uint8_t, 28> peer{};
+        for (const int type : {1, 2}) {
+            const int unconnected = sceNetSocket("port-zero", family, type, type == 1 ? 6 : 17);
+            Require(unconnected >= 0 && Failed(sceNetConnect(unconnected, portZero.data(), addressSize), 49));
+            size = peer.size();
+            Require(Failed(sceNetGetpeername(unconnected, peer.data(), &size), 57));
+            Require(sceNetSocketClose(unconnected) == 0);
+        }
+        const int udp = sceNetSocket("port-zero-udp", family, 2, 17);
+        Require(udp >= 0 && sceNetConnect(udp, datagram.data(), addressSize) == 0);
+        Require(Failed(sceNetConnect(udp, portZero.data(), addressSize), 49));
+        size = peer.size();
+        Require(Failed(sceNetGetpeername(udp, peer.data(), &size), 57));
+        const int tcp = sceNetSocket("port-zero-tcp", family, 1, 6);
+        Require(tcp >= 0 && sceNetConnect(tcp, loopback.data(), addressSize) == 0);
+        Require(Failed(sceNetConnect(tcp, portZero.data(), addressSize), 56));
+        size = peer.size();
+        Require(sceNetGetpeername(tcp, peer.data(), &size) == 0 && size == addressSize);
+        for (const int descriptor : {tcp, udp, receiver, listener}) Require(sceNetSocketClose(descriptor) == 0);
+    }
+}
+
 static void CheckDatagramDisconnect() {
     const int peer = sceNetSocket("disconnect-peer", 2, 2, 17);
     const int other = sceNetSocket("disconnect-other", 2, 2, 17);
@@ -3207,6 +3256,7 @@ int main(int argc, char** argv) {
     Require(close_nid_postfix(closed) == 0);
     Require(Failed(sceNetSocketClose(closed), 9));
     CheckKernelTimeouts();
+    CheckConnectPortZero();
     CheckSocketError();
     CheckKernelStatusFlags();
     CheckIoctl();

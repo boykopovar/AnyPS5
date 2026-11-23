@@ -1670,6 +1670,15 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
 #endif
     if (socket.listening) return fail(NET_EOPNOTSUPP);
     if (native.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
+    if ((socket.type == NET_SOCK_STREAM || socket.type == NET_SOCK_DGRAM) && native_port(native) == 0) {
+        if (socket.type == NET_SOCK_DGRAM) {
+            if (const int error = disconnect_datagram(socket)) return error;
+            return fail(NET_EADDRNOTAVAIL);
+        }
+        sockaddr_storage peer{};
+        NativeLength peer_length = sizeof(peer);
+        if (::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&peer), &peer_length) != 0) return fail(NET_EADDRNOTAVAIL);
+    }
     if (socket.type == NET_SOCK_STREAM) {
         std::lock_guard lock(g_mutex);
         const auto current = g_socks.find(s);
