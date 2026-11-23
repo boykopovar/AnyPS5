@@ -1210,10 +1210,8 @@ LibreSsl3Bignum* DuplicateRsaBignum_nid_no_patch(const LibreSsl3Bignum* number) 
 void FreeRsa_nid_no_patch(LibreSsl3Rsa* rsa) {
     if (!rsa) return;
     LibreSsl3Rsa copy{};
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&copy, rsa, sizeof(copy));
     const bool writable = readable && GuestWritable_nid_no_patch(rsa, sizeof(*rsa));
-    errno = savedErrno;
     if (!readable) throw std::invalid_argument(std::string(__func__) + ": unreadable rsa");
     if (!writable) throw std::invalid_argument(std::string(__func__) + ": unwritable rsa");
     const int remaining = std::atomic_ref<std::int32_t>(rsa->references).fetch_add(-1) - 1;
@@ -1857,10 +1855,8 @@ extern "C" {
 void APS5_VABI RSA_free_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa) {
     if (!rsa) return;
     LibreSsl3Rsa copy{};
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&copy, rsa, sizeof(copy));
     const bool writable = readable && GuestWritable_nid_no_patch(rsa, sizeof(*rsa));
-    errno = savedErrno;
     if (!readable) throw std::invalid_argument(std::string(__func__) + ": unreadable rsa");
     if (!writable) throw std::invalid_argument(std::string(__func__) + ": unwritable rsa");
     if (copy.method) {
@@ -1894,9 +1890,7 @@ int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
     constexpr auto function = "RSA_check_key";
     if (!rsa) NotImplemented_nid_no_patch("RSA_check_key of a null key");
     LibreSsl3Rsa key{};
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&key, rsa, sizeof(key));
-    errno = savedErrno;
     if (!readable) throw std::invalid_argument(std::string(function) + ": unreadable rsa");
     if (!key.p || !key.q || !key.n || !key.e || !key.d) {
         QueueError(ReasonValueMissing);
