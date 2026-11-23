@@ -3,6 +3,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include <array>
+#include <atomic>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -316,6 +318,53 @@ void RunMirrorOnceTests(const Fields& base) {
     Require(createSampler(context, DecodeSamplerResource(pack(base))).created, "a sampler without mirror-once modes needs VK_KHR_sampler_mirror_clamp_to_edge");
 }
 
+void RunCustomBorderCacheLimitTests(const Fields& base) {
+    constexpr std::uint32_t limit = 32;
+    std::atomic<std::uint32_t> live{0};
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    context.deviceProc = captureProc;
+    context.customBorderColor = true;
+    context.maxCustomBorderColorSamplers = limit;
+    context.customBorderColorSamplers = &live;
+
+    Fields custom = base;
+    custom.clampX = 6;
+    custom.borderColorType = 3;
+    const auto words = pack(custom);
+    const auto get = [&](SamplerCache& cache, std::uint32_t index) {
+        const BorderColor color{std::bit_cast<std::uint32_t>(static_cast<float>(index) / limit), 0, 0, 0};
+        return cache.Get(context, words, false, false, false, false, &color);
+    };
+
+    {
+        SamplerCache cache;
+        const std::weak_ptr<Sampler> ordinary = cache.Get(context, pack(base), false);
+        const auto retained = get(cache, 0);
+        const std::weak_ptr<Sampler> oldestUnused = get(cache, 1);
+        for (std::uint32_t index = 2; index < limit; ++index) get(cache, index);
+
+        Require(live.load() == limit, "custom border sampler test did not reach the device limit");
+        get(cache, limit);
+        Require(live.load() == limit && oldestUnused.expired(), "a new color must reuse the oldest cache-only custom sampler slot");
+        Require(get(cache, 0) == retained && !ordinary.expired(), "custom border eviction removed a retained or ordinary sampler");
+    }
+    Require(live.load() == 0, "custom border cache teardown leaked samplers");
+
+    {
+        SamplerCache cache;
+        std::array<std::shared_ptr<Sampler>, limit> retained;
+        for (std::uint32_t index = 0; index < limit; ++index) retained[index] = get(cache, index);
+
+        reject([&] { get(cache, limit); }, "maxCustomBorderColorSamplers");
+        Require(live.load() == limit, "failed custom border creation changed the live sampler count");
+        retained.front().reset();
+        get(cache, limit);
+        Require(live.load() == limit, "releasing a retained sampler did not make its cache slot reusable");
+    }
+    Require(live.load() == 0, "custom border cache leaked samplers after a capacity rejection");
+}
+
 void RunSamplerCacheDegammaTests(const Fields& base) {
     Context context{};
     context.limits.maxSamplerAnisotropy = 1.0f;
@@ -512,6 +561,7 @@ void RunGuestSamplerResourceTests() {
     Require(forced.forceDegamma && !plain.forceDegamma, "FORCE_DEGAMMA must be decoded into forceDegamma");
     Require(forced.magFilter == plain.magFilter && forced.minFilter == plain.minFilter && forced.mipmapMode == plain.mipmapMode && forced.maxLod == plain.maxLod, "FORCE_DEGAMMA must not change the host sampler state");
     RunSamplerCacheDegammaTests(base);
+    RunCustomBorderCacheLimitTests(base);
 
     Fields truncated = base;
     truncated.truncCoord = true;

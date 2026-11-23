@@ -201,6 +201,7 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
     if (slices * sliceGroups > std::numeric_limits<std::uint32_t>::max()) throw fail("its slices start past 2^32 workgroups");
     const VulkanDevice::SplitSlice base{sliceGroups * lanesPerGroup, 0u, sliceGroups, stateSlots};
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : totalGroups * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
+    const auto borderColorTable = Graphics::BorderColorTableBase(queue.userConfig, Graphics::ComputeBorderColorBase);
     using GroupRuns = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
     std::map<std::uint64_t, GroupRuns> targetRuns;
     GroupRuns callingRuns;
@@ -212,7 +213,7 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
         const auto& compiled = *parts[part].result;
         const auto* views = &parts[part].capture->snapshot.registeredImages;
         try {
-            auto prepared = localDevice->PrepareDispatch(compiled, partSnapshots[part], dispatchThreads, address, std::nullopt, views);
+            auto prepared = localDevice->PrepareDispatch(compiled, partSnapshots[part], dispatchThreads, address, std::nullopt, views, borderColorTable);
             GuestMemory::TagGpuLockSite(indirectArguments != 0 ? GuestMemory::GpuLockSite::Indirect : GuestMemory::GpuLockSite::Dispatch);
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
             recordLabelsForPacket(localDevice.get(), submission.queue);
@@ -224,10 +225,10 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
             localDevice->SetSplitSlice(current);
             try {
                 if (indirectArguments != 0) {
-                    const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, partSnapshots[part], address, std::move(prepared), nullptr, threadGroup, views);
+                    const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, partSnapshots[part], address, std::move(prepared), nullptr, threadGroup, views, borderColorTable);
                     countIndirect(outcome.cpuReason, outcome.argumentReadMs);
                 } else {
-                    localDevice->Dispatch(compiled, groups[0], groups[1], groups[2], partSnapshots[part], address, std::move(prepared), nullptr, std::nullopt, views);
+                    localDevice->Dispatch(compiled, groups[0], groups[1], groups[2], partSnapshots[part], address, std::move(prepared), nullptr, std::nullopt, views, borderColorTable);
                 }
             } catch (...) {
                 localDevice->SetSplitSlice(std::nullopt);

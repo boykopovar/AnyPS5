@@ -121,6 +121,18 @@ namespace AgcDriver::Graphics {
         ++misses;
         auto resource = DecodeSamplerResource(words, unnormalizedProven, forceDegammaPaired, integerBorder, tableColor);
         resource.compareEnable = compareEnable;
+        if (resource.borderColor == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT && context.customBorderColorSamplers != nullptr &&
+            context.customBorderColorSamplers->load() >= context.maxCustomBorderColorSamplers) {
+            auto oldest = entries.end();
+            for (auto entry = entries.begin(); entry != entries.end(); ++entry) {
+                const auto& cached = entry->second.sampler;
+                if (cached->customBorder && cached.use_count() == 1 &&
+                    (oldest == entries.end() || entry->second.lastUse < oldest->second.lastUse)) {
+                    oldest = entry;
+                }
+            }
+            if (oldest != entries.end()) entries.erase(oldest);
+        }
         auto sampler = std::make_shared<Sampler>(context, resource);
         // The cap keeps live samplers well below the device's limit (NVIDIA: ~4000); a set in flight
         // still holds the evicted sampler through its own shared_ptr.

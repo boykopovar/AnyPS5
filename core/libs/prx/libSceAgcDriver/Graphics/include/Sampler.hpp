@@ -31,6 +31,8 @@ public:
     static bool ReadsOpaqueBlackBorder(const GuestSamplerResource& descriptor);
 
 private:
+    friend class SamplerCache;
+
     void release() noexcept;
 
     Context context;
