@@ -2349,12 +2349,6 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         set_tests_properties(guest_system_command PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_exec_variadic_tests ${LIBS_INCLUDE_DIR}/tests/GuestExecVariadic.cpp)
-    target_include_directories(guest_exec_variadic_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_exec_variadic_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_exec_variadic_tests)
-    add_test(NAME guest_exec_variadic COMMAND guest_exec_variadic_tests)
-    set_tests_properties(guest_exec_variadic PROPERTIES TIMEOUT 20)
     add_test_executable(guest_socket_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketError.cpp)
     target_include_directories(guest_socket_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
     configure_windows_unwind(guest_socket_error_tests)

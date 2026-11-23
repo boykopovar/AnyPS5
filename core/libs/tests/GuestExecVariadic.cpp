@@ -2,38 +2,29 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
-#include <stdexcept>
+#include <string>
 
 static void Require(bool condition) { if (!condition) std::abort(); }
 
-#ifdef _WIN32
-template<class TCall>
-static bool NotImplemented(TCall call) {
-    try {
-        call();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
+int main() {
+    const std::string huge(300000, 'X');
+    const std::string hugeEntry = "ANYPS5_BIG=" + huge;
+    char name[] = "anyps5-exec-check-missing";
+    char oversized[] = "ANYPS5_BIG";
+    std::string hugeArgument = huge;
 
-int main() {
-    Require(NotImplemented([] { execl_nid_postfix("/nonexistent/anyps5-exec-check", "anyps5-exec-check", "one", nullptr); }));
-    Require(NotImplemented([] { execlp_nid_postfix("anyps5-exec-check-missing", "anyps5-exec-check-missing", nullptr); }));
+    *__error_nid_postfix() = 0;
+    Require(execl_nid_postfix(name, name, "one", nullptr) == -1 && *__error_nid_postfix() == 2);
+    *__error_nid_postfix() = 0;
+    Require(execl_nid_postfix(name, name, hugeArgument.c_str(), nullptr) == -1 && *__error_nid_postfix() == 7);
+    *__error_nid_postfix() = 0;
+    Require(execlp_nid_postfix(name, name, hugeArgument.c_str(), nullptr) == -1 && *__error_nid_postfix() == 7);
+
+    char* const smallEnvironment[] = {oversized, nullptr};
+    *__error_nid_postfix() = 0;
+    Require(execle_nid_postfix(name, name, "one", nullptr, smallEnvironment) == -1 && *__error_nid_postfix() == 2);
+    char* const hugeEnvironment[] = {const_cast<char*>(hugeEntry.c_str()), nullptr};
+    *__error_nid_postfix() = 0;
+    Require(execle_nid_postfix(name, name, "one", nullptr, hugeEnvironment) == -1 && *__error_nid_postfix() == 7);
     return 0;
 }
-#else
-int main() {
-    *__error_nid_postfix() = 0;
-    Require(execl_nid_postfix("/nonexistent/anyps5-exec-check", "anyps5-exec-check", "one", nullptr) == -1);
-    Require(*__error_nid_postfix() == 2);
-    char* const environment[] = {nullptr};
-    *__error_nid_postfix() = 0;
-    Require(execle_nid_postfix("/nonexistent/anyps5-exec-check", "anyps5-exec-check", "one", nullptr, environment) == -1);
-    Require(*__error_nid_postfix() == 2);
-    *__error_nid_postfix() = 0;
-    Require(execlp_nid_postfix("anyps5-exec-check-missing", "anyps5-exec-check-missing", nullptr) == -1);
-    Require(*__error_nid_postfix() == 2);
-    return 0;
-}
-#endif
