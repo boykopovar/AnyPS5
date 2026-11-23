@@ -1428,8 +1428,59 @@ void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& fu
 void EmitVoid(SpirvValueEmitContext&) {
 }
 
+void EmitMeshSoftwareBarrier(SpirvEmitterState& state) {
+    const auto pointer = [&](std::uint32_t index) {
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassWorkgroup, TypeU32(state)), result, state.meshSoftwareBarrier, ConstantU32(state, index));
+        return result;
+    };
+    const auto arrival = pointer(0u);
+    const auto generation = pointer(1u);
+    const auto scope = ConstantU32(state, spv::ScopeWorkgroup);
+    const std::uint32_t memory = spv::MemorySemanticsWorkgroupMemoryMask | LdsMemorySemantics(state);
+    const auto acquire = ConstantU32(state, spv::MemorySemanticsAcquireMask | memory);
+    const auto release = ConstantU32(state, spv::MemorySemanticsReleaseMask | memory);
+    const auto acquireRelease = ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | memory);
+    const auto currentGeneration = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), currentGeneration, generation, scope, acquire);
+    const auto ticket = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAtomicIAdd, TypeU32(state), ticket, arrival, scope, acquireRelease, ConstantU32(state, 1u));
+    const auto local = WorkgroupLocalSize(state, *ShaderWorkgroupInput(state));
+    const std::uint32_t participants = local[0] * local[1] * local[2];
+    const auto last = Binary(state, spv::OpIEqual, TypeBool(state), ticket, ConstantU32(state, participants - 1u));
+    const auto lastBlock = state.module.AllocateId();
+    const auto waitBlock = state.module.AllocateId();
+    const auto waitHeader = state.module.AllocateId();
+    const auto waitContinue = state.module.AllocateId();
+    const auto waitMerge = state.module.AllocateId();
+    const auto done = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, done, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, last, lastBlock, waitBlock);
+    EmitLabel(state, lastBlock);
+    state.module.AddFunction(spv::OpAtomicStore, arrival, scope, release, ConstantU32(state, 0u));
+    state.module.AddFunction(spv::OpAtomicIAdd, TypeU32(state), state.module.AllocateId(), generation, scope, release, ConstantU32(state, 1u));
+    state.module.AddFunction(spv::OpBranch, done);
+    EmitLabel(state, waitBlock);
+    state.module.AddFunction(spv::OpBranch, waitHeader);
+    EmitLabel(state, waitHeader);
+    const auto observedGeneration = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), observedGeneration, generation, scope, acquire);
+    const auto advanced = Binary(state, spv::OpINotEqual, TypeBool(state), observedGeneration, currentGeneration);
+    state.module.AddFunction(spv::OpLoopMerge, waitMerge, waitContinue, spv::LoopControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, advanced, waitMerge, waitContinue);
+    EmitLabel(state, waitContinue);
+    state.module.AddFunction(spv::OpBranch, waitHeader);
+    EmitLabel(state, waitMerge);
+    state.module.AddFunction(spv::OpBranch, done);
+    EmitLabel(state, done);
+}
+
 void EmitBarrier(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
+    if (state.meshSoftwareControlBarriers) {
+        EmitMeshSoftwareBarrier(state);
+        return;
+    }
     if (state.program.Resources().stage == IrShaderStage::Vertex) {
         if (PrecedesEveryMemoryAccess(state.program, inst)) return;
         for (const auto* block : state.program.BlockOrder()) {
