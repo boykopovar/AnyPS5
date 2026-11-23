@@ -121,6 +121,11 @@ static int RunAliasCollision() {
     RequireCollisionContents();
     Require(sceAppContentAddcontUnmount(&thirdMount) == 0);
     Require(access_nid_postfix("/addcont0/sample.txt", 0) == -1);
+    Require(sceAppContentAddcontMount(0, &secondLabel, &secondMount) == 0);
+    Require(std::strcmp(secondMount.data, "/addcont0/") == 0);
+    RequireCollisionContents();
+    Require(sceAppContentAddcontUnmount(&secondMount) == 0);
+    Require(access_nid_postfix("/addcont0/sample.txt", 0) == -1);
     std::filesystem::current_path(original);
     std::filesystem::remove_all(root);
     return 0;
