@@ -256,7 +256,7 @@ void TestSignalDispositionBounds() {
     Require(sigaction_nid_postfix(129, &act, nullptr) == -1);
     Require(*__error_nid_postfix() == 22);
 
-    act.handler = reinterpret_cast<std::uintptr_t>(dummy);
+    act.handler = reinterpret_cast<std::uintptr_t>(static_cast<GuestHandler>(dummy));
     *__error_nid_postfix() = 0;
     Require(sigaction_nid_postfix(9, &act, nullptr) == -1);
     Require(*__error_nid_postfix() == 22);
