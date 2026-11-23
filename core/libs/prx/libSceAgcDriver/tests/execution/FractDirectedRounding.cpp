@@ -17,7 +17,7 @@ namespace {
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
-constexpr std::uint32_t Threads = 32;
+constexpr std::uint32_t Threads = 36;
 constexpr std::uint32_t Words = 4;
 alignas(256) std::array<std::uint32_t, Threads * Words> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Words> Output{};
@@ -60,7 +60,11 @@ constexpr std::array<std::uint32_t, Threads * Words> Values{
     0xc3ebd3d1u, 0x0000b501u, 0x8df05f25u, 0xc197f9acu,
     0xc96366bau, 0x0000b3ebu, 0x6ce9da66u, 0xba181a0bu,
     0xcabed5f4u, 0x0000b338u, 0xe01c683eu, 0xc1d7db43u,
-    0xca62f40cu, 0x0000b7ffu, 0xeab06e9bu, 0xbe9864fau
+    0xca62f40cu, 0x0000b7ffu, 0xeab06e9bu, 0xbe9864fau,
+    0xff800000u, 0x0000fc00u, 0x00000000u, 0xfff00000u,
+    0x7f800000u, 0x00007c00u, 0x00000000u, 0x7ff00000u,
+    0xffc00000u, 0x0000fe00u, 0x00000000u, 0xfff80000u,
+    0x7fc12345u, 0x00007e01u, 0x12345678u, 0x7ff81234u
 };
 
 constexpr std::uint32_t Expected[3][Threads][Words] = {
@@ -96,7 +100,11 @@ constexpr std::uint32_t Expected[3][Threads][Words] = {
         {0x3eb0bc00u, 0x00003980u, 0xd8000000u, 0x3fe07d06u},
         {0x3ec00000u, 0x00003a06u, 0xffffffffu, 0x3fefffffu},
         {0x00000000u, 0x00003a32u, 0x00000000u, 0x3fe1cbe1u},
-        {0x00000000u, 0x00003801u, 0x3cd828abu, 0x3fefffffu}
+        {0x00000000u, 0x00003801u, 0x3cd828abu, 0x3fefffffu},
+        {0xffc00000u, 0x0000fe00u, 0x00000000u, 0xfff80000u},
+        {0xffc00000u, 0x0000fe00u, 0x00000000u, 0xfff80000u},
+        {0xffc00000u, 0x0000fe00u, 0x00000000u, 0xfff80000u},
+        {0x7fc12345u, 0x00007e01u, 0x12345678u, 0x7ff81234u}
     },
     {
         {0x3f7fffe4u, 0x00003bffu, 0xffffffffu, 0x3feffffbu},
@@ -130,7 +138,11 @@ constexpr std::uint32_t Expected[3][Threads][Words] = {
         {0x3eb0bc00u, 0x0000397fu, 0xd8000000u, 0x3fe07d06u},
         {0x3ec00000u, 0x00003a05u, 0xffffffffu, 0x3fefffffu},
         {0x00000000u, 0x00003a32u, 0x00000000u, 0x3fe1cbe1u},
-        {0x00000000u, 0x00003800u, 0x3cd828aau, 0x3fefffffu}
+        {0x00000000u, 0x00003800u, 0x3cd828aau, 0x3fefffffu},
+        {0xffc00000u, 0x0000fe00u, 0x00000000u, 0xfff80000u},
+        {0xffc00000u, 0x0000fe00u, 0x00000000u, 0xfff80000u},
+        {0xffc00000u, 0x0000fe00u, 0x00000000u, 0xfff80000u},
+        {0x7fc12345u, 0x00007e01u, 0x12345678u, 0x7ff81234u}
     },
     {
         {0x3f7fffe4u, 0x00003bffu, 0xffffffffu, 0x3feffffbu},
@@ -164,7 +176,11 @@ constexpr std::uint32_t Expected[3][Threads][Words] = {
         {0x3eb0bc00u, 0x0000397fu, 0xd8000000u, 0x3fe07d06u},
         {0x3ec00000u, 0x00003a05u, 0xffffffffu, 0x3fefffffu},
         {0x00000000u, 0x00003a32u, 0x00000000u, 0x3fe1cbe1u},
-        {0x00000000u, 0x00003800u, 0x3cd828aau, 0x3fefffffu}
+        {0x00000000u, 0x00003800u, 0x3cd828aau, 0x3fefffffu},
+        {0xffc00000u, 0x0000fe00u, 0x00000000u, 0xfff80000u},
+        {0xffc00000u, 0x0000fe00u, 0x00000000u, 0xfff80000u},
+        {0xffc00000u, 0x0000fe00u, 0x00000000u, 0xfff80000u},
+        {0x7fc12345u, 0x00007e01u, 0x12345678u, 0x7ff81234u}
     }
 };
 

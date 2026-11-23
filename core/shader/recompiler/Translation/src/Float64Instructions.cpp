@@ -175,7 +175,8 @@ std::array<IrU32, 2> TranslationContext::roundFractF64(const std::array<IrU32, 2
         return IrU1(ir.LogicalOr(ir.ULessThan(lhs[1].Value(), rhs[1].Value()), ir.LogicalAnd(ir.IEqual(lhs[1].Value(), rhs[1].Value()), ir.ULessThan(lhs[0].Value(), rhs[0].Value()))));
     };
     const IrU1 negative(ir.INotEqual(ir.BitwiseAnd(argument[1].Value(), ir.Constant(0x80000000u)), ir.Constant(0u)));
-    const IrU1 inexact(ir.LogicalAnd(negative.Value(), ir.INotEqual(ir.BitwiseOr(part[0].Value(), part[1].Value()), ir.Constant(0u))));
+    const IrU1 finite(ir.ULessThan(ir.BitwiseAnd(argument[1].Value(), ir.Constant(0x7fffffffu)), ir.Constant(0x7ff00000u)));
+    const IrU1 inexact(ir.LogicalAnd(ir.LogicalAnd(negative.Value(), finite.Value()), ir.INotEqual(ir.BitwiseOr(part[0].Value(), part[1].Value()), ir.Constant(0u))));
     const IrU1 step(ir.LogicalAnd(inexact.Value(), (rounding == 1u ? less(part, rest) : less(rest, part)).Value()));
     const IrU32 low(rounding == 1u ? ir.IAdd(result[0].Value(), ir.Constant(1u)) : ir.ISub(result[0].Value(), ir.Constant(1u)));
     const IrU1 carry(ir.IEqual(result[0].Value(), ir.Constant(rounding == 1u ? 0xffffffffu : 0u)));
