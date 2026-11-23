@@ -905,6 +905,10 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     SpirvEmitInfo emitted;
     try {
         result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
+    } catch (const NarrowReadFirstLaneUnsupported& error) {
+        std::fprintf(stderr, "[wave-readfirstlane] 0x%llx falls back to subgroup-local shuffle: %s\n", static_cast<unsigned long long>(request.shader.codeAddress), error.what());
+        targetOptions.narrowReadFirstLaneExchange = false;
+        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
     } catch (const SpannedWaveUnsupported& error) {
         std::fprintf(stderr, "[spanned-wave] 0x%llx falls back to two lanes per invocation: %s\n", static_cast<unsigned long long>(request.shader.codeAddress), error.what());
         targetOptions.spannedWaves = false;

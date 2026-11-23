@@ -15,6 +15,7 @@ struct SpirvRequirements {
     bool subgroupBallot = false;
     bool subgroupShuffle = false;
     bool subgroupLocalInvocationId = false;
+    bool readFirstLane = false;
     bool computeDerivatives = false;
     bool neighbourLaneReads = false;
     bool offsetBarycentricReads = false;

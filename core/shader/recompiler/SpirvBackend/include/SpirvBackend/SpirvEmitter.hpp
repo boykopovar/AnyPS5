@@ -52,6 +52,7 @@ struct SpirvTargetOptions {
     bool float16NarrowNans = false;
     bool meshInlineFunctions = false;
     bool spannedShuffleThroughMemory = false;
+    bool narrowReadFirstLaneExchange = true;
 };
 
 struct SpirvEmitInfo {
@@ -64,6 +65,10 @@ struct SpirvEmitInfo {
 };
 
 struct SpannedWaveUnsupported : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+struct NarrowReadFirstLaneUnsupported : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 

@@ -69,14 +69,12 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < 32) {
-            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
         Run(*device, ReadFirstLaneWave32Code, 32);
         Check(32, 4);
-        Run(*device, ReadFirstLaneWave64Code, 64);
-        Check(64, 40);
+        if (device->Target().subgroupSize >= 32) {
+            Run(*device, ReadFirstLaneWave64Code, 64);
+            Check(64, 40);
+        }
         std::puts("read first lane tests passed");
         return 0;
     } catch (const std::exception& error) {

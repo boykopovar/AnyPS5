@@ -218,7 +218,7 @@ void DefineInputs(SpirvEmitterState& state) {
             }
         }
     }
-    if (state.laneCount == 2u || state.spannedWave) {
+    if (state.laneCount == 2u || state.spannedWave || state.narrowReadFirstLaneExchange) {
         addBuiltin(StageInputKind::LocalInvocationIndex, 1u, "gl_LocalInvocationIndex");
         if (std::any_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
             return input.kind == StageInputKind::GlobalInvocationId;
