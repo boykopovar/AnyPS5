@@ -1583,21 +1583,25 @@ std::vector<SplitTableCallPart> CompileSplitTableCallParts(std::span<ShaderMemor
     require(memories.size() == which.size(), "split table call parts and their memories differ in count");
     std::vector<SplitTableCallPart> compiled(memories.size());
     std::vector<std::optional<ShaderRecompiler::PreparedShaderInvocation>> invocations(memories.size());
-    std::vector<bool> retry(memories.size(), false);
-    for (std::size_t part = 0; part < memories.size(); ++part) {
+    std::vector<char> retry(memories.size(), 0);
+    std::vector<std::exception_ptr> failures(memories.size());
+    std::vector<char> sampled(memories.size(), 0);
+    const bool pipelined = DrawPipeline::Active();
+    RunParallel(memories.size(), [&](std::size_t part) {
+        DrawPipeline::Active() = pipelined;
         try {
             invocations[part] = SplitTableCallPartInvocation(parts, which[part], request);
             compiled[part].capture = memories[part]->Capture(*invocations[part]);
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
-            retry[part] = true;
+            retry[part] = 1;
+            return;
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
-            retry[part] = true;
+            retry[part] = 1;
+            return;
+        } catch (...) {
+            failures[part] = std::current_exception();
+            return;
         }
-    }
-    std::vector<std::exception_ptr> failures(memories.size());
-    std::vector<char> sampled(memories.size(), 0);
-    RunParallel(memories.size(), [&](std::size_t part) {
-        if (retry[part]) return;
         try {
             compiled[part].result = invocations[part]->Materialize(*compiled[part].capture);
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
@@ -1610,7 +1614,7 @@ std::vector<SplitTableCallPart> CompileSplitTableCallParts(std::span<ShaderMemor
     });
     for (std::size_t part = 0; part < memories.size(); ++part) {
         if (failures[part] != nullptr) std::rethrow_exception(failures[part]);
-        if (retry[part] || sampled[part] != 0) compiled[part] = CompileSplitTableCallPart(*memories[part], parts, which[part], request);
+        if (retry[part] != 0 || sampled[part] != 0) compiled[part] = CompileSplitTableCallPart(*memories[part], parts, which[part], request);
     }
     return compiled;
 }
@@ -2850,6 +2854,18 @@ std::array<std::uint64_t, 4> Driver::PrebuiltLibraries() {
     const auto localDevice = device.Load();
     if (localDevice == nullptr) return {};
     return Graphics::PipelineLibraryCountersOf(localDevice->Device()).built;
+}
+
+std::uint64_t Driver::SettledPipelineLibraryWork() {
+    AwaitRegistrationPreparation();
+    if (auto* pool = RegistrationPreparePool::ExistingPrebuild()) pool->AwaitSubmitted();
+    const auto localDevice = device.Load();
+    if (localDevice == nullptr) return 0;
+    Graphics::WaitForOptimizedPipelines(localDevice->Device());
+    const auto counters = Graphics::PipelineLibraryCountersOf(localDevice->Device());
+    std::uint64_t work = counters.linked + counters.optimized;
+    for (const auto parts : counters.built) work += parts;
+    return work;
 }
 
 void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {

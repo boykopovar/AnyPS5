@@ -671,7 +671,7 @@ std::int32_t APS5_VABI sceUsbdGetStringDescriptor(void* deviceHandle, std::uint8
     if (deviceHandle == nullptr || data == nullptr || length < 1) return SCE_USBD_ERROR_INVALID_ARG;
     if (length > 65535) length = 65535;
     const std::uint8_t empty = 0;
-    if (!GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty))) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!GuestOutputWritable(data, static_cast<std::size_t>(length)) || !GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty))) return SCE_USBD_ERROR_INVALID_ARG;
     auto* handle = KnownHandle(deviceHandle, __func__);
     std::vector<std::uint8_t> local(static_cast<std::size_t>(length));
     const int result = libusb_get_string_descriptor(handle, descriptorIndex, languageId, local.data(), length);
@@ -871,7 +871,7 @@ std::int32_t APS5_VABI sceUsbdGetStringDescriptorAscii(void* deviceHandle, std::
     if (deviceHandle == nullptr || data == nullptr || length < 1) return SCE_USBD_ERROR_INVALID_ARG;
     if (length > 65535) length = 65535;
     const std::uint8_t empty = 0;
-    if (!GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty))) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!GuestOutputWritable(data, static_cast<std::size_t>(length)) || !GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty))) return SCE_USBD_ERROR_INVALID_ARG;
     auto* handle = KnownHandle(deviceHandle, __func__);
     std::uint8_t descriptor[STRING_DESCRIPTOR_SIZE];
     if (!RequestStringDescriptor(handle, 0, 0, descriptor)) return SCE_USBD_ERROR_OTHER;

@@ -324,6 +324,24 @@ void TestRegion() {
     for (Storage* region : {&empty, &one, &shape, &other}) _ZN7WebCore6RegionD1Ev(region->ptr());
 }
 
+void TestPositionConstraints() {
+    WebCore::AbsolutePositionConstraints absolute{{7.0f, 8.0f}, {1.0f, 2.5f}};
+    auto dumpAbsolute = [&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_27AbsolutePositionConstraintsE(s, absolute); };
+    Check(Dump(dumpAbsolute) == "\n(layer-position-at-last-layout (1,2.50))");
+    Check(Dump(dumpAbsolute, 0, false) == " (layer-position-at-last-layout (1,2.50))");
+    WebCore::FixedPositionViewportConstraints fixed{nullptr, {7.0f, 8.0f}, 5, {{1.0f, 2.5f}, {3.0f, 4.0f}}, {-1.5f, 2.0f}};
+    auto dumpFixed = [&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_32FixedPositionViewportConstraintsE(s, fixed); };
+    Check(Dump(dumpFixed) == "\n(viewport-rect-at-last-layout (1,2.50) width=3 height=4)\n(layer-position-at-last-layout (-1.50,2))");
+    Check(Dump(dumpFixed, SVGStyleRect) == "\n(viewport-rect-at-last-layout at (1,2.50) size 3x4)\n(layer-position-at-last-layout (-1.50,2))");
+    Check(Dump(dumpFixed, 0, false) == " (viewport-rect-at-last-layout (1,2.50) width=3 height=4) (layer-position-at-last-layout (-1.50,2))");
+    TextStream nested = NewStream();
+    nested.indent = 2;
+    TextStream& returned = _ZN7WebCorelsERN3WTF10TextStreamERKNS_32FixedPositionViewportConstraintsE(nested, fixed);
+    Check(&returned == &nested);
+    Check(nested.indent == 2);
+    Check(Release(nested) == "\n    (viewport-rect-at-last-layout (1,2.50) width=3 height=4)\n    (layer-position-at-last-layout (-1.50,2))");
+}
+
 void TestChaining() {
     TextStream stream = NewStream();
     WebCore::IntPoint point{1, 2};
@@ -347,6 +365,7 @@ int main() {
     TestActivityState();
     TestTouchAction();
     TestRegion();
+    TestPositionConstraints();
     TestChaining();
     return 0;
 }

@@ -14,7 +14,7 @@ class VideoOutTestEnvironment final {
     std::filesystem::path root;
 
 public:
-    VideoOutTestEnvironment() : previous(std::filesystem::current_path()) {
+    explicit VideoOutTestEnvironment(bool ps4 = false) : previous(std::filesystem::current_path()) {
         const auto seed = static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()) ^
                           (static_cast<std::uint64_t>(std::random_device{}()) << 32u) ^ std::random_device{}();
         for (std::uint32_t attempt = 0; attempt < 64; ++attempt) {
@@ -31,9 +31,20 @@ public:
         try {
             std::filesystem::current_path(root);
             std::filesystem::create_directories("app0/sce_sys");
-            std::ofstream param("app0/sce_sys/param.json", std::ios::binary);
-            param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"downloadDataSize":0})";
-            if (!param) throw std::runtime_error("Cannot write VideoOut param.json fixture");
+            if (ps4) {
+                const std::uint32_t header[] = {0x46535000, 0x0101, 52, 72, 2};
+                const std::uint32_t entries[] = {0x02040000, 8, 8, 0, 0x02040006, 10, 12, 8};
+                constexpr char data[] = "TITLE\0TITLE_ID\0\0\0\0\0\0Example\0CUSA00000\0\0";
+                std::ofstream param("app0/sce_sys/param.sfo", std::ios::binary);
+                param.write(reinterpret_cast<const char*>(header), sizeof(header));
+                param.write(reinterpret_cast<const char*>(entries), sizeof(entries));
+                param.write(data, sizeof(data));
+                if (!param) throw std::runtime_error("Cannot write VideoOut param.sfo fixture");
+            } else {
+                std::ofstream param("app0/sce_sys/param.json", std::ios::binary);
+                param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"downloadDataSize":0})";
+                if (!param) throw std::runtime_error("Cannot write VideoOut param.json fixture");
+            }
         } catch (...) {
             std::error_code error;
             std::filesystem::current_path(previous, error);
