@@ -1251,15 +1251,34 @@ class PadTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.work = Path(directory.name) / "work"
         self.work.mkdir()
+        self.run_index = 0
+        environment = unittest.mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop("APS5_PAD_RECORD", None)
 
-    def run_with(self, pad, seconds=1):
+    def run_with(self, pad, seconds=1, ready_after=0, recording="APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0\n", extra_env=None):
         seen = {}
+        clock = [0.0]
+        self.run_index += 1
+        run_dir = self.work.parent / f"run{self.run_index}"
+
+        def sleep(seconds):
+            clock[0] += seconds
 
         class FakeSession:
             def __init__(self, command, cwd, env, stdout, stderr, owned=None):
                 seen["env"] = env
+                self.recorded = False
+                self.record = Path(env.get("APS5_PAD_RECORD") or run_dir / "pad-record.txt")
+                if not self.record.is_absolute():
+                    self.record = cwd / self.record
 
             def alive(self):
+                if pad and not self.recorded and ready_after is not None and clock[0] >= ready_after:
+                    self.record.parent.mkdir(parents=True, exist_ok=True)
+                    self.record.write_text(recording, encoding="utf-8")
+                    self.recorded = True
                 return True
 
             def send_new_windows_to_back(self):
@@ -1274,8 +1293,10 @@ class PadTests(unittest.TestCase):
             def kill(self):
                 pass
 
-        with unittest.mock.patch.object(title_run, "Session", FakeSession), unittest.mock.patch.object(title_run, "CLOSE_SECONDS", 0):
-            result = title_run.run_title(self.work / "eboot.exe", self.work, self.work.parent / "run1", seconds, {}, pad)
+        with unittest.mock.patch.object(title_run, "Session", FakeSession), unittest.mock.patch.object(title_run, "CLOSE_SECONDS", 0), \
+                unittest.mock.patch.object(title_run.time, "monotonic", side_effect=lambda: clock[0]), \
+                unittest.mock.patch.object(title_run.time, "sleep", side_effect=sleep):
+            result = title_run.run_title(self.work / "eboot.exe", self.work, run_dir, seconds, extra_env or {}, pad)
         return result, seen["env"]
 
     def test_timeline_is_queued_after_the_delay(self):
@@ -1298,6 +1319,53 @@ class PadTests(unittest.TestCase):
         result, _ = self.run_with({"after_s": 30, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]})
         self.assertIsNone(result["pad_queued_s"])
         self.assertFalse((self.work / "pad-input.txt").exists())
+        self.assertIn("minimum input delay not reached", (self.work.parent / f"run{self.run_index}" / "stderr.log").read_text())
+
+    def test_delayed_first_read_does_not_lose_the_timeline(self):
+        result, _ = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]}, ready_after=0.5)
+        self.assertGreaterEqual(result["pad_queued_s"], 0.5)
+
+    def test_ready_input_still_waits_for_the_requested_delay(self):
+        result, _ = self.run_with({"after_s": 0.5, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]})
+        self.assertGreaterEqual(result["pad_queued_s"], 0.5)
+
+    def test_no_first_read_queues_nothing(self):
+        result, _ = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]}, ready_after=None)
+        self.assertIsNone(result["pad_queued_s"])
+        self.assertFalse((self.work / "pad-input.txt").exists())
+        self.assertIn("no fresh controller sample observed", (self.work.parent / f"run{self.run_index}" / "stderr.log").read_text())
+
+    def test_incomplete_and_malformed_recordings_do_not_signal_readiness(self):
+        for record in ["APS5_PAD_RECORDING 1\n", "APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0",
+                       "wrong header\n0 0 128 128 128 128 0 0\n", "APS5_PAD_RECORDING 1\n0 zz 128 128 128 128 0 0\n",
+                       "APS5_PAD_RECORDING 1\n0 0 256 128 128 128 0 0\n", "APS5_PAD_RECORDING 1\n-1 0 128 128 128 128 0 0\n"]:
+            with self.subTest(record=record):
+                result, _ = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]}, recording=record)
+                self.assertIsNone(result["pad_queued_s"])
+                self.assertFalse((self.work / "pad-input.txt").exists())
+
+    def test_unchanged_recording_from_a_previous_run_is_not_readiness(self):
+        previous = self.work / "previous.txt"
+        previous.write_text("APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0\n", encoding="utf-8")
+        result, env = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]},
+                                    ready_after=None, extra_env={"APS5_PAD_RECORD": "previous.txt"})
+        self.assertEqual(env["APS5_PAD_RECORD"], "previous.txt")
+        self.assertIsNone(result["pad_queued_s"])
+
+    def test_relative_recording_override_observes_the_new_first_read(self):
+        previous = self.work / "previous.txt"
+        previous.write_text("APS5_PAD_RECORDING 1\n0 0 0 0 0 0 0 0\n", encoding="utf-8")
+        result, env = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]},
+                                    ready_after=0.5, extra_env={"APS5_PAD_RECORD": "previous.txt"})
+        self.assertEqual(env["APS5_PAD_RECORD"], "previous.txt")
+        self.assertGreaterEqual(result["pad_queued_s"], 0.5)
+
+    def test_empty_recording_override_gets_a_fresh_default(self):
+        result, env = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]},
+                                    extra_env={"APS5_PAD_RECORD": ""})
+        self.assertTrue(Path(env["APS5_PAD_RECORD"]).is_absolute())
+        self.assertTrue(Path(env["APS5_PAD_RECORD"]).is_file())
+        self.assertIsNotNone(result["pad_queued_s"])
 
     def test_default_audio_driver_is_dummy(self):
         with unittest.mock.patch.dict(os.environ, {}, clear=False):

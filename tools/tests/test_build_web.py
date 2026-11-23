@@ -29,6 +29,12 @@ def library_zip(entries):
 
 
 class LibraryPublicationTests(unittest.TestCase):
+    def test_load_release_rejects_duplicate_metadata_fields(self):
+        for data, key in ((b'{"tag_name":"v1","tag_name":"v2"}', "tag_name"),
+                          (b'{"assets":[{"size":1,"size":2}]}', "size")):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, f"duplicate JSON field.*{key}"):
+                build_web.load_release(io.BytesIO(data))
+
     def test_browser_unsafe_paths_do_not_publish_library_archives(self):
         valid = library_zip([("libs/libc.prx", b"valid")])
         for name in ("libs/NUL.prx", "libs/file:stream.prx", "libs/trailing./libc.prx",
@@ -71,6 +77,11 @@ class LibraryPublicationTests(unittest.TestCase):
             allocator_license = source / "3rdparty/mimalloc/LICENSE"
             allocator_license.parent.mkdir(parents=True)
             allocator_license.write_bytes(b"allocator license")
+            ffmpeg_notices = root / "prebuilt FFmpeg" / "share/ffmpeg"
+            ffmpeg_notices.mkdir(parents=True)
+            for name in ("copyright", "SOURCE.txt"):
+                (ffmpeg_notices / name).write_bytes(name.encode())
+            (build / "release-ffmpeg-notices.txt").write_text(ffmpeg_notices.as_posix() + "\n", encoding="utf-8")
             runtime = root / "compiler"
             runtime.mkdir()
             for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
@@ -103,6 +114,8 @@ class LibraryPublicationTests(unittest.TestCase):
                         )
                         self.assertEqual(packaged.read("libs/licenses/vgmstream.txt"), b"decoder license")
                         self.assertEqual(packaged.read("libs/licenses/mimalloc.txt"), b"allocator license")
+                        for name in ("copyright", "SOURCE.txt"):
+                            self.assertEqual(packaged.read("libs/licenses/ffmpeg/" + name), name.encode())
                         if platform == "windows":
                             self.assertEqual(packaged.read("libs/libstdc++-6.dll"), b"compiler runtime")
             self.publish(archives["windows"], archives["linux"])
