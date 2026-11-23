@@ -19,9 +19,7 @@ static_assert(sizeof(AuthorityKeyId) == 24 && offsetof(AuthorityKeyId, serial) =
 
 AuthorityKeyId ReadAuthorityKeyId(const void* source) {
     AuthorityKeyId value{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(value));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(__func__) + ": unreadable authority key identifier");
     return value;
 }
@@ -37,11 +35,6 @@ void APS5_VABI AUTHORITY_KEYID_free_nid_postfix(void* authorityKeyId) {
     GENERAL_NAMES_free_nid_postfix(value.issuer);
     ASN1_INTEGER_free_nid_postfix(value.serial);
     free_nid_postfix(authorityKeyId);
-}
-
-void APS5_VABI PKCS7_free_nid_postfix(void* pkcs7) {
-    if (!pkcs7) return;
-    NotImplemented_nid_no_patch(__func__);
 }
 
 }

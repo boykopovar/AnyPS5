@@ -10,10 +10,12 @@
  * ====================================================
  */
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/RemPio2Table.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
@@ -57,6 +59,9 @@ int APS5_VABI __kernel_rem_pio2_nid_postfix(double* x, double* y, int e0, int nx
     if (prec < 0 || prec > 3) throw std::invalid_argument("__kernel_rem_pio2: precision " + std::to_string(prec) + " is not 0 to 3");
     if (nx < 1 || nx > Terms - InitJk[prec]) throw std::invalid_argument("__kernel_rem_pio2: " + std::to_string(nx) + " input chunks do not fit the 20-term work arrays");
     if (e0 < std::numeric_limits<std::int32_t>::min() + 24 * (Terms + 3)) throw std::invalid_argument("__kernel_rem_pio2: exponent " + std::to_string(e0) + " overflows the reduction's exponent arithmetic");
+    std::array<double, Terms> input{};
+    if (!GuestCopyIn_nid_no_patch(input.data(), x, static_cast<std::size_t>(nx) * sizeof(double))) throw std::invalid_argument("__kernel_rem_pio2: unreadable x");
+    std::array<double, 3> output{};
     const double zero = 0.0, one = 1.0, two24 = 1.67772160000000000000e+07, twon24 = 5.96046447753906250000e-08;
     std::int32_t jz, jx, jv, jp, jk, carry, n, i, j, k, m, q0, ih;
     std::array<std::int32_t, Terms> iq{};
@@ -73,7 +78,7 @@ int APS5_VABI __kernel_rem_pio2_nid_postfix(double* x, double* y, int e0, int nx
     m = jx + jk;
     for (i = 0; i <= m; i++, j++) At(f, i) = j < 0 ? zero : Ipio2At(j);
     for (i = 0; i <= jk; i++) {
-        for (j = 0, fw = 0.0; j <= jx; j++) fw += x[j] * At(f, jx + i - j);
+        for (j = 0, fw = 0.0; j <= jx; j++) fw += input[j] * At(f, jx + i - j);
         At(q, i) = fw;
     }
     jz = jk;
@@ -131,7 +136,7 @@ recompute:
             }
             for (i = jz + 1; i <= jz + k; i++) {
                 At(f, jx + i) = Ipio2At(jv + i);
-                for (j = 0, fw = 0.0; j <= jx; j++) fw += x[j] * At(f, jx + i - j);
+                for (j = 0, fw = 0.0; j <= jx; j++) fw += input[j] * At(f, jx + i - j);
                 At(q, i) = fw;
             }
             jz += k;
@@ -170,16 +175,16 @@ recompute:
         case 0:
             fw = 0.0;
             for (i = jz; i >= 0; i--) fw += At(fq, i);
-            y[0] = ih == 0 ? fw : -fw;
+            output[0] = ih == 0 ? fw : -fw;
             break;
         case 1:
         case 2:
             fw = 0.0;
             for (i = jz; i >= 0; i--) fw += At(fq, i);
-            y[0] = ih == 0 ? fw : -fw;
+            output[0] = ih == 0 ? fw : -fw;
             fw = At(fq, 0) - fw;
             for (i = 1; i <= jz; i++) fw += At(fq, i);
-            y[1] = ih == 0 ? fw : -fw;
+            output[1] = ih == 0 ? fw : -fw;
             break;
         case 3:
             if (jz < 1) throw std::domain_error("__kernel_rem_pio2: a one-term quad result would read an unset term");
@@ -195,16 +200,18 @@ recompute:
             }
             for (fw = 0.0, i = jz; i >= 2; i--) fw += At(fq, i);
             if (ih == 0) {
-                y[0] = At(fq, 0);
-                y[1] = At(fq, 1);
-                y[2] = fw;
+                output[0] = At(fq, 0);
+                output[1] = At(fq, 1);
+                output[2] = fw;
             } else {
-                y[0] = -At(fq, 0);
-                y[1] = -At(fq, 1);
-                y[2] = -fw;
+                output[0] = -At(fq, 0);
+                output[1] = -At(fq, 1);
+                output[2] = -fw;
             }
             break;
     }
+    const std::size_t outputs = prec == 0 ? 1 : prec == 3 ? 3 : 2;
+    if (!GuestCopyOut_nid_no_patch(y, output.data(), outputs * sizeof(double))) throw std::invalid_argument("__kernel_rem_pio2: unwritable y");
     return n & 7;
 }
 

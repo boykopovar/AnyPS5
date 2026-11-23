@@ -112,6 +112,13 @@ class TimelinePreviewTests(unittest.TestCase):
             with self.subTest(repeat=repeat, gap=gap), self.assertRaises(ValueError):
                 preview_pad_timeline.preview(DOCUMENT, repeat, gap)
 
+    def test_preview_accounts_for_full_command_header(self):
+        document = {"version": 1, "events": [{"at_ms": 0, "hold_ms": 1, "buttons": ["cross"],
+                                                "left_stick": [255, 255], "right_stick": [255, 255]}]}
+        self.assertEqual(preview_pad_timeline.preview(document, repeat=2296, gap_ms=0)["event_count"], 2296)
+        with self.assertRaisesRegex(ValueError, "runtime reads at most 65536"):
+            preview_pad_timeline.preview(document, repeat=2297, gap_ms=0)
+
     def test_bad_json_and_invalid_events_return_usage_errors_without_a_preview(self):
         with tempfile.TemporaryDirectory() as directory:
             timeline = Path(directory) / "timeline.json"
