@@ -30,13 +30,14 @@ LATER_FUNCTION = 0x300
 
 
 def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False, data_pointer=False, gap_entry=False,
-            plt_at=None, early_function=False, function_tls=False, pointer_target=None, gap_bytes=None, functions=None,
+            plt_at=None, eager_slots=(), eager_padding=0xCC, early_function=False, function_tls=False, pointer_target=None, gap_bytes=None, functions=None,
             tls=False, gap_embedded_data=False, gap_data_then_syscall=False, gap_callback_syscall_undecodable=False,
             gap_decoded_padding_syscall=False, gap_stub_then_data=False):
     has_gap_embedded = gap_embedded_data or gap_data_then_syscall or gap_callback_syscall_undecodable or gap_decoded_padding_syscall or gap_stub_then_data
     plt = (LATER_FUNCTION + FUNCTION_SIZE + gap if has_gap_embedded else FUNCTION + FUNCTION_SIZE + gap) if plt_at is None else plt_at
     entry = FUNCTION + FUNCTION_SIZE if gap_entry else FUNCTION
-    data = plt + 0x20 if plt > FUNCTION else FUNCTION + FUNCTION_SIZE
+    stubs = len(eager_slots) or 1
+    data = plt + 0x10 + 0x10 * stubs if plt > FUNCTION else FUNCTION + FUNCTION_SIZE
     if functions is None:
         functions = [(EARLY_FUNCTION, FUNCTION_SIZE)] if early_function else []
         functions.append((FUNCTION, FUNCTION_SIZE))
@@ -52,7 +53,7 @@ def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False,
         (0x61000035 if sce_block else 5, 0x600), (0x61000037 if sce_block else 10, 16),
         (0x61000039 if sce_block else 6, 0x620), (0x6100003B if sce_block else 11, 24), (0x6100003F, 48),
         (0x6100002F if sce_block else 7, 0x700), (0x61000031 if sce_block else 8, 24 if interpreter_pointer or pointer_target is not None else 0), (0x61000033 if sce_block else 9, 24),
-        (0x61000027 if sce_block else 3, GOT), (0x61000029 if sce_block else 23, 0x720), (0x6100002B, 7), (0x6100002D if sce_block else 2, 24),
+        (0x61000027 if sce_block else 3, GOT), (0x61000029 if sce_block else 23, 0x720), (0x6100002B, 7), (0x6100002D if sce_block else 2, 24 * stubs),
         (0, 0),
     ]
     struct.pack_into("<IIQQQQQQ", image, 64, PT_LOAD, 7, 0, 0, 0, len(image), len(image), 0x1000)
@@ -74,7 +75,8 @@ def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False,
         struct.pack_into("<qQ", image, 0x400 + index * 16, *tag)
     image[0x600:0x610] = b"\x00lib.so\x00symbol\x00\x00"
     struct.pack_into("<IBBHQQ", image, 0x620 + 24, 8, 0x12, 0, 0, 0, 0)
-    struct.pack_into("<QQq", image, 0x720, GOT + 24, (1 << 32) | 7, 0)
+    for index in range(stubs):
+        struct.pack_into("<QQq", image, 0x720 + 24 * index, GOT + 24 + 8 * index, (1 << 32) | 7, 0)
 
     for begin, size in functions:
         image[begin:begin + size] = b"\xc3" + b"\x90" * (size - 1)
@@ -91,6 +93,13 @@ def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False,
     struct.pack_into("<I", image, plt + 23, 0)
     image[plt + 27] = 0xE9
     struct.pack_into("<i", image, plt + 28, plt - (plt + 32))
+    if eager_slots:
+        image[plt:plt + 16] = b"\xcc" * 16
+    for index, slot in enumerate(eager_slots):
+        stub = plt + 16 + 16 * index
+        image[stub:stub + 2] = b"\xff\x25"
+        struct.pack_into("<i", image, stub + 2, GOT + slot - (stub + 6))
+        image[stub + 6:stub + 16] = bytes([eager_padding]) * 10
     image[data:data + 0x30] = b"\x0f\x79\xc0" * 0x10
     if data_pointer:
         image[FUNCTION:FUNCTION + 3] = b"\x48\x8d\x05"
@@ -152,7 +161,7 @@ def run(relinker, work, name, built, expected_error=None, target="windows", expe
     if expected_error is None:
         assert result.returncode == 0 and output.exists(), (name, result.stdout, result.stderr)
         registry = json.loads((work / (name + ".registry.json")).read_text())
-        assert [[site.lower() for site in entry["callSites"]] for entry in registry] == [[hex(plt + 16)]], (name, registry)
+        assert registry and [[site.lower() for site in entry["callSites"]] for entry in registry] == [[hex(plt + 16 + 16 * index)] for index in range(len(registry))], (name, registry)
         assert absent_bytes is None or absent_bytes not in output.read_bytes(), name
     else:
         assert result.returncode == 2 and expected_error in result.stderr and not output.exists(), (
@@ -201,6 +210,16 @@ def main():
         run(relinker, work, "sce-code-between-function-and-plt", fixture(gap=0x40))
         run(relinker, work, "sce-plt-missing", fixture(plt_push_offset=0),
             "PLT not found before or after the unwind functions")
+        run(relinker, work, "sce-eager-plt", fixture(eager_slots=(24,)))
+        run(relinker, work, "sce-code-between-function-and-eager-plt", fixture(gap=0x40, eager_slots=(24,)))
+        run(relinker, work, "sce-eager-plt-pair", fixture(eager_slots=(24, 32)))
+        run(relinker, work, "sce-eager-plt-before-code", fixture(plt_at=PLT_BEFORE_CODE, eager_slots=(24, 32)))
+        run(relinker, work, "sce-eager-plt-ends-at-function", fixture(plt_at=FUNCTION - 0x20, eager_slots=(24,)))
+        run(relinker, work, "sce-eager-plt-over-function", fixture(plt_at=FUNCTION - 0x10, eager_slots=(24,)),
+            "PLT overlaps an unwind function")
+        for name, slots, padding in (("wrong-slot", (16,), 0xCC), ("swapped-slots", (32, 24), 0xCC), ("without-trap-padding", (24,), 0x90)):
+            run(relinker, work, "sce-eager-plt-" + name, fixture(eager_slots=slots, eager_padding=padding),
+                "PLT not found before or after the unwind functions")
         run(relinker, work, "sce-plt-ends-at-function", fixture(plt_at=FUNCTION - 0x20))
         run(relinker, work, "sce-plt-starts-at-function-end",
             fixture(plt_at=EARLY_FUNCTION + FUNCTION_SIZE, early_function=True))

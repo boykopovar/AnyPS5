@@ -178,8 +178,10 @@ State drawState(const ColorTarget& color, const DrawOptions& options) {
 void draw(AgcDriver::VulkanDevice& device, const ColorTarget& color, const DrawOptions& options = {}) {
     ShaderRecompiler::RecompileResult vertex;
     vertex.spirv = std::vector<std::uint32_t>(std::begin(COVER_VERT_SPV), std::end(COVER_VERT_SPV));
+    vertex.variantId = 1;
     ShaderRecompiler::RecompileResult fragment;
     fragment.spirv = std::vector<std::uint32_t>(std::begin(COVER_FRAG_SPV), std::end(COVER_FRAG_SPV));
+    fragment.variantId = 2;
     const std::array<CompiledShader, 2> shaders{{
         {ShaderRecompiler::ShaderStage::Vertex, &vertex, 0},
         {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}
@@ -1618,8 +1620,69 @@ void memoOrder(AgcDriver::VulkanDevice& device) {
     expect(device, color, [](std::uint32_t x) { return leftOver(x, Old); }, "repeats served by either memo");
 }
 
-const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 17> R3Scenarios{{
+void recipeViews(AgcDriver::VulkanDevice& device) {
+    Require(LookupOutcomes::Profiled() && memoCounted(), "the recipe views test needs APS5_PROFILE_DRAW");
+    const bool pass = passMemoServes();
+    const auto colorA = colorTarget();
+    auto colorB = colorTarget();
+    colorB.address = address(OuterStorage.data());
+    colorB.surfaceAddress = colorB.address;
+    reset(device, colorA);
+    reset(device, colorB);
+    ShaderRecompiler::RecompileResult vertex;
+    vertex.spirv = std::vector<std::uint32_t>(std::begin(COVER_VERT_SPV), std::end(COVER_VERT_SPV));
+    vertex.variantId = 1;
+    ShaderRecompiler::RecompileResult fragment;
+    fragment.spirv = std::vector<std::uint32_t>(std::begin(COVER_FRAG_SPV), std::end(COVER_FRAG_SPV));
+    fragment.variantId = 2;
+    const std::array<CompiledShader, 2> shaders{{
+        {ShaderRecompiler::ShaderStage::Vertex, &vertex, 0},
+        {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}
+    }};
+    const auto stateA = drawState(colorA, {});
+    const auto stateB = drawState(colorB, {});
+    const AgcDriver::Pm4::DrawParameters params{0, 3, 0, 1, 0, false};
+    std::shared_ptr<const AgcDriver::DrawRecipe> recipeA;
+    std::shared_ptr<const AgcDriver::DrawRecipe> recipeB;
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        for (int attempt = 0; attempt < 3 && recipeA == nullptr; ++attempt) {
+            device.Draw(stateA, params, shaders, {}, &recipeA);
+        }
+    }
+    Require(recipeA != nullptr, "the initial draw did not produce a recipe");
+    const auto replay = [&](const State& state, const std::shared_ptr<const AgcDriver::DrawRecipe>& recipe, bool expectMemoHit, const std::string& what) {
+        const auto before = lookups();
+        const MemoEvents events;
+        AgcDriver::RecipeOutcome outcome;
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            outcome = device.DrawFromRecipe(state, params, shaders, {}, recipe);
+        }
+        Require(outcome == AgcDriver::RecipeOutcome::Recorded, what + ": recipe draw did not record");
+        if (pass) {
+            Require((lookups() == before) == expectMemoHit, what + ": unexpected full lookup count");
+            requireMemoEvent(events, TargetMemoEvent::Lookup, 0u, what);
+        }
+    };
+    replay(stateA, recipeA, true, "first recipe repeat on initial views");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        for (int attempt = 0; attempt < 3 && recipeB == nullptr; ++attempt) {
+            device.Draw(stateB, params, shaders, {}, &recipeB);
+        }
+    }
+    Require(recipeB != nullptr, "the second target draw did not produce a recipe");
+    replay(stateB, recipeB, true, "recipe repeat after switching to second target views");
+    replay(stateA, recipeA, false, "recipe draw after memo views changed");
+    replay(stateA, recipeA, true, "second recipe draw hitting reused memo after view change");
+    std::cout << "recipe views: pass attachment memo " << (pass ? "on" : "off") << '\n';
+    expect(device, colorA, [](std::uint32_t x) { return leftOver(x, Old); }, "recipe draw after view change");
+}
+
+const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 18> R3Scenarios{{
     {"memo-order", memoOrder},
+    {"recipe-views", recipeViews},
     {"untracked-dcc", untrackedDccClear},
     {"untracked-cmask", untrackedCmaskClear},
     {"untracked-stencil", untrackedStencilWrite},

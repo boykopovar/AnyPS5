@@ -37,13 +37,6 @@ std::atomic<bool> g_initialized{false};
 std::mutex g_sessionMutex;
 std::set<std::int32_t> g_sessions;
 
-std::uint32_t CompiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, process + 16, sizeof(version));
-    return version;
-}
-
 void RequireSession(const char* function, std::int32_t expId) {
     if (!g_initialized.load()) throw std::logic_error(std::string(function) + ": not initialized");
     if (!g_sessions.contains(expId)) throw std::invalid_argument(std::string(function) + ": unknown export session");
@@ -80,7 +73,7 @@ int APS5_VABI sceContentExportFinish(std::int32_t expId) {
 }
 
 int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportParam* param, std::size_t contentLength, ContentExportDataCallback callback, void* userData, char* path, std::size_t pathBufferLength) {
-    const std::int32_t sdkVersion = static_cast<std::int32_t>(CompiledSdkVersion());
+    const std::int32_t sdkVersion = static_cast<std::int32_t>(ApplicationCompiledSdkVersion());
     if (sdkVersion >= static_cast<std::int32_t>(MemoryPoolSdkVersion) && !g_initialized.load()) return ErrorNotInitialized;
     if (expId < 0 || expId >= MaxExecution || param == nullptr || callback == nullptr) return ErrorInvalidArgument;
     ContentExportParam localParam{};
@@ -92,6 +85,7 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
         std::lock_guard lock(g_sessionMutex);
         if (!g_sessions.contains(expId)) return ErrorInvalidArgument;
     }
+    if (std::memchr(localParam.content_type, '\0', sizeof(localParam.content_type)) == nullptr) return ErrorInvalidArgument;
     if (!SupportedContentType(localParam.content_type, sdkVersion)) return ErrorInvalidContentType;
     const char* subtype = std::strrchr(localParam.content_type, '/');
     if (subtype == nullptr || std::strlen(subtype + 1) < 2) return ErrorInvalidArgument;

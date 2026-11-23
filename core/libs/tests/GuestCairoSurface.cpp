@@ -1,3 +1,4 @@
+#include "prx/libcairo/include/Context.hpp"
 #include "prx/libcairo/include/Surface.hpp"
 
 #include <array>
@@ -8,6 +9,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <type_traits>
 
@@ -208,6 +210,119 @@ void CheckDeviceScale() {
     cairo_surface_destroy(nullptr);
 }
 
+void CheckNegativeStridePaintOrientation() {
+    alignas(4) std::array<unsigned char, 40> negative{};
+    negative.fill(0xA5);
+    unsigned char* base = negative.data() + 8;
+    unsigned char* row0 = base + 12;
+    unsigned char* row1 = base;
+    const std::uint32_t first = 0xffff0000u;
+    const std::uint32_t last = 0xff0000ffu;
+    const std::uint32_t guard = 0x5c5c5c5cu;
+    std::memcpy(row0 + 0, &first, 4);
+    std::memcpy(row0 + 4, &first, 4);
+    std::memcpy(row0 + 8, &guard, 4);
+    std::memcpy(row1 + 0, &last, 4);
+    std::memcpy(row1 + 4, &last, 4);
+    std::memcpy(row1 + 8, &guard, 4);
+
+    CairoSurface* source = cairo_image_surface_create_for_data(row0, 0, 2, 2, -12);
+    assert(source && cairo_surface_status(source) == 0);
+    assert(cairo_image_surface_get_data(source) == row0);
+    assert(cairo_image_surface_get_stride(source) == -12);
+    assert(cairo_image_surface_get_width(source) == 2);
+    assert(cairo_image_surface_get_height(source) == 2);
+
+    CairoSurface* target = cairo_image_surface_create(0, 2, 2);
+    assert(target && cairo_surface_status(target) == 0);
+    CairoContext* context = cairo_create(target);
+    assert(context);
+    cairo_set_source_surface(context, source, 0, 0);
+    cairo_paint(context);
+    cairo_destroy(context);
+    cairo_surface_flush(target);
+
+    auto pixel = [](CairoSurface* surface, int x, int y) {
+        std::uint32_t value = 0;
+        std::memcpy(&value,
+                    cairo_image_surface_get_data(surface) + y * cairo_image_surface_get_stride(surface) + x * 4,
+                    4);
+        return value;
+    };
+    assert(pixel(target, 0, 0) == first);
+    assert(pixel(target, 1, 0) == first);
+    assert(pixel(target, 0, 1) == last);
+    assert(pixel(target, 1, 1) == last);
+
+    std::uint32_t value = 0;
+    std::memcpy(&value, row0 + 0, 4);
+    assert(value == first);
+    std::memcpy(&value, row0 + 4, 4);
+    assert(value == first);
+    std::memcpy(&value, row0 + 8, 4);
+    assert(value == guard);
+    std::memcpy(&value, row1 + 0, 4);
+    assert(value == last);
+    std::memcpy(&value, row1 + 4, 4);
+    assert(value == last);
+    std::memcpy(&value, row1 + 8, 4);
+    assert(value == guard);
+    for (int i = 0; i < 8; ++i) assert(negative[i] == 0xA5);
+    for (int i = 32; i < 40; ++i) assert(negative[i] == 0xA5);
+
+    cairo_surface_destroy(target);
+    cairo_surface_destroy(source);
+
+    alignas(4) std::array<unsigned char, 40> positive{};
+    positive.fill(0xA5);
+    unsigned char* pbase = positive.data() + 8;
+    unsigned char* prow0 = pbase;
+    unsigned char* prow1 = pbase + 12;
+    std::memcpy(prow0 + 0, &first, 4);
+    std::memcpy(prow0 + 4, &first, 4);
+    std::memcpy(prow0 + 8, &guard, 4);
+    std::memcpy(prow1 + 0, &last, 4);
+    std::memcpy(prow1 + 4, &last, 4);
+    std::memcpy(prow1 + 8, &guard, 4);
+
+    CairoSurface* psource = cairo_image_surface_create_for_data(prow0, 0, 2, 2, 12);
+    assert(psource && cairo_surface_status(psource) == 0);
+    assert(cairo_image_surface_get_data(psource) == prow0);
+    assert(cairo_image_surface_get_stride(psource) == 12);
+
+    CairoSurface* ptarget = cairo_image_surface_create(0, 2, 2);
+    assert(ptarget && cairo_surface_status(ptarget) == 0);
+    CairoContext* pcontext = cairo_create(ptarget);
+    assert(pcontext);
+    cairo_set_source_surface(pcontext, psource, 0, 0);
+    cairo_paint(pcontext);
+    cairo_destroy(pcontext);
+    cairo_surface_flush(ptarget);
+
+    assert(pixel(ptarget, 0, 0) == first);
+    assert(pixel(ptarget, 1, 0) == first);
+    assert(pixel(ptarget, 0, 1) == last);
+    assert(pixel(ptarget, 1, 1) == last);
+
+    std::memcpy(&value, prow0 + 0, 4);
+    assert(value == first);
+    std::memcpy(&value, prow0 + 4, 4);
+    assert(value == first);
+    std::memcpy(&value, prow0 + 8, 4);
+    assert(value == guard);
+    std::memcpy(&value, prow1 + 0, 4);
+    assert(value == last);
+    std::memcpy(&value, prow1 + 4, 4);
+    assert(value == last);
+    std::memcpy(&value, prow1 + 8, 4);
+    assert(value == guard);
+    for (int i = 0; i < 8; ++i) assert(positive[i] == 0xA5);
+    for (int i = 32; i < 40; ++i) assert(positive[i] == 0xA5);
+
+    cairo_surface_destroy(ptarget);
+    cairo_surface_destroy(psource);
+}
+
 }
 
 int main() {
@@ -215,5 +330,6 @@ int main() {
     CheckBorrowedDataAndLifetime();
     CheckSimilarAndSubsurfaces();
     CheckDeviceScale();
+    CheckNegativeStridePaintOrientation();
     std::puts("guest cairo image/surface tests passed");
 }

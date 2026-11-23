@@ -141,9 +141,7 @@ extern "C" {
 std::int32_t APS5_VABI u_unescapeAt_nid_postfix(Icu::UnescapeCharacterAt characterAt, std::int32_t* offset, std::int32_t length, void* context) {
     if (!offset) APS5_INVALID_ARG_EX;
     std::int32_t probed = 0;
-    const int savedErrno = errno;
     const bool usable = GuestCopyIn_nid_no_patch(&probed, offset, sizeof(probed)) && GuestCopyOut_nid_no_patch(offset, &probed, sizeof(probed));
-    errno = savedErrno;
     if (!usable) throw std::invalid_argument("u_unescapeAt: unusable offset");
     return Decode(characterAt, *offset, length, context);
 }
