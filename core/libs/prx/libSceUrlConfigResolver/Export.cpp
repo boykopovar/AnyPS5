@@ -1,5 +1,4 @@
 #include "prx/libSceUrlConfigResolver/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -16,20 +15,13 @@ constexpr int kInvalidArgument = static_cast<int>(0x80BA8080u);
 std::mutex g_stateMutex;
 bool g_configLoaded = false;
 
-bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return copied;
-}
-
 void ZeroGuest(void* destination, std::uint32_t size, const char* function) {
     static constexpr std::array<std::byte, 4096> zeros{};
     auto* cursor = static_cast<std::byte*>(destination);
     std::uint32_t remaining = size;
     while (remaining != 0) {
         const std::uint32_t chunk = remaining < zeros.size() ? remaining : static_cast<std::uint32_t>(zeros.size());
-        if (!CopyOutPreservingErrno(cursor, zeros.data(), chunk))
+        if (!GuestCopyOut_nid_no_patch(cursor, zeros.data(), chunk))
             throw std::invalid_argument(std::string(function) + ": unwritable buffer");
         cursor += chunk;
         remaining -= chunk;
@@ -37,7 +29,7 @@ void ZeroGuest(void* destination, std::uint32_t size, const char* function) {
 }
 
 void StoreGuest(std::uint32_t* destination, std::uint32_t value, const char* function) {
-    if (!CopyOutPreservingErrno(destination, &value, sizeof(value)))
+    if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value)))
         throw std::invalid_argument(std::string(function) + ": unwritable output");
 }
 
