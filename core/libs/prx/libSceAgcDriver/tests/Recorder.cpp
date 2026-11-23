@@ -11133,6 +11133,7 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         resource.baseAddress = address;
         bool direct = false;
         bool headRead = false;
+        bool differingRead = false;
         std::size_t kept = 0;
         {
             auto image = StorageTexture::Create(context, detiler, resource, 0);
@@ -11141,6 +11142,8 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
             direct = read.has_value() && read->kind == Recorder::ReadKind::StorageUpload;
             const auto head = recorder.DescribePendingRead(address, piece);
             headRead = head.has_value() && head->kind == Recorder::ReadKind::StorageUpload;
+            const auto differing = recorder.DescribePendingRead(address + surfaceBytes - 2 * piece, piece);
+            differingRead = differing.has_value() && differing->kind == Recorder::ReadKind::StorageUpload;
             image->MarkDirty();
             image->WriteBack();
             recorder.Submit();
@@ -11152,7 +11155,7 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         const auto segments = after.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made - before.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made;
         std::printf("%s: %zu segment imports, %s upload, %zu of %zu bytes kept through the round trip\n", test.name, static_cast<std::size_t>(segments), direct ? "GPU-direct" : "CPU", kept, surfaceBytes);
         if (!direct) failures += std::string(test.name) + ": the upload took the CPU path\n";
-        if (test.lastWordDiffers && resident && !headRead) failures += std::string(test.name) + ": the upload filled a piece on the GPU although the last byte of its source differs\n";
+        if (test.lastWordDiffers && resident && !differingRead) failures += std::string(test.name) + ": the upload filled the piece whose last byte differs on the GPU instead of reading it\n";
         if (test.uniformHead && !test.lastWordDiffers && resident && headRead) failures += std::string(test.name) + ": the upload read a piece holding one repeated word from guest memory instead of filling it on the GPU\n";
         if (segments != test.segments) failures += std::string(test.name) + ": " + std::to_string(segments) + " segment imports, expected " + std::to_string(test.segments) + "\n";
         if (kept != surfaceBytes) failures += std::string(test.name) + ": the upload and write-back changed " + std::to_string(surfaceBytes - kept) + " guest bytes\n";
