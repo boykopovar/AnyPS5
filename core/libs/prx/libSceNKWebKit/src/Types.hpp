@@ -284,6 +284,9 @@ public:
     Retained<Object> topOverhangImage;
     Retained<Object> bottomOverhangImage;
     std::uint64_t paintedObjectsCounterThreshold = 0;
+    std::map<std::string, std::uint64_t> appCacheOriginQuotas;
+    std::map<std::string, std::uint64_t> appCacheOriginUsage;
+    std::uint64_t applicationCacheClearCount = 0;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
