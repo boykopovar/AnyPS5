@@ -50,6 +50,18 @@ class ErrorReportTests(unittest.TestCase):
         self.assertIn("exit code 128", str(raised.exception.code))
         self.assertIn(MISSING_REF, str(raised.exception.code))
 
+    def test_base_missing_on_github_names_the_branch(self):
+        def no_match(command, **kwargs):
+            if command[0] == "gh":
+                return subprocess.CompletedProcess(command, 0, stdout="[]", stderr="")
+            return subprocess.CompletedProcess(command, 2, stdout=b"", stderr=b"")
+
+        with patch.object(subprocess, "run", side_effect=no_match):
+            with self.assertRaises(SystemExit) as raised:
+                pr_overlap.main(["--repo", "owner/project", "--base", "origin/main", "--branch", "HEAD"])
+        self.assertEqual(str(raised.exception.code), "pr_overlap: owner/project has no branch 'origin/main'; "
+                                                     "--base takes a branch name on GitHub, such as main")
+
     def test_merge_on_old_git_names_the_version_it_needs(self):
         def old_git(command, **kwargs):
             if "version" in command:

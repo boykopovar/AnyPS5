@@ -292,7 +292,12 @@ def fetch(base, prs):
 
 
 def base_commit(base):
-    return git("ls-remote", "--exit-code", f"https://github.com/{REPO}.git", f"refs/heads/{base}").split()[0]
+    try:
+        return git("ls-remote", "--exit-code", f"https://github.com/{REPO}.git", f"refs/heads/{base}").split()[0]
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 2:
+            raise
+        raise ValueError(f"{REPO} has no branch {base!r}; --base takes a branch name on GitHub, such as main") from None
 
 
 def fetch_heads(base_sha, prs):
