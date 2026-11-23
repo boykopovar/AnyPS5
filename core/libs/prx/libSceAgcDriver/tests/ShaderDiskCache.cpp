@@ -12,6 +12,7 @@
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/SrtWalker.hpp"
 #include "IntermediateRepresentation/IrBlock.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -45,7 +46,6 @@
 #include <io.h>
 #include <fcntl.h>
 #include "prx/libc/include/General.hpp"
-#include "tests/CommandLineArgument.hpp"
 #endif
 
 namespace {
