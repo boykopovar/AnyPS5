@@ -63,6 +63,7 @@ void TestHexRange() {
     Require(std::fegetenv(&saved) == 0 && std::fesetround(FE_TONEAREST) == 0, "save hexadecimal range test environment");
     CheckHexRange(_Stofx_nid_postfix, _Stof_nid_postfix, "0X1p128", "0X1p-150");
     CheckHexRange(_Stodx_nid_postfix, _Stod_nid_postfix, "0x1p1024", "0x1p-1075");
+    CheckHexRange(_Stodx_nid_postfix, _Stod_nid_postfix, "0x1.00000000000001p1024", "0x1.00000000000001p-1075");
     CheckHexRange(_Stoldx_nid_postfix, _Stold_nid_postfix, "0x1p16384", "0x1p-16446");
     Require(std::fesetenv(&saved) == 0, "restore hexadecimal range test environment");
 }

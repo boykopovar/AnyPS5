@@ -2,7 +2,7 @@
 
 ## change [_Stod, _Stodx, _Stofx, _Stoldx, _Stof and _Stold]
 
-- [_Stod, _Stodx, _Stofx, _Stoldx, _Stof and _Stold](../../../core/libs/prx/libc/src/DinkumwareInternals.cpp) (libSceLibcInternal, implemented in libc) - a nonzero subnormal result of decimal text sets neither `errno` nor the error argument, as measured in firmware 13.60's `libSceLibcInternal.sprx` run in a Linux host process, not on a console; there about a fifth of decimal inputs with a subnormal result come out one unit apart in the last place (`_Stodx("2.2250738585072014e-308", 0)` is the largest subnormal), which is not reproduced. Hexadecimal underflow and subnormal results with a zero scale are unverified for `libSceLibcInternal.sprx`; they follow the `strtod` rule of PPSA08329's `libc.prx`, so `_Stodx("0x1.00000000000001p-1075", 0)` gives 0 with an error of 1, not 2^-1074
+- [_Stod, _Stodx, _Stofx, _Stoldx, _Stof and _Stold](../../../core/libs/prx/libc/src/DinkumwareInternals.cpp) (libSceLibcInternal, implemented in libc) - a nonzero subnormal result of decimal text sets neither `errno` nor the error argument, as measured in firmware 13.60's `libSceLibcInternal.sprx` run in a Linux host process, not on a console; there about a fifth of decimal inputs with a subnormal result come out one unit apart in the last place (`_Stodx("2.2250738585072014e-308", 0)` is the largest subnormal), which is not reproduced. Hexadecimal overflow, underflow and subnormal results with a zero scale are unverified for `libSceLibcInternal.sprx`; here they leave `errno` unchanged and the error argument at 0, so `_Stodx("0x1.00000000000001p-1075", 0)` gives 0 with an error of 0, not 2^-1074
 
 ## add Functional
 
