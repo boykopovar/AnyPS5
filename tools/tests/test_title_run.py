@@ -255,8 +255,16 @@ class AnalysisTests(unittest.TestCase):
         for label, invalid in cases.items():
             with self.subTest(label=label):
                 path.write_text(good + "\n" + invalid, encoding="utf-8")
-                self.assertEqual(title_run.read_summary(path),
+                result = title_run.read_summary(path)
+                errors = result.pop("native_errors", None)
+                self.assertEqual(result,
                                  {"presents": 10, "fps": 10.0, "gpu": "Good", "driver": "", "os": ""})
+                if label in ("duplicate frames", "non-finite duration"):
+                    self.assertEqual(errors, {"malformed_rows": 1})
+                elif label == "deep nesting":
+                    self.assertIn(errors, (None, {"non_object_rows": 1}))
+                else:
+                    self.assertIsNone(errors)
 
     def test_input_audit_ignores_non_text_telemetry_identity(self):
         path = self.root / "aps5-summary.jsonl"
