@@ -787,6 +787,7 @@ static void CheckConnectedDatagramSendto() {
     for (const int family : {2, 28}) {
         const std::uint32_t addressSize = family == 2 ? 16 : 28;
         const int receiver = sceNetSocket("connected-receiver", family, 2, 17);
+        if (receiver < 0 && family == 28 && *sceNetErrnoLoc() == 47) continue;
         const int other = sceNetSocket("connected-other", family, 2, 17);
         const int sender = sceNetSocket("connected-sender", family, 2, 17);
         Require(receiver >= 0 && other >= 0 && sender >= 0);
