@@ -10,6 +10,8 @@ from test_guest_intel_trampolines import main_fixture
 
 def importing_executable(imports, binding=1, relocation_type=6):
     image = main_fixture()
+    struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 0x4000, 0x4000, 0x4000, 0x800, 0x800, 0x4000)
+    struct.pack_into("<IIQQQQQQ", image, 64 + 2 * 56, 1, 6, 0x4800, 0x4800, 0x4800, 0x800, 0x800, 0x4000)
     strings, offsets = string_table(name for name, _ in imports)
     image[STRINGS:STRINGS + len(strings)] = strings
     for index, (offset, (_, kind)) in enumerate(zip(offsets, imports), 1):

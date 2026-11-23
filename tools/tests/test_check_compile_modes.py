@@ -81,6 +81,29 @@ class CheckCompileModeTests(unittest.TestCase):
     def test_gcc_program_and_category_help_cannot_report_success(self):
         self.check_driver_queries((("-print-prog-name=cc1",), ("--help=common",)), compiler_names=("gcc",))
 
+    def test_file_diagnostics_are_reported_without_overwriting_a_report(self):
+        compiler, = self.compilers(("gcc",))
+        for mode, extension in (("json", "gcc.json"), ("sarif", "sarif")):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                build = root / "build"
+                build.mkdir()
+                probe = subprocess.run([compiler, f"-fdiagnostics-format={mode}-stderr", "-fsyntax-only", "-x", "c", "-"],
+                                       input="", cwd=build, capture_output=True, text=True)
+                if probe.returncode != 0:
+                    self.skipTest(f"GCC does not support {mode} diagnostics")
+                source = root / "unit.c"
+                source.write_text("#error diagnostic destination witness\n", encoding="utf-8")
+                report = build / f"unit.c.{extension}"
+                report.write_bytes(b"existing report")
+                arguments = [compiler, f"-fdiagnostics-format={mode}-file", "-c", str(source), "-o", "unit.o"]
+
+                result = self.run_tool(root, build, source, arguments, "arguments")
+
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("diagnostic destination witness", result.stderr)
+                self.assertEqual(report.read_bytes(), b"existing report")
+
     def check_query_named_include_operands(self, names):
         def configure(root, build, source):
             for name in names:
@@ -241,6 +264,21 @@ class CheckCompileModeTests(unittest.TestCase):
 
     def test_explicit_cpp_language_is_preserved(self):
         self.check_modes((("-E", "-x", "c++"),))
+
+    def test_source_keeps_its_language_before_a_later_reset(self):
+        for compiler in self.compilers():
+            for field in ("arguments", "command"):
+                with self.subTest(compiler=compiler, field=field), tempfile.TemporaryDirectory() as name:
+                    root = Path(name).resolve()
+                    build = root / "build"
+                    build.mkdir()
+                    source = root / "unit.c"
+                    source.write_text("template <typename T> struct Wrapper { T value; };\n", encoding="utf-8")
+                    arguments = [compiler, "-x", "c++", "-c", "../unit.c", "-x", "none", "-o", "unit.o"]
+                    control = subprocess.run(arguments, cwd=build, capture_output=True, text=True, check=False)
+                    self.assertEqual(control.returncode, 0, control.stderr)
+                    result = self.run_tool(root, build, source, arguments, field)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_clang_end_of_options_preserves_mode_named_inputs(self):
         compiler = shutil.which("clang")

@@ -164,6 +164,11 @@ class BenchmarkCompareTests(unittest.TestCase):
             self.assertIsNone(metrics[key])
         self.assertTrue(all(value is None for value in metrics["frame_ms"].values()))
 
+    def test_zero_frame_interval_does_not_claim_a_serialization_mismatch(self):
+        result = self.summarize(benchmark_capture([benchmark_interval([])]))
+        self.assertTrue(any("no recorded frame intervals" in warning for warning in result["warnings"]))
+        self.assertFalse(any("serialization precision" in warning for warning in result["warnings"]))
+
     def test_zero_microsecond_frames_are_legal_without_infinite_throughput(self):
         metrics = self.summarize(benchmark_capture([benchmark_interval([0, 0], end=0.001)]))["metrics"]
         self.assertEqual(metrics["zero_frames"], 2)
@@ -314,6 +319,25 @@ class BenchmarkCompareTests(unittest.TestCase):
                 self.assertTrue(report["configuration_differences"])
                 with self.assertRaises(ValueError):
                     benchmark_compare.compare_benchmark_runs(path, require_matching_context=True)
+
+    def test_trace_output_directory_is_not_comparison_context(self):
+        for directories in (("baseline", "candidate"), (None, "candidate"), ("baseline", None)):
+            with self.subTest(directories=directories):
+                runs = self.abba()[:2]
+                environments = []
+                for run, directory in zip(runs, directories):
+                    capture = self.root / run["capture"]
+                    data = json.loads(gzip.decompress(capture.read_bytes()))
+                    if directory is not None:
+                        data["env"]["APS5_TRACE_DIR"] = directory
+                    environments.append(data["env"])
+                    self.write_capture(capture.name, data)
+                result = self.cli("compare", self.write_series(runs), "--require-matching-context", "--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report["configuration_differences"], [])
+                self.assertEqual(report["aggregate"]["complete_pairs"], 1)
+                self.assertEqual([run["summary"]["metadata"]["env"] for run in report["runs"]], environments)
 
     def test_same_context_different_arm_commits_is_allowed_but_arm_drift_is_reported(self):
         path = self.write_series(self.abba())

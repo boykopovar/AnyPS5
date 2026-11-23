@@ -1,0 +1,5 @@
+# libSceAudioIn
+
+## change [sceAudioInGetGain, sceAudioInGetRerouteCount](../../../core/libs/prx/libSceAudioIn/Export.cpp)
+
+- [sceAudioInGetGain, sceAudioInGetRerouteCount](../../../core/libs/prx/libSceAudioIn/Export.cpp) - GetGain writes 1.0f before handle validation and returns 0x80260105 for a null output; measured on a PS5 Pro payload process (13.60): both exports answer 0x80260101 for an invalid port and 0x80260109 for a valid-base free slot (0x30000000), and the store of 1.0f into a float primed to 2.5f happens before either check. The store is direct, so the console faults on an unwritable non-null pointer; measured: GetGain(-1, unwritable pointer) faulted the payload process in both sessions. AnyPS5 returns INVALID_POINTER (0x80260105) instead. Native handle bit checks now match the 4.03 module (0x30000000 base, 0x80260109 for free slots); the remaining differences are the shm-backed gain value and reroute counter - native counters follow device reassignment while the host opens each SDL device once and reports zero.
