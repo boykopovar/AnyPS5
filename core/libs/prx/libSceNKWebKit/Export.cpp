@@ -8670,10 +8670,6 @@ int APS5_VABI WKPageBlurFocusedNode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageCallAfterNextPresentationUpdate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageCenterSelectionInVisibleArea() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8708,19 +8704,11 @@ int APS5_VABI WKPageEndPrinting() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageExecuteCommand() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageFindString() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI WKPageFindStringMatches() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageForceRepaint() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9007,14 +8995,6 @@ int APS5_VABI WKPageSupportsTextEncoding() {
 }
 
 int APS5_VABI WKPageTryClose() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageTryRestoreScrollPosition() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageValidateCommand() {
     NotImplemented_nid_no_patch(__func__);
 }
 

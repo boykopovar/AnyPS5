@@ -98,6 +98,8 @@ public:
     bool allowsRemoteInspection = false;
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
+    bool scrollPositionRestored = false;
+    std::optional<std::u16string> lastExecutedCommand;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {
 public:
