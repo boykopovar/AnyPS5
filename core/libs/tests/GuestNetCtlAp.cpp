@@ -53,7 +53,9 @@ int main() {
     Require(sceNetCtlApInit() == 0);
 
     int state = -1;
+    errno = 71;
     Require(sceNetCtlApGetState(&state) == 0 && state == 0);
+    Require(errno == 71);
     Require(sceNetCtlApGetState(nullptr) == kErrInvalidAddr);
     errno = 71;
     Require(sceNetCtlApGetState(reinterpret_cast<int*>(0x10)) == kErrInvalidAddr);
@@ -63,7 +65,9 @@ int main() {
     std::memset(info, 0x5a, sizeof(info));
     const std::uint64_t infoSize = sizeof(info);
     std::memcpy(info, &infoSize, sizeof(infoSize));
+    errno = 71;
     Require(sceNetCtlApGetInfo(info) == kErrNotStarted);
+    Require(errno == 71);
     for (std::size_t i = sizeof(infoSize); i < sizeof(info); ++i) Require(info[i] == 0x5a);
     Require(sceNetCtlApGetInfo(nullptr) == kErrInvalidAddr);
     errno = 71;
@@ -78,7 +82,9 @@ int main() {
     const std::uint64_t connectSize = sizeof(connect);
     std::memcpy(connect, &connectSize, sizeof(connectSize));
     const char option[] = "opt";
+    errno = 71;
     Require(sceNetCtlApGetConnectInfo(option, connect) == kErrNotStarted);
+    Require(errno == 71);
     Require(sceNetCtlApGetConnectInfo(nullptr, connect) == kErrNotStarted);
     Require(sceNetCtlApGetConnectInfo("", connect) == kErrNotStarted);
     Require(sceNetCtlApGetConnectInfo("12345678", connect) == kErrNotStarted);
@@ -103,8 +109,10 @@ int main() {
 
     for (int type = 1; type <= 4; ++type) {
         int code = -1;
+        errno = 71;
         Require(sceNetCtlApClearEvent(type) == 0);
         Require(sceNetCtlApGetResult(type, &code) == 0 && code == 0);
+        Require(errno == 71);
         Require(sceNetCtlApGetResult(type, nullptr) == kErrInvalidAddr);
         errno = 71;
         Require(sceNetCtlApGetResult(type, reinterpret_cast<int*>(0x10)) == kErrInvalidAddr);
@@ -123,7 +131,9 @@ int main() {
         Require(sceNetCtlApRegisterCallback(Callback, &cids[i], &cids[i]) == 0 && cids[i] == i);
     }
     int extra = 0x5a5a;
+    errno = 71;
     Require(sceNetCtlApRegisterCallback(Callback, nullptr, &extra) == kErrCallbackMax && extra == -1);
+    Require(errno == 71);
     Require(sceNetCtlApRegisterCallback(nullptr, nullptr, &extra) == kErrInvalidAddr);
     errno = 71;
     Require(sceNetCtlApRegisterCallback(Callback, nullptr, reinterpret_cast<int*>(0x10)) == kErrInvalidAddr);
