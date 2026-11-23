@@ -93,6 +93,14 @@ class WorkerComparisonTests(unittest.TestCase):
 
 
 class PerformanceCompareTests(unittest.TestCase):
+    def test_markdown_distinguishes_missing_context_from_literal_null(self):
+        with_title = dict(SUMMARY, title="null")
+        for before, after, row in (
+                (SUMMARY, with_title, "| title | <em>not recorded</em> | null |"),
+                (with_title, SUMMARY, "| title | null | <em>not recorded</em> |")):
+            with self.subTest(row=row):
+                self.assertIn(row, performance_compare.markdown(performance_compare.compare(before, after)).splitlines())
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

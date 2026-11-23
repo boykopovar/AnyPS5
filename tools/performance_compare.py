@@ -216,6 +216,8 @@ def compare(baseline, candidate):
 
 
 def cell(value):
+    if value is None:
+        return "<em>not recorded</em>"
     text = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("|", "&#124;").replace("\r", " ").replace("\n", " ")
 
