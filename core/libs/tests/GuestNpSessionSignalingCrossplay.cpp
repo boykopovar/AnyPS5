@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -25,6 +26,16 @@ void Require(bool condition, const char* message) {
     std::abort();
 }
 
+template <typename TCall>
+void RequireThrows(TCall call, const char* message) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return;
+    }
+    Require(false, message);
+}
+
 } // namespace
 
 int main() {
@@ -33,6 +44,23 @@ int main() {
 
     std::array<std::uint8_t, 64> buffer{};
     void* p = buffer.data();
+    RequireThrows([] { sceNpSessionSignalingCrossplayCreateContext(); },
+            "CreateContext must remain explicitly unsupported");
+    RequireThrows([] { sceNpSessionSignalingCrossplayUnknown00(); },
+            "SPHdC4zuXfY must remain explicitly unsupported");
+    RequireThrows([] { sceNpSessionSignalingCrossplayDestroyContext(); },
+            "DestroyContext must remain explicitly unsupported");
+    RequireThrows([] { sceNpSessionSignalingCrossplayUnknown01(); },
+            "2nvt1vCR3qo must remain explicitly unsupported");
+    RequireThrows([&] { sceNpSessionSignalingCrossplayUnknown02(1, p, 2, p, p); },
+            "wypjyjGWaLM must throw after pointer validation succeeds");
+    RequireThrows([] { sceNpSessionSignalingCrossplayUnknown03(); },
+            "eGv1EEmON+A must remain explicitly unsupported");
+    RequireThrows([] { sceNpSessionSignalingCrossplayUnknown04(); },
+            "GMGOCumydk0 must remain explicitly unsupported");
+    RequireThrows([] { sceNpSessionSignalingCrossplayUnknown05(); },
+            "LfFgtyCjdbs must remain explicitly unsupported");
+
     for (const int expectedErrno : {0, 7, 42}) {
         errno = expectedErrno;
         Require(sceNpSessionSignalingCrossplayInitialize(nullptr) == ErrorInvalidArgument,
