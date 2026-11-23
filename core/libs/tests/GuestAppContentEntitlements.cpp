@@ -23,7 +23,12 @@ static constexpr int ErrorBusy = static_cast<int>(0x80D90003);
 static constexpr int ErrorNotFound = static_cast<int>(0x80D90005);
 static constexpr int ErrorDrmNoEntitlement = static_cast<int>(0x80D90007);
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, const std::source_location location = std::source_location::current()) {
+    if (!value) {
+        std::fprintf(stderr, "%s:%u: AppContent assertion failed\n", location.file_name(), location.line());
+        std::abort();
+    }
+}
 
 static void SetEntitlements(const std::filesystem::path& file) {
 #ifdef _WIN32
@@ -37,7 +42,7 @@ static void RequireConfigResolved(const std::source_location location = std::sou
     try {
         uint32_t count = 0;
         Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, &count) == 0);
-        Require(count == 2);
+        Require(count == 3);
     } catch (const std::filesystem::filesystem_error& error) {
         std::fprintf(stderr, "Equivalent add-on aliases failed to resolve at %s:%u: %s\n", location.file_name(), location.line(), error.what());
         std::abort();
@@ -70,6 +75,7 @@ static int RunAliasCollision() {
         std::ofstream ini(iniFile);
         ini << "COLLIDEADDON0001 = /addcont0\n";
         ini << "COLLIDEADDON0002 = /addcont0/\n";
+        ini << "COLLIDEADDON0003 = /ADDCONT0/\n";
         Require(static_cast<bool>(ini));
     }
     SetEntitlements(iniFile);
@@ -85,8 +91,10 @@ static int RunAliasCollision() {
 
     NpUnifiedEntitlementLabel firstLabel{};
     NpUnifiedEntitlementLabel secondLabel{};
+    NpUnifiedEntitlementLabel thirdLabel{};
     std::memcpy(firstLabel.data, "COLLIDEADDON0001", 16);
     std::memcpy(secondLabel.data, "COLLIDEADDON0002", 16);
+    std::memcpy(thirdLabel.data, "COLLIDEADDON0003", 16);
     AppContentMountPoint firstMount{};
     Require(sceAppContentAddcontMount(0, &firstLabel, &firstMount) == 0);
     Require(std::strcmp(firstMount.data, "/addcont0") == 0);
@@ -99,12 +107,19 @@ static int RunAliasCollision() {
     Require(std::memcmp(&secondMount, &untouchedSecondMount, sizeof(secondMount)) == 0);
     RequireCollisionContents();
 
+    AppContentMountPoint thirdMount{};
+    std::memset(&thirdMount, 0x5a, sizeof(thirdMount));
+    const auto untouchedThirdMount = thirdMount;
+    Require(sceAppContentAddcontMount(0, &thirdLabel, &thirdMount) == ErrorBusy);
+    Require(std::memcmp(&thirdMount, &untouchedThirdMount, sizeof(thirdMount)) == 0);
+    RequireCollisionContents();
+
     Require(sceAppContentAddcontUnmount(&firstMount) == 0);
     Require(access_nid_postfix("/addcont0/sample.txt", 0) == -1);
-    Require(sceAppContentAddcontMount(0, &secondLabel, &secondMount) == 0);
-    Require(std::strcmp(secondMount.data, "/addcont0/") == 0);
+    Require(sceAppContentAddcontMount(0, &thirdLabel, &thirdMount) == 0);
+    Require(std::strcmp(thirdMount.data, "/ADDCONT0/") == 0);
     RequireCollisionContents();
-    Require(sceAppContentAddcontUnmount(&secondMount) == 0);
+    Require(sceAppContentAddcontUnmount(&thirdMount) == 0);
     Require(access_nid_postfix("/addcont0/sample.txt", 0) == -1);
     std::filesystem::current_path(original);
     std::filesystem::remove_all(root);
