@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
 import tomllib
 from collections import Counter
 from datetime import date
@@ -57,7 +58,7 @@ def command_line(arguments):
     return subprocess.list2cmdline(arguments) if os.name == "nt" else shlex.join(arguments)
 
 
-def conversion_options(args, patch):
+def conversion_arguments(args, patch):
     options = ["--patches", str(patch)]
     if args.skip_sce_module:
         options.append("--skip-sce-module")
@@ -67,7 +68,21 @@ def conversion_options(args, patch):
         options.extend(("--module-dir", module_dir))
     for executable in args.executable:
         options.extend(("--executable", executable))
-    return command_line(options)
+    return options
+
+
+def conversion_options(args, patch):
+    return command_line(conversion_arguments(args, patch))
+
+
+def unique_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
 
 
 def finite_json_number(value):
@@ -79,7 +94,7 @@ def finite_json_number(value):
 
 def read_catalog(directory, object_pairs_hook=None, *, strict_numbers=False):
     options = {"parse_constant": finite_json_number, "parse_float": finite_json_number} if strict_numbers else {}
-    data = json.loads(confined(directory, "index.json").read_text(encoding="utf-8"), object_pairs_hook=object_pairs_hook, **options)
+    data = json.loads(confined(directory, "index.json").read_text(encoding="utf-8-sig"), object_pairs_hook=object_pairs_hook, **options)
     if not isinstance(data, dict) or set(data) != {"format", "entries"} or type(data["format"]) is not int or data["format"] != 1 or not isinstance(data["entries"], list):
         raise ValueError("catalog must have format 1 and an entries array")
     return data["entries"]
@@ -87,7 +102,7 @@ def read_catalog(directory, object_pairs_hook=None, *, strict_numbers=False):
 
 def load_catalog(directory, title, version):
     entries = []
-    for number, entry in enumerate(read_catalog(directory, strict_numbers=True), 1):
+    for number, entry in enumerate(read_catalog(directory, object_pairs_hook=unique_json_keys, strict_numbers=True), 1):
         if not isinstance(entry, dict) or (entry.get("titleId"), entry.get("contentVersion")) != (title, version):
             continue
         entries.append((number, entry))
@@ -174,12 +189,14 @@ def validate_entry(directory, entry):
         raise ValueError("targets must be a nonempty object")
     if any(not isinstance(name, str) or not isinstance(digest, str) or not SHA256.fullmatch(digest) for name, digest in targets.items()):
         raise ValueError("invalid target digest")
-    parsed = tomllib.loads(patch.read_text(encoding="utf-8"))
+    parsed = tomllib.loads(patch.read_text(encoding="utf-8-sig"))
     patches = parsed.get("patch")
     if not isinstance(patches, list) or not patches or any(not isinstance(item, dict) or not isinstance(item.get("target"), str) for item in patches):
         raise ValueError("patch file has no valid targets")
     if set(targets) != {item["target"] for item in patches}:
         raise ValueError("target hashes must cover exactly the patch targets")
+    if type(parsed.get("format")) is not int or parsed["format"] != 1:
+        raise ValueError("patch file must have format 1")
     return patch, {name: digest.lower() for name, digest in targets.items()}, metadata
 
 
@@ -223,7 +240,7 @@ def main(argv=None):
     parser.add_argument("--list-verified", action="store_true", help="list every verified catalog entry without choosing one")
     parser.add_argument("--json", action="store_true", help="emit catalog decisions as JSON")
     args = parser.parse_args(argv)
-    report = {"status": "error", "entries": []}
+    report = {"schemaVersion": 1, "status": "error", "entries": []}
 
     def emit(*values, **options):
         if not args.json:
@@ -238,7 +255,7 @@ def main(argv=None):
         return code
     prefix = "No verified catalog entries" if args.list_verified else "No recommendation"
     try:
-        metadata = json.loads(args.param_json.read_text(encoding="utf-8"), parse_constant=finite_json_number, parse_float=finite_json_number)
+        metadata = json.loads(args.param_json.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys, parse_constant=finite_json_number, parse_float=finite_json_number)
         if not isinstance(metadata, dict):
             raise ValueError("param.json must be an object")
         title = metadata.get("titleId")
@@ -251,6 +268,8 @@ def main(argv=None):
             raise ValueError("--skip-sce-module conflicts with --sce-module-path")
         if args.timeout_seconds <= 0:
             raise ValueError("timeout-seconds must be positive")
+        if args.timeout_seconds > threading.TIMEOUT_MAX:
+            raise ValueError(f"timeout-seconds must be at most {threading.TIMEOUT_MAX:.0f}")
         root = resolve_path(args.sce_module_path or args.input.parent)
         if not root.is_dir():
             raise ValueError("module parent must be a directory")
@@ -310,9 +329,11 @@ def main(argv=None):
             if result.returncode:
                 detail = (result.stdout + result.stderr).strip()
                 if result.returncode == 1 and verified and verified[3] > 0:
+                    record["reason"] = "verification_mismatch"
                     emit(f"{label}: rejected by relinker: {detail}")
                     continue
                 if result.returncode == 2:
+                    record["reason"] = "relinker_error"
                     emit(f"{label}: relinker error (exit 2): {detail}")
                     relinker_errors = True
                     continue
@@ -320,9 +341,11 @@ def main(argv=None):
             if not verified:
                 raise ValueError(f"{label}: relinker produced no verification summary")
             if verified[0] == 0 or verified[1] != verified[0] or verified[2] or verified[3]:
+                record["reason"] = "verification_unconfirmed"
                 emit(f"{label}: rejected: relinker did not confirm every patch")
                 continue
-            record.update(status="verified", targets=targets, metadata=catalog_metadata)
+            record.update(status="verified", targets=targets, metadata=catalog_metadata,
+                          conversion_options=conversion_arguments(args, patch))
             matches.append((number, entry, patch, targets, catalog_metadata))
         id_counts = Counter(catalog_metadata["id"] for _, _, _, _, catalog_metadata in matches if "id" in catalog_metadata)
         if any(count > 1 for count in id_counts.values()):
@@ -331,8 +354,9 @@ def main(argv=None):
                 number, entry, patch, targets, catalog_metadata = match
                 identifier = catalog_metadata.get("id")
                 if identifier is not None and id_counts[identifier] > 1:
-                    next(record for record in report["entries"] if record["number"] == number).update(
-                        status="rejected", reason=f"duplicate verified id {identifier!r}")
+                    record = next(record for record in report["entries"] if record["number"] == number)
+                    record.pop("conversion_options", None)
+                    record.update(status="rejected", reason=f"duplicate verified id {identifier!r}")
                     emit(f"Catalog entry {number} ({entry['patch']!r}): rejected: duplicate verified id {identifier!r}")
                 else:
                     unique.append(match)

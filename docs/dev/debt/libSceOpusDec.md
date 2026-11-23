@@ -8,22 +8,11 @@
 
 | Name | NID |
 | --- | --- |
-| `Unknown` | `-NcPFjTj5zU` |
-| `Unknown` | `EF6FftzF33M` |
-| `Unknown` | `I1ugumHd0+A` |
-| `Unknown` | `JZapTsLx0j0` |
-| `Unknown` | `VsujeTF0+xk` |
-| `Unknown` | `ZBx02KtHz2Y` |
-| `Unknown` | `ct42RpB2CaM` |
-| `Unknown` | `eJQx7Emrwb0` |
 | `Unknown` | `ewfq1d5iJhU` |
-| `Unknown` | `lFTdHt-AuKU` |
-| `Unknown` | `sr25irrwGBI` |
-| `Unknown` | `ygCoF49g3F0` |
 
 ### Unknown function info
 
-- [sceOpusDecCancel and sceOpusDecCreate](../../../core/libs/prx/libSceOpusDec/Export.cpp) (libSceOpusDec) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceOpusDec.c), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim.
+- [sceOpusDecCancel, sceOpusDecCreate, `-NcPFjTj5zU`, `EF6FftzF33M`, `I1ugumHd0+A`, `JZapTsLx0j0`, `VsujeTF0+xk`, `ZBx02KtHz2Y`, `ct42RpB2CaM`, `eJQx7Emrwb0`, `lFTdHt-AuKU`, `sr25irrwGBI` and `ygCoF49g3F0`](../../../core/libs/prx/libSceOpusDec/Export.cpp) (libSceOpusDec) - throw after the argument checks firmware 13.42's module makes before it tests the decoder state's magic at offset 0x88; that test and everything after it are not reproduced, as the state `main` creates does not carry that magic. The checks were read from disassembly and run under a CPU emulator on x86-64, not measured on a console; the NIDs' names are unknown and the parameter lists come from the module's register use, with neutral names. `JZapTsLx0j0` and `sr25irrwGBI` also check a channel mapping after these checks, which is not reproduced.
 - [sceOpusDecGetAjmContext, `gMazl3u8Y40`, `jXVNwfmd1II` and `ark0tPj4meI`](../../../core/libs/prx/libSceOpusDec/Export.cpp) (libSceOpusDec) - only the cases firmware 13.42's module settles without a decoder are answered; the names of the three NIDs are unknown and the parameter lists come from that module's register use. `sceOpusDecGetAjmContext` and `gMazl3u8Y40` return `0x81740000` for a null state and 0 for a null output; for a real state the module reads its own state layout (offsets 0x88 and 0x90), which the host does not keep, so they throw. `jXVNwfmd1II` returns `0x8174000d` for a null context; otherwise it initializes AJM into that context and registers the decoder module, so it throws. `ark0tPj4meI` is complete: three 32-bit values checked against 1 to 12 and a sum below 13, returning 0x290. Read from the module's disassembly, not measured on a console.
 - [sceOpusDecDecodeWithPriorityAndTimeout and sceOpusDecDecodeFloatWithPriorityAndTimeout](../../../core/libs/prx/libSceOpusDec/Export.cpp) (libSceOpusDec) decode synchronously only for the infinite timeout 0xFFFFFFFF, the value sceOpusDecDecode passes, so the batch ID output is never written. libSceOpusDec.sprx (firmware 13.60, read from disassembly, not measured on a console) passes the timeout to its AJM batch wait; when the wait does not finish it stores the batch ID and returns 0x81740015. Whether a finite timeout finishes depends on the console's decode time, so any other timeout returns the argument errors and then throws. The priority (20 to 100) is validated but does not schedule anything
 

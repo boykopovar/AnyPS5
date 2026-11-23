@@ -6,6 +6,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+#ifdef _WIN32
+#include "prx/libc/include/GuestTimeZoneName.hpp"
+#include <string>
+#include <windows.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -14,6 +19,41 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+#ifdef _WIN32
+static void VerifyGuestTimeZoneNameToUtf8() {
+    Require(GuestTimeZoneNameToUtf8(nullptr, CP_UTF8).empty());
+    Require(GuestTimeZoneNameToUtf8("", CP_UTF8).empty());
+    Require(GuestTimeZoneNameToUtf8("", 1252u).empty());
+    Require(GuestTimeZoneNameToUtf8("UTC", CP_UTF8) == "UTC");
+    Require(GuestTimeZoneNameToUtf8("UTC", 1252u) == "UTC");
+    Require(GuestTimeZoneNameToUtf8("\xE9", 1252u) == "\xC3\xA9");
+    Require(GuestTimeZoneNameToUtf8("UTC", CP_UTF7) == "UTC");
+    Require(GuestTimeZoneNameToUtf8("+AOk-", CP_UTF7) == "\xC3\xA9");
+
+    const std::string invalidByte("\xFF", 1);
+    const std::string invalidByteResult = GuestTimeZoneNameToUtf8(invalidByte.c_str(), CP_UTF8);
+    Require(invalidByteResult == invalidByte);
+    Require(invalidByteResult != "\xEF\xBF\xBD");
+
+    const std::string overlongSequence("\xC0\xAF", 2);
+    const std::string overlongResult = GuestTimeZoneNameToUtf8(overlongSequence.c_str(), CP_UTF8);
+    Require(overlongResult == overlongSequence);
+    Require(overlongResult != "\xEF\xBF\xBD\xEF\xBF\xBD");
+
+    SetLastError(12345u);
+    Require(GuestTimeZoneNameToUtf8("UTC", 0xFFFFFFFFu) == "UTC");
+    Require(GetLastError() == 12345u);
+
+    SetLastError(12345u);
+    Require(GuestTimeZoneNameToUtf8(invalidByte.c_str(), CP_UTF8) == invalidByte);
+    Require(GetLastError() == 12345u);
+
+    SetLastError(12345u);
+    Require(GuestTimeZoneNameToUtf8("+AOk-", CP_UTF7) == "\xC3\xA9");
+    Require(GetLastError() == 12345u);
+}
+#endif
 
 static int allocations = 0;
 static void* APS5_VABI Allocate(void*, std::uint32_t size) {
@@ -39,6 +79,9 @@ int main() {
     Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, &secondFont) == SCE_FONT_OK);
 
     Require(sceFontRebindRenderer(nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontRebindRenderer(nullptr) == static_cast<int>(0x80460005));
+    alignas(16) static unsigned char zeroedBlock[256] = {};
+    Require(sceFontRebindRenderer(reinterpret_cast<FontHandle>(zeroedBlock)) == static_cast<int>(0x80460005));
     alignas(16) static unsigned char notAFont[16384] = {};
     Require(sceFontRebindRenderer(reinterpret_cast<FontHandle>(notAFont)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
 
@@ -65,4 +108,7 @@ int main() {
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
     Require(allocations == 0);
     Require(sceFontMemoryTerm(&memory) == SCE_FONT_OK);
+#ifdef _WIN32
+    VerifyGuestTimeZoneNameToUtf8();
+#endif
 }

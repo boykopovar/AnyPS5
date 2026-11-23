@@ -53,6 +53,8 @@ int APS5_VABI scePlayGoDialogTerminate(void) {
 int APS5_VABI scePlayGoDialogOpen(const void* param) {
     if (!param) return ERROR_ARG_NULL;
     if (g_status.load() == STATUS_NONE) return ERROR_NOT_INITIALIZED;
+    std::uint8_t probe = 0;
+    if (!GuestCopyIn_nid_no_patch(&probe, param, sizeof(probe))) return ERROR_ARG_NULL;
     int expected = STATUS_INITIALIZED;
     if (!g_status.compare_exchange_strong(expected, STATUS_FINISHED)) {
         expected = STATUS_FINISHED;

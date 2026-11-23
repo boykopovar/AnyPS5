@@ -44,6 +44,7 @@ inline constexpr std::uint32_t BindlessTableSlots = 16u;
 inline constexpr std::uint32_t StorageMipSlots = 16u;
 inline constexpr std::uint32_t StorageHeapCapacity = 64u;
 inline constexpr std::uint32_t SamplerHeapCapacity = 64u;
+inline constexpr std::uint32_t AtomicLockCount = 1u << 20u;
 inline constexpr std::uint32_t StateExportMappings = 0u;
 inline constexpr std::uint32_t StateDwords = 2u;
 inline constexpr std::uint32_t StateVertexSelectors = 0u;

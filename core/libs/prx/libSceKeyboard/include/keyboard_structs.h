@@ -15,6 +15,7 @@ constexpr int KEYBOARD_ERROR_INVALID_USER_ID = static_cast<int>(0x809b0001u);
 constexpr int KEYBOARD_ERROR_UNKNOWN_USER = static_cast<int>(0x809b0081u);
 constexpr int KEYBOARD_MAX_DATA_NUM = 16;
 constexpr int KEYBOARD_HANDLE = 1;
+constexpr int KEYBOARD_SECOND_PORT_HANDLE = 2;
 constexpr int KEYBOARD_DEVICE_ID = 1;
 constexpr std::int32_t KEYBOARD_ARRANGEMENT_101 = 0;
 constexpr std::int32_t KEYBOARD_ARRANGEMENT_106 = 1;

@@ -337,6 +337,26 @@ void mouseLookReject() {
     require(rejects("MouseStickTarget = Left\nMouseStickTarget = Right\n"), "a mouse stick target given twice is rejected");
 }
 
+void toggleActionsParse() {
+    useConfig("ToggleActions = R2, L1 ; sticky\nR2 = KEY:Z\n");
+    const auto configuration = Pad::LoadInputMapping();
+    const auto expected = static_cast<std::uint32_t>(Pad::PadButton::R2) | static_cast<std::uint32_t>(Pad::PadButton::L1);
+    require(configuration.toggleButtons == expected, "ToggleActions lists the pad buttons it names");
+    useConfig("toggleactions = square\n");
+    require(Pad::LoadInputMapping().toggleButtons == static_cast<std::uint32_t>(Pad::PadButton::Square), "ToggleActions is read case-insensitively");
+    useConfig("Cross = KEY:F\n");
+    require(Pad::LoadInputMapping().toggleButtons == 0, "no ToggleActions line leaves every action held");
+}
+
+void toggleActionsReject() {
+    require(rejects("ToggleActions = LeftStickUp\n"), "ToggleActions refuses a stick direction");
+    require(rejects("ToggleActions = ToggleMouse\n"), "ToggleActions refuses an emulator action");
+    require(rejects("ToggleActions = Fly\n"), "ToggleActions refuses an unknown action");
+    require(rejects("ToggleActions =\n"), "an empty ToggleActions is rejected");
+    require(rejects("ToggleActions = R2,,L1\n"), "an empty entry in ToggleActions is rejected");
+    require(rejects("ToggleActions = R2\nToggleActions = L1\n"), "ToggleActions given twice is rejected");
+}
+
 void nonAsciiPaths() {
     const std::u8string name = u8"anyps5-input-\u00fc-\u65e5\u672c-" + std::u8string(root.filename().u8string());
     const auto directory = root / std::filesystem::path(name);
@@ -568,6 +588,7 @@ bool sameBinding(const Pad::InputBinding& left, const Pad::InputBinding& right) 
 }
 
 bool sameConfiguration(const Pad::InputConfiguration& left, const Pad::InputConfiguration& right) {
+    if (left.controllerButtons != right.controllerButtons) return false;
     if (left.bindings.size() != right.bindings.size()) return false;
     for (std::size_t index = 0; index < left.bindings.size(); ++index) {
         if (!sameBinding(left.bindings[index], right.bindings[index])) return false;
@@ -658,6 +679,48 @@ void padChordParse() {
     require(rejects("ToggleFullscreen = PAD:\n"), "an empty pad chord is rejected");
 }
 
+void controllerButtonOverrides() {
+    auto configuration = defaultConfiguration();
+    const auto originalBindings = configuration.bindings.size();
+    const auto& buttons = configuration.controllerButtons;
+    std::string message;
+    require(!buttons[SDL_CONTROLLER_BUTTON_A], "a missing override keeps the controller default");
+    require(applyText(configuration, "sdlbutton: A = circle\nSDLButton:b = None\nSDLButton:paddle1 = R2\n", message), "SDL buttons accept PlayStation button names or None");
+    require(buttons[SDL_CONTROLLER_BUTTON_A] == Pad::PadButton::Circle, "the SDL name and destination are case-insensitive");
+    require(buttons[SDL_CONTROLLER_BUTTON_B] == Pad::PadButton::None, "None disables an SDL button");
+    require(buttons[SDL_CONTROLLER_BUTTON_PADDLE1] == Pad::PadButton::R2, "extra SDL buttons can be assigned");
+    require(configuration.bindings.size() == originalBindings, "controller overrides keep keyboard and mouse bindings");
+    require(applyText(configuration, "SDLButton:a = Cross\n", message), "a title profile can replace an SDL button override");
+    require(buttons[SDL_CONTROLLER_BUTTON_A] == Pad::PadButton::Cross && buttons[SDL_CONTROLLER_BUTTON_B] == Pad::PadButton::None, "a profile keeps other overrides");
+    require(rejects("SDLButton:a = Cross\nSDLButton:A = Circle\n"), "duplicate SDL buttons in one file are rejected");
+    require(rejects("SDLButton:leftx = Cross\n"), "controller axes are not SDL buttons");
+    require(rejects("SDLButton:a = ToggleFullscreen\n"), "controller remaps must target a guest button");
+    require(rejects("SDLButton:a = Cross+Circle\n"), "an SDL button remaps to one destination");
+}
+
+void watchStampsAndDebounce() {
+    useConfig("Cross = KEY:F\n");
+    const auto first = Pad::InputMappingFileStamp("");
+    require(first.shared.present && !first.profile.present, "the shared file has a stamp and a missing profile has none");
+    Pad::InputMappingWatch watch(first);
+    require(!watch.Poll(first), "an unchanged file is not reloaded");
+    useConfig("Cross = KEY:G\nMouseCurve = 2\n");
+    const auto changed = Pad::InputMappingFileStamp("");
+    require(changed != first, "a rewritten file changes its stamp");
+    require(!watch.Poll(changed), "a change waits one poll before it is reloaded");
+    require(watch.Poll(changed), "a settled change is reloaded once");
+    require(!watch.Poll(changed), "a reloaded change is not reloaded again");
+    useConfig("Cross = KEY:H\n");
+    const auto moving = Pad::InputMappingFileStamp("");
+    require(!watch.Poll(moving), "a file still being written is not reloaded");
+    useConfig("Cross = KEY:HH\nCircle = KEY:J\n");
+    const auto settled = Pad::InputMappingFileStamp("");
+    require(!watch.Poll(settled), "a change in the middle of a write restarts the wait");
+    require(watch.Poll(settled), "the last version is reloaded once it settles");
+    std::filesystem::remove(root / "anyps5-input.ini");
+    require(!Pad::InputMappingFileStamp("").shared.present, "a removed file has no stamp");
+}
+
 }
 
 int main() try {
@@ -689,6 +752,8 @@ int main() try {
     profileNames();
     profileOverridesShared();
     toggleMouseDefaults();
+    toggleActionsParse();
+    toggleActionsReject();
     nonAsciiPaths();
     deadzoneOffMatchesRawSticks();
     deadzoneShapesSticks();
@@ -699,6 +764,8 @@ int main() try {
     reloadInputMappingAction();
     reloadErrorNamesLine();
     padChordParse();
+    controllerButtonOverrides();
+    watchStampsAndDebounce();
     std::filesystem::remove_all(root);
     std::cout << "input mapping tests passed\n";
     return 0;

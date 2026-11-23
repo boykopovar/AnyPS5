@@ -157,6 +157,34 @@ int main() {
     Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(nullptr, nullptr) == invalidArgument);
     Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(valid.AsParams(), nullptr) == invalidArgument);
 
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(reinterpret_cast<const BgftStorageTaskParam*>(0x10), &taskId) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorage(reinterpret_cast<const BgftStorageTaskParam*>(0x10), &taskId) == invalidArgument);
+    Require(errno == 71);
+
+    RawParams badId = valid;
+    badId.SetPointer(0x8, reinterpret_cast<const char*>(0x10));
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(badId.AsParams(), &taskId) == invalidArgument);
+    Require(errno == 71);
+    RawParams badText16 = valid;
+    badText16.SetPointer(0x10, reinterpret_cast<const char*>(0x10));
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(badText16.AsParams(), &taskId) == invalidArgument);
+    Require(errno == 71);
+    RawParams badText32 = valid;
+    badText32.SetPointer(0x20, reinterpret_cast<const char*>(0x10));
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(badText32.AsParams(), &taskId) == invalidArgument);
+    Require(errno == 71);
+    RawParams badText40 = valid;
+    badText40.SetPointer(0x28, reinterpret_cast<const char*>(0x10));
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(badText40.AsParams(), &taskId) == invalidArgument);
+    Require(errno == 71);
+
     RawParams missingId;
     Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(missingId.AsParams(), &taskId) == invalidArgument);
     RawParams idOverLong = valid;

@@ -44,7 +44,7 @@ class ExportCacheTests(unittest.TestCase):
         write("core/libs/prx/libTwo/Two.cpp", export("sceTwoSecond"))
         run("commit", "-qam", "change two")
         self.second = run("rev-parse", "HEAD")
-        self.cache = Path(run("rev-parse", "--absolute-git-dir")) / "pr_overlap-exports.json"
+        self.cache = Path(self.tmp.name) / ".git" / "pr_overlap-exports.json"
         self.parsed = []
         real = pr_overlap.source_exports
 

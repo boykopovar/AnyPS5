@@ -292,6 +292,20 @@ int main() {
         std::fprintf(stderr, "strftime writes part of a conversion that does not fit\n");
         correct = false;
     }
+    if (strftime_nid_postfix(reinterpret_cast<char*>(0x10), sizeof(text), "%Y", &base) != 0) {
+        std::fprintf(stderr, "strftime into an unwritable buffer does not return 0\n");
+        correct = false;
+    }
+    bool unreadableTimeThrew = false;
+    try {
+        strftime_nid_postfix(text, sizeof(text), "%Y", reinterpret_cast<const GuestTm*>(0x10));
+    } catch (const std::invalid_argument&) {
+        unreadableTimeThrew = true;
+    }
+    if (!unreadableTimeThrew) {
+        std::fprintf(stderr, "strftime with an unreadable time does not throw\n");
+        correct = false;
+    }
     std::memset(text, '#', sizeof(text));
     if (strftime_nid_postfix(text, 8, "%t%D", &base) != 0 || std::memcmp(text, "\t10/02/#", 8) != 0) {
         std::fprintf(stderr, "strftime does not write the parts of a composite conversion that fit\n");

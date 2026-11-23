@@ -284,7 +284,7 @@ public:
     void Submit() {
         AjmBatchError error{};
         std::uint32_t id = 0;
-        CHECK(sceAjmBatchStart(context, &info, 0, &error, &id) == 0);
+        CHECK(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, &id) == 0);
         CHECK(sceAjmBatchWait(context, id, 0, &error) == 0);
     }
 

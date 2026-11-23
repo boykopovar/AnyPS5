@@ -41,6 +41,7 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libwebrtc/include/ModuleStorage.hpp"
 #include "prx/libc/include/Api.hpp"
 
 #include <cstddef>
@@ -50,7 +51,6 @@
 namespace {
 
 constexpr int CodecTypeOther = 0;
-
 std::size_t RedundantCount(const WebRtcAudioEncodedInfo* info) {
     return static_cast<std::size_t>(info->redundantEnd - info->redundantBegin);
 }
@@ -60,22 +60,21 @@ std::size_t RedundantCapacity(const WebRtcAudioEncodedInfo* info) {
 }
 
 void FreeRedundant(WebRtcAudioEncodedInfo* info) {
-    if (info->redundantBegin)
-        _ZdlPv_nid_postfix(info->redundantBegin);
+    WebRtcModuleStorage::Free(info->redundantBegin, RedundantCapacity(info) * sizeof(WebRtcAudioEncodedInfoLeaf));
     info->redundantBegin = nullptr;
     info->redundantEnd = nullptr;
     info->redundantCapacity = nullptr;
 }
 
 void AllocateRedundant(WebRtcAudioEncodedInfo* info, std::size_t count) {
-    auto* leaves = static_cast<WebRtcAudioEncodedInfoLeaf*>(_Znwm_nid_postfix(count * sizeof(WebRtcAudioEncodedInfoLeaf)));
+    auto* leaves = static_cast<WebRtcAudioEncodedInfoLeaf*>(WebRtcModuleStorage::Allocate(count * sizeof(WebRtcAudioEncodedInfoLeaf)));
     info->redundantBegin = leaves;
     info->redundantEnd = leaves;
     info->redundantCapacity = leaves + count;
 }
 
 void CopyLeaf(WebRtcAudioEncodedInfo* info, const WebRtcAudioEncodedInfo* other) {
-    info->leaf = other->leaf;
+    std::memcpy(&info->leaf, &other->leaf, sizeof(info->leaf));
 }
 
 }
@@ -85,9 +84,13 @@ extern "C" {
 void APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1Ev_nid_postfix(WebRtcAudioEncodedInfo* info) {
     if (!info)
         throw std::invalid_argument("EncodedInfo constructor requires an object");
-    info->leaf = WebRtcAudioEncodedInfoLeaf {};
+    info->leaf.encodedBytes = 0;
+    info->leaf.encodedTimestamp = 0;
+    info->leaf.payloadType = 0;
+    info->leaf.sendEvenIfEmpty = false;
     info->leaf.speech = true;
     info->leaf.encoderType = CodecTypeOther;
+    info->leaf.unknownAt64 = false;
     info->redundantBegin = nullptr;
     info->redundantEnd = nullptr;
     info->redundantCapacity = nullptr;
@@ -111,16 +114,15 @@ void APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(WebRtcA
 void APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(WebRtcAudioEncodedInfo* info) {
     if (!info)
         throw std::invalid_argument("EncodedInfo destructor requires an object");
-    if (info->redundantBegin)
-        _ZdlPv_nid_postfix(info->redundantBegin);
+    FreeRedundant(info);
 }
 
 WebRtcAudioEncodedInfo* APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(WebRtcAudioEncodedInfo* info, const WebRtcAudioEncodedInfo* other) {
     if (!info || !other)
         throw std::invalid_argument("EncodedInfo assignment requires both objects");
-    CopyLeaf(info, other);
     if (info == other)
         return info;
+    CopyLeaf(info, other);
     const std::size_t count = RedundantCount(other);
     if (count > RedundantCapacity(info)) {
         FreeRedundant(info);

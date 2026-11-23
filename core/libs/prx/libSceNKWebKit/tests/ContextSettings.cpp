@@ -33,7 +33,25 @@ int main() {
     auto pool = NKWebKit::Make<NKWebKit::ProcessPool>();
     const void* poolRef = NKWebKit::ToRef(pool);
 
-    Require(WKContextGetCacheModel(poolRef) == 0);
+    Require(WKContextGetCacheModel(poolRef) == 2);
+    Require(WKContextGetCacheModel(nullptr) == 2);
+    {
+        auto other = NKWebKit::Make<NKWebKit::ProcessPool>();
+        const void* otherRef = NKWebKit::ToRef(other);
+        WKContextSetCacheModel(poolRef, 1);
+        Require(WKContextGetCacheModel(poolRef) == 1);
+        Require(WKContextGetCacheModel(otherRef) == 1);
+        WKContextSetCacheModel(otherRef, 0);
+        Require(WKContextGetCacheModel(poolRef) == 0);
+        WKRelease(otherRef);
+    }
+    WKContextSetCacheModel(nullptr, 1);
+    Require(WKContextGetCacheModel(poolRef) == 1);
+    for (const std::uint32_t unknown : {3u, 7u, 0xFFFFFFFFu}) {
+        WKContextSetCacheModel(poolRef, 1);
+        WKContextSetCacheModel(poolRef, unknown);
+        Require(WKContextGetCacheModel(poolRef) == 0);
+    }
     WKContextSetCacheModel(poolRef, 2);
     Require(WKContextGetCacheModel(poolRef) == 2);
 
@@ -92,8 +110,6 @@ int main() {
     WKContextSetStorageAccessAPIEnabled(poolRef, false);
     Require(!pool->storageAccessAPIEnabled);
 
-    RequireInvalidArgument([] { WKContextGetCacheModel(nullptr); });
-    RequireInvalidArgument([] { WKContextSetCacheModel(nullptr, 1); });
     RequireInvalidArgument([] { WKContextGetAccessibilityEnabled(nullptr); });
     RequireInvalidArgument([] { WKContextSetAccessibilityEnabled(nullptr, false); });
     RequireInvalidArgument([] { WKContextSetAlwaysUsesComplexTextCodePath(nullptr, true); });

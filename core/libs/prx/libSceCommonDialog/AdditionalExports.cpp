@@ -5,6 +5,7 @@
 #include "prx/libSceCommonDialog/include/Exports.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -13,7 +14,9 @@ constexpr int kResult80B8000E = static_cast<int>(0x80B8000Eu);
 
 bool HasClientImplementation(const void* client) {
     std::uint64_t implementation = 0;
-    if (client == nullptr || !GuestCopyIn_nid_no_patch(&implementation, static_cast<const std::byte*>(client) + 8, sizeof(implementation))) {
+    if (client == nullptr ||
+        reinterpret_cast<std::uintptr_t>(client) > std::numeric_limits<std::uintptr_t>::max() - 8 ||
+        !GuestCopyIn_nid_no_patch(&implementation, static_cast<const std::byte*>(client) + 8, sizeof(implementation))) {
         throw std::invalid_argument("CommonDialogUtil client: unreadable client");
     }
     return implementation != 0;
@@ -65,7 +68,9 @@ APS5_EXPORT("aUS4PgJye98", libSceCommonDialogUnknown_aUS4PgJye98_nid_no_patch);
 int APS5_VABI libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch(const void* param) {
     const auto address = reinterpret_cast<std::uintptr_t>(param);
     std::uint32_t magic = 0;
-    if (param == nullptr || !GuestCopyIn_nid_no_patch(&magic, static_cast<const std::byte*>(param) + offsetof(CommonDialogBaseParam, magic), sizeof(magic))) {
+    if (param == nullptr ||
+        address > std::numeric_limits<std::uintptr_t>::max() - offsetof(CommonDialogBaseParam, magic) ||
+        !GuestCopyIn_nid_no_patch(&magic, static_cast<const std::byte*>(param) + offsetof(CommonDialogBaseParam, magic), sizeof(magic))) {
         throw std::invalid_argument("afLdI6i0lQw: unreadable parameter");
     }
     if (magic != static_cast<std::uint32_t>(address) - 1060003575u) {

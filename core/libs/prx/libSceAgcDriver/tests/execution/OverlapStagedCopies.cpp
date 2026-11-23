@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -14,6 +15,7 @@
 #endif
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -21,6 +23,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -219,7 +222,17 @@ int main() {
 
         for (const auto* code : StoreCodes) Register(code, sizeof(StoreOne));
         for (auto& block : Staged) block = NewBlock();
-        for (std::uint32_t round = 1; round <= 3; ++round) StagedRun(round);
+        bool changedCopyBacks = false;
+        for (std::uint32_t round = 1; round <= 3; ++round) {
+            const auto snapshotsBefore = AgcDriver::Graphics::ChangedCopySnapshotsMade();
+            StagedRun(round);
+            const auto snapshots = AgcDriver::Graphics::ChangedCopySnapshotsMade() - snapshotsBefore;
+            if (round == 1) changedCopyBacks = snapshots != 0;
+            check(!changedCopyBacks || snapshots != 0, "round " + std::to_string(round) + " of the staged builds took no changed-copy snapshot, so an idle build still held the one of its earlier use");
+            for (int wait = 0; wait < 5000 && AgcDriver::Graphics::ChangedCopySnapshotBytes() != 0; ++wait) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            check(AgcDriver::Graphics::ChangedCopySnapshotBytes() == 0, std::to_string(AgcDriver::Graphics::ChangedCopySnapshotBytes()) + " bytes of changed-copy snapshots are still held after the queue went idle");
+            std::printf("overlap staged copies: round %u took %llu changed-copy snapshots and none outlived its batch\n", round, static_cast<unsigned long long>(snapshots));
+        }
         std::puts("overlap staged copies: unordered staged dispatches of four builds ran in one run");
         for (auto& block : Staged) block = NewBlock();
         RefusedRun();

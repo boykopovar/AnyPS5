@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -150,6 +151,31 @@ static void CheckDivision() {
     Require(__udivmodti4_nid_postfix(0, 5, &remainder128) == 0 && remainder128 == 0);
     Require(__udivmodti4_nid_postfix(Make(~0ull, ~0ull), Make(~0ull, ~0ull), &remainder128) == 1 && remainder128 == 0);
     Require(__udivmodti4_nid_postfix(Make(0, 10), Make(1, 0), &remainder128) == 0 && remainder128 == 10);
+    errno = 71;
+    RequireThrows([] {
+        __divmodsi4_nid_postfix(10, 3, reinterpret_cast<std::int32_t*>(0x10));
+    });
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([] {
+        __divmoddi4_nid_postfix(10, 3, reinterpret_cast<std::int64_t*>(0x10));
+    });
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([] {
+        __udivmodsi4_nid_postfix(10, 3, reinterpret_cast<std::uint32_t*>(0x10));
+    });
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([] {
+        __udivmoddi4_nid_postfix(10, 3, reinterpret_cast<std::uint64_t*>(0x10));
+    });
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([] {
+        __udivmodti4_nid_postfix(10, 3, reinterpret_cast<Uint128*>(0x10));
+    });
+    Require(errno == 71);
 }
 
 static void CheckOverflow() {
@@ -164,6 +190,21 @@ static void CheckOverflow() {
     Require(__muloti4_nid_postfix(Int128Max, 2, &overflow) == -2 && overflow == 1);
     Require(__muloti4_nid_postfix(static_cast<Int128>(Make(0, 1ull << 63)), -static_cast<Int128>(Make(1, 0)), &overflow) == Int128Min
         && overflow == 0);
+    errno = 71;
+    RequireThrows([] {
+        __mulosi4_nid_postfix(2, 3, reinterpret_cast<int*>(0x10));
+    });
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([] {
+        __mulodi4_nid_postfix(2, 3, reinterpret_cast<int*>(0x10));
+    });
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([] {
+        __muloti4_nid_postfix(2, 3, reinterpret_cast<int*>(0x10));
+    });
+    Require(errno == 71);
     Require(__mulvsi3_nid_postfix(-46341, 46340) == -2147441940);
     Require(__mulvdi3_nid_postfix(-4, 5) == -20 && __mulvti3_nid_postfix(-4, 5) == -20);
     RequireThrows([] { __mulvsi3_nid_postfix(46341, 46341); });

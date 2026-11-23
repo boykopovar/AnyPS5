@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -10,8 +11,8 @@ int APS5_VABI sceOpusDecGetSize(int channels);
 int APS5_VABI sceOpusDecCreateEx(const std::uint32_t* context, void* state, int sampleRate, int channels);
 int APS5_VABI sceOpusDecDecode(void* state, const std::uint8_t* data, int bytes, std::int16_t* pcm, int capacity);
 int APS5_VABI sceOpusDecDestroy(void* state);
-int APS5_VABI sceOpusDecCancel();
-int APS5_VABI sceOpusDecCreate();
+int APS5_VABI sceOpusDecCancel(void* argument1);
+int APS5_VABI sceOpusDecCreate(void* argument1, std::int32_t argument2, std::int32_t argument3);
 int APS5_VABI sceOpusDecCtl(void* state, int request, ...);
 int APS5_VABI sceOpusDecDecodeFloat(void* state, const std::uint8_t* data, int bytes, float* pcm, int capacity);
 int APS5_VABI sceOpusDecDecodeFloatWithPriority(void* state, const std::uint8_t* data, int bytes, float* pcm, int capacity, int priority);

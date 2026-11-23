@@ -23,9 +23,15 @@ for (const prefix of ["COM", "lpt"]) {
 const writer = new ZipWriter(new BlobWriter(), { useWebWorkers: false, useCompressionStream: false });
 await writer.add("main.elf", new Uint8ArrayReader(header));
 await writer.add("content/COM\u00b9.txt", new Uint8ArrayReader(new Uint8Array([1])));
-const archive = new Archive(await writer.close());
-try { await assert.rejects(archive.inspect(() => {}), /Unsafe ZIP path/); }
-finally { await archive.close(); }
+const invalidZip = await writer.close();
+for (const [locale, diagnostic] of [
+  ["en", /Unsafe ZIP path/],
+  ["ar", /مسار غير آمن في ZIP: content\/COM¹\.txt/u],
+]) {
+  const archive = new Archive(invalidZip, locale);
+  try { await assert.rejects(archive.inspect(() => {}), diagnostic); }
+  finally { await archive.close(); }
+}
 
 for (const device of ["CONIN$", "conout$", "CoNiN$", "CoNoUt$"]) {
   for (const name of [device, device + ".txt", "content/" + device + "/data.bin"]) {
@@ -44,5 +50,16 @@ for (const device of ["CONIN$", "conout$", "CoNiN$", "CoNoUt$"]) {
 }
 
 for (const name of ["COM10", "COM\u2074.txt", "COM\u00b9-extra", "CONIN$-extra", "CONOUT$-extra.txt", "CONINPUT.txt", "content/ordinary.txt"]) {
+  assert.equal(validPath(name), name);
+}
+
+for (const name of ["con", "con.txt", "con .txt", "NUL  .bin", "app/aux .dat", "COM1 .log", "a/lpt1 .x/b", "CONIN$ .x", "prn . .txt", "LPT² .txt"]) {
+  assert.throws(() => validPath(name), /Unsafe ZIP path/, name);
+}
+const padded = new Archive([{ path: "main.elf", file: new Blob([header]) }, { path: "content/nul .json", file: new Blob(["resource"]) }]);
+try { await assert.rejects(padded.inspect(() => {}), /Unsafe ZIP path/); }
+finally { await padded.close(); }
+
+for (const name of ["console.txt", "con1 .txt", "icon .txt", "con x.txt", "COM10 .txt", "content/nul-data .bin"]) {
   assert.equal(validPath(name), name);
 }

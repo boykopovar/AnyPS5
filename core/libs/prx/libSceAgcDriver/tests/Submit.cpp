@@ -722,6 +722,33 @@ void testLargeDataFill() {
     GuestHeap::GuestHeapFree_nid_postfix(produced);
 }
 
+std::array<std::uint32_t, 6> gpuClockCopy(void* destination) {
+    const auto to = reinterpret_cast<std::uintptr_t>(destination);
+    return {0xc0044000, 0x00010509, 0, 0, static_cast<std::uint32_t>(to), static_cast<std::uint32_t>(static_cast<std::uint64_t>(to) >> 32u)};
+}
+
+void testGpuClockCopyBehindGpuWork() {
+    alignas(64) static volatile std::uint32_t done = 0;
+    constexpr std::uint32_t bytes = 131072;
+    auto* source = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, bytes));
+    auto* destination = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, bytes));
+    std::fill_n(source, bytes / 4, 0x3c3c3c3cu);
+    std::fill_n(destination, bytes / 4, 0u);
+    std::vector<std::uint64_t> clocks(2, 0);
+    const auto drainsBefore = AgcDriver::DriverDetail::storesDrained.load();
+    const auto storesWithoutDrain = [] { return AgcDriver::DriverDetail::storesOnCpu.load() + AgcDriver::DriverDetail::storesOnGpu.load() + AgcDriver::DriverDetail::storesBehindCompletions.load(); };
+    const auto storesBefore = storesWithoutDrain();
+    submit(0, commands(memoryCopy(destination, source, bytes), gpuClockCopy(&clocks[0]), gpuClockCopy(&clocks[1]), writeData(&done, 1)));
+    waitFor(&done, 1, "the label after a GPU-clock COPY_DATA never landed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(destination[0] == 0x3c3c3c3cu && destination[bytes / 4 - 1] == 0x3c3c3c3cu, "the GPU copy before the GPU-clock COPY_DATA did not land");
+    check(clocks[0] != 0 && clocks[1] >= clocks[0], "a GPU-clock COPY_DATA did not store an increasing clock");
+    check(AgcDriver::DriverDetail::storesDrained.load() == drainsBefore, "a GPU-clock COPY_DATA into host memory behind GPU work drained the device");
+    check(storesWithoutDrain() == storesBefore + 2, "a GPU-clock COPY_DATA into host memory behind GPU work was not stored without a drain");
+    GuestHeap::GuestHeapFree_nid_postfix(destination);
+    GuestHeap::GuestHeapFree_nid_postfix(source);
+}
+
 void labelResetByItsQueueBeforeItLanded(bool wide, std::size_t resetWord) {
     alignas(64) static volatile std::uint32_t gate = 0, second = 0;
     gate = 0;
@@ -1339,6 +1366,7 @@ int main(int argc, char** argv) {
         testLabelResetByItsQueueBeforeItLanded();
         testWideLabelPartlyResetByItsQueueBeforeItLanded();
         testSmallCopyBehindPendingSource();
+        testGpuClockCopyBehindGpuWork();
         testRegisterList();
         testRegisteredFloatMode();
         testDispatchFloatMode();

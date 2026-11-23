@@ -79,6 +79,19 @@ std::int32_t APS5_VABI NegativeChunks(const void**, std::size_t*, void*) {
     return -1;
 }
 
+std::int32_t APS5_VABI SingleChunk(const void** data, std::size_t* size, void* userData) {
+    const auto& text = *static_cast<const std::string*>(userData);
+    *data = text.data();
+    *size = text.size();
+    return 1;
+}
+
+std::int32_t APS5_VABI InvalidDataChunk(const void** data, std::size_t* size, void*) {
+    *data = reinterpret_cast<const void*>(0x10);
+    *size = 5;
+    return 1;
+}
+
 struct OldChunks {
     int step = 0;
 };
@@ -146,6 +159,9 @@ int main() {
     std::filesystem::current_path(testDirectory);
     ContentExportInitParam initParam{&MockMalloc, &MockFree, nullptr};
     Require(Throws([] { sceContentExportInit(nullptr); }));
+    errno = 71;
+    Require(Throws([] { sceContentExportInit(reinterpret_cast<const ContentExportInitParam*>(0x10)); }));
+    Require(errno == 71);
     ContentExportInitParam missingMalloc = initParam;
     missingMalloc.mallocFunc = nullptr;
     Require(Throws([&] { sceContentExportInit(&missingMalloc); }));
@@ -213,15 +229,32 @@ int main() {
     const std::string exportedContents((std::istreambuf_iterator<char>(exportedFile)), std::istreambuf_iterator<char>());
     exportedFile.close();
     Require(exportedContents == "hello world");
+    std::string largeChunk(8193, 'x');
+    largeChunk.back() = 'z';
+    Require(sceContentExportFromData(first, &fromData, largeChunk.size(), SingleChunk, &largeChunk, nullptr, 0) == 0);
+    {
+        std::ifstream largeFile(exportedHostPath, std::ios::binary);
+        Require(std::string((std::istreambuf_iterator<char>(largeFile)), std::istreambuf_iterator<char>()) == largeChunk);
+    }
     chunks = DataChunks{};
     Require(sceContentExportFromData(first, &fromData, 11, ProvideChunks, &chunks, nullptr, 0) == 0);
     chunks = DataChunks{};
+    errno = 71;
+    Require(sceContentExportFromData(first, &fromData, 11, ProvideChunks, &chunks, reinterpret_cast<char*>(0x10), sizeof(exported)) == static_cast<int>(0x809D3016u));
+    Require(errno == 71);
+    chunks = DataChunks{};
     Require(sceContentExportFromData(first, &fromData, 10, ProvideChunks, &chunks, exported, sizeof(exported)) == static_cast<int>(0x809D3016u));
+    errno = 71;
+    Require(sceContentExportFromData(first, &fromData, 5, InvalidDataChunk, nullptr, nullptr, 0) == static_cast<int>(0x809D3017u));
+    Require(errno == 71);
     Require(sceContentExportFromData(first, &fromData, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D301Bu));
     Require(sceContentExportFromData(first, &fromData, 0, NegativeChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D301Bu));
     ContentExportParam badType = fromData;
     std::strncpy(badType.content_type, "text/plain", sizeof(badType.content_type) - 1);
     Require(sceContentExportFromData(first, &badType, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3012u));
+    ContentExportParam unterminatedType = fromData;
+    std::memset(unterminatedType.content_type, 'a', sizeof(unterminatedType.content_type));
+    Require(sceContentExportFromData(first, &unterminatedType, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));
     Require(sceContentExportFromData(first, nullptr, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));
     errno = 71;
     Require(sceContentExportFromData(first, reinterpret_cast<const ContentExportParam*>(0x10), 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));

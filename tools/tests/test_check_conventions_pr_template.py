@@ -98,6 +98,13 @@ class PullRequestTemplateTests(unittest.TestCase):
                 self.assert_findings(body(f"- [x] Depends on: none\n- [x] AI-assisted: {answer}\n"),
                                      ["answer AI-assisted with yes or no"])
 
+    def test_ai_assisted_answer_is_on_its_own_line(self):
+        self.assert_passes(body("- [x] Depends on: none\n- [x] AI-assisted:\tno\n"))
+        for following in ("\nNo Windows run was possible.\n", "yes, see above\n", "- [x] No new files\n"):
+            with self.subTest(following=following):
+                self.assert_findings(body(f"- [x] Depends on: none\n- [x] AI-assisted:\n{following}"),
+                                     ["answer AI-assisted with yes or no"])
+
     def test_depends_on_answers(self):
         for answer in ("none", "#123", "None"):
             with self.subTest(answer=answer):
@@ -105,6 +112,15 @@ class PullRequestTemplateTests(unittest.TestCase):
         for answer in ("", "later", "123", "<!-- #PR, or none -->"):
             with self.subTest(answer=answer):
                 self.assert_findings(body(f"- [x] Depends on: {answer}\n- [x] AI-assisted: yes\n"),
+                                     ["fill Depends on with #N or none"])
+
+    def test_depends_on_answer_is_on_its_own_line_or_a_list(self):
+        for answer in ("\t#12", " - #12", "\n- #12", "\n  - #3\n  - #4", "\r\n  * none", "\n\n+ none"):
+            with self.subTest(answer=answer):
+                self.assert_passes(body(f"- [x] Depends on:{answer}\n- [x] AI-assisted: yes\n"))
+        for following in ("\nNone of the tests ran on Windows.\n", "\n#12 is unrelated.\n", "\n\nnone\n", "\n- [x] None of the above\n"):
+            with self.subTest(following=following):
+                self.assert_findings(body(f"- [x] AI-assisted: yes\n- [x] Depends on:{following}"),
                                      ["fill Depends on with #N or none"])
 
     def test_sections_must_have_content(self):
@@ -144,5 +160,25 @@ class PullRequestTemplateTests(unittest.TestCase):
                 self.assertIn("[pr-title] Pull request title is not Conventional Commits", result.stdout)
 
 
+def template_test_shard(index, count):
+    if not 0 <= index < count:
+        raise ValueError("shard index must be within the shard count")
+    suites = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
+    tests = [test for suite in suites for test in suite]
+    return unittest.TestSuite(tests[index::count])
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--shard":
+        if len(sys.argv) != 3 or "/" not in sys.argv[2]:
+            print("usage: test_check_conventions_pr_template.py --shard INDEX/COUNT", file=sys.stderr)
+            raise SystemExit(2)
+        try:
+            index, count = (int(part) for part in sys.argv[2].split("/", 1))
+            suite = template_test_shard(index, count)
+        except ValueError as error:
+            print(f"invalid shard: {error}", file=sys.stderr)
+            raise SystemExit(2)
+        result = unittest.TextTestRunner().run(suite)
+        raise SystemExit(0 if result.wasSuccessful() else 1)
     unittest.main()

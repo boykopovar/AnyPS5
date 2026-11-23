@@ -33,12 +33,16 @@ int APS5_VABI sceOpusDecDecode(void* state, const std::uint8_t* data, int bytes,
 
 int APS5_VABI sceOpusDecDestroy(void* state) { return library.Destroy(state); }
 
-int APS5_VABI sceOpusDecCancel() {
+int APS5_VABI sceOpusDecCancel(void* argument1) {
+    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceOpusDecCreate() {
+int APS5_VABI sceOpusDecCreate(void* argument1, std::int32_t argument2, std::int32_t argument3) {
+    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
+    if (argument2 != 8000 && argument2 != 12000 && argument2 != 16000 && argument2 != 24000 && argument2 != 48000) return static_cast<int>(ErrorBase + 0x2);
+    if (argument3 != 1 && argument3 != 2) return static_cast<int>(ErrorBase + 0x3);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -94,33 +98,69 @@ int APS5_VABI sceOpusDecGetAjmContext(const void* state, std::uint32_t* ajmConte
 
 extern "C" {
 
-int APS5_VABI libSceOpusDecUnknown__minus_NcPFjTj5zU_nid_no_patch() {
+int APS5_VABI libSceOpusDecUnknown__minus_NcPFjTj5zU_nid_no_patch(void* argument1, const void* argument2, std::uint32_t argument3, void* argument4, std::int32_t argument5, std::int32_t argument6) {
+    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
+    if (argument2 == nullptr && argument3 != 0) return static_cast<int>(ErrorBase + 0x6);
+    if (argument3 > 0x1f4b) return static_cast<int>(ErrorBase + 0x7);
+    if (argument4 == nullptr) return static_cast<int>(ErrorBase + 0x8);
+    if (argument5 <= 0) return static_cast<int>(ErrorBase + 0x9);
+    if (argument6 < 20 || argument6 > 100) return static_cast<int>(ErrorBase + 0xa);
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("-NcPFjTj5zU", libSceOpusDecUnknown__minus_NcPFjTj5zU_nid_no_patch);
 
-int APS5_VABI libSceOpusDecUnknown_EF6FftzF33M_nid_no_patch() {
+int APS5_VABI libSceOpusDecUnknown_EF6FftzF33M_nid_no_patch(void* argument1) {
+    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("EF6FftzF33M", libSceOpusDecUnknown_EF6FftzF33M_nid_no_patch);
 
-int APS5_VABI libSceOpusDecUnknown_I1ugumHd0_plus_A_nid_no_patch() {
+int APS5_VABI libSceOpusDecUnknown_I1ugumHd0_plus_A_nid_no_patch(void* argument1, const void* argument2, std::uint32_t argument3, void* argument4, std::int32_t argument5, std::int32_t argument6) {
+    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
+    if (argument2 == nullptr && argument3 != 0) return static_cast<int>(ErrorBase + 0x6);
+    if (argument3 > 0x1f4b) return static_cast<int>(ErrorBase + 0x7);
+    if (argument4 == nullptr) return static_cast<int>(ErrorBase + 0x8);
+    if (argument5 <= 0) return static_cast<int>(ErrorBase + 0x9);
+    if (argument6 < 20 || argument6 > 100) return static_cast<int>(ErrorBase + 0xa);
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("I1ugumHd0+A", libSceOpusDecUnknown_I1ugumHd0_plus_A_nid_no_patch);
 
-int APS5_VABI libSceOpusDecUnknown_JZapTsLx0j0_nid_no_patch() {
+int APS5_VABI libSceOpusDecUnknown_JZapTsLx0j0_nid_no_patch(const void* argument1, void* argument2, std::int32_t argument3, std::uint32_t argument4, std::uint32_t argument5, std::uint32_t argument6, std::uint32_t argument7) {
+    if (argument1 == nullptr || argument2 == nullptr) return static_cast<int>(ErrorBase);
+    if (argument3 != 8000 && argument3 != 12000 && argument3 != 16000 && argument3 != 24000 && argument3 != 48000) return static_cast<int>(ErrorBase + 0x2);
+    if (argument4 - 1 >= 12) return static_cast<int>(ErrorBase + 0x3);
+    if (argument6 - 1 >= 12) return static_cast<int>(ErrorBase + 0x16);
+    if (argument7 > argument6) return static_cast<int>(ErrorBase + 0x17);
+    if (argument6 + argument7 > 12) return static_cast<int>(ErrorBase + 0x3);
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("JZapTsLx0j0", libSceOpusDecUnknown_JZapTsLx0j0_nid_no_patch);
 
-int APS5_VABI libSceOpusDecUnknown_VsujeTF0_plus_xk_nid_no_patch() {
+int APS5_VABI libSceOpusDecUnknown_VsujeTF0_plus_xk_nid_no_patch(void* argument1, const void* argument2, std::uint32_t argument3, void* argument4, std::int32_t argument5) {
+    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
+    if (argument2 == nullptr && argument3 != 0) return static_cast<int>(ErrorBase + 0x6);
+    if (argument3 > 0x1f4b) return static_cast<int>(ErrorBase + 0x7);
+    if (argument4 == nullptr) return static_cast<int>(ErrorBase + 0x8);
+    if (argument5 <= 0) return static_cast<int>(ErrorBase + 0x9);
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("VsujeTF0+xk", libSceOpusDecUnknown_VsujeTF0_plus_xk_nid_no_patch);
 
-int APS5_VABI libSceOpusDecUnknown_ZBx02KtHz2Y_nid_no_patch() {
+int APS5_VABI libSceOpusDecUnknown_ZBx02KtHz2Y_nid_no_patch(void* argument1, const void* argument2, std::uint32_t argument3, void* argument4, std::int32_t argument5, std::int32_t argument6) {
+    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
+    if (argument2 == nullptr && argument3 != 0) return static_cast<int>(ErrorBase + 0x6);
+    if (argument3 > 0x1f4b) return static_cast<int>(ErrorBase + 0x7);
+    if (argument4 == nullptr) return static_cast<int>(ErrorBase + 0x8);
+    if (argument5 <= 0) return static_cast<int>(ErrorBase + 0x9);
+    if (argument6 < 20 || argument6 > 100) return static_cast<int>(ErrorBase + 0xa);
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("ZBx02KtHz2Y", libSceOpusDecUnknown_ZBx02KtHz2Y_nid_no_patch);
 
@@ -133,13 +173,26 @@ int APS5_VABI libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch(std::int32_t first, 
 }
 APS5_EXPORT("ark0tPj4meI", libSceOpusDecUnknown_ark0tPj4meI_nid_no_patch);
 
-int APS5_VABI libSceOpusDecUnknown_ct42RpB2CaM_nid_no_patch() {
+int APS5_VABI libSceOpusDecUnknown_ct42RpB2CaM_nid_no_patch(void* argument1, const void* argument2, std::uint32_t argument3, void* argument4, std::int32_t argument5) {
+    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
+    if (argument2 == nullptr && argument3 != 0) return static_cast<int>(ErrorBase + 0x6);
+    if (argument3 > 0x1f4b) return static_cast<int>(ErrorBase + 0x7);
+    if (argument4 == nullptr) return static_cast<int>(ErrorBase + 0x8);
+    if (argument5 <= 0) return static_cast<int>(ErrorBase + 0x9);
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("ct42RpB2CaM", libSceOpusDecUnknown_ct42RpB2CaM_nid_no_patch);
 
-int APS5_VABI libSceOpusDecUnknown_eJQx7Emrwb0_nid_no_patch() {
+int APS5_VABI libSceOpusDecUnknown_eJQx7Emrwb0_nid_no_patch(void* argument1, const void* argument2, std::uint32_t argument3, void* argument4, std::int32_t argument5, std::int32_t argument6) {
+    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
+    if (argument2 == nullptr && argument3 != 0) return static_cast<int>(ErrorBase + 0x6);
+    if (argument3 > 0x1f4b) return static_cast<int>(ErrorBase + 0x7);
+    if (argument4 == nullptr) return static_cast<int>(ErrorBase + 0x8);
+    if (argument5 <= 0) return static_cast<int>(ErrorBase + 0x9);
+    if (argument6 < 20 || argument6 > 100) return static_cast<int>(ErrorBase + 0xa);
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("eJQx7Emrwb0", libSceOpusDecUnknown_eJQx7Emrwb0_nid_no_patch);
 
@@ -161,18 +214,29 @@ int APS5_VABI libSceOpusDecUnknown_jXVNwfmd1II_nid_no_patch(std::uint32_t* conte
 }
 APS5_EXPORT("jXVNwfmd1II", libSceOpusDecUnknown_jXVNwfmd1II_nid_no_patch);
 
-int APS5_VABI libSceOpusDecUnknown_lFTdHt_minus_AuKU_nid_no_patch() {
+int APS5_VABI libSceOpusDecUnknown_lFTdHt_minus_AuKU_nid_no_patch(void* argument1) {
+    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("lFTdHt-AuKU", libSceOpusDecUnknown_lFTdHt_minus_AuKU_nid_no_patch);
 
-int APS5_VABI libSceOpusDecUnknown_sr25irrwGBI_nid_no_patch() {
+int APS5_VABI libSceOpusDecUnknown_sr25irrwGBI_nid_no_patch(void* argument1, std::int32_t argument2, std::uint32_t argument3, std::uint32_t argument4, std::uint32_t argument5, std::uint32_t argument6) {
+    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
+    if (argument2 != 8000 && argument2 != 12000 && argument2 != 16000 && argument2 != 24000 && argument2 != 48000) return static_cast<int>(ErrorBase + 0x2);
+    if (argument3 - 1 >= 12) return static_cast<int>(ErrorBase + 0x3);
+    if (argument5 - 1 >= 12) return static_cast<int>(ErrorBase + 0x16);
+    if (argument6 > argument5) return static_cast<int>(ErrorBase + 0x17);
+    if (argument5 + argument6 > 12) return static_cast<int>(ErrorBase + 0x3);
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("sr25irrwGBI", libSceOpusDecUnknown_sr25irrwGBI_nid_no_patch);
 
-int APS5_VABI libSceOpusDecUnknown_ygCoF49g3F0_nid_no_patch() {
+int APS5_VABI libSceOpusDecUnknown_ygCoF49g3F0_nid_no_patch(void* argument1) {
+    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("ygCoF49g3F0", libSceOpusDecUnknown_ygCoF49g3F0_nid_no_patch);
 

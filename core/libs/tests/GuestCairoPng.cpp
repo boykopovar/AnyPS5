@@ -6,6 +6,7 @@
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
@@ -30,11 +31,40 @@ struct Stream {
     int error{};
 };
 
+struct InputStream {
+    const std::vector<std::uint8_t>& bytes;
+    std::size_t position{};
+    int error{10};
+};
+
+int APS5_VABI Read(void* closure, unsigned char* data, unsigned length) {
+    auto& stream = *static_cast<InputStream*>(closure);
+    if (length > stream.bytes.size() - stream.position) return stream.error;
+    std::memcpy(data, stream.bytes.data() + stream.position, length);
+    stream.position += length;
+    return 0;
+}
+
 int APS5_VABI Collect(void* closure, const unsigned char* data, unsigned length) {
     auto& stream = *static_cast<Stream*>(closure);
     Require(length != 0);
     if (++stream.calls == stream.rejectCall) return stream.error;
     stream.bytes.insert(stream.bytes.end(), data, data + length);
+    return 0;
+}
+
+struct Source {
+    const std::vector<std::uint8_t>* bytes;
+    std::size_t position{};
+    unsigned calls{};
+    unsigned failCall{};
+};
+
+int APS5_VABI Supply(void* closure, unsigned char* data, unsigned length) {
+    auto& source = *static_cast<Source*>(closure);
+    if (++source.calls == source.failCall || length > source.bytes->size() - source.position) return 10;
+    std::copy_n(source.bytes->begin() + static_cast<std::ptrdiff_t>(source.position), length, data);
+    source.position += length;
     return 0;
 }
 
@@ -132,11 +162,91 @@ void CheckFailures() {
     Require(cairo_surface_write_to_png_stream(surface.get(), Collect, &healthy) == 0);
 }
 
+void CheckRead() {
+    auto rgba = Decoder::Png::Encode(std::array<std::uint8_t, 8>{128, 64, 32, 128, 255, 1, 2, 0}, 2, 1, 4);
+    InputStream stream{rgba};
+    const auto length = rgba.size();
+    rgba.push_back(0x5a);
+    Surface surface(cairo_image_surface_create_from_png_stream(Read, &stream), cairo_surface_destroy);
+    Require(stream.position == length && cairo_surface_status(surface.get()) == 0);
+    Require(cairo_image_surface_get_format(surface.get()) == 0);
+    Require(cairo_image_surface_get_width(surface.get()) == 2 && cairo_image_surface_get_height(surface.get()) == 1);
+    std::array<std::uint32_t, 2> words{};
+    std::memcpy(words.data(), cairo_image_surface_get_data(surface.get()), sizeof(words));
+    Require(words == std::array<std::uint32_t, 2>{0x80402010, 0});
+
+    const auto rgb = Decoder::Png::Encode(std::array<std::uint8_t, 6>{0xff, 0xff, 0, 0, 0x80, 0}, 1, 1, 3,
+                                          {.bitDepth = 16});
+    stream.position = 0;
+    InputStream wide{rgb};
+    surface.reset(cairo_image_surface_create_from_png_stream(Read, &wide));
+    Require(cairo_surface_status(surface.get()) == 0 && cairo_image_surface_get_format(surface.get()) == 6);
+    std::array<float, 3> samples{};
+    std::memcpy(samples.data(), cairo_image_surface_get_data(surface.get()), sizeof(samples));
+    Require(samples == std::array<float, 3>{1.f, 0.f, 32768.f / 65535.f});
+
+    auto invalidCrc = rgba;
+    invalidCrc.resize(length);
+    invalidCrc[29] ^= 1;
+    rgba.resize(length - 1);
+    surface.reset(cairo_image_surface_create_from_png_stream(Read, &stream));
+    Require(cairo_surface_status(surface.get()) == 10);
+    stream.position = 0;
+    stream.error = 1;
+    surface.reset(cairo_image_surface_create_from_png_stream(Read, &stream));
+    Require(cairo_surface_status(surface.get()) == 1);
+    InputStream malformed{invalidCrc};
+    surface.reset(cairo_image_surface_create_from_png_stream(Read, &malformed));
+    Require(cairo_surface_status(surface.get()) == 1);
+}
+
+}
+
+void CheckRoundTrip(std::vector<std::uint32_t> pixels, int format, int readFormat, std::vector<std::uint32_t> expected) {
+    std::vector<std::uint8_t> bytes(pixels.size() * 4);
+    std::memcpy(bytes.data(), pixels.data(), bytes.size());
+    const int width = static_cast<int>(pixels.size());
+    const int stride = cairo_format_stride_for_width(format, width);
+    auto surface = Borrow(bytes.data(), format, format == 2 ? 4 : width, 1, stride);
+    Stream stream;
+    Require(cairo_surface_write_to_png_stream(surface.get(), Collect, &stream) == 0);
+    Source source{&stream.bytes};
+    Surface read(cairo_image_surface_create_from_png_stream(Supply, &source), cairo_surface_destroy);
+    Require(cairo_surface_status(read.get()) == 0);
+    Require(source.position == stream.bytes.size());
+    Require(cairo_image_surface_get_format(read.get()) == readFormat);
+    Require(cairo_image_surface_get_width(read.get()) == static_cast<int>(expected.size()));
+    Require(cairo_image_surface_get_height(read.get()) == 1);
+    std::vector<std::uint32_t> actual(expected.size());
+    std::memcpy(actual.data(), cairo_image_surface_get_data(read.get()), actual.size() * 4);
+    Require(actual == expected);
+}
+
+void CheckReading() {
+    CheckRoundTrip({0xff102030, 0x00000000, 0x80402010}, 0, 0, {0xff102030, 0x00000000, 0x80402010});
+    CheckRoundTrip({0xff010203, 0xff040506}, 1, 1, {0xff010203, 0xff040506});
+    CheckRoundTrip({0x04eb0d00}, 2, 1, {0xff000000, 0xff0d0d0d, 0xffebebeb, 0xff040404});
+
+    Surface surface(cairo_image_surface_create(0, 3, 2), cairo_surface_destroy);
+    Stream stream;
+    Require(cairo_surface_write_to_png_stream(surface.get(), Collect, &stream) == 0);
+    for (const unsigned failCall : {1u, 2u, 3u}) {
+        Source source{&stream.bytes, 0, 0, failCall};
+        Surface failed(cairo_image_surface_create_from_png_stream(Supply, &source), cairo_surface_destroy);
+        Require(cairo_surface_status(failed.get()) == 10);
+        Require(source.calls == failCall);
+    }
+    const std::vector<std::uint8_t> truncated(stream.bytes.begin(), stream.bytes.end() - 13);
+    Source source{&truncated};
+    Surface failed(cairo_image_surface_create_from_png_stream(Supply, &source), cairo_surface_destroy);
+    Require(cairo_surface_status(failed.get()) == 10);
 }
 
 int main() {
     CheckFormats();
     CheckSubsurfaces();
     CheckFailures();
+    CheckRead();
+    CheckReading();
     std::puts("guest Cairo PNG stream checks passed");
 }
