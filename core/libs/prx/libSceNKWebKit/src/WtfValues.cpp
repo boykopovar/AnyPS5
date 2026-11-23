@@ -328,9 +328,10 @@ bool EncoderEnsure(Encoder* enc, EncoderState& state, std::size_t additional) {
 }
 
 bool EncoderAppendBytes(Encoder* enc, EncoderState& state, const uint8_t* data, std::size_t length) {
-    if (!EncoderEnsure(enc, state, length) || !GuestCopyOut_nid_no_patch(state.buffer + state.size, data, length)) return false;
+    if (!EncoderEnsure(enc, state, length)) return false;
     std::vector<uint8_t> appended(length);
-    if (!GuestCopyIn_nid_no_patch(appended.data(), state.buffer + state.size, length)) return false;
+    if (!GuestCopyIn_nid_no_patch(appended.data(), data, length) || !GuestCopyOut_nid_no_patch(state.buffer + state.size, appended.data(), length))
+        return false;
     unsigned salt = 101;
     Sha1Add(&state.sha1, reinterpret_cast<const uint8_t*>(&salt), sizeof(salt));
     Sha1Add(&state.sha1, appended.data(), length);
