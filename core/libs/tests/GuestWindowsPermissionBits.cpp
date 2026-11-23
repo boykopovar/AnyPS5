@@ -66,6 +66,8 @@ void AuditDirectories(const std::string& root) {
     Require(directory >= 0, "open directory failed");
     Require(DescriptorMode(directory) == (DirectoryType | 0700), "directory descriptor must report 040700");
     Require(mkdirat_nid_postfix(directory, "nested", 0710) == 0, "mkdirat failed");
+    Require(fchmod_nid_postfix(directory, 0750) == 0, "fchmod directory failed");
+    Require(DescriptorMode(directory) == (DirectoryType | 0750), "fchmod directory 0750 must read back 040750");
     Require(close_nid_postfix(directory) == 0, "close directory failed");
     Require(PathMode(privateDirectory + "/nested") == (DirectoryType | 0710), "mkdirat 0710 must read back 040710");
 

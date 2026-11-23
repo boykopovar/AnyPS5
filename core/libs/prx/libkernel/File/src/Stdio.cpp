@@ -199,7 +199,7 @@ static DWORD SetReadOnlyAttribute(HANDLE handle, bool readOnly) {
     if (attributes == basic.FileAttributes) return ERROR_SUCCESS;
     FILE_BASIC_INFO change{};
     change.FileAttributes = attributes == 0 ? FILE_ATTRIBUTE_NORMAL : attributes;
-    const HANDLE writer = ReOpenFile(handle, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_FLAG_BACKUP_SEMANTICS);
+    const HANDLE writer = File::WindowsPermissions::Reopen(handle, FILE_WRITE_ATTRIBUTES);
     if (writer == INVALID_HANDLE_VALUE) return GetLastError();
     const bool changed = SetFileInformationByHandle(writer, FileBasicInfo, &change, sizeof(change));
     const DWORD error = changed ? ERROR_SUCCESS : GetLastError();

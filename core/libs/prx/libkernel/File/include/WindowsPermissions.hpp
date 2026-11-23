@@ -22,6 +22,26 @@ class WindowsPermissions {
         ULONG_PTR information;
     };
 
+    struct UnicodeName {
+        USHORT length;
+        USHORT maximumLength;
+        wchar_t* buffer;
+    };
+
+    struct ObjectAttributes {
+        ULONG length;
+        HANDLE rootDirectory;
+        UnicodeName* objectName;
+        ULONG attributes;
+        void* securityDescriptor;
+        void* securityQualityOfService;
+    };
+
+    using CreateFileFunction = LONG(NTAPI*)(HANDLE*, ACCESS_MASK, ObjectAttributes*, IoStatus*, LARGE_INTEGER*, ULONG, ULONG, ULONG, ULONG, void*, ULONG);
+    static constexpr ULONG openExisting = 1;
+    static constexpr ULONG synchronousOptions = 0x00000020;
+    static constexpr ULONG backupIntentOption = 0x00004000;
+
     static constexpr char name[] = "$LXMOD";
     static constexpr std::size_t nameLength = sizeof(name) - 1;
     static constexpr std::size_t valueOffset = 8 + sizeof(name);
@@ -75,6 +95,26 @@ class WindowsPermissions {
     }
 
 public:
+    // ReOpenFile refuses directory handles, so a directory is opened again relative to its own handle.
+    static HANDLE Reopen(HANDLE handle, DWORD access) {
+        const HANDLE reopened = ReOpenFile(handle, access, shareAll, FILE_FLAG_BACKUP_SEMANTICS);
+        if (reopened != INVALID_HANDLE_VALUE) return reopened;
+        const DWORD reopenError = GetLastError();
+        static const auto create = Ntdll<CreateFileFunction>("NtCreateFile");
+        if (create == nullptr) {
+            SetLastError(reopenError);
+            return INVALID_HANDLE_VALUE;
+        }
+        UnicodeName emptyName{};
+        ObjectAttributes object{sizeof(ObjectAttributes), handle, &emptyName, 0, nullptr, nullptr};
+        IoStatus io{};
+        HANDLE relative = nullptr;
+        const LONG status = create(&relative, access | SYNCHRONIZE, &object, &io, nullptr, 0, shareAll, openExisting, synchronousOptions | backupIntentOption, nullptr, 0);
+        if (status >= 0) return relative;
+        SetLastError(reopenError);
+        return INVALID_HANDLE_VALUE;
+    }
+
     static std::optional<std::uint16_t> Read(HANDLE handle) {
         static const auto information = Ntdll<QueryInformationFunction>("NtQueryInformationFile");
         if (information == nullptr) return std::nullopt;
@@ -85,7 +125,7 @@ public:
         bool found = false;
         LONG status = Query(handle, mode, found);
         if (status == accessDenied) {
-            const HANDLE reader = ReOpenFile(handle, FILE_READ_EA, shareAll, FILE_FLAG_BACKUP_SEMANTICS);
+            const HANDLE reader = Reopen(handle, FILE_READ_EA);
             if (reader == INVALID_HANDLE_VALUE) return std::nullopt;
             status = Query(reader, mode, found);
             CloseHandle(reader);
@@ -109,7 +149,7 @@ public:
         const std::uint32_t mode = type | (permissions & 07777u);
         LONG status = Write(handle, mode);
         if (status == accessDenied) {
-            const HANDLE writer = ReOpenFile(handle, FILE_WRITE_EA, shareAll, FILE_FLAG_BACKUP_SEMANTICS);
+            const HANDLE writer = Reopen(handle, FILE_WRITE_EA);
             if (writer == INVALID_HANDLE_VALUE) return GetLastError();
             status = Write(writer, mode);
             CloseHandle(writer);
