@@ -16,7 +16,8 @@ SonyConstraintHandler& SonyConstraintHandlerSlot() {
 void APS5_VABI SonyDefaultConstraintHandler(const char* message, void* pointer, int error) {
     (void)pointer;
     (void)error;
-    fputs_nid_postfix(message, __stderrp_nid_postfix);
+    if (__stderrp_nid_postfix == nullptr) return;
+    if (message != nullptr) fputs_nid_postfix(message, __stderrp_nid_postfix);
     fputc_nid_postfix('\n', __stderrp_nid_postfix);
 }
 

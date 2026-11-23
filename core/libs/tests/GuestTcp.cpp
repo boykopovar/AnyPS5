@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+#include <vector>
 
 static void Require(bool condition) {
     if (!condition) std::abort();
@@ -272,6 +273,10 @@ static void SocketNameFaults() {
     }
     size = address.size();
     Require(getpeername_nid_postfix(unconnected, address.data(), &size) == -1 && *__error_nid_postfix() == 57);
+    size = 0;
+    Require(getpeername_nid_postfix(unconnected, address.data(), &size) == -1 && *__error_nid_postfix() == 57);
+    size = address.size();
+    Require(getpeername_nid_postfix(listener, address.data(), &size) == -1 && *__error_nid_postfix() == 57);
     Require(fails(getpeername_nid_postfix(unconnected, address.data(), static_cast<std::uint32_t*>(unreadable))));
     for (const int descriptor : {unconnected, accepted, client, listener}) Require(close_nid_postfix(descriptor) == 0);
 }
@@ -329,7 +334,42 @@ static void BlockedReceiveEndsAtShutRead() {
     }
 }
 
+#ifdef __linux__
+static void SendDuringConnectFailsNotConnected() {
+    constexpr int InProgress = 36;
+    constexpr int NotConnected = 57;
+    const int listener = socket_nid_postfix(2, 1, 0);
+    Require(listener >= 0);
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(listener, address.data(), address.size()) == 0 && listen_nid_postfix(listener, 0) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(listener, address.data(), &size) == 0);
+    std::vector<int> clients;
+    int pending = -1;
+    for (int attempt = 0; attempt < 8 && pending < 0; ++attempt) {
+        const int client = socket_nid_postfix(2, 1 | 0x20000000, 0);
+        Require(client >= 0);
+        clients.push_back(client);
+        if (connect_nid_postfix(client, address.data(), address.size()) == 0) continue;
+        Require(*__error_nid_postfix() == InProgress);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::array<std::uint8_t, 16> peer{};
+        std::uint32_t peerSize = peer.size();
+        if (getpeername_nid_postfix(client, peer.data(), &peerSize) != 0) pending = client;
+    }
+    Require(pending >= 0);
+    Require(send_nid_postfix(pending, "x", 1, 0) == -1 && *__error_nid_postfix() == NotConnected);
+    Require(write_nid_postfix(pending, "x", 1) == -1 && *__error_nid_postfix() == NotConnected);
+    Require(sendto_nid_postfix(pending, "x", 1, 0, nullptr, 0) == -1 && *__error_nid_postfix() == NotConnected);
+    for (const int client : clients) Require(close_nid_postfix(client) == 0);
+    Require(close_nid_postfix(listener) == 0);
+}
+#endif
+
 int main() {
+#ifdef __linux__
+    SendDuringConnectFailsNotConnected();
+#endif
     StreamReceiveReportsNoSender();
     SocketNameFaults();
     ListenersShareAPortAcrossFamilies();

@@ -36,6 +36,17 @@ struct ArrayBufferContents {
     unsigned sizeInBytes;
 };
 
+struct ArrayBuffer {
+    unsigned refCount;
+    std::uintptr_t encodedPointer;
+    ArrayBufferContents contents;
+    std::uintptr_t neuteringWatchpointSet;
+    void* wrapper;
+    unsigned pinCount;
+    bool isWasmMemory;
+    bool locked;
+};
+
 static_assert(sizeof(SharedTaskVtable) == 24);
 static_assert(offsetof(SharedTask, refCount) == 8);
 static_assert(sizeof(std::atomic<unsigned>) == 4);
@@ -49,6 +60,11 @@ static_assert(offsetof(ArrayBufferContents, data) == 0);
 static_assert(offsetof(ArrayBufferContents, destructor) == 8);
 static_assert(offsetof(ArrayBufferContents, shared) == 14);
 static_assert(offsetof(ArrayBufferContents, sizeInBytes) == 20);
+static_assert(sizeof(ArrayBuffer) == 64);
+static_assert(offsetof(ArrayBuffer, contents) == 16);
+static_assert(offsetof(ArrayBuffer, pinCount) == 56);
+static_assert(offsetof(ArrayBuffer, isWasmMemory) == 60);
+static_assert(offsetof(ArrayBuffer, locked) == 61);
 
 } // namespace Jsc::JscAbi
 
@@ -62,5 +78,6 @@ Jsc::JscAbi::ArrayBufferContents* APS5_VABI _ZN3JSC19ArrayBufferContentsaSEOS0_(
 void APS5_VABI _ZN3JSC19ArrayBufferContentsD1Ev(Jsc::JscAbi::ArrayBufferContents* self);
 void APS5_VABI _ZN3JSC19ArrayBufferContentsD2Ev(Jsc::JscAbi::ArrayBufferContents* self);
 void APS5_VABI _ZN3JSC19ArrayBufferContents5clearEv(Jsc::JscAbi::ArrayBufferContents* self);
+const char* APS5_VABI _ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(Jsc::JscAbi::ArrayBuffer* buffer);
 
 }

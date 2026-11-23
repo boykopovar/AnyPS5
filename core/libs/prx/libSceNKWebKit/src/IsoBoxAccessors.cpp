@@ -14,6 +14,13 @@ const T& Checked(const T* self, const char* name) {
     return *self;
 }
 
+LegacyOptionalInt8* StoreOptional(LegacyOptionalInt8* result, const OptionalInt8& source, const char* name) {
+    if (!result) throw std::invalid_argument(std::string(name) + ": null result");
+    result->engaged = source.engaged;
+    result->value = source.engaged ? source.value : std::int8_t{0};
+    return result;
+}
+
 }  // namespace
 
 extern "C" {
@@ -22,8 +29,8 @@ std::uint64_t APS5_VABI _ZNK7WebCore6ISOBox4sizeEv(const Box* self) {
     return Checked(self, "ISOBox::size").size;
 }
 
-std::uint32_t APS5_VABI _ZNK7WebCore6ISOBox7boxTypeEv(const Box* self) {
-    return Checked(self, "ISOBox::boxType").boxType;
+const std::uint32_t* APS5_VABI _ZNK7WebCore6ISOBox7boxTypeEv(const Box* self) {
+    return &Checked(self, "ISOBox::boxType").boxType;
 }
 
 const ByteVector& APS5_VABI _ZNK7WebCore6ISOBox12extendedTypeEv(const Box* self) {
@@ -38,12 +45,12 @@ std::uint32_t APS5_VABI _ZNK7WebCore10ISOFullBox5flagsEv(const FullBox* self) {
     return Checked(self, "ISOFullBox::flags").flags;
 }
 
-OptionalInt8 APS5_VABI _ZNK7WebCore21ISOTrackEncryptionBox21defaultCryptByteBlockEv(const TrackEncryptionBox* self) {
-    return Checked(self, "ISOTrackEncryptionBox::defaultCryptByteBlock").defaultCryptByteBlock;
+LegacyOptionalInt8* APS5_VABI _ZNK7WebCore21ISOTrackEncryptionBox21defaultCryptByteBlockEv(LegacyOptionalInt8* result, const TrackEncryptionBox* self) {
+    return StoreOptional(result, Checked(self, "ISOTrackEncryptionBox::defaultCryptByteBlock").defaultCryptByteBlock, "ISOTrackEncryptionBox::defaultCryptByteBlock");
 }
 
-OptionalInt8 APS5_VABI _ZNK7WebCore21ISOTrackEncryptionBox20defaultSkipByteBlockEv(const TrackEncryptionBox* self) {
-    return Checked(self, "ISOTrackEncryptionBox::defaultSkipByteBlock").defaultSkipByteBlock;
+LegacyOptionalInt8* APS5_VABI _ZNK7WebCore21ISOTrackEncryptionBox20defaultSkipByteBlockEv(LegacyOptionalInt8* result, const TrackEncryptionBox* self) {
+    return StoreOptional(result, Checked(self, "ISOTrackEncryptionBox::defaultSkipByteBlock").defaultSkipByteBlock, "ISOTrackEncryptionBox::defaultSkipByteBlock");
 }
 
 std::int8_t APS5_VABI _ZNK7WebCore21ISOTrackEncryptionBox18defaultIsProtectedEv(const TrackEncryptionBox* self) {

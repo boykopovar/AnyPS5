@@ -1,3 +1,4 @@
+#include "prx/libSceIcu/include/InvariantChars.hpp"
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 
 #include <cctype>
