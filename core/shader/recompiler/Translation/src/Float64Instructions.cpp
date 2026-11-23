@@ -285,6 +285,12 @@ bool TranslationContext::vDivFmasF64(const RdnaInstruction& inst) {
     IrValue& a = readF64(sourceAt(inst, 0u)).Value();
     IrValue& b = readF64(sourceAt(inst, 1u)).Value();
     IrValue& c = ir.ConstructU64(addend[0].Value(), addend[1].Value());
+    const std::uint32_t rounding = floatRoundMode(2u);
+    if (rounding != 0u) {
+        const bool flush = floatMode.has_value() && (floatMode->floatMode & 0x80u) == 0u;
+        writeF64Result(inst.destination, nanResultF64(a, b, &c, ir.Emit(IrOpcode::FPFmaScaleRound64, IrType::U64, {&a, &b, &c, &power, &ir.Constant(rounding | (flush ? 4u : 0u))})));
+        return true;
+    }
     IrValue& result = nanResultF64(a, b, &c, ir.Emit(IrOpcode::FPFmaScale64, IrType::U64, {&a, &b, &c, &power}));
     if (floatMode.has_value() && (floatMode->floatMode & 0x80u) == 0u) {
         IrValue& probe = ir.Emit(IrOpcode::FPFmaScale64, IrType::U64, {&a, &b, &c, &ir.IAdd(power, ir.Constant(64u))});

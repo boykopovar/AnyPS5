@@ -694,10 +694,19 @@ public:
         return pair(pick(special, pick(zero, constant(DefaultNan), infinity), pick(zero, sign, roundPack(sign, exponent, wide, rounding))));
     }
 
-    std::uint32_t Fma(std::uint32_t lhsBits, std::uint32_t rhsBits, std::uint32_t addendBits, std::uint32_t rounding, bool flushResult) const {
-        const auto lhs = scalar(lhsBits);
-        const auto rhs = scalar(rhsBits);
-        const auto addend = scalar(addendBits);
+    std::uint32_t Fma(std::uint32_t lhsBits, std::uint32_t rhsBits, std::uint32_t addendBits, std::uint32_t rounding, bool flushResult, std::uint32_t scale = 0u) const {
+        auto lhs = scalar(lhsBits);
+        auto rhs = scalar(rhsBits);
+        auto addend = scalar(addendBits);
+        if (scale != 0u) {
+            const auto zero = [&](std::uint32_t value) { return testConstant(spv::OpIEqual, withConstant(spv::OpBitwiseAnd, value, MagnitudeMask), 0u); };
+            const auto finite = [&](std::uint32_t value) { return testConstant(spv::OpULessThan, withConstant(spv::OpBitwiseAnd, value, MagnitudeMask), Infinity); };
+            const auto zeroProduct = logical(spv::OpLogicalAnd, logical(spv::OpLogicalAnd, finite(lhs), finite(rhs)), logical(spv::OpLogicalOr, zero(lhs), zero(rhs)));
+            const auto moved = logical(spv::OpLogicalAnd, zeroProduct, logical(spv::OpLogicalAnd, finite(addend), Unary(state, spv::OpLogicalNot, boolean, zero(addend))));
+            lhs = pick(moved, addend, lhs);
+            rhs = pick(moved, constant(0x3ff0000000000000ull), rhs);
+            addend = pick(moved, constant(0u), addend);
+        }
         const auto productSign = withConstant(spv::OpBitwiseAnd, op(spv::OpBitwiseXor, lhs, rhs), SignBit);
         const auto addendSign = withConstant(spv::OpBitwiseAnd, addend, SignBit);
         const auto lhsMagnitude = withConstant(spv::OpBitwiseAnd, lhs, MagnitudeMask);
@@ -742,7 +751,8 @@ public:
         const auto lowered = shiftRightJam128(total, constant(1u));
         const auto wideHigh = pick(top, lowered.high, raised.high);
         const auto wideLow = pick(top, lowered.low, raised.low);
-        const auto unbounded = Binary(state, spv::OpISub, u32, Binary(state, spv::OpIAdd, u32, narrow(alignedExponent), narrowConstant(1u)), zeros);
+        const auto unscaled = Binary(state, spv::OpISub, u32, Binary(state, spv::OpIAdd, u32, narrow(alignedExponent), narrowConstant(1u)), zeros);
+        const auto unbounded = scale == 0u ? unscaled : Binary(state, spv::OpIAdd, u32, unscaled, scale);
         const auto wide = op(spv::OpBitwiseOr, wideHigh, pick(testConstant(spv::OpINotEqual, wideLow, 0u), constant(1u), constant(0u)));
         const auto tiny = Binary(state, spv::OpSLessThan, boolean, unbounded, narrowConstant(1u));
         const auto significandBits = pick(tiny, shiftRightJam32(wide, Binary(state, spv::OpISub, u32, narrowConstant(1u), unbounded)), wide);
@@ -1015,6 +1025,19 @@ std::uint32_t EmitFPFmaRound64(SpirvEmitterState& state, std::uint32_t arg0, std
     const auto both = [&](std::uint32_t lhs, std::uint32_t rhs) { return Binary(state, spv::OpLogicalAnd, TypeBool(state), lhs, rhs); };
     const auto validProduct = Unary(state, spv::OpLogicalNot, TypeBool(state), Binary(state, spv::OpLogicalOr, TypeBool(state), both(a.infinite, b.zero), both(a.zero, b.infinite)));
     auto result = Split(state, CallIntegerFunction(state, state.roundedFmaF64Functions.at(mode->ImmediateU32()), TypeU64(state), arg0, arg1, arg2));
+    result = SelectBits(state, both(c.nan, validProduct), Quiet(state, c.bits), result);
+    result = SelectBits(state, b.nan, Quiet(state, b.bits), result);
+    result = SelectBits(state, a.nan, Quiet(state, a.bits), result);
+    return Join(state, result);
+}
+
+std::uint32_t EmitFPFmaScaleRound64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3, const IrValue* mode) {
+    const auto a = Classify(state, arg0);
+    const auto b = Classify(state, arg1);
+    const auto c = Classify(state, arg2);
+    const auto both = [&](std::uint32_t lhs, std::uint32_t rhs) { return Binary(state, spv::OpLogicalAnd, TypeBool(state), lhs, rhs); };
+    const auto validProduct = Unary(state, spv::OpLogicalNot, TypeBool(state), Binary(state, spv::OpLogicalOr, TypeBool(state), both(a.infinite, b.zero), both(a.zero, b.infinite)));
+    auto result = Split(state, CallIntegerFunction(state, state.roundedFmaScaleF64Functions.at(mode->ImmediateU32()), TypeU64(state), arg0, arg1, arg2, arg3));
     result = SelectBits(state, both(c.nan, validProduct), Quiet(state, c.bits), result);
     result = SelectBits(state, b.nan, Quiet(state, b.bits), result);
     result = SelectBits(state, a.nan, Quiet(state, a.bits), result);
@@ -1384,6 +1407,14 @@ void DefineIntegerFloat64Functions(SpirvEmitterState& state) {
                     if (fused != 0u) continue;
                     const std::string fusedName = "f64_fma_round_" + std::to_string(mode & 3u) + ((mode & 4u) != 0u ? "_flush" : "");
                     fused = DefineIntegerFunction(state, fusedName.c_str(), roundedType, [&](std::uint32_t lhs, std::uint32_t rhs, std::uint32_t addend) { return rounded.Fma(lhs, rhs, addend, mode & 3u, (mode & 4u) != 0u); }, roundedType, roundedType, roundedType);
+                    continue;
+                }
+                if (inst->Opcode() == IrOpcode::FPFmaScaleRound64) {
+                    const std::uint32_t mode = inst->Argument(4u)->ImmediateU32();
+                    std::uint32_t& scaled = state.roundedFmaScaleF64Functions.at(mode);
+                    if (scaled != 0u) continue;
+                    const std::string scaledName = "f64_fma_scale_round_" + std::to_string(mode & 3u) + ((mode & 4u) != 0u ? "_flush" : "");
+                    scaled = DefineIntegerFunction(state, scaledName.c_str(), roundedType, [&](std::uint32_t lhs, std::uint32_t rhs, std::uint32_t addend, std::uint32_t scale) { return rounded.Fma(lhs, rhs, addend, mode & 3u, (mode & 4u) != 0u, scale); }, roundedType, roundedType, roundedType, TypeU32(state));
                     continue;
                 }
                 const bool add = inst->Opcode() == IrOpcode::FPAddRound64;

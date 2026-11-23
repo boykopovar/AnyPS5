@@ -180,6 +180,7 @@ bool isLaneLocal(IrOpcode opcode) {
         case IrOpcode::FPMulRound64:
         case IrOpcode::FPFma64:
         case IrOpcode::FPFmaRound64:
+        case IrOpcode::FPFmaScaleRound64:
         case IrOpcode::FPFmaScale32:
         case IrOpcode::FPMin64:
         case IrOpcode::FPMax64:

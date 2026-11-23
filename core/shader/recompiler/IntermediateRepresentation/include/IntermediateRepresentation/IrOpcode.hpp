@@ -272,6 +272,7 @@ enum class IrOpcode : std::uint16_t {
     FPFma64,
     FPFmaRound64,
     FPFmaScale64,
+    FPFmaScaleRound64,
     FPFmaScale32,
     FPMin64,
     FPMax64,
