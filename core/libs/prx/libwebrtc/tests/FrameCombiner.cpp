@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -199,6 +200,53 @@ void TestInaccessibleGuestPointersThrow() {
     CombineRaw(combiner, tail, 2, 1, 16000, 1, output.get());
     Require(output->data[0] == 100);
     Require(allocations == allocationsBefore + 1);
+}
+
+std::int16_t ExpectedDownmix(const WebRtcAudioFrame& stereo, std::size_t index) {
+    return static_cast<std::int16_t>((std::int32_t{stereo.data[2 * index]} + stereo.data[2 * index + 1]) / 2);
+}
+
+void TestLaterFrameFailureLeavesEarlierFramesUnchanged() {
+    Combiner combiner(false);
+    auto first = Filled(16000, 2, 0);
+    for (std::size_t i = 0; i < 320; ++i)
+        first->data[i] = static_cast<std::int16_t>(i % 2 ? 40 : 20);
+    const auto firstBefore = std::make_unique<WebRtcAudioFrame>(*first);
+    auto output = Filled(16000, 1, 7);
+    const auto outputBefore = std::make_unique<WebRtcAudioFrame>(*output);
+
+    GuardedPages readOnly(sizeof(WebRtcAudioFrame));
+    *readOnly.As<WebRtcAudioFrame>() = *Filled(16000, 2, 300);
+    readOnly.Protect(Access::ReadOnly);
+    GuardedPages hidden(sizeof(WebRtcAudioFrame));
+    hidden.Protect(Access::None);
+    for (std::size_t streams : {std::size_t{1}, std::size_t{2}}) {
+        WebRtcAudioFrame* const unwritable[] = {first.get(), readOnly.As<WebRtcAudioFrame>()};
+        RequireInvalidArgument([&] { CombineRaw(combiner.object.get(), unwritable, 2, 1, 16000, streams, output.get()); });
+        WebRtcAudioFrame* const unreadable[] = {first.get(), hidden.As<WebRtcAudioFrame>()};
+        RequireInvalidArgument([&] { CombineRaw(combiner.object.get(), unreadable, 2, 1, 16000, streams, output.get()); });
+        Require(std::memcmp(first.get(), firstBefore.get(), sizeof(WebRtcAudioFrame)) == 0);
+        Require(std::memcmp(output.get(), outputBefore.get(), sizeof(WebRtcAudioFrame)) == 0);
+    }
+}
+
+void TestRemixedFramesAreWrittenAfterEveryFrameIsRead() {
+    for (std::size_t streams : {std::size_t{1}, std::size_t{2}}) {
+        Combiner combiner(false);
+        auto first = Filled(16000, 2, 1000);
+        auto second = Filled(16000, 1, 200);
+        WebRtcAudioFrame* const pointers[] = {first.get(), second.get()};
+        std::memcpy(first->data, pointers, sizeof(pointers));
+        const auto firstBefore = std::make_unique<WebRtcAudioFrame>(*first);
+        auto output = Frame();
+        CombineRaw(combiner.object.get(), reinterpret_cast<WebRtcAudioFrame* const*>(first->data), streams, 1, 16000, streams, output.get());
+        Require(first->numChannels == 1 && output->numChannels == 1 && output->samplesPerChannel == 160);
+        for (std::size_t i = 0; i < 160; ++i) {
+            const std::int16_t downmixed = ExpectedDownmix(*firstBefore, i);
+            const std::int32_t mixed = streams == 1 ? downmixed : std::clamp(std::int32_t{downmixed} + 200, -32768, 32767);
+            Require(first->data[i] == downmixed && output->data[i] == mixed);
+        }
+    }
 }
 
 void TestConstructorAndDestructor() {
@@ -399,5 +447,7 @@ int main() {
     TestNonMultipleOf20WorksWithoutLimiter();
     TestRejectsUpstreamPreconditions();
     TestInaccessibleGuestPointersThrow();
+    TestLaterFrameFailureLeavesEarlierFramesUnchanged();
+    TestRemixedFramesAreWrittenAfterEveryFrameIsRead();
     return 0;
 }
