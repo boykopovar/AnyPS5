@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/QueueSubmitter.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
@@ -87,6 +88,7 @@
 #include <charconv>
 #include <cmath>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -404,7 +406,7 @@ void deviceSelectionTests() {
 // them, as the driver creates its own; the recorder's batches need a real queue and real fences.
 class Device {
 public:
-    explicit Device(bool settleOnOtherFamily = false) {
+    explicit Device(bool settleOnOtherFamily = false, bool enableTimeline = false) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
 #elif defined(__APPLE__)
@@ -624,6 +626,17 @@ public:
                 portabilityFeatures.pNext = address.pNext;
                 address.pNext = &portabilityFeatures;
             }
+            VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR};
+            if (enableTimeline && hasExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)) {
+                VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timelineFeatures};
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(context.physical, &features);
+                if (timelineFeatures.timelineSemaphore == VK_TRUE) {
+                    timelineFeatures.pNext = address.pNext;
+                    address.pNext = &timelineFeatures;
+                    extensionsEnabled.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+                    timelineEnabled = true;
+                }
+            }
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             const std::array<VkDeviceQueueCreateInfo, 2> queueInfos{queue, settle};
             device.queueCreateInfoCount = settleFamily != noSettleFamily && settleFamily != family ? 2 : 1;
@@ -669,6 +682,7 @@ public:
     bool PushDescriptors() const { return pushDescriptors; }
     void UsePushDescriptors() { context.pushDescriptors = pushDescriptors; }
     const Context& GetContext() const { return context; }
+    bool TimelineEnabled() const { return timelineEnabled; }
     bool Graphics() const { return graphics; }
     bool Timestamps() const {
         std::uint32_t count = 0;
@@ -683,7 +697,10 @@ public:
         function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(context.physical, &properties);
         return properties;
     }
-    void WaitQueue() const { Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle"); }
+    void WaitQueue() const {
+        const AgcDriver::Graphics::QueueAccess access(context.queue);
+        Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle");
+    }
     struct HeapUsage {
         std::uint64_t deviceLocal = 0;
         std::uint64_t host = 0;
@@ -715,6 +732,7 @@ private:
         context.bufferPool.reset();
         if (context.device != VK_NULL_HANDLE) {
             DestroyShadows(context.device);
+            AgcDriver::Graphics::QueueSubmitter::RetireDevice(context.device);
             function<PFN_vkDestroyDevice>("vkDestroyDevice")(context.device, nullptr);
         }
         if (instance != VK_NULL_HANDLE) function<PFN_vkDestroyInstance>("vkDestroyInstance")(instance, nullptr);
@@ -730,7 +748,117 @@ private:
     bool nullDescriptors = false;
     bool memoryBudget = false;
     bool pushDescriptors = false;
+    bool timelineEnabled = false;
 };
+
+struct SubmitReturnGate {
+    std::mutex mutex;
+    std::condition_variable ready;
+    bool gpuComplete = false;
+    bool release = false;
+    bool timedOut = false;
+    VkResult result = VK_NOT_READY;
+};
+
+SubmitReturnGate submitReturnGate;
+PFN_vkGetDeviceProcAddr submitReturnResolver = nullptr;
+PFN_vkQueueSubmit submitReturnQueueSubmit = nullptr;
+PFN_vkQueueWaitIdle submitReturnQueueWaitIdle = nullptr;
+PFN_vkGetFenceStatus submitReturnFenceStatus = nullptr;
+std::atomic<unsigned> submitReturnNullFenceQueries{0};
+std::atomic<unsigned> submitReturnFenceQueries{0};
+
+VKAPI_ATTR VkResult VKAPI_CALL submitReturnSubmit(VkQueue queue, std::uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
+    auto result = submitReturnQueueSubmit(queue, count, submits, fence);
+    if (result == VK_SUCCESS) result = submitReturnQueueWaitIdle(queue);
+    std::unique_lock lock(submitReturnGate.mutex);
+    submitReturnGate.result = result;
+    submitReturnGate.gpuComplete = true;
+    submitReturnGate.ready.notify_all();
+    if (!submitReturnGate.ready.wait_for(lock, std::chrono::seconds(10), [] { return submitReturnGate.release; })) submitReturnGate.timedOut = true;
+    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL submitReturnGetFenceStatus(VkDevice device, VkFence fence) {
+    submitReturnFenceQueries.fetch_add(1, std::memory_order_relaxed);
+    if (fence == VK_NULL_HANDLE) {
+        submitReturnNullFenceQueries.fetch_add(1, std::memory_order_relaxed);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    return submitReturnFenceStatus(device, fence);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL submitReturnProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkQueueSubmit") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&submitReturnSubmit);
+    if (std::strcmp(name, "vkGetFenceStatus") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&submitReturnGetFenceStatus);
+    return submitReturnResolver(device, name);
+}
+
+bool asyncTimelineReturnTests() {
+    Require(AgcDriver::Graphics::QueueSubmitter::Enabled(), "async timeline return test requires the queue submitter");
+    Device device(false, true);
+    if (!device.TimelineEnabled()) {
+        std::puts("async timeline return test skipped: timeline semaphores are unavailable");
+        return false;
+    }
+    auto context = device.GetContext();
+    submitReturnResolver = context.deviceProc;
+    submitReturnQueueSubmit = context.Function<PFN_vkQueueSubmit>("vkQueueSubmit");
+    submitReturnQueueWaitIdle = context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle");
+    submitReturnFenceStatus = context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus");
+    context.functions = nullptr;
+    context.deviceProc = &submitReturnProc;
+    Recorder recorder(context, true);
+    Require(recorder.HasTimeline(), "async timeline return test did not create a timeline");
+    std::future<bool> reaped;
+    struct ReleaseGate {
+        ~ReleaseGate() {
+            std::lock_guard lock(submitReturnGate.mutex);
+            submitReturnGate.release = true;
+            submitReturnGate.ready.notify_all();
+        }
+    } releaseGate;
+    alignas(16) std::uint32_t marker = 0;
+    const auto address = reinterpret_cast<std::uintptr_t>(&marker);
+    std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
+    recorder.NotePendingWrite(address, sizeof(marker));
+    const auto serial = recorder.SubmitAndEpoch();
+    gpu.unlock();
+    {
+        std::unique_lock lock(submitReturnGate.mutex);
+        Require(submitReturnGate.ready.wait_for(lock, std::chrono::seconds(5), [] { return submitReturnGate.gpuComplete; }), "the async submit callback did not execute");
+        Check(submitReturnGate.result, "async timeline test queue submit and idle");
+    }
+    Require(serial != 0 && recorder.WaitSerialFor(serial, 1'000'000'000ull), "the GPU timeline did not complete before the host-return gate");
+    gpu.lock();
+    const bool held = !recorder.PendingWriteSettled(address, sizeof(marker));
+    gpu.unlock();
+    reaped = std::async(std::launch::async, [&] {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        return recorder.Reap();
+    });
+    const bool returnedBeforeRelease = reaped.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    const bool prematureRetirement = returnedBeforeRelease && reaped.get();
+    {
+        std::lock_guard lock(submitReturnGate.mutex);
+        submitReturnGate.release = true;
+        submitReturnGate.ready.notify_all();
+    }
+    if (reaped.valid()) static_cast<void>(reaped.get());
+    AgcDriver::Graphics::QueueSubmitter::Existing(context.queue)->Drain();
+    gpu.lock();
+    Require(recorder.Reap(), "the completed async timeline batch did not retire after host return");
+    Require(recorder.PendingWriteSettled(address, sizeof(marker)), "the retired async batch retained its pending write");
+    gpu.unlock();
+    Require(held, "the GPU-complete batch was treated as settled before host submit return");
+    Require(returnedBeforeRelease && !prematureRetirement, "Reap waited for or retired a host submit that had not returned");
+    Require(!submitReturnGate.timedOut, "the delayed submit callback reached its emergency timeout");
+    Require(submitReturnNullFenceQueries.load(std::memory_order_relaxed) == 0u, "timeline completion polled a null fence");
+    if (std::getenv("APS5_BATCH_FENCES") == nullptr) Require(submitReturnFenceQueries.load(std::memory_order_relaxed) == 0u, "the fenceless timeline path polled a fence");
+    else Require(submitReturnFenceQueries.load(std::memory_order_relaxed) != 0u, "the batch-fence override did not poll its fence");
+    std::cout << "async timeline host-return pending-write and nonblocking Reap checks passed\n";
+    return true;
+}
 
 using Kind = Recorder::ReadKind;
 
@@ -10698,6 +10826,7 @@ void dccMipWriteBackTests(const Device& device, Recorder& recorder) {
         while (StorageTexture::AnyLiveOverlaps(reused)) {
             Require(std::chrono::steady_clock::now() < deadline, std::string(test.name) + ": an earlier case's image is still in the live registry over the reused memory, so this image would store whole");
             recorder.Reap();
+            recorder.FlushDeferredReleases();
             std::this_thread::yield();
         }
         {
@@ -18242,6 +18371,14 @@ int main(int argc, char** argv) {
         LibcTerminate_nid_no_patch(1);
     });
     {
+        if (argc == 2 && std::string_view(argv[1]) == "--async-timeline-return-only") {
+            try {
+                return asyncTimelineReturnTests() ? 0 : 77;
+            } catch (const std::exception& error) {
+                std::cerr << error.what() << '\n';
+                return 1;
+            }
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--collect-mapping-history-only") {
             if (!collectMappingHistoryTests()) return 77;
             std::cout << "collect mapping history tests passed\n";
