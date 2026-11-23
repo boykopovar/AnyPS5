@@ -164,4 +164,16 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-target_sources(libScePosixForWebKit PRIVATE UserDatabase.cpp)
+target_sources(libScePosixForWebKit PRIVATE UserDatabase.cpp UnsupportedPosix.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_posix_unsupported_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixUnsupported.cpp)
+    target_include_directories(guest_posix_unsupported_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_posix_unsupported_tests PRIVATE libScePosixForWebKit libc)
+    configure_windows_unwind(guest_posix_unsupported_tests)
+    add_test(NAME guest_posix_unsupported COMMAND guest_posix_unsupported_tests)
+    if(WIN32)
+        set_tests_properties(guest_posix_unsupported PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
+    endif()
+endif()
