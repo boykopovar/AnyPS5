@@ -4,10 +4,10 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Atfork.hpp"
 #include "prx/libkernel/include/Api.hpp"
-#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/General.hpp"
@@ -26,7 +26,6 @@
 namespace {
 
 constexpr int GuestClockRealtime = 0;
-constexpr std::uint32_t PARAM_SFO_ATTRIBUTE_SUPPORT_NEO_MODE = 0x00800000;
 
 int SceResult(int error) {
     return error == 0 ? 0 : SceKernelError(error);
@@ -269,8 +268,9 @@ int APS5_VABI pthread_attr_setcreatesuspend_np_nid_postfix(PthreadAttr* attr) {
 
 int APS5_VABI pthread_attr_setstackaddr_nid_postfix(PthreadAttr* attr, void* stack_addr) {
     constexpr int GuestEinval = 22;
-    if (!attr || !*attr || !stack_addr) return GuestEinval;
-    (*attr)->stackAddress = stack_addr;
+    PthreadAttr localAttr{};
+    if (!LoadAttr(attr, localAttr) || !stack_addr) return GuestEinval;
+    localAttr->stackAddress = stack_addr;
     return 0;
 }
 
@@ -280,9 +280,22 @@ int APS5_VABI pthread_get_specificarray_np_nid_postfix(PthreadKey key, int total
     constexpr int MaxKeys = 512;
     if (total <= 0 || key < 1 || key > MaxKeys || total > MaxKeys - (key - 1)) return GuestEinval;
     if (!array) return GuestEfault;
+    const std::size_t bytes = static_cast<std::size_t>(total) * sizeof(void*);
+    const std::uintptr_t start = reinterpret_cast<std::uintptr_t>(array);
+    if (bytes > UINTPTR_MAX - start) return GuestEfault;
+    void* values[MaxKeys];
     for (int i = 0; i < total; ++i) {
-        array[i] = scePthreadGetspecific(key + i);
+        values[i] = scePthreadGetspecific(key + i);
     }
+    const int savedErrno = errno;
+    bool writable = false;
+    {
+        const GuestArena::HostWrite guard(array, bytes);
+        writable = guard.Open() && GuestWritable_nid_no_patch(array, bytes);
+    }
+    const bool copied = writable && CopyOutBytes(array, values, bytes);
+    errno = savedErrno;
+    if (!copied) return GuestEfault;
     return 0;
 }
 
@@ -450,11 +463,6 @@ int APS5_VABI sceKernelAllocateDirectMemoryForMiniApp(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelAllocateToolMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelAllocateTraceDirectMemory(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -471,11 +479,6 @@ int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult_TEST(void) {
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBuffer_TEST(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelAvailableToolMemorySize(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -687,18 +690,6 @@ int APS5_VABI sceKernelGetACInfoAllForCoredump(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* categoryType) {
-    if (categoryType == nullptr) return SCE_KERNEL_ERROR_EINVAL;
-    if (pid < 0) {
-        *__error_nid_postfix() = 3;
-        return SCE_KERNEL_ERROR_ESRCH;
-    }
-    if (pid != 0 && pid != getpid_nid_postfix()) NotImplemented_nid_no_patch(__func__);
-    std::uint32_t value = 0;
-    if (!GetAppCategoryType_nid_no_patch(&value)) NotImplemented_nid_no_patch(__func__);
-    if (!GuestCopyOut_nid_no_patch(categoryType, &value, sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
-    return 0;
-}
 
 int APS5_VABI sceKernelGetAppInfoByAppId(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -1371,12 +1362,6 @@ int APS5_VABI sceKernelIsMainOnStandbyMode(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelIsNeoMode(void) {
-    std::uint32_t attribute = 0;
-    if (!GetAppParamSfoAttribute_nid_no_patch(&attribute)) NotImplemented_nid_no_patch(__func__);
-    return (attribute & PARAM_SFO_ATTRIBUTE_SUPPORT_NEO_MODE) != 0 ? 1 : 0;
-}
-
 int APS5_VABI sceKernelJitGetSharedMemoryInfo(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1399,11 +1384,6 @@ int APS5_VABI sceKernelLwfsTrimBlock(void) {
 }
 
 int APS5_VABI sceKernelMapSanitizerShadowMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelMapToolMemory(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1506,11 +1486,6 @@ int APS5_VABI sceKernelRandomizedPath(void) {
 }
 
 int APS5_VABI sceKernelReboot(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelReleaseToolMemory(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1670,11 +1645,6 @@ int APS5_VABI sceKernelSetPhysFmemLimit(void) {
 }
 
 int APS5_VABI sceKernelSetProcessName(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelSetProcessProperty(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -12,6 +12,7 @@
 #include "prx/libSceJsc/include/InventoryExports.hpp"
 #include "prx/libSceJsc/include/PlacementNewExports.hpp"
 #include "prx/libSceJsc/include/ProtoCallFrameExports.hpp"
+#include "prx/libSceJsc/include/SanitizeStackExports.hpp"
 #include "prx/libSceJsc/include/SpeculatedTypeExports.hpp"
 #include "prx/libSceJsc/include/ScriptCallArgumentHandlerExports.hpp"
 #include "prx/libSceJsc/include/WtfCpuTimeExports.hpp"
@@ -25,4 +26,5 @@
 #include "prx/libSceJsc/include/WtfThreadingExports.hpp"
 #include "prx/libSceJsc/include/WtfUnicodeExports.hpp"
 #include "prx/libSceJsc/include/WtfUrlExports.hpp"
+#include "prx/libSceJsc/include/YarrRegularExpressionExports.hpp"
 #include "prx/libSceJsc/include/YarrFlagsExports.hpp"

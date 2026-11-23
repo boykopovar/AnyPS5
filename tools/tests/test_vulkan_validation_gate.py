@@ -12,6 +12,7 @@ import unittest
 import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import vulkan_validation_gate as gate
 from test_check_compile import spawnable_python
 
@@ -27,6 +28,39 @@ PYTHON = probe_command()
 
 
 class ReportTests(unittest.TestCase):
+    def test_oversized_ctest_listing_retains_incomplete_report(self):
+        for value in (10 ** 400, -(10 ** 400)):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                source, output = root / "source", root / "evidence"
+                source.mkdir()
+                arguments = ["--baseline", str(source), "a" * 40, "--candidate", str(source), "a" * 40,
+                             "--output", str(output), "--target", "fixture", "--tests", ".*", "--gpu", "fixture"]
+
+                def run(command, log, environment, timeout):
+                    if command[0] == "ctest":
+                        log.write_text(json.dumps({"tests": [{"name": "probe", "properties": [
+                            {"name": "TIMEOUT", "value": value}]}]}), encoding="utf-8")
+                    return 0
+
+                with unittest.mock.patch.object(gate, "identity", return_value={}), \
+                        unittest.mock.patch.object(gate, "cache_values", return_value={"CMAKE_HOME_DIRECTORY": str(source)}), \
+                        unittest.mock.patch.object(gate, "run", side_effect=run) as execute, \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(gate.main(arguments), 2)
+                saved = json.loads((output / "report.json").read_text(encoding="utf-8"))
+                self.assertEqual(saved["status"], "incomplete")
+                self.assertEqual(saved["exit_code"], 2)
+                self.assertIn("probe: TIMEOUT", saved["error"])
+                self.assertEqual(saved["iterations"], [])
+                self.assertEqual(execute.call_count, 3)
+                self.assertEqual(execute.call_args.args[0][-1], "--show-only=json-v1")
+
+    def test_oversized_timeouts_are_configuration_errors(self):
+        for value in (10 ** 400, -(10 ** 400)):
+            with self.subTest(value=value), self.assertRaisesRegex(gate.GateError, "probe: TIMEOUT"):
+                gate.check_timeouts([{"name": "probe", "properties": [{"name": "TIMEOUT", "value": value}]}], 1)
+
     def test_effective_timeouts_cannot_override_the_requested_limit(self):
         for value in (0, 2, -1, float("inf"), float("nan"), "1", True):
             with self.subTest(value=value), self.assertRaisesRegex(gate.GateError, "probe: TIMEOUT"):
@@ -476,16 +510,17 @@ class CommandTests(FixtureTests):
             with self.subTest(timeout=timeout):
                 marker = self.root / ("timeout-marker" if timeout else "exit-marker")
                 ready = marker.with_suffix(".ready")
-                child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(1); Path({str(marker)!r}).touch()"
+                deadline = time.time() + 4
+                child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(max(0, {deadline!r} - time.time())); Path({str(marker)!r}).touch()"
                 parent = f"import subprocess,sys,time; from pathlib import Path; subprocess.Popen([sys.executable,'-c',{child!r}])\nwhile not Path({str(ready)!r}).exists(): time.sleep(.01)\n"
                 if timeout:
                     parent += "time.sleep(30)\n"
                     with self.assertRaises(subprocess.TimeoutExpired):
-                        gate.run([sys.executable, "-c", parent], self.root / "timeout.log", os.environ, .5)
+                        gate.run([sys.executable, "-c", parent], self.root / "timeout.log", os.environ, 3)
                 else:
                     self.assertEqual(gate.run([sys.executable, "-c", parent], self.root / "exit.log", os.environ, 5), 0)
                 self.assertTrue(ready.exists())
-                time.sleep(1.1)
+                time.sleep(max(0, deadline - time.time()) + .1)
                 self.assertFalse(marker.exists())
 
     def test_symlink_loops_are_setup_errors(self):
@@ -743,6 +778,29 @@ class ContainmentTests(unittest.TestCase):
                     self.assertFalse(self.is_dead(child, 0.3))
                     self.kill(child)
                     self.assertTrue(self.is_dead(child, 2.0))
+
+    def test_replay_comparison_guard_kills_child_before_trial_containment(self):
+        tools_dir = str(Path(__file__).resolve().parents[1])
+        script = self.root / "replay_guard_probe.py"
+        script.write_text(
+            "import os, sys, time\nfrom pathlib import Path\n"
+            f"sys.path.insert(0, {tools_dir!r})\nimport frame_replay_compare as replay\n"
+            "def stop_before_job(pid):\n"
+            "    Path(sys.argv[1]).write_text(f'{pid}\\n', encoding='utf-8')\n"
+            "    deadline = time.monotonic() + 15\n"
+            "    while time.monotonic() < deadline and not Path(sys.argv[2]).exists():\n"
+            "        time.sleep(.01)\n"
+            "    os._exit(19)\n"
+            "replay.processes.contain = stop_before_job\n"
+            "replay.execute_replay_trial([sys.executable, '-c', 'pass'], Path(sys.argv[3]), os.environ.copy(), 5, 1024)\n",
+            encoding="utf-8")
+        pid_file, release = self.root / "replay.pid", self.root / "replay.release"
+        probe = subprocess.Popen([sys.executable, str(script), str(pid_file), str(release), str(self.root / "trial")])
+        self.watch(probe.pid)
+        child = self.watch(self.read_pid(pid_file))
+        release.touch()
+        self.assertEqual(probe.wait(timeout=10), 19)
+        self.assertTrue(self.is_dead(child, 2.0), "suspended replay survived comparison runner exit")
 
     def test_unexpected_resume_suspend_count_fails_and_kills_child(self):
         spawned = []

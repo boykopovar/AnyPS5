@@ -26,6 +26,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -41,6 +42,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <fcntl.h>
+#include <io.h>
 #else
 #include <fcntl.h>
 #include <unistd.h>
@@ -1930,6 +1933,15 @@ public:
         check(file != INVALID_HANDLE_VALUE, "cannot create the stderr capture file");
         previous = GetStdHandle(STD_ERROR_HANDLE);
         check(SetStdHandle(STD_ERROR_HANDLE, file) != 0, "cannot redirect stderr");
+        std::fflush(stderr);
+        savedDescriptor = _dup(_fileno(stderr));
+        HANDLE copy = nullptr;
+        check(savedDescriptor >= 0 && DuplicateHandle(GetCurrentProcess(), file, GetCurrentProcess(), &copy, 0, FALSE, DUPLICATE_SAME_ACCESS) != 0, "cannot redirect the C runtime's stderr");
+        const int descriptor = _open_osfhandle(reinterpret_cast<intptr_t>(copy), _O_WRONLY | _O_BINARY);
+        check(descriptor >= 0, "cannot redirect the C runtime's stderr");
+        const bool redirected = _dup2(descriptor, _fileno(stderr)) == 0;
+        _close(descriptor);
+        check(redirected, "cannot redirect the C runtime's stderr");
 #else
         path = std::filesystem::temp_directory_path() / ("aps5-pm4-ring-" + std::to_string(::getpid()) + ".txt");
         file = ::open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
@@ -1942,7 +1954,14 @@ public:
 
     ~CapturedStderr() {
 #ifdef _WIN32
-        SetStdHandle(STD_ERROR_HANDLE, previous);
+        std::fflush(stderr);
+        if (savedDescriptor >= 0) {
+            _dup2(savedDescriptor, _fileno(stderr));
+            _close(savedDescriptor);
+            SetStdHandle(STD_ERROR_HANDLE, reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stderr))));
+        } else {
+            SetStdHandle(STD_ERROR_HANDLE, previous);
+        }
         CloseHandle(file);
 #else
         std::fflush(stderr);
@@ -1967,16 +1986,43 @@ public:
         return lines;
     }
 
+    std::string Text() const {
+        std::fflush(stderr);
+        std::ifstream input(path, std::ios::binary);
+        return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    }
+
 private:
     std::filesystem::path path;
 #ifdef _WIN32
     HANDLE file = INVALID_HANDLE_VALUE;
     HANDLE previous = nullptr;
+    int savedDescriptor = -1;
 #else
     int file = -1;
     int previous = -1;
 #endif
 };
+
+void testRejectionReportUsesTheSubmissionQueue() {
+    alignas(8) static std::uint32_t condition = 1, written = 0;
+    std::string report;
+    {
+        CapturedStderr capture;
+        auto words = joinPackets({conditional(condition, 5, 3u << 25u), writeWord(written, 1), makePacket(0x10, {0x68750000u}), makePacket(0x12, {0})});
+        expectFailure([&] { submitWords(words, 0x20); }, "typed user-data and legacy flip markers are not implemented");
+        AgcDriverWaitIdle_nid_postfix();
+        report = capture.Text();
+    }
+#ifdef _WIN32
+    check(GetStdHandle(STD_ERROR_HANDLE) == reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stderr))), "the stderr capture left the standard error handle apart from descriptor 2");
+#endif
+    const auto failure = [&](const char* what) { return std::string(what) + "; the report:\n" + report; };
+    check(report.find("dwords on queue 0x20 at guest") != std::string::npos, failure("the rejection report does not name the submission's queue").c_str());
+    check(report.find("COND_EXEC") != std::string::npos, failure("the rejection report does not list the COND_EXEC").c_str());
+    check(report.find("COND_EXEC reserved control fields") == std::string::npos, failure("the rejection report checked a compute queue's COND_EXEC as a graphics-queue packet").c_str());
+    check(report.find("graphics packet in compute queue") != std::string::npos, failure("the rejection report did not check a graphics packet on the compute queue").c_str());
+}
 
 std::vector<std::string> recordedWrites(const std::vector<std::string>& lines) {
     std::vector<std::string> writes;
@@ -2751,6 +2797,38 @@ void testUnwrittenUserData() {
     expectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::readRegister(shader, 0x95)); }, "required shader register");
 }
 
+template <typename Label>
+void publishThroughWait(bool checked) {
+    alignas(8) static Label label = 0;
+    alignas(8) static std::array<std::uint64_t, 8> payload{};
+    std::atomic_ref<Label>(label).store(0, std::memory_order_relaxed);
+    payload.fill(0);
+    const auto wide = sizeof(Label) == 8;
+    const auto packet = wide ? makePacket(0x93, {0x13, low(&label), high(&label), 1u, 0u, 0xffffffffu, 0xffffffffu, 0}) : makePacket(0x3c, {0x13, low(&label), high(&label), 1u, 0xffffffffu, 0});
+    std::thread producer([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        payload.fill(0x5a5a5a5a5a5a5a5aull);
+        std::atomic_ref<Label>(label).store(1, std::memory_order_release);
+    });
+    if (checked) {
+        AgcDriver::QueueState state;
+        execute(state, packet);
+    } else {
+        while (!AgcDriver::Pm4::WaitSatisfiedUnchecked(packet)) std::this_thread::yield();
+    }
+    const auto seen = payload;
+    producer.join();
+    const auto message = std::string(checked ? "WAIT_REG_MEM" : "the unchecked wait") + (wide ? " (64-bit)" : " (32-bit)") + " returned before the data published with its label";
+    check(std::all_of(seen.begin(), seen.end(), [](std::uint64_t word) { return word == 0x5a5a5a5a5a5a5a5aull; }), message.c_str());
+}
+
+void testWaitRegMemAcquiresPublishedData() {
+    publishThroughWait<std::uint32_t>(true);
+    publishThroughWait<std::uint64_t>(true);
+    publishThroughWait<std::uint32_t>(false);
+    publishThroughWait<std::uint64_t>(false);
+}
+
 void testWaitRegMemMasking() {
     alignas(8) static std::uint32_t mem32[4] = {0x12345678u, 0x9abcdef0u, 0x55555555u, 0xaaaaaaaau};
     const auto base32 = reinterpret_cast<std::uintptr_t>(&mem32[0]);
@@ -3029,11 +3107,13 @@ int main(int argc, char** argv) {
         testIndexAttributesReadAtExecution();
         testPredicatedSubmission();
         testConditionalSubmission();
+        testRejectionReportUsesTheSubmissionQueue();
         testSuspendPointWritesQueuedLabels();
         testMemSemaphore();
         testNopPadSubmission();
         testBranchSubmission();
         testWaitRegMemMasking();
+        testWaitRegMemAcquiresPublishedData();
         testWaitRegMemPipelineDrain();
         testWaitRegMem64ZeroHighMaskDrain();
         testWaitRegMemMisalignedBehindBusyPipeline();

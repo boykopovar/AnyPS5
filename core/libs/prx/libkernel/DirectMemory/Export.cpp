@@ -577,6 +577,9 @@ int APS5_VABI sceKernelCheckedReleaseDirectMemory(int64_t start, size_t len) {
 
 int APS5_VABI sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {
  if (len == 0) return 0;
+ if (type == 10) return SCE_KERNEL_ERROR_EACCES;
+ if (type < 0 || type == 127) return SCE_KERNEL_ERROR_EINVAL;
+ if (UndefinedProtection(prot) && prot != std::numeric_limits<int>::min()) return SCE_KERNEL_ERROR_EINVAL;
  return DoMtypeprotect(addr, len, type, prot, false);
 }
 
@@ -626,7 +629,6 @@ int APS5_VABI sceKernelConfiguredFlexibleMemorySize(size_t* size) {
 
 int APS5_VABI sceKernelGetResidentFmemCount(int pid, uint64_t* resident, uint64_t* mapped) {
  if (!resident || !mapped) return SCE_KERNEL_ERROR_EFAULT;
- if (pid < 0) return SCE_KERNEL_ERROR_EINVAL;
  if (pid != 0 && pid != getpid_nid_postfix()) return SCE_KERNEL_ERROR_ESRCH;
  const size_t images = GuestImageSegmentBytes_nid_no_patch();
  std::lock_guard lock(g_flexibleLock);

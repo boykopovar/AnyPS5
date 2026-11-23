@@ -370,12 +370,18 @@ class ImportRelocationTests(unittest.TestCase):
 
 
 class ObjdumpDiscoveryTests(unittest.TestCase):
-    def discover(self, versions):
+    def discover(self, versions, unsupported=(), false_success=()):
         def which(name):
             return "/bin/" + name if name in versions else None
 
         def run(command, **kwargs):
-            return subprocess.CompletedProcess(command, 0, versions[Path(command[0]).name], "")
+            name = Path(command[0]).name
+            if command[1] == "--version":
+                return subprocess.CompletedProcess(command, 0, versions[name], "")
+            self.assertIn("i386:x86-64", command)
+            instruction = "64-bit address is disabled" if name in false_success else "ret"
+            output = f"   0:\t{instruction}\n"
+            return subprocess.CompletedProcess(command, int(name in unsupported), output, "")
 
         annotate_module.gnu_objdump.cache_clear()
         self.addCleanup(annotate_module.gnu_objdump.cache_clear)
@@ -386,10 +392,21 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
         found = self.discover({"objdump": "Apple LLVM version 21.0.0\n", "gobjdump": "GNU objdump (GNU Binutils) 2.45\n"})
         self.assertEqual(found, "/bin/gobjdump")
 
+    def test_arm_gnu_objdump_is_passed_over_for_x86_64_cross_objdump(self):
+        version = "GNU objdump (GNU Binutils) 2.42\n"
+        found = self.discover({"objdump": version, "x86_64-linux-gnu-objdump": version}, unsupported=("objdump",))
+        self.assertEqual(found, "/bin/x86_64-linux-gnu-objdump")
+        self.assertIsNone(self.discover({"objdump": version}, unsupported=("objdump",)))
+
+    def test_32_bit_objdump_that_exits_successfully_is_skipped(self):
+        version = "GNU objdump (GNU Binutils) 2.28\n"
+        found = self.discover({"objdump": version, "gobjdump": version}, false_success=("objdump",))
+        self.assertEqual(found, "/bin/gobjdump")
+
     def test_only_llvm_objdump_is_refused_by_name(self):
         self.assertIsNone(self.discover({"objdump": "Apple LLVM version 21.0.0\n"}))
         with mock.patch.object(annotate_module, "gnu_objdump", lambda: None):
-            with self.assertRaisesRegex(annotate_module.ModuleError, "GNU binutils objdump was not found as any of objdump, gobjdump"):
+            with self.assertRaisesRegex(annotate_module.ModuleError, "GNU binutils objdump with x86-64 support is required"):
                 annotate_module.disassemble(b"\xc3", 0x1000)
 
 
@@ -510,6 +527,14 @@ class AnnotateModuleTests(unittest.TestCase):
     def test_no_names_skips_the_database(self):
         self.run_tool(build_module(), "--no-names")
         self.assertIn("; -> " + nid(IMPORT_NAME), self.read(".asm"))
+
+    def test_database_without_nid_records_is_reported(self):
+        db = self.root / "empty.csv"
+        db.write_text("# comment only\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            self.run_tool(build_module(), "--db", str(db))
+        self.assertEqual(raised.exception.code, "%s: %s: database contains no valid NID records" % (self.root / "module.prx", db))
+        self.assertEqual([], list(self.root.glob("out*")))
 
     def test_a_temporary_directory_outside_the_ansi_code_page_is_disassembled(self):
         temporary = self.root / "тест 界 \U0001f3ae"

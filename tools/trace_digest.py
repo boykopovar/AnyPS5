@@ -11,7 +11,7 @@ import sys
 import zlib
 from pathlib import Path
 
-from performance_compare import unique_json_object
+from performance_compare import CONTEXT, OPTIONAL_INTEGERS, OPTIONAL_STRINGS, unique_json_object
 
 DESCRIPTION = """Digest of an APS5_TRACE_FRAMES / APS5_TRACE_SECONDS capture (aps5-trace-*.json.gz) for an issue or a
 pull request: the summary line, the slowest frames with their largest slices, the busy and wait time of each
@@ -30,6 +30,8 @@ one row per interval and a text sparkline of the frame p99 and of the GPU busy t
 window captures in the same file are skipped."""
 
 RAMP = "._:-=+*#%@"
+INTERVAL_IDENTITY_STRINGS = ("commit", *CONTEXT, *OPTIONAL_STRINGS)
+INTERVAL_IDENTITY_KEYS = (*INTERVAL_IDENTITY_STRINGS, *OPTIONAL_INTEGERS, "dirty", "env")
 
 
 def is_wait(name):
@@ -158,7 +160,7 @@ def load_trace(path):
     opener = gzip.open if str(path).endswith(".gz") else open
     with opener(path, "rt", encoding="utf-8-sig") as handle:
         try:
-            document = json.load(handle)
+            document = json.load(handle, object_pairs_hook=unique_json_object)
         except RecursionError as error:
             raise ValueError(f"{path}: trace JSON nesting is too deep: {error}") from error
         return Trace(document)
@@ -558,6 +560,17 @@ def validate_interval(record):
         raise ValueError("graphics_track must map names to non-negative integers")
     if "trace_dropped" in record and type(record["trace_dropped"]) is not bool:
         raise ValueError("trace_dropped must be a boolean")
+    for field in INTERVAL_IDENTITY_STRINGS:
+        if field in record and not isinstance(record[field], str):
+            raise ValueError(f"{field} must be a string")
+    for field in OPTIONAL_INTEGERS:
+        if field in record and (type(record[field]) is not int or record[field] < 0):
+            raise ValueError(f"{field} must be a non-negative integer")
+    if record.get("dirty") is not None and type(record["dirty"]) is not bool:
+        raise ValueError("dirty must be a boolean or null")
+    env = record.get("env", {})
+    if not isinstance(env, dict) or any(not isinstance(value, str) for value in env.values()):
+        raise ValueError("env must map names to strings")
 
 
 def sparkline(values):
@@ -581,8 +594,7 @@ def digest_intervals(lines):
                      "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts"),
                      "graphics_track": line.get("graphics_track")})
     first = lines[0] if lines else {}
-    keys = ("commit", "dirty", "env", "gpu", "driver", "os", "resolution",
-            "cpu", "cpu_threads", "memory_mib", "title_id", "title", "content_version")
+    keys = INTERVAL_IDENTITY_KEYS
     changed = [index for index in range(1, len(lines)) if any(lines[index].get(key) != lines[index - 1].get(key) for key in keys)]
     return {"intervals": rows, "identity": {key: first.get(key) for key in keys}, "identity_changed_at": changed}
 
@@ -592,7 +604,7 @@ def markdown_intervals(result):
     identity = result["identity"]
     if not rows:
         return "no interval lines (interval_start_s) found\n"
-    lines = [f"**{len(rows)} intervals**, {rows[0]['start_s']:.1f} to {rows[-1]['end_s']:.1f} s, {sum(row['presents'] for row in rows)} presents",
+    lines = [f"**{len(rows)} intervals**, {rows[0]['start_s']:.3f} to {rows[-1]['end_s']:.3f} s, {sum(row['presents'] for row in rows)} presents",
              f"{markdown_text(identity['gpu'])}, {markdown_text(identity['driver'])}, {markdown_text(identity['os'])}, {markdown_text(identity['resolution'])}, commit {markdown_text(identity['commit'])}"
              f"{' (dirty)' if identity.get('dirty') else ''}"]
     if result["identity_changed_at"]:
@@ -602,7 +614,7 @@ def markdown_intervals(result):
         frame = row["frame_ms"]
         worker = f"{row['busiest_worker']['pct']:.0f} %" if row["busiest_worker"] else "-"
         phase = f"{row['top_phase']['name']} {row['top_phase']['ms_per_frame']:.1f}" if row["top_phase"] else "-"
-        lines.append(f"| {index} | {row['start_s']:.0f}-{row['end_s']:.0f}{' (dropped)' if row['trace_dropped'] else ''} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
+        lines.append(f"| {index} | {row['start_s']:.3f}-{row['end_s']:.3f}{' (dropped)' if row['trace_dropped'] else ''} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
                      f"| {frame['p99']:.1f} | {frame['max']:.1f} | {row['gpu_busy_ms_per_present']:.1f} | {worker} | {table_cell(phase)} |")
     count_names = sorted({name for row in rows for name in (row["owned_draw_counts"] or {})})
     if count_names:
