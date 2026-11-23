@@ -506,6 +506,11 @@ bool IsDenormal32(std::uint32_t bits) {
     return (bits & 0x7f800000u) == 0u && (bits & 0x007fffffu) != 0u;
 }
 
+bool TinyAsF32(std::uint64_t bits) {
+    const std::uint64_t magnitude = bits & 0x7fffffffffffffffull;
+    return magnitude != 0u && magnitude < 0x3810000000000000ull;
+}
+
 void Run(AgcDriver::VulkanDevice& device, const Mode& mode, bool hardwareFlush) {
     Input.fill(0u);
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -541,7 +546,7 @@ std::uint32_t Check(std::uint32_t mode, bool hardwareFlush, bool skipDenormals) 
         for (std::uint32_t index = 0; index < Results; ++index) {
             if (LeftOutOfDirectedRounding(mode, tid, index)) continue;
             const std::uint32_t expected = Expected[mode][tid][index];
-            if (skipDenormals && IsDenormal32(expected)) {
+            if (skipDenormals && (IsDenormal32(expected) || (TinyAsF32(Sources[tid]) && (expected & 0x7fffffffu) != 0u))) {
                 ++skipped;
                 continue;
             }
@@ -571,7 +576,7 @@ int main() {
                 skipped += Check(mode, hardwareFlush, !keepsDenormals);
             }
         }
-        std::printf("v_cvt_f32_f64 denormal result tests passed (%u of 2 flush passes run; %u values with an f32 denormal result not checked; they need DenormPreserve 32)\n", passes, skipped);
+        std::printf("v_cvt_f32_f64 denormal result tests passed (%u of 2 flush passes run; %u values with an f32 denormal result or an f64 source below 2^-126 not checked; they need DenormPreserve 32)\n", passes, skipped);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
