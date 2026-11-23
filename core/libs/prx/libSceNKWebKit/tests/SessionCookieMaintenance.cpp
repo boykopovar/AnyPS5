@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -139,13 +140,16 @@ void CheckListing() {
 
 void CheckExpiredListing() {
     const auto target = MakeAddress("https", "list.expired.test", "/");
+    using namespace std::chrono;
+    const auto expires = floor<milliseconds>(system_clock::now()) + seconds(1);
     Cookie stale = MakeCookie("stale", "x", "list.expired.test", "/");
-    stale.expires = {NowMilliseconds() - 60000, true};
-    SetCookies({stale}, target);
-    SetCookies({MakeCookie("fresh", "y", "list.expired.test", "/")}, target);
-    const auto all = Keys(GetAllCookies());
-    Require(std::find(all.begin(), all.end(), "list.expired.test|/|stale=x") == all.end());
-    Require(std::find(all.begin(), all.end(), "list.expired.test|/|fresh=y") != all.end());
+    stale.expires = {static_cast<double>(expires.time_since_epoch().count()), true};
+    SetCookies({stale, MakeCookie("fresh", "y", "list.expired.test", "/")}, target);
+    const std::vector<std::string> before{"list.expired.test|/|fresh=y", "list.expired.test|/|stale=x"};
+    Require(Keys(GetAllCookies()) == before);
+    std::this_thread::sleep_until(expires + milliseconds(1));
+    const std::vector<std::string> after{"list.expired.test|/|fresh=y"};
+    Require(Keys(GetAllCookies()) == after);
 }
 
 void CheckDeletion() {

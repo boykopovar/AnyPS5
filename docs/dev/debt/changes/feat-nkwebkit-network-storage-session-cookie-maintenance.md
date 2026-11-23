@@ -2,6 +2,6 @@
 
 ## add Functional
 
-- [WebCore::NetworkStorageSession jar maintenance](../../../core/libs/prx/libSceNKWebKit/src/SessionCookieMaintenance.cpp) (libSceNKWebKit) - not compared with a console module. `getAllCookies` returns every unexpired cookie of the calling session's jar described in the cookie storage entry, in insertion order; `deleteAllCookies` clears only that session's jar; `flushCookieStore` does nothing, as the host-memory jar has no deferred write to flush. The order is not one the console has been measured for. Closes when: compared with a console module.
+- [WebCore::NetworkStorageSession jar maintenance](../../../core/libs/prx/libSceNKWebKit/src/SessionCookieMaintenance.cpp) (libSceNKWebKit) - `getAllCookies` lists the calling session's unexpired cookies in insertion order. Expiry filtering and order are local choices with unverified console behavior. The parameterless `deleteAllCookies` and `flushCookieStore` signatures are inferred from their mangled names. The pinned Soup and Curl implementations take a completion handler for deletion and lack this flush export. Deletion clears only the calling session's jar, and flushing leaves cookies in memory without persisting persistent cookies. Closes when: compared with a console module.
 
 ## remove `_ZN7WebCore21NetworkStorageSession13getAllCookiesEv`
