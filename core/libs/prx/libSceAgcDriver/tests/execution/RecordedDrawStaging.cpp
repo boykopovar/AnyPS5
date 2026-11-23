@@ -89,9 +89,19 @@ alignas(256) constexpr std::array<std::uint32_t, 24> MarkedStorePixelCode{
     0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
     0xbf810000u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 24> SplitStorePixelCode{
+    0x7e060f00u, 0x7e080f01u, 0xd76f0002u, 0x040d0d04u, 0x34080890u, 0x38080903u,
+    0xe0702000u, 0x80000402u, 0x4a0404ffu, 0x00000800u, 0xe0702000u, 0x80010402u,
+    0x7e0002f2u, 0x7e020280u, 0xf800180fu, 0x00010100u,
+    0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
+};
 constexpr std::uint32_t StoreMark = 0x80000000u;
 constexpr std::uint32_t MarkedSlice = 0x800u;
 static_assert(MarkedSlice >= Width * Height && 2u * MarkedSlice <= Nodes);
+constexpr std::uint32_t SplitRecords = 0x1800u;
+constexpr std::uint32_t SplitSecond = 0x1000u;
+constexpr std::uint32_t SplitShift = 0x800u;
+static_assert(Width * Height <= SplitShift && SplitShift <= SplitSecond && SplitSecond < SplitRecords && SplitSecond + SplitShift >= SplitRecords && SplitSecond + SplitRecords <= Nodes);
 alignas(256) constexpr std::array<std::uint32_t, 9> FillCode{
     0xd7460004, 0x04010c08, 0x7e000204, 0x7e020205, 0x7e040206, 0x7e060207, 0xe01c2000, 0x80000004, 0xbf810000,
 };
@@ -105,6 +115,7 @@ alignas(8) Header VertexHeader{};
 alignas(8) Header PixelHeader{};
 alignas(8) Header StorePixelHeader{};
 alignas(8) Header MarkedStorePixelHeader{};
+alignas(8) Header SplitStorePixelHeader{};
 
 void Registered(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
     header.shader.file_header = 0x34333231u;
@@ -126,11 +137,11 @@ std::array<std::uint32_t, 4> BufferDescriptor(std::uint64_t address, std::size_t
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>(bytes / 16u), 0x4bfacu};
 }
 
-std::array<std::uint32_t, 4> NodeDescriptor(std::uint64_t address) {
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), Nodes, 0x01016facu};
+std::array<std::uint32_t, 4> NodeDescriptor(std::uint64_t address, std::uint32_t records = Nodes) {
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), records, 0x01016facu};
 }
 
-void AppendDraw(std::vector<std::uint32_t>& commands, std::uint64_t target, std::uint64_t nodes, const std::uint32_t* pixelCode = PixelCode.data()) {
+void AppendDraw(std::vector<std::uint32_t>& commands, std::uint64_t target, std::uint64_t nodes, const std::uint32_t* pixelCode = PixelCode.data(), std::vector<std::array<std::uint32_t, 4>> descriptors = {}) {
     const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
     const auto pixel = reinterpret_cast<std::uintptr_t>(pixelCode);
     const auto extent = (Height << 16u) | Width;
@@ -157,16 +168,18 @@ void AppendDraw(std::vector<std::uint32_t>& commands, std::uint64_t target, std:
         {0x2fe, 0}, {0x302, 0}, {0x306, 0}, {0x30a, 0},
         {0x318, static_cast<std::uint32_t>(target >> 8u)}, {0x390, static_cast<std::uint32_t>(target >> 40u)},
     };
-    const auto descriptor = NodeDescriptor(nodes);
+    if (descriptors.empty()) descriptors.push_back(NodeDescriptor(nodes));
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{
         {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, 1u << 1u}, {0x8c, 0},
-        {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, 4u << 1u},
+        {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, static_cast<std::uint32_t>(4u * descriptors.size()) << 1u},
     };
     Append(commands, 0x79, {0x242, 4});
     Append(commands, 0x79, {0x24a, 0});
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
     for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});
-    Append(commands, 0x76, {0x00c, descriptor[0], descriptor[1], descriptor[2], descriptor[3]});
+    commands.push_back(0xc0007600u | (static_cast<std::uint32_t>(4u * descriptors.size()) << 16u));
+    commands.push_back(0x00c);
+    for (const auto& descriptor : descriptors) commands.insert(commands.end(), descriptor.begin(), descriptor.end());
     Append(commands, 0x2d, {3, 2});
 }
 
@@ -433,6 +446,63 @@ void RunPass(const char* name, bool passStaging, bool deferrable, std::initializ
     if (!failure.empty()) failures.push_back(std::string(name) + ": " + failure);
 }
 
+void RunSplit(const char* name, bool passStaging, bool deferrable, const Region& control, const Region& target, const Region& nodes, std::vector<std::string>& failures) {
+    using AgcDriver::Graphics::GuestBufferMemory;
+    using AgcDriver::Graphics::RuntimeSwitch;
+    namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
+    control.Fill(Untouched);
+    target.Fill(Untouched);
+    nodes.Fill(Untouched);
+    const bool configured = RuntimeSwitches::Set(RuntimeSwitch::PassStaging);
+    struct Restore {
+        bool configured;
+        ~Restore() { AgcDriver::Graphics::RuntimeSwitches::Assign(AgcDriver::Graphics::RuntimeSwitch::PassStaging, configured); }
+    } restore{configured};
+    RuntimeSwitches::Assign(RuntimeSwitch::PassStaging, passStaging);
+    const auto stagingBefore = GuestBufferMemory::PassStagingTotals();
+    std::vector<std::uint32_t> commands;
+    AppendDraw(commands, target.Address(), nodes.Address(), SplitStorePixelCode.data(), {NodeDescriptor(nodes.Address(), SplitRecords), NodeDescriptor(nodes.Address() + std::uint64_t{SplitSecond} * 4u, SplitRecords)});
+    AppendLabel(commands, control.Address() + LabelOffset);
+    Submit(commands);
+    std::string failure;
+    if (!Await([&] { return control.Word(LabelOffset) == LabelValue; })) failure = "the label after the draw never landed";
+    AgcDriverWaitIdle_nid_postfix();
+    const auto stagingAfter = GuestBufferMemory::PassStagingTotals();
+    AgcDriver::Graphics::StorageTexture::FlushPending(target.Address(), target.bytes, nullptr, "test release");
+    AgcDriver::GuestMemory::FlushGpuWrites(nodes.Address(), nodes.bytes);
+    AgcDriver::GuestMemory::FlushGpuWrites(target.Address(), TargetBytes);
+    if (failure.empty()) {
+        std::size_t wrong = 0, disturbed = 0;
+        std::string firstWrong;
+        for (std::uint32_t index = 0; index < Nodes; ++index) {
+            const bool second = index >= SplitSecond + SplitShift;
+            const auto local = second ? index - SplitSecond - SplitShift : index;
+            const auto x = local % Width;
+            const auto y = local / Width;
+            const bool written = y < Height && InScissor(x, y);
+            const auto record = nodes.Word(std::size_t{index} * 4u);
+            if (written) {
+                const auto expected = (y << 16u) | x;
+                if (record != expected && wrong++ == 0) firstWrong = " (record " + std::to_string(index) + " is " + Hex(record) + ", not " + Hex(expected) + ")";
+            } else if (record != Untouched) {
+                ++disturbed;
+            }
+        }
+        if (wrong != 0) failure = std::to_string(wrong) + " covered fragments of the two written windows do not hold their record" + firstWrong;
+        if (disturbed != 0) failure += (failure.empty() ? "" : "; ") + std::to_string(disturbed) + " records outside the two written windows changed";
+    }
+    const auto joined = stagingAfter.joined - stagingBefore.joined;
+    const auto deferred = stagingAfter.deferred - stagingBefore.deferred;
+    const auto landed = stagingAfter.landed - stagingBefore.landed;
+    const auto counts = std::to_string(joined) + " uses joined a shadow, " + std::to_string(deferred) + " armed one, " + std::to_string(landed) + " copy-backs landed at a pass end";
+    if (failure.empty() && StagingExpected()) {
+        if (!passStaging && (joined != 0 || deferred != 0 || landed != 0)) failure = "the draw deferred a pass shadow without APS5_PASS_STAGING: " + counts;
+        if (passStaging && deferrable && (deferred != 1 || landed != 1)) failure = "the draw storing through two overlapping descriptors of one staged range did not owe both writes to one copy-back at the pass end: " + counts;
+    }
+    std::printf("recorded draw staging, %s (%s): %s\n", name, counts.c_str(), failure.empty() ? "every covered fragment of both windows holds its record" : failure.c_str());
+    if (!failure.empty()) failures.push_back(std::string(name) + ": " + failure);
+}
+
 }
 
 int main() {
@@ -460,17 +530,20 @@ int main() {
         Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
         Registered(StorePixelHeader, StorePixelCode.data(), sizeof(StorePixelCode), 1);
         Registered(MarkedStorePixelHeader, MarkedStorePixelCode.data(), sizeof(MarkedStorePixelCode), 1);
+        Registered(SplitStorePixelHeader, SplitStorePixelCode.data(), sizeof(SplitStorePixelCode), 1);
         Region control(BlockBytes);
         Region target(BlockBytes);
         Region nodes(NodeBytes);
         Region fullNodes(NodeBytes);
         Region passNodes(NodeBytes);
         Region sharedNodes(NodeBytes);
+        Region splitNodes(NodeBytes);
         Import(target);
         Import(nodes);
         Import(fullNodes);
         Import(passNodes);
         Import(sharedNodes);
+        Import(splitNodes);
         if (!AgcDriver::GuestMemory::Watched(target.Address(), TargetBytes)) {
             std::puts("recorded draw staging tests skipped, the device does not keep host imports write-watched, so the target is never resident");
             return VulkanTestSkipped;
@@ -482,6 +555,8 @@ int main() {
         RunPass("four storing draws without pass staging", false, deferrable, {StorePixelCode.data(), StorePixelCode.data(), StorePixelCode.data(), StorePixelCode.data()}, control, target, passNodes, failures);
         RunPass("four storing draws of one build with pass staging", true, deferrable, {StorePixelCode.data(), StorePixelCode.data(), StorePixelCode.data(), StorePixelCode.data()}, control, target, passNodes, failures);
         RunPass("four storing draws of two builds with pass staging", true, deferrable, {StorePixelCode.data(), MarkedStorePixelCode.data(), StorePixelCode.data(), MarkedStorePixelCode.data()}, control, target, sharedNodes, failures);
+        RunSplit("a draw storing through two overlapping descriptors without pass staging", false, deferrable, control, target, splitNodes, failures);
+        RunSplit("a draw storing through two overlapping descriptors with pass staging", true, deferrable, control, target, splitNodes, failures);
         if (!failures.empty()) {
             std::string message = "recorded draw staging: a recorded draw whose pixel shader appends to the GDS and stores a record by the returned index into a large guest buffer did not leave the records of exactly the covered fragments:";
             for (const auto& failure : failures) message += "\n  " + failure;
