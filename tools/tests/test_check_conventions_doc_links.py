@@ -8,7 +8,10 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_conventions
-from test_check_conventions_env_reference import repository
+if __package__:
+    from .test_check_conventions_env_reference import repository
+else:
+    from test_check_conventions_env_reference import repository
 
 FENCE = "`" * 3
 

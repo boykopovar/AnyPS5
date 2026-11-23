@@ -10,9 +10,7 @@ namespace {
 
 template <typename T>
 void WriteField(T* field, const T& value, const char* function) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(field, &value, sizeof(T));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(function) + " requires a writable method");
 }
 

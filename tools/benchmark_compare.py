@@ -234,7 +234,7 @@ def summarize_benchmark(loaded, intervals=None):
         current = benchmark_metrics([interval])
         raw_seconds = sum(interval["frame_us"]) / 1e6
         tolerance = (len(interval["frame_us"]) + 2000) / 1e6
-        if not current["saturated_frames"] and abs(raw_seconds - current["elapsed_s"]) > tolerance:
+        if current["frames"] and not current["saturated_frames"] and abs(raw_seconds - current["elapsed_s"]) > tolerance:
             warnings.append(f"Retained interval {index}: raw durations and wall span differ beyond serialization precision.")
         rows.append({
             "index": index,
@@ -328,7 +328,8 @@ def benchmark_context(summary):
     metadata = summary["metadata"]
     context = {name: metadata.get(name) for name in
                ("gpu", "driver", "os", *IDENTITY_STRINGS, *IDENTITY_INTEGERS)}
-    context.update({f"env.{name}": value for name, value in metadata["env"].items()})
+    context.update({f"env.{name}": value for name, value in metadata["env"].items()
+                    if name != "APS5_TRACE_DIR"})
     context["selection.ordinals"] = [row["ordinal"] for row in summary["intervals"]]
     context["selection.resolutions"] = [row["resolution"] for row in summary["intervals"]]
     return context
@@ -368,7 +369,8 @@ def compare_benchmark_runs(path, require_matching_context=False):
             identity = source["_identity"]
             if identity in seen_files or source["sha256"] in seen_hashes or source["decoded_sha256"] in seen_decoded:
                 raise ValueError(f"{attempt['id']}: duplicate capture evidence cannot count as another run")
-            seen_files.add(identity)
+            if identity[1]:
+                seen_files.add(identity)
             seen_hashes.add(source["sha256"])
             seen_decoded.add(source["decoded_sha256"])
             total_frames += sum(len(interval["frame_us"]) for interval in loaded["data"]["intervals"])
@@ -552,7 +554,7 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
-    parser = argparse.ArgumentParser(description="Read and compare native aps5-bench/1 captures offline.")
+    parser = argparse.ArgumentParser(description="Read and compare benchmark captures offline.")
     commands = parser.add_subparsers(dest="command", required=True)
     summarize = commands.add_parser("summarize", help="summarize selected complete retained intervals")
     summarize.add_argument("capture", type=Path)
@@ -562,13 +564,23 @@ def main(argv=None):
     compare.add_argument("series", type=Path)
     compare.add_argument("--json", action="store_true")
     compare.add_argument("--require-matching-context", action="store_true")
+    presentmon = commands.add_parser("compare-presentmon", help="compare a pinned aps5-presentmon-series/1 manifest")
+    presentmon.add_argument("series", type=Path)
+    presentmon.add_argument("--sha256", required=True, help="SHA-256 of the original series manifest")
+    presentmon.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    render = benchmark_report
     try:
         if args.command == "summarize":
             report = summarize_benchmark(load_benchmark(args.capture), args.intervals)
-        else:
+        elif args.command == "compare":
             report = compare_benchmark_runs(args.series, args.require_matching_context)
-        output = json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n" if args.json else benchmark_report(report)
+        else:
+            from presentmon_compare import compare_presentmon_series, render_presentmon_comparison
+
+            report = compare_presentmon_series(args.series, args.sha256)
+            render = render_presentmon_comparison
+        output = json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n" if args.json else render(report)
     except (ValueError, OSError, EOFError, RecursionError, OverflowError) as error:
         parser.exit(2, f"{parser.prog}: {error}\n")
     sys.stdout.write(output)

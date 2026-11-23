@@ -64,6 +64,17 @@ class PeModule:
             virtual_size, rva, raw_size, raw_pointer = struct.unpack_from("<IIII", data, entry + 8)
             characteristics = struct.unpack_from("<I", data, entry + 36)[0]
             self.sections.append((rva, max(virtual_size, raw_size), raw_size, raw_pointer, characteristics))
+        ranges = [(start, start + size, bool(flags & IMAGE_SCN_CNT_CODE))
+                  for start, size, _, _, flags in self.sections if size]
+        if self.headers_size:
+            ranges.append((0, self.headers_size, False))
+        mapped_end = code_end = 0
+        for start, end, code in sorted(ranges):
+            if start < code_end or code and start < mapped_end:
+                raise ValueError(f"{path}: PE code section overlaps another mapped range")
+            mapped_end = max(mapped_end, end)
+            if code:
+                code_end = end
         symbols = self.coff_symbols(data, symbol_table, symbol_count) if symbol_table and symbol_count else []
         self.exported = not symbols
         if self.exported and export_rva:
@@ -369,6 +380,8 @@ def load(path, thread=None):
         frames, _, count = line.rpartition(" ")
         if not frames or not is_ascii_digits(count):
             raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
+        if any(not frame.strip() for frame in frames.split(";")):
+            raise ValueError(f"{path}:{number}: collapsed stack contains an empty frame")
         record_format("collapsed", number)
         if thread is not None:
             raise ValueError(f"{path}:{number}: thread filtering requires an address capture; collapsed stacks have no thread IDs")

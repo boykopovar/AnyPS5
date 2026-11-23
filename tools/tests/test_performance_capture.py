@@ -1,4 +1,5 @@
 import copy
+import errno
 import gzip
 import hashlib
 import json
@@ -80,7 +81,7 @@ class CaptureEnvironment(unittest.TestCase):
         extra = {"APS5_CAPTURE_INPUTS": "1", "APS5_PIPELINE_STATS": "1", "APS5_TRACE_FRAMES": "0:1"}
         before = (base.copy(), extra.copy())
         environment, removed = performance_capture.clean_environment(base, extra, ".", "frames", (3, 2))
-        self.assertEqual(environment, {"PATH": "runtime", "APS5_TRACE_FRAMES": "3:2", "APS5_TRACE_DIR": str(Path.cwd())})
+        self.assertEqual(environment, {"PATH": "runtime", "APS5_TRACE_FRAMES": "3:2", "APS5_TRACE_DIR": str(Path.cwd().resolve())})
         self.assertEqual(set(removed), (set(base) | set(extra)) - {"PATH"})
         self.assertEqual((base, extra), before)
 
@@ -257,6 +258,10 @@ class BoundsAndLinks(CaptureFixture):
         self.write_trace()
         original = self.directory / "original"
         original.write_bytes(self.trace_path.read_bytes())
+        unsupported = {
+            getattr(errno, name, None)
+            for name in ("EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EMLINK")
+        } - {None}
         for symbolic in (False, True):
             with self.subTest(symbolic=symbolic):
                 self.trace_path.unlink(missing_ok=True)
@@ -265,8 +270,8 @@ class BoundsAndLinks(CaptureFixture):
                         self.trace_path.symlink_to(original)
                     else:
                         os.link(original, self.trace_path)
-                except (NotImplementedError, OSError):
-                    if symbolic:
+                except (NotImplementedError, OSError) as error:
+                    if symbolic or isinstance(error, NotImplementedError) or error.errno in unsupported or getattr(error, "winerror", None) in (1, 5):
                         continue
                     raise
                 self.assertEqual(self.capture_fixture()["state"], "invalid")
