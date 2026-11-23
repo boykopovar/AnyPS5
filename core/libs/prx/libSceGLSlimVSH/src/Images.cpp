@@ -268,17 +268,13 @@ void APS5_VABI glTexParameterf_nid_postfix(GLenum target, GLenum name, GLfloat v
 
 void APS5_VABI glTexParameteriv_nid_postfix(GLenum target, GLenum name, const GLint* values) {
     GLint value;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, values, sizeof(value));
-    errno = savedErrno;
     if (!copied) { std::lock_guard lock(mutex); Error_nid_no_patch(0x0501); return; }
     glTexParameteri_nid_postfix(target, name, value);
 }
 void APS5_VABI glTexParameterfv_nid_postfix(GLenum target, GLenum name, const GLfloat* values) {
     GLfloat value;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, values, sizeof(value));
-    errno = savedErrno;
     if (!copied) { std::lock_guard lock(mutex); Error_nid_no_patch(0x0501); return; }
     glTexParameterf_nid_postfix(target, name, value);
 }
@@ -291,9 +287,7 @@ void APS5_VABI glGetTexParameteriv_nid_postfix(GLenum target, GLenum name, GLint
     auto it = object->parameters.find(name);
     if (it == object->parameters.end()) { Error_nid_no_patch(0x0500); return; }
     const GLint result = it->second;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(values, &result, sizeof(result));
-    errno = savedErrno;
     if (!copied) Error_nid_no_patch(0x0501);
 }
 
@@ -305,9 +299,7 @@ void APS5_VABI glGetTexParameterfv_nid_postfix(GLenum target, GLenum name, GLflo
     auto it = object->parameters.find(name);
     if (it == object->parameters.end()) { Error_nid_no_patch(0x0500); return; }
     const GLfloat result = static_cast<GLfloat>(it->second);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(values, &result, sizeof(result));
-    errno = savedErrno;
     if (!copied) Error_nid_no_patch(0x0501);
 }
 
@@ -416,9 +408,7 @@ void APS5_VABI glGetRenderbufferParameteriv_nid_postfix(GLenum target, GLenum na
         else if (name == 0x8d55 && image.format == 0x8d48) bits = 8;
         result = bits;
     } else { Error_nid_no_patch(0x0500); return; }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
-    errno = savedErrno;
     if (!copied) Error_nid_no_patch(0x0501);
 }
 
@@ -501,9 +491,7 @@ void APS5_VABI glGetFramebufferAttachmentParameteriv_nid_postfix(GLenum target, 
     else if (name == 0x8cd2 && a->texture) result = a->level;
     else if (name == 0x8cd3 && a->texture) result = a->face == 0x0de1 ? 0 : a->face;
     else { Error_nid_no_patch(0x0500); return; }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
-    errno = savedErrno;
     if (!copied) Error_nid_no_patch(0x0501);
 }
 

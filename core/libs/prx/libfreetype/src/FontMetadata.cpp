@@ -9,7 +9,6 @@
 #include FT_WINFONTS_H
 
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 
 namespace {
@@ -20,17 +19,11 @@ FT_Face HostFace(const FreeType::GuestFaceRec* face) {
 }
 
 bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(destination, source, bytes);
 }
 
 bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
+    return GuestCopyOut_nid_no_patch(destination, source, bytes);
 }
 
 template <typename Record, typename Modify>

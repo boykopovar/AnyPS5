@@ -48,7 +48,7 @@ FiberStorage g_secondStorage;
 auto* const g_first = reinterpret_cast<FiberObject*>(&g_firstStorage);
 auto* const g_second = reinterpret_cast<FiberObject*>(&g_secondStorage);
 
-[[gnu::no_sanitize("address")]] void CheckActiveContext(FiberObject* fiber, std::uint64_t expectedSize) {
+[[gnu::no_sanitize_address]] void CheckActiveContext(FiberObject* fiber, std::uint64_t expectedSize) {
     FiberInfo info{};
     info.size = sizeof(info);
     Require(sceFiberGetInfo(fiber, &info) == 0, "active fiber context info");
@@ -701,6 +701,8 @@ int main(int argc, char** argv) {
     Require(sceFiberGetInfo(checked, &info) == 0 && info.size_context_margin == ~0ull, "no margin without size check");
     Require(info.entry == CheckedEntry, "info preserves the guest entry callback type");
     Require(sceFiberFinalize(checked) == 0, "finalize unchecked");
+    Require(sceFiberFinalize(nullptr) == FiberErrorNull, "finalize null fiber");
+    Require(sceFiberFinalize(checked) == FiberErrorInvalid, "finalize already finalized fiber");
     Require(sceFiberStartContextSizeCheck(0) == 0, "start size check");
     Require(sceFiberStartContextSizeCheck(0) == FiberErrorState, "start twice");
     Require(_sceFiberInitializeImpl_nid_postfix(checked, "checked", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0) == 0, "initialize checked");

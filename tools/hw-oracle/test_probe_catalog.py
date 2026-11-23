@@ -393,6 +393,7 @@ class ProbeRunTests(unittest.TestCase):
                 probe_catalog.run_probes(self.catalog["probes"][:1], self.digest, temporary, "../gpu")
             self.assertEqual(list(Path(temporary).iterdir()), [])
 
+    @patch.dict(os.environ, {"HSA_OVERRIDE_GFX_VERSION": ""})
     def test_ps5_run_rejects_other_hardware_before_dispatch(self):
         identity = {
             "name": "gfx1013",
@@ -435,6 +436,7 @@ class ProbeRunTests(unittest.TestCase):
             run.assert_not_called()
             self.assertEqual(list(Path(temporary).iterdir()), [])
 
+    @patch.dict(os.environ, {"HSA_OVERRIDE_GFX_VERSION": ""})
     def test_ps5_run_records_verified_identity(self):
         probe = self.catalog["probes"][0]
         identity = {
