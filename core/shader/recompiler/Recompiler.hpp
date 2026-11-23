@@ -1071,7 +1071,6 @@ void SetDebugProbeActive(bool active);
 [[nodiscard]] bool RayTracingStrict();
 [[nodiscard]] bool RayTracingMiss();
 [[nodiscard]] bool ExactF32Arithmetic();
-// NaN results of one program that keep the branching NanPropagateF32 form; the rest use the select chain (APS5_NAN_BRANCH_BUDGET).
 [[nodiscard]] std::uint32_t NanBranchBudget();
 inline constexpr std::uint32_t DefaultNanBranchBudget = 128u;
 
