@@ -8120,8 +8120,8 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
             else merged.push_back(range);
         }
     }
-    const auto declaredReadbacks = mergeWrites(Pieces(writes.begin(), writes.begin() + static_cast<std::ptrdiff_t>(addressStores ? declaredWrites : writes.size())));
-    for (const auto& [begin, end] : declaredReadbacks) {
+    const auto declaredReadbacks = addressStores ? mergeWrites(Pieces(writes.begin(), writes.begin() + static_cast<std::ptrdiff_t>(declaredWrites))) : Pieces{};
+    for (const auto& [begin, end] : addressStores ? declaredReadbacks : merged) {
         const auto* found = owner(begin, end);
         if (found == nullptr || found->mirror == nullptr || !found->mirror->heap || !found->mirror->writable || found->mirror->resident == nullptr) continue;
         const auto& region = *found;
