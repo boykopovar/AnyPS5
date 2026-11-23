@@ -223,6 +223,11 @@ void TestCloudParameters() {
         Storage storage;
         std::memset(storage.bytes, kFill, sizeof(storage.bytes));
         auto* p = storage.bytes;
+        const SimpleFn destroy[] = {
+            _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadDataD1Ev,
+            _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUserD1Ev,
+            _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUserD1Ev,
+        };
         SimpleFn construct[] = {_ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadDataC1Ev, _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUserC1Ev, _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUserC1Ev};
         SimpleFn terminate[] = {_ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData9terminateEv, _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9terminateEv, _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser9terminateEv};
         construct[family](p);
@@ -256,7 +261,14 @@ void TestCloudParameters() {
             Require(std::strcmp(reinterpret_cast<const CommonString*>(data + 0x20)->buffer, "second") == 0);
         }
         CheckCloudFields(p, data, &context, strings, integers);
+        const auto live = storage;
+        destroy[family](p);
+        Require(std::memcmp(live.bytes, p, sizeof(live.bytes)) == 0);
         Require(terminate[family](p) == 0 && terminate[family](p) == kTerminatedUninitialized);
+        const auto terminated = storage;
+        destroy[family](p);
+        Require(std::memcmp(terminated.bytes, p, sizeof(terminated.bytes)) == 0);
+        construct[family](p);
         Require(init("", "") == 0 && terminate[family](p) == 0 && GuardIntact(storage));
     }
     Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == 0);
