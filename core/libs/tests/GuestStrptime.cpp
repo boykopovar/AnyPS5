@@ -38,6 +38,12 @@ static void TestIsoDateTime() {
     Require(tmLeap.tm_mday == 29);
     Require(tmLeap.tm_wday == 4);
     Require(tmLeap.tm_yday == 59);
+
+    GuestTm tmMar{};
+    const char* remMar = strptime_nid_postfix("2024-03-01", "%Y-%m-%d", &tmMar);
+    Require(remMar != nullptr && *remMar == '\0');
+    Require(tmMar.tm_wday == 5);
+    Require(tmMar.tm_yday == 60);
 }
 
 static void TestMonthAndWeekdayNames() {
