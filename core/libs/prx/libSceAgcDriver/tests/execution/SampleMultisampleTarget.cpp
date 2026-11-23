@@ -1366,6 +1366,87 @@ std::vector<std::array<float, 4>> LoadColorSamples(AgcDriver::VulkanDevice& devi
 }
 
 
+alignas(256) constexpr std::array<std::uint32_t, 51> HtileHiZPatchCode{
+    0xbfa00003u, 0xd7460008u, 0x04010a05u, 0xe0382000u, 0x80000008u, 0xbf8c3f70u, 0x360e048fu, 0x3612068fu,
+    0x360c028fu, 0x360a008fu, 0xd54a0004u, 0x001204ffu, 0x00000fffu, 0x7d840ef9u, 0x06868680u, 0x7d8412f9u,
+    0x06868880u, 0xd54a0007u, 0x001206ffu, 0x00000fffu, 0x7d840cf9u, 0x06868a80u, 0xd54a0009u, 0x001202ffu,
+    0x00000fffu, 0x7d840a80u, 0xd54a000au, 0x001200ffu, 0x00000fffu, 0xd5010006u, 0x001a0902u, 0xd5010007u,
+    0x00220f03u, 0xd5010005u, 0x002a1301u, 0x02081500u, 0x7d8a04f9u, 0x06068406u, 0x7d8a0707u, 0x7d8a02f9u,
+    0x06068605u, 0x7d8a00f9u, 0x06068804u, 0x88ea6a04u, 0x88ea6a06u, 0x88ea6a08u, 0xbefe046au, 0xbf880002u,
+    0xe0782000u, 0x80000408u, 0xbf810000u};
+
+void HtileHiZPatch(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    constexpr std::uint32_t records = 64u;
+    constexpr std::uint32_t value = 0x12345678u;
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{32u, 1u, 1u}, 0u, {true, false, false}, false, 1u};
+    const auto patched = [](std::uint32_t word, std::uint32_t bounds) { return (word & 15u) == 0u ? (word & 0xfffu) | (bounds & ~0xfffu) : word; };
+    const auto userDataFor = [](const Block& block, std::uint32_t count, std::uint32_t patch) {
+        const auto address = block.Address();
+        return std::vector<std::uint32_t>{static_cast<std::uint32_t>(address), (static_cast<std::uint32_t>(address >> 32u) & 0xffffu) | (16u << 16u), count, 0x01016facu, patch};
+    };
+    const std::array<std::uint32_t, 5> packet{0u, records / 32u, 1u, 1u, 1u};
+    {
+        Block buffer(BlockBytes);
+        std::vector<std::uint32_t> original(records * 4u);
+        for (std::uint32_t index = 0; index < original.size(); ++index) {
+            const auto kind = index % 5u;
+            original[index] = kind == 0u ? 0xfffffff0u : kind == 1u ? 0x0000000fu | (index << 12u) : kind == 2u ? index << 4u : kind == 3u ? (value & ~0xfffu) | (index & 0xff0u) : 0xabc00005u;
+        }
+        std::memcpy(buffer.data, original.data(), original.size() * 4u);
+        const auto userData = userDataFor(buffer, records, value);
+        const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(HtileHiZPatchCode.data()), std::as_bytes(std::span(HtileHiZPatchCode))}}};
+        ShaderRecompiler::RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(HtileHiZPatchCode.data()), HtileHiZPatchCode, 0u, {}}, {32u, 0u, userData, compute, std::nullopt, std::nullopt, memory}, device.Target(), {0u, 0u, 0u, 128u}};
+        request.useCache = false;
+        device.Dispatch(ShaderRecompiler::Recompile(request), records / 32u, 1u, 1u);
+        device.WaitIdle();
+        const auto* words = reinterpret_cast<const std::uint32_t*>(buffer.data);
+        for (std::uint32_t index = 0; index < original.size(); ++index) Require(words[index] == patched(original[index], value), "the HTILE Hi-Z patch kernel did not write the bounds of cleared tiles only, at word " + std::to_string(index));
+        const auto match = MatchHtileClearedHiZPatch(HtileHiZPatchCode, userData, compute, packet, 0u);
+        Require(match && match->address == buffer.Address() && match->bytes == records * 16u && match->value == value, "the HTILE Hi-Z patch kernel was not recognized");
+        auto altered = HtileHiZPatchCode;
+        altered[12] = 0x00000ff0u;
+        Require(!MatchHtileClearedHiZPatch(altered, userData, compute, packet, 0u), "a kernel with another bit mask was recognized as the HTILE Hi-Z patch");
+        auto strided = userData;
+        strided[1] = (strided[1] & 0xffffu) | (8u << 16u);
+        Require(!MatchHtileClearedHiZPatch(HtileHiZPatchCode, strided, compute, packet, 0u), "an 8-byte record stride was recognized as the HTILE Hi-Z patch");
+        Require(!SkipNoOpHtileHiZPatch(*match), "an HTILE Hi-Z patch with no native depth owner was skipped");
+    }
+    if ((context.limits.framebufferDepthSampleCounts & VK_SAMPLE_COUNT_2_BIT) == 0u || (context.limits.sampledImageDepthSampleCounts & VK_SAMPLE_COUNT_2_BIT) == 0u) {
+        std::puts("HTILE Hi-Z patch kernel decoded; skipping it over native depth not tested: no 2x depth sampling");
+        return;
+    }
+    Block plane(BlockBytes, true);
+    Block depth(2u * BlockBytes, true);
+    auto* htile = reinterpret_cast<std::uint32_t*>(depth.data + BlockBytes);
+    std::fill_n(htile, BlockBytes / 4u, 0xfffffff0u);
+    DepthTarget native{depth.Address(), plane.Address(), {Side, Side}, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0u, depth.Address() + BlockBytes, false, 2u};
+    native.depthSwizzle = 24u;
+    native.iterate256 = native.htilePipeAligned = native.htileDepthOnly = true;
+    DepthSurfaceView(context, native);
+    device.WaitIdle();
+    auto depthTexture = TargetDescriptor(depth, 1u, 22u, TileZ64KBX);
+    depthTexture[6] = (1u << 10u) | (1u << 19u) | (1u << 21u) | (static_cast<std::uint32_t>(native.htileAddress >> 8u) << 24u);
+    depthTexture[7] = static_cast<std::uint32_t>(native.htileAddress >> 16u);
+    const auto ones = LoadSamples(device, depthTexture, 2u);
+    Require(std::all_of(ones.begin(), ones.end(), [](const auto& sample) { return sample[0] == 1.0f; }), "the native depth fixture did not read its cleared depth");
+    const HtileClearedHiZPatch unchanged{native.htileAddress, BlockBytes, 0xfffff123u};
+    const HtileClearedHiZPatch lowered{native.htileAddress, BlockBytes, 0x00000123u};
+    const bool skipped = SkipNoOpHtileHiZPatch(unchanged);
+    const bool skippedChange = SkipNoOpHtileHiZPatch(lowered);
+    const bool intact = std::all_of(htile, htile + BlockBytes / 4u, [](std::uint32_t word) { return word == 0xfffffff0u; });
+    device.SubmitRecorded(true);
+    device.WaitIdle();
+    ClearDepthSurfaces(context.device);
+    ClearCachedTextures(context.device);
+    ClearMultisampleTargets(context.device);
+    Require(skipped, "an HTILE Hi-Z patch that writes no byte over a native depth owner was not skipped");
+    Require(!skippedChange, "an HTILE Hi-Z patch that changes cleared tiles of a native depth owner was skipped");
+    Require(intact, "deciding an HTILE Hi-Z patch changed the native depth owner's HTILE");
+    std::puts("the HTILE Hi-Z patch kernel writes the bounds of cleared tiles only; over a native depth owner it is skipped when it writes no byte and kept when it changes a cleared tile");
+}
+
 void Readback(AgcDriver::VulkanDevice& device) {
     using namespace AgcDriver::Graphics;
     auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -2188,6 +2269,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--initial-uniform") { UniformInitialContents(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--initial-uniform_refusals") { UniformInitialRefusals(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--initial-uniform_hook") { UniformInitialFlushHook(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--htile-hiz-patch") { HtileHiZPatch(*device); return 0; }
         Block block(4u * BlockBytes);
         Block other(BlockBytes);
         Block output(2u * 1024u * 1024u);
