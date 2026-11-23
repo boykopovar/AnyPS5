@@ -11,7 +11,7 @@ import sys
 import zlib
 from pathlib import Path
 
-from performance_compare import unique_json_object
+from performance_compare import CONTEXT, OPTIONAL_INTEGERS, OPTIONAL_STRINGS, unique_json_object
 
 DESCRIPTION = """Digest of an APS5_TRACE_FRAMES / APS5_TRACE_SECONDS capture (aps5-trace-*.json.gz) for an issue or a
 pull request: the summary line, the slowest frames with their largest slices, the busy and wait time of each
@@ -30,6 +30,8 @@ one row per interval and a text sparkline of the frame p99 and of the GPU busy t
 window captures in the same file are skipped."""
 
 RAMP = "._:-=+*#%@"
+INTERVAL_IDENTITY_STRINGS = ("commit", *CONTEXT, *OPTIONAL_STRINGS)
+INTERVAL_IDENTITY_KEYS = (*INTERVAL_IDENTITY_STRINGS, *OPTIONAL_INTEGERS, "dirty", "env")
 
 
 def is_wait(name):
@@ -558,6 +560,17 @@ def validate_interval(record):
         raise ValueError("graphics_track must map names to non-negative integers")
     if "trace_dropped" in record and type(record["trace_dropped"]) is not bool:
         raise ValueError("trace_dropped must be a boolean")
+    for field in INTERVAL_IDENTITY_STRINGS:
+        if field in record and not isinstance(record[field], str):
+            raise ValueError(f"{field} must be a string")
+    for field in OPTIONAL_INTEGERS:
+        if field in record and (type(record[field]) is not int or record[field] < 0):
+            raise ValueError(f"{field} must be a non-negative integer")
+    if record.get("dirty") is not None and type(record["dirty"]) is not bool:
+        raise ValueError("dirty must be a boolean or null")
+    env = record.get("env", {})
+    if not isinstance(env, dict) or any(not isinstance(value, str) for value in env.values()):
+        raise ValueError("env must map names to strings")
 
 
 def sparkline(values):
@@ -581,8 +594,7 @@ def digest_intervals(lines):
                      "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts"),
                      "graphics_track": line.get("graphics_track")})
     first = lines[0] if lines else {}
-    keys = ("commit", "dirty", "env", "gpu", "driver", "os", "resolution",
-            "cpu", "cpu_threads", "memory_mib", "title_id", "title", "content_version")
+    keys = INTERVAL_IDENTITY_KEYS
     changed = [index for index in range(1, len(lines)) if any(lines[index].get(key) != lines[index - 1].get(key) for key in keys)]
     return {"intervals": rows, "identity": {key: first.get(key) for key in keys}, "identity_changed_at": changed}
 

@@ -1618,6 +1618,47 @@ class IntervalSchemaTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, r"summary\.jsonl:4:"):
                         trace_digest.load_intervals(self.path)
 
+    def test_invalid_identity_fields_are_rejected_before_interval_export(self):
+        baseline = interval_line(0, 1, 20, 1)
+        invalid = {
+            "commit": 123,
+            "gpu": ["GPU"],
+            "driver": {},
+            "os": False,
+            "resolution": [1920, 1080],
+            "cpu": 3,
+            "title_id": [],
+            "title": True,
+            "content_version": 1.0,
+            "cpu_threads": True,
+            "memory_mib": -1,
+            "dirty": 1,
+            "env": {"APS5_TRACE_SUMMARY_EVERY": 30},
+        }
+        for field, value in invalid.items():
+            with self.subTest(field=field):
+                self.write(dict(baseline, **{field: value}))
+                with self.assertRaisesRegex(ValueError, rf"summary\.jsonl:4: {field}\b"):
+                    trace_digest.load_intervals(self.path)
+
+    def test_null_dirty_and_omitted_identity_are_valid(self):
+        record = interval_line(0, 1, 20, 1, dirty=None)
+        for field in ("commit", "gpu", "driver", "os", "resolution", "env"):
+            del record[field]
+        self.write(record)
+        self.assertEqual(trace_digest.load_intervals(self.path), [record])
+
+    def test_complete_csv_rejects_boolean_core_counts_that_compare_equal_to_one(self):
+        first = interval_line(0, 1, 20, 1, cpu_threads=1)
+        second = interval_line(1, 2, 20, 1, cpu_threads=True)
+        self.path.write_text("\n".join(json.dumps(row) for row in (first, second)) + "\n", encoding="utf-8")
+        script = Path(trace_digest.__file__).with_name("trace_intervals_csv.py")
+        result = subprocess.run([sys.executable, str(script), str(self.path), "--require-complete"],
+                                capture_output=True, text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("summary.jsonl:2: cpu_threads", result.stderr)
+        self.assertEqual(result.stdout, "")
+
     def test_missing_interval_bound_is_rejected_by_both_cli_reports(self):
         for field in ("interval_start_s", "interval_end_s"):
             record = interval_line(0, 1, 20, 1)
