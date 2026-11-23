@@ -1,5 +1,4 @@
 import errno
-import io
 import json
 import os
 from pathlib import Path
@@ -72,13 +71,13 @@ class SummaryAtomicTests(unittest.TestCase):
                         self.target.write_bytes(previous)
                     entries = set(self.output.iterdir())
                     observed = []
-                    real_open = io.open
+                    real_open = Path.open
 
                     def failing_open(path, mode="r", *args, **kwargs):
                         stream = real_open(path, mode, *args, **kwargs)
                         return FailingWriter(stream, self.target, failure, "write", observed) if "w" in mode else stream
 
-                    with patch.object(io, "open", side_effect=failing_open), self.assertRaises(type(failure)):
+                    with patch.object(Path, "open", new=failing_open), self.assertRaises(type(failure)):
                         title_run.write_summary(self.output, self.summary)
                     self.assert_retained(previous, entries)
                     self.assertEqual(observed, [previous])
@@ -86,14 +85,14 @@ class SummaryAtomicTests(unittest.TestCase):
     def test_close_failure_keeps_previous_valid_bytes_and_removes_staging(self):
         self.target.write_bytes(self.previous)
         entries = set(self.output.iterdir())
-        real_open = io.open
+        real_open = Path.open
 
         def failing_open(path, mode="r", *args, **kwargs):
             stream = real_open(path, mode, *args, **kwargs)
             error = OSError(errno.ENOSPC, "controlled close failure")
             return FailingWriter(stream, self.target, error, "close", []) if "w" in mode else stream
 
-        with patch.object(io, "open", side_effect=failing_open), self.assertRaises(OSError):
+        with patch.object(Path, "open", new=failing_open), self.assertRaises(OSError):
             title_run.write_summary(self.output, self.summary)
         self.assert_retained(self.previous, entries)
 
@@ -108,7 +107,7 @@ class SummaryAtomicTests(unittest.TestCase):
             self.assertEqual(self.target.read_bytes(), self.previous)
             raise PermissionError(errno.EACCES, "controlled replace failure")
 
-        with patch.object(os, "replace", side_effect=reject_replace), self.assertRaises(PermissionError):
+        with patch.object(Path, "replace", new=reject_replace), self.assertRaises(PermissionError):
             title_run.write_summary(self.output, self.summary)
         self.assertEqual(observed, [self.expected])
         self.assert_retained(self.previous, entries)
@@ -116,7 +115,7 @@ class SummaryAtomicTests(unittest.TestCase):
     def test_success_commits_closed_complete_json_with_unchanged_format_and_default_str(self):
         self.target.write_bytes(self.previous)
         streams = []
-        real_open, real_replace = io.open, os.replace
+        real_open, real_replace = Path.open, Path.replace
         replacements = []
 
         def capture_open(path, mode="r", *args, **kwargs):
@@ -135,7 +134,7 @@ class SummaryAtomicTests(unittest.TestCase):
             replacements.append(Path(source))
             return real_replace(source, destination)
 
-        with patch.object(io, "open", side_effect=capture_open), patch.object(os, "replace", side_effect=capture_replace):
+        with patch.object(Path, "open", new=capture_open), patch.object(Path, "replace", new=capture_replace):
             title_run.write_summary(self.output, self.summary)
         self.assertEqual(len(replacements), 1)
         self.assertEqual(self.target.read_bytes(), self.expected)
@@ -193,7 +192,10 @@ class SummaryAtomicTests(unittest.TestCase):
         self.target.chmod(stat.S_IREAD)
         entries = set(self.output.iterdir())
         try:
-            with patch.object(os, "replace", side_effect=PermissionError(errno.EACCES, "controlled refusal")):
+            def refuse_replace(source, destination):
+                raise PermissionError(errno.EACCES, "controlled refusal")
+
+            with patch.object(Path, "replace", new=refuse_replace):
                 with self.assertRaises(PermissionError):
                     title_run.write_summary(self.output, self.summary)
             self.assert_retained(self.previous, entries)
