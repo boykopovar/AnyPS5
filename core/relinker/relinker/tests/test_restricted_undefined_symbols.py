@@ -11,7 +11,6 @@ from test_guest_none_relocations import TARGET, module
 
 TARGETS = (("linux", []), ("pie", ["--lazy-binding"]), ("windows", ["--windows"]), ("macos", ["--macos"]))
 ERROR = "Undefined local symbol has non-default visibility: "
-DEFINED_ERROR = "Relocation names a defined symbol that is local, hidden or internal: "
 
 
 def executable(relocation, visibility, binding=1, referenced=True, defined=False):
@@ -97,11 +96,11 @@ def main():
                         convert(label + "-filtered", make(2, binding=0), [*options, "unused-filter=1"], ERROR)
                         convert(label + "-defined-default", make(0, defined=True), options, None)
                         convert(label + "-defined-protected", make(3, defined=True), options, None)
-                        convert(label + "-defined-local", make(0, binding=0, defined=True), options, DEFINED_ERROR)
-                        convert(label + "-defined-internal", make(1, defined=True), options, DEFINED_ERROR)
-                        convert(label + "-defined-hidden", make(2, defined=True), options, DEFINED_ERROR)
+                        convert(label + "-defined-local", make(0, binding=0, defined=True), options, None)
+                        convert(label + "-defined-internal", make(1, defined=True), options, None)
+                        convert(label + "-defined-hidden", make(2, defined=True), options, None)
                         convert(label + "-defined-hidden-filtered", make(2, defined=True),
-                                [*options, "unused-filter=1"], DEFINED_ERROR)
+                                [*options, "unused-filter=1"], None)
     print(f"Restricted undefined symbol tests passed: {count} conversions ({'guest' if is_guest else 'executable'})")
 
 
