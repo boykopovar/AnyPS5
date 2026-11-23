@@ -44,7 +44,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t layers, std::uint32_t tile) {
+std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t layers, std::uint32_t tile, std::uint32_t mips = 1u) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Storage.data()));
     return {
         static_cast<std::uint32_t>(address >> 8u),
@@ -52,7 +52,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t layers, std::uint32
         (Width - 1u) >> 2u,
         0xfacu | (tile << 20u) | (Type1DArray << 28u),
         (layers - 1u),
-        0u,
+        (mips - 1u) << 4u,
         0u,
         0u,
     };
@@ -109,12 +109,12 @@ void Expect(std::uint32_t tid, const float* actual, const std::array<std::uint8_
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint32_t layers, std::uint32_t tile, bool useCache) {
+void Run(AgcDriver::VulkanDevice& device, std::uint32_t layers, std::uint32_t tile, bool useCache, std::uint32_t mips = 1u) {
     Output.fill(-1.0f);
     std::vector<std::uint32_t> userData(20, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
-    const auto texture = TextureDescriptor(layers, tile);
+    const auto texture = TextureDescriptor(layers, tile, mips);
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     std::copy(texture.begin(), texture.end(), userData.begin() + 8);
@@ -157,7 +157,14 @@ int main() {
         FillInput(8u, false);
         Run(*device, 8u, Z64KBXTile, false);
         Run(*device, 8u, Z64KBXTile, true);
-        std::puts("oversized linear and fitting tiled 1D arrays loaded correctly");
+        bool refused = false;
+        try {
+            Run(*device, oversized, LinearTile, false, 2u);
+        } catch (const std::exception& error) {
+            refused = std::string(error.what()).find("past maxImageArrayLayers") != std::string::npos;
+        }
+        Require(refused, "an oversized 1D array with mip levels was bound without flattening");
+        std::puts("oversized linear and fitting tiled 1D arrays loaded correctly, the oversized multilayered one was refused");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

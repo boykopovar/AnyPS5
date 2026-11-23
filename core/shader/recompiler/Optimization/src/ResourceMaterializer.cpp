@@ -2636,6 +2636,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
     const auto& decoded = inspected.decoded;
     const bool flattenRequired = image.flattenAllowed && decoded.dimension == RdnaImageDimension::Dim1DArray && maxImageArrayLayers != 0u && decoded.arrayLayers > maxImageArrayLayers;
     const bool flattenSupported = flattenRequired && decoded.surfaceMipCount == 1u && decoded.linear && !decoded.hasDcc;
+    if (flattenRequired && !flattenSupported) return reject(PoisonReason::Dimension, "a 1D array past maxImageArrayLayers with mip levels, tiled storage or DCC metadata is not implemented");
     const auto modeEligible = [&](const ImageResource& mode) { return mode.flattened1DArray ? flattenSupported : !flattenRequired; };
     const auto dimensionMatches = [&](const ImageResource& mode) { return mode.flattened1DArray ? flattenSupported && mode.dimension == RdnaImageDimension::Dim2D : mode.dimension == decoded.dimension; };
     const auto format = rawImageFormat(descriptor);
