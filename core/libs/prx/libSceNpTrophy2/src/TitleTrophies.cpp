@@ -38,8 +38,7 @@ std::optional<std::string> readTitleFile(const std::string& guestPath) {
     const bool exists = std::filesystem::exists(path, error);
     if (error) throw std::filesystem::filesystem_error("cannot check the file", path, error);
     if (!exists) return std::nullopt;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) throw std::filesystem::filesystem_error("cannot get the file size", path, error);
+    const auto size = std::filesystem::file_size(path);
     if (size > MaxUcpSize) throw std::runtime_error("it has " + std::to_string(size) + " bytes, more than " + std::to_string(MaxUcpSize));
     std::string bytes(static_cast<std::size_t>(size), '\0');
     std::ifstream file(path, std::ios::binary);
