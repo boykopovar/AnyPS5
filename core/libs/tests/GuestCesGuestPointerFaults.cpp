@@ -198,6 +198,38 @@ int main() {
     Require(faults(sceCesUtf16beToSbc(&letterUtf16be, 1, nullptr, cp1252, unmappedU8)));
     Require(faults(sceCesUtf16beToSbc(&letterUtf16be, 1, unmappedU32, cp1252, &byte)));
     Require(faults(sceCesUtf32beToSbc(&letterUtf32be, cp1252, unmappedU8)));
+    Require(faults(sceCesUcs2ToUtf8('A', unmappedU8, 4, nullptr)));
+    Require(faults(sceCesUcs2ToUtf8('A', utf8, 4, unmappedU32)));
+    Require(faults(sceCesUtf8ToUtf32(ascii, 1, nullptr, unmappedU32)));
+    Require(faults(sceCesUtf8ToUtf32(ascii, 1, unmappedU32, &utf32)));
+    Require(faults(sceCesUtf8ToUtf32be(ascii, 1, nullptr, unmappedU32)));
+    Require(faults(sceCesUtf8ToUtf32be(ascii, 1, unmappedU32, &utf32)));
+    Require(faults(sceCesUtf8ToUtf32le(ascii, 1, nullptr, unmappedU32)));
+    Require(faults(sceCesUtf8ToUtf32le(ascii, 1, unmappedU32, &utf32)));
+    Require(faults(sceCesUtf8ToUtf16(ascii, 1, nullptr, unmappedU16, 2, nullptr)));
+    Require(faults(sceCesUtf8ToUtf16(ascii, 1, unmappedU32, utf16, 2, nullptr)));
+    Require(faults(sceCesUtf8ToUtf16(ascii, 1, nullptr, utf16, 2, unmappedU32)));
+    Require(faults(sceCesUtf8ToUtf16be(ascii, 1, nullptr, unmappedU16, 2, nullptr)));
+    Require(faults(sceCesUtf8ToUtf16be(ascii, 1, unmappedU32, utf16, 2, nullptr)));
+    Require(faults(sceCesUtf8ToUtf16be(ascii, 1, nullptr, utf16, 2, unmappedU32)));
+    Require(faults(sceCesUtf8ToUtf16le(ascii, 1, nullptr, unmappedU16, 2, nullptr)));
+    Require(faults(sceCesUtf8ToUtf16le(ascii, 1, unmappedU32, utf16, 2, nullptr)));
+    Require(faults(sceCesUtf8ToUtf16le(ascii, 1, nullptr, utf16, 2, unmappedU32)));
+    Require(faults(sceCesUtf16ToUtf8(&letterUtf16be, 1, nullptr, unmappedU8, 4, nullptr)));
+    Require(faults(sceCesUtf16ToUtf8(&letterUtf16be, 1, unmappedU32, utf8, 4, nullptr)));
+    Require(faults(sceCesUtf16ToUtf8(&letterUtf16be, 1, nullptr, utf8, 4, unmappedU32)));
+    Require(faults(sceCesUtf16beToUtf8(&letterUtf16be, 1, nullptr, unmappedU8, 4, nullptr)));
+    Require(faults(sceCesUtf16beToUtf8(&letterUtf16be, 1, unmappedU32, utf8, 4, nullptr)));
+    Require(faults(sceCesUtf16beToUtf8(&letterUtf16be, 1, nullptr, utf8, 4, unmappedU32)));
+    Require(faults(sceCesUtf16leToUtf8(&letterUtf16be, 1, nullptr, unmappedU8, 4, nullptr)));
+    Require(faults(sceCesUtf16leToUtf8(&letterUtf16be, 1, unmappedU32, utf8, 4, nullptr)));
+    Require(faults(sceCesUtf16leToUtf8(&letterUtf16be, 1, nullptr, utf8, 4, unmappedU32)));
+    Require(faults(sceCesUtf32ToUtf8('A', unmappedU8, 4, nullptr)));
+    Require(faults(sceCesUtf32ToUtf8('A', utf8, 4, unmappedU32)));
+    Require(faults(sceCesUtf32beToUtf8(&letterUtf32be, unmappedU8, 4, nullptr)));
+    Require(faults(sceCesUtf32beToUtf8(&letterUtf32be, utf8, 4, unmappedU32)));
+    Require(faults(sceCesUtf32leToUtf8(&letterUtf32be, unmappedU8, 4, nullptr)));
+    Require(faults(sceCesUtf32leToUtf8(&letterUtf32be, utf8, 4, unmappedU32)));
     Require(sceCesSJisToUcs2(sjis, unassignedSjis, 2, &size, &unit) == ERR_UNASSIGNED_CODE && size == 2);
     errno = savedErrno;
     Require(faults(sceCesSJisToUcs2(sjis, unassignedSjis, 2, unmappedU32, &unit)));
@@ -225,6 +257,18 @@ int main() {
     Require(unreadableSource(sceCesEucJpToUcs2(eucJp, unreadable, 2, &size, &unit)));
     Require(unreadableSource(sceCesEucJpToUtf8(eucJp, unreadable, 2, &size, utf8, 4, nullptr)));
     Require(unreadableSource(sceCesUtf8ToSbc(unreadable, 1, nullptr, cp1252, &byte)));
+    Require(unreadableSource(sceCesUtf8ToUtf32(unreadable, 1, nullptr, &utf32)));
+    Require(unreadableSource(sceCesUtf8ToUtf32be(unreadable, 1, nullptr, &utf32)));
+    Require(unreadableSource(sceCesUtf8ToUtf32le(unreadable, 1, nullptr, &utf32)));
+    Require(unreadableSource(sceCesUtf8ToUtf16(unreadable, 1, nullptr, utf16, 2, nullptr)));
+    Require(unreadableSource(sceCesUtf8ToUtf16be(unreadable, 1, nullptr, utf16, 2, nullptr)));
+    Require(unreadableSource(sceCesUtf8ToUtf16le(unreadable, 1, nullptr, utf16, 2, nullptr)));
+    Require(unreadableSource(sceCesUtf8ToUcs2(unreadable, 1, nullptr, &unit)));
+    Require(unreadableSource(sceCesUtf16ToUtf8(reinterpret_cast<const uint16_t*>(0x10), 1, nullptr, utf8, 4, nullptr)));
+    Require(unreadableSource(sceCesUtf16beToUtf8(reinterpret_cast<const uint16_t*>(0x10), 1, nullptr, utf8, 4, nullptr)));
+    Require(unreadableSource(sceCesUtf16leToUtf8(reinterpret_cast<const uint16_t*>(0x10), 1, nullptr, utf8, 4, nullptr)));
+    Require(unreadableSource(sceCesUtf32beToUtf8(reinterpret_cast<const uint32_t*>(0x10), utf8, 4, nullptr)));
+    Require(unreadableSource(sceCesUtf32leToUtf8(reinterpret_cast<const uint32_t*>(0x10), utf8, 4, nullptr)));
 #ifdef _WIN32
     SYSTEM_INFO system{};
     GetSystemInfo(&system);
@@ -235,9 +279,13 @@ int main() {
     uint8_t* const last = pages + page - 1;
     *last = 'A';
     Require(sceCesSJisToUcs2(sjis, last, 4, &size, &unit) == 0 && unit == 'A' && size == 1);
+    Require(sceCesUtf8ToUtf32(last, 1, &size, &utf32) == 0 && utf32 == 'A' && size == 1);
     *last = 0x82;
     errno = savedErrno;
     Require(unreadableSource(sceCesSJisToUcs2(sjis, last, 2, &size, &unit)));
+    *last = 0xC2;
+    errno = savedErrno;
+    Require(unreadableSource(sceCesUtf8ToUtf32(last, 2, &size, &utf32)));
     Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
 #elif defined(__linux__)
     const long page = sysconf(_SC_PAGESIZE);
@@ -246,9 +294,13 @@ int main() {
     uint8_t* const last = pages + page - 1;
     *last = 'A';
     Require(sceCesSJisToUcs2(sjis, last, 4, &size, &unit) == 0 && unit == 'A' && size == 1);
+    Require(sceCesUtf8ToUtf32(last, 1, &size, &utf32) == 0 && utf32 == 'A' && size == 1);
     *last = 0x82;
     errno = savedErrno;
     Require(unreadableSource(sceCesSJisToUcs2(sjis, last, 2, &size, &unit)));
+    *last = 0xC2;
+    errno = savedErrno;
+    Require(unreadableSource(sceCesUtf8ToUtf32(last, 2, &size, &utf32)));
     Require(munmap(pages, page * 2) == 0);
 #endif
 
