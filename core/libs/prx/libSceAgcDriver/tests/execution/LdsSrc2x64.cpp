@@ -36,7 +36,7 @@ constexpr std::uint32_t DsWord1(std::uint32_t address, std::uint32_t data, std::
     return address | (data << 8u) | (destination << 24u);
 }
 
-constexpr auto BuildCode(bool unalignedOddLanes) {
+constexpr auto BuildCode(bool unalignedOddLanes, bool unalignedSource) {
     std::array<std::uint32_t, 7 + Operations * 13 + 19> code{};
     std::size_t at = 0;
     for (const std::uint32_t word : {0x34020084u, 0xe0381000u, 0x80000201u, 0x340c0083u, 0xbf8c3f70u, unalignedOddLanes ? 0x36120081u : 0x36120080u, 0x34121282u}) code[at++] = word;
@@ -44,7 +44,7 @@ constexpr auto BuildCode(bool unalignedOddLanes) {
         const bool sourceBelow = op % 2u == 0u;
         const std::uint32_t target = RegionBytes * (2u * op + (sourceBelow ? 1u : 0u));
         const std::uint32_t source = RegionBytes * (2u * op + (sourceBelow ? 0u : 1u));
-        const std::uint32_t slack = unalignedOddLanes ? 0u : 1u;
+        const std::uint32_t slack = unalignedSource ? 1u : 0u;
         const std::uint32_t dwords = sourceBelow ? 0x8000u - (RegionBytes / 4u - slack) : RegionBytes / 4u + slack;
         for (const std::uint32_t word : {0x4a0e0cffu, target, 0x4a100cffu, source, 0x4a500f09u,
                  DsWord0(0x4du, 0u), DsWord1(7u, 2u, 0u), DsWord0(0x4du, 0u), DsWord1(8u, 4u, 0u),
@@ -63,8 +63,9 @@ constexpr auto BuildCode(bool unalignedOddLanes) {
     return code;
 }
 
-alignas(256) constexpr auto Code = BuildCode(false);
-alignas(256) constexpr auto UnalignedCode = BuildCode(true);
+alignas(256) constexpr auto Code = BuildCode(false, false);
+alignas(256) constexpr auto UnalignedSourceCode = BuildCode(false, true);
+alignas(256) constexpr auto UnalignedCode = BuildCode(true, false);
 
 alignas(256) constexpr std::array<std::uint32_t, 3> AddressOffsetCode{0xdb008000u, 0x00000000u, 0xbf810000u};
 
@@ -122,14 +123,15 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
     device.WaitIdle();
 }
 
-void CheckLanes(const std::string& pass) {
+void CheckLanes(const std::string& pass, bool sourceReadsZero, bool oddLanesSkipped) {
     constexpr std::array<const char*, Operations> names{
         "ds_add_src2_u64", "ds_sub_src2_u64", "ds_rsub_src2_u64", "ds_inc_src2_u64", "ds_dec_src2_u64", "ds_min_src2_i64", "ds_max_src2_i64", "ds_min_src2_u64",
         "ds_max_src2_u64", "ds_and_src2_b64", "ds_or_src2_b64", "ds_xor_src2_b64", "ds_write_src2_b64", "ds_min_src2_f64", "ds_max_src2_f64",
     };
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint64_t a = ValueA(tid);
-        const std::uint64_t b = ValueB(tid);
+        const std::uint64_t b = sourceReadsZero ? 0u : ValueB(tid);
+        const bool skipped = oddLanesSkipped && tid % 2u == 1u;
         const auto sa = static_cast<std::int64_t>(a);
         const auto sb = static_cast<std::int64_t>(b);
         const auto fa = std::bit_cast<double>(a);
@@ -141,7 +143,8 @@ void CheckLanes(const std::string& pass) {
         };
         for (std::uint32_t op = 0; op < Operations; ++op) {
             const std::uint64_t actual = Output[tid * Results + 2u * op] | (static_cast<std::uint64_t>(Output[tid * Results + 2u * op + 1u]) << 32u);
-            Require(actual == expected[op], "lds src2 64 " + pass + ": lane " + std::to_string(tid) + " " + names[op] + " is " + Hex(actual) + ", expected " + Hex(expected[op]));
+            const std::uint64_t want = skipped ? a : expected[op];
+            Require(actual == want, "lds src2 64 " + pass + ": lane " + std::to_string(tid) + " " + names[op] + " is " + Hex(actual) + ", expected " + Hex(want));
         }
     }
 }
@@ -162,9 +165,11 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Run(*device, Code);
-        CheckLanes("aligned");
+        CheckLanes("aligned", false, false);
+        Run(*device, UnalignedSourceCode);
+        CheckLanes("unaligned source", true, false);
         Run(*device, UnalignedCode);
-        CheckLanes("unaligned");
+        CheckLanes("unaligned address", false, true);
         CheckAddressOffsetRejected(*device);
         std::puts("lds src2 64 tests passed");
         return 0;

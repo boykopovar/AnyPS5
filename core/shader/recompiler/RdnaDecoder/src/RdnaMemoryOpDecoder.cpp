@@ -1067,7 +1067,7 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
             throw std::runtime_error("DS src2 operation with the offset taken from the address is not supported");
         }
         instruction.memoryOffset = 0u;
-        instruction.secondaryOffset = (signExtend(combinedOffset & 0x7fffu, 15u) * 4u) & ~(info.dataDwords * 4u - 1u);
+        instruction.secondaryOffset = signExtend(combinedOffset & 0x7fffu, 15u) * 4u;
     }
 
     instruction.destination = d16Half(vectorRegister(vdst), instruction.op);
