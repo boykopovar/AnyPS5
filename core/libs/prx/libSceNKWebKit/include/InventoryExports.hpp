@@ -3805,7 +3805,6 @@ int APS5_VABI _ZN7WebCore9TreeScope17elementsFromPointERKNS_10FloatPointE();
 int APS5_VABI _ZN7WebCore9TreeScope17elementsFromPointEdd();
 int APS5_VABI _ZN7WebCore9endOfLineERKNS_15VisiblePositionE();
 int APS5_VABI _ZN7WebCore9endOfWordERKNS_15VisiblePositionENS_9EWordSideE();
-int APS5_VABI _ZN7WebCoreeqERKNS_18SecurityOriginDataES2_();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_24ScrollableAreaParametersE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_11EventRegionE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_12FilterEffectE();
