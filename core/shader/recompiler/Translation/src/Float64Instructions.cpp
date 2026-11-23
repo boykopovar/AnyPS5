@@ -155,12 +155,34 @@ bool TranslationContext::float64Unary(const RdnaInstruction& inst, IrOpcode opco
         IrValue& sign = ir.BitwiseAnd(bits[1].Value(), ir.Constant(0x80000000u));
         words = {IrU32(ir.Select(tiny, ir.Constant(0u), words[0].Value())), IrU32(ir.Select(tiny, sign, words[1].Value()))};
     }
+    if (opcode == IrOpcode::FPFract64 && floatRoundMode(2u) != 0u) words = roundFractF64(bits, words, floatRoundMode(2u));
     const IrU32 magnitude(ir.BitwiseAnd(bits[1].Value(), ir.Constant(0x7fffffffu)));
     const IrU1 nan(ir.LogicalOr(ir.UGreaterThan(magnitude.Value(), ir.Constant(0x7ff00000u)),
         ir.LogicalAnd(ir.IEqual(magnitude.Value(), ir.Constant(0x7ff00000u)), ir.INotEqual(bits[0].Value(), ir.Constant(0u)))));
     const auto quiet = quietNan64(bits);
     writeF64Result(inst.destination, ir.ConstructU64(ir.Select(nan.Value(), quiet[0].Value(), words[0].Value()), ir.Select(nan.Value(), quiet[1].Value(), words[1].Value())));
     return true;
+}
+
+std::array<IrU32, 2> TranslationContext::roundFractF64(const std::array<IrU32, 2>& argument, std::array<IrU32, 2> result, std::uint32_t rounding) {
+    IrValue& magnitude = ir.ConstructU64(argument[0].Value(), ir.BitwiseAnd(argument[1].Value(), ir.Constant(0x7fffffffu)));
+    IrValue& fraction = ir.Emit(IrOpcode::FPFract64, IrType::U64, {&magnitude});
+    IrValue& negated = ir.ConstructU64(result[0].Value(), ir.BitwiseXor(result[1].Value(), ir.Constant(0x80000000u)));
+    IrValue& complement = ir.Emit(IrOpcode::FPAdd64, IrType::U64, {&ir.ConstructU64(ir.Constant(0u), ir.Constant(0x3ff00000u)), &negated});
+    const std::array<IrU32, 2> part{IrU32(ir.CompositeExtract(fraction, 0u)), IrU32(ir.CompositeExtract(fraction, 1u))};
+    const std::array<IrU32, 2> rest{IrU32(ir.CompositeExtract(complement, 0u)), IrU32(ir.CompositeExtract(complement, 1u))};
+    const auto less = [&](const std::array<IrU32, 2>& lhs, const std::array<IrU32, 2>& rhs) {
+        return IrU1(ir.LogicalOr(ir.ULessThan(lhs[1].Value(), rhs[1].Value()), ir.LogicalAnd(ir.IEqual(lhs[1].Value(), rhs[1].Value()), ir.ULessThan(lhs[0].Value(), rhs[0].Value()))));
+    };
+    const IrU1 negative(ir.INotEqual(ir.BitwiseAnd(argument[1].Value(), ir.Constant(0x80000000u)), ir.Constant(0u)));
+    const IrU1 inexact(ir.LogicalAnd(negative.Value(), ir.INotEqual(ir.BitwiseOr(part[0].Value(), part[1].Value()), ir.Constant(0u))));
+    const IrU1 step(ir.LogicalAnd(inexact.Value(), (rounding == 1u ? less(part, rest) : less(rest, part)).Value()));
+    const IrU32 low(rounding == 1u ? ir.IAdd(result[0].Value(), ir.Constant(1u)) : ir.ISub(result[0].Value(), ir.Constant(1u)));
+    const IrU1 carry(ir.IEqual(result[0].Value(), ir.Constant(rounding == 1u ? 0xffffffffu : 0u)));
+    const IrU32 high(ir.Select(carry.Value(), rounding == 1u ? ir.IAdd(result[1].Value(), ir.Constant(1u)) : ir.ISub(result[1].Value(), ir.Constant(1u)), result[1].Value()));
+    result = {IrU32(ir.Select(step.Value(), low.Value(), result[0].Value())), IrU32(ir.Select(step.Value(), high.Value(), result[1].Value()))};
+    const IrU1 one(ir.IEqual(result[1].Value(), ir.Constant(0x3ff00000u)));
+    return {IrU32(ir.Select(one.Value(), ir.Constant(0xffffffffu), result[0].Value())), IrU32(ir.Select(one.Value(), ir.Constant(0x3fefffffu), result[1].Value()))};
 }
 
 bool TranslationContext::vCvtF64F32(const RdnaInstruction& inst) {

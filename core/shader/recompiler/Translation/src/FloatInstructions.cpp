@@ -158,6 +158,7 @@ bool TranslationContext::float16Unary(const RdnaInstruction& inst, IrOpcode opco
     const IrF16 rounded(ir.Emit(IrOpcode::ConvertF16F32, IrType::F16, {&applyF16ResultModifiers(inst.destination, result, {&argument.Value()}).Value()}));
     IrU32 bits(ir.Emit(IrOpcode::ConvertU32U16, IrType::U32, {&ir.Emit(IrOpcode::BitCastU16F16, IrType::U16, {&rounded.Value()})}));
     if (opcode == IrOpcode::FPFract32) {
+        if (directedF16Rounding()) bits = convertF32ToF16Bits(applyF16ResultModifiers(inst.destination, result, {&argument.Value()}), {&argument.Value()});
         bits = IrU32(ir.Select(ir.IEqual(bits.Value(), ir.Constant(0x3c00u)), ir.Constant(0x3bffu), bits.Value()));
     }
     bits = flushF16Result(bits);
@@ -690,9 +691,23 @@ IrF32 TranslationContext::floatUnaryValue(const RdnaInstruction& inst, IrOpcode 
     const IrU32 bits = flushF32Denormal(readU32(sourceAt(inst, 0u)));
     const IrF32 argument(ir.BitCastF32(bits.Value()));
     const auto [result, invalid] = unaryFloatSpecials(opcode, argument, IrF32(ir.Emit(opcode, IrType::F32, {&argument.Value()})));
+    const bool directedFract = opcode == IrOpcode::FPFract32 && floatRoundMode(0u) != 0u;
+    const IrF32 value = directedFract ? IrF32(ir.BitCastF32(roundFractF32(bits, IrU32(ir.BitCastU32(result.Value())), floatRoundMode(0u)).Value())) : result;
     const IrU1 nan(ir.UGreaterThan(ir.BitwiseAnd(bits.Value(), ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)));
     const IrU32 special(ir.Select(nan.Value(), quietNan32(bits).Value(), ir.Constant(0xffc00000u)));
-    return IrF32(ir.Select(ir.LogicalOr(nan.Value(), invalid.Value()), ir.BitCastF32(special.Value()), result.Value()));
+    return IrF32(ir.Select(ir.LogicalOr(nan.Value(), invalid.Value()), ir.BitCastF32(special.Value()), value.Value()));
+}
+
+IrU32 TranslationContext::roundFractF32(IrU32 argument, IrU32 result, std::uint32_t rounding) {
+    const IrF32 magnitude(ir.Emit(IrOpcode::FPAbs32, IrType::F32, {&ir.BitCastF32(argument.Value())}));
+    const IrU32 fraction(ir.BitCastU32(ir.Emit(IrOpcode::FPFract32, IrType::F32, {&magnitude.Value()})));
+    const IrU32 complement(ir.BitCastU32(ir.Emit(IrOpcode::FPSub32, IrType::F32, {&ir.BitCastF32(ir.Constant(0x3f800000u)), &ir.BitCastF32(result.Value())})));
+    const IrU1 negative(ir.INotEqual(ir.BitwiseAnd(argument.Value(), ir.Constant(0x80000000u)), ir.Constant(0u)));
+    const IrU1 inexact(ir.LogicalAnd(negative.Value(), ir.INotEqual(fraction.Value(), ir.Constant(0u))));
+    const IrU1 step(rounding == 1u ? ir.UGreaterThan(complement.Value(), fraction.Value()) : ir.ULessThan(complement.Value(), fraction.Value()));
+    const IrU32 stepped(rounding == 1u ? ir.IAdd(result.Value(), ir.Constant(1u)) : ir.ISub(result.Value(), ir.Constant(1u)));
+    const IrU32 rounded(ir.Select(ir.LogicalAnd(inexact.Value(), step.Value()), stepped.Value(), result.Value()));
+    return IrU32(ir.Emit(IrOpcode::UMin32, IrType::U32, {&rounded.Value(), &ir.Constant(0x3f7fffffu)}));
 }
 
 bool TranslationContext::floatUnary(const RdnaInstruction& inst, IrOpcode opcode) {

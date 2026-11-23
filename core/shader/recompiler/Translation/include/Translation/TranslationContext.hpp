@@ -95,6 +95,8 @@ private:
     std::uint32_t floatRoundMode(std::uint32_t roundShift) const;
     bool keepsDenormalResults(std::uint32_t keepBit) const;
     IrValue& roundedLimit(std::uint32_t rounding, IrU32 sign, IrValue& away, IrValue& towardZero);
+    IrU32 roundFractF32(IrU32 argument, IrU32 result, std::uint32_t rounding);
+    std::array<IrU32, 2> roundFractF64(const std::array<IrU32, 2>& argument, std::array<IrU32, 2> result, std::uint32_t rounding);
     IrU32 flushF16Bits(IrU32 bits, std::uint32_t keepBit);
     IrU32 flushF16Input(IrU32 bits);
     IrU32 flushF16Result(IrU32 bits);
