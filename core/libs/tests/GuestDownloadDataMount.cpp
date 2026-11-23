@@ -1,5 +1,6 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libc/include/General.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -38,11 +39,10 @@ int main(int argc, char** argv) {
         std::filesystem::create_directories("app0/sce_sys");
         WriteParamSfo("app0/sce_sys/param.sfo");
 #ifdef _WIN32
-        const std::string command = "\"\"" + std::string(argv[0]) + "\" sfo-child\"";
+        const int status = _wsystem((L"\"\"" + ArgumentPath(argv, 0).native() + L"\" sfo-child\"").c_str());
 #else
-        const std::string command = "\"" + std::string(argv[0]) + "\" sfo-child";
+        const int status = std::system(("\"" + std::string(argv[0]) + "\" sfo-child").c_str());
 #endif
-        const int status = std::system(command.c_str());
         std::filesystem::remove_all("app0");
         Require(status == 0);
         return 0;

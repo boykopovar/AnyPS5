@@ -1,6 +1,7 @@
 #include "prx/libSceVideoRecordingP/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <array>
 #include <cerrno>
@@ -206,14 +207,13 @@ void WriteTitle(const std::filesystem::path& directory, std::int32_t attribute) 
     Require(static_cast<bool>(file), "cannot write the param.sfo fixture");
 }
 
-int RunSelf(const char* program, std::string_view mode, const std::filesystem::path& directory) {
-    const std::string arguments = "\"" + std::string(program) + "\" " + std::string(mode) + " \"" + directory.string() + "\"";
+int RunSelf(const std::filesystem::path& program, std::string_view mode, const std::filesystem::path& directory) {
 #ifdef _WIN32
-    const std::string command = "\"" + arguments + "\"";
+    const std::wstring arguments = L"\"" + program.native() + L"\" " + std::filesystem::path(std::string(mode)).native() + L" \"" + directory.native() + L"\"";
+    return _wsystem((L"\"" + arguments + L"\"").c_str());
 #else
-    const std::string command = arguments;
+    return std::system(("\"" + program.string() + "\" " + std::string(mode) + " \"" + directory.string() + "\"").c_str());
 #endif
-    return std::system(command.c_str());
 }
 
 }
@@ -321,8 +321,8 @@ int main(int argc, char** argv) {
     std::filesystem::remove_all(titles);
     WriteTitle(titles / "base", 0);
     WriteTitle(titles / "neo", SupportNeoMode);
-    Require(RunSelf(argv[0], "--base", titles / "base") == 0, "the size queries failed for a title without Neo mode");
-    Require(RunSelf(argv[0], "--neo", titles / "neo") == 0, "the size queries failed for a Neo-mode title");
+    Require(RunSelf(ArgumentPath(argv, 0), "--base", titles / "base") == 0, "the size queries failed for a title without Neo mode");
+    Require(RunSelf(ArgumentPath(argv, 0), "--neo", titles / "neo") == 0, "the size queries failed for a Neo-mode title");
     std::filesystem::remove_all(titles);
 
     Require(sceVideoRecordingGetInfo(0xa001, nullptr, 0) == NotOpen, "info 0xa001 validation");

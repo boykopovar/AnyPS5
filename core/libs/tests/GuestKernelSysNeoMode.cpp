@@ -1,6 +1,7 @@
 #include "prx/libkernel_sys/libkernel_sys.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -104,14 +105,13 @@ bool Throws(std::string_view expected) {
     return false;
 }
 
-int RunSelf(const char* program, std::string_view mode, const std::filesystem::path& directory) {
-    const std::string arguments = "\"" + std::string(program) + "\" " + std::string(mode) + " \"" + directory.string() + "\"";
+int RunSelf(const std::filesystem::path& program, std::string_view mode, const std::filesystem::path& directory) {
 #ifdef _WIN32
-    const std::string command = "\"" + arguments + "\"";
+    const std::wstring arguments = L"\"" + program.native() + L"\" " + std::filesystem::path(std::string(mode)).native() + L" \"" + directory.native() + L"\"";
+    return _wsystem((L"\"" + arguments + L"\"").c_str());
 #else
-    const std::string command = arguments;
+    return std::system(("\"" + program.string() + "\" " + std::string(mode) + " \"" + directory.string() + "\"").c_str());
 #endif
-    return std::system(command.c_str());
 }
 
 }
@@ -182,13 +182,13 @@ int main(int argc, char** argv) {
         std::filesystem::create_directories(directory);
         if (test.paramSfo) WriteParamSfo(directory, test.attribute);
         if (test.paramJson) WriteParamJson(directory);
-        if (RunSelf(argv[0], test.mode, directory) != 0) {
+        if (RunSelf(ArgumentPath(argv, 0), test.mode, directory) != 0) {
             std::fprintf(stderr, "KERNEL SYS NEO MODE: case failed: %s\n", test.failure);
             std::filesystem::remove_all(root);
             return 1;
         }
         const auto categoryMode = test.paramJson ? "--category" : "--category-unavailable";
-        if (RunSelf(argv[0], categoryMode, directory) != 0) {
+        if (RunSelf(ArgumentPath(argv, 0), categoryMode, directory) != 0) {
             std::fprintf(stderr, "KERNEL SYS NEO MODE: category case failed: %s\n", test.failure);
             std::filesystem::remove_all(root);
             return 1;

@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -533,7 +534,7 @@ static int CheckChunkdefsRejected(const char* root) {
     return 0;
 }
 
-static void RunLayout(const char* self, const char* mode, std::initializer_list<std::pair<const char*, std::string>> files) {
+static void RunLayout(const std::filesystem::path& self, const char* mode, std::initializer_list<std::pair<const char*, std::string>> files) {
     const auto root = std::filesystem::temp_directory_path() / ("guest_playgo_" + std::to_string(std::random_device{}()));
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "app0" / "sce_sys");
@@ -541,13 +542,12 @@ static void RunLayout(const char* self, const char* mode, std::initializer_list<
         const auto directory = std::string_view(name) == "playgo-chunkdefs.xml" ? root / "app0" : root / "app0" / "sce_sys";
         std::ofstream(directory / name, std::ios::binary).write(content.data(), static_cast<std::streamsize>(content.size()));
     }
-    const std::string arguments = "\"" + std::string(self) + "\" " + mode + " \"" + root.string() + "\"";
 #ifdef _WIN32
-    const std::string command = "\"" + arguments + "\"";
+    const std::wstring arguments = L"\"" + self.native() + L"\" " + std::filesystem::path(mode).native() + L" \"" + root.native() + L"\"";
+    const int status = _wsystem((L"\"" + arguments + L"\"").c_str());
 #else
-    const std::string command = arguments;
+    const int status = std::system(("\"" + self.string() + "\" " + mode + " \"" + root.string() + "\"").c_str());
 #endif
-    const int status = std::system(command.c_str());
     std::filesystem::remove_all(root);
     Require(status == 0);
 }
@@ -582,20 +582,20 @@ int main(int argc, char** argv) {
         if (mode == "--invalid-chunk-table") return CheckRejectedLayout(argv[2], "playgo-chunk.dat");
         if (mode == "--chunkdefs-range" || mode == "--chunkdefs-overflow") return CheckChunkdefsRejected(argv[2]);
     }
-    RunLayout(argv[0], "--no-file", {});
-    RunLayout(argv[0], "--no-file-installed", {});
-    RunLayout(argv[0], "--no-file-absent", {});
-    RunLayout(argv[0], "--no-file-unknown-answer", {});
-    RunLayout(argv[0], "--no-file-explicit", {});
-    RunLayout(argv[0], "--no-file-explicit-one", {});
-    RunLayout(argv[0], "--no-file-explicit-empty", {});
-    RunLayout(argv[0], "--no-file-explicit-range", {});
-    RunLayout(argv[0], "--no-file-explicit-text", {});
-    RunLayout(argv[0], "--package-chunk-table", {{"playgo-chunk.dat", ChunkTableFile()}});
-    RunLayout(argv[0], "--package-chunk-table-explicit", {{"playgo-chunk.dat", ChunkTableFile()}});
-    RunLayout(argv[0], "--scenario-only-explicit", {{"playgo-scenario.json", "{}"}});
-    RunLayout(argv[0], "--package-chunk-table", {{"playgo-chunk.dat", ChunkTableFile("plgo")}});
-    RunLayout(argv[0], "--scenario-with-chunk-table", {{"playgo-chunk.dat", ChunkTableFile()}, {"playgo-scenario.json", "{}"}});
+    RunLayout(ArgumentPath(argv, 0), "--no-file", {});
+    RunLayout(ArgumentPath(argv, 0), "--no-file-installed", {});
+    RunLayout(ArgumentPath(argv, 0), "--no-file-absent", {});
+    RunLayout(ArgumentPath(argv, 0), "--no-file-unknown-answer", {});
+    RunLayout(ArgumentPath(argv, 0), "--no-file-explicit", {});
+    RunLayout(ArgumentPath(argv, 0), "--no-file-explicit-one", {});
+    RunLayout(ArgumentPath(argv, 0), "--no-file-explicit-empty", {});
+    RunLayout(ArgumentPath(argv, 0), "--no-file-explicit-range", {});
+    RunLayout(ArgumentPath(argv, 0), "--no-file-explicit-text", {});
+    RunLayout(ArgumentPath(argv, 0), "--package-chunk-table", {{"playgo-chunk.dat", ChunkTableFile()}});
+    RunLayout(ArgumentPath(argv, 0), "--package-chunk-table-explicit", {{"playgo-chunk.dat", ChunkTableFile()}});
+    RunLayout(ArgumentPath(argv, 0), "--scenario-only-explicit", {{"playgo-scenario.json", "{}"}});
+    RunLayout(ArgumentPath(argv, 0), "--package-chunk-table", {{"playgo-chunk.dat", ChunkTableFile("plgo")}});
+    RunLayout(ArgumentPath(argv, 0), "--scenario-with-chunk-table", {{"playgo-chunk.dat", ChunkTableFile()}, {"playgo-scenario.json", "{}"}});
     std::int64_t eta = -1;
     std::int32_t speed = -1;
     PlayGoInitParams fixtureInit{};
@@ -619,14 +619,14 @@ int main(int argc, char** argv) {
     Require(scePlayGoGetInstallSpeed(validHandle, &speed) == 0 && speed == 2);
     Require(scePlayGoPrefetch(-1, nullptr, 0, 0) == badHandleError);
     Require(scePlayGoClose(validHandle) == 0);
-    RunLayout(argv[0], "--scenario-only", {{"playgo-scenario.json", "{}"}});
-    RunLayout(argv[0], "--scenario-only-installed", {{"playgo-scenario.json", "{}"}});
-    RunLayout(argv[0], "--scenario-only-absent", {{"playgo-scenario.json", "{}"}});
-    RunLayout(argv[0], "--ficm-only", {{"playgo-ficm.dat", "x"}});
-    RunLayout(argv[0], "--hash-table-only", {{"playgo-hash-table.dat", "x"}});
-    RunLayout(argv[0], "--invalid-chunk-table", {{"playgo-chunk.dat", "not a chunk table"}});
-    RunLayout(argv[0], "--invalid-chunk-table", {{"playgo-chunk.dat", ChunkTableFile("plgo", 0)}});
-    RunLayout(argv[0], "--chunkdefs-range", {{"playgo-chunkdefs.xml", "<chunkdefs><chunk id=\"65537\"/></chunkdefs>"}});
-    RunLayout(argv[0], "--chunkdefs-overflow", {{"playgo-chunkdefs.xml", "<chunkdefs><chunk id=\"4294967296\"/></chunkdefs>"}});
+    RunLayout(ArgumentPath(argv, 0), "--scenario-only", {{"playgo-scenario.json", "{}"}});
+    RunLayout(ArgumentPath(argv, 0), "--scenario-only-installed", {{"playgo-scenario.json", "{}"}});
+    RunLayout(ArgumentPath(argv, 0), "--scenario-only-absent", {{"playgo-scenario.json", "{}"}});
+    RunLayout(ArgumentPath(argv, 0), "--ficm-only", {{"playgo-ficm.dat", "x"}});
+    RunLayout(ArgumentPath(argv, 0), "--hash-table-only", {{"playgo-hash-table.dat", "x"}});
+    RunLayout(ArgumentPath(argv, 0), "--invalid-chunk-table", {{"playgo-chunk.dat", "not a chunk table"}});
+    RunLayout(ArgumentPath(argv, 0), "--invalid-chunk-table", {{"playgo-chunk.dat", ChunkTableFile("plgo", 0)}});
+    RunLayout(ArgumentPath(argv, 0), "--chunkdefs-range", {{"playgo-chunkdefs.xml", "<chunkdefs><chunk id=\"65537\"/></chunkdefs>"}});
+    RunLayout(ArgumentPath(argv, 0), "--chunkdefs-overflow", {{"playgo-chunkdefs.xml", "<chunkdefs><chunk id=\"4294967296\"/></chunkdefs>"}});
     return 0;
 }

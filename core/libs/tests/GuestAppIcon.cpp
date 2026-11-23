@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -84,7 +85,7 @@ int CheckConcurrentAccess(const char* root) {
     return 0;
 }
 
-void RunCase(const char* self, const char* mode, std::initializer_list<std::pair<const char*, std::string>> files) {
+void RunCase(const std::filesystem::path& self, const char* mode, std::initializer_list<std::pair<const char*, std::string>> files) {
     const auto root = std::filesystem::temp_directory_path() / ("guest_app_icon_" + std::to_string(std::random_device{}()));
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "app0" / "sce_sys");
@@ -92,13 +93,12 @@ void RunCase(const char* self, const char* mode, std::initializer_list<std::pair
         std::ofstream stream(root / "app0" / "sce_sys" / name, std::ios::binary);
         stream.write(content.data(), static_cast<std::streamsize>(content.size()));
     }
-    const std::string arguments = "\"" + std::string(self) + "\" " + mode + " \"" + root.string() + "\"";
 #ifdef _WIN32
-    const std::string command = "\"" + arguments + "\"";
+    const std::wstring arguments = L"\"" + self.native() + L"\" " + std::filesystem::path(mode).native() + L" \"" + root.native() + L"\"";
+    const int status = _wsystem((L"\"" + arguments + L"\"").c_str());
 #else
-    const std::string command = arguments;
+    const int status = std::system(("\"" + self.string() + "\" " + mode + " \"" + root.string() + "\"").c_str());
 #endif
-    const int status = std::system(command.c_str());
     std::filesystem::remove_all(root);
     Require(status == 0);
 }
@@ -121,12 +121,12 @@ int main(int argc, char** argv) {
     const std::string shortPng("\x89PNG\r\n\x1a", 7);
     const std::string emptyPng("");
 
-    RunCase(argv[0], "--no-icon", {});
-    RunCase(argv[0], "--valid-icon", {{"icon0.png", validPng}});
-    RunCase(argv[0], "--empty-icon", {{"icon0.png", emptyPng}});
-    RunCase(argv[0], "--corrupt-png", {{"icon0.png", corruptPng}});
-    RunCase(argv[0], "--corrupt-png", {{"icon0.png", shortPng}});
-    RunCase(argv[0], "--concurrent", {{"icon0.png", validPng}});
+    RunCase(ArgumentPath(argv, 0), "--no-icon", {});
+    RunCase(ArgumentPath(argv, 0), "--valid-icon", {{"icon0.png", validPng}});
+    RunCase(ArgumentPath(argv, 0), "--empty-icon", {{"icon0.png", emptyPng}});
+    RunCase(ArgumentPath(argv, 0), "--corrupt-png", {{"icon0.png", corruptPng}});
+    RunCase(ArgumentPath(argv, 0), "--corrupt-png", {{"icon0.png", shortPng}});
+    RunCase(ArgumentPath(argv, 0), "--concurrent", {{"icon0.png", validPng}});
 
     return 0;
 }
