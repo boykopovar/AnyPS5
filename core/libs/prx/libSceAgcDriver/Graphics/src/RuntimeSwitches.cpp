@@ -35,6 +35,7 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_STAGE_POOL_REUSE",
     "APS5_INDEX_IN_PLACE_BEHIND_WRITER",
     "APS5_WIDE_LIBRARY_KEYS",
+    "APS5_NO_WIDE_TABLE_COPY_HLE",
 };
 
 struct SwitchValues {
@@ -59,6 +60,7 @@ struct SwitchValues {
             std::getenv("APS5_NO_STAGE_POOL_REUSE") != nullptr,
             std::getenv("APS5_INDEX_IN_PLACE_BEHIND_WRITER") != nullptr,
             std::getenv("APS5_WIDE_LIBRARY_KEYS") != nullptr,
+            std::getenv("APS5_NO_WIDE_TABLE_COPY_HLE") != nullptr,
         };
         for (std::size_t index = 0; index < SwitchCount; ++index) set[index].store(environment[index], std::memory_order_relaxed);
     }

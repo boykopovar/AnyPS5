@@ -1341,6 +1341,75 @@ static void TestBundleNodeHandle() {
     Require(copiedIframe == iframeContent.Get());
     WKRelease(copiedIframe);
 
+    Require(!WKBundleNodeHandleGetHTMLInputElementAutoFilled(ref));
+    Require(!WKBundleNodeHandleGetHTMLInputElementAutofilled(ref));
+    Require(!WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(ref));
+    Require(!WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(ref));
+    Require(handle->htmlInputElementSpellcheckEnabled);
+    Require(!handle->htmlInputElementAutoFilledAndViewable);
+    Require(handle->htmlInputElementValue.Get() == nullptr);
+
+    WKBundleNodeHandleSetHTMLInputElementAutoFilled(ref, true);
+    Require(WKBundleNodeHandleGetHTMLInputElementAutoFilled(ref));
+    Require(WKBundleNodeHandleGetHTMLInputElementAutofilled(ref));
+    Require(handle->htmlInputElementAutoFilled);
+
+    WKBundleNodeHandleSetHTMLInputElementAutofilled(ref, false);
+    Require(!WKBundleNodeHandleGetHTMLInputElementAutoFilled(ref));
+    Require(!WKBundleNodeHandleGetHTMLInputElementAutofilled(ref));
+    Require(!handle->htmlInputElementAutoFilled);
+
+    WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(ref, true);
+    Require(handle->htmlInputElementAutoFilledAndViewable);
+    WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(ref, false);
+    Require(!handle->htmlInputElementAutoFilledAndViewable);
+
+    WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(ref, false);
+    Require(!handle->htmlInputElementSpellcheckEnabled);
+    WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(ref, true);
+    Require(handle->htmlInputElementSpellcheckEnabled);
+
+    const void* val = WKStringCreateWithUTF8CString("test-user-value");
+    WKBundleNodeHandleSetHTMLInputElementValueForUser(ref, val);
+    Require(WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(ref));
+    Require(handle->htmlInputElementValue.Get() != nullptr);
+    Require(WKStringIsEqualToUTF8CString(handle->htmlInputElementValue.Get(), "test-user-value"));
+    WKRelease(val);
+
+    WKBundleNodeHandleSetHTMLInputElementValueForUser(ref, nullptr);
+    Require(handle->htmlInputElementValue.Get() == nullptr);
+    Require(WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(ref));
+
+    auto requireThrows = [](auto&& fn) {
+        bool threwEx = false;
+        try {
+            fn();
+        } catch (const std::invalid_argument&) {
+            threwEx = true;
+        }
+        Require(threwEx);
+    };
+
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutoFilled(nullptr, true); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutoFilled(docFrame.Get(), true); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementAutoFilled(nullptr); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementAutoFilled(docFrame.Get()); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutofilled(nullptr, true); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutofilled(docFrame.Get(), true); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementAutofilled(nullptr); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementAutofilled(docFrame.Get()); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(nullptr, true); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(docFrame.Get(), true); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(nullptr, false); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(docFrame.Get(), false); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementValueForUser(nullptr, nullptr); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementValueForUser(docFrame.Get(), nullptr); });
+    requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementValueForUser(ref, docFrame.Get()); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(nullptr); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(docFrame.Get()); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(nullptr); });
+    requireThrows([&] { WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(docFrame.Get()); });
+
     bool threw = false;
     try {
         WKBundleNodeHandleCopyDocument(nullptr);
@@ -1387,6 +1456,158 @@ static void TestBundleFrameScroll() {
     bool threw = false;
     try {
         WKBundleFrameGetContentBounds(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestBundlePagination() {
+    auto bundle = NKWebKit::Make<NKWebKit::Bundle>();
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    const void* bundleRef = bundle.Get();
+    const void* frameRef = frame.Get();
+
+    Require(WKBundleNumberOfPages(bundleRef, frameRef, 800.0, 600.0) == 1);
+    Require(WKBundleNumberOfPages(bundleRef, frameRef, 0.0, 600.0) == 0);
+    Require(WKBundleNumberOfPages(bundleRef, frameRef, -10.0, 600.0) == 0);
+    Require(WKBundleNumberOfPages(bundleRef, frameRef, 800.0, 0.0) == 0);
+    Require(WKBundleNumberOfPages(bundleRef, frameRef, 800.0, -5.0) == 0);
+
+    frame->numberOfPages = 7;
+    Require(WKBundleNumberOfPages(bundleRef, frameRef, 1024.0, 768.0) == 7);
+
+    Require(!WKBundleIsPageBoxVisible(bundleRef, frameRef, 0));
+    Require(!WKBundleIsPageBoxVisible(bundleRef, frameRef, -1));
+    Require(!WKBundleIsPageBoxVisible(bundleRef, frameRef, 100));
+
+    frame->pageBoxVisibility = {true, false, true};
+    Require(WKBundleIsPageBoxVisible(bundleRef, frameRef, 0));
+    Require(!WKBundleIsPageBoxVisible(bundleRef, frameRef, 1));
+    Require(WKBundleIsPageBoxVisible(bundleRef, frameRef, 2));
+    Require(!WKBundleIsPageBoxVisible(bundleRef, frameRef, 3));
+    Require(!WKBundleIsPageBoxVisible(bundleRef, frameRef, -1));
+
+    bool threw = false;
+    try {
+        WKBundleNumberOfPages(nullptr, frameRef, 800.0, 600.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleNumberOfPages(bundleRef, nullptr, 800.0, 600.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleIsPageBoxVisible(nullptr, frameRef, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleIsPageBoxVisible(bundleRef, nullptr, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleNumberOfPages(frameRef, bundleRef, 800.0, 600.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestBundleFrameForms() {
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    const void* ref = frame.Get();
+
+    Require(!WKBundleFrameContainsAnyFormElements(ref));
+    Require(!WKBundleFrameContainsAnyFormControls(ref));
+
+    frame->containsAnyFormElements = true;
+    Require(WKBundleFrameContainsAnyFormElements(ref));
+    Require(!WKBundleFrameContainsAnyFormControls(ref));
+
+    frame->containsAnyFormControls = true;
+    Require(WKBundleFrameContainsAnyFormElements(ref));
+    Require(WKBundleFrameContainsAnyFormControls(ref));
+
+    frame->containsAnyFormElements = false;
+    Require(!WKBundleFrameContainsAnyFormElements(ref));
+    Require(WKBundleFrameContainsAnyFormControls(ref));
+
+    bool threw = false;
+    try {
+        WKBundleFrameContainsAnyFormElements(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleFrameContainsAnyFormControls(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestBundleFrameActions() {
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    const void* ref = frame.Get();
+
+    Require(!frame->isFocused);
+    Require(!frame->hasOpener);
+
+    frame->hasOpener = true;
+    WKBundleFrameClearOpener(ref);
+    Require(!frame->hasOpener);
+
+    WKBundleFrameFocus(ref);
+    Require(frame->isFocused);
+
+    bool threw = false;
+    try {
+        WKBundleFrameClearOpener(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleFrameFocus(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        auto wrongObj = NKWebKit::Make<NKWebKit::String>();
+        WKBundleFrameClearOpener(wrongObj.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        auto wrongObj = NKWebKit::Make<NKWebKit::String>();
+        WKBundleFrameFocus(wrongObj.Get());
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -2542,56 +2763,24 @@ static void TestInspector() {
     Require(!WKInspectorIsProfilingPage(ref));
     Require(WKInspectorIsVisible(ref));
 
+    WKInspectorHide(ref);
+    Require(!WKInspectorIsVisible(ref));
+
     WKInspectorAttach(ref);
-    Require(WKInspectorIsAttached(ref));
-    WKInspectorDetach(ref);
     Require(!WKInspectorIsAttached(ref));
-
     WKInspectorConnect(ref);
-    Require(WKInspectorIsConnected(ref));
-
+    Require(!WKInspectorIsConnected(ref));
     WKInspectorShow(ref);
-    Require(WKInspectorIsVisible(ref));
-    Require(WKInspectorIsFront(ref));
-    WKInspectorHide(ref);
-    Require(!WKInspectorIsVisible(ref));
-    Require(!WKInspectorIsFront(ref));
-
     WKInspectorShowConsole(ref);
-    Require(WKInspectorIsVisible(ref));
-    Require(WKInspectorIsFront(ref));
-    WKInspectorHide(ref);
+    WKInspectorShowResources(ref);
     Require(!WKInspectorIsVisible(ref));
     Require(!WKInspectorIsFront(ref));
-
-    WKInspectorShowResources(ref);
-    Require(WKInspectorIsVisible(ref));
-    Require(WKInspectorIsFront(ref));
-
-    Require(!WKInspectorIsElementSelectionActive(ref));
-    WKInspectorToggleElementSelection(ref);
-    Require(WKInspectorIsElementSelectionActive(ref));
     WKInspectorToggleElementSelection(ref);
     Require(!WKInspectorIsElementSelectionActive(ref));
-
-    Require(!WKInspectorIsProfilingPage(ref));
-    WKInspectorTogglePageProfiling(ref);
-    Require(WKInspectorIsProfilingPage(ref));
     WKInspectorTogglePageProfiling(ref);
     Require(!WKInspectorIsProfilingPage(ref));
 
-    WKInspectorAttach(ref);
-    WKInspectorConnect(ref);
-    WKInspectorShow(ref);
-    WKInspectorToggleElementSelection(ref);
-    WKInspectorTogglePageProfiling(ref);
-    Require(WKInspectorIsAttached(ref));
-    Require(WKInspectorIsConnected(ref));
-    Require(WKInspectorIsVisible(ref));
-    Require(WKInspectorIsFront(ref));
-    Require(WKInspectorIsElementSelectionActive(ref));
-    Require(WKInspectorIsProfilingPage(ref));
-
+    WKInspectorDetach(ref);
     WKInspectorClose(ref);
     Require(!WKInspectorIsAttached(ref));
     Require(!WKInspectorIsConnected(ref));
@@ -2698,12 +2887,14 @@ static void TestFrame() {
     Require(!WKFrameIsDisplayingMarkupDocument(ref));
     Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(!WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
 
     frame->isDisplayingMarkupDocument = true;
     Require(WKFrameCanProvideSource(ref));
     Require(WKFrameIsDisplayingMarkupDocument(ref));
     Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(!WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
 
     frame->isDisplayingMarkupDocument = false;
     frame->isDisplayingStandaloneImageDocument = true;
@@ -2711,6 +2902,7 @@ static void TestFrame() {
     Require(!WKFrameIsDisplayingMarkupDocument(ref));
     Require(WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(!WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
 
     frame->isDisplayingStandaloneImageDocument = false;
     frame->isMainFrame = true;
@@ -2718,10 +2910,27 @@ static void TestFrame() {
     Require(!WKFrameIsDisplayingMarkupDocument(ref));
     Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
+
+    frame->isMainFrame = false;
+    frame->isFrameSet = true;
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+    Require(WKFrameIsFrameSet(ref));
 
     bool caught = false;
     try {
         WKFrameIsMainFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        caught = true;
+    }
+    Require(caught);
+
+    caught = false;
+    try {
+        WKFrameIsFrameSet(nullptr);
     } catch (const std::invalid_argument&) {
         caught = true;
     }
@@ -2802,6 +3011,50 @@ static void TestFrame() {
     checkThrows(WKFrameCopyUnreachableURL);
     checkThrows(WKFrameCreateFrameHandle);
     checkThrows(WKFrameGetFrameLoadState);
+
+    auto* htmlMime = WKStringCreateWithUTF8CString("text/html");
+    Require(WKFrameCanShowMIMEType(ref, htmlMime));
+    WKRelease(htmlMime);
+
+    auto* pngMime = WKStringCreateWithUTF8CString("image/png");
+    Require(WKFrameCanShowMIMEType(ref, pngMime));
+    WKRelease(pngMime);
+
+    auto* unsupportedMime = WKStringCreateWithUTF8CString("text/rtf");
+    Require(!WKFrameCanShowMIMEType(ref, unsupportedMime));
+    WKRelease(unsupportedMime);
+
+    auto* emptyMime = WKStringCreateWithUTF8CString("");
+    Require(!WKFrameCanShowMIMEType(ref, emptyMime));
+    WKRelease(emptyMime);
+
+    auto* nullMime = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>());
+    Require(!WKFrameCanShowMIMEType(ref, nullMime));
+    WKRelease(nullMime);
+
+    bool threwMime = false;
+    try {
+        WKFrameCanShowMIMEType(nullptr, ref);
+    } catch (const std::invalid_argument&) {
+        threwMime = true;
+    }
+    Require(threwMime);
+
+    threwMime = false;
+    try {
+        WKFrameCanShowMIMEType(ref, nullptr);
+    } catch (const std::invalid_argument&) {
+        threwMime = true;
+    }
+    Require(threwMime);
+
+    threwMime = false;
+    try {
+        WKFrameCanShowMIMEType(ref, ref);
+    } catch (const std::invalid_argument&) {
+        threwMime = true;
+    }
+    Require(threwMime);
 }
 
 static void TestImage() {
@@ -3260,6 +3513,31 @@ static void TestView() {
     WKViewSetViewScaleFactor(ref, 1.75);
     Require(WKViewGetViewScaleFactor(ref) == 1.75);
 
+    Require(!view->isActive);
+    Require(!view->isFocused);
+    Require(!view->isVisible);
+    Require(view->size.width == 0.0);
+    Require(view->size.height == 0.0);
+
+    WKViewSetActive(ref, true);
+    Require(view->isActive);
+    WKViewSetActive(ref, false);
+    Require(!view->isActive);
+
+    WKViewSetFocus(ref, true);
+    Require(view->isFocused);
+    WKViewSetFocus(ref, false);
+    Require(!view->isFocused);
+
+    WKViewSetVisible(ref, true);
+    Require(view->isVisible);
+    WKViewSetVisible(ref, false);
+    Require(!view->isVisible);
+
+    WKViewSetSize(ref, NKWebKit::SizeValue{ 1920.0, 1080.0 });
+    Require(view->size.width == 1920.0);
+    Require(view->size.height == 1080.0);
+
     WKViewSetDrawsBackground(ref, false);
     Require(!view->drawsBackground);
     WKViewSetDrawsBackground(ref, true);
@@ -3409,6 +3687,62 @@ static void TestView() {
         threw = true;
     }
     Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetSize(ref, NKWebKit::SizeValue{ -1.0, 1080.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetSize(ref, NKWebKit::SizeValue{ 1920.0, -1.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetSize(ref, NKWebKit::SizeValue{ std::numeric_limits<double>::quiet_NaN(), 1080.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetActive(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetFocus(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetVisible(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetSize(nullptr, NKWebKit::SizeValue{ 100.0, 100.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 int main() {
@@ -3432,6 +3766,9 @@ int main() {
     TestBundleHitTestResult();
     TestBundleNodeHandle();
     TestBundleFrameScroll();
+    TestBundlePagination();
+    TestBundleFrameForms();
+    TestBundleFrameActions();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();

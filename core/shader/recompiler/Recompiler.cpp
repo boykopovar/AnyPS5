@@ -450,7 +450,7 @@ struct EmissionFailure {
 };
 
 constexpr std::size_t ResultMemoSets = 64;
-constexpr std::size_t ResultMemoWays = 4;
+constexpr std::size_t ResultMemoWays = 16;
 using ResultMemoTable = std::array<ResultMemoEntry, ResultMemoSets * ResultMemoWays>;
 
 struct SourceEntry : std::enable_shared_from_this<SourceEntry> {

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -125,10 +126,29 @@ bool ValidText(const char16_t* text, std::size_t length, bool multiline) {
     return true;
 }
 
-std::size_t TextLength(const char16_t* text, std::size_t limit) {
-    std::size_t length = 0;
-    while (length < limit && text[length] != u'\0') ++length;
-    return length;
+bool ReadGuestText(const char16_t* source, std::size_t limit, std::u16string* outText) {
+    outText->clear();
+    if (limit == 0) return true;
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    if (base == 0) return false;
+    const std::uintptr_t maxAddress = std::numeric_limits<std::uintptr_t>::max();
+    const int savedErrno = errno;
+    for (std::size_t i = 0; i < limit; ++i) {
+        if (i > (maxAddress - base) / sizeof(char16_t)) {
+            errno = savedErrno;
+            return false;
+        }
+        char16_t unit = u'\0';
+        const bool copied = GuestCopyIn_nid_no_patch(&unit, reinterpret_cast<const char16_t*>(base + i * sizeof(char16_t)), sizeof(unit));
+        if (!copied) {
+            errno = savedErrno;
+            return false;
+        }
+        if (unit == u'\0') break;
+        outText->push_back(unit);
+    }
+    errno = savedErrno;
+    return true;
 }
 
 std::u16string DecodeUtf8(const char* text, std::size_t size) {
@@ -367,15 +387,7 @@ int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outPa
         if (byte != 0) return ErrorInvalidReserved;
     }
     std::u16string localText;
-    for (std::uint32_t i = 0; i < localParam.max_text_length; ++i) {
-        char16_t unit = u'\0';
-        const int textErrno = errno;
-        const bool copiedUnit = GuestCopyIn_nid_no_patch(&unit, localParam.input_text_buffer + i, sizeof(unit));
-        errno = textErrno;
-        if (!copiedUnit) return ErrorInvalidAddress;
-        if (unit == u'\0') break;
-        localText.push_back(unit);
-    }
+    if (!ReadGuestText(localParam.input_text_buffer, localParam.max_text_length, &localText)) return ErrorInvalidAddress;
     if (!ValidText(localText.data(), localText.size(), (localParam.option & OptionMultiline) != 0)) return ErrorInvalidText;
     if (outParam) *outParam = localParam;
     if (outExt) *outExt = localExt;
@@ -703,9 +715,14 @@ int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length) {
     if (!g_session) return ErrorNotOpened;
     if (!text) return ErrorInvalidAddress;
     Session& session = *g_session;
-    const std::size_t count = TextLength(text, std::min(length, session.param.max_text_length));
-    if (!ValidText(text, count, (session.param.option & OptionMultiline) != 0)) return ErrorInvalidText;
-    session.text.assign(text, count);
+    std::u16string localText;
+    if (!ReadGuestText(text, std::min<std::size_t>(length, session.param.max_text_length), &localText)) {
+        return ErrorInvalidAddress;
+    }
+    if (!ValidText(localText.data(), localText.size(), (session.param.option & OptionMultiline) != 0)) {
+        return ErrorInvalidText;
+    }
+    session.text = std::move(localText);
     ++session.revision;
     NormalizeCaret(session);
     SyncBuffers(session);

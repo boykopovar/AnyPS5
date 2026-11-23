@@ -520,6 +520,8 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
         depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
     }
     Require(!gcn || (maxMip == 0 && viewMip == 0), "PS4 depth targets with mip levels are not implemented");
+    std::uint64_t htileSliceBytes = 0;
+    std::uint64_t htileMipOffset = 0;
     if (maxMip != 0) {
         char message[320];
         std::snprintf(message, sizeof(message), "depth view mip %u of %u at %ux%u (DB_Z_INFO 0x%08x, DB_DEPTH_VIEW 0x%08x)", viewMip, maxMip + 1u, depth.extent.width, depth.extent.height, read(cx, 0x010), view);
@@ -531,7 +533,24 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
         const auto stencilMips = ComputeElementMipLayout(TextureTileMode::kZ64KBX, 1u, depth.extent.width, depth.extent.height, maxMip + 1u);
         Require(zFormat == 0 || !depthMips.at(viewMip).tail, "rendering the " + where + " into the packed mip tail is unsupported");
         Require(!stencil || !stencilMips.at(viewMip).tail, "rendering the stencil of the " + where + " into the packed mip tail is unsupported");
-        Require((read(cx, 0x010) & (1u << 29u)) == 0, "HTILE for the " + where + " is unsupported");
+        if (zFormat != 0 && (read(cx, 0x010) & (1u << 29u)) != 0) {
+            std::uint32_t firstTail = maxMip + 1u;
+            for (std::uint32_t mip = 0; mip <= maxMip; ++mip) {
+                if (depthMips.at(mip).tail) {
+                    firstTail = mip;
+                    break;
+                }
+            }
+            htileSliceBytes = firstTail == maxMip + 1u ? 0u : HtileMetadataBytes({1u, 1u});
+            for (auto mip = firstTail; mip-- > 0u;) {
+                const auto mipBytes = HtileMetadataBytes({std::max((depth.extent.width + (1u << mip) - 1u) >> mip, 1u), std::max((depth.extent.height + (1u << mip) - 1u) >> mip, 1u)});
+                if (mip == viewMip) {
+                    htileMipOffset = htileSliceBytes;
+                    Require(mipBytes == HtileMetadataBytes({depthMips.at(mip).width, depthMips.at(mip).height}), "the " + where + " needs more HTILE than its extent covers, which is unsupported");
+                }
+                htileSliceBytes += mipBytes;
+            }
+        }
         if (const auto slice = view & 0x1fffu; slice != 0) {
             if (depth.address != 0) depth.address += static_cast<std::uint64_t>(slice) * ComputeSurfaceSize(depthMips, 1u);
             if (depth.stencilAddress != 0) depth.stencilAddress += static_cast<std::uint64_t>(slice) * ComputeSurfaceSize(stencilMips, 1u);
@@ -548,7 +567,8 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     depth.depthPartiallyResident = zFormat != 0 && (read(cx, 0x010) & 0x1000u) != 0;
     depth.stencilPartiallyResident = stencil && (stencilInfo & 0x1000u) != 0;
     if (const auto htile = find(cx, 0x005); zFormat != 0 && htile != cx.end() && htile->second != 0 && (read(cx, 0x010) & (1u << 29u)) != 0) {
-        depth.htileAddress = base(0x005, 0x01e) + static_cast<std::uint64_t>(view & 0x1fffu) * HtileMetadataBytes(depth.extent);
+        const auto sliceBytes = htileSliceBytes != 0u ? htileSliceBytes : HtileMetadataBytes(depth.extent);
+        depth.htileAddress = base(0x005, 0x01e) + static_cast<std::uint64_t>(view & 0x1fffu) * sliceBytes + htileMipOffset;
         depth.htileStencil = stencil && !depth.htileDepthOnly;
     }
     return depth;
@@ -2458,7 +2478,10 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
     const auto view = read(cx, 0x31b + stride);
     const auto slice = view & 0x7ffu;
-    Require(((view >> 13u) & 0x7ffu) == slice, "GCN color views of several array slices are not implemented");
+    const auto lastSlice = (view >> 13u) & 0x7ffu;
+    Require(lastSlice >= slice, "the color view ends before its first slice");
+    const auto exports = find(cx, 0x207);
+    Require(lastSlice == slice || exports == cx.end() || (exports->second & (1u << 18u)) == 0, "GCN layered rendering into several array slices through the vertex render target index is not implemented");
     const auto pitch = ((read(cx, 0x319 + stride) & 0x7ffu) + 1u) * 8u;
     const auto sliceElements = ((read(cx, 0x31a + stride) & 0x3fffffu) + 1u) * 64u;
     color.extent = {pitch, sliceElements / pitch};

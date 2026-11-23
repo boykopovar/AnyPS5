@@ -11,12 +11,14 @@
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float16ConversionProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float16NanProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FloatFlushProbe.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -116,6 +118,7 @@ void ResetCheckpointSnapshots() noexcept;
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <utility>
 
@@ -232,6 +235,17 @@ void DumpDeviceFaultVendorBinary(VkDevice device, PFN_vkGetDeviceFaultInfoEXT fa
 APS5_RUN_REPORT_COMPONENT("libSceAgcDriver")
 
 namespace {
+
+class RdnaProbeShaders {
+public:
+    RdnaProbeShaders() : gcn(ShaderRecompiler::GcnGuestShaders()) { ShaderRecompiler::SetGcnGuestShaders(false); }
+    ~RdnaProbeShaders() { ShaderRecompiler::SetGcnGuestShaders(gcn); }
+    RdnaProbeShaders(const RdnaProbeShaders&) = delete;
+    RdnaProbeShaders& operator=(const RdnaProbeShaders&) = delete;
+
+private:
+    bool gcn;
+};
 
 std::atomic<unsigned long long> descriptorUse[7 * 4];
 
@@ -738,6 +752,8 @@ struct VulkanDevice::State {
     std::map<ComputePipelineKey, std::shared_future<std::shared_ptr<ComputePipelineObjects>>> computePipelinesBuilding;
     std::set<ComputePipelineKey> computePipelinesQueued;
     std::set<ComputePipelineKey> computePipelinesFailed;
+    std::mutex prebuiltGraphicsKeysMutex;
+    std::unordered_set<std::uint64_t> prebuiltGraphicsKeys;
     // The journal replay building this device's pipelines on its own threads; drained first at teardown.
     std::shared_ptr<Graphics::PipelineJournalReplay> journalReplay;
     std::atomic<bool> journalReplayPending{false};
@@ -2615,7 +2631,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, 0, &state->queue);
     state->queueFamily = family;
-    if (plan.present) {
+    if (plan.present && std::getenv("APS5_NO_PRESENT_QUEUE") == nullptr) {
         state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, plan.presentIndex, &state->presentQueue);
         APS5_LOG_OUT("Presentation queue family=%u index=%u", family, plan.presentIndex);
     }
@@ -2851,6 +2867,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             std::fprintf(stderr, "[present] ANYPS5_UPSCALE=fsr: FSR 1 EASU and RCAS when the window is larger than the display buffer, the normal scaler otherwise; RCAS sharpness %.2f\n", static_cast<double>(upscale.sharpness));
         }
     }
+    std::optional<RdnaProbeShaders> rdnaProbeShaders(std::in_place);
     if (state->float32FlushToZeroCandidate) {
         const auto probeStart = std::chrono::steady_clock::now();
         state->probingFloatControls = true;
@@ -2894,6 +2911,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->float16HostNans = probe.mismatches == 0u;
         std::fprintf(stderr, "[float-controls] f16 NaN results with IEEE_MODE clear: %s (%u of %u probe results differ from the selected NaN, %.0f ms)\n", state->float16HostNans ? "host" : "selected", probe.mismatches, probe.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
     }
+    rdnaProbeShaders.reset();
     // A device without a window is usually replaced by the window's device before the title draws
     // (Driver::AttachWindow): its replay starts at its first draw or dispatch instead, so the
     // journal is replayed once, on the device the title draws with.
@@ -5163,6 +5181,24 @@ bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stage
     }
     const auto layouts = Graphics::DescribeSetLayouts(context, group);
     return Graphics::Pipeline::Prebuild(context, state, Graphics::VertexInputLayout{}, layouts.View(), group);
+}
+
+bool VulkanDevice::PrebuildGraphicsLibrariesOnFirstVisit(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders) {
+    std::uint64_t key = 0xcbf29ce484222325ull;
+    for (const auto& shader : shaders) key = (key ^ (shader.program != nullptr ? shader.program->variantId : 0ull)) * 0x100000001b3ull;
+    {
+        std::lock_guard keyLock(state->prebuiltGraphicsKeysMutex);
+        if (state->prebuiltGraphicsKeys.count(key) != 0) return false;
+    }
+    bool built = false;
+    try {
+        built = PrebuildGraphicsLibraries(stages, shaders);
+    } catch (const std::exception& error) {
+        APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
+    }
+    std::lock_guard keyLock(state->prebuiltGraphicsKeysMutex);
+    state->prebuiltGraphicsKeys.insert(key);
+    return built;
 }
 
 std::vector<std::uint32_t> VulkanDevice::DrawContentKey(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders) const {
