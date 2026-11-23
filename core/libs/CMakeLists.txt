@@ -596,7 +596,7 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_patch_dependencies.py --mode aliases
                 --cmake "${CMAKE_COMMAND}" --ninja "${CMAKE_MAKE_PROGRAM}" --config "$<CONFIG>")
             set_tests_properties(nid_patch_dependencies nid_patch_dependencies_helper PROPERTIES TIMEOUT 20)
-            set_tests_properties(nid_patch_module_targets PROPERTIES TIMEOUT 120)
+            set_tests_properties(nid_patch_module_targets PROPERTIES TIMEOUT 30)
         endif()
     endif()
     add_test_executable(patched_libraries_tests tests/PatchedLibraries.cpp)

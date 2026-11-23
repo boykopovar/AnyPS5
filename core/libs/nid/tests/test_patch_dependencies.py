@@ -214,11 +214,12 @@ def main():
         repository_graph(args)
     elif args.mode == "aliases":
         alias_fixture(args, "Ninja", args.ninja)
-        make = args.make or next(filter(None, map(shutil.which, ("mingw32-make", "gmake", "make"))), None)
+        candidates = ("mingw32-make",) if os.name == "nt" else ("gmake", "make")
+        make = args.make or next(filter(None, map(shutil.which, candidates)), None)
         if make:
             alias_fixture(args, "MinGW Makefiles" if os.name == "nt" else "Unix Makefiles", make)
         else:
-            print("no make program on PATH: the Makefile generator was not checked")
+            print(f"no {' or '.join(candidates)} on PATH: the Makefile generator was not checked")
     else:
         helper_fixture(args)
 
