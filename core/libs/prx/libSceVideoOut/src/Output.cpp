@@ -396,9 +396,7 @@ int APS5_VABI sceVideoOutInitializeOutputOptions(VideoOutOutputOptions* options)
     if (options == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     VideoOutOutputOptions localOptions{};
     localOptions.internalData[0] = VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(options, &localOptions, sizeof(localOptions));
-    errno = savedErrno;
     if (!copied) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     return 0;
 }
@@ -467,9 +465,7 @@ int APS5_VABI sceVideoOutColorSettingsSetGamma(VideoOutColorSettings* settings, 
     if (!std::isfinite(gamma) || gamma < 0.1f || gamma > 2.0f) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(&settings->gamma, &gamma, sizeof(gamma));
-    errno = savedErrno;
     if (!copied) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
@@ -481,9 +477,7 @@ int APS5_VABI sceVideoOutAdjustColor(int handle, const VideoOutColorSettings* se
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
     VideoOutColorSettings localSettings{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localSettings, settings, sizeof(localSettings));
-    errno = savedErrno;
     if (!copied) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
@@ -501,9 +495,7 @@ int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversio
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
     const VideoOutColorSpaceConversionSettings zeroSettings{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(settings, &zeroSettings, sizeof(zeroSettings));
-    errno = savedErrno;
     if (!copied) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
@@ -514,9 +506,7 @@ int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(Video
     if (settings == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
-    const int savedErrno = errno;
     const bool writable = GuestWritable_nid_no_patch(settings, sizeof(VideoOutColorSpaceConversionSettings));
-    errno = savedErrno;
     if (!writable) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
@@ -530,9 +520,7 @@ int APS5_VABI sceVideoOutAdjustColorSpaceConversion(int handle, const VideoOutCo
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
     VideoOutColorSpaceConversionSettings localSettings{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localSettings, settings, sizeof(localSettings));
-    errno = savedErrno;
     if (!copied) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
