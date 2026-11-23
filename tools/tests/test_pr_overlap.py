@@ -39,7 +39,7 @@ class OpenPullRequestsTests(unittest.TestCase):
         self.assertEqual(set(found), set(range(1, 202)))
         self.assertEqual(found[201], {
             "ref": "refs/pr/201", "sha": "sha201", "branch": "branch201", "author": "author201", "title": "",
-            "depends": {12, 34},
+            "depends": {12, 34}, "fixes": set(),
         })
         self.assertEqual(found[1]["depends"], set())
 
@@ -60,7 +60,7 @@ class OpenPullRequestsTests(unittest.TestCase):
             found = pr_overlap.open_prs("main")
         self.assertEqual(found, {
             7: {"ref": "refs/pr/7", "sha": "head-sha", "branch": "contrib/topic", "author": "contributor", "title": "",
-                "depends": set()},
+                "depends": set(), "fixes": set()},
         })
 
     def test_collects_concatenated_json_pages_from_paginated_gh_output(self):
@@ -646,6 +646,48 @@ class HelperPathTests(unittest.TestCase):
         self.assertEqual(pr_overlap.depends_on(
             "- [ ] Depends on: [#7](https://github.com/boykopovar/AnyPS5/pull/7)"), {7})
         self.assertEqual(pr_overlap.depends_on(""), set())
+class FixesTests(unittest.TestCase):
+    def test_fixes_reads_the_template_field_and_closing_keywords(self):
+        self.assertEqual(pr_overlap.fixes("- [x] Fixes: Fixes #22530"), {22530})
+        self.assertEqual(pr_overlap.fixes("- [x] Fixes: #12, #34 and #56"), {12, 34, 56})
+        self.assertEqual(pr_overlap.fixes("- [x] Fixes: Fixes #12, closes #34"), {12, 34})
+        self.assertEqual(pr_overlap.fixes("This resolves #7.\n- [x] Fixes: none"), {7})
+        self.assertEqual(pr_overlap.fixes(
+            "- [x] Fixes: [the crash](https://github.com/boykopovar/AnyPS5/issues/9)"), {9})
+        self.assertEqual(pr_overlap.fixes("- [x] Fixes: Fixes https://github.com/boykopovar/AnyPS5/issues/11"), {11})
+
+    def test_fixes_ignores_none_comments_and_other_words(self):
+        self.assertEqual(pr_overlap.fixes("- [ ] Fixes: <!-- issue it closes as Fixes #N, or none -->"), set())
+        self.assertEqual(pr_overlap.fixes("- [x] Fixes: none\nUnrelated issue #42"), set())
+        self.assertEqual(pr_overlap.fixes("<!-- Fixes #3 -->"), set())
+        self.assertEqual(pr_overlap.fixes("strip the prefixes #5 and the hot-fixes #6"), set())
+        self.assertEqual(pr_overlap.fixes("- [x] Depends on: #8"), set())
+        self.assertEqual(pr_overlap.fixes(None), set())
+
+    def test_pull_requests_by_other_authors_that_fix_one_issue_are_reported(self):
+        prs = {1: {"author": "first", "depends": set(), "fixes": {22530, 7}, "tree": "a", "files": {"a.cpp"}, "added": set()},
+               2: {"author": "second", "depends": set(), "fixes": {22530}, "tree": "b", "files": {"b.cpp"}, "added": set()},
+               3: {"author": "first", "depends": set(), "fixes": {7}, "tree": "c", "files": {"c.cpp"}, "added": set()},
+               4: {"author": "third", "depends": {1}, "fixes": {22530}, "tree": "d", "files": {"d.cpp"}, "added": set()}}
+        found = pr_overlap.overlaps(prs, 1, 2)
+        self.assertEqual(found["issues"], {22530})
+        self.assertIsNone(pr_overlap.overlaps(prs, 1, 3))
+        self.assertIsNone(pr_overlap.overlaps(prs, 1, 4))
+        self.assertIsNone(pr_overlap.overlaps(prs, 2, 3))
+
+    def test_report_lists_the_shared_issue_without_cross_references(self):
+        rows = {2: {"added": set(), "conflicts": {}, "exports": set(), "issues": {22530}},
+                3: {"added": set(), "conflicts": {"other.cpp": [(1, 1)]}, "exports": set(), "issues": set()}}
+        report = pr_overlap.report(rows, "https://github.com/owner/project/blob/base")
+        self.assertIsNone(re.search(r"#\d|https://github\.com/owner/project/(pull|issues)/", report))
+        self.assertIn(
+            "\n\nOther open pull requests say they fix the same issue, so they may implement the same thing:\n\n"
+            "- [PR 2](https://www.github.com/owner/project/pull/2): "
+            "[issue 22530](https://www.github.com/owner/project/issues/22530)\n", report)
+        self.assertNotIn("[PR 2](https://www.github.com/owner/project/pull/2) |", report)
+        self.assertIn("| [PR 3](https://www.github.com/owner/project/pull/3) |", report)
+
+
 class PageAndCacheHelperTests(unittest.TestCase):
     def test_decode_pages_reads_consecutive_json_arrays(self):
         self.assertEqual(pr_overlap.decode_pages("[1]\n[2, 3] [] "), [[1], [2, 3], []])

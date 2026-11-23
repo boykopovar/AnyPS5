@@ -1138,6 +1138,11 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     }
     GuestResourceUsage result{};
     if (who == -1) {
+#ifdef _WIN32
+        const auto times = GetReapedChildProcessTimes_nid_no_patch();
+        result.ru_utime = TimevalFromHundredNanoseconds(times.user);
+        result.ru_stime = TimevalFromHundredNanoseconds(times.kernel);
+#endif
         if (!WriteGuest(usage, &result, sizeof(result))) {
             *__error_nid_postfix() = guestFault;
             return -1;

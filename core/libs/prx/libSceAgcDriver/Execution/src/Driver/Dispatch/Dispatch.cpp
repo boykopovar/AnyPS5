@@ -382,6 +382,16 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             if (resolvedAhead().empty()) gateOpened() = true;
             return;
         }
+        if (!partialLastGroup) {
+            if (const auto patch = Graphics::MatchHtileClearedHiZPatch(std::span(snapshot.code).subspan(codeOffset), userData, compute, packet, indirectArguments)) {
+                if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
+                if (Graphics::SkipNoOpHtileHiZPatch(*patch)) {
+                    pendingDispatchPhases().outcome = DispatchOutcome::FillHle;
+                    if (resolvedAhead().empty()) gateOpened() = true;
+                    return;
+                }
+            }
+        }
         if (DrawPipeline::Active() && !pipelineCandidate) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
         if (indirectArguments == 0 && (packet[4] & 0x20u) == 0) {
             if (const auto fill = Graphics::MatchMemoryValueFill(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads, {packet[1], packet[2], packet[3]})) {

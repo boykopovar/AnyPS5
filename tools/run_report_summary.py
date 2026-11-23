@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 
 
+DIAGNOSTIC_PREVIEW_LIMIT = 5
+
 def text(value):
     if not isinstance(value, str) or not value:
         return "unknown"
@@ -51,6 +53,9 @@ def render(report):
     for key in ("milestones", "missing", "shaders", "unsupported"):
         if type(report["coverage"].get(key)) is not bool:
             raise ValueError(f"report field 'coverage.{key}' must be a boolean")
+    for key in ("recovered", "incomplete"):
+        if type(report["run"].get(key)) is not bool:
+            raise ValueError(f"report field 'run.{key}' must be a boolean")
 
     game = report["game"]
     system = report["system"]
@@ -107,9 +112,12 @@ def render(report):
         functions = diagnostic_entries(report, "missing", "functions")
         calls = total_count(functions, "calls")
         lines.append(f"Missing functions: {count_text(calls, 'call')} across {count_text(len(functions), 'function')}")
-        for item in functions[:5]:
+        for item in functions[:DIAGNOSTIC_PREVIEW_LIMIT]:
             library = text(item.get("library"))
             lines.append(f"  - {library}::{text(item.get('name'))} ({count_text(item.get('calls', 0), 'call')})")
+        if len(functions) > DIAGNOSTIC_PREVIEW_LIMIT:
+            remaining = len(functions) - DIAGNOSTIC_PREVIEW_LIMIT
+            lines.append(f"  - {remaining} more function{'' if remaining == 1 else 's'} in the full report")
         if truncated.get("functions", 0):
             lines.append(f"  - {count_text(truncated['functions'], 'additional function')} omitted")
     else:
@@ -123,10 +131,13 @@ def render(report):
         unsupported = diagnostic_entries(report, "shaders", "unsupported")
         total = total_count(unsupported, "count")
         lines.append(f"Unsupported shader instructions: {count_text(total, 'occurrence')} across {count_text(len(unsupported), 'instruction')}")
-        for item in unsupported[:5]:
+        for item in unsupported[:DIAGNOSTIC_PREVIEW_LIMIT]:
             opcode_value = item.get("opcodeValue")
             instruction = item.get("opcode") or (opcode_value if opcode_value is not None else "unknown instruction")
             lines.append(f"  - {text(item.get('encoding'))}: {text(str(instruction))} ({count_text(item.get('count', 0), 'occurrence')})")
+        if len(unsupported) > DIAGNOSTIC_PREVIEW_LIMIT:
+            remaining = len(unsupported) - DIAGNOSTIC_PREVIEW_LIMIT
+            lines.append(f"  - {remaining} more instruction{'' if remaining == 1 else 's'} in the full report")
         if truncated.get("unsupported", 0):
             lines.append(f"  - {count_text(truncated['unsupported'], 'additional instruction')} omitted")
     else:

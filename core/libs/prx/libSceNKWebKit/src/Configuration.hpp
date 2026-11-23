@@ -52,6 +52,16 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    std::vector<std::string> loadedSubresourceDomains;
+    bool userMediaStateCleared = false;
+    bool wheelEventTestMonitorCleared = false;
+    bool pointerLockAllowed = false;
+    bool isTerminated = false;
+    std::int32_t processIdentifier = 1000;
+    std::vector<Retained<Object>> relatedPages;
+    Retained<Object> websitePolicies;
+    std::uint32_t layoutMilestones = 0;
+    std::uint32_t mockCameraOrientation = 0;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
