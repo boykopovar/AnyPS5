@@ -41,11 +41,15 @@ if(BUILD_TESTING)
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-concurrent-capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=8;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
                 TIMEOUT 120 SKIP_RETURN_CODE 77)
         add_test(NAME agc_driver_frame_replay_multisample_depth COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> multisample_depth)
+        add_test(NAME agc_driver_frame_replay_multisample_depth_faults COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> multisample_depth_faults)
         set_tests_properties(agc_driver_frame_replay_multisample_depth PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-multisample-depth-capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
                 TIMEOUT 30 SKIP_RETURN_CODE 77)
+        set_tests_properties(agc_driver_frame_replay_multisample_depth_faults PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-multisample-depth-faults-capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
+                TIMEOUT 30 SKIP_RETURN_CODE 77)
         if(WIN32)
-            set_tests_properties(agc_driver_frame_replay_multisample_depth PROPERTIES ENVIRONMENT_MODIFICATION
+            set_tests_properties(agc_driver_frame_replay_multisample_depth agc_driver_frame_replay_multisample_depth_faults PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
         add_test(NAME agc_driver_frame_replay_single_sample_depth COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> single_sample_depth)

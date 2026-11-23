@@ -920,7 +920,7 @@ void testSingleSampleDepthPasses(const std::filesystem::path& tool) {
     }
 }
 
-void testMultisampleDepthPasses(const std::filesystem::path& tool) {
+void testMultisampleDepth(const std::filesystem::path& tool, bool faultsOnly) {
     const char* directory = std::getenv("APS5_FRAME_CAPTURE");
     check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
     const std::filesystem::path capture(directory);
@@ -1095,36 +1095,47 @@ void testMultisampleDepthPasses(const std::filesystem::path& tool) {
             check(retiredDepth[pass] != 0, "pass " + std::to_string(pass + 1) + " retired no native depth owner although the earlier pass left samples only on the GPU");
         }
     };
+    if (faultsOnly) {
+        for (const auto& [fault, expected] : {std::pair<std::string, std::string>{"owners", "survived the reset"}, {"omit", "survived the reset"}, {"bytes", "differs from the captured contents"}, {"remap", "mapped or unmapped during the reset"}}) {
+            const auto faultLog = capture / ("multisample depth fault " + fault + ".log");
+#ifdef _WIN32
+            _putenv_s("APS5_REPLAY_RESET_FAULT_FOR_TEST", fault.c_str());
+#else
+            setenv("APS5_REPLAY_RESET_FAULT_FOR_TEST", fault.c_str(), 1);
+#endif
+            auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --verify-reset --repeat 2 > \"" + (capture / "multisample depth fault.json").string() + "\" 2> \"" + faultLog.string() + "\"";
+#ifdef _WIN32
+            command = "\"" + command + "\"";
+#endif
+            const auto code = std::system(command.c_str());
+#ifdef _WIN32
+            _putenv_s("APS5_REPLAY_RESET_FAULT_FOR_TEST", "");
+#else
+            unsetenv("APS5_REPLAY_RESET_FAULT_FOR_TEST");
+#endif
+            const auto errors = readFile(faultLog);
+            const std::string text(reinterpret_cast<const char*>(errors.data()), errors.size());
+            check(code != 0 && text.find(expected) != std::string::npos, "--verify-reset accepted a reset made faulty by " + fault + " (exit " + std::to_string(code) + "): " + text);
+        }
+        return;
+    }
     replay(1);
     replay(2);
     replay(3);
-    for (const auto& [fault, expected] : {std::pair<std::string, std::string>{"owners", "survived the reset"}, {"omit", "survived the reset"}, {"bytes", "differs from the captured contents"}, {"remap", "mapped or unmapped during the reset"}}) {
-        const auto faultLog = capture / ("multisample depth fault " + fault + ".log");
-#ifdef _WIN32
-        _putenv_s("APS5_REPLAY_RESET_FAULT_FOR_TEST", fault.c_str());
-#else
-        setenv("APS5_REPLAY_RESET_FAULT_FOR_TEST", fault.c_str(), 1);
-#endif
-        auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --verify-reset --repeat 2 > \"" + (capture / "multisample depth fault.json").string() + "\" 2> \"" + faultLog.string() + "\"";
-#ifdef _WIN32
-        command = "\"" + command + "\"";
-#endif
-        const auto code = std::system(command.c_str());
-#ifdef _WIN32
-        _putenv_s("APS5_REPLAY_RESET_FAULT_FOR_TEST", "");
-#else
-        unsetenv("APS5_REPLAY_RESET_FAULT_FOR_TEST");
-#endif
-        const auto errors = readFile(faultLog);
-        const std::string text(reinterpret_cast<const char*>(errors.data()), errors.size());
-        check(code != 0 && text.find(expected) != std::string::npos, "--verify-reset accepted a reset made faulty by " + fault + " (exit " + std::to_string(code) + "): " + text);
-    }
 #ifdef __linux__
     const auto refusedLog = capture / "multisample depth unwatched.log";
     const auto refused = std::system(("APS5_NO_WRITE_WATCH=1 \"" + tool.string() + "\" \"" + capture.string() + "\" --strict > /dev/null 2> \"" + refusedLog.string() + "\"").c_str());
     const auto refusal = readFile(refusedLog);
     check(refused != 0 && std::string(reinterpret_cast<const char*>(refusal.data()), refusal.size()).find("write watch does not cover") != std::string::npos, "the replay accepted a watched range without the guest write watch");
 #endif
+}
+
+void testMultisampleDepthPasses(const std::filesystem::path& tool) {
+    testMultisampleDepth(tool, false);
+}
+
+void testMultisampleDepthFaults(const std::filesystem::path& tool) {
+    testMultisampleDepth(tool, true);
 }
 
 CommandBuffer commands(std::uint32_t* words) {
@@ -1588,9 +1599,9 @@ int main(int argc, char** argv) {
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
         {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"rewind_page", testRewindPageRestored}, {"allocation_ranges", testRegisteredRangeBoundaries}};
     const std::map<std::string, void (*)(const std::filesystem::path&)> restored{
-        {"rewind_chained", testChainedRewindGates}, {"rewind_page_start", testRewindControlAtPageStart}, {"rewind_zero_control", testZeroRewindControlRewritten}, {"rewind_zero_control_parked", testZeroRewindControlRestoredAtPark}, {"rewind_in_order", testEarlyReleaseRestoredInOrder}, {"rewind_kept_words", testRewindControlsKeptAnywhere}, {"multisample_depth", testMultisampleDepthPasses}, {"single_sample_depth", testSingleSampleDepthPasses}};
+        {"rewind_chained", testChainedRewindGates}, {"rewind_page_start", testRewindControlAtPageStart}, {"rewind_zero_control", testZeroRewindControlRewritten}, {"rewind_zero_control_parked", testZeroRewindControlRestoredAtPark}, {"rewind_in_order", testEarlyReleaseRestoredInOrder}, {"rewind_kept_words", testRewindControlsKeptAnywhere}, {"multisample_depth", testMultisampleDepthPasses}, {"multisample_depth_faults", testMultisampleDepthFaults}, {"single_sample_depth", testSingleSampleDepthPasses}};
     if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || mode == "rewind_reuse" || mode == "rewind_shared_tail" || mode == "rewind_settled_tail" || rewound.contains(mode) || restored.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_reuse|rewind_shared_tail|rewind_settled_tail|rewind_page|rewind_chained|rewind_page_start|rewind_zero_control|rewind_zero_control_parked|rewind_in_order|rewind_kept_words|multisample_depth|single_sample_depth|allocation_ranges]\n");
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_reuse|rewind_shared_tail|rewind_settled_tail|rewind_page|rewind_chained|rewind_page_start|rewind_zero_control|rewind_zero_control_parked|rewind_in_order|rewind_kept_words|multisample_depth|multisample_depth_faults|single_sample_depth|allocation_ranges]\n");
         return 2;
     }
     int status = 0;
