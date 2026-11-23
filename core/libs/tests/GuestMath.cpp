@@ -4662,6 +4662,47 @@ static void CheckTanhfEnvironment() {
     _mm_setcsr(saved);
 }
 
+static void CheckAsinfAtanfEnvironment() {
+    const unsigned saved = _mm_getcsr();
+    constexpr unsigned inexact = _MM_EXCEPT_INEXACT;
+    constexpr unsigned denormal = _MM_EXCEPT_DENORM;
+    constexpr struct {
+        unsigned magnitude;
+        unsigned result;
+        unsigned flags;
+    } cases[] = {
+        {0, 0, 0},
+        {1, 1, denormal | inexact},
+        {0x007fffff, 0x007fffff, denormal | inexact},
+        {0x00800000, 0x00800000, inexact},
+        {0x397fffff, 0x397fffff, inexact},
+    };
+    for (const auto& item : cases) {
+        for (unsigned sign : {0u, 0x80000000u}) {
+            for (unsigned rounding : {0u, 0x2000u, 0x4000u, 0x6000u}) {
+                for (unsigned mode : {0u, 0x40u, 0x8000u, 0x8040u}) {
+                    const unsigned control = 0x1f80u | _MM_EXCEPT_DIV_ZERO | rounding | mode;
+                    const unsigned raised = (mode & 0x40u) && (item.flags & denormal) ? 0u : item.flags;
+                    *__error_nid_postfix() = 1234;
+                    _mm_setcsr(control);
+                    const float asinfResult = asinf_nid_postfix(std::bit_cast<float>(item.magnitude | sign));
+                    const unsigned asinfStatus = _mm_getcsr();
+                    Require(std::bit_cast<std::uint32_t>(asinfResult) == (item.result | sign));
+                    Require(asinfStatus == (control | raised) && *__error_nid_postfix() == 1234);
+
+                    *__error_nid_postfix() = 1234;
+                    _mm_setcsr(control);
+                    const float atanfResult = atanf_nid_postfix(std::bit_cast<float>(item.magnitude | sign));
+                    const unsigned atanfStatus = _mm_getcsr();
+                    Require(std::bit_cast<std::uint32_t>(atanfResult) == (item.result | sign));
+                    Require(atanfStatus == (control | raised) && *__error_nid_postfix() == 1234);
+                }
+            }
+        }
+    }
+    _mm_setcsr(saved);
+}
+
 static void CheckExpm1fConsoleBits() {
     constexpr struct {
         std::uint32_t input;
@@ -5143,7 +5184,9 @@ int main() {
     Require(std::isnan(tgamma_nid_postfix(-1.)));
     Require(errno == EDOM);
     errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
     Require(std::isinf(tgamma_nid_postfix(200.)));
+    Require(std::fetestexcept(FE_DIVBYZERO | FE_OVERFLOW) == FE_DIVBYZERO);
     Require(errno == 0);
     const double negativeDoubleGammaUnderflow = tgamma_nid_postfix(-190.5);
     const double positiveDoubleGammaUnderflow = tgamma_nid_postfix(-191.5);
@@ -5363,6 +5406,7 @@ int main() {
     CheckAsinl();
     CheckTanhfConsoleBits();
     CheckTanhfEnvironment();
+    CheckAsinfAtanfEnvironment();
     CheckExpm1fConsoleBits();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);

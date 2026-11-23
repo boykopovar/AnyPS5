@@ -102,9 +102,7 @@ bool CopyGuestCString(const char* source, std::string& destination) {
         char chunk[64];
         const std::size_t count = std::min<std::size_t>(sizeof(chunk), 0x1000 - address % 0x1000);
         if (address > UINTPTR_MAX - count) return false;
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), count);
-        errno = savedErrno;
         if (!copied) return false;
         if (const void* end = std::memchr(chunk, 0, count)) {
             destination.append(chunk, static_cast<const char*>(end) - chunk);
@@ -120,21 +118,12 @@ bool ZeroGuest(void* destination, std::size_t bytes) {
     auto* cursor = static_cast<char*>(destination);
     while (bytes != 0) {
         const std::size_t count = std::min(bytes, sizeof(zeros));
-        const int savedErrno = errno;
         const bool written = GuestCopyOut_nid_no_patch(cursor, zeros, count);
-        errno = savedErrno;
         if (!written) return false;
         cursor += count;
         bytes -= count;
     }
     return true;
-}
-
-bool WriteGuestBytes(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool written = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return written;
 }
 
 int parseUri(std::string_view uri, UriParts& parts) {
@@ -303,7 +292,7 @@ int APS5_VABI sceHttpUriEscape(char* out, size_t* require, size_t prepare, const
     std::string escaped;
     for (const char* c = in; ; ++c) {
         char character = 0;
-        if (!HttpGuest::CopyIn(&character, c, sizeof(character))) return ERROR_INVALID_VALUE;
+        if (!GuestCopyIn_nid_no_patch(&character, c, sizeof(character))) return ERROR_INVALID_VALUE;
         if (character == '\0') break;
         const auto value = static_cast<unsigned char>(character);
         if ((value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9')
@@ -364,13 +353,13 @@ int APS5_VABI sceHttpUriUnescape(char* out, size_t* requiredSize, size_t capacit
     }
     if (out) {
         if (unescaped.size() >= capacity) {
-            if (capacity != 0 && !WriteGuestBytes(out, unescaped.data(), capacity)) return ERROR_INVALID_VALUE;
+            if (capacity != 0 && !GuestCopyOut_nid_no_patch(out, unescaped.data(), capacity)) return ERROR_INVALID_VALUE;
             return ERROR_OUT_OF_MEMORY;
         }
-        if (!WriteGuestBytes(out, unescaped.c_str(), unescaped.size() + 1)) return ERROR_INVALID_VALUE;
+        if (!GuestCopyOut_nid_no_patch(out, unescaped.c_str(), unescaped.size() + 1)) return ERROR_INVALID_VALUE;
     }
     const size_t size = unescaped.size() + 1;
-    if (requiredSize && !WriteGuestBytes(requiredSize, &size, sizeof(size))) return ERROR_INVALID_VALUE;
+    if (requiredSize && !GuestCopyOut_nid_no_patch(requiredSize, &size, sizeof(size))) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -464,9 +453,7 @@ int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void*
     element.query = strings[5];
     element.fragment = strings[6];
     element.port = parts.port;
-    const int savedErrno = errno;
     const bool written = GuestCopyOut_nid_no_patch(out, &element, sizeof(element));
-    errno = savedErrno;
     if (!written) return ERROR_INVALID_VALUE;
     return 0;
 }
@@ -481,9 +468,7 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
         if (!ZeroGuest(out, sizeof(SceHttpUriElement))) return ERROR_INVALID_VALUE;
     }
     SceHttpUriElement source{};
-    const int savedErrno = errno;
     const bool copiedSource = GuestCopyIn_nid_no_patch(&source, src, sizeof(source));
-    errno = savedErrno;
     if (!copiedSource) return ERROR_INVALID_URL;
     const char* const fields[] = {source.scheme, source.hostname, source.path, source.username, source.password};
     std::string values[5];
@@ -498,7 +483,7 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
         used += lengths[i] + 1;
     }
     if (!write) {
-        if (!WriteGuestBytes(require, &used, sizeof(used))) return ERROR_INVALID_VALUE;
+        if (!GuestCopyOut_nid_no_patch(require, &used, sizeof(used))) return ERROR_INVALID_VALUE;
         return 0;
     }
     if (used > prepare) return ERROR_OUT_OF_MEMORY;
@@ -509,7 +494,7 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
         strings[i] = next;
         std::string segment = values[i];
         segment.push_back('\0');
-        if (!WriteGuestBytes(next, segment.data(), segment.size())) return ERROR_INVALID_VALUE;
+        if (!GuestCopyOut_nid_no_patch(next, segment.data(), segment.size())) return ERROR_INVALID_VALUE;
         next += lengths[i] + 1;
     }
     SceHttpUriElement element;
@@ -520,8 +505,8 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
     element.username = strings[3];
     element.password = strings[4];
     element.port = port;
-    if (!WriteGuestBytes(out, &element, sizeof(element))) return ERROR_INVALID_VALUE;
-    if (require && !WriteGuestBytes(require, &used, sizeof(used))) return ERROR_INVALID_VALUE;
+    if (!GuestCopyOut_nid_no_patch(out, &element, sizeof(element))) return ERROR_INVALID_VALUE;
+    if (require && !GuestCopyOut_nid_no_patch(require, &used, sizeof(used))) return ERROR_INVALID_VALUE;
     return 0;
 }
 

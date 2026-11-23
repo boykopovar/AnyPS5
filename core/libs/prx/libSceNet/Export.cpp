@@ -1860,6 +1860,24 @@ int64_t APS5_VABI GuestNetSend_nid_no_patch(int s, const void* buf, size_t len, 
     return sceNetSend(s, buf, len, flags);
 }
 
+static bool GuestBufferReadable(const void* buffer, std::size_t length) {
+    if (length == 0) return true;
+    constexpr std::size_t page = 4096;
+    const auto* bytes = static_cast<const unsigned char*>(buffer);
+    unsigned char value;
+    for (std::size_t done = 0; done < length; done += page)
+        if (!GuestCopyIn_nid_no_patch(&value, bytes + done, 1)) return false;
+    return GuestCopyIn_nid_no_patch(&value, bytes + (length - 1), 1);
+}
+
+static bool ConnectedDatagramDestination(const Sock& socket, const sockaddr_storage& destination) {
+    if (socket.type != NET_SOCK_DGRAM) return false;
+    if (destination.ss_family == AF_INET6 && reinterpret_cast<const sockaddr_in6&>(destination).sin6_port == 0) return false;
+    sockaddr_storage peer{};
+    NativeLength length = sizeof(peer);
+    return ::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&peer), &length) == 0;
+}
+
 int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, const void* to, uint32_t tolen) {
     if (!message_flags_supported(flags, NET_MSG_DONTWAIT | NET_MSG_NOSIGNAL)) return fail(NET_EOPNOTSUPP);
     if (!buf && len) return fail(NET_EINVAL);
@@ -1896,6 +1914,7 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
         NativeLength destination_length = 0;
         if (!guest_to_native_address(address.data(), address_length, destination, destination_length)) return fail(NET_EINVAL);
         if (destination.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
+        if (ConnectedDatagramDestination(socket, destination)) return fail(GuestBufferReadable(buf, len) ? NET_EISCONN : NET_EFAULT);
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
             return ::sendto(socket.native->value, data, size, NATIVE_SEND_FLAGS | native_message_flags(flags),
@@ -2236,8 +2255,11 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
     }
     if (level == NET_SOL_SOCKET && (optname == NET_SO_TYPE || optname == NET_SO_ACCEPTCONN)) {
         const int value = optname == NET_SO_TYPE ? socket.guestType : socket.listening ? NET_SO_ACCEPTCONN : 0;
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
-        std::memcpy(optval, &value, *optlen);
+        std::uint32_t length = 0;
+        if (!GuestCopyIn_nid_no_patch(&length, optlen, sizeof(length))) return fail(NET_EFAULT);
+        length = std::min(length, static_cast<std::uint32_t>(sizeof(value)));
+        if (!GuestCopyOut_nid_no_patch(optval, &value, length) ||
+            !GuestCopyOut_nid_no_patch(optlen, &length, sizeof(length))) return fail(NET_EFAULT);
         return 0;
     }
     if (level == NET_SOL_SOCKET && optname == NET_SO_OOBINLINE) {
@@ -2250,15 +2272,21 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
             enabled = socket.oobInline;
         }
         const int value = enabled != 0 ? NET_SO_OOBINLINE : 0;
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
-        std::memcpy(optval, &value, *optlen);
+        std::uint32_t length = 0;
+        if (!GuestCopyIn_nid_no_patch(&length, optlen, sizeof(length))) return fail(NET_EFAULT);
+        length = std::min(length, static_cast<std::uint32_t>(sizeof(value)));
+        if (!GuestCopyOut_nid_no_patch(optval, &value, length) ||
+            !GuestCopyOut_nid_no_patch(optlen, &length, sizeof(length))) return fail(NET_EFAULT);
         return 0;
     }
     if (level == NET_SOL_SOCKET && optname == NET_SO_PROTOCOL) {
         if (socket.type == NET_SOCK_RAW && socket.protocol == 0) NotImplemented_nid_no_patch(__func__);
         const int protocol = socket.type == NET_SOCK_RAW && !RawProtocolEntry(socket.family, socket.protocol) ? 0 : socket.protocol;
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(protocol)));
-        std::memcpy(optval, &protocol, *optlen);
+        std::uint32_t length = 0;
+        if (!GuestCopyIn_nid_no_patch(&length, optlen, sizeof(length))) return fail(NET_EFAULT);
+        length = std::min(length, static_cast<std::uint32_t>(sizeof(protocol)));
+        if (!GuestCopyOut_nid_no_patch(optval, &protocol, length) ||
+            !GuestCopyOut_nid_no_patch(optlen, &length, sizeof(length))) return fail(NET_EFAULT);
         return 0;
     }
     if (level == NET_IPPROTO_IPV6) {
@@ -2272,8 +2300,11 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
     if (level == NET_SOL_SOCKET && (optname == NET_SO_RCVTIMEO || optname == NET_SO_SNDTIMEO)) {
         const int microseconds = optname == NET_SO_RCVTIMEO ? socket.native->receiveTimeout.load() : socket.native->sendTimeout.load();
         const KernelTimeval timeout{microseconds / 1000000, microseconds % 1000000};
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(timeout)));
-        std::memcpy(optval, &timeout, *optlen);
+        std::uint32_t length = 0;
+        if (!GuestCopyIn_nid_no_patch(&length, optlen, sizeof(length))) return fail(NET_EFAULT);
+        length = std::min(length, static_cast<std::uint32_t>(sizeof(timeout)));
+        if (!GuestCopyOut_nid_no_patch(optval, &timeout, length) ||
+            !GuestCopyOut_nid_no_patch(optlen, &length, sizeof(length))) return fail(NET_EFAULT);
         return 0;
     }
     if (level == NET_SOL_SOCKET && optname == NET_SO_KEEPALIVE) {
@@ -2284,8 +2315,11 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
                 return fail(native_error());
         }
         const int value = enabled != 0 ? NET_SO_KEEPALIVE : 0;
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
-        std::memcpy(optval, &value, *optlen);
+        std::uint32_t length = 0;
+        if (!GuestCopyIn_nid_no_patch(&length, optlen, sizeof(length))) return fail(NET_EFAULT);
+        length = std::min(length, static_cast<std::uint32_t>(sizeof(value)));
+        if (!GuestCopyOut_nid_no_patch(optval, &value, length) ||
+            !GuestCopyOut_nid_no_patch(optlen, &length, sizeof(length))) return fail(NET_EFAULT);
         return 0;
     }
     if (level == NET_IPPROTO_TCP && socket.type != NET_SOCK_STREAM) return fail(NET_EINVAL);
@@ -2295,8 +2329,11 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         if (::getsockopt(socket.native->value, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char*>(&enabled), &size) != 0)
             return fail(native_error());
         const int value = enabled != 0 ? NET_TF_NODELAY : 0;
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
-        std::memcpy(optval, &value, *optlen);
+        std::uint32_t length = 0;
+        if (!GuestCopyIn_nid_no_patch(&length, optlen, sizeof(length))) return fail(NET_EFAULT);
+        length = std::min(length, static_cast<std::uint32_t>(sizeof(value)));
+        if (!GuestCopyOut_nid_no_patch(optval, &value, length) ||
+            !GuestCopyOut_nid_no_patch(optlen, &length, sizeof(length))) return fail(NET_EFAULT);
         return 0;
     }
     if (level == NET_IPPROTO_TCP &&
@@ -2305,11 +2342,16 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
             : optname == NET_TCP_KEEPIDLE ? (socket.tcpKeepIdle != 0 ? socket.tcpKeepIdle : NET_TCP_DEFAULT_KEEPIDLE)
             : optname == NET_TCP_KEEPINTVL ? (socket.tcpKeepInterval != 0 ? socket.tcpKeepInterval : NET_TCP_DEFAULT_KEEPINTVL)
             : (socket.tcpKeepCount != 0 ? socket.tcpKeepCount : NET_TCP_DEFAULT_KEEPCNT);
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
-        std::memcpy(optval, &value, *optlen);
+        std::uint32_t length = 0;
+        if (!GuestCopyIn_nid_no_patch(&length, optlen, sizeof(length))) return fail(NET_EFAULT);
+        length = std::min(length, static_cast<std::uint32_t>(sizeof(value)));
+        if (!GuestCopyOut_nid_no_patch(optval, &value, length) ||
+            !GuestCopyOut_nid_no_patch(optlen, &length, sizeof(length))) return fail(NET_EFAULT);
         return 0;
     }
-    if (*optlen < sizeof(int) &&
+    std::uint32_t length = 0;
+    if (!GuestCopyIn_nid_no_patch(&length, optlen, sizeof(length))) return fail(NET_EFAULT);
+    if (length < sizeof(int) &&
         !(level == NET_SOL_SOCKET && (optname == NET_SO_DONTROUTE || optname == NET_SO_BROADCAST))) return fail(NET_EINVAL);
     if (level == NET_IPPROTO_TCP) return fail(NET_ENOPROTOOPT);
     if (level != NET_SOL_SOCKET) return fail(NET_EOPNOTSUPP);
@@ -2362,8 +2404,9 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         }
         default: return fail(NET_EOPNOTSUPP);
     }
-    *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
-    std::memcpy(optval, &value, *optlen);
+    length = std::min(length, static_cast<std::uint32_t>(sizeof(value)));
+    if (!GuestCopyOut_nid_no_patch(optval, &value, length) ||
+        !GuestCopyOut_nid_no_patch(optlen, &length, sizeof(length))) return fail(NET_EFAULT);
     return 0;
 }
 

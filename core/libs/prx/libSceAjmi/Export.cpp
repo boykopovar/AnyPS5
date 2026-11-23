@@ -203,8 +203,8 @@ int APS5_VABI sceAjmiBatchStartBuffer(std::uint32_t context, const std::uint8_t*
     return sceAjmBatchStartBuffer(context, batch, batchSize, priority, error, batchId);
 }
 
-int APS5_VABI sceAjmiFinalize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiFinalize(std::uint32_t context) {
+    return sceAjmFinalize(context);
 }
 
 const char* APS5_VABI sceAjmiStrError(int error) {
@@ -232,8 +232,8 @@ int APS5_VABI sceAjmiBatchErrorDump() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiInstanceCodecType() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint32_t APS5_VABI sceAjmiInstanceCodecType(std::uint32_t instanceId) {
+    return sceAjmInstanceCodecType(instanceId);
 }
 
 int APS5_VABI sceAjmiMemoryUnregister() {

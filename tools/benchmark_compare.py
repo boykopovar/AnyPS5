@@ -234,7 +234,7 @@ def summarize_benchmark(loaded, intervals=None):
         current = benchmark_metrics([interval])
         raw_seconds = sum(interval["frame_us"]) / 1e6
         tolerance = (len(interval["frame_us"]) + 2000) / 1e6
-        if not current["saturated_frames"] and abs(raw_seconds - current["elapsed_s"]) > tolerance:
+        if current["frames"] and not current["saturated_frames"] and abs(raw_seconds - current["elapsed_s"]) > tolerance:
             warnings.append(f"Retained interval {index}: raw durations and wall span differ beyond serialization precision.")
         rows.append({
             "index": index,
@@ -328,7 +328,8 @@ def benchmark_context(summary):
     metadata = summary["metadata"]
     context = {name: metadata.get(name) for name in
                ("gpu", "driver", "os", *IDENTITY_STRINGS, *IDENTITY_INTEGERS)}
-    context.update({f"env.{name}": value for name, value in metadata["env"].items()})
+    context.update({f"env.{name}": value for name, value in metadata["env"].items()
+                    if name != "APS5_TRACE_DIR"})
     context["selection.ordinals"] = [row["ordinal"] for row in summary["intervals"]]
     context["selection.resolutions"] = [row["resolution"] for row in summary["intervals"]]
     return context
