@@ -45,6 +45,8 @@ constexpr int GuestSigstop = 17;
 constexpr std::uint32_t UnblockableSignals = (1u << (GuestSigkill - 1)) | (1u << (GuestSigstop - 1));
 constexpr int GuestSigalrm = 14;
 constexpr int GuestSigcont = 19;
+constexpr int GuestSigvtalrm = 26;
+constexpr int GuestSigprof = 27;
 constexpr int SaRestart = 0x2;
 constexpr int SaResethand = 0x4;
 constexpr int SaNodefer = 0x10;
@@ -380,14 +382,21 @@ bool CaughtByGuest(int guest) {
     return Disposition(guest).handler > 1;
 }
 
+bool IsTimerSignal(int guest) { return guest == GuestSigalrm || guest == GuestSigvtalrm || guest == GuestSigprof; }
+const char* TimerSignalName(int guest) { return guest == GuestSigalrm ? "SIGALRM" : guest == GuestSigvtalrm ? "SIGVTALRM" : "SIGPROF"; }
+
 bool TerminatesWithoutHandler(int guest) {
-    return guest == GuestSigalrm && Disposition(guest).handler == 0;
+    return IsTimerSignal(guest) && Disposition(guest).handler == 0;
+}
+
+[[noreturn]] void TerminateByTimerSignal(int guest, const std::string& cause) {
+    std::fprintf(stderr, "%s: %s with the default disposition; the process terminates\n", TimerSignalName(guest), cause.c_str());
+    std::fflush(stderr);
+    std::_Exit(128 + guest);
 }
 
 [[noreturn]] void TerminateBySigalrm(const char* cause) {
-    std::fprintf(stderr, "SIGALRM: %s with the default disposition; the process terminates\n", cause);
-    std::fflush(stderr);
-    std::_Exit(128 + GuestSigalrm);
+    TerminateByTimerSignal(GuestSigalrm, cause);
 }
 
 bool Deliverable(int guest) {
@@ -408,7 +417,8 @@ bool DeliverPendingSignal(int guest) {
     const GuestSigaction action = Disposition(guest);
     if (action.handler == 1) return false;
     if (action.handler > 1 && !Delivered(action)) throw std::runtime_error("signal: SA_SIGINFO handlers are not delivered");
-    if (guest == GuestSigalrm && action.handler == 0) TerminateBySigalrm("a pending SIGALRM was unblocked");
+    if (IsTimerSignal(guest) && action.handler == 0)
+        TerminateByTimerSignal(guest, "a pending " + std::string(TimerSignalName(guest)) + " was unblocked");
     const int native = NativeSignal(guest);
     if (native != 0) {
         if (std::raise(native) != 0) throw std::runtime_error("signal: delivering the signal to the host failed");
@@ -486,6 +496,35 @@ void WaitForDeliverableSignal() {
 
 namespace {
 constexpr std::int64_t MaxItimerSeconds = 0x7fffffff / 2;
+constexpr int ItimerReal = 0;
+constexpr int ItimerVirtual = 1;
+constexpr int ItimerProf = 2;
+constexpr std::int64_t MinExactIntervalMicros = 1000;
+constexpr std::uint64_t CpuTimerPollNanos = 1000000ULL;
+
+bool ValidItimer(const KernelTimeval& time) {
+    return time.tv_sec >= 0 && time.tv_usec >= 0 && time.tv_usec < 1000000 && time.tv_sec <= MaxItimerSeconds;
+}
+
+bool ItimerSet(const KernelTimeval& time) {
+    return time.tv_sec != 0 || time.tv_usec != 0;
+}
+
+std::chrono::microseconds ItimerDuration(const KernelTimeval& time) {
+    return std::chrono::seconds(time.tv_sec) + std::chrono::microseconds(time.tv_usec);
+}
+
+KernelTimeval ItimerTimeval(std::chrono::microseconds duration) {
+    return {duration.count() / 1000000, duration.count() % 1000000};
+}
+
+std::chrono::microseconds CpuTimerDuration(const KernelTimeval& time) {
+    const auto duration = ItimerDuration(time);
+    if (duration.count() != 0 && duration.count() < MinExactIntervalMicros)
+        return std::chrono::microseconds(MinExactIntervalMicros);
+    return duration;
+}
+
 struct AlarmState {
     std::mutex lock;
     TimedWait::Condition changed;
@@ -573,6 +612,97 @@ void NotifyAlarms(AlarmState& alarms) {
     }
     alarms.changed.NotifyAll();
 }
+
+struct CpuTimerState {
+    std::mutex lock;
+    TimedWait::Condition changed;
+    std::optional<std::uint64_t> deadlineMicros;
+    std::chrono::microseconds interval{0};
+    bool threadStarted = false;
+    ThreadSignals* armer = nullptr;
+};
+
+CpuTimerState& CpuTimer(int which) {
+    static auto* virtualTimer = new CpuTimerState();
+    static auto* profTimer = new CpuTimerState();
+    return which == ItimerVirtual ? *virtualTimer : *profTimer;
+}
+
+bool ReadCpuTimerMicros(int which, std::uint64_t* micros) {
+    KernelTimespec now{};
+    if (clock_gettime_nid_postfix(which, &now) != 0) return false;
+    *micros = static_cast<std::uint64_t>(now.tv_sec) * 1000000ULL + static_cast<std::uint64_t>(now.tv_nsec / 1000);
+    return true;
+}
+
+std::chrono::microseconds RemainingCpuTimer(const CpuTimerState& timer, std::uint64_t nowMicros) {
+    if (!timer.deadlineMicros || *timer.deadlineMicros <= nowMicros) return std::chrono::microseconds(0);
+    return std::chrono::microseconds(*timer.deadlineMicros - nowMicros);
+}
+
+void ExpireCpuTimer(int which, std::chrono::microseconds interval, ThreadSignals& armer) {
+    const int guest = which == ItimerVirtual ? GuestSigvtalrm : GuestSigprof;
+    std::uintptr_t handler = 0;
+    {
+        std::lock_guard lock(registration);
+        handler = dispositions[guest].handler;
+    }
+    KqueueSignalSent(guest);
+    if (handler == 1) return;
+    if (SignalBlocked(armer, guest)) {
+        MarkPending(guest, GuestSiKernel);
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+        if (SignalBlocked(armer, guest) || !TakePending(guest)) return;
+        handler = Disposition(guest).handler;
+        if (handler == 1) return;
+    }
+    if (handler == 0) TerminateByTimerSignal(guest, "the CPU interval timer expired");
+    const char* timerName = which == ItimerVirtual ? "ITIMER_VIRTUAL" : "ITIMER_PROF";
+    ThrowTimerExpiry(std::string(timerName) + " (it_interval " + DescribeInterval(interval)
+        + ") expired: delivering " + TimerSignalName(guest) + " to a guest handler is not implemented");
+}
+
+void RunCpuTimer(int which) {
+    auto& timer = CpuTimer(which);
+    std::unique_lock lock(timer.lock);
+    for (;;) {
+        if (!timer.deadlineMicros) {
+            timer.changed.Wait(lock);
+            continue;
+        }
+        const std::uint64_t deadline = *timer.deadlineMicros;
+        lock.unlock();
+        std::uint64_t nowMicros = 0;
+        const bool read = ReadCpuTimerMicros(which, &nowMicros);
+        lock.lock();
+        if (!timer.deadlineMicros || *timer.deadlineMicros != deadline) continue;
+        if (!read || nowMicros < deadline) {
+            timer.changed.WaitUntil(lock, TimedWait::NowNanos() + CpuTimerPollNanos);
+            continue;
+        }
+        const auto interval = timer.interval;
+        ThreadSignals& armer = *timer.armer;
+        if (interval.count() == 0) timer.deadlineMicros.reset();
+        else {
+            const std::uint64_t step = static_cast<std::uint64_t>(interval.count());
+            timer.deadlineMicros = deadline + ((nowMicros - deadline) / step + 1) * step;
+        }
+        lock.unlock();
+        ExpireCpuTimer(which, interval, armer);
+        lock.lock();
+    }
+}
+
+void RunVirtualTimer() { RunCpuTimer(ItimerVirtual); }
+void RunProfTimer() { RunCpuTimer(ItimerProf); }
+
+void NotifyCpuTimer(CpuTimerState& timer, int which) {
+    if (!timer.threadStarted) {
+        Libc::StartHostThread(which == ItimerVirtual ? RunVirtualTimer : RunProfTimer).detach();
+        timer.threadStarted = true;
+    }
+    timer.changed.NotifyAll();
+}
 }
 
 extern "C" unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int seconds) {
@@ -606,11 +736,17 @@ static int GetitimerInto(int which, GuestItimerval* output) {
         *__error_nid_postfix() = 14;
         return -1;
     }
-    if (which != 0) {
-        *output = {};
+    GuestItimerval result{};
+    if (which != ItimerReal) {
+        std::uint64_t nowMicros = 0;
+        if (!ReadCpuTimerMicros(which, &nowMicros)) return -1;
+        auto& timer = CpuTimer(which);
+        std::lock_guard lock(timer.lock);
+        result.interval = ItimerTimeval(timer.interval);
+        result.value = ItimerTimeval(RemainingCpuTimer(timer, nowMicros));
+        *output = result;
         return 0;
     }
-    GuestItimerval result{};
     auto& alarms = Alarms();
     {
         std::lock_guard lock(alarms.lock);
@@ -638,28 +774,6 @@ extern "C" int APS5_VABI getitimer_nid_postfix(int which, GuestItimerval* output
     return status;
 }
 
-namespace {
-constexpr int ItimerReal = 0;
-constexpr int ItimerProf = 2;
-constexpr std::int64_t MinExactIntervalMicros = 1000;
-
-bool ValidItimer(const KernelTimeval& time) {
-    return time.tv_sec >= 0 && time.tv_usec >= 0 && time.tv_usec < 1000000 && time.tv_sec <= MaxItimerSeconds;
-}
-
-bool ItimerSet(const KernelTimeval& time) {
-    return time.tv_sec != 0 || time.tv_usec != 0;
-}
-
-std::chrono::microseconds ItimerDuration(const KernelTimeval& time) {
-    return std::chrono::seconds(time.tv_sec) + std::chrono::microseconds(time.tv_usec);
-}
-
-KernelTimeval ItimerTimeval(std::chrono::microseconds duration) {
-    return {duration.count() / 1000000, duration.count() % 1000000};
-}
-}
-
 extern "C" int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* value, GuestItimerval* previous) {
     GuestItimerval requested{};
     if (value != nullptr && !GuestCopyIn_nid_no_patch(&requested, value, sizeof(requested))) { *__error_nid_postfix() = 14; return -1; }
@@ -671,12 +785,28 @@ extern "C" int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* 
         else if (!ValidItimer(requested.interval)) { *__error_nid_postfix() = 22; return -1; }
     }
     if (which != ItimerReal) {
-        if (ItimerSet(requested.value))
-            throw std::runtime_error(std::string("setitimer: ") + (which == ItimerProf ? "ITIMER_PROF" : "ITIMER_VIRTUAL") + " needs process CPU time accounting, which is not implemented");
-        if (previous != nullptr) {
-            const GuestItimerval cleared{};
-            if (!GuestCopyOut_nid_no_patch(previous, &cleared, sizeof(cleared))) { *__error_nid_postfix() = 14; return -1; }
+        std::uint64_t nowMicros = 0;
+        if (!ReadCpuTimerMicros(which, &nowMicros)) return -1;
+        GuestItimerval old{};
+        {
+            auto& timer = CpuTimer(which);
+            std::lock_guard lock(timer.lock);
+            old.interval = ItimerTimeval(timer.interval);
+            old.value = ItimerTimeval(RemainingCpuTimer(timer, nowMicros));
+            if (value != nullptr) {
+                const auto initial = CpuTimerDuration(requested.value);
+                timer.interval = CpuTimerDuration(requested.interval);
+                if (initial.count() == 0) {
+                    timer.deadlineMicros.reset();
+                    timer.armer = nullptr;
+                } else {
+                    timer.deadlineMicros = nowMicros + static_cast<std::uint64_t>(initial.count());
+                    timer.armer = &CurrentSignals();
+                }
+                NotifyCpuTimer(timer, which);
+            }
         }
+        if (previous != nullptr && !GuestCopyOut_nid_no_patch(previous, &old, sizeof(old))) { *__error_nid_postfix() = 14; return -1; }
         return 0;
     }
     if (requested.interval.tv_sec == 0 && requested.interval.tv_usec != 0 && requested.interval.tv_usec < MinExactIntervalMicros)
