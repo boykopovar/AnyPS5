@@ -11,7 +11,11 @@
 namespace {
 
 int HostRandom(void*, unsigned char* buffer, std::size_t size) {
-    HostEntropy_nid_no_patch(buffer, size);
+    try {
+        HostEntropy_nid_no_patch(buffer, size);
+    } catch (...) {
+        return -1;
+    }
     return 0;
 }
 
