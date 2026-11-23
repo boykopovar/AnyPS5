@@ -909,10 +909,16 @@ bool TranslationContext::vFmaLegacyF32(const RdnaInstruction& inst, bool accumul
     const auto factor = [&](IrValue* value) { return &ir.Emit(IrOpcode::SelectF32, IrType::F32, {&zero.Value(), &ir.ConstantF32(0.0f), value}); };
     IrValue* lhsFactor = factor(lhs);
     IrValue* rhsFactor = factor(rhs);
-    IrValue* product = &flushTinyProduct(lhsFactor, rhsFactor, &ir.Emit(IrOpcode::FPMul32, IrType::F32, {lhsFactor, rhsFactor})).Value();
+    const std::uint32_t rounding = floatRoundMode(0u);
+    const IrF32 none(ir.ConstantF32(0.0f));
+    const IrF32 unit(ir.ConstantF32(1.0f));
+    IrValue* rounded = rounding != 0u ? directedF32(*lhsFactor, *rhsFactor, none.Value(), true) : &ir.Emit(IrOpcode::FPMul32, IrType::F32, {lhsFactor, rhsFactor});
+    IrValue* product = &flushTinyProduct(lhsFactor, rhsFactor, rounded).Value();
     const IrU1 zeroSum(ir.LogicalAnd(isZero(product).Value(), isZero(addend).Value()));
-    IrValue& zeroSumBits = ir.BitwiseAnd(ir.BitwiseAnd(ir.BitCastU32(*product), ir.BitCastU32(*addend)), ir.Constant(0x80000000u));
-    IrValue* sum = &ir.Emit(IrOpcode::SelectF32, IrType::F32, {&zeroSum.Value(), &ir.BitCastF32(zeroSumBits), &ir.Emit(IrOpcode::FPAdd32, IrType::F32, {product, addend})});
+    IrValue& signs = rounding == 2u ? ir.BitwiseOr(ir.BitCastU32(*product), ir.BitCastU32(*addend)) : ir.BitwiseAnd(ir.BitCastU32(*product), ir.BitCastU32(*addend));
+    IrValue& zeroSumBits = ir.BitwiseAnd(signs, ir.Constant(0x80000000u));
+    IrValue* added = rounding != 0u ? directedF32(*product, unit.Value(), *addend) : &ir.Emit(IrOpcode::FPAdd32, IrType::F32, {product, addend});
+    IrValue* sum = &ir.Emit(IrOpcode::SelectF32, IrType::F32, {&zeroSum.Value(), &ir.BitCastF32(zeroSumBits), added});
     writeOperand(inst.destination, nanResultF32({lhsFactor, rhsFactor, addend}, sum, &invalidProductF32(lhsFactor, rhsFactor)));
     return true;
 }
