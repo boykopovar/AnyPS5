@@ -222,6 +222,25 @@ for (const result of ['success', 'failure']) {
     });
 }
 
+test('a late clipboard failure leaves focus on a newer import report', async t => {
+    const app = await setup(t, 'late-copy-report');
+    const clipboard = Promise.withResolvers();
+    navigator.clipboard.writeText = () => clipboard.promise;
+    const preview = app.get('preview');
+    preview.select = () => {};
+    await app.importFile('first.ini', 'Cross = KEY:F\n');
+    app.get('copy').click();
+    await app.importFile('broken.ini', 'NotAnAction = KEY:Space\n');
+    const status = app.get('status').textContent;
+
+    clipboard.reject(new Error('Clipboard unavailable'));
+    await setImmediate();
+
+    assert.equal(document.activeElement, app.get('import-report'));
+    assert.equal(preview.focused, false);
+    assert.equal(app.get('status').textContent, status);
+});
+
 test('a chord search result stays visible while changing its buttons in the open picker', async t => {
     const app = await setup(t, 'search-edit-chord');
     await app.importFile('input.ini', 'Screenshot = PAD:L1+R1\n');

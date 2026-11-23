@@ -432,6 +432,7 @@ byId('file').addEventListener('change', async event => {
         const report = byId('import-report');
         if (result.errors.length) {
             importReport = result;
+            saveRequest++;
             renderImportReport();
             report.focus();
             return;
