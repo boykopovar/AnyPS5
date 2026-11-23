@@ -78,6 +78,18 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
+#ifdef _WIN32
+namespace {
+
+void PrintWindowsToStandardError(const char* format, const void* args) {
+    std::string buffer;
+    const int size = LibcDetail::FormatWindows(nullptr, 0, format, args, &buffer);
+    if (size > 0) std::fwrite(buffer.data(), 1, static_cast<std::size_t>(size), stderr);
+}
+
+}
+#endif
+
 struct WTFLogChannel {
     std::uint8_t state;
     const char* name;
@@ -180,7 +192,7 @@ extern "C" {
 #ifdef _WIN32
         __builtin_sysv_va_list args;
         __builtin_sysv_va_start(args, format);
-        LibcDetail::PrintWindows(format, args);
+        PrintWindowsToStandardError(format, args);
         __builtin_sysv_va_end(args);
 #else
         std::va_list args;
@@ -243,7 +255,7 @@ void APS5_VABI WTFReportAssertionFailureWithMessage(const char* file, int line, 
 #ifdef _WIN32
         __builtin_sysv_va_list args;
         __builtin_sysv_va_start(args, format);
-        LibcDetail::PrintWindows(format, args);
+        PrintWindowsToStandardError(format, args);
         __builtin_sysv_va_end(args);
 #else
         std::va_list args;
@@ -265,7 +277,7 @@ void APS5_VABI WTFReportFatalError(const char* file, int line, const char* funct
 #ifdef _WIN32
         __builtin_sysv_va_list args;
         __builtin_sysv_va_start(args, format);
-        LibcDetail::PrintWindows(format, args);
+        PrintWindowsToStandardError(format, args);
         __builtin_sysv_va_end(args);
 #else
         std::va_list args;
@@ -283,7 +295,7 @@ void APS5_VABI WTFReportError(const char* file, int line, const char* function, 
 #ifdef _WIN32
         __builtin_sysv_va_list args;
         __builtin_sysv_va_start(args, format);
-        LibcDetail::PrintWindows(format, args);
+        PrintWindowsToStandardError(format, args);
         __builtin_sysv_va_end(args);
 #else
         std::va_list args;
@@ -306,7 +318,7 @@ void APS5_VABI WTFLogAlways(const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    LibcDetail::PrintWindows(format, args);
+    PrintWindowsToStandardError(format, args);
     __builtin_sysv_va_end(args);
 #else
     std::va_list args;
@@ -343,7 +355,7 @@ void APS5_VABI WTFLog(void* channel, const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    LibcDetail::PrintWindows(format, args);
+    PrintWindowsToStandardError(format, args);
     __builtin_sysv_va_end(args);
 #else
     std::va_list args;
@@ -365,7 +377,7 @@ void APS5_VABI WTFLogVerbose(const char* file, int line, const char* function, v
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    LibcDetail::PrintWindows(format, args);
+    PrintWindowsToStandardError(format, args);
     __builtin_sysv_va_end(args);
 #else
     std::va_list args;
@@ -387,7 +399,7 @@ void APS5_VABI WTFLogWithLevel(void* channel, std::uint32_t level, const char* f
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    LibcDetail::PrintWindows(format, args);
+    PrintWindowsToStandardError(format, args);
     __builtin_sysv_va_end(args);
 #else
     std::va_list args;
@@ -496,7 +508,7 @@ void APS5_VABI _ZN3WTF8dataLogFEPKcz(const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    LibcDetail::PrintWindows(format, args);
+    PrintWindowsToStandardError(format, args);
     __builtin_sysv_va_end(args);
 #else
     std::va_list args;
@@ -511,7 +523,7 @@ void APS5_VABI _ZN3WTF9dataLogFVEPKcP13__va_list_tag(const char* format, void* a
         return;
     }
 #ifdef _WIN32
-    LibcDetail::PrintWindows(format, argList);
+    PrintWindowsToStandardError(format, argList);
 #else
     std::vfprintf(stderr, format, *reinterpret_cast<std::va_list*>(argList));
 #endif
