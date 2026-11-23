@@ -1603,6 +1603,11 @@ bool profileDeferredBuilds() {
     return profile;
 }
 
+bool pipelineCacheDisabled() {
+    static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
+    return disabled;
+}
+
 std::size_t deferredPipelineWords() {
     static const std::size_t words = [] {
         const char* value = std::getenv("APS5_ASYNC_PIPELINE_WORDS");
@@ -1663,17 +1668,18 @@ void awaitDeferredBuilds(VkDevice device) {
 
 bool DefersPipelineBuild(std::span<const CompiledShader> shaders) {
     const auto threshold = deferredPipelineWords();
-    if (threshold == 0) return false;
+    if (threshold == 0 || pipelineCacheDisabled()) return false;
     std::size_t words = 0;
     for (const auto& shader : shaders) {
-        if (shader.program != nullptr) words += shader.program->spirv.size();
+        if (shader.program == nullptr || shader.program->Identity().Empty()) return false;
+        words += shader.program->spirv.size();
     }
     return words >= threshold;
 }
 
 std::shared_ptr<Pipeline> ResidentPipelineOrDeferredBuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint64_t* storeHash) {
     if (storeHash != nullptr) *storeHash = 0;
-    static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
+    const bool disabled = pipelineCacheDisabled();
     struct DeferredKeyStorage {};
     auto& storage = HostThreadLocal<std::vector<std::byte>, DeferredKeyStorage>();
     const auto length = disabled ? std::size_t{0} : pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout, narrowLibraryKeysNow());

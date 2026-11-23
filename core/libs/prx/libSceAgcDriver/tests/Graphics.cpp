@@ -14284,6 +14284,18 @@ void pipelineStoreLazyBufferPoolTests() {
     Require(mock.live == 0, "lazy buffer pool pipeline tests leaked Vulkan objects");
 }
 
+void pipelineDeferredBuildCacheOffTests() {
+    using namespace AgcDriver::Graphics;
+    auto vertex = std::make_unique<ShaderRecompiler::RecompileResult>();
+    ShaderRecompiler::RecompileResult fragment;
+    vertex->spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex->variantId = 401;
+    fragment.variantId = 402;
+    std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, vertex.get(), 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    Require(!DefersPipelineBuild(shaders), "APS5_NO_PIPELINE_CACHE=1 builds every pipeline on the draw thread, so DefersPipelineBuild must not report a deferral that would skip the first-visit library prebuild");
+}
+
 void pipelineDeferredBuildTests() {
     using namespace AgcDriver::Graphics;
     mock = MockVulkan{};
@@ -15759,6 +15771,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-growth") {
             pipelineStoreGrowthTests(std::getenv("APS5_PIPELINE_STORE_ENTRIES") != nullptr);
             std::cout << "pipeline store bound follows the evicted pipelines that come back\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-deferred-build-cache-off") {
+            pipelineDeferredBuildCacheOffTests();
+            std::cout << "with the pipeline cache off no pipeline build is reported as deferred\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-deferred-build") {
