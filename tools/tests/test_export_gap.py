@@ -255,6 +255,89 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("already provided", report)
             self.assertIn("sceExamplePostfixBase_nid_postfix", report)
 
+    def test_c_linkage_postfix_functions_without_vabi_are_provided(self):
+        definitions = [
+            'extern "C" [[noreturn]] void abort_nid_postfix() { std::abort(); }',
+            'extern "C" { [[noreturn]] void __stack_chk_fail_nid_postfix() { std::abort(); } }',
+            'namespace Runtime { extern "C" int Named_nid_postfix() { return 1; } }',
+            'extern "C" { namespace Runtime { int Nested_nid_postfix() { return 1; } } }',
+            'extern "C" [[gnu::visibility("default")]] int Visible_nid_postfix() { return 1; }',
+            'extern "C" { inline namespace Runtime { int InlineNamed_nid_postfix() { return 1; } } }',
+        ]
+        names = ["abort", "__stack_chk_fail", "Named", "Nested", "Visible", "InlineNamed"]
+        for source, name in zip(definitions, names):
+            with self.subTest(name=name):
+                self.assertTrue(provides_with(source, nid_of(name)))
+
+    def test_non_exported_postfix_functions_do_not_hide_gaps(self):
+        sources = [
+            'int Missing_nid_postfix() { return 1; }',
+            'extern "C" int Missing_nid_postfix();',
+            'extern "C" { int Missing_nid_postfix(); }',
+            'extern "C" { static int Missing_nid_postfix() { return 1; } }',
+            'namespace { int Missing_nid_postfix() { return 1; } }',
+            'extern "C" { struct Record { int Missing_nid_postfix() { return 1; } }; }',
+            'extern "C" { extern "C++" { int Missing_nid_postfix() { return 1; } } }',
+            'extern "C" { extern "C++" int Missing_nid_postfix() { return 1; } }',
+            'extern "C" { int Caller() { return Missing_nid_postfix(); } }',
+            'extern "C" { int Caller(int value = Missing_nid_postfix()) { return value; } }',
+            'extern "C" { [[gnu::visibility("hidden")]] int Missing_nid_postfix() { return 1; } }',
+            'namespace [[gnu::visibility("hidden")]] Runtime { extern "C" int Missing_nid_postfix() { return 1; } }',
+            'extern "C" { namespace [[gnu::visibility("hidden")]] Runtime { int Missing_nid_postfix() { return 1; } } }',
+            'namespace [[gnu::visibility("internal")]] Runtime { extern "C" int Missing_nid_postfix() { return 1; } }',
+            'extern "C" { const char* text = R"(int Missing_nid_postfix() { return 1; })"; }',
+            '#define DEFINITION extern "C" int Missing_nid_postfix() { return 1; }\n',
+        ]
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertFalse(provides_with(source, nid_of("Missing")))
+
+    def test_anonymous_namespace_definitions_remain_gaps(self):
+        sources = [
+            'extern "C" { namespace { int Missing_nid_postfix() { return 1; } } }',
+            'namespace { extern "C" int Missing_nid_postfix() { return 1; } }',
+            'namespace { namespace Nested { extern "C" int Missing_nid_postfix() { return 1; } } }',
+            'extern "C" { namespace [[deprecated("private")]] { int Missing_nid_postfix() { return 1; } } }',
+            'extern "C" { inline namespace { int Missing_nid_postfix() { return 1; } } }',
+        ]
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertFalse(provides_with(source, nid_of("Missing")))
+                self.assertTrue(provides_with(
+                    source + '\nextern "C" int After_nid_postfix() { return 1; }',
+                    nid_of("After"),
+                ))
+
+    def test_trailing_visibility_attributes_do_not_hide_real_gaps(self):
+        sources = [
+            'extern "C" int Hidden_nid_postfix() __attribute__((visibility("hidden"))) { return 1; }',
+            'extern "C" { int Hidden_nid_postfix() __attribute__((__visibility__("hidden"))) { return 1; } }',
+            'extern "C" int Hidden_nid_postfix() noexcept __attribute__((visibility("hidden"), used)) { return 1; }',
+            'extern "C" int Hidden_nid_postfix() __attribute__((used)) __attribute__((visibility("hidden"))) { return 1; }',
+            'extern "C" int Hidden_nid_postfix() __attribute__((visibility("internal"))) { return 1; }',
+            'extern "C" int Hidden_nid_postfix() __attribute__((visibility("hid" "den"))) { return 1; }',
+            '#define HIDDEN_VISIBILITY "hidden"\nextern "C" int Hidden_nid_postfix() __attribute__((visibility(HIDDEN_VISIBILITY))) { return 1; }',
+        ]
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertFalse(provides_with(source, nid_of("Hidden")))
+
+    def test_visible_attributes_and_hidden_string_literals_keep_exports(self):
+        sources = [
+            'extern "C" int Visible_nid_postfix() __attribute__((visibility("default"))) { return 1; }',
+            'extern "C" __attribute__((visibility("default"))) int Visible_nid_postfix() { return 1; }',
+            'extern "C" int Visible_nid_postfix() __attribute__((visibility("protected"))) { return 1; }',
+            'extern "C" int Visible_nid_postfix() __attribute__((visibility("de" "fault"))) { return 1; }',
+            'extern "C" int Visible_nid_postfix(const char* label = "hidden") { return 1; }',
+            'extern "C" [[deprecated("hidden")]] int Visible_nid_postfix() { return 1; }',
+            'extern "C" int Visible_nid_postfix(int value = visibility("hidden")) { return value; }',
+            'extern "C" int Visible_nid_postfix() [[gnu::visibility("hidden")]] { return 1; }',
+            'extern "C" int Visible_nid_postfix(int value __attribute__((visibility("hidden")))) { return value; }',
+        ]
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertTrue(provides_with(source, nid_of("Visible")))
+
     def test_gap_report_distinguishes_data_definitions_from_declarations(self):
         names = ["Exported", "Declared", "Private"]
         nids = [nid_of(name) for name in names]
