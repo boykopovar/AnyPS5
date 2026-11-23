@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceIcu/Data.hpp"
 
 extern "C" {
 
@@ -10,8 +11,5 @@ std::int32_t APS5_VABI uloc_addLikelySubtags_nid_postfix(const char* locale, cha
                                                          std::int32_t* status);
 std::int32_t APS5_VABI uloc_minimizeSubtags_nid_postfix(const char* locale, char* result, std::int32_t capacity,
                                                         std::int32_t* status);
-
-void APS5_VABI udata_setCommonData_nid_postfix(const void* data, std::int32_t* status);
-void APS5_VABI udata_setFileAccess_nid_postfix(std::int32_t access, std::int32_t* status);
 
 }
