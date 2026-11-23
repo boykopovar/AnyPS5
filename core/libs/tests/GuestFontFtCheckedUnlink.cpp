@@ -2,11 +2,13 @@
 #include "prx/libSceFont/include/FontDriver.hpp"
 #include "prx/libSceFontFt/include/Api.hpp"
 #include "prx/libSceFont/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <unordered_set>
 #include <vector>
 #ifdef _WIN32
@@ -114,6 +116,108 @@ static Font::FontObj* FontHead(FontHandle handle) {
     return static_cast<Font::FontObj*>(entries[native->open_info.ctx_entry_index].obj_mode1);
 }
 
+static Font::FontObj* protectedOpenHead = nullptr;
+static void* protectedOpenOutput = nullptr;
+static bool protectedOpenTriggered = false;
+static void* splitOpenOutput = nullptr;
+static void* splitOpenSecondPage = nullptr;
+static int splitOpenWrites = 0;
+
+static void ProtectOnOutputWrite(std::uintptr_t address, std::size_t) {
+    if (address == reinterpret_cast<std::uintptr_t>(protectedOpenOutput)) {
+        protectedOpenTriggered = true;
+        Require(SetWritable(protectedOpenHead ? static_cast<void*>(protectedOpenHead) : protectedOpenOutput, false));
+    }
+}
+
+static void ProtectSplitOutputOnWrite(std::uintptr_t address, std::size_t) {
+    if (address == reinterpret_cast<std::uintptr_t>(splitOpenOutput)) {
+        ++splitOpenWrites;
+        Require(SetWritable(splitOpenSecondPage, splitOpenWrites != 1));
+    }
+}
+
+static void CheckOpenInsertionFailure() {
+    const FontMemoryInterface iface{CloseAllocate, CloseRelease, nullptr, nullptr, nullptr, nullptr};
+    FontMemory memory{};
+    Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, nullptr, nullptr, nullptr) == SCE_FONT_OK);
+    FontLibrary library = nullptr;
+    Require(sceFontCreateLibrary(&memory, sceFontSelectLibraryFt(0), &library) == SCE_FONT_OK);
+    Require(sceFontSupportExternalFonts(library, 2, 0x52) == SCE_FONT_OK);
+    const auto collection = BuildCollection();
+    FontOpenDetail detail{};
+    detail.unique_id = -1;
+    FontHandle first = nullptr;
+    Require(sceFontOpenFontMemory(library, collection.data(), static_cast<std::uint32_t>(collection.size()), &detail, &first) == SCE_FONT_OK);
+    Font::FontObj* head = FontHead(first);
+    Require(head && head->prev == nullptr && head->next == nullptr && closePages.size() == 1);
+    auto* native = static_cast<Font::FontLibNative*>(library);
+    auto** output = static_cast<Font::FontObj**>(CloseAllocate(nullptr, sizeof(Font::FontObj)));
+    Require(output != nullptr);
+    *output = head;
+    Require(SetWritable(output, false));
+    protectedOpenHead = head;
+    protectedOpenOutput = output;
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(&ProtectOnOutputWrite);
+    errno = 71;
+    const int rc = native->sys_driver->open(native, 1, collection.data(), static_cast<std::uint32_t>(collection.size()), 1, 0, output);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    protectedOpenOutput = nullptr;
+    protectedOpenHead = nullptr;
+    Require(SetWritable(head, true));
+    Require(rc == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(*output == head && head->prev == nullptr && head->next == nullptr && closePages.size() == 2);
+    Require(SetWritable(output, true));
+    protectedOpenOutput = output;
+    protectedOpenTriggered = false;
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(&ProtectOnOutputWrite);
+    errno = 71;
+    const int lateRc = native->sys_driver->open(native, 1, collection.data(), static_cast<std::uint32_t>(collection.size()), 1, 0, output);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    protectedOpenOutput = nullptr;
+    Require(SetWritable(output, true));
+    Require(protectedOpenTriggered && lateRc == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(*output == head && head->prev == nullptr && head->next == nullptr && closePages.size() == 2);
+    void* splitPages = nullptr;
+#ifdef _WIN32
+    splitPages = VirtualAlloc(nullptr, 2 * PageSize(), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    splitPages = mmap(nullptr, 2 * PageSize(), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (splitPages == MAP_FAILED) splitPages = nullptr;
+#endif
+    Require(splitPages != nullptr);
+    splitOpenOutput = static_cast<std::uint8_t*>(splitPages) + PageSize() - sizeof(head) / 2;
+    splitOpenSecondPage = static_cast<std::uint8_t*>(splitPages) + PageSize();
+    std::memcpy(splitOpenOutput, &head, sizeof(head));
+    splitOpenWrites = 0;
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(&ProtectSplitOutputOnWrite);
+    errno = 71;
+    const int splitRc = native->sys_driver->open(native, 1, collection.data(), static_cast<std::uint32_t>(collection.size()), 1, 0,
+        static_cast<Font::FontObj**>(splitOpenOutput));
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    Require(SetWritable(splitOpenSecondPage, true));
+    Font::FontObj* restoredSplit = nullptr;
+    std::memcpy(&restoredSplit, splitOpenOutput, sizeof(restoredSplit));
+    Require(splitOpenWrites == 2 && splitRc == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(restoredSplit == head && head->prev == nullptr && head->next == nullptr && closePages.size() == 2);
+    splitOpenOutput = nullptr;
+    splitOpenSecondPage = nullptr;
+#ifdef _WIN32
+    Require(VirtualFree(splitPages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(splitPages, 2 * PageSize()) == 0);
+#endif
+    Require(SetWritable(head, false));
+    Font::FontObj* writableOutput = head;
+    errno = 71;
+    Require(native->sys_driver->open(native, 1, collection.data(), static_cast<std::uint32_t>(collection.size()), 1, 0, &writableOutput) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(writableOutput == head && head->prev == nullptr && head->next == nullptr && errno == 71 && closePages.size() == 2);
+    Require(SetWritable(head, true));
+    CloseRelease(nullptr, output);
+    Require(sceFontCloseFont(first) == SCE_FONT_OK && closePages.empty());
+    Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
+}
+
 static void CheckCloseUnlink() {
     const FontMemoryInterface iface{CloseAllocate, CloseRelease, nullptr, nullptr, nullptr, nullptr};
     FontMemory memory{};
@@ -193,6 +297,7 @@ static void CheckCloseUnlink() {
 }
 
 int main() {
+    CheckOpenInsertionFailure();
     CheckCloseUnlink();
     return 0;
 }

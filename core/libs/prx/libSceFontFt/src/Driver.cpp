@@ -339,6 +339,10 @@ int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const 
     if (!CopyInGuest(localLibrary, library) || !fontAddress || !CopyInGuest(headObj, inoutFontObj)) {
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
+    if (!GuestWritable_nid_no_patch(inoutFontObj, sizeof(*inoutFontObj)) ||
+        (headObj && !GuestWritable_nid_no_patch(&headObj->prev, sizeof(headObj->prev)))) {
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     FontMemoryInterface localIface{};
     const bool hasIface = localLibrary.iface && CopyInGuest(localIface, localLibrary.iface);
     const auto allocFn = hasIface ? localIface.alloc : nullptr;
@@ -387,6 +391,11 @@ int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const 
         FT_Done_Face(face);
         return SCE_FONT_ERROR_ALLOCATION_FAILED;
     }
+    if (!GuestWritable_nid_no_patch(obj, sizeof(*obj))) {
+        FT_Done_Face(face);
+        freeFn(localLibrary.alloc_ctx, obj);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     FontObj localObj{};
     localObj.refcount = 1;
     localObj.sub_font_index = subFontIndex;
@@ -394,27 +403,38 @@ int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const 
     localObj.next = headObj;
     localObj.ft_face = face;
     localObj.ft_ctx_0x58 = ftLibrary;
+    if (!CopyOutGuest(obj, localObj)) {
+        FT_Done_Face(face);
+        freeFn(localLibrary.alloc_ctx, obj);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
+    FontObj* oldHeadPrev = nullptr;
     if (headObj) {
-        FontObj nextObj{};
-        if (!CopyInGuest(nextObj, headObj)) {
+        if (!CopyInGuest(oldHeadPrev, &headObj->prev) ||
+            !GuestWritable_nid_no_patch(&headObj->prev, sizeof(headObj->prev))) {
             FT_Done_Face(face);
             freeFn(localLibrary.alloc_ctx, obj);
             return SCE_FONT_ERROR_INVALID_PARAMETER;
         }
-        nextObj.prev = obj;
-        if (!CopyOutGuest(headObj, nextObj)) {
+        if (!CopyOutGuest(&headObj->prev, obj)) {
+            CopyOutGuest(&headObj->prev, oldHeadPrev);
+            FontObj* restoredPrev = nullptr;
+            if (!CopyInGuest(restoredPrev, &headObj->prev) || restoredPrev != oldHeadPrev) {
+                return SCE_FONT_ERROR_INVALID_PARAMETER;
+            }
             FT_Done_Face(face);
             freeFn(localLibrary.alloc_ctx, obj);
             return SCE_FONT_ERROR_INVALID_PARAMETER;
         }
     }
-    if (!CopyOutGuest(obj, localObj) || !CopyOutGuest(inoutFontObj, obj)) {
-        if (headObj) {
-            FontObj nextObj{};
-            if (CopyInGuest(nextObj, headObj)) {
-                nextObj.prev = nullptr;
-                CopyOutGuest(headObj, nextObj);
-            }
+    if (!CopyOutGuest(inoutFontObj, obj)) {
+        if (headObj) CopyOutGuest(&headObj->prev, oldHeadPrev);
+        CopyOutGuest(inoutFontObj, headObj);
+        FontObj* restoredOutput = nullptr;
+        FontObj* restoredPrev = nullptr;
+        if (!CopyInGuest(restoredOutput, inoutFontObj) || restoredOutput != headObj ||
+            (headObj && (!CopyInGuest(restoredPrev, &headObj->prev) || restoredPrev != oldHeadPrev))) {
+            return SCE_FONT_ERROR_INVALID_PARAMETER;
         }
         FT_Done_Face(face);
         freeFn(localLibrary.alloc_ctx, obj);
