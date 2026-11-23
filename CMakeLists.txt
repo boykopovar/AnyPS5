@@ -966,6 +966,9 @@ if(BUILD_TESTING)
         add_test(NAME title_run_machines COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_machines.py)
         set_tests_properties(title_run_machines PROPERTIES TIMEOUT 30)
+        add_test(NAME title_run_summary_provenance COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_summary_provenance.py)
+        set_tests_properties(title_run_summary_provenance PROPERTIES TIMEOUT 30)
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)
