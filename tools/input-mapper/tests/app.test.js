@@ -106,6 +106,7 @@ async function setup(t, name) {
             querySelectorAll: selector => selector.startsWith('[data-i18n') || selector === '[data-view]' ? [] : root.querySelectorAll(selector)
         },
         window: Object.assign(new EventTarget(), {scrollTo() {}}),
+        navigator: {clipboard: {}},
         location: {hash: ''},
         history: {pushState() {}},
         localStorage: {getItem() { return null; }, setItem() {}},
@@ -302,6 +303,53 @@ test('replacing a built-in search result keeps the new binding reachable until i
     assert.equal(document.activeElement, search);
     assert.equal(app.get('download').disabled, false);
     assert.equal(app.get('preview').value, 'Screenshot = KEY:K\n');
+});
+
+for (const result of ['success', 'failure']) {
+    test(`a late clipboard ${result} leaves a newer import saved`, async t => {
+        const app = await setup(t, `late-copy-${result}`);
+        const clipboard = Promise.withResolvers();
+        const writes = [];
+        navigator.clipboard.writeText = text => {
+            writes.push(text);
+            return clipboard.promise;
+        };
+        const preview = app.get('preview');
+        preview.select = () => {};
+        await app.importFile('first.ini', 'Cross = KEY:F\n');
+        app.get('copy').click();
+        assert.deepEqual(writes, ['Cross = KEY:F\n']);
+        await app.importFile('second.ini', 'Cross = KEY:J\n');
+        const status = app.get('status').textContent;
+
+        if (result === 'success') clipboard.resolve();
+        else clipboard.reject(new Error('Clipboard unavailable'));
+        await setImmediate();
+
+        assert.equal(preview.value, 'Cross = KEY:J\n');
+        assert.equal(app.get('status').textContent, status);
+        assert.equal(preview.focused, false);
+        assert.equal(window.dispatchEvent(new Event('beforeunload', {cancelable: true})), true);
+    });
+}
+
+test('a late clipboard failure leaves focus on a newer import report', async t => {
+    const app = await setup(t, 'late-copy-report');
+    const clipboard = Promise.withResolvers();
+    navigator.clipboard.writeText = () => clipboard.promise;
+    const preview = app.get('preview');
+    preview.select = () => {};
+    await app.importFile('first.ini', 'Cross = KEY:F\n');
+    app.get('copy').click();
+    await app.importFile('broken.ini', 'NotAnAction = KEY:Space\n');
+    const status = app.get('status').textContent;
+
+    clipboard.reject(new Error('Clipboard unavailable'));
+    await setImmediate();
+
+    assert.equal(document.activeElement, app.get('import-report'));
+    assert.equal(preview.focused, false);
+    assert.equal(app.get('status').textContent, status);
 });
 
 test('a chord search result stays visible while changing its buttons in the open picker', async t => {
