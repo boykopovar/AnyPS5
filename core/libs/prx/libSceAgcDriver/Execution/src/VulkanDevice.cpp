@@ -3196,6 +3196,26 @@ bool OpportunisticReap() {
     return enabled;
 }
 
+constexpr std::uint64_t SettledLabelFlips = 3;
+
+bool LabelMappingSettled(const GuestAllocations::Range& range) {
+    struct FirstLabel {
+        std::uint64_t serial;
+        std::uint64_t flip;
+    };
+    static std::mutex mutex;
+    static std::unordered_map<std::uint64_t, FirstLabel> labelled;
+    const auto flip = Graphics::StorageTexture::FlipSerial();
+    std::lock_guard lock(mutex);
+    if (labelled.size() >= 4096) labelled.clear();
+    const auto [entry, inserted] = labelled.try_emplace(range.allocationAddress, FirstLabel{range.backingSerial, flip});
+    if (inserted || entry->second.serial != range.backingSerial) {
+        entry->second = FirstLabel{range.backingSerial, flip};
+        return false;
+    }
+    return flip - entry->second.flip >= SettledLabelFlips;
+}
+
 }
 
 bool VulkanDevice::StoreIdleResults(bool reapFirst, const std::function<bool()>& stop) {
@@ -3320,11 +3340,12 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     const auto* import = Graphics::ExistingHostImportFor(context, address, bytes.size());
     std::shared_ptr<Graphics::HostImport> unregistered;
     if (import == nullptr) {
+        std::shared_ptr<const GuestAllocations::Range> guestRange;
         const bool syncGuest = syncUnimported && [&] {
-            const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), true);
-            return range != nullptr && range->address < address + bytes.size();
+            guestRange = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), true);
+            return guestRange != nullptr && guestRange->address < address + bytes.size();
         }();
-        if (syncGuest && !Graphics::HostImportCovers(context, address, bytes.size())) {
+        if (syncGuest && !Graphics::HostImportCovers(context, address, bytes.size()) && !LabelMappingSettled(*guestRange)) {
             import = Graphics::HostImportFor(context, address, bytes.size(), Graphics::ImportRequester::Label);
             if (import == nullptr) return unimported();
         }

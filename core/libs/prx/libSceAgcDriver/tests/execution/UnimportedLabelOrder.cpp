@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "VulkanTestDevice.hpp"
 #include <SDL_loadso.h>
@@ -25,6 +26,7 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <utility>
 
 namespace {
 
@@ -188,6 +190,29 @@ int main() {
             Require(temporary.Words()[1023] == value[0] && temporary.Words()[1024] == value[1], "the unimported eight-byte label did not land");
             Require(temporary.Words()[1022] == 0 && temporary.Words()[1025] == 0, "the CPU label changed neighboring words");
             Require(device->FillBuffer(labels.Address() + 4096, 4096, pattern), "cannot record work after the unimported label");
+        }
+        {
+            GuestBlock settled(true);
+            GuestBlock fresh(true);
+            const std::uint32_t value = 0x05e771edu;
+            const auto bytes = std::as_bytes(std::span(&value, 1));
+            const auto label = [&](GuestBlock& block, std::uint64_t stamp) {
+                Require(device->FillBuffer(labels.Address() + 4096, 4096, pattern), "cannot record work before a label of a settled mapping");
+                const auto imported = AgcDriver::Graphics::HostImportLiveBytes();
+                const int reason = device->WriteLabelOnGpu(block.Address() + 128, bytes, stamp, 0);
+                const bool grew = AgcDriver::Graphics::HostImportLiveBytes() > imported;
+                if (reason == 7) AgcDriver::GuestMemory::Write(block.Address() + 128, bytes, 4);
+                return std::pair{reason, grew};
+            };
+            const auto first = label(settled, 92);
+            Require(first.first == 7 && !first.second, "the first label of a new mapping did not take its unimported CPU path (reason " + std::to_string(first.first) + ")");
+            for (int flip = 0; flip < 3; ++flip) AgcDriver::Graphics::StorageTexture::NoteFlip();
+            const auto later = label(settled, 93);
+            Require(later.first == 0 && later.second, "a label of a mapping labelled three flips earlier synced instead of importing its memory (reason " + std::to_string(later.first) + ")");
+            const auto other = label(fresh, 94);
+            Require(other.first == 7 && !other.second, "the first label of another new mapping imported its memory (reason " + std::to_string(other.first) + ")");
+            device->WaitIdle();
+            Require(settled.Words()[32] == value && fresh.Words()[32] == value, "a label of the settled-mapping case did not land");
         }
         StoreLabel(*device, AddressOf(&commandMemory[8]), 1, 1);
         StoreLabel(*device, labels.Address() + 4, 2, 2);

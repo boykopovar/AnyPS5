@@ -4925,6 +4925,10 @@ void StorageTexture::NoteFlip() {
     flipSerial.fetch_add(1, std::memory_order_relaxed);
 }
 
+std::uint64_t StorageTexture::FlipSerial() {
+    return flipSerial.load(std::memory_order_relaxed);
+}
+
 std::uint64_t StorageTexture::OccasionalLabelStores() {
     return occasionalLabelStores.load(std::memory_order_relaxed);
 }
