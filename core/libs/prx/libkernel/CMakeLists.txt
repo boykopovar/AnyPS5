@@ -64,6 +64,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketConnect.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/EventFlag/src/EventFlag.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/Module.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/UnsupportedNodes.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/DynamicLoader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/ModuleInfo.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/Tls.cpp
@@ -2349,6 +2350,12 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         set_tests_properties(guest_system_command PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_unsupported_nodes_tests ${LIBS_INCLUDE_DIR}/tests/GuestUnsupportedNodes.cpp)
+    target_include_directories(guest_unsupported_nodes_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_unsupported_nodes_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_unsupported_nodes_tests)
+    add_test(NAME guest_unsupported_nodes COMMAND guest_unsupported_nodes_tests)
+    set_tests_properties(guest_unsupported_nodes PROPERTIES TIMEOUT 20)
     add_test_executable(guest_socket_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketError.cpp)
     target_include_directories(guest_socket_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
     configure_windows_unwind(guest_socket_error_tests)
