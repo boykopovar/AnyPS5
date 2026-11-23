@@ -2690,10 +2690,6 @@ int APS5_VABI _ZN7WebCore16CalculationValue6createESt10unique_ptrINS_18CalcExpre
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore10Pasteboard21createForCopyAndPasteEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore11RenderTheme14focusRingColorEN3WTF9OptionSetINS_10StyleColor7OptionsEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -13276,23 +13272,7 @@ int APS5_VABI _ZN7WebCore10Pasteboard10readOriginEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore10Pasteboard10readStringERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore10Pasteboard11writeMarkupERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10Pasteboard11writeStringERKN3WTF6StringES4_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10Pasteboard14readAllStringsERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10Pasteboard14writePlainTextERKN3WTF6StringENS0_18SmartReplaceOptionE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
