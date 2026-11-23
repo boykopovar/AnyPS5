@@ -69,7 +69,13 @@ if(BUILD_TESTING)
     add_test_executable(guest_wctob_tests ${LIBS_INCLUDE_DIR}/tests/GuestWctob.cpp)
     target_include_directories(guest_wctob_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_wctob_tests PRIVATE libc)
+    configure_windows_unwind(guest_wctob_tests)
     add_test(NAME guest_wctob COMMAND guest_wctob_tests)
+    set_tests_properties(guest_wctob PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_wctob PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     set_tests_properties(guest_stream_purge PROPERTIES TIMEOUT 10)
     if(WIN32)
         set_tests_properties(guest_stream_purge PROPERTIES ENVIRONMENT_MODIFICATION
