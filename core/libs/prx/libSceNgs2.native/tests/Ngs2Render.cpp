@@ -919,6 +919,66 @@ static void ExpectMeasuredGains(const std::vector<float>& out, std::uint32_t cha
     for (std::size_t i = 0; i < frames.size(); i++) Require(out[frames[i] * channels] == source * gains[i]);
 }
 
+static void TestStandardMasteringGainRamp() {
+    constexpr std::uint32_t channels = 6;
+    for (const std::uint32_t grain : {128u, 192u, 256u}) {
+        GainRig rig(grain, channels, 8192, 7 * grain);
+        const auto gain = [&](float fbw, float lfe) {
+            Control(rig.master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, fbw, lfe});
+        };
+        const auto expect = [&](float oldFbw, float newFbw, float oldLfe, float newLfe) {
+            const auto out = rig.Render();
+            const auto fbw = EightLaneRamp(oldFbw, newFbw, grain);
+            const auto lfe = EightLaneRamp(oldLfe, newLfe, grain);
+            for (std::uint32_t frame = 0; frame < grain; frame++) {
+                for (std::uint32_t channel = 0; channel < channels; channel++) {
+                    Require(out[frame * channels + channel] == 0.25f * (channel == 3 ? lfe[frame] : fbw[frame]));
+                }
+            }
+        };
+
+        rig.Render();
+        gain(0.3f, 0.75f);
+        expect(0.3f, 0.3f, 0.75f, 0.75f);
+        gain(0.61f, -0.2f);
+        expect(0.3f, 0.61f, 0.75f, -0.2f);
+        expect(0.61f, 0.61f, -0.2f, -0.2f);
+        gain(0.61f, 0.0f);
+        expect(0.61f, 0.61f, -0.2f, 0.0f);
+        Control(rig.master, SCE_NGS2_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, channels, 0});
+        Event(rig.master, SCE_NGS2_VOICE_EVENT_PLAY);
+        gain(0.5f, 2.0f);
+        expect(0.5f, 0.5f, 2.0f, 2.0f);
+    }
+}
+
+static void APS5_VABI SetGainAfterBlock(const Ngs2VoiceCallbackInfo* info) {
+    Require(info->flag == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END);
+    Control(info->callback_data, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, 1.5f, 1.0f});
+}
+
+static void TestStandardMasteringGainAfterCallback() {
+    const auto system = CreateSystem();
+    const std::vector<std::int16_t> silence{0};
+    const std::vector<std::int16_t> pcm(3 * Grain, 8192);
+    const auto trigger = Sampler(system, silence, 0);
+    const auto source = Sampler(system, pcm, 0);
+    const auto master = Mastering(system, 1);
+    Patch(trigger, master);
+    Patch(source, master);
+    Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, 0.5f, 1.0f});
+    Control(trigger, SCE_NGS2_VOICE_PARAM_CALLBACK, Ngs2VoiceCallbackParam{{}, SetGainAfterBlock, master, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+    Event(trigger, SCE_NGS2_VOICE_EVENT_PLAY);
+    Event(source, SCE_NGS2_VOICE_EVENT_PLAY);
+    std::vector<float> out(Grain);
+    const Ngs2RenderBufferInfo output{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 1};
+    Require(sceNgs2SystemRender(system, &output, 1) == SCE_NGS2_OK);
+    Require(out.back() == 0.125f);
+    Require(sceNgs2SystemRender(system, &output, 1) == SCE_NGS2_OK);
+    for (std::uint32_t frame = 0; frame < Grain; frame++) Require(out[frame] == 0.25f * (0.5f + static_cast<float>(frame) / Grain));
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestPortVolumeRampLikePs5() {
     for (const std::uint32_t grain : {256u, 128u, 512u}) {
         GainRig rig(grain, 1, 16384, grain * 4);
@@ -3831,6 +3891,8 @@ int main() {
     TestSystemOptionFlags();
 
     if (!Ps4Library) {
+        TestStandardMasteringGainRamp();
+        TestStandardMasteringGainAfterCallback();
         TestMasteringGainAfterRemap();
         TestDefaultMapLikePs5();
     }

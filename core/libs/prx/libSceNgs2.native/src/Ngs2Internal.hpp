@@ -9,6 +9,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -87,6 +88,11 @@ struct Ngs2FilterHistory {
     float x2 = 0.0f;
     float y1 = 0.0f;
     float y2 = 0.0f;
+};
+
+struct Ngs2MasteringGain {
+    float fbw = 1.0f;
+    float lfe = 1.0f;
 };
 
 struct Ngs2MasteringLfe {
@@ -242,8 +248,8 @@ struct Ngs2Voice {
     std::vector<std::vector<float>> matrices;
     std::vector<Ngs2Filter> filters;
     std::uint32_t outputId = 0;
-    float fbwLevel = 1.0f;
-    float lfeLevel = 1.0f;
+    std::optional<Ngs2MasteringGain> masteringGain;
+    std::optional<Ngs2MasteringGain> renderedMasteringGain;
     Ngs2MasteringLfe masteringLfe;
     std::vector<Ngs2UserFx2> userFx;
     std::vector<Ngs2VoiceCustomUserFx> customUserFx;

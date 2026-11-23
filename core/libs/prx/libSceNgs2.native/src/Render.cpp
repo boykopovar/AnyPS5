@@ -307,6 +307,21 @@ static std::uint32_t PortOutputs(const Ngs2Voice& voice, const Ngs2Voice& source
     return static_cast<std::uint32_t>(matrix == nullptr ? channels : std::min<std::size_t>(channels, matrix->size() / source.channels));
 }
 
+static void ForEachGainFrame(float before, float now, std::uint32_t grain, const auto& consume) {
+    if (before == now) {
+        for (std::uint32_t i = 0; i < grain; i++) consume(i, now);
+        return;
+    }
+    const float step = (now - before) / static_cast<float>(grain);
+    std::array<float, 8> lanes;
+    for (std::size_t lane = 0; lane < lanes.size(); lane++) lanes[lane] = before + static_cast<float>(lane) * step;
+    for (std::uint32_t i = 0; i < grain; i++) {
+        auto& level = lanes[i % lanes.size()];
+        consume(i, level);
+        level += 8.0f * step;
+    }
+}
+
 static std::vector<float> PortGains(const Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& port, std::uint32_t& outputs) {
     const auto* matrix = port.matrix < 0 || source.matrices[port.matrix].empty() ? nullptr : &source.matrices[port.matrix];
     const auto channels = voice.InputChannels();
@@ -334,17 +349,9 @@ static void MixPort(Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& p
         const float now = gains[entry];
         const float before = port.mixed ? port.mixedGains[entry] : now;
         if (before == now && now == 0.0f) continue;
-        if (before == now) {
-            for (std::uint32_t i = 0; i < grain; i++) out[i] = std::fma(in[i], now, out[i]);
-            continue;
-        }
-        const float step = (now - before) / static_cast<float>(grain);
-        float lanes[8];
-        for (int lane = 0; lane < 8; lane++) lanes[lane] = before + static_cast<float>(lane) * step;
-        for (std::uint32_t i = 0; i < grain; i++) {
-            out[i] = std::fma(in[i], lanes[i % 8], out[i]);
-            lanes[i % 8] += 8.0f * step;
-        }
+        ForEachGainFrame(before, now, grain, [&](std::uint32_t i, float level) {
+            out[i] = std::fma(in[i], level, out[i]);
+        });
     }
 }
 
@@ -749,7 +756,9 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
             if ((voice->rack->rackId != SCE_NGS2_RACK_ID_MASTERING && voice->rack->rackId != SCE_NGS2_RACK_ID_CUSTOM_MASTERING) || !voice->hasSamples || voice->KilledForRender()) continue;
             auto& mix = OutputMix(mixes, bufferInfo, numBufferInfo, *voice, grain);
             const std::uint32_t outputChannels = bufferInfo[voice->outputId].num_channels;
+            const auto gain = voice->masteringGain.value_or(Ngs2MasteringGain{});
             if (!PS4_LIBRARY && voice->rack->rackId == SCE_NGS2_RACK_ID_MASTERING) {
+                const auto previous = voice->renderedMasteringGain.value_or(gain);
                 std::vector<float> mapped(grain);
                 for (std::uint32_t dest = 0; dest < outputChannels; dest++) {
                     std::fill(mapped.begin(), mapped.end(), 0.0f);
@@ -759,14 +768,15 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
                         for (std::uint32_t i = 0; i < grain; i++) mapped[i] += voice->samples[channel * grain + i] * map;
                     }
                     const bool lfe = dest == 3 && voice->channels >= 4 && outputChannels >= 4;
-                    const float level = lfe ? voice->lfeLevel : voice->fbwLevel;
-                    for (std::uint32_t i = 0; i < grain; i++) mix[i * outputChannels + dest] += mapped[i] * level;
+                    ForEachGainFrame(lfe ? previous.lfe : previous.fbw, lfe ? gain.lfe : gain.fbw, grain, [&](std::uint32_t i, float level) {
+                        mix[i * outputChannels + dest] += mapped[i] * level;
+                    });
                 }
                 continue;
             }
             for (std::uint32_t channel = 0; channel < voice->channels; channel++) {
                 const bool lfe = channel == 3 && (voice->channels == 6 || voice->channels == 8);
-                const float level = lfe ? voice->lfeLevel : voice->fbwLevel;
+                const float level = lfe ? gain.lfe : gain.fbw;
                 for (std::uint32_t dest = 0; dest < outputChannels; dest++) {
                     const float map = MasteringOutputLevel(voice->channels, channel, outputChannels, dest, voice->rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING);
                     if (map == 0.0f) continue;
@@ -777,6 +787,12 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
         for (std::uint32_t i = 0; i < numBufferInfo; i++) {
             if (!mixes[i].empty()) WriteOutput(bufferInfo[i], mixes[i]);
             else if (outputBytes[i] != 0) std::memset(bufferInfo[i].buffer, 0, outputBytes[i]);
+        }
+    }
+    if (!PS4_LIBRARY) {
+        for (auto* rack : system.racks) {
+            if (rack->rackId != SCE_NGS2_RACK_ID_MASTERING) continue;
+            for (auto& voice : rack->voices) voice.renderedMasteringGain = voice.masteringGain;
         }
     }
     for (auto* rack : system.racks) {

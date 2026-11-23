@@ -246,8 +246,8 @@ void Ngs2Voice::ResetSetup() {
     filters.clear();
     if (!PS4_LIBRARY && rack->rackId == SCE_NGS2_RACK_ID_MASTERING) compressor = {};
     else compressor.gain.fill(1.0f);
-    fbwLevel = 1.0f;
-    lfeLevel = 1.0f;
+    masteringGain.reset();
+    renderedMasteringGain.reset();
     masteringLfe = {};
     channels = 0;
     inputChannels = 0;
@@ -826,7 +826,7 @@ void Ngs2Voice::ApplyPendingControls() {
                 else if constexpr (std::is_same_v<TValue, Ngs2VoicePortMatrixParam>) ports[value.port].matrix = value.matrix_id;
                 else if constexpr (std::is_same_v<TValue, Ngs2MatrixControl>) matrices[value.index] = std::move(value.levels);
                 else if constexpr (std::is_same_v<TValue, Ngs2SamplerVoicePitchParam>) pitch = value.ratio;
-                else if constexpr (std::is_same_v<TValue, Ngs2MasteringVoiceGainParam>) { fbwLevel = value.fbw_level; lfeLevel = value.lfe_level; }
+                else if constexpr (std::is_same_v<TValue, Ngs2MasteringVoiceGainParam>) masteringGain = Ngs2MasteringGain{value.fbw_level, value.lfe_level};
                 else if constexpr (std::is_same_v<TValue, Ngs2SubmixerVoiceUserFxParam>) {
                     userFxHandler = value.handler;
                     userFxData = {value.user_data0, value.user_data1, value.user_data2};
@@ -1175,8 +1175,10 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_GAIN || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_GAIN) {
                 const auto& gain = ParamAs<Ngs2MasteringVoiceGainParam>(param);
-                voice.fbwLevel = std::clamp(gain.fbw_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN);
-                voice.lfeLevel = std::clamp(gain.lfe_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN);
+                voice.masteringGain = Ngs2MasteringGain{
+                    std::clamp(gain.fbw_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN),
+                    std::clamp(gain.lfe_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN),
+                };
                 return;
             }
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_OUTPUT) {
