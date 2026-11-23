@@ -100,5 +100,5 @@ Each smoke run preserves its reported OS, GPU, driver and CPU in `machine`. The 
 ## CSV exports
 
 - `tools/performance_csv.py <baseline> <candidate>` exports a performance comparison as CSV. Empty metric cells mean the value was not reported; `--require-matching-context` fails when the two captures differ in machine or scene, and `--spreadsheet-safe` escapes cells that spreadsheets would evaluate.
-- `tools/trace_intervals_csv.py <summary>` exports the trace interval summaries as CSV. `--require-complete` requires at least one interval, a consistent capture identity, no dropped events, and each interval to start at the previous interval's end.
+- `tools/trace_intervals_csv.py <summary>` exports the trace interval summaries as CSV. `--require-complete` requires at least one interval, a consistent capture identity, no dropped events, and contiguous interval times and present numbers.
 - `tools/ab_split_csv.py <log> [--program P] [--class C]` exports the existing in-run A/B comparison of a log as CSV.

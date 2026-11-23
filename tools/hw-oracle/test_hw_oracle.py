@@ -436,6 +436,81 @@ class FloatModeTests(unittest.TestCase):
         self.assertTrue(assemble.call_args.args[2])
         self.assertEqual(assemble.call_args.kwargs, MODES | {"lds": 4096})
 
+    def assembled(self, assembly_target, **modes):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(hw_oracle, "target", return_value=assembly_target),                 patch.object(hw_oracle.subprocess, "run") as run, patch.object(hw_oracle, "tool", return_value="clang"):
+            hw_oracle.assemble("s_nop 0", Path(tmp), False, **(MODES | modes))
+            self.assertIn(f"-mcpu={assembly_target}", run.call_args_list[0].args[0])
+            return (Path(tmp) / "k.s").read_text()
+
+    def test_template_keeps_kernel_modes_and_counters_before_gfx12(self):
+        for assembly_target in ("gfx1013", "gfx1036", "gfx1100", "gfx1151"):
+            with self.subTest(target=assembly_target):
+                text = self.assembled(assembly_target, ieee=1, dx10_clamp=0)
+                self.assertIn(".amdhsa_ieee_mode 1\n", text)
+                self.assertIn(".amdhsa_dx10_clamp 0\n", text)
+                self.assertIn("s_waitcnt lgkmcnt(0)\n", text)
+                self.assertIn("s_waitcnt vmcnt(0)\n", text)
+                self.assertNotIn("s_wait_", text)
+                self.assertNotRegex(text.replace("@function", ""), "@[A-Z0-9_]+@")
+
+    def test_template_omits_removed_kernel_modes_on_gfx12(self):
+        for assembly_target in ("gfx1200", "gfx1201", "gfx12-generic"):
+            with self.subTest(target=assembly_target):
+                text = self.assembled(assembly_target, ieee=None, dx10_clamp=None)
+                self.assertIn(f'.amdgcn_target "amdgcn-amd-amdhsa--{assembly_target}"', text)
+                self.assertNotIn("ieee_mode", text)
+                self.assertNotIn("dx10_clamp", text)
+                self.assertNotIn("s_waitcnt", text)
+                self.assertIn("s_wait_kmcnt 0\n", text)
+                self.assertIn("s_wait_loadcnt 0\n", text)
+                self.assertIn(".amdhsa_float_denorm_mode_16_64 3\n", text)
+                self.assertNotRegex(text.replace("@function", ""), "@[A-Z0-9_]+@")
+
+    def test_removed_kernel_modes_must_match_the_target(self):
+        cases = (("gfx1201", dict(ieee=0, dx10_clamp=None), "ieee must be None on gfx1201"),
+                 ("gfx1201", dict(ieee=None, dx10_clamp=1), "dx10_clamp must be None on gfx1201"),
+                 ("gfx1036", dict(ieee=None), "ieee must be an integer from 0 to 1 on gfx1036"),
+                 ("gfx1100", dict(dx10_clamp=None), "dx10_clamp must be an integer from 0 to 1 on gfx1100"))
+        for assembly_target, modes, message in cases:
+            with self.subTest(target=assembly_target, modes=modes), tempfile.TemporaryDirectory() as tmp,                     patch.object(hw_oracle, "target", return_value=assembly_target),                     patch.object(hw_oracle.subprocess, "run") as run, self.assertRaisesRegex(ValueError, message):
+                hw_oracle.assemble("s_nop 0", Path(tmp), False, **(MODES | modes))
+            run.assert_not_called()
+
+    def test_only_removed_kernel_modes_take_none(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(hw_oracle, "target") as target:
+            for name in MODES.keys() - {"ieee", "dx10_clamp"}:
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, f"{name} must be an integer from 0 to [13]$"):
+                    hw_oracle.assemble("s_nop 0", Path(tmp), False, **(MODES | {name: None}))
+            target.assert_not_called()
+
+    def test_cli_forwards_none_for_removed_kernel_modes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            body = Path(tmp) / "body.s"
+            rows = Path(tmp) / "rows.txt"
+            body.write_text("s_nop 0")
+            rows.write_text("1 2 3 4\n")
+            argv = ["hw_oracle.py", str(body), str(rows), "--json"]
+            argv += [item for name, value in MODES.items() for item in ["--" + name.replace("_", "-"), str(value)]]
+            argv[argv.index("--ieee") + 1] = "none"
+            argv[argv.index("--dx10-clamp") + 1] = "none"
+            with patch("sys.argv", argv), patch.object(hw_oracle, "run", return_value=[(0,) * 16]) as run,                     patch.object(hw_oracle, "target", return_value="gfx1201"),                     contextlib.redirect_stdout(io.StringIO()) as output:
+                hw_oracle.main()
+            modes = MODES | {"ieee": None, "dx10_clamp": None}
+            run.assert_called_once_with("s_nop 0", [(1, 2, 3, 4)], b"", False, False, **modes, lds=4096)
+            self.assertEqual(json.loads(output.getvalue())["floating_point_modes"], modes)
+
+    def test_cli_rejects_other_values_for_removed_kernel_modes(self):
+        flags = [item for name, value in MODES.items() for item in ["--" + name.replace("_", "-"), str(value)]]
+        for flag in ("--ieee", "--dx10-clamp"):
+            for value in ("2", "None", "", "-1"):
+                argv = ["hw_oracle.py", "missing.s", "missing.txt", *flags]
+                argv[argv.index(flag) + 1] = value
+                with self.subTest(flag=flag, value=value), patch("sys.argv", argv),                         contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as error:
+                    hw_oracle.main()
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn(flag, errors.getvalue())
+                self.assertIn("choose from 0, 1, none", errors.getvalue())
+
 
 class TargetOverrideTests(unittest.TestCase):
     def setUp(self):
@@ -1359,16 +1434,16 @@ class HipOracleTests(unittest.TestCase):
             self.oracle_hip.comgr()
         except self.oracle_hip.OracleError as error:
             self.skipTest(str(error))
-        template = (hw_oracle.HERE / "template.s").read_text()
-        for wave64, mask in ((False, "s8"), (True, "s[8:9]")):
-            text = template
-            for key, value in (("@TARGET@", "gfx1010"), ("@WAVE32@", "0" if wave64 else "1"), ("@WAVESIZE@", "64" if wave64 else "32"),
-                               ("@DENORM@", "0"), ("@DENORM16@", "3"), ("@IEEE@", "0"), ("@DX10_CLAMP@", "1"), ("@ROUND32@", "0"),
-                               ("@ROUND16@", "0"), ("@FP16_OVERFLOW@", "0"), ("@LDS@", "4096"),
-                               ("@BODY@", f"  v_cmp_lt_f32 {mask}, v4, v5\n  v_cndmask_b32 v10, v6, v7, {mask}\n")):
-                text = text.replace(key, value)
-            with self.subTest(wave64=wave64):
-                self.assertEqual(self.oracle_hip.assemble(text.encode(), "gfx1010", wave64)[:4], b"\x7fELF")
+        for assembly_target, modes in (("gfx1010", MODES), ("gfx1201", MODES | {"ieee": None, "dx10_clamp": None})):
+            for wave64, mask in ((False, "s8"), (True, "s[8:9]")):
+                body = f"  v_cmp_lt_f32 {mask}, v4, v5\n  v_cndmask_b32 v10, v6, v7, {mask}\n"
+                with tempfile.TemporaryDirectory() as tmp, patch.object(hw_oracle, "target", return_value=assembly_target), \
+                        patch.object(hw_oracle, "runtime", return_value="hsa"), patch.object(hw_oracle.subprocess, "run"), \
+                        patch.object(hw_oracle, "tool", return_value="clang"):
+                    hw_oracle.assemble(body, Path(tmp), wave64, **modes)
+                    text = (Path(tmp) / "k.s").read_text()
+                with self.subTest(target=assembly_target, wave64=wave64):
+                    self.assertEqual(self.oracle_hip.assemble(text.encode(), assembly_target, wave64)[:4], b"\x7fELF")
 
 
 if __name__ == "__main__":
