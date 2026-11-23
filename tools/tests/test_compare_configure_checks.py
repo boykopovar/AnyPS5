@@ -46,6 +46,8 @@ class Tests(unittest.TestCase):
         r=self.run_tool(a,b)
         self.assertEqual(r.returncode,2)
         self.assertEqual(r.stdout,"")
+        self.assertIn(str(b), r.stderr)
+        self.assertIn(str(b), self.run_tool(b, a).stderr)
 
     def test_value_changes_after_unicode_separators_are_reported(self):
         baseline, candidate = self.root / "baseline", self.root / "candidate"
