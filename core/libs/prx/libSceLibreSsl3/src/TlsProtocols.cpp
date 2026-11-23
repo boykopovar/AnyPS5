@@ -40,10 +40,7 @@ std::string ReadGuestText(const char* text, const char* caller) {
 }
 
 bool TryWriteProtocols(std::uint32_t* protocols, std::uint32_t value) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(protocols, &value, sizeof(value));
-    errno = savedErrno;
-    return ok;
+    return GuestCopyOut_nid_no_patch(protocols, &value, sizeof(value));
 }
 
 }
