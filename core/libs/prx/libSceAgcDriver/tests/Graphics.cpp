@@ -2155,6 +2155,16 @@ void DisabledColorTests() {
         mipped.context[0x002] = 1u << 26u;
         const auto shadowSecond = AgcDriver::Graphics::DecodeState(mipped);
         Require(shadowSecond.depth && shadowSecond.depth->htileAddress == 0x30000u + 0x18000u, "the HTILE of view mip 1 of a 1536x1536 five-mip D32 chain is not after the three smaller levels");
+        mipped.context[0x007] = 0x03ff0800;
+        mipped.context[0x010] = 0xa0010183u;
+        mipped.context[0x002] = 0;
+        const auto odd = AgcDriver::Graphics::DecodeState(mipped);
+        Require(odd.depth && odd.depth->extent.width == 2049u && odd.depth->extent.height == 1024u && odd.depth->htileAddress == 0x30000u + 0x10000u, "the HTILE of view mip 0 of a 2049x1024 two-mip D32 chain is not after the two meta blocks of mip 1, whose rounded-up extent is 1025x512");
+        mipped.context[0x002] = 1u | (1u << 13u);
+        const auto oddSliced = AgcDriver::Graphics::DecodeState(mipped);
+        Require(oddSliced.depth && oddSliced.depth->htileAddress == odd.depth->htileAddress + 0x40000u, "slice 1 of a 2049x1024 two-mip chain's HTILE does not step by its 2 + 6 meta blocks");
+        mipped.context[0x002] = 1u << 26u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(mipped); }, "needs more HTILE than its extent covers");
         mipped.context[0x007] = 0x03ff03ff;
         mipped.context[0x002] = 1u << 26u;
         mipped.context[0x010] = (0x80000181u | (2u << 16u)) & ~(31u << 4u);

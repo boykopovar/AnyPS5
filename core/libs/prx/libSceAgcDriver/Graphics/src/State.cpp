@@ -543,8 +543,12 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
             }
             htileSliceBytes = firstTail == maxMip + 1u ? 0u : HtileMetadataBytes({1u, 1u});
             for (auto mip = firstTail; mip-- > 0u;) {
-                if (mip == viewMip) htileMipOffset = htileSliceBytes;
-                htileSliceBytes += HtileMetadataBytes({std::max(depth.extent.width >> mip, 1u), std::max(depth.extent.height >> mip, 1u)});
+                const auto mipBytes = HtileMetadataBytes({std::max((depth.extent.width + (1u << mip) - 1u) >> mip, 1u), std::max((depth.extent.height + (1u << mip) - 1u) >> mip, 1u)});
+                if (mip == viewMip) {
+                    htileMipOffset = htileSliceBytes;
+                    Require(mipBytes == HtileMetadataBytes({depthMips.at(mip).width, depthMips.at(mip).height}), "the " + where + " needs more HTILE than its extent covers, which is unsupported");
+                }
+                htileSliceBytes += mipBytes;
             }
         }
         if (const auto slice = view & 0x1fffu; slice != 0) {
