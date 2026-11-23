@@ -50,6 +50,7 @@ struct Task {
     std::int64_t elapsedMicros = 0;
     KernelUseconds timeout = 0;
     void* shared = nullptr;
+    int index = 0;
 };
 
 void* APS5_VABI Entry(void* opaque) {
@@ -204,17 +205,21 @@ void CheckTimedHandoff() {
 
 struct Counted {
     PthreadMutex mutex = nullptr;
-    std::atomic<int> start{0};
     int references = 0;
     int hold = 0;
     unsigned char padding[64];
 };
 
-void ReleaseLast(Task* task) {
-    auto* counted = static_cast<Counted*>(task->shared);
+struct HandoffRounds {
+    std::atomic<Counted*> counted{nullptr};
+    std::atomic<int> generation{0};
+    std::atomic<int> finished{0};
+    int users = 0;
+};
+
+void ReleaseLast(Counted* counted) {
     PthreadMutex* slot = &counted->mutex;
     const int hold = counted->hold;
-    while (counted->start.load(std::memory_order_acquire) == 0) std::this_thread::yield();
     Require(scePthreadMutexLock(slot) == 0, "reference lock");
     for (volatile int spin = 0; spin < hold; ++spin) {}
     const bool last = --counted->references == 0;
@@ -226,25 +231,49 @@ void ReleaseLast(Task* task) {
     }
 }
 
+void HandoffWorker(Task* task) {
+    auto* rounds = static_cast<HandoffRounds*>(task->shared);
+    int seen = 0;
+    for (;;) {
+        int generation = rounds->generation.load(std::memory_order_acquire);
+        while (generation == seen) {
+            std::this_thread::yield();
+            generation = rounds->generation.load(std::memory_order_acquire);
+        }
+        if (generation < 0) return;
+        seen = generation;
+        if (task->index < rounds->users) ReleaseLast(rounds->counted.load(std::memory_order_relaxed));
+        rounds->finished.fetch_add(1, std::memory_order_acq_rel);
+    }
+}
+
 void CheckHandoffThenDestroy(int type) {
+    constexpr int workers = 4;
+    HandoffRounds rounds;
+    std::vector<Task> tasks(workers);
+    for (int index = 0; index < workers; ++index) {
+        tasks[index].body = HandoffWorker;
+        tasks[index].shared = &rounds;
+        tasks[index].index = index;
+    }
+    std::vector<Pthread> threads(tasks.size());
+    for (std::size_t index = 0; index < tasks.size(); ++index)
+        Require(scePthreadCreate(&threads[index], nullptr, Entry, &tasks[index], nullptr) == 0, "thread create");
     for (int round = 0; round < 3000; ++round) {
         const int users = 2 + round % 3;
         auto* counted = new Counted();
         counted->mutex = MakeMutex(type);
         counted->references = users;
         counted->hold = (round % 5) * 200;
-        std::vector<Task> tasks(users);
-        for (auto& task : tasks) {
-            task.body = ReleaseLast;
-            task.shared = counted;
-        }
-        std::vector<Pthread> threads(tasks.size());
-        for (std::size_t index = 0; index < tasks.size(); ++index)
-            Require(scePthreadCreate(&threads[index], nullptr, Entry, &tasks[index], nullptr) == 0, "thread create");
-        counted->start.store(1, std::memory_order_release);
-        for (auto thread : threads)
-            Require(scePthreadJoin(thread, nullptr) == 0, "thread join");
+        rounds.users = users;
+        rounds.counted.store(counted, std::memory_order_relaxed);
+        rounds.finished.store(0, std::memory_order_relaxed);
+        rounds.generation.store(round + 1, std::memory_order_release);
+        while (rounds.finished.load(std::memory_order_acquire) != workers) std::this_thread::yield();
     }
+    rounds.generation.store(-1, std::memory_order_release);
+    for (auto thread : threads)
+        Require(scePthreadJoin(thread, nullptr) == 0, "thread join");
 }
 
 }

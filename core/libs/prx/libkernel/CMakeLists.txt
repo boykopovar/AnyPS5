@@ -1455,7 +1455,7 @@ if(BUILD_TESTING)
     target_link_libraries(guest_pthread_mutex_contention_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_pthread_mutex_contention_tests)
     add_test(NAME guest_pthread_mutex_contention COMMAND guest_pthread_mutex_contention_tests)
-    set_tests_properties(guest_pthread_mutex_contention PROPERTIES TIMEOUT 60)
+    set_tests_properties(guest_pthread_mutex_contention PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_pthread_mutex_contention PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
