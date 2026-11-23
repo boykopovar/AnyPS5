@@ -389,10 +389,6 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
-            std::puts("skipped, the device has no shaderBufferInt64Atomics");
-            return VulkanTestSkipped;
-        }
         GuestBlock writable(true);
         RunAtomics(*device, writable, 32);
         std::puts("global atomics 64 tests passed");
