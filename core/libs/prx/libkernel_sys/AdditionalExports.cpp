@@ -1778,7 +1778,7 @@ int APS5_VABI sceKernelIccGetWlanBtGpio() {
 }
 
 int APS5_VABI sceKernelIccIsExtBDDriveAttached() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceKernelIccIsThermalAlert() {
