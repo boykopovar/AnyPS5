@@ -62,6 +62,11 @@ const MultipleRecord PrivateType{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_p
                                  {{&BaseType, 16 << 8}}};
 const MultipleRecord VirtualType{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "7Virtual", 0, 1,
                                  {{&BaseType, (-3 * static_cast<std::ptrdiff_t>(sizeof(void*)) * 256) | 3}}};
+const TypeRecord MidType{_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix + 16, "3Mid", &BaseType};
+const TypeRecord MidLeftType{_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix + 16, "4MidA", &MidType};
+const TypeRecord MidRightType{_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix + 16, "4MidB", &MidType};
+const MultipleRecord SharedMidRoot{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "9SharedMid", 0, 2,
+                                   {{&MidLeftType, 2}, {&MidRightType, (8 << 8) | 2}}};
 
 int FindPublic(const TypeRecord* type, std::ptrdiff_t hint, const void* object, const TypeRecord* sourceType,
                const void* source) {
@@ -178,6 +183,14 @@ int main() {
     Require(std::get<0>(privateFirstTargets) && std::get<1>(privateFirstTargets) && std::get<2>(privateFirstTargets) == 2);
     const auto onlyPublicTarget = ambiguousDestination(PublicTargetOnlyWhole);
     Require(!std::get<0>(onlyPublicTarget) && !std::get<1>(onlyPublicTarget));
+
+    alignas(std::intptr_t) unsigned char sharedMid[32]{};
+    DynamicCastResult leftMid{nullptr, 0, 0, 0, 0x10};
+    Require(!CallDynamicCast(asType(SharedMidRoot), &MidType, sharedMid, &BaseType, sharedMid, leftMid, -1));
+    Require(leftMid.destination == sharedMid);
+    DynamicCastResult rightMid{nullptr, 0, 0, 0, 0x10};
+    Require(!CallDynamicCast(asType(SharedMidRoot), &MidType, sharedMid, &BaseType, sharedMid + 8, rightMid, -1));
+    Require(rightMid.destination == sharedMid + 8);
 
     void* object = __cxa_allocate_exception_nid_postfix(16);
     auto* type = reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(&DerivedType));

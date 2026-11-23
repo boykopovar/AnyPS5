@@ -404,10 +404,6 @@ bool APS5_VABI DynamicCastTypeInfo(const __cxxabiv1::__class_type_info* self, st
     result.dst_ptr = nullptr;
     result.whole2dst = ClassTypeInfo::__unknown;
     result.dst2src = ClassTypeInfo::__unknown;
-    if (candidates.size() > 1) {
-        result.whole2dst = ClassTypeInfo::__contained_ambig;
-        return true;
-    }
     std::vector<Candidate*> downcasts;
     std::vector<Candidate*> publicTargets;
     for (auto& candidate : candidates) {
@@ -423,6 +419,10 @@ bool APS5_VABI DynamicCastTypeInfo(const __cxxabiv1::__class_type_info* self, st
     }
     if (downcasts.size() > 1) {
         result.dst2src = ClassTypeInfo::__contained_ambig;
+        return true;
+    }
+    if (candidates.size() > 1) {
+        result.whole2dst = ClassTypeInfo::__contained_ambig;
         return true;
     }
     if (publicTargets.size() == 1 && sourcePresent && sourcePublic) {
