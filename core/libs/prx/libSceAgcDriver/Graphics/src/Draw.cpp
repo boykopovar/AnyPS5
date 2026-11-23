@@ -1565,7 +1565,12 @@ const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address
     auto* recorder = context.recorder;
     static const bool copyBehindGpuWrite = std::getenv("APS5_NO_BEHIND_INPUTS_IN_PLACE") != nullptr || std::getenv("APS5_NO_DRAW_INPUTS_IN_PLACE") != nullptr;
     const bool small = std::min(fetched, bytes) <= context.drawInputsInPlaceBelow && reads <= InPlaceDrawInputMaxReads;
-    if (recorder == nullptr || bytes == 0 || (!context.drawInputsInPlace && !small && (behindGpuWrite == nullptr || copyBehindGpuWrite))) return nullptr;
+    static const std::size_t largeInput = [] {
+        const char* value = std::getenv("APS5_LARGE_INPUT_IN_PLACE_MIB");
+        return static_cast<std::size_t>(value != nullptr ? std::strtoull(value, nullptr, 10) : 8u) << 20u;
+    }();
+    const bool large = behindGpuWrite != nullptr && largeInput != 0 && bytes >= largeInput;
+    if (recorder == nullptr || bytes == 0 || (!context.drawInputsInPlace && !small && !large && (behindGpuWrite == nullptr || copyBehindGpuWrite))) return nullptr;
     bool behind = false;
     if (behindGpuWrite == nullptr) {
         GuestMemory::FlushGpuWrites(address, bytes);
@@ -1573,7 +1578,7 @@ const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address
     } else {
         StorageTexture::FlushPending(address, bytes, nullptr, "in-place vertex input");
         behind = recorder->PendingWriteOverlaps(address, bytes);
-        if (!behind && !context.drawInputsInPlace && !small) return nullptr;
+        if (!behind && !context.drawInputsInPlace && !small && !large) return nullptr;
     }
     if (recorder->PendingLabelIn(address, bytes) || recorder->QueuedStoreOverlaps(address, bytes)) return nullptr;
     const auto overlaps = [&](const auto& writer) { return writer->WritesOverlap(address, bytes); };

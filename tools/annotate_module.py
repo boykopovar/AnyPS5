@@ -337,6 +337,9 @@ class Module:
                        for start, file_offset, length, flags in self.loads):
                     yield pc
 
+    def unwind_labels(self, named_addresses):
+        return {address: "unwind_%x" % address for address in self.unwind_starts() if address not in named_addresses}
+
     def code_segments(self):
         segments = []
         for vaddr, offset, size, flags in sorted(self.loads):
@@ -396,10 +399,8 @@ def ghidra_symbols(module, namer):
             name = "irelative_resolver_%x" % address
             rows.add((address, True, name, name))
     named_addresses = {address for address, _, _, _ in rows}
-    for address in module.unwind_starts():
-        if address not in named_addresses:
-            name = "unwind_%x" % address
-            rows.add((address, False, name, name))
+    for address, name in module.unwind_labels(named_addresses).items():
+        rows.add((address, False, name, name))
     names, functions, lines = set(), set(), []
     for address, function, resolved, symbol in sorted(rows, key=lambda row: (row[0], not row[1], row[2] == row[3].split("#", 1)[0], row[2], row[3])):
         stem = re.sub(r"[^A-Za-z0-9_]", "_", resolved)
@@ -505,15 +506,19 @@ def line_note(line, slots, branch_targets, namer):
     return note
 
 
-def annotate_listing(listing, slots, exports, branch_targets, namer, entry=None):
+def annotate_listing(listing, slots, exports, branch_targets, namer, entry=None, unwind_labels=None):
     out = []
     for line in listing:
         head = LINE_ADDRESS.match(line)
-        if head and int(head.group(1), 16) == entry:
-            out.append("; ===== ELF entry point")
-        if head and int(head.group(1), 16) in exports:
-            out.append("")
-            out.extend("; ===== export " + namer.resolve(name) for name in exports[int(head.group(1), 16)])
+        if head:
+            address = int(head.group(1), 16)
+            if address == entry:
+                out.append("; ===== ELF entry point")
+            if address in exports:
+                out.append("")
+                out.extend("; ===== export " + namer.resolve(name) for name in exports[address])
+            if unwind_labels and address in unwind_labels:
+                out.append("; ===== unwind range " + unwind_labels[address])
         out.append(line + line_note(line, slots, branch_targets, namer))
     return out
 
@@ -588,9 +593,18 @@ def annotate(module_path, prefix, namer):
             functions.setdefault(address, set()).add(namer.resolve(symbol))
     branch_targets = {address: ", ".join(sorted(names)) for address, names in functions.items()}
     branch_targets.update(stubs)
+    try:
+        unwind_labels = module.unwind_labels(exports.keys() | stubs.keys() | slots.keys() | {entry})
+    except ModuleError as error:
+        print(f"{source}: skipping unwind labels: {error}", file=sys.stderr)
+        unwind_labels = {}
+    if unwind_labels:
+        decoded = (int(head.group(1), 16) for line in listing if (head := LINE_ADDRESS.match(line)))
+        unwind_labels = {address: unwind_labels[address] for address in decoded if address in unwind_labels}
+        branch_targets.update(unwind_labels)
     write_lines(prefix + ".imports.txt", ["%#x %s %s" % (slot, slots[slot], namer.resolve(slots[slot])) for slot in sorted(slots)])
     write_lines(prefix + ".exports.txt", export_lines(exports, thread_local, namer))
-    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, branch_targets, namer, entry))
+    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, branch_targets, namer, entry, unwind_labels))
     export_count = sum(len(names) for names in exports.values())
     tls_count = sum(len(names) for names in thread_local.values())
     return "%s: %d imports, %d exports, %d tls, %d stubs, %d lines" % (prefix, len(slots), export_count, tls_count, len(stubs), len(listing))

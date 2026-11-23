@@ -264,9 +264,12 @@ def write_report(path, report):
         except (OSError, NotImplementedError) as error:
             if not _hardlinks_unavailable(error):
                 raise
-            if output.exists():
-                raise ValueError(f"report already exists: {output}") from error
-            os.replace(temporary, output)
+            if os.name == "nt":
+                os.rename(temporary, output)
+            else:
+                if output.exists():
+                    raise ValueError(f"report already exists: {output}") from error
+                os.replace(temporary, output)
             temporary = None
     finally:
         if temporary is not None:

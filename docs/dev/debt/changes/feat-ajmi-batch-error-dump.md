@@ -1,0 +1,3 @@
+# libSceAjmi
+
+## remove | `sceAjmiBatchErrorDump` |

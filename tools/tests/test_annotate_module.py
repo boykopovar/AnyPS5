@@ -120,6 +120,18 @@ def append_dynamic_tags(image, entries):
     return bytes(image)
 
 
+def unwind_image(addresses, encoding=b"\x01\x1b\x03\x3b", **options):
+    image = bytearray(build_module(**options))
+    base = DATA_ADDRESS + 0x500
+    size = 12 + 8 * len(addresses)
+    struct.pack_into("<H", image, 56, 4)
+    struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 0x6474e550, 4, 0x2500, base, base, size, size, 4)
+    struct.pack_into("<4siI", image, 0x2500, encoding, 0xfc, len(addresses))
+    for index, address in enumerate(addresses):
+        struct.pack_into("<ii", image, 0x250c + 8 * index, address - base, 0x110 + index * 16)
+    return image
+
+
 class ImportRelocationTests(unittest.TestCase):
     def test_conflicting_load_mappings_cannot_supply_symbol_tables(self):
         for address in (DATA_ADDRESS + 4, DATA_ADDRESS + 0x58, DATA_ADDRESS + 0x110, DATA_ADDRESS + 0x288):
@@ -470,6 +482,39 @@ class AnnotateModuleTests(unittest.TestCase):
                 code = b"\xe8" + struct.pack("<i", target - CODE_ADDRESS - 5) + bytes(6) + b"\xc3"
                 self.annotate(build_module(code=code, symbols=[(EXPORT_NAME, section, kind, target)], relocations=()))
                 self.assertNotIn("; ->", instruction(self.read(".asm").splitlines(), "call"))
+
+    def test_listing_names_calls_and_jumps_to_unnamed_unwind_ranges(self):
+        private = CODE_ADDRESS + 10
+        code = b"\xe8\x05\x00\x00\x00\xe9\x00\x00\x00\x00\x90\xc3"
+        self.annotate(unwind_image([private, private, EXPORT_ADDRESS, DATA_ADDRESS], code=code, relocations=()))
+        listing = self.read(".asm").splitlines()
+        self.assertEqual([line for line in listing if line.startswith("; ===== unwind")], ["; ===== unwind range unwind_100a"])
+        for mnemonic in ("call", "jmp"):
+            self.assertTrue(instruction(listing, mnemonic).endswith("; -> unwind_100a"), listing)
+        self.assertEqual(listing[listing.index("; ===== unwind range unwind_100a") + 1], instruction(listing, "nop"))
+        self.assertIn("; ===== export " + EXPORT_NAME, listing)
+        self.assertNotIn("unwind_", self.read(".exports.txt"))
+
+    def test_unwind_range_at_import_stub_keeps_import_name(self):
+        self.annotate(unwind_image([CODE_ADDRESS]))
+        listing = self.read(".asm").splitlines()
+        self.assertFalse(any("unwind_" in line for line in listing))
+        self.assertTrue(instruction(listing, "call").endswith("; -> " + IMPORT_NAME))
+
+    def test_branch_annotation_requires_a_listed_unwind_target_instruction(self):
+        code = b"\xe8\x01\x00\x00\x00\xb8\x90\x90\x90\x90\xc3"
+        self.annotate(unwind_image([CODE_ADDRESS + 6], code=code, symbols=(), relocations=()))
+        self.assertNotIn("unwind_", self.read(".asm"))
+
+    def test_bad_unwind_entry_omits_partial_labels_but_keeps_the_listing(self):
+        image = unwind_image([CODE_ADDRESS, CODE_ADDRESS + 6], relocations=())
+        struct.pack_into("<i", image, 0x2518, -1)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            self.annotate(image)
+        self.assertIn("skipping unwind labels", warning.getvalue())
+        self.assertNotIn("unwind_", self.read(".asm"))
+        self.assertIn("; ===== export " + EXPORT_NAME, self.read(".asm"))
 
     def test_endbr64_stubs_name_branches_to_both_entry_addresses(self):
         for address in (0, CODE_ADDRESS, 0x100001000):
