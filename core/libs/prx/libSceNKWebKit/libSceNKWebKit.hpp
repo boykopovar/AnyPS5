@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libSceNKWebKit/include/BidiContextExports.hpp"
 #include "prx/libSceNKWebKit/include/DoViCodecParameters.hpp"
 #include "prx/libSceNKWebKit/include/HitTestLocationExports.hpp"
 #include "prx/libSceNKWebKit/include/KeyedDecoderExports.hpp"
