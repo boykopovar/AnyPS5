@@ -71,6 +71,28 @@ static void UnreadableLibrary(const Api& api) {
     Require(RefusesUnreadable([&] { api.set(misaligned, "truetype", "interpreter-version", &version); }));
 }
 
+static void UnreadableValue(const Api& api, GuestLibrary* library) {
+    auto* const unreadable = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    errno = 72;
+    Require(api.get(library, "truetype", "interpreter-version", unreadable) == FT_Err_Invalid_Argument);
+    Require(errno == 72);
+    errno = 73;
+    Require(api.set(library, "truetype", "interpreter-version", unreadable) == FT_Err_Invalid_Argument);
+    Require(errno == 73);
+    errno = 74;
+    Require(api.get(library, "autofitter", "increase-x-height", unreadable) == FT_Err_Invalid_Argument);
+    Require(errno == 74);
+    errno = 75;
+    Require(api.set(library, "autofitter", "increase-x-height", unreadable) == FT_Err_Invalid_Argument);
+    Require(errno == 75);
+    errno = 76;
+    Require(api.get(library, "autofitter", "glyph-to-script-map", unreadable) == FT_Err_Invalid_Argument);
+    Require(errno == 76);
+    errno = 77;
+    Require(api.set(library, "ot-svg", "svg-hooks", unreadable) == FT_Err_Invalid_Argument);
+    Require(errno == 77);
+}
+
 template <typename TValue>
 static auto NativePointer(TValue& value) {
     if constexpr (requires { value.data(); }) return value.data();
@@ -225,6 +247,7 @@ static void Run(const Api& api) {
     Require(api.initialize(&library) == 0 && api.initialize(&other) == 0);
     Require(FT_Init_FreeType(&native) == 0 && FT_Init_FreeType(&nativeOther) == 0);
     UnreadableLibrary(api);
+    UnreadableValue(api, library);
     Query<std::uint32_t>(api, library, native, "truetype", "interpreter-version");
     for (const auto version : {35u, 40u, 38u, 0u, 0xFFFFFFFFu}) {
         Change(api, library, native, other, nativeOther, "truetype", "interpreter-version", version);
