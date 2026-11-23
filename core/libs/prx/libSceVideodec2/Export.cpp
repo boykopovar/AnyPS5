@@ -208,6 +208,14 @@ std::vector<Vp9Unit> ParseVp9Packet(std::span<const std::uint8_t> bytes, std::ar
     return result;
 }
 
+Crop FrameCrop(const AVFrame& frame) {
+    const auto* descriptor = av_pix_fmt_desc_get(static_cast<AVPixelFormat>(frame.format));
+    if (!descriptor) throw std::runtime_error("Videodec2: unknown decoded pixel format");
+    return {static_cast<std::uint32_t>(frame.crop_left), static_cast<std::uint32_t>(frame.crop_right),
+            static_cast<std::uint32_t>(frame.crop_top), static_cast<std::uint32_t>(frame.crop_bottom),
+            descriptor->log2_chroma_w, descriptor->log2_chroma_h};
+}
+
 struct Picture {
     std::uint64_t pts = 0;
     std::uint64_t dts = 0;
@@ -479,7 +487,7 @@ void EmitDecoded(std::uint64_t handle, Decoder& decoder, FrameBuffer* frame, Out
     auto timestamps = found->second;
     decoder.inputs.erase(found);
     timestamps.idr = (picture->flags & AV_FRAME_FLAG_KEY) != 0;
-    timestamps.crop = {static_cast<std::uint32_t>(picture->crop_left), static_cast<std::uint32_t>(picture->crop_right), static_cast<std::uint32_t>(picture->crop_top), static_cast<std::uint32_t>(picture->crop_bottom)};
+    timestamps.crop = FrameCrop(*picture);
     decoder.width = static_cast<std::uint32_t>(picture->width);
     decoder.height = static_cast<std::uint32_t>(picture->height);
     if (decoder.context->profile > 0) decoder.profile = static_cast<std::uint32_t>(decoder.context->profile) & 0xffu;

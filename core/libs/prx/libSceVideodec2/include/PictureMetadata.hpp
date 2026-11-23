@@ -10,6 +10,8 @@ struct Crop {
     std::uint32_t right = 0;
     std::uint32_t top = 0;
     std::uint32_t bottom = 0;
+    std::uint8_t log2ChromaWidth = 0;
+    std::uint8_t log2ChromaHeight = 0;
 };
 
 struct PictureHeader {

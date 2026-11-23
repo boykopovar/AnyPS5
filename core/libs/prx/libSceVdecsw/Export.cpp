@@ -147,10 +147,10 @@ PictureInfo pictureInfo(std::uint64_t handle, const SceVideodec2::OutputInfo& ou
         info.bitDepthLumaMinus8 = header.bitDepthMinus8;
         info.bitDepthChromaMinus8 = header.bitDepthMinus8;
         info.conformanceWindowFlag = cropped;
-        info.confWinLeftOffset = crop.left / 2u;
-        info.confWinRightOffset = crop.right / 2u;
-        info.confWinTopOffset = crop.top / 2u;
-        info.confWinBottomOffset = crop.bottom / 2u;
+        info.confWinLeftOffset = crop.left >> crop.log2ChromaWidth;
+        info.confWinRightOffset = crop.right >> crop.log2ChromaWidth;
+        info.confWinTopOffset = crop.top >> crop.log2ChromaHeight;
+        info.confWinBottomOffset = crop.bottom >> crop.log2ChromaHeight;
         info.idrPictureFlag = header.hevcIdr;
         info.irapPictureFlag = header.keyFrame;
         info.generalProfileIdc = static_cast<std::uint8_t>(header.profile);

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -356,12 +357,12 @@ void testHevc() {
     check(pictures == HevcHashes.size(), "missing HEVC pictures after finalizing the sequence");
 }
 
-void testHevcCrop() {
+void testHevcCrop(std::span<const std::uint8_t> stream, std::array<std::uint32_t, 4> offsets) {
     Session session(CodecHevc, 1, 30);
     std::vector<std::uint8_t> buffer(session.memory.maxFrameBufferSize);
     const FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size()};
     check(sceVdecswSetDecodeOutput(session.decoder, &frame) == 0, "cropped HEVC output buffer was rejected");
-    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), HevcCroppedStream.data(), HevcCroppedStream.size(), 1000, 0, 0xa0};
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), stream.data(), stream.size(), 1000, 0, 0xa0};
     check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "cropped HEVC decode input was rejected");
     InputResult consumed{sizeof(InputResult)};
     check(sceVdecswSyncDecodeInput(session.decoder, &consumed) == 0, "the cropped HEVC access unit was not consumed");
@@ -372,8 +373,8 @@ void testHevcCrop() {
     check(sceVdecswGetHevcPictureInfo(&output, &info) == 0 && info.isValid, "cropped HEVC picture info missing");
     checkGenericPictureInfo(output, info);
     check(info.picWidthInLumaSamples == 64 && info.picHeightInLumaSamples == 40, "cropped HEVC coded size differs");
-    check(info.conformanceWindowFlag == 1 && info.confWinLeftOffset == 0 && info.confWinRightOffset == 0 && info.confWinTopOffset == 0 && info.confWinBottomOffset == 2, "HEVC conformance window differs");
-    check(info.frameCroppingFlag == 1 && info.frameCropLeftOffset == 0 && info.frameCropRightOffset == 0 && info.frameCropTopOffset == 0 && info.frameCropBottomOffset == 2, "HEVC frame cropping differs");
+    check(info.conformanceWindowFlag == 1 && std::array{info.confWinLeftOffset, info.confWinRightOffset, info.confWinTopOffset, info.confWinBottomOffset} == offsets, "HEVC conformance window differs");
+    check(info.frameCroppingFlag == 1 && std::array{info.frameCropLeftOffset, info.frameCropRightOffset, info.frameCropTopOffset, info.frameCropBottomOffset} == offsets, "HEVC frame cropping differs");
 }
 
 void testWithoutOutput() {
@@ -687,7 +688,9 @@ int main() {
         testDecode();
         testDecodeRecoveryPoint();
         testHevc();
-        testHevcCrop();
+        testHevcCrop(HevcCroppedStream, {0, 0, 0, 2});
+        testHevcCrop(HevcCropped422Stream, {1, 2, 6, 8});
+        testHevcCrop(HevcCropped444Stream, {2, 4, 6, 8});
         testHevcMain10();
         testWithoutOutput();
         testUnmappedSyncAndPictureInfo();
