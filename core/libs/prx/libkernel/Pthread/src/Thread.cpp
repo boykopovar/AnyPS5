@@ -1635,6 +1635,9 @@ Pthread APS5_VABI scePthreadSelf() {
         BindHostCpuClock(adoptedThread.get());
         adoptedThread->threadId = std::this_thread::get_id();
         adoptedThread->hostThread = pthread_self();
+#ifdef __linux__
+        adoptedThread->hostTid = static_cast<int>(gettid());
+#endif
         SetStackFromHost(adoptedThread.get());
         CurrentGuestState().current = adoptedThread.get();
     }
