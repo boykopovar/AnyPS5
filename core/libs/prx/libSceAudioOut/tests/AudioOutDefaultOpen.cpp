@@ -1,4 +1,5 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
+#include "prx/libSceCustomMusicAudioOut/include/Api.hpp"
 #include "SDL.h"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -16,6 +17,7 @@ int outputDevices = 0;
 bool endpointAbsent = false;
 bool unplugged = false;
 bool failOpen = false;
+bool failQueue = false;
 std::uint64_t nowUs = 1000000;
 int probes = 0;
 int opened = 0;
@@ -55,6 +57,7 @@ extern "C" SDL_AudioDeviceID SDLCALL SDL_OpenAudioDevice(const char* name, int c
 extern "C" void SDLCALL SDL_PauseAudioDevice(SDL_AudioDeviceID id, int) { Require(id == device, "wrong device paused"); }
 extern "C" Uint32 SDLCALL SDL_GetQueuedAudioSize(SDL_AudioDeviceID id) { Require(id == device, "wrong queue queried"); return 0; }
 extern "C" int SDLCALL SDL_QueueAudio(SDL_AudioDeviceID id, const void*, Uint32) {
+    if (failQueue) return -1;
     if (!unplugged) Require(id == device, "wrong queue written");
     if (live(id)) ++queuedLive;
     else ++queuedDead;
@@ -89,6 +92,21 @@ int main(int argc, char** argv) {
         } else if (mode == "disconnect" || mode.starts_with("retry_")) {
             driver = "wasapi";
             outputDevices = 2;
+        } else if (mode == "custom_music_queue_error") {
+            outputDevices = 1;
+            std::array<std::int16_t, 256 * 2> samples{};
+            Require(sceCustomMusicAudioOutInitialize(256, 0, 1) == 0, "custom music initialization failed");
+            Require(sceCustomMusicAudioOutOutput(samples.data()) == 0 && queuedLive == 1, "first block was not queued");
+            const auto lastSuccess = nowUs;
+            ++nowUs;
+            failQueue = true;
+            Require(sceCustomMusicAudioOutOutput(samples.data()) == static_cast<int>(0x81380003), "wrong queue error");
+            std::uint64_t last = 0;
+            Require(sceCustomMusicAudioOutGetLastOutputTime(&last) == 0 && last == lastSuccess, "failed block advanced time");
+            failQueue = false;
+            Require(sceCustomMusicAudioOutOutput(samples.data()) == 0 && queuedLive == 2, "queue did not recover");
+            Require(sceCustomMusicAudioOutFinalize() == 0, "custom music finalization failed");
+            return 0;
         } else {
             Require(false, "invalid default open mode");
         }

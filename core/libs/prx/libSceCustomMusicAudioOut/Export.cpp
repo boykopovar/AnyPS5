@@ -237,6 +237,8 @@ int APS5_VABI sceCustomMusicAudioOutOutput(const void* buf) try {
     }
     const int written = sceAudioOutOutput(g_port, buf == nullptr ? nullptr : samples.data());
     return written < 0 ? MapAudioOutStatus(written) : 0;
+} catch (const AudioOutQueueError&) {
+    return ErrorAudioOut;
 } catch (const std::bad_alloc&) {
     return ErrorOutOfMemory;
 }

@@ -361,7 +361,7 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
     }
 
     if (SDL_QueueAudio(port.device, queueData, queueSize) < 0) {
-        throw std::runtime_error(std::string("SDL_QueueAudio: ") + SDL_GetError());
+        throw AudioOutQueueError(std::string("SDL_QueueAudio: ") + SDL_GetError());
     }
     // APS5_LOG_OUT("device=%u type=%d bytes=%u queued=%u", port.device, port.type, queueSize, SDL_GetQueuedAudioSize(port.device));
 }

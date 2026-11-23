@@ -23,9 +23,9 @@ void Require(bool condition, const char* message) {
     }
 }
 
-void SubmitBlock() {
+void SubmitBlock(std::int16_t amplitude) {
     std::array<std::int16_t, Samples> pcm;
-    pcm.fill(16384);
+    pcm.fill(amplitude);
     Require(sceCustomMusicAudioOutOutput(pcm.data()) == 0, "PCM submission failed");
     Require(sceCustomMusicAudioOutOutput(nullptr) == 0, "PCM drain failed");
 }
@@ -47,15 +47,15 @@ int main(int argc, char** argv) {
 #endif
 
     Require(sceCustomMusicAudioOutInitialize(Frames, 0, 1) == 0, "Custom music initialization failed");
-    SubmitBlock();
+    SubmitBlock(16384);
     Require(sceCustomMusicAudioOutSetMuted(true) == 0, "Muting failed");
-    SubmitBlock();
+    SubmitBlock(20480);
     Require(setVolume(0.25) == 0, "Changing the volume while muted failed");
     bool muted = false;
     Require(sceCustomMusicAudioOutGetMuted(&muted) == 0 && muted, "Volume change cleared the mute flag");
-    SubmitBlock();
+    SubmitBlock(24576);
     Require(sceCustomMusicAudioOutSetMuted(false) == 0, "Unmuting failed");
-    SubmitBlock();
+    SubmitBlock(12288);
     Require(sceCustomMusicAudioOutFinalize() == 0, "Custom music finalization failed");
 
     std::ifstream capture(path, std::ios::binary);
@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
     std::filesystem::remove(path);
 
     std::vector<std::int16_t> expected(Samples, 8192);
-    expected.insert(expected.end(), Samples, 4096);
+    expected.insert(expected.end(), Samples, 3072);
     Require(nonzero == expected, "Only the initial and unmuted blocks should contain nonzero PCM");
     return 0;
 }

@@ -1,6 +1,12 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <stdexcept>
+
+class AudioOutQueueError final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 extern "C" {
 
