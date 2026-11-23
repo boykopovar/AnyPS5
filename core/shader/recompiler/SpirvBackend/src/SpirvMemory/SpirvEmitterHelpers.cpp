@@ -559,7 +559,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
         case DescriptorBindingKind::Gds:
             state.gdsVariable = Define(StorageBufferBlockType(state), "gds");
             state.module.AddAnnotation(spv::OpDecorate, state.gdsVariable, spv::DecorationCoherent);
-            if (state.requirements.gdsInt64Atomics) {
+            if (state.requirements.gdsInt64Atomics && !state.requirements.gdsAtomicLocks) {
                 state.gdsU64Variable = Define(StorageBufferU64BlockType(state), "gds_u64");
                 state.module.AddAnnotation(spv::OpDecorate, state.gdsU64Variable, spv::DecorationCoherent);
                 state.module.AddAnnotation(spv::OpDecorate, state.gdsU64Variable, spv::DecorationAliased);

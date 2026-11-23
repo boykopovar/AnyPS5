@@ -1,0 +1,9 @@
+# shader
+
+## change [64-bit integer GDS atomics]
+
+- [64-bit integer GDS atomics](../../../core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvMemoryInstructions.cpp) remain unmeasured on gfx1013, including mixed-width ordering and wave ordering of two-address exchanges. Operations and old-value returns follow [RDNA2 ISA §12.13](https://gpuopen.com/download/rdna2-shader-instruction-set-architecture.pdf); GDS syntax, including `wrxchg2`, follows [LLVM 18.1.6 GFX10 DS](https://releases.llvm.org/18.1.6/docs/AMDGPU/AMDGPUAsmGFX10.html#ds). Misaligned qwords record an Unaligned shader fault and return zero without writing, but do not stop the wave; console alignment/fault behaviour is unverified. A qword not wholly within the existing 64 KiB guest GDS bound or descriptor returns zero without writing; hardware bounds behaviour is unverified. Floating-point and src2 GDS forms still throw.
+
+## add Functional
+
+- [64-bit GDS atomics without `shaderBufferInt64Atomics`](../../../core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvMemoryInstructions.cpp) (`ds_*_u64`, `ds_*_b64` on GDS, as on MoltenVK) load and store their two dwords with 32-bit atomics under one word of the lock table of 64-bit image atomics. Every GDS atomic of such a program, 32-bit ones and append/consume included, takes that word, so the GDS atomics of one dispatch run one at a time and both widths stay ordered within the program. GDS atomics of another program running at the same time do not take it, and plain GDS loads and stores never do. On an Apple M5 Pro (MoltenVK, macOS 27.3) the `agc_driver_gds_integer_atomics64` contention and exchange tests pass with it; the throughput cost was not measured.

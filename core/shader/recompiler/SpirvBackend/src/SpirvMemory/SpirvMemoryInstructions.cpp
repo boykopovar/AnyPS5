@@ -7,6 +7,7 @@
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
+#include <optional>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -818,6 +819,7 @@ std::uint32_t LdsBufferAtomic64(SpirvEmitterState& state, std::uint32_t low, TNe
 
 template<typename TOperation>
 std::uint32_t EmitLdsAtomic32(SpirvEmitterState& state, const MemoryInfo& mem, TOperation&& operation) {
+    if (mem.kind == ResourceKind::Gds && state.requirements.gdsAtomicLocks) return LockedDeviceUpdate(state, EmitGdsAtomicLockPointer(state), TypeU32(state), ConstantU32(state, 0u), operation);
     if (mem.kind != ResourceKind::Lds || !state.requirements.ldsLock) return operation();
     return LockedLdsUpdate(state, TypeU32(state), ConstantU32(state, 0u), operation);
 }
@@ -1412,9 +1414,13 @@ std::uint32_t AppendConsume(SpirvValueEmitContext& ctx, const IrValue& inst, boo
         if (InFunctionStorage(state, mem.kind)) {
             return UpdateFunctionElement(state, EmitMemoryElementPointer(state, access, index), [&](std::uint32_t old) { return swap ? amount : Binary(state, append ? spv::OpIAdd : spv::OpISub, TypeU32(state), old, count); });
         }
-        const auto value = state.module.AllocateId();
-        state.module.AddFunction(swap ? spv::OpAtomicExchange : append ? spv::OpAtomicIAdd : spv::OpAtomicISub, TypeU32(state), value, EmitMemoryElementPointer(state, access, index), ConstantU32(state, gds ? spv::ScopeDevice : spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsMaskNone), amount);
-        return value;
+        const auto emit = [&]() {
+            const auto value = state.module.AllocateId();
+            state.module.AddFunction(swap ? spv::OpAtomicExchange : append ? spv::OpAtomicIAdd : spv::OpAtomicISub, TypeU32(state), value, EmitMemoryElementPointer(state, access, index), ConstantU32(state, gds ? spv::ScopeDevice : spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsMaskNone), amount);
+            return value;
+        };
+        if (gds && state.requirements.gdsAtomicLocks) return LockedDeviceUpdate(state, EmitGdsAtomicLockPointer(state), TypeU32(state), ConstantU32(state, 0u), emit);
+        return emit();
     });
     const auto result = state.module.AllocateId();
     EmitSubgroupShuffle(state, TypeU32(state), result, atomic, EmitHostSubgroupLane(state, sourceLane));
@@ -1499,10 +1505,26 @@ std::uint32_t LockedLdsUpdate(SpirvEmitterState& state, std::uint32_t type, std:
     return resultNext;
 }
 
+std::optional<spv::Op> GdsNativeAtomic64(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::SharedAtomicSwap64: return spv::OpAtomicExchange;
+    case IrOpcode::SharedAtomicIAdd64: return spv::OpAtomicIAdd;
+    case IrOpcode::SharedAtomicISub64: return spv::OpAtomicISub;
+    case IrOpcode::SharedAtomicSMin64: return spv::OpAtomicSMin;
+    case IrOpcode::SharedAtomicSMax64: return spv::OpAtomicSMax;
+    case IrOpcode::SharedAtomicUMin64: return spv::OpAtomicUMin;
+    case IrOpcode::SharedAtomicUMax64: return spv::OpAtomicUMax;
+    case IrOpcode::SharedAtomicAnd64: return spv::OpAtomicAnd;
+    case IrOpcode::SharedAtomicOr64: return spv::OpAtomicOr;
+    case IrOpcode::SharedAtomicXor64: return spv::OpAtomicXor;
+    default: return std::nullopt;
+    }
+}
+
 template<typename TReplacement>
 std::uint32_t GdsAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, TReplacement&& replacement) {
     auto& state = ctx.state;
-    if (!state.requirements.gdsInt64Atomics || state.gdsU64Variable == 0u) {
+    if (!state.requirements.gdsInt64Atomics || (state.gdsU64Variable == 0u && !state.requirements.gdsAtomicLocks)) {
         ctx.Fail(inst, "64-bit GDS atomic requires its storage-buffer atomic view");
     }
     const auto& mem = SharedMemory(ctx, inst);
@@ -1518,6 +1540,28 @@ std::uint32_t GdsAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, TRepl
             const auto unaligned = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), address, ConstantU32(state, 7u)), ConstantU32(state, 0u));
             EmitIfCondition(state, unaligned, [&] { RecordBdaFaultWords(state, address, ConstantU32(state, 0u), ConstantU32(state, 8u), ConstantU32(state, inst.Flags<MemoryFlags>().pc), BdaAbi::FaultReason::Unaligned); });
             return EmitValueOrDefaultIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned), TypeU64(state), ConstantU64(state, 0u), [&]() {
+                if (state.requirements.gdsAtomicLocks) {
+                    const std::array<std::uint32_t, 2> words{EmitMemoryElementPointer(state, resource, index), EmitMemoryElementPointer(state, resource, high)};
+                    const auto native = GdsNativeAtomic64(inst.Opcode());
+                    const auto value = native ? ScalarU64Argument(ctx, inst, 2u) : 0u;
+                    return Unary(state, spv::OpBitcast, TypeU64(state), LockedDeviceUpdate(state, EmitGdsAtomicLockPointer(state), type, BdaConstant(state, 0u), [&] {
+                        std::array<std::uint32_t, 2> halves{};
+                        for (std::uint32_t half = 0; half < 2u; ++half) {
+                            halves[half] = state.module.AllocateId();
+                            state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), halves[half], words[half], ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone));
+                        }
+                        const auto pair = state.module.AllocateId();
+                        state.module.AddFunction(spv::OpCompositeConstruct, TypeU64(state), pair, halves[0], halves[1]);
+                        const auto observed = Unary(state, spv::OpBitcast, type, pair);
+                        const auto next = Unary(state, spv::OpBitcast, TypeU64(state), native ? AtomicNext64(state, *native, observed, value) : replacement(state, observed));
+                        for (std::uint32_t half = 0; half < 2u; ++half) {
+                            const auto word = state.module.AllocateId();
+                            state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), word, next, half);
+                            state.module.AddFunction(spv::OpAtomicStore, words[half], ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), word);
+                        }
+                        return observed;
+                    }));
+                }
                 const auto pointer = state.module.AllocateId();
                 state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassStorageBuffer, type), pointer, state.gdsU64Variable, ConstantU32(state, 0u), Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 3u)));
                 spv::Op opcode;

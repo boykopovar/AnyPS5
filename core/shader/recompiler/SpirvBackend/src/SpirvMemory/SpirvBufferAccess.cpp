@@ -180,6 +180,10 @@ std::uint32_t EmitAtomicLockPointer(SpirvEmitterState& state, std::uint32_t inde
     return pointer;
 }
 
+std::uint32_t EmitGdsAtomicLockPointer(SpirvEmitterState& state) {
+    return EmitAtomicLockPointer(state, ConstantU32(state, 0u));
+}
+
 MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const MemoryInfo& mem) {
     MemoryResourceAccess access;
     access.kind = mem.kind;
