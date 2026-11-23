@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -17,11 +18,6 @@ extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handle
 
 namespace {
 
-int Failure(int error) {
-    *__error_nid_postfix() = error;
-    return -1;
-}
-
 #ifdef _WIN32
 void IgnoreInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {}
 #endif
@@ -29,7 +25,7 @@ void IgnoreInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsi
 
 extern "C" int APS5_VABI isatty_nid_postfix(int descriptor) {
     if (GuestSocketIsOpen_nid_no_patch(descriptor)) {
-        Failure(25);
+        FailWithGuestErrno(25);
         return 0;
     }
 #ifdef _WIN32
@@ -37,15 +33,15 @@ extern "C" int APS5_VABI isatty_nid_postfix(int descriptor) {
     const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
     _set_thread_local_invalid_parameter_handler(previous);
     if (handle == INVALID_HANDLE_VALUE) {
-        Failure(9);
+        FailWithGuestErrno(9);
         return 0;
     }
     DWORD mode = 0;
     if (::GetConsoleMode(handle, &mode)) return 1;
-    Failure(25);
+    FailWithGuestErrno(25);
 #else
     if (::isatty(descriptor)) return 1;
-    Failure(errno == EBADF ? 9 : 25);
+    FailWithGuestErrno(errno == EBADF ? 9 : 25);
 #endif
     return 0;
 }
