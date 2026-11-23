@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEFREETYPE_INCLUDE_GUESTOBJECTS_HPP
 
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libSceFreeType/include/GuestList.hpp"
 #include "prx/libSceFreeType/include/GuestSfntTables.hpp"
 
 #include <ft2build.h>
@@ -12,6 +13,7 @@
 #include <bit>
 #include <cstdint>
 #include <list>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -51,6 +53,13 @@ struct GuestStreamBridge {
     bool closed = false;
 };
 
+extern "C" void FreeTypeSyncCharmaps_nid_no_patch(GuestFace& face);
+
+struct CharMapMemory {
+    GuestMemoryRec guest{};
+    FT_Memory host = nullptr;
+};
+
 struct GuestFace {
     GuestFaceRec rec{};
     GuestGlyphSlotRec slot{};
@@ -63,7 +72,10 @@ struct GuestFace {
     std::list<GuestSize> sizes;
     std::vector<unsigned char> bytes;
     std::vector<GuestBitmapSize> fixedSizes;
-    std::vector<GuestCharMapRec> charmaps;
+    std::map<FT_CharMap, GuestCMap> charmaps;
+    CharMapMemory charmapMemory{};
+    const GuestCMapClass* nativeCharmapClass = nullptr;
+    std::map<FT_CharMap, GuestCharMapRec*> customCharmaps;
     std::vector<GuestCharMapRec*> charmapPointers;
     std::vector<GuestVector> outlinePoints;
     GuestSfntTables sfntTables{};
