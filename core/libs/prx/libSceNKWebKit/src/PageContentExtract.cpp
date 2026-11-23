@@ -3,7 +3,7 @@
 
 extern "C" {
 
-void APS5_VABI WKPageGetBytecodeProfile(const void* pageRef, void* context, void (*callback)(const void*, const void*, void*)) {
+void APS5_VABI WKPageGetBytecodeProfile(const void* pageRef, void* context, WKResultErrorFunction callback) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
     if (page->isClosed || !callback) {
         return;
@@ -12,7 +12,7 @@ void APS5_VABI WKPageGetBytecodeProfile(const void* pageRef, void* context, void
     callback(NKWebKit::ToRef(result), nullptr, context);
 }
 
-void APS5_VABI WKPageGetContentsAsMHTMLData(const void* pageRef, void* context, void (*callback)(const void*, const void*, void*)) {
+void APS5_VABI WKPageGetContentsAsMHTMLData(const void* pageRef, void* context, WKResultErrorFunction callback) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
     if (page->isClosed || !callback) {
         return;
@@ -21,7 +21,7 @@ void APS5_VABI WKPageGetContentsAsMHTMLData(const void* pageRef, void* context, 
     callback(NKWebKit::ToRef(result), nullptr, context);
 }
 
-void APS5_VABI WKPageGetContentsAsString(const void* pageRef, void* context, void (*callback)(const void*, const void*, void*)) {
+void APS5_VABI WKPageGetContentsAsString(const void* pageRef, void* context, WKResultErrorFunction callback) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
     if (page->isClosed || !callback) {
         return;
@@ -30,7 +30,7 @@ void APS5_VABI WKPageGetContentsAsString(const void* pageRef, void* context, voi
     callback(NKWebKit::ToRef(result), nullptr, context);
 }
 
-void APS5_VABI WKPageGetSamplingProfilerOutput(const void* pageRef, void* context, void (*callback)(const void*, const void*, void*)) {
+void APS5_VABI WKPageGetSamplingProfilerOutput(const void* pageRef, void* context, WKResultErrorFunction callback) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
     if (page->isClosed || !callback) {
         return;
@@ -39,7 +39,7 @@ void APS5_VABI WKPageGetSamplingProfilerOutput(const void* pageRef, void* contex
     callback(NKWebKit::ToRef(result), nullptr, context);
 }
 
-void APS5_VABI WKPageGetSelectionAsWebArchiveData(const void* pageRef, void* context, void (*callback)(const void*, const void*, void*)) {
+void APS5_VABI WKPageGetSelectionAsWebArchiveData(const void* pageRef, void* context, WKResultErrorFunction callback) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
     if (page->isClosed || !callback) {
         return;
@@ -48,7 +48,7 @@ void APS5_VABI WKPageGetSelectionAsWebArchiveData(const void* pageRef, void* con
     callback(NKWebKit::ToRef(result), nullptr, context);
 }
 
-void APS5_VABI WKPageRenderTreeExternalRepresentation(const void* pageRef, void* context, void (*callback)(const void*, const void*, void*)) {
+void APS5_VABI WKPageRenderTreeExternalRepresentation(const void* pageRef, void* context, WKResultErrorFunction callback) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
     if (page->isClosed || !callback) {
         return;
