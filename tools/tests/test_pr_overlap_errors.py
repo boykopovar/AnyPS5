@@ -36,6 +36,27 @@ class ErrorReportTests(unittest.TestCase):
         error = subprocess.CalledProcessError(1, ["gh", "api"], output="", stderr="")
         self.assertEqual(pr_overlap.describe_failure(error), "pr_overlap: gh api failed with exit code 1: no error output")
 
+    def test_git_disables_automatic_maintenance(self):
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            old = os.getcwd()
+            os.chdir(root)
+            try:
+                with patch.dict(pr_overlap._REPO_ROOTS, {Path.cwd(): root}, clear=True), \
+                        patch.object(pr_overlap.subprocess, "run", side_effect=run):
+                    pr_overlap.git("status", "--short")
+            finally:
+                os.chdir(old)
+        self.assertEqual(calls, [[
+            "git", "-c", "core.quotePath=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "status", "--short"
+        ]])
+
     def test_invalid_pagination_reports_a_concise_error(self):
         with patch.object(pr_overlap, "open_prs", side_effect=ValueError("gh api returned an invalid next page link")):
             with self.assertRaises(SystemExit) as raised:

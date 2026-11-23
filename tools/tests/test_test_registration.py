@@ -14,9 +14,49 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_test_registration
 
+CXX_BUILD_TOOLS = shutil.which("cmake") and shutil.which("ninja") and (
+    os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++") or shutil.which("clang++") or shutil.which("cl"))
+
 
 class RegistrationJsonTests(unittest.TestCase):
-    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required")
+    @unittest.skipUnless(CXX_BUILD_TOOLS, "CMake, Ninja and a C++ compiler are required")
+    def test_multi_config_report_checks_release_executables_and_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+            library = root / "core/libs/prx/libProbe"
+            library.mkdir(parents=True)
+            (library / "common.cpp").write_text("int common() { return 0; }\n", encoding="utf-8")
+            (library / "release.cpp").write_text(
+                "#define APS5_VABI\nint APS5_VABI release_only() { return 0; }\n", encoding="utf-8")
+            cmake = root / "CMakeLists.txt"
+            project = (
+                'cmake_minimum_required(VERSION 3.20)\n'
+                'project(fixture CXX)\n'
+                'enable_testing()\n'
+                'add_executable(probe main.cpp)\n'
+                'set_target_properties(probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests"\n'
+                '  OUTPUT_NAME_DEBUG debug_probe OUTPUT_NAME_RELEASE release_probe)\n'
+                'add_library(probe_library STATIC core/libs/prx/libProbe/common.cpp\n'
+                '  $<$<CONFIG:Release>:core/libs/prx/libProbe/release.cpp>)\n'
+                'add_test(NAME debug COMMAND probe CONFIGURATIONS Debug)\n')
+            build = root / "build"
+            for expected, extra_test in ((["release_probe"], ""), ([], "add_test(NAME release COMMAND probe CONFIGURATIONS Release)\n")):
+                with self.subTest(unregistered=expected):
+                    cmake.write_text(project + extra_test, encoding="utf-8")
+                    subprocess.run(["cmake", "-S", str(root), "-B", str(build), "-G", "Ninja Multi-Config",
+                                    "-DCMAKE_CONFIGURATION_TYPES=Debug;Release", "-DCMAKE_DEFAULT_BUILD_TYPE=Debug"],
+                                   check=True, capture_output=True)
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        status = check_test_registration.main([str(build), "--json"])
+                    report = json.loads(output.getvalue())
+                    self.assertEqual(report["tests"], ["debug_probe", "release_probe"])
+                    self.assertEqual(report["new_unregistered"], expected)
+                    self.assertEqual(report["unbuilt_exports"], [])
+                    self.assertEqual(status, int(bool(expected)))
+
+    @unittest.skipUnless(CXX_BUILD_TOOLS, "CMake, Ninja and a C++ compiler are required")
     def test_real_cmake_executable_report(self):
         import json
         import shutil
@@ -54,7 +94,7 @@ class RegistrationJsonTests(unittest.TestCase):
             self.assertEqual(data, {"mode": "scripts", "tests": ["tools/test_a.py", "tools/test_b.py"],
                                     "registered": ["tools/test_a.py"], "unregistered": ["tools/test_b.py"], "unselected": {}})
 
-    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required")
+    @unittest.skipUnless(CXX_BUILD_TOOLS, "CMake, Ninja and a C++ compiler are required")
     def test_real_cmake_report_matches_every_text_mode_decision(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
