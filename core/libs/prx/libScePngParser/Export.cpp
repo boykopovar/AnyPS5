@@ -1,3 +1,5 @@
+#include "WriterState.hpp"
+#include <cstring>
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libScePngParser/include/InventoryExports.hpp"
 #include <cerrno>
@@ -87,4 +89,13 @@ int APS5_VABI _ZN23sceMetadataReaderWriter9pngParser25pngParserExtractThumbnailE
     NotImplemented_nid_no_patch(__func__);
 }
 
+}
+
+PngWriter::Allocator PngWriter::GetAllocator_nid_no_patch() {
+    const std::lock_guard lock(g_configMutex);
+    Allocator allocator{};
+    std::memcpy(&allocator.allocate, g_config.data(), sizeof(allocator.allocate));
+    std::memcpy(&allocator.release, g_config.data() + 0x18, sizeof(allocator.release));
+    if (!allocator.allocate || !allocator.release) throw std::logic_error("PNG writer: missing configured allocator");
+    return allocator;
 }
