@@ -1370,6 +1370,10 @@ void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
     static_cast<void>(retireGuarded(address, bytes, false));
 }
 
+void storeEarlierStorageResults(const ColorTarget& target) {
+    static_cast<void>(StorageTexture::FlushPending(target.address, static_cast<std::size_t>(guardedColorBytes(target)), nullptr, "multisampled color target", PublishScope::None));
+}
+
 void claimOverlapping(std::uint64_t address, std::uint64_t bytes, const TargetUse* claimant) {
     for (const auto& range : guarded()) {
         if (!range.fmask && range.use.get() != claimant && address < range.address + range.bytes && range.address < address + bytes) range.use->claimed.store(true, std::memory_order_release);
@@ -1529,6 +1533,12 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
     created.ApplyFastClear(use);
     created.Keep();
     return created;
+}
+
+void flushDepthPlanesUnder(const GuestTextureResource& resource) {
+    if (!DepthPlanesStale()) return;
+    const auto bytes = SurfaceGuestBytes(resource);
+    if (bytes != 0u) static_cast<void>(FlushDepthPlanes(resource.baseAddress, static_cast<std::size_t>(bytes)));
 }
 
 MultisampleTarget& createFilled(const Context& context, const GuestTextureResource& resource, VkFormat format, const char* access, bool written) {
@@ -1905,6 +1915,7 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
 }
 
 SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const ColorTarget& target) {
+    storeEarlierStorageResults(target);
     const DccPublication publication(target);
     TargetsLock lock;
     auto& found = acquire(context, target);
@@ -1914,6 +1925,7 @@ SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const Col
 }
 
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image) {
+    storeEarlierStorageResults(target);
     const DccPublication publication(target);
     TargetsLock lock;
     auto& acquired = acquire(context, target);
@@ -1924,6 +1936,7 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
 }
 
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image) {
+    storeEarlierStorageResults(target);
     const DccPublication publication(target);
     TargetsLock lock;
     auto& acquired = acquire(context, target);
@@ -1968,6 +1981,7 @@ VkFormat sampledFormat(const Context& context, std::uint32_t guestFormat) {
 }
 
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType viewType) {
+    flushDepthPlanesUnder(resource);
     TargetsLock lock;
     discardRetiredTargets();
     const auto format = sampledFormat(context, resource.format);
@@ -1993,6 +2007,7 @@ std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const 
 }
 
 std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, const GuestTextureResource& resource, VkComponentMapping components) {
+    flushDepthPlanesUnder(resource);
     TargetsLock lock;
     discardRetiredTargets();
     const auto format = sampledFormat(context, resource.format);
@@ -2016,6 +2031,7 @@ std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, co
 }
 
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target) {
+    storeEarlierStorageResults(target);
     const DccPublication publication(target);
     TargetsLock lock;
     acquire(context, target);
@@ -2032,6 +2048,7 @@ MultisampleColorSnapshot ReadMultisampleTargetColorSnapshot_nid_no_patch(const C
 }
 
 VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage) {
+    flushDepthPlanesUnder(resource);
     TargetsLock lock;
     discardRetiredTargets();
     const auto format = ResolveTextureFormat(resource.format);
@@ -2064,6 +2081,7 @@ bool MultisampleTargetStorable(const Context& context, const ColorTarget& target
 }
 
 void ResolveMultisampleTarget(const Context& context, const ColorTarget& source, StorageTexture& destination, VkImageView destinationView) {
+    storeEarlierStorageResults(source);
     const DccPublication publication(source);
     TargetsLock lock;
     auto& target = acquire(context, source);
@@ -2197,8 +2215,20 @@ void SetMultisampleDccCopyHookForTest(void (*hook)()) {
 
 void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes) {
     if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire) || !mayOverlapGuarded(address, bytes)) return;
-    std::shared_lock lock(guardedMutex());
-    claimOverlapping(address, bytes, nullptr);
+    const auto memoryBacked = [&](const auto& range) { return !range.fmask && address < range.address + range.bytes && range.address < address + bytes && !range.use->hostOnly.load(std::memory_order_acquire); };
+    {
+        std::shared_lock lock(guardedMutex());
+        claimOverlapping(address, bytes, nullptr);
+        if (std::none_of(guarded().begin(), guarded().end(), memoryBacked)) return;
+    }
+    std::unique_lock lock(guardedMutex());
+    std::vector<std::shared_ptr<std::atomic<bool>>> retired;
+    for (const auto& range : guarded()) {
+        if (memoryBacked(range) && std::find(retired.begin(), retired.end(), range.active) == retired.end()) retired.push_back(range.active);
+    }
+    for (const auto& active : retired) active->store(false, std::memory_order_release);
+    if (std::erase_if(guarded(), [&](const auto& range) { return std::find(retired.begin(), retired.end(), range.active) != retired.end(); }) != 0u) guardedGeneration().fetch_add(1, std::memory_order_release);
+    anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
 bool MultisampleColorTargetOverlaps(std::uint64_t address, std::uint64_t bytes) {
@@ -2489,6 +2519,7 @@ std::vector<MultisampleColorAlias> MultisampleColorTargetsOver(std::uint64_t add
     std::shared_lock guardLock(guardedMutex());
     for (const auto& range : guarded()) {
         if (address >= range.address + range.bytes || range.address >= address + bytes) continue;
+        if (!range.use->hostOnly.load(std::memory_order_acquire)) continue;
         if (std::any_of(aliases.begin(), aliases.end(), [&](const MultisampleColorAlias& alias) { return alias.active == range.active; })) continue;
         const auto target = std::find_if(targets().begin(), targets().end(), [&](const auto& candidate) { return candidate->active == range.active; });
         if (target != targets().end()) {

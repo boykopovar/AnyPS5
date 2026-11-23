@@ -43,6 +43,7 @@ bool APS5_VABI _ZNK7WebCore19ResourceRequestBase9isTopSiteEv(const NKWebKit::Web
 void APS5_VABI _ZN7WebCore19ResourceRequestBase12setIsTopSiteEb(NKWebKit::WebCoreAbi::ResourceRequestBase* self, bool isTopSite);
 double APS5_VABI _ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv();
 void APS5_VABI _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(double timeoutInterval);
+void APS5_VABI _ZN7WebCore19ResourceRequestBase20clearHTTPContentTypeEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 void APS5_VABI _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 void APS5_VABI _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(NKWebKit::WebCoreAbi::LegacyResourceRequestBase* self, NKWebKit::WebCoreAbi::FormData** httpBody);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(const NKWebKit::WebCoreAbi::LegacyResourceRequestBase* self, const NKWebKit::WtfAbi::String* name);

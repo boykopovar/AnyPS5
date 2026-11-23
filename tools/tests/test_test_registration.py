@@ -52,7 +52,7 @@ class RegistrationJsonTests(unittest.TestCase):
             data = json.loads(output.getvalue())
             self.assertEqual(data["registered"], ["tools/test_a.py"])
             self.assertEqual(data, {"mode": "scripts", "tests": ["tools/test_a.py", "tools/test_b.py"],
-                                    "registered": ["tools/test_a.py"], "unregistered": ["tools/test_b.py"]})
+                                    "registered": ["tools/test_a.py"], "unregistered": ["tools/test_b.py"], "unselected": {}})
 
     @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required")
     def test_real_cmake_report_matches_every_text_mode_decision(self):
@@ -699,6 +699,15 @@ class ScriptRegistrationTests(unittest.TestCase):
                                     "tools/tests/test_env.py": "", "tools/tests/test_later.py": ""}),
                          ["tools/tests/test_env.py", "tools/tests/test_later.py", "tools/tests/test_name.py"])
 
+    def test_folded_workflow_run_registers_a_script_on_the_following_line(self):
+        script = "tools/tests/test_folded.py"
+        for scalar, separator, missing in ((">-", "\n", []), (">2-", "\n", []), ("|", "\n", [script]), (">", "\n\n", [script]),
+                                            (">", "\n  ", [script])):
+            with self.subTest(scalar=scalar, separator=separator):
+                workflow = (f"jobs:\n  t:\n    steps:\n      - run: {scalar}\n"
+                            f"          python3{separator}          {script}\n")
+                self.assertEqual(self.unrun({".github/workflows/ci.yml": workflow, script: ""}), missing)
+
 
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("ctest") and shutil.which("ninja"),
                      "CMake, CTest and Ninja are required")
@@ -938,7 +947,8 @@ class CheckRegistrationCliTests(unittest.TestCase):
                 self.assertNotIn("Traceback", errors.getvalue())
 
     def test_main_scripts_with_explicit_argv(self):
-        with patch.object(check_test_registration, "unrun_scripts", return_value=(["test_a.py"], [])):
+        with patch.object(check_test_registration, "unrun_scripts", return_value=(["test_a.py"], [])), \
+                patch.object(check_test_registration, "unselected_classes", return_value={}):
             with contextlib.redirect_stdout(io.StringIO()):
                 code = check_test_registration.main(["--scripts"])
             self.assertEqual(code, 0)
@@ -969,6 +979,94 @@ class CheckRegistrationCliTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+class ScriptClassSelectionTests(unittest.TestCase):
+    CASES = ("import unittest\n\n\nclass ATests(unittest.TestCase):\n    def test_a(self):\n        pass\n\n\n"
+             "class BTests(unittest.TestCase):\n    def test_b(self):\n        pass\n")
+    SCRIPT = "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_a.py"
+
+    def unselected(self, files):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            for name, content in files.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text(content, encoding="utf-8")
+            return check_test_registration.unselected_classes(root)
+
+    def test_class_that_no_selective_add_test_names_is_reported(self):
+        self.assertEqual(self.unselected({
+            "CMakeLists.txt": f"add_test(NAME a COMMAND python {self.SCRIPT} ATests)\n",
+            "tools/tests/test_a.py": self.CASES}), {"tools/tests/test_a.py": ["BTests"]})
+
+    def test_naming_every_class_or_running_the_whole_script_is_clean(self):
+        for cmake in (f"add_test(NAME a COMMAND python {self.SCRIPT} ATests)\nadd_test(NAME b COMMAND python {self.SCRIPT} BTests)\n",
+                      f"add_test(NAME a COMMAND python {self.SCRIPT} ATests BTests)\n",
+                      f"add_test(NAME a COMMAND python {self.SCRIPT} ATests)\nadd_test(NAME b COMMAND python {self.SCRIPT})\n",
+                      f"add_test(NAME a COMMAND python {self.SCRIPT} --shard 0/2 ${{CMAKE_COMMAND}})\n"):
+            with self.subTest(cmake=cmake):
+                self.assertEqual(self.unselected({"CMakeLists.txt": cmake, "tools/tests/test_a.py": self.CASES}), {})
+
+    def test_classes_registered_in_a_loop_through_a_variable_count_as_selected(self):
+        self.assertEqual(self.unselected({
+            "CMakeLists.txt": f'set(a_source "{self.SCRIPT}")\nadd_test(NAME a COMMAND python {self.SCRIPT} ATests)\n'
+                              "foreach(test_class IN ITEMS BTests)\n"
+                              '    add_test(NAME a_${test_class} COMMAND python "${a_source}" ${test_class})\nendforeach()\n',
+            "tools/tests/test_a.py": self.CASES}), {})
+
+    def test_a_method_selector_does_not_run_its_whole_class(self):
+        self.assertEqual(self.unselected({
+            "CMakeLists.txt": f"add_test(NAME a COMMAND python {self.SCRIPT} ATests.test_a BTests)\n",
+            "tools/tests/test_a.py": self.CASES}), {"tools/tests/test_a.py": ["ATests"]})
+
+    def test_disabled_selective_add_test_does_not_select(self):
+        self.assertEqual(self.unselected({
+            "CMakeLists.txt": f"add_test(NAME a COMMAND python {self.SCRIPT} ATests)\n"
+                              f"add_test(NAME b COMMAND python {self.SCRIPT} BTests)\n"
+                              "set_tests_properties(b PROPERTIES DISABLED ON)\n",
+            "tools/tests/test_a.py": self.CASES}), {"tools/tests/test_a.py": ["BTests"]})
+
+    def test_classes_without_tests_and_mixins_need_no_selection(self):
+        script = ("import unittest\n\n\nclass Fixture(unittest.TestCase):\n    def setUp(self):\n        pass\n\n\n"
+                  "class Helpers:\n    def test_helper(self):\n        pass\n\n\n"
+                  "class ATests(Fixture, Helpers):\n    def test_a(self):\n        pass\n\n\n"
+                  "class Inherited(Fixture):\n    pass\n")
+        self.assertEqual(self.unselected({
+            "CMakeLists.txt": f"add_test(NAME a COMMAND python {self.SCRIPT} ATests)\n",
+            "tools/tests/test_a.py": script}), {})
+
+    def test_inherited_tests_need_their_class_selected(self):
+        script = self.CASES + "\n\nclass CTests(ATests):\n    pass\n"
+        self.assertEqual(self.unselected({
+            "CMakeLists.txt": f"add_test(NAME a COMMAND python {self.SCRIPT} ATests BTests)\n",
+            "tools/tests/test_a.py": script}), {"tools/tests/test_a.py": ["CTests"]})
+
+    def test_workflow_class_selection_is_checked(self):
+        self.assertEqual(self.unselected({
+            ".github/workflows/ci.yml": "jobs:\n  t:\n    steps:\n      - run: python3 \"./tools/tests/test_a.py\" ATests && echo BTests\n",
+            "tools/tests/test_a.py": self.CASES}), {"tools/tests/test_a.py": ["BTests"]})
+
+    def test_folded_workflow_class_selection_is_checked(self):
+        self.assertEqual(self.unselected({
+            ".github/workflows/ci.yml": ("jobs:\n  t:\n    steps:\n      - run: >-\n"
+                                         "          python3 tools/tests/test_a.py\n          ATests\n"),
+            "tools/tests/test_a.py": self.CASES}), {"tools/tests/test_a.py": ["BTests"]})
+
+    def test_cli_fails_when_a_class_is_never_selected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", directory], check=True)
+            (root / "tools/tests").mkdir(parents=True)
+            (root / "tools/tests/test_a.py").write_text(self.CASES, encoding="utf-8")
+            (root / "CMakeLists.txt").write_text(f"add_test(NAME a COMMAND python {self.SCRIPT} ATests)\n", encoding="utf-8")
+            with patch.object(check_test_registration, "__file__", str(root / "tools/tool.py")):
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(check_test_registration.main(["--scripts"]), 1)
+                self.assertIn("error: tools/tests/test_a.py runs only some of its test classes; never run: BTests", output.getvalue())
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(check_test_registration.main(["--scripts", "--json"]), 1)
+                self.assertEqual(json.loads(output.getvalue())["unselected"], {"tools/tests/test_a.py": ["BTests"]})
 
 
 
