@@ -92,6 +92,12 @@ class SettingsTests(unittest.TestCase):
 
 
 class BundleTests(unittest.TestCase):
+    def test_host_section_is_redacted_like_the_other_bundle_sections(self):
+        with patch.object(bug_report, "host_text", return_value="os: serverfestivo build for ana\n"):
+            out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(bundle.read("host.txt"), b"os: <host> build for <user>\n")
+
     identity = {"home": "/home/ana", "user": "ana", "host": "serverfestivo"}
 
     def setUp(self):
