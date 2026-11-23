@@ -30,7 +30,7 @@ const char* Usage() {
            "  --omit-unavailable-dependencies Linux: leave out a module dependency that no module provides, no import uses\n"
            "                                 and no run path directory holds at conversion time.\n"
            "  --registry                     Write <output-stem>.registry.json beside the output.\n"
-           "  --autorun                      Run the output after conversion and print its exit code.\n"
+           "  --autorun                      Run the output after successful conversion; print and return its exit code.\n"
            "  --dry-run                      Convert in memory and list planned outputs without writing them.\n"
            "\n"
            "Layout:\n"
@@ -66,6 +66,7 @@ const char* Usage() {
            "  --version                      Print the build revision and exit with code 0.\n"
            "  --                             Treat all remaining arguments as paths.\n"
            "  Exit codes: 0 success, help or version, 1 invalid arguments or a patch mismatch, 2 conversion failed.\n"
+           "  With --autorun, successful conversion returns the launched application's exit code.\n"
            "Example: relinker input.elf output.elf";
 }
 
