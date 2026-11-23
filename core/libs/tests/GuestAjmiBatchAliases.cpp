@@ -1,4 +1,5 @@
 #include "prx/libSceAjmi/libSceAjmi.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <algorithm>
 #include <array>
@@ -282,7 +283,7 @@ int main(int argc, char** argv) {
     const bool patched = std::string_view(argv[3]) == "nid";
     Require(patched || std::string_view(argv[3]) == "unpatched", "known variant");
     try {
-        const std::filesystem::path aliasPath = std::u8string(reinterpret_cast<const char8_t*>(argv[1]));
+        const std::filesystem::path aliasPath = ArgumentPath(argv, 1);
         Module nativeModule(aliasPath.parent_path() / "libSceAjm.native.prx");
         Module module(aliasPath);
         if (std::string_view(argv[2]) == "inline") {

@@ -1,5 +1,6 @@
 #include "prx/libSceAjmi/libSceAjmi.hpp"
 #include "prx/libSceAjm.native/libSceAjm.native.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <array>
 #include <bit>
@@ -278,7 +279,7 @@ void CheckBatches(const Api& alias, const Api& native, const BatchApi& batch) {
 
 int main(int argc, char** argv) {
     Require(argc == 4);
-    const std::filesystem::path directory = std::u8string(reinterpret_cast<const char8_t*>(argv[1]));
+    const std::filesystem::path directory = ArgumentPath(argv, 1);
     const bool patched = std::string_view(argv[3]) == "nid";
     Require(patched || std::string_view(argv[3]) == "unpatched");
     Module nativeModule(directory / "libSceAjm.native.prx");
