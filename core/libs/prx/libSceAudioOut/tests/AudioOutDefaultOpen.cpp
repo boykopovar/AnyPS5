@@ -26,6 +26,14 @@ int opened = 0;
 int closed = 0;
 int queuedLive = 0;
 int queuedDead = 0;
+bool simulateDrain = false;
+constexpr int DrainFrames = 32768;
+constexpr int DrainFrequency = 48000;
+constexpr auto DrainPeriodUs = (1000000ULL * DrainFrames + DrainFrequency - 1) / DrainFrequency;
+Uint32 pendingBytes = 0;
+Uint32 bytesPerDevicePeriod = 0;
+std::uint64_t nextPlayback = 0;
+Uint32 discardedBytes = 0;
 
 void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
@@ -57,9 +65,20 @@ extern "C" SDL_AudioDeviceID SDLCALL SDL_OpenAudioDevice(const char* name, int c
     return device;
 }
 extern "C" void SDLCALL SDL_PauseAudioDevice(SDL_AudioDeviceID id, int) { Require(id == device, "wrong device paused"); }
-extern "C" Uint32 SDLCALL SDL_GetQueuedAudioSize(SDL_AudioDeviceID id) { Require(id == device, "wrong queue queried"); return 0; }
+extern "C" Uint32 SDLCALL SDL_GetQueuedAudioSize(SDL_AudioDeviceID id) {
+    Require(id == device, "wrong queue queried");
+    if (pendingBytes != 0) {
+        nowUs += 10000;
+        if (nowUs >= nextPlayback) {
+            pendingBytes -= std::min(pendingBytes, bytesPerDevicePeriod);
+            nextPlayback += DrainPeriodUs;
+        }
+    }
+    return pendingBytes;
+}
 extern "C" int SDLCALL SDL_QueueAudio(SDL_AudioDeviceID id, const void* data, Uint32 bytes) {
     if (failQueue) return -1;
+    if (simulateDrain) pendingBytes += bytes;
     if (expectSilentBlock) {
         Require(data && bytes == 256 * 2 * sizeof(std::int16_t), "expected 256 stereo S16 frames");
         const auto* pcm = static_cast<const std::uint8_t*>(data);
@@ -70,7 +89,11 @@ extern "C" int SDLCALL SDL_QueueAudio(SDL_AudioDeviceID id, const void* data, Ui
     else ++queuedDead;
     return 0;
 }
-extern "C" void SDLCALL SDL_ClearQueuedAudio(SDL_AudioDeviceID id) { Require(id == device, "wrong queue cleared"); }
+extern "C" void SDLCALL SDL_ClearQueuedAudio(SDL_AudioDeviceID id) {
+    Require(id == device, "wrong queue cleared");
+    discardedBytes += pendingBytes;
+    pendingBytes = 0;
+}
 extern "C" void SDLCALL SDL_CloseAudioDevice(SDL_AudioDeviceID id) { Require(id == device, "wrong device closed"); ++closed; }
 extern "C" SDL_AudioStatus SDLCALL SDL_GetAudioDeviceStatus(SDL_AudioDeviceID id) { return live(id) ? SDL_AUDIO_PLAYING : SDL_AUDIO_STOPPED; }
 
@@ -79,6 +102,25 @@ int main(int argc, char** argv) {
         Require(argc == 2, "invalid test arguments");
         const std::string_view mode = argv[1];
         bool expectOpen = true;
+        if (mode == "large_drain" || mode == "stalled_drain") {
+            std::array<std::int16_t, DrainFrames * 2> samples{};
+            outputDevices = 1;
+            simulateDrain = true;
+            if (mode == "large_drain") bytesPerDevicePeriod = sizeof(samples);
+            const int port = sceAudioOutOpen(0xff, 1, 0, DrainFrames, DrainFrequency, 1);
+            Require(port > 0, "background music port failed to open");
+            const auto start = nowUs;
+            nextPlayback = start + DrainPeriodUs;
+            Require(sceAudioOutOutput(port, samples.data()) == DrainFrames && pendingBytes == sizeof(samples), "block not queued");
+            if (mode == "large_drain") {
+                Require(sceAudioOutOutput(port, samples.data()) == DrainFrames && pendingBytes == 2 * sizeof(samples), "second block not queued");
+            }
+            Require(sceAudioOutOutput(port, nullptr) == DrainFrames && pendingBytes == 0, "drain did not empty the queue");
+            Require(discardedBytes == (mode == "large_drain" ? 0 : sizeof(samples)), "unexpected discarded audio");
+            if (mode == "stalled_drain") Require(nowUs - start < 1000000, "stalled drain took too long");
+            Require(sceAudioOutClose(port) == 0, "background music port failed to close");
+            return 0;
+        }
         if (mode == "zero_default") {
             driver = "alsa";
             outputDevices = 0;

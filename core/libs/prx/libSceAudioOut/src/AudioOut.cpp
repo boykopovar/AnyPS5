@@ -316,13 +316,20 @@ static void sleepUs(std::unique_lock<std::mutex>& lock, std::uint64_t us) {
 
 static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex>& lock) {
     if (data == nullptr) {
-        const std::uint64_t waitStart = sceKernelGetProcessTime();
-        while (SDL_GetQueuedAudioSize(port.device) > 0) {
-            if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
+        const auto devicePeriodUs = port.spec.freq > 0 ? 1000000ULL * port.spec.samples / port.spec.freq : 0;
+        auto lastProgress = sceKernelGetProcessTime();
+        auto queued = SDL_GetQueuedAudioSize(port.device);
+        while (queued != 0) {
+            sleepUs(lock, DRAIN_SLEEP_US);
+            const auto remaining = SDL_GetQueuedAudioSize(port.device);
+            const auto now = sceKernelGetProcessTime();
+            if (remaining < queued) {
+                lastProgress = now;
+            } else if (now - lastProgress > devicePeriodUs + DRAIN_TIMEOUT_US) {
                 SDL_ClearQueuedAudio(port.device);
                 break;
             }
-            sleepUs(lock, DRAIN_SLEEP_US);
+            queued = remaining;
         }
         return;
     }
