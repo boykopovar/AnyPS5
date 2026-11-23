@@ -213,6 +213,7 @@ bool APS5_VABI WKFrameIsMainFrame(const void* frameRef);
 bool APS5_VABI WKFrameIsFrameSet(const void* frameRef);
 std::uint32_t APS5_VABI WKFrameHandleGetTypeID();
 std::uint32_t APS5_VABI WKFrameInfoGetTypeID();
+const void* APS5_VABI WKFrameInfoCreateFrameHandleRef(const void* frameInfoRef);
 void APS5_VABI WKFramePolicyListenerDownload(const void* policyListenerRef);
 std::uint32_t APS5_VABI WKFramePolicyListenerGetTypeID();
 void APS5_VABI WKFramePolicyListenerIgnore(const void* policyListenerRef);
