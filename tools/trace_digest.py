@@ -702,11 +702,12 @@ def main(arguments=None):
     summary = load_summary(options.summary, options.trace)
     try:
         result = digest(trace, summary, stacks, options.frames, options.top)
+        if options.thread:
+            result["thread_filter"] = sorted(set(options.thread))
+        output = json.dumps(result, indent=1) + "\n" if options.json else markdown(result)
     except KeyError as error:
         parser.exit(2, f"FAIL: the summary line has no {error} field\n")
-    if options.thread:
-        result["thread_filter"] = sorted(set(options.thread))
-    sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown(result))
+    sys.stdout.write(output)
     return 0
 
 
