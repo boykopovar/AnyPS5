@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <climits>
 #include <csignal>
@@ -156,8 +157,14 @@ int main(int argc, char** argv) {
         const KernelTimespec poll{0, 0};
         const GuestItimerval idleCpuTimer{{0, 0}, {0, 20000}};
         Require(setitimer_nid_postfix(cpu, &idleCpuTimer, nullptr) == 0, "arming the idle CPU timer failed");
+        std::atomic<bool> burnHostCpu{true};
+        std::thread hostWorker([&burnHostCpu] {
+            while (burnHostCpu.load(std::memory_order_relaxed)) std::atomic_signal_fence(std::memory_order_seq_cst);
+        });
         std::this_thread::sleep_for(std::chrono::seconds(2));
-        Require(Micros(Read(cpu).value) > 0, "timer poller CPU expired the idle CPU timer");
+        burnHostCpu.store(false, std::memory_order_relaxed);
+        hostWorker.join();
+        Require(Micros(Read(cpu).value) > 0, "non-guest host CPU expired the idle CPU timer");
         *__error_nid_postfix() = 0;
         Require(sigtimedwait_nid_postfix(&signalSet, nullptr, &poll) == -1 && *__error_nid_postfix() == 35, "the idle CPU timer left a pending signal");
         const GuestItimerval zeroCpu{{0, 0}, {0, 0}};

@@ -576,6 +576,8 @@ struct CpuClockRegistry {
     std::map<int, PthreadPrivate*> threads;
     int nextThread = 100000;
     KernelCpumask processAffinity = DEFAULT_THREAD_AFFINITY;
+    std::uint64_t retiredUserNanos = 0;
+    std::uint64_t retiredSystemNanos = 0;
 };
 
 static CpuClockRegistry& CpuClocks() {
@@ -590,6 +592,78 @@ static bool GuestThreadEnded(const PthreadPrivate* thread) {
 #else
     return false;
 #endif
+}
+
+static bool GuestThreadCpuTimes(const PthreadPrivate* thread, std::uint64_t* userNanos, std::uint64_t* systemNanos) {
+    *userNanos = 0;
+    *systemNanos = 0;
+#ifdef _WIN32
+    if (thread->nativeHandle == nullptr) return true;
+    FILETIME creation{}, exitTime{}, kernel{}, user{};
+    if (!GetThreadTimes(static_cast<HANDLE>(thread->nativeHandle), &creation, &exitTime, &kernel, &user)) return false;
+    const auto ticks = [](const FILETIME& time) {
+        return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+    };
+    *userNanos = ticks(user) * 100ULL;
+    *systemNanos = ticks(kernel) * 100ULL;
+    return true;
+#elif defined(__APPLE__)
+    if (!thread->hostCpuClockBound) return true;
+    thread_basic_info_data_t info{};
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    if (thread_info(thread->hostMachThread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count) != KERN_SUCCESS) return false;
+    *userNanos = (static_cast<std::uint64_t>(info.user_time.seconds) * 1000000ULL + static_cast<std::uint64_t>(info.user_time.microseconds)) * 1000ULL;
+    *systemNanos = (static_cast<std::uint64_t>(info.system_time.seconds) * 1000000ULL + static_cast<std::uint64_t>(info.system_time.microseconds)) * 1000ULL;
+    return true;
+#else
+    if (!thread->hostCpuClockBound || thread->hostTid == 0) return true;
+    char path[48];
+    std::snprintf(path, sizeof(path), "/proc/self/task/%d/stat", thread->hostTid);
+    FILE* file = std::fopen(path, "r");
+    if (file == nullptr) return false;
+    char stat[2048]{};
+    const bool read = std::fgets(stat, sizeof(stat), file) != nullptr;
+    std::fclose(file);
+    if (!read) return false;
+    char* field = std::strrchr(stat, ')');
+    if (field == nullptr) return false;
+    ++field;
+    const auto skipField = [&field] {
+        while (*field == ' ') ++field;
+        if (*field == '\0') return false;
+        while (*field != '\0' && *field != ' ') ++field;
+        return true;
+    };
+    for (int index = 3; index < 14; ++index) if (!skipField()) return false;
+    while (*field == ' ') ++field;
+    char* end = nullptr;
+    errno = 0;
+    const auto userTicks = std::strtoull(field, &end, 10);
+    if (end == field || errno != 0) return false;
+    field = end;
+    while (*field == ' ') ++field;
+    errno = 0;
+    const auto systemTicks = std::strtoull(field, &end, 10);
+    if (end == field || errno != 0) return false;
+    const long rate = sysconf(_SC_CLK_TCK);
+    if (rate <= 0) return false;
+    const auto toNanos = [rate](std::uint64_t value) {
+        const auto frequency = static_cast<std::uint64_t>(rate);
+        return value / frequency * 1000000000ULL + value % frequency * 1000000000ULL / frequency;
+    };
+    *userNanos = toNanos(userTicks);
+    *systemNanos = toNanos(systemTicks);
+    return true;
+#endif
+}
+
+static void RetireGuestThreadCpu(CpuClockRegistry& registry, PthreadPrivate* thread) {
+    if (thread->cpuClockRetired) return;
+    std::uint64_t userNanos = 0, systemNanos = 0;
+    if (!GuestThreadCpuTimes(thread, &userNanos, &systemNanos)) return;
+    registry.retiredUserNanos += userNanos;
+    registry.retiredSystemNanos += systemNanos;
+    thread->cpuClockRetired = true;
 }
 
 PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false), _retval(nullptr), _detached(false), _adopted(false), _handleStorage(nullptr), _joined(false) {
@@ -635,6 +709,7 @@ std::unique_lock<std::mutex> LockMainGuestThread_nid_no_patch(PthreadPrivate*& t
 PthreadPrivate::~PthreadPrivate() {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
+    RetireGuestThreadCpu(registry, this);
     registry.threads.erase(cpuClockThread);
 }
 
@@ -871,6 +946,32 @@ bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos) {
 #endif
     return true;
 }
+
+bool GuestProcessCpuTimes_nid_no_patch(std::uint64_t* userNanos, std::uint64_t* systemNanos) {
+    if (userNanos == nullptr || systemNanos == nullptr) return false;
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    for (const auto& entry : registry.threads) {
+        auto* thread = entry.second;
+        if (!thread->cpuClockRetired && GuestThreadEnded(thread)) {
+            RetireGuestThreadCpu(registry, thread);
+            if (!thread->cpuClockRetired) return false;
+        }
+    }
+    std::uint64_t user = registry.retiredUserNanos;
+    std::uint64_t system = registry.retiredSystemNanos;
+    for (const auto& entry : registry.threads) {
+        auto* thread = entry.second;
+        if (thread->cpuClockRetired || GuestThreadEnded(thread)) continue;
+        std::uint64_t threadUser = 0, threadSystem = 0;
+        if (!GuestThreadCpuTimes(thread, &threadUser, &threadSystem)) return false;
+        user += threadUser;
+        system += threadSystem;
+    }
+    *userNanos = user;
+    *systemNanos = system;
+    return true;
+}
 #ifndef _WIN32
 static thread_local std::unique_ptr<PthreadPrivate> adoptedThread;
 // pthread_exit force-unwinds through guest frames, whose personality resolves to
@@ -939,6 +1040,11 @@ static void finishThread(PthreadPrivate* self, void* retval) {
         callback();
     ThreadLifecycle::RunKeyDtors();
     ThreadLifecycle::ReleaseRobustUmutexes();
+    {
+        auto& registry = CpuClocks();
+        std::lock_guard lock(registry.lock);
+        RetireGuestThreadCpu(registry, self);
+    }
     {
         std::unique_lock<std::mutex> lk(self->_join_mtx);
         self->_retval = retval;

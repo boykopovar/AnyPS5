@@ -75,6 +75,7 @@ constexpr int GuestSigblock = 1;
 constexpr int GuestSigunblock = 2;
 constexpr int GuestSigsetmask = 3;
 constexpr int GuestEintr = 4;
+constexpr int GuestEio = 5;
 constexpr int GuestEagain = 35;
 constexpr int GuestErange = 34;
 constexpr std::int32_t GuestSiUser = 0x10001;
@@ -628,42 +629,17 @@ CpuTimerState& CpuTimer(int which) {
     return which == ItimerVirtual ? *virtualTimer : *profTimer;
 }
 
-std::atomic<std::uint64_t> cpuTimerPollerUserNanos{};
-std::atomic<std::uint64_t> cpuTimerPollerSystemNanos{};
-struct CpuTimerPollerAccounting {
-    std::uint64_t userNanos = 0;
-    std::uint64_t systemNanos = 0;
-};
-
-void AccountCpuTimerPoller(CpuTimerPollerAccounting& accounting) {
-    std::uint64_t userNanos = 0;
-    std::uint64_t systemNanos = 0;
-    if (!HostCurrentThreadCpuTimes_nid_no_patch(&userNanos, &systemNanos)) throw std::runtime_error("setitimer: reading timer poller CPU time failed");
-    if (userNanos >= accounting.userNanos) cpuTimerPollerUserNanos.fetch_add(userNanos - accounting.userNanos, std::memory_order_relaxed);
-    if (systemNanos >= accounting.systemNanos) cpuTimerPollerSystemNanos.fetch_add(systemNanos - accounting.systemNanos, std::memory_order_relaxed);
-    accounting.userNanos = userNanos;
-    accounting.systemNanos = systemNanos;
-}
-
-bool ReadRawCpuTimerMicros(int which, std::uint64_t* micros) {
-    KernelTimespec now{};
-    const int savedErrno = *__error_nid_postfix();
-    if (clock_gettime_nid_postfix(which, &now) != 0) return false;
-    *__error_nid_postfix() = savedErrno;
-    *micros = static_cast<std::uint64_t>(now.tv_sec) * 1000000ULL + static_cast<std::uint64_t>(now.tv_nsec / 1000);
-    return true;
-}
-std::uint64_t AdjustCpuTimerMicros(int which, std::uint64_t micros) {
-    const auto user = cpuTimerPollerUserNanos.load(std::memory_order_relaxed);
-    const auto system = which == ItimerProf ? cpuTimerPollerSystemNanos.load(std::memory_order_relaxed) : 0;
-    const auto excludedMicros = (user + system) / 1000ULL;
-    return micros > excludedMicros ? micros - excludedMicros : 0;
-}
-
 bool ReadCpuTimerMicros(int which, std::uint64_t* micros) {
-    std::uint64_t raw = 0;
-    if (!ReadRawCpuTimerMicros(which, &raw)) return false;
-    *micros = AdjustCpuTimerMicros(which, raw);
+    std::uint64_t userNanos = 0;
+    std::uint64_t systemNanos = 0;
+    const int savedErrno = *__error_nid_postfix();
+    if (!GuestProcessCpuTimes_nid_no_patch(&userNanos, &systemNanos)) {
+        *__error_nid_postfix() = GuestEio;
+        return false;
+    }
+    *__error_nid_postfix() = savedErrno;
+    const auto nanos = userNanos + (which == ItimerProf ? systemNanos : 0);
+    *micros = nanos / 1000ULL;
     return true;
 }
 
@@ -695,26 +671,20 @@ void ExpireCpuTimer(int which, std::chrono::microseconds interval, ThreadSignals
 }
 
 void RunCpuTimer(int which) {
-    CpuTimerPollerAccounting accounting{};
-    AccountCpuTimerPoller(accounting);
     auto& timer = CpuTimer(which);
     std::unique_lock lock(timer.lock);
     for (;;) {
         if (!timer.deadlineMicros) {
-            AccountCpuTimerPoller(accounting);
             timer.changed.Wait(lock);
             continue;
         }
         const std::uint64_t deadline = *timer.deadlineMicros;
         lock.unlock();
-        std::uint64_t raw = 0;
-        const bool read = ReadRawCpuTimerMicros(which, &raw);
-        AccountCpuTimerPoller(accounting);
-        const std::uint64_t nowMicros = read ? AdjustCpuTimerMicros(which, raw) : 0;
+        std::uint64_t nowMicros = 0;
+        const bool read = ReadCpuTimerMicros(which, &nowMicros);
         lock.lock();
         if (!timer.deadlineMicros || *timer.deadlineMicros != deadline) continue;
         if (!read || nowMicros < deadline) {
-            AccountCpuTimerPoller(accounting);
             timer.changed.WaitUntil(lock, TimedWait::NowNanos() + CpuTimerPollNanos);
             continue;
         }
@@ -727,11 +697,9 @@ void RunCpuTimer(int which) {
         }
         lock.unlock();
         ExpireCpuTimer(which, interval, armer);
-        AccountCpuTimerPoller(accounting);
         lock.lock();
     }
 }
-
 void RunVirtualTimer() { RunCpuTimer(ItimerVirtual); }
 void RunProfTimer() { RunCpuTimer(ItimerProf); }
 
@@ -824,6 +792,7 @@ extern "C" int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* 
         else if (!ValidItimer(requested.interval)) { *__error_nid_postfix() = 22; return -1; }
     }
     if (which != ItimerReal) {
+        scePthreadSelf();
         std::uint64_t nowMicros = 0;
         if (!ReadCpuTimerMicros(which, &nowMicros)) return -1;
         GuestItimerval old{};

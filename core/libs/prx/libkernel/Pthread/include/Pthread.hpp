@@ -157,6 +157,7 @@ struct PthreadPrivate {
     std::atomic<int> priority{DEFAULT_THREAD_PRIORITY};
     int scope = GUEST_SCOPE_SYSTEM;
     int cpuClockThread = 0;
+    bool cpuClockRetired = false;
     std::atomic<bool> initialThread{false};
 #ifndef _WIN32
 #ifdef __APPLE__
@@ -200,6 +201,7 @@ bool ReplaceGuestThreadStack(std::uintptr_t start, std::size_t bytes, bool readW
 #endif
 int GuestThreadCpuClockId(const PthreadPrivate* thread);
 bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos);
+bool GuestProcessCpuTimes_nid_no_patch(std::uint64_t* userNanos, std::uint64_t* systemNanos);
 bool SetLiveGuestThreadsAffinity(KernelCpumask mask);
 KernelCpumask LiveGuestThreadsAffinity();
 KernelCpumask GuestProcessCpusetAffinity();

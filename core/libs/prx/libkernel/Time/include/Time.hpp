@@ -18,7 +18,6 @@ extern "C" {
     int APS5_VABI nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp);
     int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
     int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res);
-    bool HostCurrentThreadCpuTimes_nid_no_patch(std::uint64_t* userNanos, std::uint64_t* systemNanos);
 #ifdef _WIN32
     int APS5_VABI ClockTimeWin32ErrorToGuestErrno_nid_no_patch(std::uint32_t error);
     bool HostThreadCpuNanos_nid_no_patch(void* thread, std::uint64_t* nanos);
