@@ -107,6 +107,13 @@ also builds `libs` through the `patched_libraries_tests` dependency. Titles load
 files from `build/core/libs/libs`; running a title after a library change without rebuilding `libs`
 therefore tests the previous binaries and can show no effect at all.
 
+To rebuild one patched module, build its `libs_<name>` target, where `<name>` is the output file name
+without its extension: `cmake --build build --target libs_libSceAgcDriver` rebuilds and NID-patches
+`build/core/libs/libs/libSceAgcDriver.prx` and the targets it depends on, without patching the other
+modules. The same applies to the other files `libs` places beside them, such as `libs_mimalloc`.
+Name the target, not the output path: with the Makefile generators, an existing file passed as a
+target counts as up to date, so a stale patched module is not rebuilt.
+
 [Relinker usage and runtime layout](../user/USAGE.md).
 
 `tools/public_headers_manifest.py [--root <dir>]` inventories the inputs of the public header package, with a content hash for each file, without creating an archive. `--root` defaults to the repository that contains the script.
