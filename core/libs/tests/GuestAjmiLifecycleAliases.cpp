@@ -73,6 +73,7 @@ private:
 
 struct Api {
     decltype(&sceAjmiInitialize) initialize;
+    decltype(&sceAjmiFinalize) finalize;
     decltype(&sceAjmiInstanceCreate) create;
     decltype(&sceAjmiInstanceDestroy) destroy;
     decltype(&sceAjmiBatchWait) wait;
@@ -126,6 +127,13 @@ void CheckContexts(const Api& alias, const Api& native) {
     Require(alias.create(second, 0, 0, &instance.value) == 0);
     Require(native.destroy(second, instance.value) == 0);
     instance.Check();
+    errno = 71;
+    Require(alias.finalize(first) == 0 && errno == 71);
+    Require(native.finalize(second) == 0);
+    Require(alias.finalize(third) == 0);
+    Require(alias.finalize(fourth) == 0);
+    Require(alias.finalize(0) == 0);
+    Require(native.finalize(0) == 0);
 }
 
 void CheckInstances(const Api& alias, const Api& native, decltype(&sceAjmiInstanceCodecType) codecType) {
@@ -239,6 +247,7 @@ int main(int argc, char** argv) {
     Module aliasModule(directory / "libSceAjmi.prx");
     const Api alias{
         aliasModule.Import<decltype(Api::initialize)>(patched ? "QhA7rTjJbro" : "sceAjmiInitialize"),
+        aliasModule.Import<decltype(Api::finalize)>(patched ? "BD002VBfhuE" : "sceAjmiFinalize"),
         aliasModule.Import<decltype(Api::create)>(patched ? "ofRX8Vq0ss0" : "sceAjmiInstanceCreate"),
         aliasModule.Import<decltype(Api::destroy)>(patched ? "YtubBgSeNH0" : "sceAjmiInstanceDestroy"),
         aliasModule.Import<decltype(Api::wait)>(patched ? "JJ9g04D344Q" : "sceAjmiBatchWait"),
@@ -246,6 +255,7 @@ int main(int argc, char** argv) {
     };
     const Api native{
         nativeModule.Import<decltype(Api::initialize)>(patched ? "dl+4eHSzUu4" : "sceAjmInitialize"),
+        nativeModule.Import<decltype(Api::finalize)>(patched ? "MHur6qCsUus" : "sceAjmFinalize"),
         nativeModule.Import<decltype(Api::create)>(patched ? "AxoDrINp4J8" : "sceAjmInstanceCreate"),
         nativeModule.Import<decltype(Api::destroy)>(patched ? "RbLbuKv8zho" : "sceAjmInstanceDestroy"),
         nativeModule.Import<decltype(Api::wait)>(patched ? "-qLsfDAywIY" : "sceAjmBatchWait"),
