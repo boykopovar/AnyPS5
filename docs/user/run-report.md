@@ -59,7 +59,7 @@ Every text value in the report goes through the same filter for user names, host
 | `exit` | `clean`, `crash`, `abort` or `killed`. A non-zero exit code from the game is not automatically a crash. |
 | `exitCode` | The process exit code when known, otherwise null. |
 | `averageFps`, `fpsWindowSeconds` | Frames per second measured from the first presented frame to the last, and the length of that window. Both are null with fewer than two presented frames. |
-| `frameMs` | Frame-time percentiles in milliseconds: `p50`, `p90` and `p99` of the intervals between presented frames, over the most recent 2,048 intervals. Null with fewer than two presented frames, or when milestones are not covered. The percentile is nearest-rank, the same math the optional performance trace uses. |
+| `frameMs` | Frame-time percentiles in milliseconds: `p50`, `p90` and `p99` of the intervals between presented frames, over the most recent 2,048 intervals. Null with fewer than two presented frames, or when milestones are not covered. For `n` sorted intervals, percentile `p` is the value at zero-based position `floor(p * n)`, or the last value when that position is past the end. This is the same math the optional performance trace uses. It is not nearest-rank: with 10 intervals, `p50` is the 6th value and `p90` the 10th, where nearest-rank gives the 5th and the 9th. `tools/presentmon_compare.py` reports nearest-rank, so its `p99` can be one rank lower than this one for the same frames. |
 | `recovered`, `incomplete` | `incomplete` is true when an observation had to be dropped. |
 
 ## Run recipe
