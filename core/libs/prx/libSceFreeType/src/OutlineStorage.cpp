@@ -6,12 +6,20 @@
 #include FT_OUTLINE_H
 
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 
 using namespace FreeType;
 
 namespace {
+
+FT_Library ReadGuestLibrary(GuestLibrary* library, const char* func) {
+    if (!library) return nullptr;
+    FT_Library host = nullptr;
+    if (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host))) NotImplemented_nid_no_patch(func);
+    return host;
+}
 
 bool ReadOutline(GuestOutline& copy, const GuestOutline* outline) {
     const int savedErrno = errno;
@@ -42,7 +50,7 @@ extern "C" {
 int APS5_VABI FT_Outline_Done_nid_postfix(GuestLibrary* library, GuestOutline* outline) {
     if (!library) return FT_Err_Invalid_Library_Handle;
     if (!outline) return FT_Err_Invalid_Outline;
-    if (!library->host) return FT_Err_Invalid_Argument;
+    if (!ReadGuestLibrary(library, __func__)) return FT_Err_Invalid_Argument;
     GuestOutline current;
     if (!ReadOutline(current, outline)) return FT_Err_Invalid_Outline;
     ReleaseOwned(current);
@@ -53,7 +61,7 @@ int APS5_VABI FT_Outline_Done_nid_postfix(GuestLibrary* library, GuestOutline* o
 int APS5_VABI FT_Outline_New_nid_postfix(GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, GuestOutline* outline) {
     if (!library) return FT_Err_Invalid_Library_Handle;
     if (!outline) return FT_Err_Invalid_Argument;
-    if (!library->host) return FT_Err_Invalid_Argument;
+    if (!ReadGuestLibrary(library, __func__)) return FT_Err_Invalid_Argument;
     if (!WriteOutline(outline, GuestOutline{})) return FT_Err_Invalid_Argument;
     if (numContours < 0 || static_cast<std::uint32_t>(numContours) > numPoints) return FT_Err_Invalid_Argument;
     if (numPoints > FT_OUTLINE_POINTS_MAX) return FT_Err_Array_Too_Large;

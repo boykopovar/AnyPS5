@@ -25,8 +25,8 @@ def resolve_output_path(path):
     return resolved
 
 
-def release_body(notes):
-    if len(notes) <= BODY_LIMIT:
+def release_body(notes, limit=BODY_LIMIT):
+    if len(notes) <= limit:
         return notes
     return re.sub(
         r"^## What's Changed[^\S\r\n]*\r?\n.*?(?=^#{1,2} |^\*\*Full Changelog\*\*:|\Z)",
@@ -37,7 +37,16 @@ def release_body(notes):
     )
 
 
-def prepare_notes(source, body, full, check=False):
+def unique_release_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Generated release notes response has a duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def prepare_notes(source, body, full, check=False, *, marker=None):
     paths = (source, body, full)
     for index, first in enumerate(paths):
         for second in paths[index + 1:]:
@@ -45,7 +54,7 @@ def prepare_notes(source, body, full, check=False):
                     (first.exists() and second.exists() and first.samefile(second))):
                 raise ValueError("Release note input and outputs must be distinct files")
     try:
-        payload = json.loads(source.read_text(encoding="utf-8-sig"))
+        payload = json.loads(source.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_release_object)
     except RecursionError as error:
         raise ValueError("Generated release notes response is too deeply nested") from error
     if not isinstance(payload, dict) or "body" not in payload:
@@ -53,7 +62,8 @@ def prepare_notes(source, body, full, check=False):
     notes = payload["body"]
     if not isinstance(notes, str):
         raise ValueError("Generated release notes body must be a string")
-    body_text = release_body(notes)
+    suffix = f"\n{marker}\n" if marker is not None else ""
+    body_text = release_body(notes, BODY_LIMIT - len(suffix)) + suffix
     if len(body_text) > BODY_LIMIT:
         raise ValueError(f"Release notes body exceeds {BODY_LIMIT} characters after removing What's Changed")
     if check:
@@ -124,10 +134,11 @@ def main(argv=None):
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--body", type=Path, required=True)
     parser.add_argument("--full", type=Path, required=True)
+    parser.add_argument("--marker", help="append a workflow marker within the release body limit")
     parser.add_argument("--check", action="store_true", help="fail with status 1 when outputs differ; never create or modify files")
     args = parser.parse_args(argv)
     try:
-        matched = prepare_notes(args.input, args.body, args.full, args.check)
+        matched = prepare_notes(args.input, args.body, args.full, args.check, marker=args.marker)
         if args.check and not matched:
             print("Release note outputs are missing or stale", file=sys.stderr)
             return 1

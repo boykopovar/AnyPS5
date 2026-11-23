@@ -59,14 +59,22 @@ AvPlayerMemAllocator WithGuestHeapFallback(AvPlayerMemAllocator memory) {
 
 std::uint32_t DetectSourceType(std::string_view path) {
     std::string_view name = path;
-    if (name.find("://") != std::string_view::npos) name = name.substr(0, name.find_first_of("?#"));
+    const auto scheme = name.find("://");
+    if (scheme != std::string_view::npos) {
+        name = name.substr(0, name.find_first_of("?#"));
+        const auto pathStart = name.find('/', scheme + 3);
+        if (pathStart == std::string_view::npos) return SourceTypeUnknown;
+        name.remove_prefix(pathStart + 1);
+    }
+    const auto slash = name.rfind('/');
+    if (slash != std::string_view::npos) name.remove_prefix(slash + 1);
     const auto dot = name.rfind('.');
     if (dot == std::string_view::npos) return SourceTypeUnknown;
-    auto extension = name.substr(dot);
-    extension = extension.substr(0, extension.find('/'));
-    for (const auto mp4 : {".mp4", ".m4v", ".m3d", ".m4a", ".mov"}) {
+    const auto extension = name.substr(dot);
+    for (const auto mp4 : {".mp4", ".m4v", ".m4a", ".mov"}) {
         if (EqualsIgnoreCase(extension, mp4)) return SourceTypeFileMp4;
     }
+    if (EqualsIgnoreCase(extension, ".webm")) return SourceTypeWebm;
     if (EqualsIgnoreCase(extension, ".m3u8")) return SourceTypeHls;
     return SourceTypeUnknown;
 }
@@ -230,6 +238,7 @@ int Player::AddSource(std::string_view path, std::uint32_t sourceType) {
         state = State::Error;
         return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     }
+    activeSourceType = sourceType;
     if (opened->StreamCount() == 0) {
         source = std::move(opened);
         previous = state;
@@ -365,10 +374,11 @@ int Player::SetLooping(bool enabled) {
 int Player::SetTrickSpeed(std::int32_t trickSpeed) {
     std::lock_guard lock(mutex);
     if (!source) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    if (trickSpeed == 0) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
-    if (state == State::Stop || state == State::EndOfFile || state == State::Error) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    speed = trickSpeed;
-    source->SetSpeed(trickSpeed);
+    if (trickSpeed != NormalSpeed && trickSpeed > -400 && trickSpeed < 400) return SCE_AVPLAYER_ERROR_NOT_SUPPORTED;
+    if (activeSourceType != SourceTypeFileMp4 && activeSourceType != SourceTypeWebm) return SCE_AVPLAYER_ERROR_NOT_SUPPORTED;
+    const auto appliedSpeed = std::clamp(trickSpeed, -3200, 3200);
+    speed = appliedSpeed;
+    source->SetSpeed(appliedSpeed);
     return SCE_OK;
 }
 
@@ -419,6 +429,11 @@ bool Player::IsActive() {
 std::uint64_t Player::CurrentTime() {
     std::lock_guard lock(mutex);
     return source ? source->CurrentTime() : 0;
+}
+
+std::int32_t Player::TrickSpeedForTest() {
+    std::lock_guard lock(mutex);
+    return speed;
 }
 
 void Player::SetClockTimeForTest(double milliseconds) {
