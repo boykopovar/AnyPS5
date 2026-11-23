@@ -278,6 +278,8 @@ inline Registers ClearStateContextRegisters() {
     return cleared;
 }
 
+inline constexpr std::uint32_t AllSampleDumpBlocks = 0xffffu;
+
 struct Predication {
     std::uint64_t address = 0;
     std::uint32_t operation = 0;
@@ -301,6 +303,7 @@ struct QueueState {
     std::uint32_t instanceCount = 1;
     std::vector<std::string> markers;
     Predication predication;
+    std::uint32_t sampleDumpBlocks = AllSampleDumpBlocks;
 
     void ClearContext() {
         context = ClearStateContextRegisters();

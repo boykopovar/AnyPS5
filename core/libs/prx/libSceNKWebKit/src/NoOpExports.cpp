@@ -152,9 +152,6 @@ void APS5_VABI WKIconDatabaseSetIconDatabaseClient() {
 void APS5_VABI WKIconDatabaseSetIconURLForPageURL() {
 }
 
-void APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled() {
-}
-
 void APS5_VABI WKPreferencesSetQTKitEnabled() {
 }
 
