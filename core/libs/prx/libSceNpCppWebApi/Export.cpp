@@ -10,6 +10,8 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <stdexcept>
+#include <string>
 #include <unordered_set>
 #include <unordered_map>
 #include "SceTypes.hpp"
@@ -21,16 +23,17 @@ static int SetSessionScalar(void* self, std::size_t offset, const T* value, cons
     static_assert(Width == 1 || Width == sizeof(int));
     const auto address = reinterpret_cast<std::uintptr_t>(self);
     if (!self || address > std::numeric_limits<std::uintptr_t>::max() - offset - Width)
-        NotImplemented_nid_no_patch(function);
+        throw std::invalid_argument(std::string(function) + ": unwritable model");
     auto* target = reinterpret_cast<void*>(address + offset);
     std::array<std::uint8_t, Width + 1> field{};
     field.back() = 1;
     const int savedErrno = errno;
-    const bool written = GuestCopyIn_nid_no_patch(field.data(), value, Width) &&
-                         GuestWritable_nid_no_patch(target, field.size()) &&
+    const bool read = GuestCopyIn_nid_no_patch(field.data(), value, Width);
+    const bool written = read && GuestWritable_nid_no_patch(target, field.size()) &&
                          GuestCopyOut_nid_no_patch(target, field.data(), field.size());
     errno = savedErrno;
-    if (!written) NotImplemented_nid_no_patch(function);
+    if (!read) throw std::invalid_argument(std::string(function) + ": unreadable value");
+    if (!written) throw std::invalid_argument(std::string(function) + ": unwritable model");
     int result = 0;
     std::memcpy(&result, field.data(), Width);
     return result;
