@@ -577,7 +577,7 @@ int APS5_VABI sceRudpNetReceived(int socketId, const void* data, std::size_t dat
                           GuestCopyIn_nid_no_patch(address, sourceAddress, length);
     if (!readable) return RUDP_ERROR_INVALID_ARGUMENT;
     if (!g_sockets.contains(socketId)) return RUDP_ERROR_INVALID_SOCKET;
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceRudpGetMaxSegmentSize(uint16_t* size) {

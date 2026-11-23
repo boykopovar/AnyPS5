@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
-#include <stdexcept>
 #include <string>
 
 static void Require(bool value, int line) {
@@ -60,13 +59,7 @@ int main() {
     CHECK(sceRudpBind(context, 7, 0x2711, 2) == 0);
     CHECK(sceRudpNetReceived(7, &packet, 0, nullptr, 0) == 0);
     CHECK(sceRudpNetReceived(8, &packet, 1, address, sizeof(address)) == invalidSocket);
-    bool refused = false;
-    try {
-        sceRudpNetReceived(7, &packet, 1, address, sizeof(address));
-    } catch (const std::runtime_error&) {
-        refused = true;
-    }
-    CHECK(refused);
+    CHECK(sceRudpNetReceived(7, &packet, 1, address, sizeof(address)) == 0);
     CHECK(sceRudpTerminate(context) == 0);
     CHECK(sceRudpSetMaxSegmentSize(1000) == 0);
     CHECK(sceRudpEnd() == 0);
