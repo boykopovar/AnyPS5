@@ -96,7 +96,7 @@ void APS5_VABI _ZN6webrtc18callback_list_impl21CallbackListReceiversC1Ev_nid_pos
 void APS5_VABI _ZN3rtc19webrtc_logging_impl3LogEPKNS0_10LogArgTypeEz_nid_postfix(const WebRtcLogArgType* format, ...);
 bool APS5_VABI _ZN3rtc10LogMessage6IsNoopENS_15LoggingSeverityE_nid_postfix(std::int32_t severity);
 void APS5_VABI _ZN3rtc13SocketAddressC1Ev_nid_postfix(WebRtcSocketAddress* address);
-int APS5_VABI _ZN3rtc13SocketAddressaSERKS0__nid_postfix(void);
+WebRtcSocketAddress* APS5_VABI _ZN3rtc13SocketAddressaSERKS0__nid_postfix(WebRtcSocketAddress* address, const WebRtcSocketAddress* other);
 const WebRtcIpAddress* APS5_VABI _ZNK3rtc13SocketAddress6ipaddrEv_nid_postfix(const WebRtcSocketAddress* address);
 void APS5_VABI _ZN3rtc13SocketAddressC1ERKNS_9IPAddressEi_nid_postfix(WebRtcSocketAddress* address, const WebRtcIpAddress* ip, std::int32_t port);
 std::uint16_t APS5_VABI _ZNK3rtc13SocketAddress4portEv_nid_postfix(const WebRtcSocketAddress* address);
@@ -156,7 +156,7 @@ const void* APS5_VABI _ZNK6webrtc14RTCStatsReport13ConstIteratordeEv_nid_postfix
 void APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIteratorD1Ev_nid_postfix(WebRtcStatsReportConstIterator* iterator);
 std::int64_t APS5_VABI _ZN3rtc10TimeMicrosEv_nid_postfix();
 int APS5_VABI libwebrtcUnknown07(void);
-int APS5_VABI _ZN3rtc13SocketAddressC1ERKS0__nid_postfix(void);
+void APS5_VABI _ZN3rtc13SocketAddressC1ERKS0__nid_postfix(WebRtcSocketAddress* address, const WebRtcSocketAddress* other);
 int APS5_VABI libwebrtcUnknown08(void);
 bool APS5_VABI _ZNK3rtc13SocketAddress5IsNilEv_nid_postfix(const WebRtcSocketAddress* address);
 int APS5_VABI libwebrtcUnknown09(void);
@@ -299,7 +299,7 @@ void APS5_VABI _ZNK3rtc24RecursiveCriticalSection5EnterEv_nid_postfix(const WebR
 void APS5_VABI _ZNK3rtc24RecursiveCriticalSection5LeaveEv_nid_postfix(const WebRtcRecursiveCriticalSection* section);
 void APS5_VABI _ZN3rtc9ExpFilter5ResetEf_nid_postfix(WebRtcExpFilter* filter, float alpha);
 float APS5_VABI _ZN3rtc9ExpFilter5ApplyEff_nid_postfix(WebRtcExpFilter* filter, float exponent, float sample);
-int APS5_VABI _ZNK6webrtc4rtcp10RtcpPacket5BuildEv_nid_postfix(void);
+WebRtcBuffer* APS5_VABI _ZNK6webrtc4rtcp10RtcpPacket5BuildEv_nid_postfix(WebRtcBuffer* result, const void* packet);
 bool APS5_VABI _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRtcRtcpApp* app, const WebRtcRtcpCommonHeader* packet);
 void APS5_VABI _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(WebRtcRtcpApp* app);
 void APS5_VABI _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(WebRtcRtcpApp* app);

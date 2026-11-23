@@ -1060,6 +1060,7 @@ std::span<const unsigned char> DigestIdentifier(int type) {
     static constexpr unsigned char Sha256[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01};
     static constexpr unsigned char Sha384[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02};
     static constexpr unsigned char Sha512[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03};
+    static constexpr unsigned char Sha512_256[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x06};
     switch (type) {
     case 4: return Md5;
     case 64: return Sha1;
@@ -1069,6 +1070,7 @@ std::span<const unsigned char> DigestIdentifier(int type) {
     case 673: return Sha384;
     case 674: return Sha512;
     case 675: return Sha224;
+    case 1030: return Sha512_256;
     default: return {};
     }
 }
