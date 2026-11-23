@@ -99,6 +99,7 @@ int main() {
     sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(longCallbacks.data()), 516);
     for (std::size_t i = 0; i < longCallbacks.size(); ++i) Require(longCallbacks[i] == (i < 516 ? 0 : 0xa5), "large callback initialization wrote outside the requested range");
 
+    Require(sceMbusAcquireControlList() == static_cast<int>(0x809B00FFu), "control-list fallback changed");
     CheckDeviceIdConversion();
     CheckInit();
     DeviceServiceInitParam param{};
