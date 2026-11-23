@@ -78,6 +78,8 @@ struct Api {
     decltype(&sceAjmiInstanceDestroy) destroy;
     decltype(&sceAjmiBatchWait) wait;
     decltype(&sceAjmiBatchCancel) cancel;
+    decltype(&sceAjmiModuleRegister) moduleRegister;
+    decltype(&sceAjmiModuleUnregister) moduleUnregister;
 };
 
 struct BatchApi {
@@ -128,6 +130,17 @@ void CheckContexts(const Api& alias, const Api& native) {
     Require(native.destroy(second, instance.value) == 0);
     instance.Check();
     errno = 71;
+    Require(alias.moduleRegister(first, 0, 1) == InvalidParameter);
+    Require(alias.moduleRegister(first, 0, -1) == InvalidParameter);
+    Require(alias.moduleRegister(first, 0, 0x100000000ll) == InvalidParameter);
+    Require(alias.moduleRegister(first, 0, 0) == 0);
+    Require(alias.moduleUnregister(first, 0) == 0);
+    Require(alias.moduleRegister(second, 0x24, 0) == 0);
+    Require(alias.moduleUnregister(second, 0x24) == 0);
+    Require(alias.moduleRegister(first, 1, 0) == 0);
+    Require(native.moduleUnregister(first, 1) == 0);
+    Require(native.moduleRegister(second, 1, 0) == 0);
+    Require(alias.moduleUnregister(second, 1) == 0);
     Require(alias.finalize(first) == 0 && errno == 71);
     Require(native.finalize(second) == 0);
     Require(alias.finalize(third) == 0);
@@ -251,7 +264,9 @@ int main(int argc, char** argv) {
         aliasModule.Import<decltype(Api::create)>(patched ? "ofRX8Vq0ss0" : "sceAjmiInstanceCreate"),
         aliasModule.Import<decltype(Api::destroy)>(patched ? "YtubBgSeNH0" : "sceAjmiInstanceDestroy"),
         aliasModule.Import<decltype(Api::wait)>(patched ? "JJ9g04D344Q" : "sceAjmiBatchWait"),
-        aliasModule.Import<decltype(Api::cancel)>(patched ? "6lWAGxD8NLs" : "sceAjmiBatchCancel")
+        aliasModule.Import<decltype(Api::cancel)>(patched ? "6lWAGxD8NLs" : "sceAjmiBatchCancel"),
+        aliasModule.Import<decltype(Api::moduleRegister)>(patched ? "dmwcwCeItmE" : "sceAjmiModuleRegister"),
+        aliasModule.Import<decltype(Api::moduleUnregister)>(patched ? "6fY-ci3au2U" : "sceAjmiModuleUnregister")
     };
     const Api native{
         nativeModule.Import<decltype(Api::initialize)>(patched ? "dl+4eHSzUu4" : "sceAjmInitialize"),
@@ -259,7 +274,9 @@ int main(int argc, char** argv) {
         nativeModule.Import<decltype(Api::create)>(patched ? "AxoDrINp4J8" : "sceAjmInstanceCreate"),
         nativeModule.Import<decltype(Api::destroy)>(patched ? "RbLbuKv8zho" : "sceAjmInstanceDestroy"),
         nativeModule.Import<decltype(Api::wait)>(patched ? "-qLsfDAywIY" : "sceAjmBatchWait"),
-        nativeModule.Import<decltype(Api::cancel)>(patched ? "NVDXiUesSbA" : "sceAjmBatchCancel")
+        nativeModule.Import<decltype(Api::cancel)>(patched ? "NVDXiUesSbA" : "sceAjmBatchCancel"),
+        nativeModule.Import<decltype(Api::moduleRegister)>(patched ? "Q3dyFuwGn64" : "sceAjmModuleRegister"),
+        nativeModule.Import<decltype(Api::moduleUnregister)>(patched ? "Wi7DtlLV+KI" : "sceAjmModuleUnregister")
     };
     const std::string_view operation = argv[2];
     if (operation == "contexts") {
