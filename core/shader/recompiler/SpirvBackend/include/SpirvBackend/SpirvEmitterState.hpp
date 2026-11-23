@@ -188,7 +188,7 @@ struct SpirvEmitterState {
     bool nativeF16ModesEmitted = false;
     bool f16DenormPreserveEmitted = false;
     std::uint32_t dot2F32F16Function = 0;
-    std::array<std::uint32_t, 4> fmaScaleF32Functions{};
+    std::array<std::uint32_t, 8> fmaScaleF32Functions{};
     std::uint32_t reciprocalCorrectionFunction = 0;
     std::array<std::uint32_t, 3> reciprocalTables {};
     std::map<std::pair<bool, std::uint32_t>, std::uint32_t> interpolateFunctions;

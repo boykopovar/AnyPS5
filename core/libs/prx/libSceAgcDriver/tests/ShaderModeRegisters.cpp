@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -23,7 +24,7 @@ void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-IrProgram translate(std::span<const std::uint32_t> code, std::optional<ShaderFloatMode> mode, std::uint32_t waveSize = 32) {
+IrProgram translate(std::span<const std::uint32_t> code, std::optional<ShaderFloatMode> mode, std::uint32_t waveSize = 32, bool float64 = false) {
     const auto decoded = RdnaInstructionDecoder{}.Decode(code);
     const auto graph = GraphBuilder{}.Build(decoded);
     const ShaderComputeInputInfo compute{};
@@ -31,6 +32,7 @@ IrProgram translate(std::span<const std::uint32_t> code, std::optional<ShaderFlo
     options.stage = ShaderStageKind::Compute;
     options.waveSize = waveSize;
     options.floatMode = mode;
+    options.float64 = float64;
     options.inputInfo.compute = &compute;
     return InstructionTranslator{}.Translate(decoded, graph, options);
 }
@@ -97,6 +99,7 @@ constexpr std::uint32_t vCvtF32I32 = 0x7e000b00;
 constexpr std::uint32_t vCvtF32U32 = 0x7e000d00;
 constexpr std::uint32_t vCvtF16F32 = 0x7e001500;
 constexpr std::uint32_t vAddF16 = 0x64000300;
+constexpr std::array<std::uint32_t, 2> vDivFmasF32{0xd56f000a, 0x041a0b04};
 
 std::uint32_t roundMode(std::uint32_t value) {
     return 0xbfa40000u | value;
@@ -361,6 +364,51 @@ void verifyDenormDiamond() {
     }
 }
 
+std::pair<std::uint32_t, std::uint32_t> divFmasModes(const IrProgram& program) {
+    const IrValue* found = nullptr;
+    for (const auto& block : program.Blocks()) {
+        for (const auto* instruction : block->Instructions()) {
+            if (instruction->Opcode() != IrOpcode::FPFmaScale32) continue;
+            require(found == nullptr, "v_div_fmas_f32 emitted more than one FPFmaScale32");
+            found = instruction;
+        }
+    }
+    require(found != nullptr && found->ArgumentCount() == 6u && found->Argument(4)->HasImmediate() && found->Argument(5)->HasImmediate(), "v_div_fmas_f32 did not emit FPFmaScale32 with an immediate round mode and flush");
+    return {found->Argument(4)->ImmediateU32(), found->Argument(5)->ImmediateU32()};
+}
+
+void verifyDivFmasModeFlow() {
+    const std::array<std::uint32_t, 3> declared{vDivFmasF32[0], vDivFmasF32[1], endProgram};
+    for (std::uint32_t denorm = 0; denorm < 4; ++denorm) {
+        for (std::uint32_t rounding = 0; rounding < 4; ++rounding) {
+            const std::pair<std::uint32_t, std::uint32_t> expected{rounding, (denorm & 2u) != 0u ? 0u : 1u};
+            require(divFmasModes(translate(declared, ShaderFloatMode{(denorm << 4u) | rounding}, 32, true)) == expected, "declared FLOAT_MODE did not reach v_div_fmas_f32");
+            const std::array<std::uint32_t, 5> runtime{denormMode(denorm), roundMode(rounding), vDivFmasF32[0], vDivFmasF32[1], endProgram};
+            for (const std::uint32_t initial : {0x00u, 0xf3u}) {
+                require(divFmasModes(translate(runtime, ShaderFloatMode{initial}, 32, true)) == expected, "s_denorm_mode and s_round_mode did not reach v_div_fmas_f32");
+            }
+            const std::array<std::uint32_t, 8> same{0xbf840002, denormMode(denorm), 0xbf820001, denormMode(denorm ^ 1u), vDivFmasF32[0], vDivFmasF32[1], endProgram, endProgram};
+            require(divFmasModes(translate(same, ShaderFloatMode{0xc0u | rounding}, 32, true)) == expected, "paths that differ only in the f32 input flush changed v_div_fmas_f32");
+            const std::array<std::uint32_t, 8> differing{0xbf840002, denormMode(denorm), 0xbf820001, denormMode(denorm ^ 2u), vDivFmasF32[0], vDivFmasF32[1], endProgram, endProgram};
+            expectRejected(differing, ShaderFloatMode{0xc0u | rounding}, "reads MODE bits", 16);
+        }
+    }
+    for (const auto instruction : {0xb9800101u, 0xb9800981u}) {
+        const std::array<std::uint32_t, 4> unknown{instruction, vDivFmasF32[0], vDivFmasF32[1], endProgram};
+        static_cast<void>(translate(unknown, ShaderFloatMode{0xc0}, 32, true));
+    }
+    for (const auto instruction : {0xb9800141u, 0xb9800901u, 0xb9800041u}) {
+        const std::array<std::uint32_t, 4> unknown{instruction, vDivFmasF32[0], vDivFmasF32[1], endProgram};
+        expectRejected(unknown, ShaderFloatMode{0xc0}, "reads MODE bits", 4);
+    }
+    for (std::uint32_t rounding = 1; rounding < 4; ++rounding) {
+        expectRejected(declared, ShaderFloatMode{0xc0u | rounding}, "needs shaderFloat64", 0);
+        const std::array<std::uint32_t, 4> runtime{roundMode(rounding), vDivFmasF32[0], vDivFmasF32[1], endProgram};
+        expectRejected(runtime, ShaderFloatMode{0xc0}, "needs shaderFloat64", 4);
+    }
+    static_cast<void>(translate(declared, ShaderFloatMode{0xc0}));
+}
+
 void verifyRoundingInLoop() {
     const std::array<std::uint32_t, 6> stable{roundMode(0), vAddF32, 0xbf84fffd, roundMode(0), endProgram, endProgram};
     static_cast<void>(translate(stable, ShaderFloatMode{0xc0}));
@@ -405,7 +453,7 @@ int main() {
         const char* name;
         void (*run)();
     };
-    constexpr std::array<Check, 21> checks{{
+    constexpr std::array<Check, 22> checks{{
         {"encodings", verifyEncodings}, {"reads", verifyReads}, {"dynamicWrites", verifyDynamicWrites},
         {"partialOverwrite", verifyDynamicWriteSurvivesPartialOverwrite}, {"immediateWrites", verifyImmediateWrites},
         {"denormalImmediateWrites", verifyDenormalImmediateWrites}, {"roundInstruction", verifyRoundInstruction},
@@ -414,6 +462,7 @@ int main() {
         {"untouchedFields", verifyUntouchedFieldsStayAccepted}, {"unmodelled", verifyUnmodelledDirectedRounding},
         {"directedF16", verifyDirectedF16Conversion}, {"denormBeforeUse", verifyDenormBeforeUse}, {"denormDiamond", verifyDenormDiamond},
         {"loop", verifyRoundingInLoop}, {"propagation", verifyRecompilePropagation}, {"denormalAfterRounding", verifyDenormalReadsAfterRoundingWrites},
+        {"divFmasModeFlow", verifyDivFmasModeFlow},
     }};
     int failures = 0;
     for (const auto& check : checks) {

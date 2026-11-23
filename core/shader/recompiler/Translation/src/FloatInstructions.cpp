@@ -632,7 +632,7 @@ bool TranslationContext::vDivFmasF32(const RdnaInstruction& inst) {
     const std::uint32_t rounding = floatRoundMode(0u);
     if (float64) {
         IrValue& power = ir.Select(scale.Value(), ir.Select(up.Value(), ir.Constant(64u), ir.Constant(static_cast<std::uint32_t>(-64))), ir.Constant(0u));
-        writeOperand(inst.destination, nanResultF32({lhs, rhs, addend}, &ir.Emit(IrOpcode::FPFmaScale32, IrType::F32, {lhs, rhs, addend, &power, &ir.Constant(rounding)}), &invalidProductF32(lhs, rhs)));
+        writeOperand(inst.destination, nanResultF32({lhs, rhs, addend}, &ir.Emit(IrOpcode::FPFmaScale32, IrType::F32, {lhs, rhs, addend, &power, &ir.Constant(rounding), &ir.Constant((f32DenormalFlush & 2u) != 0u ? 1u : 0u)}), &invalidProductF32(lhs, rhs)));
         return true;
     }
     if (rounding != 0u) {

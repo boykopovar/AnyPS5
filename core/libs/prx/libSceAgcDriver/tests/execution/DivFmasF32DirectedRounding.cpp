@@ -17,7 +17,7 @@ namespace {
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
-constexpr std::uint32_t Threads = 32;
+constexpr std::uint32_t Threads = 64;
 constexpr std::uint32_t Words = 4;
 alignas(256) std::array<std::uint32_t, Threads * Words> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Words> Output{};
@@ -60,27 +60,129 @@ constexpr std::array<std::uint32_t, Threads * Words> Values{
     0x0061442au, 0x7f4b6396u, 0x00000001u, 0x00000000u,
     0x00b5b4f5u, 0x901bb0beu, 0x7edfeef7u, 0x00000000u,
     0x3f800000u, 0x3f800000u, 0xbf800000u, 0x00000000u,
-    0x3f800000u, 0x3f800000u, 0xbf800000u, 0x00000001u
+    0x3f800000u, 0x3f800000u, 0xbf800000u, 0x00000001u,
+    0x00800000u, 0x3f7fffffu, 0x00000000u, 0x00000000u,
+    0x00800001u, 0x3f7ffffeu, 0x00000000u, 0x00000000u,
+    0x00800000u, 0x3f7ffffeu, 0x00000000u, 0x00000000u,
+    0x00800003u, 0x3f7ffffau, 0x00000000u, 0x00000000u,
+    0x00800000u, 0x3f800001u, 0x00000000u, 0x00000000u,
+    0x1f800000u, 0x3f7fffffu, 0x00000000u, 0x00000001u,
+    0x1f800001u, 0x3f7ffffeu, 0x00000000u, 0x00000001u,
+    0x00800000u, 0x3f7fffffu, 0x80000000u, 0x00000000u,
+    0x00800001u, 0x3f7ffffeu, 0x80000000u, 0x00000000u,
+    0x00800000u, 0x3f7ffffeu, 0x80000000u, 0x00000000u,
+    0x00800003u, 0x3f7ffffau, 0x80000000u, 0x00000000u,
+    0x00800000u, 0x3f800001u, 0x80000000u, 0x00000000u,
+    0x1f800000u, 0x3f7fffffu, 0x80000000u, 0x00000001u,
+    0x1f800001u, 0x3f7ffffeu, 0x80000000u, 0x00000001u,
+    0x80800000u, 0x3f7fffffu, 0x00000000u, 0x00000000u,
+    0x80800001u, 0x3f7ffffeu, 0x00000000u, 0x00000000u,
+    0x80800000u, 0x3f7ffffeu, 0x00000000u, 0x00000000u,
+    0x80800003u, 0x3f7ffffau, 0x00000000u, 0x00000000u,
+    0x80800000u, 0x3f800001u, 0x00000000u, 0x00000000u,
+    0x9f800000u, 0x3f7fffffu, 0x00000000u, 0x00000001u,
+    0x9f800001u, 0x3f7ffffeu, 0x00000000u, 0x00000001u,
+    0x80800000u, 0x3f7fffffu, 0x80000000u, 0x00000000u,
+    0x80800001u, 0x3f7ffffeu, 0x80000000u, 0x00000000u,
+    0x80800000u, 0x3f7ffffeu, 0x80000000u, 0x00000000u,
+    0x80800003u, 0x3f7ffffau, 0x80000000u, 0x00000000u,
+    0x80800000u, 0x3f800001u, 0x80000000u, 0x00000000u,
+    0x9f800000u, 0x3f7fffffu, 0x80000000u, 0x00000001u,
+    0x9f800001u, 0x3f7ffffeu, 0x80000000u, 0x00000001u,
+    0x36749bf5u, 0x8998334cu, 0x008d7f10u, 0x00000000u,
+    0xaa52e6d3u, 0x95c0c1e0u, 0x807653aeu, 0x00000000u,
+    0x20838babu, 0x3f0dd802u, 0x00000000u, 0x00000001u,
+    0xbe82459cu, 0x210f1b5bu, 0x00000000u, 0x00000001u
 };
 
-constexpr std::uint32_t Expected[3][Threads] = {
+constexpr std::uint32_t Expected[4][2][Threads] = {
     {
-        0x8152eaf5u, 0xe067186eu, 0x34e68645u, 0x2024343eu, 0x4109204fu, 0x608a8bf7u, 0xe87e4258u, 0x95cce5b6u,
-        0x7f800000u, 0x7f800000u, 0xff7fffffu, 0xff7fffffu, 0x00000000u, 0x00000000u, 0x02e3622cu, 0xff7fffffu,
-        0xa5b1eaeau, 0xff7fffffu, 0x6d470329u, 0xfeea31d0u, 0x5fc6d9ccu, 0xff7fffffu, 0xa0fd3206u, 0x20aec9ccu,
-        0xff7fffffu, 0xff7fffffu, 0xb804529au, 0x7f800000u, 0x401a8dc8u, 0x7edfeef7u, 0x00000000u, 0x00000000u
+        {
+            0x8152eaf5u, 0xe067186eu, 0x34e68645u, 0x2024343eu, 0x4109204eu, 0x608a8bf6u, 0xe87e4259u, 0x95cce5b7u,
+            0x7f800000u, 0x7f800000u, 0xff800000u, 0xff800000u, 0x00000000u, 0x00000000u, 0x02e3622bu, 0xff800000u,
+            0xa5b1eaebu, 0xff800000u, 0x6d470328u, 0xfeea31d1u, 0x5fc6d9ccu, 0xff800000u, 0xa0fd3206u, 0x20aec9cbu,
+            0xff800000u, 0xff800000u, 0xb804529au, 0x7f800000u, 0x401a8dc7u, 0x7edfeef7u, 0x00000000u, 0x00000000u,
+            0x00000000u, 0x00800000u, 0x00000000u, 0x00800000u, 0x00800001u, 0x00000000u, 0x00000000u, 0x00000000u,
+            0x00800000u, 0x00000000u, 0x00800000u, 0x00800001u, 0x00000000u, 0x00000000u, 0x80000000u, 0x80800000u,
+            0x80000000u, 0x80800000u, 0x80800001u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80800000u, 0x80000000u,
+            0x80800000u, 0x80800001u, 0x80000000u, 0x80000000u, 0x80000000u, 0x00000000u, 0x00000000u, 0x80000000u
+        },
+        {
+            0x8152eaf5u, 0xe067186eu, 0x34e68645u, 0x2024343eu, 0x4109204eu, 0x608a8bf6u, 0xe87e4259u, 0x95cce5b7u,
+            0x7f800000u, 0x7f800000u, 0xff800000u, 0xff800000u, 0x00000000u, 0x00000000u, 0x02e3622bu, 0xff800000u,
+            0xa5b1eaebu, 0xff800000u, 0x6d470328u, 0xfeea31d1u, 0x5fc6d9ccu, 0xff800000u, 0xa0fd3206u, 0x20aec9cbu,
+            0xff800000u, 0xff800000u, 0xb804529au, 0x7f800000u, 0x401a8dc7u, 0x7edfeef7u, 0x00000000u, 0x00000000u,
+            0x00800000u, 0x00800000u, 0x007fffffu, 0x00800000u, 0x00800001u, 0x00200000u, 0x00200000u, 0x00800000u,
+            0x00800000u, 0x007fffffu, 0x00800000u, 0x00800001u, 0x00200000u, 0x00200000u, 0x80800000u, 0x80800000u,
+            0x807fffffu, 0x80800000u, 0x80800001u, 0x80200000u, 0x80200000u, 0x80800000u, 0x80800000u, 0x807fffffu,
+            0x80800000u, 0x80800001u, 0x80200000u, 0x80200000u, 0x8003ee8du, 0x00287929u, 0x0048e2ecu, 0x8048d2ceu
+        }
     },
     {
-        0x8152eaf6u, 0xe067186fu, 0x34e68644u, 0x2024343du, 0x4109204eu, 0x608a8bf6u, 0xe87e4259u, 0x95cce5b7u,
-        0x7f7fffffu, 0x7f7fffffu, 0xff800000u, 0xff800000u, 0x80000000u, 0x80000000u, 0x02e3622bu, 0xff800000u,
-        0xa5b1eaebu, 0xff800000u, 0x6d470328u, 0xfeea31d1u, 0x5fc6d9cbu, 0xff800000u, 0xa0fd3207u, 0x20aec9cbu,
-        0xff800000u, 0xff800000u, 0xb804529bu, 0x7f7fffffu, 0x401a8dc7u, 0x7edfeef6u, 0x80000000u, 0x80000000u
+        {
+            0x8152eaf5u, 0xe067186eu, 0x34e68645u, 0x2024343eu, 0x4109204fu, 0x608a8bf7u, 0xe87e4258u, 0x95cce5b6u,
+            0x7f800000u, 0x7f800000u, 0xff7fffffu, 0xff7fffffu, 0x00000000u, 0x00000000u, 0x02e3622cu, 0xff7fffffu,
+            0xa5b1eaeau, 0xff7fffffu, 0x6d470329u, 0xfeea31d0u, 0x5fc6d9ccu, 0xff7fffffu, 0xa0fd3206u, 0x20aec9ccu,
+            0xff7fffffu, 0xff7fffffu, 0xb804529au, 0x7f800000u, 0x401a8dc8u, 0x7edfeef7u, 0x00000000u, 0x00000000u,
+            0x00000000u, 0x00800000u, 0x00000000u, 0x00800000u, 0x00800001u, 0x00000000u, 0x00000000u, 0x00000000u,
+            0x00800000u, 0x00000000u, 0x00800000u, 0x00800001u, 0x00000000u, 0x00000000u, 0x80000000u, 0x80000000u,
+            0x80000000u, 0x80000000u, 0x80800001u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u,
+            0x80000000u, 0x80800001u, 0x80000000u, 0x80000000u, 0x80000000u, 0x00000000u, 0x00000000u, 0x80000000u
+        },
+        {
+            0x8152eaf5u, 0xe067186eu, 0x34e68645u, 0x2024343eu, 0x4109204fu, 0x608a8bf7u, 0xe87e4258u, 0x95cce5b6u,
+            0x7f800000u, 0x7f800000u, 0xff7fffffu, 0xff7fffffu, 0x00000000u, 0x00000000u, 0x02e3622cu, 0xff7fffffu,
+            0xa5b1eaeau, 0xff7fffffu, 0x6d470329u, 0xfeea31d0u, 0x5fc6d9ccu, 0xff7fffffu, 0xa0fd3206u, 0x20aec9ccu,
+            0xff7fffffu, 0xff7fffffu, 0xb804529au, 0x7f800000u, 0x401a8dc8u, 0x7edfeef7u, 0x00000000u, 0x00000000u,
+            0x00800000u, 0x00800000u, 0x007fffffu, 0x00800000u, 0x00800001u, 0x00200000u, 0x00200000u, 0x00800000u,
+            0x00800000u, 0x007fffffu, 0x00800000u, 0x00800001u, 0x00200000u, 0x00200000u, 0x807fffffu, 0x807fffffu,
+            0x807fffffu, 0x807fffffu, 0x80800001u, 0x801fffffu, 0x801fffffu, 0x807fffffu, 0x807fffffu, 0x807fffffu,
+            0x807fffffu, 0x80800001u, 0x801fffffu, 0x801fffffu, 0x8003ee8du, 0x00287929u, 0x0048e2edu, 0x8048d2cdu
+        }
     },
     {
-        0x8152eaf5u, 0xe067186eu, 0x34e68644u, 0x2024343du, 0x4109204eu, 0x608a8bf6u, 0xe87e4258u, 0x95cce5b6u,
-        0x7f7fffffu, 0x7f7fffffu, 0xff7fffffu, 0xff7fffffu, 0x00000000u, 0x00000000u, 0x02e3622bu, 0xff7fffffu,
-        0xa5b1eaeau, 0xff7fffffu, 0x6d470328u, 0xfeea31d0u, 0x5fc6d9cbu, 0xff7fffffu, 0xa0fd3206u, 0x20aec9cbu,
-        0xff7fffffu, 0xff7fffffu, 0xb804529au, 0x7f7fffffu, 0x401a8dc7u, 0x7edfeef6u, 0x00000000u, 0x00000000u
+        {
+            0x8152eaf6u, 0xe067186fu, 0x34e68644u, 0x2024343du, 0x4109204eu, 0x608a8bf6u, 0xe87e4259u, 0x95cce5b7u,
+            0x7f7fffffu, 0x7f7fffffu, 0xff800000u, 0xff800000u, 0x80000000u, 0x80000000u, 0x02e3622bu, 0xff800000u,
+            0xa5b1eaebu, 0xff800000u, 0x6d470328u, 0xfeea31d1u, 0x5fc6d9cbu, 0xff800000u, 0xa0fd3207u, 0x20aec9cbu,
+            0xff800000u, 0xff800000u, 0xb804529bu, 0x7f7fffffu, 0x401a8dc7u, 0x7edfeef6u, 0x80000000u, 0x80000000u,
+            0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00800001u, 0x00000000u, 0x00000000u, 0x00000000u,
+            0x00000000u, 0x00000000u, 0x00000000u, 0x00800001u, 0x00000000u, 0x00000000u, 0x80000000u, 0x80800000u,
+            0x80000000u, 0x80800000u, 0x80800001u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80800000u, 0x80000000u,
+            0x80800000u, 0x80800001u, 0x80000000u, 0x80000000u, 0x80000000u, 0x00000000u, 0x00000000u, 0x80000000u
+        },
+        {
+            0x8152eaf6u, 0xe067186fu, 0x34e68644u, 0x2024343du, 0x4109204eu, 0x608a8bf6u, 0xe87e4259u, 0x95cce5b7u,
+            0x7f7fffffu, 0x7f7fffffu, 0xff800000u, 0xff800000u, 0x80000000u, 0x80000000u, 0x02e3622bu, 0xff800000u,
+            0xa5b1eaebu, 0xff800000u, 0x6d470328u, 0xfeea31d1u, 0x5fc6d9cbu, 0xff800000u, 0xa0fd3207u, 0x20aec9cbu,
+            0xff800000u, 0xff800000u, 0xb804529bu, 0x7f7fffffu, 0x401a8dc7u, 0x7edfeef6u, 0x80000000u, 0x80000000u,
+            0x007fffffu, 0x007fffffu, 0x007fffffu, 0x007fffffu, 0x00800001u, 0x001fffffu, 0x001fffffu, 0x007fffffu,
+            0x007fffffu, 0x007fffffu, 0x007fffffu, 0x00800001u, 0x001fffffu, 0x001fffffu, 0x80800000u, 0x80800000u,
+            0x807fffffu, 0x80800000u, 0x80800001u, 0x80200000u, 0x80200000u, 0x80800000u, 0x80800000u, 0x807fffffu,
+            0x80800000u, 0x80800001u, 0x80200000u, 0x80200000u, 0x8003ee8eu, 0x00287928u, 0x0048e2ecu, 0x8048d2ceu
+        }
+    },
+    {
+        {
+            0x8152eaf5u, 0xe067186eu, 0x34e68644u, 0x2024343du, 0x4109204eu, 0x608a8bf6u, 0xe87e4258u, 0x95cce5b6u,
+            0x7f7fffffu, 0x7f7fffffu, 0xff7fffffu, 0xff7fffffu, 0x00000000u, 0x00000000u, 0x02e3622bu, 0xff7fffffu,
+            0xa5b1eaeau, 0xff7fffffu, 0x6d470328u, 0xfeea31d0u, 0x5fc6d9cbu, 0xff7fffffu, 0xa0fd3206u, 0x20aec9cbu,
+            0xff7fffffu, 0xff7fffffu, 0xb804529au, 0x7f7fffffu, 0x401a8dc7u, 0x7edfeef6u, 0x00000000u, 0x00000000u,
+            0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00800001u, 0x00000000u, 0x00000000u, 0x00000000u,
+            0x00000000u, 0x00000000u, 0x00000000u, 0x00800001u, 0x00000000u, 0x00000000u, 0x80000000u, 0x80000000u,
+            0x80000000u, 0x80000000u, 0x80800001u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u,
+            0x80000000u, 0x80800001u, 0x80000000u, 0x80000000u, 0x80000000u, 0x00000000u, 0x00000000u, 0x80000000u
+        },
+        {
+            0x8152eaf5u, 0xe067186eu, 0x34e68644u, 0x2024343du, 0x4109204eu, 0x608a8bf6u, 0xe87e4258u, 0x95cce5b6u,
+            0x7f7fffffu, 0x7f7fffffu, 0xff7fffffu, 0xff7fffffu, 0x00000000u, 0x00000000u, 0x02e3622bu, 0xff7fffffu,
+            0xa5b1eaeau, 0xff7fffffu, 0x6d470328u, 0xfeea31d0u, 0x5fc6d9cbu, 0xff7fffffu, 0xa0fd3206u, 0x20aec9cbu,
+            0xff7fffffu, 0xff7fffffu, 0xb804529au, 0x7f7fffffu, 0x401a8dc7u, 0x7edfeef6u, 0x00000000u, 0x00000000u,
+            0x007fffffu, 0x007fffffu, 0x007fffffu, 0x007fffffu, 0x00800001u, 0x001fffffu, 0x001fffffu, 0x007fffffu,
+            0x007fffffu, 0x007fffffu, 0x007fffffu, 0x00800001u, 0x001fffffu, 0x001fffffu, 0x807fffffu, 0x807fffffu,
+            0x807fffffu, 0x807fffffu, 0x80800001u, 0x801fffffu, 0x801fffffu, 0x807fffffu, 0x807fffffu, 0x807fffffu,
+            0x807fffffu, 0x80800001u, 0x801fffffu, 0x801fffffu, 0x8003ee8du, 0x00287928u, 0x0048e2ecu, 0x8048d2cdu
+        }
     }
 };
 
@@ -95,7 +197,7 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-std::optional<std::string> Run(AgcDriver::VulkanDevice& device, ShaderRecompiler::ShaderFloatMode floatMode, std::span<const std::uint32_t> code) {
+std::optional<std::string> Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, ShaderRecompiler::ShaderFloatMode floatMode, std::span<const std::uint32_t> code, bool dispatch) {
     Input = Values;
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
@@ -108,7 +210,7 @@ std::optional<std::string> Run(AgcDriver::VulkanDevice& device, ShaderRecompiler
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        target,
         {0, 0, 0, 128}
     };
     request.useCache = false;
@@ -119,16 +221,32 @@ std::optional<std::string> Run(AgcDriver::VulkanDevice& device, ShaderRecompiler
     } catch (const std::exception& error) {
         return std::string(error.what());
     }
+    if (!dispatch) return std::nullopt;
     device.Dispatch(*result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     return std::nullopt;
 }
 
-void Check(std::uint32_t rounding, const std::string& mode) {
+void Check(std::uint32_t rounding, bool flush, const std::string& mode) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Values[tid * Words];
-        const std::uint32_t expected = Expected[rounding - 1u][tid];
+        const std::uint32_t expected = Expected[rounding][flush ? 0u : 1u][tid];
         Require(Output[tid * Words + 0u] == expected, "v_div_fmas_f32 " + mode + " of " + Hex(in[0]) + ", " + Hex(in[1]) + ", " + Hex(in[2]) + ", " + Hex(in[3]) + " is " + Hex(Output[tid * Words + 0u]) + ", expected " + Hex(expected));
+    }
+}
+
+void CheckWithoutFloat64(AgcDriver::VulkanDevice& device) {
+    std::vector<std::uint32_t> capabilities;
+    for (const std::uint32_t capability : device.Target().supportedCapabilities) {
+        if (capability != static_cast<std::uint32_t>(spv::CapabilityFloat64)) capabilities.push_back(capability);
+    }
+    ShaderRecompiler::SpirvTarget target = device.Target();
+    target.supportedCapabilities = capabilities;
+    const auto nearest = Run(device, target, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}, Code, false);
+    Require(!nearest, "v_div_fmas_f32 at FLOAT_MODE 0xc0 without Float64: " + nearest.value_or(""));
+    for (std::uint32_t rounding = 1u; rounding < 4u; ++rounding) {
+        const auto refusal = Run(device, target, ShaderRecompiler::ShaderFloatMode{0xc0u | rounding, true, false, false}, Code, false);
+        Require(refusal && refusal->find("needs shaderFloat64") != std::string::npos, "v_div_fmas_f32 at FLOAT_MODE " + Hex(0xc0u | rounding) + " without Float64 was not refused: " + refusal.value_or("compiled"));
     }
 }
 
@@ -138,27 +256,33 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        CheckWithoutFloat64(*device);
+        if (!TargetHasCapability(device->Target(), spv::CapabilityFloat64)) {
+            std::puts("skipped, the device has no Float64");
+            return VulkanTestSkipped;
+        }
         std::uint32_t checked = 0u;
-        for (std::uint32_t rounding = 1u; rounding < 4u; ++rounding) {
+        for (std::uint32_t rounding = 0u; rounding < 4u; ++rounding) {
             for (const std::uint32_t denormals : {0xc0u, 0xf0u}) {
                 for (const bool ieee : {false, true}) {
+                    const bool flush = denormals == 0xc0u;
                     const std::string declared = "FLOAT_MODE " + Hex(denormals | rounding) + (ieee ? ", IEEE=1" : ", IEEE=0");
-                    const auto refusal = Run(*device, ShaderRecompiler::ShaderFloatMode{denormals | rounding, true, ieee, false}, Code);
+                    const auto refusal = Run(*device, device->Target(), ShaderRecompiler::ShaderFloatMode{denormals | rounding, true, ieee, false}, Code, true);
                     if (refusal) {
-                        Require(denormals == 0xf0u && refusal->find("DenormPreserve") != std::string::npos, declared + ": " + *refusal);
+                        Require(!flush && refusal->find("DenormPreserve") != std::string::npos, declared + ": " + *refusal);
                         continue;
                     }
-                    Check(rounding, declared);
+                    Check(rounding, flush, declared);
                     RuntimeCode[0] = 0xbfa40000u | rounding;
                     std::copy(Code.begin(), Code.end(), RuntimeCode.begin() + 1);
-                    const auto runtimeRefusal = Run(*device, ShaderRecompiler::ShaderFloatMode{denormals, true, ieee, false}, RuntimeCode);
+                    const auto runtimeRefusal = Run(*device, device->Target(), ShaderRecompiler::ShaderFloatMode{denormals, true, ieee, false}, RuntimeCode, true);
                     Require(!runtimeRefusal, "s_round_mode " + Hex(rounding) + " after " + declared + ": " + runtimeRefusal.value_or(""));
-                    Check(rounding, "s_round_mode " + Hex(rounding) + " after FLOAT_MODE " + Hex(denormals) + (ieee ? ", IEEE=1" : ", IEEE=0"));
+                    Check(rounding, flush, "s_round_mode " + Hex(rounding) + " after FLOAT_MODE " + Hex(denormals) + (ieee ? ", IEEE=1" : ", IEEE=0"));
                     checked += 2u;
                 }
             }
         }
-        std::printf("v_div_fmas_f32 directed rounding tests passed (%u of 24 runs, declared and set by s_round_mode)\n", checked);
+        std::printf("v_div_fmas_f32 rounding tests passed (%u of 32 runs, declared and set by s_round_mode)\n", checked);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

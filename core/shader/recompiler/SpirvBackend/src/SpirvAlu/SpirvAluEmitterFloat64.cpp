@@ -328,7 +328,7 @@ std::uint32_t DirectedF32Limits(SpirvEmitterState& state, std::uint32_t rounded,
     return ToF64(state, Join(state, result));
 }
 
-std::uint32_t FmaScaleF32(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs, std::uint32_t addend, std::uint32_t scale, std::uint32_t rounding) {
+std::uint32_t FmaScaleF32(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs, std::uint32_t addend, std::uint32_t scale, std::uint32_t rounding, bool flushTiny) {
     const auto u32 = TypeU32(state);
     const auto boolean = TypeBool(state);
     const auto product = Exact(state, spv::OpFMul, FromF32Exact(state, lhs), FromF32Exact(state, rhs));
@@ -336,7 +336,13 @@ std::uint32_t FmaScaleF32(SpirvEmitterState& state, std::uint32_t lhs, std::uint
     const auto sum = AddRoundToOdd(state, product, wideAddend);
     const auto scaled = Exact(state, spv::OpFMul, sum, PowerOfTwo(state, scale));
     const auto rounded = rounding == 0u ? RoundToPrecision(state, scaled, 23u, 874u) : DirectedF32Limits(state, RoundToPrecisionDirected(state, scaled, 23u, 874u, rounding), sum, product, wideAddend, rounding);
-    const auto finite = F32BitsOfRounded(state, rounded);
+    auto finite = F32BitsOfRounded(state, rounded);
+    if (flushTiny) {
+        const auto unboundedRounded = rounding == 0u ? RoundToPrecision(state, scaled, 23u, 1u) : RoundToPrecisionDirected(state, scaled, 23u, 1u, rounding);
+        const auto unboundedMagnitude = Binary(state, spv::OpBitwiseAnd, u32, Split(state, FromF64(state, unboundedRounded)).high, ConstantU32(state, 0x7fffffffu));
+        const auto tiny = Binary(state, spv::OpULessThan, boolean, unboundedMagnitude, ConstantU32(state, 0x38100000u));
+        finite = Select(state, u32, tiny, Binary(state, spv::OpBitwiseAnd, u32, finite, ConstantU32(state, 0x80000000u)), finite);
+    }
     const auto inputs = std::array{Unary(state, spv::OpBitcast, u32, lhs), Unary(state, spv::OpBitcast, u32, rhs), Unary(state, spv::OpBitcast, u32, addend)};
     const auto unbounded = Split(state, FromF64(state, Exact(state, spv::OpFAdd, product, wideAddend)));
     auto special = Select(state, u32, Classify(state, Join(state, unbounded)).nan, ConstantU32(state, 0xffc00000u), Binary(state, spv::OpBitwiseOr, u32, Binary(state, spv::OpBitwiseAnd, u32, unbounded.high, ConstantU32(state, 0x80000000u)), ConstantU32(state, 0x7f800000u)));
@@ -921,10 +927,11 @@ std::uint32_t EmitFPFmaScale64(SpirvEmitterState& state, std::uint32_t arg0, std
     return FusedMultiplyAdd(state, arg0, arg1, arg2, Unary(state, spv::OpBitcast, TypeI32(state), arg3));
 }
 
-std::uint32_t EmitFPFmaScale32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3, const IrValue* rounding) {
+std::uint32_t EmitFPFmaScale32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3, const IrValue* rounding, const IrValue* flushTiny) {
     const auto f32 = TypeF32(state);
     const auto i32 = TypeI32(state);
-    const std::uint32_t mode = rounding->ImmediateU32() & 3u;
+    const bool flush = flushTiny->ImmediateU32() != 0u;
+    const std::uint32_t mode = (rounding->ImmediateU32() & 3u) | (flush ? 4u : 0u);
     if (state.fmaScaleF32Functions[mode] == 0u) {
         const auto id = state.module.AllocateId();
         struct Restore {
@@ -945,7 +952,7 @@ std::uint32_t EmitFPFmaScale32(SpirvEmitterState& state, std::uint32_t arg0, std
             state.module.AddFunction(spv::OpFunctionParameter, index == 3u ? i32 : f32, parameters[index]);
         }
         EmitLabel(state, state.module.AllocateId());
-        state.module.AddFunction(spv::OpReturnValue, FmaScaleF32(state, parameters[0], parameters[1], parameters[2], parameters[3], mode));
+        state.module.AddFunction(spv::OpReturnValue, FmaScaleF32(state, parameters[0], parameters[1], parameters[2], parameters[3], mode & 3u, flush));
         state.module.AddFunction(spv::OpFunctionEnd);
         state.fmaScaleF32Functions[mode] = id;
     }
