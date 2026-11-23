@@ -889,28 +889,34 @@ static void CheckPseudoRandomSysctl() {
     Require(sysctlbyname_nid_postfix("kern.rng_pseudo", first, unreadable, first, 64) == -1 && *__error_nid_postfix() == 14);
 }
 static void CheckOvercommitSysctl() {
+    std::size_t length = 77;
     *__error_nid_postfix() = 13;
-    std::size_t length = 0;
-    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, &length, nullptr, 0) == 0 && length == sizeof(int));
-    int value = -1;
+    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+    Require(length == 77);
+
+    int value = 0x5a5a5a5a;
     length = sizeof(value);
-    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, nullptr, 0) == 0 && value == 0 && length == sizeof(int));
-    Require(*__error_nid_postfix() == 13);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+    Require(value == 0x5a5a5a5a && length == sizeof(value));
+
     unsigned char bytes[4] = {0xaa, 0xaa, 0xaa, 0xaa};
     length = 2;
-    Require(sysctlbyname_nid_postfix("vm.overcommit", bytes, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12);
-    Require(length == 2 && bytes[2] == 0xaa && bytes[3] == 0xaa);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix("vm.overcommit", bytes, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+    Require(length == 2 && Untouched(bytes, sizeof(bytes)));
+
     int written = 1;
-    value = -1;
+    value = 0x5a5a5a5a;
     length = sizeof(value);
     *__error_nid_postfix() = 13;
-    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, &written, sizeof(written)) == -1 && *__error_nid_postfix() == 1);
-    Require(value == -1 && length == sizeof(value));
-    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, nullptr, &written, sizeof(written)) == -1 && *__error_nid_postfix() == 1);
-    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, nullptr, &written, 0) == -1 && *__error_nid_postfix() == 1);
-    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, nullptr, reinterpret_cast<const void*>(0x10), 1) == -1 && *__error_nid_postfix() == 1);
-    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, nullptr, 0) == 0 && value == 0);
+    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, &written, sizeof(written)) == -1 && *__error_nid_postfix() == 2);
+    Require(value == 0x5a5a5a5a && length == sizeof(value));
+
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, nullptr, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
 }
+
 static void CheckSdkVersionSysctl() {
     *__error_nid_postfix() = 13;
     std::size_t length = 0;
