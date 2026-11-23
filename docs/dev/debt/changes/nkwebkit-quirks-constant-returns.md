@@ -1,0 +1,11 @@
+# libSceNKWebKit
+
+## remove `_ZNK7WebCore6Quirks44shouldAvoidResizingWhenInputViewBoundsChangeEv`
+
+## remove `_ZNK7WebCore6Quirks47shouldIgnoreContentObservationForSyntheticClickEb`
+
+## remove `_ZNK7WebCore6Quirks56shouldDispatchSyntheticMouseEventsWhenModifyingSelectionEv`
+
+## remove `_ZNK7WebCore6Quirks61shouldUseLegacySelectPopoverDismissalBehaviorInDataActivationEv`
+
+## remove `_ZNK7WebCore6Quirks62shouldLayOutAtMinimumWindowWidthWhenIgnoringScalingConstraintsEv`
