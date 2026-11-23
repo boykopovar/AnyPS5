@@ -263,6 +263,8 @@ void TestSignedMessage() {
     }
     const auto* capabilities = static_cast<const Asn1String*>(At<LibreSsl3Asn1Type>(At<LibreSsl3X509Attribute>(signer->authAttr, 3)->set, 0)->value);
     Require(capabilities->length == 108 && capabilities->data[0] == 0x30);
+    const auto* key = X509_get0_pubkey_nid_postfix(reinterpret_cast<const LibreSsl3Certificate*>(certificate));
+    Require(key != nullptr && X509_get0_pubkey_nid_postfix(reinterpret_cast<const LibreSsl3Certificate*>(certificate)) == key);
     PKCS7_free_nid_postfix(pkcs7);
     Require(allocations.empty());
 }

@@ -50,6 +50,7 @@ int APS5_VABI FT_Get_Advances_nid_postfix(FreeType::GuestFaceRec* face, std::uin
 int APS5_VABI FT_Get_Glyph_nid_postfix(FreeType::GuestGlyphSlotRec* slot, FreeType::GuestGlyphRec** target);
 int APS5_VABI FT_Glyph_Copy_nid_postfix(FreeType::GuestGlyphRec* source, FreeType::GuestGlyphRec** target);
 void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(FreeType::GuestGlyphRec* glyph, std::uint32_t mode, FreeType::GuestBBox* box);
+void APS5_VABI FreeTypeGlyphGetCBox_nid_no_patch(FreeType::GuestGlyphRec* glyph, std::uint32_t mode, FreeType::GuestBBox* box);
 void APS5_VABI FT_Done_Glyph_nid_postfix(FreeType::GuestGlyphRec* glyph);
 int APS5_VABI FT_Get_Gasp_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t ppem);
 int APS5_VABI FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(FreeType::GuestFaceRec* face, const char** registry, const char** ordering, std::int32_t* supplement);
@@ -178,13 +179,4 @@ void* APS5_VABI FT_Get_Module_nid_postfix(FreeType::GuestLibrary* library, const
 void* APS5_VABI FT_Get_Renderer_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t format);
 int APS5_VABI FT_Remove_Module_nid_postfix(FreeType::GuestLibrary* library, void* module);
 void APS5_VABI FT_Add_Default_Modules_nid_postfix(FreeType::GuestLibrary* library);
-}
-
-namespace FreeType {
-
-extern "C" int FreeTypeGlyphMutationToBitmapHost_nid_no_patch(GuestGlyphRec** glyph, std::int32_t renderMode, const GuestVector* origin, std::uint8_t destroy, const char* function);
-extern "C" int FreeTypeGlyphMutationTransformHost_nid_no_patch(GuestGlyphRec* glyph, const GuestMatrix* matrix, const GuestVector* delta, const char* function);
-extern "C" int FreeTypeGlyphMutationStrokeHost_nid_no_patch(GuestGlyphRec** glyph, void* stroker, std::uint8_t destroy, const char* function);
-extern "C" int FreeTypeGlyphMutationStrokeBorderHost_nid_no_patch(GuestGlyphRec** glyph, void* stroker, std::uint8_t inside, std::uint8_t destroy, const char* function);
-
 }

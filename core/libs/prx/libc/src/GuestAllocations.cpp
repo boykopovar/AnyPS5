@@ -145,7 +145,7 @@ std::vector<std::pair<std::uintptr_t, std::size_t>> fileBackedWritableImage() {
 }
 
 #ifdef ANYPS5_ENABLE_ASAN
-[[gnu::no_sanitize("address")]] void copyImagePages(void* target, const void* source, std::size_t bytes) {
+[[gnu::no_sanitize_address]] void copyImagePages(void* target, const void* source, std::size_t bytes) {
     auto* to = static_cast<volatile std::uintptr_t*>(target);
     const auto* from = static_cast<const volatile std::uintptr_t*>(source);
     for (std::size_t word = 0; word < bytes / sizeof(std::uintptr_t); ++word) to[word] = from[word];

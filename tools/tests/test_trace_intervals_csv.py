@@ -123,7 +123,9 @@ class IntervalCsvTests(unittest.TestCase):
                     self.assertEqual(completed.returncode, 2, completed.stderr)
                     self.assertEqual(completed.stdout, b"")
                     self.assertIn(b"error: capture is empty, has dropped events or changing identity", completed.stderr)
-            path.write_bytes((json.dumps(first) + "\n" + json.dumps(interval_line(30.0, 60.0, 20.0, 5.0, commit="a" * 40)) + "\n").encode())
+            second = interval_line(30.0, 60.0, 20.0, 5.0, commit="a" * 40)
+            second["window"]["first_present"] = first["presents"]
+            path.write_text("\n".join(map(json.dumps, (first, second))) + "\n", encoding="utf-8")
             same = subprocess.run(command, capture_output=True)
             self.assertEqual(same.returncode, 0, same.stderr)
             self.assertEqual(len(list(csv.DictReader(io.StringIO(same.stdout.decode(), newline="")))), 2)

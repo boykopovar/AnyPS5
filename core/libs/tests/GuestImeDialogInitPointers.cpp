@@ -5,6 +5,7 @@
 
 #ifdef __linux__
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 #include <cerrno>
@@ -101,6 +102,24 @@ int main() {
         Require(sceImeDialogGetPanelSize(nullptr, &readOnlyWidth, reinterpret_cast<uint32_t*>(readOnly)) == ErrorInvalidAddress, "a read-only height page returns ErrorInvalidAddress");
         Require(errno == 71, "read-only panel height check preserves errno");
         Require(readOnlyWidth == 0xdeadbeef, "the failed height write leaves the width untouched");
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0, "get the host page size");
+        auto* pages = static_cast<unsigned char*>(mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(pages != MAP_FAILED, "map two pages for a crossing panel height");
+        auto* boundary = pages + pageSize;
+        auto* crossingHeight = boundary - 2;
+        const std::uint32_t originalHeight = 0xdeadbeef;
+        std::memcpy(crossingHeight, &originalHeight, sizeof(originalHeight));
+        Require(mprotect(boundary, pageSize, PROT_READ) == 0, "protect the second panel height page");
+        errno = 71;
+        Require(sceImeDialogGetPanelSize(nullptr, &readOnlyWidth, reinterpret_cast<uint32_t*>(crossingHeight)) == ErrorInvalidAddress,
+            "a crossing panel height returns ErrorInvalidAddress");
+        Require(errno == 71, "crossing panel height preserves errno");
+        Require(readOnlyWidth == 0xdeadbeef, "a rejected panel height leaves the width untouched");
+        Require(std::memcmp(crossingHeight, &originalHeight, sizeof(originalHeight)) == 0,
+            "a rejected panel height leaves the writable prefix untouched");
+        Require(munmap(pages, 2 * pageSize) == 0, "unmap the panel height pages");
         ImeHostInput enter{};
         enter.kind = ImeHostInputKind::Enter;
         errno = 71;
