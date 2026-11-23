@@ -181,8 +181,18 @@ public:
     }
 };
 
+struct OpaqueJSContext;
+
 class Bundle final : public ObjectOf<ObjectType::Bundle> {
 public:
+    ~Bundle() override;
+
+    OpaqueJSContext* context = nullptr;
+    std::size_t javaScriptObjectsCount = 0;
+    std::uint32_t memoryReleaseCount = 0;
+    bool historyClearedForTesting = false;
+    bool resourceLoadStatisticsCleared = false;
+    std::uint32_t resourceLoadStatisticsNotifyCount = 0;
 };
 
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
