@@ -35,7 +35,11 @@ int main() {
     RequireMiss(table, nullptr);
     RequireMiss(DnsOverride::Table(DnsOverride::Parse(nullptr)), "example.com");
 
+#ifdef _WIN32
+    Require(_putenv_s("ANYPS5_DNS_OVERRIDE", "env.test=198.51.100.9,bad entry") == 0, "putenv failed");
+#else
     Require(setenv("ANYPS5_DNS_OVERRIDE", "env.test=198.51.100.9,bad entry", 1) == 0, "setenv failed");
+#endif
     DnsOverride::Address address{};
     Require(DnsOverride::LookupOverride("ENV.test", address), "environment override missing");
     Require(address == (DnsOverride::Address{198, 51, 100, 9}), "environment override address changed");
