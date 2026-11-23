@@ -50,6 +50,7 @@ struct SpirvTargetOptions {
     bool meshWindowBuffer = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
+    bool float32HostExp2 = false;
     bool meshInlineFunctions = false;
     bool spannedShuffleThroughMemory = false;
 };

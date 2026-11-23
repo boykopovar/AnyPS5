@@ -896,6 +896,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.meshWindowBuffer = request.target.meshWindowBuffer;
     targetOptions.float16WidenNans = request.target.float16WidenNans;
     targetOptions.float16NarrowNans = request.target.float16NarrowNans;
+    targetOptions.float32HostExp2 = request.target.float32HostExp2;
     targetOptions.meshInlineFunctions = request.target.meshInlineFunctions;
     targetOptions.spannedShuffleThroughMemory = request.target.spannedShuffleThroughMemory;
 

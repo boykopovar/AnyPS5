@@ -59,6 +59,7 @@ bool g_deviceAtomicWorkgroupMemoryBarriers = false;
 bool g_shaderFma = false;
 bool g_f16HostNans = false;
 bool g_spannedShuffleThroughMemory = false;
+bool g_f32HostExp2 = false;
 bool g_shaderInt16 = false;
 bool g_code = false;
 bool g_float16WidenNans = false;
@@ -102,6 +103,7 @@ bool Replay(const char* path) {
     if (g_deviceAtomicWorkgroupMemoryBarriers) request.request.target.deviceAtomicWorkgroupMemoryBarriers = true;
     if (g_f16HostNans) request.request.target.float16HostNans = true;
     if (g_spannedShuffleThroughMemory) request.request.target.spannedShuffleThroughMemory = true;
+    if (g_f32HostExp2) request.request.target.float32HostExp2 = true;
     if (g_shaderFma) {
         request.supportedCapabilities.push_back(spv::CapabilityFMAKHR);
         request.supportedExtensions.push_back("SPV_KHR_fma");
@@ -251,7 +253,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--device-atomic-workgroup-memory-barriers] [--shader-fma] [--shader-int16] [--f16-widen-nans] [--f16-narrow-nans] [--f16-host-nans] [--spanned-shuffle-memory] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--device-atomic-workgroup-memory-barriers] [--shader-fma] [--shader-int16] [--f16-widen-nans] [--f16-narrow-nans] [--f16-host-nans] [--spanned-shuffle-memory] [--f32-host-exp2] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
         return 2;
     }
     int failures = 0;
@@ -318,6 +320,10 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--spanned-shuffle-memory") {
             g_spannedShuffleThroughMemory = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--f32-host-exp2") {
+            g_f32HostExp2 = true;
             continue;
         }
         if (std::string(argv[i]) == "--mem") {

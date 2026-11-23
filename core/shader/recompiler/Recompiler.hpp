@@ -396,6 +396,7 @@ struct SpirvTarget {
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
     bool float16HostNans = false;
+    bool float32HostExp2 = false;
     bool meshInlineFunctions = false;
     bool spannedShuffleThroughMemory = false;
 };

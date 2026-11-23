@@ -1,9 +1,11 @@
 #include "prx/libSceAgcDriver/Execution/include/Float16NanProbe.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Float32Exp2Probe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <spirv/unified1/spirv.hpp>
+#include <spirv/unified1/GLSL.std.450.h>
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -44,6 +46,11 @@ alignas(256) constexpr std::array<std::uint32_t, 20> ScalarFmaCode{
     0x6e1a0b04u, 0x00003d55u,
     0x701c0b04u, 0x00000001u,
     0xe0781000u, 0x80010a03u, 0xe0701010u, 0x80010e03u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 9> Exp2Code{
+    0x34020084u, 0x34040086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u,
+    0x7e144b04u, 0xe0781000u, 0x80010a02u, 0xbf810000u,
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -110,6 +117,22 @@ void VerifySpirv() {
         Require(Selects(host) < Selects(selected), std::string("f16 NaN probe: the ") + name + " with float16HostNans and IEEE_MODE clear have " + std::to_string(Selects(host)) + " selects, without " + std::to_string(Selects(selected)));
         Require(compile(code, true, true) == compile(code, false, true), std::string("f16 NaN probe: float16HostNans changed the ") + name + " with IEEE_MODE set");
     }
+    const auto countLdexp = [](std::span<const std::uint32_t> words) {
+        std::uint32_t count = 0;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto length = words[cursor] >> 16u;
+            Require(length != 0u && cursor + length <= words.size(), "f32 exp2 probe: malformed SPIR-V");
+            if ((words[cursor] & 0xffffu) == spv::OpExtInst && length > 4u && words[cursor + 4u] == GLSLstd450Ldexp) ++count;
+            cursor += length;
+        }
+        return count;
+    };
+    target.float32HostExp2 = true;
+    const auto host = compile(Exp2Code, false, false);
+    target.float32HostExp2 = false;
+    const auto reduced = compile(Exp2Code, false, false);
+    Require(countLdexp(host) == 0u, "f32 exp2 probe: host path emitted Ldexp");
+    Require(countLdexp(reduced) != 0u, "f32 exp2 probe: range-reduced path omitted Ldexp");
 }
 
 }
@@ -127,6 +150,9 @@ int main(int argc, char** argv) {
         const auto supports = [&](spv::Capability capability) {
             return std::ranges::find(target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != target.supportedCapabilities.end();
         };
+        const auto exp2 = AgcDriver::ProbeFloat32HostExp2(*device, target, false);
+        Require(exp2.compared == 254u, "f32 exp2 probe: wrong number of compared results");
+        Require(exp2.mismatches == 0u, "f32 exp2 probe: range-reduced path changed an integer result");
         if (!supports(spv::CapabilityFloat16) || !supports(spv::CapabilityRoundingModeRTE) || !supports(spv::CapabilityDenormPreserve)) {
             std::puts("f16 NaN probe: skipped, the device has no native f16 with RTE rounding and kept denormals");
             return VulkanTestSkipped;

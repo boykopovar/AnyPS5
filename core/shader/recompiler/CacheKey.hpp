@@ -395,6 +395,7 @@ private:
         append(key, value.float16WidenNans);
         append(key, value.float16NarrowNans);
         append(key, value.float16HostNans);
+        append(key, value.float32HostExp2);
         append(key, value.meshInlineFunctions);
         append(key, value.spannedShuffleThroughMemory);
     }
