@@ -309,22 +309,9 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
                 break;
             }
             case 'Y': {
-                const char* p = b;
-                int sign = 1;
-                if (*p == '+' || *p == '-') {
-                    sign = (*p == '-') ? -1 : 1;
-                    ++p;
-                }
-                int digits = 0;
                 int val = 0;
-                while (*p >= '0' && *p <= '9') {
-                    val = val * 10 + (*p - '0');
-                    ++p;
-                    ++digits;
-                }
-                if (digits == 0) return nullptr;
-                b = p;
-                state.yearFull = val * sign;
+                if (!ParseDigits(b, 1, 4, 0, 9999, val)) return nullptr;
+                state.yearFull = val;
                 state.hasYear = true;
                 break;
             }
@@ -357,6 +344,16 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
                     tm.tm_gmtoff = 0;
                 }
                 break;
+            }
+            case 'U':
+            case 'W':
+            case 's':
+            case 'G':
+            case 'g':
+            case 'V':
+            case 'k':
+            case 'l': {
+                NotImplemented_nid_no_patch(__func__);
             }
             default: {
                 return nullptr;

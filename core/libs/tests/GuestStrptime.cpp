@@ -228,6 +228,33 @@ static void TestInvalidAndNullInputs() {
     Require(strptime_nid_postfix("2026-11-23 12:60:00", "%Y-%m-%d %H:%M:%S", &tm) == nullptr);
     Require(strptime_nid_postfix("2026-11-23 12:00:61", "%Y-%m-%d %H:%M:%S", &tm) == nullptr);
     Require(strptime_nid_postfix("2026-11-23", "%Y/%m/%d", &tm) == nullptr);
+    Require(strptime_nid_postfix("+20261124", "%Y%m%d", &tm) == nullptr);
+    Require(strptime_nid_postfix("-20261124", "%Y%m%d", &tm) == nullptr);
+    Require(strptime_nid_postfix("123", "%q", &tm) == nullptr);
+}
+
+static void TestCompactDate() {
+    GuestTm tm{};
+    const char input[] = "20261124";
+    const char* rem = strptime_nid_postfix(input, "%Y%m%d", &tm);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tm.tm_year == 126);
+    Require(tm.tm_mon == 10);
+    Require(tm.tm_mday == 24);
+}
+
+static void TestUnimplementedSpecifiers() {
+    GuestTm tm{};
+    const char* const formats[] = {"%U", "%W", "%s", "%G", "%g", "%V", "%k", "%l"};
+    for (const char* fmt : formats) {
+        bool threw = false;
+        try {
+            strptime_nid_postfix("123", fmt, &tm);
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        Require(threw);
+    }
 }
 
 int main() {
@@ -239,6 +266,8 @@ int main() {
     TestTimezone();
     TestWhitespaceAndRemainder();
     TestModifiersAndEscapes();
+    TestCompactDate();
+    TestUnimplementedSpecifiers();
     TestInvalidAndNullInputs();
     return 0;
 }
