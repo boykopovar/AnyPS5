@@ -847,6 +847,17 @@ class CTestIndexFileTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout)
             self.assertIn("Run select again", result.stderr)
 
+    def test_selection_past_the_registered_tests_must_be_regenerated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text(
+                f'add_test(other "{Path(sys.executable).as_posix()}" --version)\n', encoding="utf-8")
+            (root / "select.tests").write_text(json.dumps({"2": "wanted"}), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory, "-N"],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("Run select again", result.stderr)
+
     def test_large_selection_is_passed_to_ctest_without_an_oversized_argument(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

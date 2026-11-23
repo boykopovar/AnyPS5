@@ -417,7 +417,7 @@ def main(argv=None):
                 except (ValueError, RecursionError) as error:
                     parser.error(f"could not read the CTest test listing: {error}")
                 names = [test["name"] for test in listing["tests"]]
-                if names and collections.Counter(names) != collections.Counter(selection.values()):
+                if collections.Counter(names) != collections.Counter(selection.values()):
                     parser.error(f"{selected}: CTest registration changed. Run select again and rebuild the selected targets")
             return subprocess.run([*command, *args.arguments, "-I", index_file]).returncode
     if args.command == "explain":
