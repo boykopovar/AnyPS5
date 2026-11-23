@@ -40,6 +40,17 @@ int main() {
     Require(GuestAllocations::GuestAllocationsGeneration_nid_postfix() != registryGeneration);
     Require(get_vm_map_timestamp_nid_postfix() == mappedTimestamp);
 
+    const auto failedMutationTimestamp = get_vm_map_timestamp_nid_postfix();
+    bool addFailed = false;
+    try {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(mapped, page, true, true, false);
+    } catch (...) {
+        addFailed = true;
+    }
+    Require(addFailed);
+    Require(get_vm_map_timestamp_nid_postfix() == failedMutationTimestamp);
+
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), reserveBytes) == 0);
     Require(get_vm_map_timestamp_nid_postfix() != mappedTimestamp);
     return 0;

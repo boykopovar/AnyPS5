@@ -129,10 +129,7 @@ void noteMapChange(void* mutation) {
 }
 
 void recordChange(void* mutation, const void* pointer, std::size_t bytes) {
-    if (mutation == nullptr || bytes == 0) return;
-    auto* state = static_cast<MutationState*>(mutation);
-    state->changed.emplace_back(reinterpret_cast<std::uintptr_t>(pointer), bytes);
-    state->mapChanged = true;
+    if (mutation != nullptr && bytes != 0) static_cast<MutationState*>(mutation)->changed.emplace_back(reinterpret_cast<std::uintptr_t>(pointer), bytes);
 }
 
 #if !defined(_WIN32) && !defined(__APPLE__) && !defined(__EMSCRIPTEN__)
@@ -441,6 +438,7 @@ void GuestAllocationsUnregisterImage_nid_postfix(void* mutation, const void* ima
     recordChange(mutation, image, end - begin);
     std::erase_if(state.ranges, [&](const auto& entry) { return !entry.second->releasable && entry.second->allocationAddress >= begin && entry.second->allocationAddress < end; });
     state.registeredImages.erase(found);
+    noteMapChange(mutation);
 }
 
 void GuestAllocationsAddGpu_nid_no_patch(void* mutation, void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu, bool gpuWritable) {
@@ -457,6 +455,7 @@ void GuestAllocationsAddGpu_nid_no_patch(void* mutation, void* pointer, std::siz
         require(previous.address + previous.bytes <= address, "overlapping guest allocation");
     }
     ranges.emplace(address, std::make_shared<const Range>(Range{address, bytes, readable, writable, address, bytes, true, gpu, freshBacking(), gpuWritable}));
+    noteMapChange(mutation);
 }
 
 void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu) {
@@ -702,6 +701,7 @@ void GuestAllocationsRemove_nid_postfix(void* mutation, const void* pointer) {
     } else {
         std::erase_if(ranges, [&](const auto& entry) { return entry.second->allocationAddress == range.address; });
     }
+    noteMapChange(mutation);
     if (const auto observer = unmapObserver.load(std::memory_order_acquire)) observer(range.address, range.bytes);
 }
 
@@ -779,6 +779,7 @@ void GuestAllocationsProtectGpu_nid_no_patch(void* mutation, const void* pointer
     StagedPatch staged(patch);
     apply();
     staged.apply();
+    noteMapChange(mutation);
 }
 
 void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu, const std::function<void()>& apply) {
@@ -811,6 +812,7 @@ void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std:
         StagedPatch staged(patch);
         apply(reinterpret_cast<const void*>(cursor), pieceEnd - cursor, reinterpret_cast<const void*>(range.allocationAddress), last);
         staged.apply();
+        noteMapChange(mutation);
         if (const auto observer = unmapObserver.load(std::memory_order_acquire)) observer(cursor, pieceEnd - cursor);
         any = true;
         cursor = pieceEnd;
