@@ -2461,7 +2461,8 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     const auto lastSlice = (view >> 13u) & 0x7ffu;
     Require(lastSlice >= slice, "the color view ends before its first slice");
     const auto exports = find(cx, 0x207);
-    Require(lastSlice == slice || exports == cx.end() || (exports->second & (1u << 18u)) == 0, "GCN layered rendering into several array slices through the vertex render target index is not implemented");
+    const bool layered = lastSlice != slice && exports != cx.end() && (exports->second & (1u << 18u)) != 0;
+    Require(!layered || color.coverageSamples == 1u, "GCN layered rendering into several slices of a multisampled color array through the vertex render target index is not implemented");
     const auto pitch = ((read(cx, 0x319 + stride) & 0x7ffu) + 1u) * 8u;
     const auto sliceElements = ((read(cx, 0x31a + stride) & 0x3fffffu) + 1u) * 64u;
     color.extent = {pitch, sliceElements / pitch};
@@ -2484,6 +2485,12 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     color.surfaceAddress = (static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u) + static_cast<std::uint64_t>(slice) * layout.Bytes() * fragments;
     color.address = color.surfaceAddress;
     color.bytes = layout.Bytes();
+    if (layered) {
+        color.arrayAddress = static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u;
+        color.arraySlice = slice;
+        color.arrayLastSlice = lastSlice;
+        color.layers = lastSlice + 1u - slice;
+    }
     color.format = decoded.format;
     color.componentMapping = decoded.componentMapping;
     color.packing = decoded.packing;
@@ -2519,6 +2526,7 @@ GuestTextureResource ArraySurfaceForTarget(const ColorTarget& color) {
     surface.height = color.surfaceExtent.height;
     surface.depthOrLastArray = color.arrayLastSlice;
     surface.dimension = TextureDimension::k2DArray;
+    if (ColorTileModeIsGcn(color.tileMode)) surface.pipeBankXor = 0;
     return surface;
 }
 

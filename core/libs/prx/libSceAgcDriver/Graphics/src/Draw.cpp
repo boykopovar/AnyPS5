@@ -4075,7 +4075,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                         Require(color.dccAddress == 0 && color.cmaskAddress == 0 && AttachmentProxyFormat(context, color.format) == VK_FORMAT_UNDEFINED, "a slice of a 2D array color target with DCC, CMASK or an attachment proxy has no resident array image");
                         const auto array = ArraySurfaceForTarget(color);
                         // DecodeColorBuffer offsets slice s by s times this size; every slice the image stores must agree.
-                        const auto sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+                        const auto sliceBytes = ColorTileModeIsGcn(color.tileMode) ? static_cast<std::uint64_t>(color.bytes) : ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
                         const auto geometry = DescribeSurface(array);
                         for (std::uint32_t slice = 0; slice <= color.arrayLastSlice; ++slice) Require(geometry.GuestLayerOffset(slice) == slice * sliceBytes, "the array image's layer pitch differs from the color view's slice offset");
                         Require(color.surfaceAddress == color.arrayAddress + color.arraySlice * sliceBytes, "the array image's layer pitch differs from the color view's slice offset");
