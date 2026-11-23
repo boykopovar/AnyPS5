@@ -124,6 +124,7 @@
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorBindingTraitsExports.hpp"
 #include "prx/libSceNKWebKit/include/BmallocIsoHeapExports.hpp"
+#include "prx/libSceNKWebKit/include/VtableConstructorExports.hpp"
 #include "prx/libSceNKWebKit/include/GraphemeClusterExports.hpp"
 #include "prx/libSceNKWebKit/include/YarrRegularExpressionExports.hpp"
 #include "prx/libSceNKWebKit/include/EmptyLoaderErrorExports.hpp"
