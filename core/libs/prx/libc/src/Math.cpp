@@ -2348,7 +2348,10 @@ float APS5_VABI lgammaf_r_nid_postfix(float x, int* signgamp) {
 }
 
 float APS5_VABI lgammaf_nid_postfix(float x) {
-    return lgammaf_r_nid_postfix(x, &signgam_nid_postfix);
+    int sign;
+    const float result = LgammaMsunFloat(x, sign);
+    signgam_nid_postfix = sign;
+    return result;
 }
 
 double APS5_VABI gamma_nid_postfix(double x) {
