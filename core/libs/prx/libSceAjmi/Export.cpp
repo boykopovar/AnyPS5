@@ -236,8 +236,8 @@ std::uint32_t APS5_VABI sceAjmiInstanceCodecType(std::uint32_t instanceId) {
     return sceAjmInstanceCodecType(instanceId);
 }
 
-int APS5_VABI sceAjmiMemoryUnregister() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiMemoryUnregister(std::uint32_t context, void* ptr) {
+    return sceAjmMemoryUnregister(context, ptr);
 }
 
 int APS5_VABI sceAjmiInstanceDestroy(std::uint32_t context, std::uint32_t instance) {
@@ -248,8 +248,8 @@ int APS5_VABI sceAjmiDecMp3ParseFrame(const std::uint8_t* stream, std::uint32_t 
     return sceAjmDecMp3ParseFrame(stream, streamSize, parseOfl, frame);
 }
 
-int APS5_VABI sceAjmiMemoryRegister() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiMemoryRegister(std::uint32_t context, void* ptr, std::size_t pages) {
+    return sceAjmMemoryRegister(context, ptr, pages);
 }
 
 int APS5_VABI sceAjmiModuleRegister(std::uint32_t context, std::uint32_t codec, std::int64_t reserved) {

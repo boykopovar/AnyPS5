@@ -15,10 +15,10 @@ int APS5_VABI sceAjmiDecAt9ParseConfigData(const void* configData, AjmDecAt9Conf
 int APS5_VABI sceAjmiInitialize(std::int64_t reserved, std::uint32_t* context);
 int APS5_VABI sceAjmiBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* error);
 std::uint32_t APS5_VABI sceAjmiInstanceCodecType(std::uint32_t instanceId);
-int APS5_VABI sceAjmiMemoryUnregister();
+int APS5_VABI sceAjmiMemoryUnregister(std::uint32_t context, void* ptr);
 int APS5_VABI sceAjmiInstanceDestroy(std::uint32_t context, std::uint32_t instance);
 int APS5_VABI sceAjmiDecMp3ParseFrame(const std::uint8_t* stream, std::uint32_t streamSize, int parseOfl, AjmDecMp3ParseFrame* frame);
-int APS5_VABI sceAjmiMemoryRegister();
+int APS5_VABI sceAjmiMemoryRegister(std::uint32_t context, void* ptr, std::size_t pages);
 int APS5_VABI sceAjmiModuleRegister(std::uint32_t context, std::uint32_t codec, std::int64_t reserved);
 int APS5_VABI sceAjmiInstanceCreate(std::uint32_t context, std::uint32_t codec, std::uint64_t flags, std::uint32_t* instance);
 int APS5_VABI sceAjmiInstanceExtend();
