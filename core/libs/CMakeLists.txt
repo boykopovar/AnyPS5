@@ -241,6 +241,9 @@ target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/Vad.c
 target_include_directories(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/libfvad/src)
 target_link_libraries(libwebrtc PRIVATE fvad)
 
+if(NOT EXISTS ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale.cc)
+    message(FATAL_ERROR "libyuv: ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale.cc is missing; initialize the submodule with git submodule update --init 3rdparty/libyuv")
+endif()
 add_library(webrtc_yuv STATIC EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/cpu_id.cc
     ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/planar_functions.cc

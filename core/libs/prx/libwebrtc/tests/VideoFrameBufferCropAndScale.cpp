@@ -227,6 +227,13 @@ void TestANegativeHeightFlips() {
     for (int row = 0; row < 4; ++row)
         for (int column = 0; column < 4; ++column) Require(planes.U(column, row) == PatternU(column, 3 - row) && planes.V(column, row) == PatternV(column, 3 - row));
     Release(flipped);
+    Buffer* window = CropAndScale(source, 0, 2, 8, -4, 8, 4);
+    const Planes rows(window);
+    for (int row = 0; row < 4; ++row)
+        for (int column = 0; column < 8; ++column) Require(rows.Y(column, row) == PatternY(column, 5 - row));
+    for (int row = 0; row < 2; ++row)
+        for (int column = 0; column < 4; ++column) Require(rows.U(column, row) == PatternU(column, 2 - row) && rows.V(column, row) == PatternV(column, 2 - row));
+    Release(window);
     Release(source);
 }
 
@@ -448,7 +455,8 @@ void TestInvalid() {
     WebRtcVideoFrameBuffer empty{nullptr};
     RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, &empty, 0, 0, 8, 6, 8, 6); });
     const int rejected[][4] = {{0, 0, 9, 6}, {0, 0, 8, 7}, {1, 0, 8, 6}, {0, 1, 8, 6}, {2, 0, 7, 6}, {0, 2, 8, 5}, {-1, 0, 8, 6}, {0, -1, 8, 6}, {-2, -2, 4, 4},
-        {1, 0, INT_MAX, 6}, {0, 1, 8, INT_MAX}, {INT_MAX, 0, 1, 6}, {0, INT_MAX, 8, 1}, {INT_MAX, INT_MAX, INT_MAX, INT_MAX}};
+        {1, 0, INT_MAX, 6}, {0, 1, 8, INT_MAX}, {INT_MAX, 0, 1, 6}, {0, INT_MAX, 8, 1}, {INT_MAX, INT_MAX, INT_MAX, INT_MAX},
+        {0, 0, 8, -7}, {0, 4, 8, -4}, {0, 1, 8, -6}, {0, 0, 8, INT_MIN}, {0, 1, 8, INT_MIN}, {0, 0, 8, -INT_MAX}, {0, 6, 8, -1}, {0, INT_MAX, 8, INT_MIN}};
     for (const auto& crop : rejected) {
         RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, source, crop[0], crop[1], crop[2], crop[3], 4, 4); });
         Require(result == source && source->refCount.load() == 1 && allocations.size() == before);
@@ -458,7 +466,7 @@ void TestInvalid() {
         RequireThrows<std::runtime_error>([&] { cropAndScale(&result, source, 0, 0, 8, 6, size[0], size[1]); });
         Require(result == source && source->refCount.load() == 1 && allocations.size() == before);
     }
-    const int accepted[][4] = {{0, 0, 8, 6}, {2, 2, 6, 4}, {7, 5, 1, 1}, {8, 6, 0, 0}, {0, 0, 0, 6}, {0, 0, 8, 0}};
+    const int accepted[][4] = {{0, 0, 8, 6}, {2, 2, 6, 4}, {7, 5, 1, 1}, {8, 6, 0, 0}, {0, 0, 0, 6}, {0, 0, 8, 0}, {0, 0, 8, -6}, {0, 2, 8, -4}, {0, 5, 8, -1}};
     for (const auto& crop : accepted) {
         Buffer* scaled = CropAndScale(source, crop[0], crop[1], crop[2], crop[3], 4, 4);
         Require(source->refCount.load() == 1);

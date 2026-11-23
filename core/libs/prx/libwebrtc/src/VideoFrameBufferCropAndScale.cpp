@@ -109,7 +109,8 @@ void** APS5_VABI _ZN6webrtc16VideoFrameBuffer12CropAndScaleEiiiiii_nid_postfix(
     if (!source.object) throw std::invalid_argument("VideoFrameBuffer::CropAndScale requires a buffer that converts to I420");
     const std::int64_t sourceWidth = Call<std::int32_t>(source.object, WidthSlot);
     const std::int64_t sourceHeight = Call<std::int32_t>(source.object, HeightSlot);
-    if (std::int64_t{cropWidth} + offsetX > sourceWidth || std::int64_t{cropHeight} + offsetY > sourceHeight || offsetX < 0 || offsetY < 0)
+    const std::int64_t rows = cropHeight < 0 ? -std::int64_t{cropHeight} : std::int64_t{cropHeight};
+    if (std::int64_t{cropWidth} + offsetX > sourceWidth || rows + offsetY > sourceHeight || offsetX < 0 || offsetY < 0)
         throw std::invalid_argument("VideoFrameBuffer::CropAndScale requires a crop rectangle inside the buffer");
     const int uvOffsetX = offsetX / 2;
     const int uvOffsetY = offsetY / 2;
