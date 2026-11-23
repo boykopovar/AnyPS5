@@ -14,6 +14,7 @@ Stripes StripesOf(std::uint64_t begin, std::uint64_t end);
 bool LockOrderChecked();
 void NoteLeafLock() noexcept;
 void NoteLeafUnlock() noexcept;
+bool LeafLockHeld() noexcept;
 void RequireNoLeafLockHeld(const char* where);
 
 template<typename TMutex> class LeafMutex {
