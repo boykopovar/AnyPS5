@@ -1021,6 +1021,13 @@ bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
             }
             return replaceBinaryIdentity(value, IrType::U32, 0u);
         }
+        case IrOpcode::SplatLowU16x2: {
+            auto& source = resolveArg(value, 0);
+            if (!isImmediate(source, IrType::U32)) return false;
+            const auto low = source.ImmediateU32() & 0xffffu;
+            replaceWith(value, builder.Constant(low | (low << 16u)));
+            return true;
+        }
         case IrOpcode::IAdd16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return a + b; });
         case IrOpcode::ISub16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return a - b; });
         case IrOpcode::IMul16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return static_cast<std::uint32_t>(a) * b; });
