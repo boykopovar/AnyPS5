@@ -845,11 +845,6 @@ int APS5_VABI _Getcloc_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Getctyptab_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
     if (s == nullptr) {
         return nullptr;
