@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/ConverterToUnicodeWriters.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "unicode/ucnv_cb.h"
 #include "ucnv_bld.h"
 #include <algorithm>
@@ -37,6 +38,14 @@ std::uintptr_t End(const void* pointer, std::size_t bytes, const char* caller) {
     if (bytes > std::numeric_limits<std::uintptr_t>::max() - start) NotImplemented_nid_no_patch(caller);
     return start + bytes;
 }
+
+struct WritableRange {
+    GuestArena::HostWrite access;
+
+    WritableRange(void* address, std::size_t bytes, const char* caller) : access(address, bytes) {
+        if (bytes && (!access.Open() || !GuestWritable_nid_no_patch(address, bytes))) NotImplemented_nid_no_patch(caller);
+    }
+};
 
 struct Status {
     std::int32_t* address;
@@ -125,17 +134,17 @@ void Write(Icu::ConverterToUnicodeArgs* guest, const char16_t* source, std::int3
     const auto remaining = count - produced;
     if (original.converter && remaining > UCNV_ERROR_BUFFER_LENGTH) NotImplemented_nid_no_patch(caller);
     const auto read = substitute ? 0 : original.converter ? count : produced;
-    if (original.offsets) End(original.offsets, produced * sizeof(std::int32_t), caller);
+    const auto targetBytes = produced * sizeof(char16_t);
+    const auto offsetBytes = original.offsets ? produced * sizeof(std::int32_t) : 0;
+    if (offsetBytes) End(original.offsets, offsetBytes, caller);
     auto* fields = reinterpret_cast<std::uint8_t*>(guest);
-    if (produced && (!GuestWritable_nid_no_patch(original.target, produced * sizeof(char16_t)) ||
-        !GuestWritable_nid_no_patch(fields + offsetof(UConverterToUnicodeArgs, target), sizeof(original.target)))) {
-        NotImplemented_nid_no_patch(caller);
-    }
-    if (original.offsets && produced && (!GuestWritable_nid_no_patch(original.offsets, produced * sizeof(std::int32_t)) ||
-        !GuestWritable_nid_no_patch(fields + offsetof(UConverterToUnicodeArgs, offsets), sizeof(original.offsets)))) {
-        NotImplemented_nid_no_patch(caller);
-    }
-    if (remaining && !GuestWritable_nid_no_patch(error, sizeof(*error))) NotImplemented_nid_no_patch(caller);
+    auto* offsetsField = fields + offsetof(UConverterToUnicodeArgs, offsets);
+    auto* targetField = fields + offsetof(UConverterToUnicodeArgs, target);
+    const WritableRange targetAccess(original.target, targetBytes, caller);
+    const WritableRange targetCursorAccess(targetField, produced ? sizeof(original.target) : 0, caller);
+    const WritableRange offsetsAccess(original.offsets, offsetBytes, caller);
+    const WritableRange offsetsCursorAccess(offsetsField, offsetBytes ? sizeof(original.offsets) : 0, caller);
+    const WritableRange statusAccess(error, remaining ? sizeof(*error) : 0, caller);
     try {
         Buffers buffers(source, original.target, read, produced, original.offsets != nullptr, caller);
         auto native = original;
@@ -155,16 +164,14 @@ void Write(Icu::ConverterToUnicodeArgs* guest, const char16_t* source, std::int3
         ucnv_cbToUWriteUChars(&native, buffers.source, length, offsetIndex, &status.value);
         const auto written = native.target - buffers.target;
         if (written < 0 || static_cast<std::size_t>(written) != produced) NotImplemented_nid_no_patch(caller);
-        auto* newTarget = reinterpret_cast<char16_t*>(End(original.target, produced * sizeof(char16_t), caller));
+        auto* newTarget = reinterpret_cast<char16_t*>(End(original.target, targetBytes, caller));
         auto* newOffsets = original.offsets ?
-            reinterpret_cast<std::int32_t*>(End(original.offsets, produced * sizeof(std::int32_t), caller)) : nullptr;
-        auto* offsetsField = fields + offsetof(UConverterToUnicodeArgs, offsets);
-        auto* targetField = fields + offsetof(UConverterToUnicodeArgs, target);
+            reinterpret_cast<std::int32_t*>(End(original.offsets, offsetBytes, caller)) : nullptr;
         bool offsetsCommitted = false;
         bool targetCommitted = false;
         try {
-            CopyOut(original.target, buffers.target, produced * sizeof(char16_t), caller);
-            if (original.offsets) CopyOut(original.offsets, buffers.offsets.data(), produced * sizeof(std::int32_t), caller);
+            CopyOut(original.target, buffers.target, targetBytes, caller);
+            CopyOut(original.offsets, buffers.offsets.data(), offsetBytes, caller);
             if (newOffsets != original.offsets) {
                 CopyOut(offsetsField, &newOffsets, sizeof(newOffsets), caller);
                 offsetsCommitted = true;

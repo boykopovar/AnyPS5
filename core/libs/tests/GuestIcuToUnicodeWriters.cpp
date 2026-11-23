@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "unicode/ucnv.h"
 #include "unicode/ucnv_cb.h"
 #include <algorithm>
@@ -353,11 +354,10 @@ void Unreadable(Call call) {
 
 Guarded* refusalPage;
 void* refusedAddress;
-bool copyAttempted;
+unsigned writeAttempts;
 
 void RefuseCheckedCopy(std::uintptr_t address, std::size_t) {
-    if (address == reinterpret_cast<std::uintptr_t>(refusedAddress) && !copyAttempted) {
-        copyAttempted = true;
+    if (address == reinterpret_cast<std::uintptr_t>(refusedAddress) && ++writeAttempts == 2) {
         refusalPage->ReadOnly();
     }
 }
@@ -380,14 +380,15 @@ void LateCopyRefusal() {
         auto* guest = reinterpret_cast<Icu::ConverterToUnicodeArgs*>(&args);
         refusalPage = &page;
         refusedAddress = pass == 0 ? static_cast<void*>(target) : static_cast<void*>(error);
-        copyAttempted = false;
+        writeAttempts = 0;
         GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(RefuseCheckedCopy);
         Unreadable([&] {
             if (substitution) Substitute(guest, 7, error);
             else Chars(guest, u"abc", 3, 7, error);
         });
         GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
-        Require(copyAttempted && *error == 0, "writable preflight succeeds and actual checked copy is refused");
+        Require(writeAttempts == 2 && *error == 0, "writable preflight succeeds and actual checked copy is refused");
+        if (pass == 1) Require(*target == u'a' && offset == 7, "status refusal follows a completed prefix write");
         Require(Drain(converter.get()) == std::vector<char16_t>{u'o', u'l', u'd'},
             "late refusal preserves the preexisting native converter suffix");
         Require(args.target == target && args.offsets == &offset, "late refusal restores guest cursors for retry");
@@ -407,11 +408,11 @@ void LateCopyRefusal() {
     *error = 0;
     refusalPage = &page;
     refusedAddress = error;
-    copyAttempted = false;
+    writeAttempts = 0;
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(RefuseCheckedCopy);
     Unreadable([&] { Chars(guest, joint.data() + 1, 4, 0, error); });
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
-    Require(copyAttempted && joint[1] == u'b' && args.target == joint.data() && Drain(converter.get()).empty(),
+    Require(writeAttempts == 2 && joint[1] == u'b' && args.target == joint.data() && Drain(converter.get()).empty(),
         "late refusal preserves overlapped input and guest cursor for retry");
     page.Writable();
     Chars(guest, joint.data() + 1, 4, 0, error);
@@ -419,7 +420,79 @@ void LateCopyRefusal() {
         "retry reads original overlapping input and publishes its suffix");
 }
 
+void WatchedOutputs() {
+    using namespace GuestArena;
+    constexpr std::size_t spacing = 16384;
+    constexpr std::size_t bytes = 4 * spacing;
+#ifndef _WIN32
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::fputs("guest write watch unavailable; running guarded writer tests\n", stderr);
+        return;
+    }
+#endif
+    auto* memory = static_cast<std::uint8_t*>(GuestArenaAllocate_nid_postfix(bytes, bytes));
+    Require(memory != nullptr, "allocate callback guest arena");
+#ifdef _WIN32
+    const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+    Require(section != nullptr, "create shared callback mapping");
+    GuestArenaMap_nid_postfix(memory, bytes, section, 0, PAGE_READWRITE);
+    CloseHandle(section);
+#else
+    GuestArenaCommit_nid_postfix(memory, bytes, 0x04, bytes);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory, bytes);
+#endif
+    const auto collect = [&] {
+#ifdef _WIN32
+        std::array<void*, 32> pages{};
+        auto count = pages.size();
+        Require(GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(memory), bytes,
+            pages.data(), &count, true), "collect writes to shared callback mapping");
+        return count != 0;
+#else
+        bool written = false;
+        Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(memory), bytes,
+            [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &written),
+            "collect writes to callback mapping");
+        return written;
+#endif
+    };
+    auto converter = Open();
+    auto* args = reinterpret_cast<UConverterToUnicodeArgs*>(memory);
+    auto* output = reinterpret_cast<char16_t*>(memory + spacing);
+    auto* offsets = reinterpret_cast<std::int32_t*>(memory + 2 * spacing);
+    auto* status = reinterpret_cast<std::int32_t*>(memory + 3 * spacing);
+    for (bool substitute : {false, true}) {
+        *args = Arguments(converter.get(), output, output + 1, offsets);
+        output[0] = output[1] = u'?';
+        offsets[0] = offsets[1] = -1;
+        *status = 0;
+        Require(collect() && !collect(), "clear and arm all four callback pages");
+#ifdef _WIN32
+        for (std::size_t offset = 0; offset < bytes; offset += spacing) {
+            MEMORY_BASIC_INFORMATION info{};
+            Require(VirtualQuery(memory + offset, &info, sizeof(info)) == sizeof(info) && info.Protect == PAGE_READONLY,
+                "write watch protects a legitimately writable callback page");
+        }
+#endif
+        auto* guest = reinterpret_cast<Icu::ConverterToUnicodeArgs*>(args);
+        if (substitute) Substitute(guest, 23, status);
+        else Chars(guest, u"abc", 3, 23, status);
+        Require(*status == (substitute ? U_ZERO_ERROR : U_BUFFER_OVERFLOW_ERROR) &&
+            output[0] == (substitute ? 0xfffd : u'a') && output[1] == u'?' && offsets[0] == 23 && offsets[1] == -1 &&
+            args->target == output + 1 && args->offsets == offsets + 1, "write watched output, offsets, cursors and status");
+        const auto suffix = Drain(converter.get());
+        Require(substitute ? suffix.empty() : suffix == std::vector<char16_t>{u'b', u'c'}, "watched callback overflow suffix");
+        Require(collect(), "write tracking observes callback output");
+    }
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, bytes);
+#endif
+    GuestArenaReset_nid_postfix(memory, bytes);
+    GuestArenaRelease_nid_postfix(memory, bytes);
+}
+
 void GuardsCase() {
+    WatchedOutputs();
     LateCopyRefusal();
     Guarded guard;
     auto converter = Open();
