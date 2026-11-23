@@ -128,7 +128,17 @@ target_sources(icu_common PRIVATE
     ${ICU_SOURCE_DIR}/common/uresbund.cpp
     ${ICU_SOURCE_DIR}/common/uresdata.cpp
     ${ICU_SOURCE_DIR}/common/ustrenum.cpp
-    ${ICU_SOURCE_DIR}/common/utypes.cpp)
+    ${ICU_SOURCE_DIR}/common/utypes.cpp
+    ${ICU_SOURCE_DIR}/common/locdispnames.cpp
+    ${ICU_SOURCE_DIR}/common/locdspnm.cpp
+    ${ICU_SOURCE_DIR}/common/locresdata.cpp
+    ${ICU_SOURCE_DIR}/common/simpleformatter.cpp
+    ${ICU_SOURCE_DIR}/common/static_unicode_sets.cpp
+    ${ICU_SOURCE_DIR}/common/ucurr.cpp
+    ${ICU_SOURCE_DIR}/common/ulist.cpp
+    ${ICU_SOURCE_DIR}/common/usetiter.cpp
+    ${ICU_SOURCE_DIR}/common/ustrcase_locale.cpp)
+set_source_files_properties(${ICU_SOURCE_DIR}/common/locdspnm.cpp PROPERTIES COMPILE_DEFINITIONS UCONFIG_NO_BREAK_ITERATION=1)
 if(WIN32)
     target_sources(icu_common PRIVATE ${ICU_SOURCE_DIR}/common/wintz.cpp)
 endif()
