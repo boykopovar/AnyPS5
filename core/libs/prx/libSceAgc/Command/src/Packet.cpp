@@ -147,16 +147,6 @@ std::uint32_t* Allocate(CommandBuffer* buffer, std::uint32_t count, const char* 
 }
 
 #ifdef ANYPS5_ENABLE_TSAN
-void StoreWords(std::uint32_t* destination, const std::uint32_t* source, std::size_t count) {
-    for (std::size_t index = 0; index < count; ++index) std::atomic_ref<std::uint32_t>(destination[index]).store(source[index], std::memory_order_relaxed);
-}
-#else
-void StoreWords(std::uint32_t* destination, const std::uint32_t* source, std::size_t count) {
-    std::copy_n(source, count, destination);
-}
-#endif
-
-#ifdef ANYPS5_ENABLE_TSAN
 static void ClearWords(std::uint32_t* destination, std::size_t count) {
     for (std::size_t index = 0; index < count; ++index) std::atomic_ref<std::uint32_t>(destination[index]).store(0u, std::memory_order_relaxed);
 }
