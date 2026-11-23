@@ -301,7 +301,8 @@ void CheckUnobservedOptions(int context) {
     Require(sceHttpSetProxy(connection, 0, 0, nullptr, 0) == InvalidValue, "sceHttpSetProxy took a null host");
     Require(sceHttpSetProxy(UnknownId, 0, 0, nullptr, 0) == InvalidValue, "the proxy host is not checked before the id");
     Require(sceHttpSetProxy(UnknownId, 1, 1, "proxy.example", 8080) == InvalidId, "sceHttpSetProxy took an unknown id");
-    Require(sceHttpAbortRequestForce(request) == 0, "sceHttpAbortRequestForce failed on a live request");
+    Require(sceHttpAbortRequest(UnknownId) == 0 && sceHttpAbortRequestForce(UnknownId) == 0, "the abort stubs started validating unknown request ids");
+    Require(sceHttpAbortRequest(request) == 0 && sceHttpAbortRequestForce(request) == 0, "an abort stub failed on a live request");
     Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
     Require(sceHttpSetDelayBuildRequestEnabled(request, 1) == InvalidId, "a deleted request still accepted delay build request");
 }
@@ -330,6 +331,7 @@ void CheckProxy(int context) {
 }
 
 int main() {
+    Require(sceHttpAbortRequest(UnknownId) == 0 && sceHttpAbortRequestForce(UnknownId) == 0, "the abort stubs started requiring sceHttpInit");
     Require(sceHttpSetDelayBuildRequestEnabled(UnknownId, 1) == BeforeInit, "delay build request was taken before sceHttpInit");
     const int context = sceHttpInit_nid_postfix(1, 1, 0x10000);
     Require(context > 0, "sceHttpInit failed");
