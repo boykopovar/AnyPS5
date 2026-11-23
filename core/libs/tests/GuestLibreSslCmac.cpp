@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Cmac.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -37,13 +38,13 @@ decltype(&ERR_clear_error_nid_postfix) clearError;
 decltype(&ERR_get_error_nid_postfix) getError;
 decltype(&ApplicationHeapRegister_nid_no_patch) registerHeap;
 
-void* Load(const std::string& path) {
+void* Load(const std::filesystem::path& path) {
 #ifdef _WIN32
-    auto* library = LoadLibraryExA(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    auto* library = LoadLibraryExW(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 #else
     auto* library = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
-    if (library == nullptr) throw std::runtime_error("failed to load patched CMAC dependency: " + path);
+    if (library == nullptr) throw std::runtime_error("failed to load patched CMAC dependency: " + path.string());
     return library;
 }
 
@@ -56,10 +57,9 @@ template<typename TFunction> void Resolve(TFunction& destination, void* library,
     if (destination == nullptr) throw std::runtime_error(std::string("missing patched CMAC dependency: ") + name);
 }
 
-void InitializePatched(const char* directory) {
-    const auto root = std::string(directory) + "/";
-    auto* libc = Load(root + "libc.prx");
-    auto* library = Load(root + "libSceLibreSsl.prx");
+void InitializePatched(const std::filesystem::path& directory) {
+    auto* libc = Load(directory / "libc.prx");
+    auto* library = Load(directory / "libSceLibreSsl.prx");
     Resolve(cmacNew, library, "mwJYST4Bb3U");
     Resolve(cmacFree, library, "cBNGAG1DkXc");
     Resolve(cmacInit, library, "LATrF+dIZYI");
@@ -426,7 +426,7 @@ void Callbacks() {
 int main(int argc, char** argv) {
 #ifdef ANYPS5_CMAC_DYNAMIC
     Require(argc == 2, "patched test needs the library directory");
-    InitializePatched(argv[1]);
+    InitializePatched(ArgumentPath(argv, 1));
 #endif
     InitializeHeap();
     Methods[0] = EVP_aes_128_cbc_nid_postfix();

@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <algorithm>
 #include <array>
@@ -300,7 +301,7 @@ void Run(SelectProtocol select) {
 int main(int argc, char** argv) {
     Require(argc == 3);
 #ifdef _WIN32
-    const auto library = LoadLibraryExW(std::filesystem::path(argv[1]).c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    const auto library = LoadLibraryExW(ArgumentPath(argv, 1).c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!library) std::fprintf(stderr, "LoadLibraryExW failed: %lu\n", GetLastError());
     Require(library != nullptr);
     const auto select = std::bit_cast<SelectProtocol>(GetProcAddress(library, argv[2]));

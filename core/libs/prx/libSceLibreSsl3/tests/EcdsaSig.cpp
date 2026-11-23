@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <array>
 #include <bit>
@@ -61,7 +62,7 @@ void Run(Getter getter) {
 int main(int argc, char** argv) {
     Require(argc == 2);
 #ifdef _WIN32
-    const auto library = LoadLibraryExW(std::filesystem::path(argv[1]).c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    const auto library = LoadLibraryExW(ArgumentPath(argv, 1).c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     Require(library != nullptr);
     const auto getter = std::bit_cast<Getter>(GetProcAddress(library, "z8fsXF8JuL0"));
 #else
