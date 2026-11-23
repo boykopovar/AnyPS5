@@ -356,8 +356,10 @@ struct Sock {
     bool bound = false;
     bool listening = false;
     bool connectAttempted = false;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
     bool connectPending = false;
+#endif
+#ifdef _WIN32
     bool connectRefused = false;
 #endif
     bool aborted = false;
@@ -1635,11 +1637,26 @@ static bool pending_connect_refused(Sock& socket) {
     }
     return socket.connectRefused;
 }
+#endif
 
+#if defined(_WIN32) || defined(__linux__)
 static void note_connect_pending(int s, const Sock& socket, bool pending) {
     std::lock_guard lock(g_mutex);
     const auto current = g_socks.find(s);
     if (current != g_socks.end() && current->second.native == socket.native) current->second.connectPending = pending;
+}
+#endif
+
+#ifdef __linux__
+static bool send_before_connect(int s, const Sock& socket) {
+    if (!socket.connectPending) return false;
+    pollfd entry{socket.native->value, POLLOUT, 0};
+    int ready;
+    do ready = ::poll(&entry, 1, 0); while (ready < 0 && errno == EINTR);
+    if (ready < 0) throw std::runtime_error("sceNetSend: polling a pending connect failed, errno " + std::to_string(errno));
+    if (ready == 0) return true;
+    note_connect_pending(s, socket, false);
+    return false;
 }
 #endif
 
@@ -1698,8 +1715,11 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
         return 0;
     }
 #endif
+#ifdef __linux__
+    if (socket.type == NET_SOCK_STREAM) note_connect_pending(s, socket, true);
+#endif
     if (::connect(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) == 0) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
         if (socket.type == NET_SOCK_STREAM) note_connect_pending(s, socket, false);
 #endif
 #if defined(_WIN32) || defined(__APPLE__)
@@ -1734,6 +1754,12 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     }
 #elif defined(__APPLE__)
     if (socket.type == NET_SOCK_STREAM && errno == EISCONN && dropped_tcp_connection(socket.native->value)) return fail(NET_ECONNREFUSED);
+#else
+    if (socket.type == NET_SOCK_STREAM && errno != EINPROGRESS && errno != EALREADY && errno != EINTR) {
+        const int saved = errno;
+        note_connect_pending(s, socket, false);
+        errno = saved;
+    }
 #endif
     return fail(native_error());
 }
@@ -1844,6 +1870,9 @@ int64_t APS5_VABI sceNetSend(int s, const void* buf, size_t len, int flags) {
         socket = it->second;
     }
     if (IsPeerSocket(socket)) NotImplemented_nid_no_patch(__func__);
+#ifdef __linux__
+    if (send_before_connect(s, socket)) return fail(NET_ENOTCONN);
+#endif
 #ifdef __APPLE__
     const auto result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
         return ::send(socket.native->value, data, size, NATIVE_SEND_FLAGS | native_message_flags(flags));
@@ -1879,6 +1908,9 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
 #endif
     if (!to) {
         if (tolen != 0) return fail(NET_EINVAL);
+#ifdef __linux__
+        if (send_before_connect(s, socket)) return fail(NET_ENOTCONN);
+#endif
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
             return ::send(socket.native->value, data, size, NATIVE_SEND_FLAGS | native_message_flags(flags));
