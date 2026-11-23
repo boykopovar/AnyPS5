@@ -2323,10 +2323,6 @@ int APS5_VABI _ZN7WebCore4Page16setActivityStateEN3WTF9OptionSetINS_13ActivitySt
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextSyncLocalStorage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore10FontHandleC2EON3WTF3RefINS_12SharedBufferENS1_13DumbPtrTraitsIS3_EEEENS_4Font6OriginEfbb() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2766,10 +2762,6 @@ int APS5_VABI _ZN7WebCore11DisplayList20FillRectWithGradientD2Ev() {
 }
 
 int APS5_VABI _ZNK7WebCore25BackForwardItemIdentifier7isValidEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextClearCachedCredentials() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -4432,10 +4424,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_Y3wceZOjVQk_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("Y3wceZOjVQk", libSceNKWebKitLegacyUnknown_Y3wceZOjVQk_nid_no_patch);
-
-int APS5_VABI WKContextClearLegacyPrivateBrowsingLocalStorage() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore23ScaleTransformOperationD2Ev() {
     NotImplemented_nid_no_patch(__func__);

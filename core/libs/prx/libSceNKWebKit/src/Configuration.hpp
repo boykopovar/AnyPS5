@@ -152,6 +152,9 @@ public:
     bool canHandleHTTPSServerTrustEvaluation = true;
     Retained<String> customWebContentServiceBundleIdentifier;
     std::uint32_t terminatedNetworkProcessesCount = 0;
+    bool cachedCredentialsCleared = false;
+    bool legacyPrivateBrowsingLocalStorageCleared = false;
+    bool localStorageSynced = false;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
