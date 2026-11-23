@@ -60,8 +60,8 @@ std::vector<std::uint8_t> TestJpeg(std::uint32_t width, std::uint32_t height, st
 }
 
 std::vector<std::uint8_t> ProgressiveOddJpeg() {
-    constexpr std::uint32_t width = 37;
-    constexpr std::uint32_t height = 29;
+    constexpr std::uint32_t width = 97;
+    constexpr std::uint32_t height = 73;
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 3);
     for (std::uint32_t y = 0; y < height; ++y) {
         for (std::uint32_t x = 0; x < width; ++x) {
@@ -155,7 +155,7 @@ void RequireTurboReference(const std::vector<std::uint8_t>& jpeg, std::uint32_t 
     }
 }
 
-void RequireStreamMatches(const std::vector<std::uint8_t>& jpeg, std::uint32_t width, std::uint32_t height, std::uint16_t downScale, std::size_t chunkSize, std::uint32_t pitch = 0) {
+void RequireStreamMatches(const std::vector<std::uint8_t>& jpeg, std::uint32_t width, std::uint32_t height, std::uint16_t downScale, std::size_t chunkSize, std::uint32_t pitch = 0, bool requireContinuation = false) {
     std::int32_t expected = 0;
     const std::uint32_t outputWidth = (width + downScale - 1) / downScale;
     const std::uint32_t outputHeight = (height + downScale - 1) / downScale;
@@ -169,6 +169,7 @@ void RequireStreamMatches(const std::vector<std::uint8_t>& jpeg, std::uint32_t w
     parse.down_scale = downScale;
     JpegDecImageInfo info{}, expectedInfo{};
     Require(sceJpegDecDecodeWithInputControl(decoder.handle, &parse, &info) == 0);
+    if (requireContinuation) Require(header.offset < jpeg.size());
     const JpegDecParseParam parseHeader{jpeg.data(), static_cast<std::uint32_t>(jpeg.size()), 0, downScale};
     Require(sceJpegDecParseHeader(&parseHeader, &expectedInfo) == 0);
     Require(std::equal(reinterpret_cast<const std::uint8_t*>(&info), reinterpret_cast<const std::uint8_t*>(&info + 1), reinterpret_cast<const std::uint8_t*>(&expectedInfo)));
@@ -186,6 +187,10 @@ void RequireStreamMatches(const std::vector<std::uint8_t>& jpeg, std::uint32_t w
     JpegDecImageInfo untouched{};
     untouched.image_width = 0x1234;
     Require(sceJpegDecDecodeWithInputControl(decoder.handle, &decode, &untouched) == expected);
+    if (requireContinuation) {
+        Require(rest.calls > 0);
+        Require(rest.offset > 0);
+    }
     Require(untouched.image_width == 0x1234);
     Require(info.image_width == width && info.image_height == height && info.output_image_width == outputWidth && info.output_image_height == outputHeight);
     for (std::uint32_t y = 0; y < outputHeight; ++y) {
@@ -441,6 +446,6 @@ int main() {
     RequireStreamMatches(TestJpeg(64, 48, 3), 64, 48, 2, 37);
     RequireStreamMatches(TestJpeg(64, 48, 3), 64, 48, 8, 0x10000);
     const std::vector<std::uint8_t> progressiveOdd = ProgressiveOddJpeg();
-    RequireStreamMatches(progressiveOdd, 37, 29, 2, 13, 80);
-    RequireStreamMatches(progressiveOdd, 37, 29, 4, 19, 44);
+    RequireStreamMatches(progressiveOdd, 97, 73, 2, 13, 208, true);
+    RequireStreamMatches(progressiveOdd, 97, 73, 4, 19, 112, true);
 }
