@@ -282,6 +282,11 @@ int main() {
     Require(sceNpCommerceDialogGetStatus() == statusNone);
     Require(sceNpCommerceDialogUpdateStatus() == statusNone);
     RequireNotices();
+    Require(sceNpCommerceHidePsStoreIcon() == 0);
+    Require(sceNpCommerceShowPsStoreIcon(0) == 0);
+    Require(sceNpCommerceShowPsStoreIcon(1) == 0);
+    Require(sceNpCommerceSetPsStoreIconLayout(0) == 0);
+    Require(sceNpCommerceSetPsStoreIconLayout(1) == 0);
     Require(sceUserServiceTerminate() == 0);
     return 0;
 }
