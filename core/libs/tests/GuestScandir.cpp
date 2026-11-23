@@ -40,6 +40,7 @@ void RegisterAllocator() {
 }
 
 int APS5_VABI KeepTextFiles(const GuestDirectoryEntry* entry) {
+    errno = ENOENT;
     return std::strstr(entry->name, ".txt") != nullptr;
 }
 

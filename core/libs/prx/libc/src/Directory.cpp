@@ -440,8 +440,10 @@ int APS5_VABI scandir_nid_postfix(const char* path, GuestDirectoryEntry*** namel
     void* handle = opendir_nid_postfix(path);
     if (handle == nullptr) return -1;
     std::vector<GuestDirectoryEntry*> entries;
-    errno = 0;
-    while (const auto* entry = readdir_nid_postfix(handle)) {
+    for (;;) {
+        errno = 0;
+        const auto* entry = readdir_nid_postfix(handle);
+        if (entry == nullptr) break;
         if (select != nullptr && select(entry) == 0) continue;
         auto* copy = CopyDirectoryEntry(entry);
         if (copy == nullptr) {
