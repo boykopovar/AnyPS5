@@ -1037,7 +1037,16 @@ bool TranslationContext::floatCube(const RdnaInstruction& inst, std::uint32_t re
             const IrF32 major = selectFace(x, y, z);
             const IrF32 twice(ir.Emit(IrOpcode::FPMul32, IrType::F32, {&major.Value(), &ir.ConstantF32(2.0f)}));
             const IrU1 nan(ir.UGreaterThan(ir.BitCastU32(magnitude(major).Value()), ir.Constant(0x7f800000u)));
-            result = selectF32(nan, major, selectF32(exponentZero(major), IrF32(ir.ConstantF32(0.0f)), twice));
+            const std::uint32_t rounding = floatRoundMode(0u);
+            const IrU32 sign(ir.BitwiseAnd(ir.BitCastU32(major.Value()), ir.Constant(0x80000000u)));
+            const IrF32 zero(rounding == 2u ? IrF32(ir.BitCastF32(sign.Value())) : IrF32(ir.ConstantF32(0.0f)));
+            IrF32 scaled = twice;
+            if (rounding != 0u) {
+                const IrU1 overflow(ir.LogicalAnd(ir.ULessThan(ir.BitCastU32(magnitude(major).Value()), ir.Constant(0x7f800000u)), ir.IEqual(ir.BitCastU32(magnitude(twice).Value()), ir.Constant(0x7f800000u))));
+                const IrF32 limit(ir.BitCastF32(ir.BitwiseOr(sign.Value(), roundedLimit(rounding, sign, ir.Constant(0x7f800000u), ir.Constant(0x7f7fffffu)))));
+                scaled = selectF32(overflow, limit, twice);
+            }
+            result = selectF32(nan, major, selectF32(exponentZero(major), zero, scaled));
             break;
         }
         default:

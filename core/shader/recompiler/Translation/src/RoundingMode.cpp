@@ -96,6 +96,7 @@ RoundingUse RoundingUseOf(RdnaOpcode opcode) {
     switch (opcode) {
     case RdnaOpcode::VCvtF32I32:
     case RdnaOpcode::VCvtF32U32:
+    case RdnaOpcode::VCubemaF32:
         return {round32, RoundingUseKind::Directed32};
     case RdnaOpcode::VCvtPkU8F32:
         return {round32 | denorm32In, RoundingUseKind::Directed32};
@@ -143,7 +144,6 @@ RoundingUse RoundingUseOf(RdnaOpcode opcode) {
     case RdnaOpcode::VMadLegacyF32:
     case RdnaOpcode::VMacLegacyF32:
     case RdnaOpcode::VDivFmasF32:
-    case RdnaOpcode::VCubemaF32:
     case RdnaOpcode::VDot2F32F16:
     case RdnaOpcode::VDot2cF32F16:
     case RdnaOpcode::VInterpP1F32:
