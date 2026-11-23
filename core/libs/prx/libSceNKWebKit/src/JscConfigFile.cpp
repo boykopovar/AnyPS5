@@ -322,10 +322,9 @@ private:
             else
                 return Result::Error;
 
-            if (ParsePredicate(predicateMatches, actualValue)) {
-                if (!predicateMatches) subNesting = Nesting::NestedFailedCriteria;
-                if (!scanner.TryConsume("&&", 2)) break;
-            }
+            if (!ParsePredicate(predicateMatches, actualValue)) return Result::Error;
+            if (!predicateMatches) subNesting = Nesting::NestedFailedCriteria;
+            if (!scanner.TryConsume("&&", 2)) break;
         }
         if (!scanner.TryConsume('{')) return Result::Error;
         Result parseResult = Result::Ok;

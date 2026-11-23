@@ -187,6 +187,31 @@ void TestProcessNamePredicates(const std::filesystem::path& root) {
     Parse(&blocks);
 }
 
+void TestPredicateChains(const std::filesystem::path& root) {
+    SetProcessName("gamma");
+    SetParentProcessName("ps5");
+
+    WriteFile(root, "false-first-chain.txt",
+        "processName == \"delta\" && build == \"Release\" { logFile = \"out.log\" }\n"
+        "parentProcessName == \"ps5\" && processName == \"gamma\" && build == \"Release\" {\n"
+        "  jscOptions { useJIT = true }\n"
+        "}\n");
+    ConfigFile falseFirst = Constructed(GuestPath("false-first-chain.txt"));
+    bool appliedOptions = false;
+    try {
+        Parse(&falseFirst);
+    } catch (const std::logic_error& error) {
+        appliedOptions = std::strcmp(error.what(), "JSC::ConfigFile::parse: JSC::Options::setOptions is not implemented") == 0;
+    }
+    Require(appliedOptions);
+
+    WriteFile(root, "malformed-chain.txt",
+        "processName == \"delta\" && build == parentProcessName == \"ps5\" { }\n"
+        "jscOptions { useJIT = true }\n");
+    ConfigFile malformed = Constructed(GuestPath("malformed-chain.txt"));
+    Require(!ThrowsLogicError([&] { Parse(&malformed); }));
+}
+
 void TestRegexPredicates(const std::filesystem::path& root) {
     SetProcessName("gamma");
 
@@ -322,6 +347,7 @@ int main() {
     TestRefusals();
     TestMissingFile();
     TestProcessNamePredicates(root);
+    TestPredicateChains(root);
     TestRegexPredicates(root);
     TestOptions(root);
     TestLogFile(root);
