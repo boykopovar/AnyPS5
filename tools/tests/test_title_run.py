@@ -57,6 +57,18 @@ class TitlesTests(unittest.TestCase):
         path.write_text(json.dumps({"PPSA00001": {"seconds": 30}}), encoding="utf-8-sig")
         self.assertEqual(title_run.load_titles(path)["PPSA00001"]["seconds"], 30)
 
+    def test_catalog_must_be_an_object(self):
+        for value in (None, True, 1, 1.5, "PPSA00001", [], ["PPSA00001"]):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "title catalog must be an object"):
+                title_run.load_titles(self.write(value))
+        self.assertEqual(title_run.load_titles(self.write({})), {})
+
+    def test_title_entries_must_be_objects(self):
+        for value in (None, True, 1, 1.5, "title", [], ["--registry"]):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "PPSA00001: title entry must be an object"):
+                title_run.load_titles(self.write({"PPSA00001": value}))
+        self.assertEqual(title_run.load_titles(self.write({"PPSA00001": {}})), {"PPSA00001": {}})
+
     def test_unknown_field_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: unknown field rlink"):
             title_run.load_titles(self.write({"PPSA00001": {"rlink": []}}))
@@ -87,6 +99,16 @@ class TitlesTests(unittest.TestCase):
                     {"events": events, "after_s": 3601}, {"events": events, "repeat": 0}):
             with self.assertRaises(ValueError):
                 title_run.load_titles(self.write({"PPSA00001": {"pad": pad}}))
+
+    def test_pad_timeline_size_accounts_for_full_command_header(self):
+        events = [{"at_ms": 0, "hold_ms": 1, "buttons": ["cross"],
+                   "left_stick": [255, 255], "right_stick": [255, 255]}]
+        pad = {"events": events, "repeat": 2296, "gap_ms": 0}
+        catalog = {"PPSA00001": {"pad": pad}}
+        self.assertEqual(title_run.load_titles(self.write(catalog)), catalog)
+        pad["repeat"] = 2297
+        with self.assertRaisesRegex(ValueError, "PPSA00001: timeline command file .*runtime reads at most 65536"):
+            title_run.load_titles(self.write(catalog))
 
     def test_files_are_checked(self):
         files = {"app0/id1/autoexec.cfg": {"text": "r_rtshadows 0\n"}, "data/x/y.mp4": {"content": "media/y.mp4"}}
@@ -806,8 +828,14 @@ class PreparationTests(unittest.TestCase):
         unknown.write_text(json.dumps({"PPSA00001": {"rlink": []}}), encoding="utf-8")
         invalid = self.root / "invalid.json"
         invalid.write_text("not json", encoding="utf-8")
+        array_catalog = self.root / "array.json"
+        array_catalog.write_text("[]", encoding="utf-8")
+        null_entry = self.root / "null-entry.json"
+        null_entry.write_text('{"PPSA00001": null}', encoding="utf-8")
         for option, path, message in (("--titles", self.root / "missing.json", "No such file"), ("--titles", self.root / "games", ""),
                                       ("--titles", unknown, "unknown field rlink"), ("--titles", invalid, "Expecting value"),
+                                      ("--titles", array_catalog, "title catalog must be an object"),
+                                      ("--titles", null_entry, "PPSA00001: title entry must be an object"),
                                       ("--compare", self.root / "missing.json", "No such file"), ("--compare", invalid, "Expecting value")):
             with self.subTest(option=option, path=path.name):
                 errors = io.StringIO()
@@ -1176,6 +1204,28 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((work / "app0/id1/pak0.pak").read_bytes(), b"PACK")
         self.assertEqual((source / "id1/pak0.pak").read_bytes(), b"bundled data")
         self.assertFalse((work / "data/media/clip.mp4").exists())
+
+    def test_files_override_read_only_bundled_assets(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        content = self.root / "content"
+        content.mkdir()
+        (content / "replacement.bin").write_bytes(b"external")
+        files = {"app0/config.ini": {"text": "override"}, "app0/asset.bin": {"content": "replacement.bin"}}
+        for name in ("config.ini", "asset.bin"):
+            original = source / name
+            original.write_bytes(b"bundled")
+            original.chmod(stat.S_IREAD)
+        work = self.root / "work"
+        title_run.link_tree(source, work / "app0", {"sce_module"})
+
+        self.assertEqual(title_run.stage_files(files, work, content), [])
+
+        self.assertEqual((work / "app0/config.ini").read_bytes(), b"override")
+        self.assertEqual((work / "app0/asset.bin").read_bytes(), b"external")
+        for name in ("config.ini", "asset.bin"):
+            original = source / name
+            self.assertEqual(original.read_bytes(), b"bundled")
+            self.assertFalse(original.stat().st_mode & stat.S_IWRITE)
 
     def test_missing_external_content_preserves_the_staged_package_file(self):
         source = package(self.root / "pkg", "PPSA00001")

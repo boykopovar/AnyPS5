@@ -331,6 +331,15 @@ class TimelineTests(unittest.TestCase):
         self.check_input_alias(path, alias)
         self.check_input_alias(alias, path)
 
+    def test_cli_renders_unpaired_surrogates_in_slice_names(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document([complete(1, "worker \u03b1\ud800", 0, 100)])), encoding="utf-8")
+        output = path.with_suffix(".html")
+        output.write_text("previous report", encoding="utf-8")
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path)], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("worker \u03b1\\ud800", output.read_text(encoding="utf-8"))
+
     def test_cli_allows_distinct_existing_output_with_identical_contents(self):
         path = Path(self.tmp.name) / "capture.json"
         path.write_text(json.dumps(document(self.items)), encoding="utf-8")

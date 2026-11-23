@@ -834,6 +834,58 @@ test("cancelling the ZIP picker does not report a failure", async t => {
   assert.equal(get("convert").disabled, false);
 });
 
+for (const stage of ["waiting for the lock", "creating the folder"]) {
+  test(`Cancel works while folder output is ${stage}`, async t => {
+    const waiting = deferred();
+    const resume = deferred();
+    let lookups = 0;
+    let created = 0;
+    const removed = [];
+    const waitsForLock = stage === "waiting for the lock";
+    const parent = {
+      async getDirectoryHandle(name, options) {
+        lookups++;
+        if (!options?.create) throw new DOMException("Folder not found", "NotFoundError");
+        waiting.resolve();
+        await resume.promise;
+        created++;
+        return { name };
+      },
+      async removeEntry(name, options) { removed.push([name, options]); }
+    };
+    const { get, workers } = await setup(t, `cancel-folder-${stage}`, {
+      showDirectoryPicker: async () => parent,
+      navigator: { locks: { async request(_name, acquire) {
+        if (waitsForLock) {
+          waiting.resolve();
+          await resume.promise;
+        }
+        return acquire();
+      } } }
+    });
+    const original = await selected(get, workers, "first.zip");
+    get("save").value = "disk";
+    get("save").listeners.get("change")();
+    const converting = get("convert").onclick();
+    try {
+      await waiting.promise;
+      assert.equal(get("cancel").hidden, false);
+      await get("cancel").onclick();
+      assert.equal(original.terminated, true);
+      const replacement = await selected(get, workers, "replacement.zip");
+      assert.equal(replacement.terminated, false);
+    } finally {
+      resume.resolve();
+      await converting;
+    }
+    assert.equal(lookups, waitsForLock ? 0 : 2);
+    assert.equal(created, waitsForLock ? 0 : 1);
+    assert.deepEqual(removed, waitsForLock ? [] : [["first-linux", { recursive: true }]]);
+    assert.deepEqual(original.messages.map(message => message.type), ["inspect"]);
+    assert.equal(get("archive-name").textContent, "replacement.zip");
+  });
+}
+
 test("an existing output folder permits retrying with the same inspected input", async t => {
   let pickers = 0;
   const existingParent = {
@@ -895,3 +947,18 @@ for (const supported of [false, true]) {
     assert.equal(get("save").querySelector('[value="memory"]').disabled, false);
   });
 }
+
+test("the live log and failure details keep the last 150 lines across worker messages", async t => {
+  const { get, workers } = await setup(t, "multiline-log");
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  const send = data => workers[0].onmessage({ data });
+  const lines = Array.from({ length: 151 }, (_, index) => "line " + index);
+  await send({ type: "progress", message: lines.join("\r\n") });
+  await send({ type: "progress", appName: "first.zip", message: "done" });
+  const expected = [...lines.slice(2), "first.zip: done"].join("\n");
+  assert.equal(get("log").textContent, expected);
+  await send({ type: "error", message: "conversion failed" });
+  const report = get("error").children[1].children[1].textContent;
+  assert.ok(report.endsWith("Conversion log (last 150 lines):\n" + expected));
+});

@@ -39,7 +39,7 @@ def main(argv=None):
     parser.add_argument("summary", type=Path)
     parser.add_argument("--require-complete", action="store_true",
                         help="require a nonempty capture with contiguous times and present ranges, unique intervals, "
-                             "no dropped events and unchanged identity")
+                             "trace_dropped set to false in every interval and unchanged identity")
     parser.add_argument("--spreadsheet-safe", action="store_true",
                         help="opt-in tab prefix changes text cells; spreadsheet behavior varies and save/reopen not guaranteed")
     args = parser.parse_args(argv)
@@ -60,6 +60,8 @@ def main(argv=None):
                 previous_start, previous_end = start, end
             expected_present = None
             for index, record in enumerate(records, start=1):
+                if "trace_dropped" not in record:
+                    raise ValueError(f"interval {index} is missing trace_dropped")
                 window = record.get("window")
                 first = window.get("first_present") if isinstance(window, dict) else None
                 if type(first) is not int or first < 0:

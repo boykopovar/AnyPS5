@@ -77,7 +77,7 @@ def elf_sections(path, data):
     return [unpack("<IIQQQQIIQQ", data, section_offset + index * 64, path, f"section header {index}") for index in range(section_count)]
 
 
-def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
+def elf_program_dynamic_symbols(path, data, sections=None):
     header = unpack("<16sHHIQQQIHHHHHH", data, 0, path, "ELF header")
     ident, program_offset, program_size, program_count = header[0], header[5], header[9], header[10]
     if ident[6] != 1 or header[3] != 1:
@@ -143,7 +143,8 @@ def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
     string_size = dynamic.get(10)
     symbol_address = dynamic.get(6)
     symbol_size = dynamic.get(11)
-    if section_symbol_count == 0 and symbol_address is None:
+    section_symbol_count = max((section[5] // 24 for section in sections or () if section[1] == 11), default=None)
+    if sections is not None and not section_symbol_count and symbol_address is None:
         if not needed_offsets:
             return {}, set(), set()
         if string_address is None or not string_size:
@@ -297,9 +298,11 @@ def elf_exports(path, data):
             if name == 0 or index == 0 or binding not in (1, 2, 10) or visibility not in (0, 3):
                 continue
             names.add(cstring(data, strings_offset + name, strings_offset + strings_size, path, "export name").split(MODULE_SUFFIX, 1)[0])
-    section_symbol_count = max((section[5] // 24 for section in sections if section[1] == 11), default=0)
-    if elf_has_dynamic_segment(path, data, header) and names != elf_program_dynamic_symbols(path, data, section_symbol_count)[1]:
-        raise AuditError(f"{path}: ELF section exports disagree with PT_DYNAMIC")
+    if elf_has_dynamic_segment(path, data, header):
+        runtime_exports = elf_program_dynamic_symbols(path, data, sections)[1]
+        if any(section[1] == 11 for section in sections) and names != runtime_exports:
+            raise AuditError(f"{path}: ELF section exports disagree with PT_DYNAMIC")
+        return runtime_exports
     return names
 
 
@@ -342,10 +345,11 @@ def elf_imports(path, data):
             if not terminated:
                 raise AuditError(f"{path}: dynamic section is not terminated by DT_NULL")
     if elf_has_dynamic_segment(path, data, header):
-        section_symbol_count = max((section[5] // 24 for section in sections if section[1] == 11), default=0)
-        runtime_imports, _, runtime_needed = elf_program_dynamic_symbols(path, data, section_symbol_count)
-        if symbols != runtime_imports or needed != runtime_needed:
+        runtime_imports, _, runtime_needed = elf_program_dynamic_symbols(path, data, sections)
+        section_types = {section[1] for section in sections}
+        if (11 in section_types and symbols != runtime_imports) or (6 in section_types and needed != runtime_needed):
             raise AuditError(f"{path}: ELF section imports or dependencies disagree with PT_DYNAMIC")
+        return runtime_imports, runtime_needed
     return symbols, needed
 
 

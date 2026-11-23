@@ -226,8 +226,8 @@ async function onMessage({ data }, currentWorker) {
   try {
     if (data.type === "progress") {
       if (data.message) {
-        logs.push(`${data.appName ? `${data.appName}: ` : ""}${data.message.trim()}`);
-        logs = logs.slice(-150);
+        const entry = `${data.appName ? `${data.appName}: ` : ""}${data.message.trim()}`;
+        logs = logs.concat(entry.split(/\r\n|[\r\n]/u)).slice(-150);
         $("log").textContent = logs.join("\n");
         return;
       }
@@ -469,10 +469,12 @@ $("convert").onclick = async () => {
       if (writable === null) return;
       sink = writable;
     } else if ($("save").value === "disk") {
+      $("cancel").hidden = false;
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
       const parent = await window.showDirectoryPicker({ mode: "readwrite" });
       if (currentWorker !== worker) return;
-      const transaction = await OutputDirectoryTransaction.create(parent, name, folderLocks, locale);
+      const transaction = await OutputDirectoryTransaction.create(parent, name, folderLocks, locale, () => currentWorker === worker);
+      if (!transaction) return;
       if (currentWorker !== worker) {
         await transaction.discard();
         return;

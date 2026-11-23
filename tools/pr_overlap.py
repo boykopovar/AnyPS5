@@ -29,6 +29,8 @@ FIXES = re.compile(rf"(?<![\w-])Fixes:[ \t]*((?:{CLOSING}[ \t]+)?#\d+\b(?:(?:[ \
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))?", re.M)
 MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
+PR_PAGE_SIZE = 100
+MAX_PR_PAGES = 1000
 BASE_REF = "refs/pr/base"
 PROGRESS_EVERY = 100
 PAIR_PROGRESS_EVERY = 1000
@@ -240,43 +242,94 @@ def json_pages(out):
     return decode_pages(repair_escapes(out))
 
 
-def open_prs(base):
-    query = urlencode({"state": "open", "base": base, "per_page": 100})
-    url = f"repos/{REPO}/pulls?{query}"
-    head, out = page(f"{url}&page=1")
+class PaginationChanged(ValueError):
+    pass
+
+
+def read_pr_pages(url, number):
+    head, out = page(f"{url}&page={number}")
     pages = json_pages(out)
     if not pages:
         raise ValueError("gh api returned no JSON pages")
-    last = LAST_PAGE.search(head)
-    pushed_past_last = None
-    if last:
-        numbers = range(2, int(last.group(1)) + 1)
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            for out in executor.map(lambda number: page(f"{url}&page={number}")[1], numbers):
-                pages.extend(json_pages(out))
-        pushed_past_last = numbers.stop
-    elif NEXT_LINK.search(head):
-        current_page = 1
+    return head, pages
+
+
+def numbered_pr_page(url, number):
+    head, pages = read_pr_pages(url, number)
+    if len(pages) != 1:
+        raise ValueError(f"gh api returned multiple JSON arrays for pull request page {number}")
+    return head, pages[0]
+
+
+def open_pr_pages(url):
+    head, first = read_pr_pages(url, 1)
+    last_link = LAST_PAGE.search(head)
+    if not last_link and not NEXT_LINK.search(head):
+        return first
+    if len(first) != 1:
+        raise ValueError("gh api returned multiple JSON arrays for pull request page 1")
+    observed = {1: first[0]}
+    if last_link:
+        last = int(last_link.group(1))
+        if not 2 <= last <= MAX_PR_PAGES:
+            raise ValueError("gh api returned an invalid last page link")
+        head, tail = numbered_pr_page(url, last)
+    else:
+        last, tail = 1, first[0]
         while next_link := NEXT_LINK.search(head):
             values = parse_qs(urlsplit(next_link.group(1)).query, keep_blank_values=True).get("page", [])
-            if len(values) != 1 or re.fullmatch(r"[0-9]+", values[0]) is None or int(values[0]) <= current_page:
+            if len(values) != 1 or values[0] != str(last + 1) or last == MAX_PR_PAGES:
                 raise ValueError("gh api returned an invalid next page link")
-            current_page = int(values[0])
-            head, out = page(f"{url}&page={current_page}")
-            fetched = json_pages(out)
-            if not fetched:
-                raise ValueError("gh api returned no JSON pages")
-            pages.extend(fetched)
-        pushed_past_last = current_page + 1
-    if pushed_past_last is not None:
-        while len(pages[-1]) == 100:
-            pages.extend(json_pages(page(f"{url}&page={pushed_past_last}")[1]) or [[]])
-            pushed_past_last += 1
-    pull_requests = [pr for found in pages for pr in found]
+            last += 1
+            head, tail = numbered_pr_page(url, last)
+            observed[last] = tail
+
+    if not 0 < len(tail) <= PR_PAGE_SIZE:
+        raise PaginationChanged(f"unexpected length for last page {last}")
+    descending = [tail]
+    has_next = NEXT_LINK.search(head)
+    if has_next or len(tail) == PR_PAGE_SIZE:
+        extra_head, extra = numbered_pr_page(url, last + 1)
+        if len(extra) >= PR_PAGE_SIZE or NEXT_LINK.search(extra_head) or (extra and last == MAX_PR_PAGES):
+            raise PaginationChanged(f"pull request list grew past page {last + 1}")
+        if has_next and (not extra or len(tail) != PR_PAGE_SIZE):
+            raise PaginationChanged(f"last page {last} disagrees with its next link")
+        if extra:
+            observed[last] = tail
+            descending = [extra]
+            last += 1
+
+    for number in range(last - 1, 0, -1):
+        _, rows = numbered_pr_page(url, number)
+        if not rows or len(rows) > PR_PAGE_SIZE or (last_link and len(rows) != PR_PAGE_SIZE):
+            raise PaginationChanged(f"unexpected length for pull request page {number}")
+        if number in observed and [pr["number"] for pr in rows] != [pr["number"] for pr in observed[number]]:
+            raise PaginationChanged(f"pull request IDs changed on page {number}")
+        descending.append(rows)
+    return reversed(descending)
+
+
+def open_prs(base):
+    query = urlencode({"state": "open", "base": base, "sort": "created", "direction": "asc", "per_page": PR_PAGE_SIZE})
+    url = f"repos/{REPO}/pulls?{query}"
+    for attempt in range(2):
+        try:
+            rows = {}
+            for found in open_pr_pages(url):
+                for pr in found:
+                    number = pr["number"]
+                    if number in rows:
+                        raise PaginationChanged(f"duplicate pull request #{number} in paginated results")
+                    rows[number] = pr
+            break
+        except PaginationChanged as error:
+            if attempt:
+                raise ValueError(f"could not establish pull request pagination consistency after one retry: {error}") from error
+            progress(f"pull request pagination changed ({error}); retrying once")
     prs = {}
-    for pr in pull_requests:
-        prs[pr["number"]] = {
-            "ref": f"refs/pr/{pr['number']}",
+    for number, pr in rows.items():
+        prs[number] = {
+            "ref": f"refs/pr/{number}",
             "sha": pr["head"]["sha"],
             "branch": pr["head"]["ref"],
             **({"head_repo": head_repo["full_name"]} if (head_repo := pr["head"].get("repo")) else {}),
