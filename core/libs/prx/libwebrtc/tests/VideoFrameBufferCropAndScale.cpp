@@ -408,6 +408,9 @@ void TestAGuestBufferIsConverted() {
     Require(native.conversions == 2 && converted->refCount.load() == 1 && untouched == &native);
     RequireThrows<std::runtime_error>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, 0, 4); });
     RequireThrows<std::runtime_error>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, 4, -1); });
+    RequireThrows<std::runtime_error>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, INT_MAX, 4); });
+    RequireThrows<std::runtime_error>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, 4, INT_MAX); });
+    RequireThrows<std::runtime_error>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, INT_MAX, INT_MAX); });
     Require(native.conversions == 2 && untouched == &native);
     native.converted = nullptr;
     const std::size_t before = allocations.size();
@@ -461,7 +464,7 @@ void TestInvalid() {
         RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, source, crop[0], crop[1], crop[2], crop[3], 4, 4); });
         Require(result == source && source->refCount.load() == 1 && allocations.size() == before);
     }
-    const int sizes[][2] = {{0, 4}, {4, 0}, {-4, 4}, {4, -4}, {0, 0}};
+    const int sizes[][2] = {{0, 4}, {4, 0}, {-4, 4}, {4, -4}, {0, 0}, {INT_MAX, 4}, {4, INT_MAX}, {INT_MAX, INT_MAX}, {INT_MAX - 1, 2}, {INT_MIN, 4}, {4, INT_MIN}, {-1, -1}};
     for (const auto& size : sizes) {
         RequireThrows<std::runtime_error>([&] { cropAndScale(&result, source, 0, 0, 8, 6, size[0], size[1]); });
         Require(result == source && source->refCount.load() == 1 && allocations.size() == before);

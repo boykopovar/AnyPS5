@@ -102,7 +102,8 @@ void** APS5_VABI _ZN6webrtc16VideoFrameBuffer12CropAndScaleEiiiiii_nid_postfix(
     if (!result) throw std::invalid_argument("VideoFrameBuffer::CropAndScale requires a result");
     if (!buffer || !buffer->vtable) throw std::invalid_argument("VideoFrameBuffer::CropAndScale requires a buffer with a vtable");
     WebRtcRefCountedI420Buffer* created = nullptr;
-    _ZN6webrtc10I420Buffer6CreateEiiiii_nid_postfix(&created, scaledWidth, scaledHeight, scaledWidth, (scaledWidth + 1) / 2, (scaledWidth + 1) / 2);
+    const int chromaStride = scaledWidth / 2 + scaledWidth % 2;
+    _ZN6webrtc10I420Buffer6CreateEiiiii_nid_postfix(&created, scaledWidth, scaledHeight, scaledWidth, chromaStride, chromaStride);
     Reference target{created};
     Reference source;
     reinterpret_cast<ToI420>(Slot(buffer, ToI420Slot))(&source.object, buffer);
