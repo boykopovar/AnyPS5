@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -83,12 +84,16 @@ public:
         for (auto& entry : entries) {
             const std::uint64_t startUs = entry.startMs * 1000;
             const std::uint64_t endUs = (entry.startMs + entry.holdMs) * 1000;
+            if (endUs > std::numeric_limits<std::uint64_t>::max() - loopUs) throw std::runtime_error("APS5_PAD_SCRIPT_LOOP_MS: loop period is too large");
             scriptEnd = std::max(scriptEnd, endUs);
             script.push_back({std::move(entry), startUs, endUs, -1});
         }
     }
 
-    void SetLoopMs(std::uint64_t value) { loopUs = value * 1000; }
+    void SetLoopMs(std::uint64_t value) {
+        if (value > (std::numeric_limits<std::uint64_t>::max() - scriptEnd) / 1000) throw std::runtime_error("APS5_PAD_SCRIPT_LOOP_MS: loop period is too large");
+        loopUs = value * 1000;
+    }
 
     void SetLive(const std::filesystem::path& path) {
         livePath = path;

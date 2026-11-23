@@ -247,6 +247,19 @@ class EncodingTests(unittest.TestCase):
                           stderr.buffer.getvalue().decode("utf-8"))
             self.assertFalse(output.exists())
 
+    def test_a_source_root_outside_the_ansi_code_page_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary).resolve() / "исходники"
+            source.mkdir()
+            subprocess.run(["git", "init", "-q", str(source)], check=True)
+            (source / "file").write_text("fixture\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(source), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                            "commit", "-qm", "fixture"], check=True)
+            commit = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True,
+                                    check=True).stdout.decode("ascii").strip()
+            self.assertEqual(gate.identity(source, commit), {"source": str(source), "commit": commit})
+
 
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja") and shutil.which("ctest"), "requires CMake, Ninja and CTest")
 class FixtureTests(unittest.TestCase):
@@ -510,16 +523,17 @@ class CommandTests(FixtureTests):
             with self.subTest(timeout=timeout):
                 marker = self.root / ("timeout-marker" if timeout else "exit-marker")
                 ready = marker.with_suffix(".ready")
-                child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(1); Path({str(marker)!r}).touch()"
+                deadline = time.time() + 4
+                child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(max(0, {deadline!r} - time.time())); Path({str(marker)!r}).touch()"
                 parent = f"import subprocess,sys,time; from pathlib import Path; subprocess.Popen([sys.executable,'-c',{child!r}])\nwhile not Path({str(ready)!r}).exists(): time.sleep(.01)\n"
                 if timeout:
                     parent += "time.sleep(30)\n"
                     with self.assertRaises(subprocess.TimeoutExpired):
-                        gate.run([sys.executable, "-c", parent], self.root / "timeout.log", os.environ, .5)
+                        gate.run([sys.executable, "-c", parent], self.root / "timeout.log", os.environ, 3)
                 else:
                     self.assertEqual(gate.run([sys.executable, "-c", parent], self.root / "exit.log", os.environ, 5), 0)
                 self.assertTrue(ready.exists())
-                time.sleep(1.1)
+                time.sleep(max(0, deadline - time.time()) + .1)
                 self.assertFalse(marker.exists())
 
     def test_symlink_loops_are_setup_errors(self):

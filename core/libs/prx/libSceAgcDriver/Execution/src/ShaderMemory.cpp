@@ -653,7 +653,7 @@ bool ShaderMemory::readWords(void* context, std::uint64_t address, std::uint32_t
                 std::memcpy(values, page->words.data() + index, bytes);
                 page->read.SetRun(index, words);
                 page->recent.SetRun(index, words);
-                CaptureTotals().reads += words;
+                if (CaptureProfiled()) CaptureTotals().reads += words;
             } else {
                 const auto offsetWords = static_cast<std::uint64_t>(values - startValues);
                 for (std::size_t word = 0; word < words; ++word) {

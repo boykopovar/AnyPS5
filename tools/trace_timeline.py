@@ -136,7 +136,7 @@ def main(arguments=None):
     output = options.output or options.trace.with_suffix(".html")
     if output.absolute() == options.trace.absolute() or (output.exists() and output.samefile(options.trace)):
         raise ValueError("output must not overwrite the input trace")
-    output.write_text(page(svg(laid), options.trace.name, notes), encoding="utf-8")
+    output.write_text(page(svg(laid), options.trace.name, notes), encoding="utf-8", errors="backslashreplace")
     print(f"wrote {output}")
     return 0
 
