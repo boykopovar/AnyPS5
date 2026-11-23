@@ -149,8 +149,12 @@ int main() {
 
     Require(sceRudpActivate(-1, nullptr, 0) == static_cast<int>(0x80770004));
 
+    constexpr int internalIoThreadEnabled = static_cast<int>(0x80770010);
     Require(sceRudpEnableInternalIOThread(0, 0) == 0);
-    Require(sceRudpEnableInternalIOThread(1024, 1) == 0);
+    Require(sceRudpEnableInternalIOThread(1024, 1) == internalIoThreadEnabled);
+    Require(sceRudpProcessEvents(0) == internalIoThreadEnabled);
+    Require(sceRudpEnd() == 0);
+    Require(sceRudpInit_nid_postfix(pool, sizeof(pool)) == 0);
 
     Require(sceRudpBind(12345, 0, 0, 2) == invalidContextId);
 
