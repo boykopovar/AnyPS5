@@ -34,7 +34,6 @@ int main() {
     Require(NotImplemented([] { catgets_nid_postfix(nullptr, 1, 1, "s"); }));
     Require(NotImplemented([] { catclose_nid_postfix(nullptr); }));
     Require(NotImplemented([] { nl_langinfo_nid_postfix(0); }));
-    Require(NotImplemented([] { strptime_nid_postfix("", "", nullptr); }));
     Require(NotImplemented([] { fmtmsg_nid_postfix(0, nullptr, 0, nullptr, nullptr, nullptr); }));
     Require(NotImplemented([] { confstr_nid_postfix(0, nullptr, 0); }));
     Require(NotImplemented([] { uname_nid_postfix(nullptr); }));

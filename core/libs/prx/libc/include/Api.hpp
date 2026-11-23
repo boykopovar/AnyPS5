@@ -497,7 +497,6 @@ void* APS5_VABI catopen_nid_postfix(const char* name, int flag);
 char* APS5_VABI catgets_nid_postfix(void* catalog, int set, int message, const char* string);
 int APS5_VABI catclose_nid_postfix(void* catalog);
 char* APS5_VABI nl_langinfo_nid_postfix(int item);
-char* APS5_VABI strptime_nid_postfix(const char* buffer, const char* format, void* tm);
 int APS5_VABI fmtmsg_nid_postfix(std::int64_t classification, const char* label, int severity, const char* text, const char* action, const char* tag);
 std::size_t APS5_VABI confstr_nid_postfix(int name, char* buffer, std::size_t length);
 int APS5_VABI uname_nid_postfix(void* name);

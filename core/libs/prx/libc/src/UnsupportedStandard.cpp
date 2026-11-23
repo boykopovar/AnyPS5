@@ -54,10 +54,6 @@ char* APS5_VABI nl_langinfo_nid_postfix(int) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-char* APS5_VABI strptime_nid_postfix(const char*, const char*, void*) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI fmtmsg_nid_postfix(std::int64_t, const char*, int, const char*, const char*, const char*) {
     NotImplemented_nid_no_patch(__func__);
 }
