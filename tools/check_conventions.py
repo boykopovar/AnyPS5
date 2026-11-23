@@ -30,6 +30,7 @@ RULES = {
     "alignment": ("error", "CONTRIBUTING.md#code", "MinGW GCC rejects static objects aligned above 8192 bytes; align a larger block at run time inside a bigger buffer"),
     "notes-file": ("error", "CONTRIBUTING.md#branches-and-pull-requests", "Notes, investigation and agent files go in the pull request, not in the repository; only the root AGENTS.md is allowed"),
     "binary": ("error", "docs/dev/CONVENTIONS.md", "Only UTF-8 text files in the repository; images go in the gist comments"),
+    "executable-script": ("error", "CONTRIBUTING.md#code", "A top-level tools/*.py file with a shebang is executable (mode 100755), so direct invocation matches the shebang"),
     "ci-gate": ("error", "CONTRIBUTING.md#build-and-test", "A job that runs for pull requests needs a file filter: paths on the pull_request trigger, or needs eligibility and an if on its outputs"),
     "doc-link": ("error", "CONTRIBUTING.md#documentation", "Relative link to a file that does not exist"),
     "doc-anchor": ("error", "CONTRIBUTING.md#documentation", "The #fragment of a link to a Markdown file does not match any heading of that file"),
@@ -399,6 +400,12 @@ class Check:
         return {path for key, path in values.items() if key.endswith(".path") and values.get(f"{key[:-5]}.url")}
 
     def repository(self):
+        scripts = [path for path in self.tree if PurePosixPath(path).parent == PurePosixPath("tools") and path.endswith(".py")]
+        self.read(scripts)
+        for path in sorted(scripts):
+            if self.blobs.get(path, b"").startswith(b"#!") and self.modes[path] != "100755":
+                self.report("executable-script", path, 1)
+
         gitlinks = {path for path, mode in self.modes.items() if mode == "160000" and path.startswith("3rdparty/")}
         checked = gitlinks if ".gitmodules" in self.status else gitlinks & self.status.keys()
         if checked:

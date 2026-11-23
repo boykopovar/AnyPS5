@@ -530,6 +530,9 @@ if(BUILD_TESTING)
         add_test(NAME conventions_ci_gate COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_ci_gate.py)
         set_tests_properties(conventions_ci_gate PROPERTIES TIMEOUT 20)
+        add_test(NAME conventions_executable_scripts COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_executable_scripts.py)
+        set_tests_properties(conventions_executable_scripts PROPERTIES TIMEOUT 20)
         add_test(NAME preview_pad_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_preview_pad_timeline.py)
         set_tests_properties(preview_pad_timeline PROPERTIES TIMEOUT 20)
