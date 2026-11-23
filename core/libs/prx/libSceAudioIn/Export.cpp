@@ -19,6 +19,13 @@
 #include <string_view>
 #include <stdexcept>
 #include "prx/libScePad/include/HostAudioInControl.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 
 namespace {
 
@@ -149,8 +156,21 @@ void applyMode(int mode, int value) {
 int openPort(std::uint32_t len, std::uint32_t freq, std::uint32_t param) {
     Format format{};
     if (!formatOf(param, format)) return AUDIO_IN_ERROR_INVALID_PARAM;
+#ifdef _WIN32
+    std::string requestedName;
+    if (const auto* configuredName = _wgetenv(L"ANYPS5_AUDIO_IN_DEVICE")) {
+        const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, configuredName, -1, nullptr, 0, nullptr, nullptr);
+        if (bytes == 0) return AUDIO_IN_ERROR_INVALID_DEVICE;
+        requestedName.resize(static_cast<std::size_t>(bytes));
+        if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, configuredName, -1, requestedName.data(), bytes, nullptr, nullptr) != bytes) {
+            return AUDIO_IN_ERROR_INVALID_DEVICE;
+        }
+        requestedName.pop_back();
+    }
+#else
     const char* const configuredName = std::getenv("ANYPS5_AUDIO_IN_DEVICE");
     const std::string_view requestedName = configuredName ? std::string_view(configuredName) : std::string_view{};
+#endif
     const bool explicitDevice = !requestedName.empty() && requestedName != "default";
     std::lock_guard lock(g_mutex);
     for (std::size_t i = g_ports.size(); i-- > 0;) {

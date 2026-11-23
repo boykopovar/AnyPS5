@@ -38,13 +38,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Export trace interval summaries as CSV")
     parser.add_argument("summary", type=Path)
     parser.add_argument("--require-complete", action="store_true",
-                        help="require a nonempty capture with contiguous, unique intervals, "
+                        help="require a nonempty capture with contiguous times and present ranges, unique intervals, "
                              "no dropped events and unchanged identity")
     parser.add_argument("--spreadsheet-safe", action="store_true",
                         help="opt-in tab prefix changes text cells; spreadsheet behavior varies and save/reopen not guaranteed")
     args = parser.parse_args(argv)
     try:
-        result = trace_digest.digest_intervals(trace_digest.load_intervals(args.summary))
+        records = trace_digest.load_intervals(args.summary)
+        result = trace_digest.digest_intervals(records)
         if args.require_complete:
             intervals = result["intervals"]
             if not intervals or result["identity_changed_at"] or any(row["trace_dropped"] for row in intervals):
@@ -57,6 +58,15 @@ def main(argv=None):
                 if (start, end) == (previous_start, previous_end):
                     raise ValueError(f"interval {index} duplicates the previous interval at {start} s")
                 previous_start, previous_end = start, end
+            expected_present = None
+            for index, record in enumerate(records, start=1):
+                window = record.get("window")
+                first = window.get("first_present") if isinstance(window, dict) else None
+                if type(first) is not int or first < 0:
+                    raise ValueError(f"interval {index} window.first_present must be a non-negative integer")
+                if expected_present is not None and first != expected_present:
+                    raise ValueError(f"interval {index} starts at present {first}; expected present {expected_present}")
+                expected_present = first + record["presents"]
         text = render(result, args.spreadsheet_safe)
     except (EOFError, OSError, ValueError, KeyError, TypeError, RecursionError) as error:
         parser.error(str(error))
