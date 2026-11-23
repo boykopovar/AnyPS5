@@ -362,6 +362,10 @@ struct Sock {
 #ifdef _WIN32
     bool connectRefused = false;
 #endif
+#ifdef __linux__
+    bool connectStarting = false;
+    std::uint64_t connectAttempt = 0;
+#endif
     bool aborted = false;
     bool unboundReceiveStopped = false;
     bool oobInline = false;
@@ -471,6 +475,7 @@ bool g_net_inited = false;
 bool g_net_init_param_set = false;
 std::array<std::uint8_t, 32> g_net_init_param{};
 std::atomic<GuestSceNetTest::ResolverLookup> g_resolverLookupForTests{nullptr};
+std::atomic<GuestSceNetTest::ConnectStart> g_connectStartForTests{nullptr};
 std::atomic<GuestSceNetTest::ResolverReverseLookup> g_resolverReverseLookupForTests{nullptr};
 
 int* errno_slot() {
@@ -1028,6 +1033,10 @@ std::optional<std::uint32_t> InterfaceIdOfHostIndex(std::uint32_t index) {
 
 void GuestSceNetTest::SetResolverLookupForTests_nid_no_patch(ResolverLookup lookup) noexcept {
     g_resolverLookupForTests.store(lookup);
+}
+
+void GuestSceNetTest::SetConnectStartForTests_nid_no_patch(ConnectStart hook) noexcept {
+    g_connectStartForTests.store(hook);
 }
 
 void GuestSceNetTest::SetResolverReverseLookupForTests_nid_no_patch(ResolverReverseLookup lookup) noexcept {
@@ -1639,7 +1648,7 @@ static bool pending_connect_refused(Sock& socket) {
 }
 #endif
 
-#if defined(_WIN32) || defined(__linux__)
+#ifdef _WIN32
 static void note_connect_pending(int s, const Sock& socket, bool pending) {
     std::lock_guard lock(g_mutex);
     const auto current = g_socks.find(s);
@@ -1648,14 +1657,35 @@ static void note_connect_pending(int s, const Sock& socket, bool pending) {
 #endif
 
 #ifdef __linux__
+static std::uint64_t begin_connect(int s, const Sock& socket) {
+    std::lock_guard lock(g_mutex);
+    const auto current = g_socks.find(s);
+    if (current == g_socks.end() || current->second.native != socket.native) return 0;
+    current->second.connectPending = true;
+    current->second.connectStarting = true;
+    return ++current->second.connectAttempt;
+}
+
+static void end_connect(int s, const Sock& socket, std::uint64_t attempt, bool pending) {
+    std::lock_guard lock(g_mutex);
+    const auto current = g_socks.find(s);
+    if (current == g_socks.end() || current->second.native != socket.native || current->second.connectAttempt != attempt) return;
+    current->second.connectStarting = false;
+    current->second.connectPending = pending;
+}
+
 static bool send_before_connect(int s, const Sock& socket) {
     if (!socket.connectPending) return false;
+    if (socket.connectStarting) return true;
     pollfd entry{socket.native->value, POLLOUT, 0};
     int ready;
     do ready = ::poll(&entry, 1, 0); while (ready < 0 && errno == EINTR);
     if (ready < 0) throw std::runtime_error("sceNetSend: polling a pending connect failed, errno " + std::to_string(errno));
     if (ready == 0) return true;
-    note_connect_pending(s, socket, false);
+    std::lock_guard lock(g_mutex);
+    const auto current = g_socks.find(s);
+    if (current != g_socks.end() && current->second.native == socket.native && current->second.connectAttempt == socket.connectAttempt &&
+        !current->second.connectStarting) current->second.connectPending = false;
     return false;
 }
 #endif
@@ -1716,11 +1746,16 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     }
 #endif
 #ifdef __linux__
-    if (socket.type == NET_SOCK_STREAM) note_connect_pending(s, socket, true);
+    const std::uint64_t attempt = socket.type == NET_SOCK_STREAM ? begin_connect(s, socket) : 0;
+    if (attempt != 0) {
+        if (const auto hook = g_connectStartForTests.load()) hook(s);
+    }
 #endif
     if (::connect(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) == 0) {
-#if defined(_WIN32) || defined(__linux__)
+#ifdef _WIN32
         if (socket.type == NET_SOCK_STREAM) note_connect_pending(s, socket, false);
+#elif defined(__linux__)
+        if (attempt != 0) end_connect(s, socket, attempt, false);
 #endif
 #if defined(_WIN32) || defined(__APPLE__)
         note_local_address(s, socket);
@@ -1754,10 +1789,10 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     }
 #elif defined(__APPLE__)
     if (socket.type == NET_SOCK_STREAM && errno == EISCONN && dropped_tcp_connection(socket.native->value)) return fail(NET_ECONNREFUSED);
-#else
-    if (socket.type == NET_SOCK_STREAM && errno != EINPROGRESS && errno != EALREADY && errno != EINTR) {
+#elif defined(__linux__)
+    if (attempt != 0) {
         const int saved = errno;
-        note_connect_pending(s, socket, false);
+        end_connect(s, socket, attempt, saved == EINPROGRESS || saved == EALREADY || saved == EINTR);
         errno = saved;
     }
 #endif

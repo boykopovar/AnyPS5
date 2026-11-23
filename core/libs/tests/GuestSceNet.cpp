@@ -2114,6 +2114,12 @@ static void CheckEpollClosedStream() {
 }
 
 #ifdef __linux__
+static std::atomic<std::int64_t> sendWhileConnectStarts{0};
+
+static void SendWhileConnectStarts(int socket) {
+    sendWhileConnectStarts = sceNetSend(socket, "x", 1, 0);
+}
+
 static void CheckSendDuringConnect() {
     const int listener = socket_nid_postfix(2, 1, 0);
     Require(listener >= 0);
@@ -2128,8 +2134,14 @@ static void CheckSendDuringConnect() {
         const int client = sceNetSocket("pending-connect", 2, 1, 6);
         Require(client >= 0 && sceNetSetsockopt(client, 0xffff, 0x1200, &on, sizeof(on)) == 0);
         clients.push_back(client);
-        if (sceNetConnect(client, address.data(), address.size()) == 0) continue;
-        Require(*sceNetErrnoLoc() == 36);
+        sendWhileConnectStarts = 0;
+        GuestSceNetTest::SetConnectStartForTests_nid_no_patch(SendWhileConnectStarts);
+        const int connected = sceNetConnect(client, address.data(), address.size());
+        const int connectError = *sceNetErrnoLoc();
+        GuestSceNetTest::SetConnectStartForTests_nid_no_patch(nullptr);
+        Require(sendWhileConnectStarts == static_cast<int>(0x80410100u | 57));
+        if (connected == 0) continue;
+        Require(connectError == 36);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         std::array<std::uint8_t, 16> peer{};
         std::uint32_t peerSize = peer.size();
