@@ -354,6 +354,8 @@ int main(int argc, char** argv) {
             constexpr std::array<float, 8> mirrorXs{-64.25f, -1.0f - 1.0f / 65536.0f, -1.0f, -1.0f + 1.0f / 65536.0f, -0.5f, -1.0f / 512.0f, 0.5f, 64.25f};
             constexpr std::array<float, 8> mirrorYs{-4.25f, -1.0f - 1.0f / 65536.0f, -1.0f, -1.0f + 1.0f / 65536.0f, -0.5f, -1.0f / 512.0f, 0.5f, 4.25f};
             for (const auto x : mirrorXs) for (const auto y : mirrorYs) coordinates.push_back({x, y});
+            constexpr std::array<float, 4> precisionBoundaries{1.0f - 3.0f / 1024.0f, 0.5f - 3.0f / 1024.0f, 1.0f - 3.0f / 2048.0f, 0.5f - 3.0f / 2048.0f};
+            for (const auto value : precisionBoundaries) coordinates.push_back({value, value});
             auto program = LevelZero;
             alignas(256) std::array<std::uint32_t, 18> oneDCode = LevelZeroCode;
             if (oneD) {
@@ -393,7 +395,7 @@ int main(int argc, char** argv) {
                     Require(std::isfinite(actual) && std::fabs(static_cast<double>(actual) - expected) <= 1e-4, "MC sampler differs from the native gfx1032 model at lane " + std::to_string(lane) + " component " + std::to_string(component) + ": got " + std::to_string(actual) + ", expected " + std::to_string(expected));
                 }
             }
-            std::cout << "MC_COORD_TRUNC oracle model passed 128 coordinate pairs\n";
+            std::cout << "MC_COORD_TRUNC oracle model passed " << coordinates.size() << " coordinate pairs\n";
             return 0;
         }
         Require(argc == 1, "invalid image sample test arguments");
