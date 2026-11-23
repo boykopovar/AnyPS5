@@ -261,6 +261,8 @@ std::int32_t writeImage(const Decoder::Jpeg::Header& header, std::span<const std
     return static_cast<std::int32_t>(outputWidth << 16 | outputHeight);
 }
 
+enum class FirstScan { Absent, Pending, Rejected, Complete };
+
 struct InputStream {
     JpegDecInputCallback input = nullptr;
     void* argument = nullptr;
@@ -271,6 +273,7 @@ struct InputStream {
     std::optional<Decoder::Jpeg::Header> header;
     std::uint32_t downScale = 0;
     std::size_t scanOffset = 2;
+    FirstScan firstScan = FirstScan::Absent;
     bool inScan = false;
     std::optional<std::size_t> end;
     std::atomic<bool> busy = false;
@@ -326,11 +329,12 @@ void pull(InputStream& stream, std::uint32_t size, ReadUntil until) {
         stream.chunkSize -= count;
         size -= count;
         scanMarkers(stream, until);
-        if (stream.end || (until == ReadUntil::Scan && stream.inScan)) return;
+        if (stream.end || (until == ReadUntil::Scan && stream.firstScan == FirstScan::Complete)) return;
     }
 }
 
 bool scanMarkers(InputStream& stream, ReadUntil until) {
+    if (until == ReadUntil::Scan && stream.firstScan == FirstScan::Rejected) return true;
     const std::vector<std::uint8_t>& data = stream.data;
     std::size_t& at = stream.scanOffset;
     while (true) {
@@ -354,11 +358,23 @@ bool scanMarkers(InputStream& stream, ReadUntil until) {
             at += 2;
             continue;
         }
+        const bool firstScan = marker == 0xDA && until == ReadUntil::Scan;
+        if (firstScan) stream.firstScan = FirstScan::Pending;
         if (at + 3 >= data.size()) return false;
         const std::size_t length = (static_cast<std::size_t>(data[at + 2]) << 8) | data[at + 3];
-        if (length < 2) return true;
+        if (length < 2) {
+            if (firstScan) stream.firstScan = FirstScan::Rejected;
+            return true;
+        }
         if (at + 2 + length > data.size()) return false;
         at += 2 + length;
+        if (firstScan) {
+            if (!Decoder::Jpeg::HasScanHeader(std::span(data).first(at))) {
+                stream.firstScan = FirstScan::Rejected;
+                return true;
+            }
+            stream.firstScan = FirstScan::Complete;
+        }
         if (marker == 0xDA) {
             stream.inScan = true;
             if (until == ReadUntil::Scan) return true;
@@ -385,8 +401,9 @@ std::int32_t parseStream(const Context* context, const JpegDecInputControlParam*
     InputStream& stream = *use;
     stream.input = param->input;
     stream.argument = param->input_argument;
-    while (!stream.inScan && stream.status == 0 && mayBecomeHeader(stream)) pull(stream, INPUT_BLOCK_SIZE, ReadUntil::Scan);
+    while (stream.firstScan != FirstScan::Complete && stream.status == 0 && mayBecomeHeader(stream)) pull(stream, INPUT_BLOCK_SIZE, ReadUntil::Scan);
     if (stream.status < 0) return stream.status;
+    if (stream.firstScan == FirstScan::Pending || stream.firstScan == FirstScan::Rejected) return SCE_JPEG_DEC_ERROR_DECODE_ERROR;
     stream.header = Decoder::Jpeg::ParseHeader(stream.data);
     if (!stream.header) return SCE_JPEG_DEC_ERROR_DECODE_ERROR;
     stream.downScale = param->down_scale;

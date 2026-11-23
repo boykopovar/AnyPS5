@@ -143,6 +143,12 @@ std::optional<Image> DecodeScaled(std::span<const std::uint8_t> jpeg, std::uint3
     return image;
 }
 
+bool HasScanHeader(std::span<const std::uint8_t> jpeg) {
+    Handle handle(TJINIT_DECOMPRESS);
+    if (tj3Set(handle, TJPARAM_STOPONWARNING, 1) < 0) throw std::runtime_error("Jpeg::HasScanHeader: decoder configuration failed");
+    return tj3DecompressHeader(handle, jpeg.data(), jpeg.size()) == 0 && tj3Get(handle, TJPARAM_JPEGWIDTH) > 0;
+}
+
 std::optional<Header> ParseHeader(std::span<const std::uint8_t> jpeg) {
     if (jpeg.empty() || jpeg.size() > INT_MAX) return std::nullopt;
 

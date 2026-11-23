@@ -172,11 +172,38 @@ void RequireHeaderBoundary(const std::vector<std::uint8_t>& jpeg, std::size_t ch
     Require(image == reference && sceJpegDecDelete(decoder.handle) == 0);
 }
 
+void RequireInvalidScan(const std::vector<std::uint8_t>& jpeg, std::initializer_list<std::uint8_t> scan) {
+    std::vector<std::uint8_t> bytes(jpeg.begin(), jpeg.begin() + 609);
+    bytes.insert(bytes.end(), {0xff, 0xda});
+    bytes.insert(bytes.end(), scan);
+    for (const std::int32_t failure : {-123, 0}) {
+        JpegHandle decoder(227);
+        Source source{bytes, 1};
+        source.failure = failure;
+        source.failureAt = bytes.size();
+        auto parse = StreamParam(0x10, source);
+        JpegDecImageInfo info{};
+        info.image_width = 0xaabbccdd;
+        info.image_height = 0x11223344;
+        const auto expected = failure < 0 ? failure : static_cast<std::int32_t>(0x80650012);
+        Require(sceJpegDecDecodeWithInputControl(decoder.handle, &parse, &info) == expected);
+        Require(source.calls == bytes.size() + 1 && info.image_width == 0xaabbccdd && info.image_height == 0x11223344);
+        Require(sceJpegDecDelete(decoder.handle) == 0);
+    }
+}
+
 void CheckFirmwareHeaderFixture() {
     std::ifstream file(JPEG_TEST_IMAGE, std::ios::binary);
     Require(file.is_open());
     std::vector<std::uint8_t> jpeg{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
     Require(jpeg.size() > 1000 && jpeg[609] == 0xff && jpeg[610] == 0xda);
+    RequireInvalidScan(jpeg, {0, 2, 0});
+    RequireInvalidScan(jpeg, {0, 0});
+    RequireInvalidScan(jpeg, {0, 1, 0});
+    RequireInvalidScan(jpeg, {0, 8, 1, 1, 0, 0, 63});
+    RequireInvalidScan(jpeg, {0, 8, 2, 1, 0, 0, 63, 0});
+    RequireInvalidScan(jpeg, {0, 8, 1, 9, 0, 0, 63, 0});
+    RequireInvalidScan(jpeg, {0, 10, 2, 1, 0, 1, 0, 0, 63, 0});
     RequireHeaderBoundary(jpeg, 100, 700);
     RequireHeaderBoundary(jpeg, 1000, 1000);
     RequireHeaderBoundary(jpeg, 4000, 4000);
