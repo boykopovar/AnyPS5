@@ -3,6 +3,7 @@
 #include "prx/libSceSystemService/libSceSystemService.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -123,10 +124,30 @@ void TestShell() {
     });
     Case("sceSystemStateMgrIsShellUIShutdownInProgress", [] { return !sceSystemStateMgrIsShellUIShutdownInProgress(); });
     Case("sceShellCoreUtilGetSocialScreenStatus", [] { return ReportsInactive(sceShellCoreUtilGetSocialScreenStatus); });
+    Case("sceShellCoreUtilGetSocialScreenStatus null output", [] {
+        return RejectsNullOutput(sceShellCoreUtilGetSocialScreenStatus, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+    });
+    Case("sceShellCoreUtilGetSocialScreenStatus unwritable output", [] {
+        return RejectsUnwritableOutput(sceShellCoreUtilGetSocialScreenStatus, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+    });
     Case("sceShellCoreUtilIsEyeToEyeDistanceAdjusted", [] { return ReportsNotAdjusted(sceShellCoreUtilIsEyeToEyeDistanceAdjusted); });
     Case("sceSystemServiceIsEyeToEyeDistanceAdjusted", [] {
         return ReportsNotAdjusted(sceSystemServiceIsEyeToEyeDistanceAdjusted) &&
             sceSystemServiceIsEyeToEyeDistanceAdjusted(LOGGED_IN_USER, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER;
+    });
+    Case("sceShellCoreUtilIsEyeToEyeDistanceAdjusted unwritable output", [] {
+        errno = 73;
+        try {
+            sceShellCoreUtilIsEyeToEyeDistanceAdjusted(LOGGED_IN_USER, reinterpret_cast<std::uint8_t*>(0x10));
+        } catch (const std::runtime_error&) {
+            return errno == 73;
+        }
+        return false;
+    });
+    Case("sceSystemServiceIsEyeToEyeDistanceAdjusted unwritable output", [] {
+        errno = 73;
+        return sceSystemServiceIsEyeToEyeDistanceAdjusted(LOGGED_IN_USER, reinterpret_cast<std::uint8_t*>(0x10)) ==
+            SYSTEM_SERVICE_ERROR_PARAMETER && errno == 73;
     });
 }
 

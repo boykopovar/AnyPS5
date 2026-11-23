@@ -104,8 +104,10 @@ static void CheckAioAdmission() {
 }
 
 static int g_aioSourceCalls = 0;
+static std::uintptr_t g_aioSourceAddress = 0;
 
-static void FailAioSource(std::uintptr_t, std::size_t) {
+static void FailAioSource(std::uintptr_t address, std::size_t) {
+    if (address != g_aioSourceAddress) return;
     if (++g_aioSourceCalls % 2 == 0) throw std::runtime_error("AIO source fault injection");
 }
 
@@ -116,6 +118,7 @@ static void CheckAioRollback() {
     Check(fd >= 0);
     std::array<KernelAioResult, 2> results{{{-7, 7}, {-7, 7}}};
     char byte = 'A';
+    g_aioSourceAddress = reinterpret_cast<std::uintptr_t>(&byte);
     KernelAioRwRequest requests[2]{{0, 1, &byte, &results[0], fd}, {1, 1, &byte, &results[1], fd}};
     for (const auto submit : {sceKernelAioSubmitWriteCommands, sceKernelAioSubmitWriteCommandsMultiple}) {
         GuestArena::GuestArenaSetHostReadHook_nid_no_patch(FailAioSource);

@@ -99,6 +99,7 @@ int main() {
     NpWebApiContentParameter typeless{8, nullptr, {}};
     Require(intCreateRequest(user, nullptr, "/v1", 0, nullptr, nullptr, &request) == InvalidArgument && intCreateRequest(user, "group", nullptr, 0, nullptr, nullptr, &request) == InvalidArgument, "an internal request without a group or path was taken");
     Require(intCreateRequest(user, "group", "/v1", 5, &typeless, nullptr, &request) == InvalidArgument, "a method past PATCH was not refused before the content parameter");
+    Require(intCreateRequest(user, "group", "/v1", -1, &typeless, nullptr, &request) == InvalidArgument && request == 77, "a negative method was not refused");
     Require(intCreateRequest(user, "group", "/v1", 0, &typeless, nullptr, &request) == InvalidContentParameter, "content without a type was taken");
     Require(intCreateRequest(user + 1, "group", "/v1", 4, nullptr, nullptr, &request) == UserContextNotFound && request == 77, "an internal request for an unknown user context was taken");
     Require(intCreateRequest(user, "group", "/v1", 4, nullptr, nullptr, &request) == 0 && (request >> 32) == user, "a PATCH internal request was not created in the user context");

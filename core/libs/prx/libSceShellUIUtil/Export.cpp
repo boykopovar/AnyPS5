@@ -1,9 +1,12 @@
 #include "prx/libSceShellUIUtil/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
 #include <mutex>
+#include <string>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -20,8 +23,21 @@ std::recursive_mutex g_mutex;
 bool g_initialized = false;
 std::atomic<std::uint32_t> g_taskTokens{0};
 
+bool IsValidGuestWrite(void* pointer, std::size_t size) {
+    if (pointer == nullptr) return false;
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(pointer, size != 0 ? size : 1);
+    errno = savedErrno;
+    return writable;
+}
+
 bool StringTooLong(const char* text) {
-    return strnlen(text, StringLimit) > StringLimit - 1;
+    if (text == nullptr) return true;
+    std::string copy;
+    const int savedErrno = errno;
+    const int error = CopyGuestString_nid_no_patch(text, StringLimit, copy);
+    errno = savedErrno;
+    return error != 0 || copy.length() > StringLimit - 1;
 }
 
 int CallService(const char* name) {
@@ -46,11 +62,13 @@ int APS5_VABI sceShellUIUtilCreateTaskToken() {
 }
 
 int APS5_VABI sceShellUIUtilGetAppUrl(const char* application, const char* parameter, char* output, std::uint32_t capacity, std::uint32_t* outputSize) {
-    (void)outputSize;
     if (application == nullptr || parameter == nullptr || StringTooLong(application)) {
         return ErrorInvalidArgument;
     }
-    if (capacity > AppUrlCapacityLimit || StringTooLong(parameter) || (capacity != 0 && output == nullptr)) {
+    if (capacity > AppUrlCapacityLimit || StringTooLong(parameter) || (capacity != 0 && !IsValidGuestWrite(output, capacity))) {
+        return ErrorInvalidArgument;
+    }
+    if (outputSize != nullptr && !IsValidGuestWrite(outputSize, sizeof(*outputSize))) {
         return ErrorInvalidArgument;
     }
     return CallService(__func__);
@@ -67,8 +85,10 @@ int APS5_VABI sceShellUIUtilLaunchByUri(const char* uri, const ShellUIUtilLaunch
         return ErrorInvalidArgument;
     }
     std::uint32_t size = 0;
-    std::memcpy(&size, parameter, sizeof(size));
-    if (size != LaunchParameterSize) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, parameter, sizeof(size));
+    errno = savedErrno;
+    if (!copied || size != LaunchParameterSize) {
         return ErrorInvalidArgument;
     }
     return CallService(__func__);
@@ -79,7 +99,13 @@ int APS5_VABI sceShellUIUtilLaunchTask(std::int32_t taskToken, const char* uri, 
     if (uri == nullptr || capacity < TaskOutputMinimumCapacity || output == nullptr || StringTooLong(uri)) {
         return ErrorInvalidArgument;
     }
-    std::memset(output, 0, capacity);
+    const std::vector<char> zeros(capacity, 0);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(output, zeros.data(), capacity);
+    errno = savedErrno;
+    if (!copied) {
+        return ErrorInvalidArgument;
+    }
     return CallService(__func__);
 }
 

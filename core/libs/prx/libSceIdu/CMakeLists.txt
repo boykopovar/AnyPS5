@@ -1,0 +1,15 @@
+add_library(libSceIdu SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceIdu PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceIdu)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_idu_tests ${LIBS_INCLUDE_DIR}/tests/GuestIdu.cpp)
+    target_include_directories(guest_idu_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_idu_tests PRIVATE libSceIdu libc)
+    configure_windows_unwind(guest_idu_tests)
+    add_test(NAME guest_idu COMMAND guest_idu_tests)
+    if(WIN32)
+        set_tests_properties(guest_idu PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIdu>")
+    endif()
+endif()

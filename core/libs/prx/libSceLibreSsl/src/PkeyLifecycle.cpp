@@ -24,10 +24,12 @@ struct Pkey {
 static_assert(sizeof(int) == 4 && sizeof(void*) == 8, "layout assumes LP64");
 
 constexpr int PkeyRsa = 6;
+constexpr int PkeyEc = 408;
 constexpr int LibraryEvp = 6;
 constexpr int FunctionUnknown = 0xfff;
 constexpr int ReasonDifferentKeyTypes = 101;
 constexpr int ReasonExpectingAnRsaKey = 127;
+constexpr int ReasonExpectingAnEcKey = 142;
 
 const int RsaMethod = PkeyRsa;
 
@@ -97,6 +99,16 @@ LibreSslRsa* APS5_VABI EVP_PKEY_get1_RSA_nid_postfix(void* value) {
     if (!rsa) throw std::invalid_argument(std::string(__func__) + ": RSA key without an RSA object");
     std::atomic_ref<int>(rsa->references).fetch_add(1);
     return rsa;
+}
+
+EcKey* APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void* value) {
+    if (!value) NotImplemented_nid_no_patch(__func__);
+    const auto& pkey = *static_cast<const Pkey*>(value);
+    if (pkey.type != PkeyEc) {
+        LibreSslPutError_nid_no_patch(LibraryEvp, FunctionUnknown, ReasonExpectingAnEcKey);
+        return nullptr;
+    }
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI EVP_PKEY_copy_parameters_nid_postfix(void* to, const void* from) {

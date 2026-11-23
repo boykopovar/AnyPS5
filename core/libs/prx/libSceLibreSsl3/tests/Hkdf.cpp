@@ -200,6 +200,56 @@ void CheckFailures() {
     Require(threw);
 }
 
+void CheckAesCcmReinit() {
+    constexpr int ControlGetTag = 0x10;
+    const auto key = Bytes("404142434445464748494a4b4c4d4e4f");
+    const auto iv1 = Bytes("10111213141516");
+    const auto iv2 = Bytes("20212223242526");
+    const auto plain = Bytes("303132333435363738393a3b3c3d3e3f");
+    const auto expectedIv1Cipher = Bytes("6172114bd041850e4908bebf2c01e3c4");
+    const auto expectedIv2Cipher = Bytes("de2d1734f5ab52f15053495a96cd7a34");
+    const auto expectedIv2Tag = Bytes("d8f69e62e925d695dc8fae15");
+
+    LibreSslEvpCipherCtx* ctx = EVP_CIPHER_CTX_new_nid_postfix();
+    Require(ctx != nullptr);
+    Require(EVP_EncryptInit_ex_nid_postfix(ctx, EVP_aes_128_ccm_nid_postfix(), nullptr, key.data(), iv1.data()) == 1);
+
+    int outl = -1;
+    Require(EVP_EncryptUpdate_nid_postfix(ctx, nullptr, &outl, nullptr, 10) == 1 && outl == 10);
+    Require(EVP_EncryptInit_ex_nid_postfix(ctx, nullptr, nullptr, nullptr, iv2.data()) == 1);
+
+    std::vector<std::uint8_t> tag(12, Guard);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(ctx, ControlGetTag, 12, tag.data()) == 0);
+    Require(tag == std::vector<std::uint8_t>(12, Guard));
+
+    std::vector<std::uint8_t> cipher(plain.size(), Guard);
+    outl = -1;
+    Require(EVP_EncryptUpdate_nid_postfix(ctx, cipher.data(), &outl, plain.data(), static_cast<int>(plain.size())) == 1);
+    Require(outl == static_cast<int>(plain.size()) && cipher == expectedIv2Cipher);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(ctx, ControlGetTag, 12, tag.data()) == 1);
+    Require(tag == expectedIv2Tag);
+
+    Require(EVP_EncryptInit_ex_nid_postfix(ctx, nullptr, nullptr, nullptr, iv1.data()) == 1);
+    std::vector<std::uint8_t> cipher1(plain.size(), Guard);
+    outl = -1;
+    Require(EVP_EncryptUpdate_nid_postfix(ctx, cipher1.data(), &outl, plain.data(), static_cast<int>(plain.size())) == 1);
+    Require(outl == static_cast<int>(plain.size()) && cipher1 == expectedIv1Cipher);
+
+    Require(EVP_EncryptInit_ex_nid_postfix(ctx, nullptr, nullptr, nullptr, iv2.data()) == 1);
+    tag.assign(12, Guard);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(ctx, ControlGetTag, 12, tag.data()) == 0);
+    Require(tag == std::vector<std::uint8_t>(12, Guard));
+
+    cipher.assign(plain.size(), Guard);
+    outl = -1;
+    Require(EVP_EncryptUpdate_nid_postfix(ctx, cipher.data(), &outl, plain.data(), static_cast<int>(plain.size())) == 1);
+    Require(outl == static_cast<int>(plain.size()) && cipher == expectedIv2Cipher);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(ctx, ControlGetTag, 12, tag.data()) == 1);
+    Require(tag == expectedIv2Tag);
+
+    EVP_CIPHER_CTX_free_nid_postfix(ctx);
+}
+
 }
 
 int main() {
@@ -213,6 +263,7 @@ int main() {
     CheckLengthLimit(Hash::Sha1, 20);
     CheckSalt();
     CheckFailures();
+    CheckAesCcmReinit();
     std::puts("LibreSSL3 HKDF: ok");
     return 0;
 }

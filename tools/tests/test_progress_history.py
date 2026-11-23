@@ -143,10 +143,31 @@ class HistoryCsvTests(unittest.TestCase):
                     for name in ("libraries", "shaders"):
                         for key in ("done", "total", "percent"):
                             self.assertEqual(float(row[f"{name}_{key}"]), point[name][key])
+                    self.assertEqual(row["shader_metric"], point["shader_metric"])
                 original = (output / "history.csv").read_bytes()
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                     progress_history.main([str(output), "--csv", "--cache", str(output / "history.csv")])
                 self.assertEqual((output / "history.csv").read_bytes(), original)
+
+    def test_csv_includes_optional_gfx1013_counts(self):
+        import csv
+        metric = {"done": 1, "total": 2, "percent": 50.0}
+        points = [
+            {"date": "2026-01-01", "commit": "a" * 40, "libraries": metric, "shaders": metric},
+            {"date": "2026-01-02", "commit": "b" * 40, "libraries": metric, "shaders": metric,
+             "gfx1013": {"done": 0, "total": 8, "percent": 0.0}},
+            {"date": "2026-01-03", "commit": "c" * 40, "libraries": metric, "shaders": metric,
+             "gfx1013": {"done": 5, "total": 8, "percent": 62.5}},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(progress_history, "collect", return_value=points), contextlib.redirect_stdout(io.StringIO()):
+                progress_history.main([directory, "--csv"])
+            with (Path(directory) / "history.csv").open(newline="", encoding="utf-8") as stream:
+                reader = csv.DictReader(stream)
+                columns = ["gfx1013_done", "gfx1013_total", "gfx1013_percent"]
+                self.assertEqual(reader.fieldnames[-4:], ["shader_metric", *columns])
+                self.assertEqual([[row[column] for column in columns] for row in reader],
+                                 [["", "", ""], ["0", "8", "0.0"], ["5", "8", "62.5"]])
 
 
 class HistoryReportOutputTests(unittest.TestCase):
@@ -215,6 +236,34 @@ class HistoryDateWindowTests(unittest.TestCase):
 
 
 class ProgressHistoryTests(unittest.TestCase):
+    def test_cache_symlink_updates_target_without_replacing_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "shared" / "counts.json"
+            target.parent.mkdir()
+            progress_history.save_cache(target, "old", {})
+            alias = root / "counts-link.json"
+            try:
+                alias.symlink_to(target)
+            except OSError as error:
+                self.skipTest(f"cannot create a cache symlink: {error}")
+            progress_history.save_cache(alias, "new", {})
+            self.assertTrue(alias.is_symlink())
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8"))["rules"], "new")
+            self.assertEqual(json.loads(alias.read_text(encoding="utf-8"))["rules"], "new")
+            self.assertEqual(list(target.parent.iterdir()), [target])
+
+    def test_cache_symlink_loop_is_not_replaced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loop = Path(directory) / "counts-link.json"
+            try:
+                loop.symlink_to(loop)
+            except OSError as error:
+                self.skipTest(f"cannot create a cache symlink: {error}")
+            with self.assertRaisesRegex(ValueError, "symbolic link loop"):
+                progress_history.save_cache(loop, "rules", {})
+            self.assertTrue(loop.is_symlink())
+            self.assertEqual(list(Path(directory).iterdir()), [loop])
     def test_git_measurement_failure_preserves_reports_and_cache_until_retry(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -346,7 +395,7 @@ class ProgressHistoryTests(unittest.TestCase):
                 "libraries": {"done": 1, "total": 1, "percent": 100.0},
                 "shaders": {"done": 0, "total": 0, "percent": 0},
             }
-            for metric in ("bogus", [], {}):
+            for metric in ("bogus", "gfx1013", [], {}):
                 with self.subTest(metric=metric):
                     cache.write_text(json.dumps({
                         "schema_version": 2,
@@ -418,6 +467,77 @@ class ProgressHistoryTests(unittest.TestCase):
 
             self.assertEqual(result["shaders"], {"done": 3, "total": 4, "percent": 75.0})
             self.assertEqual(result["shader_metric"], "decoded")
+            self.assertNotIn("gfx1013", result)
+
+    def test_measure_retains_rdna2_and_adds_the_gfx1013_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            current_prx = root / "current" / "prx"
+            current_opcodes = root / "current" / "opcodes.txt"
+            current_prx.mkdir(parents=True)
+            current_opcodes.write_text("current", encoding="utf-8")
+
+            class Archive:
+                def extractall(self, destination, **kwargs):
+                    (destination / "current" / "prx").mkdir(parents=True)
+                    (destination / "current" / "opcodes.txt").write_text("archived", encoding="utf-8")
+
+            def git_output(*args):
+                return b"current/prx/file.cpp\ncurrent/opcodes.txt\n" if args[0] == "ls-tree" else b"archive"
+
+            source = {"instructions": {"decoded": 3, "total": 4},
+                      "profiles": {"gfx1013": {"instructions": {"decoded": 5, "total": 8}}}}
+            with patch.multiple(progress, ROOT=root, PRX=current_prx, OPCODES=current_opcodes), \
+                    patch.object(progress_history, "git", side_effect=git_output), \
+                    patch.object(progress_history.tarfile, "open", return_value=Archive()), \
+                    patch.object(progress, "collect_libraries", return_value={"done": 1, "total": 1, "percent": 100.0}), \
+                    patch.object(progress, "collect_shader_source", return_value=source):
+                result = progress_history.measure("HEAD")
+
+        self.assertEqual(result["shaders"], {"done": 3, "total": 4, "percent": 75.0})
+        self.assertEqual(result["shader_metric"], "decoded")
+        self.assertEqual(result["gfx1013"], {"done": 5, "total": 8, "percent": 62.5})
+
+    def test_profile_counts_are_validated_in_the_history_cache(self):
+        record = {"libraries": {"done": 1, "total": 1, "percent": 100.0},
+                  "shaders": {"done": 3, "total": 4, "percent": 75.0}, "shader_metric": "decoded"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "history.json"
+            valid = {**record, "gfx1013": {"done": 5, "total": 8, "percent": 62.5}}
+            progress_history.save_cache(path, "rules", {"a" * 40: valid, "b" * 40: record})
+            self.assertEqual(progress_history.load_cache(path, "rules"), {"a" * 40: valid, "b" * 40: record})
+            for profile in (None, {}, {"done": True, "total": 8, "percent": 12.5},
+                            {"done": 9, "total": 8, "percent": 112.5}, {"done": 5, "total": 8, "percent": 75.0}):
+                with self.subTest(profile=profile):
+                    progress_history.save_cache(path, "rules", {"a" * 40: {**record, "gfx1013": profile}})
+                    with self.assertRaisesRegex(ValueError, "cached metric"):
+                        progress_history.load_cache(path, "rules")
+
+    def test_profile_inventory_and_parser_changes_invalidate_cached_measurements(self):
+        record = {"libraries": {"done": 1, "total": 1, "percent": 100.0},
+                  "shaders": {"done": 3, "total": 4, "percent": 75.0}, "shader_metric": "decoded",
+                  "gfx1013": {"done": 5, "total": 8, "percent": 62.5}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            table = root / "gfx1013.txt"
+            module = root / "isa_profiles.py"
+            table.write_text("inventory", encoding="utf-8")
+            module.write_text("parser", encoding="utf-8")
+            cache = root / "history.json"
+            with patch.object(progress, "ISA_GFX1013", table), \
+                    patch.object(progress.isa_profiles, "__file__", str(module)), \
+                    patch.object(progress_history, "daily_commits", return_value=[("2026-01-01", "a" * 40)]), \
+                    patch.object(progress_history, "measure", return_value=record) as measure:
+                expected = progress_history.collect("HEAD", cache)
+                self.assertEqual(measure.call_count, 1)
+                measure.reset_mock()
+                self.assertEqual(progress_history.collect("HEAD", cache), expected)
+                measure.assert_not_called()
+                for changed in (table, module):
+                    changed.write_text(changed.read_text(encoding="utf-8") + "changed", encoding="utf-8")
+                    self.assertEqual(progress_history.collect("HEAD", cache), expected)
+                    self.assertEqual(measure.call_count, 1)
+                    measure.reset_mock()
 
     def test_mixed_shader_metrics_are_tagged_and_rendered_separately(self):
         def point(day, metric, done, total):
@@ -434,12 +554,13 @@ class ProgressHistoryTests(unittest.TestCase):
         svg = progress_history.chart(points)
         html = progress_history.page(points)
         ET.fromstring(svg)
-        decoded_panel = svg.split(">Decoded shader forms</text>", 1)[1].split(">Legacy shader opcode names</text>", 1)[0]
+        decoded_panel = svg.split(">RDNA2 reference shader forms</text>", 1)[1].split(">Legacy shader opcode names</text>", 1)[0]
         legacy_panel = svg.split(">Legacy shader opcode names</text>", 1)[1]
         self.assertEqual([len(polyline.split()) for polyline in re.findall(r'<polyline points="([^"]*)"', decoded_panel)], [2, 2])
         self.assertEqual([len(polyline.split()) for polyline in re.findall(r'<polyline points="([^"]*)"', legacy_panel)], [2, 2])
         self.assertNotIn("1,166", decoded_panel)
         self.assertNotIn("1,460", legacy_panel)
+        self.assertNotIn("gfx1013 reference shader forms", svg)
         self.assertIn("compare points only within the same shader panel", html)
         self.assertIn("<tr><td>2026-01-04</td><td>1/2</td><td>50.0%</td><td>+0</td><td>1460/1460</td><td>100.0%</td><td>—</td><td>—</td></tr>", html)
         self.assertIn("<tr><td>2026-01-02</td><td>1/2</td><td>50.0%</td><td>+0</td><td>—</td><td>—</td><td>1166/1166</td><td>100.0%</td></tr>", html)
@@ -449,6 +570,40 @@ class ProgressHistoryTests(unittest.TestCase):
                 progress_history.main([str(output)])
             data = json.loads((output / "history.json").read_text(encoding="utf-8"))
         self.assertEqual([item["shader_metric"] for item in data], ["legacy", "legacy", "decoded", "decoded"])
+
+    def test_gfx1013_points_have_a_separate_panel_and_table(self):
+        points = [
+            {"date": "2026-01-01", "commit": "a" * 40, "shader_metric": "legacy",
+             "libraries": {"done": 1, "total": 2, "percent": 50.0},
+             "shaders": {"done": 1166, "total": 1166, "percent": 100.0}},
+            {"date": "2026-01-02", "commit": "b" * 40, "shader_metric": "decoded",
+             "libraries": {"done": 1, "total": 2, "percent": 50.0},
+             "shaders": {"done": 1450, "total": 1460, "percent": 99.32},
+             "gfx1013": {"done": 501, "total": 1599, "percent": 31.33}},
+            {"date": "2026-01-03", "commit": "c" * 40, "shader_metric": "decoded",
+             "libraries": {"done": 1, "total": 2, "percent": 50.0},
+             "shaders": {"done": 1460, "total": 1460, "percent": 100.0},
+             "gfx1013": {"done": 502, "total": 1599, "percent": 31.39}},
+        ]
+        svg = progress_history.chart(points)
+        ET.fromstring(svg)
+        reference = svg.split(">RDNA2 reference shader forms</text>", 1)[1].split(">gfx1013 reference shader forms</text>", 1)[0]
+        profile = svg.split(">gfx1013 reference shader forms</text>", 1)[1].split(">Legacy shader opcode names</text>", 1)[0]
+        for panel in (reference, profile):
+            self.assertEqual([len(line.split()) for line in re.findall(r'<polyline points="([^"]*)"', panel)], [2, 2])
+        self.assertIn("Declared 1,460", reference)
+        self.assertNotIn("1,599", reference)
+        self.assertIn("Declared 1,599", profile)
+        self.assertNotIn("1,460", profile)
+        self.assertNotIn("1,166", profile)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            with patch.object(progress_history, "collect", return_value=points), contextlib.redirect_stdout(io.StringIO()):
+                progress_history.main([str(output)])
+            self.assertEqual(json.loads((output / "history.json").read_text(encoding="utf-8")), points)
+            html = (output / "history.html").read_text(encoding="utf-8")
+            self.assertIn('<td>1460/1460</td><td>100.0%</td><td>502/1599</td><td>31.39%</td>', html)
+            self.assertIn('<td>—</td><td>—</td><td>—</td><td>—</td><td>1166/1166</td>', html)
 
     def test_measure_ignores_paths_missing_from_archived_commit(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -597,7 +752,7 @@ class ProgressHistoryTests(unittest.TestCase):
                 table = ET.fromstring(html[html.index("<table>"):html.index("</table>") + len("</table>")])
                 rows = [[cell.text for cell in row] for row in table]
                 self.assertEqual(rows[0], ["Date", "System library functions", "%", "Functions implemented",
-                                           "Decoded shader forms", "%"])
+                                           "RDNA2 reference shader forms", "%"])
                 expected = [
                     ["2026-01-01", "100/200", "50.0%", "n/a", "1/1", "100.0%"],
                     ["2026-01-02", "1505/4000", "37.62%", "+1,405", "1/1", "100.0%"],
@@ -704,6 +859,34 @@ class ProgressHistoryTests(unittest.TestCase):
             self.assertIn(str(path), str(raised.exception))
             self.assertEqual(path.read_bytes(), b"preserve cache")
 
+    def test_duplicate_cache_commit_is_rejected_before_writing_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "reports"
+            output.mkdir()
+            csv_report = output / "history.csv"
+            csv_report.write_bytes(b"previous CSV")
+            cache = root / "counts.json"
+            checkout = root / "checkout"
+            subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+            day = "2026-01-01"
+            commit(checkout, day, "example", "int APS5_VABI Ready() { return 1; }\n")
+            sha = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
+            counts = {"libraries": {"done": 1, "total": 2, "percent": 50},
+                      "shaders": {"done": 0, "total": 1, "percent": 0}, "shader_metric": "legacy"}
+            changed = {**counts, "libraries": {"done": 2, "total": 2, "percent": 100}}
+            original = (f'{{"schema_version":2,"rules":"{progress_history.cache_signature()}",'
+                        f'"commits":{{"{sha}":{json.dumps(counts)},"{sha}":{json.dumps(changed)}}}}}').encode()
+            cache.write_bytes(original)
+            completed = subprocess.run([sys.executable, str(Path(progress_history.__file__)), str(output), "--csv",
+                                        "--cache", str(cache), "--since", day, "--until", day],
+                                       capture_output=True, timeout=10, env={**os.environ, "GIT_DIR": str(checkout / ".git")})
+            self.assertEqual(completed.returncode, 2, (completed.stdout, completed.stderr, csv_report.read_bytes()))
+            self.assertIn(f"{cache}: duplicate JSON key '{sha}'".encode(), completed.stderr)
+            self.assertEqual(cache.read_bytes(), original)
+            self.assertEqual(csv_report.read_bytes(), b"previous CSV")
+            self.assertFalse((output / "history.json").exists())
+
     def test_real_deep_cache_cli_is_bounded_and_preserves_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -719,6 +902,54 @@ class ProgressHistoryTests(unittest.TestCase):
             self.assertEqual(cache.read_bytes(), original)
 
 
+class LocationAndSeriesTests(unittest.TestCase):
+    def test_used_shader_metrics_lists_only_series_with_counts(self):
+        points = [{"shaders": 3}, {"shader_metric": "legacy", "shaders": 4}]
+        self.assertEqual(progress_history.used_shader_metrics(points), ["decoded", "legacy"])
+
+    def test_same_location_compares_real_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file = Path(directory) / "history.json"
+            file.write_text("{}", encoding="utf-8")
+            self.assertTrue(progress_history.same_location(file, Path(directory) / "." / "history.json"))
+            self.assertFalse(progress_history.same_location(file, Path(directory) / "other.json"))
+
+
+class UtcDayTests(unittest.TestCase):
+    def test_utc_day_accepts_valid_dates_only(self):
+        import argparse
+        import progress_history
+        self.assertEqual(progress_history.utc_day("2026-11-16"), "2026-11-16")
+        for value in ("2026-02-30", "16-11-2026", "2026-11-16T00:00"):
+            with self.assertRaises(argparse.ArgumentTypeError, msg=value):
+                progress_history.utc_day(value)
+
+
+class SpreadTests(unittest.TestCase):
+    def test_spread_pushes_close_values_apart(self):
+        import progress_history
+        self.assertEqual(progress_history.spread([0, 5, 100], gap=15), [0, 15, 100])
+        self.assertEqual(progress_history.spread([10, 10, 10], gap=5), [10, 15, 20])
+class LabelledTests(unittest.TestCase):
+    def test_labelled_depends_on_span_and_weekday(self):
+        import datetime
+        import progress_history
+        day = datetime.date(2026, 1, 5)
+        self.assertEqual(day.weekday(), 0)
+        self.assertEqual(progress_history.labelled(day, 10), "Jan 5")
+        self.assertEqual(progress_history.labelled(day, 100), "Jan 5")
+        self.assertEqual(progress_history.labelled(day, 200), "Jan 2026")
+        self.assertEqual(progress_history.labelled(datetime.date(2026, 1, 12), 200), "")
+
+
+class ShaderCountsTests(unittest.TestCase):
+    def test_shader_counts_follow_the_point_metric(self):
+        import progress_history
+        point = {"shaders": 3, "shader_metric": "decoded", "gfx1013": 7}
+        self.assertEqual(progress_history.shader_metric({}), "decoded")
+        self.assertEqual(progress_history.shader_counts(point, "decoded"), 3)
+        self.assertIsNone(progress_history.shader_counts(point, "other"))
+        self.assertEqual(progress_history.shader_counts(point, "gfx1013"), 7)
 
 
 if __name__ == "__main__":

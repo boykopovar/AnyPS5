@@ -36,6 +36,23 @@ void CheckBeforeInitialize() {
         "GetConnectionStatus before Initialize");
     Require(status == static_cast<std::int32_t>(Stale), "GetConnectionStatus: a failed call writes nothing");
     Require(sceNpRemotePlaySessionSignalingInitialize(nullptr) == InvalidArgument, "Initialize: null parameter");
+    errno = 71;
+    Require(sceNpRemotePlaySessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(0x10)) == InvalidArgument,
+        "Initialize: unmapped parameter");
+    Require(errno == 71, "Initialize: preserves errno");
+
+    std::uint32_t group = Stale;
+    std::uint32_t connection = Stale;
+    Require(sceNpRemotePlaySessionSignalingCreateJoinSession("session", &group, &connection) == NotInitialized,
+        "CreateJoinSession before Initialize");
+    const std::uint8_t mode = 1;
+    Require(sceNpRemotePlaySessionSignalingJoinSession("session", &mode, &group, &connection) == NotInitialized,
+        "JoinSession before Initialize");
+    Require(group == Stale && connection == Stale, "CreateJoinSession and JoinSession: a failed call writes nothing");
+    Require(sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession(nullptr, nullptr, nullptr) == NotInitialized, "ManualUdpCreateJoinSession before Initialize");
+    Require(sceNpRemotePlaySessionSignalingManualUdpJoinSession(nullptr, nullptr, nullptr, nullptr) == NotInitialized, "ManualUdpJoinSession before Initialize");
+    Require(sceNpRemotePlaySessionSignalingEstablishConnection(1, 0) == NotInitialized, "EstablishConnection before Initialize");
+    Require(sceNpRemotePlaySessionSignalingAbortConnection(1) == NotInitialized, "AbortConnection before Initialize");
 }
 
 void CheckInitialized() {
@@ -61,17 +78,59 @@ void CheckInitialized() {
     Require(sceNpRemotePlaySessionSignalingGetLocalNetInfo(1, &net) == Unavailable, "GetLocalNetInfo: library result");
     Require(net.localAddress == Stale && net.mappedAddress == Stale && net.mappedPort == Stale,
         "GetLocalNetInfo: a failed call writes nothing");
+    errno = 71;
+    Require(sceNpRemotePlaySessionSignalingGetLocalNetInfo(1, reinterpret_cast<NpRemotePlaySessionSignalingLocalNetInfo*>(0x10)) == Unavailable,
+        "GetLocalNetInfo: unmapped pointer");
+    Require(errno == 71, "GetLocalNetInfo: preserves errno");
 
     std::int32_t status = static_cast<std::int32_t>(Stale);
     Require(sceNpRemotePlaySessionSignalingGetConnectionStatus(999, 2, &status, nullptr, nullptr) == ContextNotFound,
         "GetConnectionStatus: unknown context");
     Require(status == static_cast<std::int32_t>(Stale), "GetConnectionStatus: a failed call writes nothing");
+    errno = 71;
+    Require(sceNpRemotePlaySessionSignalingGetConnectionStatus(999, 2, reinterpret_cast<std::int32_t*>(0x10), nullptr, nullptr) == ContextNotFound,
+        "GetConnectionStatus: unmapped pointer");
+    Require(errno == 71, "GetConnectionStatus: preserves errno");
 
     std::uint32_t property = Stale;
     Require(sceNpRemotePlaySessionSignalingGetCustomProperty(999, &property) == ContextNotFound, "GetCustomProperty");
     Require(property == Stale, "GetCustomProperty: a failed call writes nothing");
     Require(sceNpRemotePlaySessionSignalingSetCustomProperty(999, nullptr, nullptr) == InvalidArgument, "SetCustomProperty");
     Require(sceNpRemotePlaySessionSignalingLeaveSession(999) == ContextNotFound, "LeaveSession");
+    const unsigned char manualParam[16] = {};
+    std::uint32_t manualId = Stale;
+    Require(sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession(nullptr, &manualId, nullptr) == InvalidArgument, "ManualUdpCreateJoinSession: null parameter");
+    Require(sceNpRemotePlaySessionSignalingManualUdpJoinSession(manualParam, "", &manualId, nullptr) == InvalidArgument, "ManualUdpJoinSession: empty name");
+    Require(manualId == Stale, "ManualUdp: a failed call writes nothing");
+    Require(sceNpRemotePlaySessionSignalingEstablishConnection(999, 0) == ContextNotFound, "EstablishConnection: unknown context");
+    Require(sceNpRemotePlaySessionSignalingAbortConnection(999) == ContextNotFound, "AbortConnection: unknown context");
+
+    std::uint32_t group = Stale;
+    std::uint32_t connection = Stale;
+    Require(sceNpRemotePlaySessionSignalingCreateJoinSession(nullptr, &group, &connection) == InvalidArgument,
+        "CreateJoinSession: null session id");
+    Require(sceNpRemotePlaySessionSignalingCreateJoinSession("session", nullptr, &connection) == InvalidArgument,
+        "CreateJoinSession: null group");
+    Require(sceNpRemotePlaySessionSignalingCreateJoinSession("session", &group, &connection) == Unavailable,
+        "CreateJoinSession: no service");
+    Require(group == Stale && connection == Stale, "CreateJoinSession: a failed call writes nothing");
+
+    std::uint8_t mode = 1;
+    Require(sceNpRemotePlaySessionSignalingJoinSession(nullptr, &mode, &group, &connection) == InvalidArgument,
+        "JoinSession: null session id");
+    Require(sceNpRemotePlaySessionSignalingJoinSession("session", nullptr, &group, &connection) == InvalidArgument,
+        "JoinSession: null parameter");
+    Require(sceNpRemotePlaySessionSignalingJoinSession("session", &mode, nullptr, &connection) == InvalidArgument,
+        "JoinSession: null group");
+    mode = 0;
+    Require(sceNpRemotePlaySessionSignalingJoinSession("session", &mode, &group, &connection) == InvalidArgument,
+        "JoinSession: zero mode");
+    Require(sceNpRemotePlaySessionSignalingJoinSession("session", reinterpret_cast<const void*>(0x10), &group, &connection) == InvalidArgument,
+        "JoinSession: unmapped parameter");
+    mode = 1;
+    Require(sceNpRemotePlaySessionSignalingJoinSession("session", &mode, &group, &connection) == Unavailable,
+        "JoinSession: no service");
+    Require(group == Stale && connection == Stale, "JoinSession: a failed call writes nothing");
 
     Require(sceNpRemotePlaySessionSignalingTerminate() == 0, "Terminate");
     Require(sceNpRemotePlaySessionSignalingTerminate() == NotInitialized, "Terminate twice");

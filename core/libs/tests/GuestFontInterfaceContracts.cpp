@@ -34,13 +34,19 @@ static bool OutlineCases() {
 
 static bool UpdationCases() {
     if (sceFontSupportSystemUpdation(nullptr, 0x20230801) != SCE_FONT_ERROR_INVALID_LIBRARY) return false;
+    for (const std::uint32_t badMagic : {0x0u, 0xf00u, 0xf02u}) {
+        Font::FontLibNative library{};
+        library.magic = badMagic;
+        library.reserved0 = 0x8041;
+        library.lock_word = 0x1234;
+        const auto invalid = library;
+        if (sceFontSupportSystemUpdation(&library, 0x20230801) != SCE_FONT_ERROR_INVALID_LIBRARY ||
+            std::memcmp(&library, &invalid, sizeof(library))) return false;
+    }
     Font::FontLibNative library{};
+    library.magic = 0xf01;
     library.reserved0 = 0x8041;
     library.lock_word = 0x1234;
-    const auto invalid = library;
-    if (sceFontSupportSystemUpdation(&library, 0x20230801) != SCE_FONT_ERROR_INVALID_LIBRARY ||
-        std::memcmp(&library, &invalid, sizeof(library))) return false;
-    library.magic = 0xf01;
     for (std::uint32_t version : {0u, 0x20230800u, 0x20230801u, 0x20230802u, 0xffffffffu}) {
         auto expected = library;
         const bool supported = version == 0x20230801;

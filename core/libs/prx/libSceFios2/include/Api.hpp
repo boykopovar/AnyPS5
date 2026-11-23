@@ -157,7 +157,7 @@ int APS5_VABI sceFiosOverlayGetInfo(std::int32_t id, void* outInfo);
 int APS5_VABI sceFiosOverlayGetList(std::int32_t* ids, std::uint64_t capacity, std::uint64_t* count);
 int APS5_VABI sceFiosOverlayModify(std::int32_t id, const void* overlay);
 int APS5_VABI sceFiosOverlayRemove(std::int32_t id);
-int APS5_VABI sceFiosOverlayResolveSync(std::uint32_t capacity, const char* root, const char* path, void* result);
+int APS5_VABI sceFiosOverlayResolveSync(std::int32_t flag, const char* path, char* result, std::size_t capacity);
 std::size_t APS5_VABI sceFiosPathNormalize(char* output, const char* path, std::size_t capacity);
 int APS5_VABI sceFiosPathcmp(const char* left, const char* right);
 int APS5_VABI sceFiosPathncmp(const char* left, const char* right, std::size_t count);

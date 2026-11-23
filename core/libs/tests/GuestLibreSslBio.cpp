@@ -26,7 +26,9 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <windows.h>
 #else
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -41,6 +43,21 @@
 using LibreSsl::Bio;
 using LibreSsl::BioBuffer;
 using LibreSsl::BioMethod;
+
+struct TestBioSslData {
+    void* ssl;
+    int renegotiates;
+    std::uint64_t renegotiateCount;
+    std::uint64_t byteCount;
+    std::uint64_t renegotiateTimeout;
+    std::int64_t lastTime;
+};
+
+static_assert(sizeof(TestBioSslData) == 48);
+static_assert(offsetof(TestBioSslData, renegotiateCount) == 16);
+static_assert(offsetof(TestBioSslData, byteCount) == 24);
+static_assert(offsetof(TestBioSslData, renegotiateTimeout) == 32);
+static_assert(offsetof(TestBioSslData, lastTime) == 40);
 
 
 #ifdef ANYPS5_BIO_DYNAMIC
@@ -563,6 +580,151 @@ void TestUnsupported() {
 }
 
 #ifndef ANYPS5_BIO_DYNAMIC
+void TestSslMethod() {
+    const BioMethod* method = BIO_f_ssl_nid_postfix();
+    Require(method && method->type == 0x207 && std::strcmp(method->name, "ssl") == 0, "SSL BIO method descriptor");
+    Require(method->write && method->read && method->puts && method->control && method->create && method->destroy && method->callbackControl,
+        "SSL BIO method has its callbacks");
+    Bio* bio = BIO_new_nid_postfix(method);
+    Require(bio && !bio->initialized && !bio->flags && bio->shutdown && bio->data, "SSL BIO creates zeroed private state");
+    const auto* state = static_cast<const TestBioSslData*>(bio->data);
+    Require(!state->ssl && !state->renegotiates && !state->renegotiateCount && !state->byteCount && !state->renegotiateTimeout && !state->lastTime,
+        "SSL BIO private state starts zeroed");
+    Require(BIO_ctrl_nid_postfix(bio, 1, 0, nullptr) == 0, "unattached reset returns zero");
+    Require(BIO_ctrl_nid_postfix(bio, 3, 0, nullptr) == 0, "unattached info returns zero");
+    Require(BIO_ctrl_nid_postfix(bio, 8, 0, nullptr) == 0, "unattached get-close returns zero");
+    Require(BIO_ctrl_nid_postfix(bio, 9, 0, nullptr) == 0 && bio->shutdown == 1,
+        "unattached set-close returns zero without changing shutdown");
+    void* sslSentinel = bio;
+    Require(BIO_ctrl_nid_postfix(bio, 110, 0, &sslSentinel) == 0 && sslSentinel == bio,
+        "unattached get-SSL returns zero without writing its output");
+    Require(BIO_ctrl_nid_postfix(bio, 119, 1, nullptr) == 0, "unattached SSL mode returns zero");
+    Require(BIO_ctrl_nid_postfix(bio, 126, 0, nullptr) == 0, "unattached renegotiate count returns zero");
+    bool nullSetThrew = false;
+    try { BIO_ctrl_nid_postfix(bio, 109, 0, nullptr); }
+    catch (const std::invalid_argument&) { nullSetThrew = true; }
+    Require(nullSetThrew && bio->shutdown == 0 && !bio->initialized && !state->ssl,
+        "setting a null SSL updates shutdown then faults before initialization");
+    Require(method->read(nullptr, nullptr, 1) == 0 && method->write(nullptr, nullptr, 1) == 0, "null SSL BIO buffers return zero before BIO or SSL access");
+    Require(BIO_free_nid_postfix(bio) == 1 && allocations == 0, "unattached SSL BIO frees its guest state");
+    LibreSslPutError_nid_no_patch(2, 3, 17);
+    allocationsUntilFailure = 1;
+    Require(BIO_new_nid_postfix(method) == nullptr, "SSL BIO state allocation failure rejects creation");
+    Require(ERR_get_error_nid_postfix() == 0x02003011, "SSL BIO allocation error preserves older FIFO entries");
+    RequireError(0x14fff041);
+    Require(allocations == 0, "failed SSL BIO creation frees its outer BIO");
+    allocationsUntilFailure = -1;
+}
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = static_cast<char*>(VirtualAlloc(nullptr, bytes * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr, "guarded page allocation");
+        DWORD previous{};
+        Require(VirtualProtect(data + bytes, bytes, PAGE_NOACCESS, &previous) != 0, "guard page protection");
+#else
+        bytes = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, bytes * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "guarded page mapping");
+        data = static_cast<char*>(mapped);
+        Require(mprotect(data + bytes, bytes, PROT_NONE) == 0, "guard page protection");
+#endif
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes * 2);
+#endif
+    }
+
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+
+    char* Tail(const char* value, std::size_t size) {
+        std::memcpy(data + bytes - size, value, size);
+        return data + bytes - size;
+    }
+
+private:
+    char* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template<class TFunction>
+void RequireRejected(TFunction function, const char* message) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        rejected = errno == 71;
+    }
+    Require(rejected, message);
+}
+
+void TestGuestPointers() {
+    auto* unmapped = reinterpret_cast<char*>(0x10);
+    GuardedPage page;
+    Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "guest pointer BIO allocation");
+    RequireRejected([&] { BIO_write_nid_postfix(bio, unmapped, 4); }, "unmapped write into an empty BIO");
+    RequireRejected([&] { BIO_puts_nid_postfix(bio, unmapped); }, "unmapped puts string");
+    RequireData(bio, "");
+    Require(BIO_write_nid_postfix(bio, "abcdef", 6) == 6, "write before guest pointer checks");
+    RequireRejected([&] { BIO_write_nid_postfix(bio, unmapped, 1); }, "unmapped write within capacity");
+    RequireRejected([&] { BIO_write_nid_postfix(bio, unmapped, 8); }, "unmapped write that grows the buffer");
+    RequireRejected([&] { BIO_write_nid_postfix(bio, page.Tail("ghij", 4), 5); }, "write source running into an unmapped page");
+    RequireData(bio, "abcdef");
+    char* bytes = nullptr;
+    Require(BIO_ctrl_nid_postfix(bio, 3, 0, &bytes) == 6 && bytes, "memory pointer");
+    Require(BIO_write_nid_postfix(bio, bytes, 2) == 2, "write from the BIO's own storage");
+    RequireData(bio, "abcdefab");
+    Require(BIO_puts_nid_postfix(bio, page.Tail("xy", 3)) == 2, "puts string ending at a page boundary");
+    RequireRejected([&] { BIO_puts_nid_postfix(bio, page.Tail("zz", 2)); }, "unterminated puts string running into an unmapped page");
+    RequireData(bio, "abcdefabxy");
+    char output[8]{};
+    RequireRejected([&] { bio->method->read(bio, unmapped, 4); }, "unmapped read destination");
+    RequireRejected([&] { bio->method->gets(bio, unmapped, 4); }, "unmapped line destination");
+    RequireRejected([&] { bio->method->gets(bio, unmapped, 1); }, "unmapped empty line destination");
+    RequireRejected([&] { bio->method->gets(bio, page.Tail("...", 3), 4); }, "line terminator running into an unmapped page");
+    RequireData(bio, "abcdefabxy");
+    RequireRejected([&] { BIO_ctrl_nid_postfix(bio, 3, 0, unmapped); }, "unmapped memory pointer output");
+    RequireRejected([&] { BIO_ctrl_nid_postfix(bio, 115, 0, unmapped); }, "unmapped buffer pointer output");
+    Require(bio->method->gets(bio, output, 4) == 3 && std::strcmp(output, "abc") == 0, "line after rejected destinations");
+    Require(BIO_free_nid_postfix(bio) == 1, "free guest pointer BIO");
+
+    RequireRejected([&] { BIO_new_mem_buf_nid_postfix(unmapped, -1); }, "unmapped borrowed string");
+    RequireRejected([&] { BIO_new_mem_buf_nid_postfix(page.Tail("ab", 2), -1); }, "unterminated borrowed string");
+    Require(allocations == 0, "rejected borrowed strings allocate nothing");
+    Bio* borrowed = BIO_new_mem_buf_nid_postfix(page.Tail("ab", 3), -1);
+    Require(borrowed && BIO_ctrl_nid_postfix(borrowed, 10, 0, nullptr) == 2, "borrowed string ending at a page boundary");
+    Require(BIO_free_nid_postfix(borrowed) == 1, "free borrowed string BIO");
+    borrowed = BIO_new_mem_buf_nid_postfix(page.Tail("ab", 2), 4);
+    Require(borrowed != nullptr, "borrowed buffer running into an unmapped page");
+    std::memcpy(output, "#######", sizeof(output));
+    RequireRejected([&] { borrowed->method->read(borrowed, output, 4); }, "read from a borrowed buffer running into an unmapped page");
+    Require(std::memcmp(output, "#######", sizeof(output)) == 0, "rejected borrowed read leaves the destination untouched");
+    RequireRejected([&] { borrowed->method->gets(borrowed, output, 8); }, "line from a borrowed buffer running into an unmapped page");
+    Require(BIO_ctrl_nid_postfix(borrowed, 10, 0, nullptr) == 4, "rejected borrowed reads consume nothing");
+    Require(BIO_free_nid_postfix(borrowed) == 1, "free overlong borrowed BIO");
+
+    bio = BIO_new_nid_postfix(BIO_f_ssl_nid_postfix());
+    Require(bio != nullptr, "guest pointer SSL BIO allocation");
+    auto* state = static_cast<TestBioSslData*>(bio->data);
+    state->ssl = &page;
+    void* ssl = nullptr;
+    RequireRejected([&] { BIO_ctrl_nid_postfix(bio, 110, 0, unmapped); }, "unmapped SSL output");
+    Require(BIO_ctrl_nid_postfix(bio, 110, 0, &ssl) == 1 && ssl == &page, "SSL output after a rejected destination");
+    state->ssl = nullptr;
+    Require(BIO_free_nid_postfix(bio) == 1 && allocations == 0, "free guest pointer SSL BIO");
+}
+
 void TestPkcs12BioReadErrors() {
     constexpr std::uint64_t bioUnsupported = 0x20fff079;
     constexpr std::uint64_t notEnoughData = 0x0dfff08e;
@@ -693,6 +855,16 @@ void TestFileAndSocket() {
     Require(ERR_get_error_nid_postfix() == 0, "clean EOF does not queue LibreSSL errors");
     Require(BIO_ctrl_nid_postfix(file, 1, 0, nullptr) == 0, "file reset returns fseek success status");
     Require(file->method->read(file, buffer, 3) == 3 && std::memcmp(buffer, "abc", 3) == 0, "read after file BIO reset");
+    Require(BIO_ctrl_nid_postfix(file, 1, 1, nullptr) == 0, "file reset seeks to its offset argument");
+    Require(file->method->read(file, buffer, 3) == 2 && std::memcmp(buffer, "bc", 2) == 0, "read after file BIO reset to an offset");
+    Require(BIO_ctrl_nid_postfix(file, 1, -1, nullptr) == -1, "file reset to a negative offset reports the fseek failure");
+    Require(BIO_ctrl_nid_postfix(file, 1, 2, nullptr) == 0, "file reset after a failed one");
+    Require(file->method->read(file, buffer, 3) == 1 && buffer[0] == 'c', "read after the second offset reset");
+    Require(BIO_ctrl_nid_postfix(file, 128, 1, nullptr) == 0, "file seek control");
+    Require(BIO_ctrl_nid_postfix(file, 133, 0, nullptr) == 1 && BIO_ctrl_nid_postfix(file, 3, 0, nullptr) == 1, "file tell and info controls after a seek");
+    Require(file->method->read(file, buffer, 3) == 2 && std::memcmp(buffer, "bc", 2) == 0, "read after the file seek control");
+    Require(BIO_ctrl_nid_postfix(file, 133, 0, nullptr) == 3, "file tell control after a read");
+    Require(BIO_ctrl_nid_postfix(file, 128, -1, nullptr) == -1 && BIO_ctrl_nid_postfix(file, 133, 0, nullptr) == 3, "failed file seek keeps the position");
     FileStream* queried = nullptr;
     Require(BIO_ctrl_nid_postfix(file, 107, 0, &queried) == 1 && queried == &stream, "get guest file pointer");
     Require(BIO_free_nid_postfix(file) == 1, "free BIO without closing file");
@@ -705,6 +877,34 @@ void TestFileAndSocket() {
     Bio* ownedBio = BIO_new_fp_nid_postfix(&owned, 1);
     Require(ownedBio && BIO_ctrl_nid_postfix(ownedBio, 8, 0, nullptr) == 1, "owned guest file BIO");
     Require(BIO_free_nid_postfix(ownedBio) == 1 && !owned.IsOpen(), "owned BIO closes guest file");
+
+    Bio* unopened = BIO_new_nid_postfix(fileMethod);
+    Require(unopened && unopened->data == nullptr, "file BIO without a stream");
+    Require(BIO_ctrl_nid_postfix(unopened, 11, 0, nullptr) == 1, "flush without a stream returns one");
+    Require(BIO_ctrl_nid_postfix(unopened, 128, 0, nullptr) == -1 && BIO_ctrl_nid_postfix(unopened, 133, 0, nullptr) == -1,
+            "seek and tell without a stream");
+    std::FILE* firstNative = std::tmpfile();
+    std::FILE* secondNative = std::tmpfile();
+    Require(firstNative != nullptr && secondNative != nullptr, "open temporary files for the file pointer control");
+    FileStream firstStream(firstNative);
+    FileStream secondStream(secondNative);
+    Require(BIO_ctrl_nid_postfix(unopened, 106, 0x11, &firstStream) == 1, "set file pointer control");
+    Require(unopened->data == &firstStream && unopened->initialized == 1 && unopened->shutdown == 1, "set file pointer keeps only the close bit");
+    Require(BIO_write_nid_postfix(unopened, "xy", 2) == 2 && BIO_ctrl_nid_postfix(unopened, 133, 0, nullptr) == 2, "write through the adopted stream");
+    Require(BIO_ctrl_nid_postfix(unopened, 106, 0, &secondStream) == 1, "replace the file pointer");
+    Require(!firstStream.IsOpen(), "replacing an owned stream closes it");
+    Require(unopened->data == &secondStream && unopened->initialized == 1 && unopened->shutdown == 0, "replacement stream is borrowed");
+    Require(BIO_ctrl_nid_postfix(unopened, 106, 0, nullptr) == 1 && unopened->data == nullptr && unopened->initialized == 1, "set a null file pointer");
+    Require(secondStream.IsOpen() && fclose_nid_postfix(&secondStream) == 0, "replacing a borrowed stream leaves it open");
+    Require(BIO_free_nid_postfix(unopened) == 1, "free file BIO without a stream");
+    std::FILE* closedNative = std::tmpfile();
+    Require(closedNative != nullptr, "open temporary file to close under a BIO");
+    FileStream closedStream(closedNative);
+    Bio* closedBio = BIO_new_fp_nid_postfix(&closedStream, 0);
+    Require(closedBio != nullptr, "file BIO around a stream that will be closed");
+    Require(fclose_nid_postfix(&closedStream) == 0 && fflush_nid_postfix(&closedStream) == -1, "flushing the closed stream fails");
+    Require(BIO_ctrl_nid_postfix(closedBio, 11, 0, nullptr) == 1, "flush returns one when fflush fails");
+    Require(BIO_free_nid_postfix(closedBio) == 1, "free file BIO around the closed stream");
 
     int descriptors[2]{-1, -1};
 #ifdef _WIN32
@@ -734,11 +934,37 @@ void TestFileAndSocket() {
     Require(::close(descriptors[0]) == 0, "close pipe reader");
 #endif
 
-    Require(BIO_new_socket_nid_postfix(-1, 0) == nullptr, "reject negative guest socket");
+    for (const int closeFlag : {0, 1}) {
+        Bio* negative = BIO_new_socket_nid_postfix(-1, closeFlag);
+        Require(negative && negative->initialized && negative->number == -1, "socket BIO around a negative descriptor");
+        Require(negative->method && negative->method->type == 0x405, "negative descriptor BIO uses the socket method");
+        Require(BIO_ctrl_nid_postfix(negative, 8, 0, nullptr) == closeFlag, "negative descriptor BIO keeps its close flag");
+        char byte = 0;
+        Require(negative->method->read(negative, &byte, 1) == -1, "read on a negative descriptor fails");
+        Require(negative->method->write(negative, "x", 1) == -1, "write on a negative descriptor fails");
+        Require(BIO_free_nid_postfix(negative) == 1, "free socket BIO around a negative descriptor");
+    }
+    Bio* lowest = BIO_new_socket_nid_postfix(std::numeric_limits<int>::min(), 0);
+    Require(lowest && lowest->number == std::numeric_limits<int>::min(), "socket BIO keeps any descriptor value");
+    Require(BIO_free_nid_postfix(lowest) == 1, "free socket BIO around the lowest descriptor");
     Bio* socket = BIO_new_socket_nid_postfix(42, 0);
     Require(socket && socket->initialized && socket->number == 42, "guest socket BIO descriptor");
     Require(socket->method && socket->method->type == 0x405, "socket BIO method descriptor");
     Require(BIO_ctrl_nid_postfix(socket, 8, 0, nullptr) == 0, "socket BIO no-close flag");
+    int descriptor = 0;
+    Require(BIO_ctrl_nid_postfix(socket, 105, 0, &descriptor) == 42 && descriptor == 42, "get descriptor control");
+    Require(BIO_ctrl_nid_postfix(socket, 105, 0, nullptr) == 42, "get descriptor control without an output");
+    descriptor = 77;
+    Require(BIO_ctrl_nid_postfix(socket, 104, 1, &descriptor) == 1, "set descriptor control");
+    Require(socket->number == 77 && socket->shutdown == 1 && socket->initialized == 1, "set descriptor stores the descriptor and close flag");
+    Require(BIO_ctrl_nid_postfix(socket, 9, 0, nullptr) == 1, "clear the close flag before replacing the descriptor");
+    descriptor = -5;
+    Require(BIO_ctrl_nid_postfix(socket, 104, 0, &descriptor) == 1 && socket->number == -5 && socket->initialized == 1, "set a negative descriptor");
+    Require(BIO_ctrl_nid_postfix(socket, 105, 0, &descriptor) == -5 && descriptor == -5, "get a negative descriptor");
+    Bio* idle = BIO_new_nid_postfix(socket->method);
+    descriptor = 9;
+    Require(idle && !idle->initialized && BIO_ctrl_nid_postfix(idle, 105, 0, &descriptor) == -1 && descriptor == 9, "get descriptor before one is set");
+    Require(BIO_free_nid_postfix(idle) == 1, "free socket BIO without a descriptor");
     Require(BIO_free_nid_postfix(socket) == 1, "free unowned guest socket BIO");
 }
 
@@ -998,6 +1224,51 @@ void TestCertificateChainFileErrorPaths() {
     RemovePathAlias_nid_no_patch(AliasPrefix);
 }
 
+void TestPemReadX509FileWrapper() {
+    auto* const sentinel = reinterpret_cast<LibreSslX509*>(std::uintptr_t{1});
+    LibreSslX509* output = sentinel;
+
+    ERR_clear_error_nid_postfix();
+    Require(PEM_read_X509_nid_postfix(nullptr, &output, nullptr, nullptr) == nullptr,
+            "null FILE returns null");
+    RequireError(0x09fff007);
+    Require(allocations == 0 && output == sentinel, "null FILE preserves the output");
+
+    std::FILE* native = std::tmpfile();
+    Require(native != nullptr, "open temporary PEM file");
+    FileStream stream(native);
+    allocationsUntilFailure = 0;
+    Require(PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr) == nullptr,
+            "BIO allocation failure returns null");
+    allocationsUntilFailure = -1;
+    Require(ERR_get_error_nid_postfix() == 0x20fff041, "BIO allocation error precedes the PEM wrapper error");
+    RequireError(0x09fff007);
+    Require(allocations == 0 && output == sentinel, "BIO allocation failure has no leak or output write");
+
+    Require(PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr) == nullptr,
+            "empty PEM file returns null through the reader");
+    Require(allocations == 0 && stream.IsOpen() && output == sentinel,
+            "empty PEM file frees only the borrowed BIO and keeps the stream open");
+    RequireError(0x09fff06c);
+
+    constexpr char record[] = "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n";
+    Require(fwrite_nid_postfix(record, 1, sizeof(record) - 1, &stream) == sizeof(record) - 1,
+            "write a certificate record to the borrowed PEM file");
+    Require(fflush_nid_postfix(&stream) == 0, "flush the certificate record before reading it back");
+    Require(fseek_nid_postfix(&stream, 0, SEEK_SET) == 0, "rewind the certificate record file");
+    bool conversionThrew = false;
+    try {
+        static_cast<void>(PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr));
+    } catch (const std::runtime_error&) {
+        conversionThrew = true;
+    }
+    Require(conversionThrew, "a certificate record reaches the unsupported conversion and propagates");
+    Require(allocations == 0 && stream.IsOpen() && output == sentinel,
+            "reader exception frees only the borrowed BIO and preserves stream and output");
+    Require(ERR_get_error_nid_postfix() == 0, "the unsupported conversion queues no OpenSSL errors");
+    Require(fclose_nid_postfix(&stream) == 0, "close borrowed PEM file after the reader exception");
+}
+
 std::uint64_t ErrorCode(int library, int reason) {
     return (static_cast<std::uint64_t>(library) << 24) | (static_cast<std::uint64_t>(0xfff) << 12) |
            static_cast<std::uint64_t>(reason);
@@ -1112,11 +1383,14 @@ int main(int argc, char** argv) {
     TestDispatchAndReferences();
     TestUnsupported();
 #ifndef ANYPS5_BIO_DYNAMIC
+    TestSslMethod();
+    TestGuestPointers();
     TestPkcs12BioReadErrors();
     TestPemReadBioX509NoStartLine();
     TestFileAndSocket();
     TestPrivateKeyFileErrorPaths();
     TestCertificateChainFileErrorPaths();
+    TestPemReadX509FileWrapper();
     TestCertificateFileLoadPaths();
 #endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");

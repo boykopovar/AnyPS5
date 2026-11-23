@@ -10,7 +10,7 @@
 
 ---
 
-Comments in code can only be added to indicate areas of [technical debt](TechnicalDebt.md) (only by a human), the end of `#endif`, and the end of namespace.
+Comments in code can only be added to indicate areas of [technical debt](TechnicalDebt.md) (only by a human), the end of `#endif`, the end of namespace, and the licence and copyright notice of code adapted from an upstream source, as described in [AGENTS.md](../../AGENTS.md).
 
 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)
 

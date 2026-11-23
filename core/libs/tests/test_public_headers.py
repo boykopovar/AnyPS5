@@ -2,6 +2,7 @@ import argparse
 import concurrent.futures
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -15,23 +16,149 @@ sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location("nid_names", ROOT / "tools/nid_names.py")
 NIDS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(NIDS)
-DECLARATION = re.compile(r"(?:\bAPS5_VABI\s+|^[ \t]*[A-Za-z_][\w:*&<> \t]*?[ \t]+)(\w+)\s*\([^;{}]*\)\s*(?:noexcept\s*)?;", re.M)
+DECLARATION = re.compile(r"(?=APS5_VABI|^)(?:\bAPS5_VABI\s+|^[ \t]*[A-Za-z_][\w:*&<> \t]*[ \t]+)(\w+)\s*\([^;{}]*\)\s*(?:noexcept\s*)?;", re.M)
+_LINE_DECLARATION = re.compile(r"^[ \t]*[A-Za-z_][\w:*&<> \t]*[ \t]+(\w+)\s*\([^;{}]*\)\s*(?:noexcept\s*)?;", re.M)
 DATA_DECLARATION = re.compile(
     r"^[ \t]*extern\s+(?:const\s+)?[A-Za-z_][\w:<>]*(?:\s+(?:const|volatile))?\s+\**\s*(\w+)\s*(?:\[[^;\]\n]*\])?\s*;", re.M
 )
 INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
-TYPE_TOKEN = re.compile(r"\bnamespace\s*([\w:]*)\s*\{|\bextern\s*\{|\b(?:struct|union|class)\s+(\w+)\s*(?:final\s*)?(?::(?!:)[^;{]*)?([;{])|\busing\s+(\w+)\s*=|[{}]")
+TYPE_TOKEN = re.compile(r"(?=[{}censu])(?:\bnamespace\s*([\w:]*)\s*\{|\bextern\s*\{|\b(?:struct|union|class)\s+(\w+)\s*(?:final\s*)?(?::(?!:)[^;{]*)?([;{])|\busing\s+(\w+)\s*=|[{}])")
+_TYPE_NAME_HINT = re.compile(r"\b(?:struct|union|class|using)\s+(\w+)")
+TOKENS, _, CODE_TOKEN = NIDS.CPP_TOKEN.pattern.rpartition("|(?P<code>")
+CODE_RUN = re.compile(
+    rf"""{TOKENS}|(?P<code>(?:{CODE_TOKEN[:-1]})(?:\s*(?:(?:[0-9]|\.[0-9])[A-Za-z0-9_.']*|(?!(?:u8|u|U|L)?R?["'])[A-Za-z_][A-Za-z0-9_]*|[^\w\s/"']))*)"""
+)
+MASK = re.compile(r"[^\n]")
+_NON_CODE_TRIGGER = re.compile(r'//|/\*|"|\'')
+_RAW_BODY = re.compile(r'"(?P<delimiter>[^\s()\\]{0,16})\([\s\S]*?\)(?P=delimiter)"')
+_STRING_BODY = re.compile(r'"(?:\\[\s\S]|[^"\\])*"')
+_CHAR_BODY = re.compile(r"'(?:\\[\s\S]|[^'\\])*'")
+_CODE_TOKEN = re.compile(r"(?:[0-9]|\.[0-9])[A-Za-z0-9_.']*|[A-Za-z_][A-Za-z0-9_]*|\S")
+_PRE_TOKEN_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.'")
+_STRING_PREFIXES = frozenset(("u8", "u", "U", "L"))
+_RAW_PREFIXES = frozenset(("R", "u8R", "uR", "UR", "LR"))
+_ANON_NAMESPACE = re.compile(r"\bnamespace\s*\{")
+_BRACE = re.compile(r"[{}]")
+_HIDDEN_SPECIFIER = re.compile(r"\b(?:static|GCC_HIDDEN_FN)\b")
+_DECL_PREFIX_SKIP = re.compile(r"\b(?:return|co_return|throw|else|case)\b|&&|\|\|")
+
+
+def _blank_span(span):
+    if "\n" not in span:
+        return " " * len(span)
+    return "\n".join(" " * len(line) for line in span.split("\n"))
+
+
+def _token_before(text, index, floor):
+    scan_start = index
+    while scan_start > floor and text[scan_start - 1] in _PRE_TOKEN_CHARS:
+        scan_start -= 1
+    if scan_start == index:
+        return None, None, index
+    last_start = index
+    last_token = None
+    for token in _CODE_TOKEN.finditer(text, scan_start):
+        if token.start() >= index:
+            break
+        if token.end() > index:
+            return token.start(), token.group(), token.end()
+        last_start = token.start()
+        last_token = token.group()
+        if token.end() == index:
+            return last_start, last_token, index
+    return None, None, index
 
 
 @cache
 def code(text):
-    return NIDS.CPP_TOKEN.sub(lambda match: match.group() if match.group("code") else re.sub(r"[^\n]", " ", match.group()), text)
+    out = []
+    pos = 0
+    cursor = 0
+    floor = 0
+    no_block_close = False
+    length = len(text)
+    while cursor < length:
+        trigger = _NON_CODE_TRIGGER.search(text, cursor)
+        if trigger is None:
+            break
+        index = trigger.start()
+        token = trigger.group()
+        if token == "//":
+            end = text.find("\n", index + 2)
+            if end == -1:
+                end = length
+            out.append(text[pos:index])
+            out.append(" " * (end - index))
+            pos = cursor = floor = end
+        elif token == "/*":
+            if no_block_close:
+                cursor = floor = index + 2
+                continue
+            close = text.find("*/", index + 2)
+            if close == -1:
+                no_block_close = True
+                cursor = floor = index + 2
+                continue
+            end = close + 2
+            out.append(text[pos:index])
+            out.append(_blank_span(text[index:end]))
+            pos = cursor = floor = end
+        elif token == '"':
+            tok_start, tok_text, tok_end = _token_before(text, index, floor)
+            if tok_end > index:
+                cursor = floor = tok_end
+                continue
+            if tok_text in _RAW_PREFIXES:
+                raw_match = _RAW_BODY.match(text, index)
+                if raw_match is not None:
+                    end = raw_match.end()
+                    out.append(text[pos:tok_start])
+                    out.append(_blank_span(text[tok_start:end]))
+                    pos = cursor = floor = end
+                    continue
+            str_match = _STRING_BODY.match(text, index)
+            if str_match is not None:
+                start = tok_start if tok_text in _STRING_PREFIXES else index
+                end = str_match.end()
+                out.append(text[pos:start])
+                out.append(_blank_span(text[start:end]))
+                pos = cursor = floor = end
+            else:
+                cursor = floor = index + 1
+        else:
+            tok_start, tok_text, tok_end = _token_before(text, index, floor)
+            if tok_end > index:
+                cursor = floor = tok_end
+                continue
+            char_match = _CHAR_BODY.match(text, index)
+            if char_match is not None:
+                start = tok_start if tok_text in _STRING_PREFIXES else index
+                end = char_match.end()
+                out.append(text[pos:start])
+                out.append(_blank_span(text[start:end]))
+                pos = cursor = floor = end
+            else:
+                cursor = floor = index + 1
+    if not out:
+        return text
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def declared_types(text):
+    if "struct" not in text and "union" not in text and "class" not in text and "using" not in text:
+        return set()
     scopes = []
     result = set()
     for token in TYPE_TOKEN.finditer(text):
+        raw = token.group()
+        if raw == "{":
+            scopes.append(None)
+            continue
+        if raw == "}":
+            if scopes:
+                scopes.pop()
+            continue
         namespace, name, ending, alias = token.groups()
         if namespace is not None:
             scopes.append(namespace or None)
@@ -40,12 +167,8 @@ def declared_types(text):
                 result.add("::".join([scope for scope in scopes if scope] + [name or alias]))
             if ending == "{":
                 scopes.append(name)
-        elif token.group().startswith("extern"):
+        else:
             scopes.append("")
-        elif token.group() == "{":
-            scopes.append(None)
-        elif scopes:
-            scopes.pop()
     return result
 
 
@@ -74,20 +197,31 @@ def reachable(header, visited):
 
 
 def exported_definitions(text):
-    text = text.replace("\\\n", "").replace("\\\r\n", "")
+    if "\\\n" in text:
+        text = text.replace("\\\n", "")
+    if "\\\r\n" in text:
+        text = text.replace("\\\r\n", "")
+    if "APS5_VABI" not in text:
+        return set()
     masked = code(text)
+    matches = list(NIDS.DEFINITION.finditer(masked))
+    if not matches:
+        return set()
     ranges = []
-    for match in re.finditer(r"\bnamespace\s*\{", masked):
-        depth = 1
-        end = match.end()
-        while depth and end < len(masked):
-            depth += (masked[end] == "{") - (masked[end] == "}")
-            end += 1
-        ranges.append((match.start(), end))
+    if "namespace" in masked:
+        for match in _ANON_NAMESPACE.finditer(masked):
+            depth = 1
+            end = len(masked)
+            for brace in _BRACE.finditer(masked, match.end()):
+                depth += 1 if brace.group() == "{" else -1
+                if depth == 0:
+                    end = brace.end()
+                    break
+            ranges.append((match.start(), end))
     result = set()
     position = 0
     parentheses = 0
-    for match in NIDS.DEFINITION.finditer(masked):
+    for match in matches:
         prefix = masked[position:match.start()]
         parentheses += prefix.count("(") - prefix.count(")")
         position = match.start()
@@ -96,10 +230,37 @@ def exported_definitions(text):
         if any(start < match.start() < end for start, end in ranges):
             continue
         start = max(masked.rfind(delimiter, 0, match.start()) for delimiter in ";{}") + 1
-        if re.search(r"\b(?:static|GCC_HIDDEN_FN)\b", masked[start:match.start()]):
+        if _HIDDEN_SPECIFIER.search(masked, start, match.start()):
             continue
         result.add(match.group(1))
     return result
+
+
+def _scan_core_sources(core_dir):
+    all_sources = []
+    cpp_sources = []
+    stack = [os.fspath(core_dir)]
+    while stack:
+        current = stack.pop()
+        with os.scandir(current) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(entry.path)
+                else:
+                    name = entry.name
+                    if name.endswith(".cpp"):
+                        path = Path(entry.path)
+                        all_sources.append(path)
+                        cpp_sources.append(path)
+                    elif name.endswith((".h", ".hpp")):
+                        all_sources.append(Path(entry.path))
+    all_sources.sort()
+    cpp_sources.sort()
+    return all_sources, cpp_sources
+
+
+def _declaration_matches(text):
+    return DECLARATION.finditer(text) if "APS5_VABI" in text else _LINE_DECLARATION.finditer(text)
 
 
 def audit():
@@ -116,7 +277,12 @@ def audit():
         for source in NIDS.source_files(umbrella.parent):
             if "tools" in source.relative_to(umbrella.parent).parts:
                 continue
-            text = source_text(source).replace("\\\n", "").replace("\\\r\n", "")
+            raw_text = source_text(source)
+            text = raw_text
+            if "\\\n" in text:
+                text = text.replace("\\\n", "")
+            if "\\\r\n" in text:
+                text = text.replace("\\\r\n", "")
             aliases = {name for nid, name in NIDS.source_aliases(text)} if "APS5_EXPORT" in text else set()
             definitions = exported_definitions(text)
             if any(macro in text for macro in NIDS.ASM_FUNCTION_MACROS):
@@ -126,21 +292,35 @@ def audit():
                     continue
                 exports.setdefault(name, []).append((source, included, name in definitions))
     declarations = {name: [] for name in exports}
-    for source in sorted((ROOT / "core").rglob("*")):
-        if source.suffix not in {".cpp", ".h", ".hpp"}:
-            continue
+    core_sources, cpp_sources = _scan_core_sources(ROOT / "core")
+    for source in core_sources:
         text = code(source_text(source))
-        resolved = source.resolve()
-        for match in DECLARATION.finditer(text):
-            if match.group(1) not in declarations:
-                continue
-            prefix = match.group()[:match.start(1) - match.start()]
-            if re.search(r"\b(?:return|co_return|throw|else|case)\b|&&|\|\|", prefix):
-                continue
-            declarations[match.group(1)].append((resolved, text.count("\n", 0, match.start()) + 1, "function"))
-        for match in DATA_DECLARATION.finditer(text):
-            if match.group(1) in declarations:
-                declarations[match.group(1)].append((resolved, text.count("\n", 0, match.start()) + 1, "data"))
+        resolved = None
+        if "(" in text and ";" in text:
+            prev_pos = 0
+            line_no = 1
+            for match in _declaration_matches(text):
+                name = match.group(1)
+                if name not in declarations:
+                    continue
+                if _DECL_PREFIX_SKIP.search(text, match.start(), match.start(1)):
+                    continue
+                if resolved is None:
+                    resolved = source.resolve()
+                line_no += text.count("\n", prev_pos, match.start())
+                prev_pos = match.start()
+                declarations[name].append((resolved, line_no, "function"))
+        if "extern" in text and ";" in text:
+            prev_pos = 0
+            line_no = 1
+            for match in DATA_DECLARATION.finditer(text):
+                name = match.group(1)
+                if name in declarations:
+                    if resolved is None:
+                        resolved = source.resolve()
+                    line_no += text.count("\n", prev_pos, match.start())
+                    prev_pos = match.start()
+                    declarations[name].append((resolved, line_no, "data"))
     errors = []
     headers = set(umbrellas)
     for name, definitions in exports.items():
@@ -163,8 +343,13 @@ def audit():
     for header in headers:
         text = code(source_text(header))
         public_types.update(declared_types(text))
-    for source in sorted((ROOT / "core").rglob("*.cpp")):
+    public_short_names = {name.rpartition("::")[2] for name in public_types}
+    for source in cpp_sources:
         text = code(source_text(source))
+        if "struct" not in text and "union" not in text and "class" not in text and "using" not in text:
+            continue
+        if not any(match.group(1) in public_short_names for match in _TYPE_NAME_HINT.finditer(text)):
+            continue
         types = declared_types(text)
         for name in sorted(public_types & types):
             errors.append(f"{source.relative_to(ROOT)}: duplicate public type {name}; include its header")

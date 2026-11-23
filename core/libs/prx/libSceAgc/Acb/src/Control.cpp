@@ -44,7 +44,7 @@ std::uint32_t* APS5_VABI sceAgcAcbAtomicGds_0900(CommandBuffer* buf, std::uint32
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbJump(CommandBuffer* buf, std::uint8_t cachePolicy, const std::uint32_t* target, std::uint32_t sizeInDwords) {
-    return Agc::Command::WriteJump(buf, 1, cachePolicy, target, sizeInDwords, __func__);
+    return Agc::Command::WriteJump(buf, true, 1, cachePolicy, target, sizeInDwords, __func__);
 }
 
 uint32_t APS5_VABI sceAgcAcbJumpGetSize(void) {

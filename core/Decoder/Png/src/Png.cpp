@@ -7,11 +7,7 @@
 #include <cstdlib>
 #include <memory>
 #include <stdexcept>
-
-#define STB_IMAGE_WRITE_STATIC
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define STBI_WRITE_NO_STDIO
-#include "stb_image_write.h"
+#include "zlib.h"
 
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
@@ -98,14 +94,19 @@ void appendBigEndian32(std::vector<std::uint8_t>& output, std::uint32_t value) {
     for (int shift = 24; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(value >> shift));
 }
 
+std::uint32_t chunkCrc(std::span<const std::uint8_t> typeAndData) {
+    std::uint32_t crc = 0xFFFFFFFFu;
+    for (const auto byte : typeAndData) crc = (crc >> 8) ^ CRC_TABLE[(crc ^ byte) & 0xFF];
+    return ~crc;
+}
+
 void appendChunk(std::vector<std::uint8_t>& output, const char* type, std::span<const std::uint8_t> data) {
     appendBigEndian32(output, static_cast<std::uint32_t>(data.size()));
     const std::size_t checkedFrom = output.size();
     output.insert(output.end(), type, type + 4);
     output.insert(output.end(), data.begin(), data.end());
-    std::uint32_t crc = 0xFFFFFFFFu;
-    for (std::size_t i = checkedFrom; i < output.size(); ++i) crc = (crc >> 8) ^ CRC_TABLE[(crc ^ output[i]) & 0xFF];
-    appendBigEndian32(output, ~crc);
+    const auto crc = chunkCrc(std::span(output).subspan(checkedFrom));
+    appendBigEndian32(output, crc);
 }
 
 int paethPredictor(int left, int up, int upLeft) {
@@ -194,6 +195,23 @@ std::optional<Image> Decode(std::span<const std::uint8_t> png) {
     return image;
 }
 
+std::vector<std::uint16_t> DecodeRgba16(std::span<const std::uint8_t> png) {
+    if (png.empty() || png.size() > INT_MAX) return {};
+    const auto header = ParseHeader(png);
+    if (!header || header->bitDepth != 16) return {};
+    int width = 0;
+    int height = 0;
+    const std::unique_ptr<stbi_us, decltype(&stbi_image_free)> decoded(
+        stbi_load_16_from_memory(png.data(), static_cast<int>(png.size()), &width, &height, nullptr, 4),
+        stbi_image_free);
+    if (!decoded || width != static_cast<int>(header->width) || height != static_cast<int>(header->height)) return {};
+    return {decoded.get(), decoded.get() + static_cast<std::size_t>(width) * height * 4};
+}
+
+bool CheckChunkCrc(std::span<const std::uint8_t> typeAndData, std::uint32_t expected) {
+    return chunkCrc(typeAndData) == expected;
+}
+
 std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,
                                  std::uint32_t channels, EncodeOptions options) {
     if (channels < 1 || channels > 4) throw std::invalid_argument("Png::Encode: channels must be 1-4");
@@ -228,11 +246,13 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
         }
     }
 
-    int compressedSize = 0;
-    const std::unique_ptr<unsigned char, void (*)(unsigned char*)> compressed(
-        stbi_zlib_compress(filtered.data(), static_cast<int>(filtered.size()), &compressedSize, options.compressionLevel),
-        [](unsigned char* memory) { STBIW_FREE(memory); });
-    if (!compressed) throw std::runtime_error("Png::Encode: encoding failed");
+    const auto inputSize = static_cast<uLong>(filtered.size());
+    uLongf compressedSize = compressBound(inputSize);
+    const auto compressed = std::make_unique<std::uint8_t[]>(compressedSize);
+    if (compress2(compressed.get(), &compressedSize, filtered.data(), inputSize, options.compressionLevel) != Z_OK) {
+        throw std::runtime_error("Png::Encode: encoding failed");
+    }
+    if (compressedSize > INT_MAX) throw std::runtime_error("Png::Encode: PNG chunk is too large");
 
     std::vector<std::uint8_t> header;
     appendBigEndian32(header, width);

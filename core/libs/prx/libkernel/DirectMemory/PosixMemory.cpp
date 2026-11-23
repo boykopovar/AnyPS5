@@ -5,6 +5,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/AppArchive.hpp"
+#include "prx/libc/include/HostErrno.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
@@ -26,6 +28,7 @@
 
 namespace {
 // FreeBSD/PS5 ABI values, independent of the host's errno and mmap constants.
+constexpr int GuestNotPermitted = 1;
 constexpr int GuestInvalid = 22;
 constexpr int GuestNoMemory = 12;
 constexpr int GuestBadDescriptor = 9;
@@ -45,18 +48,32 @@ constexpr int GuestSyncAsync = 0x1;
 constexpr int GuestSyncInvalidate = 0x2;
 constexpr int GuestAdviceCore = 9;
 constexpr int GuestAdviceProtect = 10;
-constexpr int GuestLockCurrent = 0x1;
-constexpr int GuestLockFuture = 0x2;
 constexpr int GuestDefinedProtection = 0x3F7;
 constexpr std::uintptr_t GuestUserAddressStart = PS5_PAGE_SIZE;
 constexpr std::uintptr_t GuestUserAddressEnd = 0x800000000000;
 constexpr int GuestAlignedSuper = 0x1000000;
 constexpr std::size_t SuperpageSize = std::size_t{1} << 21;
 
+class ArchiveMappingDescriptor {
+public:
+    ArchiveMappingDescriptor() = default;
+    ArchiveMappingDescriptor(const ArchiveMappingDescriptor&) = delete;
+    ArchiveMappingDescriptor& operator=(const ArchiveMappingDescriptor&) = delete;
+    ~ArchiveMappingDescriptor() {
+        if (descriptor < 0) return;
+#ifdef _WIN32
+        _close(descriptor);
+#else
+        close(descriptor);
+#endif
+    }
+    int descriptor = -1;
+};
+
 #if defined(__linux__) || defined(__APPLE__)
 class ScopedDescriptor {
 public:
-    explicit ScopedDescriptor(int value) noexcept : descriptor(fcntl(value, F_DUPFD_CLOEXEC, 0)), error(descriptor < 0 ? errno : 0) {}
+    explicit ScopedDescriptor(int value, bool duplicate) noexcept : descriptor(duplicate ? fcntl(value, F_DUPFD_CLOEXEC, 0) : value), error(descriptor < 0 ? errno : 0) {}
     ~ScopedDescriptor() {
         const int savedError = errno;
         if (descriptor >= 0) close(descriptor);
@@ -115,6 +132,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
     void* mapped = address;
     try {
         if (DoMapAnon(&mapped, rounded, 3, placement, alignment, false) != 0) return failed(GuestNoMemory);
+        if ((placement & GuestMapFixed) != 0) ReleaseFlexibleMappingRange(reinterpret_cast<std::uintptr_t>(mapped), rounded);
     } catch (const std::invalid_argument&) {
         return failed(GuestInvalid);
     } catch (const std::exception&) {
@@ -139,14 +157,10 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
     return mapped;
 }
 #endif
-}
-
-extern "C" {
-
-void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection,
-                                int flags, int descriptor, std::int64_t offset) noexcept {
-    const auto failed = [](int error) -> void* {
-        SetError(error);
+void* Map(void* address, std::size_t length, int protection,
+          int flags, int descriptor, std::int64_t offset, int& mappingError) noexcept {
+    const auto failed = [&mappingError](int error) -> void* {
+        mappingError = error;
         return reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
     };
     std::size_t rounded;
@@ -190,13 +204,41 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
         return failed(GuestNotSupported);
     if (descriptor < 0) return failed(GuestBadDescriptor);
     if (File::IsVirtualDirectoryDescriptor(descriptor)) return failed(GuestNotSupported);
-    File::RefuseArchivedFile(descriptor, "mmap");
     if (offset < 0 || (static_cast<std::uint64_t>(offset) & (PS5_PAGE_SIZE - 1)) != 0 ||
         rounded > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) ||
         static_cast<std::uint64_t>(offset) > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) - rounded)
         return failed(GuestInvalid);
+    ArchiveMappingDescriptor archive;
+    try {
+        if (File::IsArchivedFile(descriptor) && kind == GuestShared && (protection & 2) != 0) return failed(GuestAccess);
+        AppArchiveMappingDescriptor_nid_no_patch(descriptor, static_cast<std::uint64_t>(offset), rounded, &archive.descriptor);
+    } catch (const std::system_error& error) {
+        if (error.code() == std::errc::not_enough_memory) return failed(GuestNoMemory);
+        if (error.code() == std::errc::permission_denied) return failed(GuestAccess);
+        const auto condition = error.code().default_error_condition();
+        if (condition.category() == std::generic_category()) {
+            switch (condition.value()) {
+            case EMFILE:
+            case ENFILE:
+            case ENOSPC:
+            case EFBIG:
+            case EINTR:
+                return failed(GuestErrnoFromHost_nid_no_patch(condition.value()));
+            default: break;
+            }
+        }
+        return failed(GuestIoError);
+    } catch (const std::bad_alloc&) {
+        return failed(GuestNoMemory);
+    } catch (const std::exception&) {
+        return failed(GuestIoError);
+    }
+    const int sourceDescriptor = archive.descriptor >= 0 ? archive.descriptor : descriptor;
+    const auto mappingOffset = archive.descriptor >= 0 ? std::int64_t{0} : offset;
 #if defined(__linux__) || defined(__APPLE__)
-    const ScopedDescriptor pinnedDescriptor(descriptor);
+    const bool archiveBacked = archive.descriptor >= 0;
+    const ScopedDescriptor pinnedDescriptor(sourceDescriptor, !archiveBacked);
+    if (archiveBacked) archive.descriptor = -1;
     if (pinnedDescriptor.Get() < 0) return failed(pinnedDescriptor.Error());
     const int mappingDescriptor = pinnedDescriptor.Get();
     const int descriptorFlags = fcntl(mappingDescriptor, F_GETFL);
@@ -206,7 +248,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
     if (kind == GuestShared && (protection & 2) != 0 && accessMode == O_RDONLY) return failed(GuestAccess);
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor) && !RegularFile(mappingDescriptor)) return failed(GuestNotSupported);
 #elif defined(_WIN32)
-    const int mappingDescriptor = descriptor;
+    const int mappingDescriptor = sourceDescriptor;
     {
         const HANDLE handle = WindowsDescriptorHandle_nid_no_patch(mappingDescriptor);
         if (handle == INVALID_HANDLE_VALUE) return failed(GuestBadDescriptor);
@@ -219,18 +261,18 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
         if (kind == GuestShared && (protection & 2) != 0 && accessMode == 0) return failed(GuestAccess);
         if (kind == GuestPrivate) {
             const std::size_t privateAlignment = (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
-            return MapPrivateFileCopy(address, rounded, protection, placement, privateAlignment, handle, mappingDescriptor, offset, accessMode, failed);
+            return MapPrivateFileCopy(address, rounded, protection, placement, privateAlignment, handle, mappingDescriptor, mappingOffset, accessMode, failed);
         }
     }
 #else
-    const int mappingDescriptor = descriptor;
+    const int mappingDescriptor = sourceDescriptor;
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor)) return failed(GuestNotSupported);
 #endif
     const std::size_t alignment = (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
     void* mapped = nullptr;
     try {
         mapped = address;
-        const auto result = DoMapFileBacked_nid_no_patch(&mapped, rounded, protection, kind | placement, mappingDescriptor, static_cast<std::uint64_t>(offset), alignment);
+        const auto result = DoMapFileBacked_nid_no_patch(&mapped, rounded, protection, kind | placement, mappingDescriptor, static_cast<std::uint64_t>(mappingOffset), alignment);
         if (result != 0) return failed(result == SCE_KERNEL_ERROR_EINVAL ? GuestInvalid : GuestNoMemory);
         if ((placement & GuestMapFixed) != 0) ReleaseFlexibleMappingRange(reinterpret_cast<std::uintptr_t>(mapped), rounded);
         return mapped;
@@ -247,6 +289,18 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
     } catch (const std::exception&) {
         return failed(GuestNoMemory);
     }
+}
+
+}
+
+extern "C" {
+
+void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection,
+                                int flags, int descriptor, std::int64_t offset) noexcept {
+    int error = 0;
+    void* mapped = Map(address, length, protection, flags, descriptor, offset, error);
+    if (error != 0) SetError(error);
+    return mapped;
 }
 
 int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
@@ -295,32 +349,27 @@ int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protec
 }
 
 int APS5_VABI mlock_nid_postfix(const void* address, std::size_t length) {
-    const int result = sceKernelMlock_nid_postfix(const_cast<void*>(address), length);
-    if (result == 0) return 0;
-    SetError(result & 0xffff);
+    (void)address;
+    (void)length;
+    SetError(GuestNotPermitted);
     return -1;
 }
 
 int APS5_VABI munlock_nid_postfix(const void* address, std::size_t length) {
-    const int result = sceKernelMunlock_nid_postfix(const_cast<void*>(address), length);
-    if (result == 0) return 0;
-    SetError(result & 0xffff);
+    (void)address;
+    (void)length;
+    SetError(GuestNotPermitted);
     return -1;
 }
 
 int APS5_VABI mlockall_nid_postfix(int flags) {
-    if (flags == 0 || (flags & ~(GuestLockCurrent | GuestLockFuture)) != 0) {
-        SetError(GuestInvalid);
-        return -1;
-    }
-    NotImplemented_nid_no_patch("mlockall");
-    return 0;
+    (void)flags;
+    SetError(GuestNotPermitted);
+    return -1;
 }
 
 int APS5_VABI munlockall_nid_postfix() {
-    const int result = sceKernelMunlockall_nid_postfix();
-    if (result == 0) return 0;
-    SetError(result & 0xffff);
+    SetError(GuestNotPermitted);
     return -1;
 }
 
@@ -345,7 +394,7 @@ int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags) {
 int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice) {
     if (advice == GuestAdviceProtect) return 0;
     const auto start = reinterpret_cast<std::uintptr_t>(address);
-    if (advice < 0 || advice > GuestAdviceCore || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
+    if (advice < 0 || advice > GuestAdviceCore || start < GuestUserAddressStart || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
         SetError(GuestInvalid);
         return -1;
     }

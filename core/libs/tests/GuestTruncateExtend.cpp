@@ -20,6 +20,7 @@ constexpr int ReadOnly = 0;
 constexpr int ReadWrite = 2;
 constexpr int Create = 0x200;
 constexpr std::int64_t Length = 64ll * 1024 * 1024;
+constexpr std::int64_t QueryFailureLength = 1024 * 1024;
 constexpr char FileName[] = "anyps5_truncate_extend_file";
 
 void Cleanup() {
@@ -148,10 +149,11 @@ void CheckSparseExtension(int mode, bool supported, bool queryFails = false) {
     const auto resize = [&](std::int64_t length) {
         return mode == 2 ? truncate_nid_postfix(FileName, length) : ftruncate_nid_postfix(descriptor, length);
     };
+    const std::int64_t extension = queryFails ? QueryFailureLength : Length;
     for (int round = 0; round < 2; ++round) {
-        Require(resize(Length) == 0, "sparse extension failed");
+        Require(resize(extension) == 0, "sparse extension failed");
         Require(lseek_nid_postfix(descriptor, 0, 1) == 137, "extension changed the file position");
-        Require(lseek_nid_postfix(checker, 0, 2) == Length, "sparse extension has wrong size");
+        Require(lseek_nid_postfix(checker, 0, 2) == extension, "sparse extension has wrong size");
         CheckSparseAllocation(supported);
         if (queryFails) {
             const DWORD attributes = GetFileAttributesW(L"anyps5_truncate_extend_file");
@@ -163,16 +165,16 @@ void CheckSparseExtension(int mode, bool supported, bool queryFails = false) {
         Require(pread_nid_postfix(checker, prefix, prefixSize, 0) == prefixSize && std::memcmp(prefix, "head", prefixSize) == 0,
             "sparse extension changed original bytes");
         std::array<char, 65536> buffer{};
-        for (std::int64_t offset = prefixSize; offset < Length;) {
-            const auto count = static_cast<std::size_t>((std::min)(Length - offset, static_cast<std::int64_t>(buffer.size())));
+        for (std::int64_t offset = prefixSize; offset < extension;) {
+            const auto count = static_cast<std::size_t>((std::min)(extension - offset, static_cast<std::int64_t>(buffer.size())));
             buffer.fill(1);
             Require(pread_nid_postfix(checker, buffer.data(), count, offset) == static_cast<std::int64_t>(count), "read sparse hole failed");
             Require(std::all_of(buffer.begin(), buffer.begin() + count, [](char byte) { return byte == 0; }), "sparse hole must read entirely as zeros");
             offset += count;
         }
-        Require(sceKernelPwrite(checker, "tail", 4, Length - 4) == 4, "write near sparse end failed");
+        Require(sceKernelPwrite(checker, "tail", 4, extension - 4) == 4, "write near sparse end failed");
         char tail[4]{};
-        Require(pread_nid_postfix(checker, tail, 4, Length - 4) == 4 && std::memcmp(tail, "tail", 4) == 0, "write near sparse end landed incorrectly");
+        Require(pread_nid_postfix(checker, tail, 4, extension - 4) == 4 && std::memcmp(tail, "tail", 4) == 0, "write near sparse end landed incorrectly");
         Require(lseek_nid_postfix(descriptor, 0, 1) == 137, "verification changed the original cursor");
         Require(resize(2) == 0, "sparse shrink failed");
         Require(lseek_nid_postfix(descriptor, 0, 1) == 137, "shrink changed the file position");
