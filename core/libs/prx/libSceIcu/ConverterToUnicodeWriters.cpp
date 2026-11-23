@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <optional>
 #include <vector>
 
 namespace {
@@ -40,10 +41,11 @@ std::uintptr_t End(const void* pointer, std::size_t bytes, const char* caller) {
 }
 
 struct WritableRange {
-    GuestArena::HostWrite access;
+    std::optional<GuestArena::HostWrite> access;
 
-    WritableRange(void* address, std::size_t bytes, const char* caller) : access(address, bytes) {
-        if (bytes && (!access.Open() || !GuestWritable_nid_no_patch(address, bytes))) NotImplemented_nid_no_patch(caller);
+    WritableRange(void* address, std::size_t bytes, const char* caller) {
+        if (!bytes) return;
+        if (!access.emplace(address, bytes).Open() || !GuestWritable_nid_no_patch(address, bytes)) NotImplemented_nid_no_patch(caller);
     }
 };
 
@@ -140,12 +142,12 @@ void Write(Icu::ConverterToUnicodeArgs* guest, const char16_t* source, std::int3
     auto* fields = reinterpret_cast<std::uint8_t*>(guest);
     auto* offsetsField = fields + offsetof(UConverterToUnicodeArgs, offsets);
     auto* targetField = fields + offsetof(UConverterToUnicodeArgs, target);
-    const WritableRange targetAccess(original.target, targetBytes, caller);
-    const WritableRange targetCursorAccess(targetField, produced ? sizeof(original.target) : 0, caller);
-    const WritableRange offsetsAccess(original.offsets, offsetBytes, caller);
-    const WritableRange offsetsCursorAccess(offsetsField, offsetBytes ? sizeof(original.offsets) : 0, caller);
-    const WritableRange statusAccess(error, remaining ? sizeof(*error) : 0, caller);
     try {
+        const WritableRange targetAccess(original.target, targetBytes, caller);
+        const WritableRange targetCursorAccess(targetField, produced ? sizeof(original.target) : 0, caller);
+        const WritableRange offsetsAccess(original.offsets, offsetBytes, caller);
+        const WritableRange offsetsCursorAccess(offsetsField, offsetBytes ? sizeof(original.offsets) : 0, caller);
+        const WritableRange statusAccess(error, remaining ? sizeof(*error) : 0, caller);
         Buffers buffers(source, original.target, read, produced, original.offsets != nullptr, caller);
         auto native = original;
         native.target = buffers.target;

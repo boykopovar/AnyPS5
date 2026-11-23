@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <exception>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -362,6 +363,27 @@ void RefuseCheckedCopy(std::uintptr_t address, std::size_t) {
     }
 }
 
+void FailWriteAllocation(std::uintptr_t address, std::size_t) {
+    if (address == reinterpret_cast<std::uintptr_t>(refusedAddress)) {
+        refusedAddress = nullptr;
+        throw std::bad_alloc{};
+    }
+}
+
+void PreflightAllocationFailure() {
+    auto converter = Open();
+    char16_t output = u'?';
+    std::int32_t offset = -1, status = 0;
+    auto args = Arguments(converter.get(), &output, &output + 1, &offset);
+    refusedAddress = &output;
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(FailWriteAllocation);
+    Chars(reinterpret_cast<Icu::ConverterToUnicodeArgs*>(&args), u"abc", 3, 5, &status);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    Require(refusedAddress == nullptr && status == U_MEMORY_ALLOCATION_ERROR && output == u'?' && offset == -1 &&
+        args.target == &output && args.offsets == &offset && Drain(converter.get()).empty(),
+        "write-reservation allocation failure preserves converter, cursors and data");
+}
+
 void LateCopyRefusal() {
     auto converter = Open();
     for (int pass = 0; pass < 3; ++pass) {
@@ -493,6 +515,7 @@ void WatchedOutputs() {
 
 void GuardsCase() {
     WatchedOutputs();
+    PreflightAllocationFailure();
     LateCopyRefusal();
     Guarded guard;
     auto converter = Open();
