@@ -2753,7 +2753,7 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
         if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
         shut = ReceiveEnded(*socket);
 #ifndef _WIN32
-        if (passing) {
+        if (passing && !shut) {
             std::vector<char> control(CMSG_SPACE(MostPassedDescriptors * sizeof(int)));
             iovec vector{buffer.data(), buffer.size()};
             msghdr host{};

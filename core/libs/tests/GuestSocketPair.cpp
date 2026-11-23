@@ -380,11 +380,18 @@ static void CheckStatBlockSize() {
     Require(udp >= 0 && BlockSize(udp, 9216) && close_nid_postfix(udp) == 0);
 }
 
-static std::int64_t ReceiveWhileBlocked(int descriptor, std::atomic<bool>& done, const std::function<void()>& release) {
+static std::int64_t ReceiveWhileBlocked(int descriptor, std::atomic<bool>& done, const std::function<void()>& release, bool control = false) {
     std::int64_t result = -2;
     std::thread reader([&] {
         char record[16]{};
-        result = recv_nid_postfix(descriptor, record, sizeof(record), 0);
+        if (control) {
+            alignas(8) unsigned char rights[64]{};
+            KernelIovec vector{record, sizeof(record)};
+            GuestMsghdr message{nullptr, 0, &vector, 1, rights, sizeof(rights), 0};
+            result = recvmsg_nid_postfix(descriptor, &message, 0);
+        } else {
+            result = recv_nid_postfix(descriptor, record, sizeof(record), 0);
+        }
         done = true;
     });
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -422,6 +429,11 @@ static void CheckSequencedPacketEnds() {
     Require(Readable(pair[1]) && recv_nid_postfix(pair[1], received, sizeof(received), 0) == 0);
     Require(FailsWith(send_nid_postfix(pair[0], "x", 1, NoSignal), 32));
     Require(Exchange(pair[1], pair[0], "reply"));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+
+    done = false;
+    Require(socketpair_nid_postfix(Unix, SequencedPacket, 0, pair) == 0);
+    Require(ReceiveWhileBlocked(pair[1], done, [&] { Require(shutdown_nid_postfix(pair[0], 1) == 0); }, true) == 0);
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 }
 
