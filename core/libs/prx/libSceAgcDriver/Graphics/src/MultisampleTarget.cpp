@@ -2215,8 +2215,20 @@ void SetMultisampleDccCopyHookForTest(void (*hook)()) {
 
 void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes) {
     if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire) || !mayOverlapGuarded(address, bytes)) return;
-    std::shared_lock lock(guardedMutex());
-    claimOverlapping(address, bytes, nullptr);
+    const auto memoryBacked = [&](const auto& range) { return !range.fmask && address < range.address + range.bytes && range.address < address + bytes && !range.use->hostOnly.load(std::memory_order_acquire); };
+    {
+        std::shared_lock lock(guardedMutex());
+        claimOverlapping(address, bytes, nullptr);
+        if (std::none_of(guarded().begin(), guarded().end(), memoryBacked)) return;
+    }
+    std::unique_lock lock(guardedMutex());
+    std::vector<std::shared_ptr<std::atomic<bool>>> retired;
+    for (const auto& range : guarded()) {
+        if (memoryBacked(range) && std::find(retired.begin(), retired.end(), range.active) == retired.end()) retired.push_back(range.active);
+    }
+    for (const auto& active : retired) active->store(false, std::memory_order_release);
+    if (std::erase_if(guarded(), [&](const auto& range) { return std::find(retired.begin(), retired.end(), range.active) != retired.end(); }) != 0u) guardedGeneration().fetch_add(1, std::memory_order_release);
+    anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
 bool MultisampleColorTargetOverlaps(std::uint64_t address, std::uint64_t bytes) {
@@ -2507,6 +2519,7 @@ std::vector<MultisampleColorAlias> MultisampleColorTargetsOver(std::uint64_t add
     std::shared_lock guardLock(guardedMutex());
     for (const auto& range : guarded()) {
         if (address >= range.address + range.bytes || range.address >= address + bytes) continue;
+        if (!range.use->hostOnly.load(std::memory_order_acquire)) continue;
         if (std::any_of(aliases.begin(), aliases.end(), [&](const MultisampleColorAlias& alias) { return alias.active == range.active; })) continue;
         const auto target = std::find_if(targets().begin(), targets().end(), [&](const auto& candidate) { return candidate->active == range.active; });
         if (target != targets().end()) {

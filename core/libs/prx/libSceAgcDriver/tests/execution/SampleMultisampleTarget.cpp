@@ -83,6 +83,7 @@ constexpr std::uint32_t Uint8x4Info = 0x8428u;
 constexpr std::uint32_t Format8888Unorm = 56;
 constexpr std::uint32_t Format8888Uint = 60;
 constexpr std::uint32_t Format8888Sint = 61;
+constexpr std::uint32_t Format8Uint = 5;
 constexpr std::uint32_t Float10_11_11Info = 0x0718u;
 constexpr std::uint32_t Format11_11_10Float = 36;
 constexpr std::uint32_t Format32Float = 22;
@@ -885,7 +886,49 @@ void CheckClaimedTargets(AgcDriver::VulkanDevice& device) {
         AgcDriver::Graphics::ClearDepthSurfaces(context.device);
         Require(refusal.find("overlaps the FMASK") != std::string::npos, "a stencil plane bound over a one-fragment target's FMASK retired its guard: " + refusal);
     }
-    std::puts("a 2x target whose memory a D32S8 stencil plane, a single-sample color target or a 4x target was bound over after its last draw is retired at the next guarded read; one drawn again or stored to after the stencil bind stays guarded, and a one-fragment target's FMASK guard keeps refusing");
+    {
+        Block copied(BlockBytes, true);
+        const auto copiedTexture = TargetDescriptor(copied, 1u, Format8Uint, TileZ64KBX);
+        const auto zeros = LoadSamples(device, copiedTexture, 2u);
+        Require(std::all_of(zeros.begin(), zeros.end(), [](const auto& sample) { return std::bit_cast<std::uint32_t>(sample[0]) == 0u; }), "the memory-backed 2x R8 copy for the direct claim did not read the zeros in memory");
+        Require(AgcDriver::Graphics::MultisampleColorTargetOverlaps(copied.Address(), copied.bytes), "reading zeroed memory as a 2x R8 texture kept no memory-backed copy for the direct claim");
+        AgcDriver::Graphics::ClaimMultisampleTargetMemory(copied.Address(), copied.bytes);
+        const bool kept = AgcDriver::Graphics::MultisampleColorTargetOverlaps(copied.Address(), copied.bytes);
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+        AgcDriver::Graphics::ClearCachedTextures(context.device);
+        AgcDriver::Graphics::ClearMultisampleTargets(context.device);
+        Require(!kept, "a direct claim left the memory-backed 2x copy registered");
+    }
+    {
+        Block plane(BlockBytes, true);
+        Block depth(2u * BlockBytes, true);
+        std::fill_n(reinterpret_cast<std::uint32_t*>(depth.data + BlockBytes), BlockBytes / 4u, 0xfffffff0u);
+        const auto stencilTexture = TargetDescriptor(plane, 1u, Format8Uint, TileZ64KBX);
+        const auto zeros = LoadSamples(device, stencilTexture, 2u);
+        Require(std::all_of(zeros.begin(), zeros.end(), [](const auto& sample) { return std::bit_cast<std::uint32_t>(sample[0]) == 0u; }), "the memory-backed 2x R8 copy did not read the zeros in memory");
+        Require(AgcDriver::Graphics::MultisampleColorTargetOverlaps(plane.Address(), plane.bytes), "reading zeroed memory as a 2x R8 texture kept no memory-backed copy");
+        Require(!AgcDriver::Graphics::MultisampleColorTargetOver(plane.Address(), plane.bytes).has_value(), "a memory-backed 2x copy was reported as a colour target whose samples are only on the host");
+        AgcDriver::Graphics::DepthTarget native{depth.Address(), plane.Address(), {Side, Side}, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0u, depth.Address() + BlockBytes, false, 2u};
+        native.depthSwizzle = 24u;
+        native.iterate256 = native.htilePipeAligned = native.htileDepthOnly = true;
+        AgcDriver::Graphics::DepthSurfaceView(context, native);
+        device.WaitIdle();
+        const bool kept = AgcDriver::Graphics::MultisampleColorTargetOverlaps(plane.Address(), plane.bytes);
+        std::string refusal;
+        std::vector<std::array<float, 4>> stencil;
+        try { stencil = LoadSamples(device, stencilTexture, 2u); }
+        catch (const std::runtime_error& error) { refusal = error.what(); }
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+        AgcDriver::Graphics::ClearDepthSurfaces(context.device);
+        AgcDriver::Graphics::ClearCachedTextures(context.device);
+        AgcDriver::Graphics::ClearMultisampleTargets(context.device);
+        Require(refusal.empty(), "sampling a stencil plane bound over a memory-backed 2x copy refused: " + refusal);
+        Require(!kept, "a memory-backed 2x copy stayed registered after a D32S8 target's stencil plane was bound over its memory");
+        Require(std::all_of(stencil.begin(), stencil.end(), [](const auto& sample) { return std::bit_cast<std::uint32_t>(sample[0]) == 0u; }), "the stencil plane bound over a memory-backed 2x copy did not read the stencil in memory");
+    }
+    std::puts("a 2x target whose memory a D32S8 stencil plane, a single-sample color target or a 4x target was bound over after its last draw is retired at the next guarded read; one drawn again or stored to after the stencil bind stays guarded, a one-fragment target's FMASK guard keeps refusing, and a memory-backed 2x copy is dropped by a direct claim of its memory and when a stencil plane is bound over it");
 }
 
 void StoreWords(const Block& block, std::uint64_t bytes, std::uint32_t word) {
