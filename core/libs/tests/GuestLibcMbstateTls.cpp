@@ -122,7 +122,7 @@ static void CheckMbrtowcThreadLocal() {
     Require(t1_final_w.load() == 0x20ac, "t1 final char U+20AC");
 }
 
-static void CheckWcrtombThreadLocal() {
+static void CheckWcrtombNullState() {
     char buf[8]{};
     auto r = wcrtomb_nid_postfix(buf, 0x20ac, nullptr);
     Require(r == 3, "wcrtomb returns 3");
@@ -133,6 +133,6 @@ int main() {
     CheckGetpmbstateMainThread();
     CheckGetpmbstateThreadLocal();
     CheckMbrtowcThreadLocal();
-    CheckWcrtombThreadLocal();
+    CheckWcrtombNullState();
     return 0;
 }
