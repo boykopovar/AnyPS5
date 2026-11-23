@@ -1068,7 +1068,7 @@ public:
             Require(GuestMemory::Accessible(reinterpret_cast<const void*>(range.address), range.bytes) && GuestMemory::Watched(range.address, range.bytes), "native multisample depth requires watched accessible guest memory");
             if (recorder != nullptr && !(index == 1u && queuedFill) && !(index == 2u && queuedStencilFill) && recorder->PendingWriteOverlaps(range.address, range.bytes)) {
                 if (recorder->PendingStoreOverlaps(range.address, range.bytes)) {
-                    Require(index == 1u, "external GPU writes over native multisample depth are not implemented");
+                    Require(index == 1u && target.htileAddress != 0u, "external GPU writes over native multisample depth are not implemented");
                     RecorderFor(context)->SyncThrough(range.address, range.bytes);
                     if (!expandedHtilePlane(range)) sampling.refusal = "external GPU writes over native multisample depth are not implemented";
                     Require(sampling.refusal.empty(), sampling.refusal);

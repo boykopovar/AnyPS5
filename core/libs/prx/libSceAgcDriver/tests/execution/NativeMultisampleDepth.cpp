@@ -3541,6 +3541,33 @@ void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
     std::printf("Native D32S8 without HTILE, samples=%u: uniform planes imported and sampled, other planes refused\n", samples);
 }
 
+void CheckExpandedWordsOverUniformStencil(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{129u, 67u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    TargetMemory memory(depthBytes), stencil(stencilBytes);
+    const auto word = std::bit_cast<std::uint32_t>(0.25f);
+    for (std::size_t offset = 0u; offset < depthBytes; offset += 4u) std::memcpy(memory.Data() + offset, &word, 4u);
+    std::memset(stencil.Data(), 0x5a, stencilBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0u, 0u, false, samples};
+    target.depthSwizzle = 24u;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    auto words = DepthSampleWords(target);
+    words[6] &= ~((1u << 19u) | (1u << 21u));
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the uniform-plane stencil store fixture has no attachment view");
+    Require(DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{}) != nullptr, "the uniform-plane stencil store fixture was not imported");
+    recorder.Sync();
+    QueueTargetWordFill(context, recorder, target.stencilAddress, stencilBytes, 0xfffc000fu);
+    TargetRefuses([&] { DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{}); }, "external GPU writes over native multisample depth are not implemented");
+    std::printf("Native D32S8 without HTILE, samples=%u: a GPU store of expanded-HTILE-looking words over the stencil plane was refused\n", samples);
+}
+
 void CheckUnevenPlaneWithoutHtile(Context context, std::uint32_t samples) {
     constexpr VkExtent2D extent{129u, 67u};
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
@@ -5245,6 +5272,7 @@ int main(int argc, char** argv) {
             for (const auto samples : {2u, 4u, 8u}) {
                 if (!DepthSupported(context, HostDepthFormat(context, VK_FORMAT_D32_SFLOAT_S8_UINT), samples)) { ++unavailable; continue; }
                 CheckUniformPlanesWithoutHtile(context, samples);
+                CheckExpandedWordsOverUniformStencil(context, samples);
                 ++checked;
             }
             std::printf("Native depth uniform-plane cases checked=%u unavailable=%u\n", checked, unavailable);
