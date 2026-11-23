@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <filesystem>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -17,18 +18,18 @@ inline bool LibraryExportsName(void* library, const char* name) {
 }
 
 template <typename Export, std::size_t Count>
-bool ExportsResolveByName(const char* path, const Export (&exports)[Count], const char* absentName) {
-    if (path == nullptr) {
+bool ExportsResolveByName(const std::filesystem::path& path, const Export (&exports)[Count], const char* absentName) {
+    if (path.empty()) {
         std::fprintf(stderr, "no library path was given\n");
         return false;
     }
 #ifdef _WIN32
-    void* library = LoadLibraryA(path);
+    void* library = LoadLibraryW(path.c_str());
 #else
-    void* library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    void* library = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
     if (library == nullptr) {
-        std::fprintf(stderr, "%s did not load\n", path);
+        std::fprintf(stderr, "%s did not load\n", path.string().c_str());
         return false;
     }
     for (const auto& entry : exports) {

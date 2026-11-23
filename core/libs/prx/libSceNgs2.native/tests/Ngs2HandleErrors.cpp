@@ -2,6 +2,7 @@
 #include "prx/libSceNgs2.native/include/Api.hpp"
 #include "prx/libSceNgs2/include/Api.hpp"
 #include "tests/ExportLookup.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -23,7 +24,7 @@ static void CheckExportLinked() {
     Require(linked != nullptr);
 }
 
-static void CheckPendingExports(const char* path) {
+static void CheckPendingExports(const std::filesystem::path& path) {
     struct Export {
         int (APS5_VABI* function)(void);
         const char* name;
@@ -48,7 +49,7 @@ static void CheckPendingExports(const char* path) {
     }
 }
 
-static void CheckCorePendingExports(const char* path) {
+static void CheckCorePendingExports(const std::filesystem::path& path) {
     struct Export {
         void (*function)(void);
         const char* name;
@@ -643,8 +644,8 @@ int main(int argc, char** argv) {
         CheckFftQuerySize();
         CheckEnumeration();
         CheckExportLinked();
-        CheckPendingExports(argc > 1 ? argv[1] : nullptr);
-        CheckCorePendingExports(argc > 2 ? argv[2] : nullptr);
+        CheckPendingExports(argc > 1 ? ArgumentPath(argv, 1) : std::filesystem::path());
+        CheckCorePendingExports(argc > 2 ? ArgumentPath(argv, 2) : std::filesystem::path());
         std::cout << "NGS2 PS5 handle errors and validation precedence checked\n";
         return 0;
     } catch (const std::exception& error) {

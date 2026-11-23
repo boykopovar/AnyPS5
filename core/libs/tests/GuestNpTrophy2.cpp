@@ -3,6 +3,7 @@
 #include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "tests/ExportLookup.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -13,7 +14,7 @@ static void Require(bool value) { if (!value) std::abort(); }
 
 static void APS5_VABI OnUnlock(int, int, void*) {}
 
-static void ResolvePendingExports(const char* path) {
+static void ResolvePendingExports(const std::filesystem::path& path) {
     struct Export {
         int (APS5_VABI* function)(void);
         const char* name;
@@ -71,7 +72,7 @@ int main(int argc, char** argv) {
 
     auto* volatile linked = &sceNpTrophy2SystemCreateContext;
     Require(linked != nullptr);
-    ResolvePendingExports(argc > 1 ? argv[1] : nullptr);
+    ResolvePendingExports(argc > 1 ? ArgumentPath(argv, 1) : std::filesystem::path());
 
     NpTrophy2GameDetails details{};
     NpTrophy2GameData data{};

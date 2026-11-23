@@ -4,6 +4,7 @@
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "tests/ExportLookup.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -229,7 +230,7 @@ static void ReportExportLinked() {
     Require(linked != nullptr, "sceNpUniversalDataSystemIntInitialize is not linked");
 }
 
-static void ResolveInternalExports(const char* path) {
+static void ResolveInternalExports(const std::filesystem::path& path) {
     struct Export {
         int (APS5_VABI* function)(void);
         const char* name;
@@ -264,7 +265,7 @@ int main(int argc, char** argv) {
     PostUnlocks(context);
     ReportPlaceholders();
     ReportExportLinked();
-    ResolveInternalExports(argc > 1 ? argv[1] : nullptr);
+    ResolveInternalExports(argc > 1 ? ArgumentPath(argv, 1) : std::filesystem::path());
 
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);

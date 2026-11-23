@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/ExportLookup.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cstdio>
 
 int main(int argc, char** argv) {
@@ -13,7 +14,7 @@ int main(int argc, char** argv) {
         {reinterpret_cast<void*>(sceAvPlayerPrintf), "sceAvPlayerPrintf"},
         {reinterpret_cast<void*>(sceAvPlayerVprintf), "sceAvPlayerVprintf"},
     };
-    if (!ExportsResolveByName(argc > 1 ? argv[1] : nullptr, exports, "sceAvPlayerNotExported")) return 1;
+    if (!ExportsResolveByName(argc > 1 ? ArgumentPath(argv, 1) : std::filesystem::path(), exports, "sceAvPlayerNotExported")) return 1;
     std::puts("libSceAvPlayer.native pending exports are exported");
     return 0;
 }
