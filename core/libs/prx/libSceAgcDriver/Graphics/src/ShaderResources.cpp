@@ -7571,6 +7571,28 @@ void ShaderResources::RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out
     }
 }
 
+void ShaderResources::MovedRunAccesses(const DrawBindings& bindings, std::vector<std::array<std::uint64_t, 3>>& out) const {
+    const auto guestRange = [&](const Allocation& item) {
+        const auto begin = item.address - item.adjustment;
+        return std::pair<std::uint64_t, std::uint64_t>{begin, begin + GuestBufferMemory::ViewBytes(item.size, item.adjustment)};
+    };
+    const auto moved = [&](std::size_t index) { return std::any_of(bindings.inPlace.begin(), bindings.inPlace.end(), [&](const DrawBindings::InPlace& entry) { return entry.allocation == index; }); };
+    for (const auto& entry : bindings.inPlace) {
+        if (entry.allocation >= allocations.size()) continue;
+        const auto [begin, end] = guestRange(allocations[entry.allocation]);
+        std::erase_if(out, [&](const std::array<std::uint64_t, 3>& access) {
+            if (access[2] != 0 || access[0] < begin || access[1] > end) return false;
+            for (std::size_t index = 0; index < allocations.size(); ++index) {
+                if (!allocations[index].guest || moved(index)) continue;
+                const auto [otherBegin, otherEnd] = guestRange(allocations[index]);
+                if (otherBegin < access[1] && access[0] < otherEnd) return false;
+            }
+            return true;
+        });
+    }
+    for (const auto& [begin, end] : bindings.inPlaceReads) out.push_back({begin, end, 0});
+}
+
 std::vector<std::pair<VkImage, bool>> ShaderResources::StorageImages() const {
     std::vector<std::pair<VkImage, bool>> images;
     StorageImages(images);

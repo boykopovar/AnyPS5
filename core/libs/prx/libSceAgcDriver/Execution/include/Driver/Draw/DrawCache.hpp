@@ -166,6 +166,24 @@ struct DrawRelocationCounters {
     std::uint64_t lookups = 0, donors = 0, refused = 0, hits = 0, evicted = 0;
 };
 
+struct DispatchDonor {
+    std::uint64_t key = 0;
+    std::vector<std::uint32_t> userData;
+};
+
+struct DispatchUserMove {
+    std::uint32_t index, from, to;
+    bool descriptor = false;
+};
+
+struct DispatchDescriptorMove {
+    std::array<std::uint32_t, 4> from, to;
+};
+
+struct DispatchRelocationCounters {
+    std::uint64_t lookups = 0, relocated = 0, noDonor = 0, donors = 0, refused = 0, contentChanged = 0, descriptorChanged = 0, unreadable = 0, movedDescriptors = 0, recipesDropped = 0, learned = 0, evicted = 0;
+};
+
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry& registry);
 
 }

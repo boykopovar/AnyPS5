@@ -178,6 +178,7 @@ void Driver::lookupDispatch(std::uint64_t address, const Submission& submission,
             if (profile && std::chrono::steady_clock::now() - counters.lastReport > std::chrono::seconds(10)) {
                 counters.lastReport = std::chrono::steady_clock::now();
                 reportDispatchCache(counters);
+                if (dispatchRelocationEnabled()) reportDispatchRelocation();
             }
             phaseTiming.Phase(PhaseRelock);
         }
