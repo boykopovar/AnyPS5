@@ -105,7 +105,7 @@ int APS5_VABI _ZN7WebCore4Page15setFooterHeightEi();
 int APS5_VABI _ZN7WebCore8JSDOMURL9toWrappedERN3JSC2VMENS1_7JSValueE();
 int APS5_VABI _ZN7WebCore21ISOTrackEncryptionBoxC1Ev();
 int APS5_VABI _ZN7WebCore18PlatformTimeRangesnaEm();
-int APS5_VABI _ZN3JSC9Integrity22auditCellMinimallySlowERNS_2VMEPNS_6JSCellE();
+void APS5_VABI _ZN3JSC9Integrity22auditCellMinimallySlowERNS_2VMEPNS_6JSCellE();
 int APS5_VABI _ZN9Inspector24TargetFrontendDispatchernwEm();
 int APS5_VABI _ZNK7WebCore16HTMLImageElement13naturalHeightEv();
 int APS5_VABI _ZN3JSC10LinkBuffer8linkCodeERNS_14MacroAssemblerENS_20JITCompilationEffortE();
