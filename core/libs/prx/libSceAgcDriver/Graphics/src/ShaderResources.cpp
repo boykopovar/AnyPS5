@@ -4994,7 +4994,7 @@ void ShaderResources::resolveImageTables() {
                 continue;
             }
             ReusedTableElement remembered{};
-            remembered.key = MakeTextureKey(context.device, words, components, depthCompare);
+            remembered.key = MakeTextureKey(context.device, sampledWords, components, depthCompare);
             remembered.texture = texture;
             remembered.resource = resource;
             remembered.guestBytes = guestBytes;
