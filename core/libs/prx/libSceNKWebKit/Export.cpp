@@ -20906,14 +20906,6 @@ int APS5_VABI _ZN7WebCore5Style5Scope8resolverEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore6CursorC1EPNS_5ImageERKNS_8IntPointE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore6CursorC2EPNS_5ImageERKNS_8IntPointE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore6Editor10applyStyleEPNS_15StylePropertiesENS_10EditActionE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -27029,11 +27021,6 @@ int APS5_VABI _ZNK7WebCore6Cookie4hashEv() {
 }
 
 int APS5_VABI _ZNK7WebCore6CookieeqERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
-int APS5_VABI _ZNK7WebCore6Cursor19setAsPlatformCursorEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
