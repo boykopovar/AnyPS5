@@ -97,7 +97,7 @@ void Run() {
         for (std::size_t i = 0; i < header->shader.num_sh_registers; ++i) commands.insert(commands.end(), {0xc0017600u, header->registers[i].offset, header->registers[i].value});
         for (std::size_t i = 0; i < header->shader.num_cx_registers; ++i) commands.insert(commands.end(), {0xc0016900u, header->context[i].offset, header->context[i].value});
     }
-    commands.insert(commands.end(), {0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 17, 0xc0012d00u, 3, 2});
+    commands.insert(commands.end(), {0xc0016900u, 0x203, 0x400u, 0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 17, 0xc0012d00u, 3, 2});
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "lazy rectangle draw was not submitted");
     AgcDriverWaitIdle_nid_postfix();
