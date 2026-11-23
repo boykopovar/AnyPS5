@@ -5,11 +5,13 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace AgcDriver::DriverDetail {
 
@@ -32,6 +34,24 @@ bool SkipRefusedDraws();
 bool AsyncDrawCompile();
 std::size_t AsyncComputePipelineWords();
 std::chrono::milliseconds AsyncDispatchWait();
+std::chrono::milliseconds AsyncComputeWait();
+
+class SlidingWaitBudget {
+public:
+    using Clock = std::chrono::steady_clock;
+    SlidingWaitBudget(Clock::duration perWait, Clock::duration window, Clock::duration total);
+    Clock::duration Take(Clock::time_point now);
+    void Spend(Clock::time_point start, Clock::time_point end);
+
+private:
+    Clock::duration perWait;
+    Clock::duration window;
+    Clock::duration total;
+    std::mutex mutex;
+    std::deque<std::pair<Clock::time_point, Clock::time_point>> spent;
+};
+
+SlidingWaitBudget& ComputePipelineWaitBudget();
 
 class BackgroundWaitScope {
 public:

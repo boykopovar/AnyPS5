@@ -49,6 +49,22 @@ bool Done() {
 
 }
 
+void CheckSlidingWaitBudget() {
+    using namespace std::chrono_literals;
+    using Clock = std::chrono::steady_clock;
+    AgcDriver::DriverDetail::SlidingWaitBudget budget(2000ms, 10s, 4000ms);
+    const auto start = Clock::time_point{} + 100s;
+    Require(budget.Take(start) == 2000ms, "an unused compute pipeline wait budget did not allow a full wait");
+    budget.Spend(start, start + 2s);
+    Require(budget.Take(start + 2s) == 2000ms, "a compute pipeline wait budget with 2 of 4 s spent did not allow a full wait");
+    budget.Spend(start + 2s, start + 4s);
+    Require(budget.Take(start + 4s) == Clock::duration{}, "a compute pipeline wait budget allowed more than its total in 10 s");
+    Require(budget.Take(start + 11s) == 1000ms, "a compute pipeline wait budget did not count the waits that overlap the last 10 s (" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(budget.Take(start + 11s)).count()) + " ms allowed)");
+    Require(budget.Take(start + 14s) == 2000ms, "a compute pipeline wait budget kept waits older than 10 s");
+    budget.Spend(start + 14s, start + 14s);
+    Require(budget.Take(start + 14s) == 2000ms, "an empty wait was counted against the compute pipeline wait budget");
+}
+
 void CheckFailedBuildAhead() {
     using Ahead = AgcDriver::VulkanDevice::PipelineAhead;
     auto device = OpenVulkanTestDevice();
@@ -60,6 +76,7 @@ void CheckFailedBuildAhead() {
     if (first == Ahead::Unavailable) return;
     Require(first == Ahead::Start, "a compute pipeline that is not built yet was not handed out for a build ahead");
     Require(device->ComputePipelineAhead(failing) == Ahead::Building, "a compute pipeline queued for a build ahead was not reported as building");
+    Require(!device->AwaitComputePipelineAhead(failing, std::chrono::steady_clock::now() + std::chrono::milliseconds(20)), "a dispatch waiting for a compute pipeline still queued for a build ahead went ahead before the build");
     bool threw = false;
     try {
         device->PrebuildComputePipeline(failing);
@@ -68,6 +85,7 @@ void CheckFailedBuildAhead() {
     }
     Require(threw, "a build ahead with an incompatible runtime ABI did not fail");
     Require(device->ComputePipelineAhead(failing) == Ahead::Unavailable, "a build ahead that failed left its compute pipeline queued, so every dispatch of it would be skipped");
+    Require(device->AwaitComputePipelineAhead(failing, std::chrono::steady_clock::now()), "a dispatch waiting for a build ahead that failed was skipped instead of building the pipeline itself");
     ShaderRecompiler::RecompileResult abandoned;
     abandoned.spirv = std::vector<std::uint32_t>{0x07230203u, 0x00010300u, 0u, 17u, 0u};
     Require(device->ComputePipelineAhead(abandoned) == Ahead::Start, "a second compute pipeline was not handed out for a build ahead");
@@ -77,6 +95,7 @@ void CheckFailedBuildAhead() {
 
 int main() {
     try {
+        CheckSlidingWaitBudget();
         CheckFailedBuildAhead();
         {
             const auto device = OpenVulkanTestDevice();
@@ -97,11 +116,11 @@ int main() {
         } while (std::chrono::steady_clock::now() < deadline);
         Require(Done(), "the dispatch never stored after its shader was prepared and specialized in the background");
         Require(async || attempts == 1, "a dispatch without APS5_ASYNC_DRAW_COMPILE needed more than one attempt");
-        const bool waits = async && AgcDriver::DriverDetail::AsyncDispatchWait().count() > 0 && AgcDriver::DriverDetail::AsyncComputePipelineWords() != 0;
-        Require(!waits || attempts == 1, "a dispatch whose shader was prepared and specialized in the background within APS5_ASYNC_DISPATCH_WAIT_MS was dropped (" + std::to_string(attempts) + " attempts)");
+        const bool ahead = async && AgcDriver::DriverDetail::AsyncComputePipelineWords() == 0;
+        const bool waits = async && AgcDriver::DriverDetail::AsyncDispatchWait().count() > 0 && (!ahead || AgcDriver::DriverDetail::AsyncComputeWait().count() > 0);
+        Require(!waits || attempts == 1, "a dispatch whose shader was prepared and specialized in the background within APS5_ASYNC_DISPATCH_WAIT_MS, and whose compute pipeline was built ahead within APS5_ASYNC_COMPUTE_WAIT_MS, was skipped (" + std::to_string(attempts) + " attempts)");
         const auto after = AgcDriver::VulkanDevice::ComputePipelineCounts();
         Require(after.created > before.created, "the dispatch stored without creating a compute pipeline");
-        const bool ahead = async && AgcDriver::DriverDetail::AsyncComputePipelineWords() == 0;
         if (ahead) Require(after.created - before.created == after.ahead - before.ahead, "a dispatch with APS5_ASYNC_DRAW_COMPILE and APS5_ASYNC_COMPUTE_WORDS=0 created its compute pipeline itself (" + std::to_string(after.created - before.created) + " created, " + std::to_string(after.ahead - before.ahead) + " on the library prebuild pool)");
         else Require(after.ahead == before.ahead, "a dispatch whose compute pipeline is below APS5_ASYNC_COMPUTE_WORDS, or without APS5_ASYNC_DRAW_COMPILE, built its pipeline on the library prebuild pool");
         AgcDriverShutdown_nid_postfix();

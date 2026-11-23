@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <charconv>
@@ -121,6 +122,37 @@ std::chrono::milliseconds AsyncDispatchWait() {
         return std::chrono::milliseconds(text != nullptr ? std::strtoll(text, nullptr, 10) : 1000);
     }();
     return wait;
+}
+
+std::chrono::milliseconds AsyncComputeWait() {
+    static const std::chrono::milliseconds wait = [] {
+        const char* text = std::getenv("APS5_ASYNC_COMPUTE_WAIT_MS");
+        return std::chrono::milliseconds(text != nullptr ? std::max<long long>(std::strtoll(text, nullptr, 10), 0) : 500);
+    }();
+    return wait;
+}
+
+SlidingWaitBudget::SlidingWaitBudget(Clock::duration perWait, Clock::duration window, Clock::duration total) : perWait(perWait), window(window), total(total) {}
+
+SlidingWaitBudget::Clock::duration SlidingWaitBudget::Take(Clock::time_point now) {
+    std::lock_guard lock(mutex);
+    const auto from = now - window;
+    while (!spent.empty() && spent.front().second <= from) spent.pop_front();
+    Clock::duration used{};
+    for (const auto& [start, end] : spent) used += end - std::max(start, from);
+    if (used >= total) return {};
+    return std::min(perWait, total - used);
+}
+
+void SlidingWaitBudget::Spend(Clock::time_point start, Clock::time_point end) {
+    if (end <= start) return;
+    std::lock_guard lock(mutex);
+    spent.emplace_back(start, end);
+}
+
+SlidingWaitBudget& ComputePipelineWaitBudget() {
+    static auto* budget = new SlidingWaitBudget(AsyncComputeWait(), std::chrono::seconds(10), 2 * AsyncComputeWait());
+    return *budget;
 }
 
 namespace {
