@@ -75,6 +75,7 @@ struct Server {
     mbedtls_ssl_config config;
     std::uint16_t port = 0;
     std::atomic<bool> sawCloseNotify{false};
+    std::atomic<std::size_t> receivedBytes{0};
     std::atomic<bool> clientStalled{false};
     std::atomic<bool> clientWriteRejected{false};
 
@@ -121,13 +122,16 @@ struct Server {
         }
     }
 
-    static bool AwaitCloseNotify(mbedtls_ssl_context& ssl) {
+    bool AwaitCloseNotify(mbedtls_ssl_context& ssl) {
         std::array<unsigned char, 16384> buffer{};
         int retries = 0;
         for (;;) {
             const int count = mbedtls_ssl_read(&ssl, buffer.data(), buffer.size());
             if (count == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) return true;
-            if (count > 0) continue;
+            if (count > 0) {
+                receivedBytes += static_cast<std::size_t>(count);
+                continue;
+            }
             if (count != MBEDTLS_ERR_SSL_WANT_READ && count != MBEDTLS_ERR_SSL_WANT_WRITE) return false;
             if (++retries > 500) return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -136,6 +140,7 @@ struct Server {
 
     std::thread Spawn(ServerMode mode) {
         sawCloseNotify = false;
+        receivedBytes = 0;
         clientStalled = false;
         clientWriteRejected = false;
         return std::thread([this, mode]() {
@@ -359,6 +364,7 @@ void TestCloseWithPendingWrite(Server& server) {
     }
 
     std::array<char, 16384> payload{};
+    std::size_t accepted = 0;
     int stalls = 0;
     for (int attempt = 0; attempt < 20000 && stalls < 200; ++attempt) {
         const auto result = tls_write_nid_postfix(client, payload.data(), payload.size());
@@ -367,6 +373,7 @@ void TestCloseWithPendingWrite(Server& server) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         } else {
             Check(result == static_cast<std::int64_t>(payload.size()));
+            ++accepted;
             stalls = 0;
         }
     }
@@ -389,6 +396,7 @@ void TestCloseWithPendingWrite(Server& server) {
     tls_config_free_nid_postfix(config);
     thread.join();
     Check(server.sawCloseNotify);
+    Check(server.receivedBytes == (accepted + 1) * payload.size());
     Check(close_nid_postfix(sock) == 0);
 }
 
