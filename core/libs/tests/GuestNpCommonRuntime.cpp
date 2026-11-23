@@ -906,6 +906,14 @@ void TestJsonParser() {
     Require(ParseJson(&strings, stray) == 0 && joined() == strayDecoded, "a lead byte that the next byte does not continue is decoded alone");
     Require(ParseJson(&strings, stray, {7, 2, 1}) == 0 && joined() == strayDecoded,
         "a lead byte split from the bytes that do not continue it keeps the bytes after it");
+    const std::string strayThree = "{\"s\":\"\xF0" "AB\"}";
+    const std::string strayThreeDecoded = "5 0 0 s - -1|6 0 0 s 4:\xF0" "AB -1";
+    Require(ParseJson(&strings, strayThree, {7, 1, 2, 1}) == 0 && joined() == strayThreeDecoded,
+        "a lead byte split across three calls keeps every byte after it");
+    const std::string partial = "{\"s\":\"\xF0\x90" "AB\"}";
+    const std::string partialDecoded = "5 0 0 s - -1|6 0 0 s 4:\xF0\x90" "AB -1";
+    Require(ParseJson(&strings, partial, {8, 1, 2, 1}) == 0 && joined() == partialDecoded,
+        "a partial multi-byte prefix split across three calls keeps its buffered continuation byte");
 
     const NpJsonRule anyElement[] = {{2, nullptr, 1}, {0, "", 0}};
     const NpJsonRule* deepLevels[] = {anyElement};
