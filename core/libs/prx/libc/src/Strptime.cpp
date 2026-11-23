@@ -195,7 +195,7 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
             }
             case 'd':
             case 'e': {
-                while (*f == 'e' && *b == ' ') ++b;
+                while (*b == ' ') ++b;
                 int val = 0;
                 if (!ParseDigits(b, 1, 2, 1, 31, val)) return nullptr;
                 tm.tm_mday = val;

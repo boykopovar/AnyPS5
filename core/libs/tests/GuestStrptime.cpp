@@ -28,6 +28,16 @@ static void TestIsoDateTime() {
     Require(tm.tm_sec == 30);
     Require(tm.tm_wday == 1);
     Require(tm.tm_yday == 326);
+
+    GuestTm tmLeap{};
+    const char inLeap[] = "2024-02-29 12:00:00";
+    const char* remLeap = strptime_nid_postfix(inLeap, "%Y-%m-%d %H:%M:%S", &tmLeap);
+    Require(remLeap != nullptr && *remLeap == '\0');
+    Require(tmLeap.tm_year == 124);
+    Require(tmLeap.tm_mon == 1);
+    Require(tmLeap.tm_mday == 29);
+    Require(tmLeap.tm_wday == 4);
+    Require(tmLeap.tm_yday == 59);
 }
 
 static void TestMonthAndWeekdayNames() {
@@ -129,6 +139,21 @@ static void TestTwoDigitYearAndCentury() {
     rem = strptime_nid_postfix(in4, "%C %y", &tm);
     Require(rem != nullptr && *rem == '\0');
     Require(tm.tm_year == 85);
+
+    const char in68[] = "68";
+    rem = strptime_nid_postfix(in68, "%y", &tm);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tm.tm_year == 168);
+
+    const char in69[] = "69";
+    rem = strptime_nid_postfix(in69, "%y", &tm);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tm.tm_year == 69);
+
+    GuestTm tmSpaceDay{};
+    rem = strptime_nid_postfix(" 5", "%d", &tmSpaceDay);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmSpaceDay.tm_mday == 5);
 }
 
 static void TestCompoundFormats() {
