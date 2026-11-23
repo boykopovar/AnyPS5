@@ -99,9 +99,7 @@ int APS5_VABI sceMbusConvertToLocalDeviceId(std::uint64_t deviceId, std::uint32_
     }
     if (deviceClass != nullptr) {
         const auto val = static_cast<std::uint32_t>(deviceId >> 48);
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(deviceClass, &val, sizeof(val));
-        errno = savedErrno;
         if (!copied) return invalidArgument;
     }
     return 0;
@@ -112,9 +110,7 @@ int APS5_VABI sceMbusConvertToLocalDeviceId2(std::uint64_t deviceId, std::uint32
     if (localId != nullptr) {
         constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
         const auto val = deviceId & 0xFFFFFFFFFFFFull;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(localId, &val, sizeof(val));
-        errno = savedErrno;
         if (!copied) return invalidArgument;
     }
     return 0;
@@ -126,9 +122,7 @@ int APS5_VABI sceMbusConvertToMbusDeviceId(std::uint64_t localId, std::uint32_t 
     const bool convertible = deviceClass == 0x10 || deviceClass == 0x20;
     if (deviceId != nullptr) {
         const auto val = convertible ? (static_cast<std::uint64_t>(deviceClass) << 48) | localId : 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(deviceId, &val, sizeof(val));
-        errno = savedErrno;
         if (!copied) return invalidArgument;
     }
     return convertible ? 0 : unconvertibleClass;
