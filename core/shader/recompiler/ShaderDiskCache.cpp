@@ -1633,7 +1633,7 @@ private:
                 if (extension == ".pack") packPaths.push_back(entry);
                 if (extension == ".bin" && entry.stem().string().size() == 32) loose = true;
             };
-            ForEachDirectoryEntry(path, error, collect);
+            File::ForEachDirectoryEntry(path, error, collect);
             std::sort(packPaths.begin(), packPaths.end());
             for (const auto& item : packPaths) addPack(item);
             if (loose) looseDirectories.push_back(path);
@@ -1836,7 +1836,7 @@ private:
         refreshWriteTime(stamp);
         const auto now = std::chrono::system_clock::now();
         const auto hexDigits = std::filesystem::path("0123456789abcdef").native();
-        ForEachDirectoryEntry(cacheRoot, error, [&](const auto& entry) {
+        File::ForEachDirectoryEntry(cacheRoot, error, [&](const auto& entry) {
             const auto name = entry.filename().native();
             std::error_code entryError;
             if (entry == active || name.size() != 16 || name.find_first_not_of(hexDigits) != name.npos ||
@@ -1848,7 +1848,7 @@ private:
             }
         });
         const auto temporaryMarker = std::filesystem::path(".tmp.").native();
-        ForEachDirectoryEntry(active, error, [&](const auto& entry) {
+        File::ForEachDirectoryEntry(active, error, [&](const auto& entry) {
             if (entry.filename().native().find(temporaryMarker) == std::filesystem::path::string_type::npos) return;
             const auto written = lastWriteTime(entry);
             if (written && now - *written > std::chrono::hours(1)) {

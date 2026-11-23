@@ -15,6 +15,8 @@
 #include <windows.h>
 #endif
 
+namespace File {
+
 template<typename TVisitor>
 inline void ForEachDirectoryEntry(const std::filesystem::path& directory, std::error_code& error, TVisitor visit) {
 #ifdef _WIN32
@@ -43,6 +45,8 @@ inline void ForEachDirectoryEntry(const std::filesystem::path& directory, std::e
 #endif
 }
 
+}
+
 inline void RemoveTree(const std::filesystem::path& target, std::error_code& error) {
     error.clear();
 #ifdef _WIN32
@@ -56,7 +60,7 @@ inline void RemoveTree(const std::filesystem::path& target, std::error_code& err
     }
     const bool directory = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
     if (directory && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
-        ForEachDirectoryEntry(target, error, [&](const auto& child) { RemoveTree(child, error); });
+        File::ForEachDirectoryEntry(target, error, [&](const auto& child) { RemoveTree(child, error); });
         if (error) return;
     }
     if (directory ? RemoveDirectoryW(wide.c_str()) != 0 : DeleteFileW(wide.c_str()) != 0) return;
