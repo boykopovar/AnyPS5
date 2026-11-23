@@ -610,6 +610,14 @@ static void TestSourceMatching() {
     Require(Matches("*.cdn.example", "https://cdn.example/x"));
     Require(!Matches("*.cdn.example", "https://xcdn.example/x"));
     Require(Matches("https://*", "https://anything.example/x"));
+    Require(Matches("https://*/allowed/", "https://anything.example/allowed/x"));
+    Require(Matches("https://*/allowed/", "https://anything.example/elsewhere/x"));
+    Require(!Matches("https://*/allowed/", "http://anything.example/allowed/x"));
+    Require(Matches("https:", "https://anything.example/elsewhere/x"));
+    Require(Matches("https://cdn.example/allowed/", "https://cdn.example/allowed/x"));
+    Require(!Matches("https://cdn.example/allowed/", "https://cdn.example/elsewhere/x"));
+    Require(Matches("cdn.example.", "https://cdn.example./x"));
+    Require(!Matches("cdn.example.", "https://cdn.example/x"));
     Require(!Matches("https://*", "http://anything.example/x"));
     Require(Matches("https://cdn.example:8443", "https://cdn.example:8443/x"));
     Require(!Matches("https://cdn.example:8443", "https://cdn.example/x"));
