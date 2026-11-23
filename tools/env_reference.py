@@ -218,10 +218,12 @@ def source_files(root):
     paths = []
     for current, dirs, files in os.walk(root):
         dirs[:] = [name for name in dirs if name not in SKIP]
+        current_path = Path(current)
         for filename in files:
-            dot = filename.rfind(".")
-            if dot > 0 and filename[dot:] in EXTENSIONS:
-                paths.append(Path(current) / filename)
+            if "." in filename:
+                path = current_path / filename
+                if path.suffix in EXTENSIONS:
+                    paths.append(path)
     paths.sort()
     yield from paths
 
