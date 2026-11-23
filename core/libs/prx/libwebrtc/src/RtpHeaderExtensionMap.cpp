@@ -91,15 +91,9 @@ constexpr ExtensionEntry KnownExtensions[] = {
 
 static_assert(sizeof(KnownExtensions) / sizeof(KnownExtensions[0]) == WebRtcRtpExtensionNumberOfExtensions - 1);
 
-struct ErrnoGuard {
-    int savedErrno = errno;
-    ~ErrnoGuard() { errno = savedErrno; }
-};
-
 void RequireWritable(void* address, std::size_t bytes, const char* message) {
     if (!address)
         throw std::invalid_argument(message);
-    ErrnoGuard guard;
     if (!GuestWritable_nid_no_patch(address, bytes))
         throw std::invalid_argument(message);
 }
@@ -107,7 +101,6 @@ void RequireWritable(void* address, std::size_t bytes, const char* message) {
 void CopyInChecked(void* destination, const void* source, std::size_t bytes, const char* message) {
     if (!source)
         throw std::invalid_argument(message);
-    ErrnoGuard guard;
     if (!GuestCopyIn_nid_no_patch(destination, source, bytes))
         throw std::invalid_argument(message);
 }
@@ -115,7 +108,6 @@ void CopyInChecked(void* destination, const void* source, std::size_t bytes, con
 void CopyOutChecked(void* destination, const void* source, std::size_t bytes, const char* message) {
     if (!destination)
         throw std::invalid_argument(message);
-    ErrnoGuard guard;
     if (!GuestCopyOut_nid_no_patch(destination, source, bytes))
         throw std::invalid_argument(message);
 }

@@ -61,15 +61,9 @@ constexpr int MaximumTreeHeight = 128;
 
 using DeletingDestructor = void(APS5_VABI*)(void*);
 
-struct ErrnoGuard {
-    int savedErrno = errno;
-    ~ErrnoGuard() { errno = savedErrno; }
-};
-
 void RequireWritable(const void* address, std::size_t bytes, const char* message) {
     if (!address)
         throw std::invalid_argument(message);
-    ErrnoGuard guard;
     if (!GuestWritable_nid_no_patch(const_cast<void*>(address), bytes))
         throw std::invalid_argument(message);
 }
@@ -77,7 +71,6 @@ void RequireWritable(const void* address, std::size_t bytes, const char* message
 void CopyInChecked(void* destination, const void* source, std::size_t bytes, const char* message) {
     if (!source)
         throw std::invalid_argument(message);
-    ErrnoGuard guard;
     if (!GuestCopyIn_nid_no_patch(destination, source, bytes))
         throw std::invalid_argument(message);
 }
@@ -85,7 +78,6 @@ void CopyInChecked(void* destination, const void* source, std::size_t bytes, con
 void CopyOutChecked(void* destination, const void* source, std::size_t bytes, const char* message) {
     if (!destination)
         throw std::invalid_argument(message);
-    ErrnoGuard guard;
     if (!GuestCopyOut_nid_no_patch(destination, source, bytes))
         throw std::invalid_argument(message);
 }

@@ -73,7 +73,6 @@ WebRtcPendingTaskSafetyFlag** APS5_VABI _ZN6webrtc21PendingTaskSafetyFlag6Create
     if (!result)
         throw std::invalid_argument("PendingTaskSafetyFlag::Create requires a result");
     {
-        ErrnoGuard guard;
         if (!GuestWritable_nid_no_patch(result, sizeof(*result)))
             throw std::invalid_argument("PendingTaskSafetyFlag::Create requires a result");
     }
