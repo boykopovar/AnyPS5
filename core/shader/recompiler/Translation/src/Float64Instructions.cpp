@@ -127,13 +127,35 @@ bool TranslationContext::minMaxF64(const RdnaInstruction& inst, IrOpcode opcode)
     return true;
 }
 
+IrValue& TranslationContext::roundLdexpF64(const std::array<IrU32, 2>& argument, IrValue& exponent, IrValue& rounded) {
+    const std::uint32_t rounding = floatRoundMode(2u);
+    if (rounding == 0u) return rounded;
+    const std::array<IrU32, 2> result{IrU32(ir.CompositeExtract(rounded, 0u)), IrU32(ir.CompositeExtract(rounded, 1u))};
+    const auto magnitude = [&](const std::array<IrU32, 2>& word) { return &ir.ConstructU64(word[0].Value(), ir.BitwiseAnd(word[1].Value(), ir.Constant(0x7fffffffu))); };
+    IrValue& limited = ir.Emit(IrOpcode::SMax32, IrType::U32, {&ir.Emit(IrOpcode::SMin32, IrType::U32, {&exponent, &ir.Constant(2200u)}), &ir.Constant(static_cast<std::uint32_t>(-2200))});
+    IrValue& inverse = ir.ISub(ir.Constant(0u), limited);
+    IrValue& back = ir.Emit(IrOpcode::FPLdexp64, IrType::U64, {&ir.ConstructU64(result[0].Value(), result[1].Value()), &inverse});
+    IrValue& backMagnitude = *magnitude({IrU32(ir.CompositeExtract(back, 0u)), IrU32(ir.CompositeExtract(back, 1u))});
+    IrValue& sourceMagnitude = *magnitude(argument);
+    const IrU1 away(ir.Emit(IrOpcode::UGreaterThan64, IrType::U1, {&backMagnitude, &sourceMagnitude}));
+    const IrU1 toward(ir.Emit(IrOpcode::ULessThan64, IrType::U1, {&backMagnitude, &sourceMagnitude}));
+    const IrU1 negative(ir.INotEqual(ir.BitwiseAnd(argument[1].Value(), ir.Constant(0x80000000u)), ir.Constant(0u)));
+    const IrU1 increasing(rounding == 3u ? ir.ConstantBool(false) : rounding == 1u ? ir.LogicalNot(negative.Value()) : negative.Value());
+    const IrU1 up(ir.LogicalAnd(toward.Value(), increasing.Value()));
+    const IrU1 down(ir.LogicalAnd(away.Value(), ir.LogicalNot(increasing.Value())));
+    IrValue& resultMagnitude = *magnitude(result);
+    IrValue& stepped = ir.Select(up.Value(), ir.Emit(IrOpcode::IAdd64, IrType::U64, {&resultMagnitude, &ir.ConstantU64(1u)}),
+        ir.Select(down.Value(), ir.Emit(IrOpcode::ISub64, IrType::U64, {&resultMagnitude, &ir.ConstantU64(1u)}), resultMagnitude));
+    return ir.ConstructU64(ir.CompositeExtract(stepped, 0u), ir.BitwiseOr(ir.CompositeExtract(stepped, 1u), ir.BitwiseAnd(argument[1].Value(), ir.Constant(0x80000000u))));
+}
+
 bool TranslationContext::float64Unary(const RdnaInstruction& inst, IrOpcode opcode) {
     const bool ldexp = opcode == IrOpcode::FPLdexp64;
     const bool flushesInput = ldexp || opcode == IrOpcode::FPFloor64 || opcode == IrOpcode::FPCeil64 || opcode == IrOpcode::FPFract64 || opcode == IrOpcode::FPFrexpMant64;
     const auto bits = flushesInput ? flushF64Bits(readF64Bits(sourceAt(inst, 0u)), 0x40u) : readF64Bits(sourceAt(inst, 0u));
     IrValue& argument = ir.ConstructU64(bits[0].Value(), bits[1].Value());
     IrValue* exponent = ldexp ? &readU32(sourceAt(inst, 1u)).Value() : nullptr;
-    IrValue& result = ldexp ? ir.Emit(opcode, IrType::U64, {&argument, exponent}) : ir.Emit(opcode, IrType::U64, {&argument});
+    IrValue& result = ldexp ? roundLdexpF64(bits, *exponent, ir.Emit(opcode, IrType::U64, {&argument, exponent})) : ir.Emit(opcode, IrType::U64, {&argument});
     std::array<IrU32, 2> words{IrU32(ir.CompositeExtract(result, 0u)), IrU32(ir.CompositeExtract(result, 1u))};
     if (opcode == IrOpcode::FPFract64) words = flushF64Bits(words, 0x80u);
     if (ldexp && floatMode.has_value() && (floatMode->floatMode & 0x80u) == 0u) {
