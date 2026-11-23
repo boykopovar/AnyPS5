@@ -574,6 +574,5 @@ public:
     Retained<URL> failingURL;
     Retained<String> localizedDescription;
 };
-};
 
 }  // namespace NKWebKit
