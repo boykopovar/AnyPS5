@@ -302,13 +302,41 @@ std::uint32_t Nan32(SpirvEmitterState& state, std::uint32_t bits) {
     return Binary(state, spv::OpUGreaterThan, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), bits, ConstantU32(state, 0x7fffffffu)), ConstantU32(state, 0x7f800000u));
 }
 
-std::uint32_t FmaScaleF32(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs, std::uint32_t addend, std::uint32_t scale) {
+std::uint32_t DirectedF32Limits(SpirvEmitterState& state, std::uint32_t rounded, std::uint32_t exact, std::uint32_t product, std::uint32_t addend, std::uint32_t rounding) {
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto bits = Split(state, FromF64(state, rounded));
+    const auto sign = Binary(state, spv::OpBitwiseAnd, u32, bits.high, ConstantU32(state, 0x80000000u));
+    const auto magnitude = Binary(state, spv::OpBitwiseAnd, u32, bits.high, ConstantU32(state, 0x7fffffffu));
+    const auto exactMagnitude = Binary(state, spv::OpBitwiseAnd, u32, Split(state, FromF64(state, exact)).high, ConstantU32(state, 0x7fffffffu));
+    const auto exactFinite = Binary(state, spv::OpULessThan, boolean, exactMagnitude, ConstantU32(state, 0x7ff00000u));
+    const auto overflow = Binary(state, spv::OpLogicalAnd, boolean, Binary(state, spv::OpUGreaterThanEqual, boolean, magnitude, ConstantU32(state, 0x47f00000u)), exactFinite);
+    const auto negative = Binary(state, spv::OpINotEqual, boolean, sign, ConstantU32(state, 0u));
+    std::uint32_t limit = ConstantU32(state, 0x47efffffu);
+    if (rounding == 1u) limit = Select(state, u32, negative, ConstantU32(state, 0x47efffffu), ConstantU32(state, 0x47f00000u));
+    if (rounding == 2u) limit = Select(state, u32, negative, ConstantU32(state, 0x47f00000u), ConstantU32(state, 0x47efffffu));
+    const auto limitLow = Select(state, u32, Binary(state, spv::OpIEqual, boolean, limit, ConstantU32(state, 0x47f00000u)), ConstantU32(state, 0u), ConstantU32(state, 0xe0000000u));
+    auto result = SelectBits(state, overflow, {limitLow, Binary(state, spv::OpBitwiseOr, u32, sign, limit)}, bits);
+    if (rounding == 2u) {
+        const auto zeroBits = [&](F64Bits value, std::uint32_t highMask) {
+            return Binary(state, spv::OpLogicalAnd, boolean, Binary(state, spv::OpIEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, value.high, ConstantU32(state, highMask)), ConstantU32(state, 0u)), Binary(state, spv::OpIEqual, boolean, value.low, ConstantU32(state, 0u)));
+        };
+        const auto positiveZeros = Binary(state, spv::OpLogicalAnd, boolean, zeroBits(Split(state, FromF64(state, product)), 0xffffffffu), zeroBits(Split(state, FromF64(state, addend)), 0xffffffffu));
+        const auto negativeZero = Binary(state, spv::OpLogicalAnd, boolean, zeroBits(Split(state, FromF64(state, exact)), 0x7fffffffu), Unary(state, spv::OpLogicalNot, boolean, positiveZeros));
+        result = SelectBits(state, negativeZero, {ConstantU32(state, 0u), ConstantU32(state, 0x80000000u)}, result);
+    }
+    return ToF64(state, Join(state, result));
+}
+
+std::uint32_t FmaScaleF32(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs, std::uint32_t addend, std::uint32_t scale, std::uint32_t rounding) {
     const auto u32 = TypeU32(state);
     const auto boolean = TypeBool(state);
     const auto product = Exact(state, spv::OpFMul, FromF32Exact(state, lhs), FromF32Exact(state, rhs));
     const auto wideAddend = FromF32Exact(state, addend);
-    const auto scaled = Exact(state, spv::OpFMul, AddRoundToOdd(state, product, wideAddend), PowerOfTwo(state, scale));
-    const auto finite = F32BitsOfRounded(state, RoundToPrecision(state, scaled, 23u, 874u));
+    const auto sum = AddRoundToOdd(state, product, wideAddend);
+    const auto scaled = Exact(state, spv::OpFMul, sum, PowerOfTwo(state, scale));
+    const auto rounded = rounding == 0u ? RoundToPrecision(state, scaled, 23u, 874u) : DirectedF32Limits(state, RoundToPrecisionDirected(state, scaled, 23u, 874u, rounding), sum, product, wideAddend, rounding);
+    const auto finite = F32BitsOfRounded(state, rounded);
     const auto inputs = std::array{Unary(state, spv::OpBitcast, u32, lhs), Unary(state, spv::OpBitcast, u32, rhs), Unary(state, spv::OpBitcast, u32, addend)};
     const auto unbounded = Split(state, FromF64(state, Exact(state, spv::OpFAdd, product, wideAddend)));
     auto special = Select(state, u32, Classify(state, Join(state, unbounded)).nan, ConstantU32(state, 0xffc00000u), Binary(state, spv::OpBitwiseOr, u32, Binary(state, spv::OpBitwiseAnd, u32, unbounded.high, ConstantU32(state, 0x80000000u)), ConstantU32(state, 0x7f800000u)));
@@ -893,10 +921,11 @@ std::uint32_t EmitFPFmaScale64(SpirvEmitterState& state, std::uint32_t arg0, std
     return FusedMultiplyAdd(state, arg0, arg1, arg2, Unary(state, spv::OpBitcast, TypeI32(state), arg3));
 }
 
-std::uint32_t EmitFPFmaScale32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3) {
+std::uint32_t EmitFPFmaScale32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3, const IrValue* rounding) {
     const auto f32 = TypeF32(state);
     const auto i32 = TypeI32(state);
-    if (state.fmaScaleF32Function == 0u) {
+    const std::uint32_t mode = rounding->ImmediateU32() & 3u;
+    if (state.fmaScaleF32Functions[mode] == 0u) {
         const auto id = state.module.AllocateId();
         struct Restore {
             SpirvEmitterState& state;
@@ -916,12 +945,12 @@ std::uint32_t EmitFPFmaScale32(SpirvEmitterState& state, std::uint32_t arg0, std
             state.module.AddFunction(spv::OpFunctionParameter, index == 3u ? i32 : f32, parameters[index]);
         }
         EmitLabel(state, state.module.AllocateId());
-        state.module.AddFunction(spv::OpReturnValue, FmaScaleF32(state, parameters[0], parameters[1], parameters[2], parameters[3]));
+        state.module.AddFunction(spv::OpReturnValue, FmaScaleF32(state, parameters[0], parameters[1], parameters[2], parameters[3], mode));
         state.module.AddFunction(spv::OpFunctionEnd);
-        state.fmaScaleF32Function = id;
+        state.fmaScaleF32Functions[mode] = id;
     }
     const auto result = state.module.AllocateId();
-    state.module.AddFunction(spv::OpFunctionCall, f32, result, state.fmaScaleF32Function, arg0, arg1, arg2, Unary(state, spv::OpBitcast, i32, arg3));
+    state.module.AddFunction(spv::OpFunctionCall, f32, result, state.fmaScaleF32Functions[mode], arg0, arg1, arg2, Unary(state, spv::OpBitcast, i32, arg3));
     return result;
 }
 

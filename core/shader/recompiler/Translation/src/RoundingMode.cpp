@@ -94,6 +94,7 @@ RoundingUse RoundingUseOf(RdnaOpcode opcode) {
     constexpr std::uint32_t denorm1664Out = 0x80u;
     constexpr std::uint32_t denorm1664 = ModeDenorm1664Bits;
     switch (opcode) {
+    case RdnaOpcode::VDivFmasF32:
     case RdnaOpcode::VCvtF32I32:
     case RdnaOpcode::VCvtF32U32:
         return {round32, RoundingUseKind::Directed32};
@@ -142,7 +143,6 @@ RoundingUse RoundingUseOf(RdnaOpcode opcode) {
     case RdnaOpcode::VMadF32:
     case RdnaOpcode::VMadLegacyF32:
     case RdnaOpcode::VMacLegacyF32:
-    case RdnaOpcode::VDivFmasF32:
     case RdnaOpcode::VCubemaF32:
     case RdnaOpcode::VDot2F32F16:
     case RdnaOpcode::VDot2cF32F16:

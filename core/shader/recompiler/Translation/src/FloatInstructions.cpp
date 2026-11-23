@@ -629,10 +629,14 @@ bool TranslationContext::vDivFmasF32(const RdnaInstruction& inst) {
         return IrU32(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&ir.BitCastU32(value), &ir.Constant(23u), &ir.Constant(8u)}));
     };
     const IrU1 up(ir.Emit(IrOpcode::UGreaterThanEqual32, IrType::U1, {&exponent(*addend).Value(), &ir.Constant(128u)}));
+    const std::uint32_t rounding = floatRoundMode(0u);
     if (float64) {
         IrValue& power = ir.Select(scale.Value(), ir.Select(up.Value(), ir.Constant(64u), ir.Constant(static_cast<std::uint32_t>(-64))), ir.Constant(0u));
-        writeOperand(inst.destination, nanResultF32({lhs, rhs, addend}, &ir.Emit(IrOpcode::FPFmaScale32, IrType::F32, {lhs, rhs, addend, &power}), &invalidProductF32(lhs, rhs)));
+        writeOperand(inst.destination, nanResultF32({lhs, rhs, addend}, &ir.Emit(IrOpcode::FPFmaScale32, IrType::F32, {lhs, rhs, addend, &power, &ir.Constant(rounding)}), &invalidProductF32(lhs, rhs)));
         return true;
+    }
+    if (rounding != 0u) {
+        throw std::runtime_error("v_div_fmas_f32 at pc " + std::to_string(inst.programCounter) + " needs shaderFloat64 to round in a directed f32 round mode");
     }
     IrValue& power = ir.Emit(IrOpcode::SelectF32, IrType::F32, {&up.Value(), &ir.ConstantF32(18446744073709551616.0f), &ir.ConstantF32(5.42101086242752217e-20f)});
     IrValue& plain = ir.Emit(IrOpcode::FPFma32, IrType::F32, {lhs, rhs, addend});
