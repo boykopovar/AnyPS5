@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -68,27 +69,107 @@ std::mutex& WaiterMutex() {
     return mutex;
 }
 
-std::multimap<const TimedWait::Condition*, Pthread>& Waiters() {
-    static std::multimap<const TimedWait::Condition*, Pthread> waiters;
+enum class CondWake {
+    None,
+    Signal,
+    Broadcast,
+    Targeted,
+};
+
+struct CondWaiter {
+    Pthread thread = nullptr;
+    TimedWait::Condition condition;
+    std::atomic<bool> signaled{false};
+    CondWake wake = CondWake::None;
+};
+
+using CondWaiters = std::multimap<const TimedWait::Condition*, std::shared_ptr<CondWaiter>>;
+
+CondWaiters& Waiters() {
+    static CondWaiters waiters;
     return waiters;
 }
 
-std::multimap<const TimedWait::Condition*, Pthread>::iterator AddWaiter(const TimedWait::Condition* condition) {
+struct RegisteredWaiter {
+    CondWaiters::iterator position;
+    std::shared_ptr<CondWaiter> waiter;
+};
+
+RegisteredWaiter AddWaiter(const TimedWait::Condition* condition) {
+    auto waiter = std::make_shared<CondWaiter>();
+    waiter->thread = scePthreadSelf();
     std::lock_guard lock(WaiterMutex());
-    return Waiters().emplace(condition, scePthreadSelf());
+    return {Waiters().emplace(condition, waiter), std::move(waiter)};
 }
 
-void RemoveWaiter(std::multimap<const TimedWait::Condition*, Pthread>::iterator waiter) {
+CondWake RemoveWaiter(const RegisteredWaiter& registered) {
     std::lock_guard lock(WaiterMutex());
-    Waiters().erase(waiter);
+    const auto wake = registered.waiter->wake;
+    Waiters().erase(registered.position);
+    return wake;
 }
 
-bool IsWaiting(const TimedWait::Condition* condition, Pthread thread) {
+std::shared_ptr<CondWaiter> SelectWaiter(const TimedWait::Condition* condition, Pthread thread, CondWake wake) {
     std::lock_guard lock(WaiterMutex());
     const auto [first, last] = Waiters().equal_range(condition);
-    for (auto waiter = first; waiter != last; ++waiter)
-        if (waiter->second == thread) return true;
-    return false;
+    for (auto entry = first; entry != last; ++entry) {
+        const auto& waiter = entry->second;
+        if (waiter->signaled.load(std::memory_order_acquire))
+            continue;
+        if (thread != nullptr && waiter->thread != thread)
+            continue;
+        waiter->wake = wake;
+        waiter->signaled.store(true, std::memory_order_release);
+        return waiter;
+    }
+    return {};
+}
+
+void SignalOne(const TimedWait::Condition* condition) {
+    if (const auto waiter = SelectWaiter(condition, nullptr, CondWake::Signal))
+        waiter->condition.NotifyOne();
+}
+
+bool SignalTarget(const TimedWait::Condition* condition, Pthread thread) {
+    const auto waiter = SelectWaiter(condition, thread, CondWake::Targeted);
+    if (!waiter)
+        return false;
+    waiter->condition.NotifyOne();
+    return true;
+}
+
+void SignalAll(const TimedWait::Condition* condition) {
+    std::vector<std::shared_ptr<CondWaiter>> selected;
+    {
+        std::lock_guard lock(WaiterMutex());
+        const auto [first, last] = Waiters().equal_range(condition);
+        for (auto entry = first; entry != last; ++entry) {
+            const auto& waiter = entry->second;
+            if (waiter->signaled.load(std::memory_order_acquire))
+                continue;
+            waiter->wake = CondWake::Broadcast;
+            waiter->signaled.store(true, std::memory_order_release);
+            selected.push_back(waiter);
+        }
+    }
+    for (const auto& waiter : selected)
+        waiter->condition.NotifyOne();
+}
+
+template <class TLock>
+std::pair<bool, CondWake> WaitRegistered(std::shared_ptr<TimedWait::Condition>& condition, TLock& lock,
+                                         std::optional<std::uint64_t> deadlineNanos) {
+    const auto registered = AddWaiter(condition.get());
+    bool timedOut = false;
+    while (!registered.waiter->signaled.load(std::memory_order_acquire)) {
+        if (!ThreadCancel::Wait(registered.waiter->condition, lock, deadlineNanos)) {
+            timedOut = true;
+            break;
+        }
+        if (ThreadCancel::Requested())
+            break;
+    }
+    return {timedOut, RemoveWaiter(registered)};
 }
 
 int mutexOwnership(PthreadMutex* mutex, PthreadMutex* owned) {
@@ -119,9 +200,10 @@ struct WakingLock {
     }
 };
 
-int finishWait(std::shared_ptr<TimedWait::Condition>& condition, bool timedOut) {
+int finishWait(std::shared_ptr<TimedWait::Condition>& condition, CondWake wake, bool timedOut) {
     if (ThreadCancel::Requested()) {
-        condition->NotifyOne();
+        if (wake == CondWake::Signal)
+            SignalOne(condition.get());
         condition.reset();
         scePthreadExit(GUEST_CANCELED);
     }
@@ -148,25 +230,23 @@ int waitUntil(std::shared_ptr<TimedWait::Condition> condition, PthreadMutex* mut
         m->_owner.store(std::thread::id{}, std::memory_order_release);
         for (int level = 1; level < previousCount; ++level)
             m->_rmtx.unlock();
-        const auto waiter = AddWaiter(condition.get());
-        timedOut = !ThreadCancel::Wait(*condition, lock, deadlineNanos);
-        RemoveWaiter(waiter);
+        const auto [waitTimedOut, wake] = WaitRegistered(condition, lock, deadlineNanos);
+        timedOut = waitTimedOut;
         for (int level = 1; level < previousCount; ++level)
             m->_rmtx.lock();
         m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
         m->_count = previousCount;
         lock.release();
-        return finishWait(condition, timedOut);
+        return finishWait(condition, wake, timedOut);
     }
     WakingLock<std::timed_mutex> waking{m, m->_mtx};
     std::unique_lock lock(waking, std::adopt_lock);
     m->_owner.store(std::thread::id{}, std::memory_order_release);
-    const auto waiter = AddWaiter(condition.get());
-    timedOut = !ThreadCancel::Wait(*condition, lock, deadlineNanos);
-    RemoveWaiter(waiter);
+    const auto [waitTimedOut, wake] = WaitRegistered(condition, lock, deadlineNanos);
+    timedOut = waitTimedOut;
     m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
     lock.release();
-    return finishWait(condition, timedOut);
+    return finishWait(condition, wake, timedOut);
 }
 
 }
@@ -278,7 +358,7 @@ int APS5_VABI scePthreadCondSignal(PthreadCond* cond) {
     const auto resolved = resolveCond(cond);
     if (!resolved)
         return SCE_KERNEL_ERROR_EINVAL;
-    resolved->NotifyOne();
+    SignalOne(resolved.get());
     return 0;
 }
 
@@ -286,7 +366,7 @@ int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) {
     const auto resolved = resolveCond(cond);
     if (!resolved)
         return SCE_KERNEL_ERROR_EINVAL;
-    resolved->NotifyAll();
+    SignalAll(resolved.get());
     return 0;
 }
 
@@ -296,9 +376,8 @@ int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread) {
         return SCE_KERNEL_ERROR_EINVAL;
     if (!GuestThreadIsLive(thread))
         return SCE_KERNEL_ERROR_ESRCH;
-    if (!IsWaiting(resolved.get(), thread))
+    if (!SignalTarget(resolved.get(), thread))
         return SCE_KERNEL_ERROR_EPERM;
-    resolved->NotifyAll();
     return 0;
 }
 

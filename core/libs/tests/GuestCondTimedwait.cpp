@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <thread>
 
 static int cleanupAt = -1;
 static void APS5_VABI Cleanup(void*) { cleanupAt = 0; }
@@ -208,6 +209,63 @@ static void SignalTo() {
     Require(scePthreadMutexDestroy(&signalled.mutex) == SCE_OK);
 }
 
+
+struct TargetedWait {
+    PthreadMutex mutex = nullptr;
+    PthreadCond cond = nullptr;
+    std::atomic<int> ready{0};
+    std::atomic<int> targetResult{-1};
+    std::atomic<int> otherResult{-1};
+};
+
+struct TargetedWaitArgument {
+    TargetedWait* state;
+    bool target;
+};
+
+static void* APS5_VABI TargetedWaiter(void* arg) {
+    const auto argument = *static_cast<TargetedWaitArgument*>(arg);
+    auto& state = *argument.state;
+    Require(scePthreadMutexLock(&state.mutex) == SCE_OK);
+    state.ready.fetch_add(1);
+    const int result = pthread_cond_reltimedwait_np_nid_postfix(&state.cond, &state.mutex, 100000);
+    (argument.target ? state.targetResult : state.otherResult).store(result);
+    Require(scePthreadMutexUnlock(&state.mutex) == SCE_OK);
+    return nullptr;
+}
+
+static void SignalToTargetOnly() {
+    for (int round = 0; round < 10; ++round) {
+        TargetedWait state;
+        Require(scePthreadMutexInit(&state.mutex, nullptr, nullptr) == SCE_OK);
+        Require(scePthreadCondInit(&state.cond, nullptr, nullptr) == SCE_OK);
+        Require(scePthreadMutexLock(&state.mutex) == SCE_OK);
+
+        TargetedWaitArgument targetArgument{&state, true};
+        TargetedWaitArgument otherArgument{&state, false};
+        Pthread target = nullptr;
+        Pthread other = nullptr;
+        Require(scePthreadCreate(&target, nullptr, TargetedWaiter, &targetArgument, nullptr) == SCE_OK);
+        Require(scePthreadCreate(&other, nullptr, TargetedWaiter, &otherArgument, nullptr) == SCE_OK);
+        Require(scePthreadMutexUnlock(&state.mutex) == SCE_OK);
+
+        while (state.ready.load() != 2)
+            std::this_thread::yield();
+
+        Require(scePthreadMutexLock(&state.mutex) == SCE_OK);
+        Require(scePthreadCondSignalto(&state.cond, target) == SCE_OK);
+        Require(scePthreadMutexUnlock(&state.mutex) == SCE_OK);
+
+        Require(scePthreadJoin(target, nullptr) == SCE_OK);
+        Require(scePthreadJoin(other, nullptr) == SCE_OK);
+        Require(state.targetResult.load() == 0);
+        Require(state.otherResult.load() == POSIX_ETIMEDOUT);
+
+        Require(scePthreadCondDestroy(&state.cond) == SCE_OK);
+        Require(scePthreadMutexDestroy(&state.mutex) == SCE_OK);
+    }
+}
+
 static void SignalToEveryRound(bool recursive) {
     for (int round = 0; round < 200; ++round) {
         Signalled signalled;
@@ -240,6 +298,7 @@ int main() {
     MonotonicClockWait();
     DistantAbsoluteDeadline();
     SignalTo();
+    SignalToTargetOnly();
     SignalToEveryRound(false);
     SignalToEveryRound(true);
 
