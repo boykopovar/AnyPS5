@@ -96,6 +96,31 @@ void TestEntriesOfAFreshMapAreWeak() {
     Require(destroyed.calls == 1);
 }
 
+void TestMapStaysAliveWhileAContextRetainsItsGroup() {
+    destroyed = {};
+    JSContextGroupRef group = JSContextGroupCreate();
+    JSGlobalContextRef creator = JSGlobalContextCreateInGroup(group, nullptr);
+    JSGlobalContextRef survivor = JSGlobalContextCreateInGroup(group, nullptr);
+    auto* map = static_cast<OpaqueJSWeakObjectMap*>(
+        JSWeakObjectMapCreate(creator, nullptr, reinterpret_cast<Jsc::WeakMapDestroyedCallback>(&OnDestroyed)));
+    Require(map != nullptr);
+
+    JSContextGroupRelease(group);
+    JSGlobalContextRelease(creator);
+    Require(destroyed.calls == 0);
+
+    int key = 0;
+    JSObjectRef object = JSObjectMake(survivor, nullptr, nullptr);
+    Require(object != nullptr);
+    JSWeakObjectMapSet(survivor, map, &key, object);
+    Require(JSWeakObjectMapGet(survivor, map, &key) == object);
+    Require(JSWeakObjectMapRemove(survivor, map, &key));
+    Require(JSWeakObjectMapGet(survivor, map, &key) == nullptr);
+
+    JSGlobalContextRelease(survivor);
+    Require(destroyed.calls == 1);
+}
+
 void TestEveryMapIsDestroyedOnce() {
     destroyed = {};
     JSContextGroupRef group = JSContextGroupCreate();
@@ -143,6 +168,7 @@ void TestNullContextThrows() {
 int main() {
     TestCreateBindsTheMapToTheGroup();
     TestEntriesOfAFreshMapAreWeak();
+    TestMapStaysAliveWhileAContextRetainsItsGroup();
     TestEveryMapIsDestroyedOnce();
     TestNullDestructorIsAccepted();
     TestNullContextThrows();
