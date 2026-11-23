@@ -122,7 +122,6 @@ int APS5_VABI WKBundlePageGetAppCacheUsageForOrigin();
 int APS5_VABI WKBundlePageGetBackForwardList();
 int APS5_VABI WKBundlePageGetPageZoomFactor();
 int APS5_VABI WKBundlePageGetTextZoomFactor();
-int APS5_VABI WKBundlePageHasLocalDataForURL();
 int APS5_VABI WKBundlePageInsertNewlineInQuotedContent();
 int APS5_VABI WKBundlePageInstallPageOverlayWithAnimation();
 int APS5_VABI WKBundlePageInstallPageOverlay();

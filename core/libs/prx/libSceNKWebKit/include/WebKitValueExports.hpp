@@ -150,6 +150,7 @@ void APS5_VABI WKBundlePageWillExitFullScreen(const void* pageRef);
 void APS5_VABI WKBundlePageSetBottomOverhangImage(const void* pageRef, const void* imageRef);
 void APS5_VABI WKBundlePageSetTopOverhangImage(const void* pageRef, const void* imageRef);
 void APS5_VABI WKBundlePageSetPaintedObjectsCounterThreshold(const void* pageRef, std::uint64_t threshold);
+bool APS5_VABI WKBundlePageHasLocalDataForURL(const void* pageRef, const void* urlRef);
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID();
 std::uint32_t APS5_VABI WKBundleRangeHandleGetTypeID();
 std::uint32_t APS5_VABI WKBundleScriptWorldGetTypeID();

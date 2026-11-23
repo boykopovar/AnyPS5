@@ -8461,10 +8461,6 @@ int APS5_VABI WKBundlePageGetTextZoomFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageHasLocalDataForURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageInsertNewlineInQuotedContent() {
     NotImplemented_nid_no_patch(__func__);
 }
