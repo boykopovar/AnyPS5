@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <bit>
 #include <cerrno>
 #include <cfenv>
 #include <cmath>
@@ -56,6 +57,43 @@ void CheckHexRange(TFloat (APS5_VABI *parse)(const char*, char**, std::int64_t, 
         const auto plain = simple(text.c_str(), &end, 0);
         Require(matches(plain) && end == text.c_str() + text.size() - 4 && *__error_nid_postfix() == saved, "unscaled hexadecimal range wrapper preserves errno");
     }
+}
+
+void TestDecimalFloat() {
+    const auto saved = _mm_getcsr();
+    struct Example {
+        const char* text;
+        int consumed;
+        std::uint32_t bits[4];
+        unsigned flags;
+    };
+    const Example examples[] = {
+        {"1e-40", 5, {0x116c3, 0x116c1, 0x116ca, 0x116c1}, 0x32},
+        {"  -1.5tail", 6, {0xbfc00000, 0xbfbfffff, 0xbfc00000, 0xbfbfffff}, 0x20},
+        {"0.999999999999999", 17, {0x3f800000, 0x3f7fffff, 0x3f800000, 0x3f7fffff}, 0x20},
+        {"-1.000049948", 12, {0xbf8001a3, 0xbf8001a3, 0xbf8001a4, 0xbf8001a3}, 0x20},
+        {"1e-46", 5, {0, 0, 9, 0}, 0x32},
+        {"1e39", 4, {0x7f800000, 0x7f7fffff, 0x7f800000, 0x7f7fffff}, 0x28},
+    };
+    for (const auto& example : examples) {
+        for (unsigned mode = 0; mode < 4; ++mode) {
+            _mm_setcsr(0x1f80 | (mode << 13));
+            char* end = nullptr;
+            int error = -1;
+            *__error_nid_postfix() = 97;
+            const auto bits = std::bit_cast<std::uint32_t>(_Stofx_nid_postfix(example.text, &end, 0, &error));
+            const auto flags = _mm_getcsr() & 0x3f;
+            const bool rangeLost = bits == 0 || bits == 0x7f800000;
+            Require(bits == example.bits[mode], "decimal _Stofx follows the selected rounding mode");
+            Require(flags == example.flags, "decimal _Stofx status flags");
+            Require(end == example.text + example.consumed, "decimal _Stofx end pointer");
+            Require(error == (rangeLost ? 1 : 0) && *__error_nid_postfix() == (rangeLost ? RangeError : 97), "decimal _Stofx range reporting");
+        }
+    }
+    _mm_setcsr(0x1f80);
+    Require(std::bit_cast<std::uint32_t>(_Stof_nid_postfix("1e-34", nullptr, -6)) == 0x116c3, "_Stof applies the external decimal scale");
+    Require(std::bit_cast<std::uint32_t>(_WStof_nid_postfix(u"1e-34", nullptr, -6)) == 0x116c3, "_WStof applies the external decimal scale");
+    _mm_setcsr(saved);
 }
 
 void TestHexRange() {
@@ -853,6 +891,7 @@ void TestLongLogExports() {
 }
 
 int main() {
+    TestDecimalFloat();
     TestStod();
     CheckNoConversion(_Stodx_nid_postfix);
     CheckNoConversion(_Stofx_nid_postfix);
