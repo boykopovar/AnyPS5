@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -55,10 +56,14 @@ constexpr std::size_t DepthSliceBytes = LayerBytes;
 constexpr std::size_t StoredDepthOffset = SurfaceBytes + DepthSliceBytes * Layers;
 constexpr std::size_t PitchedDepthOffset = StoredDepthOffset + DepthSliceBytes * Layers;
 constexpr std::size_t DepthSlicePitch = DepthSliceBytes * 2u;
-constexpr std::size_t BlockBytes = PitchedDepthOffset + DepthSlicePitch * Layers;
+constexpr std::size_t MippedDepthOffset = PitchedDepthOffset + DepthSlicePitch * Layers;
+constexpr std::size_t MippedDepthReservePerSlice = 8u * 1024u * 1024u;
+constexpr std::size_t BlockBytes = MippedDepthOffset + MippedDepthReservePerSlice * Layers;
 constexpr std::size_t HtileSliceBytes = ((Side + 1023u) / 1024u) * ((Side + 511u) / 512u) * 32768u;
+constexpr std::size_t MippedHtileSliceBytes = 0x20000u;
 
 alignas(256) std::array<std::uint32_t, HtileSliceBytes * Layers / 4u> Htile{};
+alignas(256) std::array<std::uint32_t, MippedHtileSliceBytes * Layers / 4u> MippedHtile{};
 
 alignas(256) constexpr std::array<std::uint32_t, 10> VertexCode{
     0xe0382000, 0x80000005, 0xe030201c, 0x80000405, 0xbf8c3f70, 0xf80000cf, 0x03020100, 0xf80008d4, 0x00040000, 0xbf810000,
@@ -175,6 +180,10 @@ struct Pass {
     bool htiled = true;
     std::uint64_t depthBase = 0;
     std::uint64_t slicePitch = 0;
+    std::uint32_t depthWidth = Side;
+    std::uint32_t depthHeight = Side;
+    std::uint64_t htileBase = 0;
+    std::uint64_t htileSlicePitch = 0;
 };
 
 void Draw(AgcDriver::VulkanDevice& device, std::uint64_t surface, const Pass& pass) {
@@ -211,11 +220,14 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint64_t surface, const Pass& pa
     state.layerExports = pass.layers == 1 ? 0u : 1u << 18u;
     const auto depthBase = pass.depthBase != 0 ? pass.depthBase : DepthAddress;
     const std::uint64_t slicePitch = pass.slicePitch != 0 ? pass.slicePitch : DepthSliceBytes;
-    state.depth = AgcDriver::Graphics::DepthTarget{depthBase + pass.slice * slicePitch, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, pass.htiled ? AddressOf(Htile.data()) + pass.slice * HtileSliceBytes : 0u, false};
+    const auto htileSlicePitch = pass.htileSlicePitch != 0 ? pass.htileSlicePitch : HtileSliceBytes;
+    const auto htileAddress = pass.htileBase != 0 ? pass.htileBase + pass.slice * htileSlicePitch : AddressOf(Htile.data()) + pass.slice * HtileSliceBytes;
+    state.depth = AgcDriver::Graphics::DepthTarget{depthBase + pass.slice * slicePitch, 0, {pass.depthWidth, pass.depthHeight}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, pass.htiled ? htileAddress : 0u, false};
     state.depth->firstSlice = pass.slice;
     state.depth->lastSlice = pass.slice + pass.layers - 1u;
     state.depth->layers = pass.layers;
     state.depth->depthSlicePitch = static_cast<std::uint32_t>(pass.slicePitch);
+    state.depth->htileSlicePitch = pass.htileSlicePitch;
     state.depthTest = pass.depthTest;
     state.depthWrite = pass.depthWrite;
     state.depthCompare = pass.compare;
@@ -400,6 +412,35 @@ void PitchedSlices(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     }
 }
 
+void MippedHtileSliceClear(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    using AgcDriver::Graphics::ComputeElementMipLayout;
+    using AgcDriver::Graphics::ComputeSurfaceSize;
+    using AgcDriver::Graphics::HtileMetadataBytes;
+    using AgcDriver::Graphics::TextureTileMode;
+    const auto mips = ComputeElementMipLayout(TextureTileMode::kZ64KBX, 4u, 1024u, 1024u, 3u);
+    const auto depthSlicePitch = ComputeSurfaceSize(mips, 1u);
+    const auto depthExtent = VkExtent2D{mips.at(1).width, mips.at(1).height};
+    const auto htileMipOffset = HtileMetadataBytes({mips.at(2).width, mips.at(2).height});
+    const auto htileSlicePitch = HtileMetadataBytes({mips.at(0).width, mips.at(0).height}) + HtileMetadataBytes({mips.at(1).width, mips.at(1).height}) + htileMipOffset;
+    Require(depthSlicePitch <= MippedDepthReservePerSlice, "the 1024x1024 three-mip depth slice exceeds its reserved guest span");
+    Require(htileSlicePitch == MippedHtileSliceBytes, "the 1024x1024 three-mip HTILE slice does not fit the reserved metadata span");
+    const auto depthBase = AddressOf(texels + MippedDepthOffset) + mips.at(1).tiledOffset;
+    const auto htileBase = AddressOf(MippedHtile.data()) + htileMipOffset;
+    std::fill_n(reinterpret_cast<std::uint32_t*>(texels + MippedDepthOffset), MippedDepthReservePerSlice * Layers / 4u, 0u);
+    AgcDriver::GuestMemory::CollectWrites(AddressOf(texels + MippedDepthOffset), MippedDepthReservePerSlice * Layers);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    MippedHtile.fill(0xffffffffu);
+    std::array<float, Layers> depths{};
+    for (std::uint32_t layer = 0; layer < Layers; ++layer) depths[layer] = static_cast<float>(layer + 1u) / 8.0f;
+    Quads(Layers, false, depths);
+    Draw(device, AddressOf(texels), {0, Layers, true, true, VK_COMPARE_OP_ALWAYS, FillPixelCode, true, depthBase, depthSlicePitch, depthExtent.width, depthExtent.height, htileBase, htileSlicePitch});
+    AgcDriver::Graphics::NoteDepthMetadataFill(htileBase + 4u * htileSlicePitch, HtileMetadataBytes(depthExtent), 0u);
+    const std::array<float, Layers> unused{};
+    Quads(Layers, true, unused);
+    Draw(device, AddressOf(texels), {0, Layers, true, false, VK_COMPARE_OP_LESS, PassPixelCode, true, depthBase, depthSlicePitch, depthExtent.width, depthExtent.height, htileBase, htileSlicePitch});
+    for (std::uint32_t slice = 0; slice < Layers; ++slice) Expect(device, AddressOf(texels), slice, slice == 4u ? Threads : 4u * (slice + 1u), "a mip 1 layered draw after an HTILE clear of depth slice 4 alone");
+}
+
 void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     const auto surface = AddressOf(texels);
     DepthAddress = surface + SurfaceBytes;
@@ -444,6 +485,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     device.WaitIdle();
     StoredSliceFill(device, texels);
     PitchedSlices(device, texels);
+    MippedHtileSliceClear(device, texels);
 }
 
 }
