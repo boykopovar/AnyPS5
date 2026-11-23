@@ -25,6 +25,7 @@ namespace {
 using Windows::LoadRva;
 
 constexpr std::uint64_t PageSize = 0x1000;
+constexpr std::uint64_t LowReserveEnd = 0x100000000;
 constexpr std::uint64_t UserAddressEnd = 0x7fffffe00000;
 
 constexpr std::uint32_t MhMagic64 = 0xfeedfacf;
@@ -918,7 +919,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     std::sort(segments.begin() + static_cast<std::ptrdiff_t>(guestSegments), segments.end(), [](const Segment& left, const Segment& right) { return left.Rva < right.Rva; });
     if (input.Executable) {
         const auto end = segments.back().Rva + AlignUp(segments.back().MemorySize, PageSize);
-        if (imageBase + end < Windows::ImageBase) segments.push_back({"__APS5LOW", end, Windows::ImageBase - imageBase - end, 0, {}, {}});
+        if (imageBase + end < LowReserveEnd) segments.push_back({"__APS5LOW", end, LowReserveEnd - imageBase - end, 0, {}, {}});
     }
     for (std::size_t index = guestSegments; index < segments.size(); ++index) {
         auto& data = segments[index].Data;
@@ -1112,12 +1113,12 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     }
 
     const auto linkeditOffset = file.size();
+    const auto exportOffset = file.size();
+    file.insert(file.end(), exports.begin(), exports.end());
     const auto rebaseOffset = file.size();
     file.insert(file.end(), rebase.begin(), rebase.end());
     const auto bindOffset = file.size();
     file.insert(file.end(), bind.begin(), bind.end());
-    const auto exportOffset = file.size();
-    file.insert(file.end(), exports.begin(), exports.end());
     const auto stringOffset = file.size();
     file.insert(file.end(), 8, 0);
     PadTo(file, 16);
@@ -1129,6 +1130,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         throw Domain::RelinkerException("Mach-O output exceeds 4 GiB");
     if (imageBase + imageEnd + AlignUp(linkeditSize, PageSize) > UserAddressEnd)
         throw Domain::RelinkerException("Mach-O image ends outside the macOS user address space");
+    if (imageEnd + (exportOffset - linkeditOffset) + exports.size() > std::numeric_limits<std::uint32_t>::max())
+        throw Domain::RelinkerException("Mach-O export trie ends more than 4 GiB past __TEXT, beyond dyld's 32-bit runtime offset");
 
     const auto writeSegment = [&](const std::size_t at, const std::uint64_t vmaddr, const std::uint64_t vmsize, const std::uint64_t fileoff, const std::uint64_t filesize) {
         Io::WriteU64(commands, at + 24, vmaddr);

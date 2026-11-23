@@ -119,7 +119,7 @@ Its executable is also not placed by address space layout randomization:
 
 - **Linux:** loaded at `0x400000` or at the `--linux-fixed-base` address, unless the deprecated `--lazy-binding` keeps it position independent.
 - **Windows:** the lowest ELF load page is loaded at the preferred `0x400000` when that range is free, or at the `--windows-fixed-base` address, without `DYNAMIC_BASE`.
-- **macOS:** the lowest ELF load page is loaded at `0x400000` or at the `--macos-fixed-base` address; the executable is written without `MH_PIE`. Below `0x140000000`, the address range after the image stays reserved (`__APS5LOW`, no access), so dyld, malloc and Rosetta place their memory above it, as they did when the image itself started there.
+- **macOS:** the lowest ELF load page is loaded at `0x400000` or at the `--macos-fixed-base` address; the executable is written without `MH_PIE`. Below 4 GiB (`0x100000000`), the address range after the image stays reserved (`__APS5LOW`, no access), so dyld, malloc and Rosetta place their memory above it, as they did when the image itself started at `0x140010000`.
 
 ### CPU requirements
 

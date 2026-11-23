@@ -103,8 +103,12 @@ def check_structure(name, data):
     first_load = next(segment for segment in macho.segments if segment["name"].startswith("__ELF"))
     check(first_load["vmaddr"] == 0x400000, f"{name}: the lowest ELF load page is at {first_load['vmaddr']:#x}, not at the default 0x400000")
     low = macho.segment("__APS5LOW")
-    check(low["vmaddr"] + low["vmsize"] == 0x140000000 and low["initprot"] == 0 and low["maxprot"] == 0 and low["filesize"] == 0,
-          f"{name}: the address range from the image to 0x140000000 is not reserved: {low}")
+    check(low["vmaddr"] + low["vmsize"] == 0x100000000 and low["initprot"] == 0 and low["maxprot"] == 0 and low["filesize"] == 0,
+          f"{name}: the address range from the image to 0x100000000 is not reserved: {low}")
+    text = macho.segment("__TEXT")
+    linkedit = macho.segment("__LINKEDIT")
+    export_end = macho.dyld_info[8] + macho.dyld_info[9] - linkedit["fileoff"] + linkedit["vmaddr"] - text["vmaddr"]
+    check(export_end <= 0xFFFFFFFF, f"{name}: the export trie ends {export_end:#x} past __TEXT, beyond dyld's 32-bit runtime offset")
     check(zero["vmaddr"] == 0 and zero["vmsize"] == IMAGE_BASE and zero["initprot"] == 0, f"{name}: bad __PAGEZERO")
     expected = IMAGE_BASE
     for segment in macho.segments[1:]:
