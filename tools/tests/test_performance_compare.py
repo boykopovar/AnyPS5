@@ -537,6 +537,17 @@ class PerformanceCompareTests(unittest.TestCase):
                 self.write(self.after, candidate)
                 self.assertEqual(self.run_cli("--require-matching-context").returncode, 2)
 
+    def test_trace_output_directory_does_not_change_the_comparison_context(self):
+        self.write(self.before, self.baseline)
+        self.candidate["env"]["APS5_TRACE_DIR"] = "<path>"
+        self.write(self.after, self.candidate)
+
+        result = self.run_cli("--require-matching-context", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["configuration_differences"], {})
+        self.assertEqual(report["candidate"]["env"]["APS5_TRACE_DIR"], "<path>")
+
     def test_timed_windows_allow_different_first_present_counters(self):
         for summary in (self.baseline, self.candidate):
             summary["env"] = {"APS5_TRACE_SECONDS": "270:20"}

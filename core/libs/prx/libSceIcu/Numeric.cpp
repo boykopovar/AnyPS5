@@ -97,9 +97,7 @@ std::int8_t APS5_VABI uprv_add32_overflow_nid_postfix(std::int32_t a, std::int32
     if (!res) APS5_INVALID_ARG_EX;
     const std::int64_t result = static_cast<std::int64_t>(a) + b;
     const std::int32_t narrowed = static_cast<std::int32_t>(result);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(res, &narrowed, sizeof(narrowed));
-    errno = savedErrno;
     if (!copied) APS5_INVALID_ARG_EX;
     return result != narrowed;
 }
@@ -108,9 +106,7 @@ std::int8_t APS5_VABI uprv_mul32_overflow_nid_postfix(std::int32_t a, std::int32
     if (!res) APS5_INVALID_ARG_EX;
     const std::int64_t result = static_cast<std::int64_t>(a) * b;
     const std::int32_t narrowed = static_cast<std::int32_t>(result);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(res, &narrowed, sizeof(narrowed));
-    errno = savedErrno;
     if (!copied) APS5_INVALID_ARG_EX;
     return result != narrowed;
 }

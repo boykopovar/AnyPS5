@@ -15,30 +15,6 @@
 
 namespace {
 
-class PreservedErrno {
-public:
-    PreservedErrno() : saved(errno) {}
-    ~PreservedErrno() { errno = saved; }
-
-private:
-    int saved;
-};
-
-bool CopyInPreservingErrno(void* dst, const void* src, std::size_t bytes) {
-    PreservedErrno guard;
-    return GuestCopyIn_nid_no_patch(dst, src, bytes);
-}
-
-bool CopyOutPreservingErrno(void* dst, const void* src, std::size_t bytes) {
-    PreservedErrno guard;
-    return GuestCopyOut_nid_no_patch(dst, src, bytes);
-}
-
-bool WritablePreservingErrno(void* dst, std::size_t bytes) {
-    PreservedErrno guard;
-    return GuestWritable_nid_no_patch(dst, bytes);
-}
-
 constexpr std::int32_t Unwritten = -1;
 
 struct ClassCallback {
@@ -63,22 +39,22 @@ const UBiDi* Native(const Icu::BiDi* bidi) {
 }
 
 bool EnterStatus(std::int32_t* error, UErrorCode& status, std::int32_t& previous, const char* caller) {
-    if (!CopyInPreservingErrno(&previous, error, sizeof(previous))) throw std::runtime_error(caller);
+    if (!GuestCopyIn_nid_no_patch(&previous, error, sizeof(previous))) throw std::runtime_error(caller);
     status = static_cast<UErrorCode>(previous);
     return !U_FAILURE(status);
 }
 
 void LeaveStatus(std::int32_t* error, UErrorCode status, std::int32_t previous, const char* caller) {
     const auto updated = static_cast<std::int32_t>(status);
-    if (updated != previous && !CopyOutPreservingErrno(error, &updated, sizeof(updated))) throw std::runtime_error(caller);
+    if (updated != previous && !GuestCopyOut_nid_no_patch(error, &updated, sizeof(updated))) throw std::runtime_error(caller);
 }
 
 template <typename TFirst, typename TSecond>
 void CommitOutputs(TFirst* first, const TFirst& hostFirst, TSecond* second, const TSecond& hostSecond,
                    const char* caller) {
-    if (first && second && !WritablePreservingErrno(second, sizeof(*second))) throw std::runtime_error(caller);
-    if (first && !CopyOutPreservingErrno(first, &hostFirst, sizeof(hostFirst))) throw std::runtime_error(caller);
-    if (second && !CopyOutPreservingErrno(second, &hostSecond, sizeof(hostSecond))) throw std::runtime_error(caller);
+    if (first && second && !GuestWritable_nid_no_patch(second, sizeof(*second))) throw std::runtime_error(caller);
+    if (first && !GuestCopyOut_nid_no_patch(first, &hostFirst, sizeof(hostFirst))) throw std::runtime_error(caller);
+    if (second && !GuestCopyOut_nid_no_patch(second, &hostSecond, sizeof(hostSecond))) throw std::runtime_error(caller);
 }
 
 }
@@ -164,15 +140,15 @@ void APS5_VABI ubidi_reorderVisual_nid_postfix(const std::uint8_t* levels, std::
         std::uint8_t probe[ProbeChunk];
         for (std::size_t offset = 0; offset < count; offset += ProbeChunk) {
             const std::size_t chunk = std::min(ProbeChunk, count - offset);
-            if (!CopyInPreservingErrno(probe, levels + offset, chunk)) throw std::runtime_error(__func__);
+            if (!GuestCopyIn_nid_no_patch(probe, levels + offset, chunk)) throw std::runtime_error(__func__);
         }
     }
     std::vector<std::uint8_t> hostLevels(count);
-    if (!CopyInPreservingErrno(hostLevels.data(), levels, hostLevels.size())) throw std::runtime_error(__func__);
+    if (!GuestCopyIn_nid_no_patch(hostLevels.data(), levels, hostLevels.size())) throw std::runtime_error(__func__);
     std::vector<std::int32_t> hostMap(count, Unwritten);
     ubidi_reorderVisual(hostLevels.data(), length, hostMap.data());
     if (hostMap[0] == Unwritten) return;
-    if (!CopyOutPreservingErrno(indexMap, hostMap.data(), mapBytes)) throw std::runtime_error(__func__);
+    if (!GuestCopyOut_nid_no_patch(indexMap, hostMap.data(), mapBytes)) throw std::runtime_error(__func__);
 }
 
 void APS5_VABI ubidi_setClassCallback_nid_postfix(Icu::BiDi* bidi, Icu::BiDiClassCallback function, const void* context,
@@ -186,8 +162,8 @@ void APS5_VABI ubidi_setClassCallback_nid_postfix(Icu::BiDi* bidi, Icu::BiDiClas
         LeaveStatus(error, U_ILLEGAL_ARGUMENT_ERROR, previous, __func__);
         return;
     }
-    if (oldFunction && !WritablePreservingErrno(oldFunction, sizeof(*oldFunction))) throw std::runtime_error(__func__);
-    if (oldContext && !WritablePreservingErrno(oldContext, sizeof(*oldContext))) throw std::runtime_error(__func__);
+    if (oldFunction && !GuestWritable_nid_no_patch(oldFunction, sizeof(*oldFunction))) throw std::runtime_error(__func__);
+    if (oldContext && !GuestWritable_nid_no_patch(oldContext, sizeof(*oldContext))) throw std::runtime_error(__func__);
 
     std::lock_guard lock(classCallbackMutex);
     auto& callback = classCallbacks[bidi];
@@ -197,10 +173,10 @@ void APS5_VABI ubidi_setClassCallback_nid_postfix(Icu::BiDi* bidi, Icu::BiDiClas
     callback->function = function;
     callback->context = context;
     ubidi_setClassCallback(Native(bidi), function ? ForwardClass : nullptr, callback.get(), nullptr, nullptr, &status);
-    if (oldFunction && !CopyOutPreservingErrno(oldFunction, &previousFunction, sizeof(previousFunction))) {
+    if (oldFunction && !GuestCopyOut_nid_no_patch(oldFunction, &previousFunction, sizeof(previousFunction))) {
         throw std::runtime_error(__func__);
     }
-    if (oldContext && !CopyOutPreservingErrno(oldContext, &previousContext, sizeof(previousContext))) {
+    if (oldContext && !GuestCopyOut_nid_no_patch(oldContext, &previousContext, sizeof(previousContext))) {
         throw std::runtime_error(__func__);
     }
     LeaveStatus(error, status, previous, __func__);

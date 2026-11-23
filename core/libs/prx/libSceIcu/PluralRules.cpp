@@ -10,18 +10,14 @@ constexpr std::int32_t PluralTypeCount = 2;
 
 bool Failure(const std::int32_t* status, const char* caller) {
     Icu::RequireStatus(status);
-    const int savedErrno = errno;
     std::int32_t value = 0;
     const bool ok = GuestCopyIn_nid_no_patch(&value, status, sizeof(value));
-    errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
     return value > 0;
 }
 
 void WriteStatus(std::int32_t* status, std::int32_t value, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
-    errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
 }
 
