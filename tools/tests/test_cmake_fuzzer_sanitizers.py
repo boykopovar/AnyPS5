@@ -15,7 +15,7 @@ def configure(build_dir, *options):
 
 
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja") and (
-    os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")),
+    os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++") or shutil.which("clang++") or shutil.which("cl")),
     "requires cmake, ninja and a C++ compiler")
 class Tests(unittest.TestCase):
     def setUp(self):

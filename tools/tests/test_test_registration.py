@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_test_registration
 
 CXX_BUILD_TOOLS = shutil.which("cmake") and shutil.which("ninja") and (
-    os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++") or shutil.which("clang++"))
+    os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++") or shutil.which("clang++") or shutil.which("cl"))
 
 
 class RegistrationJsonTests(unittest.TestCase):
