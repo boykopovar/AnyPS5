@@ -2105,7 +2105,7 @@ Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, 
         return {open->commands, true, false, PassBreak::Continued};
     }
     const auto reason = PassBreakFor(hazard);
-    const bool merge = MergeBarriers() && !fenced && !pass.fenced && !pass.afterPass;
+    const bool merge = MergeBarriers() && !fenced && !pass.fenced && !pass.afterPass && pass.afterEnd.empty();
     const bool elide = merge && hazard == PassHazard::None;
     endOpenRenderPass(reason, !merge);
     const auto commands = Commands();
@@ -2125,6 +2125,11 @@ void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool
     pass.key = key;
     pass.fenced = pass.fenced || fenced;
     open->passHazards.Add(access);
+}
+
+void Recorder::AfterRenderPass(std::function<void(Recorder&)> work) {
+    Require(RenderPassOpen(), "work after a render pass without an open render pass");
+    open->renderPass.afterEnd.push_back(std::move(work));
 }
 
 void Recorder::SealPassWriteOnly() {
@@ -2150,9 +2155,19 @@ void Recorder::endOpenRenderPass(PassBreak by, bool barrier) {
     EndGpuTiming(pass.timing);
     open->coveredAccess = barrier ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT : 0;
     open->hostReadOwed = true;
+    auto after = std::move(pass.afterEnd);
     pass = {};
     pass.closedBy = by;
     PerformanceTrace::Amount(PassBreakScopeNames[static_cast<std::size_t>(by)], 1);
+    std::exception_ptr failure;
+    for (auto& work : after) {
+        try {
+            work(*this);
+        } catch (...) {
+            if (failure == nullptr) failure = std::current_exception();
+        }
+    }
+    if (failure != nullptr) std::rethrow_exception(failure);
 }
 
 void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end) {
@@ -2382,7 +2397,7 @@ bool Recorder::closeStoreRun(bool atSubmit) {
         // A label says the work before it is done: the queued key stores (results of that work)
         // land ahead of every store of the run, and the pass a draw left open ends.
         if (!open->keyStores.empty()) recordKeyStores(true);
-        const bool passEndLast = open->renderPass.open && !open->renderPass.afterPass;
+        const bool passEndLast = open->renderPass.open && !open->renderPass.afterPass && open->renderPass.afterEnd.empty();
         if (open->renderPass.open) endOpenRenderPass(PassBreak::Label);
         const auto commands = open->commands;
         run.timing = beginTiming(ClassKey(CommandClass::LabelRun));
