@@ -89,6 +89,31 @@ int main(int argc, char** argv) {
     Require(std::memcmp(line, embedded, sizeof(embedded)) == 0);
     Require(fclose_nid_postfix(stream) == 0);
 
+    const std::string emptyPath = base + ".empty";
+    stream = fopen_nid_postfix(emptyPath.c_str(), "w+b");
+    Require(stream != nullptr);
+    char* empty = nullptr;
+    std::size_t emptyCapacity = 0;
+    Require(getline_nid_postfix(&empty, &emptyCapacity, stream) == -1);
+    Require(empty != nullptr && empty[0] == '\0' && emptyCapacity == 1);
+    Require(fclose_nid_postfix(stream) == 0);
+    free_nid_postfix(empty);
+    Require(std::filesystem::remove(emptyPath));
+
+    const std::string highPath = base + ".high";
+    stream = fopen_nid_postfix(highPath.c_str(), "w+b");
+    Require(stream != nullptr);
+    constexpr char high[] = {'a', static_cast<char>(0xE9), 'b', '\n'};
+    Require(fwrite_nid_postfix(high, 1, sizeof(high), stream) == sizeof(high));
+    Require(fseek_nid_postfix(stream, 0, SEEK_SET) == 0);
+    char* highLine = nullptr;
+    std::size_t highCapacity = 0;
+    Require(getdelim_nid_postfix(&highLine, &highCapacity, static_cast<char>(0xE9), stream) == 2);
+    Require(std::memcmp(highLine, high, 2) == 0);
+    Require(fclose_nid_postfix(stream) == 0);
+    free_nid_postfix(highLine);
+    Require(std::filesystem::remove(highPath));
+
 #ifndef _WIN32
     const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
     auto* lineStorage = static_cast<std::byte*>(mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));

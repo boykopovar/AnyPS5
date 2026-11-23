@@ -254,15 +254,35 @@ std::int64_t APS5_VABI getdelim_nid_postfix(char** lineptr, std::size_t* n, int 
         ~Unlock() { funlockfile_nid_postfix(stream); }
     } unlock{stream};
     const bool failedBefore = ferror_nid_postfix(stream) != 0;
+    const auto stop = static_cast<unsigned char>(delimiter);
     std::string line;
-    for (;;) {
-        const int value = fgetc_nid_postfix(stream);
-        if (value == EOF) break;
-        line.push_back(static_cast<char>(value));
-        if (value == delimiter) break;
+    try {
+        for (;;) {
+            const int value = fgetc_nid_postfix(stream);
+            if (value == EOF) break;
+            line.push_back(static_cast<char>(value));
+            if (static_cast<unsigned char>(value) == stop) break;
+        }
+    } catch (const std::bad_alloc&) {
+        errno = 12;
+        return -1;
     }
     if (ferror_nid_postfix(stream) != 0 && !failedBefore) return -1;
-    if (line.empty()) return -1;
+    if (line.empty()) {
+        if (buffer == nullptr) {
+            auto* created = static_cast<char*>(realloc_nid_postfix(nullptr, 1));
+            if (created == nullptr) { errno = 12; return -1; }
+            const std::size_t one = 1;
+            if (!GuestCopyOut_nid_no_patch(n, &one, sizeof(one)) || !GuestCopyOut_nid_no_patch(lineptr, &created, sizeof(created))) {
+                free_nid_postfix(created);
+                errno = 14;
+                return -1;
+            }
+            buffer = created;
+        }
+        if (!GuestCopyOut_nid_no_patch(buffer, "", 1)) { errno = 14; return -1; }
+        return -1;
+    }
 
     const std::size_t needed = line.size() + 1;
     if (buffer != nullptr && capacity >= needed) {
