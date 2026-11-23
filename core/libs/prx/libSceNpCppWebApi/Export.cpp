@@ -2116,6 +2116,7 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
     auto* body = static_cast<VectorBody*>(self->object);
     if (body == nullptr) {
         LibContextState* state = LibContextStateFor(self->libContext);
+        if (self->libContext != nullptr && state == nullptr) throw std::runtime_error("libSceNpCppWebApi allocates through an uninitialized or terminated LibContext");
         body = state != nullptr
             ? static_cast<VectorBody*>(LibContextAllocate(self->libContext, sizeof(VectorBody)))
             : static_cast<VectorBody*>(std::calloc(1, sizeof(VectorBody)));
