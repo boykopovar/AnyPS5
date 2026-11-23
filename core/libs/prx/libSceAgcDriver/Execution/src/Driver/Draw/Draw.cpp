@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -1532,25 +1533,31 @@ void Driver::restartFinishedDraw(DrawTail& tail) {
 void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey, const std::shared_ptr<DrawEntry>& recipeDonor, VulkanDevice::DrawTraceContext trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
     const auto* tracePtr = trace.token != 0 ? &trace : nullptr;
     if (localDevice != nullptr) localDevice->PrebuildGraphicsLibrariesOnFirstVisit(graphics.stages, stages);
-    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
-    std::lock_guard gpuLock(GuestMemory::GpuMutex());
-    if (auto current = device.Load(); current != nullptr && current != localDevice) localDevice = std::move(current);
-    struct SubmitDue {
-        Driver& driver;
-        const std::shared_ptr<VulkanDevice>& device;
-        ~SubmitDue() noexcept(false) {
-            if (std::uncaught_exceptions() == 0) driver.submitDueAfterCommit(device.get());
+    const auto commit = [&] {
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        if (auto current = device.Load(); current != nullptr && current != localDevice) localDevice = std::move(current);
+        struct SubmitDue {
+            Driver& driver;
+            const std::shared_ptr<VulkanDevice>& device;
+            ~SubmitDue() noexcept(false) {
+                if (std::uncaught_exceptions() == 0) driver.submitDueAfterCommit(device.get());
+            }
+        } submitDue{*this, localDevice};
+        recordLabelsForPacket(localDevice.get(), queue);
+        noteDrawWriters(stages, queue);
+        if (recipe != nullptr) {
+            if (localDevice->DrawFromRecipe(graphics, drawParameters, stages, snapshots, recipe, tracePtr) == RecipeOutcome::Recorded) return;
+            VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, VulkanDevice::RecipeKind::Draw);
         }
-    } submitDue{*this, localDevice};
-    recordLabelsForPacket(localDevice.get(), queue);
-    noteDrawWriters(stages, queue);
-    if (recipe != nullptr) {
-        if (localDevice->DrawFromRecipe(graphics, drawParameters, stages, snapshots, recipe, tracePtr) == RecipeOutcome::Recorded) return;
-        VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, VulkanDevice::RecipeKind::Draw);
-    }
-    std::shared_ptr<const DrawRecipe> built;
-    localDevice->Draw(graphics, drawParameters, stages, snapshots, recipeStages.empty() ? nullptr : &built, tracePtr, shape, contentKey);
-    if (built != nullptr) attachDrawRecipe(drawKey, recipeStages, std::move(built), recipeDonor);
+        std::shared_ptr<const DrawRecipe> built;
+        localDevice->Draw(graphics, drawParameters, stages, snapshots, recipeStages.empty() ? nullptr : &built, tracePtr, shape, contentKey);
+        if (built != nullptr) attachDrawRecipe(drawKey, recipeStages, std::move(built), recipeDonor);
+    };
+    if (GuestMemory::GpuMutex().DepthOnThisThread() != 0) return commit();
+    Graphics::UnlockedPipelineBuild unlocked;
+    commit();
+    if (unlocked.Build()) commit();
 }
 
 }

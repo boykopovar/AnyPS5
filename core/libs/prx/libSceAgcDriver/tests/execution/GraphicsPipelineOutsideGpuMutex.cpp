@@ -97,7 +97,7 @@ void Pass(std::vector<std::uint32_t>& commands) {
     AgcDriverWaitIdle_nid_postfix();
 }
 
-void NoShaderLibraryBuiltUnderTheGpuMutex() {
+void NoPipelineBuiltUnderTheGpuMutex() {
     Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
     Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
     for (std::size_t i = 0; i < Sources.size(); ++i) Sources[i] = {static_cast<float>(i + 1) / static_cast<float>(Draws + 1), 0.0f, 0.0f, 1.0f};
@@ -105,6 +105,7 @@ void NoShaderLibraryBuiltUnderTheGpuMutex() {
     Pass(commands);
     const auto locked = AgcDriver::Graphics::GraphicsPipelineLibraryLockedTotals();
     Require(locked[1] == 0 && locked[2] == 0, "a first-visit draw built its pre-rasterization (" + std::to_string(locked[1]) + ") or fragment (" + std::to_string(locked[2]) + ") shader pipeline library while the GPU mutex was held; the draw path must prebuild them before taking GuestMemory::GpuMutex()");
+    Require(locked[4] == 0, "a first-visit draw linked " + std::to_string(locked[4]) + " graphics pipeline(s) while the GPU mutex was held; a missing draw pipeline must be built after the draw releases GuestMemory::GpuMutex()");
 }
 
 }
@@ -115,9 +116,9 @@ int main() {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
-        NoShaderLibraryBuiltUnderTheGpuMutex();
+        NoPipelineBuiltUnderTheGpuMutex();
         AgcDriverShutdown_nid_postfix();
-        std::cout << "no graphics shader pipeline library was built under the GPU mutex\n";
+        std::cout << "no graphics pipeline or shader pipeline library was built under the GPU mutex\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

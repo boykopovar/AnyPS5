@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/InlineList.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
@@ -27,6 +28,7 @@
 #include <deque>
 #include <list>
 #include <mutex>
+#include <optional>
 #include <spirv/unified1/spirv.hpp>
 #include <stdexcept>
 #include <string>
@@ -1611,6 +1613,11 @@ std::size_t deferredPipelineWords() {
     return words;
 }
 
+void buildPipeline(const DeferredPipelineBuild& job) {
+    const PipelineSetLayouts layouts{job.mainLayout, job.fragmentLayout, job.split, job.mainKey, job.fragmentKey};
+    static_cast<void>(CachedPipeline(job.context, job.state, job.vertexInput, layouts, job.shaders, job.attachmentLayout));
+}
+
 void runDeferredBuilds() {
     auto& builds = deferredBuilds();
     for (;;) {
@@ -1625,8 +1632,7 @@ void runDeferredBuilds() {
         bool failed = false;
         const auto started = std::chrono::steady_clock::now();
         try {
-            const PipelineSetLayouts layouts{job->mainLayout, job->fragmentLayout, job->split, job->mainKey, job->fragmentKey};
-            static_cast<void>(CachedPipeline(job->context, job->state, job->vertexInput, layouts, job->shaders, job->attachmentLayout));
+            buildPipeline(*job);
         } catch (const std::exception& error) {
             failed = true;
             if (profileDeferredBuilds()) AgcDriver::ProfilePrint_nid_no_patch("[pipecache] deferred build 0x%016llx failed: %s\n", static_cast<unsigned long long>(job->hash), error.what());
@@ -1659,41 +1665,23 @@ void awaitDeferredBuilds(VkDevice device) {
     builds.failed.clear();
 }
 
-}
-
-bool DefersPipelineBuild(std::span<const CompiledShader> shaders) {
-    const auto threshold = deferredPipelineWords();
-    if (threshold == 0) return false;
-    std::size_t words = 0;
-    for (const auto& shader : shaders) {
-        if (shader.program != nullptr) words += shader.program->spirv.size();
-    }
-    return words >= threshold;
-}
-
-std::shared_ptr<Pipeline> ResidentPipelineOrDeferredBuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint64_t* storeHash) {
-    if (storeHash != nullptr) *storeHash = 0;
+std::optional<std::uint64_t> missingPipelineHash(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
+    if (disabled) return std::nullopt;
     struct DeferredKeyStorage {};
     auto& storage = HostThreadLocal<std::vector<std::byte>, DeferredKeyStorage>();
-    const auto length = disabled ? std::size_t{0} : pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout, narrowLibraryKeysNow());
+    const auto length = pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout, narrowLibraryKeysNow());
+    if (length == 0) return std::nullopt;
     const std::span<const std::byte> key(storage.data(), length);
-    if (disabled || key.empty()) return CachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, nullptr, storeHash);
     const auto hash = hashKey(key);
-    bool synchronous = false;
-    {
-        auto& store = Pipelines();
-        std::lock_guard lock(store.mutex);
-        const auto found = store.index.find(hash);
-        synchronous = found != store.index.end() && (found->second->key.size() != key.size() || std::memcmp(found->second->key.data(), key.data(), key.size()) != 0 || alive(*found->second, context));
-    }
-    auto& builds = deferredBuilds();
-    if (!synchronous) {
-        std::lock_guard lock(builds.mutex);
-        if (builds.pending.contains(hash)) return nullptr;
-        synchronous = builds.failed.erase(hash) != 0;
-    }
-    if (synchronous) return CachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, nullptr, storeHash);
+    auto& store = Pipelines();
+    std::lock_guard lock(store.mutex);
+    const auto found = store.index.find(hash);
+    if (found != store.index.end() && (found->second->key.size() != key.size() || std::memcmp(found->second->key.data(), key.data(), key.size()) != 0 || alive(*found->second, context))) return std::nullopt;
+    return hash;
+}
+
+std::unique_ptr<DeferredPipelineBuild> pipelineBuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint64_t hash) {
     auto job = std::make_unique<DeferredPipelineBuild>();
     job->context = context;
     job->state = state;
@@ -1711,6 +1699,82 @@ std::shared_ptr<Pipeline> ResidentPipelineOrDeferredBuild(const Context& context
         if (shader.registeredImageViews != nullptr) copy.registeredImageViews = &job->views.emplace_back(*shader.registeredImageViews);
         job->shaders.push_back(copy);
     }
+    return job;
+}
+
+struct UnlockedPipelineBuildSlot {
+    bool allowed = false;
+    std::unique_ptr<DeferredPipelineBuild> pending;
+};
+
+UnlockedPipelineBuildSlot& unlockedPipelineBuild() {
+    struct UnlockedPipelineBuildStorage {};
+    return HostThreadLocal<UnlockedPipelineBuildSlot, UnlockedPipelineBuildStorage>();
+}
+
+}
+
+UnlockedPipelineBuild::UnlockedPipelineBuild() {
+    auto& slot = unlockedPipelineBuild();
+    slot.allowed = true;
+    slot.pending.reset();
+}
+
+UnlockedPipelineBuild::~UnlockedPipelineBuild() {
+    auto& slot = unlockedPipelineBuild();
+    slot.allowed = false;
+    slot.pending.reset();
+}
+
+std::shared_ptr<Pipeline> ResidentPipelineOrUnlockedBuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint64_t* storeHash) {
+    auto& slot = unlockedPipelineBuild();
+    if (slot.allowed && slot.pending == nullptr && GuestMemory::GpuMutex().DepthOnThisThread() == 1) {
+        if (const auto hash = missingPipelineHash(context, state, vertexInput, resources, shaders, attachmentLayout)) {
+            if (storeHash != nullptr) *storeHash = 0;
+            slot.pending = pipelineBuild(context, state, vertexInput, resources, shaders, attachmentLayout, *hash);
+            return nullptr;
+        }
+    }
+    return CachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, nullptr, storeHash);
+}
+
+bool UnlockedPipelineBuild::Build() {
+    auto& slot = unlockedPipelineBuild();
+    slot.allowed = false;
+    const auto job = std::move(slot.pending);
+    if (job == nullptr) return false;
+    PerformanceTimer timing("Vulkan.GraphicsPipelineUnlocked");
+    try {
+        buildPipeline(*job);
+    } catch (const std::exception& error) {
+        if (profileDeferredBuilds()) AgcDriver::ProfilePrint_nid_no_patch("[pipecache] unlocked build 0x%016llx failed, the draw builds it under the GPU mutex: %s\n", static_cast<unsigned long long>(job->hash), error.what());
+    }
+    return true;
+}
+
+bool DefersPipelineBuild(std::span<const CompiledShader> shaders) {
+    const auto threshold = deferredPipelineWords();
+    if (threshold == 0) return false;
+    std::size_t words = 0;
+    for (const auto& shader : shaders) {
+        if (shader.program != nullptr) words += shader.program->spirv.size();
+    }
+    return words >= threshold;
+}
+
+std::shared_ptr<Pipeline> ResidentPipelineOrDeferredBuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint64_t* storeHash) {
+    if (storeHash != nullptr) *storeHash = 0;
+    const auto missing = missingPipelineHash(context, state, vertexInput, resources, shaders, attachmentLayout);
+    bool synchronous = !missing.has_value();
+    auto& builds = deferredBuilds();
+    if (!synchronous) {
+        std::lock_guard lock(builds.mutex);
+        if (builds.pending.contains(*missing)) return nullptr;
+        synchronous = builds.failed.erase(*missing) != 0;
+    }
+    if (synchronous) return CachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, nullptr, storeHash);
+    const auto hash = *missing;
+    auto job = pipelineBuild(context, state, vertexInput, resources, shaders, attachmentLayout, hash);
     {
         std::lock_guard lock(builds.mutex);
         if (!builds.pending.insert(hash).second) return nullptr;

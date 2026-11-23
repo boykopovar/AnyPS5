@@ -129,6 +129,15 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
 std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, bool* created = nullptr, std::uint64_t* storeHash = nullptr);
 bool DefersPipelineBuild(std::span<const CompiledShader> shaders);
 std::shared_ptr<Pipeline> ResidentPipelineOrDeferredBuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint64_t* storeHash);
+class UnlockedPipelineBuild {
+public:
+    UnlockedPipelineBuild();
+    ~UnlockedPipelineBuild();
+    UnlockedPipelineBuild(const UnlockedPipelineBuild&) = delete;
+    UnlockedPipelineBuild& operator=(const UnlockedPipelineBuild&) = delete;
+    bool Build();
+};
+std::shared_ptr<Pipeline> ResidentPipelineOrUnlockedBuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint64_t* storeHash);
 std::shared_ptr<Pipeline> TouchCachedPipeline(const Context& context, std::uint64_t hash, const std::weak_ptr<Pipeline>& expected);
 // Cumulative pipeline store outcomes since start-up (the [pipecache] line reports 10 s windows).
 struct PipelineStoreCounters {

@@ -4495,7 +4495,13 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                 return false;
             }
         }
-        if (!repeated && pipeline == nullptr) pipeline = CachedPipeline(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, nullptr, &storeHash);
+        if (!repeated && pipeline == nullptr) {
+            pipeline = ResidentPipelineOrUnlockedBuild(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, &storeHash);
+            if (pipeline == nullptr) {
+                report(" pipeline building outside the GPU mutex");
+                return false;
+            }
+        }
         if (memoized) rememberShape(context, prepared.shape, targets, repeated ? nullptr : &pipeline, storeHash, inputs.VertexLayout(), layouts, shaders, attachmentLayout, inputs.fragmentOutputs);
     }
     // Resident targets' views are stable while their storage image lives, so the framebuffer is
