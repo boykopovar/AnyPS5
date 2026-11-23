@@ -96,6 +96,37 @@ void TestDecimalFloat() {
     _mm_setcsr(saved);
 }
 
+void TestDecimalScaleLimits() {
+    struct Case {
+        const char* text;
+        std::int64_t scale;
+        std::uint32_t bits;
+        unsigned flags;
+    };
+    constexpr Case cases[] = {
+        {"1e999999999", -999999999, 0x3f800000, 0},
+        {"1e-999999999", 999999999, 0x3f800000, 0},
+        {"1e1000000000", -1000000000, 0, 0x32},
+        {"1e-1000000000", 1000000000, 0x7f800000, 0x28},
+        {"1e1", INT64_MAX, 0, 0x32},
+        {"1e-1", INT64_MIN, 0x7f800000, 0x28}
+    };
+    const auto saved = _mm_getcsr();
+    for (const auto& item : cases) {
+        _mm_setcsr(0x1f80);
+        char* end = nullptr;
+        int error = -1;
+        *__error_nid_postfix() = 97;
+        const auto actual = std::bit_cast<std::uint32_t>(_Stofx_nid_postfix(item.text, &end, item.scale, &error));
+        const auto flags = _mm_getcsr() & 0x3f;
+        Require(actual == item.bits && flags == item.flags, "_Stofx decimal scale limits");
+        Require(end == item.text + std::strlen(item.text), "_Stofx consumes the complete exponent");
+        const bool range = item.flags != 0;
+        Require(error == (range ? 1 : 0) && *__error_nid_postfix() == (range ? RangeError : 97), "_Stofx scale limit range reporting");
+    }
+    _mm_setcsr(saved);
+}
+
 void TestHexRange() {
     std::fenv_t saved;
     Require(std::fegetenv(&saved) == 0 && std::fesetround(FE_TONEAREST) == 0, "save hexadecimal range test environment");
@@ -896,6 +927,7 @@ int main() {
     CheckNoConversion(_Stodx_nid_postfix);
     CheckNoConversion(_Stofx_nid_postfix);
     CheckNoConversion(_Stoldx_nid_postfix);
+    TestDecimalScaleLimits();
     TestHexRange();
     TestUnscaledHexadecimal();
     TestLongDoubleHexadecimalPrecision();
