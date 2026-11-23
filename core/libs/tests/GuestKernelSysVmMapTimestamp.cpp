@@ -20,10 +20,12 @@ int main() {
     constexpr std::size_t page = 0x4000;
     constexpr std::size_t reserveBytes = 2 * page;
 
+    const auto initialTimestamp = get_vm_map_timestamp_nid_postfix();
     void* reserved = nullptr;
     Require(sceKernelReserveVirtualRange(&reserved, reserveBytes, 0, page) == 0);
 
     const auto reservedTimestamp = get_vm_map_timestamp_nid_postfix();
+    Require(reservedTimestamp != initialTimestamp);
     Require(get_vm_map_timestamp_nid_postfix() == reservedTimestamp);
 
     void* mapped = reserved;
@@ -52,6 +54,30 @@ int main() {
     Require(get_vm_map_timestamp_nid_postfix() == failedMutationTimestamp);
 
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), reserveBytes) == 0);
-    Require(get_vm_map_timestamp_nid_postfix() != mappedTimestamp);
+    const auto unmappedTimestamp = get_vm_map_timestamp_nid_postfix();
+    Require(unmappedTimestamp != mappedTimestamp);
+
+    bool unmapFailed = false;
+    try {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(reserved, page, [](const void*, std::size_t, const void*, bool) {});
+    } catch (...) {
+        unmapFailed = true;
+    }
+    Require(unmapFailed);
+    Require(get_vm_map_timestamp_nid_postfix() == unmappedTimestamp);
+
+    bool protectFailed = false;
+    try {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(reserved, page, true, true, false, [] {});
+    } catch (...) {
+        protectFailed = true;
+    }
+    Require(protectFailed);
+    Require(get_vm_map_timestamp_nid_postfix() == unmappedTimestamp);
+
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(reserved), page);
+    Require(get_vm_map_timestamp_nid_postfix() != unmappedTimestamp);
     return 0;
 }
