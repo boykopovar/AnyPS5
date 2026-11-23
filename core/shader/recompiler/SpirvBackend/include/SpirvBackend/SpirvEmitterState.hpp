@@ -105,6 +105,7 @@ struct SpirvEmitterState {
     bool splitSubgroup = false;
     bool spannedWave = false;
     bool spannedAnySubgroup = false;
+    bool spannedShuffleThroughMemory = false;
     std::uint32_t spannedExchangeVariable = 0;
     std::uint32_t spannedBallotVariable = 0;
     std::uint32_t spannedBallotParityVariable = 0;
@@ -137,10 +138,12 @@ struct SpirvEmitterState {
     bool waveLdsMemoryBarriers = false;
     bool deviceScopeLdsMemoryBarriers = false;
     bool ldsLockFences = false;
+    bool deviceAtomicWorkgroupMemoryBarriers = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
     std::unordered_set<const IrValue*> sharedLaneValues;
     std::uint32_t laneHalf = 0;
+    bool laneValueShared = false;
     std::uint32_t spirvVersion = 0x00010300u;
     std::span<const std::uint32_t> supportedCapabilities;
     std::span<const std::string_view> supportedExtensions;
@@ -215,6 +218,8 @@ struct SpirvEmitterState {
     std::uint32_t bdaPcOverride = 0;
     // False for programs with workgroup barriers: faulting BDA accesses then continue (see BdaInvocationsMayStop).
     bool bdaStopsInvocations = true;
+    bool bdaFaultMasksWrites = false;
+    std::array<std::uint32_t, 2> bdaFaultedVariables {};
     bool continueTarget = false;
     // Execution scope of the barriers that keep one guest wave's LDS accesses in program order across
     // host invocations (see WaveLdsScope); 0 when none are emitted.
@@ -252,6 +257,8 @@ struct SpirvEmitterState {
     std::uint32_t vectorWindowIndexed = 0;
     std::array<std::vector<std::uint32_t>, 2> vectorWindowSlots {};
     bool meshWindowBuffer = false;
+    bool splitState = false;
+    std::uint32_t splitStateVariable = 0;
     std::uint32_t meshWindowBufferVariable = 0;
     std::uint32_t meshWindowSlotVariable = 0;
     std::uint32_t meshWindowBaseVariable = 0;
@@ -280,6 +287,7 @@ struct SpirvEmitterState {
     std::vector<std::uint32_t> mergePendingVariables;
     std::uint32_t quadPixelUncovered = 0;
     std::uint32_t sampleMaskInputVariable = 0;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> sampleMaskCopies;
     std::uint32_t quadSampleCoverage = 0;
     std::uint32_t sampleOrderWord = 0;
     std::uint32_t alphaCoverageVariable = 0;
@@ -298,6 +306,7 @@ struct SpirvEmitterState {
     std::uint32_t sampleMaskVariable = 0;
     std::uint32_t stencilRefVariable = 0;
     bool stencilReplay = false;
+    bool stencilReplayLateStore = false;
     std::vector<SpirvInputBinding> inputs;
     std::vector<SpirvOutputBinding> outputs;
     std::vector<std::uint32_t> interfaceVariables;
@@ -319,6 +328,7 @@ public:
 
     void Emplace(const IrValue* value, std::uint32_t id) {
         if (Find(value) != nullptr) return;
+        if (added != nullptr) added->push_back(value);
         const std::uint32_t index = value->Id();
         if (index >= slots.size()) slots.resize(std::max<std::size_t>(std::size_t{index} + 1u, slots.size() * 2u));
         if (slots[index].key == nullptr) {
@@ -326,6 +336,10 @@ public:
             return;
         }
         overflow.emplace(value, id);
+    }
+
+    void RecordAdded(std::vector<const IrValue*>* values) {
+        added = values;
     }
 
     void Erase(const IrValue* value) {
@@ -345,6 +359,7 @@ private:
 
     std::vector<Slot> slots;
     std::unordered_map<const IrValue*, std::uint32_t> overflow;
+    std::vector<const IrValue*>* added = nullptr;
 };
 
 struct SpirvValueEmitContext {

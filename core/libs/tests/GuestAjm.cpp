@@ -1053,13 +1053,20 @@ void TestInstanceContextOwnership(std::uint32_t context) {
     constexpr int invalidContext = static_cast<int>(0x80930002);
     constexpr int invalidInstance = static_cast<int>(0x80930003);
     constexpr int invalidParameter = static_cast<int>(0x80930005);
+    constexpr int invalidFlags = static_cast<int>(0x8093000C);
     std::uint32_t untouched = 0xfeedu;
     Require(sceAjmInstanceCreate(0, 24, 0, &untouched) == invalidContext);
     Require(untouched == 0xfeedu);
     Require(sceAjmInstanceCreate(0xffffffffu, 24, 0, &untouched) == invalidContext);
     Require(untouched == 0xfeedu);
-    Require(sceAjmInstanceCreate(0, 24, 0, nullptr) == invalidContext);
+    Require(sceAjmInstanceCreate(0, 24, 0, nullptr) == invalidParameter);
     Require(sceAjmInstanceCreate(context, 24, 0, nullptr) == invalidParameter);
+    for (const std::uint64_t flags : {0x180ull, 0x2000ull, 0x4000ull, 1ull << 60}) {
+        Require(sceAjmInstanceCreate(context, 24, flags, &untouched) == invalidFlags);
+        Require(sceAjmInstanceCreate(0, 24, flags, &untouched) == invalidFlags);
+        Require(sceAjmInstanceCreate(context, 24, flags, nullptr) == invalidParameter);
+    }
+    Require(untouched == 0xfeedu);
     errno = 71;
     Require(sceAjmInstanceCreate(context, 24, 0, reinterpret_cast<uint32_t*>(0x10)) == invalidParameter);
     Require(errno == 71);
@@ -2528,6 +2535,52 @@ void TestConsoleRunBufferRa(const char* ajmiLibrary) {
     TestRunSplitBufferRaLayout(reinterpret_cast<RunSplitBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobRunSplitBufferRa_nid_disambig1")));
 }
 
+void TestBuildersRejectUnmapped(InlineBuffer inlineBuffer, RunBufferRa runBufferRa, ControlBufferRa controlBufferRa, RunSplitBufferRa runSplitBufferRa) {
+    auto* const unmapped = reinterpret_cast<void*>(0x10);
+    const auto* const unmappedList = static_cast<const AjmBuffer*>(unmapped);
+    std::uint8_t data[13]{};
+    std::uint8_t sideband[0x20]{};
+    const AjmBuffer buffers[1] = {{data, sizeof(data)}};
+    std::vector<std::uint8_t> batch(0x80, 0xCC);
+    const auto pristine = batch;
+    const void* address = nullptr;
+    const auto rejects = [&](auto&& build, bool untouched) {
+        std::fill(batch.begin(), batch.end(), 0xCC);
+        address = nullptr;
+        errno = 71;
+        bool thrown = false;
+        try {
+            build();
+        } catch (const std::runtime_error&) {
+            thrown = true;
+        }
+        Require(thrown && errno == 71 && address == nullptr);
+        if (untouched) Require(batch == pristine);
+    };
+    rejects([&] { inlineBuffer(unmapped, data, sizeof(data), &address); }, true);
+    rejects([&] { inlineBuffer(batch.data(), unmapped, sizeof(data), &address); }, false);
+    rejects([&] { inlineBuffer(batch.data(), data, sizeof(data), static_cast<const void**>(unmapped)); }, false);
+    rejects([&] { runBufferRa(unmapped, 1, 0, data, sizeof(data), data, sizeof(data), sideband, sizeof(sideband), nullptr); }, true);
+    rejects([&] { controlBufferRa(unmapped, 1, 0, data, sizeof(data), sideband, sizeof(sideband), nullptr); }, true);
+    rejects([&] { runSplitBufferRa(unmapped, 1, 0, buffers, 1, buffers, 1, sideband, sizeof(sideband), nullptr); }, true);
+    rejects([&] { runSplitBufferRa(batch.data(), 1, 0, unmappedList, 1, buffers, 1, sideband, sizeof(sideband), nullptr); }, true);
+    rejects([&] { runSplitBufferRa(batch.data(), 1, 0, buffers, 1, unmappedList, 1, sideband, sizeof(sideband), nullptr); }, true);
+}
+
+void TestConsoleBuildersRejectUnmapped(const char* ajmiLibrary) {
+#ifdef _WIN32
+    const char* nativeLibrary = "libSceAjm.native.prx";
+#else
+    const char* nativeLibrary = nullptr;
+#endif
+    TestBuildersRejectUnmapped(reinterpret_cast<InlineBuffer>(ResolveExport(nativeLibrary, "sceAjmBatchJobInlineBuffer")), sceAjmBatchJobRunBufferRa,
+        sceAjmBatchJobControlBufferRa, sceAjmBatchJobRunSplitBufferRa);
+    TestBuildersRejectUnmapped(reinterpret_cast<InlineBuffer>(ResolveExport(ajmiLibrary, "sceAjmBatchJobInlineBuffer_nid_disambig1")),
+        reinterpret_cast<RunBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobRunBufferRa_nid_disambig1")),
+        reinterpret_cast<ControlBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobControlBufferRa_nid_disambig1")),
+        reinterpret_cast<RunSplitBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobRunSplitBufferRa_nid_disambig1")));
+}
+
 int StartBufferRefused(std::uint32_t context, const void* batch, std::size_t size, AjmBatchError& error) {
     std::uint32_t id = 0;
     error = AjmBatchError{};
@@ -2979,6 +3032,7 @@ int main(int argc, char** argv) {
     TestConsoleHandWrittenJobs(context);
     TestConsoleInlineBuffer(context, argv[1]);
     TestConsoleRunBufferRa(argv[1]);
+    TestConsoleBuildersRejectUnmapped(argv[1]);
     TestConsoleBufferEdges(context);
     TestConsoleEmptyBatch(context);
     TestConsoleSingleFrameRun(context);

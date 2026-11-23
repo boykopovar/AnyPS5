@@ -17,7 +17,7 @@ DOC_TEXT = "| `APS5_DOCUMENTED` | presence |\n| `APS5_GONE` | presence |\n"
 def repository(root, base, head, target=None):
     def git(*args):
         subprocess.run(["git", "-c", f"safe.directory={root}", "-c", "user.name=Conventions Test",
-                        "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args],
+                        "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *args],
                        cwd=root, capture_output=True, check=True)
 
     def apply(files):

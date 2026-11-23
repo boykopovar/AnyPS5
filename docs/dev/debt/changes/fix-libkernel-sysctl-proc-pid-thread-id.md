@@ -7,7 +7,3 @@
 ## change [kern.proc.pid_td]
 
 - [kern.proc.pid_td](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - whether the console answers {`CTL_KERN`, `KERN_PROC`, `KERN_PROC_PID | KERN_PROC_INC_THREAD`, pid} and what it fills in is unverified; here it returns one `kern.proc.pid` record per live guest thread, as FreeBSD 11.4's [`kern_proc_out`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/kern_proc.c#L1329-L1373) does without `KERN_PROC_NOTHREADS`, with `ki_tid` (the `pthread_getthreadid_np` value), `ki_numthreads`, and the thread name split as `fill_kinfo_thread` splits it: up to 16 bytes in `ki_tdname`, the next 3 in `ki_moretdname`. Run time, CPU, state, priority and the other per-thread fields stay 0. As for `kern.proc.pid`, only the calling process is answered, by its pid or the id of one of its live threads: any other pid, -1 included, fails with `ESRCH`, where FreeBSD's `pget` also answers for other visible processes.
-
-## add Functional
-
-- [kern.proc.pathname, kern.proc.env and kern.proc.vmmap](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - the id of one of the calling process's live threads fails with `ESRCH`, where FreeBSD 11.4's `pget`, which these three call without `PGET_NOTID`, maps an id above `PID_MAX` to its thread's process, as `kern.proc.pid` does here.

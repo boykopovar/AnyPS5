@@ -29,6 +29,7 @@ ROWS_PER_DISPATCH = 1024
 DEFAULT_LDS = 4096
 MAX_LDS = 65536
 RUNTIMES = ("hsa", "hip", "vulkan")
+HSA_IDENTITY_KEYS = ("name", "vendor", "product", "chip_id", "asic_revision", "compute_units")
 
 
 def runtime():
@@ -117,6 +118,33 @@ def detected_target(binary, visible_devices):
                           env=environment).stdout.strip()
 
 
+@cache
+def hsa_identity(binary, visible_devices):
+    environment = dict(os.environ)
+    if visible_devices is None:
+        environment.pop("ROCR_VISIBLE_DEVICES", None)
+    else:
+        environment["ROCR_VISIBLE_DEVICES"] = visible_devices
+    output = subprocess.run([binary, "--identity"], capture_output=True, text=True, check=True,
+                            env=environment).stdout
+    fields = {}
+    for line in output.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) != 2 or parts[0] not in HSA_IDENTITY_KEYS or parts[0] in fields or not parts[1]:
+            raise ValueError("hardware oracle returned an invalid HSA identity")
+        fields[parts[0]] = parts[1]
+    if tuple(fields) != HSA_IDENTITY_KEYS:
+        raise ValueError("hardware oracle returned an incomplete HSA identity")
+    for name in ("chip_id", "asic_revision", "compute_units"):
+        try:
+            fields[name] = int(fields[name], 10)
+        except ValueError as error:
+            raise ValueError("hardware oracle returned an invalid HSA identity") from error
+        if fields[name] < 0 or fields[name] > 0xffffffff:
+            raise ValueError("hardware oracle returned an invalid HSA identity")
+    return fields
+
+
 def target():
     if os.environ.get("HW_ORACLE_TARGET"):
         return os.environ["HW_ORACLE_TARGET"]
@@ -127,26 +155,46 @@ def target():
     return detected_target(oracle(), os.environ.get("ROCR_VISIBLE_DEVICES"))
 
 
+GFX12_REMOVED_MODES = ("ieee", "dx10_clamp")
+
+
+def is_gfx12(name):
+    return name.startswith("gfx12")
+
+
 def assemble(body, work, wave64, *, ieee, denorm32, denorm16, dx10_clamp, round32, round16, fp16_overflow, lds=DEFAULT_LDS):
     modes = (("ieee", ieee, 2), ("denorm32", denorm32, 4), ("denorm16", denorm16, 4),
              ("dx10_clamp", dx10_clamp, 2), ("round32", round32, 4), ("round16", round16, 4),
              ("fp16_overflow", fp16_overflow, 2))
     for name, value, limit in modes:
+        if name in GFX12_REMOVED_MODES and value is None:
+            continue
         if not isinstance(value, int) or value not in range(limit):
-            raise ValueError(f"{name} must be an integer from 0 to {limit - 1}")
+            raise ValueError(f"{name} must be an integer from 0 to {limit - 1}" + (", or None on gfx12" if name in GFX12_REMOVED_MODES else ""))
     if not isinstance(lds, int) or lds not in range(MAX_LDS + 1):
         raise ValueError(f"lds must be an integer from 0 to {MAX_LDS}")
+    assembly_target = target()
+    gfx12 = is_gfx12(assembly_target)
+    for name, value in (("ieee", ieee), ("dx10_clamp", dx10_clamp)):
+        if gfx12 and value is not None:
+            raise ValueError(f"{name} must be None on {assembly_target}, whose kernel descriptor has no {name} field")
+        if not gfx12 and value is None:
+            raise ValueError(f"{name} must be an integer from 0 to 1 on {assembly_target}")
     text = (HERE / "template.s").read_text(encoding="utf-8")
-    for key, value in (("@TARGET@", target()), ("@WAVE32@", "0" if wave64 else "1"), ("@WAVESIZE@", "64" if wave64 else "32"),
-                       ("@DENORM@", str(int(denorm32))), ("@DENORM16@", str(int(denorm16))), ("@IEEE@", str(int(ieee))),
-                       ("@DX10_CLAMP@", str(int(dx10_clamp))), ("@ROUND32@", str(int(round32))), ("@ROUND16@", str(int(round16))),
+    for key, value in (("@TARGET@", assembly_target), ("@WAVE32@", "0" if wave64 else "1"), ("@WAVESIZE@", "64" if wave64 else "32"),
+                       ("@WAIT_SCALAR@", "s_wait_kmcnt 0" if gfx12 else "s_waitcnt lgkmcnt(0)"),
+                       ("@WAIT_LOAD@", "s_wait_loadcnt 0" if gfx12 else "s_waitcnt vmcnt(0)"),
+                       ("@DENORM@", str(int(denorm32))), ("@DENORM16@", str(int(denorm16))),
+                       ("@IEEE_MODE@", "" if gfx12 else f"  .amdhsa_ieee_mode {int(ieee)}"),
+                       ("@DX10_CLAMP_MODE@", "" if gfx12 else f"  .amdhsa_dx10_clamp {int(dx10_clamp)}"),
+                       ("@ROUND32@", str(int(round32))), ("@ROUND16@", str(int(round16))),
                        ("@FP16_OVERFLOW@", str(int(fp16_overflow))), ("@LDS@", str(lds)), ("@BODY@", body)):
         text = text.replace(key, value)
     (work / "k.s").write_text(text, encoding="utf-8")
     if runtime() == "hip" or (runtime() == "vulkan" and os.name == "nt"):
-        (work / "k.co").write_bytes(hip_runtime().assemble(text.encode("utf-8"), target(), wave64))
+        (work / "k.co").write_bytes(hip_runtime().assemble(text.encode("utf-8"), assembly_target, wave64))
         return work / "k.co"
-    subprocess.run([tool("clang"), "-x", "assembler", "-target", "amdgcn-amd-amdhsa", f"-mcpu={target()}", *(["-mwavefrontsize64"] if wave64 else []), "-c", str(work / "k.s"), "-o", str(work / "k.o")], check=True, stdout=sys.stderr)
+    subprocess.run([tool("clang"), "-x", "assembler", "-target", "amdgcn-amd-amdhsa", f"-mcpu={assembly_target}", *(["-mwavefrontsize64"] if wave64 else []), "-c", str(work / "k.s"), "-o", str(work / "k.o")], check=True, stdout=sys.stderr)
     subprocess.run([tool("ld.lld"), "-m", "elf64_amdgpu", "-shared", str(work / "k.o"), "-o", str(work / "k.co")], check=True, stdout=sys.stderr)
     return work / "k.co"
 
@@ -202,6 +250,14 @@ def run(body, rows, extra=b"", wave64=False, coarse=False, *, ieee, denorm32, de
     return out[:len(rows)]
 
 
+def bit_or_none(value):
+    if value == "none":
+        return None
+    if value in ("0", "1"):
+        return int(value)
+    raise argparse.ArgumentTypeError(f"invalid choice: {value!r} (choose from 0, 1, none)")
+
+
 def parse_word(value):
     try:
         return int(value, 0)
@@ -214,10 +270,10 @@ def main():
     parser.add_argument("body", type=Path, help="assembly inserted into template.s")
     parser.add_argument("rows", type=Path, help="one row per line: 4 u32 values (decimal or 0x hex)")
     parser.add_argument("--wave64", action="store_true")
-    parser.add_argument("--ieee", type=int, choices=(0, 1), required=True)
+    parser.add_argument("--ieee", type=bit_or_none, required=True, metavar="{0,1,none}", help="none on gfx12, whose kernel descriptor has no IEEE mode field")
     parser.add_argument("--denorm32", type=int, choices=range(4), required=True)
     parser.add_argument("--denorm16", type=int, choices=range(4), required=True)
-    parser.add_argument("--dx10-clamp", type=int, choices=(0, 1), required=True)
+    parser.add_argument("--dx10-clamp", type=bit_or_none, required=True, metavar="{0,1,none}", help="none on gfx12, whose kernel descriptor has no DX10 clamp field")
     parser.add_argument("--round32", type=int, choices=range(4), required=True)
     parser.add_argument("--round16", type=int, choices=range(4), required=True)
     parser.add_argument("--fp16-overflow", type=int, choices=(0, 1), required=True)
