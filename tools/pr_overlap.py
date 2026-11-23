@@ -457,8 +457,8 @@ def production_source(path):
     return path.suffix == ".cpp" and not any(part.lower() in {"test", "tests"} for part in path.parts[2:-1])
 
 
-def export_diff(old, new):
-    diff = git("diff", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
+def export_diffs(old, new):
+    diff = git("diff", "--find-renames", "-l1000", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
     source, in_hunk, relocated = None, False, set()
     for line in diff.split("\n"):
         line = line.removesuffix("\r")
@@ -472,10 +472,11 @@ def export_diff(old, new):
             destination = unquote_path(line[10:])
             if library_for_path(source) != library_for_path(destination):
                 relocated.update(path for path in (source, destination) if library_for_path(path) and production_source(path))
+    identity_diff = diff
     if relocated:
-        diff += "\n" + git("diff", "--no-renames", "-U0", "--no-color", old, new, "--",
-                           *(f":(literal){path}" for path in sorted(relocated)), *EXPORT_PATHS[1:])
-    return diff
+        identity_diff += "\n" + git("diff", "--no-renames", "-U0", "--no-color", old, new, "--",
+                                    *(f":(literal){path}" for path in sorted(relocated)), *EXPORT_PATHS[1:])
+    return diff, identity_diff
 
 
 def source_exports(text, library=""):
@@ -603,10 +604,10 @@ def scan(pr):
         pr["files"].add(path)
         if status == "A":
             pr["added"].add(path)
-    diff = export_diff(old, new)
+    diff, identity_diff = export_diffs(old, new)
     pr["exports"] = exports(diff)
-    pr["added_exports"] = source_changed_exports(diff, "+")
-    pr["removed_exports"] = source_changed_exports(diff, "-")
+    pr["added_exports"] = source_changed_exports(identity_diff, "+")
+    pr["removed_exports"] = source_changed_exports(identity_diff, "-")
 
 
 def probe(pr):
@@ -619,8 +620,8 @@ def probe(pr):
             existing.add(path)
     if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
         return files, (set(), {}), existing
-    diff = export_diff(base, pr["ref"])
-    return files, (exports(diff), source_changed_exports(diff, "+")), existing
+    diff, identity_diff = export_diffs(base, pr["ref"])
+    return files, (exports(diff), source_changed_exports(identity_diff, "+")), existing
 
 
 def related(prs, executor):
