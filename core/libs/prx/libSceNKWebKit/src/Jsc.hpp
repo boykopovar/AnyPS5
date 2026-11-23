@@ -122,6 +122,7 @@ struct OpaqueJSContextGroup {
     bool hasTimeLimit = false;
     double timeLimitSeconds = 0.0;
     std::chrono::steady_clock::time_point deadline{};
+    double cpuDeadlineSeconds = 0.0;
     bool deadlineArmed = false;
     int vmEntryDepth = 0;
     JSShouldTerminateCallback terminateCallback = nullptr;

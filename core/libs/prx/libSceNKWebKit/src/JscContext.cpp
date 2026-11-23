@@ -5,6 +5,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 namespace NKWebKit {
 
@@ -17,6 +18,11 @@ int InterruptHandler(JSRuntime* rt, void* opaque) {
     if (!group || !group->hasTimeLimit || !group->deadlineArmed) return 0;
     const auto now = std::chrono::steady_clock::now();
     if (now < group->deadline) return 0;
+    const double cpuNow = _ZN3WTF7CPUTime16forCurrentThreadEv().m_value;
+    if (cpuNow < group->cpuDeadlineSeconds) {
+        group->deadline = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(group->cpuDeadlineSeconds - cpuNow));
+        return 0;
+    }
     group->deadlineArmed = false;
     if (group->terminateCallback) {
         OpaqueJSContext* ctx = group->activeContext ? group->activeContext : group->DefaultContext();
@@ -533,12 +539,9 @@ void OpaqueJSContextGroup::DrainMicrotasks() {
 
 void OpaqueJSContextGroup::RefreshDeadline() {
     constexpr double maxTimeLimitSeconds = 1.0e9;
-    if (!(timeLimitSeconds > 0.0)) {
-        deadline = std::chrono::steady_clock::now();
-    } else {
-        const double seconds = std::min(timeLimitSeconds, maxTimeLimitSeconds);
-        deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
-    }
+    const double seconds = timeLimitSeconds > 0.0 ? std::min(timeLimitSeconds, maxTimeLimitSeconds) : 0.0;
+    cpuDeadlineSeconds = _ZN3WTF7CPUTime16forCurrentThreadEv().m_value + seconds;
+    deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
 }
 
 void OpaqueJSContextGroup::EnterVm() {
