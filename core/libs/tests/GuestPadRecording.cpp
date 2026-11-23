@@ -82,17 +82,36 @@ int main() {
     live.analogButtonsL2 = 90;
     PadPublishInput_nid_postfix(live);
 
-    SetPath("APS5_PAD_REPLAY", directory / "missing.aps5pad");
-    Require(ReadRefused(), "a missing APS5_PAD_REPLAY file did not stop the controller read");
     const auto surviving = directory / "surviving-record.aps5pad";
     std::ofstream(surviving, std::ios::binary) << "previous recording";
+    SetPath("APS5_PAD_REPLAY", directory / "missing.aps5pad");
     SetPath("APS5_PAD_RECORD", surviving);
+    const auto requireSurviving = [&] {
+        std::stringstream contents;
+        contents << std::ifstream(surviving, std::ios::binary).rdbuf();
+        Require(contents.str() == "previous recording", "a failed replay initialization opened the existing APS5_PAD_RECORD file");
+    };
+    Require(ReadRefused(), "a missing APS5_PAD_REPLAY file did not stop the controller read");
+    requireSurviving();
     const std::string missingReplayRefusal = ReadRefusal();
     Require(!missingReplayRefusal.empty() && missingReplayRefusal.find("APS5_PAD_REPLAY") != std::string::npos && missingReplayRefusal.find("cannot compare") == std::string::npos,
         "a missing APS5_PAD_REPLAY with an existing APS5_PAD_RECORD was not refused as a replay read failure");
-    std::stringstream survivingContents;
-    survivingContents << std::ifstream(surviving, std::ios::binary).rdbuf();
-    Require(survivingContents.str() == "previous recording", "the refused recording attempt modified the existing recording file");
+    requireSurviving();
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const std::string refusal = ReadRefusal();
+        Require(!refusal.empty() && refusal.find("APS5_PAD_REPLAY") != std::string::npos && refusal.find("cannot compare") == std::string::npos,
+            "a repeated read with a missing APS5_PAD_REPLAY and an existing APS5_PAD_RECORD was not refused as a replay read failure");
+        requireSurviving();
+    }
+    const auto invalid = directory / "invalid.aps5pad";
+    std::ofstream(invalid, std::ios::binary) << "not a recording";
+    SetPath("APS5_PAD_REPLAY", invalid);
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const std::string refusal = ReadRefusal();
+        Require(!refusal.empty() && refusal.find("APS5_PAD_REPLAY") != std::string::npos && refusal.find("cannot compare") == std::string::npos,
+            "a read with an invalid APS5_PAD_REPLAY and an existing APS5_PAD_RECORD was not refused as a replay parse failure");
+        requireSurviving();
+    }
     SetPath("APS5_PAD_RECORD", std::filesystem::path{});
     SetPath("APS5_PAD_REPLAY", replay);
     SetPath("APS5_PAD_RECORD", directory / "missing-directory" / "record.aps5pad");
