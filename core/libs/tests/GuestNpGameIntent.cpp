@@ -88,6 +88,14 @@ int main() {
             "uninitialized notify app launched must report not-initialized");
 
     Require(sceNpGameIntentInitialize(&initParam) == 0, "initialization failed");
+    Require(Throws<std::runtime_error>([] { sceNpGameIntentGetUdsNpComId(); }),
+            "initialized get uds np com id did not throw");
+    Require(Throws<std::runtime_error>([] { sceNpGameIntentLaunchApp(); }),
+            "initialized launch app did not throw");
+    Require(Throws<std::runtime_error>([] { sceNpGameIntentLaunchApp2(); }),
+            "initialized launch app 2 did not throw");
+    Require(Throws<std::runtime_error>([] { sceNpGameIntentNotifyAppLaunched(); }),
+            "initialized notify app launched did not throw");
     Require(sceNpGameIntentReceiveIntent(nullptr) == kInvalidArgument, "null receive intent did not fail");
     errno = 71;
     Require(sceNpGameIntentReceiveIntent(reinterpret_cast<NpGameIntentInfo*>(0x10)) == kInvalidArgument, "unmapped receive intent did not fail");
