@@ -296,6 +296,43 @@ void TestDrawLineForText() {
     Require(doubled.Pixel(3, 7) == 0);
 }
 
+void TestGlobalAlpha() {
+    Surface surface;
+    OwnedContext owned(&surface.platform);
+    auto& context = *owned.context;
+    context.state.alpha = 0.5f;
+    const WebCore::Color red = Red;
+    _ZN7WebCore15GraphicsContext12setFillColorERKNS_5ColorE(&context, &red);
+    FillRect(context, 0, 0, 4, 4);
+    cairo_new_path(surface.context);
+    cairo_set_source_rgba(surface.context, 1.0, 0.0, 0.0, 0.5);
+    cairo_rectangle(surface.context, 4, 0, 4, 4);
+    cairo_fill(surface.context);
+    Require(surface.Pixel(1, 1) == surface.Pixel(5, 1));
+    Require(((surface.Pixel(1, 1) >> 24) & 0xFFU) >= 0x7FU);
+    Require(((surface.Pixel(1, 1) >> 24) & 0xFFU) <= 0x80U);
+
+    const WebCore::Color blue = Blue;
+    const WebCore::FloatRect rect{{0, 4}, {4, 4}};
+    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &rect, &blue);
+    cairo_new_path(surface.context);
+    cairo_set_source_rgba(surface.context, 0.0, 0.0, 1.0, 0.5);
+    cairo_rectangle(surface.context, 4, 4, 4, 4);
+    cairo_fill(surface.context);
+    Require(surface.Pixel(1, 5) == surface.Pixel(5, 5));
+    Require(((surface.Pixel(1, 5) >> 24) & 0xFFU) >= 0x7FU);
+    Require(((surface.Pixel(1, 5) >> 24) & 0xFFU) <= 0x80U);
+
+    Surface underlined;
+    OwnedContext underlineContext(&underlined.platform);
+    underlineContext.context->state.alpha = 0.5f;
+    _ZN7WebCore15GraphicsContext14setStrokeColorERKNS_5ColorE(underlineContext.context, &red);
+    const WebCore::FloatRect line{{1, 1}, {6, 2}};
+    _ZN7WebCore15GraphicsContext15drawLineForTextERKNS_9FloatRectEbbNS_11StrokeStyleE(underlineContext.context, &line, false, false, 1);
+    Require(((underlined.Pixel(3, 1) >> 24) & 0xFFU) >= 0x7FU);
+    Require(((underlined.Pixel(3, 1) >> 24) & 0xFFU) <= 0x80U);
+}
+
 void TestShadowState() {
     Surface surface;
     OwnedContext owned(&surface.platform);
@@ -324,6 +361,7 @@ int main() {
         TestPlatformContext();
         TestStrokeRectAndImage();
         TestDrawLineForText();
+        TestGlobalAlpha();
         TestShadowState();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "GraphicsContext test failed: %s\n", error.what());

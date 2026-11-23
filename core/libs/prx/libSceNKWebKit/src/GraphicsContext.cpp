@@ -102,14 +102,14 @@ bool IsOutOfLine(const WebCore::Color& color) {
     return (color.m_colorAndFlags & OutOfLineFlag) != 0;
 }
 
-void SetSource(CairoContext* context, const WebCore::Color& color) {
+void SetSource(CairoContext* context, const WebCore::Color& color, float globalAlpha) {
     if (!context) return;
     if (IsOutOfLine(color)) throw std::invalid_argument("out-of-line WebCore::Color is not supported");
     const std::uint64_t packed = color.m_colorAndFlags;
     const double red = static_cast<double>((packed >> 24) & 0xFF) / 255.0;
     const double green = static_cast<double>((packed >> 16) & 0xFF) / 255.0;
     const double blue = static_cast<double>((packed >> 8) & 0xFF) / 255.0;
-    const double alpha = static_cast<double>(packed & 0xFF) / 255.0;
+    const double alpha = static_cast<double>(packed & 0xFF) / 255.0 * static_cast<double>(globalAlpha);
     CairoSetSourceRgba_nid_no_patch(context, red, green, blue, alpha);
 }
 
@@ -191,12 +191,6 @@ int CairoOperator(const std::uint8_t compositeOperator, const std::uint8_t blend
     }
 }
 
-void ApplyOperator(Context& context) {
-    CairoContext* cr = Cairo(context);
-    if (!cr) return;
-    CairoSetOperator_nid_no_patch(cr, CairoOperator(context.state.compositeOperator, context.state.blendMode));
-}
-
 WebCore::Color MultiplyAlpha(const WebCore::Color& color, float shade) {
     if (IsOutOfLine(color)) throw std::invalid_argument("out-of-line WebCore::Color is not supported");
     const auto alpha = static_cast<std::uint64_t>(std::lround(static_cast<double>(color.m_colorAndFlags & 0xFF) * shade));
@@ -233,11 +227,10 @@ void DrawLinesForText(Context& context, const WebCore::FloatPoint& point, float 
     CairoContext* cr = Cairo(context);
     if (!cr || widths.empty() || widths.size() % 2) return;
     const LineBounds bounds = ComputeLineBounds(context, point, static_cast<float>(widths.back()), printing, context.state.strokeColor, thickness);
-    ApplyOperator(context);
     CairoSave_nid_no_patch(cr);
     const auto fillDash = [&](double x, double width, double y) {
         if (width <= 0.0) return;
-        SetSource(cr, bounds.m_color);
+        SetSource(cr, bounds.m_color, context.state.alpha);
         CairoNewPath_nid_no_patch(cr);
         CairoRectangle_nid_no_patch(cr, bounds.m_rect.x() + x, bounds.m_rect.y() + y, width, bounds.m_rect.height());
         CairoFill_nid_no_patch(cr);
@@ -357,8 +350,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectE(Context* s
     if (!rect) throw std::invalid_argument("WebCore::GraphicsContext::fillRect requires a rectangle");
     CairoContext* cr = Cairo(context);
     if (!cr) return;
-    ApplyOperator(context);
-    SetSource(cr, context.state.fillColor);
+    SetSource(cr, context.state.fillColor, context.state.alpha);
     CairoNewPath_nid_no_patch(cr);
     Rectangle(cr, *rect);
     CairoFill_nid_no_patch(cr);
@@ -369,8 +361,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5Color
     if (!rect || !color) throw std::invalid_argument("WebCore::GraphicsContext::fillRect requires a rectangle and a color");
     CairoContext* cr = Cairo(context);
     if (!cr) return;
-    ApplyOperator(context);
-    SetSource(cr, *color);
+    SetSource(cr, *color, context.state.alpha);
     CairoNewPath_nid_no_patch(cr);
     Rectangle(cr, *rect);
     CairoFill_nid_no_patch(cr);
@@ -394,8 +385,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContext8fillPathERKNS_4PathE(Context* self, 
     if (!path) throw std::invalid_argument("WebCore::GraphicsContext::fillPath requires a path");
     CairoContext* cr = Cairo(context);
     if (!cr) return;
-    ApplyOperator(context);
-    SetSource(cr, context.state.fillColor);
+    SetSource(cr, context.state.fillColor, context.state.alpha);
     AppendPath(cr, path);
     CairoFill_nid_no_patch(cr);
 }
@@ -405,8 +395,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContext10strokePathERKNS_4PathE(Context* sel
     if (!path) throw std::invalid_argument("WebCore::GraphicsContext::strokePath requires a path");
     CairoContext* cr = Cairo(context);
     if (!cr) return;
-    ApplyOperator(context);
-    SetSource(cr, context.state.strokeColor);
+    SetSource(cr, context.state.strokeColor, context.state.alpha);
     CairoSetLineWidth_nid_no_patch(cr, context.state.strokeThickness);
     AppendPath(cr, path);
     CairoStroke_nid_no_patch(cr);
@@ -417,8 +406,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContext10strokeRectERKNS_9FloatRectEf(Contex
     if (!rect) throw std::invalid_argument("WebCore::GraphicsContext::strokeRect requires a rectangle");
     CairoContext* cr = Cairo(context);
     if (!cr) return;
-    ApplyOperator(context);
-    SetSource(cr, context.state.strokeColor);
+    SetSource(cr, context.state.strokeColor, context.state.alpha);
     CairoSetLineWidth_nid_no_patch(cr, thickness);
     CairoNewPath_nid_no_patch(cr);
     Rectangle(cr, *rect);
