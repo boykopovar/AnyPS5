@@ -759,6 +759,10 @@ test("a visible error follows a language switch", async t => {
   assert.equal(document.documentElement.dir, "ltr");
   assert.equal(get("error").children[0].textContent, "Sürüm bilgileri yüklenemiyor (404). release.json site derlemesi sırasında oluşturulur, bu nedenle demo/web doğrudan sunulduğunda eksiktir.");
   get("locale").onclick();
+  assert.equal(document.documentElement.lang, "es");
+  assert.equal(document.documentElement.dir, "ltr");
+  assert.equal(get("error").children[0].textContent, "No se puede cargar la información de la versión (404). release.json se genera durante la compilación del sitio, por lo que falta al servir demo/web directamente.");
+  get("locale").onclick();
   assert.equal(document.documentElement.lang, "en");
   assert.equal(document.documentElement.dir, "ltr");
   assert.equal(get("error").children[0].textContent, "Cannot load release information (404). release.json is generated during the site build, so it is missing when serving demo/web directly.");

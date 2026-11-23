@@ -1013,6 +1013,72 @@ int main() {
             cieUnterminatedRejected = std::string(error.what()).find("unterminated LEB128 value") != std::string::npos;
         }
         Require(cieUnterminatedRejected);
-        std::cout << "86 unwind record cases passed\n";
+        std::vector<std::uint8_t> validLsdaBytes(0x400, 0);
+        Io::WriteU32(validLsdaBytes, 0x200, 25);
+        validLsdaBytes[0x208] = 1;
+        std::copy(std::begin(ciePrefix), std::end(ciePrefix), validLsdaBytes.begin() + 0x209);
+        validLsdaBytes[0x212] = 0;
+        Io::WriteU64(validLsdaBytes, 0x213, 0x1000);
+        validLsdaBytes[0x21B] = 0x03;
+        validLsdaBytes[0x21C] = 0;
+        Io::WriteU32(validLsdaBytes, 0x220, 29);
+        Io::WriteU32(validLsdaBytes, 0x224, 0x24);
+        Io::WriteU64(validLsdaBytes, 0x228, 0x1000);
+        Io::WriteU64(validLsdaBytes, 0x230, 0x20);
+        validLsdaBytes[0x238] = 4;
+        Io::WriteU32(validLsdaBytes, 0x239, 0x280);
+        validLsdaBytes[0x280] = 0xFF;
+        validLsdaBytes[0x281] = 0xFF;
+        validLsdaBytes[0x282] = 3;
+        validLsdaBytes[0x283] = 13;
+        Io::WriteU32(validLsdaBytes, 0x284, 0);
+        Io::WriteU32(validLsdaBytes, 0x288, 0x10);
+        Io::WriteU32(validLsdaBytes, 0x28C, 0x40);
+        validLsdaBytes[0x290] = 0;
+        validLsdaBytes[0x300] = 1;
+        validLsdaBytes[0x302] = 3;
+        Io::WriteU64(validLsdaBytes, 0x304, 0x200);
+        Io::WriteU32(validLsdaBytes, 0x30C, 1);
+        Io::WriteU64(validLsdaBytes, 0x310, 0x1000);
+        Io::WriteU64(validLsdaBytes, 0x318, 0x220);
+        Domain::ProgramHeader validLsdaLoad{}; validLsdaLoad.Type = 1; validLsdaLoad.Flags = 4; validLsdaLoad.FileSize = validLsdaBytes.size(); validLsdaLoad.MemorySize = validLsdaBytes.size(); validLsdaLoad.Alignment = 8;
+        Domain::ProgramHeader validLsdaEh = validLsdaLoad; validLsdaEh.Type = 0x6474E550; validLsdaEh.Offset = 0x300; validLsdaEh.MappedAddress = 0x300; validLsdaEh.FileSize = 32; validLsdaEh.MemorySize = 32; validLsdaEh.Alignment = 4;
+        const auto validLsdaFuncs = Relinker::UnusedNidFilter::ReadExceptionFunctions(validLsdaBytes, {validLsdaLoad, validLsdaEh}, {}, {});
+        Require(validLsdaFuncs.size() == 1 && validLsdaFuncs[0].ExtraTargets.size() == 2 && validLsdaFuncs[0].ExtraTargets[1] == 0x1040);
+        auto lsdaTruncatedBytes = validLsdaBytes;
+        lsdaTruncatedBytes[0x283] = 10;
+        bool lsdaTruncatedRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaTruncatedBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaTruncatedRejected = std::string(error.what()).find("LSDA call-site table size mismatch") != std::string::npos;
+        }
+        Require(lsdaTruncatedRejected);
+        auto lsdaTableSizeOobBytes = validLsdaBytes;
+        lsdaTableSizeOobBytes[0x283] = 0x80;
+        lsdaTableSizeOobBytes[0x284] = 0x10;
+        bool lsdaTableSizeOobRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaTableSizeOobBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaTableSizeOobRejected = std::string(error.what()).find("invalid LSDA table size") != std::string::npos;
+        }
+        Require(lsdaTableSizeOobRejected);
+        auto lsdaTableExceedsBytes = validLsdaBytes;
+        lsdaTableExceedsBytes[0x283] = 0x80;
+        lsdaTableExceedsBytes[0x284] = 0x03;
+        bool lsdaTableExceedsRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaTableExceedsBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaTableExceedsRejected = std::string(error.what()).find("unwind range is not file-backed") != std::string::npos;
+        }
+        Require(lsdaTableExceedsRejected);
+        auto lsdaCallEncodingBytes = validLsdaBytes;
+        lsdaCallEncodingBytes[0x282] = 0x13;
+        bool lsdaCallEncodingRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaCallEncodingBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaCallEncodingRejected = std::string(error.what()).find("unsupported LSDA call-site encoding") != std::string::npos;
+        }
+        Require(lsdaCallEncodingRejected);
+        std::cout << "91 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

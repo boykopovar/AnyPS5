@@ -655,6 +655,15 @@ bool SampledFromStorageEligible(const Context& context, const GuestTextureResour
     return SampledFromStorageEligible(context, resource.format, resource.baseAddress, guestBytes);
 }
 
+bool ImportGpuWrittenSampledSurface(const Context& context, const GuestTextureResource& resource, std::uint64_t guestBytes) {
+    static const bool disabled = std::getenv("APS5_NO_SAMPLED_SURFACE_IMPORT") != nullptr || std::getenv("APS5_NO_SAMPLED_FROM_STORAGE") != nullptr;
+    if (disabled || !sampledFromStorageForTest.load(std::memory_order_relaxed) || context.hostImportAlignment == 0 || guestBytes == 0) return false;
+    if (IsBlockCompressed(resource.format) || !StorageFormatAvailable(context, resource.format)) return false;
+    const auto bytes = static_cast<std::size_t>(guestBytes);
+    if (!Recorder::SnapshotWriteOverlaps(resource.baseAddress, bytes) && !HostImportOverlaps(context, resource.baseAddress, bytes)) return false;
+    return HostImportJoinedFor(context, resource.baseAddress, bytes) != nullptr && HostImportCovers(context, resource.baseAddress, bytes);
+}
+
 // Whether a sampled texture over a fast-cleared, storage-eligible surface views the cleared storage
 // image (see cachedTexture). APS5_NO_CLEARED_VIEW=1 keeps such surfaces snapshots, as before.
 bool ClearedViewEnabled() {
@@ -1123,7 +1132,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     // import, recorded behind the producer, so no bytes are read or compared on the CPU and nothing
     // waits for the producer. A fast-cleared surface (keys) is viewed only through an image whose own
     // descriptor carries the DCC address (below); it stays a snapshot otherwise, its texels not read.
-    if ((!depthCompare || depthCopy) && !layerRows && source == nullptr && !clearThroughKeys && !residentLevels && SampledFromStorageEligible(context, resource, guestBytes)) {
+    if ((!depthCompare || depthCopy) && !layerRows && source == nullptr && !clearThroughKeys && !residentLevels && (SampledFromStorageEligible(context, resource, guestBytes) || ImportGpuWrittenSampledSurface(context, resource, guestBytes))) {
 
         keys = scanKeys();
         if (*keys == DccKeys::Uncompressed) {
