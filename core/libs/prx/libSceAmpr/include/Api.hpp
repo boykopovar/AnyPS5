@@ -137,8 +137,6 @@ int APS5_VABI sceAmprAmmSubmitCommandBuffer(void* base, std::uint32_t offset, st
 int APS5_VABI sceAmprAmmSubmitCommandBuffer2(void* base, std::uint32_t offset, std::uint32_t priority, AmmSubmitResult* result, std::uint32_t* id);
 int APS5_VABI sceAmprAmmSubmitCommandBuffer3(void* base, std::uint32_t offset, std::uint32_t priority, std::uint32_t* id);
 int APS5_VABI sceAmprAmmWaitCommandBufferCompletion(std::uint32_t id);
-int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKcSE__nid_postfix(void);
-int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(void);
 SonyLconv* APS5_VABI sceAmprLocaleconv(void);
 unsigned __int128 APS5_VABI sceAmprUdivti3(unsigned __int128 dividend, unsigned __int128 divisor);
 double APS5_VABI sceAmprSinh(double x, double y);
