@@ -159,8 +159,65 @@ struct AacLayout {
     std::uint32_t objectType;
     std::uint32_t samplingIndex;
     std::uint32_t channelConfiguration;
+    std::vector<std::uint8_t> programConfig;
+    std::uint32_t coreChannels = 0;
     bool operator==(const AacLayout&) const = default;
 };
+
+void putAacBits(std::vector<std::uint8_t>& bytes, std::size_t& bits, std::uint32_t value, unsigned width) {
+    for (unsigned remaining = width; remaining > 0; --remaining, ++bits) {
+        if (bits % 8 == 0) bytes.push_back(0);
+        bytes.back() |= static_cast<std::uint8_t>((value >> (remaining - 1) & 1) << (7 - bits % 8));
+    }
+}
+
+bool readProgramConfig(const std::uint8_t* data, std::size_t size, AacLayout& layout, std::size_t& consumed) {
+    std::size_t position = 3;
+    std::size_t bits = 0;
+    bool valid = true;
+    const auto get = [&](unsigned width) {
+        std::uint32_t value = 0;
+        if (width > size * 8 - position) {
+            valid = false;
+            return value;
+        }
+        for (unsigned index = 0; index < width; ++index, ++position) {
+            value = (value << 1) | (data[position / 8] >> (7 - position % 8) & 1);
+        }
+        return value;
+    };
+    const auto copy = [&](unsigned width) {
+        const auto value = get(width);
+        putAacBits(layout.programConfig, bits, value, width);
+        return value;
+    };
+    copy(4);
+    copy(2);
+    copy(4);
+    const auto front = copy(4);
+    const auto side = copy(4);
+    const auto back = copy(4);
+    const auto lfe = copy(2);
+    const auto associated = copy(3);
+    const auto coupling = copy(4);
+    if (copy(1)) copy(4);
+    if (copy(1)) copy(4);
+    if (copy(1)) copy(3);
+    const auto elements = front + side + back;
+    for (std::uint32_t index = 0; index < elements; ++index) {
+        layout.coreChannels += 1 + copy(1);
+        copy(4);
+    }
+    layout.coreChannels += lfe;
+    for (std::uint32_t index = 0; index < lfe + associated; ++index) copy(4);
+    for (std::uint32_t index = 0; index < coupling; ++index) copy(5);
+    get(static_cast<unsigned>((8 - position % 8) % 8));
+    putAacBits(layout.programConfig, bits, 0, static_cast<unsigned>((8 - bits % 8) % 8));
+    const auto commentBytes = copy(8);
+    for (std::uint32_t index = 0; index < commentBytes; ++index) copy(8);
+    consumed = position / 8;
+    return valid;
+}
 
 enum class Sbr {
     Implicit,
@@ -172,19 +229,19 @@ std::vector<std::uint8_t> audioSpecificConfig(const AacLayout& layout, Sbr sbr, 
     std::vector<std::uint8_t> bytes;
     std::size_t bits = 0;
     const auto put = [&](std::uint32_t value, int width) {
-        for (int bit = width - 1; bit >= 0; --bit, ++bits) {
-            if (bits % 8 == 0) bytes.push_back(0);
-            bytes.back() |= static_cast<std::uint8_t>((value >> bit & 1) << (7 - bits % 8));
-        }
+        putAacBits(bytes, bits, value, width);
     };
     put(layout.objectType, 5);
     put(layout.samplingIndex, 4);
     put(layout.channelConfiguration, 4);
     put(0, 3);
-    if (sbr == Sbr::Implicit) return bytes;
-    put(0x2B7, 11);
-    put(5, 5);
-    put(sbr == Sbr::WithoutParametricStereo, 1);
+    for (const auto byte : layout.programConfig) put(byte, 8);
+    const auto extension = bits;
+    if (sbr != Sbr::Implicit) {
+        put(0x2B7, 11);
+        put(5, 5);
+        put(sbr == Sbr::WithoutParametricStereo, 1);
+    }
     if (sbr == Sbr::WithoutParametricStereo) {
         const auto* rate = std::find(std::begin(AAC_SAMPLE_RATES), std::end(AAC_SAMPLE_RATES), sbrSampleRate);
         if (rate == std::end(AAC_SAMPLE_RATES)) {
@@ -195,6 +252,16 @@ std::vector<std::uint8_t> audioSpecificConfig(const AacLayout& layout, Sbr sbr, 
         }
         put(0x548, 11);
         put(0, 1);
+    }
+    if (!layout.programConfig.empty()) {
+        const auto totalBits = bytes.size() * 8;
+        for (std::size_t position = 13; position < extension && totalBits - position > 15; ++position) {
+            std::uint32_t marker = 0;
+            for (std::size_t bit = position; bit < position + 11; ++bit) {
+                marker = (marker << 1) | (bytes[bit / 8] >> (7 - bit % 8) & 1);
+            }
+            if (marker == 0x2B7) throw std::runtime_error("libSceAudiodec: PCE contains an ambiguous AAC sync extension");
+        }
     }
     return bytes;
 }
@@ -212,20 +279,29 @@ public:
         const std::size_t headerBytes = (data[1] & 1) != 0 ? 7 : 9;
         if (frameBytes <= headerBytes) return {DecodeStatus::InvalidData};
         if (frameBytes > size) return {DecodeStatus::PartialInput};
-        const AacLayout layout{(data[2] >> 6) + 1u, data[2] >> 2 & 15u, (data[2] & 1u) << 2 | data[3] >> 6};
+        AacLayout layout{(data[2] >> 6) + 1u, data[2] >> 2 & 15u, (data[2] & 1u) << 2 | data[3] >> 6};
+        std::size_t payloadOffset = headerBytes;
         if (layout.channelConfiguration == 0) {
-            if (!layouts.empty()) {
-                layouts.clear();
-                if (!tryReopen({})) return {DecodeStatus::InvalidData};
+            if (headerBytes != 7 || (data[6] & 3) != 0) throw std::runtime_error("libSceAudiodec: PCE with CRC or multiple raw data blocks is not implemented");
+            if (data[headerBytes] >> 5 == 5) {
+                std::size_t pceBytes = 0;
+                if (!readProgramConfig(data + headerBytes, frameBytes - headerBytes, layout, pceBytes)) return {DecodeStatus::InvalidData};
+                payloadOffset += pceBytes;
+            } else if (!layouts.empty() && layouts.front().channelConfiguration == 0 &&
+                       layouts.front().objectType == layout.objectType && layouts.front().samplingIndex == layout.samplingIndex) {
+                layout = layouts.front();
+            } else {
+                throw std::runtime_error("libSceAudiodec: initial PCE must be the first AAC syntax element");
             }
-            return decodePacket(data, frameBytes, pcm, pcmSize);
         }
         if (layouts.empty() || layouts.front() != layout) {
+            const auto replacementSbr = highEfficiency ? Sbr::Implicit : Sbr::Absent;
+            auto config = audioSpecificConfig(layout, replacementSbr, 0);
             layouts = {layout};
-            sbr = highEfficiency ? Sbr::Implicit : Sbr::Absent;
-            if (!tryReopen(audioSpecificConfig(layout, sbr, 0))) return {DecodeStatus::InvalidData};
+            sbr = replacementSbr;
+            if (!tryReopen(std::move(config))) return {DecodeStatus::InvalidData};
         }
-        DecodeResult result = decodeAccessUnit(data + headerBytes, frameBytes - headerBytes, pcm, pcmSize);
+        DecodeResult result = decodeAccessUnit(data + payloadOffset, frameBytes - payloadOffset, pcm, pcmSize);
         result.consumed = frameBytes;
         return result;
     }
@@ -246,9 +322,12 @@ private:
             DecodeResult result = decodePacket(data, size, pcm, pcmSize);
             if (result.status == DecodeStatus::InvalidData) continue;
             layouts = {layouts[index]};
-            if (sbr == Sbr::Implicit && layouts.front().channelConfiguration == 1 && result.channels > 1) {
+            const bool mono = layouts.front().channelConfiguration == 1 ||
+                              (layouts.front().channelConfiguration == 0 && layouts.front().coreChannels == 1);
+            if (sbr == Sbr::Implicit && mono && result.channels > 1) {
+                auto config = audioSpecificConfig(layouts.front(), Sbr::WithoutParametricStereo, result.sampleRate);
                 sbr = Sbr::WithoutParametricStereo;
-                if (!tryReopen(audioSpecificConfig(layouts.front(), sbr, result.sampleRate))) return {DecodeStatus::InvalidData};
+                if (!tryReopen(std::move(config))) return {DecodeStatus::InvalidData};
                 result = decodePacket(data, size, pcm, pcmSize);
             }
             return result;
