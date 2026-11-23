@@ -355,6 +355,31 @@ void run() {
         fails([&] { VertexBufferReadSize(input[0], 5, 1); });
     }
     {
+        std::array input{attribute()};
+        input[0].components = 3;
+        input[0].formatComponents = 3;
+        input[0].resource.fields[1] = 0;
+        input[0].resource.fields[3] = (74u << 12u) | (1u << 28u);
+        input[0].resource.fields[2] = 8;
+        Require(VertexBufferReadSize(input[0], 7, 1) == 12, "an in-range zero-stride fetch was not sized from its element");
+        Require(!VertexFetchOutOfRange(input[0]) && !VertexFetchOutOfRange(input[0], 7), "an in-range zero-stride fetch read zero");
+        fails([&] { VertexBufferReadSize(input[0], 8, 1, 0, 7); });
+        Require(VertexBufferReadSize(input[0], 8, 1, 0, 8) == 16, "a draw whose lowest index is NUM_RECORDS did not read zero");
+        Require(VertexBufferReadSize(input[0], 9, 1, 0, 8) == 16, "a draw whose every index is past NUM_RECORDS did not read zero");
+        Require(VertexBufferReadSize(input[0], 0xffffffffu, 1, 0, 0xffffffffu) == 16, "a far zero-stride index did not read zero");
+        Require(VertexFetchOutOfRange(input[0], 8) && !VertexFetchOutOfRange(input[0], 7), "the zero decision did not follow the draw's lowest index");
+        input[0].resource.fields[2] = 0;
+        Require(VertexBufferReadSize(input[0], 0xffffffffu, 1, 0, 0xffffffffu) == 16, "NUM_RECORDS 0 stopped reading zero");
+        input[0].resource.fields[2] = 8;
+        VertexInputCache cache(ctx);
+        const auto inRange = cache.TryGet(1903, input);
+        Require(inRange != nullptr && inRange->attributes[0].format == VK_FORMAT_R32G32B32_SFLOAT && inRange->bindings[0].stride == 0, "an in-range zero-stride fetch did not keep its element format");
+        Require(!VertexInputNeedsPerDrawLayout(std::span(input), 7) && VertexInputNeedsPerDrawLayout(std::span(input), 8), "the cached layout was not kept off an all-past draw");
+        const auto past = BuildVertexInputLayout(ctx, std::span(input), 8);
+        Require(past.attributes[0].format == VK_FORMAT_R32G32B32A32_SFLOAT && past.zeroLayoutLocations.size() == 1, "an all-past draw did not acquire the zero layout");
+        Require(cache.TryGet(1903, input) == inRange, "the all-past layout replaced the cached in-range layout");
+    }
+    {
         VertexInputCache thrashing(ctx, 2);
         std::array input{attribute()};
         const auto kept = thrashing.TryGet(1, input);

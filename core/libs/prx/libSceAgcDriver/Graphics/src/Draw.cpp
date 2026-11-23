@@ -1956,6 +1956,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         auto indexCopy = std::make_shared<Buffer>(context, expandedIndexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
         auto* outIndices = reinterpret_cast<std::uint32_t*>(indexCopy->Bytes().data());
         std::uint32_t maxIdx = 0;
+        std::uint32_t minIdx = std::numeric_limits<std::uint32_t>::max();
         const bool lastProvoking = state.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
         const auto expand = [&](const auto& source) {
             for (std::uint32_t primitive = 0; primitive < primitives; ++primitive) {
@@ -1992,7 +1993,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
                         out[2] = source(primitive + 2u - odd);
                     }
                 }
-                for (std::uint32_t corner = 0; corner < corners; ++corner) maxIdx = std::max(maxIdx, out[corner]);
+                for (std::uint32_t corner = 0; corner < corners; ++corner) {
+                    maxIdx = std::max(maxIdx, out[corner]);
+                    minIdx = std::min(minIdx, out[corner]);
+                }
             }
         };
         if (draw.indexed) {
@@ -2017,6 +2021,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             expand([](std::uint32_t idx) { return idx; });
         }
         inputs.maxIndex = draw.indexed ? maxIdx : maxIdx + draw.firstVertex;
+        inputs.minIndex = draw.indexed ? minIdx : minIdx + draw.firstVertex;
         Require(inputs.maxIndex <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
         inputs.indexHandle = indexCopy->Handle();
         inputs.indexOffset = 0;
@@ -2152,12 +2157,17 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     fetchLimit.reserve(attributes.size());
     fetchOf.assign(attributes.size(), 0);
     zeroed.resize(attributes.size());
+    const auto zeroIndex = args == nullptr ? inputs.minIndex : 0u;
+    if (VertexInputNeedsPerDrawLayout(attributes, zeroIndex)) {
+        inputs.retainedVertexInput = nullptr;
+        inputs.vertexInput = BuildVertexInputLayout(context, attributes, zeroIndex);
+    }
     const auto& layout = inputs.VertexLayout();
     for (std::size_t i = 0; i < attributes.size(); ++i) {
         const auto& attribute = attributes[i];
         const auto described = std::find_if(layout.attributes.begin(), layout.attributes.end(), [&](const auto& entry) { return entry.location == attribute.location; });
         Require(described != layout.attributes.end(), "vertex attribute missing from its input layout");
-        if (VertexFetchOutOfRange(attribute)) {
+        if (VertexFetchOutOfRange(attribute, zeroIndex)) {
             zeroed[i] = zeroVertexBuffer(context, ZeroVertexFormat(attribute).bytes);
             continue;
         }
@@ -2168,7 +2178,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             continue;
         }
         // An indirect draw's counts are unknown here: the descriptor's whole range is copied.
-        const auto bytes = (wholeRange ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance)) + widened;
+        const auto bytes = (wholeRange ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance, zeroIndex)) + widened;
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
         const auto firstByte = !wholeRange ? VertexBufferReadOffset(attribute, draw.firstVertex, draw.firstInstance) : 0;
@@ -5270,6 +5280,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         result.recorded = true;
         return result;
     }
+    if (VertexInputNeedsPerDrawLayout(shaders.front().program->vertexAttributes, inputs.minIndex)) return miss(DrawRecipeMiss::Proof);
     // The resident-target proof on the stored images (design_cpu_final 3.7): while an image is
     // still the storage cache's for its surface (StorageImageCached: the cache entry, removed under
     // the cache mutex before an eviction's flush, and the LRU touch a lookup would make), it is
