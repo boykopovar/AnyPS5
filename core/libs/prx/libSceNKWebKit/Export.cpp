@@ -568,10 +568,6 @@ int APS5_VABI _ZN7WebCore26IdentityTransformOperationD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageMarkAdClickAttributionsAsExpiredForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore21SerializedScriptValue8toStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1806,10 +1802,6 @@ int APS5_VABI _ZN7WebCore15GraphicsContextC2EPNS_20PlatformContextCairoE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetAdClickAttributionConversionURLForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore9FrameView19scrollElementToRectERKNS_7ElementERKNS_7IntRectE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2302,9 +2294,6 @@ int APS5_VABI _ZN7WebCore12SourceBuffer25bufferedSamplesForTrackIDERKN3WTF10Atom
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetAdClickAttributionOverrideTimerForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI libSceNKWebKitLegacyUnknown_GuYMrSZQWHE_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -2850,10 +2839,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_Ldf7UpFfDEI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("Ldf7UpFfDEI", libSceNKWebKitLegacyUnknown_Ldf7UpFfDEI_nid_no_patch);
-
-int APS5_VABI WKPageClearAdClickAttribution() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK7WebCore9FrameView23absoluteToDocumentPointENS_10FloatPointEN3WTF8OptionalIfEE() {
     NotImplemented_nid_no_patch(__func__);
@@ -5169,10 +5154,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_eFGLtTGFSzE_nid_no_patch() {
 APS5_EXPORT("eFGLtTGFSzE", libSceNKWebKitLegacyUnknown_eFGLtTGFSzE_nid_no_patch);
 
 int APS5_VABI _ZN7WebCore13createWrapperERNS_17JSDOMGlobalObjectEON3WTF3RefINS_8NodeListENS2_13DumbPtrTraitsIS4_EEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageDumpAdClickAttribution() {
     NotImplemented_nid_no_patch(__func__);
 }
 

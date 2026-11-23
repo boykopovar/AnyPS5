@@ -65,6 +65,11 @@ public:
     std::uint32_t mutedState = 0;
     bool mayStartMediaWhenInWindow = true;
     std::uint32_t mediaState = 0;
+    bool adClickAttributionsExpiredForTesting = false;
+    Retained<URL> adClickAttributionConversionURL;
+    bool adClickAttributionOverrideTimer = false;
+    bool adClickAttributionCleared = false;
+    Retained<String> adClickAttributionDumpString;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
