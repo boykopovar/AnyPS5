@@ -17,6 +17,7 @@ constexpr int ErrorFault = 14;
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorNotTerminal = 25;
 constexpr int ErrorAgain = 35;
+constexpr int DirectoryFlag = 0x00020000;
 constexpr short PollIn = 0x1;
 
 constexpr std::uint64_t NonblockingRequest = 0x8004667e;
@@ -347,7 +348,7 @@ void AuditDirectoryReadableQuery() {
     rmdir_nid_postfix(Path);
     Require(mkdir_nid_postfix(Path, 0755) == 0, "directory creation failed");
 
-    const int directory = sceKernelOpen(Path, SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    const int directory = open_nid_postfix(Path, DirectoryFlag, 0);
     Require(directory >= 0, "directory open failed");
 
     int readable = -1;
