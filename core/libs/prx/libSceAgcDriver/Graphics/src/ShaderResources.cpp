@@ -815,6 +815,26 @@ void reportGuestAllocation(const GuestTextureResource& resource, std::uint64_t g
     std::fprintf(stderr, "[gpu] view 0x%llx of %llu MiB lies in the guest allocation 0x%llx..0x%llx (%llu MiB, range 0x%llx..0x%llx, %s%s%s): %llu of its %u slices fit in the range\n", static_cast<unsigned long long>(resource.baseAddress), static_cast<unsigned long long>(guestBytes >> 20u), static_cast<unsigned long long>(range->allocationAddress), static_cast<unsigned long long>(range->allocationAddress + range->allocationBytes), static_cast<unsigned long long>(range->allocationBytes >> 20u), static_cast<unsigned long long>(range->address), static_cast<unsigned long long>(end), range->readable ? "r" : "-", range->writable ? "w" : "-", range->gpu ? "g" : "-", static_cast<unsigned long long>(fitting), geometry.layers);
 }
 
+std::optional<std::uint64_t> RegisteredGuestBytes(std::uint64_t address) {
+    const auto first = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), false);
+    if (first == nullptr) return std::nullopt;
+    auto end = first->address + first->bytes;
+    for (;;) {
+        const auto next = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(end), false);
+        if (next == nullptr || next->address != end || next->bytes == 0) break;
+        end += next->bytes;
+    }
+    return end - address;
+}
+
+GuestTextureResource SampledArrayWindow(const GuestTextureResource& window) {
+    const bool layered = window.dimension == TextureDimension::k2DArray || window.dimension == TextureDimension::k1DArray || window.dimension == TextureDimension::kCube;
+    if (!layered) return window;
+    const auto registered = RegisteredGuestBytes(window.baseAddress);
+    if (!registered) return window;
+    return BoundArrayWindow(window, *registered);
+}
+
 struct PendingLookup {
     std::shared_ptr<StorageTexture> source;
     bool depthCopy = false;
@@ -840,7 +860,7 @@ PendingLookup pendingLookupSource(const Context& context, const GuestTextureReso
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
 std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, VkComponentMapping components, std::uint64_t guestBytes = 0, bool depthCompare = false, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D, bool layerRows = false) {
     Require(!layerRows || (requested.dimension == TextureDimension::k1DArray && !depthCompare), "only a sampled 1D array is laid out as rows of a 2D image");
-    const auto resource = layerRows ? requested : ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
+    const auto resource = layerRows ? requested : SampledArrayWindow(ArrayLayerWindow(requested, context.limits.maxImageArrayLayers));
     if (resource.baseAddress != requested.baseAddress) guestBytes = 0;
     if (resource.dimension == TextureDimension::k2DMsaa) {
         Require(!depthCompare, "native multisampled depth comparison sampling is not implemented");
