@@ -2074,7 +2074,7 @@ static int getConvertProgress(float* progress) {
 
 int APS5_VABI sceSaveDataGetConvertProgress(float* progress) {
     const int rc = getConvertProgress(progress);
-    SAVEDATA_TRACE("getConvertProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), progress != nullptr && rc == SAVE_DATA_OK ? *progress : 0.0f);
+    SAVEDATA_TRACE("getConvertProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), rc == SAVE_DATA_OK ? g_convertProgress.load() : 0.0f);
     return rc;
 }
 
