@@ -117,6 +117,42 @@ void verify(std::uint32_t waveSize, std::uint32_t limit, bool int64Atomics) {
     require(result.bdaAbiVersion == 1u, "a 64-bit LDS atomic did not get the fault buffer for a misaligned address at limit " + std::to_string(limit));
 }
 
+void verifyNarrowReadFirstLaneBudget() {
+    static constexpr std::array<std::uint32_t, 5> code{
+        0x7e020280u, 0xd8340000u, 0x00000100u, 0x7e100501u, 0xbf810000u
+    };
+    static constexpr std::array<std::uint32_t, 4> capabilities{
+        spv::CapabilityShader, spv::CapabilityGroupNonUniform,
+        spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle};
+    constexpr std::uint32_t threads = 128u;
+    constexpr std::uint32_t ldsDwords = 8064u;
+    constexpr std::uint32_t exchangeDwords = threads + (threads + 31u) / 32u;
+    constexpr std::uint32_t reservedDwords = 1u;
+    constexpr std::uint32_t combinedBoundary = (ldsDwords + exchangeDwords + reservedDwords) * 4u;
+    const auto compile = [&](std::uint32_t limit) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, 0x21000u, code, 0, {}};
+        request.context.waveSize = 32u;
+        request.context.compute = ShaderComputeStageInfo{{threads, 1u, 1u}, ldsDwords, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00403000u;
+        request.target.spirvVersion = 0x00010600u;
+        request.target.subgroupSize = 8u;
+        request.target.supportedCapabilities = capabilities;
+        request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+        request.target.maxWorkgroupInvocations = 1024u;
+        request.target.maxWorkgroupSharedMemoryBytes = limit;
+        request.layout = {0, 0, 0, 128};
+        request.useCache = false;
+        return Recompile(request);
+    };
+    const auto fits = compile(combinedBoundary);
+    require(fits.workgroupMemoryDwords == 0u, "narrow readfirstlane budget: guest LDS left Workgroup memory at the combined boundary");
+    require(workgroupBytes(fits.spirv.Words()) <= combinedBoundary, "narrow readfirstlane budget: combined-boundary module exceeds its Workgroup limit");
+    const auto spills = compile(32768u);
+    require(spills.workgroupMemoryDwords == ((ldsDwords + 2u) & ~1u), "narrow readfirstlane budget: guest LDS did not move to device memory when the exchange would exceed 32 KiB");
+    require(workgroupBytes(spills.spirv.Words()) <= 32768u, "narrow readfirstlane budget: 32 KiB module still exceeds its Workgroup limit");
+}
+
 alignas(256) std::array<std::uint8_t, 32768> Texture{};
 
 void verifySpecializedImageWithoutBuffers() {
@@ -158,6 +194,14 @@ void verifySpecializedImageWithoutBuffers() {
 
 int main() {
     unsigned failures = 0;
+    try {
+        verifyNarrowReadFirstLaneBudget();
+        std::cout << "LDS lock budget: narrow readfirstlane exchange passed\n";
+    } catch (const std::exception& error) {
+        ++failures;
+        const std::string message(error.what());
+        std::cerr << "LDS lock budget: narrow readfirstlane exchange: " << message.substr(0, message.find("RecompileRequest:")) << '\n';
+    }
     try {
         verifySpecializedImageWithoutBuffers();
         std::cout << "LDS lock budget: specialized image program without buffers passed\n";
