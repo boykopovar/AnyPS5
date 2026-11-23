@@ -31,6 +31,7 @@ MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
 BASE_REF = "refs/pr/base"
 PROGRESS_EVERY = 100
+PAIR_PROGRESS_EVERY = 1000
 MAX_REPORT_CHARS = 60000
 EXPORT_PATHS = ("core/libs/prx/*.cpp", ":(exclude,icase)**/test/**", ":(exclude,icase)**/tests/**")
 _REPO_ROOTS = {}
@@ -660,6 +661,27 @@ def overlaps(prs, a, b):
 
 
 
+def compare_all(prs, pairs, jobs):
+    rows = {n: {} for n in prs}
+    with ThreadPoolExecutor(max_workers=jobs) as executor:
+        try:
+            merging = {}
+            for a, b in pairs:
+                if prs[a].get("author") != prs[b].get("author") and prs[a].get("files", set()) & prs[b].get("files", set()):
+                    merging[a, b] = executor.submit(overlaps, prs, a, b)
+                elif found := overlaps(prs, a, b):
+                    rows[a][b] = rows[b][a] = found
+            for index, ((a, b), future) in enumerate(merging.items(), 1):
+                if found := future.result():
+                    rows[a][b] = rows[b][a] = found
+                if index % PAIR_PROGRESS_EVERY == 0 or index == len(merging):
+                    progress(f"compared {index}/{len(merging)} pull request pairs that change the same files")
+        except BaseException:
+            executor.shutdown(cancel_futures=True)
+            raise
+    return rows
+
+
 def code_span(item):
     item = str(item)
     runs = re.findall(r"`+", item)
@@ -1004,12 +1026,9 @@ def main(argv=None):
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)
         current_exports = base_exports(BASE_REF)
-        rows = {n: {} for n in prs}
         main_exports = main_export_findings(prs, current_exports)
         pairs = [(0, n) for n in prs if n] if args.branch else combinations(prs, 2)
-        for a, b in pairs:
-            if found := overlaps(prs, a, b):
-                rows[a][b] = rows[b][a] = found
+        rows = compare_all(prs, pairs, args.jobs)
         blob = f'https://github.com/{REPO}/blob/{BASE_REF}'
     except subprocess.CalledProcessError as error:
         raise SystemExit(describe_failure(error))
