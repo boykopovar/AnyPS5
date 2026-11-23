@@ -1062,7 +1062,6 @@ int APS5_VABI _ZN7WebCore6Path2D6createERKN3WTF6StringE();
 int APS5_VABI _ZNK7WebCore26Matrix3DTransformOperation19isRepresentableIn2DEv();
 int APS5_VABI _ZN7WebCore11DisplayList8DrawPathD1Ev();
 int APS5_VABI _ZNK7WebCore9InlineBox14caretMinOffsetEv();
-int APS5_VABI _ZN7WebCore21NetworkStorageSession12deleteCookieERKNS_6CookieE();
 int APS5_VABI _ZNK7WebCore9FrameView29maxStableLayoutViewportOriginEv();
 int APS5_VABI _ZN7WebCore9FrameView17willEndLiveResizeEv();
 int APS5_VABI _ZThn64_NK7WebCore9FrameView12footerHeightEv();

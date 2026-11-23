@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libSceNKWebKit/include/BidiContextExports.hpp"
 #include "prx/libSceNKWebKit/include/CrossOriginPreflightExports.hpp"
 #include "prx/libSceNKWebKit/include/DoViCodecParameters.hpp"
 #include "prx/libSceNKWebKit/include/HitTestLocationExports.hpp"
@@ -28,6 +29,7 @@
 #include "prx/libSceNKWebKit/include/Api.hpp"
 #include "prx/libSceNKWebKit/include/AuthenticationChallengeExports.hpp"
 #include "prx/libSceNKWebKit/include/ScrollbarValueExports.hpp"
+#include "prx/libSceNKWebKit/include/SessionCookieExports.hpp"
 #include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"
 #include "prx/libSceNKWebKit/include/CursorExports.hpp"
 #include "prx/libSceNKWebKit/include/ProcessWarmingExports.hpp"

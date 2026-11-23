@@ -721,17 +721,21 @@ void CallbackClassFinalizer(JSRuntime* rt, JSValueConst val) {
     if (!data->isGlobalInterceptor) {
         RunClassFinalize(data);
     }
-    if (!JS_IsUndefined(data->propStore)) {
-        JS_FreeValueRT(rt, data->propStore);
-        data->propStore = JS_UNDEFINED;
-    }
-    for (auto& [k, slot] : data->privateProperties) {
-        if (!JS_IsUndefined(slot.strongVal)) {
-            JS_FreeValueRT(rt, slot.strongVal);
-            slot.strongVal = JS_UNDEFINED;
+    CallbackObjectData* owned[2] = {data, data->isGlobalInterceptor ? group->FindCallbackData(handle) : nullptr};
+    for (CallbackObjectData* holder : owned) {
+        if (!holder) continue;
+        if (!JS_IsUndefined(holder->propStore)) {
+            JS_FreeValueRT(rt, holder->propStore);
+            holder->propStore = JS_UNDEFINED;
         }
+        for (auto& [k, slot] : holder->privateProperties) {
+            if (!JS_IsUndefined(slot.strongVal)) {
+                JS_FreeValueRT(rt, slot.strongVal);
+                slot.strongVal = JS_UNDEFINED;
+            }
+        }
+        holder->privateProperties.clear();
     }
-    data->privateProperties.clear();
     group->callbackDataByPtr.erase(ptr);
     if (!data->isGlobalInterceptor) {
         group->NotifyObjectFinalized(ptr, handle);
