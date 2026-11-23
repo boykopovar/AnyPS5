@@ -2350,43 +2350,45 @@ void ResolveMultisampleTarget(const Context& context, const ColorTarget& source,
     const bool packed = source.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10;
     const auto imageFormat = destination.ImageFormat();
     const bool stage = !packed && imageFormat != format && colorTwinFormat(context, imageFormat) != format && !resolveFollowsView(context, source.format, imageFormat, source.samples, source.elementBytes);
-    const DccPublication publication(source);
-    TargetsLock lock;
-    auto& target = acquire(context, source);
-    target.Keep();
-    auto* averaging = packed ? &target.PackedResolve() : nullptr;
-    const auto* staged = stage ? &target.ResolveCopy(source.format) : nullptr;
-    const auto destinationView = staged != nullptr ? staged->view : destination.AttachmentView(format, mip);
-    const std::array<VkImageView, 2> views{target.View(source.format), destinationView};
-    auto framebuffer = averaging != nullptr ? nullptr : std::make_shared<Framebuffer>(context, target.ResolvePass(source.format), views, source.extent);
-    std::shared_ptr<void> averaged;
-    recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT);
-        if (averaging != nullptr) {
-            averaged = averaging->RecordInto(commands, recorder, views[0], VK_IMAGE_LAYOUT_GENERAL, destinationView);
-        } else {
-            VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-            begin.renderPass = target.ResolvePass(source.format);
-            begin.framebuffer = framebuffer->Handle();
-            begin.renderArea = {{0, 0}, source.extent};
-            context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-            context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
-        }
-        if (staged != nullptr) {
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-            const auto& descriptor = destination.Descriptor();
-            VkImageCopy region{};
-            region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, descriptor.dimension == TextureDimension::k3D ? 0u : descriptor.baseArray, 1};
-            region.extent = {source.extent.width, source.extent.height, 1};
-            context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, staged->image, VK_IMAGE_LAYOUT_GENERAL, destination.Image(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
-        }
-        RecordMemoryBarrier(context, commands, staged != nullptr ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, staged != nullptr ? VK_ACCESS_TRANSFER_WRITE_BIT : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
-        if (recorder != nullptr) {
-            Recorder::CountBarriers(Recorder::CommandClass::Draw, staged != nullptr ? 3 : 2);
-            if (framebuffer != nullptr) recorder->Keep(framebuffer);
-        }
-    });
+    {
+        const DccPublication publication(source);
+        TargetsLock lock;
+        auto& target = acquire(context, source);
+        target.Keep();
+        auto* averaging = packed ? &target.PackedResolve() : nullptr;
+        const auto* staged = stage ? &target.ResolveCopy(source.format) : nullptr;
+        const auto destinationView = staged != nullptr ? staged->view : destination.AttachmentView(format, mip);
+        const std::array<VkImageView, 2> views{target.View(source.format), destinationView};
+        auto framebuffer = averaging != nullptr ? nullptr : std::make_shared<Framebuffer>(context, target.ResolvePass(source.format), views, source.extent);
+        std::shared_ptr<void> averaged;
+        recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT);
+            if (averaging != nullptr) {
+                averaged = averaging->RecordInto(commands, recorder, views[0], VK_IMAGE_LAYOUT_GENERAL, destinationView);
+            } else {
+                VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+                begin.renderPass = target.ResolvePass(source.format);
+                begin.framebuffer = framebuffer->Handle();
+                begin.renderArea = {{0, 0}, source.extent};
+                context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+                context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
+            }
+            if (staged != nullptr) {
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                const auto& descriptor = destination.Descriptor();
+                VkImageCopy region{};
+                region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, descriptor.dimension == TextureDimension::k3D ? 0u : descriptor.baseArray, 1};
+                region.extent = {source.extent.width, source.extent.height, 1};
+                context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, staged->image, VK_IMAGE_LAYOUT_GENERAL, destination.Image(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+            }
+            RecordMemoryBarrier(context, commands, staged != nullptr ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, staged != nullptr ? VK_ACCESS_TRANSFER_WRITE_BIT : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+            if (recorder != nullptr) {
+                Recorder::CountBarriers(Recorder::CommandClass::Draw, staged != nullptr ? 3 : 2);
+                if (framebuffer != nullptr) recorder->Keep(framebuffer);
+            }
+        });
+    }
     destination.MarkDirty();
 }
 

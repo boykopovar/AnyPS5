@@ -3,10 +3,11 @@ target_include_directories(agc_driver_alpha_to_coverage_tests PRIVATE $<TARGET_P
 if(BUILD_TESTING)
     add_test(NAME agc_driver_msaa_dcc_unwatch COMMAND agc_driver_alpha_to_coverage_tests --dcc-unwatch)
     add_test(NAME agc_driver_msaa_dcc_publish_gate COMMAND agc_driver_alpha_to_coverage_tests --dcc-publish-gate)
-    set_tests_properties(agc_driver_msaa_dcc_unwatch agc_driver_msaa_dcc_publish_gate PROPERTIES
+    add_test(NAME agc_driver_msaa_resolve_publication_order COMMAND agc_driver_alpha_to_coverage_tests --resolve-publication-order)
+    set_tests_properties(agc_driver_msaa_dcc_unwatch agc_driver_msaa_dcc_publish_gate agc_driver_msaa_resolve_publication_order PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_ASSERT_GPU_LOCK=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
-        set_tests_properties(agc_driver_msaa_dcc_unwatch agc_driver_msaa_dcc_publish_gate PROPERTIES
+        set_tests_properties(agc_driver_msaa_dcc_unwatch agc_driver_msaa_dcc_publish_gate agc_driver_msaa_resolve_publication_order PROPERTIES
                 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_driver_dithered_alpha_to_coverage COMMAND agc_driver_alpha_to_coverage_tests --dithered8)
