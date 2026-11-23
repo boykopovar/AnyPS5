@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace NKWebKit {
 void* Allocate(std::size_t size, std::size_t alignment = 16);
@@ -311,18 +312,28 @@ bool EncoderEnsure(Encoder* enc, EncoderState& state, std::size_t additional) {
             _ZN3WTF8fastFreeEPv(nextBuf);
             return false;
         }
-        if (state.buffer != EncoderInlineBuffer(enc)) _ZN3WTF8fastFreeEPv(state.buffer);
+        uint8_t* oldBuf = state.buffer;
+        unsigned oldCapacity = state.capacity;
         state.buffer = nextBuf;
         state.capacity = static_cast<unsigned>(next);
+        if (!GuestCopyOut_nid_no_patch(enc, &state, encoderHeaderBytes)) {
+            state.buffer = oldBuf;
+            state.capacity = oldCapacity;
+            _ZN3WTF8fastFreeEPv(nextBuf);
+            return false;
+        }
+        if (oldBuf != EncoderInlineBuffer(enc)) _ZN3WTF8fastFreeEPv(oldBuf);
     }
     return true;
 }
 
 bool EncoderAppendBytes(Encoder* enc, EncoderState& state, const uint8_t* data, std::size_t length) {
+    if (!EncoderEnsure(enc, state, length) || !GuestCopyOut_nid_no_patch(state.buffer + state.size, data, length)) return false;
+    std::vector<uint8_t> appended(length);
+    if (!GuestCopyIn_nid_no_patch(appended.data(), state.buffer + state.size, length)) return false;
     unsigned salt = 101;
     Sha1Add(&state.sha1, reinterpret_cast<const uint8_t*>(&salt), sizeof(salt));
-    Sha1Add(&state.sha1, data, length);
-    if (!EncoderEnsure(enc, state, length) || !GuestCopyOut_nid_no_patch(state.buffer + state.size, data, length)) return false;
+    Sha1Add(&state.sha1, appended.data(), length);
     state.size += static_cast<unsigned>(length);
     return true;
 }
