@@ -34,7 +34,7 @@ else()
     set(videoOutSdl SDL2-static)
     set(videoOutSdlInclude)
 endif()
-target_link_libraries(libSceVideoOut PRIVATE libSceAgcDriver libScePad libSceUserService libSceMouse libSceKeyboard libSceIme libc libkernel decoder_png ${videoOutSdl})
+target_link_libraries(libSceVideoOut PRIVATE libSceAgcDriver libScePad libSceUserService libSceMouse libSceKeyboard libSceIme libc libkernel libkernel_sys decoder_png ${videoOutSdl})
 if(WIN32)
     target_link_libraries(libSceVideoOut PRIVATE comctl32 dxgi)
 endif()
@@ -197,7 +197,7 @@ if(BUILD_TESTING)
     endforeach()
 
     set_target_properties(video_out_flip_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
-    foreach(flipMode IN ITEMS lifetime reopen decode controls overlay padstatus unopened ps4 resolution resolution_override fresh
+    foreach(flipMode IN ITEMS lifetime reopen decode controls overlay padstatus unopened ps4 ps4_initial_status resolution resolution_override fresh
             present backtoback dcc pacing aftergpu onedevice deferred unregistered)
         if(flipMode STREQUAL "lifetime")
             add_test(NAME video_out_flip_${flipMode} COMMAND video_out_flip_tests)

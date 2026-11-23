@@ -6098,7 +6098,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             continue;
         }
         const auto resource = record != nullptr && record->decoded ? record->resource : DecodeTextureResource(words);
-        const bool firstLayer = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k2DArray;
+        const bool firstLayer = (binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k2DArray) || (binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image1D && resource.dimension == TextureDimension::k1DArray && resource.baseArray == resource.depthOrLastArray);
         if (binding.imageShape.has_value() && !firstLayer && !MatchesGuestDimension(*binding.imageShape, resource.dimension)) throw std::runtime_error("AGC graphics: guest storage texture dimension disagrees with the shader's declared image shape (shape " + std::to_string(static_cast<int>(*binding.imageShape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")");
         if (resource.dimension == TextureDimension::k2DMsaa) {
             Require(!(element < binding.imageAtomic.size() && binding.imageAtomic[element]) && !(element < binding.imageAtomic64.size() && binding.imageAtomic64[element]), "storage image atomics on a multisampled texture are not implemented");

@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/GuestWords.hpp"
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceLibcInternal/include/PendingExports.hpp"
@@ -268,9 +269,8 @@ int APS5_VABI _ZNSt10moneypunctIcLb0EEC2Em_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNSt10moneypunctIcLb0EED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt10moneypunctIcLb0EED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI sceLibcInternalPending4_138_nid_no_patch() {
@@ -324,9 +324,8 @@ int APS5_VABI _ZNSt10moneypunctIcLb1EEC2Em_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNSt10moneypunctIcLb1EED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt10moneypunctIcLb1EED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI _ZNSt10moneypunctIcLb1EED1Ev_nid_postfix() {
@@ -676,13 +675,18 @@ int APS5_VABI _FTgamma_nid_postfix() {
 
 float APS5_VABI _FXp_getw_nid_postfix(const float* parts, int count) {
     if (count == 0) return 0.0f;
-    if (count == 1 || parts[0] == 0.0f || parts[1] == 0.0f) return parts[0];
-    if (count == 2 || parts[2] == 0.0f) return parts[0] + parts[1];
-    const float head = parts[0] + parts[1];
-    float tail = parts[2];
-    if (count >= 4) tail += parts[3];
-    if (head - parts[0] == parts[1]) return head + tail;
-    return parts[0] + (parts[1] + tail);
+    const float first = ExtendedPrecisionWords::ReadWord(parts, 0, "_FXp_getw");
+    if (count == 1 || first == 0.0f) return first;
+    const float second = ExtendedPrecisionWords::ReadWord(parts, 1, "_FXp_getw");
+    if (second == 0.0f) return first;
+    if (count == 2) return first + second;
+    const float third = ExtendedPrecisionWords::ReadWord(parts, 2, "_FXp_getw");
+    if (third == 0.0f) return first + second;
+    const float head = first + second;
+    float tail = third;
+    if (count >= 4) tail += ExtendedPrecisionWords::ReadWord(parts, 3, "_FXp_getw");
+    if (head - first == second) return head + tail;
+    return first + (second + tail);
 }
 
 int APS5_VABI _Fac_tidy_nid_postfix() {
@@ -841,18 +845,26 @@ int APS5_VABI _Getcloc_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Getctyptab_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
-    if (s == nullptr || *s == '\0') {
+    if (s == nullptr) {
         return nullptr;
     }
-    const char sep = *s;
+    const char* const begin = s;
+    const auto readByte = [&](const char* p) -> char {
+        if (p - begin >= 0x10000) throw std::invalid_argument("_Getdst: an unterminated rule string");
+        char value;
+        const int savedErrno = errno;
+        const bool read = GuestCopyIn_nid_no_patch(&value, p, sizeof(value));
+        errno = savedErrno;
+        if (!read) throw std::invalid_argument("_Getdst: an unreadable rule string");
+        return value;
+    };
+    if (readByte(s) == '\0') {
+        return nullptr;
+    }
+    const char sep = readByte(s);
     ++s;
-    if (*s == '\0') {
+    if (readByte(s) == '\0') {
         return nullptr;
     }
 
@@ -867,25 +879,33 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
     std::vector<Rule> rules;
     std::uint8_t lastYear = 0;
 
-    while (*s != '\0') {
-        if (*s == sep) {
+    while (true) {
+        const char head = readByte(s);
+        if (head == '\0') {
+            break;
+        }
+        if (head == sep) {
             return nullptr;
         }
 
         std::uint8_t ruleYear = lastYear;
-        if (*s == '(') {
+        if (head == '(') {
             ++s;
             int yearVal = 0;
             int digits = 0;
-            while (*s >= '0' && *s <= '9') {
-                yearVal = yearVal * 10 + (*s - '0');
+            while (true) {
+                const char digit = readByte(s);
+                if (digit < '0' || digit > '9') {
+                    break;
+                }
+                yearVal = yearVal * 10 + (digit - '0');
                 ++digits;
                 ++s;
                 if (digits > 4) {
                     return nullptr;
                 }
             }
-            if (digits != 4 || *s != ')' || yearVal < 1900) {
+            if (digits != 4 || readByte(s) != ')' || yearVal < 1900) {
                 return nullptr;
             }
             ++s;
@@ -895,9 +915,13 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
 
         int dateDigits = 0;
         char dateBuf[7] = {};
-        while (*s >= '0' && *s <= '9') {
+        while (true) {
+            const char digit = readByte(s);
+            if (digit < '0' || digit > '9') {
+                break;
+            }
             if (dateDigits < 6) {
-                dateBuf[dateDigits] = *s;
+                dateBuf[dateDigits] = digit;
             }
             ++dateDigits;
             ++s;
@@ -922,13 +946,14 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
         }
 
         std::uint8_t suffixByte = 0;
-        if (*s == '+' || *s == '-') {
-            char sign = *s;
+        const char sign = readByte(s);
+        if (sign == '+' || sign == '-') {
             ++s;
-            if (*s < '0' || *s > '6') {
+            const char weight = readByte(s);
+            if (weight < '0' || weight > '6') {
                 return nullptr;
             }
-            int w = *s - '0';
+            int w = weight - '0';
             ++s;
             int v = (w == 0) ? 7 : w;
             if (sign == '+') {
@@ -938,7 +963,8 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
             }
         }
 
-        if (*s != '\0' && *s != sep) {
+        const char stop = readByte(s);
+        if (stop != '\0' && stop != sep) {
             return nullptr;
         }
 
@@ -950,9 +976,9 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
         r.year = ruleYear;
         rules.push_back(r);
 
-        if (*s == sep) {
+        if (stop == sep) {
             ++s;
-            if (*s == '\0') {
+            if (readByte(s) == '\0') {
                 return nullptr;
             }
         }

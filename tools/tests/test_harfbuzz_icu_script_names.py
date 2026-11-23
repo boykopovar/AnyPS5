@@ -48,6 +48,12 @@ class GeneratorTests(unittest.TestCase):
         rows = [line for line in text.splitlines() if line.startswith('    "')]
         self.assertEqual([row.count('"') // 2 for row in rows], [10] * 19 + [3])
 
+    def test_windows_checkout_matches_the_pinned_header(self):
+        header = header_text(range(SCRIPT_COUNT))
+        expected = self.generate(header)
+        checkout = header.replace(b"\n", b"\r\n")
+        self.assertEqual(self.generate(checkout, checksum=hashlib.sha256(header).hexdigest()), expected)
+
     def test_input_header_is_not_overwritten_by_the_output(self):
         header = header_text(range(SCRIPT_COUNT))
         source = self.root / "uscript.h"

@@ -7,6 +7,7 @@
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/General.hpp"
@@ -267,8 +268,9 @@ int APS5_VABI pthread_attr_setcreatesuspend_np_nid_postfix(PthreadAttr* attr) {
 
 int APS5_VABI pthread_attr_setstackaddr_nid_postfix(PthreadAttr* attr, void* stack_addr) {
     constexpr int GuestEinval = 22;
-    if (!attr || !*attr || !stack_addr) return GuestEinval;
-    (*attr)->stackAddress = stack_addr;
+    PthreadAttr localAttr{};
+    if (!LoadAttr(attr, localAttr) || !stack_addr) return GuestEinval;
+    localAttr->stackAddress = stack_addr;
     return 0;
 }
 
@@ -278,9 +280,22 @@ int APS5_VABI pthread_get_specificarray_np_nid_postfix(PthreadKey key, int total
     constexpr int MaxKeys = 512;
     if (total <= 0 || key < 1 || key > MaxKeys || total > MaxKeys - (key - 1)) return GuestEinval;
     if (!array) return GuestEfault;
+    const std::size_t bytes = static_cast<std::size_t>(total) * sizeof(void*);
+    const std::uintptr_t start = reinterpret_cast<std::uintptr_t>(array);
+    if (bytes > UINTPTR_MAX - start) return GuestEfault;
+    void* values[MaxKeys];
     for (int i = 0; i < total; ++i) {
-        array[i] = scePthreadGetspecific(key + i);
+        values[i] = scePthreadGetspecific(key + i);
     }
+    const int savedErrno = errno;
+    bool writable = false;
+    {
+        const GuestArena::HostWrite guard(array, bytes);
+        writable = guard.Open() && GuestWritable_nid_no_patch(array, bytes);
+    }
+    const bool copied = writable && CopyOutBytes(array, values, bytes);
+    errno = savedErrno;
+    if (!copied) return GuestEfault;
     return 0;
 }
 
