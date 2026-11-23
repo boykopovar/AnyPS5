@@ -18,16 +18,12 @@ std::mutex DefaultConverterMutex;
 std::unordered_set<UConverter*> CheckedOutDefaultConverters;
 
 void CopyIn(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
 }
 
 void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
 }
 
@@ -118,7 +114,6 @@ UConverter* APS5_VABI u_getDefaultConverter_nid_postfix(std::int32_t* errorCode)
     if (!errorCode) APS5_INVALID_ARG_EX;
     std::int32_t incoming = 0;
     CopyIn(&incoming, errorCode, sizeof(incoming), __func__);
-    if (incoming > 0) return nullptr;
     const std::int32_t entered = incoming < U_ERROR_WARNING_START ? 0 : incoming;
     auto status = static_cast<UErrorCode>(entered);
 

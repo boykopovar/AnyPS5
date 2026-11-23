@@ -12,9 +12,7 @@
 namespace {
 
 void CopyUnits(std::uint16_t* destination, const std::uint16_t* source, std::size_t count, const char* caller) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, count * sizeof(std::uint16_t));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(caller) + ": unreadable text");
 }
 
