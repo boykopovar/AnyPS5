@@ -208,8 +208,9 @@ measured here; a result that depends on these differences needs a run on RDNA2.
 
 - The gfx12 kernel descriptor has no IEEE mode or DX10 clamp field, so `template.s` leaves out `.amdhsa_ieee_mode` and
   `.amdhsa_dx10_clamp`. Pass `ieee=None` and `dx10_clamp=None` (`--ieee none --dx10-clamp none`). An integer for either
-  is rejected on gfx12, and `None` is rejected on older targets. JSON reports record `null`, and `compare_results.py`
-  treats `null` and an integer as different settings.
+  is rejected on gfx12, and `None` is rejected on older targets. JSON reports record `null`. `compare_results.py`
+  rejects a report whose two modes do not match its `assembly_target` the same way, and treats `null` and an integer as
+  different settings.
 - `template.s` waits with `s_wait_kmcnt 0` and `s_wait_loadcnt 0`. comgr still assembles `s_waitcnt` for gfx12, but as
   SOPP opcode 9 (`s_waitcnt lgkmcnt(0)` is `bf89fc07`), not as one of the gfx12 counter waits (`s_wait_kmcnt 0` is
   `bfc70000`). A body that waits for its own memory operations uses `s_wait_loadcnt`, `s_wait_storecnt`, `s_wait_dscnt` or
