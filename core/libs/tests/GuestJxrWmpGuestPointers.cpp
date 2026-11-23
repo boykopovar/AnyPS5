@@ -363,6 +363,22 @@ int main() {
                     unpaddedLastRowDst + static_cast<std::size_t>(row) * PaddedStride, Stride);
     CHECK(decodedPixels == sourcePixels);
 
+    auto* partialStream = CreateMemoryStream(encoded);
+    void* partialDecoderRaw = nullptr;
+    CHECK(PKImageDecode_Create_WMP_nid_postfix(&partialDecoderRaw) == 0 && partialDecoderRaw != nullptr);
+    auto* partialDecoder = static_cast<Decoder*>(partialDecoderRaw);
+    CHECK(partialDecoder->initialize(partialDecoder, partialStream) == 0);
+    JxrWmpReferenceConfigureDecoder(partialDecoder);
+    JxrWmpReferenceRegion(partialDecoder, 0, 0, 0, 0);
+    auto* partialPixels = reinterpret_cast<std::uint8_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - Height * Stride);
+    const Rect firstBand{0, 0, 1, static_cast<std::int32_t>(Height / 2)};
+    const Rect secondBand{0, static_cast<std::int32_t>(Height / 2), 0, static_cast<std::int32_t>(Height / 2)};
+    CHECK(partialDecoder->copy(partialDecoder, &firstBand, partialPixels, Stride) == 0);
+    CHECK(partialDecoder->copy(partialDecoder, &secondBand, partialPixels + Height / 2 * Stride, Stride) == 0);
+    CHECK(std::memcmp(partialPixels, sourcePixels.data(), Height * Stride) == 0);
+    CHECK(partialDecoder->release(&partialDecoder) == 0 && partialDecoder == nullptr);
+    CHECK(partialStream->close(&partialStream) == 0 && partialStream == nullptr);
+
     auto* tightDecodeStream = CreateMemoryStream(encoded);
     void* tightDecoderRaw = nullptr;
     CHECK(PKImageDecode_Create_WMP_nid_postfix(&tightDecoderRaw) == 0 && tightDecoderRaw != nullptr);
