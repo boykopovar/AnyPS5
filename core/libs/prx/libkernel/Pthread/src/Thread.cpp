@@ -970,8 +970,9 @@ void ThreadCancel::BeginWait(TimedWait::Condition* condition) {
     auto& state = CurrentGuestState();
     if (!state.current) return;
     std::lock_guard lock(state.current->cancelLock);
-    state.current->cancelWait = condition;
-    state.current->cancelWaitExiting = condition && state.exiting;
+    const bool enabled = state.cancelState == GUEST_CANCEL_ENABLE;
+    state.current->cancelWait = enabled ? condition : nullptr;
+    state.current->cancelWaitExiting = enabled && condition && state.exiting;
 }
 
 void ThreadCancel::EndWait() {
