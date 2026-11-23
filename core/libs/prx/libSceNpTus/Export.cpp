@@ -423,14 +423,7 @@ int APS5_VABI sceNpTssGetStorageAsync(int reqId, std::int32_t slot, void* data, 
     (void)data;
     (void)maxSize;
     (void)contentLength;
-    if (option) {
-        TssGetDataOptParam localOption{};
-        const int savedErrno = errno;
-        const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
-        errno = savedErrno;
-        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-        if (localOption.size != sizeof(TssGetDataOptParam)) return SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
-    }
+    if (const int error = TssOptionError(option)) return error;
     if (slot < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
 }
