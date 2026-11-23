@@ -57,7 +57,7 @@ class ParallelPageTests(unittest.TestCase):
         found = self.open_prs(served)
         self.assertEqual(set(found), set(range(1, 251)))
         self.assertCountEqual(served.requested, [1, 2, 3])
-        self.assertEqual(found[250], {"ref": "refs/pr/250", "sha": "sha250", "branch": "branch250", "author": "author250", "title": "", "depends": set()})
+        self.assertEqual(found[250], {"ref": "refs/pr/250", "sha": "sha250", "branch": "branch250", "author": "author250", "title": "", "depends": set(), "fixes": set()})
 
     def test_a_single_page_needs_one_request(self):
         served = ServedPages({1: range(1, 43)}, last=None)

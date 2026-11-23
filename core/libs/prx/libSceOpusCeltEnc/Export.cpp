@@ -3,7 +3,6 @@
 #include "prx/libSceOpusCeltEnc/include/OpusEncoder.hpp"
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -75,16 +74,9 @@ int encoderError(std::uint32_t offset) {
     return static_cast<int>(codes.baseError + offset);
 }
 
-bool copyInPreservingErrno(void* hostDst, const void* guestSrc, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(hostDst, guestSrc, size);
-    errno = savedErrno;
-    return copied;
-}
-
 std::uint32_t guestStateWord(const void* state, std::size_t offset) {
     std::uint32_t word = 0;
-    if (!copyInPreservingErrno(&word, static_cast<const std::uint8_t*>(state) + offset, sizeof word)) throw std::runtime_error("OpusCeltEnc: unreadable state");
+    if (!GuestCopyIn_nid_no_patch(&word, static_cast<const std::uint8_t*>(state) + offset, sizeof word)) throw std::runtime_error("OpusCeltEnc: unreadable state");
     return word;
 }
 
@@ -116,7 +108,7 @@ int multistreamCreateError(const void* state, int sampleRate, int streams, int c
     const std::uint32_t channels = streamCount + coupledCount;
     if (channels > maximumStreams) return encoderError(codes.channelsErrorOffset);
     std::array<std::uint8_t, maximumStreams> entries{};
-    if (!copyInPreservingErrno(entries.data(), mapping, channels)) throw std::runtime_error("OpusCeltEnc: unreadable channel mapping");
+    if (!GuestCopyIn_nid_no_patch(entries.data(), mapping, channels)) throw std::runtime_error("OpusCeltEnc: unreadable channel mapping");
     for (std::uint32_t channel = 0; channel < channels; ++channel)
         if (std::count(entries.begin(), entries.begin() + channels, channel) != 1) return encoderError(mappingErrorOffset);
     if (application != OPUS_APPLICATION_RESTRICTED_LOWDELAY) return encoderError(codes.applicationErrorOffset);
@@ -184,13 +176,8 @@ int APS5_VABI sceOpusCeltEncGetAjmContext(const OpusCeltEncoder* state, std::uin
     if (state == nullptr) return encoderError(codes.nullErrorOffset);
     if (context == nullptr) return 0;
     std::uint32_t value = 0;
-    const int savedErrno = errno;
-    const bool readable = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const std::uint8_t*>(state) + 0xD4, sizeof(value));
-    errno = savedErrno;
-    if (!readable) throw std::runtime_error("OpusCeltEnc: unreadable AJM context");
-    const bool writable = GuestCopyOut_nid_no_patch(context, &value, sizeof(value));
-    errno = savedErrno;
-    if (!writable) throw std::runtime_error("OpusCeltEnc: unwritable AJM context");
+    if (!GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const std::uint8_t*>(state) + 0xD4, sizeof(value))) throw std::runtime_error("OpusCeltEnc: unreadable AJM context");
+    if (!GuestCopyOut_nid_no_patch(context, &value, sizeof(value))) throw std::runtime_error("OpusCeltEnc: unwritable AJM context");
     return 0;
 }
 

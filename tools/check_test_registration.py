@@ -229,6 +229,15 @@ def skipped_libraries(build):
     return set(SANITIZER_SKIPPED_LIBRARIES) if enabled else set()
 
 
+def source_directory(build):
+    cache = Path(build) / "CMakeCache.txt"
+    for line in cache.read_text(encoding="utf-8-sig").splitlines():
+        name, _, value = line.partition("=")
+        if name == "CMAKE_HOME_DIRECTORY:INTERNAL" and value:
+            return Path(value)
+    raise ValueError(f"CMAKE_HOME_DIRECTORY is not set in {cache}")
+
+
 def unbuilt_exports(root, sources, skipped=()):
     prx = (Path(root) / "core" / "libs" / "prx").resolve()
     built_sources = {source for source in sources if prx in source.parents}
@@ -713,7 +722,7 @@ def main(argv=None):
         every = sorted(built(args.build))
         run = registered(args.build)
         skipped = skipped_libraries(args.build)
-        unbuilt = None if skipped is None else unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build), skipped)
+        unbuilt = None if skipped is None else unbuilt_exports(source_directory(args.build), compiled(args.build), skipped)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
     if args.list:
