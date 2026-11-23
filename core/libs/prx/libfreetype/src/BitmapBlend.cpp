@@ -30,20 +30,12 @@ std::size_t PixelBytes(const FreeType::GuestBitmap& bitmap) {
     return bitmap.buffer ? pitch * bitmap.rows : 0;
 }
 
-bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    return GuestCopyIn_nid_no_patch(destination, source, bytes);
-}
-
-bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    return GuestCopyOut_nid_no_patch(destination, source, bytes);
-}
-
 bool CopyPixels(const unsigned char* buffer, std::size_t bytes, std::vector<unsigned char>& pixels) {
     constexpr std::size_t Chunk = 0x1000;
     for (std::size_t offset = 0; offset < bytes;) {
         const std::size_t size = std::min(Chunk, bytes - offset);
         pixels.resize(offset + size);
-        if (!CopyIn(pixels.data() + offset, buffer + offset, size)) return false;
+        if (!GuestCopyIn_nid_no_patch(pixels.data() + offset, buffer + offset, size)) return false;
         offset += size;
     }
     return true;
@@ -61,8 +53,8 @@ int APS5_VABI freetypeLegacyBitmapBlend_nid_no_patch(FreeType::GuestLibrary* lib
     FreeType::GuestBitmap sourceRecord{};
     FreeType::GuestBitmap targetRecord{};
     FreeType::GuestVector offset{};
-    if (!CopyIn(&sourceRecord, source, sizeof(sourceRecord)) || !CopyIn(&targetRecord, target, sizeof(targetRecord)) ||
-        !CopyIn(&offset, targetOffset, sizeof(offset))) {
+    if (!GuestCopyIn_nid_no_patch(&sourceRecord, source, sizeof(sourceRecord)) || !GuestCopyIn_nid_no_patch(&targetRecord, target, sizeof(targetRecord)) ||
+        !GuestCopyIn_nid_no_patch(&offset, targetOffset, sizeof(offset))) {
         return FT_Err_Invalid_Argument;
     }
     const FT_Vector nativeSourceOffset = Vector(sourceOffset, __func__);
@@ -88,7 +80,7 @@ int APS5_VABI freetypeLegacyBitmapBlend_nid_no_patch(FreeType::GuestLibrary* lib
         if (target == &face->slot.bitmap && face->host != nullptr && face->host->glyph != nullptr) face->host->glyph->bitmap = nativeTarget;
     }
     const FreeType::GuestVector resultOffset{nativeTargetOffset.x, nativeTargetOffset.y};
-    if (!FreeTypeSyncBitmap_nid_no_patch(target, nativeTarget) || !CopyOut(targetOffset, &resultOffset, sizeof(resultOffset))) return FT_Err_Invalid_Argument;
+    if (!FreeTypeSyncBitmap_nid_no_patch(target, nativeTarget) || !GuestCopyOut_nid_no_patch(targetOffset, &resultOffset, sizeof(resultOffset))) return FT_Err_Invalid_Argument;
     return error;
 }
 APS5_EXPORT("C3-qsnriefE", freetypeLegacyBitmapBlend_nid_no_patch);
