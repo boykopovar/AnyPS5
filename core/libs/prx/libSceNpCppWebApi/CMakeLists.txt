@@ -1,6 +1,7 @@
 add_library(libSceNpCppWebApi SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceNpCppWebApi PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNpCppWebApi)
+target_sources(libSceNpCppWebApi PRIVATE StringSubstrings.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_np_cpp_web_api_native_accessors_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiNativeAccessors.cpp)
