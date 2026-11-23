@@ -101,10 +101,9 @@ public:
             block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
             if (resident) {
                 Require(block != nullptr, "cannot reserve resident test memory");
-                const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
-                Require(section != nullptr, "cannot create resident test memory");
-                GuestArena::GuestArenaMapDirect_nid_postfix(block, bytes, section, 0, PAGE_READWRITE);
-                CloseHandle(section);
+                residentSection = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+                Require(residentSection != nullptr, "cannot create resident test memory");
+                GuestArena::GuestArenaMapDirect_nid_postfix(block, bytes, residentSection, 0, PAGE_READWRITE);
             } else if (shared) {
                 Require(block != nullptr, "cannot reserve shared test memory");
                 const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
@@ -150,6 +149,10 @@ public:
         if (watched) {
             GuestArena::GuestArenaReset_nid_postfix(block, bytes);
             GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
+            if (residentSection != nullptr) {
+                GuestArena::GuestArenaForgetSection_nid_postfix(residentSection);
+                CloseHandle(residentSection);
+            }
         } else {
             VirtualFree(block, 0, MEM_RELEASE);
         }
@@ -173,6 +176,9 @@ private:
     std::size_t bytes;
     std::uint8_t* block = nullptr;
     std::uint8_t* twin = nullptr;
+#ifdef _WIN32
+    HANDLE residentSection = nullptr;
+#endif
 };
 
 std::array<std::uint32_t, 8> TextureDescriptor(const std::uint8_t* texels, const std::uint8_t* keys) {
