@@ -318,13 +318,16 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
 
         const std::uint32_t thunkRva = desc.OriginalFirstThunk != 0u ? desc.OriginalFirstThunk : desc.FirstThunk;
         std::size_t thunkOffset = RvaToOffset(pe, thunkRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const auto thunkSectionOffset = FindSectionOffsetByRva(pe, thunkRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const auto thunkSection = Internal::Read<PeSectionHeader>(pe, thunkSectionOffset);
+        const auto thunkRawEnd = std::uint64_t{thunkSection.PointerToRawData} + thunkSection.SizeOfRawData;
 
         const bool is64 = magic == 0x20bu;
         const std::size_t thunkEntrySize = is64 ? 8u : 4u;
         const std::uint64_t ordinalFlag = is64 ? (std::uint64_t{1} << 63u) : (std::uint64_t{1} << 31u);
 
         while (true) {
-            if (thunkOffset + thunkEntrySize > pe.size())
+            if (thunkOffset > thunkRawEnd || thunkEntrySize > thunkRawEnd - thunkOffset || thunkOffset > pe.size() || thunkEntrySize > pe.size() - thunkOffset)
                 throw std::runtime_error("thunk entry out of bounds");
 
             const std::uint64_t thunk = is64
