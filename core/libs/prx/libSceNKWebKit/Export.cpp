@@ -8345,14 +8345,6 @@ int APS5_VABI WKBundlePageAddUserStyleSheet() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageCallAfterTasksAndTimers() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageCanHandleRequest() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageCanShowMIMEType() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8378,10 +8370,6 @@ int APS5_VABI WKBundlePageConfirmComposition() {
 }
 
 int APS5_VABI WKBundlePageConfirmCompositionWithText() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageCopyGroupIdentifier() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8521,10 +8509,6 @@ int APS5_VABI WKBundlePagePostSynchronousMessageForTesting() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageRegisterScrollOperationCompletionCallback() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageRemoveAllUserContent() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8613,23 +8597,7 @@ int APS5_VABI WKBundlePageSetUseDarkAppearance() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageSimulateMouseDown() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageSimulateMouseMotion() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageSimulateMouseUp() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageSizeAndMarginsInPixels() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageStartMonitoringScrollOperations() {
     NotImplemented_nid_no_patch(__func__);
 }
 

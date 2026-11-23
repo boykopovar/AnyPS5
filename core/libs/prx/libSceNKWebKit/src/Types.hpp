@@ -284,6 +284,23 @@ public:
     Retained<Object> topOverhangImage;
     Retained<Object> bottomOverhangImage;
     std::uint64_t paintedObjectsCounterThreshold = 0;
+    std::uint64_t simulatedMouseDownCount = 0;
+    std::uint64_t simulatedMouseMotionCount = 0;
+    std::uint64_t simulatedMouseUpCount = 0;
+    PointValue lastMousePosition{0.0, 0.0};
+    int lastMouseButton = 0;
+    int lastMouseClickCount = 0;
+    std::uint32_t lastMouseModifiers = 0;
+    double lastSyntheticClickType = 0.0;
+    bool isMonitoringScrollOperations = false;
+    bool clearLatchingState = false;
+    void (*scrollOperationCompletionCallback)(void*) = nullptr;
+    bool expectWheelEndOrCancel = false;
+    bool expectMomentumEnd = false;
+    void* scrollOperationCompletionContext = nullptr;
+    void (*tasksAndTimersCallback)(void*) = nullptr;
+    void* tasksAndTimersContext = nullptr;
+    Retained<String> groupIdentifier;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
