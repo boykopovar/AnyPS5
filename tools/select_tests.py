@@ -338,9 +338,14 @@ def ctest_index_file(indices):
         yield str(path)
 
 
+def disabled(test):
+    return any(p.get("name") == "DISABLED" and p.get("value") is True for p in test.get("properties") or [])
+
+
 def plan(build, graph, picked):
     _, listed = build.tests()
-    run = [i for i, t in enumerate(listed, 1) if t["name"] in picked or t["name"] not in graph["tests"]]
+    run = [i for i, t in enumerate(listed, 1)
+           if not disabled(t) and (t["name"] in picked or t["name"] not in graph["tests"])]
     if not run:
         skip = {build.target(t) for t in listed} - {None}
         return [], [t for t in build.leaves() if t not in skip], len(listed)
