@@ -95,7 +95,6 @@ class WindowsPermissions {
     }
 
 public:
-    // ReOpenFile refuses directory handles, so a directory is opened again relative to its own handle.
     static HANDLE Reopen(HANDLE handle, DWORD access) {
         const HANDLE reopened = ReOpenFile(handle, access, shareAll, FILE_FLAG_BACKUP_SEMANTICS);
         if (reopened != INVALID_HANDLE_VALUE) return reopened;
