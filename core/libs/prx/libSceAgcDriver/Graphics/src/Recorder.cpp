@@ -2294,6 +2294,7 @@ void Recorder::ensureOpen() {
             open->traceId = traceIds.fetch_add(1, std::memory_order_relaxed) + 1;
         }
         TraceBatchTag = open->traceId;
+        open->classTimed = ClassTimingSampled();
         // The whole-batch range: its start stamp waits for the previous batches like any
         // bottom-of-pipe stamp, so it marks when this batch's execution began.
         if (BatchStampsEnabled()) open->batchTiming = beginTiming(BatchTimingKey);
@@ -2545,6 +2546,7 @@ std::atomic<std::int64_t> traceBarriersLeft{[] {
     return text != nullptr ? static_cast<std::int64_t>(std::strtoll(text, nullptr, 10)) : std::int64_t{0};
 }()};
 std::atomic<std::uint64_t> timingPresents{0};
+std::atomic<std::uint64_t> unsampledPresents{0};
 std::atomic<std::uint64_t> presentSerial{0};
 std::atomic<std::uint64_t> settledFrames{0};
 std::atomic<std::uint64_t> settledFrameBusyNs{0};
@@ -2553,7 +2555,7 @@ std::atomic<std::uint64_t> timingDropped{0};
 struct TimingTotals { std::uint64_t count = 0; double ms = 0; std::uint64_t bytes = 0; };
 AgcDriver::Mutex timingMutex;
 std::map<std::uint64_t, TimingTotals> timingByKey;
-double timingProgramMs = 0, timingClassMs = 0, timingUnionMs = 0, timingBatchMs = 0;
+double timingProgramMs = 0, timingClassMs = 0, timingUnionMs = 0, timingBatchMs = 0, timingUnsampledBatchMs = 0;
 std::uint64_t timingBatches = 0;
 
 bool DrawOrGpuProfiled() {
@@ -2609,8 +2611,24 @@ void reportBarriers() {
 }
 
 bool Recorder::GpuTimingEnabled() {
-    static const bool enabled = std::getenv("APS5_PROFILE_GPU") != nullptr;
+    static const bool enabled = std::getenv("APS5_PROFILE_GPU") != nullptr || std::getenv("APS5_PROFILE_GPU_EVERY") != nullptr;
     return enabled;
+}
+
+std::uint64_t Recorder::ClassTimingPeriod() {
+    static const std::uint64_t period = [] {
+        const char* text = std::getenv("APS5_PROFILE_GPU_EVERY");
+        if (text == nullptr) return std::uint64_t{1};
+        char* end = nullptr;
+        const auto parsed = std::strtoull(text, &end, 10);
+        Require(*text >= '0' && *text <= '9' && *end == '\0' && parsed != 0, "APS5_PROFILE_GPU_EVERY must be a whole number above 0");
+        return static_cast<std::uint64_t>(parsed);
+    }();
+    return period;
+}
+
+bool Recorder::ClassTimingSampled() {
+    return GpuTimingEnabled() && Presents() % ClassTimingPeriod() == 0;
 }
 
 bool Recorder::BatchStampsEnabled() {
@@ -2694,8 +2712,8 @@ void Recorder::NoteAccess(CommandClass which, const Access& access) {
 }
 
 void Recorder::CountPresent() {
-    timingPresents.fetch_add(1, std::memory_order_relaxed);
-    presentSerial.fetch_add(1, std::memory_order_relaxed);
+    const auto serial = presentSerial.fetch_add(1, std::memory_order_relaxed) + 1;
+    (serial % ClassTimingPeriod() == 0 ? timingPresents : unsampledPresents).fetch_add(1, std::memory_order_relaxed);
     ReferenceStorage::Shared().ReleaseIdle();
 }
 
@@ -2729,7 +2747,7 @@ void Recorder::AddGpuTiming(CommandClass which, double nanoseconds, std::uint64_
 std::uint32_t Recorder::BeginGpuTiming(std::uint64_t key) {
     if (!GpuTimingEnabled()) return NoTiming;
     ensureOpen();
-    if (open->queries == VK_NULL_HANDLE && open->renderPass.open) return NoTiming;
+    if (!open->classTimed || (open->queries == VK_NULL_HANDLE && open->renderPass.open)) return NoTiming;
     return beginTiming(key);
 }
 
@@ -2766,27 +2784,28 @@ std::uint64_t Recorder::DrawStageTimingKey(std::span<const std::pair<std::uint32
 }
 
 std::uint32_t Recorder::BeginInPassGpuTiming(std::uint64_t key) {
-    if (!GpuTimingEnabled() || open == nullptr || open->queries == VK_NULL_HANDLE) return NoTiming;
+    if (open == nullptr || !open->classTimed || open->queries == VK_NULL_HANDLE) return NoTiming;
     return beginTiming(key);
 }
 
 std::uint32_t Recorder::beginTiming(std::uint64_t key) {
-    const bool full = GpuTimingEnabled();
+    const bool full = open->classTimed;
     if (!full && !(key == BatchTimingKey && BatchStampsEnabled())) return NoTiming;
     const auto commands = open->commands;
     const std::uint32_t queryCount = full ? MaxTimedRanges * 2 : 2;
     if (open->queries == VK_NULL_HANDLE) {
-        if (!full && !sparePools.empty()) {
+        if (!sparePools.empty()) {
             open->queries = sparePools.back();
             sparePools.pop_back();
         } else {
             VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
             info.queryType = VK_QUERY_TYPE_TIMESTAMP;
-            info.queryCount = queryCount;
+            info.queryCount = GpuTimingEnabled() ? MaxTimedRanges * 2 : 2;
             if (context.Function<PFN_vkCreateQueryPool>("vkCreateQueryPool")(context.device, &info, nullptr, &open->queries) != VK_SUCCESS) {
                 open->queries = VK_NULL_HANDLE;
                 return NoTiming;
             }
+            ++timingPoolsCreated;
         }
         function(cmdResetQueryPool, "vkCmdResetQueryPool")(commands, open->queries, 0, queryCount);
     }
@@ -3614,7 +3633,7 @@ void Recorder::readGpuTiming(Batch& batch) {
             batch.gpuStartNs = static_cast<double>(stamps[i * 2]) * period;
             batch.gpuEndNs = static_cast<double>(stamps[i * 2 + 1]) * period;
             PerformanceTrace::GpuRange("batch", batch.gpuStartNs, batch.gpuEndNs, batch.traceId);
-            timingBatchMs += ns / 1e6;
+            (batch.classTimed ? timingBatchMs : timingUnsampledBatchMs) += ns / 1e6;
             AgcDriver::PerformanceCounters::AddGpuNanoseconds(static_cast<std::uint64_t>(ns));
             continue;
         }
@@ -3635,11 +3654,14 @@ void Recorder::readGpuTiming(Batch& batch) {
         unionEnd = std::max(unionEnd, end);
     }
     timingUnionMs += static_cast<double>(coveredTicks) * period / 1e6;
-    ++timingBatches;
+    if (batch.classTimed) ++timingBatches;
     const auto now = std::chrono::steady_clock::now();
     if (now - lastReport < std::chrono::seconds(10)) return;
     lastReport = now;
     const auto presents = timingPresents.exchange(0, std::memory_order_relaxed);
+    const auto unsampled = unsampledPresents.exchange(0, std::memory_order_relaxed);
+    char sampling[160] = "";
+    if (ClassTimingPeriod() > 1) std::snprintf(sampling, sizeof(sampling), "; sampled 1 present in %llu, unsampled batch %.0f ms in %llu presents", static_cast<unsigned long long>(ClassTimingPeriod()), timingUnsampledBatchMs, static_cast<unsigned long long>(unsampled));
     const double perPresent = presents != 0 ? 1.0 / static_cast<double>(presents) : 0.0;
     std::vector<std::pair<std::uint64_t, TimingTotals>> hot;
     std::string classes;
@@ -3654,11 +3676,11 @@ void Recorder::readGpuTiming(Batch& batch) {
     }
     std::sort(hot.begin(), hot.end(), [](const auto& a, const auto& b) { return a.second.ms > b.second.ms; });
     // The first field stays the program sum: the measure scripts match on it.
-    AgcDriver::ProfilePrint_nid_no_patch("[gputime] %.0f ms of GPU time in %llu batches over 10 s (batch %.0f ms first to last command; classes %.0f ms, all ranges %.0f ms, untimed %.0f ms outside every range; %llu presents; %llu ranges dropped at the %u cap); by program:", timingProgramMs, static_cast<unsigned long long>(timingBatches), timingBatchMs, timingClassMs, timingUnionMs, timingBatchMs - timingUnionMs, static_cast<unsigned long long>(presents), static_cast<unsigned long long>(timingDropped.exchange(0, std::memory_order_relaxed)), MaxTimedRanges);
+    AgcDriver::ProfilePrint_nid_no_patch("[gputime] %.0f ms of GPU time in %llu batches over 10 s (batch %.0f ms first to last command; classes %.0f ms, all ranges %.0f ms, untimed %.0f ms outside every range%s; %llu presents; %llu ranges dropped at the %u cap); by program:", timingProgramMs, static_cast<unsigned long long>(timingBatches), timingBatchMs, timingClassMs, timingUnionMs, timingBatchMs - timingUnionMs, sampling, static_cast<unsigned long long>(presents), static_cast<unsigned long long>(timingDropped.exchange(0, std::memory_order_relaxed)), MaxTimedRanges);
     for (std::size_t i = 0; i < hot.size() && i < 12; ++i) AgcDriver::ProfilePrint_nid_no_patch(" %s x%llu %.0fms", Recorder::TimingKeyLabel(hot[i].first).c_str(), static_cast<unsigned long long>(hot[i].second.count), hot[i].second.ms);
     AgcDriver::ProfilePrint_nid_no_patch("; by class:%s\n", classes.c_str());
     timingByKey.clear();
-    timingProgramMs = timingClassMs = timingUnionMs = timingBatchMs = 0;
+    timingProgramMs = timingClassMs = timingUnionMs = timingBatchMs = timingUnsampledBatchMs = 0;
     timingBatches = 0;
     lock.unlock();
     reportBarriers();
@@ -5640,7 +5662,7 @@ void Recorder::removeLabels(Batch& batch) {
 
 void Recorder::release(Batch& batch) noexcept {
     if (batch.queries != VK_NULL_HANDLE) {
-        if (!GpuTimingEnabled() && sparePools.size() < 64) {
+        if (sparePools.size() < 64) {
             try {
                 sparePools.push_back(batch.queries);
                 batch.queries = VK_NULL_HANDLE;

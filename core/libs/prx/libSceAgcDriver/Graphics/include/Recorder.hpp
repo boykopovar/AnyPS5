@@ -451,6 +451,7 @@ public:
     // Completes batches that already finished; returns whether nothing is in flight.
     bool Reap();
     std::uint64_t Submissions() const { return submissions; }
+    std::uint64_t TimingPoolsCreated() const { return timingPoolsCreated; }
     // Batches submitted and not yet finished (what a full Sync() waits for); under GuestMemory::GpuMutex.
     std::size_t InFlightBatches() const { return inFlight.size(); }
     // Reaps that retired at least one batch so far (the [recorder] line's 'with work' count).
@@ -695,6 +696,8 @@ public:
     static std::string TimingKeyLabel(std::uint64_t key);
     static bool GpuTimingEnabled();
     static bool BatchStampsEnabled();
+    static std::uint64_t ClassTimingPeriod();
+    static bool ClassTimingSampled();
     std::uint32_t BeginGpuTiming(std::uint64_t key);
     std::uint32_t BeginInPassGpuTiming(std::uint64_t key);
     // `bytes`: what the range moved (a fill's, a copy's), summed per key on the [gputime] line.
@@ -851,6 +854,7 @@ private:
         std::vector<std::uint64_t> timedBytes;
         // The whole-batch timed range (BatchTimingKey) and its stamps once read (see Completed).
         std::uint32_t batchTiming = NoTiming;
+        bool classTimed = false;
         double gpuStartNs = 0;
         double gpuEndNs = 0;
         std::uint64_t readGeneration = 0;
@@ -1150,6 +1154,7 @@ private:
     VkDeviceSize drawUploadUsed = 0;
     std::vector<VkFence> spare;
     std::vector<VkQueryPool> sparePools;
+    std::uint64_t timingPoolsCreated = 0;
     mutable AgcDriver::Mutex completedMutex;
     std::array<Completed, CompletedRingSize> completed;
     std::uint64_t newestSubmitted = 0;

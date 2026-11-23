@@ -2060,6 +2060,46 @@ int gpuTimingCompletionTests(const Device& device, bool incomplete) {
     return 0;
 }
 
+int gpuTimingSampledTests(const Device& device) {
+    const auto& context = device.GetContext();
+    if (!device.Timestamps()) {
+        std::cout << "skipped, queue timestamp queries unavailable\n";
+        return 77;
+    }
+    Require(Recorder::GpuTimingEnabled(), "sampled GPU timing test requires APS5_PROFILE_GPU or APS5_PROFILE_GPU_EVERY");
+    const auto period = Recorder::ClassTimingPeriod();
+    Require(period == 1 || period == 3, "the class timing period is not one the test registrations set");
+    std::unique_lock gpu(GpuMutex());
+    int completed = 0;
+    Recorder recorder(context);
+    recorder.Activate();
+    std::uint64_t sampledPresents = 0;
+    std::uint64_t poolsAfterFirst = 0;
+    for (int round = 0; round < 6; ++round) {
+        const bool sampled = Recorder::Presents() % period == 0;
+        Require(Recorder::ClassTimingSampled() == sampled, "the present's sampling does not follow the period");
+        const auto range = recorder.BeginGpuTiming(Recorder::CommandClass::Copy);
+        Require((range != Recorder::NoTiming) == sampled, sampled ? "a batch opened in a sampled present got no class range" : "a batch opened in an unsampled present got a class range");
+        recorder.EndGpuTiming(range);
+        recorder.OnComplete([&] { ++completed; });
+        const auto serial = recorder.Submissions() + 1;
+        recorder.Submit();
+        recorder.Sync();
+        Require(completed == round + 1 && recorder.Idle(), "sampled GPU timing prevented batch completion");
+        std::size_t missing = 0;
+        const auto batches = recorder.CompletedBatches(serial - 1, serial, missing);
+        Require(missing == 0 && batches.size() == 1 && batches.front().serial == serial, "sampled GPU timing batch completion record is missing");
+        Require(batches.front().gpuStartNs > 0 && batches.front().gpuEndNs >= batches.front().gpuStartNs, "a batch lost its whole-batch stamps");
+        if (round == 0) poolsAfterFirst = recorder.TimingPoolsCreated();
+        if (sampled) ++sampledPresents;
+        Recorder::CountPresent();
+    }
+    Require(sampledPresents == 6 / period, "the presents with class ranges are not one in the period");
+    Require(poolsAfterFirst == 1 && recorder.TimingPoolsCreated() == poolsAfterFirst, "a finished batch's query pool was not reused by the next batch");
+    std::cout << "sampled GPU timing checked, period=" << period << '\n';
+    return 0;
+}
+
 void batchStampTests(Recorder& recorder) {
     Require(recorder.Idle(), "batch stamps: the recorder is busy");
     double previousEnd = 0;
@@ -19137,6 +19177,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && (std::string_view(argv[1]) == "--gpu-timing-complete-only" || std::string_view(argv[1]) == "--gpu-timing-incomplete-only")) {
             return gpuTimingCompletionTests(device, std::string_view(argv[1]) == "--gpu-timing-incomplete-only");
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--gpu-timing-sampled-only") return gpuTimingSampledTests(device);
         if (argc == 2 && std::string_view(argv[1]) == "--import-watch-only") {
             importWatchTests(device);
             return 0;

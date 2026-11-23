@@ -170,6 +170,38 @@ class GpuOccupancyTests(unittest.TestCase):
         result = trace_digest.digest(self.trace([(0, 10000), (5000, 10000)], thread="worker"))
         self.assertEqual(result["threads"][0]["busy_ms_per_frame"], 10)
 
+    def test_gpu_classes_come_from_the_batches_with_class_ranges(self):
+        events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": "gpu"}},
+                  {"name": "present", "ph": "i", "ts": 0, "args": {"present": 1}},
+                  {"name": "present", "ph": "i", "ts": 10000, "args": {"present": 2}},
+                  {"name": "present", "ph": "i", "ts": 20000, "args": {"present": 3}},
+                  {"name": "present", "ph": "i", "ts": 30000, "args": {"present": 4}},
+                  {"name": "present", "ph": "i", "ts": 40000, "args": {"present": 5}},
+                  dict(complete(1, "batch", 0, 4000), args={"batch": 1}),
+                  dict(complete(1, "copy", 500, 1000), args={"batch": 1}),
+                  dict(complete(1, "draw", 1500, 2000), args={"batch": 1}),
+                  dict(complete(1, "batch", 5000, 4000), args={"batch": 2}),
+                  dict(complete(1, "draw", 5500, 3000), args={"batch": 2}),
+                  dict(complete(1, "batch", 10000, 3000), args={"batch": 3}),
+                  dict(complete(1, "batch", 15000, 3000), args={"batch": 4}),
+                  dict(complete(1, "batch", 20000, 3000), args={"batch": 5}),
+                  dict(complete(1, "batch", 25000, 3000), args={"batch": 6}),
+                  dict(complete(1, "batch", 30000, 3000), args={"batch": 7}),
+                  dict(complete(1, "batch", 35000, 3000), args={"batch": 8}),
+                  dict(complete(1, "batch", 45000, 4000), args={"batch": 9}),
+                  dict(complete(1, "draw", 45500, 3000), args={"batch": 9})]
+        classes = trace_digest.digest(trace_digest.Trace(events))["gpu_classes"]
+        self.assertEqual((classes["timed_batches"], classes["untimed_batches"]), (2, 6))
+        self.assertEqual(classes["timed_presents"], 1.0)
+        self.assertEqual((classes["timed_batch_ms"], classes["untimed_batch_ms"]), (4.0, 3.0))
+        self.assertEqual(classes["classes"], [{"name": "draw", "ranges": 2, "ms": 5.0, "ms_per_timed_present": 5.0},
+                                              {"name": "copy", "ranges": 1, "ms": 1.0, "ms_per_timed_present": 1.0}])
+        lines = trace_digest.markdown(trace_digest.digest(trace_digest.Trace(events))).splitlines()
+        self.assertIn("- draw x2 5.00, copy x1 1.00", lines)
+
+    def test_no_class_ranges_leave_out_gpu_classes(self):
+        self.assertNotIn("gpu_classes", trace_digest.digest(self.trace([(0, 10000), (5000, 10000)])))
+
     def test_cli_reports_overlapping_gpu_batches_in_json_and_markdown(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "capture.json"

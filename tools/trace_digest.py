@@ -17,7 +17,8 @@ from performance_compare import CONTEXT, OPTIONAL_INTEGERS, OPTIONAL_STRINGS, un
 DESCRIPTION = """Digest of an APS5_TRACE_FRAMES / APS5_TRACE_SECONDS capture (aps5-trace-*.json.gz) for an issue or a
 pull request: the summary line, the slowest frames with their largest slices, the busy and wait time of each
 thread, the largest slices per frame, the longest waits, the largest GPU batches with the CPU slices that
-recorded them (when the trace carries batch ids) and, with --stacks, the hottest functions of an
+recorded them (when the trace carries batch ids), the GPU time per command class of the batches that carry class ranges
+(APS5_PROFILE_GPU or APS5_PROFILE_GPU_EVERY) and, with --stacks, the hottest functions of an
 APS5_SAMPLE_WORKER collapsed-stack file. The summary line is read from aps5-summary.jsonl next to the trace
 unless --summary names another file.
 
@@ -400,6 +401,22 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
                                           "gpu_ranges": [{"name": name, "ms": us / 1000.0} for name, us in ranges[batch].most_common(3)],
                                           "recorded_by": [{"name": name, "thread": thread, "ms": us / 1000.0} for (name, thread), us in recorded[batch].most_common(4)]}
                                          for _, ts, dur, _, batch in sorted(batches, key=lambda entry: -entry[2])[:worst]]
+        spans = [(batch, dur) for _, ts, dur, _, batch in batches if not frames or frames[0][1] <= ts < frames[-1][2]]
+        timed = {batch for batch, _ in spans if ranges[batch]}
+        if timed:
+            timed_us = [dur for batch, dur in spans if batch in timed]
+            untimed_us = [dur for batch, dur in spans if batch not in timed]
+            presents = count * len(timed_us) / len(spans)
+            classes = collections.defaultdict(lambda: [0, 0.0])
+            for tid, ts, dur, name, batch in trace.batched:
+                if tid in gpu and name != "batch" and batch in timed:
+                    classes[name][0] += 1
+                    classes[name][1] += dur
+            mean = lambda values: sum(values) / len(values) / 1000.0 if values else None
+            result["gpu_classes"] = {"timed_batches": len(timed_us), "untimed_batches": len(untimed_us),
+                                     "timed_batch_ms": mean(timed_us), "untimed_batch_ms": mean(untimed_us), "timed_presents": presents,
+                                     "classes": [{"name": name, "ranges": number, "ms": us / 1000.0, "ms_per_timed_present": us / 1000.0 / presents}
+                                                 for name, (number, us) in sorted(classes.items(), key=lambda entry: -entry[1][1])]}
 
     if stacks is not None:
         samples = sum(count for _, count in stacks)
@@ -509,6 +526,14 @@ def markdown(result):
             ranges = ", ".join(f"{markdown_text(entry['name'])} {entry['ms']:.1f}" for entry in batch["gpu_ranges"]) or "no ranges"
             recorded = ", ".join(f"{markdown_text(entry['name'])} ({markdown_text(entry['thread'])}) {entry['ms']:.1f}" for entry in batch["recorded_by"]) or "no CPU slices"
             lines.append(f"- batch {markdown_text(batch['batch'])}: {batch['ms']:.1f} ms at {batch['at_ms']:.0f} ms, present {markdown_text(batch['present'])}: GPU {ranges}; recorded by {recorded}")
+    if "gpu_classes" in result:
+        classes = result["gpu_classes"]
+        mean = lambda value: f"{value:.2f} ms" if value is not None else "none"
+        lines.append("")
+        lines.append(f"**GPU time by class** (ms per present over {classes['timed_presents']:.1f} presents' worth of batches: class ranges in {classes['timed_batches']} of "
+                     f"{classes['timed_batches'] + classes['untimed_batches']} batches; mean batch {mean(classes['timed_batch_ms'])} with class ranges, {mean(classes['untimed_batch_ms'])} without)")
+        lines.append("")
+        lines.append("- " + ", ".join(f"{markdown_text(entry['name'])} x{entry['ranges']} {entry['ms_per_timed_present']:.2f}" for entry in classes["classes"]))
     if "stacks" in result:
         stacks = result["stacks"]
         lines.append("")
