@@ -454,13 +454,12 @@ void AuditNonblockingModeQueries() {
     const int v6Dgram = socket_nid_postfix(Inet6, Datagram, 0);
     if (v6Dgram >= 0) {
         std::array<std::uint8_t, 28> any6{28, 28};
-        const bool bound = bind_nid_postfix(v6Dgram, any6.data(), any6.size()) == 0;
+        Require(bind_nid_postfix(v6Dgram, any6.data(), any6.size()) == 0, "bind v6 dgram to [::]:0 failed");
         int v6Large = 42;
         Require(ioctl_nid_postfix(v6Dgram, NonblockingRequest, &v6Large) == 0, "set FIONBIO on v6 dgram failed");
         const auto received = recv_nid_postfix(v6Dgram, buffer, sizeof(buffer), 0);
         const int error = *__error_nid_postfix();
-        Require(received == -1 && (error == ErrorAgain || (!bound && error == ErrorInvalid)),
-            "recv on nonblocking v6 dgram must fail with EWOULDBLOCK");
+        Require(received == -1 && error == ErrorAgain, "recv on nonblocking v6 dgram must fail with EWOULDBLOCK");
         int v6Clear = 0;
         Require(ioctl_nid_postfix(v6Dgram, NonblockingRequest, &v6Clear) == 0, "clear FIONBIO on v6 dgram failed");
         Require(close_nid_postfix(v6Dgram) == 0, "close v6 dgram failed");
