@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/BreakIterator.hpp"
+#include "prx/libSceIcu/BreakRules.hpp"
 #include "prx/libSceIcu/DefaultLocaleName.hpp"
 #include "prx/libc/include/General.hpp"
 #include "unicode/ubrk.h"
@@ -33,7 +34,7 @@ void* APS5_VABI ubrk_open(std::int32_t type, const char* locale, const char16_t*
 }
 
 void APS5_VABI ubrk_close(void* iterator) {
-    ubrk_close_78(static_cast<UBreakIterator*>(iterator));
+    Icu::CloseBreakIterator_nid_no_patch(iterator);
 }
 
 void APS5_VABI ubrk_setText(void* iterator, const char16_t* text, std::int32_t length, std::int32_t* error) {
