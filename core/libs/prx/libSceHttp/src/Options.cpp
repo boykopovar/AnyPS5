@@ -17,10 +17,7 @@ namespace {
 constexpr std::uint32_t SocketCreationCallbackSdkVersion = 0x01500000u;
 
 std::uint32_t CompiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, process + 16, sizeof(sdkVersion));
-    return sdkVersion;
+    return ApplicationCompiledSdkVersion();
 }
 
 constexpr std::uint32_t PrivateSslFlags = 0x2dffu;

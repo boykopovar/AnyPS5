@@ -14,8 +14,8 @@
 #include "zlib.h"
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libSceSsl/include/Ssl.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include <nghttp2/nghttp2.h>
 #include <algorithm>
@@ -88,8 +88,7 @@ std::string Lower(std::string text) {
 }
 
 std::uint32_t CompiledSdkVersion() {
-    std::int32_t version = 0;
-    return sceKernelGetCompiledSdkVersion(&version) < 0 ? 0x99900000u : static_cast<std::uint32_t>(version);
+    return ApplicationCompiledSdkVersion();
 }
 
 bool NamesField(std::string_view line, std::string_view name) {
