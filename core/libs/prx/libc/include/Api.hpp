@@ -1766,6 +1766,19 @@ void APS5_VABI _ZNSt13exception_ptrD1Ev_nid_postfix(GuestLibcxxExceptionPointer*
 [[noreturn]] void APS5_VABI __cxa_throw_bad_array_new_length_nid_postfix();
 [[noreturn]] void APS5_VABI _ZSt6_ThrowRKSt20bad_array_new_length_nid_postfix(const LibcException::ExceptionObject* error);
 [[noreturn]] void APS5_VABI _ZSt6_ThrowRKSt8bad_cast_nid_postfix(const LibcException::ExceptionObject* error);
+struct LibcxxErrorCondition {
+    std::int32_t value;
+    std::uint32_t reserved;
+    const void* category;
+};
+
+LibcxxErrorCondition APS5_VABI _ZNKSt3__114error_category23default_error_conditionEi_nid_postfix(
+    const void* category, std::int32_t value);
+bool APS5_VABI _ZNKSt3__114error_category10equivalentERKNS_10error_codeEi_nid_postfix(
+    const void* category, const LibcxxErrorCondition* code, std::int32_t condition);
+bool APS5_VABI _ZNKSt3__114error_category10equivalentEiRKNS_15error_conditionE_nid_postfix(
+    const void* category, std::int32_t code, const LibcxxErrorCondition* condition);
+
 [[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZSt14_Xout_of_rangePKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZSt14_Xlength_errorPKc_nid_postfix(const char* message);

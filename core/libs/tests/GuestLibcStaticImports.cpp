@@ -62,6 +62,48 @@ void TestNearbyintf() {
     Require(std::isnan(nearbyintf_nid_postfix(nan)));
 }
 
+using DefaultErrorCondition = decltype(&_ZNKSt3__114error_category23default_error_conditionEi_nid_postfix);
+
+struct TestErrorCategory {
+    const DefaultErrorCondition* vtable;
+    const void* target;
+};
+
+LibcxxErrorCondition APS5_VABI ConvertErrorCondition(const void* category, std::int32_t value) {
+    return {value + 1, 0, static_cast<const TestErrorCategory*>(category)->target};
+}
+
+void TestLibcxxErrorCategory() {
+    constexpr auto Default = _ZNKSt3__114error_category23default_error_conditionEi_nid_postfix;
+    constexpr auto CompareCode = _ZNKSt3__114error_category10equivalentERKNS_10error_codeEi_nid_postfix;
+    constexpr auto CompareCondition = _ZNKSt3__114error_category10equivalentEiRKNS_15error_conditionE_nid_postfix;
+    const DefaultErrorCondition baseTable[]{nullptr, nullptr, nullptr, Default, nullptr};
+    const DefaultErrorCondition overrideTable[]{nullptr, nullptr, nullptr, ConvertErrorCondition, nullptr};
+    const TestErrorCategory base{baseTable, nullptr};
+    const TestErrorCategory overridden{overrideTable, &base};
+
+    const auto minimum = std::numeric_limits<std::int32_t>::min();
+    const auto result = Default(&base, minimum);
+    Require(result.value == minimum && result.reserved == 0 && result.category == &base);
+
+    const LibcxxErrorCondition matchingCode{minimum, 17, &base};
+    const LibcxxErrorCondition wrongCategory{minimum, 0, &overridden};
+    Require(CompareCode(&base, &matchingCode, minimum));
+    Require(!CompareCode(&base, &wrongCategory, minimum));
+    Require(!CompareCode(&base, &matchingCode, 0));
+    Require(CompareCondition(&base, minimum, &matchingCode));
+
+    const LibcxxErrorCondition mapped{-6, 27, &base};
+    const LibcxxErrorCondition mappedWrongCategory{-6, 0, &overridden};
+    Require(CompareCondition(&overridden, -7, &mapped));
+    Require(!CompareCondition(&overridden, -7, &mappedWrongCategory));
+    Require(!CompareCondition(&overridden, -8, &mapped));
+
+    const TestErrorCategory missing{};
+    RequireThrows<std::invalid_argument>([&] { CompareCondition(&missing, 0, &mapped); });
+    RequireThrows<std::invalid_argument>([&] { CompareCode(&base, nullptr, 0); });
+}
+
 void TestMtxTrylock() {
     void* mutex = nullptr;
     Require(_Mtx_init_nid_postfix(&mutex, mutexTryable) == threadSuccess && mutex != nullptr);
@@ -150,6 +192,7 @@ void TestThrdSleep() {
 
 int main() {
     TestNearbyintf();
+    TestLibcxxErrorCategory();
     TestMtxTrylock();
     TestThrdSleep();
     return 0;
