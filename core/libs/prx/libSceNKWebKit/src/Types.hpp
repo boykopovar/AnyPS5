@@ -193,6 +193,17 @@ public:
     bool historyClearedForTesting = false;
     bool resourceLoadStatisticsCleared = false;
     std::uint32_t resourceLoadStatisticsNotifyCount = 0;
+    bool allowFileAccessFromFileURLs = false;
+    bool allowStorageAccessFromFileURLs = false;
+    bool allowUniversalAccessFromFileURLs = false;
+    bool asynchronousSpellCheckingEnabled = false;
+    bool authorAndUserStylesEnabled = true;
+    std::uint64_t databaseQuota = 0;
+    bool frameFlatteningEnabled = false;
+    bool javaScriptCanAccessClipboard = false;
+    int minimumLogicalFontSize = 0;
+    bool popupBlockingEnabled = true;
+    bool spatialNavigationEnabled = false;
 };
 
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {

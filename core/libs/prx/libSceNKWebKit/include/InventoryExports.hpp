@@ -181,7 +181,6 @@ int APS5_VABI WKBundleRemoveOriginAccessAllowListEntry();
 int APS5_VABI WKBundleReportException();
 int APS5_VABI WKBundleResetOriginAccessAllowLists();
 int APS5_VABI WKBundleSetClient();
-int APS5_VABI WKBundleSetDatabaseQuota();
 int APS5_VABI WKBundleSetTabKeyCyclesThroughElements();
 int APS5_VABI WKBundleSetWebNotificationPermission();
 int APS5_VABI WKContextCopyPlugInAutoStartOriginHashes();

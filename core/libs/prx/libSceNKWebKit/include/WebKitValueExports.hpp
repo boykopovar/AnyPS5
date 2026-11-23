@@ -103,6 +103,17 @@ bool APS5_VABI WKBundleIsPageBoxVisible(const void* bundleRef, const void* frame
 int APS5_VABI WKBundleNumberOfPages(const void* bundleRef, const void* frameRef, double pageWidthInPixels, double pageHeightInPixels);
 void APS5_VABI WKBundleReleaseMemory(const void* bundleRef);
 void APS5_VABI WKBundleResourceLoadStatisticsNotifyObserver(const void* bundleRef);
+void APS5_VABI WKBundleSetAllowFileAccessFromFileURLs(const void* bundleRef, bool allows);
+void APS5_VABI WKBundleSetAllowStorageAccessFromFileURLS(const void* bundleRef, bool allows);
+void APS5_VABI WKBundleSetAllowUniversalAccessFromFileURLs(const void* bundleRef, bool allows);
+void APS5_VABI WKBundleSetAsynchronousSpellCheckingEnabled(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetAuthorAndUserStylesEnabled(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetDatabaseQuota(const void* bundleRef, std::uint64_t quota);
+void APS5_VABI WKBundleSetFrameFlatteningEnabled(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetJavaScriptCanAccessClipboard(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetMinimumLogicalFontSize(const void* bundleRef, int size);
+void APS5_VABI WKBundleSetPopupBlockingEnabled(const void* bundleRef, bool enabled);
+void APS5_VABI WKBundleSetSpatialNavigationEnabled(const void* bundleRef, bool enabled);
 std::uint32_t APS5_VABI WKBundleHitTestResultGetTypeID();
 const void* APS5_VABI WKBundleHitTestResultCopyAbsoluteImageURL(const void* hitTestResultRef);
 const void* APS5_VABI WKBundleHitTestResultCopyAbsoluteLinkURL(const void* hitTestResultRef);
