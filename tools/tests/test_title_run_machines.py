@@ -90,11 +90,12 @@ class BisectRunMachineTests(unittest.TestCase):
         del summary["machine"]
         self.assertEqual(self.sample(summary)["identity"]["cpu"], "Fixture CPU B")
         summary["titles"]["PPSA00001"]["runs"][0]["machine"]["cpu"] = ""
-        self.assertEqual(self.sample(summary)["identity"]["cpu"], "")
+        with self.assertRaisesRegex(ValueError, "identity.*cpu"):
+            self.sample(summary)
 
     def test_bad_present_run_machine_never_falls_back_to_a_known_global_record(self):
         for machine in (None, [], "machine", {}, {"gpu": "B"}, {**B, "gpu": ""}, {**B, "driver": 9},
-                        {**B, "gpu": " "}, {**B, "os": "\t"}):
+                        {**B, "gpu": " "}, {**B, "os": "\t"}, {**B, "cpu": ""}, {**B, "cpu": " \t"}):
             summary = recorded([B])
             summary["titles"]["PPSA00001"]["runs"][0]["machine"] = machine
             with self.subTest(machine=machine), self.assertRaisesRegex(ValueError, "machine"):
