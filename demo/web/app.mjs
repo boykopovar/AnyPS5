@@ -18,6 +18,7 @@ let sink;
 let outputDirectory;
 let outputTransaction;
 let downloadUrl;
+let completedResult;
 let logs = [];
 let release;
 const canSaveZip = typeof window.showSaveFilePicker === "function" && window.isSecureContext;
@@ -309,23 +310,19 @@ async function onMessage({ data }, currentWorker) {
       working = false;
       $("done").hidden = false;
       $("status").hidden = true;
-      const unit = data.mode === "disk" ? translate(locale, "resultUnitFiles") : "ZIP";
-      $("result-info").textContent = data.apps > 1
-        ? translate(locale, "resultInfoBatch", { apps: data.apps, size: bytes(data.size), unit, release: data.release })
-        : translate(locale, "resultInfoSingle", { size: bytes(data.size), unit, release: data.release, outputName: data.outputName });
+      const { apps, mode, size, release: tag, outputName } = data;
+      completedResult = {
+        apps, mode, size, tag, outputName,
+        folderName: mode === "disk" ? outputTransaction.name : null,
+        target: document.querySelector('input[name="target"]:checked').value
+      };
+      renderResult();
       if (data.blob) {
         downloadUrl = URL.createObjectURL(data.blob);
         $("download").href = downloadUrl;
-        $("download").download = `${data.outputName}.zip`;
+        $("download").download = outputName + ".zip";
         $("download").hidden = false;
-      } else if (data.mode === "zip") {
-        $("result-info").textContent += translate(locale, "resultZipSavedToDisk");
-      } else {
-        $("result-info").textContent += translate(locale, "resultSavedIn", { name: outputTransaction.name });
-        if (document.querySelector('input[name="target"]:checked').value === "linux") $("result-info").textContent += translate(locale, "resultLinuxChmod", { name: data.outputName });
       }
-      $("result-note").textContent = data.apps > 1 ? translate(locale, "resultNoteBatch") : translate(locale, "resultNoteSingle");
-      $("result-note").hidden = data.mode === "disk";
       outputDirectory = null;
       outputTransaction?.commit();
       outputTransaction = null;
@@ -341,6 +338,23 @@ async function onMessage({ data }, currentWorker) {
   } catch (error) {
     if (currentWorker === worker) await fail(error);
   }
+}
+
+function renderResult() {
+  if (!completedResult || $("done").hidden) return;
+  const { apps, mode, size, tag, outputName, folderName, target } = completedResult;
+  const unit = mode === "disk" ? translate(locale, "resultUnitFiles") : "ZIP";
+  const values = { apps, size: bytes(size), unit, release: tag, outputName };
+  let info = translate(locale, apps > 1 ? "resultInfoBatch" : "resultInfoSingle", values);
+  if (mode === "zip") {
+    info += translate(locale, "resultZipSavedToDisk");
+  } else if (mode === "disk") {
+    info += translate(locale, "resultSavedIn", { name: folderName });
+    if (target === "linux") info += translate(locale, "resultLinuxChmod", { name: outputName });
+  }
+  $("result-info").textContent = info;
+  $("result-note").textContent = translate(locale, apps > 1 ? "resultNoteBatch" : "resultNoteSingle");
+  $("result-note").hidden = mode === "disk";
 }
 
 async function selectInputs(inputs) {
@@ -495,6 +509,7 @@ $("locale").onclick = () => {
   setLocale(locale);
   updateLocaleButton();
   if (inspectionComplete && selectedInputs.length > 1) renderSelection();
+  renderResult();
   update();
 };
 updateLocaleButton();
