@@ -57,6 +57,10 @@ alignas(256) constexpr std::array<std::uint32_t, 40> TableCode{
     0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xe0781400u, 0x80070a08u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 7> StoreCode{
+    0x7e020d00u, 0x082802f7u, 0x7e3c0300u, 0x7e3e0280u, 0xf0201108u, 0x0001141eu, 0xbf810000u,
+};
+
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 
 std::uint64_t AddressOf(const void* data) {
@@ -277,6 +281,67 @@ void RunLayers(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     Require(Shared(before) == 0, "image table array views: a two-layer array entry borrowed the one-layer 2D entry's texture");
 }
 
+void Store(AgcDriver::VulkanDevice& device, const GuestBlock& block, std::uint32_t texture) {
+    std::vector<std::uint32_t> userData(16, 0u);
+    const auto image = Image(block.Texels(texture), Type2D);
+    std::copy(image.begin(), image.end(), userData.begin() + 4);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{AddressOf(StoreCode.data()), std::as_bytes(std::span(StoreCode))}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, AddressOf(StoreCode.data()), std::span<const std::uint32_t>(StoreCode), 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, AddressOf(StoreCode.data()));
+    device.WaitIdle();
+}
+
+void ExpectUsed(const AgcDriver::Graphics::ImageTableReuseCounts& before, std::uint64_t dispatches, const std::string& what) {
+    const auto now = AgcDriver::Graphics::ImageTableReuses();
+    const auto gotUsed = now.reused + now.replayed - before.reused - before.replayed;
+    const auto gotResolved = now.resolved - before.resolved;
+    Require(gotResolved == 0 && gotUsed >= dispatches, "image table array views: " + what + ": " + std::to_string(gotUsed) + " uses of a remembered table and " + std::to_string(gotResolved) + " tables resolved, expected at least " + std::to_string(dispatches) + " and none");
+}
+
+void ExpectTables(const AgcDriver::Graphics::ImageTableReuseCounts& before, std::uint64_t reused, std::uint64_t resolved, const std::string& what) {
+    const auto now = AgcDriver::Graphics::ImageTableReuses();
+    const auto gotReused = now.reused - before.reused;
+    const auto gotResolved = now.resolved - before.resolved;
+    Require(gotReused == reused && gotResolved == resolved, "image table array views: " + what + ": " + std::to_string(gotReused) + " reused and " + std::to_string(gotResolved) + " resolved tables, expected " + std::to_string(reused) + " and " + std::to_string(resolved));
+}
+
+void RunSharedReuse(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    Prepare(block, 0, 1);
+    SetRecord(block, 0, block.Texels(0), Type2D);
+    SetRecord(block, 1, block.Texels(0), Type2DArray);
+    const auto result = Compile(device, block);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    const auto fresh = Dispatch(device, result, 0, 1);
+    Require(fresh.flat == Row(block.Texels(0)) && fresh.array == Row(block.Texels(0)), "image table array views: the first dispatch of a table with a 2D and an array entry sampled the wrong texels");
+    const auto settle = Dispatch(device, result, 0, 1);
+    Require(settle.flat == fresh.flat && settle.array == fresh.array, "image table array views: the second dispatch bound the entries differently from the first");
+    const auto afterFresh = AgcDriver::Graphics::ImageTableReuses();
+    for (int again = 0; again < 3; ++again) {
+        const auto rows = Dispatch(device, result, 0, 1);
+        Require(rows.flat == fresh.flat && rows.array == fresh.array, "image table array views: a dispatch that used the table again bound the entries differently from the fresh resolve");
+    }
+    ExpectUsed(afterFresh, 3, "three dispatches of a remembered table with a 2D entry and an array entry of the same surface");
+    Require(Shared(before) == 5, "image table array views: the array entry was not bound to the 2D entry's texture on every dispatch (" + std::to_string(Shared(before)) + " of 5 shared)");
+    const auto beforeStore = AgcDriver::Graphics::ImageTableReuses();
+    Store(device, block, 0);
+    std::vector<float> stored(Wide);
+    for (std::uint32_t x = 0; x < Wide; ++x) stored[x] = -4.0f - static_cast<float>(x);
+    const auto rows = Dispatch(device, result, 0, 1);
+    Require(rows.flat == Row(stored.data()) && rows.array == Row(stored.data()), "image table array views: after an image store left results pending over the surface, a reused table sampled the old texels");
+    ExpectTables(beforeStore, 0, 1, "an image store leaving results pending over a shared surface");
+    AgcDriver::Graphics::StorageTexture::FlushPending(AddressOf(block.Texels(0)), TextureBytes, nullptr, "test");
+    device.WaitIdle();
+}
+
 }
 
 int main() {
@@ -288,6 +353,7 @@ int main() {
         RunOtherSurface(*device, block);
         RunOtherSwizzle(*device, block);
         RunLayers(*device, block);
+        RunSharedReuse(*device, block);
         std::puts("image table array view tests passed");
         return 0;
     } catch (const std::exception& error) {
