@@ -1,0 +1,5 @@
+# libSceIcu
+
+## add Functional locale parsing and metadata
+
+- [Supplemental-data region](../../../core/libs/prx/libSceIcu/SupplementalRegion.cpp) - `ulocimp_getRegionForSupplementalData` is unverified on a console. It ports the C function of [ICU 68.2](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/loclikely.cpp#L1359-L1409), whose name the NID carries, onto this library's `uloc_getKeywordValue`, `uloc_getCountry`, `uloc_addLikelySubtags` and `u_terminateChars`, inheriting their gaps; inferred regions use bundled ICU 78.1 likely-subtags data. ICU 78.1 (firmware 13.42) makes it a C++ function that also reads `sd` and validates the region ([loclikely.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/loclikely.cpp#L432-L457)); whether newer modules export the C name is unmeasured. A null or unwritable status, a negative capacity or an unwritable buffer throws where ICU 68.2 accesses invalid memory. Its prototype is not taken from a title.
