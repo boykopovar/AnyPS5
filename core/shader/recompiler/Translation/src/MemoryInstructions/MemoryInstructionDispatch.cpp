@@ -58,6 +58,69 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::SScratchLoadDwordx2:
     case RdnaOpcode::SScratchLoadDwordx4:
         return sScratchLoad(inst);
+    case RdnaOpcode::SStoreDword:
+    case RdnaOpcode::SStoreDwordx2:
+    case RdnaOpcode::SStoreDwordx4:
+    case RdnaOpcode::SScratchStoreDword:
+    case RdnaOpcode::SScratchStoreDwordx2:
+    case RdnaOpcode::SScratchStoreDwordx4:
+    case RdnaOpcode::SBufferStoreDword:
+    case RdnaOpcode::SBufferStoreDwordx2:
+    case RdnaOpcode::SBufferStoreDwordx4:
+        return sStore(inst);
+    case RdnaOpcode::SBufferAtomicSwap:
+    case RdnaOpcode::SBufferAtomicCmpswap:
+    case RdnaOpcode::SBufferAtomicAdd:
+    case RdnaOpcode::SBufferAtomicSub:
+    case RdnaOpcode::SBufferAtomicSmin:
+    case RdnaOpcode::SBufferAtomicUmin:
+    case RdnaOpcode::SBufferAtomicSmax:
+    case RdnaOpcode::SBufferAtomicUmax:
+    case RdnaOpcode::SBufferAtomicAnd:
+    case RdnaOpcode::SBufferAtomicOr:
+    case RdnaOpcode::SBufferAtomicXor:
+    case RdnaOpcode::SBufferAtomicInc:
+    case RdnaOpcode::SBufferAtomicDec:
+    case RdnaOpcode::SBufferAtomicSwapX2:
+    case RdnaOpcode::SBufferAtomicCmpswapX2:
+    case RdnaOpcode::SBufferAtomicAddX2:
+    case RdnaOpcode::SBufferAtomicSubX2:
+    case RdnaOpcode::SBufferAtomicSminX2:
+    case RdnaOpcode::SBufferAtomicUminX2:
+    case RdnaOpcode::SBufferAtomicSmaxX2:
+    case RdnaOpcode::SBufferAtomicUmaxX2:
+    case RdnaOpcode::SBufferAtomicAndX2:
+    case RdnaOpcode::SBufferAtomicOrX2:
+    case RdnaOpcode::SBufferAtomicXorX2:
+    case RdnaOpcode::SBufferAtomicIncX2:
+    case RdnaOpcode::SBufferAtomicDecX2:
+    case RdnaOpcode::SAtomicSwap:
+    case RdnaOpcode::SAtomicCmpswap:
+    case RdnaOpcode::SAtomicAdd:
+    case RdnaOpcode::SAtomicSub:
+    case RdnaOpcode::SAtomicSmin:
+    case RdnaOpcode::SAtomicUmin:
+    case RdnaOpcode::SAtomicSmax:
+    case RdnaOpcode::SAtomicUmax:
+    case RdnaOpcode::SAtomicAnd:
+    case RdnaOpcode::SAtomicOr:
+    case RdnaOpcode::SAtomicXor:
+    case RdnaOpcode::SAtomicInc:
+    case RdnaOpcode::SAtomicDec:
+    case RdnaOpcode::SAtomicSwapX2:
+    case RdnaOpcode::SAtomicCmpswapX2:
+    case RdnaOpcode::SAtomicAddX2:
+    case RdnaOpcode::SAtomicSubX2:
+    case RdnaOpcode::SAtomicSminX2:
+    case RdnaOpcode::SAtomicUminX2:
+    case RdnaOpcode::SAtomicSmaxX2:
+    case RdnaOpcode::SAtomicUmaxX2:
+    case RdnaOpcode::SAtomicAndX2:
+    case RdnaOpcode::SAtomicOrX2:
+    case RdnaOpcode::SAtomicXorX2:
+    case RdnaOpcode::SAtomicIncX2:
+    case RdnaOpcode::SAtomicDecX2:
+        return sAtomic(inst);
     case RdnaOpcode::SGetWaveidInWorkgroup: {
         if (program.Resources().stage != IrShaderStage::Compute) {
             throw std::runtime_error("s_get_waveid_in_workgroup is supported only in compute shaders, at pc " + std::to_string(inst.programCounter));
@@ -363,6 +426,36 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return dsSrc2(inst, IrOpcode::SharedAtomicFMax32);
     case RdnaOpcode::DsAddSrc2F32:
         return dsSrc2(inst, IrOpcode::SharedAtomicFAdd32);
+    case RdnaOpcode::DsAddSrc2U64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicIAdd64);
+    case RdnaOpcode::DsSubSrc2U64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicISub64);
+    case RdnaOpcode::DsRsubSrc2U64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicRsub64);
+    case RdnaOpcode::DsIncSrc2U64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicInc64);
+    case RdnaOpcode::DsDecSrc2U64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicDec64);
+    case RdnaOpcode::DsMinSrc2I64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicSMin64);
+    case RdnaOpcode::DsMaxSrc2I64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicSMax64);
+    case RdnaOpcode::DsMinSrc2U64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicUMin64);
+    case RdnaOpcode::DsMaxSrc2U64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicUMax64);
+    case RdnaOpcode::DsAndSrc2B64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicAnd64);
+    case RdnaOpcode::DsOrSrc2B64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicOr64);
+    case RdnaOpcode::DsXorSrc2B64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicXor64);
+    case RdnaOpcode::DsWriteSrc2B64:
+        return dsSrc2(inst, IrOpcode::WriteSharedU32x2);
+    case RdnaOpcode::DsMinSrc2F64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicFMin64);
+    case RdnaOpcode::DsMaxSrc2F64:
+        return dsSrc2(inst, IrOpcode::SharedAtomicFMax64);
     case RdnaOpcode::DsWrxchgRtnB32:
         return dsAtomic(inst, IrOpcode::SharedAtomicSwap32, true);
 

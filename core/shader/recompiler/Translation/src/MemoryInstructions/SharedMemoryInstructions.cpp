@@ -204,6 +204,9 @@ bool TranslationContext::dsSrc2(const RdnaInstruction& inst, IrOpcode opcode) {
         throw std::runtime_error("GDS src2 operations are not supported");
     }
     const MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
+    if (memory.dataDwords == 2u) {
+        throw std::runtime_error("64-bit DS src2 operations are not supported");
+    }
     const IrU32 address = readU32(inst.source0);
     MemoryInfo source = memory;
     source.offset = memory.secondaryOffset;

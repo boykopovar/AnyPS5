@@ -55,6 +55,14 @@ bool TranslationContext::sScratchLoad(const RdnaInstruction& /*inst*/) {
     throw std::runtime_error("s_scratch_load not yet implemented: wave-uniform or swizzled scratch layout required");
 }
 
+bool TranslationContext::sStore(const RdnaInstruction&) {
+    throw std::runtime_error("s_store not yet implemented");
+}
+
+bool TranslationContext::sAtomic(const RdnaInstruction&) {
+    throw std::runtime_error("s_atomic not yet implemented");
+}
+
 void TranslationContext::TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table) {
     if (table.values.empty()) throw std::runtime_error("empty shader code table");
     const IrU32 index = readRawU32(instruction.source1);
