@@ -134,7 +134,10 @@ int main() {
     }
 }
 #else
+#include <cstdio>
+
 int main() {
+    std::puts("SPIR-V optimization on a fiber: skipped, this build has no SPIR-V optimizer; configure with -DANYPS5_ENABLE_SPIRV_TOOLS=ON");
     return 77;
 }
 #endif
