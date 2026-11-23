@@ -3070,6 +3070,37 @@ void CheckEligibility(Context context) {
     std::puts("Native depth eligibility, guest writes, queued writes, metadata transitions and held views checked");
 }
 
+void CheckClearSupersedesPlaneWrites(Context context, std::uint32_t fragments, bool queued) {
+    const VkExtent2D extent{5u, 3u};
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
+    TargetMemory memory(bytes), metadata(65536u);
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::memset(metadata.Data(), 0, metadataBytes);
+    DepthTarget target{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, metadata.Address(), false, fragments};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = true;
+    target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    DepthSurfaceView(context, target);
+    const auto words = DepthSampleWords(target);
+    Require(CachedSampledTexture(context, words) != nullptr, "native depth for the superseded plane write check was not imported");
+    QueueTargetByteWrite(context, recorder, target.address, std::byte{0x3f});
+    if (!queued) recorder.Sync();
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, metadataBytes, [&] { std::memset(metadata.Data(), 0, metadataBytes); });
+    Require(CachedSampledTexture(context, words) != nullptr, "native depth after a full HTILE clear was not sampled");
+    QueueTargetByteWrite(context, recorder, target.address + 4u, std::byte{0x40});
+    recorder.Sync();
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "writes over native multisample depth are not implemented");
+    std::printf("Native depth samples=%u: a %s write to the depth plane before a full HTILE clear is superseded by it, and one after it still refuses\n", fragments, queued ? "queued" : "landed");
+}
+
 void CheckInitialOwner(Context context, VkFormat format, std::uint32_t samples, bool one, bool depthOnly) {
     constexpr VkExtent2D extent{5u, 3u};
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, format == VK_FORMAT_D16_UNORM ? 2u : 4u, samples));
@@ -5417,6 +5448,16 @@ int main(int argc, char** argv) {
                 }
             }
             std::printf("Native depth with an aliased depth plane, %s HTILE, cases checked=%u unavailable=%u\n", argv[2], checked, unavailable);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--clear-supersedes-plane-writes") {
+            std::uint32_t checked = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!DepthSupported(context, VK_FORMAT_D32_SFLOAT, samples)) continue;
+                for (const bool queued : {true, false}) CheckClearSupersedesPlaneWrites(context, samples, queued);
+                ++checked;
+            }
+            Require(checked != 0u, "no sampled multisampled D32 depth for the superseded plane write check");
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--expand-gate") {
