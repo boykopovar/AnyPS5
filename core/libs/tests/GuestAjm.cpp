@@ -325,6 +325,58 @@ void TestOpusInputBeyondStatedData(std::uint32_t context, bool multipleFrames) {
 #endif
 }
 
+void TestOpusPacketPastReadableInput(std::uint32_t context) {
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const std::size_t pageSize = system.dwPageSize;
+    auto* pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD oldProtection = 0;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &oldProtection) != 0);
+#else
+    const long hostPageSize = sysconf(_SC_PAGESIZE);
+    Require(hostPageSize > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(hostPageSize);
+    auto* pages = static_cast<std::uint8_t*>(mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    auto* tail = pages + pageSize - 4;
+    tail[0] = 0x6a;
+    tail[1] = 0xff;
+    tail[2] = OPUS_STEREO[2];
+    tail[3] = OPUS_STEREO[3];
+
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 24, 0, &instance) == 0);
+    const std::uint32_t parameters[3] = {2, 48000, 0};
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo info{};
+    std::int64_t initResult[2] = {-1, -1};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobInitialize(&info, instance, parameters, sizeof(parameters), initResult) == 0);
+    std::uint32_t id = 0;
+    AjmBatchError error{};
+    Require(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, &id) == 0 && sceAjmBatchWait(context, id, 0, &error) == 0);
+    Require(initResult[0] == 0);
+
+    std::vector<std::int16_t> pcm(960 * 2);
+    DecodeSideband sideband{};
+    RunDecode(context, instance, tail, 0xFFFFFE74u, pcm.data(), pcm.size() * sizeof(std::int16_t), sideband);
+    Require(sideband.result == 2 && sideband.inputConsumed == 0 && sideband.outputWritten == 0);
+    const std::size_t packetBytes = 2 + (OPUS_STEREO[0] | (std::size_t{OPUS_STEREO[1]} << 8u));
+    DecodeSideband next{};
+    RunDecode(context, instance, OPUS_STEREO, packetBytes, pcm.data(), pcm.size() * sizeof(std::int16_t), next);
+    Require(next.result == 0 && static_cast<std::size_t>(next.inputConsumed) == packetBytes && next.outputWritten == 960 * 2 * 2);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, 2 * pageSize) == 0);
+#endif
+}
+
 bool ParsesTo(const std::uint8_t* stream, std::uint32_t streamSize, std::uint64_t frameSize, std::uint32_t channels, std::uint32_t samples, std::uint32_t bitrate, std::uint32_t sampleRate) {
     AjmDecMp3ParseFrame frame;
     std::memset(&frame, 0xFF, sizeof(frame));
@@ -3054,6 +3106,7 @@ int main(int argc, char** argv) {
     }
     TestOpusInputBeyondStatedData(context, false);
     TestOpusInputBeyondStatedData(context, true);
+    TestOpusPacketPastReadableInput(context);
     TestDecodeSingle(context);
     TestDecodeSplit(context);
     TestGaplessDecode(context);

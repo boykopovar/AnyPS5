@@ -552,6 +552,17 @@ public:
         if (single) CopyBatchIn(destination, reinterpret_cast<const void*>(guest + offset), length, "AJM job input is unreadable");
         else std::memcpy(destination, joined.data() + offset, length);
     }
+    bool TryCopy(std::size_t offset, void* destination, std::size_t length) const {
+        if (length == 0) return true;
+        if (!single) {
+            std::memcpy(destination, joined.data() + offset, length);
+            return true;
+        }
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(destination, reinterpret_cast<const void*>(guest + offset), length);
+        errno = savedErrno;
+        return copied;
+    }
 
 private:
     std::vector<std::uint8_t> joined;
@@ -1372,7 +1383,10 @@ void RunOpus(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, 
             break;
         }
         packetBytes.resize(bytes);
-        input.Copy(consumed + 2, packetBytes.data(), bytes);
+        if (!input.TryCopy(consumed + 2, packetBytes.data(), bytes)) {
+            result |= AJM_RESULT_INVALID_DATA;
+            break;
+        }
         const auto* data = packetBytes.data();
         const std::size_t samples = OpusPacketSamples(data, bytes);
         if (bytes == 0 || samples == 0) {
