@@ -176,6 +176,17 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(laid["bars"][0]["ms"], 6.0)
         self.assertEqual(laid["left_out"], 2)
 
+    def test_layout_preserves_tied_slice_order_at_the_limit(self):
+        items = [complete(1, f"slice {index}", index * 100, duration)
+                 for index, duration in enumerate((2000, 5000, 3000, 5000, 3000, 5000))]
+        slices = trace_timeline_slices(items)
+        for limit in (0, 1, 2, 3, 4, 6, 8):
+            with self.subTest(limit=limit):
+                laid = trace_timeline.layout(slices, 0, 10000, 1000, max_slices=limit)
+                expected = sorted(slices, key=lambda entry: -entry["dur"])[:limit]
+                self.assertEqual([bar["name"] for bar in laid["bars"]], [entry["name"] for entry in expected])
+                self.assertEqual(laid["left_out"], len(slices) - len(expected))
+
     def test_svg_escapes_slice_names(self):
         laid = trace_timeline.layout(trace_timeline_slices([complete(1, "<script>", 0, 1000)]), 0, 2000, 1000)
         text = trace_timeline.svg(laid)
@@ -251,6 +262,17 @@ class TimelineTests(unittest.TestCase):
                 self.assertEqual(done.returncode, 2, done.stderr)
                 self.assertIn(option, done.stderr)
                 self.assertFalse(out.exists())
+
+    def test_the_cli_rejects_a_width_that_overflows_layout(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        out = path.with_suffix(".html")
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "--width", str(10**309)],
+                              capture_output=True, text=True, timeout=15)
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertIn("--width", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertFalse(out.exists())
 
     def test_the_cli_reports_a_non_ascii_output_path_as_utf8(self):
         directory = Path(self.tmp.name) / "界"

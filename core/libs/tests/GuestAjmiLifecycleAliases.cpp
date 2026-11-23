@@ -128,7 +128,11 @@ void CheckContexts(const Api& alias, const Api& native) {
     instance.Check();
 }
 
-void CheckInstances(const Api& alias, const Api& native) {
+void CheckInstances(const Api& alias, const Api& native, decltype(&sceAjmiInstanceCodecType) codecType) {
+    Require(codecType(0) == 0);
+    Require(codecType(0x3fffu) == 0);
+    Require(codecType(0x4000u) == 1);
+    Require(codecType(0xffffffffu) == 0x3ffffu);
     const auto context = Context(alias);
     const auto other = Context(native);
     Guarded<std::uint32_t> first;
@@ -142,6 +146,7 @@ void CheckInstances(const Api& alias, const Api& native) {
     errno = 71;
     Require(alias.create(context, 0, 0, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidParameter && errno == 71);
     Require(alias.create(context, 24, 0x1002, &first.value) == 0);
+    Require(codecType(first.value) == 24);
     Require(native.create(other, 24, 0x1002, &second.value) == 0 && first.value != second.value);
     Require(native.destroy(other, first.value) == InvalidInstance);
     Require(alias.destroy(context, second.value) == InvalidInstance);
@@ -250,7 +255,8 @@ int main(int argc, char** argv) {
     if (operation == "contexts") {
         CheckContexts(alias, native);
     } else if (operation == "instances") {
-        CheckInstances(alias, native);
+        const auto codecType = aliasModule.Import<decltype(&sceAjmiInstanceCodecType)>(patched ? "Uqtj4RSP-JQ" : "sceAjmiInstanceCodecType");
+        CheckInstances(alias, native, codecType);
     } else {
         Require(operation == "batches");
         const BatchApi batch{

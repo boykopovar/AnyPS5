@@ -215,24 +215,18 @@ constexpr int TooLarge = 164;
 
 template <typename T>
 void CopyGuestInPreservingErrno(const void* guestAddress, T& hostValue, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&hostValue, guestAddress, sizeof(T));
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 
 void RequireGuestWritablePreservingErrno(void* guestAddress, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestWritable_nid_no_patch(guestAddress, bytes);
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 
 template <typename T>
 void CopyGuestOutPreservingErrno(void* guestAddress, const T& hostValue, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(guestAddress, &hostValue, sizeof(T));
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 

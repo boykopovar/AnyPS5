@@ -10,7 +10,7 @@ from test_guest_none_relocations import TARGET, module
 
 
 TARGETS = (("linux", []), ("pie", ["--lazy-binding"]), ("windows", ["--windows"]), ("macos", ["--macos"]))
-ERROR = "Undefined non-weak symbol has non-default visibility: "
+ERROR = "Undefined local symbol has non-default visibility: "
 DEFINED_ERROR = "Relocation names a defined symbol that is local, hidden or internal: "
 
 
@@ -85,15 +85,16 @@ def main():
                         lambda visibility, **kw: executable(relocation, visibility, **kw))
                     label = f"{relocation}-{target}-{sce}"
                     for visibility in (1, 2, 3):
-                        convert(label + f"-visibility-{visibility}", make(visibility), options, ERROR)
-                    convert(label + "-local-hidden", make(2, binding=0), options, ERROR)
+                        convert(label + f"-visibility-{visibility}", make(visibility), options, None)
+                        convert(label + f"-weak-visibility-{visibility}", make(visibility, binding=2), options, None)
+                        convert(label + f"-local-visibility-{visibility}", make(visibility, binding=0), options, ERROR)
                     convert(label + "-default", make(0), options, None)
                     convert(label + "-weak-default", make(0, binding=2), options, None)
-                    convert(label + "-unreferenced", make(2, referenced=False), options, None)
+                    convert(label + "-unreferenced", make(2, binding=0, referenced=False), options, None)
                     if is_guest:
                         convert(label + "-defined-hidden", make(2, defined=True), options, None)
                     else:
-                        convert(label + "-filtered", make(2), [*options, "unused-filter=1"], ERROR)
+                        convert(label + "-filtered", make(2, binding=0), [*options, "unused-filter=1"], ERROR)
                         convert(label + "-defined-default", make(0, defined=True), options, None)
                         convert(label + "-defined-protected", make(3, defined=True), options, None)
                         convert(label + "-defined-local", make(0, binding=0, defined=True), options, DEFINED_ERROR)

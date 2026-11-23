@@ -205,9 +205,7 @@ std::string GuestShortName(const char* name, const char* function) {
     char chunk[Page];
     for (;;) {
         const std::size_t size = Page - address % Page;
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), size);
-        errno = savedErrno;
         if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable name");
         const auto* end = static_cast<const char*>(std::memchr(chunk, '\0', size));
         text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : size);

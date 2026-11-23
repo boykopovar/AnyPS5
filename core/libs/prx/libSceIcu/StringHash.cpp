@@ -27,9 +27,7 @@ std::int32_t HashSamples(const Unit* s, std::int32_t length, std::int32_t (*hash
     Unit samples[MaximumSamples];
     std::int32_t count = 0;
     for (std::int64_t offset = 0; offset < length; offset += step) {
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&samples[count], s + offset, sizeof(Unit));
-        errno = savedErrno;
         if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable string");
         ++count;
     }

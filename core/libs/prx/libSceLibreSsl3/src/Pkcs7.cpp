@@ -633,9 +633,7 @@ LibreSsl3Pkcs7* APS5_VABI d2i_PKCS7_nid_postfix(LibreSsl3Pkcs7** output, const u
 void APS5_VABI PKCS7_free_nid_postfix(LibreSsl3Pkcs7* pkcs7) {
     if (!pkcs7) return;
     LibreSsl3Pkcs7 header{};
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&header, pkcs7, sizeof(header));
-    errno = savedErrno;
     if (!readable) throw std::invalid_argument(std::string(__func__) + ": unreadable PKCS7");
     FreePkcs7(pkcs7);
 }

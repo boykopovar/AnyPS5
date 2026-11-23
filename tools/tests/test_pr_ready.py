@@ -68,6 +68,24 @@ class BlockerTests(unittest.TestCase):
         checks = PASSING + [("intake", "completed", "failure"), ("labels", "in_progress", None), ("eligibility", "queued", None)]
         self.assertEqual(pr_ready.blockers(make(checks=checks)), [])
 
+    def test_the_conflict_label_job_does_not_block(self):
+        for state, conclusion in (("in_progress", None), ("completed", "cancelled"), ("completed", "failure")):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(pr_ready.blockers(make(checks=PASSING + [("pr", state, conclusion)])), [])
+
+    def test_each_bot_check_name_is_a_job_of_its_bot_workflow_only(self):
+        owners = {name: set() for name in pr_ready.BOT_CHECKS}
+        for workflow in (Path(__file__).resolve().parents[2] / ".github/workflows").glob("*.yml"):
+            text = workflow.read_text(encoding="utf-8")
+            if "\njobs:\n" not in text:
+                continue
+            for line in text.split("\njobs:\n", 1)[1].split("\n"):
+                name = line[2:].split(":", 1)[0]
+                if line.startswith("  ") and not line.startswith("   ") and line.rstrip().endswith(":") and name in owners:
+                    owners[name].add(workflow.name)
+        self.assertEqual(owners, {"intake": {"pr-intake.yml"}, "labels": {"pr-labels.yml"}, "eligibility": {"build.yml"},
+                                  "report": {"progress-report.yml"}, "pr": {"conflict-label-pr.yml"}})
+
     def test_a_failing_progress_report_does_not_block(self):
         self.assertEqual(pr_ready.blockers(make(checks=PASSING + [("report", "completed", "failure")])), [])
 
@@ -84,6 +102,16 @@ class BlockerTests(unittest.TestCase):
         self.assertTrue(pr_ready.built(make(checks=[("conventions", "completed", "success"),
                                                     ("relinker (ubuntu-latest, g++)", "completed", "success")])))
         self.assertFalse(pr_ready.built(make(checks=[("conventions", "completed", "success"), ("linux", "completed", "skipped")])))
+
+    def test_every_build_workflow_job_counts_as_a_build(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/build.yml").read_text(encoding="utf-8")
+        jobs = workflow.split("\njobs:\n", 1)[1]
+        names = {line[2:].split(":", 1)[0] for line in jobs.split("\n") if line.startswith("  ") and not line.startswith("   ")
+                 and line.rstrip().endswith(":")}
+        self.assertEqual(names - pr_ready.BOT_CHECKS, pr_ready.BUILD_CHECKS)
+        for name in ("pipe-write (macos-15)", "edge-watch (macos-15-intel)"):
+            with self.subTest(name=name):
+                self.assertTrue(pr_ready.built(make(checks=[("conventions", "completed", "success"), (name, "completed", "success")])))
 
     def test_the_newest_run_of_a_check_wins(self):
         data = node(checks=[("conventions", "completed", "success")])
@@ -190,6 +218,13 @@ class MainTests(unittest.TestCase):
 
         def fake(*args):
             if args[:2] == ("api", "graphql"):
+                if "--explain" in argv:
+                    number = int(argv[argv.index("--explain") + 1])
+                    self.assertIn("resource(url: $url)", args[3])
+                    self.assertEqual(args[-1], f"url=https://github.com/o/r/pull/{number}")
+                    match = next((pr for pr in prs if pr["number"] == number), None)
+                    resource = {"state": "OPEN", "baseRefName": "main", **match} if match else None
+                    return json.dumps({"data": {"resource": resource}})
                 if any("CLOSED" in arg for arg in args):
                     return json.dumps({"data": {"repository": {"pullRequests": {
                         "pageInfo": {"hasNextPage": False, "endCursor": None},
@@ -285,10 +320,27 @@ class MainTests(unittest.TestCase):
         self.assertEqual(out.strip(), "draft")
         self.assertEqual(calls, [])
 
+    def test_explain_reports_only_the_selected_pr_and_leaves_the_queue_alone(self):
+        calls = []
+        prs = [node(number=1, draft=True), node(number=7, checks=[("conventions", "completed", "failure")],
+                                                changes=["bob"])]
+        code, out, _ = self.run_main(["--explain", "7", "--issue", "3"], prs, calls, closed=[2])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines(), ["failing: conventions", "change request not answered by a re-request: bob"])
+        self.assertEqual(calls, [])
+
     def test_explain_an_unknown_pull_request_fails(self):
         code, _, err = self.run_main(["--explain", "9"], [node(number=7)], [])
         self.assertEqual(code, 2)
         self.assertIn("#9 is not an open pull request", err)
+
+    def test_explain_rejects_a_closed_or_retargeted_pull_request(self):
+        for fields in ({"state": "MERGED"}, {"state": "CLOSED"}, {"baseRefName": "release"}):
+            with self.subTest(fields=fields):
+                calls = []
+                code, _, err = self.run_main(["--explain", "7"], [{**node(), **fields}], calls)
+                self.assertEqual((code, calls), (2, []))
+                self.assertIn("#7 is not an open pull request to main", err)
 
     def test_a_malformed_response_is_an_error(self):
         code, _, err = self.run_main([], [{"number": 7}], [])
