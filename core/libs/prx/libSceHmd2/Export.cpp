@@ -94,10 +94,7 @@ std::int32_t BeforeInitialize(std::int32_t answer, const char* name) {
 }
 
 std::uint32_t CompiledSdkVersion() {
-    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, processParameters + 0x10, sizeof(version));
-    return version;
+    return ApplicationCompiledSdkVersion();
 }
 
 bool CopyGuestOut(void* dst, const void* src, std::size_t size) {

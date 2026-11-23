@@ -58,10 +58,7 @@ int WriteContextState(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t p
 constexpr std::uint32_t ContextState400SdkVersion = 0x04000000;
 
 std::uint32_t CompiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, process + 0x10, sizeof(version));
-    return version;
+    return ApplicationCompiledSdkVersion();
 }
 
 constexpr std::uint32_t OpSetContextReg = 0x69;

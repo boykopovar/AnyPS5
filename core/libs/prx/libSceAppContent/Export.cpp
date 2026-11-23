@@ -39,10 +39,7 @@ std::atomic_bool initialized{false};
 std::mutex initializationMutex;
 
 std::uint32_t compiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, process + 16, sizeof(version));
-    return version;
+    return ApplicationCompiledSdkVersion();
 }
 
 bool validEntitlementLabel(const NpUnifiedEntitlementLabel& label, std::uint32_t minimumSdkVersion) {
