@@ -234,7 +234,7 @@ def summarize_benchmark(loaded, intervals=None):
         current = benchmark_metrics([interval])
         raw_seconds = sum(interval["frame_us"]) / 1e6
         tolerance = (len(interval["frame_us"]) + 2000) / 1e6
-        if not current["saturated_frames"] and abs(raw_seconds - current["elapsed_s"]) > tolerance:
+        if current["frames"] and not current["saturated_frames"] and abs(raw_seconds - current["elapsed_s"]) > tolerance:
             warnings.append(f"Retained interval {index}: raw durations and wall span differ beyond serialization precision.")
         rows.append({
             "index": index,
