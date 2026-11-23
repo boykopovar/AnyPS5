@@ -83,6 +83,7 @@ int Run(int argc, char** argv) {
     for (auto at = trace.find(name); at != std::string::npos; at = trace.find(name, at + name.size())) ++retained;
     std::ifstream summaryFile(directory / "aps5-summary.jsonl");
     const std::string summary((std::istreambuf_iterator<char>(summaryFile)), std::istreambuf_iterator<char>());
+    summaryFile.close();
     std::cout << "requested=" << capacity << " submitted=" << count << " retained=" << retained << '\n' << summary;
     Check(retained == std::min(capacity, count), "the runtime GPU trace ignored the requested capacity; capture: " + path);
     if (count > capacity) {
