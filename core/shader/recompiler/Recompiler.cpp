@@ -281,7 +281,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     const auto sharedVectors = GuestSharedVectorRegisters(request.context);
     translateOptions.sharedVectorBase = sharedVectors.base;
     translateOptions.sharedVectorCount = sharedVectors.count;
-    translateOptions.sharedMemoryBytes = DeviceMemoryLdsBytes(request, NarrowReadFirstLaneExchangeBytes(request, decoded));
+    translateOptions.sharedMemoryBytes = DeviceMemoryLdsBytes(request);
     const bool hostInterpolationFirst = stageKind == ShaderStageKind::Pixel && request.target.fragmentShaderBarycentricEnabled && request.target.hostInterpolationFirst;
     const bool emulatedBarycentrics = stageKind == ShaderStageKind::Pixel && request.graphics.has_value() && request.graphics->emulateBarycentrics;
     translateOptions.fragmentShaderBarycentricEnabled = emulatedBarycentrics || (request.target.fragmentShaderBarycentricEnabled && !hostInterpolationFirst);
@@ -380,6 +380,18 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         }
     };
     simplify();
+    const auto exchangeBytes = NarrowReadFirstLaneExchangeBytes(request, decoded);
+    if (translateOptions.sharedMemoryBytes == 0u && exchangeBytes != 0u && DeviceMemoryLdsBytes(request, exchangeBytes) != 0u) {
+        const bool liveReadFirstLane = std::ranges::any_of(program.BlockOrder(), [](const IrBlock* block) {
+            return std::ranges::any_of(block->Instructions(), [](const IrValue* value) { return value->Opcode() == IrOpcode::ReadFirstLane; });
+        });
+        if (liveReadFirstLane) {
+            translateOptions.sharedMemoryBytes = DeviceMemoryLdsBytes(request, exchangeBytes);
+            program = translator.Translate(decoded, cfg, translateOptions);
+            if (emulatedBarycentrics) program.Metadata().barycentricEmulation = true;
+            simplify();
+        }
+    }
     if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled) program.Metadata().barycentricBuiltinsUnnormalized = request.target.fragmentBarycentricBuiltins && !hostInterpolationFirst;
     if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled && !HostInterpolationChecker{}.Lower(program, *inputInfo.pixel, request.target.fragmentBarycentricBuiltins && !hostInterpolationFirst, !hostInterpolationFirst)) {
         translateOptions.fragmentShaderBarycentricEnabled = true;
