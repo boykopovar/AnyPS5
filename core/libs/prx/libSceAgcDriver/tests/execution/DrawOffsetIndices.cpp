@@ -580,6 +580,17 @@ std::string Run(Fixture& fixture) {
         failures += fixture.Check("direct indexed draw whose lowest index is 3, s16 1000, s17 40", raised, baseVertex, startInstance, true);
     }
     {
+        constexpr std::uint32_t baseVertex = 0xfffffffdu;
+        constexpr std::uint32_t startInstance = 40;
+        const auto userData = fixture.UserData(baseVertex, startInstance);
+        const auto vertex = fixture.Vertex(VertexCode, userData);
+        const std::array<std::uint32_t, Vertices> raised{RaisedIndices[0], RaisedIndices[1], RaisedIndices[2]};
+        const auto draw = FoldedDraw(vertex, userData, {fixture.GuestIndices(RaisedIndices), Vertices, 2, Instances, 0, true, 0, 0});
+        fixture.Place(baseVertex, raised, startInstance);
+        fixture.Draw(vertex, draw);
+        failures += fixture.Check("direct indexed draw with base vertex -3 and lowest index 3, s16 -3, s17 40", raised, baseVertex, startInstance, true);
+    }
+    {
         constexpr std::uint32_t baseVertex = 1000;
         constexpr std::uint32_t startInstance = 40;
         const auto userData = fixture.UserData(baseVertex, startInstance);

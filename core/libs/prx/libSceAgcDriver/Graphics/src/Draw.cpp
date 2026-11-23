@@ -1956,6 +1956,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         auto indexCopy = std::make_shared<Buffer>(context, expandedIndexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
         auto* outIndices = reinterpret_cast<std::uint32_t*>(indexCopy->Bytes().data());
         std::uint32_t maxIdx = 0;
+        std::uint32_t minIdx = std::numeric_limits<std::uint32_t>::max();
         const bool lastProvoking = state.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
         const auto expand = [&](const auto& source) {
             for (std::uint32_t primitive = 0; primitive < primitives; ++primitive) {
@@ -1992,7 +1993,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
                         out[2] = source(primitive + 2u - odd);
                     }
                 }
-                for (std::uint32_t corner = 0; corner < corners; ++corner) maxIdx = std::max(maxIdx, out[corner]);
+                for (std::uint32_t corner = 0; corner < corners; ++corner) {
+                    maxIdx = std::max(maxIdx, out[corner]);
+                    minIdx = std::min(minIdx, out[corner]);
+                }
             }
         };
         if (draw.indexed) {
@@ -2010,13 +2014,14 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
                 }
             };
             expand(readIndex);
-            Require(draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - maxIdx, "indexed draw vertex range overflow");
+            Require(static_cast<std::int64_t>(maxIdx) + static_cast<std::int32_t>(draw.firstVertex) <= std::numeric_limits<std::uint32_t>::max(), "indexed draw vertex range overflow");
         } else {
             const std::uint32_t lastVertex = state.quadList ? primitives * 4u - 1u : primitives + 1u;
             Require(draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - lastVertex, "auto draw vertex range overflow");
             expand([](std::uint32_t idx) { return idx; });
         }
         inputs.maxIndex = draw.indexed ? maxIdx : maxIdx + draw.firstVertex;
+        if (draw.indexed && minIdx <= maxIdx) inputs.minIndex = minIdx;
         Require(inputs.maxIndex <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
         inputs.indexHandle = indexCopy->Handle();
         inputs.indexOffset = 0;
@@ -2038,7 +2043,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         auto bounds = DrawIndexRange(kept, draw.indexSize, restartLeft);
         constexpr std::uint32_t ZeroFetchSlack = 0x10000u;
         if (const auto zeroFrom = bounds && !shaders.front().program->vertexAttributes.empty() ? ZeroFetchVertex(shaders.front().program->vertexAttributes) : std::nullopt) {
-            const auto limit = *zeroFrom > draw.firstVertex ? *zeroFrom - draw.firstVertex : 0u;
+            const auto limit = static_cast<std::uint32_t>(std::clamp<std::int64_t>(static_cast<std::int64_t>(*zeroFrom) - static_cast<std::int32_t>(draw.firstVertex), 0, std::numeric_limits<std::uint32_t>::max()));
             if (bounds->highest >= limit && bounds->highest - limit >= ZeroFetchSlack) bounds = ClampDrawIndices(kept, draw.indexSize, restartLeft, limit);
         }
         if (!bounds) {
@@ -2089,7 +2094,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         }
         constexpr std::uint32_t ZeroFetchSlack = 0x10000u;
         if (const auto zeroFrom = state.stages.mesh || shaders.front().program->vertexAttributes.empty() ? std::nullopt : ZeroFetchVertex(shaders.front().program->vertexAttributes)) {
-            const auto limit = *zeroFrom > draw.firstVertex ? *zeroFrom - draw.firstVertex : 0u;
+            const auto limit = static_cast<std::uint32_t>(std::clamp<std::int64_t>(static_cast<std::int64_t>(*zeroFrom) - static_cast<std::int32_t>(draw.firstVertex), 0, std::numeric_limits<std::uint32_t>::max()));
             if (*highest >= limit && *highest - limit >= ZeroFetchSlack) {
                 GuestMemory::FlushGpuWrites(draw.indexAddress, static_cast<std::size_t>(indexBytes));
                 auto clamped = std::make_shared<Buffer>(context, static_cast<std::size_t>(indexBytes), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
@@ -2131,7 +2136,8 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     inputs.vertexHandles.reserve(attributes.size());
     // An indexed draw's vertex offset moves every fetch: the copy must reach the last one.
     if (draw.indexed) {
-        Require(draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - inputs.maxIndex, "indexed draw vertex range overflow");
+        const auto offset = static_cast<std::int64_t>(static_cast<std::int32_t>(draw.firstVertex));
+        Require(static_cast<std::int64_t>(inputs.minIndex) + offset >= 0 && static_cast<std::int64_t>(inputs.maxIndex) + offset <= std::numeric_limits<std::uint32_t>::max(), "indexed draw vertex range overflow");
         inputs.maxIndex += draw.firstVertex;
         inputs.minIndex += draw.firstVertex;
     }
@@ -2165,7 +2171,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto bytes = (wholeRange ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance)) + widened;
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
-        const auto firstByte = !wholeRange ? VertexBufferReadOffset(attribute, draw.firstVertex, draw.firstInstance) : 0;
+        const auto firstByte = !wholeRange ? VertexBufferReadOffset(attribute, draw.indexed ? inputs.minIndex : draw.firstVertex, draw.firstInstance) : 0;
         Require(!state.hasColorTarget || address + bytes <= state.color.MemoryAddress() || state.color.MemoryAddress() + state.color.bytes <= address + firstByte, "vertex buffer aliases the render target");
         const auto stride = (fields[1] >> 16u) & 0x3fffu;
         fetchOf[i] = fetches.size();
