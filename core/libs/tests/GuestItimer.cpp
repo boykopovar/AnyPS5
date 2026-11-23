@@ -153,6 +153,15 @@ int main(int argc, char** argv) {
     for (int cpu : {1, 2}) {
         const int signal = cpu == 1 ? 26 : 27;
         const GuestSignalSet signalSet{{1u << (signal - 1), 0, 0, 0}};
+        const KernelTimespec poll{0, 0};
+        const GuestItimerval idleCpuTimer{{0, 0}, {0, 20000}};
+        Require(setitimer_nid_postfix(cpu, &idleCpuTimer, nullptr) == 0, "arming the idle CPU timer failed");
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        Require(Micros(Read(cpu).value) > 0, "timer poller CPU expired the idle CPU timer");
+        *__error_nid_postfix() = 0;
+        Require(sigtimedwait_nid_postfix(&signalSet, nullptr, &poll) == -1 && *__error_nid_postfix() == 35, "the idle CPU timer left a pending signal");
+        const GuestItimerval zeroCpu{{0, 0}, {0, 0}};
+        Require(setitimer_nid_postfix(cpu, &zeroCpu, nullptr) == 0, "disarming the idle CPU timer failed");
         const GuestItimerval cpuOnce{{0, 0}, {0, 100000}};
         GuestItimerval cpuPrevious{{11, 22}, {33, 44}};
         Require(setitimer_nid_postfix(cpu, &cpuOnce, &cpuPrevious) == 0, "arming a CPU timer failed");
@@ -161,7 +170,6 @@ int main(int argc, char** argv) {
         Require(Micros(armed.interval) == 0 && Micros(armed.value) > 0 && Micros(armed.value) <= 100000, "the CPU timer is not visible");
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         Require(Micros(Read(cpu).value) > 10000, "wall-clock sleep consumed the CPU timer");
-        const KernelTimespec poll{0, 0};
         *__error_nid_postfix() = 0;
         Require(sigtimedwait_nid_postfix(&signalSet, nullptr, &poll) == -1 && *__error_nid_postfix() == 35,
             "the CPU timer expired without enough process CPU time");
@@ -178,11 +186,19 @@ int main(int argc, char** argv) {
         const auto rearmedCpu = Read(cpu);
         Require(Micros(rearmedCpu.interval) == 20000 && Micros(rearmedCpu.value) >= 0 && Micros(rearmedCpu.value) <= 20000,
             "the periodic CPU timer was not re-armed");
-        const GuestItimerval zeroCpu{{0, 0}, {0, 0}};
         Require(setitimer_nid_postfix(cpu, &zeroCpu, &cpuPrevious) == 0, "disarming the CPU timer failed");
         Require(Micros(cpuPrevious.interval) == 20000, "disarming the CPU timer returned the wrong interval");
         const auto idleCpu = Read(cpu);
         Require(Micros(idleCpu.interval) == 0 && Micros(idleCpu.value) == 0, "the CPU timer remained armed after disarm");
+        for (;;) {
+            *__error_nid_postfix() = 0;
+            const int pending = sigtimedwait_nid_postfix(&signalSet, nullptr, &poll);
+            if (pending == -1) {
+                Require(*__error_nid_postfix() == 35, "draining CPU timer signals failed");
+                break;
+            }
+            Require(pending == signal, "draining CPU timer signals returned the wrong signal");
+        }
     }
     Require(_sigprocmask_nid_postfix(3, &cpuPreviousMask, nullptr) == 0, "restoring CPU timer signal mask failed");
     bool threw = false;

@@ -40,6 +40,7 @@
 #include <sys/times.h>
 #include <unistd.h>
 #ifdef __linux__
+#include <sys/resource.h>
 #include <dlfcn.h>
 #include <link.h>
 #include <pthread.h>
@@ -473,6 +474,41 @@ int APS5_VABI _nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec*
 int APS5_VABI usleep_nid_postfix(KernelUseconds microseconds) {
     CancellableSleep(static_cast<std::uint64_t>(microseconds) * 1000ULL);
     return 0;
+}
+
+bool HostCurrentThreadCpuTimes_nid_no_patch(std::uint64_t* userNanos, std::uint64_t* systemNanos) {
+    if (userNanos == nullptr || systemNanos == nullptr) return false;
+#ifdef _WIN32
+    FILETIME creation{};
+    FILETIME exitTime{};
+    FILETIME kernel{};
+    FILETIME user{};
+    if (!GetThreadTimes(GetCurrentThread(), &creation, &exitTime, &kernel, &user)) return false;
+    const auto toTicks = [](const FILETIME& time) {
+        return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+    };
+    *userNanos = toTicks(user) * 100ULL;
+    *systemNanos = toTicks(kernel) * 100ULL;
+    return true;
+#elif defined(__APPLE__)
+    thread_basic_info_data_t info{};
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    if (thread_info(pthread_mach_thread_np(pthread_self()), THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count) != KERN_SUCCESS) return false;
+    *userNanos = (static_cast<std::uint64_t>(info.user_time.seconds) * 1000000ULL + static_cast<std::uint64_t>(info.user_time.microseconds)) * 1000ULL;
+    *systemNanos = (static_cast<std::uint64_t>(info.system_time.seconds) * 1000000ULL + static_cast<std::uint64_t>(info.system_time.microseconds)) * 1000ULL;
+    return true;
+#elif defined(__linux__)
+    rusage usage{};
+    if (getrusage(RUSAGE_THREAD, &usage) != 0) return false;
+    const auto toNanos = [](const timeval& time) {
+        return static_cast<std::uint64_t>(time.tv_sec) * 1000000000ULL + static_cast<std::uint64_t>(time.tv_usec) * 1000ULL;
+    };
+    *userNanos = toNanos(usage.ru_utime);
+    *systemNanos = toNanos(usage.ru_stime);
+    return true;
+#else
+    return false;
+#endif
 }
 
 #ifdef _WIN32
