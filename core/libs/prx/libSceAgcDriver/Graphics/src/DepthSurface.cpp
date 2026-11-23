@@ -1484,7 +1484,7 @@ public:
     void PublishForGuestRead() {
         if (!hostWritten->load(std::memory_order_acquire)) return;
         Require(!HoldsMultisampleTargetsLock(), "sample-preserving guest publication of native multisample depth is not implemented while a multisampled colour target is being acquired");
-        PublishToGuest();
+        PublishToGuest(DepthReadCause::Access);
     }
 
     std::uint64_t written = ++depthWrites;
