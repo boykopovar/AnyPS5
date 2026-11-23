@@ -240,6 +240,8 @@ int APS5_VABI LibraryTerm(FontLibNative* library) {
     if (!freeFn) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* ctx = static_cast<FtLibraryContext*>(localLibrary.fontset_registry);
     if (!ctx) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    localLibrary.fontset_registry = nullptr;
+    if (!CopyOutGuest(library, localLibrary)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (ctx->library) {
         FT_Done_Library(ctx->library);
         ctx->library = nullptr;
@@ -257,8 +259,6 @@ int APS5_VABI LibraryTerm(FontLibNative* library) {
         ctx->memory = nullptr;
     }
     freeFn(localLibrary.alloc_ctx, ctx);
-    localLibrary.fontset_registry = nullptr;
-    if (!CopyOutGuest(library, localLibrary)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
