@@ -3,6 +3,7 @@
 #include "prx/libSceOpusCeltEnc/include/OpusEncoder.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdarg>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -147,7 +148,18 @@ int APS5_VABI sceOpusCeltEncCtl(OpusCeltEncoder* state, int request, ...) {
     if (state == nullptr) return encoderError(codes.nullErrorOffset);
     if (!hasStateMarker(state, codes.stateMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
     if (outsideRequests(request) && request != requestMinusOne && request != requestMinusTwo) return encoderError(requestErrorOffset);
-    NotImplemented_nid_no_patch(__func__);
+#ifdef _WIN32
+    __builtin_sysv_va_list list;
+    __builtin_sysv_va_start(list, request);
+    const std::int32_t value = OpusEncoderLibrary::ReadCtlValue(request, [&] { return __builtin_va_arg(list, int); });
+    __builtin_sysv_va_end(list);
+#else
+    std::va_list list;
+    va_start(list, request);
+    const std::int32_t value = OpusEncoderLibrary::ReadCtlValue(request, [&] { return va_arg(list, int); });
+    va_end(list);
+#endif
+    return library.Ctl(state, request, value);
 }
 
 int APS5_VABI sceOpusCeltEncEncodeWithPriority(OpusCeltEncoder* state, const std::int16_t* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {

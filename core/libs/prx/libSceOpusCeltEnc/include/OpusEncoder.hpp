@@ -131,6 +131,51 @@ public:
         return bytes;
     }
 
+    enum class CtlArgument { None, Value, Unsupported };
+
+    static CtlArgument CtlArgumentKind(int request) {
+        switch (request) {
+        case OPUS_RESET_STATE: return CtlArgument::None;
+        case OPUS_SET_BITRATE_REQUEST:
+        case OPUS_SET_MAX_BANDWIDTH_REQUEST:
+        case OPUS_SET_VBR_REQUEST:
+        case OPUS_SET_BANDWIDTH_REQUEST:
+        case OPUS_SET_COMPLEXITY_REQUEST:
+        case OPUS_SET_INBAND_FEC_REQUEST:
+        case OPUS_SET_PACKET_LOSS_PERC_REQUEST:
+        case OPUS_SET_DTX_REQUEST:
+        case OPUS_SET_VBR_CONSTRAINT_REQUEST:
+        case OPUS_SET_FORCE_CHANNELS_REQUEST:
+        case OPUS_SET_SIGNAL_REQUEST:
+        case OPUS_SET_LSB_DEPTH_REQUEST:
+        case OPUS_SET_EXPERT_FRAME_DURATION_REQUEST:
+        case OPUS_SET_PREDICTION_DISABLED_REQUEST:
+        case OPUS_SET_PHASE_INVERSION_DISABLED_REQUEST: return CtlArgument::Value;
+        }
+        return CtlArgument::Unsupported;
+    }
+
+    template <typename TReadValue>
+    static std::int32_t ReadCtlValue(int request, TReadValue readValue) {
+        return CtlArgumentKind(request) == CtlArgument::Value ? readValue() : 0;
+    }
+
+    int Ctl(void* state, int request, std::int32_t value) {
+        const CtlArgument kind = CtlArgumentKind(request);
+        if (kind == CtlArgument::Unsupported) fail(("request " + std::to_string(request) + " is not implemented").c_str());
+        std::lock_guard lock(mutex);
+        if (!hasMarker(state)) return error(codes.destroyStateErrorOffset);
+        const auto found = encoders.find(stateWord(state, codes.stateInstanceOffset));
+        if (found == encoders.end()) fail("state does not reference a live encoder");
+        OpusEncoder* codec = found->second->codec.get();
+        if (kind == CtlArgument::None) {
+            if (opus_encoder_ctl(codec, OPUS_RESET_STATE) != OPUS_OK) fail("libopus did not reset the encoder");
+            return 0;
+        }
+        if (opus_encoder_ctl(codec, request, static_cast<opus_int32>(value)) != OPUS_OK) fail(("the answer to request " + std::to_string(request) + " with a value libopus refuses is not known").c_str());
+        return 0;
+    }
+
     int Destroy(void* state) {
         if (!state) return error(codes.nullErrorOffset);
         if (!hasMarker(state)) return error(codes.destroyStateErrorOffset);
