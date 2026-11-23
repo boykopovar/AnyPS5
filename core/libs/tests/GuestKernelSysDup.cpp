@@ -92,6 +92,26 @@ int main() {
 
     RequireThrows([] { sceKernelRdup(1234567, 0); }, "sceKernelRdup for another process did not throw");
 
+    Require(__sys_rdup_nid_postfix(0, -1) == -1 && *__error_nid_postfix() == GuestEbadf, "__sys_rdup(0, -1) did not fail with EBADF");
+    Require(__sys_rdup_nid_postfix(getpid_nid_postfix(), -1) == -1 && *__error_nid_postfix() == GuestEbadf, "__sys_rdup(own_pid, -1) did not fail with EBADF");
+    Require(__sys_rdup_nid_postfix(0, 1000000) == -1 && *__error_nid_postfix() == GuestEbadf, "__sys_rdup on unopened descriptor did not fail with EBADF");
+    RequireThrows([] { __sys_rdup_nid_postfix(1234567, 0); }, "__sys_rdup for another process did not throw");
+
+    int sysRdupPipe[2]{-1, -1};
+    Require(pipe_nid_postfix(sysRdupPipe) == 0, "sys_rdup pipe creation failed");
+    const int sysRdupCopy = __sys_rdup_nid_postfix(0, sysRdupPipe[0]);
+    Require(sysRdupCopy >= 0 && sysRdupCopy != sysRdupPipe[0], "__sys_rdup(0, fd) failed to duplicate");
+    const char sysRdupMsg[] = "sys_rdup_payload";
+    const auto sysRdupLen = static_cast<std::int64_t>(sizeof(sysRdupMsg));
+    Require(write_nid_postfix(sysRdupPipe[1], sysRdupMsg, sysRdupLen) == sysRdupLen, "write to pipe failed");
+    char sysRdupBuf[32]{};
+    Require(read_nid_postfix(sysRdupCopy, sysRdupBuf, sizeof(sysRdupBuf)) == sysRdupLen, "read from sys_rdup copy failed");
+    Require(std::memcmp(sysRdupBuf, sysRdupMsg, sizeof(sysRdupMsg)) == 0, "sys_rdup payload mismatch");
+
+    Require(close_nid_postfix(sysRdupCopy) == 0, "close sys_rdup copy failed");
+    Require(close_nid_postfix(sysRdupPipe[0]) == 0, "close sys_rdup pipe 0 failed");
+    Require(close_nid_postfix(sysRdupPipe[1]) == 0, "close sys_rdup pipe 1 failed");
+
     std::puts("KERNEL SYS DUP tests passed");
     return 0;
 }
