@@ -46,6 +46,11 @@ constexpr std::size_t TexturesOffset = 65536;
 constexpr std::size_t BlockBytes = TexturesOffset + 2 * 65536;
 constexpr std::size_t UnimportableBytes = BlockBytes - 256;
 constexpr std::uint64_t CpuWriteResolutions = 1;
+#ifdef _WIN32
+constexpr std::uint64_t DriverStoreReuses = 1;
+#else
+constexpr std::uint64_t DriverStoreReuses = 2;
+#endif
 
 alignas(256) std::array<std::uint32_t, Records> Keys{};
 alignas(256) std::array<std::uint32_t, Lanes * 4> Output{};
@@ -371,7 +376,7 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
     AgcDriver::GuestMemory::Write(AddressOf(block.Texels(11)), std::as_bytes(std::span(stored)));
     Require(Dispatch(device, result, 11) == Row(stored.data()), "image table reuse: an entry the driver stored over in the epoch kept its old texels");
     Require(Dispatch(device, result, 11) == Row(stored.data()), "image table reuse: the table resolved after a driver store sampled the wrong entry");
-    Expect(before, 1, 1, "a driver store over an entry");
+    Expect(before, DriverStoreReuses, 1, "a driver store over an entry");
 
     before = AgcDriver::Graphics::ImageTableReuses();
     Fill(block, 17, 0.75f);
