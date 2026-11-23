@@ -40,7 +40,9 @@ class Tests(unittest.TestCase):
     def test_invalid_cache_and_empty_seed(self):
         cache, seed = self.root / "cache", self.root / "seed"
         cache.write_bytes(b"\xff")
-        self.assertEqual(self.run_tool(cache, seed).returncode, 2)
+        result = self.run_tool(cache, seed)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(str(cache), result.stderr)
         self.assertFalse(seed.exists())
         cache.write_text("OPT:BOOL=ON\n", encoding="utf-8")
         seed.write_bytes(b"")

@@ -129,6 +129,18 @@ Titles run natively, so the host CPU needs the extensions of the PS5's Zen 2 CPU
 
 On Linux and Windows, a converted title logs the host CPU's extensions at start-up. If one is absent, it stops before running any title code and names the CPU and the missing extensions ([list](../dev/debt/libkernel.md)).
 
+### Linux system requirements
+
+The Linux system libraries need glibc 2.38 or later and the C++ library of GCC 13 or later (`GLIBCXX_3.4.31`), as in Ubuntu 24.04, Debian 13, Fedora 39 and their later releases. On an older system, such as Ubuntu 22.04, Debian 12 or Fedora 38, none of them loads, and the title stops before it starts with a line such as:
+
+```text
+./app.elf: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found (required by /path/to/libs/libc.prx)
+```
+
+The v0.1.4 and v0.1.5 `prx-linux` archives need glibc 2.43, as in Ubuntu 26.04 and Fedora 44.
+
+The Linux `relinker-<version>` release file is linked statically and also runs on older systems. A browser download has no execute permission, so run `chmod +x relinker-<version>` once.
+
 ### Output file collisions
 
 The executable, registry, Windows import diagnostics, icon and desktop entry output files must not refer to the input executable or to a bundled module being converted. This includes hard links and symbolic links.

@@ -65,9 +65,18 @@ export function typesForAction(action) {
     return padButtons.has(action) ? ['KEY', 'MOUSE', 'WHEEL'] : ['KEY', 'MOUSE'];
 }
 
+export function asciiTrim(value) {
+    return value.replace(/^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/gu, '');
+}
+
+export function asciiUpper(value) {
+    return value.replace(/[a-z]+/gu, letters => letters.toUpperCase());
+}
+
 export function canonicalValue(value, choices) {
     if (typeof value !== 'string') return undefined;
-    return choices.find(choice => choice.toUpperCase() === value.trim().toUpperCase());
+    const wanted = asciiUpper(asciiTrim(value));
+    return choices.find(choice => asciiUpper(choice) === wanted);
 }
 
 export function canonicalChord(value) {

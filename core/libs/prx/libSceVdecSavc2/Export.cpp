@@ -1,4 +1,5 @@
 #include "prx/libSceVdecSavc2/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libSceVdecSavc/include/SdecShared.hpp"
 #include <algorithm>
 #include <array>
@@ -7,7 +8,6 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libkernel_sys/include/Api.hpp"
 
 namespace {
 
@@ -31,15 +31,6 @@ constexpr std::array<LevelLimits, 17> Levels{{
     {40, 32768, 8192}, {41, 32768, 8192}, {42, 34816, 8704}, {50, 110400, 22080}, {51, 184320, 36864},
     {52, 184320, 36864}, {111, 184320, 99},
 }};
-
-std::uint32_t CompiledSdkVersion() {
-    std::int32_t version = 0;
-    const int savedErrno = errno;
-    const int status = sceKernelGetCompiledSdkVersion(&version);
-    errno = savedErrno;
-    if (status != 0) return 0xffffffffu;
-    return static_cast<std::uint32_t>(version);
-}
 
 bool ValidDepths(const SdecConfig2& config) {
     return config.depthLuma == config.depthChroma || (config.depthLuma != 8 && config.depthChroma != 8);
@@ -118,7 +109,7 @@ bool ComputeSizes(const SdecConfig2& config, const SdecRecord& record, std::uint
     const std::uint64_t frames = dpbFrames + static_cast<std::uint64_t>(std::max(record.extraFrames, 0)) + 1;
     if (width > MaxLayoutWidthInMbs || height > MaxLayoutHeightInMbs || frames > MaxLayoutFrames) return false;
     const std::uint64_t instances = record.instanceMode == 1 ? 1 : (record.instanceMode == 2 ? record.unknown8 : 2);
-    const bool lateSdk = CompiledSdkVersion() >= SdkLateThreshold;
+    const bool lateSdk = ApplicationCompiledSdkVersion() >= SdkLateThreshold;
     std::uint64_t extra = 0;
     if (lateSdk) {
         if (record.extraFrames >= 0 && record.extraFrames <= 16) {

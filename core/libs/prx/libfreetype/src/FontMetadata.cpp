@@ -18,21 +18,13 @@ FT_Face HostFace(const FreeType::GuestFaceRec* face) {
     return owner ? owner->host : nullptr;
 }
 
-bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    return GuestCopyIn_nid_no_patch(destination, source, bytes);
-}
-
-bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    return GuestCopyOut_nid_no_patch(destination, source, bytes);
-}
-
 template <typename Record, typename Modify>
 bool Update(Record* destination, Modify modify) {
     GuestArena::HostWrite write(destination, sizeof(Record));
     Record record{};
-    if (!write.Open() || !GuestWritable_nid_no_patch(destination, sizeof(Record)) || !CopyIn(&record, destination, sizeof(Record))) return false;
+    if (!write.Open() || !GuestWritable_nid_no_patch(destination, sizeof(Record)) || !GuestCopyIn_nid_no_patch(&record, destination, sizeof(Record))) return false;
     modify(record);
-    return CopyOut(destination, &record, sizeof(Record));
+    return GuestCopyOut_nid_no_patch(destination, &record, sizeof(Record));
 }
 
 }

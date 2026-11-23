@@ -26,8 +26,9 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_WAITS` | Blocking waits aggregated by guest call site, including timeout counts and longest waits, every three seconds. |
 
 To inspect a guest address in a saved `APS5_TRACE_MEMORY` log, run
-`python3 tools/memory_trace_address.py <log> --address 0x... [--length <bytes>]`. It lists recorded mapping,
-remapping, protection, reservation and unmapping events whose ranges overlap the query, in log order. These are trace
+`python3 tools/memory_trace_address.py <log> --address 0x... [--length <bytes>] [--limit <events>]`. It lists recorded mapping,
+remapping, protection, reservation and unmapping events whose ranges overlap the query, in log order. By default it shows
+the last 40 matches. Raise `--limit` to inspect earlier events, such as the mapping that preceded a later unmap. These are trace
 records, not confirmation that each attempted operation succeeded; no matching event does not prove the address was
 unmapped.
 

@@ -452,6 +452,23 @@ class TraceDigestTests(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(result.stdout, "")
 
+    def test_cli_reports_a_summary_line_without_a_field_of_the_markdown_header(self):
+        summary = self.trace.with_name("aps5-summary.jsonl")
+        records = [({key: value for key, value in SUMMARY.items() if key != name}, name)
+                   for name in ("frame_ms", "presents", "gpu_busy_ms_per_present", "gpu", "driver", "os", "resolution", "commit", "trace_dropped")]
+        records += [(dict(SUMMARY, window={"first_present": 600, "ms": 40.0}), "spec"),
+                    (dict(SUMMARY, window={"spec": "frames 600:3", "ms": 40.0}), "first_present"),
+                    (dict(SUMMARY, frame_ms={"p50": 10.0, "p90": 20.0, "max": 20.0}), "p99")]
+        for record, name in records:
+            with self.subTest(name=name):
+                summary.write_text(json.dumps(record) + "\n", encoding="utf-8")
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace)],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertTrue(result.stderr.startswith(f"FAIL: the summary line has no '{name}' field"), result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def test_cli_rejects_invalid_summary_windows(self):
         summary = self.trace.with_name("aps5-summary.jsonl")
         invalid = [(None, "window must be an object"), ([], "window must be an object")]
@@ -1151,6 +1168,14 @@ class TraceDigestTests(unittest.TestCase):
         self.assertNotIn("a.prx+0x10", total)
         self.assertEqual(total, {"a.prx+0x20": 60.0, "a.prx+0x30": 40.0, "a.prx+0x40": 20.0})
 
+    def test_tied_stack_leaders_are_stable_when_sample_rows_are_reordered(self):
+        stacks = [(["root", "leaf-z"], 2), (["root", "leaf-a"], 2)]
+        for entries in (stacks, list(reversed(stacks))):
+            result = trace_digest.digest(trace_digest.Trace([]), stacks=entries, top=1)["stacks"]
+            for field in ("self", "total"):
+                with self.subTest(field=field, entries=entries):
+                    self.assertEqual(result[field], [{"frame": "leaf-a", "pct": 50.0}])
+
     def test_largest_gpu_batches_with_their_recording(self):
         def tagged(tid, name, ts, dur, batch):
             return dict(complete(tid, name, ts, dur), args={"batch": batch})
@@ -1465,6 +1490,24 @@ class IntervalDigestTests(unittest.TestCase):
                     with contextlib.redirect_stdout(output):
                         self.assertEqual(trace_digest.main([str(self.path)]), 0)
                     self.assertIn("| Driver.Packet 7.0 |", output.getvalue())
+
+    def test_tied_interval_leaders_are_stable_when_json_keys_are_reordered(self):
+        fields = {
+            "worker_busy_pct": [("worker-z", 20), ("worker-a", 20)],
+            "top_phases_ms_per_frame": [("phase-z", 10), ("phase-a", 10)],
+            "graphics_track": [("Graphics.RenderPass.Close.z", 5), ("Graphics.RenderPass.Close.a", 5)],
+        }
+        for reverse in (False, True):
+            record = interval_line(0, 1, 20, 1, **{
+                key: dict(values[::-1] if reverse else values) for key, values in fields.items()
+            })
+            report = trace_digest.digest_intervals([record])
+            with self.subTest(field="busiest_worker", reverse=reverse):
+                self.assertEqual(report["intervals"][0]["busiest_worker"]["thread"], "worker-a")
+            with self.subTest(field="top_phase", reverse=reverse):
+                self.assertEqual(report["intervals"][0]["top_phase"]["name"], "phase-a")
+            with self.subTest(field="top_close", reverse=reverse):
+                self.assertIn("| 1 | 0 | 0 | 10 | a |", trace_digest.markdown_intervals(report))
 
     def test_command_line_table_and_json(self):
         output = io.StringIO()

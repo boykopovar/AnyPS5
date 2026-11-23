@@ -139,6 +139,19 @@ class OpenPrProgressTests(unittest.TestCase):
         self.assertEqual(order, [])
         self.assertEqual(excluded, {1: "dependency_cycle", 2: "dependency_cycle"})
 
+    def test_dependents_of_a_dependency_cycle_are_not_cycle_members(self):
+        first = self.branch(1, {"first": "1"})
+        second = self.branch(2, {"second": "2"})
+        third = self.branch(3, {"second": "3"})
+        first["depends"] = {2}
+        second["depends"] = {1}
+        third["depends"] = {1}
+        combined, included, excluded = progress_prs.integrate_pull_requests(
+            self.root, {1: first, 2: second, 3: third}, self.base, "boykopovar/AnyPS5")
+        self.assertEqual(combined, self.base)
+        self.assertEqual(included, set())
+        self.assertEqual(excluded, {1: "dependency_cycle", 2: "dependency_cycle", 3: "dependency_excluded"})
+
     def test_heads_are_fetched_by_commit_when_their_pull_ref_is_missing(self):
         first = self.branch(1, {"first": "1"})
         second = self.branch(2, {"second": "2"})

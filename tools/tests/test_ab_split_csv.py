@@ -108,6 +108,19 @@ class AbCsvTests(unittest.TestCase):
                                  "change": "", "change_pct": "", "noise_mean": "0.5",
                                  "noise_se": "0.25", "noise_sd": "0.75", "noise_n": "4"}])
 
+    def test_colliding_class_filters_emit_no_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.txt"
+            path.write_text("".join(log()), encoding="utf-8")
+            for tool in (ab_split, ab_split_csv):
+                for name in ("gputime", "0x1000"):
+                    with self.subTest(tool=tool.__name__, name=name):
+                        args = [sys.executable, tool.__file__, str(path), "--program", "0x1000", "--class", name]
+                        result = subprocess.run(args, capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 2)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn(f"{name} ms/present", result.stderr)
+
     def test_invalid_inputs_emit_no_csv(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "log.txt"
