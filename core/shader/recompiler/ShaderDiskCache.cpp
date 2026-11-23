@@ -855,6 +855,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.constantSwizzle);
         out.Value(image.constantSwizzleCompatible);
         out.Value(image.cubeFaceCompatible);
+        out.Value(image.shortCubeCompatible);
         out.Value(image.flatVolumeCompatible);
         out.Value(image.singleMipPlaneBiasCompatible);
         out.Value(image.volumeArraySampleCompatible);
@@ -973,6 +974,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.constantSwizzle);
         in.Value(image.constantSwizzleCompatible);
         in.Value(image.cubeFaceCompatible);
+        in.Value(image.shortCubeCompatible);
         in.Value(image.flatVolumeCompatible);
         in.Value(image.singleMipPlaneBiasCompatible);
         in.Value(image.volumeArraySampleCompatible);

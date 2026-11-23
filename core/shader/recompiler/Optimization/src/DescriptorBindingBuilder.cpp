@@ -21,6 +21,7 @@ namespace ShaderRecompiler {
 
 static_assert(PipelineSpecialization::ImageBase + ShaderInfo::MaxImages * PipelineSpecialization::ImageWords <= PipelineSpecialization::VertexBase);
 static_assert(PipelineSpecialization::MipCountBase + ShaderInfo::MaxImages <= PipelineSpecialization::StoreQuantizeBase);
+static_assert(PipelineSpecialization::CubeFaceLimitBase + ShaderInfo::MaxImages <= PipelineSpecialization::StoreQuantizeBase);
 static_assert(PipelineSpecialization::StoreQuantizeBase + ShaderInfo::MaxImages * PipelineSpecialization::StoreQuantizeWords <= PipelineSpecialization::DescriptorIndexBase);
 static_assert(PipelineSpecialization::CompareBase + ShaderInfo::MaxImages * PipelineSpecialization::CompareWords <= PipelineSpecialization::FoldOffsetBase);
 static_assert(PipelineSpecialization::FoldOffsetBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::UnnormalizedBaseLevelBase);
@@ -551,6 +552,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
             const auto texelFormat = (snapshot.images.at(index).dwords[1] >> 20u) & 0x1ffu;
             plan.specialization.push_back({PipelineSpecialization::D16TowardZeroBase + index, texelFormat == 22u || texelFormat == 64u || texelFormat == 74u || texelFormat == 77u ? 1u : 0u});
         }
+        plan.specialization.push_back({PipelineSpecialization::CubeFaceLimitBase + index, ResourceMaterializer::ShortCubeFaceLimit(snapshot.images.at(index))});
         if (shaderImageMinLod) {
             const auto& words = snapshot.images.at(index).dwords;
             const auto clamp = RelativeMinLod(words)[0];

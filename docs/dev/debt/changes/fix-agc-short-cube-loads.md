@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [Cube texture descriptors]
+
+- [Cube texture descriptors](../../../core/libs/prx/libSceAgcDriver/Graphics/src/GuestTextureResource.cpp) of two to five slices load at mip 0 and answer dimension queries as RDNA2 does: face f reads slice `BASE_ARRAY`+f up to `DEPTH`, else 0, and the depth component is `DEPTH`-`BASE_ARRAY`+1 (gfx1036, #11507); stores, atomics and mip loads still throw. Out-of-range cube-array sampling is unimplemented; PS5 equivalence is unmeasured. A range of fewer than six slices samples six faces from `BASE_ARRAY` (measured with `tools/hw-oracle` on gfx1036 for two to five slices, and on RX 6600, gfx1032, for equal `BASE_ARRAY` and `DEPTH`); one of six or more keeps every slice up to `DEPTH`. Samplers with `DISABLE_CUBE_WRAP` are created with `VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT`, the flag RADV maps to that bit (Mesa `src/amd/vulkan/radv_sampler.c`, `src/amd/common/ac_descriptors.c`); without `VK_EXT_non_seamless_cube_map` a cube sampled through such a sampler throws.

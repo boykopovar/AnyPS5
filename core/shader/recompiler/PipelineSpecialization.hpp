@@ -47,6 +47,7 @@ inline constexpr std::uint32_t AtomicLockTableBase = 8244u;
 inline constexpr std::uint32_t AtomicLockTableWords = 2u;
 inline constexpr std::uint32_t HeapCountBase = 8256u;
 inline constexpr std::uint32_t MipCountBase = 8320u;
+inline constexpr std::uint32_t CubeFaceLimitBase = 8448u;
 inline constexpr std::uint32_t StoreQuantizeBase = 12288u;
 inline constexpr std::uint32_t StoreQuantizeWords = 4u;
 inline constexpr std::uint32_t DescriptorIndexBase = 16384u;

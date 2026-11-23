@@ -523,6 +523,10 @@ std::uint32_t QueryDimensions(SpirvValueEmitContext& ctx, const ImageEmitAccess&
         result[3] = state.module.AllocateId();
         state.module.AddFunction(spv::OpImageQueryLevels, TypeU32(state), result[3], image);
     }
+    if (access.image.dimension == RdnaImageDimension::Dim2DArray && access.mem.imageDimension == RdnaImageDimension::Dim2DArray) {
+        const auto limit = CubeFaceLimit(state, access.mem.resource);
+        result[2] = Select(state, TypeU32(state), Binary(state, spv::OpINotEqual, TypeBool(state), limit, ConstantU32(state, 0u)), limit, result[2]);
+    }
     const auto vector = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4), vector, result[0], result[1], result[2], result[3]);
     return vector;
@@ -1454,6 +1458,12 @@ void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     }
     if (VolumeSliceAddress(access)) {
         condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, VolumeSliceInRange(ctx, access, LoadSampledImageDescriptor(state, access.mem.resource), LodU32(ctx, access)));
+    }
+    if (access.image.dimension == RdnaImageDimension::Dim2DArray && access.mem.imageDimension == RdnaImageDimension::Dim2DArray) {
+        const auto limit = CubeFaceLimit(state, access.mem.resource);
+        const auto layer = AddressU32(ctx, access, 2u);
+        const auto inside = Binary(state, spv::OpLogicalOr, TypeBool(state), Binary(state, spv::OpIEqual, TypeBool(state), limit, ConstantU32(state, 0u)), Binary(state, spv::OpULessThan, TypeBool(state), layer, limit));
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, inside);
     }
     ctx.Define(access.inst, EmitValueOrDefaultIfCondition(state, condition, TypeU32Vector(state, 4), ConstantU32CompositeZero(state, 4), [&]() {
         const auto descriptor = LoadSampledImageDescriptor(state, access.mem.resource);

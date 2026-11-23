@@ -2733,6 +2733,9 @@ private:
         const bool cubeFaceStore = op == IrOpcode::ImageWrite && !memory.imageHasMip;
         const bool cubeFaceGather = op == IrOpcode::ImageGatherRaw && (memory.imageSampleFlags == 0u || memory.imageSampleFlags == RdnaImageSampleFlagLevelZero);
         image.cubeFaceCompatible = image.cubeFaceCompatible && (cubeFaceLoad || cubeFaceSample || cubeFaceStore || cubeFaceGather) && !memory.imagePacked && memory.imageByElements == 0u;
+        const bool shortCubeLoad = op == IrOpcode::ImageRead && !memory.imageHasMip && memory.imageSampleFlags == 0u;
+        const bool shortCubeAccess = shortCubeLoad || op == IrOpcode::ImageQueryDimensions || ImageOpcodeInfoOf(op).needsSampler;
+        image.shortCubeCompatible = image.shortCubeCompatible && shortCubeAccess && !memory.imagePacked && memory.imageByElements == 0u;
         image.volumeArraySampleCompatible = image.volumeArraySampleCompatible && cubeFaceSample && !memory.imageR128 && !memory.imagePacked && memory.imageByElements == 0u;
         const bool flatVolumeLoad = op == IrOpcode::ImageRead && memory.imageSampleFlags == 0u;
         const bool flatVolumeSample = op == IrOpcode::ImageSampleRaw && memory.imageSampleFlags == RdnaImageSampleFlagLevelZero;
