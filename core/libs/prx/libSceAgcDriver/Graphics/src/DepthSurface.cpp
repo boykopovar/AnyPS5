@@ -3190,7 +3190,7 @@ DepthTarget layerTarget(const DepthTarget& target, std::uint32_t layer) {
     const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
     slice.address += static_cast<std::uint64_t>(layer) * (target.depthSlicePitch != 0u ? target.depthSlicePitch : DepthSliceBytes(target.extent, d16 ? 2u : 4u));
     if (slice.stencilAddress != 0) slice.stencilAddress += static_cast<std::uint64_t>(layer) * (target.stencilSlicePitch != 0u ? target.stencilSlicePitch : DepthSliceBytes(target.extent, 1u));
-    if (slice.htileAddress != 0) slice.htileAddress += static_cast<std::uint64_t>(layer) * HtileMetadataBytes(target.extent);
+    if (slice.htileAddress != 0) slice.htileAddress += static_cast<std::uint64_t>(layer) * (target.htileSlicePitch != 0u ? target.htileSlicePitch : HtileMetadataBytes(target.extent));
     slice.firstSlice = target.firstSlice + layer;
     slice.lastSlice = slice.firstSlice;
     slice.layers = 1;

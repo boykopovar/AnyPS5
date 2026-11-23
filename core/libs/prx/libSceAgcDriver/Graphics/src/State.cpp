@@ -570,6 +570,7 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     depth.stencilPartiallyResident = stencil && (stencilInfo & 0x1000u) != 0;
     if (const auto htile = find(cx, 0x005); zFormat != 0 && htile != cx.end() && htile->second != 0 && (read(cx, 0x010) & (1u << 29u)) != 0) {
         const auto sliceBytes = htileSliceBytes != 0u ? htileSliceBytes : HtileMetadataBytes(depth.extent);
+        depth.htileSlicePitch = sliceBytes;
         depth.htileAddress = base(0x005, 0x01e) + static_cast<std::uint64_t>(view & 0x1fffu) * sliceBytes + htileMipOffset;
         depth.htileStencil = stencil && !depth.htileDepthOnly;
     }

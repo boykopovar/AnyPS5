@@ -2145,13 +2145,19 @@ void DisabledColorTests() {
         mipped.context[0x010] |= 1u << 29u;
         mipped.context[0x005] = 0x300;
         const auto htileSecond = AgcDriver::Graphics::DecodeState(mipped);
-        Require(htileSecond.depth && htileSecond.depth->htileAddress == 0x30000u + 0x8000u, "the HTILE of view mip 1 of a 1024x1024 three-mip chain is not after the smaller levels' meta blocks");
+        const auto htileMipOffset = AgcDriver::Graphics::HtileMetadataBytes({mips.at(2).width, mips.at(2).height});
+        Require(htileSecond.depth && htileSecond.depth->htileAddress == 0x30000u + htileMipOffset, "the HTILE of view mip 1 of a 1024x1024 three-mip chain is not after the smaller levels' meta blocks");
+        const auto htileSlicePitch =
+            AgcDriver::Graphics::HtileMetadataBytes({mips.at(0).width, mips.at(0).height}) +
+            AgcDriver::Graphics::HtileMetadataBytes({mips.at(1).width, mips.at(1).height}) +
+            AgcDriver::Graphics::HtileMetadataBytes({mips.at(2).width, mips.at(2).height});
+        Require(htileSecond.depth->htileSlicePitch == htileSlicePitch, "the HTILE slice pitch does not sum the mip metadata sizes");
         mipped.context[0x002] = 0;
         const auto htileFirst = AgcDriver::Graphics::DecodeState(mipped);
         Require(htileFirst.depth && htileFirst.depth->htileAddress == 0x30000u + 0x10000u, "the HTILE of view mip 0 of a 1024x1024 three-mip chain is not last in the chain");
         mipped.context[0x002] = (1u << 26u) | 1u | (1u << 13u);
         const auto htileSliced = AgcDriver::Graphics::DecodeState(mipped);
-        Require(htileSliced.depth && htileSliced.depth->htileAddress == htileSecond.depth->htileAddress + 0x20000u, "slice 1 of a mip chain's HTILE does not step by the whole chain's HTILE");
+        Require(htileSliced.depth && htileSliced.depth->htileAddress == 0x30000u + htileSlicePitch + htileMipOffset, "slice 1 of a mip chain's HTILE is not at the mip offset within the next HTILE slice");
         mipped.context[0x002] = 2u << 26u;
         mipped.context[0x007] = 0x003f003f;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(mipped); }, "into the packed mip tail is unsupported");
