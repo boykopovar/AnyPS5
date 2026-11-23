@@ -126,8 +126,31 @@ void CheckMbrtoc() {
     GuardedPages statePages;
     auto* readOnly = statePages.Last<unsigned char>(16);
     statePages.ReadOnly();
+    wide = 0x5a5a5a5a;
+    unit = 0x5a5a;
     RequireInvalid([&] { mbrtoc32_nid_postfix(&wide, "A", 1, readOnly); }, "mbrtoc32: unwritable conversion state");
+    Require(wide == 0x5a5a5a5a, "mbrtoc32 leaves the destination unchanged when the state is read-only");
     RequireInvalid([&] { mbrtoc16_nid_postfix(&unit, "\xc3", 1, readOnly); }, "mbrtoc16: unwritable conversion state");
+    RequireInvalid([&] { mbrtoc16_nid_postfix(&unit, "A", 1, readOnly); }, "mbrtoc16: unwritable conversion state");
+    Require(unit == 0x5a5a, "mbrtoc16 leaves the destination unchanged when the state is read-only");
+    RequireInvalid([&] { mbrtoc16_nid_postfix(&unit, "\xf0\x9f\x98\x80", 4, readOnly); }, "mbrtoc16: unwritable conversion state");
+    Require(unit == 0x5a5a, "mbrtoc16 leaves the destination unchanged when a high surrogate cannot be recorded");
+
+    GuardedPages surrogatePages;
+    auto* surrogateState = surrogatePages.Last<unsigned char>(16);
+    surrogateState[10] = 0x10;
+    surrogatePages.ReadOnly();
+    RequireInvalid([&] { mbrtoc16_nid_postfix(&unit, "A", 1, surrogateState); }, "mbrtoc16: unwritable conversion state");
+    Require(unit == 0x5a5a, "mbrtoc16 leaves the destination unchanged when a pending low surrogate cannot be consumed");
+
+    std::uint64_t partial[2] = {};
+    Require(mbrtoc32_nid_postfix(&wide, "\xc3", 1, partial) == Incomplete, "mbrtoc32 starts an incomplete character");
+    RequireInvalid([&] { mbrtoc32_nid_postfix(static_cast<std::uint32_t*>(Inaccessible()), "\xa9", 1, partial); }, "mbrtoc32: unwritable destination");
+    Require(reinterpret_cast<unsigned char*>(partial)[10] == 1, "mbrtoc32 keeps the pending character when the destination is unwritable");
+    partial[0] = partial[1] = 0;
+    Require(mbrtoc16_nid_postfix(&unit, "\xc3", 1, partial) == Incomplete, "mbrtoc16 starts an incomplete character");
+    RequireInvalid([&] { mbrtoc16_nid_postfix(static_cast<std::uint16_t*>(Inaccessible()), "\xa9", 1, partial); }, "mbrtoc16: unwritable destination");
+    Require(reinterpret_cast<unsigned char*>(partial)[10] == 1, "mbrtoc16 keeps the pending character when the destination is unwritable");
 }
 
 void CheckWcsrtombs() {

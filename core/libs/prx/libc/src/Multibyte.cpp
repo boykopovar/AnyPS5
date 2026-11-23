@@ -138,8 +138,10 @@ void WriteShiftPending(void* state, std::int8_t pending, const char* message) {
 }
 
 template<typename TValue>
-void WriteDestination(TValue* destination, TValue value, const char* message) {
-    if (destination) GuestCopyOutOrThrow(destination, &value, sizeof(value), message);
+void Publish(void* state, std::int8_t pending, TValue* destination, TValue value, const char* stateMessage, const char* destinationMessage) {
+    if (destination && !GuestWritable_nid_no_patch(destination, sizeof(value))) throw std::invalid_argument(destinationMessage);
+    WriteShiftPending(state, pending, stateMessage);
+    if (destination) GuestCopyOutOrThrow(destination, &value, sizeof(value), destinationMessage);
 }
 
 }
@@ -252,8 +254,7 @@ std::size_t APS5_VABI mbrtoc32_nid_postfix(std::uint32_t* destination, const cha
             return static_cast<std::size_t>(-1);
         }
         if (pending == 0) {
-            WriteDestination(destination, static_cast<std::uint32_t>(value), "mbrtoc32: unwritable destination");
-            WriteShiftPending(state, 0, "mbrtoc32: unwritable conversion state");
+            Publish(state, 0, destination, static_cast<std::uint32_t>(value), "mbrtoc32: unwritable conversion state", "mbrtoc32: unwritable destination");
             return value == 0 ? 0 : consumed;
         }
     }
@@ -271,8 +272,7 @@ std::size_t APS5_VABI mbrtoc16_nid_postfix(std::uint16_t* destination, const cha
     }
     auto [value, pending] = ReadShiftState(state, "mbrtoc16: unreadable conversion state");
     if (pending == LowSurrogatePending) {
-        WriteDestination(destination, static_cast<std::uint16_t>((value & 0x3ff) | 0xdc00), "mbrtoc16: unwritable destination");
-        WriteShiftPending(state, 0, "mbrtoc16: unwritable conversion state");
+        Publish(state, 0, destination, static_cast<std::uint16_t>((value & 0x3ff) | 0xdc00), "mbrtoc16: unwritable conversion state", "mbrtoc16: unwritable destination");
         return static_cast<std::size_t>(-3);
     }
     GuestSourceWindow<char, 8> input(source, count, "mbrtoc16: unreadable source");
@@ -288,12 +288,10 @@ std::size_t APS5_VABI mbrtoc16_nid_postfix(std::uint16_t* destination, const cha
             return static_cast<std::size_t>(-1);
         }
         if (value >= 0x10000) {
-            WriteDestination(destination, static_cast<std::uint16_t>(((value >> 10) + 0x3fc0) | 0xd800), "mbrtoc16: unwritable destination");
-            WriteShiftPending(state, LowSurrogatePending, "mbrtoc16: unwritable conversion state");
+            Publish(state, LowSurrogatePending, destination, static_cast<std::uint16_t>(((value >> 10) + 0x3fc0) | 0xd800), "mbrtoc16: unwritable conversion state", "mbrtoc16: unwritable destination");
             return consumed;
         }
-        WriteDestination(destination, static_cast<std::uint16_t>(value), "mbrtoc16: unwritable destination");
-        WriteShiftPending(state, 0, "mbrtoc16: unwritable conversion state");
+        Publish(state, 0, destination, static_cast<std::uint16_t>(value), "mbrtoc16: unwritable conversion state", "mbrtoc16: unwritable destination");
         return value == 0 ? 0 : consumed;
     }
     WriteShiftValue(state, value, "mbrtoc16: unwritable conversion state");
