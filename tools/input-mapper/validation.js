@@ -19,11 +19,11 @@ export const settings = [
 ];
 
 const numberPattern = /^-?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/u;
-const sdlControllerButtons = [
+export const sdlControllerButtons = [
     'a', 'b', 'x', 'y', 'back', 'guide', 'start', 'leftstick', 'rightstick', 'leftshoulder', 'rightshoulder',
     'dpup', 'dpdown', 'dpleft', 'dpright', 'misc1', 'paddle1', 'paddle2', 'paddle3', 'paddle4', 'touchpad'
 ];
-const controllerDestinations = [...chordButtons, 'None'];
+export const controllerDestinations = [...chordButtons, 'None'];
 
 function parseControllerRemap(button, value, used) {
     const name = typeof button === 'string' ? button.trim() : '';
