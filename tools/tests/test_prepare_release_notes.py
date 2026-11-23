@@ -95,6 +95,20 @@ class PrepareBodyLimitTests(ReleaseNotesCase):
         self.assertEqual(self.body.read_bytes(), b"## New Contributors\n* newcomer\n")
         self.assertEqual(self.full.read_bytes(), notes.encode("utf-8"))
 
+    def test_fenced_headings_and_changelog_are_literal_in_oversized_notes(self):
+        for marker in ("````", "~~~~"):
+            with self.subTest(marker=marker):
+                prefix = f"  {marker}markdown\r\n## What's Changed\r\n  {marker}\r\n"
+                retained = "**Full Changelog**: link\r\n"
+                section = (f"## What's Changed\r\n{marker}\r\n{marker[:3]}\r\n"
+                           f"## Example\r\n**Full Changelog**: example\r\n{marker}{marker[0]}\r\n"
+                           + "x" * LIMIT + "\r\n")
+                notes = prefix + section + retained
+                self.write_source(json.dumps({"body": notes}))
+                prepare_release_notes.prepare_notes(self.source, self.body, self.full)
+                self.assertEqual(self.body.read_bytes(), (prefix + retained).encode())
+                self.assertEqual(self.full.read_bytes(), notes.encode())
+
     def test_marker_is_counted_before_shortening_the_body(self):
         marker = "<!-- anyps5-release-workflow:" + "a" * 40 + " -->"
         prefix = "## What's Changed\n* "

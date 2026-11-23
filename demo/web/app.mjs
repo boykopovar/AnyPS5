@@ -469,10 +469,12 @@ $("convert").onclick = async () => {
       if (writable === null) return;
       sink = writable;
     } else if ($("save").value === "disk") {
+      $("cancel").hidden = false;
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
       const parent = await window.showDirectoryPicker({ mode: "readwrite" });
       if (currentWorker !== worker) return;
-      const transaction = await OutputDirectoryTransaction.create(parent, name, folderLocks, locale);
+      const transaction = await OutputDirectoryTransaction.create(parent, name, folderLocks, locale, () => currentWorker === worker);
+      if (!transaction) return;
       if (currentWorker !== worker) {
         await transaction.discard();
         return;

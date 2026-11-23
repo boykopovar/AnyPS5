@@ -642,6 +642,24 @@ class BisectCleanupTests(GitHistoryCase):
 
 
 class AtomicReportRaceTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "rename refuses an existing destination on Windows")
+    def test_windows_fallback_preserves_report_created_before_rename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            rename, replace = os.rename, os.replace
+
+            def create_racing_report(publish, source, destination):
+                Path(destination).write_text('{"result": "other run"}', encoding="utf-8")
+                return publish(source, destination)
+
+            with patch.object(os, "link", side_effect=OSError(errno.ENOTSUP, "unsupported")), \
+                    patch.object(os, "rename", side_effect=lambda *args: create_racing_report(rename, *args)), \
+                    patch.object(os, "replace", side_effect=lambda *args: create_racing_report(replace, *args)), \
+                    self.assertRaises(FileExistsError):
+                performance_bisect.write_report(path, {"result": "bisect report"})
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "other run"})
+            self.assertEqual(list(Path(directory).iterdir()), [path])
+
     def test_does_not_overwrite_a_report_created_during_write(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "report.json"
