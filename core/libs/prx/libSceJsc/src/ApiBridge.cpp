@@ -3,7 +3,6 @@
 
 #include <atomic>
 #include <stdexcept>
-#include <string>
 
 namespace {
 
@@ -11,7 +10,7 @@ std::atomic<const Jsc::ApiBridge*> registeredBridge{nullptr};
 
 const Jsc::ApiBridge& Bridge(const char* function) {
     const auto* bridge = registeredBridge.load(std::memory_order_acquire);
-    if (!bridge) throw std::logic_error(std::string(function) + ": no JavaScriptCore bridge is registered by libSceNKWebKit");
+    if (!bridge) NotImplemented_nid_no_patch(function);
     return *bridge;
 }
 

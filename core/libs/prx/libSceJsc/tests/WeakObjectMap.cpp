@@ -45,13 +45,18 @@ void* CreateWeakObjectMap(const void* context, void* privateData, Jsc::WeakMapDe
 
 const Jsc::ApiBridge bridge{&UnusedMakeString, &UnusedHasPropertyForKey, &UnusedResizeStringBuilder, &CreateWeakObjectMap};
 
-std::string LogicErrorOf(void (*call)(), const char* name) {
+void RequireMissingBridge(void (*call)(), const char* name) {
+    const std::string expected = std::string(name) + " not implemented";
     try {
         call();
-    } catch (const std::logic_error& error) {
-        return error.what();
+    } catch (const std::runtime_error& error) {
+        Require(error.what() == expected);
+        return;
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "%s reported an unexpected error: %s\n", name, error.what());
+        std::exit(1);
     }
-    std::fprintf(stderr, "%s did not throw a logic error\n", name);
+    std::fprintf(stderr, "%s did not report a missing bridge\n", name);
     std::exit(1);
 }
 
@@ -115,14 +120,18 @@ void CallHasPropertyWithoutBridge() {
     JSObjectHasPropertyForKey(&bridgeContext, &bridgeContext, &bridgeContext, nullptr);
 }
 
-void TestMissingBridgeThrowsALogicError() {
+void CallResizeStringBuilderWithoutBridge() {
+    Jsc::WtfAbi::StringBuilder builder{};
+    _ZN3WTF13StringBuilder6resizeEj(&builder, 1);
+}
+
+void TestMissingBridgeReportsNotImplemented() {
     RegisterApiBridge_nid_no_patch(nullptr);
 
-    const std::string create = LogicErrorOf(&CallCreateWithoutBridge, "JSWeakObjectMapCreate");
-    Require(create.find("JSWeakObjectMapCreate") != std::string::npos);
-    Require(create.find("no JavaScriptCore bridge is registered") != std::string::npos);
-    Require(LogicErrorOf(&CallMakeStringWithoutBridge, "JSValueMakeString").find("JSValueMakeString") != std::string::npos);
-    Require(LogicErrorOf(&CallHasPropertyWithoutBridge, "JSObjectHasPropertyForKey").find("JSObjectHasPropertyForKey") != std::string::npos);
+    RequireMissingBridge(&CallCreateWithoutBridge, "JSWeakObjectMapCreate");
+    RequireMissingBridge(&CallMakeStringWithoutBridge, "JSValueMakeString");
+    RequireMissingBridge(&CallHasPropertyWithoutBridge, "JSObjectHasPropertyForKey");
+    RequireMissingBridge(&CallResizeStringBuilderWithoutBridge, "_ZN3WTF13StringBuilder6resizeEj");
 }
 
 void TestNullContextPathsDoNotNeedABridge() {
@@ -145,7 +154,7 @@ int main() {
     TestNullContextThrowsBeforeTheBridge();
     TestCreateForwardsItsArguments();
     TestNullPrivateDataAndDestructorAreForwarded();
-    TestMissingBridgeThrowsALogicError();
+    TestMissingBridgeReportsNotImplemented();
     TestNullContextPathsDoNotNeedABridge();
     RegisterApiBridge_nid_no_patch(nullptr);
     std::puts("libSceJsc JSWeakObjectMapCreate tests passed");
