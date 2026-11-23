@@ -630,7 +630,9 @@ CpuTimerState& CpuTimer(int which) {
 
 bool ReadCpuTimerMicros(int which, std::uint64_t* micros) {
     KernelTimespec now{};
+    const int savedErrno = *__error_nid_postfix();
     if (clock_gettime_nid_postfix(which, &now) != 0) return false;
+    *__error_nid_postfix() = savedErrno;
     *micros = static_cast<std::uint64_t>(now.tv_sec) * 1000000ULL + static_cast<std::uint64_t>(now.tv_nsec / 1000);
     return true;
 }
