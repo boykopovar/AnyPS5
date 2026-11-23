@@ -8465,14 +8465,6 @@ int APS5_VABI WKBundlePageInsertNewlineInQuotedContent() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageInstallPageOverlayWithAnimation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageInstallPageOverlay() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageIsEditingCommandEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8493,19 +8485,7 @@ int APS5_VABI WKBundlePageOverlayClear() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageOverlayCreate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageOverlayFractionFadedIn() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageOverlaySetAccessibilityClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageOverlaySetNeedsDisplay() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8561,19 +8541,11 @@ int APS5_VABI WKBundlePageSetEventThrottlingBehaviorOverride() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageSetFooterBanner() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageSetFormClient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI WKBundlePageSetFullScreenClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageSetHeaderBanner() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8641,11 +8613,6 @@ int APS5_VABI WKBundlePageStopLoading() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageUninstallPageOverlay() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageUninstallPageOverlayWithAnimation() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -271,6 +271,19 @@ public:
     std::vector<std::string> evaluatedScriptsForTest;
 };
 
+class BundlePageOverlay final : public ObjectOf<ObjectType::BundlePageOverlay> {
+public:
+    double fractionFadedIn = 1.0;
+    const void* client = nullptr;
+    RectValue lastNeedsDisplayRect{{0.0, 0.0}, {0.0, 0.0}};
+    std::uint64_t needsDisplayCount = 0;
+};
+
+class BundlePageBanner final : public ObjectOf<ObjectType::BundlePageBanner> {
+public:
+    bool isVisible = true;
+};
+
 class BundlePage final : public ObjectOf<ObjectType::BundlePage> {
 public:
     mutable Retained<BundleInspector> inspector;
@@ -284,6 +297,9 @@ public:
     Retained<Object> topOverhangImage;
     Retained<Object> bottomOverhangImage;
     std::uint64_t paintedObjectsCounterThreshold = 0;
+    Retained<BundlePageBanner> headerBanner;
+    Retained<BundlePageBanner> footerBanner;
+    std::vector<Retained<BundlePageOverlay>> pageOverlays;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
