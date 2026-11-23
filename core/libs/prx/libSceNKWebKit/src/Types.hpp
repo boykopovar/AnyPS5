@@ -195,6 +195,10 @@ public:
     bool hasVerticalScrollbar = false;
     int numberOfPages = 1;
     std::vector<bool> pageBoxVisibility;
+    bool containsAnyFormElements = false;
+    bool containsAnyFormControls = false;
+    bool isFocused = false;
+    bool hasOpener = false;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
@@ -371,6 +375,17 @@ public:
     Retained<Object> lastMessageName;
     Retained<Object> lastMessageBody;
     bool clientConfigured = false;
+};
+
+class MessageListener final : public ObjectOf<ObjectType::MessageListener> {
+public:
+    bool replied = false;
+    Retained<Object> reply;
+
+    void SendReply(Retained<Object> replyObj) {
+        replied = true;
+        reply = std::move(replyObj);
+    }
 };
 
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {

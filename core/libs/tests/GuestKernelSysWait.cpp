@@ -145,6 +145,13 @@ int main(int argc, char** argv) {
     const auto waitChild = [&](int child, int* out, int options, void* resources) {
         return test == "wait3" ? wait3(out, options, resources) : wait4(child, out, options, resources);
     };
+    const auto getrusage = LoadFunction<int (APS5_VABI*)(int, GuestResourceUsage*)>(kernel, "getrusage", patched);
+    const auto childUsage = [&] {
+        GuestResourceUsage resources{};
+        Require(getrusage(-1, &resources) == 0);
+        return resources;
+    };
+    const auto micros = [](const KernelTimeval& time) { return time.tv_sec * 1000000 + time.tv_usec; };
     const auto readUsage = [&] {
         GuestResourceUsage resources{};
         static_assert(sizeof(resources) == sizeof(usage));
@@ -156,8 +163,10 @@ int main(int argc, char** argv) {
         Require(std::memcmp(&resources.ru_maxrss, &empty.ru_maxrss, sizeof(resources) - offsetof(GuestResourceUsage, ru_maxrss)) == 0);
         return resources;
     };
-    const int first = spawn(L"child", nullptr);
-    Require(waitChild(first, &status, 0, nullptr) == first && status == (42 << 8));
+    const int first = spawn(L"burn", nullptr);
+    Require(waitChild(first, &status, 0, nullptr) == first && status == 0);
+    const auto firstUsage = childUsage();
+    Require(micros(firstUsage.ru_utime) + micros(firstUsage.ru_stime) >= 50000);
     SECURITY_ATTRIBUTES inheritable{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     HANDLE readEnd = nullptr;
     HANDLE writeEnd = nullptr;
@@ -169,16 +178,25 @@ int main(int argc, char** argv) {
     Require(waitChild(blocked, &status, 1, usage.data()) == 0);
     Require(status == 0x12345678);
     for (auto byte : usage) Require(byte == 0xa5);
+    const auto pendingUsage = childUsage();
+    Require(std::memcmp(&firstUsage, &pendingUsage, sizeof(firstUsage)) == 0);
     DWORD written = 0;
     Require(WriteFile(writeEnd, "x", 1, &written, nullptr) != FALSE && written == 1 && CloseHandle(writeEnd) != FALSE);
     Require(waitChild(blocked, &status, 0, usage.data()) == blocked && status == (42 << 8));
     readUsage();
+    const auto beforeBurn = childUsage();
     const int burned = spawn(L"burn", nullptr);
     usage.fill(0xa5);
     Require(waitChild(burned, &status, 0, usage.data()) == burned && status == 0);
     const auto burnedUsage = readUsage();
-    const auto micros = [](const KernelTimeval& time) { return time.tv_sec * 1000000 + time.tv_usec; };
     Require(micros(burnedUsage.ru_utime) + micros(burnedUsage.ru_stime) >= 50000);
+    const auto afterBurn = childUsage();
+    const auto userDelta = micros(afterBurn.ru_utime) - micros(beforeBurn.ru_utime) - micros(burnedUsage.ru_utime);
+    const auto systemDelta = micros(afterBurn.ru_stime) - micros(beforeBurn.ru_stime) - micros(burnedUsage.ru_stime);
+    Require(userDelta >= 0 && userDelta <= 1 && systemDelta >= 0 && systemDelta <= 1);
+    Require(waitChild(burned, &status, 1, nullptr) == -1 && *error() == 10);
+    const auto repeatedUsage = childUsage();
+    Require(std::memcmp(&afterBurn, &repeatedUsage, sizeof(afterBurn)) == 0);
     const int second = spawn(L"child", nullptr);
     status = 0;
     const int failed = waitChild(second, &status, 0, reinterpret_cast<void*>(1));

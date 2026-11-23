@@ -1,4 +1,5 @@
 import argparse
+import codecs
 import collections
 import subprocess
 import sys
@@ -36,6 +37,13 @@ def commits(root, base, tip):
     return len(git(root, "rev-list", "--no-merges", f"{base}..{tip}").split())
 
 
+def patch_path(header, prefix):
+    path = header[4:].removesuffix("\t")
+    if path.startswith('"') and path.endswith('"'):
+        path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", "replace")
+    return path[len(prefix):] if path.startswith(prefix) else None
+
+
 def changed_lines(root, base, tip):
     added = collections.defaultdict(collections.Counter)
     deleted = collections.defaultdict(collections.Counter)
@@ -47,9 +55,9 @@ def changed_lines(root, base, tip):
         if line.startswith("diff --git "):
             old_path, new_path, in_hunk = None, None, False
         elif not in_hunk and line.startswith("--- "):
-            old_path = line[6:].removesuffix("\t") if line.startswith("--- a/") else None
+            old_path = patch_path(line, "a/")
         elif not in_hunk and line.startswith("+++ "):
-            new_path = line[6:].removesuffix("\t") if line.startswith("+++ b/") else None
+            new_path = patch_path(line, "b/")
         elif line.startswith("@@"):
             in_hunk = True
         elif in_hunk and line.startswith("+") and new_path is not None:
@@ -113,6 +121,51 @@ def mode_differences(root, old_base, old, new_base, new):
     return problems
 
 
+def binary_paths(root, base, tip):
+    data = git(root, "diff", "--numstat", "-z", "--no-renames", "--no-relative", "--no-ext-diff",
+               "--no-textconv", "--ignore-submodules=none", "--submodule=short", base, tip, "--", raw=True)
+    result = set()
+    for item in data.split(b"\0"):
+        if not item:
+            continue
+        added, deleted, path = item.split(b"\t", 2)
+        if added == deleted == b"-":
+            result.add(path)
+    return result
+
+
+def changed_blobs(root, base, tip):
+    data = git(root, "diff", "--raw", "-z", "--no-abbrev", "--no-renames", "--no-relative",
+               "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", base, tip, "--", raw=True)
+    fields = data.split(b"\0")
+    result = {}
+    for header, path in zip(fields[::2], fields[1::2]):
+        metadata = header[1:].split()
+        result[path] = metadata[2], metadata[3]
+    return result
+
+
+def binary_differences(root, old_base, old, new_base, new):
+    paths = binary_paths(root, old_base, old) | binary_paths(root, new_base, new)
+    if not paths:
+        return []
+    original = changed_blobs(root, old_base, old)
+    rebased = changed_blobs(root, new_base, new)
+    upstream = changed_blobs(root, old_base, new_base) if old_base != new_base else {}
+    problems = []
+    for path in sorted(paths):
+        name = path.decode("utf-8", "backslashreplace")
+        if path not in original:
+            problems.append(f"{name}: new binary change requires manual review")
+            continue
+        before, expected = original[path]
+        new_base_blob = upstream[path][1] if path in upstream else before
+        actual = rebased[path][1] if path in rebased else new_base_blob
+        if actual != expected:
+            problems.append(f"{name}: binary content differs; manual review required")
+    return problems
+
+
 def verify(root, old, new, onto):
     old_base = git(root, "merge-base", old, onto).strip()
     new_base = git(root, "merge-base", new, onto).strip()
@@ -132,6 +185,7 @@ def verify(root, old, new, onto):
     }
     problems += differences(expected_deleted, new_deleted, deleted=True)
     problems += mode_differences(root, old_base, old, new_base, new)
+    problems += binary_differences(root, old_base, old, new_base, new)
     return old_base, count_old, count_new, problems
 
 
@@ -139,7 +193,7 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
-    parser = argparse.ArgumentParser(description="check that a rebased branch kept its added and deleted lines, file modes, authors and commits")
+    parser = argparse.ArgumentParser(description="check that a rebased branch kept its added and deleted lines, Git-classified binary contents, file modes, authors and commits")
     parser.add_argument("old", help="the branch or commit before the rebase")
     parser.add_argument("new", help="the branch or commit after the rebase")
     parser.add_argument("--onto", help="the branch the new commits sit on (default: upstream/main, then origin/main, then main)")
@@ -154,9 +208,9 @@ def main(argv=None):
     for problem in problems:
         print(f"error: {problem}")
     if problems:
-        print(f"{len(problems)} difference(s): the rebase changed something other than conflict resolution")
+        print(f"{len(problems)} difference(s) require review")
         return 1
-    print("all added and deleted lines, file modes, authors and commits are kept")
+    print("all added and deleted lines, Git-classified binary contents, file modes, authors and commits are kept")
     return 0
 
 
