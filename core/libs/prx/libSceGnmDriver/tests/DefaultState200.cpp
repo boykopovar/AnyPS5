@@ -1,5 +1,6 @@
 #include "prx/libSceGnmDriver/include/Api.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -123,14 +124,13 @@ void WriteParamSfo(const std::filesystem::path& directory, std::int32_t attribut
     Require(static_cast<bool>(file), "cannot write the param.sfo fixture");
 }
 
-int RunSelf(const char* program, std::string_view mode, const std::filesystem::path& directory) {
-    const std::string arguments = "\"" + std::string(program) + "\" " + std::string(mode) + " \"" + directory.string() + "\"";
+int RunSelf(const std::filesystem::path& program, std::string_view mode, const std::filesystem::path& directory) {
 #ifdef _WIN32
-    const std::string command = "\"" + arguments + "\"";
+    const std::wstring arguments = L"\"" + program.native() + L"\" " + std::filesystem::path(mode).native() + L" \"" + directory.native() + L"\"";
+    return _wsystem((L"\"" + arguments + L"\"").c_str());
 #else
-    const std::string command = arguments;
+    return std::system(("\"" + program.string() + "\" " + std::string(mode) + " \"" + directory.string() + "\"").c_str());
 #endif
-    return std::system(command.c_str());
 }
 
 int Child(std::string_view mode, const char* directory) {
@@ -183,7 +183,7 @@ int main(int argc, char** argv) {
             const auto directory = root / test.name;
             std::filesystem::create_directories(directory);
             if (test.paramSfo) WriteParamSfo(directory, test.attribute);
-            if (RunSelf(argv[0], test.mode, directory) != 0) {
+            if (RunSelf(ArgumentPath(argv, 0), test.mode, directory) != 0) {
                 std::fprintf(stderr, "Gnm default state 200: case failed: %s\n", test.name);
                 failed = 1;
             }

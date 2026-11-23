@@ -1,4 +1,5 @@
 #include "SceTypes.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -311,7 +312,7 @@ int main(int argc, char** argv) {
         Require(argc == 4 || (argc == 5 && std::string_view(argv[4]) == "--patched"), "expected provider, metadata mode and library path, optionally --patched");
         const std::string provider = argv[1], mode = argv[2];
         Require(provider == "normal" || provider == "neo", "unknown GNM provider");
-        const auto library = std::filesystem::absolute(argv[3]);
+        const auto library = std::filesystem::absolute(ArgumentPath(argv, 3));
         Fixture fixture(mode);
         const bool normal = provider == "normal", unknown = normal && (mode == "json" || mode == "none");
         const Writers writer(Load(library), normal, argc == 5);
