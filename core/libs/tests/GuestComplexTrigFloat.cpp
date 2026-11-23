@@ -47,5 +47,12 @@ int main() {
     Require(Near(clogf_nid_postfix(Make(-1.0f, 0.0f)), 0.0f, pi));
     Require(Near(cpowf_nid_postfix(Make(2.0f, 0.0f), Make(2.0f, 0.0f)), 4.0f, 0.0f));
     Require(Near(cpowf_nid_postfix(i, Make(2.0f, 0.0f)), -1.0f, 0.0f));
+    Require(Near(csqrtf_nid_postfix(Make(-4.0f, -0.0f)), 0.0f, -2.0f));
+    const __complex__ float point = Make(0.5f, 0.25f);
+    Require(Near(casinhf_nid_postfix(point), 0.49267568f, 0.22432845f));
+    Require(Near(catanhf_nid_postfix(point), 0.50037000f, 0.31439814f));
+    const __complex__ float negative = Make(-0.5f, -0.75f);
+    Require(Near(casinhf_nid_postfix(negative), -0.60633500f, -0.68220397f));
+    Require(Near(catanhf_nid_postfix(negative), -0.31042828f, -0.72322067f));
     return 0;
 }
