@@ -843,7 +843,7 @@ bool isCompleteWave32Mask(const IrValue& root) {
 
 void resolveWave32VccUse(IrProgram& program, IrBuilder& builder, IrValue& use) {
     auto& word = resolveArg(use, 0u);
-    if (!runsAllStartingLanes(program, use.Parent()) || !isCompleteWave32Mask(word)) {
+    if (!isCompleteWave32Mask(word)) {
         replaceWith(use, resolveArg(use, 1u));
         return;
     }
