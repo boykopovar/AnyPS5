@@ -281,9 +281,7 @@ bool IsValidFill(const FontGraphicsFill* fill) {
     const auto value = reinterpret_cast<std::intptr_t>(fill);
     if (value >= -1 && value < 3) return true;
     std::uint8_t mode{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&mode, fill, sizeof(mode));
-    errno = savedErrno;
     return copied && (mode & 0xf) == 0 && mode >= 0x10 && mode <= 0x50;
 }
 
@@ -386,9 +384,7 @@ int GraphicsFillPlotInit(FontGraphicsFillPlot* plot, const FontGraphicsRegion* r
     if (!IsObject(plot)) return Fail(FONT_GRAPHICS_ERROR_INVALID_FILL_PLOT);
     FontGraphicsRegion guestRegion{};
     if (IsObject(region)) {
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&guestRegion, region, sizeof(guestRegion));
-        errno = savedErrno;
         if (!copied || !IsUsableRegion(guestRegion)) {
             constexpr std::size_t tagOffset = offsetof(FontGraphicsFillPlot, tag);
             const auto address = reinterpret_cast<std::uintptr_t>(plot);
