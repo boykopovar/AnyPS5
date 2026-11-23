@@ -6,6 +6,7 @@
 #include <chrono>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 
 namespace NKWebKit::WebCoreAbi {
 
@@ -40,15 +41,12 @@ bool EqualIgnoringAsciiCase(const StringView& a, const StringView& b) {
     return true;
 }
 
-bool HasSuffixIgnoringAsciiCase(const StringView& text, const StringView& suffix) {
-    if (suffix.length > text.length) return false;
-    return EqualIgnoringAsciiCase(Slice(text, text.length - suffix.length), suffix);
-}
-
 bool KeyEqual(const Cookie& a, const Cookie& b) {
-    return EqualIgnoringAsciiCase(View(a.name), View(b.name))
+    const auto aPath = View(a.path);
+    const auto bPath = View(b.path);
+    return _ZN3WTF5equalEPKNS_10StringImplES2_(a.name.impl, b.name.impl)
         && EqualIgnoringAsciiCase(View(a.domain), View(b.domain))
-        && EqualIgnoringAsciiCase(View(a.path), View(b.path));
+        && ((!aPath.length && !bPath.length) || _ZN3WTF22equalRespectingNullityENS_10StringViewES0_(aPath, bPath));
 }
 
 bool SecureRequest(const WtfAbi::URL& url) {
@@ -73,10 +71,13 @@ StringView View(const WtfAbi::String& string) {
 
 bool HostMatchesDomain(const StringView& domain, const StringView& host) {
     if (!domain.length || !host.length) return false;
-    if (EqualIgnoringAsciiCase(domain, host)) return true;
-    if (Unit(domain, 0) != '.') return false;
-    if (EqualIgnoringAsciiCase(Slice(domain, 1), host)) return true;
-    return HasSuffixIgnoringAsciiCase(host, domain);
+    if (Unit(domain, 0) != '.') return EqualIgnoringAsciiCase(domain, host);
+    if (domain.length == 1) return false;
+    const auto suffix = Slice(domain, 1);
+    if (EqualIgnoringAsciiCase(suffix, host)) return true;
+    if (host.length <= domain.length) return false;
+    const auto start = host.length - suffix.length;
+    return Unit(host, start - 1) == '.' && EqualIgnoringAsciiCase(Slice(host, start), suffix);
 }
 
 bool PathMatches(const StringView& cookiePath, const StringView& requestPath) {
@@ -105,24 +106,25 @@ SessionCookieJar& SessionCookies(const void* session) {
 void SessionCookieJar::addCookie(const Cookie& cookie, const WtfAbi::URL& url) {
     const StringView name = View(cookie.name);
     if (!name.length) return;
-    if (!View(cookie.domain).length) return;
+    if (!HostMatchesDomain(View(cookie.domain), _ZNK3WTF3URL4hostEv(&url))) return;
     const bool secureOrigin = SecureRequest(url);
     if (cookie.secure && !secureOrigin) return;
     const double now = NowMilliseconds();
     std::lock_guard<std::mutex> lock(m_mutex);
     const auto existing = std::find_if(m_cookies.begin(), m_cookies.end(),
         [&](const Cookie& stored) { return KeyEqual(stored, cookie); });
-    if (existing != m_cookies.end()) {
-        if (existing->secure && !secureOrigin) return;
-        if (IsExpired(cookie, now)) {
-            m_cookies.erase(existing);
-            return;
-        }
-        *existing = cookie;
+    if (existing != m_cookies.end() && existing->secure && !secureOrigin) return;
+    if (IsExpired(cookie, now)) {
+        if (existing != m_cookies.end()) m_cookies.erase(existing);
         return;
     }
-    if (IsExpired(cookie, now)) return;
-    m_cookies.push_back(cookie);
+    auto stored = cookie;
+    stored.commentURL = {};
+    if (existing != m_cookies.end()) {
+        *existing = std::move(stored);
+    } else {
+        m_cookies.push_back(std::move(stored));
+    }
 }
 
 void SessionCookieJar::deleteCookie(const Cookie& cookie) {
