@@ -280,9 +280,16 @@ void RequireChainBeforeCallee(const std::vector<std::uint32_t>& code) {
     Require(call != program.instructions.end(), "a continued callee part has no call");
     auto chain = call;
     while (chain != program.instructions.begin() && std::prev(chain)->op != ShaderRecompiler::RdnaOpcode::SEndpgm) --chain;
+    Require(chain != program.instructions.begin(), "a continued callee part has no exit before its callee");
+    const auto exit = std::prev(chain)->programCounter;
+    bool leaves = false;
     for (auto at = chain; at != call; ++at) {
-        Require(!ShaderRecompiler::IsConditionalBranchOpcode(at->op) || at->branchTarget < call->programCounter, "a continued callee part jumps past its callee when its target does not match");
+        if (!ShaderRecompiler::IsConditionalBranchOpcode(at->op)) continue;
+        const bool inChain = at->branchTarget >= chain->programCounter && at->branchTarget < call->programCounter;
+        Require(inChain || at->branchTarget == exit, "a continued callee part jumps past its callee, or away from its exit, when its target does not match");
+        leaves = leaves || at->branchTarget == exit;
     }
+    Require(leaves, "a continued callee part has no branch to its exit when its target does not match");
 }
 
 }
