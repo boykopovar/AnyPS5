@@ -94,6 +94,10 @@ bool CheckRegions() {
 
 int main() {
     if (!CheckRegions()) return 1;
+#ifdef ANYPS5_SEH_UNWIND
+    std::fprintf(stderr, "skipped: the toolchain uses SEH unwinding, so the fixture has no DWARF-only frames\n");
+    return 77;
+#endif
     const auto path = std::filesystem::temp_directory_path() / ("anyps5-process-stack-" + std::to_string(GetCurrentProcessId()) + ".txt");
     _putenv_s("APS5_SAMPLE_THREADS", path.string().c_str());
     _putenv_s("APS5_SAMPLE_WORKER", "");
