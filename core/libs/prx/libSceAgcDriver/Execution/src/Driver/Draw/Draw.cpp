@@ -1533,7 +1533,7 @@ void Driver::restartFinishedDraw(DrawTail& tail) {
 void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey, const std::shared_ptr<DrawEntry>& recipeDonor, VulkanDevice::DrawTraceContext trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
     const auto* tracePtr = trace.token != 0 ? &trace : nullptr;
     if (localDevice != nullptr) localDevice->PrebuildGraphicsLibrariesOnFirstVisit(graphics.stages, stages);
-    const auto commit = [&] {
+    const auto commit = [&](bool retried) {
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         if (auto current = device.Load(); current != nullptr && current != localDevice) localDevice = std::move(current);
@@ -1546,7 +1546,7 @@ void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t
         } submitDue{*this, localDevice};
         recordLabelsForPacket(localDevice.get(), queue);
         noteDrawWriters(stages, queue);
-        if (recipe != nullptr) {
+        if (recipe != nullptr && !retried) {
             if (localDevice->DrawFromRecipe(graphics, drawParameters, stages, snapshots, recipe, tracePtr) == RecipeOutcome::Recorded) return;
             VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, VulkanDevice::RecipeKind::Draw);
         }
@@ -1554,10 +1554,10 @@ void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t
         localDevice->Draw(graphics, drawParameters, stages, snapshots, recipeStages.empty() ? nullptr : &built, tracePtr, shape, contentKey);
         if (built != nullptr) attachDrawRecipe(drawKey, recipeStages, std::move(built), recipeDonor);
     };
-    if (GuestMemory::GpuMutex().DepthOnThisThread() != 0) return commit();
+    if (GuestMemory::GpuMutex().DepthOnThisThread() != 0) return commit(false);
     Graphics::UnlockedPipelineBuild unlocked;
-    commit();
-    if (unlocked.Build()) commit();
+    commit(false);
+    if (unlocked.Build()) commit(true);
 }
 
 }
