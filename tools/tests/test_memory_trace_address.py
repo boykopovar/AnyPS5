@@ -215,9 +215,10 @@ class CliTests(FeatureRequired):
             self.assertIn("line 1: map anon 0x1000+0x1000", result.stdout)
             self.assertNotIn("No traced mapping operations", result.stdout)
 
-    def test_cli_reads_a_first_line_event_in_a_utf16_trace(self):
+    def test_cli_reads_a_first_line_event_in_a_utf16_or_utf32_trace(self):
         line = "[memory] map anon 0x1000+0x1000 prot=0x3\r\n"
-        for encoding, bom in (("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff")):
+        for encoding, bom in (("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff"),
+                              ("utf-32-le", b"\xff\xfe\x00\x00"), ("utf-32-be", b"\x00\x00\xfe\xff")):
             with self.subTest(encoding=encoding), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "run.log"
                 path.write_bytes(bom + line.encode(encoding))
