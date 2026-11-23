@@ -51,7 +51,10 @@ std::uint32_t High(const void* code) { return reinterpret_cast<std::uintptr_t>(c
 void Run() {
     using namespace AgcDriver::DriverDetail;
     Require(std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr, "lazy preparation is not enabled");
-    alignas(256) static const std::array<std::uint32_t, 11> vertexCode{0x7e0002ffu, 0, 0x7e0202ffu, 0, 0x7e0402ffu, 0, 0x7e0602ffu, 0x3f800000u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
+    alignas(256) static const std::array<std::uint32_t, 13> vertexCode{
+        0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
+        0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u,
+    };
     alignas(256) static const std::array<std::uint32_t, 5> pixelCode{0x7e0002ffu, 0x3f800000u, 0xf800180fu, 0, 0xbf810000u};
     static Header front, pixel;
     Describe(front, vertexCode, 2, {{0xc8, Low(vertexCode.data())}, {0xc9, High(vertexCode.data())}, {0x8a, 0}, {0x8b, 0}, {0xca, 0}, {0xcb, 0}, {0xcc, 0}}, {{0x2d5, 0x2000}});
