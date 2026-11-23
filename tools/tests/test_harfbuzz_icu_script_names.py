@@ -70,10 +70,10 @@ class GeneratorTests(unittest.TestCase):
         source = self.root / "missing-uscript.h"
         output = self.root / "IcuScriptNames.hpp"
         result = subprocess.run([sys.executable, str(Path(generator.__file__)), str(source), str(output)],
-                                capture_output=True, text=True, encoding="utf-8")
+                                capture_output=True)
         self.assertEqual(result.returncode, 2)
-        self.assertIn(source.name, result.stderr)
-        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn(source.name.encode("ascii"), result.stderr)
+        self.assertNotIn(b"Traceback", result.stderr)
         self.assertFalse(output.exists())
 
     def test_a_header_with_another_checksum_is_refused_and_nothing_is_written(self):
