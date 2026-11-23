@@ -1,4 +1,5 @@
 #include "../src/Jsc.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceJsc/include/Api.hpp"
@@ -207,6 +208,59 @@ void TestPassedDeadlineDoesNotStopLaterWork() {
     JSContextGroupClearExecutionTimeLimit(f.group);
 }
 
+struct NapState {
+    int naps = 0;
+};
+
+NapState napState;
+
+JSValueRef APS5_VABI Nap(JSContextRef ctx, JSObjectRef function, JSObjectRef thisObject, std::size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception) {
+    (void)function;
+    (void)thisObject;
+    (void)argumentCount;
+    (void)arguments;
+    (void)exception;
+    ++napState.naps;
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    return JSValueMakeUndefined(ctx);
+}
+
+double ProcessorSeconds() {
+    return _ZN3WTF7CPUTime16forCurrentThreadEv().m_value;
+}
+
+void TestTimeSpentWaitingIsNotCounted() {
+    Fixture f;
+    ScopedJsString name("nap");
+    JSObjectSetProperty(f.ctx, JSContextGetGlobalObject(f.ctx), name, JSObjectMakeFunctionWithCallback(f.ctx, name, &Nap), kJSPropertyAttributeNone, nullptr);
+    constexpr const char* NapThenWork = "nap(); var n = 0; while (n < 300000) { n++; } n";
+    const auto nap = std::chrono::milliseconds(400);
+
+    CountingState state;
+    JSContextGroupSetExecutionTimeLimit(f.group, 0.25, &CountingCallback, &state);
+    JSValueRef exception = nullptr;
+    auto start = Clock::now();
+    JSValueRef value = Eval(f.ctx, NapThenWork, &exception);
+    Require(Clock::now() - start >= nap);
+    Require(value != nullptr && exception == nullptr);
+    Require(JSValueToNumber(f.ctx, value, nullptr) == 300000.0);
+    Require(state.calls == 0);
+
+    JSContextGroupSetExecutionTimeLimit(f.group, 0.25, nullptr, nullptr);
+    value = Eval(f.ctx, NapThenWork, &exception);
+    Require(value != nullptr && exception == nullptr);
+    Require(JSValueToNumber(f.ctx, value, nullptr) == 300000.0);
+    Require(napState.naps == 2);
+
+    JSContextGroupSetExecutionTimeLimit(f.group, 0.05, nullptr, nullptr);
+    const double processorBefore = ProcessorSeconds();
+    start = Clock::now();
+    Require(Eval(f.ctx, "nap(); var turns = 0; while (turns < 100000000) { turns++; } turns") == nullptr);
+    Require(ProcessorSeconds() - processorBefore >= 0.05);
+    Require(Clock::now() - start >= nap + std::chrono::milliseconds(50));
+    JSContextGroupClearExecutionTimeLimit(f.group);
+}
+
 }  // namespace
 
 int main() {
@@ -215,6 +269,7 @@ int main() {
     TestCallbackDecides();
     TestCallbackChangesTheLimit();
     TestPassedDeadlineDoesNotStopLaterWork();
+    TestTimeSpentWaitingIsNotCounted();
     std::puts("libSceNKWebKit JS execution time limit tests passed");
     return 0;
 }

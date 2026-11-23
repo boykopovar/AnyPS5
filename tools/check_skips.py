@@ -102,10 +102,13 @@ def skips(path, require_tests=False):
         if name in seen:
             raise ValueError(f"{path}: testcase {name!r} is listed more than once")
         seen.add(name)
+        status = case.get("status")
+        if status is not None and status not in ("run", "fail", "notrun", "disabled", "None"):
+            raise ValueError(f"{path}: invalid testcase status {status!r} for {name!r}")
         skipped = case.find("skipped")
         ctest_skip = skipped is not None and CTEST_SKIP_STATUS.fullmatch(skipped.get("message", "").strip())
-        if case.get("status") == "disabled" or (case.get("status") == "notrun" and not ctest_skip):
-            raise ValueError(f"{path}: testcase {name!r} is {case.get('status')} and was not run")
+        if status == "disabled" or (status == "notrun" and not ctest_skip):
+            raise ValueError(f"{path}: testcase {name!r} is {status} and was not run")
         if skipped is None:
             continue
         output = ["skipped, " + reason.strip() for reason in (skipped.get("message", ""), skipped.text or "")

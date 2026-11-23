@@ -161,6 +161,7 @@ debt entry, never in code or test names.
 ## Export and NID tools
 
 - `tools/export_gap.py --module <name> --nids <file> --db <nid-db>` lists the console exports an AnyPS5 library does not provide. To read a genstub export table, replace `--nids <file>` with `--export-table <dir>`, where `<dir>` contains `<name>.c`.
+- With the console module in ELF format, use `--elf <module.prx>` in place of `--nids <file>`. This compares one module at a time. It reads NID-shaped names from the dynamic exports, including sectionless SCE symbol tables, and ignores imports and other names. An ELF without any matching exports produces an error.
 - `tools/stubgen.py --module <name> --nids <file> --db <nid-db> --out <file>` writes an `Export.cpp` skeleton to the named file and prints the matching technical-debt lines. Pass `--td-out <file>` to save those lines separately.
 - `tools/audit_nid_names.py <database>` audits the hash consistency of a local NID/name database with the stub generator's first-record policy.
 - `tools/pe_symbol_inventory.py <module>` inventories the code symbols and identity metadata of a PE module without reading samples.
