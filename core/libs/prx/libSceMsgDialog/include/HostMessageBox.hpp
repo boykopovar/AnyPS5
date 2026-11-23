@@ -70,4 +70,6 @@ std::optional<HostBoxAnswer> ShowHostMessageBox(std::string_view message, const 
 
 }
 
+extern "C" bool ShowHostMessageBox_nid_postfix(std::string_view message, const ModalDialogRequest& request, MsgDialog::HostBoxAnswer& answer);
+
 #endif

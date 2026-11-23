@@ -1,9 +1,11 @@
 #include "prx/libSceErrorDialog/include/Api.hpp"
 #include "prx/libSceErrorDialog/include/ErrorDialogRequest.hpp"
+#include "prx/libSceMsgDialog/include/HostMessageBox.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 
@@ -16,6 +18,11 @@ constexpr int kStatusNone = 0;
 constexpr int kStatusInitialized = 1;
 constexpr int kStatusRunning = 2;
 constexpr int kStatusFinished = 3;
+#ifdef __APPLE__
+constexpr bool kAppleBuild = true;
+#else
+constexpr bool kAppleBuild = false;
+#endif
 
 constexpr int kErrOk = 0;
 constexpr int kErrNotInitialized = static_cast<int>(0x80ED0001u);
@@ -64,6 +71,16 @@ int APS5_VABI sceErrorDialogOpen(const void* param) {
  std::memcpy(&userId, buffer + 8, sizeof(userId));
  ModalDialogRequest request = ErrorDialog::BuildRequest(errorCode);
  request.owner = ModalDialogOwnerErrorDialog;
+ if (MsgDialog::HostMessageBoxEnabled(std::getenv("ANYPS5_ERROR_DIALOG_HOST"), kAppleBuild)) {
+  MsgDialog::HostBoxAnswer answer;
+  if (ShowHostMessageBox_nid_postfix(MsgDialog::HostMessageLabel(request.message), request, answer)) {
+   g_presented = false;
+   g_status = kStatusFinished;
+   APS5_HIT("ERRORDIALOG", "open: error_code=0x%08X user_id=%d -> host box", errorCode, userId);
+   return kErrOk;
+  }
+  APS5_HIT("ERRORDIALOG", "open: host box unavailable, using the in-game dialog");
+ }
  g_presented = ModalDialogOpen_nid_postfix(request);
  APS5_HIT("ERRORDIALOG", "open: error_code=0x%08X user_id=%d -> %s", errorCode, userId, g_presented ? "shown" : "auto answer");
  g_status = kStatusRunning;

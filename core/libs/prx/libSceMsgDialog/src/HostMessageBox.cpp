@@ -31,3 +31,10 @@ std::optional<HostBoxAnswer> ShowHostMessageBox(std::string_view message, const 
 }
 
 }
+
+extern "C" bool ShowHostMessageBox_nid_postfix(std::string_view message, const ModalDialogRequest& request, MsgDialog::HostBoxAnswer& answer) {
+    const auto result = MsgDialog::ShowHostMessageBox(message, request);
+    if (!result) return false;
+    answer = *result;
+    return true;
+}
