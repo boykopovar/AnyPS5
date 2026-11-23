@@ -50,4 +50,8 @@ extern "C" bool ImeCapturesPad_nid_postfix();
 extern "C" void ImePublishPad_nid_postfix(const ImeHostPad& pad);
 extern "C" void ImeSetHostPadSink_nid_no_patch(ImeHostPadSink sink);
 
+using ImeHostClipboardSink = void (*)(const char* utf8, std::size_t size);
+
+extern "C" void ImeSetHostClipboardSink_nid_no_patch(ImeHostClipboardSink sink);
+
 #endif

@@ -107,6 +107,7 @@ std::optional<Session> g_session;
 std::atomic<ImeHostTextSink> g_textSink{nullptr};
 std::atomic<ImeHostPreeditSink> g_preeditSink{nullptr};
 std::atomic<ImeHostPadSink> g_padSink{nullptr};
+std::atomic<ImeHostClipboardSink> g_clipboardSink{nullptr};
 std::atomic<ImeKeyboardViewProvider> g_viewProvider{nullptr};
 std::uint64_t g_nextSessionId = 0;
 
@@ -324,7 +325,10 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
             if ((session.param.option & OptionMultiline) != 0) {
                 return Insert(session, u"\n");
             }
-            if (ImeClipboard::CopyEnabled(std::getenv("ANYPS5_IME_COPY"), kAppleBuild) && !session.text.empty()) ImeClipboard::CopyToHost(session.text);
+            if (const ImeHostClipboardSink clipboardSink = g_clipboardSink.load(); clipboardSink && ImeClipboard::CopyEnabled(std::getenv("ANYPS5_IME_COPY"), kAppleBuild) && !session.text.empty()) {
+                const std::string utf8 = ImeClipboard::Utf8(session.text);
+                clipboardSink(utf8.c_str(), utf8.size());
+            }
             QueueText(session, EventPressEnter, session.caret, 0);
             return std::nullopt;
         case ImeHostInputKind::Escape:
@@ -466,6 +470,10 @@ void ImePublishPad_nid_postfix(const ImeHostPad& pad) {
 
 void ImeSetHostPadSink_nid_no_patch(ImeHostPadSink sink) {
     g_padSink = sink;
+}
+
+void ImeSetHostClipboardSink_nid_no_patch(ImeHostClipboardSink sink) {
+    g_clipboardSink = sink;
 }
 
 void ImeSetKeyboardViewProvider_nid_no_patch(ImeKeyboardViewProvider provider) {

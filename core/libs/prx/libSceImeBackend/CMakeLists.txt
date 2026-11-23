@@ -1,6 +1,5 @@
-add_library(libSceImeBackend SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../libSceIme/src/ImeClipboard.cpp)
-target_include_directories(libSceImeBackend PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
-target_link_libraries(libSceImeBackend PRIVATE SDL2-static)
+add_library(libSceImeBackend SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+target_include_directories(libSceImeBackend PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceImeBackend)
 
 if(BUILD_TESTING)
