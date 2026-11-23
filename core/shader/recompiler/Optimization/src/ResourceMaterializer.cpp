@@ -851,6 +851,8 @@ public:
 
 private:
     static constexpr std::uint64_t PageBytes = 4096u;
+    static constexpr std::uint32_t NoRecord = std::numeric_limits<std::uint32_t>::max();
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> pointerSlots;
     mutable std::uint32_t indirectDwords = 0;
     mutable std::uint32_t indirectDword = 0;
     mutable std::uint32_t accessibleChecks = 0;
@@ -1172,6 +1174,9 @@ private:
         if (column.indirect) {
             unread();
             if (column.buffer || column.pointerKeyed) records.pointers.assign(records.keys, ImageTableAbi::UncapturedPointer);
+            std::size_t slotCount = 16u;
+            while (slotCount < static_cast<std::size_t>(records.keys) * 2u) slotCount *= 2u;
+            pointerSlots.assign(slotCount, {0u, NoRecord});
             for (std::uint32_t record = 0; record < records.keys; record++) {
                 if (records.states[record] != RecordState::Read) continue;
                 const auto offset = column.addend + record * column.stride;
@@ -1182,6 +1187,15 @@ private:
                     continue;
                 }
                 std::uint64_t pointer = (static_cast<std::uint64_t>(Read(records.base + *highWord)) << 32u) | Read(records.base + *lowWord);
+                auto slot = static_cast<std::size_t>((pointer * 0x9e3779b97f4a7c15ull) >> 32u) & (slotCount - 1u);
+                while (pointerSlots[slot].second != NoRecord && pointerSlots[slot].first != pointer) slot = (slot + 1u) & (slotCount - 1u);
+                if (const auto seen = pointerSlots[slot].second; seen != NoRecord) {
+                    records.states[record] = records.states[seen];
+                    records.words[record] = records.words[seen];
+                    if (column.buffer || column.pointerKeyed) records.pointers[record] = records.pointers[seen];
+                    continue;
+                }
+                pointerSlots[slot] = {pointer, record};
                 if (column.pointerKeyed) records.pointers[record] = pointer;
                 for (const auto& hop : column.pointerHops) {
                     const auto low = ImageTableAbi::ScalarAddressDword(pointer, hop.offset, hop.immediate);
@@ -1199,7 +1213,35 @@ private:
                 value.dwordCount = column.sampler || column.buffer ? 4u : 8u;
                 std::uint64_t first = std::numeric_limits<std::uint64_t>::max();
                 std::uint64_t past = 0;
-                for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
+                std::array<std::uint64_t, 8> addresses{};
+                bool contiguous = runtime.readWords != nullptr && column.dwordCount > 1u && column.dwordCount <= addresses.size();
+                for (std::uint32_t dword = 0; contiguous && dword < column.dwordCount; dword++) {
+                    const auto address = ImageTableAbi::ScalarAddressDword(pointer, column.indirectOffset, column.indirectImmediate + dword * 4u);
+                    contiguous = address.has_value() && (*address & 3u) == 0u && (dword == 0u || *address == addresses[0] + dword * 4u);
+                    if (contiguous) addresses[dword] = *address;
+                }
+                if (contiguous) {
+                    const auto firstPage = addresses[0] & ~(PageBytes - 1u);
+                    const bool onePage = ((addresses[column.dwordCount - 1u] & ~(PageBytes - 1u)) == firstPage) && AddressAccessible(addresses[0]) && wholePages.find(firstPage)->second;
+                    for (std::uint32_t dword = onePage ? column.dwordCount : 0u; dword < column.dwordCount; dword++) {
+                        if (!AddressAccessible(addresses[dword])) {
+                            records.states[record] = RecordState::Unmapped;
+                            break;
+                        }
+                    }
+                    indirectDword = 0u;
+                    accessibleChecks = 0u;
+                    if (records.states[record] == RecordState::Read) {
+                        if (runtime.descriptorScope != nullptr) static_cast<void>(runtime.descriptorScope(runtime.userContext, static_cast<std::size_t>(column.dwordCount) * sizeof(std::uint32_t)));
+                        const bool ok = runtime.readWords(runtime.userContext, addresses[0], value.dwords.data(), column.dwordCount);
+                        if (runtime.descriptorScope != nullptr) static_cast<void>(runtime.descriptorScope(runtime.userContext, 0u));
+                        if (!ok) throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(addresses[0]));
+                        value.availableDwordMask = static_cast<std::uint8_t>((1u << column.dwordCount) - 1u);
+                        first = addresses[0];
+                        past = addresses[0] + column.dwordCount * sizeof(std::uint32_t);
+                    }
+                }
+                for (std::uint32_t dword = 0; !contiguous && dword < column.dwordCount; dword++) {
                     auto address = ImageTableAbi::ScalarAddressDword(pointer, column.indirectOffset, column.indirectImmediate + dword * 4u);
                     if (address.has_value() && (*address & 3u) != 0u) address.reset();
                     if (!address.has_value() || !AddressAccessible(*address)) {
@@ -1899,25 +1941,27 @@ struct DecodeMemo {
     std::unordered_map<DecodeMemoKey, std::uint32_t, DecodeMemoHash> entries;
 };
 
-DecodeMemo& decodeMemo() {
-    static DecodeMemo memo;
-    return memo;
+constexpr std::size_t DecodeMemoShards = 64u;
+
+DecodeMemo& decodeMemo(const DecodeMemoKey& key) {
+    static std::array<DecodeMemo, DecodeMemoShards> memos;
+    return memos[DecodeMemoHash{}(key) % DecodeMemoShards];
 }
 
-constexpr std::uint32_t DecodeMemoEntries = 1u << 20u;
+constexpr std::uint32_t DecodeMemoEntries = (1u << 20u) / DecodeMemoShards;
 constexpr std::uint32_t DecodeFailed = 0x80000000u;
 
 std::uint32_t decodeTableEntry(const ImageResource& image, std::span<const ImageResource> modes, const DescriptorValue& words, std::uint64_t memoKey, std::uint32_t resource) {
     DecodeMemoKey key{memoKey, resource, words.dwords};
     if (memoKey != 0u) {
-        auto& memo = decodeMemo();
+        auto& memo = decodeMemo(key);
         std::lock_guard lock(memo.mutex);
         if (const auto found = memo.entries.find(key); found != memo.entries.end()) return found->second;
     }
     const auto match = ResourceMaterializer::TryRuntimeImageMode(image, words, modes);
     const auto value = match.mode.has_value() ? *match.mode : DecodeFailed | static_cast<std::uint32_t>(match.reason);
     if (memoKey != 0u) {
-        auto& memo = decodeMemo();
+        auto& memo = decodeMemo(key);
         std::lock_guard lock(memo.mutex);
         if (memo.entries.size() >= DecodeMemoEntries) memo.entries.clear();
         memo.entries.emplace(key, value);
