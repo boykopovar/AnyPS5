@@ -173,6 +173,12 @@ void CheckHostAndDomainMatching() {
     Require(ValueOf(GetCookies(second), "shared") == "both");
     Require(ValueOf(GetCookies(child), "shared") == "both");
     Require(ValueOf(GetCookies(bare), "shared") == "both");
+    const auto similar = MakeAddress("https", "someone.test", "/");
+    const auto parent = MakeAddress("https", "test", "/");
+    Require(GetCookies(similar).size == 0);
+    Require(GetCookies(parent).size == 0);
+    SetCookies({MakeCookie("mismatch", "x", ".one.test", "/")}, similar, similar);
+    Require(!HasName(GetCookies(bare), "mismatch"));
 }
 
 void CheckPathMatching() {
@@ -235,6 +241,37 @@ void CheckDelete() {
     Require(PathOf(GetCookies(target), "dup") == "/");
     DeleteCookie(MakeCookie("dup", "root", "delete.five.test", "/"));
     Require(GetCookies(target).size == 0);
+}
+
+void CheckCaseSensitiveKeys() {
+    const auto upper = MakeAddress("https", "keys.test", "/App");
+    const auto lower = MakeAddress("https", "keys.test", "/app");
+    SetCookies({MakeCookie("SID", "upper", "KEYS.TEST", "/App"),
+        MakeCookie("sid", "lower", "keys.test", "/App"),
+        MakeCookie("SID", "path", "keys.test", "/app")}, upper, upper);
+    Require(ValueOf(GetCookies(upper), "SID") == "upper");
+    Require(ValueOf(GetCookies(upper), "sid") == "lower");
+    Require(ValueOf(GetCookies(lower), "SID") == "path");
+    DeleteCookie(MakeCookie("sid", "", "KEYS.TEST", "/App"));
+    Require(!HasName(GetCookies(upper), "sid"));
+    Require(ValueOf(GetCookies(upper), "SID") == "upper");
+    DeleteCookie(MakeCookie("SID", "", "keys.test", "/app"));
+    Require(GetCookies(lower).size == 0);
+    Require(ValueOf(GetCookies(upper), "SID") == "upper");
+}
+
+void CheckCommentURL() {
+    const auto target = MakeAddress("https", "comment.test", "/");
+    const auto comment = MakeAddress("https", "comment.test", "/details");
+    auto cookie = MakeCookie("with-comment", "first", "comment.test", "/");
+    cookie.commentURL = comment.url;
+    SetCookies({cookie}, target, target);
+    auto listed = GetCookies(target);
+    Require(listed.size == 1 && !listed[0].commentURL.impl);
+    cookie.value = MakeString("second");
+    SetCookies({cookie}, target, target);
+    listed = GetCookies(target);
+    Require(listed.size == 1 && !listed[0].commentURL.impl && Text(listed[0].value) == "second");
 }
 
 void CheckRejectedInput() {
@@ -313,6 +350,8 @@ void Run() {
     CheckSecureCookies();
     CheckExpiry();
     CheckDelete();
+    CheckCaseSensitiveKeys();
+    CheckCommentURL();
     CheckRejectedInput();
 }
 
