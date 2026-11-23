@@ -2136,7 +2136,37 @@ void DisabledColorTests() {
         mipped.context[0x002] = 1u << 26u;
         mipped.context[0x010] |= 1u << 29u;
         mipped.context[0x005] = 0x300;
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(mipped); }, "HTILE for the depth view mip");
+        const auto htileSecond = AgcDriver::Graphics::DecodeState(mipped);
+        Require(htileSecond.depth && htileSecond.depth->htileAddress == 0x30000u + 0x8000u, "the HTILE of view mip 1 of a 1024x1024 three-mip chain is not after the smaller levels' meta blocks");
+        mipped.context[0x002] = 0;
+        const auto htileFirst = AgcDriver::Graphics::DecodeState(mipped);
+        Require(htileFirst.depth && htileFirst.depth->htileAddress == 0x30000u + 0x10000u, "the HTILE of view mip 0 of a 1024x1024 three-mip chain is not last in the chain");
+        mipped.context[0x002] = (1u << 26u) | 1u | (1u << 13u);
+        const auto htileSliced = AgcDriver::Graphics::DecodeState(mipped);
+        Require(htileSliced.depth && htileSliced.depth->htileAddress == htileSecond.depth->htileAddress + 0x20000u, "slice 1 of a mip chain's HTILE does not step by the whole chain's HTILE");
+        mipped.context[0x002] = 2u << 26u;
+        mipped.context[0x007] = 0x003f003f;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(mipped); }, "into the packed mip tail is unsupported");
+        mipped.context[0x007] = 0x05ff05ff;
+        mipped.context[0x010] = 0xa0040183u;
+        mipped.context[0x002] = 0;
+        const auto shadow = AgcDriver::Graphics::DecodeState(mipped);
+        Require(shadow.depth && shadow.depth->extent.width == 1536u && shadow.depth->extent.height == 1536u && shadow.depth->htileAddress == 0x30000u + 0x28000u, "the HTILE of view mip 0 of a 1536x1536 five-mip D32 chain is not after the 32, 32, 32 and 64 KiB of the smaller levels");
+        mipped.context[0x002] = 1u << 26u;
+        const auto shadowSecond = AgcDriver::Graphics::DecodeState(mipped);
+        Require(shadowSecond.depth && shadowSecond.depth->htileAddress == 0x30000u + 0x18000u, "the HTILE of view mip 1 of a 1536x1536 five-mip D32 chain is not after the three smaller levels");
+        mipped.context[0x007] = 0x03ff0800;
+        mipped.context[0x010] = 0xa0010183u;
+        mipped.context[0x002] = 0;
+        const auto odd = AgcDriver::Graphics::DecodeState(mipped);
+        Require(odd.depth && odd.depth->extent.width == 2049u && odd.depth->extent.height == 1024u && odd.depth->htileAddress == 0x30000u + 0x10000u, "the HTILE of view mip 0 of a 2049x1024 two-mip D32 chain is not after the two meta blocks of mip 1, whose rounded-up extent is 1025x512");
+        mipped.context[0x002] = 1u | (1u << 13u);
+        const auto oddSliced = AgcDriver::Graphics::DecodeState(mipped);
+        Require(oddSliced.depth && oddSliced.depth->htileAddress == odd.depth->htileAddress + 0x40000u, "slice 1 of a 2049x1024 two-mip chain's HTILE does not step by its 2 + 6 meta blocks");
+        mipped.context[0x002] = 1u << 26u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(mipped); }, "needs more HTILE than its extent covers");
+        mipped.context[0x007] = 0x03ff03ff;
+        mipped.context[0x002] = 1u << 26u;
         mipped.context[0x010] = (0x80000181u | (2u << 16u)) & ~(31u << 4u);
         expectFailure([&] { AgcDriver::Graphics::DecodeState(mipped); }, "uses a swizzle other than 64 KiB Z_X");
     }
@@ -3999,6 +4029,24 @@ void gcnColorSliceTests() {
         const auto target = DecodeColorBuffer(queue.context, 0);
         Require(target.address == base + slice * GcnSliceBytes && target.bytes == GcnSliceBytes, "a GCN color view of one array slice does not address that slice");
     }
+    for (const std::uint32_t slice : {0u, 1u}) {
+        for (const std::uint32_t exports : {0u, (1u << 18u) - 1u, ~(1u << 18u)}) {
+            queue.context[0x207] = exports;
+            queue.context[0x31b] = slice | (2u << 13u);
+            const auto target = DecodeColorBuffer(queue.context, 0);
+            Require(target.address == base + slice * GcnSliceBytes && target.bytes == GcnSliceBytes && target.layers == 1u, "a GCN color view of several slices without a vertex render target index does not draw into its first slice");
+        }
+    }
+    queue.context.erase(0x207);
+    queue.context[0x31b] = 1u | (2u << 13u);
+    Require(DecodeColorBuffer(queue.context, 0).address == base + GcnSliceBytes, "a GCN color view of several slices decoded without PA_CL_VS_OUT_CNTL does not draw into its first slice");
+    queue.context[0x207] = 1u << 18u;
+    expectFailure([&] { static_cast<void>(DecodeColorBuffer(queue.context, 0)); }, "GCN layered rendering into several array slices through the vertex render target index is not implemented");
+    queue.context[0x31b] = 1u | (1u << 13u);
+    Require(DecodeColorBuffer(queue.context, 0).address == base + GcnSliceBytes, "a GCN color view of one slice is refused for a vertex render target index");
+    queue.context[0x207] = 0;
+    queue.context[0x31b] = 2u | (1u << 13u);
+    expectFailure([&] { static_cast<void>(DecodeColorBuffer(queue.context, 0)); }, "the color view ends before its first slice");
 }
 
 void cmaskTests() {

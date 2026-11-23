@@ -2274,7 +2274,7 @@ bool ClearColorForTexel(VkFormat format, std::uint32_t elementBytes, std::span<c
 
 VkImageView StorageTexture::createView(std::uint32_t mip, bool firstLayer, VkFormat format) const {
     Require(mip < descriptor.mipCount, "storage texture mip level is outside the texture");
-    Require(!firstLayer || descriptor.dimension == TextureDimension::k2DArray, "a first-layer storage view needs a 2D array surface");
+    Require(!firstLayer || descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k1DArray, "a first-layer storage view needs a 1D or 2D array surface");
     const auto viewLayerCount = firstLayer ? 1u : geometry.imageLayers - descriptor.baseArray;
     VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     const bool packed = PackedStorageViewFormat(storageFormat) != VK_FORMAT_UNDEFINED;
@@ -2283,7 +2283,7 @@ VkImageView StorageTexture::createView(std::uint32_t mip, bool firstLayer, VkFor
     viewInfo.pNext = format == storageFormat && !packed ? nullptr : &usage;
     viewInfo.image = image;
     // Storage views address one mip; cube faces are written as array layers.
-    viewInfo.viewType = firstLayer ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k1D ? VK_IMAGE_VIEW_TYPE_1D : descriptor.dimension == TextureDimension::k2D ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_VIEW_TYPE_3D : descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    viewInfo.viewType = firstLayer ? (descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_1D : VK_IMAGE_VIEW_TYPE_2D) : descriptor.dimension == TextureDimension::k1D ? VK_IMAGE_VIEW_TYPE_1D : descriptor.dimension == TextureDimension::k2D ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_VIEW_TYPE_3D : descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     viewInfo.format = format;
     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1u, descriptor.baseArray, viewLayerCount};
@@ -6012,6 +6012,10 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
         for (auto* texture : pending.textures) {
             if (texture->descriptor.tileMode == TextureTileMode::kLinear || texture->guestBytes <= SmallStoreBytes || texture->guestBytes > OccasionalStoreBytes) continue;
             if (device != VK_NULL_HANDLE && texture->context.device != device) continue;
+#if defined(__APPLE__)
+            const auto coversTrapped = [&](const StorageTexture* other) { return other != texture && other->readTrapped.load(std::memory_order_acquire) && other->overlaps(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)); };
+            if (trap && std::any_of(pending.textures.begin(), pending.textures.end(), coversTrapped)) continue;
+#endif
             if (!texture->writtenOccasionally.exchange(false, std::memory_order_relaxed)) continue;
             occasionalLabelStores.fetch_add(1, std::memory_order_relaxed);
             occasional.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));

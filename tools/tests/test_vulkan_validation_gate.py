@@ -28,6 +28,39 @@ PYTHON = probe_command()
 
 
 class ReportTests(unittest.TestCase):
+    def test_oversized_ctest_listing_retains_incomplete_report(self):
+        for value in (10 ** 400, -(10 ** 400)):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                source, output = root / "source", root / "evidence"
+                source.mkdir()
+                arguments = ["--baseline", str(source), "a" * 40, "--candidate", str(source), "a" * 40,
+                             "--output", str(output), "--target", "fixture", "--tests", ".*", "--gpu", "fixture"]
+
+                def run(command, log, environment, timeout):
+                    if command[0] == "ctest":
+                        log.write_text(json.dumps({"tests": [{"name": "probe", "properties": [
+                            {"name": "TIMEOUT", "value": value}]}]}), encoding="utf-8")
+                    return 0
+
+                with unittest.mock.patch.object(gate, "identity", return_value={}), \
+                        unittest.mock.patch.object(gate, "cache_values", return_value={"CMAKE_HOME_DIRECTORY": str(source)}), \
+                        unittest.mock.patch.object(gate, "run", side_effect=run) as execute, \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(gate.main(arguments), 2)
+                saved = json.loads((output / "report.json").read_text(encoding="utf-8"))
+                self.assertEqual(saved["status"], "incomplete")
+                self.assertEqual(saved["exit_code"], 2)
+                self.assertIn("probe: TIMEOUT", saved["error"])
+                self.assertEqual(saved["iterations"], [])
+                self.assertEqual(execute.call_count, 3)
+                self.assertEqual(execute.call_args.args[0][-1], "--show-only=json-v1")
+
+    def test_oversized_timeouts_are_configuration_errors(self):
+        for value in (10 ** 400, -(10 ** 400)):
+            with self.subTest(value=value), self.assertRaisesRegex(gate.GateError, "probe: TIMEOUT"):
+                gate.check_timeouts([{"name": "probe", "properties": [{"name": "TIMEOUT", "value": value}]}], 1)
+
     def test_effective_timeouts_cannot_override_the_requested_limit(self):
         for value in (0, 2, -1, float("inf"), float("nan"), "1", True):
             with self.subTest(value=value), self.assertRaisesRegex(gate.GateError, "probe: TIMEOUT"):
@@ -213,6 +246,19 @@ class EncodingTests(unittest.TestCase):
             self.assertIn(f"validation gate: {source}: must be a source worktree root",
                           stderr.buffer.getvalue().decode("utf-8"))
             self.assertFalse(output.exists())
+
+    def test_a_source_root_outside_the_ansi_code_page_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary).resolve() / "исходники"
+            source.mkdir()
+            subprocess.run(["git", "init", "-q", str(source)], check=True)
+            (source / "file").write_text("fixture\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(source), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                            "commit", "-qm", "fixture"], check=True)
+            commit = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True,
+                                    check=True).stdout.decode("ascii").strip()
+            self.assertEqual(gate.identity(source, commit), {"source": str(source), "commit": commit})
 
 
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja") and shutil.which("ctest"), "requires CMake, Ninja and CTest")
@@ -477,16 +523,17 @@ class CommandTests(FixtureTests):
             with self.subTest(timeout=timeout):
                 marker = self.root / ("timeout-marker" if timeout else "exit-marker")
                 ready = marker.with_suffix(".ready")
-                child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(1); Path({str(marker)!r}).touch()"
+                deadline = time.time() + 4
+                child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(max(0, {deadline!r} - time.time())); Path({str(marker)!r}).touch()"
                 parent = f"import subprocess,sys,time; from pathlib import Path; subprocess.Popen([sys.executable,'-c',{child!r}])\nwhile not Path({str(ready)!r}).exists(): time.sleep(.01)\n"
                 if timeout:
                     parent += "time.sleep(30)\n"
                     with self.assertRaises(subprocess.TimeoutExpired):
-                        gate.run([sys.executable, "-c", parent], self.root / "timeout.log", os.environ, .5)
+                        gate.run([sys.executable, "-c", parent], self.root / "timeout.log", os.environ, 3)
                 else:
                     self.assertEqual(gate.run([sys.executable, "-c", parent], self.root / "exit.log", os.environ, 5), 0)
                 self.assertTrue(ready.exists())
-                time.sleep(1.1)
+                time.sleep(max(0, deadline - time.time()) + .1)
                 self.assertFalse(marker.exists())
 
     def test_symlink_loops_are_setup_errors(self):

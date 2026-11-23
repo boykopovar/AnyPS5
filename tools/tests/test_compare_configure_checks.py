@@ -84,6 +84,16 @@ class Tests(unittest.TestCase):
             "after": {"value": "1", "help": "Test new help"},
         }])
 
+    def test_variable_probe_change_is_reported(self):
+        baseline, candidate = self.root / "baseline", self.root / "candidate"
+        for cache, value in ((baseline, "1"), (candidate, "")):
+            cache.write_text(f"//Have variable timezone\nHAVE_TIMEZONE:INTERNAL={value}\n", encoding="utf-8")
+        result = self.run_tool(baseline, candidate)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        change, = json.loads(result.stdout)["changed"]
+        self.assertEqual((change["name"], change["before"]["value"], change["after"]["value"]),
+                         ("HAVE_TIMEZONE", "1", ""))
+
     def test_added_and_removed_are_sorted_by_name(self):
         a, b = self.root / "a", self.root / "b"
         a.write_text("//Test Z\nZ:INTERNAL=1\n//Test M\nM:INTERNAL=1\n//Test A\nA:INTERNAL=1\n", encoding="utf-8")

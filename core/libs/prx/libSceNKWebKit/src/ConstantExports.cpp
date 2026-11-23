@@ -126,14 +126,6 @@ int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled() {
     return 0;
 }
 
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFilled() {
-    return 0;
-}
-
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutofilled() {
-    return 0;
-}
-
 int APS5_VABI WKBundlePageCopyContextMenuAtPointInWindow() {
     return 0;
 }
@@ -323,10 +315,6 @@ int APS5_VABI WKPluginInformationPluginspageAttributeURLKey() {
 }
 
 int APS5_VABI WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey() {
-    return 0;
-}
-
-int APS5_VABI WKPreferencesGetAccelerated2DCanvasEnabled() {
     return 0;
 }
 
