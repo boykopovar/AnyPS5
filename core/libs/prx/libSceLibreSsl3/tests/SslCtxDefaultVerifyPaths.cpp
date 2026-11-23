@@ -186,8 +186,8 @@ LibreSslX509Store* NewStore() {
     return store;
 }
 
-LibreSsl3SslCtx ContextFor(LibreSslX509Store* store) {
-    LibreSsl3SslCtx context{};
+LibreSslCtx ContextFor(LibreSslX509Store* store) {
+    LibreSslCtx context{};
     context.certStore = store;
     return context;
 }
@@ -240,7 +240,7 @@ void TestSystemCertificateListWithT61Subject() {
     WriteGuestFile("system-ca.pem", T61Certificate);
     AddPathAlias_nid_no_patch("/system/common/cert/CA_LIST.cer", HostPath("system-ca.pem").c_str());
     LibreSslX509Store* store = NewStore();
-    LibreSsl3SslCtx context = ContextFor(store);
+    LibreSslCtx context = ContextFor(store);
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 1);
     Require(ObjectCount(store) == 1);
     static const unsigned char expected[] = {0x31, 0x14, 0x30, 0x12, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x0b,
@@ -256,7 +256,7 @@ void TestNoCandidateLocations() {
     BlockPathAlias_nid_no_patch("/system/common/cert/CA_LIST.cer");
     ClearEnvironment();
     LibreSslX509Store* store = NewStore();
-    LibreSsl3SslCtx context = ContextFor(store);
+    LibreSslCtx context = ContextFor(store);
     if (access_nid_postfix("/system/common/cert/CA_LIST.cer", 0) == 0) {
         Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 1);
         Require(ObjectCount(store) > 0);
@@ -277,7 +277,7 @@ void TestDefaultFileCandidate() {
     AddPathAlias_nid_no_patch(CertificateFileCandidates[2], later.c_str());
     ClearEnvironment();
     LibreSslX509Store* store = NewStore();
-    LibreSsl3SslCtx context = ContextFor(store);
+    LibreSslCtx context = ContextFor(store);
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 1);
     Require(HoldsCertificates(store, 2));
     Require(LookupCount(store) == 2);
@@ -300,7 +300,7 @@ void TestEnvironmentOverridesCandidates() {
     Require(setenv_nid_postfix(CertificateFileVariable, overrideBundle.c_str(), 1) == 0);
     Require(unsetenv_nid_postfix(CertificateDirectoryVariable) == 0);
     LibreSslX509Store* store = NewStore();
-    LibreSsl3SslCtx context = ContextFor(store);
+    LibreSslCtx context = ContextFor(store);
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 1);
     Require(HoldsCertificates(store, 1));
     Require(LookupCount(store) == 1);
@@ -317,7 +317,7 @@ void TestUnreadableEnvironmentFile() {
     Require(setenv_nid_postfix(CertificateFileVariable, MissingBundle, 1) == 0);
     Require(unsetenv_nid_postfix(CertificateDirectoryVariable) == 0);
     LibreSslX509Store* store = NewStore();
-    LibreSsl3SslCtx context = ContextFor(store);
+    LibreSslCtx context = ContextFor(store);
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 0);
     Require(ObjectCount(store) == 0);
     X509_STORE_free_nid_postfix(store);
@@ -333,7 +333,7 @@ void TestEnvironmentDirectory() {
     Require(unsetenv_nid_postfix(CertificateFileVariable) == 0);
     Require(setenv_nid_postfix(CertificateDirectoryVariable, "/anyps5-libressl3-default-dir", 1) == 0);
     LibreSslX509Store* store = NewStore();
-    LibreSsl3SslCtx context = ContextFor(store);
+    LibreSslCtx context = ContextFor(store);
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 1);
     Require(ObjectCount(store) == 0);
     Require(LookupCount(store) == 1);
@@ -372,9 +372,50 @@ void TestEnvironmentDirectory() {
 
 void TestNullArguments() {
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(nullptr) == 0);
-    LibreSsl3SslCtx context{};
+    LibreSslCtx context{};
     Require(context.certStore == nullptr);
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 0);
+}
+
+LibreSslCtx* NewContext(LibreSslX509Store*& store) {
+    LibreSslCtx* context = SSL_CTX_new_nid_postfix(TLS_client_method_nid_postfix());
+    Require(context != nullptr);
+    store = static_cast<LibreSslX509Store*>(SSL_CTX_get_cert_store_nid_postfix(context));
+    Require(store != nullptr && store == context->certStore);
+    Require(ObjectCount(store) == 0);
+    Require(LookupCount(store) == 0);
+    return context;
+}
+
+void TestConstructedContext() {
+    BlockCandidates();
+    const std::string bundle = WriteGuestFile("constructed/constructed.pem", std::string(CertificateA) + CertificateB);
+    Require(setenv_nid_postfix(CertificateFileVariable, bundle.c_str(), 1) == 0);
+    Require(unsetenv_nid_postfix(CertificateDirectoryVariable) == 0);
+    LibreSslX509Store* store = nullptr;
+    LibreSslCtx* context = NewContext(store);
+    std::array<unsigned char, sizeof(LibreSslCtx)> before{};
+    std::memcpy(before.data(), context, before.size());
+    Require(SSL_CTX_set_default_verify_paths_nid_postfix(context) == 1);
+    Require(std::memcmp(before.data(), context, before.size()) == 0);
+    Require(SSL_CTX_get_cert_store_nid_postfix(context) == store);
+    Require(HoldsCertificates(store, 2));
+    Require(LookupCount(store) == 1);
+    int length = 0;
+    const unsigned char* first = StoredSubject(store, 0, length);
+    Require(length == static_cast<int>(sizeof(SubjectEncodingA)));
+    Require(std::memcmp(first, SubjectEncodingA, sizeof(SubjectEncodingA)) == 0);
+    const unsigned char* second = StoredSubject(store, 1, length);
+    Require(length == static_cast<int>(sizeof(SubjectEncodingB)));
+    Require(std::memcmp(second, SubjectEncodingB, sizeof(SubjectEncodingB)) == 0);
+
+    Require(setenv_nid_postfix(CertificateFileVariable, MissingBundle, 1) == 0);
+    LibreSslX509Store* emptyStore = nullptr;
+    LibreSslCtx* empty = NewContext(emptyStore);
+    Require(SSL_CTX_set_default_verify_paths_nid_postfix(empty) == 0);
+    Require(ObjectCount(emptyStore) == 0);
+    SSL_CTX_free_nid_postfix(empty);
+    ClearEnvironment();
 }
 
 void TestNegativeControl() {
@@ -382,7 +423,7 @@ void TestNegativeControl() {
     const std::string bundle = WriteGuestFile("control/control.pem", CertificateB);
     Require(setenv_nid_postfix(CertificateFileVariable, bundle.c_str(), 1) == 0);
     LibreSslX509Store* store = NewStore();
-    LibreSsl3SslCtx context = ContextFor(store);
+    LibreSslCtx context = ContextFor(store);
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 1);
     Require(HoldsCertificates(store, 1));
     auto* stack = const_cast<LibreSslStack*>(static_cast<const LibreSslStack*>(store->objects));
@@ -414,6 +455,7 @@ int main() {
     TestUnreadableEnvironmentFile();
     TestEnvironmentDirectory();
     TestNullArguments();
+    TestConstructedContext();
     TestNegativeControl();
     std::puts("libSceLibreSsl3 SSL_CTX_set_default_verify_paths tests passed");
     return 0;

@@ -263,6 +263,17 @@ class TimelineTests(unittest.TestCase):
                 self.assertIn(option, done.stderr)
                 self.assertFalse(out.exists())
 
+    def test_the_cli_rejects_a_width_that_overflows_layout(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        out = path.with_suffix(".html")
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "--width", str(10**309)],
+                              capture_output=True, text=True, timeout=15)
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertIn("--width", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertFalse(out.exists())
+
     def test_the_cli_reports_a_non_ascii_output_path_as_utf8(self):
         directory = Path(self.tmp.name) / "界"
         directory.mkdir()
@@ -319,6 +330,15 @@ class TimelineTests(unittest.TestCase):
             self.skipTest(f"symbolic links unavailable: {error}")
         self.check_input_alias(path, alias)
         self.check_input_alias(alias, path)
+
+    def test_cli_renders_unpaired_surrogates_in_slice_names(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document([complete(1, "worker \u03b1\ud800", 0, 100)])), encoding="utf-8")
+        output = path.with_suffix(".html")
+        output.write_text("previous report", encoding="utf-8")
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path)], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("worker \u03b1\\ud800", output.read_text(encoding="utf-8"))
 
     def test_cli_allows_distinct_existing_output_with_identical_contents(self):
         path = Path(self.tmp.name) / "capture.json"

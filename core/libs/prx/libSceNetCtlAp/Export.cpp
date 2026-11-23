@@ -82,9 +82,7 @@ int APS5_VABI sceNetCtlApRegisterCallback(NetCtlApCallback func, void* arg, int*
         }
     }
     const int invalidCid = -1;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(cid, &invalidCid, sizeof(invalidCid));
-    errno = savedErrno;
     if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
     return NET_CTL_AP_ERROR_CALLBACK_MAX;
 }
@@ -104,9 +102,7 @@ int APS5_VABI sceNetCtlApGetResult(int eventType, int* errorCode) {
     if (!errorCode) return NET_CTL_AP_ERROR_INVALID_ADDR;
     if (!ValidEventType(eventType)) return NET_CTL_AP_ERROR_INVALID_TYPE;
     const int zero = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(errorCode, &zero, sizeof(zero));
-    errno = savedErrno;
     if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
     return 0;
 }
@@ -116,9 +112,7 @@ int APS5_VABI sceNetCtlApGetInfo(void* info) {
     if (!g_initialized) return NET_CTL_AP_ERROR_NOT_INITIALIZED;
     if (!info) return NET_CTL_AP_ERROR_INVALID_ADDR;
     std::uint64_t size = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&size, info, sizeof(size));
-    errno = savedErrno;
     if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
     if (size != NET_CTL_AP_INFO_SIZE) return NET_CTL_AP_ERROR_INVALID_SIZE;
     return NET_CTL_AP_ERROR_NOT_STARTED;
@@ -129,9 +123,7 @@ int APS5_VABI sceNetCtlApGetState(int* state) {
     if (!g_initialized) return NET_CTL_AP_ERROR_NOT_INITIALIZED;
     if (!state) return NET_CTL_AP_ERROR_INVALID_ADDR;
     const int stoppedState = NET_CTL_AP_STATE_STOPPED;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(state, &stoppedState, sizeof(stoppedState));
-    errno = savedErrno;
     if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
     return 0;
 }
@@ -159,9 +151,7 @@ int APS5_VABI sceNetCtlApGetConnectInfo(const char* optStr, void* connectInfo) {
     }
     if (!connectInfo) return NET_CTL_AP_ERROR_INVALID_ADDR;
     std::uint64_t size = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&size, connectInfo, sizeof(size));
-    errno = savedErrno;
     if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
     if (size != NET_CTL_AP_CONNECT_INFO_SIZE) return NET_CTL_AP_ERROR_INVALID_SIZE;
     return NET_CTL_AP_ERROR_NOT_STARTED;
