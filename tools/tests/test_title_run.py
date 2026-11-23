@@ -1543,9 +1543,31 @@ class SessionTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "LoadExec hand-over is Windows-specific")
     @unittest.skipIf(ALIAS_INTERPRETER, ALIAS_REASON)
     def test_exit_code_of_the_last_process(self):
-        session = self.start("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])")
-        self.assertTrue(wait_until(lambda: not session.alive()))
-        self.assertEqual(session.exit_code(), 7)
+        for status in (0, 7, 259):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                parent_status = 7 if status == 0 else 0
+                launch, release, child_pid = (Path(directory) / name for name in ("launch", "release", "child-pid"))
+                child = (f"import sys, time; from pathlib import Path; release = Path({str(release)!r})\n"
+                         f"while not release.exists(): time.sleep(0.01)\nsys.exit({status})")
+                parent = (f"import subprocess, sys, time; from pathlib import Path; launch = Path({str(launch)!r})\n"
+                          "while not launch.exists(): time.sleep(0.01)\n"
+                          f"child = subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+                          f"Path({str(child_pid)!r}).write_text(str(child.pid)); sys.exit({parent_status})")
+                session = self.start(parent, interactive=True)
+                self.assertIn(session.process.pid, session.process_ids())
+                launch.touch()
+                self.assertTrue(wait_until(lambda: session.process.poll() == parent_status))
+                pid = int(child_pid.read_text())
+                self.assertIn(pid, session.process_ids())
+                self.assertTrue(session.alive())
+                active = title_run.wintypes.DWORD()
+                self.assertTrue(title_run.kernel32.GetExitCodeProcess(session.handles[pid], ctypes.byref(active)))
+                self.assertEqual(active.value, 259)
+                self.assertEqual(session.exit_code(), parent_status)
+                release.touch()
+                self.assertTrue(wait_until(lambda: not session.alive()))
+                self.assertEqual(session.exit_code(), status)
+                self.assertEqual(title_run.classify(True, session.exit_code(), None, False, None), "crashed" if status else "exited")
 
     @unittest.skipUnless(os.name == "nt", "job process list is Windows-specific")
     @unittest.skipIf(ALIAS_INTERPRETER, ALIAS_REASON)
