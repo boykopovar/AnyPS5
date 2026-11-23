@@ -1,4 +1,5 @@
 #include "prx/libSceJpegDec/include/Api.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -89,7 +90,7 @@ static T Resolve(void* module, const char* name) {
 int main(int argc, char** argv) {
     Require(argc == 3 || argc == 4, "module and raw/nid arguments required");
 #ifdef _WIN32
-    void* module = LoadLibraryA(argv[1]);
+    void* module = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     if (!module) std::fprintf(stderr, "LoadLibrary error %lu\n", GetLastError());
 #else
     void* module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
