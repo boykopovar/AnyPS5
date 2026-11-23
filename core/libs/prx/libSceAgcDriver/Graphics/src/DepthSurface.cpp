@@ -1104,13 +1104,16 @@ public:
             const bool gpuFill = clearPattern.has_value() && clearFillNote != 0u && (queuedFill || newestHtileNote == 0u);
             for (std::size_t index = 0u; index < sampling.initial.size(); ++index) {
                 const auto& plane = sampling.initial[index];
-                if (index != 1u) Require(GuestMemory::UnchangedSince(plane.address, plane.bytes, plane.generation), "guest writes over native multisample depth are not implemented");
+                if (index != 1u) Require(GuestMemory::UnchangedSince(plane.address, plane.bytes, clearedPlane(index) ? clearPlaneGeneration[index] : plane.generation), "guest writes over native multisample depth are not implemented");
             }
             Require(GuestMemory::UnchangedSinceCollected(metadata.address, metadata.bytes, clearGeneration), "CPU writes raced native multisample depth clear");
             Require(gpuFill || clearStored || GuestMemory::StoredAllSince_nid_no_patch(metadata.address, metadata.bytes, clearGeneration), "native multisample depth clear has no complete tracked HTILE store");
             Require(clearDepth == 0.0f || clearDepth == 1.0f, "native multisample depth clear value is not implemented");
             auto current = sampling.initial;
             current[1].generation = GuestMemory::CollectWritesUncached(metadata.address, metadata.bytes);
+            for (std::size_t index = 0u; index < current.size(); ++index) {
+                if (clearedPlane(index)) current[index].generation = GuestMemory::CollectWritesUncached(current[index].address, current[index].bytes);
+            }
             std::vector<std::uint32_t> words(queuedFill ? 1u : metadata.bytes / sizeof(std::uint32_t), queuedFill ? *clearPattern : 0u);
             if (!queuedFill) std::memcpy(words.data(), reinterpret_cast<const void*>(metadata.address), metadata.bytes);
             for (const auto word : words) {
@@ -1123,8 +1126,12 @@ public:
             RecordClear(clearAspects);
             sampling.initial = current;
             RebasePublication(1u);
+            for (std::size_t index = 0u; index < current.size(); ++index) {
+                if (clearedPlane(index)) RebasePublication(index);
+            }
             clearGeneration = 0u;
             clearAspects = 0u;
+            clearPlaneGeneration = {};
             pendingClear = 0u;
         }
         Require(GuestMemory::UnchangedSinceAll(sampling.initial), "guest writes over native multisample depth are not implemented");
@@ -1152,6 +1159,11 @@ public:
             if (reports.fetch_add(1) < 8) std::fprintf(stderr, "[gpu] native multisample depth 0x%llx sampled through a descriptor without metadata before an in-place expand (last DB_RENDER_CONTROL 0x%08x)\n", static_cast<unsigned long long>(target.address), renderControl);
         }
         Require(layout && (htile || (bare && expanded)), "native multisample depth sampled metadata or XOR mismatch");
+    }
+
+    bool clearedPlane(std::size_t index) const {
+        if (clearGeneration == 0u || index == 1u || index >= sampling.initial.size() || clearPlaneGeneration[index] == 0u) return false;
+        return index == 0u ? (clearAspects & VK_IMAGE_ASPECT_DEPTH_BIT) != 0u : (clearAspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0u;
     }
 
     void RequireStencilProven() const {
@@ -1386,6 +1398,12 @@ public:
     bool Holds(const Texture* texture) const {
         const auto held = [&](const auto& entry) { return entry.second.get() == texture; };
         return std::any_of(textures.begin(), textures.end(), held) || std::any_of(stencilCopy.textures.begin(), stencilCopy.textures.end(), held);
+    }
+
+    bool StencilPlaneReadFromMemory(const GuestTextureResource& resource) const {
+        const bool bare = resource.dccAddress == 0u && !resource.dccPipeAligned && !resource.dccAlphaOnMsb;
+        const bool plane = resource.format == 5u && resource.width == target.extent.width && resource.height == target.extent.height && resource.samples == target.samples && resource.dimension == TextureDimension::k2DMsaa && resource.tileMode == TextureTileMode::kZ64KBX && resource.pipeBankXor == target.pipeBankXor && resource.depthOrLastArray == 0u && resource.baseArray == 0u && resource.lastLevel == 0u;
+        return target.samples != 1u && target.htileStencil && !expanded && bare && plane && !hostWritten->load(std::memory_order_acquire);
     }
 
     bool SampledElsewhere() const {
@@ -2046,6 +2064,7 @@ public:
     std::optional<std::uint32_t> clearPattern;
     std::uint64_t clearFillNote = 0u;
     std::uint64_t clearFillFloor = 0u;
+    std::array<std::uint64_t, 3> clearPlaneGeneration{};
     bool clearStored = false;
     std::uint64_t stencilClearGeneration = 0u;
     std::optional<std::uint8_t> stencilClearValue;
@@ -4781,6 +4800,7 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
             found->ApplyFastClear();
         } else {
             found->CheckCurrent();
+            if (stencil && found->StencilPlaneReadFromMemory(resource)) return nullptr;
             if (stencil) found->RequireStencilProven();
             found->CheckResource(resource);
             Require(found->pendingClear == 0u, "native multisample depth fast-clear transition is not implemented");
@@ -4917,6 +4937,17 @@ std::optional<float> planeFillDepth(const DepthTarget& target, std::uint64_t add
 
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
     forgetCopiesInside(address, bytes);
+    std::vector<GuestMemory::UnchangedQuery> clearedPlanes;
+    {
+        std::lock_guard lock(surfacesMutex());
+        for (const auto& surface : surfaces()) {
+            const auto& target = surface->target;
+            if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || target.samples == 1u || target.htileAddress == 0u || !HtileFillCovers(target.htileAddress, target.extent, address, bytes)) continue;
+            clearedPlanes.push_back(surface->sampling.initial[0]);
+            if (target.htileStencil && surface->sampling.initial.size() > 2u) clearedPlanes.push_back(surface->sampling.initial[2]);
+        }
+    }
+    for (const auto& plane : clearedPlanes) StorageTexture::FlushPending(plane.address, plane.bytes);
     std::lock_guard gpu(GuestMemory::GpuMutex());
     std::lock_guard lock(surfacesMutex());
     forgetHtileReads(address, bytes);
@@ -4964,6 +4995,15 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
                     surface->clearFillFloor = 0u;
                     surface->clearStored = false;
                 }
+                if (auto* planeRecorder = RecorderFor(surface->context); planeRecorder != nullptr) {
+                    for (std::size_t index = 0u; index < surface->sampling.initial.size(); ++index) {
+                        const auto& plane = surface->sampling.initial[index];
+                        if (index != 1u && planeRecorder->PendingWriteOverlaps(plane.address, plane.bytes)) planeRecorder->SyncThrough(plane.address, plane.bytes);
+                    }
+                }
+                surface->clearPlaneGeneration = {};
+                surface->clearPlaneGeneration[0] = GuestMemory::CollectWritesUncached(surface->sampling.initial[0].address, surface->sampling.initial[0].bytes);
+                if (target.htileStencil && surface->sampling.initial.size() > 2u) surface->clearPlaneGeneration[2] = GuestMemory::CollectWritesUncached(surface->sampling.initial[2].address, surface->sampling.initial[2].bytes);
                 if (refill != 0u) surface->clearFillNote = refill;
                 else {
                     surface->clearGeneration = GuestMemory::CollectWritesUncached(metadata.address, metadata.bytes);
