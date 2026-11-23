@@ -256,15 +256,24 @@ int32_t JxrWmpEncodePixelSpan_nid_no_patch(const void* encoder, uint32_t lines, 
     return RowSpanBytes(&pIE->guidPixFormat, pIE->uWidth, lines, stride, bytes, overflow);
 }
 
-int32_t JxrWmpDecodePixelSpan_nid_no_patch(const void* decoder, int32_t width, int32_t height, uint32_t stride,
+int32_t JxrWmpDecodePixelSpan_nid_no_patch(const void* decoder, int32_t height, uint32_t stride,
                                            size_t* bytes, int32_t* overflow) {
     const PKImageDecode* pID = (const PKImageDecode*)decoder;
-    if (width <= 0 || height <= 0) {
+    CWMImageInfo info = pID->WMP.wmiI;
+    CWMIStrCodecParam parameters = pID->WMP.wmiSCP;
+    if (height <= 0) {
         *bytes = 0;
         *overflow = 0;
         return 1;
     }
-    return RowSpanBytes(&pID->guidPixFormat, (uint64_t)width, (uint64_t)height, stride, bytes, overflow);
+#ifdef REENTRANT_MODE
+    if (pID->WMP.DecoderCurrMBRow == 0)
+#endif
+    {
+        if (parameters.pWStream == NULL || WMPhotoValidate(&info, &parameters) != ICERR_OK) return 0;
+    }
+    const uint64_t width = info.oOrientation >= O_RCW ? info.cROIHeight : info.cROIWidth;
+    return RowSpanBytes(&pID->guidPixFormat, width, (uint64_t)height, stride, bytes, overflow);
 }
 
 int64_t JxrWmpEncodeInitialize_nid_no_patch(void* encoder, void* stream, void* parameters, size_t size) {

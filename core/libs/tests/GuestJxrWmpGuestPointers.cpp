@@ -24,6 +24,7 @@ extern "C" {
 std::size_t JxrWmpReferenceParameterSize();
 void JxrWmpReferenceParameters(void* value, std::int32_t spatial, std::uint8_t alphaMode);
 void JxrWmpReferenceConfigureDecoder(void* value);
+void JxrWmpReferenceRegion(void* value, std::uint32_t left, std::uint32_t top, std::uint32_t width, std::uint32_t height);
 }
 
 namespace {
@@ -317,6 +318,24 @@ int main() {
     std::uint32_t nonzeroSize = 8;
     CHECK_THROWS_AS(std::runtime_error, decoder->getColorContext(decoder, static_cast<std::uint8_t*>(pages.readOnly), &nonzeroSize));
 
+    auto* regionStream = CreateMemoryStream(encoded);
+    void* regionDecoderRaw = nullptr;
+    CHECK(PKImageDecode_Create_WMP_nid_postfix(&regionDecoderRaw) == 0 && regionDecoderRaw != nullptr);
+    auto* regionDecoder = static_cast<Decoder*>(regionDecoderRaw);
+    CHECK(regionDecoder->initialize(regionDecoder, regionStream) == 0);
+    JxrWmpReferenceConfigureDecoder(regionDecoder);
+    constexpr std::uint32_t RegionLeft = 8;
+    constexpr std::uint32_t RegionWidth = 16;
+    constexpr std::uint32_t RegionStride = RegionWidth * 3;
+    JxrWmpReferenceRegion(regionDecoder, RegionLeft, 0, RegionWidth, Height);
+    const Rect regionRect{0, 0, width, height};
+    auto* regionPixels = reinterpret_cast<std::uint8_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - Height * RegionStride);
+    CHECK(regionDecoder->copy(regionDecoder, &regionRect, regionPixels, RegionStride) == 0);
+    for (std::uint32_t row = 0; row < Height; ++row)
+        CHECK(std::memcmp(regionPixels + row * RegionStride, sourcePixels.data() + row * Stride + RegionLeft * 3, RegionStride) == 0);
+    CHECK(regionDecoder->release(&regionDecoder) == 0 && regionDecoder == nullptr);
+    CHECK(regionStream->close(&regionStream) == 0 && regionStream == nullptr);
+
     JxrWmpReferenceConfigureDecoder(decoder);
     const Rect validRect{0, 0, width, height};
     std::vector<std::uint8_t> decodedPixels(Height * Stride);
@@ -330,6 +349,13 @@ int main() {
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, static_cast<std::uint8_t*>(pages.unmapped), Stride));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, static_cast<std::uint8_t*>(pages.readOnly), Stride));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &validRect, boundaryPixels, Stride));
+    for (const std::int32_t rectangleWidth : {0, 1, -1, width + 1}) {
+        const Rect ignoredWidthRect{0, 0, rectangleWidth, height};
+        CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &ignoredWidthRect, nullptr, Stride));
+        CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &ignoredWidthRect, static_cast<std::uint8_t*>(pages.unmapped), Stride));
+        CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &ignoredWidthRect, static_cast<std::uint8_t*>(pages.readOnly), Stride));
+        CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &ignoredWidthRect, boundaryPixels, Stride));
+    }
     auto* unpaddedLastRowDst = reinterpret_cast<std::uint8_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - ExactPaddedSpan);
     CHECK(decoder->copy(decoder, &validRect, unpaddedLastRowDst, PaddedStride) == 0);
     for (std::uint32_t row = 0; row < Height; ++row)
@@ -344,7 +370,8 @@ int main() {
     CHECK(tightDecoder->initialize(tightDecoder, tightDecodeStream) == 0);
     JxrWmpReferenceConfigureDecoder(tightDecoder);
     std::vector<std::uint8_t> tightDecodedPixels(Height * Stride);
-    CHECK(tightDecoder->copy(tightDecoder, &validRect, tightDecodedPixels.data(), Stride) == 0);
+    const Rect ignoredWidthRect{0, 0, 0, height};
+    CHECK(tightDecoder->copy(tightDecoder, &ignoredWidthRect, tightDecodedPixels.data(), Stride) == 0);
     CHECK(tightDecodedPixels == sourcePixels);
     CHECK(tightDecoder->release(&tightDecoder) == 0 && tightDecoder == nullptr);
     CHECK(tightDecodeStream->close(&tightDecodeStream) == 0 && tightDecodeStream == nullptr);
