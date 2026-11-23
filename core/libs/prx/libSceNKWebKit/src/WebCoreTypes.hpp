@@ -381,6 +381,8 @@ static_assert(sizeof(ScrollBehaviorForFixedElements) == 1);
 static_assert(sizeof(LayoutViewportConstraint) == 4);
 static_assert(static_cast<std::int32_t>(LayoutViewportConstraint::ConstrainedToDocumentRect) == 0);
 static_assert(sizeof(RoundedRect) == 48);
+static_assert(offsetof(RoundedRect, m_rect) == 0);
+static_assert(offsetof(RoundedRect, m_radii) == 16);
 static_assert(sizeof(FourCC) == 4);
 static_assert(alignof(FourCC) == 4);
 static_assert(std::is_trivially_copyable_v<FourCC>);
