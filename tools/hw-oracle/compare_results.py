@@ -8,6 +8,7 @@ from pathlib import Path
 SETTINGS = ("body", "wave_size", "floating_point_modes", "lds_bytes", "memory",
             "extra_bytes", "extra_sha256", "output_registers")
 MODES = dict(ieee=2, denorm32=4, denorm16=4, dx10_clamp=2, round32=4, round16=4, fp16_overflow=2)
+GFX12_REMOVED_MODES = ("ieee", "dx10_clamp")
 
 
 def integer(value, minimum, maximum):
@@ -40,7 +41,8 @@ def read_report(path):
         raise ValueError(f"{path}: unsupported schema_version")
     modes = report["floating_point_modes"]
     if not isinstance(modes, dict) or modes.keys() != MODES.keys() or any(
-            not integer(modes[name], 0, limit - 1) for name, limit in MODES.items()):
+            not integer(modes[name], 0, limit - 1) and not (name in GFX12_REMOVED_MODES and modes[name] is None)
+            for name, limit in MODES.items()):
         raise ValueError(f"{path}: invalid floating_point_modes")
     if not isinstance(report["body"], str):
         raise ValueError(f"{path}: body must be text")

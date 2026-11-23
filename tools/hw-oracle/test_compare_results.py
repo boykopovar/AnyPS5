@@ -103,6 +103,37 @@ class CompareResultsTests(unittest.TestCase):
         self.assertIn("2 rows x 2 registers: 0 differing words", result.stdout)
         self.assertEqual(result.stderr, "")
 
+    def test_gfx12_reports_without_removed_kernel_modes_compare(self):
+        self.report["assembly_target"] = "gfx1201"
+        self.report["floating_point_modes"] |= {"ieee": None, "dx10_clamp": None}
+        after = copy.deepcopy(self.report)
+        after["assembly_target"] = "gfx1200"
+        result = self.cli(after=after)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("gfx1201 -> gfx1200", result.stdout)
+        self.assertIn("2 rows x 2 registers: 0 differing words", result.stdout)
+
+    def test_removed_kernel_modes_differ_from_explicit_modes(self):
+        for mode in ("ieee", "dx10_clamp"):
+            with self.subTest(mode=mode):
+                after = copy.deepcopy(self.report)
+                after["assembly_target"] = "gfx1201"
+                after["floating_point_modes"][mode] = None
+                result = self.cli(after=after)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("floating_point_modes differs", result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_only_removed_kernel_modes_may_be_null(self):
+        for mode in MODES.keys() - {"ieee", "dx10_clamp"}:
+            with self.subTest(mode=mode):
+                after = copy.deepcopy(self.report)
+                after["floating_point_modes"][mode] = None
+                result = self.cli(after=after)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("invalid floating_point_modes", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def test_duplicate_output_cannot_hide_a_difference_on_either_side(self):
         original = json.dumps(self.report)
         ambiguous = original.replace('"output": [0, 2147483648]',
