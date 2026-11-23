@@ -2724,6 +2724,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             return GuestMemory::EqualsCommitted(descriptor.baseAddress, original);
         };
         const auto compareUnknown = [&](std::size_t firstBlock, std::size_t blocks) {
+            if (!GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) return false;
             unknownBlocks.assign(generations.size(), 0);
             if (!GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), generations, stampedBlocks, cpuBlocks, unknownBlocks)) return false;
             if (std::none_of(unknownBlocks.begin(), unknownBlocks.end(), [](auto value) { return value != 0; })) return true;
@@ -8246,6 +8247,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     std::vector<bool> compared(trackedLayers, false);
     std::vector<bool> unitTracked;
     const auto compareUnknown = [&] {
+        if (!GuestMemory::Watched(firstStored, static_cast<std::size_t>(lastStored - firstStored))) {
+            std::fill(changedBlocks.begin(), changedBlocks.end(), GuestMemory::BlockWritten);
+            return false;
+        }
         unknownBlocks.assign(spanBlocks, 0);
         cpuBlocks.assign(spanBlocks, 0);
         if (!GuestMemory::ChangedBlocks(firstStored, static_cast<std::size_t>(lastStored - firstStored), generations, changedBlocks, cpuBlocks, unknownBlocks)) return false;
