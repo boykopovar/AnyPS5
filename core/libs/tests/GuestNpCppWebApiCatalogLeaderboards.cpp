@@ -86,6 +86,16 @@ void CheckRankingRequest() {
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V14UserEEEED1Ev(vector.data());
     Require(Read<int>(userData, 0) == 10);
 
+    alignas(8) std::array<std::uint8_t, 0x10> liveParameter{};
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingC1Ev(liveParameter.data());
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking10initializeEPNS1_6Common10LibContextEi(liveParameter.data(), library, negative) == 0);
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking24setgetRankingRequestBodyENS1_6Common12IntrusivePtrINS3_21GetRankingRequestBodyEEE(liveParameter.data(), &request);
+    Require(Read<int>(body, 0) == 2);
+    alignas(8) auto savedForCleanup = liveParameter;
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingD1Ev(liveParameter.data());
+    Require(liveParameter == savedForCleanup && Read<int>(body, 0) == 2);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking9terminateEv(savedForCleanup.data()) == 0 && Read<int>(body, 0) == 1);
+
     alignas(8) std::array<std::uint8_t, 0x10> parameter{};
     _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingC1Ev(parameter.data());
     _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking24setgetRankingRequestBodyENS1_6Common12IntrusivePtrINS3_21GetRankingRequestBodyEEE(parameter.data(), &request);
@@ -104,6 +114,9 @@ void CheckRankingRequest() {
     Require(Read<int>(body, 0) == 1);
     Require(_ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking9terminateEv(parameter.data()) == 0 && Read<int>(userData, 0) == 1);
     Require(_ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking9terminateEv(parameter.data()) == static_cast<int>(0x80553510));
+    const auto terminatedParameter = parameter;
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingD1Ev(parameter.data());
+    Require(parameter == terminatedParameter && Read<int>(userData, 0) == 1);
     _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V14UserEED1Ev(&other);
     _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V14UserEED1Ev(&user);
     Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(library) == 0);
