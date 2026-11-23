@@ -10621,6 +10621,17 @@ void verifyUnnormalizedSamplers() {
         require(foldedSamples(oneD.spirv.Words()), "unnormalized texel offsets: a 1D offset was not added to the coordinate");
     }
     const auto constantLz = offsetProgram(0xf0dc0f08u, 0xffu, 0x3du | (2u << 8u));
+    for (const bool trunc : {false, true}) {
+        auto mcSampler = unnormalized;
+        mcSampler[0] |= (1u << 19u) | (static_cast<std::uint32_t>(trunc) << 27u);
+        for (const std::uint32_t source : {0xffu, 0x100u}) {
+            for (const std::uint32_t mimg : {0xf0dc0f00u, 0xf0dc0f08u, 0xf0d00f08u, 0xf0c00f08u, 0xf0d40f08u, 0xf0c40f08u}) {
+                const auto code = offsetProgram(mimg, source, 0x3du | (2u << 8u));
+                const auto data = imageData(mcSampler, mimg == 0xf0dc0f00u ? Type1D : Type2D, Format8888UNorm, 0u);
+                expectFailure([&] { static_cast<void>(recompile(code, data)); }, "uses MC_COORD_TRUNC with texel offsets", "unnormalized MC samplers: an unmeasured offset ordering was accepted");
+            }
+        }
+    }
     const auto foldedLz = recompile(constantLz, userData(unnormalized), 0x48000u);
     require(proven(foldedLz, true), "unnormalized texel offsets: image_sample_lz_o through an unnormalized S# was not flagged");
     auditSpirv(foldedLz.spirv.Words());

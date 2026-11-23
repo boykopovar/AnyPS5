@@ -353,6 +353,7 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
             if (image.constantSwizzle) continue;
             const auto& samplerWords = snapshot.samplers[r].dwords;
             if ((samplerWords[0] & (1u << 19u)) != 0u) {
+                if ((sampler.uses & SamplerUseOffset) != 0u) failUnnormalized("uses MC_COORD_TRUNC with texel offsets");
                 const auto supportedClamp = [](std::uint32_t clamp) { return clamp <= 3u || clamp == 6u; };
                 if (!supportedClamp(samplerWords[0] & 7u) || (image.dimension == RdnaImageDimension::Dim2D && !supportedClamp((samplerWords[0] >> 3u) & 7u))) failUnnormalized("uses MC_COORD_TRUNC with an unimplemented clamp mode");
                 if (sampler.forcePointFiltering || IsConvertedUnormTextureFormat(image.conversionFormat)) failUnnormalized("uses MC_COORD_TRUNC with shader-emulated texture filtering");
