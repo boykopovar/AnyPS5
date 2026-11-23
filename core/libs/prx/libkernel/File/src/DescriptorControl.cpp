@@ -53,6 +53,8 @@ constexpr int GuestEopnotsupp = 45;
 constexpr int GuestEnolck = 77;
 constexpr int GuestEoverflow = 84;
 
+constexpr int DirectoryReadableBytes = 65536;
+
 constexpr int DuplicateCommand = 0;
 constexpr int GetDescriptorFlags = 1;
 constexpr int SetDescriptorFlags = 2;
@@ -576,8 +578,13 @@ bool IoctlRequestMalformed(std::uint64_t request) {
 
 int Ioctl(int fd, std::uint64_t request, void* argument) {
     if (IoctlRequestMalformed(request)) return Fail(GuestEnotty);
-    if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const auto command = static_cast<std::uint32_t>(request);
+    if (File::IsVirtualDirectoryDescriptor(fd)) {
+        if (command != ReadableRequest) return Fail(GuestEinval);
+        const int available = DirectoryReadableBytes;
+        if (!GuestCopyOut_nid_no_patch(argument, &available, sizeof(available))) return Fail(GuestEfault);
+        return 0;
+    }
     const std::uint32_t length = (command >> 16) & 0x1fff;
     const std::uint32_t copied = (command & RequestVoid) != 0 ? 0 : length;
     if ((command & RequestIn) && copied != 0 && argument == nullptr) return Fail(GuestEfault);
@@ -596,9 +603,11 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
     }
     if (command == ReadableRequest) {
         if (*kind == Kind::RandomDevice) return Fail(GuestEnotty);
-        if (*kind != Kind::File && *kind != Kind::Pipe && *kind != Kind::Socket && *kind != Kind::ArchivedFile) Unsupported("ioctl", "FIONREAD", *kind, fd);
+        if (*kind != Kind::File && *kind != Kind::Directory && *kind != Kind::Pipe && *kind != Kind::Socket && *kind != Kind::ArchivedFile) Unsupported("ioctl", "FIONREAD", *kind, fd);
         const auto archived = File::ArchivedFileRemaining(fd);
-        const int available = archived ? static_cast<int>(std::min<std::int64_t>(*archived, std::numeric_limits<int>::max())) : Readable(fd, *kind, "ioctl");
+        const int available = *kind == Kind::Directory ? DirectoryReadableBytes
+            : archived ? static_cast<int>(std::min<std::int64_t>(*archived, std::numeric_limits<int>::max()))
+                       : Readable(fd, *kind, "ioctl");
         if (!GuestCopyOut_nid_no_patch(argument, &available, sizeof(available))) return Fail(GuestEfault);
         return 0;
     }
