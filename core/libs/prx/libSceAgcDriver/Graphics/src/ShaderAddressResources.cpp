@@ -473,12 +473,13 @@ void ShaderResources::narrowToStoreWindows(Recorder& recorder, std::vector<std::
             if (recorder.PendingWriteOverlaps(first, static_cast<std::size_t>(span))) return keep(StoreWindowOutcome::PendingTable);
             bytes.resize(static_cast<std::size_t>(span));
             const auto readable = table.address ? span : table.size > table.offset ? std::min<std::uint64_t>(span, table.size - table.offset) : 0u;
-            std::fill(bytes.begin(), bytes.end(), std::byte{0});
             if (readable != 0u && GuestMemory::CopyMapped(first, std::span<std::byte>(bytes.data(), static_cast<std::size_t>(readable))) != GuestMemory::Compare::Equal) return keep(StoreWindowOutcome::Unmapped);
             tableRanges.emplace_back(first, first + readable);
             const auto record = [&](std::uint32_t key) {
+                const auto begin = static_cast<std::uint64_t>(key) * table.stride;
                 std::array<std::uint32_t, 4> words{};
-                std::memcpy(words.data(), bytes.data() + static_cast<std::size_t>(key) * table.stride, sizeof(words));
+                if (begin + sizeof(words) > readable) return true;
+                std::memcpy(words.data(), bytes.data() + static_cast<std::size_t>(begin), sizeof(words));
                 if (const auto extent = storeExtent(words, table, unbounded)) windows.push_back(*extent);
                 return !unbounded.has_value();
             };
