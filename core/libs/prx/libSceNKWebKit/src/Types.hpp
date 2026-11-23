@@ -410,6 +410,17 @@ public:
     }
 };
 
+class IconDatabase final : public ObjectOf<ObjectType::IconDatabase> {
+public:
+    std::map<std::string, std::string> pageURLToIconURL;
+    std::map<std::string, std::vector<std::uint8_t>> iconURLToData;
+    std::map<std::string, std::uint32_t> iconRetainCounts;
+    bool checkIntegrityBeforeOpening = false;
+    bool closed = false;
+    bool cleanupEnabled = false;
+    const void* client = nullptr;
+};
+
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
 public:
     bool decided = false;

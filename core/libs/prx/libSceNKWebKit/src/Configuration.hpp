@@ -146,13 +146,15 @@ public:
     bool initialProcessWarmed = false;
     bool useSeparateServiceWorkerProcess = false;
     bool currentModifierStateCleared = false;
-    std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
+std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
     std::uint32_t processModel = 0;
     bool usesNetworkProcess = true;
     bool diskCacheSpeculativeValidationEnabled = false;
     bool canHandleHTTPSServerTrustEvaluation = true;
     Retained<String> customWebContentServiceBundleIdentifier;
     std::uint32_t terminatedNetworkProcessesCount = 0;
+mutable Retained<IconDatabase> iconDatabase;
+    std::optional<std::u16string> iconDatabasePath;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {

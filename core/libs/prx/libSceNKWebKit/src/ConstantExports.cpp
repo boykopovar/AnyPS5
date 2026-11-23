@@ -150,10 +150,6 @@ int APS5_VABI WKContextDownloadURLRequest() {
     return 0;
 }
 
-int APS5_VABI WKContextGetIconDatabase() {
-    return 0;
-}
-
 int APS5_VABI WKContextMenuCopySubmenuItems() {
     return 0;
 }
@@ -203,14 +199,6 @@ int APS5_VABI WKContextResumeDownload() {
 }
 
 int APS5_VABI WKFrameCreateFrameInfo() {
-    return 0;
-}
-
-int APS5_VABI WKIconDatabaseCopyIconDataForPageURL() {
-    return 0;
-}
-
-int APS5_VABI WKIconDatabaseCopyIconURLForPageURL() {
     return 0;
 }
 
