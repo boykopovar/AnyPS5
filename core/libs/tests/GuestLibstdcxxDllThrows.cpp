@@ -1,13 +1,18 @@
 #include "prx/libc/include/Api.hpp"
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <filesystem>
 #include <locale>
+#include <memory>
+#include <new>
 #include <regex>
 #include <stdexcept>
 #include <string>
+#include <typeinfo>
 
 namespace {
 
@@ -115,6 +120,24 @@ void FilesystemErrorReachesCatch() {
     Require(destroyed == 1, "the frame between the throw and the catch was not cleaned up");
 }
 
+[[gnu::noinline]] int* AllocateTooMany() {
+    Cleanup cleanup;
+    std::allocator<int> allocator;
+    return allocator.allocate(static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(int) + 1);
+}
+
+void BadAllocReachesCatch() {
+    destroyed = 0;
+    bool caught = false;
+    try {
+        static_cast<void>(AllocateTooMany());
+    } catch (const std::bad_alloc& error) {
+        caught = typeid(error) == typeid(std::bad_alloc);
+    }
+    Require(caught, "std::bad_alloc from the runtime DLL was not caught by type");
+    Require(destroyed == 1, "the frame between the throw and the catch was not cleaned up");
+}
+
 void CatchAll() {
     bool caught = false;
     try {
@@ -135,6 +158,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(mode, "all") == 0) CatchAll();
     else if (std::strcmp(mode, "rethrown") == 0) RuntimeCatchAndRethrow();
     else if (std::strcmp(mode, "filesystem") == 0) FilesystemErrorReachesCatch();
+    else if (std::strcmp(mode, "badalloc") == 0) BadAllocReachesCatch();
     else Require(false, "unknown mode");
     for (int round = 0; round < 1000; ++round) RegexErrorReachesCatch();
     std::puts("libstdc++ DLL throw checks passed");
