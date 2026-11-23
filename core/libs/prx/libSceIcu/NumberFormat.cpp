@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libSceIcu/NumberFormatBackend.hpp"
+#include "prx/libSceIcu/FieldPositionIterator.hpp"
 #include "prx/libSceIcu/Enumeration.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/General.hpp"
@@ -123,13 +124,13 @@ void WriteField(UFieldPosition* pointer, const Backend::Field& value) {
     if (!GuestCopyOut_nid_no_patch(Offset(reinterpret_cast<unsigned char*>(pointer), 4), indices.data(), sizeof(indices))) NotImplemented_nid_no_patch(__func__);
 }
 
-enum class Operation { Double, Decimal, MissingDecimal, Symbol, Text };
+enum class Operation { Double, DoubleFields, Decimal, MissingDecimal, Symbol, Text };
 
 bool EarlyError(Operation operation, std::int32_t error) {
     if (operation == Operation::MissingDecimal) return error == Icu::IllegalArgument;
-    if (error == Icu::UnsupportedError) return operation == Operation::Symbol || operation == Operation::Text;
+    if (error == Icu::UnsupportedError) return operation == Operation::DoubleFields || operation == Operation::Symbol || operation == Operation::Text;
     if (error == 0x10110) return operation == Operation::Decimal;
-    return error == 0x10111 && (operation == Operation::Double || operation == Operation::Decimal);
+    return error == 0x10111 && (operation == Operation::Double || operation == Operation::DoubleFields || operation == Operation::Decimal);
 }
 
 template<class Function>
@@ -169,11 +170,18 @@ std::int32_t Output(Operation operation, char16_t* output, std::int32_t capacity
     if (length != secondLength || error != secondError || std::memcmp(&field, &secondField, sizeof(field))) NotImplemented_nid_no_patch(__func__);
     if (error > 0 && error != Icu::BufferOverflow && !EarlyError(operation, error)) NotImplemented_nid_no_patch(__func__);
     FieldAlias(position, field, status);
-    for (std::size_t index = 0; index < count; ++index) {
-        if (first[index] != second[index]) continue;
-        const auto* address = Offset(output, index);
-        if (Overlap(address, sizeof(char16_t), status, 4) ||
-            (position && Overlap(address, sizeof(char16_t), position, 12))) NotImplemented_nid_no_patch(__func__);
+    if (operation == Operation::DoubleFields && before != error && !GuestWritable_nid_no_patch(status, sizeof(*status))) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    for (std::size_t start = 0; start < count;) {
+        if (first[start] != second[start]) { ++start; continue; }
+        auto end = start + 1;
+        while (end < count && first[end] == second[end]) ++end;
+        auto* address = Offset(output, start);
+        const auto bytes = (end - start) * sizeof(char16_t);
+        if (Overlap(address, bytes, status, 4) || (position && Overlap(address, bytes, position, 12)) ||
+            (operation == Operation::DoubleFields && !GuestWritable_nid_no_patch(address, bytes))) NotImplemented_nid_no_patch(__func__);
+        start = end;
     }
     WriteField(position, field);
     for (std::size_t start = 0; start < count;) {
@@ -249,13 +257,33 @@ std::int32_t APS5_VABI unum_formatDouble_nid_postfix(const UNumberFormat* format
         });
 }
 
-std::int32_t APS5_VABI unum_formatDoubleForFields_nid_postfix(const UNumberFormat*, double, char16_t* result, std::int32_t resultLength, UFieldPositionIterator*, std::int32_t* status) {
-    if (Icu::Failure(status)) return -1;
-    if (result == nullptr ? resultLength != 0 : resultLength < 0) {
-        *status = Icu::IllegalArgument;
+std::int32_t APS5_VABI unum_formatDoubleForFields_nid_postfix(const UNumberFormat* format, double number, char16_t* result,
+                                                            std::int32_t capacity, UFieldPositionIterator* iterator,
+                                                            std::int32_t* status) {
+    const auto before = ReadStatus(status);
+    if (before > 0) return -1;
+    if ((!result && capacity != 0) || capacity < 0) {
+        WriteStatus(status, before, Icu::IllegalArgument);
         return -1;
     }
-    NotImplemented_nid_no_patch(__func__);
+    const auto owner = Find(format);
+    const std::lock_guard formatLock(owner->mutex);
+    const auto iteratorLock = iterator ? Icu::LockFieldPositionIterator_nid_no_patch(iterator, __func__) :
+                                        std::unique_lock<std::mutex>();
+    std::vector<Backend::Field> fields;
+    std::int32_t after = before;
+    const auto length = Output(Operation::DoubleFields, result, capacity, nullptr, status, before,
+        [&](char16_t* output, std::int32_t size, Backend::Field*, std::int32_t* error) {
+            const auto count = Backend::DoubleFields_nid_no_patch(owner->native.get(), number, output,
+                size, iterator ? &fields : nullptr, error);
+            after = *error;
+            return count;
+        });
+    if (iterator && (after <= 0 || after == Icu::BufferOverflow)) {
+        const auto error = Backend::SetFields_nid_no_patch(iterator, fields);
+        if (error > 0) WriteStatus(status, after, error);
+    }
+    return length;
 }
 
 std::int32_t APS5_VABI unum_formatDecimal_nid_postfix(const UNumberFormat* format, const char* number, std::int32_t length,

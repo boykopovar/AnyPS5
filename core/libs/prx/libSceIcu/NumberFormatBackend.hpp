@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <span>
+#include <vector>
 
 namespace IcuNumberBackend {
 
@@ -16,6 +18,8 @@ void* Open_nid_no_patch(std::int32_t, const char16_t*, std::int32_t, const char*
 void* Clone_nid_no_patch(const void*, std::int32_t*);
 void Close_nid_no_patch(void*);
 std::int32_t Double_nid_no_patch(const void*, double, char16_t*, std::int32_t, Field*, std::int32_t*);
+std::int32_t DoubleFields_nid_no_patch(const void*, double, char16_t*, std::int32_t, std::vector<Field>*, std::int32_t*);
+std::int32_t SetFields_nid_no_patch(void*, std::span<const Field>);
 std::int32_t Decimal_nid_no_patch(const void*, const char*, std::int32_t, char16_t*, std::int32_t, Field*, std::int32_t*);
 std::int32_t Symbol_nid_no_patch(const void*, std::int32_t, char16_t*, std::int32_t, std::int32_t*);
 std::int32_t Text_nid_no_patch(const void*, std::int32_t, char16_t*, std::int32_t, std::int32_t*);

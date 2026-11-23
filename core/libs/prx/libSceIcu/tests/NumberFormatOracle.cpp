@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/tests/NumberFormatOracle.hpp"
 #include "unicode/unum.h"
+#include "unicode/fpositer.h"
 #include <cstddef>
 #include <cstring>
 #include <type_traits>
@@ -38,6 +39,20 @@ void* Clone(const void* handle, std::int32_t* status) {
 }
 
 void Close(void* handle) { unum_close(static_cast<UNumberFormat*>(handle)); }
+
+std::int32_t DoubleForFields(const void* handle, double value, char16_t* output, std::int32_t capacity,
+                            std::vector<Field>* fields, std::int32_t* status) {
+    auto error = static_cast<UErrorCode>(*status);
+    icu::FieldPositionIterator iterator;
+    const auto count = unum_formatDoubleForFields(static_cast<const UNumberFormat*>(handle), value, output,
+        capacity, fields ? reinterpret_cast<UFieldPositionIterator*>(&iterator) : nullptr, &error);
+    if (fields) {
+        icu::FieldPosition field;
+        while (iterator.next(field)) fields->push_back({field.getField(), field.getBeginIndex(), field.getEndIndex()});
+    }
+    *status = error;
+    return count;
+}
 
 std::int32_t Double(const void* handle, double value, char16_t* output, std::int32_t capacity,
                     Field* field, std::int32_t* status) {

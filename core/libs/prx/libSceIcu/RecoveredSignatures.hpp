@@ -2,6 +2,7 @@
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIcu/Enumeration.hpp"
+#include "prx/libSceIcu/FieldPositionIterator.hpp"
 #include <cstdint>
 
 struct UBreakIterator;
@@ -14,7 +15,6 @@ struct UDateIntervalFormat;
 struct UDateTimePatternGenerator;
 struct UDataMemory;
 struct UFieldPosition;
-struct UFieldPositionIterator;
 struct UFormattedDateInterval;
 struct UFormattedList;
 struct UFormattedNumber;
@@ -157,9 +157,6 @@ UDateIntervalFormat* APS5_VABI udtitvfmt_open_nid_postfix(const char* locale, co
 UFormattedDateInterval* APS5_VABI udtitvfmt_openResult_nid_postfix(std::int32_t* status);
 const UFormattedValue* APS5_VABI udtitvfmt_resultAsValue_nid_postfix(const UFormattedDateInterval* result, std::int32_t* status);
 
-std::int32_t APS5_VABI ufieldpositer_next_nid_postfix(UFieldPositionIterator*, std::int32_t*, std::int32_t*);
-void APS5_VABI ufieldpositer_close_nid_postfix(UFieldPositionIterator*);
-UFieldPositionIterator* APS5_VABI ufieldpositer_open_nid_postfix(std::int32_t*);
 
 const char16_t* APS5_VABI ufmtval_getString_nid_postfix(const UFormattedValue* ufmtval, std::int32_t* pLength, std::int32_t* ec);
 std::int8_t APS5_VABI ufmtval_nextPosition_nid_postfix(const UFormattedValue* ufmtval, UConstrainedFieldPosition* ucfpos, std::int32_t* ec);

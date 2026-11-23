@@ -1,5 +1,7 @@
 #include "prx/libSceIcu/NumberFormatBackend.hpp"
 #include "unicode/unum.h"
+#include "unicode/fpositer.h"
+#include "fphdlimp.h"
 #include <cstddef>
 #include <cstring>
 #include <type_traits>
@@ -59,6 +61,30 @@ std::int32_t Double_nid_no_patch(const void* handle, double number, char16_t* ou
     if (field != nullptr) std::memcpy(field, &record, sizeof(record));
     *status = error;
     return result;
+}
+
+std::int32_t SetFields_nid_no_patch(void* handle, std::span<const Field> fields) {
+    UErrorCode error = U_ZERO_ERROR;
+    icu::FieldPositionIteratorHandler handler(static_cast<icu::FieldPositionIterator*>(handle), error);
+    for (const auto& field : fields) handler.addAttribute(field.field, field.begin, field.end);
+    handler.getError(error);
+    return error;
+}
+
+std::int32_t DoubleFields_nid_no_patch(const void* handle, double number, char16_t* output,
+                                      std::int32_t capacity, std::vector<Field>* fields, std::int32_t* status) {
+    auto error = static_cast<UErrorCode>(*status);
+    icu::FieldPositionIterator iterator;
+    const auto length = unum_formatDoubleForFields(static_cast<const UNumberFormat*>(handle), number, output,
+        capacity, fields ? reinterpret_cast<UFieldPositionIterator*>(&iterator) : nullptr, &error);
+    if (fields && fields->empty()) {
+        icu::FieldPosition field;
+        while (iterator.next(field)) {
+            fields->push_back({field.getField(), field.getBeginIndex(), field.getEndIndex()});
+        }
+    }
+    *status = error;
+    return length;
 }
 
 std::int32_t Decimal_nid_no_patch(const void* handle, const char* number, std::int32_t length,

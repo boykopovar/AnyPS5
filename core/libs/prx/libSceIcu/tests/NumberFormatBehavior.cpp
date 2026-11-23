@@ -129,6 +129,79 @@ void Literal(UNumberFormat* guest, double number, std::u16string_view expected) 
         output[0] == 0xa55a && output[count + 2] == 0xa55a, "independent literal, terminator and tail");
 }
 
+void Fields() {
+    std::int32_t status = 0;
+    auto* iterator = ufieldpositer_open_nid_postfix(&status);
+    Require(iterator && status == 0, "open guest field iterator");
+    for (const auto* locale : {"en_US", "de_DE", "ar_EG"}) {
+        for (const auto style : {1, 2, 3, 5}) {
+            Pair pair(style, locale);
+            for (const auto capacity : {0, 1, 3, 9, 10, 48}) {
+                for (const bool withFields : {false, true}) {
+                    for (const auto initial : {0, -124}) {
+                        std::array<char16_t, 52> output;
+                        output.fill(0xa55a);
+                        auto reference = output;
+                        std::vector<Oracle::Field> fields;
+                        auto expectedStatus = initial;
+                        status = initial;
+                        const auto expected = Oracle::DoubleForFields(pair.native, -1234.5,
+                            capacity ? reference.data() + 2 : nullptr, capacity, withFields ? &fields : nullptr, &expectedStatus);
+                        const auto count = unum_formatDoubleForFields_nid_postfix(pair.guest, -1234.5,
+                            capacity ? output.data() + 2 : nullptr, capacity, withFields ? iterator : nullptr, &status);
+                        Require(count == expected && status == expectedStatus && output == reference,
+                            "field formatter matches ICU count, status and complete output including guards");
+                        for (const auto field : fields) {
+                            std::int32_t begin = -1, end = -1;
+                            Require(ufieldpositer_next_nid_postfix(iterator, &begin, &end) == field.field &&
+                                begin == field.begin && end == field.end, "ordered ICU field and UTF-16 span");
+                        }
+                        Require(ufieldpositer_next_nid_postfix(iterator, nullptr, nullptr) == -1, "exhausted field list");
+                    }
+                }
+            }
+        }
+    }
+    Pair currency(2, "en_US");
+    std::array<char16_t, 24> output{};
+    status = 0;
+    const auto count = unum_formatDoubleForFields_nid_postfix(currency.guest, -1234.5,
+        output.data(), output.size(), iterator, &status);
+    Require(status <= 0 && count == 10 && std::u16string_view(output.data()) == u"-$1,234.50", "US currency with sign and grouping");
+    auto* bad = reinterpret_cast<char16_t*>(static_cast<std::uintptr_t>(1));
+    Refuses([&] { unum_formatDoubleForFields_nid_postfix(currency.guest, 9, bad, 24, iterator, &status); });
+    Pair inexact(0, "en_US", u"0.00");
+    unum_setAttribute_nid_postfix(inexact.guest, 11, 7);
+    const auto original = output;
+    status = 0;
+    unum_formatDoubleForFields_nid_postfix(inexact.guest, 12.345, output.data(), output.size(), iterator, &status);
+    Require(status == 0x10111 && output == original, "inexact rounding preserves output and the prior iterator");
+    status = 0;
+    std::vector<std::array<std::int32_t, 3>> spans;
+    for (;;) {
+        std::int32_t begin = -1, end = -1;
+        const auto field = ufieldpositer_next_nid_postfix(iterator, &begin, &end);
+        if (field == -1) break;
+        spans.push_back({field, begin, end});
+    }
+    const std::vector<std::array<std::int32_t, 3>> wanted{{10, 0, 1}, {7, 1, 2}, {6, 3, 4}, {0, 2, 7}, {2, 7, 8}, {1, 8, 10}};
+    Require(spans == wanted, "refused output preserves all currency, sign, grouping and numeric field ranges");
+    const auto before = output;
+    Refuses([&] { unum_formatDoubleForFields_nid_postfix(currency.guest, 3.0, output.data(), output.size(),
+        reinterpret_cast<UFieldPositionIterator*>(static_cast<std::uintptr_t>(1)), &status); });
+    Require(output == before, "unknown iterator leaves result untouched");
+    status = 0;
+    const auto length = unum_formatDoubleForFields_nid_postfix(currency.guest, -1234.5, nullptr, 0, iterator, &status);
+    Require(length == 10 && status == 15 && ufieldpositer_next_nid_postfix(iterator, nullptr, nullptr) == 10,
+        "preflight fills field ranges through overflow");
+    status = 0;
+    unum_formatDoubleForFields_nid_postfix(currency.guest, 1, output.data(), output.size(), iterator, &status);
+    std::int32_t begin = -1, end = -1;
+    Require(ufieldpositer_next_nid_postfix(iterator, &begin, &end) == 7 && begin == 0 && end == 1,
+        "successful reformat replaces partially consumed ranges and rewinds iterator");
+    ufieldpositer_close_nid_postfix(iterator);
+}
+
 void Open() {
     std::fputs("classic number fixture: valid decimal unum_open\n", stderr);
     Pair decimal(1, "en_US");
@@ -541,6 +614,8 @@ void Memory() {
     Require(unum_getTextAttribute_nid_postfix(badFormat, 0, badText, INT32_MAX, status) == -1, "prefailed text getter before handle/output");
     Require(unum_getSymbol_nid_postfix(badFormat, 0, badText, INT32_MAX, status) == 0, "prefailed symbol before handle/output");
     unum_setTextAttribute_nid_postfix(badFormat, 0, badText, INT32_MAX, status);
+    Require(unum_formatDoubleForFields_nid_postfix(badFormat, 1.0, badText, INT32_MAX,
+        reinterpret_cast<UFieldPositionIterator*>(data), status) == -1, "prefailed fields avoid inaccessible handles and output");
     Require(*status == 7, "all prefailed operations leave read-only status intact");
     Require(sceKernelMprotect(data + page, page, 3) == 0, "restore formatter status page");
     *status = 0;
@@ -549,6 +624,19 @@ void Memory() {
     auto* handle = unum_open_nid_postfix(1, nullptr, -1, locale, nullptr, status);
     Require(handle && *status <= 0, "mapped locale with NUL exactly at page end opens");
     *status = 0;
+    auto* fields = ufieldpositer_open_nid_postfix(status);
+    Require(fields && *status == 0, "open field iterator for mapped memory");
+    std::array<char16_t, 16> scratch;
+    scratch.fill(0xa55a);
+    const auto sentinel = scratch;
+    Require(sceKernelMprotect(data + page, page, 1) == 0, "read-only success status for field output");
+    Refuses([&] { unum_formatDoubleForFields_nid_postfix(handle, 1234, scratch.data(), 5, fields, status); });
+    Require(*status == 0 && scratch == sentinel && ufieldpositer_next_nid_postfix(fields, nullptr, nullptr) == -1,
+        "unwritable changed status preserves string and iterator");
+    Require(unum_formatDoubleForFields_nid_postfix(handle, 1234, scratch.data(), scratch.size(), fields, status) == 5 &&
+        *status == 0 && ufieldpositer_next_nid_postfix(fields, nullptr, nullptr) == 6, "unchanged read-only status allows fields");
+    ufieldpositer_close_nid_postfix(fields);
+    Require(sceKernelMprotect(data + page, page, 3) == 0, "restore field status page");
     auto* ignored = unum_open_nid_postfix(1, badText, INT32_MAX, "en_US", reinterpret_cast<UParseError*>(data), status);
     Require(ignored && *status <= 0, "nonpattern style ignores inaccessible pattern and parse record");
     unum_close_nid_postfix(ignored);
@@ -608,6 +696,7 @@ int main(int argc, char** argv) {
         const std::string_view mode = argc > 1 ? argv[1] : "open";
         if (mode == "open") Open();
         else if (mode == "format") Format();
+        else if (mode == "fields") Fields();
         else if (mode == "attributes") Attributes();
         else if (mode == "lifetime") Lifetime();
         else if (mode == "memory") Memory();

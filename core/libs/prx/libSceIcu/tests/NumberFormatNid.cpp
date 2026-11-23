@@ -77,6 +77,10 @@ void Check(const char* path) {
     const auto clone = reinterpret_cast<decltype(&unum_clone_nid_postfix)>(import("9JDnDlccCuM"));
     const auto close = reinterpret_cast<decltype(&unum_close_nid_postfix)>(import("mlcTS2ELqQs"));
     const auto doubleValue = reinterpret_cast<decltype(&unum_formatDouble_nid_postfix)>(import("LoU4jxGpQjw"));
+    const auto doubleFields = reinterpret_cast<decltype(&unum_formatDoubleForFields_nid_postfix)>(import("BNqdDra7QOA"));
+    const auto fieldOpen = reinterpret_cast<decltype(&ufieldpositer_open_nid_postfix)>(import("Ns2ep8k12aw"));
+    const auto fieldNext = reinterpret_cast<decltype(&ufieldpositer_next_nid_postfix)>(import("v9QRrGYy3lk"));
+    const auto fieldClose = reinterpret_cast<decltype(&ufieldpositer_close_nid_postfix)>(import("mANYKKAD1dg"));
     const auto decimal = reinterpret_cast<decltype(&unum_formatDecimal_nid_postfix)>(import("tm89z9VpUQY"));
     const auto symbol = reinterpret_cast<decltype(&unum_getSymbol_nid_postfix)>(import("iDjDG1mddFk"));
     const auto text = reinterpret_cast<decltype(&unum_getTextAttribute_nid_postfix)>(import("Ingmz6RYxYQ"));
@@ -91,6 +95,20 @@ void Check(const char* path) {
     CheckOutput([&](char16_t* output, std::int32_t capacity, UFieldPosition* field, std::int32_t* error) {
         return decimal(handle, "123456789012345678901234567890.123456789012345", -1, output, capacity, field, error);
     }, u"123,456,789,012,345,678,901,234,567,890.12", 0, 39);
+    auto* iterator = fieldOpen(&status);
+    Require(iterator && status <= 0, "actual field iterator NID opens");
+    std::array<char16_t, 32> fieldsText{};
+    status = 0;
+    Require(doubleFields(handle, -1234.5, fieldsText.data(), fieldsText.size(), iterator, &status) == 9 &&
+        status == 0 && std::u16string_view(fieldsText.data()) == u"-1,234.50", "actual field formatting NID");
+    for (const std::array<int, 3> expected : {std::array{10, 0, 1}, std::array{6, 2, 3}, std::array{0, 1, 6},
+                                              std::array{2, 6, 7}, std::array{1, 7, 9}}) {
+        std::int32_t begin = -1, end = -1;
+        Require(fieldNext(iterator, &begin, &end) == expected[0] && begin == expected[1] &&
+            end == expected[2], "actual iterator NID returns formatted field ranges");
+    }
+    Require(fieldNext(iterator, nullptr, nullptr) == -1, "actual iterator NID exhausted");
+    fieldClose(iterator);
     std::array<char16_t, 32> output;
     output.fill(0xa55a);
     status = 0;
