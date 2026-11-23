@@ -1,5 +1,6 @@
 #pragma once
 #include "prx/libSceNKWebKit/include/DoViCodecParameters.hpp"
+#include "prx/libSceNKWebKit/include/HitTestLocationExports.hpp"
 #include "prx/libSceNKWebKit/include/KeyedDecoderExports.hpp"
 #include "prx/libSceNKWebKit/include/MIMETypeCacheExports.hpp"
 #include "prx/libSceNKWebKit/include/ParallelEnvironmentExports.hpp"
@@ -45,6 +46,7 @@
 #include "prx/libSceNKWebKit/include/ProtoCallFrameExports.hpp"
 #include "prx/libSceNKWebKit/include/JscBytecodeCacheErrorExports.hpp"
 #include "prx/libSceNKWebKit/include/ParsedContentRangeExports.hpp"
+#include "prx/libSceNKWebKit/include/ParsedContentTypeExports.hpp"
 #include "prx/libSceNKWebKit/include/QualifiedNameExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"

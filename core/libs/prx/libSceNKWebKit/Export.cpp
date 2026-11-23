@@ -922,10 +922,6 @@ int APS5_VABI _ZN7WebCore24RotateTransformOperation6createEddddNS_18TransformOpe
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15HitTestLocationC1ERKNS_10FloatPointE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore13FetchResponse6createERNS_22ScriptExecutionContextEON3WTF8OptionalINS_9FetchBodyEEENS_12FetchHeaders5GuardEONS_16ResourceResponseE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2523,10 +2519,6 @@ int APS5_VABI _ZNK7WebCore11MediaSample15isNonDisplayingEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore17ParsedContentType6createERKN3WTF6StringENS_4ModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_HW0KT3iPct8_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2731,10 +2723,6 @@ int APS5_VABI _ZN7WebCore11EventTarget30removeEventListenerForBindingsERKN3WTF10
 }
 
 int APS5_VABI _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15HitTestLocationC2ERKNS_10FloatPointE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9411,9 +9399,6 @@ int APS5_VABI WKKeyboardEventMake() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKMessageListenerSendReply() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKMouseEventMake() {
     NotImplemented_nid_no_patch(__func__);
@@ -26493,10 +26478,6 @@ int APS5_VABI _ZNK7WebCore17MouseRelatedEvent1xEv() {
 }
 
 int APS5_VABI _ZNK7WebCore17MouseRelatedEvent29locationInRootViewCoordinatesEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore17ParsedContentType9serializeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

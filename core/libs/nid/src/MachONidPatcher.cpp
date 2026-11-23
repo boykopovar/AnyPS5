@@ -411,7 +411,7 @@ void WriteLinkeditData(std::vector<std::uint8_t>& binary, const Image& image, co
     }
     if (!linkedit) throw std::runtime_error("Mach-O image has no __LINKEDIT segment");
     auto segment = Read<SegmentCommand64>(binary, *linkedit);
-    if (segment.FileOffset + segment.FileSize != binary.size()) throw std::runtime_error("__LINKEDIT does not end the file");
+    if (segment.FileOffset > binary.size() || segment.FileSize != binary.size() - segment.FileOffset) throw std::runtime_error("__LINKEDIT does not end the file");
     const auto newOffset = (binary.size() + 7) & ~std::size_t{7};
     if (newOffset + trie.size() > 0xffffffffu) throw std::runtime_error("linkedit data offset overflow");
     binary.resize(newOffset, 0);

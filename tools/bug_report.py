@@ -109,7 +109,7 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None, e
         members["anyps5-input.ini"] = redact(Path(input_config).read_text(encoding="utf-8", errors="replace"), **identity)
     if environ is not None:
         members["anyps5-settings.txt"] = settings_text(environ, identity)
-    members["host.txt"] = host_text()
+    members["host.txt"] = redact(host_text(), **identity)
     members["README.txt"] = README
     with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name, content in members.items():
