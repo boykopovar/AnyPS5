@@ -25,6 +25,7 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
+#include "SpirvBackend/SpirvSpannedUniformity.hpp"
 #include "SavedExecMaskLoop.hpp"
 #include "ShaderDiskCache.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
@@ -575,6 +576,67 @@ void verifyResultMemoBudget() {
     SetResultMemoBudget(0u);
     for (const auto value : {5u, 6u, 7u}) static_cast<void>(compile(value));
     require(ResultMemoBytes() > budget, "result memo budget: clearing the budget kept bounding the memo");
+}
+
+bool compileResultMemoBuffer(std::uint32_t address, std::uint32_t stride) {
+    using namespace ShaderRecompiler;
+    static const std::vector<std::uint32_t> code{0xe0700000u, 0x80000000u, 0xbf810000u};
+    const std::array<std::uint32_t, 4> buffer{address, stride << 16u, 0x40u, 0x00027facu};
+    auto request = FrontendRequest(code, buffer);
+    request.useCache = true;
+    AgcDriver::ShaderMemory memory({});
+    const auto capture = memory.Capture(request);
+    const auto regions = memory.Regions();
+    request.context.memory = regions;
+    bool hit = false;
+    static_cast<void>(Recompile(request, *capture, &hit));
+    return hit;
+}
+
+void verifyResultMemoWays() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 17> colliding{
+        38u, 164u, 181u, 241u, 283u, 335u, 376u, 385u, 438u, 461u, 498u, 539u, 588u, 710u, 792u, 836u, 914u
+    };
+    for (std::size_t i = 0; i < 16u; ++i) {
+        require(!compileResultMemoPixel(colliding[i]), "result memo ways: a distinct snapshot unexpectedly hit the memo");
+    }
+    for (std::size_t i = 0; i < 16u; ++i) {
+        require(compileResultMemoPixel(colliding[i]), "result memo ways: one of 16 results sharing a set was evicted");
+    }
+    require(!compileResultMemoPixel(colliding[16]), "result memo ways: an unseen 17th snapshot hit the memo");
+    for (std::size_t i = 1; i < 17u; ++i) {
+        require(compileResultMemoPixel(colliding[i]), "result memo ways: inserting a 17th result evicted a newer entry than the LRU one");
+    }
+    require(!compileResultMemoPixel(colliding[0]), "result memo ways: the 17th result in one set did not evict the least recently used entry");
+}
+
+void verifyResultMemoMaskedWays() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 17> colliding{
+        21u, 96u, 134u, 184u, 405u, 411u, 499u, 568u, 590u, 617u, 656u, 678u, 796u, 883u, 884u, 949u, 971u
+    };
+    const auto expectPatched = [&](std::uint32_t address, std::uint32_t stride, bool expectedPatch, const char* message) {
+        const auto before = ResultMemoBytes();
+        require(!compileResultMemoBuffer(address, stride), "result memo masked ways: a new buffer address unexpectedly hit the full memo");
+        const bool patched = ResultMemoBytes() == before;
+        require(patched == expectedPatch, message);
+    };
+    for (std::size_t i = 0; i < 16u; ++i) {
+        const auto before = ResultMemoBytes();
+        require(!compileResultMemoBuffer(0x10000000u, colliding[i]), "result memo masked ways: an unseen masked snapshot hit the memo");
+        require(ResultMemoBytes() > before, "result memo masked ways: a missed masked snapshot inserted no entry");
+    }
+    for (std::size_t i = 0; i < 16u; ++i) {
+        expectPatched(0x10000100u, colliding[i], true, "result memo masked ways: one of 16 masked donors sharing a set was evicted");
+    }
+    const auto before17 = ResultMemoBytes();
+    require(!compileResultMemoBuffer(0x10000000u, colliding[16]), "result memo masked ways: an unseen 17th masked snapshot hit the memo");
+    require(ResultMemoBytes() > before17, "result memo masked ways: the 17th masked snapshot inserted no entry");
+    for (std::size_t i = 1; i < 17u; ++i) {
+        expectPatched(0x10000200u, colliding[i], true, "result memo masked ways: inserting a 17th masked donor evicted a newer entry than the LRU one");
+    }
+    expectPatched(0x10000200u, colliding[0], false, "result memo masked ways: the 17th masked donor in one set did not evict the least recently used entry");
 }
 
 ShaderRecompiler::RecompileRequest LayoutPairRequest(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, bool registration, std::uint32_t wordLimit) {
@@ -4007,12 +4069,19 @@ void verifyRegionMerge(bool strided = false, bool benchmark = false) {
 }
 
 
-void verifyNestedSnapshotRetry() {
+void verifyNestedSnapshotRetry(bool sampler) {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Parents = ImageTableAbi::MaxParentKeys / 2u + 1u;
     constexpr std::uint32_t Children = ImageTableAbi::MaxNestedKeys / 2u + 1u;
-    std::vector<std::array<std::uint32_t, 8>> leaves(Children, TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u));
-    const auto child = TableV(leaves.data(), 32u, Children);
+    const std::uint32_t leafDwords = sampler ? 4u : 8u;
+    const auto texture = TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u);
+    const std::array<std::uint32_t, 4> pointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
+    std::vector<std::uint32_t> leaves;
+    for (std::uint32_t leaf = 0; leaf < Children; ++leaf) {
+        if (sampler) leaves.insert(leaves.end(), pointClamp.begin(), pointClamp.end());
+        else leaves.insert(leaves.end(), texture.begin(), texture.end());
+    }
+    const auto child = TableV(leaves.data(), leafDwords * 4u, Children);
     std::vector<std::uint64_t> parents(Parents, reinterpret_cast<std::uintptr_t>(child.data()));
     const auto root = TableV(parents.data(), 8u, Parents);
     std::vector<std::unique_ptr<IrValue>> values;
@@ -4038,17 +4107,25 @@ void verifyNestedSnapshotRetry() {
     plan.descriptorSources[1].tableColumn = parent;
     TableColumn nested;
     nested.heapSource = 1u;
-    nested.stride = 32u;
-    nested.dwordCount = 8u;
+    nested.stride = leafDwords * 4u;
+    nested.dwordCount = leafDwords;
+    nested.sampler = sampler;
     plan.descriptorSources[2].tableColumn = nested;
-    ImageResource image;
-    image.source = 2u;
-    image.table = 0u;
-    image.resourceClass = ImageResourceClass::Sampled;
-    image.dimension = RdnaImageDimension::Dim2D;
-    image.read = true;
-    plan.info.images.push_back(image);
-    plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    if (sampler) {
+        SamplerResource resource;
+        resource.source = 2u;
+        resource.table = 0u;
+        plan.info.samplers.push_back(resource);
+    } else {
+        ImageResource image;
+        image.source = 2u;
+        image.table = 0u;
+        image.resourceClass = ImageResourceClass::Sampled;
+        image.dimension = RdnaImageDimension::Dim2D;
+        image.read = true;
+        plan.info.images.push_back(image);
+        plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    }
     struct Memory {
         std::array<std::pair<std::uint64_t, std::size_t>, 3> ranges;
         std::uint64_t epoch = 0;
@@ -9983,6 +10060,16 @@ void verifyPixelInputs() {
         RecompileCacheKey::Build(other, key);
         require(key != first && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(other), "the cache keys ignore the pixel input layout");
     }
+    request.context.pixel->alphaToCoverage = true;
+    request.context.pixel->ditheredAlphaToCoverage = true;
+    request.context.pixel->ditheredAlphaSamples = 1;
+    request.context.pixel->singleSampleDither = SingleSampleDither::E701;
+    auto rounded = request;
+    rounded.context.pixel->singleSampleDither = SingleSampleDither::Rounded18701;
+    std::vector<std::uint64_t> roundedKey;
+    RecompileCacheKey::BuildInterface(request, key);
+    RecompileCacheKey::BuildInterface(rounded, roundedKey);
+    require(key != roundedKey && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(rounded), "the cache keys alias the single-sample dither patterns");
 }
 
 ShaderRecompiler::RecompileRequest slotRequest(std::initializer_list<std::uint32_t> controls, std::span<const std::uint32_t> code, bool hostInterpolationFirst) {
@@ -12660,6 +12747,85 @@ void verifyGcnTableImageConversion() {
     }
 }
 
+void verifySpannedShuffleThroughMemory() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Lanes = 64u;
+    constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle};
+    alignas(256) static std::array<std::uint32_t, Lanes * 16u> output{};
+    alignas(256) static constexpr std::array<std::uint32_t, 8> code{0x34040082u, 0xdacc0000u, 0x0a000002u, 0xbf8cc07fu, 0xe0702000u, 0x80010a00u, 0xbf810000u, 0xbf810000u};
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    std::array<std::uint32_t, 8> userData{};
+    userData[4] = static_cast<std::uint32_t>(address);
+    userData[5] = static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (64u << 16u);
+    userData[6] = Lanes;
+    userData[7] = 0x11016facu;
+    alignas(256) static constexpr std::array<std::uint32_t, 11> lanePredicated{0x7d880094u, 0xbe88246au, 0x34040082u, 0xdacc0000u, 0x0a000002u, 0xbf8cc07fu, 0xe0702000u, 0x80010a00u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
+    const auto compile = [&](std::span<const std::uint32_t> program, std::uint32_t subgroupSize, bool spanned, bool throughMemory) {
+        const auto codeAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(program.data()));
+        const std::array<MemoryRegion, 1> memory{{{codeAddress, std::as_bytes(program)}}};
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, codeAddress, program, 0, {}};
+        request.context.waveSize = Lanes;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{Lanes, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.context.memory = memory;
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = subgroupSize;
+        request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+        request.target.maxWorkgroupInvocations = 1024u;
+        request.target.maxWorkgroupSharedMemoryBytes = 32768u;
+        request.target.supportedCapabilities = capabilities;
+        request.target.spannedWaves = spanned;
+        request.target.spannedShuffleThroughMemory = throughMemory;
+        request.layout.pushConstantSizeBytes = 128u;
+        request.useCache = false;
+        return Recompile(request);
+    };
+    struct Counts {
+        std::uint32_t shuffles = 0;
+        std::uint32_t workgroupBarriers = 0;
+        std::uint32_t subgroupBarriers = 0;
+        std::uint32_t workgroupVariables = 0;
+    };
+    const auto count = [](std::span<const std::uint32_t> spirv) {
+        Counts result;
+        std::map<std::uint32_t, std::uint32_t> constants;
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            const auto op = spirv[cursor] & 0xffffu;
+            if (op == spv::OpConstant && (spirv[cursor] >> 16u) == 4u) constants[spirv[cursor + 2u]] = spirv[cursor + 3u];
+            if (op == spv::OpGroupNonUniformShuffle) ++result.shuffles;
+            if (op == spv::OpVariable && spirv[cursor + 3u] == spv::StorageClassWorkgroup) ++result.workgroupVariables;
+            if (op == spv::OpControlBarrier) {
+                const auto scope = constants.find(spirv[cursor + 1u]);
+                if (scope != constants.end() && scope->second == spv::ScopeWorkgroup) ++result.workgroupBarriers;
+                if (scope != constants.end() && scope->second == spv::ScopeSubgroup) ++result.subgroupBarriers;
+            }
+        }
+        return result;
+    };
+    const std::span<const std::uint32_t> straight{code};
+    const auto native = compile(straight, 32u, true, false);
+    require(native.fullSubgroups, "spanned shuffle: the wave64 compute program did not span two 32-lane subgroups");
+    const auto nativeCounts = count(native.spirv);
+    require(nativeCounts.shuffles >= 1u && nativeCounts.subgroupBarriers == 0u, "spanned shuffle: without the flag the lane read is not the native subgroup shuffle");
+    const auto exchanged = compile(straight, 32u, true, true);
+    require(exchanged.fullSubgroups, "spanned shuffle: the flagged wave64 compute program did not span two 32-lane subgroups");
+    const auto exchangedCounts = count(exchanged.spirv);
+    require(exchangedCounts.shuffles == 0u, "spanned shuffle: with the flag the lane read still uses OpGroupNonUniformShuffle, which NVIDIA's compiler crashes on in the title's shader");
+    require(exchangedCounts.workgroupVariables >= 1u && exchangedCounts.workgroupBarriers >= nativeCounts.workgroupBarriers + 2u, "spanned shuffle: with the flag the lane read does not go through a workgroup array between two more workgroup-scope barriers");
+    require(exchangedCounts.subgroupBarriers == 0u, "spanned shuffle: with the flag the exchange uses a subgroup-scope barrier, which did not make LDS writes visible on NVIDIA");
+    const auto unspanned = compile(straight, 32u, false, true);
+    const auto unspannedNative = compile(straight, 32u, false, false);
+    require(!unspanned.fullSubgroups && unspanned.spirv == unspannedNative.spirv, "spanned shuffle: the flag changed a program that does not span subgroups");
+    const auto predicatedNative = compile(lanePredicated, 32u, true, false);
+    const auto predicated = compile(lanePredicated, 32u, true, true);
+    require(predicated.fullSubgroups && count(predicated.spirv).shuffles == 0u && count(predicated.spirv).workgroupBarriers >= count(predicatedNative.spirv).workgroupBarriers + 2u, "spanned shuffle: a lane-predicated lane read did not go through the workgroup exchange");
+    require(!SpannedBarrierInDivergentFlow(predicated.spirv).has_value(), "spanned shuffle: the exchange's workgroup barriers of a lane-predicated lane read sit in divergent control flow, which would hang instead of crash");
+    require(!SpannedBarrierInDivergentFlow(exchanged.spirv).has_value(), "spanned shuffle: the exchange's workgroup barriers sit in divergent control flow, which would hang instead of crash");
+}
+
 void verifyPixelQuadPermReads() {
     using namespace ShaderRecompiler;
     constexpr std::array<std::uint32_t, 6> shuffleCapabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
@@ -13315,6 +13481,11 @@ int main(int argc, char** argv) {
             std::cout << "Quad masks preserve neighbour-lane helpers or refuse without demote\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--spanned-shuffle-memory") {
+            verifySpannedShuffleThroughMemory();
+            std::cout << "Spanned wave64 shuffles go through workgroup memory only when the target asks for it\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--frontend-pair") {
             verifyFrontendPair();
             std::cout << "Prepared frontend reuse preserves full and partial-thread programs\n";
@@ -13328,6 +13499,16 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-masked") {
             verifyResultMemoBudgetMasked();
             std::cout << "The result memo budget counts and trims the masked table's entries\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-ways") {
+            verifyResultMemoWays();
+            std::cout << "Each result memo set keeps 16 results and evicts the least recently used entry\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-ways-masked") {
+            verifyResultMemoMaskedWays();
+            std::cout << "Each masked result memo set keeps 16 donors and evicts the least recently used entry\n";
             return 0;
         }
         if (argc == 2 && (std::string_view(argv[1]) == "--region-merge" || std::string_view(argv[1]) == "--region-merge-bench")) {
@@ -13387,8 +13568,13 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--nested-snapshot-retry") {
-            verifyNestedSnapshotRetry();
+            verifyNestedSnapshotRetry(false);
             std::cout << "Nested snapshot retry preserves parent and child coverage\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--nested-sampler-snapshot-retry") {
+            verifyNestedSnapshotRetry(true);
+            std::cout << "Nested sampler snapshot retry checks the descriptor epoch and preserves parent and child coverage\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {
@@ -13553,6 +13739,7 @@ int main(int argc, char** argv) {
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
+        verifySpannedShuffleThroughMemory();
         verifyPixelQuadPermReads();
         verifyCoherentGds();
 #if ANYPS5_ENABLE_SPIRV_TOOLS

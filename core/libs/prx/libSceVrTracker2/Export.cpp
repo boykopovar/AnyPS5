@@ -73,13 +73,6 @@ std::uint32_t WorkMemorySize(std::uint32_t mode) {
     return 32u << 20;
 }
 
-std::uint32_t CompiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, process + 0x10, sizeof(sdkVersion));
-    return sdkVersion;
-}
-
 std::int32_t ValidateMode(std::uint32_t mode) {
     if (mode == SystemTrackingMode || mode == SystemClientMode) NotImplemented_nid_no_patch("sceVrTracker2Initialize: application category of a system mode");
     return mode == TrackerMode ? SCE_OK : VR_TRACKER2_ERROR_INVALID_ARGUMENT;
@@ -96,7 +89,7 @@ bool AffinityAllowed(std::uint32_t mode, std::uint64_t mask) {
 
 bool OptionModeAllowed(std::int8_t optionMode) {
     if (optionMode == -1 || optionMode == 0) return true;
-    return optionMode == 1 && CompiledSdkVersion() >= OptionModeSdkVersion;
+    return optionMode == 1 && ApplicationCompiledSdkVersion() >= OptionModeSdkVersion;
 }
 
 class InitializeSession {
@@ -229,7 +222,7 @@ std::int32_t APS5_VABI sceVrTracker2QueryMemory(const VrTracker2MemoryParameter*
     if (!copiedParam) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     if (localParam.size != sizeof(VrTracker2MemoryParameter)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     if (localParam.mode == SystemTrackingMode || localParam.mode == SystemClientMode) {
-        if (CompiledSdkVersion() < 0x1000000) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+        if (ApplicationCompiledSdkVersion() < 0x1000000) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     } else if (localParam.mode != TrackerMode) {
         return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     }
