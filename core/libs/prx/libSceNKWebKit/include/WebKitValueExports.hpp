@@ -78,10 +78,14 @@ NKWebKit::RectValue APS5_VABI WKBundleFrameGetVisibleContentBoundsExcludingScrol
 NKWebKit::SizeValue APS5_VABI WKBundleFrameGetScrollOffset(const void* frameRef);
 bool APS5_VABI WKBundleFrameHasHorizontalScrollbar(const void* frameRef);
 bool APS5_VABI WKBundleFrameHasVerticalScrollbar(const void* frameRef);
+bool APS5_VABI WKBundleFrameAllowsFollowingLink(const void* frameRef, const void* urlRef);
+bool APS5_VABI WKBundleFrameCallShouldCloseOnWebView(const void* frameRef);
 bool APS5_VABI WKBundleFrameContainsAnyFormControls(const void* frameRef);
 bool APS5_VABI WKBundleFrameContainsAnyFormElements(const void* frameRef);
 void APS5_VABI WKBundleFrameClearOpener(const void* frameRef);
 void APS5_VABI WKBundleFrameFocus(const void* frameRef);
+void APS5_VABI WKBundleFrameSetAccessibleName(const void* frameRef, const void* accessibleNameRef);
+void APS5_VABI WKBundleFrameSetTextDirection(const void* frameRef, const void* directionRef);
 std::uint32_t APS5_VABI WKBundleGetTypeID();
 int APS5_VABI WKBundleNumberOfPages(const void* bundleRef, const void* frameRef, double pageWidthInPixels, double pageHeightInPixels);
 bool APS5_VABI WKBundleIsPageBoxVisible(const void* bundleRef, const void* frameRef, int pageIndex);
