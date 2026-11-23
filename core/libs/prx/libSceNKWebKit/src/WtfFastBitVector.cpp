@@ -63,7 +63,8 @@ extern "C" void APS5_VABI _ZN3WTF22FastBitVectorWordOwner10resizeSlowEm(WTF::Fas
     auto* words = static_cast<std::uint32_t*>(_ZN3WTF10fastMallocEm(newCount * sizeof(std::uint32_t)));
     if (oldCount) std::memcpy(words, current.words, oldCount * sizeof(std::uint32_t));
     std::fill_n(words + oldCount, newCount - oldCount, std::uint32_t{0});
-    if (!GuestCopyOut_nid_no_patch(&owner->words, &words, sizeof(words))) {
+    const WTF::FastBitVectorWordOwner result{words, numBits};
+    if (!GuestCopyOut_nid_no_patch(owner, &result, sizeof(result))) {
         _ZN3WTF8fastFreeEPv(words);
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }

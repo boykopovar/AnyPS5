@@ -122,7 +122,7 @@ static void TestFastBitVector() {
 
     WTF::FastBitVectorWordOwner source;
     _ZN3WTF22FastBitVectorWordOwner10resizeSlowEm(&source, 64);
-    source.numBits = 64;
+    Require(source.numBits == 64);
     source.words[0] = 0x12345678;
     source.words[1] = 0x9ABCDEF0;
     Require(FaultsAsNotImplemented([&] { _ZN3WTF22FastBitVectorWordOwner13setEqualsSlowERKS0_(&source, unreadableOwner); return 0; },
@@ -151,10 +151,30 @@ static void TestFastBitVector() {
     _ZN3WTF8fastFreeEPv(source.words);
 }
 
+static void TestFastBitVectorResizeThenClearRange() {
+    WTF::FastBitVector bits;
+    _ZN3WTF22FastBitVectorWordOwner10resizeSlowEm(&bits.storage, 64);
+    Require(bits.storage.numBits == 64 && bits.storage.words != nullptr);
+    bits.storage.words[0] = 0xFFFFFFFF;
+    bits.storage.words[1] = 0xFFFFFFFF;
+    _ZN3WTF13FastBitVector10clearRangeEmm(&bits, 4, 60);
+    Require(bits.storage.words[0] == 0x0000000F && bits.storage.words[1] == 0xF0000000);
+    _ZN3WTF13FastBitVector10clearRangeEmm(&bits, 0, 64);
+    Require(bits.storage.words[0] == 0 && bits.storage.words[1] == 0);
+
+    _ZN3WTF22FastBitVectorWordOwner10resizeSlowEm(&bits.storage, 65);
+    Require(bits.storage.numBits == 65);
+    bits.storage.words[2] = 0xFFFFFFFF;
+    _ZN3WTF13FastBitVector10clearRangeEmm(&bits, 64, 65);
+    Require(bits.storage.words[2] == 0xFFFFFFFE);
+    _ZN3WTF8fastFreeEPv(bits.storage.words);
+}
+
 int main() {
     TestTryMalloc();
     TestFastStrDup();
     TestFastBitVector();
+    TestFastBitVectorResizeThenClearRange();
     std::puts("WTF memory guest pointer tests passed");
     return 0;
 }
