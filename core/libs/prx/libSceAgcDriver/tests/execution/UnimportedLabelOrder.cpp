@@ -221,7 +221,7 @@ int main() {
             const auto submissions = recorder->Submissions();
             const std::uint32_t early = 0xea51u;
             const auto bytes = std::as_bytes(std::span(&early, 1));
-            Require(device->WriteLabelOnGpu(temporary.Address() + 256, bytes, 93, 0) == 7, "a label after work that leaves guest memory alone did not take the unimported path");
+            Require(device->WriteLabelOnGpu(temporary.Address() + 256, bytes, 93, 0, false) == 7, "a label after work that leaves guest memory alone did not take the unimported path");
             Require(recorder->Recording() && recorder->Submissions() == submissions, "a label after work that leaves guest memory alone waited for it or submitted before its store");
             AgcDriver::GuestMemory::Write(temporary.Address() + 256, bytes, 4);
             Require(device->SubmitAfterEarlyLabel() && !device->SubmitAfterEarlyLabel(), "the batch left open by the early label was not submitted once after the store");
