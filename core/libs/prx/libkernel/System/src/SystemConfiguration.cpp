@@ -680,14 +680,6 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         static constexpr int mib[] = {1, 50};
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
     }
-    if (std::strcmp(name, "vm.overcommit") == 0) {
-        if (newValue != nullptr) {
-            *__error_nid_postfix() = 1;
-            return -1;
-        }
-        static constexpr int overcommit = 0;
-        return CopyOut(&overcommit, sizeof(overcommit), oldValue, oldLength);
-    }
     if (std::strcmp(name, "machdep.tsc_freq") == 0) {
         if (newValue != nullptr) {
             *__error_nid_postfix() = 1;
