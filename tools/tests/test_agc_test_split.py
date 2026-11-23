@@ -138,6 +138,15 @@ class SplitTextTests(unittest.TestCase):
 
 
 class ArgumentTests(unittest.TestCase):
+    def test_long_bracket_delimiters(self):
+        equals = "=" * 40
+        for prefix, expected in (("", ["A", "x y", "tail"]), ("#", ["A", "tail"])):
+            with self.subTest(prefix=prefix):
+                text = f"set(A {prefix}[{equals}[x y]{equals}] tail)"
+                arguments, end, _ = agc_test_split.arguments_of(text, text.index("(") + 1, 0)
+                self.assertEqual(arguments, expected)
+                self.assertEqual(end, len(text))
+
     def test_bracket_comment_ends_at_its_closing_bracket(self):
         text = "set(A #[[c]]x)\n"
         arguments, end, _ = agc_test_split.arguments_of(text, text.index("(") + 1, 0)
