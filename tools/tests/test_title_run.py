@@ -88,6 +88,16 @@ class TitlesTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 title_run.load_titles(self.write({"PPSA00001": {"pad": pad}}))
 
+    def test_pad_timeline_size_accounts_for_full_command_header(self):
+        events = [{"at_ms": 0, "hold_ms": 1, "buttons": ["cross"],
+                   "left_stick": [255, 255], "right_stick": [255, 255]}]
+        pad = {"events": events, "repeat": 2296, "gap_ms": 0}
+        catalog = {"PPSA00001": {"pad": pad}}
+        self.assertEqual(title_run.load_titles(self.write(catalog)), catalog)
+        pad["repeat"] = 2297
+        with self.assertRaisesRegex(ValueError, "PPSA00001: timeline command file .*runtime reads at most 65536"):
+            title_run.load_titles(self.write(catalog))
+
     def test_files_are_checked(self):
         files = {"app0/id1/autoexec.cfg": {"text": "r_rtshadows 0\n"}, "data/x/y.mp4": {"content": "media/y.mp4"}}
         self.assertEqual(title_run.load_titles(self.write({"PPSA00001": {"files": files}}))["PPSA00001"]["files"], files)

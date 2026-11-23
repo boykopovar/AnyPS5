@@ -45,7 +45,7 @@ def check_pad(pad):
     if "events" not in pad or not set(pad) <= PAD_FIELDS:
         raise ValueError(f"pad must hold events and may hold {', '.join(sorted(PAD_FIELDS - {'events'}))}")
     pad_timeline.integer(pad.get("after_s", PAD_AFTER_SECONDS), "pad.after_s", 0, 3600)
-    pad_text(pad, 1)
+    pad_text(pad, pad_input.MAX_SEQUENCE)
 
 
 def pad_record_signature(path):
