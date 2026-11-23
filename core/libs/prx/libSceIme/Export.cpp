@@ -373,9 +373,7 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
 int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outParam = nullptr, ExtendedParam* outExt = nullptr, std::u16string* outText = nullptr) {
     if (!param) return ErrorInvalidAddress;
     Param localParam{};
-    const int savedErrno = errno;
     const bool copiedParam = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
-    errno = savedErrno;
     if (!copiedParam) return ErrorInvalidAddress;
     if (localParam.user_id == UserIdInvalid) return ErrorInvalidUserId;
     if (localParam.type > TypeNumber) return ErrorInvalidType;
@@ -392,9 +390,7 @@ int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outPa
     if (localParam.vertical_alignment > AlignmentLast) return ErrorInvalidVerticalAlignment;
     ExtendedParam localExt{};
     if (extended) {
-        const int extErrno = errno;
         const bool copiedExt = GuestCopyIn_nid_no_patch(&localExt, extended, sizeof(localExt));
-        errno = extErrno;
         if (!copiedExt) return ErrorInvalidAddress;
         if (localExt.priority > PanelPriorityLast) return ErrorInvalidExtended;
         for (const std::int8_t byte : localExt.reserved) {
@@ -427,9 +423,7 @@ bool ReadImeTextLength(const char16_t* text, std::uint32_t& length) {
         const auto offset = static_cast<std::uintptr_t>(index) * sizeof(char16_t);
         if (base > UINTPTR_MAX - offset) return false;
         char16_t unit = u'\0';
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&unit, reinterpret_cast<const void*>(base + offset), sizeof(unit));
-        errno = savedErrno;
         if (!copied) return false;
         if (unit == u'\0') {
             length = index;
@@ -443,9 +437,7 @@ bool ReadImeTextLength(const char16_t* text, std::uint32_t& length) {
 int CheckEditTextInfo(const ImeEditText* info, std::uint8_t repair, const char* function) {
     if (info == nullptr) NotImplemented_nid_no_patch(function);
     ImeEditText localInfo{};
-    const int savedErrno = errno;
     const bool copiedInfo = GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo));
-    errno = savedErrno;
     if (!copiedInfo) NotImplemented_nid_no_patch(function);
 
     std::uint32_t textLength = 0;
@@ -714,9 +706,7 @@ int APS5_VABI sceImeCheckFilterText(char16_t* text, std::uint8_t repair) {
     }
     if (!repair) return -2;
     constexpr char16_t terminator = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(text + maxLength, &terminator, sizeof(terminator));
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return 0;
 }
@@ -733,9 +723,7 @@ int APS5_VABI sceImeSetCaret(const Caret* caret) {
     if (!g_session) return ErrorNotOpened;
     if (!caret) return ErrorInvalidAddress;
     Caret localCaret{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localCaret, caret, sizeof(localCaret));
-    errno = savedErrno;
     if (!copied) return ErrorInvalidAddress;
     if (localCaret.index > g_session->text.size()) return ErrorInvalidParam;
     g_session->caret = localCaret.index;
@@ -956,9 +944,7 @@ int APS5_VABI sceImeCheckUpdateTextInfo(ImeEditText* info, std::uint8_t repair) 
 int APS5_VABI sceImeCheckRemoteEventParam(ImeEvent* event, std::uint8_t repair) {
     if (event == nullptr) NotImplemented_nid_no_patch(__func__);
     std::uint32_t eventId = 0;
-    const int savedErrno = errno;
     const bool copiedId = GuestCopyIn_nid_no_patch(&eventId, event, sizeof(eventId));
-    errno = savedErrno;
     if (!copiedId) NotImplemented_nid_no_patch(__func__);
     if (eventId != EventUpdateText) return 0;
     const auto address = reinterpret_cast<std::uintptr_t>(event);
