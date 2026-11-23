@@ -56,6 +56,7 @@
 #include "prx/libSceNKWebKit/include/VPCodecExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreValueHelpersExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitConfigExports.hpp"
+#include "prx/libSceNKWebKit/include/WorkerPoolExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfStringDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/include/PropertyDescriptorExports.hpp"
