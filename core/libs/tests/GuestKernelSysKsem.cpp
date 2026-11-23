@@ -297,6 +297,35 @@ void Duplicates() {
     }
 }
 
+std::intptr_t g_destroyAfterFind = -1;
+
+void DestroyAfterFind(std::intptr_t) {
+    Require(ksem_destroy_nid_postfix(g_destroyAfterFind) == 0);
+}
+
+void DestroyedAfterLookup() {
+    for (int operation = 0; operation < 5; ++operation) {
+        std::intptr_t id = -1;
+        Require(ksem_init_nid_postfix(&id, 0) == 0);
+        const int copy = dup_nid_postfix(static_cast<int>(id));
+        Require(copy >= 0);
+        g_destroyAfterFind = id;
+        KsemAfterFindForTests_nid_no_patch(DestroyAfterFind);
+        int value = -1;
+        KernelTimespec deadline = FromNow(std::chrono::milliseconds(50));
+        int result = 0;
+        switch (operation) {
+        case 0: result = ksem_post_nid_postfix(copy); break;
+        case 1: result = ksem_trywait_nid_postfix(copy); break;
+        case 2: result = ksem_timedwait_nid_postfix(copy, &deadline); break;
+        case 3: result = ksem_getvalue_nid_postfix(copy, &value); break;
+        default: result = ksem_destroy_nid_postfix(copy); break;
+        }
+        Require(result == -1 && Error() == Einval && value == -1);
+        Require(close_nid_postfix(copy) == 0);
+    }
+}
+
 void DuplicatesCountOnce() {
     std::intptr_t ids[30] = {};
     for (auto& id : ids) Require(ksem_init_nid_postfix(&id, 0) == 0);
@@ -397,6 +426,7 @@ int main() {
     Identifiers();
     Metadata();
     Duplicates();
+    DestroyedAfterLookup();
     DuplicatesCountOnce();
     Limit();
     std::puts("ksem unnamed semaphores passed");
