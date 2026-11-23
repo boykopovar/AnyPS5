@@ -1171,6 +1171,26 @@ class LoadConsoleNidsTests(unittest.TestCase):
         self.assertEqual(console, {"libA": ["AAAAAAAAAAA", "BBBBBBBBBBB"], "libB": ["AAAAAAAAAAA", "BBBBBBBBBBB"]})
         self.assertIsNot(console["libA"], console["libB"])
 
+    def test_source_texts_and_self_calls_handle_dot_files_and_non_word_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Source.cpp").write_text(
+                "struct Number { int operator+(int x) { return x; } };\n"
+                "int f() { return Number{}.operator+(1) + Number{}.operator+ (2); }\n",
+                encoding="utf-8",
+            )
+            (root / ".tracked.cpp").write_text("int APS5_VABI sceTracked_nid_postfix(void) { return 0; }\n", encoding="utf-8")
+            (root / "..cpp").write_text("int APS5_VABI scePhantom_nid_postfix(void) { return 0; }\n", encoding="utf-8")
+            (root / ".cpp").write_text("int APS5_VABI sceDotOnly_nid_postfix(void) { return 0; }\n", encoding="utf-8")
+            names = [path.name for path, _ in export_gap.source_texts(root)]
+            self.assertEqual(names, [".tracked.cpp", "Source.cpp"])
+            provided = export_gap.collect_provided(root)
+            self.assertIn(export_gap.nid_names.compute_nid("sceTracked"), provided)
+            self.assertNotIn(export_gap.nid_names.compute_nid("scePhantom"), provided)
+            calls = export_gap.find_self_calls(root, {"AAAAAAAAAAA": "operator+"})
+            self.assertEqual([c[0] for c in calls], ["operator+", "operator+", "operator+"])
+            self.assertEqual([c[3] for c in calls], [1, 2, 2])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -319,10 +319,12 @@ def source_texts(module_dir):
     paths = []
     for root, dirs, files in os.walk(module_dir):
         dirs[:] = [name for name in dirs if name.lower() not in _TEST_DIRS]
+        root_path = Path(root)
         for filename in files:
-            dot = filename.rfind(".")
-            if dot > 0 and filename[dot:].lower() in _SOURCE_SUFFIXES:
-                paths.append(Path(root) / filename)
+            if "." in filename:
+                path = root_path / filename
+                if path.suffix.lower() in _SOURCE_SUFFIXES:
+                    paths.append(path)
     paths.sort()
     texts = []
     for path in paths:
@@ -478,7 +480,7 @@ def _find_self_calls_in_texts(texts, missing):
         name_to_nid.setdefault(value, key)
     names = sorted(name_to_nid)
     alts = "|".join(re.escape(name) for name in names)
-    any_name = re.compile(r"\b(?:" + alts + r")\b")
+    any_name = re.compile(alts)
     call = re.compile(r"(?<![\w:])(::)?\b(" + alts + r")\s*\(")
     calls = []
     for path, text in texts:
