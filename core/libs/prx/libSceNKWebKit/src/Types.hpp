@@ -284,6 +284,14 @@ public:
     Retained<Object> topOverhangImage;
     Retained<Object> bottomOverhangImage;
     std::uint64_t paintedObjectsCounterThreshold = 0;
+    bool uiClientConfigured = false;
+    bool editorClientConfigured = false;
+    bool formClientConfigured = false;
+    bool fullScreenClientConfigured = false;
+    bool pageLoaderClientConfigured = false;
+    bool resourceLoadClientConfigured = false;
+    std::vector<Retained<Object>> userScripts;
+    std::vector<Retained<Object>> userStyleSheets;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {

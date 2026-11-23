@@ -80,6 +80,23 @@ int main() {
     Require(lastResultFilter == compiledFilter);
     Require(lastResultStatus == 0);
 
+    auto missingIdStr = NKWebKit::String::FromUtf8("non-existent");
+    const void* missingIdRef = NKWebKit::ToRef(missingIdStr);
+    WKUserContentExtensionStoreRemove(storeRef, missingIdRef, &lastResultStatus, OnCompileOrLookup);
+    Require(lastResultFilter == nullptr);
+    Require(lastResultStatus == 1);
+    WKRelease(missingIdRef);
+
+    WKUserContentExtensionStoreRemove(storeRef, idRef, &lastResultStatus, OnCompileOrLookup);
+    Require(lastResultFilter == nullptr);
+    Require(lastResultStatus == 0);
+
+    WKUserContentExtensionStoreLookup(storeRef, idRef, &lastResultStatus, OnCompileOrLookup);
+    Require(lastResultFilter == nullptr);
+    Require(lastResultStatus == 1);
+
+    WKUserContentExtensionStoreRemove(storeRef, idRef, nullptr, nullptr);
+
     WKUserContentExtensionStoreCompile(storeRef, idRef, jsonRef, nullptr, nullptr);
     WKUserContentExtensionStoreLookup(storeRef, idRef, nullptr, nullptr);
 
@@ -88,6 +105,10 @@ int main() {
     RequireInvalidArgument([&] { WKUserContentExtensionStoreCompile(storeRef, idRef, nullptr, nullptr, nullptr); });
     RequireInvalidArgument([&] { WKUserContentExtensionStoreLookup(nullptr, idRef, nullptr, nullptr); });
     RequireInvalidArgument([&] { WKUserContentExtensionStoreLookup(storeRef, nullptr, nullptr, nullptr); });
+    RequireInvalidArgument([&] { WKUserContentExtensionStoreRemove(nullptr, idRef, nullptr, nullptr); });
+    RequireInvalidArgument([&] { WKUserContentExtensionStoreRemove(storeRef, nullptr, nullptr, nullptr); });
+    RequireInvalidArgument([&] { WKUserContentExtensionStoreRemove(idRef, idRef, nullptr, nullptr); });
+    RequireInvalidArgument([&] { WKUserContentExtensionStoreRemove(storeRef, storeRef, nullptr, nullptr); });
     RequireInvalidArgument([&] { WKUserContentExtensionStoreCreate(storeRef); });
 
     WKRelease(defaultStoreRef);

@@ -8333,18 +8333,6 @@ int APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButt
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageAddUserScript() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageAddUserScriptInWorld() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageAddUserStyleSheet() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageCallAfterTasksAndTimers() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8525,10 +8513,6 @@ int APS5_VABI WKBundlePageRegisterScrollOperationCompletionCallback() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageRemoveAllUserContent() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageReplaceStringMatches() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8553,9 +8537,6 @@ int APS5_VABI WKBundlePageSetComposition() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageSetEditorClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKBundlePageSetEventThrottlingBehaviorOverride() {
     NotImplemented_nid_no_patch(__func__);
@@ -8565,19 +8546,7 @@ int APS5_VABI WKBundlePageSetFooterBanner() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageSetFormClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageSetFullScreenClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageSetHeaderBanner() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageSetPageLoaderClient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8586,10 +8555,6 @@ int APS5_VABI WKBundlePageSetPageZoomFactor() {
 }
 
 int APS5_VABI WKBundlePageSetPolicyClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageSetResourceLoadClient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8602,10 +8567,6 @@ int APS5_VABI WKBundlePageSetTextZoomFactor() {
 }
 
 int APS5_VABI WKBundlePageSetTracksRepaints() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageSetUIClient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
