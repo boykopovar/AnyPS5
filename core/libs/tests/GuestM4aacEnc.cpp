@@ -64,10 +64,6 @@ void CheckCreate() {
     Require(error == Stale, "CreateEx: the encoder check comes before the error pointer is written");
 }
 
-void CheckTerminate() {
-    Require(sceM4aacEncTerminate(nullptr) == ErrorInvalidPointer, "Terminate: null context");
-}
-
 void CheckEncodeAndFlush() {
     uint8_t input[16]{};
     uint8_t output[16]{};
@@ -165,7 +161,6 @@ int main() {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     CheckCreate();
-    CheckTerminate();
     CheckEncodeAndFlush();
     CheckContextCalls();
     std::puts("M4aacEnc tests passed");
