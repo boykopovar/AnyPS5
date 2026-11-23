@@ -206,6 +206,7 @@ async function fail(value, { keepInspection = false } = {}) {
   errorState.appended = await abortAndDiscardOutput(transaction, activeSink, locale);
   $("error").hidden = false;
   $("status").hidden = true;
+  const restoreFocus = document.activeElement === $("cancel");
   $("cancel").hidden = true;
   $("drop").hidden = false;
   $("selection").hidden = true;
@@ -216,6 +217,7 @@ async function fail(value, { keepInspection = false } = {}) {
   failing = false;
   lock(false);
   update();
+  if (restoreFocus) $("choose").focus();
 }
 
 async function onMessage({ data }, currentWorker) {
