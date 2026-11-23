@@ -13,8 +13,7 @@ extern "C" {
 
 bool lre_check_stack_overflow(void* opaque, size_t allocaSize) {
     const auto* state = static_cast<const State*>(opaque);
-    char marker = 0;
-    const char* const here = &marker;
+    const char* const here = static_cast<const char*>(__builtin_frame_address(0));
     const std::size_t used = static_cast<std::size_t>(state->stackBase > here ? state->stackBase - here : here - state->stackBase);
     return used + allocaSize > Jsc::YarrEngine::StackBudget;
 }
