@@ -1164,7 +1164,9 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
     Require(fchdir_nid_postfix(target) == 0 && readMarker(-100) == 'o');
     Require(chdir_nid_postfix(previous) == 0);
     Require(mkdirat_nid_postfix(target, "created", 0755) == 0);
+#ifndef _WIN32
     Require(mkfifoat_nid_postfix(-100, (moved / "pipe").string().c_str(), 0600) == 0 && std::filesystem::is_fifo(moved / "pipe"));
+#endif
     Require(std::filesystem::is_directory(moved / "created") && !std::filesystem::exists(original / "created"));
     Require(unlinkat_nid_postfix(duplicate, "created", 0x800) == 0);
     Require(sceKernelRename(moved.string().c_str(), twice.string().c_str()) == 0);
