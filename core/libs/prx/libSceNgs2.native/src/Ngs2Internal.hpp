@@ -160,6 +160,7 @@ struct Ngs2VoiceCustomChannelMixer {
 struct Ngs2SubmixerCompressor {
     bool configured = false;
     Ngs2SubmixerVoiceCompressorParam param{};
+    std::vector<float> keySamples;
     std::array<float, NGS2_MAX_CHANNELS> gain{};
 };
 

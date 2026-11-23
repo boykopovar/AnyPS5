@@ -285,6 +285,28 @@ static void TestSubmixerKeyInput() {
     Render(system, {-0.5f});
     Route(input1, 0, submixer, 1);
     Render(system, {0.25f});
+#ifndef APS5_NGS2_PS4_LIBRARY
+    Ngs2SubmixerVoiceCompressorParam param{{}, 0x8, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0};
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, param);
+    Render(system, {0.25f * 0.5f / 0.75f});
+    param.flags = 0xa;
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, param);
+    Render(system, {0.25f * 0.5f / 0.75f});
+    Route(input1, 0, 0);
+    Render(system, {0.25f});
+    Route(input1, 0, submixer, 1);
+    param.flags = 0;
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, param);
+    Render(system, {0.25f});
+    param.flags = 0x8;
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, param);
+    Route(input0, 1, submixer, 1);
+    Render(system, {0.25f});
+    Route(input0, 0, 0);
+    Render(system, {0.0f});
+    Route(input1, 0, submixer);
+    Render(system, {-0.75f});
+#endif
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
