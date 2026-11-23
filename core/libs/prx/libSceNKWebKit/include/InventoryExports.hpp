@@ -1212,9 +1212,6 @@ double APS5_VABI _ZN3WTF18charactersToDoubleEPKhmPb(const unsigned char* data, s
 int APS5_VABI _ZN3WTF19MetaAllocatorHandle6shrinkEm();
 int APS5_VABI _ZN3WTF19MetaAllocatorHandleD1Ev();
 int APS5_VABI _ZN3WTF19MetaAllocatorHandleD2Ev();
-int APS5_VABI _ZN3WTF19ParallelEnvironment7executeEPv();
-int APS5_VABI _ZN3WTF19ParallelEnvironmentC1EPFvPvEmi();
-int APS5_VABI _ZN3WTF19ParallelEnvironmentC2EPFvPvEmi();
 int APS5_VABI _ZN3WTF19isCompilationThreadEv();
 int APS5_VABI _ZN3WTF20ParallelHelperClient13doSomeHelpingEv();
 int APS5_VABI _ZN3WTF20ParallelHelperClient6finishEv();
