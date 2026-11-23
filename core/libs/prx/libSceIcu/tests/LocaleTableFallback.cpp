@@ -159,6 +159,7 @@ struct FallbackCase {
     const char* itemKey;
     std::u16string_view expected;
     UErrorCode expectedStatus;
+    std::int32_t expectedNullLength = -1;
 };
 
 void CheckFallback() {
@@ -169,7 +170,7 @@ void CheckFallback() {
     const std::vector<std::uint32_t> root = BuildBundle({
         {"Countries", {{"US", u"root-country"}}}, {"layout", {{"ltr", u"left-to-right"}}}});
     const std::vector<std::uint32_t> de = BuildBundle({
-        {"Countries", {{"RS", u"replacement"}}}, {"labels", {{"yes", u"ja"}}}});
+        {"Countries", {{"RS", u"replacement"}}}, {"labels", {{"none", u"\u2205\u2205\u2205"}, {"yes", u"ja"}}}});
     const std::vector<std::uint32_t> sr = BuildBundle({{"Countries", {{"RS", u"serbia"}}}});
     const std::vector<std::uint32_t> deXx = BuildNestedBundle();
     const std::vector<std::uint32_t> en = BuildBundle({{"layout", {{"rtl", u"right-to-left"}}}});
@@ -212,6 +213,8 @@ void CheckFallback() {
         {"sr", "Countries", nullptr, "YU", u"serbia", U_ZERO_ERROR},
         {"pt_BR", "Countries", nullptr, "YU", u"replacement", U_ZERO_ERROR},
         {"de", "labels", nullptr, "missing", {}, U_MISSING_RESOURCE_ERROR},
+        {"de", "labels", nullptr, "none", {}, U_MISSING_RESOURCE_ERROR, 0},
+        {"de_AT", "labels", nullptr, "yes", u"ja", U_USING_FALLBACK_WARNING},
         {"en", "layout", nullptr, "ltr", u"left-to-right", U_ZERO_ERROR},
     };
     for (const auto& item : cases) {
@@ -223,7 +226,7 @@ void CheckFallback() {
         if (expectNull) {
             Require(guest == nullptr, "expected fallback miss returns null");
             Require(guestCode == static_cast<std::int32_t>(item.expectedStatus), "expected fallback miss status");
-            Require(guestLength == -1, "expected fallback miss leaves the length");
+            Require(guestLength == item.expectedNullLength, "expected fallback miss length");
         } else {
             Require(guest != nullptr, "expected fallback hit returns a string");
             Require(guestCode == static_cast<std::int32_t>(item.expectedStatus), "expected fallback hit status");
@@ -242,6 +245,21 @@ void CheckFallback() {
         Require(hostLength == guestLength, "fallback length matches native ICU");
         if (host) Require(host == guest, "fallback returns the native ICU string");
     }
+
+    std::int32_t nullLenCode = 0;
+    const char16_t* nullLen = uloc_getTableStringWithFallback_nid_postfix(
+        nullptr, "de", "labels", nullptr, "yes", nullptr, &nullLenCode);
+    UErrorCode hostNullLenCode = U_ZERO_ERROR;
+    const char16_t* hostNullLen = uloc_getTableStringWithFallback(
+        nullptr, "de", "labels", nullptr, "yes", nullptr, &hostNullLenCode);
+    Require(nullLen != nullptr && std::u16string_view(nullLen) == u"ja",
+            "null length returns the table item");
+    Require(nullLenCode == 0, "null length keeps a clear status");
+    Require(static_cast<std::int32_t>(hostNullLenCode) == nullLenCode,
+            "null length status matches native ICU");
+    Require((hostNullLen == nullptr) == (nullLen == nullptr),
+            "null length result matches native ICU");
+    if (hostNullLen) Require(hostNullLen == nullLen, "null length returns the native ICU string");
 
     for (const std::int32_t failure : {1, 2, 15, 0x7fffffff}) {
         std::int32_t code = failure;

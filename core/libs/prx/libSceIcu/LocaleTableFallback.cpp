@@ -47,7 +47,7 @@ const char16_t* APS5_VABI uloc_getTableStringWithFallback_nid_postfix(const char
     std::int32_t incoming = 0;
     CopyIn(&incoming, pErrorCode, sizeof(incoming), caller);
     if (incoming > 0) return nullptr;
-    if (!tableKey || !itemKey || !pLength) NotImplemented_nid_no_patch(caller);
+    if (!tableKey || !itemKey) NotImplemented_nid_no_patch(caller);
 
     const std::string hostPath = path ? ReadString(path, caller) : std::string();
     const std::string hostLocale = locale ? ReadString(locale, caller) : std::string();
@@ -55,19 +55,23 @@ const char16_t* APS5_VABI uloc_getTableStringWithFallback_nid_postfix(const char
     const std::string hostSubTableKey = subTableKey ? ReadString(subTableKey, caller) : std::string();
     const std::string hostItemKey = ReadString(itemKey, caller);
 
+    std::int32_t incomingLength = 0;
+    if (pLength) CopyIn(&incomingLength, pLength, sizeof(incomingLength), caller);
+    std::int32_t length = incomingLength;
+
     UErrorCode errorCode = static_cast<UErrorCode>(incoming);
-    std::int32_t length = 0;
     const char16_t* result = uloc_getTableStringWithFallback(
         path ? hostPath.c_str() : nullptr,
         locale ? hostLocale.c_str() : nullptr,
         hostTableKey.c_str(),
         subTableKey ? hostSubTableKey.c_str() : nullptr,
         hostItemKey.c_str(),
-        &length,
+        pLength ? &length : nullptr,
         &errorCode);
+    if (pLength && (result != nullptr || length != incomingLength))
+        CopyOut(pLength, &length, sizeof(length), caller);
     const auto outgoing = static_cast<std::int32_t>(errorCode);
     if (outgoing != incoming) CopyOut(pErrorCode, &outgoing, sizeof(outgoing), caller);
-    if (result) CopyOut(pLength, &length, sizeof(length), caller);
     return result;
 }
 
