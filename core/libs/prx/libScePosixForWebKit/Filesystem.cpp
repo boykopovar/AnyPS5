@@ -5,6 +5,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
+#include <array>
 #include <cerrno>
 #include <cstring>
 #ifdef _WIN32
@@ -50,14 +51,35 @@ extern "C" int APS5_VABI isatty_nid_postfix(int descriptor) {
     return 0;
 }
 
-extern "C" char* APS5_VABI ttyname_nid_postfix(int descriptor) {
-    (void)descriptor;
-    NotImplemented_nid_no_patch(__func__);
-}
-
 extern "C" int APS5_VABI ttyname_r_nid_postfix(int descriptor, char* buffer, std::size_t length) {
+#ifdef _WIN32
     (void)descriptor;
     (void)buffer;
     (void)length;
     NotImplemented_nid_no_patch(__func__);
+#else
+    if (buffer == nullptr || length == 0) return 22;
+    if (::isatty(descriptor) == 0) return errno == EBADF ? 9 : 25;
+    std::array<char, 1024> name{};
+    if (::ttyname_r(descriptor, name.data(), name.size()) != 0) return 25;
+    const std::size_t size = std::strlen(name.data()) + 1;
+    if (size > length) return 34;
+    if (!GuestCopyOut_nid_no_patch(buffer, name.data(), size)) return 14;
+    return 0;
+#endif
+}
+
+extern "C" char* APS5_VABI ttyname_nid_postfix(int descriptor) {
+#ifdef _WIN32
+    (void)descriptor;
+    NotImplemented_nid_no_patch(__func__);
+#else
+    thread_local std::array<char, 1024> name{};
+    const int error = ttyname_r_nid_postfix(descriptor, name.data(), name.size());
+    if (error != 0) {
+        *__error_nid_postfix() = error;
+        return nullptr;
+    }
+    return name.data();
+#endif
 }
