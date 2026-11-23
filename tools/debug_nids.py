@@ -18,7 +18,6 @@ ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-"
 
 def to_nid(text, as_name):
     if not as_name and NID.fullmatch(text):
-        # The runtime rejects a last character with nonzero low bits (8 bytes = 11 base64 chars, 2 unused bits).
         if ALPHABET.index(text[-1]) % 4 != 0:
             raise ValueError(f"'{text}' is not a valid NID: its last character has nonzero low bits")
         return text

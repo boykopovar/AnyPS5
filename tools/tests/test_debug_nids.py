@@ -27,6 +27,11 @@ class NidDebugClient(unittest.TestCase):
             with self.subTest(value=bad), self.assertRaises(ValueError):
                 debug_nids.to_nid(bad, False)
 
+    def test_a_nid_with_nonzero_padding_bits_is_refused_and_a_canonical_one_kept(self):
+        self.assertEqual(debug_nids.to_nid("AAAAAAAAAAA", False), "AAAAAAAAAAA")
+        with self.assertRaises(ValueError):
+            debug_nids.to_nid("AAAAAAAAAAB", False)
+
     def test_commands_are_written_in_order_and_replace_the_file(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "cmd.txt"
