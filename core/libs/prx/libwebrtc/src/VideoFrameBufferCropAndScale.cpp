@@ -59,6 +59,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -73,6 +74,7 @@ constexpr std::size_t StrideVSlot = 16;
 constexpr std::size_t DataYSlot = 17;
 constexpr std::size_t DataUSlot = 18;
 constexpr std::size_t DataVSlot = 19;
+constexpr int MaximumCropDimension = 32768;
 
 using ToI420 = void** (APS5_VABI*)(void** result, void* buffer);
 
@@ -101,16 +103,19 @@ void** APS5_VABI _ZN6webrtc16VideoFrameBuffer12CropAndScaleEiiiiii_nid_postfix(
     void** result, WebRtcVideoFrameBuffer* buffer, int offsetX, int offsetY, int cropWidth, int cropHeight, int scaledWidth, int scaledHeight) {
     if (!result) throw std::invalid_argument("VideoFrameBuffer::CropAndScale requires a result");
     if (!buffer || !buffer->vtable) throw std::invalid_argument("VideoFrameBuffer::CropAndScale requires a buffer with a vtable");
-    WebRtcRefCountedI420Buffer* created = nullptr;
+    if (scaledWidth <= 0 || scaledHeight <= 0) throw std::invalid_argument("VideoFrameBuffer::CropAndScale requires a positive scaled size");
     const int chromaStride = scaledWidth / 2 + scaledWidth % 2;
-    _ZN6webrtc10I420Buffer6CreateEiiiii_nid_postfix(&created, scaledWidth, scaledHeight, scaledWidth, chromaStride, chromaStride);
-    Reference target{created};
+    const std::int64_t chromaRows = (std::int64_t{scaledHeight} + 1) / 2;
+    if (std::int64_t{scaledWidth} * scaledHeight + 2 * std::int64_t{chromaStride} * chromaRows > std::numeric_limits<int>::max())
+        throw std::invalid_argument("VideoFrameBuffer::CropAndScale requires a scaled size whose planes fit in int");
+    const std::int64_t rows = cropHeight < 0 ? -std::int64_t{cropHeight} : std::int64_t{cropHeight};
+    if (cropWidth <= 0 || cropWidth > MaximumCropDimension || rows == 0 || rows > MaximumCropDimension)
+        throw std::invalid_argument("VideoFrameBuffer::CropAndScale requires a crop size the scaler accepts");
     Reference source;
     reinterpret_cast<ToI420>(Slot(buffer, ToI420Slot))(&source.object, buffer);
     if (!source.object) throw std::invalid_argument("VideoFrameBuffer::CropAndScale requires a buffer that converts to I420");
     const std::int64_t sourceWidth = Call<std::int32_t>(source.object, WidthSlot);
     const std::int64_t sourceHeight = Call<std::int32_t>(source.object, HeightSlot);
-    const std::int64_t rows = cropHeight < 0 ? -std::int64_t{cropHeight} : std::int64_t{cropHeight};
     if (std::int64_t{cropWidth} + offsetX > sourceWidth || rows + offsetY > sourceHeight || offsetX < 0 || offsetY < 0)
         throw std::invalid_argument("VideoFrameBuffer::CropAndScale requires a crop rectangle inside the buffer");
     const int uvOffsetX = offsetX / 2;
@@ -120,15 +125,23 @@ void** APS5_VABI _ZN6webrtc16VideoFrameBuffer12CropAndScaleEiiiiii_nid_postfix(
     const int strideY = Call<std::int32_t>(source.object, StrideYSlot);
     const int strideU = Call<std::int32_t>(source.object, StrideUSlot);
     const int strideV = Call<std::int32_t>(source.object, StrideVSlot);
-    const std::uint8_t* planeY = Call<const std::uint8_t*>(source.object, DataYSlot) + std::ptrdiff_t{strideY} * offsetY + offsetX;
-    const std::uint8_t* planeU = Call<const std::uint8_t*>(source.object, DataUSlot) + std::ptrdiff_t{strideU} * uvOffsetY + uvOffsetX;
-    const std::uint8_t* planeV = Call<const std::uint8_t*>(source.object, DataVSlot) + std::ptrdiff_t{strideV} * uvOffsetY + uvOffsetX;
+    const std::uint8_t* dataY = Call<const std::uint8_t*>(source.object, DataYSlot);
+    const std::uint8_t* dataU = Call<const std::uint8_t*>(source.object, DataUSlot);
+    const std::uint8_t* dataV = Call<const std::uint8_t*>(source.object, DataVSlot);
+    if (!dataY || !dataU || !dataV) throw std::invalid_argument("VideoFrameBuffer::CropAndScale requires a buffer with three planes");
+    const std::uint8_t* planeY = dataY + std::ptrdiff_t{strideY} * offsetY + offsetX;
+    const std::uint8_t* planeU = dataU + std::ptrdiff_t{strideU} * uvOffsetY + uvOffsetX;
+    const std::uint8_t* planeV = dataV + std::ptrdiff_t{strideV} * uvOffsetY + uvOffsetX;
+    WebRtcRefCountedI420Buffer* created = nullptr;
+    _ZN6webrtc10I420Buffer6CreateEiiiii_nid_postfix(&created, scaledWidth, scaledHeight, scaledWidth, chromaStride, chromaStride);
+    Reference target{created};
     WebRtcI420Buffer& destination = created->buffer;
-    libyuv::I420Scale(planeY, strideY, planeU, strideU, planeV, strideV, cropWidth, cropHeight,
-                      _ZN6webrtc10I420Buffer12MutableDataYEv_nid_postfix(&destination), destination.strideY,
-                      _ZN6webrtc10I420Buffer12MutableDataUEv_nid_postfix(&destination), destination.strideU,
-                      _ZN6webrtc10I420Buffer12MutableDataVEv_nid_postfix(&destination), destination.strideV,
-                      destination.width, destination.height, libyuv::kFilterBox);
+    if (libyuv::I420Scale(planeY, strideY, planeU, strideU, planeV, strideV, cropWidth, cropHeight,
+                          _ZN6webrtc10I420Buffer12MutableDataYEv_nid_postfix(&destination), destination.strideY,
+                          _ZN6webrtc10I420Buffer12MutableDataUEv_nid_postfix(&destination), destination.strideU,
+                          _ZN6webrtc10I420Buffer12MutableDataVEv_nid_postfix(&destination), destination.strideV,
+                          destination.width, destination.height, libyuv::kFilterBox) != 0)
+        throw std::runtime_error("VideoFrameBuffer::CropAndScale could not scale the planes");
     target.object = nullptr;
     *result = created;
     return result;

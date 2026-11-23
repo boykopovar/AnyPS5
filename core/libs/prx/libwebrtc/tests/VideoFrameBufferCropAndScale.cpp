@@ -16,6 +16,7 @@
 namespace {
 
 std::unordered_map<void*, std::size_t> allocations;
+std::size_t allocationCalls = 0;
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -24,6 +25,7 @@ void Require(bool condition, std::source_location location = std::source_locatio
 }
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
+    ++allocationCalls;
     auto* pointer = std::malloc(size);
     if (pointer) {
         allocations.emplace(pointer, size);
@@ -406,11 +408,13 @@ void TestAGuestBufferIsConverted() {
     const auto cropAndScale = reinterpret_cast<Function>(const_cast<void*>(Entry(&native, 9)));
     RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, 9, 8, 4, 4); });
     Require(native.conversions == 2 && converted->refCount.load() == 1 && untouched == &native);
-    RequireThrows<std::runtime_error>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, 0, 4); });
-    RequireThrows<std::runtime_error>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, 4, -1); });
-    RequireThrows<std::runtime_error>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, INT_MAX, 4); });
-    RequireThrows<std::runtime_error>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, 4, INT_MAX); });
-    RequireThrows<std::runtime_error>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, INT_MAX, INT_MAX); });
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, 0, 4); });
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, 4, -1); });
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, INT_MAX, 4); });
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, 4, INT_MAX); });
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, INT_MAX, INT_MAX); });
+    for (const int width : {0, -4, INT_MIN, 32769, INT_MAX}) RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, width, 4, 4, 4); });
+    for (const int height : {0, INT_MIN, 32769, -32769, INT_MAX}) RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, 4, height, 4, 4); });
     Require(native.conversions == 2 && untouched == &native);
     native.converted = nullptr;
     const std::size_t before = allocations.size();
@@ -445,6 +449,37 @@ void TestAGuestBufferIsConverted() {
     Release(copy);
     RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &planar, 0, 0, 6, 5, 6, 4); });
     Require(planar.references == 2 && planar.releases == 2);
+    for (int plane = 0; plane < 3; ++plane) {
+        GuestBuffer partial = planar;
+        partial.converted = &partial;
+        partial.references = 0;
+        partial.releases = 0;
+        (plane == 0 ? partial.y : plane == 1 ? partial.u : partial.v) = std::vector<std::uint8_t>();
+        const std::size_t calls = allocationCalls;
+        RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &partial, 0, 0, 6, 4, 6, 4); });
+        Require(partial.references == 1 && partial.releases == 1 && allocationCalls == calls && untouched == &native);
+    }
+}
+
+void TestTheScalerLimits() {
+    Buffer* wide = Create(40000, 2, 40000, 20000, 20000);
+    Buffer* tall = Create(2, 40000, 2, 1, 1);
+    using Function = void** (APS5_VABI*)(void**, void*, int, int, int, int, int, int);
+    const auto cropAndScale = reinterpret_cast<Function>(const_cast<void*>(Entry(wide, 9)));
+    void* result = wide;
+    const std::size_t calls = allocationCalls;
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, wide, 0, 0, 32769, 2, 4, 2); });
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, wide, 0, 0, 40000, 2, 4, 2); });
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, tall, 0, 0, 2, 32769, 2, 4); });
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, tall, 0, 0, 2, -32769, 2, 4); });
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, tall, 0, 0, 2, 40000, 2, 4); });
+    Require(result == wide && allocationCalls == calls && wide->refCount.load() == 1 && tall->refCount.load() == 1);
+    Release(CropAndScale(wide, 0, 0, 32768, 2, 4, 2));
+    Release(CropAndScale(wide, 7232, 0, 32768, 2, 4, 2));
+    Release(CropAndScale(tall, 0, 0, 2, 32768, 2, 4));
+    Release(CropAndScale(tall, 0, 7232, 2, -32768, 2, 4));
+    Release(wide);
+    Release(tall);
 }
 
 void TestInvalid() {
@@ -453,23 +488,25 @@ void TestInvalid() {
     const auto cropAndScale = reinterpret_cast<Function>(const_cast<void*>(Entry(source, 9)));
     void* result = source;
     const std::size_t before = allocations.size();
+    const std::size_t calls = allocationCalls;
     RequireThrows<std::invalid_argument>([&] { cropAndScale(nullptr, source, 0, 0, 8, 6, 8, 6); });
     RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, nullptr, 0, 0, 8, 6, 8, 6); });
     WebRtcVideoFrameBuffer empty{nullptr};
     RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, &empty, 0, 0, 8, 6, 8, 6); });
     const int rejected[][4] = {{0, 0, 9, 6}, {0, 0, 8, 7}, {1, 0, 8, 6}, {0, 1, 8, 6}, {2, 0, 7, 6}, {0, 2, 8, 5}, {-1, 0, 8, 6}, {0, -1, 8, 6}, {-2, -2, 4, 4},
         {1, 0, INT_MAX, 6}, {0, 1, 8, INT_MAX}, {INT_MAX, 0, 1, 6}, {0, INT_MAX, 8, 1}, {INT_MAX, INT_MAX, INT_MAX, INT_MAX},
-        {0, 0, 8, -7}, {0, 4, 8, -4}, {0, 1, 8, -6}, {0, 0, 8, INT_MIN}, {0, 1, 8, INT_MIN}, {0, 0, 8, -INT_MAX}, {0, 6, 8, -1}, {0, INT_MAX, 8, INT_MIN}};
+        {0, 0, 8, -7}, {0, 4, 8, -4}, {0, 1, 8, -6}, {0, 0, 8, INT_MIN}, {0, 1, 8, INT_MIN}, {0, 0, 8, -INT_MAX}, {0, 6, 8, -1}, {0, INT_MAX, 8, INT_MIN},
+        {0, 0, 0, 6}, {0, 0, 8, 0}, {8, 6, 0, 0}, {0, 0, -8, 6}, {0, 0, INT_MIN, 6}, {8, 0, -1, 6}, {0, 0, -1, -1}, {0, 0, 0, 0}, {INT_MAX, 0, INT_MIN, 6}};
     for (const auto& crop : rejected) {
         RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, source, crop[0], crop[1], crop[2], crop[3], 4, 4); });
-        Require(result == source && source->refCount.load() == 1 && allocations.size() == before);
+        Require(result == source && source->refCount.load() == 1 && allocations.size() == before && allocationCalls == calls);
     }
-    const int sizes[][2] = {{0, 4}, {4, 0}, {-4, 4}, {4, -4}, {0, 0}, {INT_MAX, 4}, {4, INT_MAX}, {INT_MAX, INT_MAX}, {INT_MAX - 1, 2}, {INT_MIN, 4}, {4, INT_MIN}, {-1, -1}};
+    const int sizes[][2] = {{0, 4}, {4, 0}, {-4, 4}, {4, -4}, {0, 0}, {INT_MAX, 4}, {4, INT_MAX}, {INT_MAX, INT_MAX}, {INT_MAX - 1, 2}, {INT_MIN, 4}, {4, INT_MIN}, {-1, -1}, {40000, 40000}, {60000, 30000}, {46342, 46342}};
     for (const auto& size : sizes) {
-        RequireThrows<std::runtime_error>([&] { cropAndScale(&result, source, 0, 0, 8, 6, size[0], size[1]); });
-        Require(result == source && source->refCount.load() == 1 && allocations.size() == before);
+        RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, source, 0, 0, 8, 6, size[0], size[1]); });
+        Require(result == source && source->refCount.load() == 1 && allocations.size() == before && allocationCalls == calls);
     }
-    const int accepted[][4] = {{0, 0, 8, 6}, {2, 2, 6, 4}, {7, 5, 1, 1}, {8, 6, 0, 0}, {0, 0, 0, 6}, {0, 0, 8, 0}, {0, 0, 8, -6}, {0, 2, 8, -4}, {0, 5, 8, -1}};
+    const int accepted[][4] = {{0, 0, 8, 6}, {2, 2, 6, 4}, {7, 5, 1, 1}, {0, 0, 8, -6}, {0, 2, 8, -4}, {0, 5, 8, -1}};
     for (const auto& crop : accepted) {
         Buffer* scaled = CropAndScale(source, crop[0], crop[1], crop[2], crop[3], 4, 4);
         Require(source->refCount.load() == 1);
@@ -495,6 +532,7 @@ int main() {
         TestThirdAndThreeQuarters();
         TestScaledValuesStayInsideTheCrop();
         TestAGuestBufferIsConverted();
+        TestTheScalerLimits();
         TestInvalid();
         Require(allocations.empty());
     } catch (const std::exception& error) {
