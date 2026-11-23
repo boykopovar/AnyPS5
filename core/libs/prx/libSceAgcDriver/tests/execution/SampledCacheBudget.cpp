@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
@@ -1670,12 +1671,23 @@ bool surfaceImportTests(Context context) {
         else Require(!produced->ViewsStorageImage(), "a split surface the GPU wrote was viewed through a storage image with the sampled surface import off");
         recorder.Sync();
         const auto texels = FetchTexels(context, *produced, SplitSide);
-        for (std::size_t piece = 0; piece < patterns.size(); ++piece) {
-            const auto expected = static_cast<std::size_t>(bounds[piece + 1u] - bounds[piece]) / sizeof(std::uint32_t);
-            const auto found = static_cast<std::size_t>(std::count(texels.begin(), texels.end(), patterns[piece]));
-            Require(found == expected, std::string(importing ? "through the joined import, " : "through the snapshot, ") + "allocation " + std::to_string(piece) + " of the split surface sampled " + std::to_string(found) + " texels the GPU wrote there, not " + std::to_string(expected));
+        const ColorTargetLayout layout(SplitSide, SplitSide, ColorTileMode::RenderTarget);
+        Require(layout.Bytes() == surfaceBytes, "the R_X layout of the split surface does not take its guest bytes");
+        std::array<std::size_t, 3> sampled{};
+        for (std::uint32_t y = 0; y < SplitSide; ++y) {
+            for (std::uint32_t x = 0; x < SplitSide; ++x) {
+                const auto address = split.Surface() + layout.Offset(x, y);
+                const auto piece = static_cast<std::size_t>(std::upper_bound(bounds.begin() + 1, bounds.end(), address) - bounds.begin() - 1);
+                const auto texel = texels[std::size_t{y} * SplitSide + x];
+                if (texel != patterns[piece]) {
+                    char text[192];
+                    std::snprintf(text, sizeof(text), "texel (%u, %u) at guest offset 0x%llx in allocation %zu sampled 0x%08x, not the 0x%08x the GPU wrote there", x, y, static_cast<unsigned long long>(address - split.Base()), piece, texel, patterns[piece]);
+                    Require(false, std::string(importing ? "through the joined import, " : "through the snapshot, ") + text);
+                }
+                ++sampled[piece];
+            }
         }
-        Require(std::all_of(texels.begin(), texels.end(), [&](std::uint32_t texel) { return std::find(patterns.begin(), patterns.end(), texel) != patterns.end(); }), std::string(importing ? "through the joined import, " : "through the snapshot, ") + "the split surface sampled texels the GPU producer did not write");
+        for (std::size_t piece = 0; piece < patterns.size(); ++piece) Require(sampled[piece] == static_cast<std::size_t>(bounds[piece + 1u] - bounds[piece]) / sizeof(std::uint32_t), "the split surface's texels do not cover allocation " + std::to_string(piece) + " exactly");
         produced.reset();
         ClearCachedTextures(context.device);
     }

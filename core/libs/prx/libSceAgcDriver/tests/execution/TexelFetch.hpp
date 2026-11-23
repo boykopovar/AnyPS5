@@ -45,8 +45,10 @@ inline std::vector<std::uint32_t> TexelFetchShader(std::uint32_t side) {
     module.AddFunction(spv::OpLabel, module.AllocateId());
     const auto loaded = module.AllocateId();
     module.AddFunction(spv::OpLoad, v3, loaded, group);
-    const auto index = module.AllocateId();
-    module.AddFunction(spv::OpCompositeExtract, u32, index, loaded, 0u);
+    const auto column = module.AllocateId();
+    module.AddFunction(spv::OpCompositeExtract, u32, column, loaded, 0u);
+    const auto row = module.AllocateId();
+    module.AddFunction(spv::OpCompositeExtract, u32, row, loaded, 1u);
     const auto binary = [&](spv::Op op, std::uint32_t a, std::uint32_t b) {
         const auto result = module.AllocateId();
         module.AddFunction(op, u32, result, a, b);
@@ -57,8 +59,9 @@ inline std::vector<std::uint32_t> TexelFetchShader(std::uint32_t side) {
         module.AddFunction(spv::OpBitcast, i32, result, value);
         return result;
     };
+    const auto index = binary(spv::OpIAdd, binary(spv::OpIMul, row, constant(side)), column);
     const auto coordinate = module.AllocateId();
-    module.AddFunction(spv::OpCompositeConstruct, v2, coordinate, signedValue(binary(spv::OpUMod, index, constant(side))), signedValue(binary(spv::OpUDiv, index, constant(side))));
+    module.AddFunction(spv::OpCompositeConstruct, v2, coordinate, signedValue(column), signedValue(row));
     const auto object = module.AllocateId();
     module.AddFunction(spv::OpLoad, imageType, object, image);
     const auto value = module.AllocateId();
@@ -115,10 +118,10 @@ public:
     TexelFetch(const TexelFetch&) = delete;
     TexelFetch& operator=(const TexelFetch&) = delete;
 
-    void Run(VkCommandBuffer commands, std::uint32_t groups) const {
+    void Run(VkCommandBuffer commands, std::uint32_t columns, std::uint32_t rows) const {
         context.BindComputePipeline(commands, pipeline);
         context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0u, 1u, &set, 0u, nullptr);
-        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groups, 1u, 1u);
+        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, columns, rows, 1u);
     }
 
 private:
@@ -145,7 +148,7 @@ inline std::vector<std::uint32_t> FetchTexels(const Context& context, const Text
     std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
     const TexelFetch fetch(context, texture, output, TexelFetchShader(side));
     CommandBatch batch(context);
-    fetch.Run(batch.Handle(), count);
+    fetch.Run(batch.Handle(), side, side);
     RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
     batch.SubmitAndWait();
     output.Invalidate();
