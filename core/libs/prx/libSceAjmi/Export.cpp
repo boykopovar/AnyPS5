@@ -228,8 +228,8 @@ int APS5_VABI sceAjmiInitialize(std::int64_t reserved, std::uint32_t* context) {
     return sceAjmInitialize(reserved, context);
 }
 
-int APS5_VABI sceAjmiBatchErrorDump() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* error) {
+    return sceAjmBatchErrorDump(info, error);
 }
 
 std::uint32_t APS5_VABI sceAjmiInstanceCodecType(std::uint32_t instanceId) {

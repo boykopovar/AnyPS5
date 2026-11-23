@@ -13,7 +13,7 @@ const char* APS5_VABI sceAjmiStrError(int error);
 int APS5_VABI sceAjmiInstanceSwitch();
 int APS5_VABI sceAjmiDecAt9ParseConfigData(const void* configData, AjmDecAt9ConfigDataInfo* configInfo);
 int APS5_VABI sceAjmiInitialize(std::int64_t reserved, std::uint32_t* context);
-int APS5_VABI sceAjmiBatchErrorDump();
+int APS5_VABI sceAjmiBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* error);
 std::uint32_t APS5_VABI sceAjmiInstanceCodecType(std::uint32_t instanceId);
 int APS5_VABI sceAjmiMemoryUnregister();
 int APS5_VABI sceAjmiInstanceDestroy(std::uint32_t context, std::uint32_t instance);
