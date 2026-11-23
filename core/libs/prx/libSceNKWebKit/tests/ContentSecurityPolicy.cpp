@@ -334,12 +334,12 @@ static void TestSourceListMessages() {
     Require(Only(MessagesFor("script-src https://a.example/p?x=1"), "The source list for Content Security Policy directive 'script-src' contains a source with an invalid path: '/p?x=1'. The query component, including the '?', will be ignored."));
     Require(Only(MessagesFor("img-src a.example/p#f"), "The source list for Content Security Policy directive 'img-src' contains a source with an invalid path: '/p#f'. The fragment identifier, including the '#', will be ignored."));
     Require(Only(MessagesFor("script-src img-src"), "The Content Security Policy directive 'script-src' contains 'img-src' as a source expression. Did you mean 'script-src ...; img-src...' (note the semicolon)?"));
-    const char* invalid[] = {"ht!tp://x", "https://", "https:///p", "a..b", "*a.example", "a.example:80x", "a.example:65536", "a.example:99999999999999999999", "1http://a.example", "'nonce-'", "'nonce-abc", "'sha256-!!'", "'sha256-AAAAA'", "'sha256-++++='", "'sha256-'", "'md5-AAAA'", "'self", "*.*"};
+    const char* invalid[] = {"https:/p", ".a.example", "a.example..", "ht!tp://x", "https://", "https:///p", "a..b", "*a.example", "a.example:80x", "a.example:65536", "a.example:99999999999999999999", "1http://a.example", "'nonce-'", "'nonce-abc", "'sha256-!!'", "'sha256-AAAAA'", "'sha256-++++='", "'sha256-'", "'md5-AAAA'", "'self", "*.*"};
     for (const char* source : invalid) {
         const std::string expected = std::string("The source list for Content Security Policy directive 'style-src' contains an invalid source: '") + source + "'. It will be ignored.";
         Require(Only(MessagesFor(std::string("style-src ") + source), expected));
     }
-    const char* valid[] = {"*", "'self'", "'SELF'", "https:", "a.example:", "a.example", "*.a.example", "a.example:*", "a.example:0", "a.example:65535", "a.example:00080", "https://a.example:443/p/q", "a-b.example/", "custom+scheme-1.x://h", "'nonce-abc+/-_='", "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='", "'sha256-47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU'", "'SHA384-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'", "*:*"};
+    const char* valid[] = {"a.example.", "example.", "*.a.example.", "https://a.example./p", "*", "'self'", "'SELF'", "https:", "a.example:", "a.example", "*.a.example", "a.example:*", "a.example:0", "a.example:65535", "a.example:00080", "https://a.example:443/p/q", "a-b.example/", "custom+scheme-1.x://h", "'nonce-abc+/-_='", "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='", "'sha256-47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU'", "'SHA384-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'", "*:*"};
     for (const char* source : valid) Require(MessagesFor(std::string("style-src ") + source).empty());
     const std::string tooLong = "'sha512-" + std::string(88, 'A') + "'";
     Require(MessagesFor("style-src " + tooLong).size() == 1);
