@@ -193,6 +193,7 @@ struct Observation {
 };
 Observation Observe(std::uint64_t address, std::size_t bytes);
 void SetObservationHookForTest(void (*hook)(int point));
+void SetWriteChangedIfHeldHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
 // The tracker's current generation (every collect and MarkWritten bumps it): a stamp taken after
 // a set of driver stores, for UnchangedSinceCollected to compare against later. Read under the
 // tracker mutex, so every collect that bumped before it has finished its walk and every later

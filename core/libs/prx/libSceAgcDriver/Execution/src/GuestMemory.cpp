@@ -2300,6 +2300,12 @@ void SetObservationHookForTest(void (*hook)(int point)) {
     observationHook.store(hook, std::memory_order_release);
 }
 
+std::atomic<void (*)(std::uint64_t, std::size_t)> writeChangedIfHeldHook{nullptr};
+
+void SetWriteChangedIfHeldHookForTest(void (*hook)(std::uint64_t, std::size_t)) {
+    writeChangedIfHeldHook.store(hook, std::memory_order_release);
+}
+
 std::uint64_t WriteGeneration() {
     return Tracker().generation.load(std::memory_order_acquire);
 }
@@ -4165,6 +4171,7 @@ std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte>
                 return std::pair<std::uint64_t, std::uint64_t>{0, 0};
             }
         }
+        if (const auto hook = writeChangedIfHeldHook.load(std::memory_order_acquire)) hook(address, size);
         std::size_t firstChanged = size;
         std::size_t lastChanged = 0;
         const auto exchange = [&](std::size_t index) {

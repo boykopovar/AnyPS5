@@ -545,6 +545,41 @@ void CheckOwnStore() {
     Require(!UnchangedSince(base, 64, beforeCpu), "a CPU write after the driver store is not seen");
 }
 
+#ifndef _WIN32
+std::atomic<int> sameValuePhase{0};
+std::thread sameValueThread;
+
+void StoreSameValueDuringCommit(std::uint64_t address, std::size_t) {
+    if (sameValuePhase.exchange(1) != 0) return;
+    const auto value = *reinterpret_cast<const std::uint8_t*>(address);
+    sameValueThread = std::thread([address, value] {
+        sameValuePhase.store(2, std::memory_order_release);
+        *reinterpret_cast<volatile std::uint8_t*>(address) = value;
+        sameValuePhase.store(3, std::memory_order_release);
+    });
+    while (sameValuePhase.load(std::memory_order_acquire) != 2) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+void CheckWriteChangedIfHeldSameValue() {
+    void* memory = AllocateWatched(Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, Block);
+    const auto synced = CollectWrites(base, Block);
+    Require(synced != 0, "the same-value publication block is not collected");
+    std::array<std::byte, 8> original, current;
+    original.fill(std::byte{0x11});
+    current.fill(std::byte{0x22});
+    sameValuePhase.store(0);
+    SetWriteChangedIfHeldHookForTest(&StoreSameValueDuringCommit);
+    WriteChangedIfHeld(base, current, original, synced);
+    SetWriteChangedIfHeldHookForTest(nullptr);
+    sameValueThread.join();
+    Require(sameValuePhase.load() == 3, "the same-value guest store did not finish");
+    Require(*reinterpret_cast<const std::uint8_t*>(memory) == 0x11u, "a guarded publication overwrote a same-value guest store made during its commit");
+}
+#endif
+
 void CheckGpuWriteNotListed() {
     void* memory = AllocateWatched(Block);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -2821,6 +2856,11 @@ int main(int argc, char** argv) {
         CheckAdoptLatestEpoch();
 #ifndef _WIN32
         CheckOwnStoreImages();
+#endif
+#if defined(__linux__)
+        CheckWriteChangedIfHeldSameValue();
+#else
+        std::cout << "same-value publication regression skipped: the ordering fix needs an alias for a host write to a read-only guest page, which this platform does not provide (docs/dev/debt/libSceAgcDriver.md, same-value store during a guarded publication)\n";
 #endif
     } catch (const std::exception& error) {
         std::cerr << "write tracking test failed: " << error.what() << "\n";
