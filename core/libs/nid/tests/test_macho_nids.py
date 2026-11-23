@@ -311,6 +311,16 @@ def check_dylib_name_bounds(patcher, directory):
     assert result.returncode != 0 and "dylib name" in result.stdout + result.stderr, (result.stdout, result.stderr)
     assert path.read_bytes() == image
 
+    for invalid_offset in (0, 8, 12, 16, 20, 23):
+        image = bytearray(build_dylib([], [("_sceKernelFoo", 1)]))
+        command = command_fields(image)[LC_LOAD_DYLIB][-1]
+        struct.pack_into("<I", image, command + 8, invalid_offset)
+        path = Path(directory) / f"dylib-command-name-offset-{invalid_offset}.dylib"
+        path.write_bytes(image)
+        result = subprocess.run([str(patcher), "--exec", str(path)], capture_output=True, text=True, timeout=30)
+        assert result.returncode != 0 and "dylib name out of bounds" in result.stdout + result.stderr, (invalid_offset, result.stdout, result.stderr)
+        assert path.read_bytes() == image
+
 def check_short_imports(patcher, directory):
     imports = [("_sceXy", 1), ("_malloc", 2), ("_sceKernelFoo", 1), ("_sceNetRecv", 1)]
     result, path = patch(patcher, directory, "short.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], imports))
