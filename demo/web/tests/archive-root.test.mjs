@@ -314,6 +314,17 @@ const folder = new Archive([{ path: "outer/inner/title/main.elf", file: new Blob
 try { assert.equal((await folder.inspect(() => {})).root, "outer/inner/title/"); }
 finally { await folder.close(); }
 
+const emptySiblings = new Archive(await zipped([
+  ["empty/", true], ["outer/", true], ["outer/empty/child/", true],
+  ["outer/title/main.elf", false], ["outer/title/sce_module/", true], ["outer/title/assets/", true]
+]));
+try {
+  const summary = await emptySiblings.inspect(() => {});
+  assert.equal(summary.root, "outer/title/");
+  assert.deepEqual(emptySiblings.files.map(item => item.name).sort(), ["assets/", "main.elf", "sce_module/"]);
+  assert.deepEqual((await emptySiblings.conversionInput("windows", false, () => {})).executable, header);
+} finally { await emptySiblings.close(); }
+
 const siblings = new Archive(await zipped([["outer/", true], ["outer/main.elf", false], ["other/resource", false]]));
 try { await assert.rejects(siblings.inspect(() => {}), /This doesn't look like a PS5 app/); }
 finally { await siblings.close(); }

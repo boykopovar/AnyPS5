@@ -132,9 +132,7 @@ template <typename T>
 T ReadGuest(const T* source, const char* function) {
     T value{};
     if (!source) throw std::invalid_argument(std::string(function) + ": null guest pointer");
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(value));
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return value;
 }
@@ -142,9 +140,7 @@ T ReadGuest(const T* source, const char* function) {
 void ReadGuestBytes(void* destination, const void* source, std::size_t size, const char* function) {
     if (size == 0) return;
     if (!source) throw std::invalid_argument(std::string(function) + ": null guest buffer");
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
@@ -1403,9 +1399,7 @@ int APS5_VABI DirectoryBySubject(LibreSslX509Lookup* lookup, int type, LibreSslX
         }
         LibreSslX509Object found{};
         if (FindStoredCertificate(lookup->storeContext, subject, found)) {
-            const int savedErrno = errno;
             const bool copied = GuestCopyOut_nid_no_patch(result, &found, sizeof(found));
-            errno = savedErrno;
             if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
             return 1;
         }

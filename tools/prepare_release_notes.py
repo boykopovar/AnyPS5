@@ -25,16 +25,28 @@ def resolve_output_path(path):
     return resolved
 
 
-def release_body(notes):
-    if len(notes) <= BODY_LIMIT:
+def release_body(notes, limit=BODY_LIMIT):
+    if len(notes) <= limit:
         return notes
-    return re.sub(
-        r"^## What's Changed[^\S\r\n]*\r?\n.*?(?=^#{1,2} |^\*\*Full Changelog\*\*:|\Z)",
-        "",
-        notes,
-        count=1,
-        flags=re.MULTILINE | re.DOTALL,
-    )
+    section = None
+    fence = ""
+    for line in re.finditer(r"[^\r\n]*(?:\r\n|\r|\n|$)", notes):
+        content = line.group().rstrip("\r\n")
+        marker = re.match(r" {0,3}(`{3,}|~{3,})(.*)", content)
+        if marker:
+            run, info = marker.groups()
+            if fence:
+                if run.startswith(fence) and not info.strip(" \t"):
+                    fence = ""
+            elif run[0] == "~" or "`" not in info:
+                fence = run
+        elif not fence:
+            if section is None:
+                if content.rstrip() == "## What's Changed":
+                    section = line.start()
+            elif content.startswith(("# ", "## ", "**Full Changelog**:")):
+                return notes[:section] + notes[line.start():]
+    return notes[:section]
 
 
 def unique_release_object(pairs):
@@ -46,7 +58,7 @@ def unique_release_object(pairs):
     return result
 
 
-def prepare_notes(source, body, full, check=False):
+def prepare_notes(source, body, full, check=False, *, marker=None):
     paths = (source, body, full)
     for index, first in enumerate(paths):
         for second in paths[index + 1:]:
@@ -62,7 +74,8 @@ def prepare_notes(source, body, full, check=False):
     notes = payload["body"]
     if not isinstance(notes, str):
         raise ValueError("Generated release notes body must be a string")
-    body_text = release_body(notes)
+    suffix = f"\n{marker}\n" if marker is not None else ""
+    body_text = release_body(notes, BODY_LIMIT - len(suffix)) + suffix
     if len(body_text) > BODY_LIMIT:
         raise ValueError(f"Release notes body exceeds {BODY_LIMIT} characters after removing What's Changed")
     if check:
@@ -133,10 +146,11 @@ def main(argv=None):
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--body", type=Path, required=True)
     parser.add_argument("--full", type=Path, required=True)
+    parser.add_argument("--marker", help="append a workflow marker within the release body limit")
     parser.add_argument("--check", action="store_true", help="fail with status 1 when outputs differ; never create or modify files")
     args = parser.parse_args(argv)
     try:
-        matched = prepare_notes(args.input, args.body, args.full, args.check)
+        matched = prepare_notes(args.input, args.body, args.full, args.check, marker=args.marker)
         if args.check and not matched:
             print("Release note outputs are missing or stale", file=sys.stderr)
             return 1

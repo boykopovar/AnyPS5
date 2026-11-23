@@ -126,6 +126,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -766,25 +767,12 @@ int WritePkcs8PrivateKey(LibreSsl::Bio* bio, const LibreSsl3EvpPkey* key) {
 
 template<typename T>
 bool CopyGuestInPreservingErrno(T& destination, const T* source) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
-    errno = savedErrno;
-    return ok;
+    return GuestPtr<const T>(source).CopyIn(destination);
 }
 
 template<typename T>
 bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
-    return ok;
-}
-
-bool GuestWritablePreservingErrno(void* destination, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool ok = GuestWritable_nid_no_patch(destination, bytes);
-    errno = savedErrno;
-    return ok;
+    return GuestPtr<T>(destination).CopyOut(value);
 }
 
 }
@@ -847,7 +835,7 @@ LibreSsl3Rsa* APS5_VABI PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(
     if (decoded.get() == nullptr) return nullptr;
     if (rsa != nullptr) {
         LibreSsl3Rsa* previous = nullptr;
-        if (!CopyGuestInPreservingErrno(previous, rsa) || !GuestWritablePreservingErrno(rsa, sizeof(previous))) {
+        if (!CopyGuestInPreservingErrno(previous, rsa) || !GuestWritable_nid_no_patch(rsa, sizeof(previous))) {
             NotImplemented_nid_no_patch(__func__);
         }
         if (previous != nullptr) RSA_free_nid_disambig1_nid_postfix(previous);

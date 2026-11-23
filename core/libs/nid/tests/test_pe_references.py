@@ -367,6 +367,37 @@ class ExecutableImportTests(unittest.TestCase):
             self.assertIn("not backed by section file data", result.stderr)
             self.assertEqual(path.read_bytes(), image)
 
+    def test_exec_rejects_import_name_crossing_raw_tail_without_writing(self):
+        image = bytearray(self.pe())
+        section = 0x58 + 240
+        struct.pack_into("<I", image, section + 16, 0x183)
+        struct.pack_into("<Q", image, 584, 0)
+        struct.pack_into("<Q", image, 712, 0)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(image)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("string exceeds section file data", result.stderr)
+            self.assertEqual(path.read_bytes(), image)
+
+    def test_pe_import_descriptor_walk_stays_within_declared_directory(self):
+        image = self.pe()
+        import_directory = 0x58 + 112 + 8
+        struct.pack_into("<I", image, import_directory + 4, 20)
+        struct.pack_into("<IIIII", image, 512, 0x14f0, 0, 0, 0x15f0, 0x14f8)
+        struct.pack_into("<IIIII", image, 532, 0x1040, 0, 0, 0x15f0, 0x10c0)
+        image[552:572] = bytes(20)
+        image[2032:2041] = b"test.prx\0"
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(image)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("import descriptor table is not terminated within import directory", result.stderr)
+            self.assertEqual(path.read_bytes(), image)
+
     def test_exec_accepts_macho_without_exports(self):
         from test_macho_nids import LC_DYLD_EXPORTS_TRIE, command_fields
         image = self.macho()
