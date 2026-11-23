@@ -127,6 +127,7 @@ void ReportHostImports();
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester = ImportRequester::Access);
 bool HostImportUsesDmaBuf(const Context& context, std::uint64_t address, std::size_t bytes);
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+const HostImport* HostImportJoinedFor(const Context& context, std::uint64_t address, std::size_t bytes);
 struct HostImportCopy {
     VkBuffer buffer;
     VkDeviceSize offset;
