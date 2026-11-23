@@ -45,14 +45,9 @@ template<typename T, std::size_t inlineCapacity> T* InlineStorage(InlineVector<T
 template<typename T, std::size_t inlineCapacity>
 void CheckInlineVector(const InlineVector<T, inlineCapacity>* vector, const char* function) {
     Checked(vector, function);
-    if (vector->size > vector->capacity)
-        throw std::invalid_argument(std::string(function) + " requires a valid vector");
-    if (vector->capacity <= inlineCapacity) {
-        if (vector->buffer != reinterpret_cast<const T*>(vector->inlineStorage))
-            throw std::invalid_argument(std::string(function) + " requires a valid vector");
-        return;
-    }
-    if (!vector->buffer || vector->buffer == reinterpret_cast<const T*>(vector->inlineStorage))
+    const bool usesInlineStorage = vector->buffer == reinterpret_cast<const T*>(vector->inlineStorage);
+    const bool validCapacity = usesInlineStorage ? vector->capacity == inlineCapacity : vector->capacity > inlineCapacity;
+    if (!vector->buffer || !validCapacity || vector->size > vector->capacity)
         throw std::invalid_argument(std::string(function) + " requires a valid vector");
 }
 

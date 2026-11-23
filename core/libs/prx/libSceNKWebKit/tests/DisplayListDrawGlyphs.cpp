@@ -291,9 +291,13 @@ void TestInvalidVectors() {
     glyphs.buffer = nullptr;
     Require(Throws<std::invalid_argument>(construct));
     glyphs.buffer = inlineBuffer;
+    glyphs.size = 0;
     glyphs.capacity = 0;
     Require(Throws<std::invalid_argument>(construct));
     glyphs.capacity = 128;
+    glyphs.size = static_cast<std::uint32_t>(Glyphs.size());
+    advances.capacity = 127;
+    Require(Throws<std::invalid_argument>(construct));
     advances.capacity = 200;
     Require(Throws<std::invalid_argument>(construct));
     advances.capacity = 128;
