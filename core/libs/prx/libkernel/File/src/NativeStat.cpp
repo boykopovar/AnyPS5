@@ -10,6 +10,7 @@
 
 #ifdef _WIN32
 #include "prx/libkernel/File/include/WindowsFileTime.hpp"
+#include "prx/libkernel/File/include/WindowsPermissions.hpp"
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
 #include "prx/libc/include/WindowsDescriptor.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
@@ -33,6 +34,7 @@ static int OpenFailure() {
 struct NativeStat : __stat64 {
     FILE_BASIC_INFO times{};
     BY_HANDLE_FILE_INFORMATION identity{};
+    std::optional<std::uint16_t> permissions;
     bool hasTimes = false;
     bool hasIdentity = false;
     bool isSymbolicLink = false;
@@ -55,12 +57,19 @@ static bool NativeStatPath(const std::filesystem::path& path, std::filesystem::p
                                                : std::filesystem::path(L"\\\\?\\" + native);
     return true;
 }
+static HANDLE OpenMetadata(const std::filesystem::path& path, DWORD flags) {
+    constexpr DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    const auto handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | FILE_READ_EA, share, nullptr, OPEN_EXISTING, flags, nullptr);
+    if (handle != INVALID_HANDLE_VALUE || GetLastError() != ERROR_ACCESS_DENIED) return handle;
+    return CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, share, nullptr, OPEN_EXISTING, flags, nullptr);
+}
 static int ReadHandleInfo(HANDLE handle, NativeStat* st) {
     if (GetFileType(handle) != FILE_TYPE_DISK) return 0;
     if (!GetFileInformationByHandleEx(handle, FileBasicInfo, &st->times, sizeof(st->times)))
         return File::WindowsFileTime::Failure(GetLastError());
     st->hasTimes = true;
     st->hasIdentity = GetFileInformationByHandle(handle, &st->identity) != 0;
+    st->permissions = File::WindowsPermissions::Read(handle);
     return 0;
 }
 static int DoStat(const std::filesystem::path& p, NativeStat* st) {
@@ -70,8 +79,7 @@ static int DoStat(const std::filesystem::path& p, NativeStat* st) {
         if (_doserrno == ERROR_CANT_RESOLVE_FILENAME) File::WindowsFileTime::Failure(_doserrno);
         return -1;
     }
-    const auto handle = CreateFileW(prepared.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    const auto handle = OpenMetadata(prepared, FILE_FLAG_BACKUP_SEMANTICS);
     if (handle == INVALID_HANDLE_VALUE) return OpenFailure();
     const int result = ReadHandleInfo(handle, st);
     CloseHandle(handle);
@@ -93,8 +101,7 @@ static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
     if (!File::WindowsSymbolicLink::IsNameSurrogate(prepared, "lstat")) return DoStat(p, st);
     std::string target;
     const bool link = File::WindowsSymbolicLink::Read(prepared, target, "lstat") || File::WindowsSymbolicLink::ReadJunction(prepared, target, "lstat");
-    const auto handle = CreateFileW(prepared.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    const auto handle = OpenMetadata(prepared, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS);
     if (handle == INVALID_HANDLE_VALUE) return OpenFailure();
     const int result = ReadHandleInfo(handle, st);
     CloseHandle(handle);
@@ -197,6 +204,8 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
         sb->st_ino = WindowsFileNumber_nid_no_patch(st.identity);
         sb->st_nlink = static_cast<std::uint16_t>(std::min<DWORD>(st.identity.nNumberOfLinks, 0xffff));
     }
+    if (st.permissions && !st.isSymbolicLink && ((sb->st_mode & 0170000) == 0040000 || (sb->st_mode & 0170000) == 0100000))
+        sb->st_mode = static_cast<std::uint16_t>((sb->st_mode & 0170000) | *st.permissions);
 #else
     sb->st_dev = static_cast<std::uint32_t>(st.st_dev);
     sb->st_ino = static_cast<std::uint32_t>(st.st_ino);

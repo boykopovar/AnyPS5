@@ -39,6 +39,8 @@
 #include "prx/libc/include/WindowsDescriptor.hpp"
 #include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
+#include "prx/libkernel/File/include/WindowsPermissions.hpp"
+#include "prx/libc/include/CreationMask.hpp"
 static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint16_t mode) {
     const int access = nativeFlags & (_O_RDONLY | _O_WRONLY | _O_RDWR);
     const DWORD desired = access == _O_RDONLY ? GENERIC_READ : access == _O_WRONLY ? GENERIC_WRITE : GENERIC_READ | GENERIC_WRITE;
@@ -47,10 +49,21 @@ static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint
     else if (nativeFlags & _O_TRUNC) disposition = TRUNCATE_EXISTING;
     const DWORD attributes = (nativeFlags & _O_CREAT) && !(mode & _S_IWRITE) ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL;
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, (nativeFlags & _O_NOINHERIT) == 0};
+    const auto kept = (nativeFlags & _O_TRUNC) ? File::WindowsPermissions::Read(p) : std::nullopt;
     const auto handle = CreateFileW(p.c_str(), desired, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &security, disposition, attributes, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         errno = WindowsOpenError_nid_no_patch(GetLastError());
         return -1;
+    }
+    const bool created = (nativeFlags & _O_CREAT) && (disposition == CREATE_NEW || GetLastError() != ERROR_ALREADY_EXISTS);
+    if (created || kept) {
+        const auto permissions = created ? static_cast<std::uint16_t>((mode & ~File::GetCreationMask_nid_no_patch()) & 06777) : *kept;
+        if (const DWORD error = File::WindowsPermissions::Store(handle, permissions); error != ERROR_SUCCESS) {
+            CloseHandle(handle);
+            if (created) ::DeleteFileW(p.c_str());
+            errno = WindowsOpenError_nid_no_patch(error);
+            return -1;
+        }
     }
     const int descriptor = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(handle), nativeFlags & (_O_APPEND | _O_RDONLY | _O_BINARY | _O_NOINHERIT));
     if (descriptor < 0) CloseHandle(handle);
