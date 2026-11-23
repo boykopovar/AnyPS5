@@ -6247,8 +6247,11 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
         const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(first) * 4u, 4u);
         std::string rejected;
         if (first + Abi::SamplerEntryElements > context.samplerTableCapacity) rejected = "the sampler table exceeds the device's capacity of " + std::to_string(context.samplerTableCapacity) + " samplers";
-        const auto* const contextAddress = &context;
-        std::string verdictKey(reinterpret_cast<const char*>(&contextAddress), sizeof(contextAddress));
+        const float anisotropyLimit = context.limits.maxSamplerAnisotropy;
+        const float lodBiasLimit = context.limits.maxSamplerLodBias;
+        std::string verdictKey(reinterpret_cast<const char*>(&anisotropyLimit), sizeof(anisotropyLimit));
+        verdictKey.append(reinterpret_cast<const char*>(&lodBiasLimit), sizeof(lodBiasLimit));
+        for (const bool capability : {context.samplerAnisotropy, context.samplerFilterMinmax, context.samplerMirrorClampToEdge, context.nonSeamlessCubeMap}) verdictKey.push_back(capability ? '1' : '0');
         verdictKey.append(reinterpret_cast<const char*>(binding.guestDescriptor.data() + static_cast<std::size_t>(first) * 4u), static_cast<std::size_t>(Abi::SamplerEntryElements) * 4u * sizeof(std::uint32_t));
         for (std::uint32_t element = first; element < first + Abi::SamplerEntryElements; ++element) verdictKey.push_back(binding.samplerDepthCompare.at(element) ? '1' : '0');
         static std::mutex verdictMutex;
