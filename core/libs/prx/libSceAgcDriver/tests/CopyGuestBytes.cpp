@@ -2,6 +2,7 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -69,9 +70,33 @@ static void CheckConcurrentAccess() {
     writer.join();
 }
 
+#if defined(ANYPS5_ENABLE_ASAN) || defined(ANYPS5_ENABLE_TSAN)
+static void CheckAlignedWordsDoNotTear() {
+    alignas(64) static std::array<std::uint64_t, 512> shared{};
+    std::atomic<bool> stop{false};
+    std::thread writer([&] {
+        std::array<std::uint64_t, 512> pattern{};
+        for (unsigned round = 0; !stop.load(std::memory_order_relaxed); ++round) {
+            pattern.fill(0x0101010101010101ull * (round & 0xffu));
+            AgcDriver::GuestMemory::CopyToGuestBytes(shared.data(), pattern.data(), sizeof(pattern));
+        }
+    });
+    std::array<std::uint64_t, 512> copy{};
+    for (int round = 0; round < 4000; ++round) {
+        AgcDriver::GuestMemory::CopyGuestBytes(copy.data(), shared.data(), sizeof(copy));
+        for (const std::uint64_t word : copy) Require(word == 0x0101010101010101ull * (word & 0xffu), "an aligned 8-byte word was torn");
+    }
+    stop.store(true, std::memory_order_relaxed);
+    writer.join();
+}
+#endif
+
 int main() {
     CheckCopies();
     CheckComparisons();
     CheckConcurrentAccess();
+#if defined(ANYPS5_ENABLE_ASAN) || defined(ANYPS5_ENABLE_TSAN)
+    CheckAlignedWordsDoNotTear();
+#endif
     std::puts("copy guest bytes: ok");
 }

@@ -3804,22 +3804,44 @@ std::uint64_t ReadLabel(std::uint64_t address, std::size_t bytes) {
     return std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address)).load(std::memory_order_acquire);
 }
 
+#if defined(ANYPS5_ENABLE_ASAN) || defined(ANYPS5_ENABLE_TSAN)
 namespace {
 
-using UnalignedGuestWord [[gnu::aligned(1), gnu::may_alias]] = std::uint64_t;
+constexpr std::uintptr_t GuestWordMask = sizeof(std::uint64_t) - 1u;
+
+template <typename OnByte, typename OnWord>
+[[gnu::always_inline]] inline bool WalkGuestBytes(const void* guest, std::size_t bytes, OnByte&& onByte, OnWord&& onWord) {
+    const auto* base = static_cast<const unsigned char*>(guest);
+    std::size_t index = 0;
+    while (index < bytes && ((reinterpret_cast<std::uintptr_t>(base + index) & GuestWordMask) != 0)) {
+        if (!onByte(index)) return false;
+        ++index;
+    }
+    for (; index + sizeof(std::uint64_t) <= bytes; index += sizeof(std::uint64_t)) {
+        if (!onWord(index)) return false;
+    }
+    for (; index < bytes; ++index) {
+        if (!onByte(index)) return false;
+    }
+    return true;
+}
 
 }
 
-#if defined(ANYPS5_ENABLE_ASAN) || defined(ANYPS5_ENABLE_TSAN)
-[[gnu::no_sanitize_address, gnu::no_sanitize_thread]] void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
+[[gnu::no_sanitize_address]] void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
     auto* to = static_cast<unsigned char*>(destination);
     const auto* from = static_cast<const unsigned char*>(source);
-    std::size_t index = 0;
-    for (; index + sizeof(std::uint64_t) <= bytes; index += sizeof(std::uint64_t)) {
-        const std::uint64_t word = *reinterpret_cast<const volatile UnalignedGuestWord*>(from + index);
-        std::memcpy(to + index, &word, sizeof(word));
-    }
-    for (; index < bytes; ++index) to[index] = static_cast<const volatile unsigned char*>(from)[index];
+    WalkGuestBytes(
+        source, bytes,
+        [&](std::size_t index) {
+            to[index] = __atomic_load_n(from + index, __ATOMIC_RELAXED);
+            return true;
+        },
+        [&](std::size_t index) {
+            const std::uint64_t word = __atomic_load_n(reinterpret_cast<const std::uint64_t*>(from + index), __ATOMIC_RELAXED);
+            std::memcpy(to + index, &word, sizeof(word));
+            return true;
+        });
 }
 #else
 void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
@@ -3828,32 +3850,34 @@ void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
 #endif
 
 #ifdef ANYPS5_ENABLE_TSAN
-[[gnu::no_sanitize_thread]] void CopyToGuestBytes(void* destination, const void* source, std::size_t bytes) {
+void CopyToGuestBytes(void* destination, const void* source, std::size_t bytes) {
     auto* to = static_cast<unsigned char*>(destination);
     const auto* from = static_cast<const unsigned char*>(source);
-    std::size_t index = 0;
-    for (; index + sizeof(std::uint64_t) <= bytes; index += sizeof(std::uint64_t)) {
-        std::uint64_t word = 0;
-        std::memcpy(&word, from + index, sizeof(word));
-        *reinterpret_cast<volatile UnalignedGuestWord*>(to + index) = word;
-    }
-    for (; index < bytes; ++index) static_cast<volatile unsigned char*>(destination)[index] = from[index];
+    WalkGuestBytes(
+        destination, bytes,
+        [&](std::size_t index) {
+            __atomic_store_n(to + index, from[index], __ATOMIC_RELAXED);
+            return true;
+        },
+        [&](std::size_t index) {
+            std::uint64_t word = 0;
+            std::memcpy(&word, from + index, sizeof(word));
+            __atomic_store_n(reinterpret_cast<std::uint64_t*>(to + index), word, __ATOMIC_RELAXED);
+            return true;
+        });
 }
 
-[[gnu::no_sanitize_thread]] bool GuestBytesEqual(const void* guest, const void* expected, std::size_t bytes) {
+bool GuestBytesEqual(const void* guest, const void* expected, std::size_t bytes) {
     const auto* from = static_cast<const unsigned char*>(guest);
     const auto* other = static_cast<const unsigned char*>(expected);
-    std::size_t index = 0;
-    for (; index + sizeof(std::uint64_t) <= bytes; index += sizeof(std::uint64_t)) {
-        const std::uint64_t word = *reinterpret_cast<const volatile UnalignedGuestWord*>(from + index);
-        std::uint64_t wanted = 0;
-        std::memcpy(&wanted, other + index, sizeof(wanted));
-        if (word != wanted) return false;
-    }
-    for (; index < bytes; ++index) {
-        if (static_cast<const volatile unsigned char*>(guest)[index] != other[index]) return false;
-    }
-    return true;
+    return WalkGuestBytes(
+        guest, bytes,
+        [&](std::size_t index) { return __atomic_load_n(from + index, __ATOMIC_RELAXED) == other[index]; },
+        [&](std::size_t index) {
+            std::uint64_t wanted = 0;
+            std::memcpy(&wanted, other + index, sizeof(wanted));
+            return __atomic_load_n(reinterpret_cast<const std::uint64_t*>(from + index), __ATOMIC_RELAXED) == wanted;
+        });
 }
 #else
 void CopyToGuestBytes(void* destination, const void* source, std::size_t bytes) {
