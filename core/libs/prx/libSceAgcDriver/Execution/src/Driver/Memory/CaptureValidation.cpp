@@ -1,10 +1,26 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
-#include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include <cstdlib>
 #include <cstring>
 
 namespace AgcDriver::DriverDetail {
+
+namespace {
+
+struct CaptureScratch {
+    std::vector<std::byte> known;
+    std::vector<std::size_t> pending;
+    std::vector<VouchedRegions> skipped;
+    std::vector<std::byte> live;
+    std::vector<ShaderMemory::PendingWrite> policies;
+    std::vector<std::size_t> knownOffsets;
+    std::vector<std::byte> knownBytes;
+};
+
+struct CaptureScratchTag {};
+
+}
 
 bool Driver::captureStable(std::span<const ShaderRecompiler::MemoryRegion> captured) {
     using Policy = ShaderMemory::PendingWrite;
@@ -15,8 +31,7 @@ bool Driver::captureStable(std::span<const ShaderRecompiler::MemoryRegion> captu
     double waited = 0;
     PendingView pending;
     pending.Load();
-    thread_local std::vector<std::byte>* knownSlot = nullptr;
-    auto& known = ShaderRecompiler::ThreadOwned(knownSlot);
+    auto& known = ThreadScratch<CaptureScratch, CaptureScratchTag>().known;
     for (const auto& region : captured) {
         if (!stable) break;
         known.resize(region.bytes.size());
@@ -60,11 +75,10 @@ bool Driver::captureStable(std::span<const ShaderRecompiler::MemoryRegion> captu
 bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderRecompiler::RecompileResult& compiled, bool inPlace, const PendingView& view, bool* unmapped, std::optional<SampledReadScope>* sampling, const DataMask* data, std::span<const VouchedRegions> vouched) {
     using Policy = ShaderMemory::PendingWrite;
 
-    thread_local std::vector<std::size_t>* pendingSlot = nullptr;
-    auto& pending = ShaderRecompiler::ThreadOwned(pendingSlot);
+    auto& scratch = ThreadScratch<CaptureScratch, CaptureScratchTag>();
+    auto& pending = scratch.pending;
     pending.clear();
-    thread_local std::vector<VouchedRegions>* skippedSlot = nullptr;
-    auto& skipped = ShaderRecompiler::ThreadOwned(skippedSlot);
+    auto& skipped = scratch.skipped;
     skipped.clear();
     for (const auto& range : vouched) {
         if (range.begin < range.end && range.end <= captured.size() && (skipped.empty() || skipped.back().end <= range.begin) && !view.Overlaps(range.low, static_cast<std::size_t>(range.high - range.low))) skipped.push_back(range);
@@ -79,8 +93,7 @@ bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::s
     }
 
     const auto compareMasked = [&](const ShaderRecompiler::MemoryRegion& region, std::size_t first) {
-        thread_local std::vector<std::byte>* liveSlot = nullptr;
-        auto& live = ShaderRecompiler::ThreadOwned(liveSlot);
+        auto& live = scratch.live;
         live.resize(region.bytes.size());
         const auto copied = GuestMemory::CopyMapped(region.guestAddress, live);
         if (copied != GuestMemory::Compare::Equal) return copied;
@@ -98,12 +111,9 @@ bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::s
     };
 
     static constexpr std::size_t NoKnownValue = std::numeric_limits<std::size_t>::max();
-    thread_local std::vector<Policy>* policiesSlot = nullptr;
-    thread_local std::vector<std::size_t>* knownOffsetsSlot = nullptr;
-    thread_local std::vector<std::byte>* knownBytesSlot = nullptr;
-    auto& policies = ShaderRecompiler::ThreadOwned(policiesSlot);
-    auto& knownOffsets = ShaderRecompiler::ThreadOwned(knownOffsetsSlot);
-    auto& knownBytes = ShaderRecompiler::ThreadOwned(knownBytesSlot);
+    auto& policies = scratch.policies;
+    auto& knownOffsets = scratch.knownOffsets;
+    auto& knownBytes = scratch.knownBytes;
     policies.assign(pending.size(), Policy::None);
     knownOffsets.assign(pending.size(), NoKnownValue);
     knownBytes.clear();

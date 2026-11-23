@@ -1,9 +1,9 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
-#include "ThreadOwned.hpp"
 #include "Optimization/SrtWalker.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -13,6 +13,13 @@ namespace AgcDriver::DriverDetail {
 namespace {
 
 enum class QueuedOverlap : std::uint8_t { None, Stored, Unknown };
+
+struct VariantScratch {
+    std::vector<VouchedRegions> vouched;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> checked;
+};
+
+struct VariantScratchTag {};
 
 QueuedOverlap QueuedWritesOver(DrawPipeline& pipeline, std::span<const ShaderRecompiler::MemoryRegion> regions) {
     auto answer = QueuedOverlap::None;
@@ -129,15 +136,14 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
     }
     const bool masked = live != nullptr && !variant.dataPositions.empty();
     const DataMask mask{variant.dataPositions, live};
-    thread_local std::vector<VouchedRegions>* vouchedSlot = nullptr;
-    auto& vouched = ShaderRecompiler::ThreadOwned(vouchedSlot);
+    auto& scratch = ThreadScratch<VariantScratch, VariantScratchTag>();
+    auto& vouched = scratch.vouched;
     vouched.clear();
     if (!variant.shared.empty() && vouchedValidation() && !validateLegacy() && variant.runs.size() == regions.size()) VouchSharedRegions(variant.shared, regions.size(), &QueryPendingSpan, vouched, variant.linking != nullptr ? std::span(variant.linking->dependencies) : std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>>{}, &PreparedShaderState::UserDataLink::Restamp);
     PendingView pending;
     pending.Load();
     std::erase_if(vouched, [&](const VouchedRegions& range) { return pending.Overlaps(range.low, static_cast<std::size_t>(range.high - range.low)); });
-    thread_local std::vector<std::pair<std::uint64_t, std::uint64_t>>* checkedSlot = nullptr;
-    auto& checked = ShaderRecompiler::ThreadOwned(checkedSlot);
+    auto& checked = scratch.checked;
     checked.clear();
     if (!vouched.empty()) {
         for (std::size_t index = 0, range = 0; index < variant.runs.size(); ++index) {
