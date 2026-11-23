@@ -950,6 +950,11 @@ static void finishThread(PthreadPrivate* self, void* retval) {
 #endif
 }
 
+bool ThreadCancel::Enabled() {
+    const auto& state = CurrentGuestState();
+    return state.current && state.cancelState == GUEST_CANCEL_ENABLE;
+}
+
 bool ThreadCancel::Requested() {
     return CurrentGuestState().current && !CurrentGuestState().exiting && CurrentGuestState().cancelState == GUEST_CANCEL_ENABLE && CurrentGuestState().current->cancelPending.load();
 }
@@ -970,9 +975,8 @@ void ThreadCancel::BeginWait(TimedWait::Condition* condition) {
     auto& state = CurrentGuestState();
     if (!state.current) return;
     std::lock_guard lock(state.current->cancelLock);
-    const bool enabled = state.cancelState == GUEST_CANCEL_ENABLE;
-    state.current->cancelWait = enabled ? condition : nullptr;
-    state.current->cancelWaitExiting = enabled && condition && state.exiting;
+    state.current->cancelWait = condition;
+    state.current->cancelWaitExiting = condition && state.exiting;
 }
 
 void ThreadCancel::EndWait() {

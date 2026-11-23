@@ -154,7 +154,8 @@ std::pair<bool, CondWake> WaitRegistered(std::shared_ptr<TimedWait::Condition>& 
                                          std::optional<std::uint64_t> deadlineNanos) {
     const auto registered = AddWaiter(condition.get());
     std::unique_lock waiterLock(WaiterMutex());
-    ThreadCancel::BeginWait(&registered.waiter->condition);
+    if (ThreadCancel::Enabled())
+        ThreadCancel::BeginWait(&registered.waiter->condition);
     lock.unlock();
     const auto ready = [&] {
         return registered.waiter->signaled.load(std::memory_order_acquire) || ThreadCancel::Requested();
