@@ -1,6 +1,7 @@
 #include "prx/libSceGameLiveStreaming/include/Api.hpp"
 
 #include <cstdlib>
+#include <stdexcept>
 
 namespace {
 
@@ -9,6 +10,21 @@ void Require(bool value) {
 }
 
 constexpr int notInitialized = static_cast<int>(0x80A00004u);
+
+template <typename Call>
+void RequireThrows(Call&& call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return;
+    }
+    std::abort();
+}
+
+void CheckLaunchViewerStubs() {
+    RequireThrows([] { sceGameLiveStreamingLaunchLiveViewer(); });
+    RequireThrows([] { sceGameLiveStreamingLaunchLiveViewerA(); });
+}
 
 void CheckNotInitializedCalls() {
     Require(sceGameLiveStreamingScreenInitialize() == notInitialized);
@@ -36,9 +52,12 @@ void CheckNotInitializedCalls() {
 }
 
 int main() {
+    CheckLaunchViewerStubs();
     CheckNotInitializedCalls();
     Require(sceGameLiveStreamingInitialize(0x4000) == 0);
+    CheckLaunchViewerStubs();
     Require(sceGameLiveStreamingTerminate() == 0);
     CheckNotInitializedCalls();
+    CheckLaunchViewerStubs();
     return 0;
 }
