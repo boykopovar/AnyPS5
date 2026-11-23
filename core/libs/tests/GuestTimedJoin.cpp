@@ -2,6 +2,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -156,7 +157,7 @@ void Contention(bool cancel) {
 int main(int argc,char** argv) {
     Require(argc==2,"expected kernel path");
 #ifdef _WIN32
-    const auto library=LoadLibraryA(argv[1]);
+    const auto library=LoadLibraryW(ArgumentPath(argv, 1).c_str());
     Require(library!=nullptr,"load kernel");
     timedJoin=reinterpret_cast<TimedJoin>(GetProcAddress(library,"pthread_timedjoin_np_nid_postfix"));
 #else
