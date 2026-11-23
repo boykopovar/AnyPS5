@@ -133,7 +133,7 @@ int RunSelf(const std::filesystem::path& program, std::string_view mode, const s
 #endif
 }
 
-int Child(std::string_view mode, const char* directory) {
+int Child(std::string_view mode, const std::filesystem::path& directory) {
     std::filesystem::current_path(directory);
     if (mode == "--base") {
         CheckState(BaseState, "base mode");
@@ -164,7 +164,7 @@ int Child(std::string_view mode, const char* directory) {
 
 int main(int argc, char** argv) {
     try {
-        if (argc == 3) return Child(argv[1], argv[2]);
+        if (argc == 3) return Child(argv[1], ArgumentPath(argv, 2));
         const auto root = std::filesystem::temp_directory_path() / ("gnm_default_state_200_" + std::to_string(std::random_device{}()));
         std::filesystem::remove_all(root);
         const struct {
