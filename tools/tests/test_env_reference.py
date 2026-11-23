@@ -865,6 +865,35 @@ class HelperTests(unittest.TestCase):
         self.assertIn('getenv("ANYPS5_A")', blanked)
         self.assertNotIn("ANYPS5_B", blanked)
 
+    def test_fast_cpp_scanners_match_cpp_token_on_literals_and_digit_separators(self):
+        samples = [
+            'int n = 1\'000\'000; auto s = u8R"d(getenv("APS5_RAW"))d"; // APS5_C\r\nauto a = getenv("APS5_OK");\n',
+            'char c = L\'x\'; /* block\nAPS5_B */ auto b = _wgetenv(L"ANYPS5_W");\n',
+            'int x = 0x1\'2; /* unclosed comment\nauto k = "APS5_KEEP";\n',
+        ]
+        for sample in samples:
+            expected_cpp = env_reference.CPP_TOKEN.sub(
+                lambda m: env_reference.NON_NEWLINE.sub(" ", m.group())
+                if m.lastgroup in ("comment", "raw", "char") else m.group(),
+                sample,
+            )
+            expected_blank = env_reference.CPP_TOKEN.sub(
+                lambda m: m.group() if m.group("code") else " " * len(m.group()),
+                sample,
+            )
+            expected_uncommented = env_reference.CPP_TOKEN.sub(
+                lambda m: " " * len(m.group()) if m.group("comment") else m.group(),
+                sample,
+            )
+            self.assertEqual(env_reference.cpp_reads(sample), expected_cpp)
+            self.assertEqual(env_reference._blank_non_code(sample), expected_blank)
+            self.assertEqual(env_reference.uncommented(sample), expected_uncommented)
+
+    def test_anchored_line_reads_preserve_word_boundaries(self):
+        text = 'foo_std::getenv("APS5_NO"); foo_wgetenv(L"APS5_NO2"); std::getenv("APS5_YES"); std::_wgetenv(L"APS5_YES2");'
+        names = [m.group("name") for _, m in env_reference.line_reads(text)]
+        self.assertEqual(names, ["APS5_YES", "APS5_YES2"])
+
     def test_list_names_writes_sorted_tab_separated_rows(self):
         found = {"ANYPS5_B": [("core/a.cpp", 3, "getenv", "1")],
                  "ANYPS5_A": [("core/b.cpp", 7, "IsEnvironmentSet", "")]}
