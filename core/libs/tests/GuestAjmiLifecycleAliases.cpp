@@ -86,6 +86,8 @@ struct BatchApi {
     decltype(&sceAjmBatchInitialize) initialize;
     decltype(&sceAjmBatchJobGetStatistics) statistics;
     decltype(&sceAjmBatchStart) start;
+    decltype(&sceAjmiBatchErrorDump) errorDumpAlias;
+    decltype(&sceAjmBatchErrorDump) errorDumpNative;
 };
 
 template <typename TValue>
@@ -246,6 +248,20 @@ void CheckBatches(const Api& alias, const Api& native, const BatchApi& batch) {
     const auto fourth = StartBatch(batch, context);
     Require(alias.cancel(context, fourth) == 0);
     Require(native.wait(context, fourth, 0, nullptr) == 0);
+    AjmBatchInfo dumpInfo{};
+    std::memset(&dumpInfo, 0xAA, sizeof(dumpInfo));
+    std::memset(&error.value, 0xAA, sizeof(error.value));
+    errno = 71;
+    Require(batch.errorDumpAlias(&dumpInfo, &error.value) == 0);
+    Require(std::memcmp(cleared.data(), &error.value, cleared.size()) == 0);
+    Require(batch.errorDumpAlias(reinterpret_cast<const AjmBatchInfo*>(0x10), nullptr) == 0);
+    Require(batch.errorDumpAlias(&dumpInfo, reinterpret_cast<AjmBatchError*>(0x10)) == InvalidParameter);
+    std::memset(&error.value, 0xAA, sizeof(error.value));
+    Require(batch.errorDumpNative(&dumpInfo, &error.value) == 0);
+    Require(std::memcmp(cleared.data(), &error.value, cleared.size()) == 0);
+    Require(batch.errorDumpNative(reinterpret_cast<const AjmBatchInfo*>(0x10), nullptr) == 0);
+    Require(batch.errorDumpNative(&dumpInfo, reinterpret_cast<AjmBatchError*>(0x10)) == InvalidParameter);
+    Require(errno == 71);
     error.Check();
 }
 
@@ -289,7 +305,9 @@ int main(int argc, char** argv) {
         const BatchApi batch{
             nativeModule.Import<decltype(BatchApi::initialize)>(patched ? "MmpF1XsQiHw" : "sceAjmBatchInitialize"),
             nativeModule.Import<decltype(BatchApi::statistics)>(patched ? "3cAg7xN995U" : "sceAjmBatchJobGetStatistics"),
-            nativeModule.Import<decltype(BatchApi::start)>(patched ? "5tOfnaClcqM" : "sceAjmBatchStart")
+            nativeModule.Import<decltype(BatchApi::start)>(patched ? "5tOfnaClcqM" : "sceAjmBatchStart"),
+            aliasModule.Import<decltype(BatchApi::errorDumpAlias)>(patched ? "RbLGSlJB6dc" : "sceAjmiBatchErrorDump"),
+            nativeModule.Import<decltype(BatchApi::errorDumpNative)>(patched ? "WfAiBW8Wcek" : "sceAjmBatchErrorDump")
         };
         CheckBatches(alias, native, batch);
     }
