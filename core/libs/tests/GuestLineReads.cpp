@@ -100,6 +100,25 @@ int main(int argc, char** argv) {
     free_nid_postfix(empty);
     Require(std::filesystem::remove(emptyPath));
 
+    const std::string zeroPath = base + ".zero";
+    stream = fopen_nid_postfix(zeroPath.c_str(), "w+b");
+    Require(stream != nullptr);
+    char keptBuffer[4] = "xyz";
+    char* zeroLine = keptBuffer;
+    std::size_t zeroCapacity = 0;
+    Require(getline_nid_postfix(&zeroLine, &zeroCapacity, stream) == -1);
+    Require(zeroLine != keptBuffer && zeroLine[0] == '\0' && zeroCapacity == 1);
+    free_nid_postfix(zeroLine);
+    Require(fwrite_nid_postfix("ab\n", 1, 3, stream) == 3);
+    Require(fseek_nid_postfix(stream, 0, SEEK_SET) == 0);
+    char* zeroRead = keptBuffer;
+    zeroCapacity = 0;
+    Require(getline_nid_postfix(&zeroRead, &zeroCapacity, stream) == 3);
+    Require(zeroRead != keptBuffer && std::memcmp(zeroRead, "ab\n", 4) == 0 && zeroCapacity == 4);
+    Require(fclose_nid_postfix(stream) == 0);
+    free_nid_postfix(zeroRead);
+    Require(std::filesystem::remove(zeroPath));
+
     const std::string highPath = base + ".high";
     stream = fopen_nid_postfix(highPath.c_str(), "w+b");
     Require(stream != nullptr);
