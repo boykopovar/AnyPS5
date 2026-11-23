@@ -933,6 +933,25 @@ int APS5_VABI execve_nid_postfix(const char* path, char* const* arguments, char*
     return ExecProgram(path, arguments, environment, false, false);
 }
 
+#ifdef _WIN32
+int APS5_VABI execl_nid_postfix(const char* path, const char* arg, ...) {
+    (void)path;
+    (void)arg;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI execle_nid_postfix(const char* path, const char* arg, ...) {
+    (void)path;
+    (void)arg;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI execlp_nid_postfix(const char* file, const char* arg, ...) {
+    (void)file;
+    (void)arg;
+    NotImplemented_nid_no_patch(__func__);
+}
+#else
 namespace {
 
 std::vector<char*> CollectArguments(const char* first, va_list list) {
@@ -970,6 +989,7 @@ int APS5_VABI execlp_nid_postfix(const char* file, const char* arg, ...) {
     arguments.push_back(nullptr);
     return execvp_nid_postfix(file, arguments.data());
 }
+#endif
 
 int APS5_VABI sceKernelGetCurrentCpu(void) {
 #ifdef _WIN32
