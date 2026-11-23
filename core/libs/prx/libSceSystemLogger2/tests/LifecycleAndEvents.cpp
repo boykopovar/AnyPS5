@@ -1,5 +1,6 @@
 #include "prx/libSceSystemLogger2/libSceSystemLogger2.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -7,6 +8,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -28,6 +36,39 @@ void Require(bool value, std::source_location location = std::source_location::c
     if (value) return;
     std::fprintf(stderr, "libSceSystemLogger2 check failed at line %u\n", location.line());
     std::abort();
+}
+
+void CheckTimestampAcrossGuardPage() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    auto* pages = static_cast<unsigned char*>(
+        VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD previousProtection;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &previousProtection) != 0);
+#else
+    const long page = sysconf(_SC_PAGESIZE);
+    Require(page > 0);
+    const auto pageSize = static_cast<std::size_t>(page);
+    auto* pages = static_cast<unsigned char*>(
+        mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    auto* const boundary = pages + pageSize;
+    auto* const output = boundary - 40;
+    std::fill(output, boundary, 0xa5);
+    errno = EDOM;
+    Require(sceSystemLogger2GetTimestamp(reinterpret_cast<SceSystemLogger2Timestamp*>(output)) == kInvalidArgument);
+    Require(errno == EDOM);
+    Require(std::all_of(output, boundary, [](unsigned char byte) { return byte == 0xa5; }));
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, 2 * pageSize) == 0);
+#endif
 }
 
 void StoreU32(std::uint8_t* record, std::size_t offset, std::uint32_t value) {
@@ -79,6 +120,7 @@ int main() {
     Require(sceSystemLogger2GetTimestamp(reinterpret_cast<SceSystemLogger2Timestamp*>(0x10)) == kInvalidArgument);
     Require(errno == 71);
 
+    CheckTimestampAcrossGuardPage();
     Require(sceSystemLogger2IsAvailableMonitor() == kNotAvailable);
 
     char statusName[0x26] = {};

@@ -123,6 +123,8 @@ export const locales = [
 
 export const messages = {
     "en": {
+        "controllerButtons": "Controller buttons",
+        "noOverride": "No override",
         "controls": "Controls",
         "configuration": "Configuration",
         "help": "Help",
@@ -206,6 +208,8 @@ export const messages = {
         "noOptions": "No matching options."
     },
     "sv": {
+        "controllerButtons": "Handkontrollens knappar",
+        "noOverride": "Ärv knappmappning",
         "controls": "Kontroller",
         "configuration": "Konfiguration",
         "help": "Hjälp",
@@ -286,6 +290,8 @@ export const messages = {
         "noOptions": "Inga matchande alternativ."
     },
     "ar-EG": {
+        "controllerButtons": "أزرار دراع التحكم",
+        "noOverride": "استخدم التعيين الموروث",
         "controls": "التحكم",
         "configuration": "ملف الإعدادات",
         "help": "المساعدة",
@@ -366,6 +372,8 @@ export const messages = {
         "noOptions": "مفيش اختيار مطابق للبحث."
     },
     "es": {
+        "controllerButtons": "Botones del mando",
+        "noOverride": "Usar asignación heredada",
         "controls": "Controles",
         "configuration": "Configuración",
         "help": "Ayuda",
@@ -398,16 +406,19 @@ export const messages = {
         "moveFocus": "Mover el foco",
         "helpIntro": "Respuestas rápidas para empezar.",
         "configIntro": "Revisa las entradas y copia o descarga el archivo.",
+        "profileTitleId": "Title ID (opcional)",
+        "profileTitleIdHelp": "Usa el Title ID exacto del juego para un perfil propio de ese juego. Déjalo vacío para una configuración compartida.",
+        "profileTitleIdError": "Usa hasta 32 caracteres entre A-Z, a-z, 0-9, _ y -.",
         "captureTitle": "Pulsa una tecla para {action}",
         "cancelCapture": "Cancelar captura",
         "keepEditing": "Seguir editando",
         "discard": "Descartar cambios",
         "faq0Question": "¿Cómo asigno una tecla?",
-        "faq0Answer": "Elige un grupo y Añadir entrada. Usa Capturar o la lista. Puedes asignar varias entradas a una acción.",
+        "faq0Answer": "Elige un grupo, selecciona Añadir entrada y luego Capturar, o elige una tecla de la lista. Las entradas de una misma acción son alternativas.",
         "faq1Question": "¿Dónde guardo el archivo INI?",
         "faq1Answer": "Pon anyps5-input.ini junto al ejecutable generado del juego. Para otra ruta, usa ANYPS5_INPUT_CONFIG.",
         "faq2Question": "¿Por qué no se captura una tecla?",
-        "faq2Answer": "El navegador o sistema puede interceptarla. Elígela en la lista. Escape cancela la captura; asígnala desde la lista.",
+        "faq2Answer": "El navegador o el sistema puede interceptarla. Elígela en la lista. Escape cancela la captura; asígnala desde la lista.",
         "faq3Question": "¿Se guardan mis cambios solos?",
         "faq3Answer": "Los cambios están en memoria: cópialos o descárgalos antes de recargar. Solo se guarda el idioma. Las acciones no configuradas conservan sus valores predeterminados.",
         "skip": "Saltar al contenido",
@@ -446,6 +457,8 @@ export const messages = {
         "noOptions": "No hay opciones coincidentes."
     },
     "fr": {
+        "controllerButtons": "Boutons de la manette",
+        "noOverride": "Hériter de l’affectation",
         "controls": "Commandes",
         "configuration": "Configuration",
         "help": "Aide",
@@ -529,6 +542,8 @@ export const messages = {
         "noOptions": "Aucune option trouvée."
     },
     "de": {
+        "controllerButtons": "Controller-Tasten",
+        "noOverride": "Keine eigene Belegung",
         "controls": "Steuerung",
         "configuration": "Konfiguration",
         "help": "Hilfe",
@@ -577,6 +592,8 @@ export const messages = {
         "noOptions": "Keine passenden Optionen."
     },
     "it": {
+        "controllerButtons": "Pulsanti del controller",
+        "noOverride": "Eredita assegnazione",
         "controls": "Controlli",
         "configuration": "Configurazione",
         "help": "Aiuto",
@@ -628,6 +645,8 @@ export const messages = {
         "noOptions": "Nessuna opzione trovata."
     },
     "pt-BR": {
+        "controllerButtons": "Botões do controle",
+        "noOverride": "Herdar mapeamento",
         "controls": "Controles",
         "configuration": "Configuração",
         "help": "Ajuda",
@@ -660,6 +679,9 @@ export const messages = {
         "moveFocus": "Mover o foco",
         "helpIntro": "Respostas rápidas para começar.",
         "configIntro": "Confira as entradas e copie ou baixe o arquivo.",
+        "profileTitleId": "Title ID (opcional)",
+        "profileTitleIdHelp": "Use o Title ID exato do jogo para um perfil próprio desse jogo. Deixe em branco para uma configuração compartilhada.",
+        "profileTitleIdError": "Use até 32 caracteres entre A-Z, a-z, 0-9, _ e -.",
         "captureTitle": "Pressione uma tecla para {action}",
         "cancelCapture": "Cancelar captura",
         "keepEditing": "Continuar editando",
@@ -708,6 +730,8 @@ export const messages = {
         "noOptions": "Nenhuma opção encontrada."
     },
     "ru": {
+        "controllerButtons": "Кнопки контроллера",
+        "noOverride": "Унаследовать назначение",
         "controls": "Управление",
         "configuration": "Конфигурация",
         "help": "Помощь",
@@ -756,6 +780,8 @@ export const messages = {
         "noOptions": "Совпадений нет."
     },
     "tr": {
+        "controllerButtons": "Kontrolcü düğmeleri",
+        "noOverride": "Üst eşlemeyi kullan",
         "controls": "Kontroller",
         "configuration": "Yapılandırma",
         "help": "Yardım",
@@ -804,6 +830,8 @@ export const messages = {
         "noOptions": "Eşleşen seçenek yok."
     },
     "zh-Hans": {
+        "controllerButtons": "手柄按键",
+        "noOverride": "继承映射",
         "controls": "控制",
         "configuration": "配置",
         "help": "帮助",
@@ -852,6 +880,8 @@ export const messages = {
         "noOptions": "没有匹配选项。"
     },
     "ja": {
+        "controllerButtons": "コントローラーのボタン",
+        "noOverride": "割り当てを継承",
         "controls": "操作",
         "configuration": "構成",
         "help": "ヘルプ",
@@ -900,6 +930,8 @@ export const messages = {
         "noOptions": "一致する選択肢がありません。"
     },
     "ko": {
+        "controllerButtons": "컨트롤러 버튼",
+        "noOverride": "매핑 상속",
         "controls": "컨트롤",
         "configuration": "구성",
         "help": "도움말",
@@ -948,6 +980,8 @@ export const messages = {
         "noOptions": "일치하는 옵션이 없습니다."
     },
     "hi": {
+        "controllerButtons": "कंट्रोलर के बटन",
+        "noOverride": "इनहेरिट की गई मैपिंग",
         "controls": "नियंत्रण",
         "configuration": "कॉन्फ़िगरेशन",
         "help": "मदद",
@@ -996,6 +1030,8 @@ export const messages = {
         "noOptions": "कोई विकल्प नहीं मिला।"
     },
     "bn": {
+        "controllerButtons": "কন্ট্রোলারের বোতাম",
+        "noOverride": "উত্তরাধিকারসূত্রে পাওয়া ম্যাপিং",
         "controls": "নিয়ন্ত্রণ",
         "configuration": "কনফিগারেশন",
         "help": "সাহায্য",
@@ -1044,6 +1080,8 @@ export const messages = {
         "noOptions": "কোনো বিকল্প মেলেনি।"
     },
     "ur": {
+        "controllerButtons": "کنٹرولر کے بٹن",
+        "noOverride": "وراثتی میپنگ استعمال کریں",
         "controls": "کنٹرول",
         "configuration": "ترتیب",
         "help": "مدد",
@@ -1092,6 +1130,8 @@ export const messages = {
         "noOptions": "کوئی اختیار نہیں ملا۔"
     },
     "fa": {
+        "controllerButtons": "دکمه‌های دستهٔ بازی",
+        "noOverride": "استفاده از نگاشت به‌ارث‌رسیده",
         "controls": "کنترل‌ها",
         "configuration": "پیکربندی",
         "help": "راهنما",
@@ -1140,6 +1180,8 @@ export const messages = {
         "noOptions": "گزینه‌ای پیدا نشد."
     },
     "id": {
+        "controllerButtons": "Tombol pengontrol",
+        "noOverride": "Gunakan pemetaan turunan",
         "controls": "Kontrol",
         "configuration": "Konfigurasi",
         "help": "Bantuan",
@@ -1188,6 +1230,8 @@ export const messages = {
         "noOptions": "Tidak ada opsi yang cocok."
     },
     "vi": {
+        "controllerButtons": "Nút tay cầm",
+        "noOverride": "Kế thừa ánh xạ",
         "controls": "Điều khiển",
         "configuration": "Cấu hình",
         "help": "Trợ giúp",
@@ -1236,6 +1280,8 @@ export const messages = {
         "noOptions": "Không có tùy chọn phù hợp."
     },
     "th": {
+        "controllerButtons": "ปุ่มคอนโทรลเลอร์",
+        "noOverride": "สืบทอดการแมป",
         "controls": "การควบคุม",
         "configuration": "การกำหนดค่า",
         "help": "ช่วยเหลือ",
@@ -1284,6 +1330,8 @@ export const messages = {
         "noOptions": "ไม่พบตัวเลือกที่ตรงกัน"
     },
     "sw": {
+        "controllerButtons": "Vitufe vya kidhibiti",
+        "noOverride": "Rithi mpangilio",
         "controls": "Vidhibiti",
         "configuration": "Usanidi",
         "help": "Msaada",
@@ -1332,6 +1380,8 @@ export const messages = {
         "noOptions": "Hakuna chaguo linalolingana."
     },
     "nl": {
+        "controllerButtons": "Controllerknoppen",
+        "noOverride": "Toewijzing overnemen",
         "controls": "Bediening",
         "configuration": "Configuratie",
         "help": "Hulp",
@@ -1380,6 +1430,8 @@ export const messages = {
         "noOptions": "Geen passende opties."
     },
     "pl": {
+        "controllerButtons": "Przyciski kontrolera",
+        "noOverride": "Dziedzicz przypisanie",
         "controls": "Sterowanie",
         "configuration": "Konfiguracja",
         "help": "Pomoc",
@@ -1428,6 +1480,8 @@ export const messages = {
         "noOptions": "Brak pasujących opcji."
     },
     "el": {
+        "controllerButtons": "Κουμπιά χειριστηρίου",
+        "noOverride": "Κληρονόμηση αντιστοίχισης",
         "controls": "Χειρισμοί",
         "configuration": "Διαμόρφωση",
         "help": "Βοήθεια",
@@ -1566,6 +1620,9 @@ const diagnostics = {
         [/(\w+) must be a number from ([\d.]+) to ([\d.]+)\./gu, '$1 deve ser um número de $2 a $3.'],
         [/(\w+) must be LEFT or RIGHT\./gu, '$1 deve ser LEFT ou RIGHT.'],
         [/(\w+): unknown input setting\./gu, '$1: configuração de entrada desconhecida.'],
+        [/(\w+) has an empty action name\./gu, '$1 contém um nome de ação vazio.'],
+        [/(\w+): unknown action '(.*)'\./u, "$1: ação '$2' desconhecida."],
+        [/(\w+) only lists pad buttons, not '(.*)'\./u, "$1 aceita apenas botões do controle, não '$2'."],
         ['Configuration must be a list of bindings.', 'A configuração deve ser uma lista de atribuições.'],
         ['Unknown or empty action.', 'Ação desconhecida ou vazia.'],
         ['Input type must be KEY, MOUSE, WHEEL or PAD.', 'O tipo de entrada deve ser KEY, MOUSE, WHEEL ou PAD.'],
@@ -1581,6 +1638,69 @@ const diagnostics = {
         ['Expected Action = TYPE:VALUE.', 'Formato esperado: Action = TYPE:VALUE.'],
         ['Duplicate binding ignored.', 'Atribuição duplicada ignorada.'],
         ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Esta tecla física não pode ser capturada no formato INI atual. Escolha uma tecla SDL na lista.'],
+    ],
+    'es': [
+        [/Unknown SDL controller button '(.*)'\./u, "Botón de mando SDL desconocido: '$1'."],
+        ['expected a PlayStation button or None.', 'el valor debe ser un botón de PlayStation o None.'],
+        [/(\w+) is set more than once\./gu, '$1 está definido más de una vez.'],
+        [/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 debe ser un porcentaje entero de 0 a 90.'],
+        [/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 debe ser un número mayor que 0 y como máximo 10.'],
+        [/(\w+) must be a number from ([\d.]+) to ([\d.]+)\./gu, '$1 debe ser un número de $2 a $3.'],
+        [/(\w+) must be LEFT or RIGHT\./gu, '$1 debe ser LEFT o RIGHT.'],
+        [/(\w+): unknown input setting\./gu, '$1: ajuste de entrada desconocido.'],
+        [/(\w+) has an empty action name\./gu, '$1 contiene un nombre de acción vacío.'],
+        [/(\w+): unknown action '(.*)'\./u, "$1: acción '$2' desconocida."],
+        [/(\w+) only lists pad buttons, not '(.*)'\./u, "$1 solo admite botones del mando, no '$2'."],
+        ['Settings must be a list of names and values.', 'Los ajustes deben ser una lista de nombres y valores.'],
+        ['Configuration must be a list of bindings.', 'La configuración debe ser una lista de entradas.'],
+        ['Unknown or empty action.', 'Acción desconocida o vacía.'],
+        ['Input type must be KEY, MOUSE, WHEEL or PAD.', 'El tipo de entrada debe ser KEY, MOUSE, WHEEL o PAD.'],
+        [/(\w+) cannot use (\w+)\./gu, '$1 no puede usar $2.'],
+        [/Unknown or empty (\w+) value\./gu, 'Valor $1 desconocido o vacío.'],
+        ['This SDL key name cannot be represented in the current INI comment syntax.', 'Este nombre de tecla SDL no se puede representar con la sintaxis actual de los comentarios INI.'],
+        [/duplicate (.+) will be omitted\./gu, 'se omitirá la entrada duplicada $1.'],
+        ['Composition and dead keys are ambiguous. Select an SDL key from the list.', 'Las teclas muertas y de composición son ambiguas. Elige una tecla SDL de la lista.'],
+        ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Esta tecla física no se puede capturar en el formato INI actual. Elige una tecla SDL de la lista.'],
+        ['Controller remaps must be a list.', 'Las reasignaciones del mando deben ser una lista.'],
+        ['INI content must be text.', 'El contenido INI debe ser texto.'],
+        ['Expected Action = TYPE:VALUE.', 'Formato esperado: Action = TYPE:VALUE.'],
+        ['Duplicate binding ignored.', 'Entrada duplicada ignorada.'],
+        [' controls ', ' controla '],
+        [' (built-in)', ' (predeterminado)', true],
+        [' and ', ' y ', true],
+        ['Binding: ', 'Entrada: '],
+    ],
+    'fr': [
+        [/Unknown SDL controller button '(.*)'\./u, "Bouton de manette SDL inconnu : '$1'."],
+        ['expected a PlayStation button or None.', 'la valeur doit être un bouton PlayStation ou None.'],
+        [/(\w+) is set more than once\./gu, '$1 est défini plus d’une fois.'],
+        [/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 doit être un pourcentage entier de 0 à 90.'],
+        [/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 doit être un nombre supérieur à 0 et inférieur ou égal à 10.'],
+        [/(\w+) must be a number from ([\d.]+) to ([\d.]+)\./gu, '$1 doit être un nombre de $2 à $3.'],
+        [/(\w+) must be LEFT or RIGHT\./gu, '$1 doit être LEFT ou RIGHT.'],
+        [/(\w+): unknown input setting\./gu, '$1: paramètre d’entrée inconnu.'],
+        [/(\w+) has an empty action name\./gu, '$1 contient un nom d’action vide.'],
+        [/(\w+): unknown action '(.*)'\./u, "$1: action '$2' inconnue."],
+        [/(\w+) only lists pad buttons, not '(.*)'\./u, "$1 n’accepte que des boutons de manette, pas '$2'."],
+        ['Settings must be a list of names and values.', 'Les paramètres doivent être une liste de noms et de valeurs.'],
+        ['Configuration must be a list of bindings.', 'La configuration doit être une liste d’entrées.'],
+        ['Unknown or empty action.', 'Action inconnue ou vide.'],
+        ['Input type must be KEY, MOUSE, WHEEL or PAD.', 'Le type d’entrée doit être KEY, MOUSE, WHEEL ou PAD.'],
+        [/(\w+) cannot use (\w+)\./gu, '$1 ne peut pas utiliser $2.'],
+        [/Unknown or empty (\w+) value\./gu, 'Valeur $1 inconnue ou vide.'],
+        ['This SDL key name cannot be represented in the current INI comment syntax.', 'Ce nom de touche SDL est incompatible avec la syntaxe actuelle des commentaires INI.'],
+        [/duplicate (.+) will be omitted\./gu, 'l’entrée $1 en double sera omise.'],
+        ['Composition and dead keys are ambiguous. Select an SDL key from the list.', 'Les touches mortes et de composition sont ambiguës. Choisissez une touche SDL dans la liste.'],
+        ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Cette touche physique ne peut pas être capturée dans le format INI actuel. Choisissez une touche SDL dans la liste.'],
+        ['Controller remaps must be a list.', 'Les réaffectations de la manette doivent être une liste.'],
+        ['INI content must be text.', 'Le contenu INI doit être du texte.'],
+        ['Expected Action = TYPE:VALUE.', 'Format attendu : Action = TYPE:VALUE.'],
+        ['Duplicate binding ignored.', 'Entrée en double ignorée.'],
+        [' controls ', ' déclenche '],
+        [' (built-in)', ' (par défaut)', true],
+        [' and ', ' et ', true],
+        ['Binding: ', 'Entrée : '],
+        [/^(\S+): /u, '$1 : '],
     ]
 };
 

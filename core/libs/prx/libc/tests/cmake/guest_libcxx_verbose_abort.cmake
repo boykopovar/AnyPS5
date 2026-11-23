@@ -1,0 +1,12 @@
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test_executable(guest_libcxx_verbose_abort_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxVerboseAbort.cpp)
+    target_include_directories(guest_libcxx_verbose_abort_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libcxx_verbose_abort_tests PRIVATE libc)
+    configure_windows_unwind(guest_libcxx_verbose_abort_tests)
+    add_test(NAME guest_libcxx_verbose_abort COMMAND ${Python3_EXECUTABLE} ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxVerboseAbort.py $<TARGET_FILE:guest_libcxx_verbose_abort_tests>)
+    set_tests_properties(guest_libcxx_verbose_abort PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libcxx_verbose_abort PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

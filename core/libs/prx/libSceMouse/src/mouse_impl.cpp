@@ -217,9 +217,7 @@ int SetExtensionConfig(std::int32_t handle, const std::uint8_t* config) {
     if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
     if (config == nullptr) return MOUSE_ERROR_INVALID_ARG;
     std::array<std::uint8_t, MOUSE_EXTENSION_CONFIG_SIZE> local{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(local.data(), config, local.size());
-    errno = savedErrno;
     if (!copied) return MOUSE_ERROR_INVALID_ARG;
     for (std::size_t offset = 5; offset < MOUSE_EXTENSION_CONFIG_SIZE; ++offset) {
         if (local[offset] != 0) return MOUSE_ERROR_INVALID_ARG;
@@ -243,9 +241,7 @@ int GetCursor(std::int32_t handle, std::int32_t* cursor) {
     if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
     if (cursor == nullptr) return MOUSE_ERROR_INVALID_ARG;
     if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
-    const int savedErrno = errno;
     const bool written = GuestCopyOut_nid_no_patch(cursor, &extensionCursor, sizeof(extensionCursor));
-    errno = savedErrno;
     return written ? MOUSE_OK : MOUSE_ERROR_INVALID_ARG;
 }
 
@@ -371,16 +367,12 @@ int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
     if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
     if (deviceId == nullptr) return MOUSE_ERROR_INVALID_ARG;
     const std::int32_t initialId = -1;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(deviceId, &initialId, sizeof(initialId));
-    errno = savedErrno;
     if (!copied) return MOUSE_ERROR_INVALID_ARG;
     if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
     if (!connected) return MOUSE_OK;
     const std::int32_t connectedId = MOUSE_DEVICE_ID;
-    const int savedErrno2 = errno;
     GuestCopyOut_nid_no_patch(deviceId, &connectedId, sizeof(connectedId));
-    errno = savedErrno2;
     return MOUSE_OK;
 }
 

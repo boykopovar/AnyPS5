@@ -1,0 +1,5 @@
+# libc
+
+## change [ungetc]
+
+- [ungetc](../../../core/libs/prx/libc/src/StandardStreams.cpp) (libc) accepts more pushbacks than the console: a payload process on a PS5 (firmware 11.60) accepted six in a row and refused the seventh, read them back last in first out, ignored `ungetc(EOF)`, lost them to an `fseek`, and cleared the end-of-file state when it pushed a character back after the last byte; a title process may differ. On Linux and Windows any number succeeds while memory lasts, as with FreeBSD 11.4's [`__ungetc`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/stdio/ungetc.c#L135-L140) and [`__submore`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/stdio/ungetc.c#L56-L83). glibc grows its pushback area, and `FileStream::PushBack` grows the UCRT buffer of every stream; it would skip a guest buffer, but `setvbuf` never hands the UCRT one. macOS is not measured. Closes when: the depth is measured in a title process on a PS5 and `ungetc` enforces it.
