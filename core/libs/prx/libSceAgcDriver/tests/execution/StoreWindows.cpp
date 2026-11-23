@@ -25,6 +25,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -39,10 +40,29 @@ constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t TableOffset = 48;
 constexpr std::uint32_t TableRecords = 32;
 constexpr std::uint32_t HolderRecords = 4;
-constexpr std::uint32_t HolderBytes = (HolderRecords - 1u) * 16u + 8u;
+constexpr std::uint32_t HolderBytes = HolderRecords * 16u;
+constexpr std::uint32_t CutOffset = (HolderRecords - 1u) * 16u;
+constexpr std::uint32_t WrappedAddKey = 0xfffffffdu;
+constexpr std::uint32_t WrappedScaleKey = 0x05555556u;
+constexpr std::uint32_t WrappedScaleOffset = 32u;
+constexpr std::uint32_t FindBitOffset = 32u;
+constexpr std::uint32_t InactiveKey = 40u;
+constexpr std::uint32_t FormatBytes = 16u;
+constexpr std::uint32_t CountRecordOffset = 0x800u;
+constexpr std::uint32_t LiveCountOffset = 0x2000u;
 
 alignas(256) constexpr std::array<std::uint32_t, 12> StoreCode{0x7e080500u, 0x9385ff04u, 0x00050010u, 0x9885b005u, 0xf4080200u, 0x0a000000u, 0x34020082u, 0xbf8cc07fu, 0xe0701000u, 0x80020001u, 0xbf810000u, 0xbf810000u};
-alignas(256) constexpr std::array<std::uint32_t, 12> HolderCode{0xf4080100u, 0xfa000000u, 0x8f0d8402u, 0x34020082u, 0xbf8cc07fu, 0xf4280202u, 0x1a000000u, 0xbf8cc07fu, 0xe0701000u, 0x80020001u, 0xbf810000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> HolderCode{0xf4080100u, 0xfa000000u, 0x4a040002u, 0x7e180502u, 0x8f0d840cu, 0x34020082u, 0xf4280202u, 0x1a000000u, 0xe0701000u, 0x80020001u, 0xbf810000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> AddendCode{0xf4080100u, 0xfa000000u, 0x4a040002u, 0x7e180502u, 0x8f0d840cu, 0x810db00du, 0x34020082u, 0xf4280202u, 0x1a000000u, 0xe0701000u, 0x80020001u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> ScaleCode{0xf4080100u, 0xfa000000u, 0x4a040002u, 0x7e180502u, 0x930db00cu, 0x34020082u, 0xf4280202u, 0x1a000000u, 0xe0701000u, 0x80020001u, 0xbf810000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> UnalignedCode{0xf4080100u, 0xfa000000u, 0x36040083u, 0x7e180502u, 0x8f0d840cu, 0x810db20du, 0x34020082u, 0xf4280202u, 0x1a000000u, 0xe0701000u, 0x80020001u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> FindBitCode{0xf4080100u, 0xfa000000u, 0x7e180500u, 0xbe8c130cu, 0x8f0d840cu, 0x810db00du, 0x34020082u, 0xf4280202u, 0x1a000000u, 0xe0701000u, 0x80020001u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> InactiveCode{0x4a040002u, 0x7d8400a8u, 0xbefe036au, 0x36040083u, 0x7e080502u, 0xbefe03c1u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0xe0700000u, 0x80020200u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> FormatCode{0x7e080500u, 0x9385ff04u, 0x00050010u, 0x9885b005u, 0xf4080200u, 0x0a000000u, 0x34020082u, 0xbf8cc07fu, 0xe0100000u, 0x80020000u, 0xbf810000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 20> CarriedSelectCode{0x36040083u, 0xbe830380u, 0x7d860090u, 0xbefe036au, 0x7e080502u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0xe0700000u, 0x80020200u, 0xbe94037eu, 0xbefe03c1u, 0x7e040202u, 0xbefe0314u, 0x36040083u, 0xbefe03c1u, 0x81038103u, 0xbf0a8203u, 0xbf85fff1u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 20> CarriedReadCode{0xbe960380u, 0xbe830380u, 0x7d8400a8u, 0xbefe036au, 0x9885b016u, 0xf4080200u, 0x0a000000u, 0xe0700000u, 0x80020200u, 0xbe94037eu, 0xbefe03c1u, 0x7e040202u, 0xbefe0314u, 0x7e040282u, 0x7e2c0502u, 0xbefe03c1u, 0x81038103u, 0xbf0a8203u, 0xbf85fff1u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 20> RereadCode{0x7e280500u, 0x8f148214u, 0xf4000180u, 0x28000000u, 0xbf0a8406u, 0xbf84000du, 0x7e0402a8u, 0xf4080200u, 0xfa000800u, 0xe0700000u, 0x80020200u, 0xbf8cc07fu, 0xf4000180u, 0x28000000u, 0x9885b006u, 0xf4080200u, 0x0a000000u, 0xe0700000u, 0x80020200u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 20> LiveBoundCode{0x7e0802c0u, 0xf4080300u, 0xfa000020u, 0xe0700000u, 0x80030400u, 0xbf8cc07fu, 0x4a040002u, 0x7e060502u, 0xf4080200u, 0xfa000010u, 0xf4200184u, 0xfa000000u, 0xbf0a0603u, 0xbf840005u, 0x9885b003u, 0xf4080200u, 0x0a000000u, 0xe0700000u, 0x80020200u, 0xbf810000u};
 
 struct Header {
     Shader shader{};
@@ -51,12 +71,22 @@ struct Header {
 
 alignas(8) Header StoreHeader{};
 alignas(8) Header HolderHeader{};
+alignas(8) Header AddendHeader{};
+alignas(8) Header ScaleHeader{};
+alignas(8) Header UnalignedHeader{};
+alignas(8) Header FindBitHeader{};
+alignas(8) Header InactiveHeader{};
+alignas(8) Header FormatHeader{};
+alignas(8) Header CarriedSelectHeader{};
+alignas(8) Header CarriedReadHeader{};
+alignas(8) Header RereadHeader{};
+alignas(8) Header LiveBoundHeader{};
 
-void Register(Header& header, const std::array<std::uint32_t, 12>& code) {
+void Register(Header& header, std::span<const std::uint32_t> code) {
     header.shader.file_header = 0x34333231u;
     header.shader.version = 0x18u;
     header.shader.header_size = sizeof(Header);
-    header.shader.shader_size = static_cast<std::uint32_t>(sizeof(code));
+    header.shader.shader_size = static_cast<std::uint32_t>(code.size_bytes());
     header.shader.code = code.data();
     header.shader.type = 0;
     header.shader.user_data = nullptr;
@@ -209,6 +239,7 @@ struct Pending {
     bool output = false;
     bool table = false;
     bool beside = false;
+    bool formatTail = false;
 };
 
 void WriteRecord(const GuestBlock& table, std::size_t offset, const std::array<std::uint32_t, 4>& descriptor) {
@@ -228,7 +259,7 @@ bool Untouched(const GuestBlock& block) {
     return true;
 }
 
-Pending HeldDispatch(const std::array<std::uint32_t, 12>& program, std::initializer_list<std::uint32_t> user, const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside) {
+Pending HeldDispatch(std::span<const std::uint32_t> program, std::initializer_list<std::uint32_t> user, const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside) {
     std::vector<std::uint32_t> commands;
     const auto code = reinterpret_cast<std::uintptr_t>(program.data());
     Append(commands, 0x76, {0x20c, static_cast<std::uint32_t>(code >> 8u), static_cast<std::uint32_t>(code >> 40u)});
@@ -251,6 +282,7 @@ Pending HeldDispatch(const std::array<std::uint32_t, 12>& program, std::initiali
         pending.output = recorder->PendingWriteOverlaps(output.At(0), OutputBytes);
         pending.table = recorder->PendingWriteOverlaps(table.At(0), BlockBytes);
         pending.beside = recorder->PendingWriteOverlaps(beside.At(0), BlockBytes);
+        pending.formatTail = recorder->PendingWriteOverlaps(output.At(sizeof(std::uint32_t)), FormatBytes - sizeof(std::uint32_t));
     }
     hold.Finish();
     AgcDriverWaitIdle_nid_postfix();
@@ -276,22 +308,73 @@ void PointerTable(const GuestBlock& table, const GuestBlock& output, const Guest
     if (!whole) RequireUnreachedUnpending(pending, "the pointer-table store");
 }
 
-void CutHolder(const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside, bool whole) {
+void ResetHolder(const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside, std::uint32_t bytes) {
     std::memset(table.Bytes(0), 0, BlockBytes);
     std::memset(output.Bytes(0), 0, OutputBytes);
     std::memset(beside.Bytes(0), 0, OutputBytes);
-    WriteRecord(table, 0, RawDescriptor(table.At(TableOffset), HolderBytes));
-    for (std::uint32_t record = 0; record + 1u < HolderRecords; ++record) WriteRecord(table, TableOffset + record * 16u, RawDescriptor(output.At(0), OutputBytes));
-    WriteRecord(table, TableOffset + (HolderRecords - 1u) * 16u, RawDescriptor(beside.At(0), OutputBytes));
-    const auto first = HeldDispatch(HolderCode, {static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u), 0u}, table, output, beside);
+    WriteRecord(table, 0, RawDescriptor(table.At(TableOffset), bytes));
+    for (std::uint32_t record = 0; record < HolderRecords; ++record) WriteRecord(table, TableOffset + record * 16u, RawDescriptor(output.At(0), OutputBytes));
+}
+
+Pending HolderDispatch(std::span<const std::uint32_t> program, std::uint32_t key, const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside) {
+    return HeldDispatch(program, {static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u), key}, table, output, beside);
+}
+
+void CutHolder(const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside, bool whole, std::uint32_t cutBytes, const std::array<std::uint32_t, 4>& cutRecord) {
+    const auto name = "the holder cut " + std::to_string(cutBytes) + " bytes into its last record";
+    ResetHolder(table, output, beside, CutOffset + cutBytes);
+    WriteRecord(table, TableOffset + CutOffset, cutRecord);
+    const auto first = HolderDispatch(HolderCode, 0u, table, output, beside);
     RequireLanes(output);
-    RequireOutputPending(first, "the holder-table store");
-    if (!whole) RequireUnreachedUnpending(first, "the holder-table store");
+    RequireOutputPending(first, name.c_str());
+    if (whole && !first.beside) throw std::runtime_error("store windows: with APS5_NO_STORE_WINDOWS " + name + " did not note the whole writable reach, so its store is not an address-based one");
+    if (!whole) RequireUnreachedUnpending(first, name.c_str());
     std::memset(output.Bytes(0), 0, OutputBytes);
-    const auto cut = HeldDispatch(HolderCode, {static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u), HolderRecords - 1u}, table, output, beside);
-    if (!Untouched(beside)) throw std::runtime_error("store windows: a store through the holder's cut last record reached the V# stored past the holder");
-    if (!Untouched(output)) throw std::runtime_error("store windows: a store through the holder's cut last record wrote the other records' range");
-    if (!whole) RequireUnreachedUnpending(cut, "the holder's cut last record");
+    const auto cut = HolderDispatch(HolderCode, HolderRecords - 1u, table, output, beside);
+    if (!Untouched(beside)) throw std::runtime_error("store windows: a store through " + name + " reached the V# stored past the holder");
+    if (!Untouched(output)) throw std::runtime_error("store windows: a store through " + name + " wrote the other records' range");
+    if (!whole) RequireUnreachedUnpending(cut, name.c_str());
+}
+
+void RequireEscapePending(const Pending& pending, const GuestBlock& beside, const char* name) {
+    if (Untouched(beside)) throw std::runtime_error(std::string("store windows: ") + name + " did not reach the record the shader reads");
+    if (!pending.beside) throw std::runtime_error(std::string("store windows: ") + name + " wrote a range it left unpending");
+}
+
+void LiveBound(const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside) {
+    ResetHolder(table, output, beside, HolderBytes);
+    std::memset(table.Bytes(0), 0, TableOffset);
+    WriteRecord(table, 0x10u, RawDescriptor(table.At(LiveCountOffset), sizeof(std::uint32_t)));
+    WriteRecord(table, 0x20u, RawDescriptor(table.At(LiveCountOffset), sizeof(std::uint32_t)));
+    *table.Words(LiveCountOffset) = HolderRecords;
+    WriteRecord(table, TableOffset + InactiveKey * 16u, RawDescriptor(beside.At(0), OutputBytes));
+    RequireEscapePending(HolderDispatch(LiveBoundCode, InactiveKey, table, output, beside), beside, "a bound the shader writes before it reads it");
+}
+
+void EscapingRecord(std::span<const std::uint32_t> program, std::uint32_t key, std::uint32_t landing, const std::array<std::uint32_t, 4>& landed, const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside, const char* name) {
+    ResetHolder(table, output, beside, HolderBytes);
+    WriteRecord(table, TableOffset + landing, landed);
+    RequireEscapePending(HolderDispatch(program, key, table, output, beside), beside, name);
+}
+
+void RereadKey(const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside) {
+    ResetHolder(table, output, beside, HolderBytes);
+    std::memset(table.Bytes(0), 0, TableOffset);
+    WriteRecord(table, CountRecordOffset, RawDescriptor(table.At(0), sizeof(std::uint32_t)));
+    WriteRecord(table, TableOffset + InactiveKey * 16u, RawDescriptor(beside.At(0), OutputBytes));
+    RequireEscapePending(HolderDispatch(RereadCode, 0u, table, output, beside), beside, "a key read again after the shader wrote it");
+}
+
+void FormattedExtent(const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside, bool whole) {
+    std::memset(table.Bytes(0), 0, BlockBytes);
+    std::memset(beside.Bytes(0), 0, OutputBytes);
+    std::memset(output.Bytes(0), 0xff, OutputBytes);
+    const auto raw = RawDescriptor(output.At(0), OutputBytes);
+    for (std::uint32_t record = 0; record < TableRecords; ++record) WriteRecord(table, TableOffset + record * 16u, {raw[0], raw[1], 1u, 0x1104bfacu});
+    const auto pending = HeldDispatch(FormatCode, {static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u)}, table, output, beside);
+    if (*output.Words(FormatBytes - sizeof(std::uint32_t)) != 0u) throw std::runtime_error("store windows: the formatted store did not write its format's last component");
+    if (!pending.formatTail) throw std::runtime_error("store windows: a formatted store left its format's later components unpending");
+    if (!whole) RequireUnreachedUnpending(pending, "the formatted store");
 }
 
 }
@@ -305,11 +388,35 @@ int main(int argc, char** argv) {
         }
         Register(StoreHeader, StoreCode);
         Register(HolderHeader, HolderCode);
+        Register(AddendHeader, AddendCode);
+        Register(ScaleHeader, ScaleCode);
+        Register(UnalignedHeader, UnalignedCode);
+        Register(FindBitHeader, FindBitCode);
+        Register(InactiveHeader, InactiveCode);
+        Register(FormatHeader, FormatCode);
+        Register(CarriedSelectHeader, CarriedSelectCode);
+        Register(CarriedReadHeader, CarriedReadCode);
+        Register(RereadHeader, RereadCode);
+        Register(LiveBoundHeader, LiveBoundCode);
         GuestBlock table, output, beside;
         PointerTable(table, output, beside, whole);
-        CutHolder(table, output, beside, whole);
+        const auto besideRaw = RawDescriptor(beside.At(0), OutputBytes);
+        const std::array<std::uint32_t, 4> besideStructured{besideRaw[0], besideRaw[1] | (4u << 16u), Lanes, besideRaw[3]};
+        const std::array<std::uint32_t, 4> besideFormatHigh{besideRaw[0], besideRaw[1], OutputBytes, 0x31010000u};
+        CutHolder(table, output, beside, whole, 8u, besideRaw);
+        CutHolder(table, output, beside, whole, 12u, besideStructured);
+        EscapingRecord(AddendCode, WrappedAddKey, 0u, besideRaw, table, output, beside, "a key offset whose addend wraps");
+        EscapingRecord(ScaleCode, WrappedScaleKey, WrappedScaleOffset, besideRaw, table, output, beside, "a key offset whose scale wraps");
+        EscapingRecord(UnalignedCode, 0u, CutOffset, besideFormatHigh, table, output, beside, "an unaligned table offset");
+        FormattedExtent(table, output, beside, whole);
+        EscapingRecord(FindBitCode, 0u, FindBitOffset, besideRaw, table, output, beside, "a find-bit key of a zero word");
+        EscapingRecord(InactiveCode, InactiveKey, InactiveKey * 16u, besideRaw, table, output, beside, "a key read under an empty mask");
+        EscapingRecord(CarriedReadCode, InactiveKey, InactiveKey * 16u, besideRaw, table, output, beside, "a lane read carried by a loop");
+        EscapingRecord(CarriedSelectCode, InactiveKey, InactiveKey * 16u, besideRaw, table, output, beside, "a select carried by a loop");
+        RereadKey(table, output, beside);
+        LiveBound(table, output, beside);
         AgcDriverShutdown_nid_postfix();
-        std::puts(whole ? "store windows: the kill switch notes the whole writable reach, and the holder's cut last record stores nothing" : "store windows: a store through a pointer table's or a holder table's V# leaves only that V#'s range pending, and the holder's cut last record stores nothing and notes nothing");
+        std::puts(whole ? "store windows: the kill switch notes the whole writable reach, and a holder's cut last record stores nothing" : "store windows: a store through a pointer table's or a holder table's V# leaves only that V#'s range pending, a holder's cut last record notes nothing, and a key that can leave its records keeps the whole reach, and a formatted store notes its format's size");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
