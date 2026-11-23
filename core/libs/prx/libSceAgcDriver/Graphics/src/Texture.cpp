@@ -2548,7 +2548,8 @@ std::pair<std::uint32_t, std::uint32_t> StorageTexture::refreshUnits(std::uint32
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (layerPending[layer] && (layer < firstLayer || layer >= lastLayer)) return whole;
     }
-    if (pendingAlias() != nullptr) return whole;
+    std::uint32_t aliasShift = 0;
+    if (pendingAlias(&aliasShift) != nullptr) return whole;
     return {firstLayer, lastLayer};
 }
 
@@ -2619,14 +2620,16 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     // generation, no results of this image's own there) or dead to its own write-back (tracked and
     // stamped); an untracked unit is stored whole by that write-back, and a unit pending in both
     // images takes the old order (store, then this image re-uploads it).
-    auto alias = scoped ? std::shared_ptr<StorageTexture>{} : pendingAlias();
+    std::uint32_t aliasShift = 0;
+    auto alias = scoped ? std::shared_ptr<StorageTexture>{} : pendingAlias(&aliasShift);
     if (alias != nullptr && !(ProvedClearKeys(descriptor, guestBytes, keyProof) == DccKeys::Uncompressed && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr)) alias = nullptr;
     if (alias != nullptr) {
         std::vector<std::uint8_t> aliasStamped(trackedLayers);
-        if (!GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias->layerGeneration, aliasStamped)) alias = nullptr;
-        for (std::uint32_t unit = 0; alias != nullptr && unit < trackedLayers; ++unit) {
-            if (!alias->layerPending[unit]) continue;
-            if (alias->layerGeneration[unit] == 0 || (aliasStamped[unit] == GuestMemory::BlockUnchanged && layerPending[unit])) {
+        if (!aliasStamps(*alias, aliasShift, aliasStamped)) alias = nullptr;
+        for (std::uint32_t theirs = 0; alias != nullptr && theirs < alias->trackedLayers; ++theirs) {
+            if (!alias->layerPending[theirs]) continue;
+            const auto unit = aliasShift + theirs;
+            if (alias->layerGeneration[theirs] == 0 || (aliasStamped[unit] == GuestMemory::BlockUnchanged && layerPending[unit])) {
                 alias = nullptr;
                 break;
             }
@@ -2836,12 +2839,13 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             // driver store there wins over its results, as at its own write-back) are taken from
             // its image: every one of them, since its write-back would have stamped them all. Units
             // already holding them at the same alias version stay as they are.
-            const bool sameBorrow = borrowedFrom.lock() == alias && borrowedVersion == alias->version && borrowedUnits.size() == trackedLayers;
+            const bool sameBorrow = borrowedFrom.lock() == alias && borrowedVersion == alias->version && borrowedShift == aliasShift && borrowedUnits.size() == trackedLayers;
             std::vector<std::uint8_t> aliasStamped(trackedLayers);
-            const bool aliasTracked = GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias->layerGeneration, aliasStamped);
+            const bool aliasTracked = aliasStamps(*alias, aliasShift, aliasStamped);
             borrowed.assign(trackedLayers, false);
-            for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
-                if (!aliasTracked || !alias->layerPending[unit] || aliasStamped[unit] != 0 || alias->layerGeneration[unit] == 0 || layerPending[unit]) continue;
+            for (std::uint32_t theirs = 0; theirs < alias->trackedLayers; ++theirs) {
+                const auto unit = aliasShift + theirs;
+                if (!aliasTracked || !alias->layerPending[theirs] || aliasStamped[unit] != 0 || alias->layerGeneration[theirs] == 0 || layerPending[unit]) continue;
                 if (sameBorrow && borrowedUnits[unit]) continue;
                 borrowed[unit] = true;
                 anyBorrowed = true;
@@ -2960,7 +2964,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     if (anyBorrowed) {
         NoteRefreshWork();
         uploadReason = "alias";
-        borrowUnits(*alias, borrowed);
+        borrowUnits(*alias, borrowed, aliasShift);
         for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
             if (borrowed[unit]) {
                 layerGeneration[unit] = currentFor(unit);
@@ -4941,8 +4945,8 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
         for (std::uint32_t unit = first; unit < first + count; ++unit) {
             if (!borrowedUnits[unit]) continue;
             borrowedUnits[unit] = false;
-            if (source->version != borrowedVersion || !source->layerPending[unit]) continue;
-            source->layerPending[unit] = false;
+            if (source->version != borrowedVersion || unit < borrowedShift || unit - borrowedShift >= source->trackedLayers || !source->layerPending[unit - borrowedShift]) continue;
+            source->layerPending[unit - borrowedShift] = false;
             unitsSuperseded.fetch_add(1, std::memory_order_relaxed);
             superseded = true;
         }
@@ -7795,21 +7799,38 @@ void StorageTexture::AdoptHandOver(CreationHandOver handOver) {
     creationHandOvers.fetch_add(1, std::memory_order_relaxed);
 }
 
-std::shared_ptr<StorageTexture> StorageTexture::pendingAlias() const {
+std::shared_ptr<StorageTexture> StorageTexture::pendingAlias(std::uint32_t* layerShift) const {
     static const bool disabled = std::getenv("APS5_NO_ALIAS_BORROW") != nullptr;
-    if (disabled || !blockUnits) return nullptr;
+    if (layerShift != nullptr) *layerShift = 0;
+    // Layer units: one unit is one array layer of the image (see the constructor).
+    const bool layerUnits = layerShift != nullptr && !blockUnits && trackedLayers >= 2 && trackedLayers == geometry.imageLayers && trackedLayerBytes == geometry.layerBytes && descriptor.baseArray == 0;
+    if (disabled || (!blockUnits && !layerUnits)) return nullptr;
     std::vector<std::shared_ptr<StorageTexture>> candidates;
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
         for (auto* texture : pending.textures) {
-            if (texture == this || texture->descriptor.baseAddress != descriptor.baseAddress || texture->guestBytes != guestBytes || !texture->blockUnits) continue;
+            if (texture == this || texture->blockUnits != blockUnits) continue;
+            const auto base = texture->descriptor.baseAddress;
+            if (blockUnits ? base != descriptor.baseAddress || texture->guestBytes != guestBytes : base < descriptor.baseAddress || texture->guestBytes >= guestBytes || base - descriptor.baseAddress > guestBytes - texture->guestBytes) continue;
             if (auto alive = texture->weak_from_this().lock()) candidates.push_back(std::move(alive));
         }
     }
     for (const auto& candidate : candidates) {
         const auto& mine = descriptor;
         const auto& theirs = candidate->descriptor;
+        if (!blockUnits) {
+            // Whole array layers of this image: the same texels, layer for layer. Anything else
+            // (another format or extent, a base inside a layer, an image reaching past the end)
+            // takes the store.
+            const auto planar = [](const GuestTextureResource& resource) { return resource.dimension == TextureDimension::k2D || resource.dimension == TextureDimension::k2DArray; };
+            const auto offset = theirs.baseAddress - mine.baseAddress;
+            const bool sameTexels = planar(mine) && planar(theirs) && mine.format == theirs.format && mine.width == theirs.width && mine.height == theirs.height && mine.mipCount == theirs.mipCount && mine.tileMode == theirs.tileMode && mine.samples == theirs.samples && theirs.baseArray == 0;
+            const bool wholeLayers = candidate->trackedLayers == candidate->geometry.imageLayers && candidate->trackedLayerBytes == trackedLayerBytes && candidate->geometry.layerBytes == geometry.layerBytes && candidate->guestBytes == candidate->trackedLayers * trackedLayerBytes && candidate->geometry.imageDepth == 1 && offset % trackedLayerBytes == 0 && offset / trackedLayerBytes + candidate->trackedLayers <= trackedLayers;
+            if (!sameTexels || !wholeLayers || !candidate->Cached() || candidate->uploadedKeys != DccKeys::Uncompressed) continue;
+            *layerShift = static_cast<std::uint32_t>(offset / trackedLayerBytes);
+            return candidate;
+        }
         // The same texels under another format of the same size: the device copy moves them bit
         // for bit, as the guest bytes would.
         const auto oneSlice = [](const GuestTextureResource& resource) { return resource.dimension == TextureDimension::k2D || (resource.dimension == TextureDimension::k2DArray && resource.depthOrLastArray == 0); };
@@ -7818,6 +7839,22 @@ std::shared_ptr<StorageTexture> StorageTexture::pendingAlias() const {
         if (sameShape && candidate->Cached() && candidate->uploadedKeys == DccKeys::Uncompressed) return candidate;
     }
     return nullptr;
+}
+
+bool StorageTexture::aliasStamps(const StorageTexture& alias, std::uint32_t shift, std::span<std::uint8_t> stamped) const {
+    if (alias.blockUnits) return GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias.layerGeneration, stamped);
+    std::fill(stamped.begin(), stamped.end(), GuestMemory::BlockWritten);
+    std::vector<std::uint64_t> generations;
+    std::vector<std::uint8_t> blocks;
+    for (std::uint32_t unit = 0; unit < alias.trackedLayers; ++unit) {
+        const auto begin = alias.layerBegin(unit);
+        const auto bytes = static_cast<std::size_t>(alias.layerBytes(unit));
+        generations.assign(static_cast<std::size_t>((begin + bytes - 1) / 65536 - begin / 65536 + 1), alias.layerGeneration[unit]);
+        blocks.assign(generations.size(), GuestMemory::BlockWritten);
+        if (!GuestMemory::ChangedBlocks(begin, bytes, generations, blocks)) return false;
+        if (std::all_of(blocks.begin(), blocks.end(), [](std::uint8_t block) { return block == GuestMemory::BlockUnchanged; })) stamped[shift + unit] = GuestMemory::BlockUnchanged;
+    }
+    return true;
 }
 
 void StorageTexture::forgetBorrowed(std::uint32_t first, std::uint32_t count) {
@@ -7829,14 +7866,28 @@ void StorageTexture::forgetBorrowed(std::uint32_t first, std::uint32_t count) {
     }
 }
 
-std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vector<bool>& units) {
+std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vector<bool>& units, std::uint32_t shift) {
     const auto runs = unitRuns(units);
-    const auto windows = sliceWindows(runs);
-    Require(!windows.empty(), "storage image borrows no unit");
     std::vector<VkImageCopy> regions;
-    for (const auto& window : windows) {
-        for (const auto& region : window.regions) regions.push_back({region.imageSubresource, region.imageOffset, region.imageSubresource, region.imageOffset, region.imageExtent});
+    if (blockUnits) {
+        for (const auto& window : sliceWindows(runs)) {
+            for (const auto& region : window.regions) regions.push_back({region.imageSubresource, region.imageOffset, region.imageSubresource, region.imageOffset, region.imageExtent});
+        }
+    } else {
+        // Layer units (any tile mode, linear too): every level of each borrowed array layer, whole.
+        // A layer alias holds this image's layer `shift + j` as its layer j.
+        for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+            if (!units[unit]) continue;
+            Require(unit >= shift && unit - shift < source.trackedLayers, "storage image borrows a layer its alias does not hold");
+            for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
+                if (!geometry.HasLayer(level, unit)) continue;
+                const VkImageSubresourceLayers to{VK_IMAGE_ASPECT_COLOR_BIT, level, unit, 1};
+                const VkImageSubresourceLayers from{VK_IMAGE_ASPECT_COLOR_BIT, level, unit - shift, 1};
+                regions.push_back({from, {0, 0, 0}, to, {0, 0, 0}, {mips[level].width, mips[level].height, 1u}});
+            }
+        }
     }
+    Require(!regions.empty(), "storage image borrows no unit");
     std::uint64_t bytes = 0;
     for (const auto& [begin, end] : runs) bytes += end - begin;
     auto* recorder = Recorder::Active();
@@ -7881,9 +7932,10 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
     if (batch) batch->SubmitAndWait();
     else recorder->EndGpuTiming(timing, bytes);
     countStorageUpload(3, bytes);
-    if (borrowedFrom.lock() != source.weak_from_this().lock() || borrowedUnits.size() != trackedLayers) {
+    if (borrowedFrom.lock() != source.weak_from_this().lock() || borrowedShift != shift || borrowedUnits.size() != trackedLayers) {
         borrowedUnits.assign(trackedLayers, false);
         borrowedFrom = source.weak_from_this();
+        borrowedShift = shift;
     }
     borrowedVersion = source.version;
     source.lent = true;
