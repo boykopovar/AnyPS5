@@ -7,7 +7,6 @@
 #include FT_BITMAP_H
 
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <utility>
 #include <vector>
@@ -32,17 +31,11 @@ std::size_t PixelBytes(const FreeType::GuestBitmap& bitmap) {
 }
 
 bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(destination, source, bytes);
 }
 
 bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
+    return GuestCopyOut_nid_no_patch(destination, source, bytes);
 }
 
 bool CopyPixels(const unsigned char* buffer, std::size_t bytes, std::vector<unsigned char>& pixels) {

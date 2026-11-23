@@ -104,6 +104,20 @@ class OpenPrProgressTests(unittest.TestCase):
         self.assertEqual(excluded, {2: "conflict", 3: "dependency_excluded"})
         self.assertEqual(progress_prs.measure(self.root, combined)["done"], 2)
 
+    def test_a_pr_already_in_the_base_does_not_block_its_dependents(self):
+        first = self.branch(1, {"first": "1"})
+        first["depends"] = {99}
+        self.git("update-ref", "refs/open-pr-progress/2", self.base)
+        second = {"sha": self.base, "ref": "refs/open-pr-progress/2", "depends": {1}}
+        third = self.branch(3, {"second": "3"})
+        third["depends"] = {2}
+        with patch.object(progress_prs, "closed_dependency_status", return_value=None):
+            combined, included, excluded = progress_prs.integrate_pull_requests(
+                self.root, {1: first, 2: second, 3: third}, self.base, "boykopovar/AnyPS5")
+        self.assertEqual(included, {2, 3})
+        self.assertEqual(excluded, {1: "unresolved_dependency"})
+        self.assertEqual(progress_prs.measure(self.root, combined)["done"], 1)
+
     def test_unresolved_and_cyclic_dependencies_are_excluded(self):
         first = self.branch(1, {"first": "1"})
         second = self.branch(2, {"second": "2"})
@@ -125,39 +139,64 @@ class OpenPrProgressTests(unittest.TestCase):
         self.assertEqual(order, [])
         self.assertEqual(excluded, {1: "dependency_cycle", 2: "dependency_cycle"})
 
-    def test_changed_heads_are_relisted_and_refetched_once(self):
-        old = {1: {"sha": "old", "depends": set()}}
-        current = {1: {"sha": "new", "depends": set()}}
-        ok = subprocess.CompletedProcess([], 0, "", "")
+    def test_dependents_of_a_dependency_cycle_are_not_cycle_members(self):
+        first = self.branch(1, {"first": "1"})
+        second = self.branch(2, {"second": "2"})
+        third = self.branch(3, {"second": "3"})
+        first["depends"] = {2}
+        second["depends"] = {1}
+        third["depends"] = {1}
+        combined, included, excluded = progress_prs.integrate_pull_requests(
+            self.root, {1: first, 2: second, 3: third}, self.base, "boykopovar/AnyPS5")
+        self.assertEqual(combined, self.base)
+        self.assertEqual(included, set())
+        self.assertEqual(excluded, {1: "dependency_cycle", 2: "dependency_cycle", 3: "dependency_excluded"})
 
-        def fake_git(root, *args, **kwargs):
-            if args[0] == "rev-parse":
-                value = "new\n" if args[1].endswith("/1") else "base\n"
-                return subprocess.CompletedProcess([], 0, value, "")
-            return ok
+    def test_heads_are_fetched_by_commit_when_their_pull_ref_is_missing(self):
+        first = self.branch(1, {"first": "1"})
+        second = self.branch(2, {"second": "2"})
+        missing = "0123456789abcdef0123456789abcdef01234567"
+        remote = Path(self.temp.name) / "fixture" / "repo.git"
+        subprocess.run(["git", "clone", "-q", "--mirror", str(self.root), str(remote)], check=True)
+        checkout = Path(self.temp.name) / "checkout"
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+        listed = {1: {"sha": first["sha"], "depends": set()}, 2: {"sha": second["sha"], "depends": set()},
+                  3: {"sha": missing, "depends": set()}}
+        with patch.object(progress_prs, "REMOTE", self.temp.name), \
+                patch.object(progress_prs.pr_overlap, "open_prs", return_value=listed):
+            pulls, base = progress_prs.collect_open_prs("fixture/repo", checkout)
+        self.assertEqual(base, self.base)
+        for number, sha in ((1, first["sha"]), (2, second["sha"])):
+            fetched = subprocess.run(["git", "rev-parse", pulls[number]["ref"]], cwd=checkout, capture_output=True,
+                                     text=True, check=True).stdout.strip()
+            self.assertEqual(fetched, sha)
+            self.assertNotIn("unavailable", pulls[number])
+        self.assertTrue(pulls[3]["unavailable"])
 
-        with (patch.object(progress_prs.pr_overlap, "open_prs", side_effect=[old, current]) as open_prs,
-              patch.object(progress_prs, "git", side_effect=fake_git)):
-            pulls, base = progress_prs.collect_open_prs("fixture/repo", self.root)
-        self.assertEqual(pulls[1]["sha"], "new")
-        self.assertEqual(base, "base")
-        self.assertEqual(open_prs.call_count, 2)
+    def test_a_head_fetch_failure_other_than_a_missing_commit_is_an_error(self):
+        listed = {1: {"sha": "head", "depends": set()}}
 
-    def test_persistently_changing_heads_fail_after_one_retry(self):
-        stale = {1: {"sha": "old", "depends": set()}}
-        ok = subprocess.CompletedProcess([], 0, "", "")
+        def fake_git(root, *args, check=True):
+            if args[0] == "fetch" and args[-1].startswith("+head:"):
+                return subprocess.CompletedProcess([], 128, "", "fatal: unable to access: Could not resolve host\n")
+            return subprocess.CompletedProcess([], 0, "base\n", "")
 
-        def fake_git(root, *args, **kwargs):
-            if args[0] == "rev-parse":
-                value = "new\n" if args[1].endswith("/1") else "base\n"
-                return subprocess.CompletedProcess([], 0, value, "")
-            return ok
-
-        with (patch.object(progress_prs.pr_overlap, "open_prs", side_effect=[stale, stale]) as open_prs,
-              patch.object(progress_prs, "git", side_effect=fake_git)):
-            with self.assertRaisesRegex(RuntimeError, "pull request heads changed during fetch: 1"):
+        with patch.object(progress_prs.pr_overlap, "open_prs", return_value=listed), \
+                patch.object(progress_prs, "git", side_effect=fake_git):
+            with self.assertRaisesRegex(RuntimeError, "Could not resolve host"):
                 progress_prs.collect_open_prs("fixture/repo", self.root)
-        self.assertEqual(open_prs.call_count, 2)
+
+    def test_an_unavailable_head_excludes_it_and_its_dependents(self):
+        first = self.branch(1, {"first": "1"})
+        second = {"sha": "0123456789abcdef0123456789abcdef01234567", "ref": "refs/open-pr-progress/2",
+                  "depends": set(), "unavailable": True}
+        third = self.branch(3, {"second": "3"})
+        third["depends"] = {2}
+        combined, included, excluded = progress_prs.integrate_pull_requests(
+            self.root, {1: first, 2: second, 3: third}, self.base, "boykopovar/AnyPS5")
+        self.assertEqual(included, {1})
+        self.assertEqual(excluded, {2: "head_unavailable", 3: "dependency_excluded"})
+        self.assertEqual(progress_prs.measure(self.root, combined)["done"], 1)
 
     def test_unavailable_estimate_keeps_failure_reason(self):
         with patch.object(progress_prs, "collect_open_prs", side_effect=RuntimeError("API unavailable")):
