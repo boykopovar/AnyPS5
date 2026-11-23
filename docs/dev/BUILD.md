@@ -65,6 +65,12 @@ python3 tools/select_tests.py ctest build --output-on-failure
 
 [`tools/build_changed_guest_tests.py`](../../tools/build_changed_guest_tests.py) builds and runs the guest and host-only `core/libs` tests that a change touches, from the build directory and an optional changed-paths argument; `--output-log` writes its log to a file. [`tools/build_mingw_host_only_tests.py`](../../tools/build_mingw_host_only_tests.py) builds the `core/libs` test executables that do not link guest libc. It prints the executables it selects, and `--list-only` stops there without building them.
 
+## Pinned CTest result bundles
+
+Use [`tools/ctest_bundle.py`](../../tools/ctest_bundle.py) to collect a CTest invocation's original JUnit and text reports. Run `prepare` from the checkout before testing and give each invocation a fresh directory outside the build cache. Direct CTest's `--output-junit` and `--output-log` to `ctest.xml` and `ctest.log` in that directory. Call `finish --directory <dir> --outcome <success|failure|skipped|cancelled>` with the actual step outcome. Keep CTest's exit status independently.
+
+`finish` creates `published/manifest.json` with version 1 provenance, including the actual checked-out Git commit and tree, tracked-change state, and any allowlisted CI context. Included reports retain their original bytes and SHA-256 hashes. Missing, linked, and oversized reports have explicit manifest states. The recorded outcome belongs to the invoking step. Test execution and verdict attribution require the original reports.
+
 ## Requirements
 
 - x86-64, Git, CMake 3.22.1 or newer for the default full build with bundled dependencies, 3.24 or newer on macOS (bundled glslang, SPIRV-Tools and Vulkan-Headers declare 3.22.1, bundled SDL's Apple configuration 3.24, and the test build's CMake scripts use `file(COPY_FILE)`, added in CMake 3.21; `CMakeLists.txt` declares 3.20), Ninja, C++20.
