@@ -15,14 +15,46 @@ namespace {
 
 constexpr DWORD GccThrow = 0x20474343u;
 constexpr std::uint64_t GnuPrimaryClass = 0x474e5543432b2b00ull;
-constexpr std::size_t RuntimeHeaderBytes = 160;
-constexpr std::size_t RuntimeUnwindBytes = 64;
-constexpr std::ptrdiff_t UnwindToAllocation = RuntimeHeaderBytes - RuntimeUnwindBytes;
-constexpr std::ptrdiff_t UnwindToType = 80;
-constexpr std::ptrdiff_t UnwindToDestructor = 72;
-constexpr std::ptrdiff_t UnwindToPrivate = 16;
-constexpr std::ptrdiff_t AllocationToType = 16;
 constexpr std::size_t SearchObjectBytes = 512;
+
+struct alignas(16) RuntimeUnwindException {
+    std::uint64_t exceptionClass;
+    void (*cleanup)(int, void*);
+    std::uintptr_t privateWords[6];
+};
+
+struct RuntimeCxaException {
+    std::type_info* type;
+    void (*destructor)(void*);
+    void (*unexpected)();
+    void (*terminate)();
+    RuntimeCxaException* next;
+    int handlerCount;
+    int handlerSwitchValue;
+    const unsigned char* actionRecord;
+    const unsigned char* languageSpecificData;
+    void* catchTemp;
+    void* adjusted;
+    RuntimeUnwindException unwind;
+};
+
+struct RuntimeRefcountedException {
+    int references;
+    RuntimeCxaException exception;
+};
+
+static_assert(sizeof(RuntimeUnwindException) == 64);
+static_assert(offsetof(RuntimeCxaException, unwind) == 80 && sizeof(RuntimeCxaException) == 144);
+static_assert(offsetof(RuntimeRefcountedException, exception) == 16 && sizeof(RuntimeRefcountedException) == 160);
+
+constexpr std::size_t RuntimeHeaderBytes = sizeof(RuntimeRefcountedException);
+constexpr std::size_t RuntimeUnwindBytes = sizeof(RuntimeUnwindException);
+constexpr std::ptrdiff_t UnwindToAllocation = offsetof(RuntimeRefcountedException, exception) + offsetof(RuntimeCxaException, unwind);
+constexpr std::ptrdiff_t UnwindToType = offsetof(RuntimeCxaException, unwind) - offsetof(RuntimeCxaException, type);
+constexpr std::ptrdiff_t UnwindToDestructor = offsetof(RuntimeCxaException, unwind) - offsetof(RuntimeCxaException, destructor);
+constexpr std::ptrdiff_t UnwindToPrivate = offsetof(RuntimeUnwindException, privateWords);
+constexpr std::ptrdiff_t AllocationToType = offsetof(RuntimeRefcountedException, exception) + offsetof(RuntimeCxaException, type);
+static_assert(UnwindToAllocation == 96 && UnwindToType == 80 && UnwindToDestructor == 72 && UnwindToPrivate == 16 && AllocationToType == 16);
 
 struct Handoff {
     CONTEXT scratch;
