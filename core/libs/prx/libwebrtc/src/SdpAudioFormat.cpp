@@ -270,14 +270,13 @@ struct NodeGuard {
     }
 };
 
-void CloneMap(const WebRtcStringMap& source, const WebRtcStringMapNode* sourceEnd, WebRtcStringMap& destination, WebRtcStringMapNode* destinationEnd, const char* message) {
+void CloneMap(const WebRtcStringMap& source, const WebRtcStringMapNode* sourceEnd, WebRtcStringMap& destination, WebRtcStringMapNode* destinationEnd, NodeGuard& guard, const char* message) {
     std::vector<ValidatedNode> validated;
     ValidateMapNodes(source, sourceEnd, message, validated);
     ResetMap(destination, destinationEnd);
     if (source.size == 0)
         return;
 
-    NodeGuard guard;
     struct CloneTask {
         const WebRtcStringMapNode* source;
         WebRtcStringMapNode** slot;
@@ -308,7 +307,6 @@ void CloneMap(const WebRtcStringMap& source, const WebRtcStringMapNode* sourceEn
             tasks.push_back({sourceNode.links.left, &node->links.left, node});
     }
     destination.size = source.size;
-    guard.active = false;
 }
 
 void ValidateFormat(const WebRtcSdpAudioFormat& format, const WebRtcStringMapNode* end, const char* message, std::vector<ValidatedNode>& outNodes) {
@@ -337,13 +335,15 @@ void APS5_VABI _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(WebRtcSdpAudioForm
     CopyString(snapshot.name, nameGuard.value, message);
     nameGuard.active = true;
 
-    CloneMap(snapshot.parameters, GuestEndNode(other), result.parameters, GuestEndNode(format), message);
+    NodeGuard nodeGuard;
+    CloneMap(snapshot.parameters, GuestEndNode(other), result.parameters, GuestEndNode(format), nodeGuard, message);
 
     result.name = nameGuard.value;
     result.clockrateHz = snapshot.clockrateHz;
     result.numChannels = snapshot.numChannels;
     CopyOutChecked(format, &result, sizeof(result), message);
     nameGuard.active = false;
+    nodeGuard.active = false;
 }
 
 void APS5_VABI _ZN6webrtc14SdpAudioFormatC1EOS0__nid_postfix(WebRtcSdpAudioFormat* format, WebRtcSdpAudioFormat* other) {
@@ -392,18 +392,19 @@ WebRtcSdpAudioFormat* APS5_VABI _ZN6webrtc14SdpAudioFormataSERKS0__nid_postfix(W
     CopyString(snapshot.name, nameGuard.value, message);
     nameGuard.active = true;
 
-    WebRtcStringMap clonedMap{};
-    CloneMap(snapshot.parameters, GuestEndNode(other), clonedMap, GuestEndNode(format), message);
+    NodeGuard nodeGuard;
+    WebRtcSdpAudioFormat updated = result;
+    CloneMap(snapshot.parameters, GuestEndNode(other), updated.parameters, GuestEndNode(format), nodeGuard, message);
+
+    updated.name = nameGuard.value;
+    updated.clockrateHz = snapshot.clockrateHz;
+    updated.numChannels = snapshot.numChannels;
+    CopyOutChecked(format, &updated, sizeof(updated), message);
+    nameGuard.active = false;
+    nodeGuard.active = false;
 
     DestroyMapNodes(existingNodes, result.parameters, GuestEndNode(format));
     ReleaseString(result.name);
-
-    result.name = nameGuard.value;
-    nameGuard.active = false;
-    result.clockrateHz = snapshot.clockrateHz;
-    result.numChannels = snapshot.numChannels;
-    result.parameters = clonedMap;
-    CopyOutChecked(format, &result, sizeof(result), message);
     return format;
 }
 
@@ -413,9 +414,12 @@ void APS5_VABI _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(WebRtcSdpAudioFormat* 
     WebRtcSdpAudioFormat host = ReadFormat(format, message);
     std::vector<ValidatedNode> nodes;
     ValidateFormat(host, GuestEndNode(format), message, nodes);
+    WebRtcSdpAudioFormat cleared = host;
+    ResetMap(cleared.parameters, GuestEndNode(format));
+    InitStringEmpty(cleared.name);
+    CopyOutChecked(format, &cleared, sizeof(cleared), message);
     DestroyMapNodes(nodes, host.parameters, GuestEndNode(format));
     ReleaseString(host.name);
-    CopyOutChecked(format, &host, sizeof(host), message);
 }
 
 }

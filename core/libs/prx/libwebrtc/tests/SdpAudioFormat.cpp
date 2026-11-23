@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -28,6 +29,8 @@ namespace {
 std::set<void*> live;
 std::size_t failAfterAllocations = static_cast<std::size_t>(-1);
 std::size_t allocationCounter = 0;
+void (*afterAllocateHook)() = nullptr;
+void (*afterFreeHook)() = nullptr;
 
 void* APS5_VABI TestAllocate(std::size_t size) {
     if (allocationCounter >= failAfterAllocations)
@@ -37,6 +40,8 @@ void* APS5_VABI TestAllocate(std::size_t size) {
     if (!pointer)
         throw std::bad_alloc();
     live.insert(pointer);
+    if (afterAllocateHook)
+        std::exchange(afterAllocateHook, nullptr)();
     return pointer;
 }
 
@@ -46,6 +51,8 @@ void APS5_VABI TestFree(void* pointer) {
     if (live.erase(pointer) != 1)
         std::abort();
     std::free(pointer);
+    if (afterFreeHook)
+        std::exchange(afterFreeHook, nullptr)();
 }
 
 void* APS5_VABI TestCalloc(std::size_t count, std::size_t size) {
@@ -405,6 +412,55 @@ void TestMoveWithReadOnlyRootThrows() {
     Require(live.empty());
 }
 
+ReadOnlyPage* hookPage = nullptr;
+
+void TestDestinationTurningReadOnlyLeaksNothing() {
+    ReadOnlyPage page;
+    page.SetWritable();
+    hookPage = &page;
+    auto* target = static_cast<WebRtcSdpAudioFormat*>(page.address);
+    WebRtcSdpAudioFormat source;
+    InitEmptyFormat(source, "heap-source-codec-name-1234567890", 48000, 2);
+    AttachSampleTree(source);
+
+    std::memset(target, 0xcd, sizeof(*target));
+    const WebRtcSdpAudioFormat untouched = *target;
+    const auto liveBefore = live;
+    afterAllocateHook = [] { hookPage->SetReadOnly(); };
+    Require(ThrowsInvalid([&] { _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(target, &source); }));
+    Require(afterAllocateHook == nullptr && live == liveBefore);
+    Require(std::memcmp(target, &untouched, sizeof(*target)) == 0);
+
+    page.SetWritable();
+    InitEmptyFormat(*target, "existing-codec-name-1234567890", 16000, 1);
+    auto* node = MakeNode("ptime", "20", true);
+    node->links.parent = EndNode(target->parameters);
+    target->parameters.root = node;
+    target->parameters.beginNode = node;
+    target->parameters.size = 1;
+    const WebRtcSdpAudioFormat assignedBefore = *target;
+    const auto liveAssigned = live;
+    afterAllocateHook = [] { hookPage->SetReadOnly(); };
+    Require(ThrowsInvalid([&] { _ZN6webrtc14SdpAudioFormataSERKS0__nid_postfix(target, &source); }));
+    Require(afterAllocateHook == nullptr && live == liveAssigned);
+    Require(std::memcmp(target, &assignedBefore, sizeof(*target)) == 0);
+
+    page.SetWritable();
+    afterFreeHook = [] { hookPage->SetReadOnly(); };
+    _ZN6webrtc14SdpAudioFormataSERKS0__nid_postfix(target, &source);
+    Require(afterFreeHook == nullptr && live.count(node) == 0 && target->parameters.size == 4);
+    Require(ReadGuestString(target->name) == "heap-source-codec-name-1234567890" && target->clockrateHz == 48000);
+
+    page.SetWritable();
+    afterFreeHook = [] { hookPage->SetReadOnly(); };
+    _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(target);
+    Require(afterFreeHook == nullptr && target->parameters.size == 0 && target->parameters.root == nullptr);
+    Require(target->parameters.beginNode == EndNode(target->parameters) && target->name.size == 0);
+    hookPage = nullptr;
+    _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(&source);
+    Require(live.empty());
+}
+
 }
 
 int main() {
@@ -419,6 +475,7 @@ int main() {
     TestAllocationFailureCleanup();
     TestInvalidGuestInputs();
     TestMoveWithReadOnlyRootThrows();
+    TestDestinationTurningReadOnlyLeaksNothing();
     std::puts("libwebrtc SdpAudioFormat tests passed");
     return 0;
 }

@@ -16,6 +16,7 @@
 #include <cstring>
 #include <new>
 #include <source_location>
+#include <utility>
 #include <stdexcept>
 #include <vector>
 
@@ -57,8 +58,21 @@ void* lastFreed = nullptr;
 int allocations = 0;
 int frees = 0;
 
-void* APS5_VABI TestAllocate(std::size_t size) { ++allocations; return std::malloc(size); }
-void APS5_VABI TestFree(void* pointer) { lastFreed = pointer; ++frees; std::free(pointer); }
+void (*afterAllocateHook)() = nullptr;
+void (*afterFreeHook)() = nullptr;
+
+void* APS5_VABI TestAllocate(std::size_t size) {
+    ++allocations;
+    void* pointer = std::malloc(size);
+    if (afterAllocateHook) std::exchange(afterAllocateHook, nullptr)();
+    return pointer;
+}
+void APS5_VABI TestFree(void* pointer) {
+    lastFreed = pointer;
+    ++frees;
+    std::free(pointer);
+    if (afterFreeHook) std::exchange(afterFreeHook, nullptr)();
+}
 void* APS5_VABI TestCalloc(std::size_t count, std::size_t size) { ++allocations; return std::calloc(count, size); }
 void* APS5_VABI TestReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
 void* APS5_VABI TestAlign(std::size_t, std::size_t size) { ++allocations; return std::malloc(size); }
@@ -294,7 +308,55 @@ struct GuardedPage {
         Require(mprotect(base, size, PROT_NONE) == 0);
 #endif
     }
+
+    void SetWritable() const {
+#ifdef _WIN32
+        DWORD prev = 0;
+        Require(VirtualProtect(base, size, PAGE_READWRITE, &prev) != 0);
+#else
+        Require(mprotect(base, size, PROT_READ | PROT_WRITE) == 0);
+#endif
+    }
 };
+
+GuardedPage* hookPage = nullptr;
+
+void TestDestinationTurningReadOnlyLeaksNothing() {
+    GuardedPage page;
+    hookPage = &page;
+    auto* target = page.As<WebRtcAudioEncodedInfo>();
+    std::memset(target, 0x5A, sizeof(*target));
+    const WebRtcAudioEncodedInfo untouched = *target;
+    WebRtcAudioEncodedInfo source = WithRedundant(3);
+    const int liveBefore = allocations - frees;
+    afterAllocateHook = [] { hookPage->SetReadOnly(); };
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(target, &source); });
+    Require(afterAllocateHook == nullptr && allocations - frees == liveBefore);
+    Require(std::memcmp(target, &untouched, sizeof(*target)) == 0);
+
+    page.SetWritable();
+    *target = WithRedundant(1);
+    const WebRtcAudioEncodedInfo assignedBefore = *target;
+    afterAllocateHook = [] { hookPage->SetReadOnly(); };
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(target, &source); });
+    Require(afterAllocateHook == nullptr && allocations - frees == liveBefore + 1);
+    Require(std::memcmp(target, &assignedBefore, sizeof(*target)) == 0 && HoldsRedundant(*target, 1));
+
+    page.SetWritable();
+    afterFreeHook = [] { hookPage->SetReadOnly(); };
+    _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(target, &source);
+    Require(afterFreeHook == nullptr && allocations - frees == liveBefore + 1);
+    Require(lastFreed == assignedBefore.redundantBegin && HoldsRedundant(*target, 3));
+
+    page.SetWritable();
+    WebRtcAudioEncodedInfoLeaf* storage = target->redundantBegin;
+    afterFreeHook = [] { hookPage->SetReadOnly(); };
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(target);
+    Require(afterFreeHook == nullptr && allocations - frees == liveBefore && lastFreed == storage);
+    Require(target->redundantBegin == nullptr && target->redundantEnd == nullptr && target->redundantCapacity == nullptr);
+    hookPage = nullptr;
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&source);
+}
 
 void TestInaccessibleGuestPointersThrow() {
     GuardedPage readOnly;
@@ -449,5 +511,6 @@ int main() {
     TestOversizedRedundantRangesThrow();
     TestRedundantListsLongerThanOneCopyChunk();
     TestOverlappingAssignmentCopiesLikeMemmove();
+    TestDestinationTurningReadOnlyLeaksNothing();
     return 0;
 }

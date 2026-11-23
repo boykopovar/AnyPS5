@@ -100,6 +100,13 @@ void AllocateRedundant(WebRtcAudioEncodedInfo& info, std::size_t count) {
     info.redundantCapacity = leaves + count;
 }
 
+void WriteInfoOrFree(WebRtcAudioEncodedInfo* info, WebRtcAudioEncodedInfo& host, const char* message) {
+    if (GuestPtr<WebRtcAudioEncodedInfo>(info).CopyOut(host))
+        return;
+    FreeRedundant(host);
+    throw std::invalid_argument(message);
+}
+
 constexpr std::size_t ChunkLeaves = 4096 / sizeof(WebRtcAudioEncodedInfoLeaf);
 
 void CheckRedundantReadable(const WebRtcAudioEncodedInfo& info, const char* message) {
@@ -123,6 +130,21 @@ bool CopyRedundant(WebRtcAudioEncodedInfoLeaf* target, const WebRtcAudioEncodedI
         done += size;
     }
     return true;
+}
+
+WebRtcAudioEncodedInfo CopyInfo(const WebRtcAudioEncodedInfo& source, const char* message) {
+    const std::size_t count = RedundantCount(source);
+    WebRtcAudioEncodedInfo host{};
+    std::memcpy(&host.leaf, &source.leaf, sizeof(host.leaf));
+    if (!count)
+        return host;
+    AllocateRedundant(host, count);
+    if (!CopyRedundant(host.redundantBegin, source.redundantBegin, count)) {
+        FreeRedundant(host);
+        throw std::invalid_argument(message);
+    }
+    host.redundantEnd = host.redundantBegin + count;
+    return host;
 }
 
 }
@@ -155,25 +177,19 @@ void APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(WebRtcA
         throw std::invalid_argument(message);
     const WebRtcAudioEncodedInfo source = ReadInfo(other, message);
     CheckRedundantReadable(source, message);
-    const std::size_t count = RedundantCount(source);
-    WebRtcAudioEncodedInfo host{};
-    std::memcpy(&host.leaf, &source.leaf, sizeof(host.leaf));
-    if (count) {
-        AllocateRedundant(host, count);
-        if (!CopyRedundant(host.redundantBegin, source.redundantBegin, count)) {
-            FreeRedundant(host);
-            throw std::invalid_argument(message);
-        }
-        host.redundantEnd = host.redundantBegin + count;
-    }
-    WriteInfo(info, host, message);
+    WebRtcAudioEncodedInfo host = CopyInfo(source, message);
+    WriteInfoOrFree(info, host, message);
 }
 
 void APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(WebRtcAudioEncodedInfo* info) {
     constexpr const char* message = "EncodedInfo destructor requires an object";
     WebRtcAudioEncodedInfo host = ReadWritableInfo(info, message);
-    FreeRedundant(host);
+    WebRtcAudioEncodedInfo released = host;
+    host.redundantBegin = nullptr;
+    host.redundantEnd = nullptr;
+    host.redundantCapacity = nullptr;
     WriteInfo(info, host, message);
+    FreeRedundant(released);
 }
 
 WebRtcAudioEncodedInfo* APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(WebRtcAudioEncodedInfo* info, const WebRtcAudioEncodedInfo* other) {
@@ -186,12 +202,13 @@ WebRtcAudioEncodedInfo* APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__
     const WebRtcAudioEncodedInfo source = ReadInfo(other, message);
     CheckRedundantReadable(source, message);
     const std::size_t count = RedundantCount(source);
-    std::memcpy(&host.leaf, &source.leaf, sizeof(host.leaf));
     if (count > RedundantCapacity(host)) {
+        WebRtcAudioEncodedInfo grown = CopyInfo(source, message);
+        WriteInfoOrFree(info, grown, message);
         FreeRedundant(host);
-        WriteInfo(info, host, message);
-        AllocateRedundant(host, count);
+        return info;
     }
+    std::memcpy(&host.leaf, &source.leaf, sizeof(host.leaf));
     if (!CopyRedundant(host.redundantBegin, source.redundantBegin, count)) {
         WriteInfo(info, host, message);
         throw std::invalid_argument(message);
