@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -14,6 +15,7 @@
 
 namespace {
 
+constexpr int PositiveIntegerType = 2;
 constexpr int NegativeIntegerType = 0x102;
 constexpr int DsaKeyType = 116;
 constexpr int SignatureIndent = 9;
@@ -195,14 +197,26 @@ bool PrintSerial(LibreSsl::Bio* bio, const void* guestSerial) {
     if (WriteLiteral(bio, "        Serial Number:") <= 0) return false;
     if (!guestSerial) throw std::invalid_argument("X509_print: null serial number");
     const LibreSsl3Asn1String serial = CopyIn(static_cast<const LibreSsl3Asn1String*>(guestSerial), "X509_print");
-    std::int64_t value = -1;
-    if (serial.length <= static_cast<int>(sizeof(std::int64_t)))
-        value = ASN1_INTEGER_get_nid_postfix(reinterpret_cast<const Asn1String*>(guestSerial));
-    if (value != -1) {
-        const bool negative = serial.type == NegativeIntegerType;
-        const std::uint64_t magnitude = negative
-            ? std::uint64_t{0} - static_cast<std::uint64_t>(value)
-            : static_cast<std::uint64_t>(value);
+    const bool negative = serial.type == NegativeIntegerType;
+    bool representable = false;
+    std::uint64_t magnitude = 0;
+    if ((serial.type == PositiveIntegerType || negative) && serial.length >= 0 &&
+        serial.length <= static_cast<int>(sizeof(std::int64_t))) {
+        if (serial.length == 0) {
+            representable = true;
+        } else if (serial.data) {
+            for (int index = 0; index < serial.length; ++index) {
+                unsigned char byte = 0;
+                CopyBytesIn(&byte, serial.data + index, 1);
+                magnitude = (magnitude << 8) | byte;
+            }
+            const std::uint64_t limit = negative
+                ? std::uint64_t{1} << 63
+                : static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+            representable = magnitude <= limit;
+        }
+    }
+    if (representable) {
         std::string text(" ");
         if (negative) text += "-";
         text += Decimal(magnitude);

@@ -236,7 +236,7 @@ void CheckVersionZeroAndNegativeSerial() {
     printed.clear();
     Require(X509_print_nid_postfix(&output.bio, &fixture.certificate) == 1, "a missing version prints");
     const std::string expected = std::string(Header) + "        Version: 1 (0x0)\n" +
-        "        Serial Number:\n             (Negative)01\n" + Body + DumpBlock;
+        "        Serial Number: -1 (-0x1)\n" + Body + DumpBlock;
     Require(printed == expected, "a missing version and a negative serial match the literal");
 }
 
