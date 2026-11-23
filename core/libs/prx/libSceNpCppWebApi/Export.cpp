@@ -1033,20 +1033,27 @@ static LibContextState* LibContextStateFor(void* libContext) {
 }
 
 static void* LibContextAllocate(void* libContext, const std::size_t size) {
+    if (libContext == nullptr) return std::malloc(size);
     LibContextState* state = LibContextStateFor(libContext);
-    return state != nullptr ? sceLibcMspaceMalloc_nid_postfix(state->mspace, size) : std::malloc(size);
+    if (state == nullptr) throw std::runtime_error("libSceNpCppWebApi allocates through an uninitialized or terminated LibContext");
+    return sceLibcMspaceMalloc_nid_postfix(state->mspace, size);
 }
 
 static void* LibContextReallocate(void* libContext, void* object, const std::size_t size) {
+    if (libContext == nullptr) return std::realloc(object, size);
     LibContextState* state = LibContextStateFor(libContext);
-    return state != nullptr ? sceLibcMspaceRealloc_nid_postfix(state->mspace, object, size) : std::realloc(object, size);
+    if (state == nullptr) throw std::runtime_error("libSceNpCppWebApi reallocates through an uninitialized or terminated LibContext");
+    return sceLibcMspaceRealloc_nid_postfix(state->mspace, object, size);
 }
 
 static void LibContextDeallocate(void* libContext, void* object) {
     if (object == nullptr) return;
+    if (libContext == nullptr) {
+        std::free(object);
+        return;
+    }
     LibContextState* state = LibContextStateFor(libContext);
     if (state != nullptr) sceLibcMspaceFree_nid_postfix(state->mspace, object);
-    else std::free(object);
 }
 
 static void* AllocateContextOrHost(void* libContext, const std::size_t size) {

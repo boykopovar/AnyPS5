@@ -169,14 +169,13 @@ void CheckNativeVectors(bool constOnly = false) {
 }
 
 void CheckHostVectors() {
-    int context = 1;
     for (int repeat = 0; repeat < 32; ++repeat) {
-        IntrusivePtr vector{nullptr, nullptr, &context};
+        IntrusivePtr vector{nullptr, nullptr, nullptr};
         CommonIterator first{}, last{};
         _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE5beginEv(&first, &vector);
         _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv(&last, &vector);
         Require(first.element == nullptr && last.element == nullptr, "empty host vector changed");
-        CommonString value{0, const_cast<char*>("native iterator"), 16, &context};
+        CommonString value{0, const_cast<char*>("native iterator"), 16, nullptr};
         Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(&vector, &value) == 0, "host append failed");
         for (void* self : {static_cast<void*>(&vector), vector.object}) {
             _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE5beginEv(&first, static_cast<IntrusivePtr*>(self));
@@ -209,7 +208,11 @@ void CheckHandleResult(const Method& method, void* self, void* expectedElement) 
 }
 
 void CheckHandleIdentity() {
-    int context = 1;
+    std::uint64_t context = 0;
+    alignas(8) unsigned char params[0x28];
+    std::memset(params, 0, sizeof(params));
+    _ZN3sce2Np9CppWebApi6Common10InitParamsC1Ev(params);
+    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(params, &context) == 0, "the handle identity context did not initialize");
     IntrusivePtr donor{nullptr, nullptr, &context};
     CommonString text{0, const_cast<char*>("identity"), 9, &context};
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(&donor, &text) == 0, "identity donor allocation failed");
@@ -278,6 +281,15 @@ void CheckHandleIdentity() {
     Require(sharedReferences == 1, "tagged String copy references did not release");
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(&donor);
     Require(donor.object == nullptr, "last host vector reference did not release its body");
+    Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == 0, "the handle identity context did not terminate");
+    IntrusivePtr terminated{nullptr, nullptr, &context};
+    bool terminatedRefused = false;
+    try {
+        _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(&terminated, &text);
+    } catch (const std::runtime_error&) {
+        terminatedRefused = true;
+    }
+    Require(terminatedRefused, "a terminated context allocated outside its arena");
 }
 
 }
