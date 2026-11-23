@@ -149,14 +149,18 @@ void submitRewindFrame(std::byte* block, std::size_t frame, const Output& output
     waitPresented(output, presented + 1);
 }
 
-const char* captureDirectory() {
+std::filesystem::path captureDirectory() {
+#ifdef _WIN32
+    const wchar_t* directory = _wgetenv(L"APS5_FRAME_CAPTURE");
+#else
     const char* directory = std::getenv("APS5_FRAME_CAPTURE");
-    check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
+#endif
+    check(directory != nullptr && *directory != 0, "APS5_FRAME_CAPTURE is not set");
     return directory;
 }
 
-void checkCapturedFrames(const char* directory) {
-    const FrameCaptureReader reader{std::filesystem::path(directory)};
+void checkCapturedFrames(const std::filesystem::path& directory) {
+    const FrameCaptureReader reader{directory};
     check(!reader.Truncated(), "the capture is truncated");
     check(reader.Header().find("\"frames\":" + std::to_string(CapturedFrames)) != std::string::npos, "the capture header does not record " + std::to_string(CapturedFrames) + " frames: " + reader.Header());
     const auto& calls = reader.Calls();
@@ -177,7 +181,7 @@ void checkCapturedFrames(const char* directory) {
 }
 
 void testEopFramesCountOnce() {
-    const char* directory = captureDirectory();
+    const auto directory = captureDirectory();
     auto* const block = allocate();
     auto output = std::make_shared<Output>();
     AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
@@ -188,7 +192,7 @@ void testEopFramesCountOnce() {
 }
 
 void testRewindTailFramesCount() {
-    const char* directory = captureDirectory();
+    const auto directory = captureDirectory();
     std::filesystem::remove_all(directory);
     auto* const block = allocate();
     auto output = std::make_shared<Output>();
@@ -200,7 +204,7 @@ void testRewindTailFramesCount() {
 }
 
 void testRewindReleasedAfterCall() {
-    const char* directory = captureDirectory();
+    const auto directory = captureDirectory();
     std::filesystem::remove_all(directory);
     auto* const block = allocate();
     auto output = std::make_shared<Output>();
@@ -362,9 +366,14 @@ void finishedWithin(const std::function<void()>& call, const char* what) {
 void testRecorderStartsAfterAdmittedCalls() {
     auto* const recorder = AgcDriver::FrameRecorder::Active();
     check(recorder != nullptr, "the frame recorder is not active");
-    const std::filesystem::path directory(captureDirectory());
-    const char* trigger = std::getenv("APS5_FRAME_CAPTURE_TRIGGER");
-    check(trigger != nullptr && *trigger != '\0', "the startup test needs APS5_FRAME_CAPTURE_TRIGGER");
+    const auto directory = captureDirectory();
+#ifdef _WIN32
+    const wchar_t* configuredTrigger = _wgetenv(L"APS5_FRAME_CAPTURE_TRIGGER");
+#else
+    const char* configuredTrigger = std::getenv("APS5_FRAME_CAPTURE_TRIGGER");
+#endif
+    check(configuredTrigger != nullptr && *configuredTrigger != 0, "the startup test needs APS5_FRAME_CAPTURE_TRIGGER");
+    const std::filesystem::path trigger(configuredTrigger);
     std::filesystem::remove(trigger);
     std::filesystem::remove_all(directory);
     const auto started = [&] { return std::filesystem::exists(directory / FrameCaptureWriter::MemoryName); };
