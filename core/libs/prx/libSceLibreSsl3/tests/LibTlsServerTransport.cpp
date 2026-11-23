@@ -243,6 +243,23 @@ void TestAcceptAndExchange() {
     tls_free_nid_postfix(server);
 }
 
+void TestPemWithoutNul() {
+    Peer peer;
+    TlsConfig* config = tls_config_new_nid_postfix();
+    Check(config != nullptr);
+    Check(tls_config_set_cert_mem_nid_postfix(config,
+        reinterpret_cast<const std::uint8_t*>(ServerPem), std::strlen(ServerPem)) == 0);
+    Check(tls_config_set_key_mem_nid_postfix(config,
+        reinterpret_cast<const std::uint8_t*>(ServerKey), std::strlen(ServerKey)) == 0);
+    TlsContext* server = tls_server_nid_postfix();
+    Check(server != nullptr);
+    Check(tls_configure_nid_postfix(server, config) == 0);
+    Check(tls_error_nid_postfix(server) == nullptr);
+    Exchange(peer, server);
+    tls_config_free_nid_postfix(config);
+    tls_free_nid_postfix(server);
+}
+
 void TestInvalidArguments() {
     Peer peer;
     const int descriptor = OpenGuestSocket(peer.port);
@@ -329,6 +346,7 @@ int main() {
     std::signal(SIGPIPE, SIG_IGN);
 #endif
     TestAcceptAndExchange();
+    TestPemWithoutNul();
     TestInvalidArguments();
     TestConfigurationValidation();
     std::puts("libtls server transport tests passed");

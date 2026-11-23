@@ -63,6 +63,12 @@ constexpr std::size_t TransferChunkSize = 16 * 1024;
 constexpr std::uint32_t TlsProtocol12 = 0x08;
 constexpr std::uint32_t TlsProtocol13 = 0x10;
 
+std::vector<unsigned char> NulTerminated(const unsigned char* data, std::size_t length) {
+    std::vector<unsigned char> buffer(data, data + length);
+    if (buffer.empty() || buffer.back() != 0) buffer.push_back(0);
+    return buffer;
+}
+
 int HostError() {
 #ifdef _WIN32
     return WSAGetLastError();
@@ -236,12 +242,14 @@ struct Session {
 #endif
         if (!client) {
             if (settings.cert && settings.certLength) {
-                result = mbedtls_x509_crt_parse(&certificate, settings.cert, settings.certLength);
+                const auto pem = NulTerminated(settings.cert, settings.certLength);
+                result = mbedtls_x509_crt_parse(&certificate, pem.data(), pem.size());
                 if (result != 0) return result;
                 if (certificate.raw.p == nullptr) return MBEDTLS_ERR_X509_BAD_INPUT_DATA;
             }
             if (settings.key && settings.keyLength) {
-                result = mbedtls_pk_parse_key(&key, settings.key, settings.keyLength, nullptr, 0,
+                const auto pem = NulTerminated(settings.key, settings.keyLength);
+                result = mbedtls_pk_parse_key(&key, pem.data(), pem.size(), nullptr, 0,
                     mbedtls_ctr_drbg_random, &random);
                 if (result != 0) return result;
             }
@@ -374,13 +382,17 @@ int ValidateServer(const TlsTransportConfig& settings, char* error, std::size_t 
     mbedtls_ctr_drbg_init(&random);
     mbedtls_x509_crt_init(&certificate);
     mbedtls_pk_init(&key);
+    const auto certPem = haveCert ? NulTerminated(settings.cert, settings.certLength)
+                                  : std::vector<unsigned char>();
+    const auto keyPem = haveKey ? NulTerminated(settings.key, settings.keyLength)
+                                : std::vector<unsigned char>();
     int outcome = 0;
     if (mbedtls_ctr_drbg_seed(&random, mbedtls_entropy_func, &entropy, nullptr, 0) != 0) {
         outcome = fail("failed to read private key");
-    } else if (haveCert && (mbedtls_x509_crt_parse(&certificate, settings.cert, settings.certLength) != 0 ||
+    } else if (haveCert && (mbedtls_x509_crt_parse(&certificate, certPem.data(), certPem.size()) != 0 ||
                             certificate.raw.p == nullptr)) {
         outcome = fail("failed to load certificate");
-    } else if (haveKey && mbedtls_pk_parse_key(&key, settings.key, settings.keyLength, nullptr, 0,
+    } else if (haveKey && mbedtls_pk_parse_key(&key, keyPem.data(), keyPem.size(), nullptr, 0,
                                                mbedtls_ctr_drbg_random, &random) != 0) {
         outcome = fail("failed to read private key");
     } else if (!haveCert || !haveKey || mbedtls_pk_get_type(&key) == MBEDTLS_PK_NONE ||
