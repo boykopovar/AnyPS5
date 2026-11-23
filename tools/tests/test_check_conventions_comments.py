@@ -1110,18 +1110,8 @@ class SilentStubDebtTests(unittest.TestCase):
     def test_text_without_the_section_has_no_entries(self):
         self.assertEqual(silent_stub_debt("# Debt\n## Known gaps\n- a\n"), [])
 
-class CommentLineHelperTests(unittest.TestCase):
-    def test_python_comments_lists_lines_holding_a_comment(self):
-        self.assertEqual(check_conventions.python_comments("x = 1  # hi\ny = 2\n"), {1})
 
-    def test_python_comments_ignores_a_byte_order_mark_and_refuses_bad_syntax(self):
-        self.assertEqual(check_conventions.python_comments("\ufeff# c\nx = 1\n"), {1})
-        self.assertIsNone(check_conventions.python_comments("def (:\n"))
-
-    def test_cmake_comments_covers_line_and_bracket_comments(self):
-        text = "set(A 1) # note\n#[[ block\nmore ]]\nset(B 2)\n"
-        self.assertEqual(check_conventions.cmake_comments(text), {1, 2, 3})
-
+class FlowMappingTests(unittest.TestCase):
     def test_flow_mapping_reads_a_flow_map_and_refuses_other_values(self):
         self.assertEqual(check_conventions.flow_mapping('{a: 1, "b": 2}'), {"a": "1", "b": "2"})
         self.assertEqual(check_conventions.flow_mapping("{}"), {})

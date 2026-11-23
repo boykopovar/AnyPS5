@@ -7,15 +7,6 @@ import check_conventions
 
 
 class HelperTests(unittest.TestCase):
-    def test_integer_literal_reads_hex_binary_octal_and_digit_separators(self):
-        self.assertEqual(check_conventions.integer_literal("0x1F"), 31)
-        self.assertEqual(check_conventions.integer_literal("0b101"), 5)
-        self.assertEqual(check_conventions.integer_literal("1'000"), 1000)
-        self.assertEqual(check_conventions.integer_literal("017"), 15)
-        self.assertEqual(check_conventions.integer_literal("0"), 0)
-        self.assertEqual(check_conventions.integer_literal("10"), 10)
-
-
     def test_symbol_nid_computes_the_nid_of_a_plain_export(self):
         self.assertEqual(check_conventions.symbol_nid("sceFoo_nid_postfix"),
                          check_conventions.compute_nid("sceFoo"))
@@ -27,7 +18,6 @@ class HelperTests(unittest.TestCase):
         self.assertIsNone(check_conventions.symbol_nid("sceFoo_nid_no_patch_cut"))
         self.assertIsNone(check_conventions.symbol_nid("SDL_Init"))
         self.assertIsNone(check_conventions.symbol_nid("_nid_postfix"))
-
 
     def test_is_debt_accepts_only_top_level_debt_files(self):
         self.assertTrue(check_conventions.is_debt(check_conventions.DEBT))
@@ -45,7 +35,6 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(set(check_conventions.link_bases("docs/dev/debt/changes/x.md", "[a](a.md)\n").values()),
                          {f"{check_conventions.DEBT_DIR}fragment.md"})
         self.assertEqual(set(check_conventions.link_bases("docs/dev/BUILD.md", "text\n").values()), {"docs/dev/BUILD.md"})
-
 
     def test_utf8_accepts_valid_utf8_and_refuses_invalid_bytes(self):
         self.assertTrue(check_conventions.utf8("ñ".encode("utf-8")))

@@ -9,7 +9,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_conventions
 from check_conventions import Check
-import check_conventions
 
 CHECKER = Path(__file__).resolve().parents[1] / "check_conventions.py"
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github/workflows"
@@ -231,6 +230,8 @@ class YamlHelperTests(unittest.TestCase):
         self.assertFalse(check_conventions.pull_request_filtered(lines, (1, 0, "on", "pull_request")))
         self.assertTrue(check_conventions.pull_request_filtered(lines, (1, 0, "on", "{pull_request: {paths: [x]}}")))
         self.assertFalse(check_conventions.pull_request_filtered(lines, (1, 0, "on", "{pull_request: {branches: [main]}}")))
+
+
 class JobListTests(unittest.TestCase):
     def test_jobs_reports_each_job_with_its_needs_and_condition(self):
         source = ['jobs:', '  build:', '    runs-on: ubuntu', '  test:', '    needs: [build]', '    if: always()', 'top:']

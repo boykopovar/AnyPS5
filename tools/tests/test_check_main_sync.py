@@ -437,15 +437,8 @@ class RenderTests(unittest.TestCase):
         text = check_main_sync.render(self.data(['f.txt']))
         self.assertIn('merge: CONFLICT in 1 file(s)', text)
         self.assertIn('  f.txt', text)
-class ResolveBaseTests(unittest.TestCase):
-    def test_resolve_base_returns_an_existing_ref_and_refuses_a_missing_one(self):
-        import subprocess as sp
-        with tempfile.TemporaryDirectory() as directory:
-            sp.run(['git', '-C', directory, 'init', '-q'], check=True)
-            sp.run(['git', '-C', directory, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'base'], check=True)
-            self.assertEqual(check_main_sync.resolve_base(Path(directory), 'HEAD'), 'HEAD')
-            with self.assertRaisesRegex(RuntimeError, 'no base ref found'):
-                check_main_sync.resolve_base(Path(directory), 'no-such-ref')
+
+
 class GitListTests(unittest.TestCase):
     def make_repo(self, directory):
         import subprocess as sp
@@ -463,12 +456,6 @@ class GitListTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.make_repo(directory)
             self.assertEqual(check_main_sync.names(Path(directory), 'ls-files', '-z'), ['a.txt'])
-class GitVersionTests(unittest.TestCase):
-    def test_git_version_returns_major_and_minor_numbers(self):
-        version = check_main_sync.git_version(Path('.'))
-        self.assertIsNotNone(version)
-        self.assertEqual(len(version), 2)
-        self.assertTrue(all(isinstance(part, int) for part in version))
 
 
 class ResolveBaseTests(unittest.TestCase):

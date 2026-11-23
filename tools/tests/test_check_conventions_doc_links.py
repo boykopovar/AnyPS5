@@ -280,6 +280,7 @@ class LinkSyntaxTests(unittest.TestCase):
         self.assertIn("[a](b.md)", blanked)
         self.assertNotIn("[x](y)", blanked)
         self.assertEqual(len(blanked), len(text))
+
     def test_link_syntax_blanks_a_fenced_block_and_keeps_line_count(self):
         text = "```\n[x](y)\n```\n[a](b.md)\n"
         blanked = check_conventions.link_syntax(text)
