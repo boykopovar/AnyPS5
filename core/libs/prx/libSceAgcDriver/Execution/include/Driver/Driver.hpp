@@ -259,6 +259,7 @@ private:
     static std::chrono::steady_clock::time_point& packetStartedAt();
     static PendingDrawPhases& pendingDrawPhases();
     void addDrawPhases(const std::array<double, DrawDriverPhaseCount>& ms, bool drawn, std::uint64_t captures);
+    void addFinisherDrawPhases(const std::array<double, DrawDriverPhaseCount>& ms, bool drawn, std::uint64_t captures, double queueMs);
     void noteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool ordered = true);
     void noteLabelPass(std::span<const std::uint32_t> packet, std::uint32_t queue);
     void noteLabelIssue(std::span<const std::uint32_t> packet, std::uint32_t queue);

@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawTiming.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "VulkanTestDevice.hpp"
@@ -118,6 +119,8 @@ int main() {
         if (!libraries && std::getenv("APS5_NO_GPL") == nullptr) return VulkanTestSkipped;
         using AgcDriver::DriverDetail::DrawFinisher;
         const bool finisher = DrawFinisher::Enabled() && DrawFinisher::Overlap();
+        const bool profiled = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+        const auto phasesBefore = AgcDriver::DriverDetail::CountedDrawPhases();
         Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
         Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
         PixelConstant[0] = 0.25f;
@@ -132,6 +135,7 @@ int main() {
         Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
         AgcDriverWaitIdle_nid_postfix();
         const auto drains = DrawFinisher::DrainText();
+        const auto phasesAfter = AgcDriver::DriverDetail::CountedDrawPhases();
         AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(LabelMemory.data()), sizeof(LabelMemory));
         AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(ColorMemory.data()), ColorMemory.size());
         for (std::uint32_t index = 0; index < Labels; ++index) {
@@ -142,8 +146,18 @@ int main() {
         Require(brightest + 2 >= 128 && brightest <= 130, "the draws before the labels wrote " + std::to_string(brightest) + ", expected 128");
         if (finisher) Require(drains.find(" 0x37 x") == std::string::npos, "a WRITE_DATA label after a draw handed to the finisher drained the finisher:" + drains);
         if (finisher) Require(drains.find(" 0x3c x") == std::string::npos, "a WAIT_REG_MEM on a label the finisher holds drained the finisher:" + drains);
+        if (profiled) {
+            const auto packets = phasesAfter.packets - phasesBefore.packets;
+            const auto drawn = phasesAfter.drawn - phasesBefore.drawn;
+            const auto handed = phasesAfter.handed - phasesBefore.handed;
+            const auto handedDrawn = phasesAfter.handedDrawn - phasesBefore.handedDrawn;
+            const auto counts = std::to_string(packets) + " draw packets, " + std::to_string(drawn) + " drawn, " + std::to_string(handed) + " handed, " + std::to_string(handedDrawn) + " drawn on the finisher";
+            Require(packets == Labels && drawn == Labels, "the worker did not report the phases of each draw packet once under APS5_PROFILE_DRAW: " + counts);
+            Require(handed == (finisher ? Labels : 0u), finisher ? "APS5_PROFILE_DRAW kept draws from the draw finisher or reported a handed draw's phases more than once: " + counts : "draws without the finisher reported finisher phases: " + counts);
+            Require(handedDrawn == handed, "a draw handed to the finisher under APS5_PROFILE_DRAW was not drawn there: " + counts);
+        }
         AgcDriverShutdown_nid_postfix();
-        std::cout << "labels after finisher draws " << (finisher ? "queued through the finisher" : "written in order") << "\n";
+        std::cout << "labels after finisher draws " << (finisher ? "queued through the finisher" : "written in order") << (profiled ? ", draw phases reported once per draw" : "") << "\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

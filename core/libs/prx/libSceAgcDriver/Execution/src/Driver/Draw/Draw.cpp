@@ -35,6 +35,7 @@
 #include <string>
 #include <string_view>
 #include <typeinfo>
+#include <utility>
 
 namespace AgcDriver::DriverDetail {
 
@@ -129,6 +130,7 @@ struct DrawTail {
     std::array<double, DrawDriverPhaseCount> phaseMs{};
     std::uint64_t captures = 0;
     std::chrono::steady_clock::time_point phaseLap{};
+    std::chrono::steady_clock::time_point handedAt{};
     DrawPhaseTiming phaseTiming{false, phaseMs, phaseLap};
     Pm4::DrawParameters drawParameters{};
     Pm4::DrawParameters resolvedParameters{};
@@ -766,7 +768,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     tail.dumpTarget = dumpTarget;
     tail.dumpSlot1 = dumpSlot1;
     tail.packetOffset = packetOffset;
-    const bool handOff = pipelined && !drawParameters.indirect && !profile && !lockedPrepare && !dumpGraphics && dumpTarget == 0 && dumpSlot1 == 0 && !tracePrograms && !verifyDrawDataHits() && deferredLabels().labels.empty() && DrawFinisher::Enabled();
+    const bool handOff = pipelined && !drawParameters.indirect && !lockedPrepare && !dumpGraphics && dumpTarget == 0 && dumpSlot1 == 0 && !tracePrograms && !verifyDrawDataHits() && deferredLabels().labels.empty() && DrawFinisher::Enabled();
     if (handOff) {
         tail.epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         tail.submissionSerial = submission.serial;
@@ -775,13 +777,26 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         if (DrawTableSnapshotEnabled()) KeepUserDataTables(*shaderMemory, programs);
         DrawFinisher::Pending held;
         if (DrawFinisher::Overlap()) held = heldWrites(tail);
+        const auto handedVerdict = drawn();
+        if (profile) tail.handedAt = std::chrono::steady_clock::now();
         DrawFinisher::Get().Enqueue([this, tailHolder] {
             auto& job = *tailHolder;
+            const auto pickedAt = job.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            PendingDrawPhases outer{};
+            if (job.profile) {
+                job.phaseMs = {};
+                job.captures = 0;
+                job.phaseLap = pickedAt;
+                outer = std::exchange(pendingDrawPhases(), PendingDrawPhases{});
+            }
             DrawPipeline::FollowEpoch(job.epoch);
             GuestMemory::SetCurrentPacket(job.packetOpcode, job.submissionQueue);
             PerformanceTimer finishTiming("Driver.DrawFinish");
+            bool finished = false;
             try {
-                if (finishDraw(job, finishTiming) == DrawVerdict::Rejected) throw std::runtime_error(job.ownRejected);
+                const auto verdict = finishDraw(job, finishTiming);
+                if (verdict == DrawVerdict::Rejected) throw std::runtime_error(job.ownRejected);
+                finished = verdict == DrawVerdict::Drawn;
             } catch (const DrawCompilePending&) {
                 CaptureTrace::Log("draw-pending submission=%llu offset=%zu finisher=1", static_cast<unsigned long long>(job.submissionSerial), job.packetOffset);
             } catch (const RefusedDraw& refused) {
@@ -791,9 +806,22 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 CaptureTrace::Log("draw-error submission=%llu offset=%zu finisher=1 reason=%.256s", static_cast<unsigned long long>(job.submissionSerial), job.packetOffset, error.what());
                 throw std::runtime_error("draw at submission " + std::to_string(job.submissionSerial) + " offset " + std::to_string(job.packetOffset) + " (finished on the draw finisher): " + error.what());
             }
+            if (!job.profile) return;
+            const auto now = std::chrono::steady_clock::now();
+            const auto& pending = pendingDrawPhases();
+            const bool phases = finished && pending.phases;
+            std::array<double, DrawDriverPhaseCount> ms{};
+            if (phases) {
+                ms = pending.ms;
+                ms[DrawRowEpilogue] = std::chrono::duration<double, std::milli>(now - pending.tailAt).count();
+            } else {
+                ms[DrawRowSkipped] = std::chrono::duration<double, std::milli>(now - pickedAt).count();
+            }
+            addFinisherDrawPhases(ms, phases, job.captures, std::chrono::duration<double, std::milli>(pickedAt - job.handedAt).count());
+            pendingDrawPhases() = outer;
         }, std::move(held));
         timing.Mark("draw_handed_off");
-        return drawn();
+        return handedVerdict;
     }
     noteFinisherHandOff(false);
     if (DrawFinisher::Busy()) {
