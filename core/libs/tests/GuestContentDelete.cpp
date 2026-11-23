@@ -22,6 +22,16 @@ std::string LogicErrorMessage(TAction action) {
     return "returned";
 }
 
+template <typename TAction>
+bool ThrowsRuntimeError(TAction action) {
+    try {
+        action();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
 }
 
 int main() {
@@ -45,6 +55,12 @@ int main() {
     param.heap_size = 0x4000;
     Require(sceContentDeleteInitialize(&param) == 0);
     Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5003u));
+    Require(ThrowsRuntimeError([] { sceContentDeleteByPath("/user/av_contents/photo/a.png"); }));
+    Require(ThrowsRuntimeError([] { sceContentDeleteById(1); }));
+    Require(ThrowsRuntimeError([&] { sceContentDeleteByIdListForSf(validIds, 1); }));
+    Require(ThrowsRuntimeError([] { sceContentDeleteGlobalMstat(); }));
+    Require(ThrowsRuntimeError([] { sceContentDeleteMemoryInitialize(); }));
+    Require(ThrowsRuntimeError([] { sceContentDeleteMemoryTerminate(); }));
     Require(sceContentDeleteInitialize(nullptr) == static_cast<int>(0x809D5001u));
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5001u));
     errno = 71;
