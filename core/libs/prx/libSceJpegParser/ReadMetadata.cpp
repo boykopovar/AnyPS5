@@ -163,10 +163,13 @@ struct Output {
             setter(object, &key, &value);
         } else {
             const auto& text = std::get<std::string>(field);
+            constexpr auto maxTextSize = std::min<std::uintmax_t>(SIZE_MAX - 1, INT64_MAX);
+            if (text.size() > maxTextSize) throw std::length_error("JPEG metadata: unrepresentable text length");
+            const std::size_t allocationSize = text.size() + 1;
             if (!zero) throw std::logic_error("JPEG metadata: missing calloc callback");
-            std::unique_ptr<void, JpegParser::Free> data(zero(1, text.size() + 1), release);
+            std::unique_ptr<void, JpegParser::Free> data(zero(1, allocationSize), release);
             if (!data) throw std::bad_alloc();
-            if (!GuestCopyOut_nid_no_patch(data.get(), text.c_str(), text.size() + 1))
+            if (!GuestCopyOut_nid_no_patch(data.get(), text.c_str(), allocationSize))
                 throw std::invalid_argument("JPEG metadata: unwritable text");
             const Value value{2, static_cast<std::int64_t>(text.size()), {.text = static_cast<const char*>(data.get())}};
             setter(object, &key, &value);

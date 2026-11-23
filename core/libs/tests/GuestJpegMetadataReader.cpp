@@ -60,8 +60,14 @@ void APS5_VABI Set(Metadata* out, const String* key, const Value* value) {
 }
 
 unsigned allocations = 0, releases = 0, zeroAllocations = 0;
+std::size_t largestTextAllocation = 0;
 void* APS5_VABI Allocate(std::size_t size) { ++allocations; return std::malloc(size); }
-void* APS5_VABI Zero(std::size_t count, std::size_t size) { ++zeroAllocations; return std::calloc(count, size); }
+void* APS5_VABI Zero(std::size_t count, std::size_t size) {
+    Check(count == 1, "single text allocation");
+    largestTextAllocation = std::max(largestTextAllocation, size);
+    ++zeroAllocations;
+    return std::calloc(count, size);
+}
 void APS5_VABI Free(void* p) { ++releases; std::free(p); }
 
 void Put(Bytes& dst, unsigned value, unsigned bytes, bool little) {
@@ -115,6 +121,16 @@ Bytes Exif(bool little) {
     return bytes;
 }
 
+Bytes LargeTitle(bool little, unsigned declaredCount, unsigned bytes) {
+    Bytes tiff(2, little ? 'I' : 'M');
+    Put(tiff, 42, 2, little); Put(tiff, 8, 4, little); Put(tiff, 1, 2, little);
+    Put(tiff, 0x010e, 2, little); Put(tiff, 2, 2, little); Put(tiff, declaredCount, 4, little);
+    Put(tiff, 26, 4, little); Put(tiff, 0, 4, little);
+    tiff.insert(tiff.end(), bytes, 's');
+    tiff.back() = 0;
+    return tiff;
+}
+
 Bytes WithExif(const Bytes& jpeg, const Bytes& tiff) {
     Bytes out{0xff, 0xd8, 0xff, 0xe1};
     Put(out, tiff.size() + 8, 2, false);
@@ -135,10 +151,15 @@ int main() {
     slots[10] = reinterpret_cast<std::uintptr_t>(Count);
     Check(libSceJpegParserUnknown_v3aOHSEXfjo_nid_no_patch(config.data()) == 0, "initialize");
     const std::string pathName = "/reader_picture.jpg";
-    String path{}; path.data = pathName.c_str(); path.size = path.capacity = pathName.size();
     Metadata request{slots.data(), 0, 0, {}, {}}, output{slots.data(), 0x55, 0, {}, {}};
-    const auto host = pathName.substr(1);
-    const auto read = [&](const Bytes& img) {
+    const auto read = [&](const Bytes& img, std::string_view filePath = {}) {
+        const std::string name(filePath.empty() ? std::string_view(pathName) : filePath);
+        const auto host = name.front() == '/' ? name.substr(1) : name;
+        String path{};
+        path.size = name.size();
+        path.capacity = std::max<std::size_t>(15, name.size());
+        if (name.size() < 16) std::memcpy(path.small, name.data(), name.size());
+        else path.data = name.c_str();
         if (img.empty()) std::filesystem::remove(host);
         else {
             std::ofstream file(host, std::ios::binary | std::ios::trunc);
@@ -167,6 +188,39 @@ int main() {
               f.at("codec_type") == Field{17} && f.at("base_id") == Field{0}, "file facts");
         Check(output.order.front() == "title" && output.order.back() == "exif_version", "firmware key order");
     }
+    constexpr unsigned maxCount = 65535 - 8 - 26;
+    std::string maxTitle(maxCount, 's');
+    maxTitle.back() = 0;
+    for (bool little : {false, true}) {
+        largestTextAllocation = 0;
+        Check(read(WithExif(jpeg, LargeTitle(little, maxCount, maxCount))) == 0 &&
+              output.fields.at("title") == Field{maxTitle} && output.fields.at("embedded_title") == Field{maxTitle} &&
+              largestTextAllocation == maxCount + 1, "largest single-title APP1 and setter terminator");
+        largestTextAllocation = 0;
+        Check(read(WithExif(jpeg, LargeTitle(little, maxCount + 1, maxCount))) == 0 &&
+              !output.fields.contains("embedded_title") && output.fields.at("title") == Field{"reader_picture"} &&
+              largestTextAllocation < maxCount, "ignore tag count beyond APP1 before allocating its text");
+    }
+    struct PathCase { const char* name; const char* title; const char* extension; };
+    const PathCase paths[] = {{"bare.jpg", nullptr, "jpg"}, {"/plain", nullptr, nullptr},
+                              {"/reader.dir/item", "item", "dir/item"}, {"/reader.dir/item.JPEG", "item", "JPEG"},
+                              {"/reader.dir/a.b.jpg", "a.b", "jpg"}, {"/reader.dir/.hidden", "", "hidden"}};
+    std::filesystem::create_directory("reader.dir");
+    for (const auto& entry : paths) {
+        Check(read(jpeg, entry.name) == 0, "read JPEG at guest path");
+        for (const auto& [key, value] : {std::pair{"title", entry.title}, std::pair{"content_path_ext", entry.extension}}) {
+            const auto found = output.fields.find(key);
+            Check(value ? found != output.fields.end() && found->second == Field{std::string(value)} :
+                          found == output.fields.end(), "file defaults match whole-path rules");
+        }
+        Check(output.fields.at("content_path") == Field{std::string(entry.name)} && !output.fields.contains("embedded_title"),
+              "plain path metadata");
+        Check(read(WithExif(jpeg, Exif(true)), entry.name) == 0 && output.fields.at("title") == Field{std::string("film\0", 5)},
+              "EXIF title overrides path defaults");
+        const std::string name(entry.name);
+        std::filesystem::remove(name.front() == '/' ? name.substr(1) : name);
+    }
+    std::filesystem::remove("reader.dir");
     auto tiff = Exif(true);
     const auto note = Maker();
     const auto start = std::search(tiff.begin(), tiff.end(), note.begin(), note.end());
