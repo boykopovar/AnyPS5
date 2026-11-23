@@ -186,6 +186,54 @@ class AnalysisTests(unittest.TestCase):
         text = "[time] scheduler tick raised to 0.5 ms\nFailed to load module: libs/libSceSystemService.prx\nGetLastError: 127 - The specified procedure could not be found.\n"
         self.assertEqual(title_run.first_error(text), "Failed to load module: libs/libSceSystemService.prx")
 
+    def test_input_audit_skips_invalid_telemetry_lines(self):
+        path = self.root / "aps5-summary.jsonl"
+        good = '{"presents":10,"window":{"ms":1000},"gpu":"Good"}'
+        cases = {
+            "duplicate frames": '{"presents":20,"presents":30,"window":{"ms":1000}}',
+            "non-object window": '{"presents":20,"window":[]}',
+            "negative frame count": '{"presents":-20,"window":{"ms":1000}}',
+            "negative duration": '{"presents":20,"window":{"ms":-1000}}',
+            "numeric overflow": '{"presents":' + str(10**309) + ',"window":{"ms":1000}}',
+            "non-finite duration": '{"presents":20,"window":{"ms":1e999}}',
+            "oversized integer duration": '{"presents":20,"window":{"ms":' + str(10**400) + '}}',
+            "missing duration with presents": '{"presents":20,"window":{}}',
+            "zero duration with presents": '{"presents":20,"window":{"ms":0}}',
+            "deep nesting": "[" * 20000 + "0" + "]" * 20000,
+        }
+        for label, invalid in cases.items():
+            with self.subTest(label=label):
+                path.write_text(good + "\n" + invalid, encoding="utf-8")
+                self.assertEqual(title_run.read_summary(path),
+                                 {"presents": 10, "fps": 10.0, "gpu": "Good", "driver": "", "os": ""})
+
+    def test_input_audit_ignores_non_text_telemetry_identity(self):
+        path = self.root / "aps5-summary.jsonl"
+        path.write_text(json.dumps({"presents": 10, "window": {"ms": 1000},
+                                    "gpu": ["GPU"], "driver": "Driver", "os": {"name": "OS"}}), encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path),
+                         {"presents": 10, "fps": 10.0, "gpu": "", "driver": "Driver", "os": ""})
+
+    def test_input_audit_telemetry_bom_keeps_the_first_measurement(self):
+        path = self.root / "aps5-summary.jsonl"
+        path.write_text('{"presents":10,"window":{"ms":1000}}', encoding="utf-8-sig")
+        self.assertEqual(title_run.read_summary(path)["fps"], 10.0)
+
+    def test_input_audit_run_report_handles_malformed_or_bom_json(self):
+        path = self.root / "anyps5-report.json"
+        cases = {
+            "duplicate report fields": '{"format":"anyps5-report","run":{},"run":{"averageFps":90}}',
+            "nested report overflow": "[" * 20000 + "0" + "]" * 20000,
+            "non-finite report measurement": '{"format":"anyps5-report","run":{"averageFps":1e999}}',
+        }
+        for label, payload in cases.items():
+            with self.subTest(label=label):
+                path.write_text(payload, encoding="utf-8")
+                self.assertIsNone(title_run.read_report(path))
+        with self.subTest(label="BOM report"):
+            path.write_text('{"format":"anyps5-report","run":{"averageFps":60}}', encoding="utf-8-sig")
+            self.assertEqual(title_run.read_report(path)["averageFps"], 60)
+
     def test_read_summary(self):
         path = self.root / "aps5-summary.jsonl"
         lines = [{"presents": 300, "window": {"ms": 10000}, "gpu": "A", "driver": "1", "os": "W"},
@@ -800,6 +848,81 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "no title package under --games: .*games$"):
             title_run.main(["--games", str(games), "--out", str(self.root / "out")])
         self.assertFalse((self.root / "out").exists())
+
+    def test_input_audit_comparison_refuses_bad_structure_before_discovery(self):
+        import contextlib
+        import io
+        path = self.root / "comparison.json"
+        cases = (
+            ("[]", "must be an object with a titles object"),
+            ('{"titles":[]}', "must be an object with a titles object"),
+            ('{"titles":{"PPSA00001":false}}', "comparison title PPSA00001 must be an object with a name"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[]}}}', "comparison title PPSA00001 needs recorded runs"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"unknown"}]}}}', "unrecognized outcome"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"rendering","fps":NaN}]}}}', "JSON numbers must be finite"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"rendering","report":[1]}]}}}', "report must be an object"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"rendering","report":{"shaders":[1]}}]}}}', "shaders must be an object"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"rendering","report":{"missing":[1]}}]}}}', "missing must be a list of objects"),
+        )
+        for text, message in cases:
+            with self.subTest(message=message):
+                path.write_text(text, encoding="utf-8")
+                errors = io.StringIO()
+                with unittest.mock.patch.object(title_run, "discover", return_value={}) as discover, \
+                        contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                    title_run.main(["--games", str(self.root), "--compare", str(path)])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(message, errors.getvalue())
+                discover.assert_not_called()
+
+    def test_input_audit_title_catalog_checks_each_object(self):
+        path = self.root / "titles.json"
+        for text, message in (
+            ("[]", "title catalog must be an object"),
+            ('{"PPSA00001":null}', "PPSA00001: title entry must be an object"),
+            ("[" * 20000 + "0" + "]" * 20000, "nested too deeply|title catalog must be an object"),
+        ):
+            with self.subTest(message=message):
+                path.write_text(text, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    title_run.load_titles(path)
+
+    def test_input_audit_discovery_rejects_malformed_package_metadata(self):
+        base = self.root / "pkg"
+        package(base, "PPSA00001")
+        param = base / "sce_sys/param.json"
+        cases = (
+            ("[]", "package metadata must be an object"),
+            ('{"titleId":"PPSA00001","titleId":"PPSA00002"}', "duplicate field"),
+            ('{"titleId":"PPSA00001","localizedParameters":[]}', "localizedParameters must be an object"),
+            ('{"titleId":"PPSA00001","localizedParameters":{"defaultLanguage":[]}}', "defaultLanguage must be a string"),
+            ('{"titleId":"PPSA00001","localizedParameters":{"en-US":null}}', "localized entry must be an object"),
+            ('{"titleId":"PPSA00001","contentVersion":4}', "contentVersion must be a string"),
+        )
+        for text, message in cases:
+            with self.subTest(message=message):
+                param.write_text(text, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    title_run.discover([self.root])
+
+    def test_input_audit_cli_reports_malformed_game_metadata_without_a_traceback(self):
+        base = self.root / "games" / "pkg"
+        package(base, "PPSA00001")
+        (base / "sce_sys/param.json").write_text("[]", encoding="utf-8")
+        result = subprocess.run([sys.executable, title_run.__file__, "--games", str(self.root / "games")],
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("error: --games:", result.stderr)
+        self.assertIn("param.json", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_input_audit_discovery_uses_title_id_for_empty_name(self):
+        base = self.root / "pkg"
+        package(base, "PPSA00001")
+        param = base / "sce_sys/param.json"
+        param.write_text('{"titleId":"PPSA00001","localizedParameters":{"en-US":{"titleName":null}}}',
+                         encoding="utf-8")
+        self.assertEqual(title_run.discover([self.root])["PPSA00001"]["name"], "PPSA00001")
 
     def test_discover(self):
         package(self.root / "a/src/PPSA00001", "PPSA00001", "01.000.110", "Light")

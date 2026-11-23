@@ -199,6 +199,10 @@ public:
     bool containsAnyFormControls = false;
     bool isFocused = false;
     bool hasOpener = false;
+    bool allowsFollowingLink = true;
+    bool shouldCloseOnWebView = true;
+    std::optional<std::u16string> accessibleName;
+    std::optional<std::u16string> textDirection;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
@@ -525,6 +529,14 @@ class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListSt
 public:
     std::u16string path;
     std::map<std::u16string, Retained<Object>> filters;
+};
+
+class FramePolicyListener final : public ObjectOf<ObjectType::FramePolicyListener> {
+public:
+    enum class Decision { None, Use, UseInNewProcess, Download, Ignore };
+
+    Decision decision = Decision::None;
+    Retained<Object> policies;
 };
 
 }  // namespace NKWebKit
