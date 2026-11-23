@@ -124,12 +124,13 @@ struct FileCloser {
 };
 
 bool CopyFileContents(const String& targetPath, const String& linkPath) {
+    FileStat status{};
+    if (!Status(targetPath, status, true) || GuestFilesystem::TypeOfMode(status.st_mode) != GuestFilesystem::TypeRegular) return false;
     FileCloser source{_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(targetPath, 0, true, false)};
     if (source.handle == -1) return false;
     FileCloser destination{_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(linkPath, 1, true, true)};
     if (destination.handle == -1) return false;
-    FileStat status{};
-    if (Status(targetPath, status, true)) fchmod_nid_postfix(destination.handle, status.st_mode & 07777);
+    fchmod_nid_postfix(destination.handle, status.st_mode & 07777);
     std::array<char, CopyBufferSize> buffer{};
     for (;;) {
         const int bytesRead = ReadFromFile(source.handle, buffer.data(), CopyBufferSize);

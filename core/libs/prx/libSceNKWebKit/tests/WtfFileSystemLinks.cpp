@@ -154,6 +154,10 @@ int main() {
         Require(!std::filesystem::equivalent(otherPath / "permissions.bin", copiedPath / "copied.bin"));
         Require((std::filesystem::status(copiedPath / "copied.bin").permissions() & std::filesystem::perms::mask) == (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write));
         Require(!hardLinkOrCopyFile(Make(GuestPath("/nkwebkit-hard-link-or-copy-other", "permissions.bin")), Make(GuestPath("/nkwebkit-hard-link-or-copy-tmpfs", "copied.bin"))));
+
+        Require(::mkfifo(NativeText(otherPath / "source.fifo").c_str(), 0600) == 0);
+        Require(!hardLinkOrCopyFile(Make(GuestPath("/nkwebkit-hard-link-or-copy-other", "source.fifo")), Make(GuestPath("/nkwebkit-hard-link-or-copy-tmpfs", "fifo-copy"))));
+        Require(!std::filesystem::exists(copiedPath / "fifo-copy"));
         std::filesystem::remove_all(copiedPath, error);
     }
 #endif
