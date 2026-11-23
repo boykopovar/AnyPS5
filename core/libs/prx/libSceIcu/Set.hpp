@@ -18,4 +18,9 @@ void APS5_VABI uset_addAll_nid_postfix(USet*, const USet*);
 std::int8_t APS5_VABI uset_contains_nid_postfix(const USet*, std::int32_t);
 std::int32_t APS5_VABI uset_getItemCount_nid_postfix(const USet*);
 std::int32_t APS5_VABI uset_getItem_nid_postfix(const USet*, std::int32_t, std::int32_t*, std::int32_t*, char16_t*, std::int32_t, std::int32_t*);
+std::int32_t APS5_VABI _ZNK6icu_6810UnicodeSet4spanEPKDsi17USetSpanCondition_nid_postfix(const USet*, const char16_t*, std::int32_t, std::int32_t);
+std::int32_t APS5_VABI _ZNK6icu_6810UnicodeSet8spanBackEPKDsi17USetSpanCondition_nid_postfix(const USet*, const char16_t*, std::int32_t, std::int32_t);
+std::int32_t APS5_VABI _ZNK6icu_6810UnicodeSet8spanUTF8EPKci17USetSpanCondition_nid_postfix(const USet*, const char*, std::int32_t, std::int32_t);
+std::int32_t APS5_VABI _ZNK6icu_6810UnicodeSet12spanBackUTF8EPKci17USetSpanCondition_nid_postfix(const USet*, const char*, std::int32_t, std::int32_t);
+USet* APS5_VABI _ZN6icu_6810UnicodeSet21applyIntPropertyValueE9UPropertyiR10UErrorCode_nid_postfix(USet*, std::int32_t, std::int32_t, std::int32_t*);
 }

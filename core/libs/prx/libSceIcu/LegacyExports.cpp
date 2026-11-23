@@ -426,10 +426,6 @@ int APS5_VABI sceIcuLegacyUnknown_0ZHUcvkrLyI_nid_no_patch() {
 }
 APS5_EXPORT("0ZHUcvkrLyI", sceIcuLegacyUnknown_0ZHUcvkrLyI_nid_no_patch);
 
-int APS5_VABI _ZNK6icu_6810UnicodeSet12spanBackUTF8EPKci17USetSpanCondition_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ubrk_getRuleStatusVec_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1585,10 +1581,6 @@ int APS5_VABI sceIcuLegacyUnknown_8n2w3ligC94_nid_no_patch() {
 APS5_EXPORT("8n2w3ligC94", sceIcuLegacyUnknown_8n2w3ligC94_nid_no_patch);
 
 int APS5_VABI _ZN6icu_6817UCharsTrieBuilderD0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK6icu_6810UnicodeSet4spanEPKDsi17USetSpanCondition_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7611,10 +7603,6 @@ int APS5_VABI sceIcuLegacyUnknown_mnKq6wtnV9c_nid_no_patch() {
 }
 APS5_EXPORT("mnKq6wtnV9c", sceIcuLegacyUnknown_mnKq6wtnV9c_nid_no_patch);
 
-int APS5_VABI _ZN6icu_6810UnicodeSet21applyIntPropertyValueE9UPropertyiR10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_mr1Iv7iiMow_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8066,10 +8054,6 @@ int APS5_VABI sceIcuLegacyUnknown_pr2ZxWaYW28_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("pr2ZxWaYW28", sceIcuLegacyUnknown_pr2ZxWaYW28_nid_no_patch);
-
-int APS5_VABI _ZNK6icu_6810UnicodeSet8spanUTF8EPKci17USetSpanCondition_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6810UnicodeSet9retainAllERKNS_13UnicodeStringE_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -9413,10 +9397,6 @@ int APS5_VABI sceIcuLegacyUnknown_yYblB5YQKKE_nid_no_patch() {
 APS5_EXPORT("yYblB5YQKKE", sceIcuLegacyUnknown_yYblB5YQKKE_nid_no_patch);
 
 int APS5_VABI _ZN6icu_6810CharStringC1EOS0__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK6icu_6810UnicodeSet8spanBackEPKDsi17USetSpanCondition_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
