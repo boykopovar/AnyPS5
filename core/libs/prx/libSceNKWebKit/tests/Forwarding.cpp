@@ -146,7 +146,6 @@ int main() {
     RequireStub(&_ZN3JSC22FullGCActivityCallbackD2Ev);
     RequireStub(&_ZN3JSC6JSLock12DropAllLocksC1ERNS_2VME);
     RequireStub(&_ZN3JSC6JSLock12DropAllLocksC2ERNS_2VME);
-    RequireStub(&_ZN7WebCore12ISOWebVTTCueD1Ev);
     RequireStub(&_ZN7WebCore13MIMETypeCacheD1Ev);
     RequireStub(&_ZN7WebCore16HTMLMediaElement15clearMediaCacheERKN3WTF6StringENS1_8WallTimeE);
     RequireStub(&_ZN7WebCore26ISOProtectionSchemeInfoBoxD1Ev);
