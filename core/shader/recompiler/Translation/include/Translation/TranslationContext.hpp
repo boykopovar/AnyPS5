@@ -113,7 +113,7 @@ private:
     IrValue& invalidProductF32(IrValue* lhs, IrValue* rhs);
     IrValue& invalidOperationF32(std::initializer_list<IrValue*> sources, IrValue& invalidProduct);
     std::array<IrU32, 2> quietNan64(const std::array<IrU32, 2>& bits);
-    IrValue& roundLdexpF64(const std::array<IrU32, 2>& argument, IrValue& exponent, IrValue& result);
+    IrValue& ldexpF64(const std::array<IrU32, 2>& argument, IrValue& exponent);
     std::array<IrU32, 2> readU32Pair(const RdnaOperand& operand);
     IrU64 readU64(const RdnaOperand& operand);
     std::array<IrU32, 2> readF64Bits(const RdnaOperand& operand);
