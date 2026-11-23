@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
+#include <stdexcept>
 #include <filesystem>
 #include <string>
 #include <sys/stat.h>
@@ -13,6 +14,17 @@ int main(int argc, char** argv) {
     const std::filesystem::path base = argv[1];
     std::filesystem::remove_all(base);
     Require(std::filesystem::create_directory(base));
+#ifdef _WIN32
+    bool notImplemented = false;
+    try {
+        mkfifo_nid_postfix((base / "pipe").string().c_str(), 0600);
+    } catch (const std::runtime_error&) {
+        notImplemented = true;
+    }
+    Require(notImplemented);
+    std::filesystem::remove_all(base);
+    return 0;
+#else
 
     const std::string fifo = (base / "pipe").string();
     Require(mkfifo_nid_postfix(fifo.c_str(), 0600) == 0);
@@ -28,4 +40,5 @@ int main(int argc, char** argv) {
 
     std::filesystem::remove_all(base);
     return 0;
+#endif
 }
