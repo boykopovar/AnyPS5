@@ -2,6 +2,7 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 
 #include <array>
 #include <chrono>
@@ -187,8 +188,13 @@ void TestFiles() {
     const auto wide = modificationTime(guest("\xe4\xb8\xad.db"));
     Require(wide.hasValue && wide.value == 1300000000.0);
     Require(!modificationTime(guest("missing.db")).hasValue);
-    Require(!modificationTime(Make("")).hasValue);
-    Require(!modificationTime(String()).hasValue);
+    *__error_nid_postfix() = 91;
+    Require(!modificationTime(Make("")).hasValue && *__error_nid_postfix() == 91);
+    Require(!modificationTime(String()).hasValue && *__error_nid_postfix() == 91);
+    Require(!modificationTime(Make(std::string(1, char{}) + "old.db")).hasValue && *__error_nid_postfix() == 91);
+    Require(!modificationTime(guest("missing.db")).hasValue && *__error_nid_postfix() == 2);
+    *__error_nid_postfix() = 91;
+    Require(modificationTime(guest("old.db")).hasValue && *__error_nid_postfix() == 91);
 
     std::filesystem::create_directory(root / "empty");
     Require(deleteEmptyDirectory(guest("empty")));

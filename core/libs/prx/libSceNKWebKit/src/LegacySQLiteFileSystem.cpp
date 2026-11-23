@@ -111,7 +111,7 @@ OptionalWallTime APS5_VABI _ZN7WebCore16SQLiteFileSystem24databaseModificationTi
     if (!fileName.impl) return OptionalWallTime{};
     const CString representation = _ZNK3WTF6String4utf8ENS_14ConversionModeE(&fileName, 0);
     const char* data = representation.buffer ? reinterpret_cast<const char*>(representation.buffer + 1) : nullptr;
-    if (!data) return OptionalWallTime{};
+    if (!data || !*data) return OptionalWallTime{};
     FileStat status{};
     if (stat_nid_postfix(data, &status) != 0) return OptionalWallTime{};
     return OptionalWallTime{static_cast<double>(status.st_mtim.tv_sec)};
