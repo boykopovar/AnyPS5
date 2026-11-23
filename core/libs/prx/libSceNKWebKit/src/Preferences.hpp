@@ -72,6 +72,7 @@ const void* APS5_VABI WKPreferencesCreateWithIdentifier(const void* identifierRe
 void APS5_VABI WKPreferencesEnableAllExperimentalFeatures(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetAVFoundationEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetAVFoundationNSURLSessionEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetAccelerated2DCanvasEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetAcceleratedCompositingEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetAcceleratedDrawingEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetAggressiveTileRetentionEnabled(const void* preferencesRef);
@@ -83,6 +84,7 @@ bool APS5_VABI WKPreferencesGetAnimatedImageAsyncDecodingEnabled(const void* pre
 bool APS5_VABI WKPreferencesGetAntialiasedFontDilationEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetApplePayCapabilityDisclosureAllowed(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetApplePayEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetApplicationChromeModeEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetArtificialPluginInitializationDelayEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetAsynchronousPluginInitializationEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetAsynchronousPluginInitializationEnabledForAllPlugins(const void* preferencesRef);
@@ -276,6 +278,7 @@ void APS5_VABI WKPreferencesResetAllInternalDebugFeatures(const void* preference
 void APS5_VABI WKPreferencesResetTestRunnerOverrides(const void* preferencesRef);
 void APS5_VABI WKPreferencesSetAVFoundationEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetAVFoundationNSURLSessionEnabled(const void* preferencesRef, bool value);
+void APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetAcceleratedCompositingEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetAcceleratedDrawingEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetAggressiveTileRetentionEnabled(const void* preferencesRef, bool enabled);

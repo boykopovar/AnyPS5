@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -14,6 +15,7 @@
 namespace {
 
 using NKWebKit::WtfAbi::ByteVector;
+using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringView;
 
 void Check(bool condition, std::source_location location = std::source_location::current()) {
@@ -321,6 +323,200 @@ void TestLineEndingStorage() {
     Check(grown.buffer == original && grown.size == 2);
 }
 
+struct RangeResult {
+    bool accepted;
+    long long offset;
+    long long end;
+    long long suffixLength;
+};
+
+RangeResult ParseRange(const String& string) {
+    RangeResult result{false, 7, 7, 7};
+    result.accepted = _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&string, &result.offset, &result.end, &result.suffixLength);
+    return result;
+}
+
+String MakeNarrow(const char* text) {
+    return _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(text), static_cast<unsigned>(std::strlen(text)));
+}
+
+String MakeWide(const std::u16string& text) {
+    String string = _ZN3WTF10StringImpl6createEPKDsj(text.data(), static_cast<unsigned>(text.size()));
+    if (!text.empty()) Check(!(string.impl->hashAndFlags & 4));
+    return string;
+}
+
+template<typename Function> void ForBothStringWidths(const char* text, Function function) {
+    function(MakeNarrow(text));
+    std::u16string wide;
+    for (const char* cursor = text; *cursor; ++cursor) wide.push_back(static_cast<unsigned char>(*cursor));
+    function(MakeWide(wide));
+}
+
+void ExpectRange(const char* text, long long offset, long long end, long long suffixLength, std::source_location location = std::source_location::current()) {
+    ForBothStringWidths(text, [&](const String& string) {
+        RangeResult result = ParseRange(string);
+        Check(result.accepted && result.offset == offset && result.end == end && result.suffixLength == suffixLength, location);
+    });
+}
+
+void ExpectRejected(const char* text, std::source_location location = std::source_location::current()) {
+    ForBothStringWidths(text, [&](const String& string) {
+        RangeResult result = ParseRange(string);
+        Check(!result.accepted && result.offset == -1 && result.end == -1 && result.suffixLength == -1, location);
+    });
+}
+
+bool IsRangeWhitespace(char16_t unit) {
+    return (unit >= 0x9 && unit <= 0xD) || unit == 0x20 || unit == 0x1680 || (unit >= 0x2000 && unit <= 0x200A) || unit == 0x2028 || unit == 0x205F || unit == 0x3000;
+}
+
+bool IsZeroToFive(const std::u16string& text) {
+    RangeResult result = ParseRange(MakeWide(text));
+    return result.accepted && result.offset == 0 && result.end == 5 && result.suffixLength == -1;
+}
+
+void TestParseRangeForms() {
+    constexpr long long maximum = std::numeric_limits<long long>::max();
+    constexpr long long minimum = std::numeric_limits<long long>::min();
+
+    ExpectRange("bytes=0-499", 0, 499, -1);
+    ExpectRange("bytes=500-", 500, -1, -1);
+    ExpectRange("bytes=-500", -1, -1, 500);
+    ExpectRange("bytes=0-0", 0, 0, -1);
+    ExpectRange("bytes=7-7", 7, 7, -1);
+    ExpectRange("bytes=00012-00015", 12, 15, -1);
+    ExpectRange("bytes=+0-+5", 0, 5, -1);
+    ExpectRange("bytes=-+5", -1, -1, 5);
+    ExpectRange("bytes=-0", -1, -1, 0);
+
+    ExpectRange("BYTES=0-1", 0, 1, -1);
+    ExpectRange("Bytes=2-3", 2, 3, -1);
+    ExpectRange("bYtEs=4-5", 4, 5, -1);
+    ExpectRange("bytes\x1d" "0-1", 0, 1, -1);
+
+    ExpectRange("bytes= 0 - 499 ", 0, 499, -1);
+    ExpectRange("bytes=\t0-\t1\t", 0, 1, -1);
+    ExpectRange("bytes=\v0-1\f", 0, 1, -1);
+    ExpectRange("bytes=\r\n0-1\r\n", 0, 1, -1);
+    ExpectRange("bytes= 5 -", 5, -1, -1);
+    ExpectRange("bytes=5-   ", 5, -1, -1);
+    ExpectRange("bytes=- 500 ", -1, -1, 500);
+
+    ExpectRange("bytes=0-9223372036854775807", 0, maximum, -1);
+    ExpectRange("bytes=9223372036854775807-9223372036854775807", maximum, maximum, -1);
+    ExpectRange("bytes=9223372036854775807-", maximum, -1, -1);
+    ExpectRange("bytes=-9223372036854775807", -1, -1, maximum);
+    ExpectRange("bytes=-9223372036854775808", -1, -1, -1);
+
+    ExpectRange("bytes=5--1", 5, -1, -1);
+    ExpectRange("bytes=--5", -1, -1, -5);
+    ExpectRange("bytes=--9223372036854775807", -1, -1, -maximum);
+    ExpectRange("bytes=--9223372036854775808", -1, -1, minimum);
+}
+
+void TestParseRangeSuffixLeniency() {
+    ExpectRange("bytes=-", -1, -1, -1);
+    ExpectRange("bytes=- ", -1, -1, -1);
+    ExpectRange("bytes=-abc", -1, -1, -1);
+    ExpectRange("bytes=-5,7", -1, -1, -1);
+    ExpectRange("bytes=-5-6", -1, -1, -1);
+    ExpectRange("bytes=-5 5", -1, -1, -1);
+    ExpectRange("bytes=-9223372036854775809", -1, -1, -1);
+    ExpectRange("bytes=--9223372036854775809", -1, -1, -1);
+}
+
+void TestParseRangeRejections() {
+    static const char* const rejected[] = {
+        "",
+        "b",
+        "bytes",
+        "bytes=",
+        "bytes=5",
+        "bytes=5 ",
+        "byte=0-1",
+        "bytes 0-1",
+        "bytes:0-1",
+        "bytes0-1",
+        "bytess=0-1",
+        "items=0-1",
+        " bytes=0-1",
+        "\tbytes=0-1",
+        "bytes =0-1",
+        "bytes=a-5",
+        "bytes=5-a",
+        "bytes=5-5a",
+        "bytes=0x5-7",
+        "bytes=1.5-2",
+        "bytes=1-2.5",
+        "bytes=1 2-3",
+        "bytes=1-2 3",
+        "bytes=+-5",
+        "bytes=5-4",
+        "bytes=1-0",
+        "bytes=10-9",
+        "bytes=9223372036854775807-0",
+        "bytes=5--2",
+        "bytes= -5",
+        "bytes= -5-6",
+        "bytes=0-1,5-6",
+        "bytes=0-1, 5-6",
+        "bytes=0-,5-",
+        "bytes=0-1,",
+        "bytes=0-1;5-6",
+        "bytes=0-9223372036854775808",
+        "bytes=9223372036854775808-",
+        "bytes=99999999999999999999-",
+        "bytes=0-99999999999999999999",
+        "bytes=\xa0" "0-5",
+        "bytes=0-5\xa0",
+        "bytes=\x85" "0-5",
+    };
+    for (const char* text : rejected) ExpectRejected(text);
+
+    RangeResult result = ParseRange(String());
+    Check(!result.accepted && result.offset == -1 && result.end == -1 && result.suffixLength == -1);
+}
+
+void TestParseRangeWhitespaceUnits() {
+    for (unsigned value = 0; value <= 0xFFFF; ++value) {
+        const char16_t unit = static_cast<char16_t>(value);
+        std::u16string leading = u"bytes=";
+        leading.push_back(unit);
+        leading += u"0-5";
+        Check(IsZeroToFive(leading) == (IsRangeWhitespace(unit) || unit == u'+' || unit == u'0'));
+
+        std::u16string trailing = u"bytes=0-5";
+        trailing.push_back(unit);
+        Check(IsZeroToFive(trailing) == IsRangeWhitespace(unit));
+
+        std::u16string separator = u"bytes";
+        separator.push_back(unit);
+        separator += u"0-5";
+        Check(IsZeroToFive(separator) == (unit == u'=' || unit == 0x1D));
+    }
+}
+
+void TestParseRangeArguments() {
+    String text = MakeNarrow("bytes=0-1");
+    const unsigned references = text.impl->refCount;
+    long long offset = 0;
+    long long end = 0;
+    long long suffixLength = 0;
+    Check(_ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&text, &offset, &end, &suffixLength));
+    Check(text.impl->refCount == references && offset == 0 && end == 1 && suffixLength == -1);
+
+    Throws([&] { _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(nullptr, &offset, &end, &suffixLength); });
+    Throws([&] { _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&text, nullptr, &end, &suffixLength); });
+    Throws([&] { _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&text, &offset, nullptr, &suffixLength); });
+    Throws([&] { _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&text, &offset, &end, nullptr); });
+
+    NKWebKit::WtfAbi::StringImpl broken{2, 9, nullptr, 4};
+    String brokenString(&broken);
+    Throws([&] { ParseRange(brokenString); });
+    brokenString.impl = nullptr;
+}
+
 }  // namespace
 
 int main() {
@@ -329,5 +525,10 @@ int main() {
     TestXFrameOptions();
     TestLineEndings();
     TestLineEndingStorage();
+    TestParseRangeForms();
+    TestParseRangeSuffixLeniency();
+    TestParseRangeRejections();
+    TestParseRangeWhitespaceUnits();
+    TestParseRangeArguments();
     return 0;
 }

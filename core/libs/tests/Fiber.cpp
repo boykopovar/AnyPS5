@@ -48,7 +48,7 @@ FiberStorage g_secondStorage;
 auto* const g_first = reinterpret_cast<FiberObject*>(&g_firstStorage);
 auto* const g_second = reinterpret_cast<FiberObject*>(&g_secondStorage);
 
-[[gnu::no_sanitize("address")]] void CheckActiveContext(FiberObject* fiber, std::uint64_t expectedSize) {
+[[gnu::no_sanitize_address]] void CheckActiveContext(FiberObject* fiber, std::uint64_t expectedSize) {
     FiberInfo info{};
     info.size = sizeof(info);
     Require(sceFiberGetInfo(fiber, &info) == 0, "active fiber context info");
@@ -300,6 +300,9 @@ void RunAttachedContext() {
     Require(sceFiberRename(g_attached, longName.c_str()) == 0, "rename to a long name");
     Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strlen(info.name) == FIBER_MAX_NAME_LENGTH && longName.compare(0, FIBER_MAX_NAME_LENGTH, info.name) == 0, "a long name is cut at the limit");
     Require(sceFiberRename(g_attached, "attached") == 0, "restore the fiber's name");
+    errno = 71;
+    Require(_sceFiberInitializeImpl_nid_postfix(g_attached, reinterpret_cast<const char*>(0x10), AttachedEntry, 34, nullptr, 0, nullptr, 0) == FiberErrorInvalid && errno == 71, "initialize with an unreadable name");
+    Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strcmp(info.name, "attached") == 0 && info.arg_on_initialize == 33, "an unreadable name leaves the fiber unchanged");
     Require(_sceFiberAttachContextAndRun(nullptr, g_attachedContext.data(), g_attachedContext.size(), 0, nullptr) == FiberErrorNull, "attach and run a null fiber");
     Require(_sceFiberAttachContextAndRun(g_attached, nullptr, g_attachedContext.size(), 0, nullptr) == FiberErrorInvalid, "attach a null context with a size");
     Require(_sceFiberAttachContextAndRun(g_attached, g_attachedContext.data(), 0, 0, nullptr) == FiberErrorRange, "attach a context without a size");
@@ -320,6 +323,8 @@ void RunAttachedContext() {
 void RunInternalOptions() {
     auto* fiber = reinterpret_cast<FiberObject*>(&g_checkedStorage);
     Require(_sceFiberInitializeWithInternalOptionImpl(nullptr, "options", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0, 0) == FiberErrorNull, "internal option null fiber");
+    errno = 71;
+    Require(_sceFiberInitializeWithInternalOptionImpl(fiber, reinterpret_cast<const char*>(0x10), CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0, 0) == FiberErrorInvalid && errno == 71, "internal option unreadable name");
     Require(_sceFiberInitializeWithInternalOptionImpl(fiber, "options", CheckedEntry, 0, g_checkedContext.data(), 256, nullptr, 0, 0) == FiberErrorRange, "internal option small context");
     Require(_sceFiberInitializeWithInternalOptionImpl(fiber, "options", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0x1, 0) == 0, "internal option without object registration");
     FiberInfo info{};
@@ -621,22 +626,58 @@ int main(int argc, char** argv) {
     Require(sceFiberGetSelf(&self) == FiberErrorPermission, "no fiber on the thread");
     Require(sceFiberOptParamInitialize(nullptr) == FiberErrorNull, "null opt param");
     Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(0x10)) == FiberErrorInvalid, "unwritable opt param");
+    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(0x1000)) == FiberErrorInvalid, "unwritable opt param page");
+    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(0x7FFFFFFFFFFF0000ULL)) == FiberErrorInvalid, "unwritable opt param boundary");
+    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(0x1)) == FiberErrorAlignment, "misaligned opt param");
     struct alignas(8) AlignedOptParamBuffer {
-        std::uint8_t bytes[0x80];
+        std::uint32_t preSentinel = 0xa5a5a5a5;
+        alignas(8) std::uint8_t bytes[0x80 + 0x40];
         std::uint32_t sentinel = 0x5a5a5a5a;
     } storage;
-    std::memset(storage.bytes, 0xA5, sizeof(storage.bytes));
-    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(storage.bytes)) == 0, "initialize opt param");
-    bool allZero = true;
+    constexpr std::size_t OptParamSize = 0x80;
+    constexpr std::uint8_t OptParamMagic[4] = {0x4d, 0xe6, 0x40, 0xbb};
+    for (const std::size_t offset : {std::size_t{0}, std::size_t{8}, std::size_t{16}, std::size_t{32}}) {
+        std::memset(storage.bytes, 0xA5, sizeof(storage.bytes));
+        Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(storage.bytes + offset)) == 0, "initialize opt param");
+        Require(std::memcmp(storage.bytes + offset, OptParamMagic, sizeof(OptParamMagic)) == 0, "opt param magic");
+        bool restZero = true;
+        for (std::size_t i = sizeof(OptParamMagic); i < OptParamSize; ++i) {
+            if (storage.bytes[offset + i] != 0) restZero = false;
+        }
+        Require(restZero, "opt param bytes 4..127 cleared");
+        bool outsideIntact = true;
+        for (std::size_t i = 0; i < sizeof(storage.bytes); ++i) {
+            if ((i < offset || i >= offset + OptParamSize) && storage.bytes[i] != 0xA5) outsideIntact = false;
+        }
+        Require(outsideIntact, "bytes outside the opt param intact");
+        Require(storage.preSentinel == 0xa5a5a5a5, "pre-sentinel intact");
+        Require(storage.sentinel == 0x5a5a5a5a, "sentinel intact");
+    }
+    for (const std::size_t offset : {std::size_t{1}, std::size_t{2}, std::size_t{4}}) {
+        std::memset(storage.bytes, 0xA5, sizeof(storage.bytes));
+        Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(storage.bytes + offset)) == FiberErrorAlignment, "misaligned opt param offset");
+        bool untouched = true;
+        for (std::size_t i = 0; i < sizeof(storage.bytes); ++i) {
+            if (storage.bytes[i] != 0xA5) untouched = false;
+        }
+        Require(untouched, "misaligned opt param writes nothing");
+    }
     for (std::size_t i = 0; i < sizeof(storage.bytes); ++i) {
+        storage.bytes[i] = static_cast<std::uint8_t>((i * 37u + 11u) & 0xFFu);
+    }
+    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(storage.bytes)) == 0, "reinitialize opt param");
+    Require(std::memcmp(storage.bytes, OptParamMagic, sizeof(OptParamMagic)) == 0, "reinitialized opt param magic");
+    bool reinitZero = true;
+    for (std::size_t i = sizeof(OptParamMagic); i < OptParamSize; ++i) {
         if (storage.bytes[i] != 0) {
-            allZero = false;
+            reinitZero = false;
             break;
         }
     }
-    Require(allZero, "opt param cleared");
+    Require(reinitZero, "reinitialized opt param cleared again");
+    Require(storage.preSentinel == 0xa5a5a5a5, "pre-sentinel intact");
     Require(storage.sentinel == 0x5a5a5a5a, "sentinel intact");
-    Require(_sceFiberInitializeImpl_nid_postfix(g_first, "first", FirstEntry, 11, g_firstContext.data(), g_firstContext.size(), nullptr, 0) == 0, "initialize first");
+    Require(_sceFiberInitializeWithInternalOptionImpl(g_first, "first", FirstEntry, 11, g_firstContext.data(), g_firstContext.size(), reinterpret_cast<const FiberOptParam*>(storage.bytes), 0, 0) == 0, "initialize first");
     Require(_sceFiberInitializeImpl_nid_postfix(g_second, "second", SecondEntry, 22, g_secondContext.data(), g_secondContext.size(), nullptr, 0) == 0, "initialize second");
     const auto threadCsr = _mm_getcsr();
     std::uint64_t returned = 0;
@@ -660,6 +701,8 @@ int main(int argc, char** argv) {
     Require(sceFiberGetInfo(checked, &info) == 0 && info.size_context_margin == ~0ull, "no margin without size check");
     Require(info.entry == CheckedEntry, "info preserves the guest entry callback type");
     Require(sceFiberFinalize(checked) == 0, "finalize unchecked");
+    Require(sceFiberFinalize(nullptr) == FiberErrorNull, "finalize null fiber");
+    Require(sceFiberFinalize(checked) == FiberErrorInvalid, "finalize already finalized fiber");
     Require(sceFiberStartContextSizeCheck(0) == 0, "start size check");
     Require(sceFiberStartContextSizeCheck(0) == FiberErrorState, "start twice");
     Require(_sceFiberInitializeImpl_nid_postfix(checked, "checked", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0) == 0, "initialize checked");

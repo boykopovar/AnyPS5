@@ -1,10 +1,48 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "unicode/ucnv.h"
+#include "ustr_cnv.h"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_set>
 
 namespace {
+
+std::mutex DefaultConverterMutex;
+std::unordered_set<UConverter*> CheckedOutDefaultConverters;
+
+void CopyIn(void* destination, const void* source, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!ok) NotImplemented_nid_no_patch(caller);
+}
+
+void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!ok) NotImplemented_nid_no_patch(caller);
+}
+
+std::string CopyConverterName(const char* source, const char* caller) {
+    constexpr int GuestNameTooLong = 63;
+    std::string name;
+    for (std::size_t capacity = UCNV_MAX_CONVERTER_NAME_LENGTH; capacity <= name.max_size() / 2; capacity *= 2) {
+        const int savedErrno = errno;
+        const int error = CopyGuestString_nid_no_patch(source, capacity, name);
+        errno = savedErrno;
+        if (error == 0) return name;
+        if (error != GuestNameTooLong) break;
+    }
+    NotImplemented_nid_no_patch(caller);
+}
 
 bool IsDigit(unsigned char value, bool ebcdic) {
     const unsigned char zero = ebcdic ? 0xf0 : 0x30;
@@ -71,6 +109,55 @@ constexpr Signature Signatures[] = {
 
 extern "C" {
 
+void APS5_VABI u_flushDefaultConverter_nid_postfix() {
+    const std::lock_guard lock(DefaultConverterMutex);
+    u_flushDefaultConverter();
+}
+
+UConverter* APS5_VABI u_getDefaultConverter_nid_postfix(std::int32_t* errorCode) {
+    if (!errorCode) APS5_INVALID_ARG_EX;
+    std::int32_t incoming = 0;
+    CopyIn(&incoming, errorCode, sizeof(incoming), __func__);
+    const std::int32_t entered = incoming < U_ERROR_WARNING_START ? 0 : incoming;
+    auto status = static_cast<UErrorCode>(entered);
+
+    const std::lock_guard lock(DefaultConverterMutex);
+    std::unique_ptr<UConverter, decltype(&u_releaseDefaultConverter)> converter(
+        u_getDefaultConverter(&status), u_releaseDefaultConverter);
+    const auto outgoing = static_cast<std::int32_t>(status);
+    if (outgoing != entered) CopyOut(errorCode, &outgoing, sizeof(outgoing), __func__);
+    if (converter) CheckedOutDefaultConverters.insert(converter.get());
+    return converter.release();
+}
+
+void APS5_VABI u_releaseDefaultConverter_nid_postfix(UConverter* converter) {
+    if (!converter) return;
+    const std::lock_guard lock(DefaultConverterMutex);
+    if (CheckedOutDefaultConverters.erase(converter) == 0) APS5_INVALID_ARG_EX;
+    if constexpr (!U_CHARSET_IS_UTF8) {
+        UErrorCode status = U_ZERO_ERROR;
+        const char* name = ucnv_getName(converter, &status);
+        if (U_FAILURE(status) || !name || std::strcmp(name, ucnv_getDefaultName()) != 0) {
+            ucnv_close(converter);
+            return;
+        }
+    }
+    u_releaseDefaultConverter(converter);
+}
+
+const char* APS5_VABI ucnv_getDefaultName_nid_postfix() {
+    const std::lock_guard lock(DefaultConverterMutex);
+    return ucnv_getDefaultName();
+}
+
+void APS5_VABI ucnv_setDefaultName_nid_postfix(const char* name) {
+    if constexpr (U_CHARSET_IS_UTF8) return;
+    const std::string copied = name ? CopyConverterName(name, __func__) : std::string{};
+    const std::lock_guard lock(DefaultConverterMutex);
+    ucnv_setDefaultName(name ? copied.c_str() : nullptr);
+    if (!name) u_flushDefaultConverter();
+}
+
 int APS5_VABI ucnv_compareNames_nid_postfix(const char* left, const char* right) {
     if (!left || !right) APS5_INVALID_ARG_EX;
     auto first = reinterpret_cast<const unsigned char*>(left);
@@ -94,30 +181,43 @@ char* APS5_VABI ucnv_io_stripEBCDICForCompare_nid_postfix(char* destination, con
 
 const char* APS5_VABI ucnv_detectUnicodeSignature_nid_postfix(const char* source, std::int32_t sourceLength,
                                                          std::int32_t* signatureLength, std::int32_t* errorCode) {
-    if (!errorCode || *errorCode > 0) return nullptr;
+    if (!errorCode) return nullptr;
+    std::int32_t status = 0;
+    CopyIn(&status, errorCode, sizeof(status), __func__);
+    if (status > 0) return nullptr;
     if (!source || sourceLength < -1) {
-        *errorCode = 1;
+        const std::int32_t illegalArgument = 1;
+        CopyOut(errorCode, &illegalArgument, sizeof(illegalArgument), __func__);
         return nullptr;
     }
     std::array<unsigned char, 5> prefix{};
     std::int32_t available = 0;
-    while (available < static_cast<std::int32_t>(prefix.size()) && (sourceLength < 0 || available < sourceLength)) {
-        const auto value = static_cast<unsigned char>(source[available]);
-        if (sourceLength < 0 && !value) break;
-        prefix[available++] = value;
+    if (sourceLength >= 0) {
+        available = sourceLength < static_cast<std::int32_t>(prefix.size()) ? sourceLength : static_cast<std::int32_t>(prefix.size());
+        if (available > 0) CopyIn(prefix.data(), source, static_cast<std::size_t>(available), __func__);
+    } else {
+        while (available < static_cast<std::int32_t>(prefix.size())) {
+            unsigned char value = 0;
+            CopyIn(&value, source + available, 1, __func__);
+            if (!value) break;
+            prefix[available++] = value;
+        }
     }
+    const char* name = nullptr;
+    std::int32_t length = 0;
     for (const auto& signature : Signatures) {
         if (available < signature.length) continue;
         bool matches = true;
         for (std::int32_t i = 0; i < signature.length; ++i)
             if (prefix[i] != signature.bytes[i]) matches = false;
         if (matches) {
-            if (signatureLength) *signatureLength = signature.length;
-            return signature.name;
+            name = signature.name;
+            length = signature.length;
+            break;
         }
     }
-    if (signatureLength) *signatureLength = 0;
-    return nullptr;
+    if (signatureLength) CopyOut(signatureLength, &length, sizeof(length), __func__);
+    return name;
 }
 
 }

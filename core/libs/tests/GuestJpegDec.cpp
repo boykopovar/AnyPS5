@@ -30,6 +30,17 @@ static_assert(offsetof(JpegDecImageInfo, output_image_width) == 0x1C && offsetof
 
 static void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
+static void* gTamperContext = nullptr;
+static std::uintptr_t gWatchReadStart = 0;
+static std::uintptr_t gWatchReadEnd = 0;
+
+static void TamperContextOnRead(std::uintptr_t address, std::size_t) {
+    errno = 99;
+    if (gTamperContext && address >= gWatchReadStart && address < gWatchReadEnd) {
+        std::memset(static_cast<std::uint8_t*>(gTamperContext) + sizeof(void*), 0, 24);
+    }
+}
+
 static void Require(bool value) { if (!value) std::abort(); }
 
 template<typename TFunction>
@@ -342,6 +353,26 @@ int main() {
     errno = 71;
     Require(sceJpegDecDecodeWithInputControl(handle, reinterpret_cast<const JpegDecInputControlParam*>(0x10), &info) == invalidAddr);
     Require(errno == 71);
+    {
+        std::vector<std::uint8_t> tamperedMemory(static_cast<std::size_t>(memorySize) + 32);
+        void* tamperedHandle = nullptr;
+        Require(sceJpegDecCreate(&param, tamperedMemory.data(), static_cast<std::uint32_t>(memorySize), &tamperedHandle) == 0);
+        std::vector<std::uint8_t> tamperedImage(7 * 5 * 4, 0xCC);
+        const JpegDecDecodeParam tamperedDecode = DecodeParam(jpeg, tamperedImage, 7 * 4);
+        gTamperContext = tamperedHandle;
+        gWatchReadStart = reinterpret_cast<std::uintptr_t>(jpeg.data());
+        gWatchReadEnd = gWatchReadStart + jpeg.size();
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(TamperContextOnRead);
+        info = {};
+        errno = 71;
+        Require(sceJpegDecDecode(tamperedHandle, &tamperedDecode, &info) == static_cast<std::int32_t>(7 << 16 | 5));
+        Require(errno == 71);
+        gTamperContext = nullptr;
+        gWatchReadStart = 0;
+        gWatchReadEnd = 0;
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+        Require(sceJpegDecDelete(tamperedHandle) == 0);
+    }
     errno = 71;
     Require(sceJpegDecDelete(handle) == 0);
     Require(errno == 71);

@@ -1,3 +1,36 @@
+/* Derived from Source/WTF/wtf/JSONValues.cpp@c55364d53f971f63a709976f168d932d558b8909 */
+/*
+ * Copyright (C) 2010 Google Inc. All rights reserved.
+ * Copyright (C) 2014 University of Washington. All rights reserved.
+ * Copyright (C) 2017-2019 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ * copyright notice, this list of conditions and the following disclaimer
+ * in the documentation and/or other materials provided with the
+ * distribution.
+ *     * Neither the name of Google Inc. nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/JsonExports.hpp"
@@ -34,12 +67,92 @@ T& Checked(T* ptr) {
     return *ptr;
 }
 
-void APS5_VABI ValueWriteJSON(const Value*, StringBuilder&) {
-    NotImplemented_nid_no_patch(__func__);
+char HexDigit(unsigned nibble) {
+    return "0123456789ABCDEF"[nibble & 0xF];
 }
 
-void APS5_VABI ArrayWriteJSON(const Value*, StringBuilder&) {
-    NotImplemented_nid_no_patch(__func__);
+void EscapeString(StringBuilder& builder, const StringImpl* string) {
+    if (!string) return;
+    if (string->length && !string->data) throw std::invalid_argument("invalid WTF string storage");
+    const bool is8Bit = string->hashAndFlags & 4;
+    for (unsigned i = 0; i < string->length; ++i) {
+        const char16_t codeUnit = is8Bit ? static_cast<const unsigned char*>(string->data)[i] : static_cast<const char16_t*>(string->data)[i];
+        switch (codeUnit) {
+        case '\b':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\b");
+            continue;
+        case '\f':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\f");
+            continue;
+        case '\n':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\n");
+            continue;
+        case '\r':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\r");
+            continue;
+        case '\t':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\t");
+            continue;
+        case '\\':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\\\");
+            continue;
+        case '"':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\\"");
+            continue;
+        }
+        if (codeUnit >= 32 && codeUnit < 127 && codeUnit != '<' && codeUnit != '>') {
+            NKWebKit::WtfAbi::AppendCharacter(builder, static_cast<unsigned char>(codeUnit));
+            continue;
+        }
+        const char escaped[] = {'\\', 'u', HexDigit(codeUnit >> 12), HexDigit(codeUnit >> 8), HexDigit(codeUnit >> 4), HexDigit(codeUnit), 0};
+        NKWebKit::WtfAbi::AppendCString(builder, escaped);
+    }
+}
+
+void APS5_VABI ValueWriteJSON(const Value* self, StringBuilder& output) {
+    const auto& value = Checked(self);
+    switch (value.valueType) {
+    case ValueType::Null:
+        NKWebKit::WtfAbi::AppendCString(output, "null");
+        return;
+    case ValueType::Boolean:
+        NKWebKit::WtfAbi::AppendCString(output, value.data.boolean ? "true" : "false");
+        return;
+    case ValueType::Double:
+    case ValueType::Integer:
+        if (!std::isfinite(value.data.number)) {
+            NKWebKit::WtfAbi::AppendCString(output, "null");
+            return;
+        }
+        NKWebKit::WtfAbi::AppendCString(output, NKWebKit::WtfAbi::NumberToString(value.data.number).c_str());
+        return;
+    case ValueType::String: {
+        NKWebKit::WtfAbi::AppendCharacter(output, '"');
+        EscapeString(output, value.data.string);
+        NKWebKit::WtfAbi::AppendCharacter(output, '"');
+        return;
+    }
+    case ValueType::Object:
+    case ValueType::Array:
+        throw std::invalid_argument("JSON composite value requires its derived writeJSON implementation");
+    }
+    throw std::invalid_argument("unknown WTF JSON value type");
+}
+
+void APS5_VABI ArrayWriteJSON(const Value* self, StringBuilder& output) {
+    const auto& array = static_cast<const ArrayBase&>(Checked(self));
+    if (array.elements.size > array.elements.capacity || (array.elements.size && !array.elements.buffer))
+        throw std::invalid_argument("invalid WTF JSON array storage");
+
+    NKWebKit::WtfAbi::AppendCharacter(output, '[');
+    for (unsigned i = 0; i < array.elements.size; ++i) {
+        if (i) NKWebKit::WtfAbi::AppendCharacter(output, ',');
+        const auto* value = array.elements.buffer[i].ptr;
+        if (!value || !value->vptr || !value->vptr->writeJSON)
+            throw std::invalid_argument("invalid WTF JSON array value");
+        value->vptr->writeJSON(value, output);
+    }
+    NKWebKit::WtfAbi::AppendCharacter(output, ']');
 }
 
 RefPtr<Object> APS5_VABI ValueAsObject(Value* self) {

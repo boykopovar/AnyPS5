@@ -1,4 +1,4 @@
-[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | **Català** | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Bahasa Indonesia](README.id.md) | [Polski](README.pl.md) | [日本語](README.ja.md)
+[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | **Català** | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Bahasa Indonesia](README.id.md) | [Polski](README.pl.md) | [日本語](README.ja.md) | [العربية](README.ar.md) | [Ελληνικά](README.el.md) | [Türkçe](README.tr.md) | [עברית](README.he.md)
 
 # Sobre
 
@@ -12,11 +12,11 @@ La compilació que només inclou el relinker funciona a macOS, inclòs Apple sil
 
 Inclou un [relinker](../../core/relinker) que converteix l'executable al format natiu del sistema de destinació i implementacions de les [biblioteques prx del sistema](../../core/libs/prx) aptes per a l'enllaçament dinàmic. Sense emulació ni un procés a part en temps d'execució.
 
-[**Discord**](https://discord.gg/BHFztBPUe), [Ús](USAGE.md), [Instruccions de compilació](../dev/BUILD.md), [Arquitectura](../dev/ARCHITECTURE.md), [Deute tècnic del projecte](../dev/TechnicalDebt.md), [convencions d'estil de codi](../dev/CONVENTIONS.md), [com contribuir](../../CONTRIBUTING.md)
+[**Discord**](https://discord.gg/x9naWVzC6A), [Ús](USAGE.md), [Instruccions de compilació](../dev/BUILD.md), [Arquitectura](../dev/ARCHITECTURE.md), [Deute tècnic del projecte](../dev/TechnicalDebt.md), [convencions d'estil de codi](../dev/CONVENTIONS.md), [com contribuir](../../CONTRIBUTING.md)
 
 ## Estat
 
-[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shader forms decoded, counted from the code](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![implemented in 7 days](https://boykopovar.github.io/AnyPS5/badge-week.svg)](https://boykopovar.github.io/AnyPS5/history.html)
+[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![RDNA2 reference shader forms decoded](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![gfx1013 reference shader forms decoded](https://boykopovar.github.io/AnyPS5/badge-shaders-gfx1013.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![implemented in 7 days](https://boykopovar.github.io/AnyPS5/badge-week.svg)](https://boykopovar.github.io/AnyPS5/history.html)
 
 [![progress map](https://boykopovar.github.io/AnyPS5/progress.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
 

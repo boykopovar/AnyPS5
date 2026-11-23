@@ -12,6 +12,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -32,6 +33,27 @@ constexpr std::size_t GuestBytes = 65536;
 constexpr std::uint32_t FaultColumns = 8;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 alignas(256) std::array<std::uint32_t, Width * Height> Counters{};
+PFN_vkCmdSetColorWriteMaskEXT NativeSetMasks = nullptr;
+std::atomic<std::uint64_t> MaskSets{0u};
+
+VKAPI_ATTR void VKAPI_CALL CountMasks(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkColorComponentFlags* masks) {
+    ++MaskSets;
+    NativeSetMasks(commands, first, count, masks);
+}
+
+struct MaskTrace {
+    AgcDriver::Graphics::DeviceFunctions* functions = nullptr;
+    explicit MaskTrace(const AgcDriver::Graphics::Context& context) {
+        if (!context.dynamicColorWriteMask) return;
+        functions = const_cast<AgcDriver::Graphics::DeviceFunctions*>(context.functions);
+        NativeSetMasks = reinterpret_cast<PFN_vkCmdSetColorWriteMaskEXT>(context.deviceProc(context.device, "vkCmdSetColorWriteMaskEXT"));
+        AgcDriver::Graphics::Require(functions != nullptr && NativeSetMasks != nullptr, "vkCmdSetColorWriteMaskEXT is unavailable");
+        functions->cmdSetColorWriteMask = CountMasks;
+    }
+    ~MaskTrace() {
+        if (functions != nullptr) functions->cmdSetColorWriteMask = NativeSetMasks;
+    }
+};
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -228,6 +250,7 @@ int main() {
             return VulkanTestSkipped;
         }
         GuestCounters guest;
+        const MaskTrace trace(device->graphicsContext());
         for (const auto waveSize : {64u, 32u}) {
             for (std::uint32_t pass = 0; pass < 3; ++pass) {
                 Draw(*device, waveSize);
@@ -238,6 +261,7 @@ int main() {
             Check(waveSize, 3);
         }
         Require(!device->GraphicsPipelineLibraries() || AgcDriver::Graphics::PipelineLibraryCountersOf(device->Device()).linked == 0, "pixel interlock: a primitive-ordered pixel shader's pipeline was linked from graphics pipeline libraries");
+        Require(MaskSets == 0u, "pixel interlock: a primitive-ordered pixel shader's pipeline took the dynamic color write mask");
         std::printf("pixel interlock tests passed: 10 draws of %u overlapping triangles over %u pixels, 2 of them with a killed BDA fault in every %uth column\n", Layers, Width * Height, FaultColumns);
         return 0;
     } catch (const std::exception& error) {

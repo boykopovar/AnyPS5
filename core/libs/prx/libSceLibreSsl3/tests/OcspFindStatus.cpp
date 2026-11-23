@@ -1,9 +1,25 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 
+#include <cerrno>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -12,6 +28,52 @@ void Require(bool condition, std::source_location location = std::source_locatio
     std::fprintf(stderr, "OCSP find status check failed at line %u\n", location.line());
     std::abort();
 }
+
+template<typename TAction> void RequireNotImplemented(TAction action, std::source_location location = std::source_location::current()) {
+    try { action(); } catch (const std::runtime_error&) { return; }
+    Require(false, location);
+}
+
+class ReadOnlyPage {
+public:
+    explicit ReadOnlyPage(const void* initial = nullptr, std::size_t size = 0) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        _size = info.dwPageSize != 0 ? info.dwPageSize : 4096u;
+        _page = VirtualAlloc(nullptr, _size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(_page != nullptr);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(_page, _size, PAGE_READONLY, &oldProtect) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        _size = pageSize > 0 ? static_cast<std::size_t>(pageSize) : 4096u;
+        _page = mmap(nullptr, _size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(_page != MAP_FAILED);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        Require(mprotect(_page, _size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+        if (!_page) return;
+#ifdef _WIN32
+        VirtualFree(_page, 0, MEM_RELEASE);
+#else
+        munmap(_page, _size);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    template<typename T> T* As() const { return static_cast<T*>(_page); }
+
+private:
+    void* _page = nullptr;
+    std::size_t _size = 0;
+};
 
 struct Fixture {
     unsigned char oidBytes[2] {0x2b, 0x0e};
@@ -128,8 +190,68 @@ void TestFind() {
     Require(threw);
 }
 
+void TestGuestPointers() {
+    Fixture f;
+    f.certStatus.type = 1;
+    f.certStatus.value = &f.revoked;
+
+    int status = 88;
+    int reason = 99;
+    Asn1String* rev = &f.sentinel;
+    Asn1String* now = &f.sentinel;
+    Asn1String* after = &f.sentinel;
+    ReadOnlyPage roInt(&status, sizeof(status));
+    ReadOnlyPage roPtr(&rev, sizeof(rev));
+
+    errno = 73;
+    RequireNotImplemented([&] {
+        OCSP_resp_find_status_nid_postfix(reinterpret_cast<LibreSslOcspBasicResponse*>(0x10), &f.query, &status, &reason, &rev, &now, &after);
+    });
+    Require(errno == 73 && status == 88 && reason == 99 && rev == &f.sentinel && now == &f.sentinel && after == &f.sentinel);
+
+    LibreSslOcspBasicResponse badTbsBs {reinterpret_cast<LibreSslOcspResponseData*>(0x10), nullptr, nullptr, nullptr};
+    errno = 73;
+    RequireNotImplemented([&] {
+        OCSP_resp_find_status_nid_postfix(&badTbsBs, &f.query, &status, &reason, &rev, &now, &after);
+    });
+    Require(errno == 73);
+
+    errno = 73;
+    RequireNotImplemented([&] {
+        OCSP_resp_find_status_nid_postfix(&f.response, reinterpret_cast<OCSP_CERTID*>(0x10), &status, &reason, &rev, &now, &after);
+    });
+    Require(errno == 73);
+
+    errno = 73;
+    RequireNotImplemented([&] { f.Find(&status, &reason, roPtr.As<Asn1String*>(), &now, &after); });
+    Require(errno == 73 && status == 88 && reason == 99 && now == &f.sentinel && after == &f.sentinel);
+
+    errno = 73;
+    RequireNotImplemented([&] { f.Find(&status, roInt.As<int>(), &rev, &now, &after); });
+    Require(errno == 73 && status == 88 && rev == &f.sentinel && now == &f.sentinel && after == &f.sentinel);
+
+    errno = 73;
+    RequireNotImplemented([&] { f.Find(&status, &reason, &rev, roPtr.As<Asn1String*>(), &after); });
+    Require(errno == 73 && status == 88 && reason == 99 && rev == &f.sentinel && after == &f.sentinel);
+
+    errno = 73;
+    RequireNotImplemented([&] { f.Find(&status, &reason, &rev, &now, roPtr.As<Asn1String*>()); });
+    Require(errno == 73 && status == 88 && reason == 99 && rev == &f.sentinel && now == &f.sentinel);
+
+    errno = 73;
+    RequireNotImplemented([&] { f.Find(roInt.As<int>(), &reason, &rev, &now, &after); });
+    Require(errno == 73 && reason == 99 && rev == &f.sentinel && now == &f.sentinel && after == &f.sentinel);
+
+    f.certStatus.type = 0;
+    f.certStatus.value = nullptr;
+    errno = 73;
+    Require(f.Find(&status, roInt.As<int>(), roPtr.As<Asn1String*>(), &now, &after) == 1);
+    Require(errno == 73 && status == 0 && now == &f.current && after == &f.next);
+}
+
 }
 
 int main() {
     TestFind();
+    TestGuestPointers();
 }

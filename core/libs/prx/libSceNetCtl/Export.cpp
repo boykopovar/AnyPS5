@@ -14,7 +14,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/ioctl.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #ifdef __linux__
@@ -55,9 +55,11 @@ static constexpr int SCE_NET_CTL_ERROR_INVALID_ID = static_cast<int>(0x80412105)
 static constexpr int SCE_NET_CTL_ERROR_INVALID_CODE = static_cast<int>(0x80412106);
 static constexpr int SCE_NET_CTL_ERROR_INVALID_ADDR = static_cast<int>(0x80412107);
 static constexpr int SCE_NET_CTL_ERROR_NOT_CONNECTED = static_cast<int>(0x80412108);
+static constexpr int SCE_NET_CTL_ERROR_RESULT_EVENT_REFUSED = static_cast<int>(0x8041210F);
 static constexpr int NET_CTL_STATE_DISCONNECTED = 0;
 static constexpr int NET_CTL_STATE_IPOBTAINED = 3;
 static constexpr int NET_CTL_EVENT_DISCONNECTED = 1;
+static constexpr int NET_CTL_EVENT_DISCONNECT_REQ_FINISHED = 2;
 static constexpr int NET_CTL_EVENT_IPOBTAINED = 3;
 static constexpr int NET_CTL_STUN_STATUS_FAILED = 1;
 static constexpr int NET_CTL_STUN_STATUS_OK = 2;
@@ -702,6 +704,7 @@ static bool ProbeStunServer(StunSocket descriptor, const sockaddr_in& server, in
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline) return false;
         const auto remainingUs = std::chrono::duration_cast<std::chrono::microseconds>(deadline - now).count();
+#ifdef _WIN32
         fd_set readSet;
         FD_ZERO(&readSet);
         FD_SET(descriptor, &readSet);
@@ -709,10 +712,10 @@ static bool ProbeStunServer(StunSocket descriptor, const sockaddr_in& server, in
         tv.tv_sec = static_cast<long>(remainingUs / 1000000);
         tv.tv_usec = static_cast<long>(remainingUs % 1000000);
         if (tv.tv_sec == 0 && tv.tv_usec == 0) tv.tv_usec = 1000;
-#ifdef _WIN32
         const int ready = select(0, &readSet, nullptr, nullptr, &tv);
 #else
-        const int ready = select(descriptor + 1, &readSet, nullptr, nullptr, &tv);
+        pollfd entry{descriptor, POLLIN, 0};
+        const int ready = poll(&entry, 1, static_cast<int>((remainingUs + 999) / 1000));
 #endif
         if (ready <= 0) return false;
         std::uint8_t buffer[512];
@@ -1160,9 +1163,11 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
 
 int APS5_VABI sceNetCtlGetResult(int event, int* result) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
+    if (!result) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (event == NET_CTL_EVENT_DISCONNECT_REQ_FINISHED || event == NET_CTL_EVENT_IPOBTAINED) return SCE_NET_CTL_ERROR_RESULT_EVENT_REFUSED;
     const int val = 0;
-    if (!result || !GuestCopyOut_nid_no_patch(result, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    if (event < NET_CTL_EVENT_DISCONNECTED || event > NET_CTL_EVENT_IPOBTAINED) {
+    if (!GuestCopyOut_nid_no_patch(result, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (event != NET_CTL_EVENT_DISCONNECTED) {
         throw std::runtime_error("sceNetCtlGetResult: event type " + std::to_string(event) + " is not implemented");
     }
     return 0;
@@ -1586,10 +1591,9 @@ int APS5_VABI sceNetConnSwitcherStop() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI libSceNetCtlUnknown_09YMz3Vp5us_nid_no_patch() {
+int APS5_VABI sceNetCtlApCpUnregisterCallback() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("09YMz3Vp5us", libSceNetCtlUnknown_09YMz3Vp5us_nid_no_patch);
 
 int APS5_VABI libSceNetCtlUnknown_1PGApDf96ao_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -1611,25 +1615,22 @@ int APS5_VABI libSceNetCtlUnknown_3cNKxJXXYYk_nid_no_patch() {
 }
 APS5_EXPORT("3cNKxJXXYYk", libSceNetCtlUnknown_3cNKxJXXYYk_nid_no_patch);
 
-int APS5_VABI libSceNetCtlUnknown_AIu_minus_tRC_minus_mSM_nid_no_patch() {
+int APS5_VABI sceNetCtlApCpRegisterCallback() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("AIu-tRC-mSM", libSceNetCtlUnknown_AIu_minus_tRC_minus_mSM_nid_no_patch);
 
 int APS5_VABI libSceNetCtlUnknown_BSERkV_minus_a9e8_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("BSERkV-a9e8", libSceNetCtlUnknown_BSERkV_minus_a9e8_nid_no_patch);
 
-int APS5_VABI libSceNetCtlUnknown_FwX_plus_Js8qXNA_nid_no_patch() {
+int APS5_VABI sceNetCtlApCpStartWithRetry() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("FwX+Js8qXNA", libSceNetCtlUnknown_FwX_plus_Js8qXNA_nid_no_patch);
 
-int APS5_VABI libSceNetCtlUnknown_I14Npt_minus_awQg_nid_no_patch() {
+int APS5_VABI sceNetCtlApCpGetInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("I14Npt-awQg", libSceNetCtlUnknown_I14Npt_minus_awQg_nid_no_patch);
 
 int APS5_VABI libSceNetCtlUnknown_KUdWtCC6w_minus_0_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -1641,34 +1642,29 @@ int APS5_VABI libSceNetCtlUnknown_QnQ4RBu546Y_nid_no_patch() {
 }
 APS5_EXPORT("QnQ4RBu546Y", libSceNetCtlUnknown_QnQ4RBu546Y_nid_no_patch);
 
-int APS5_VABI libSceNetCtlUnknown_e5_minus_Xj0wEzbI_nid_no_patch() {
+int APS5_VABI sceNetCtlApCpCheckCallback() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("e5-Xj0wEzbI", libSceNetCtlUnknown_e5_minus_Xj0wEzbI_nid_no_patch);
 
-int APS5_VABI libSceNetCtlUnknown_lScJhO3Rnpk_nid_no_patch() {
+int APS5_VABI sceNetCtlApCpGetResult() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("lScJhO3Rnpk", libSceNetCtlUnknown_lScJhO3Rnpk_nid_no_patch);
 
-int APS5_VABI libSceNetCtlUnknown_mfWDyuk_minus_M0I_nid_no_patch() {
+int APS5_VABI sceNetCtlApCpClearEvent() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("mfWDyuk-M0I", libSceNetCtlUnknown_mfWDyuk_minus_M0I_nid_no_patch);
 
-int APS5_VABI libSceNetCtlUnknown_on7RqSRy8pU_nid_no_patch() {
+int APS5_VABI sceNetCtlApCpGetState() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("on7RqSRy8pU", libSceNetCtlUnknown_on7RqSRy8pU_nid_no_patch);
 
 int APS5_VABI libSceNetCtlUnknown_sngJX5nUjVM_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("sngJX5nUjVM", libSceNetCtlUnknown_sngJX5nUjVM_nid_no_patch);
 
-int APS5_VABI libSceNetCtlUnknown_wVXoAlD7Fsg_nid_no_patch() {
+int APS5_VABI sceNetCtlApCpGetConnectInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("wVXoAlD7Fsg", libSceNetCtlUnknown_wVXoAlD7Fsg_nid_no_patch);
 
 }

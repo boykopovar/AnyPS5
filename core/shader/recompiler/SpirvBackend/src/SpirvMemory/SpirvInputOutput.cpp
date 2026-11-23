@@ -202,7 +202,7 @@ namespace ShaderRecompiler
     }
 
     std::uint32_t EmitLocalInvocationIndex(SpirvEmitterState& state) {
-        if (state.spannedWave) {
+        if (state.spannedWave && !state.spannedAnySubgroup) {
             const auto subgroup = state.module.AllocateId();
             const auto invocation = state.module.AllocateId();
             state.module.AddFunction(spv::OpLoad, TypeU32(state), subgroup, state.subgroupIdVariable);

@@ -19,8 +19,10 @@ constexpr int kAlreadyInit = static_cast<int>(0x80EE0002);
 constexpr int kInvalidArg = static_cast<int>(0x80EE0003);
 constexpr int kInvalidHandle = static_cast<int>(0x80EE0004);
 constexpr int kMaxCombined = static_cast<int>(0x80EE0005);
+constexpr int kInvalidPort = static_cast<int>(0x80EE0006);
 constexpr int kAlreadyOpened = static_cast<int>(0x80EE0007);
 constexpr std::int32_t kUserId = 0x10000000;
+constexpr std::int32_t kInvalidUserId = -1;
 constexpr std::int32_t kFirstHandle = 0x30B0100;
 constexpr std::int32_t kHandleStep = 0x100;
 constexpr std::uint8_t kFill = 0x5A;
@@ -87,14 +89,14 @@ void RequireNotInit(std::int32_t handle) {
     Require(sceMoveGetCalibrationInfo(handle, nullptr) == kNotInit);
     Require(sceMoveGetDeviceId(handle, &deviceId) == kNotInit);
     Require(sceMoveGetDeviceId(handle, nullptr) == kNotInit);
-    Require(sceMoveIsReproductionModel() == kNotInit);
+    Require(sceMoveIsReproductionModel(handle) == kNotInit);
     Require(sceMoveIsValidHandle(handle) == 0);
-    Require(sceMoveReadStateRecentForTracker() == kNotInit);
+    Require(sceMoveReadStateRecentForTracker(handle, 0, buffer.bytes, nullptr) == kNotInit);
     Require(sceMoveSetCalibrationMode(handle, 1) == kNotInit);
     Require(address == 0x5a5a5a5a5a5a5a5a && deviceId == 0x5a5a5a5a);
-    Require(sceMoveSetExtensionPortOutput() == kNotInit);
-    Require(sceMoveSetLightSphereForTracker() == kNotInit);
-    Require(sceMoveWriteCalibrationInfo() == kNotInit);
+    Require(sceMoveSetExtensionPortOutput(handle, nullptr) == kNotInit);
+    Require(sceMoveSetLightSphereForTracker(handle, 0, 0, 0) == kNotInit);
+    Require(sceMoveWriteCalibrationInfo(handle, nullptr) == kNotInit);
     Require(sceMoveTerm() == kNotInit);
     Require(buffer.Untouched());
     Require(count == -7);
@@ -108,6 +110,8 @@ void RequireUnknownHandle(std::int32_t handle) {
     Require(sceMoveGetExtensionPortInfo(handle, buffer.bytes) == kInvalidHandle);
     Require(sceMoveReadStateLatest(handle, buffer.bytes) == kInvalidHandle);
     Require(sceMoveReadStateRecent(handle, 0, buffer.bytes, &count) == kInvalidHandle);
+    Require(count == 0);
+    count = -7;
     Require(sceMoveSetVibration(handle, 0xFF) == kInvalidHandle);
     Require(sceMoveSetLightSphere(handle, 0xFF, 0, 0) == kInvalidHandle);
     Require(sceMoveResetLightSphere(handle) == kInvalidHandle);
@@ -145,6 +149,9 @@ int main() {
     RequireUnknownHandle(-1);
     RequireUnknownHandle(kFirstHandle);
 
+    Require(sceMoveOpen(kInvalidUserId, 0, 0) == kInvalidPort);
+    Require(sceMoveOpen(kInvalidUserId, 0, 1) == kInvalidPort);
+
     const std::int32_t first = sceMoveOpen(kUserId, 0, 0);
     const std::int32_t second = sceMoveOpen(kUserId, 0, 1);
     Require(first == kFirstHandle);
@@ -170,7 +177,8 @@ int main() {
     Require(sceMoveReadStateRecent(first, -1, nullptr, &count) == kInvalidArg);
     Require(sceMoveReadStateRecent(first, 0, nullptr, nullptr) == kInvalidArg);
     Require(sceMoveReadStateRecent(first + 1, 0, nullptr, &count) == kInvalidHandle);
-    Require(count == -7);
+    Require(count == 0);
+    count = -7;
     SetCompiledSdkVersion(kFirstSdkRequiringData);
     Require(sceMoveReadStateRecent(first, 0, nullptr, &count) == kInvalidArg);
 
@@ -190,11 +198,32 @@ int main() {
     Require(sceMoveSetCalibrationMode(first, 1) == kOk);
     Require(sceMoveSetCalibrationMode(first, -5) == kOk);
     Require(sceMoveGetBluetoothAddress(first, nullptr) == kInvalidArg);
+    Require(sceMoveGetBluetoothAddress(first, reinterpret_cast<uint64_t*>(0x10)) == kInvalidArg);
     Require(sceMoveGetCalibrationInfo(first, nullptr) == kInvalidArg);
     Require(sceMoveGetDeviceId(first, nullptr) == kInvalidArg);
+    Require(sceMoveGetDeviceId(first, reinterpret_cast<uint32_t*>(0x10)) == kInvalidArg);
+    Require(sceMoveReadStateRecent(first, 0, buffer.bytes, reinterpret_cast<int32_t*>(0x10)) == kInvalidArg);
     Require(sceMoveGetBluetoothAddress(first, &address) == kNoControllerConnected && address == 0x5a5a5a5a5a5a5a5a);
     Require(sceMoveGetCalibrationInfo(first, buffer.bytes) == kNoControllerConnected && buffer.Untouched());
     Require(sceMoveGetDeviceId(first, &deviceId) == kNoControllerConnected && deviceId == 0x5a5a5a5a);
+
+    Require(sceMoveSetLightSphereForTracker(first, 0, 0xFF, 0) == kNoControllerConnected);
+    Require(sceMoveSetLightSphereForTracker(first + 1, 0, 0xFF, 0) == kInvalidHandle);
+    Require(sceMoveReadStateRecentForTracker(first, -1, buffer.bytes, &count) == kInvalidArg);
+    Require(sceMoveReadStateRecentForTracker(first, 0, buffer.bytes, nullptr) == kInvalidArg);
+    count = -7;
+    Require(sceMoveReadStateRecentForTracker(first + 1, 0, buffer.bytes, &count) == kInvalidHandle);
+    Require(count == 0);
+    count = -7;
+    Require(sceMoveReadStateRecentForTracker(first, 0, buffer.bytes, &count) == kNoControllerConnected && buffer.Untouched());
+    Require(sceMoveSetExtensionPortOutput(first, nullptr) == kInvalidArg);
+    Require(sceMoveSetExtensionPortOutput(first + 1, buffer.bytes) == kInvalidHandle);
+    Require(sceMoveSetExtensionPortOutput(first, buffer.bytes) == kNoControllerConnected && buffer.Untouched());
+    Require(sceMoveWriteCalibrationInfo(first, nullptr) == kInvalidArg);
+    Require(sceMoveWriteCalibrationInfo(first + 1, buffer.bytes) == kInvalidHandle);
+    Require(sceMoveWriteCalibrationInfo(first, buffer.bytes) == kNoControllerConnected && buffer.Untouched());
+    Require(sceMoveIsReproductionModel(first + 1) == kInvalidPort);
+    Require(sceMoveIsReproductionModel(0) == kInvalidPort);
 
     Require(sceMoveClose(first) == kOk);
     RequireUnknownHandle(first);

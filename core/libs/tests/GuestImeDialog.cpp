@@ -1,16 +1,20 @@
 #include "prx/libSceImeDialog/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 constexpr int StatusNone = 0;
 constexpr int StatusRunning = 1;
@@ -102,6 +106,8 @@ void Close() {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     char16_t buffer[16] = u"Hi";
     const Param param = DialogParam(buffer, 8);
     Require(!ImeCapturesKeyboard_nid_postfix());
@@ -126,10 +132,16 @@ int main() {
     Type("\xf0\x9f\x98\x80");
     Require(std::u16string(buffer) == u"Hi");
     Press(SDL_SCANCODE_RETURN);
+    errno = 71;
     Require(sceImeDialogGetStatus() == StatusFinished);
+    Require(errno == 71);
     Require(!ImeCapturesKeyboard_nid_postfix());
+    errno = 71;
     Require(sceImeDialogGetResult(reinterpret_cast<Result*>(1)) == ErrorNotOpened);
+    Require(errno == 71);
+    errno = 71;
     Require(EndStatus() == EndStatusOk);
+    Require(errno == 71);
     Require(std::u16string(buffer) == u"Hi\u00e9\U0001F600");
     Require(sceImeDialogAbort() == ErrorNotOpened);
     Close();
@@ -338,7 +350,9 @@ int main() {
     buffer[0] = u'\0';
     ExtendedParam noController{};
     noController.disable_device = 0x00000001;
+    errno = 71;
     Require(sceImeDialogInit(&param, &noController) == 0);
+    Require(errno == 71);
     Require(ImeCapturesPad_nid_postfix());
     Pad(0);
     Tap(PadCross);
@@ -364,4 +378,20 @@ int main() {
     Require(sceImeDialogGetResult(&earlyResult) == ErrorNotInUse);
     Require(sceImeDialogInit(nullptr, nullptr) == ErrorInvalidAddress);
     Require(sceImeDialogInitInternal(nullptr, nullptr) == ErrorInvalidAddress);
+    errno = 71;
+    Require(sceImeDialogInit(reinterpret_cast<const Param*>(1), nullptr) == ErrorInvalidAddress);
+    Require(errno == 71);
+    {
+        unsigned char subInfo[0x128] = {};
+        Require(sceImeDialogInitInternalWithSubInfo(nullptr, nullptr, subInfo) == ErrorInvalidAddress);
+        Require(sceImeDialogInitInternalWithSubInfo(nullptr, nullptr, nullptr) == ErrorInvalidAddress);
+        Require(sceImeDialogInitInternalWithSubInfo(&param, nullptr, subInfo) == 0);
+        Require(sceImeDialogGetStatus() == StatusRunning);
+        Require(sceImeDialogInitInternalWithSubInfo(&param, nullptr, subInfo) == ErrorBusy);
+        Require(sceImeDialogInitInternalWithSubInfo(&param, nullptr, nullptr) == ErrorBusy);
+        Require(sceImeDialogTerm() == 0);
+        Require(sceImeDialogGetStatus() == StatusNone);
+    }
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }

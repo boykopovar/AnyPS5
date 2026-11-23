@@ -1,13 +1,16 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libSceHttp/src/Options.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceHttp/src/GuestAccess.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace {
 
@@ -92,6 +95,25 @@ bool SetHttpCookieEnabled(int id, int enable) {
     return true;
 }
 
+bool SetHttpProxy(int id, int httpConf, int wlanConf, std::string host, std::uint16_t port) {
+    std::lock_guard lock(g_optionsMutex);
+    const auto found = g_objectOptions.find(id);
+    if (found == g_objectOptions.end()) return false;
+    found->second.proxyHttpConf = httpConf;
+    found->second.proxyWlanConf = wlanConf;
+    found->second.proxyHost = std::move(host);
+    found->second.proxyPort = port;
+    return true;
+}
+
+bool SetHttpEpollId(int id, int epollId) {
+    std::lock_guard lock(g_optionsMutex);
+    const auto found = g_objectOptions.find(id);
+    if (found == g_objectOptions.end()) return false;
+    found->second.epollId = epollId;
+    return true;
+}
+
 bool SetHttpContextAcceptEncodingGzip(int contextId, bool enable) {
     std::lock_guard lock(g_optionsMutex);
     const auto found = g_contextAcceptEncodingGzip.find(contextId);
@@ -116,7 +138,7 @@ int APS5_VABI sceHttpGetAutoRedirect(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->autoRedirect ? 1 : 0;
+    if (!HttpGuest::Store(enable, options->autoRedirect ? 1 : 0)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -125,7 +147,7 @@ int APS5_VABI sceHttpGetNonblock(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->nonblock ? 1 : 0;
+    if (!HttpGuest::Store(enable, options->nonblock ? 1 : 0)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -138,7 +160,7 @@ int APS5_VABI sceHttpGetAcceptEncodingGZIPEnabled(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->acceptEncodingGzip ? 1 : 0;
+    if (!HttpGuest::Store(enable, options->acceptEncodingGzip ? 1 : 0)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -152,8 +174,8 @@ int APS5_VABI sceHttpGetEpoll(int id, HttpEpollHandle* epoll, void** argument) {
     if (!epoll) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *epoll = options->epoll;
-    if (argument) *argument = options->epollArgument;
+    if (!HttpGuest::Store(epoll, options->epoll)) return ERROR_INVALID_VALUE;
+    if (argument && !HttpGuest::Store(argument, options->epollArgument)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
