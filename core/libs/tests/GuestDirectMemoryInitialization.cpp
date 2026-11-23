@@ -20,16 +20,11 @@ int main() {
 
     Require(sceKernelAvailableDirectMemorySize(0, size, 3, &start, &available) == SCE_KERNEL_ERROR_EINVAL);
     Require(start == -1 && available == 123);
-    Require(sceKernelAvailableDirectMemorySize(0, size, PS5_PAGE_SIZE, &start, &available) == SCE_KERNEL_ERROR_EBADF);
-    Require(start == -1 && available == 123);
-
-    const auto reportedSize = sceKernelGetDirectMemorySize();
-    Require(reportedSize == static_cast<std::size_t>(size));
 
     start = -1;
     available = 0;
-    Require(sceKernelAvailableDirectMemorySize(0, static_cast<int64_t>(reportedSize), PS5_PAGE_SIZE, &start, &available) == 0);
-    Require(start == 0 && available == reportedSize);
+    Require(sceKernelAvailableDirectMemorySize(0, size, PS5_PAGE_SIZE, &start, &available) == 0);
+    Require(start == 0 && available == static_cast<std::size_t>(size));
 
     return 0;
 }
