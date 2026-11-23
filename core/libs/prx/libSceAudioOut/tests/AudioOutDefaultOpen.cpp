@@ -4,6 +4,7 @@
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -18,6 +19,7 @@ bool endpointAbsent = false;
 bool unplugged = false;
 bool failOpen = false;
 bool failQueue = false;
+bool expectSilentBlock = false;
 std::uint64_t nowUs = 1000000;
 int probes = 0;
 int opened = 0;
@@ -56,8 +58,13 @@ extern "C" SDL_AudioDeviceID SDLCALL SDL_OpenAudioDevice(const char* name, int c
 }
 extern "C" void SDLCALL SDL_PauseAudioDevice(SDL_AudioDeviceID id, int) { Require(id == device, "wrong device paused"); }
 extern "C" Uint32 SDLCALL SDL_GetQueuedAudioSize(SDL_AudioDeviceID id) { Require(id == device, "wrong queue queried"); return 0; }
-extern "C" int SDLCALL SDL_QueueAudio(SDL_AudioDeviceID id, const void*, Uint32) {
+extern "C" int SDLCALL SDL_QueueAudio(SDL_AudioDeviceID id, const void* data, Uint32 bytes) {
     if (failQueue) return -1;
+    if (expectSilentBlock) {
+        Require(data && bytes == 256 * 2 * sizeof(std::int16_t), "expected 256 stereo S16 frames");
+        const auto* pcm = static_cast<const std::uint8_t*>(data);
+        Require(std::all_of(pcm, pcm + bytes, [](auto byte) { return byte == 0; }), "muted output contains sound");
+    }
     if (!unplugged) Require(id == device, "wrong queue written");
     if (live(id)) ++queuedLive;
     else ++queuedDead;
@@ -92,6 +99,19 @@ int main(int argc, char** argv) {
         } else if (mode == "disconnect" || mode.starts_with("retry_")) {
             driver = "wasapi";
             outputDevices = 2;
+        } else if (mode == "custom_music_muted_volume" || mode == "custom_music_muted_all_volume") {
+            outputDevices = 1;
+            std::array<std::int16_t, 256 * 2> samples;
+            samples.fill(16384);
+            Require(sceCustomMusicAudioOutInitialize(256, 0, 1) == 0, "custom music initialization failed");
+            Require(sceCustomMusicAudioOutSetMuted(true) == 0, "mute failed");
+            expectSilentBlock = true;
+            Require(sceCustomMusicAudioOutOutput(samples.data()) == 0 && queuedLive == 1, "first silent block missing");
+            const auto setVolume = mode == "custom_music_muted_volume" ? sceCustomMusicAudioOutSetVolume : sceCustomMusicAudioOutSetAllMusicVolume;
+            Require(setVolume(0.25) == 0, "volume change failed");
+            Require(sceCustomMusicAudioOutOutput(samples.data()) == 0 && queuedLive == 2, "second silent block missing");
+            Require(sceCustomMusicAudioOutFinalize() == 0, "custom music finalization failed");
+            return 0;
         } else if (mode == "custom_music_queue_error") {
             outputDevices = 1;
             std::array<std::int16_t, 256 * 2> samples{};
