@@ -111,7 +111,11 @@ bool FindTarget(const CONTEXT& start, Handoff& state, SearchException& probe) {
         const auto entry = RtlLookupFunctionEntry(context.Rip, &imageBase, nullptr);
         bool known = false;
         for (const auto candidate : modules) known = known || (module != nullptr && module == candidate);
-        if (!known) return sawRuntime && entry == nullptr && LibcUnwindHasFrame_nid_no_patch(context.Rip);
+        if (!known) {
+            const std::uintptr_t registers[17] = {context.Rax, context.Rdx, context.Rcx, context.Rbx, context.Rsi, context.Rdi, context.Rbp, context.Rsp,
+                context.R8, context.R9, context.R10, context.R11, context.R12, context.R13, context.R14, context.R15, context.Rip};
+            return sawRuntime && LibcUnwindHasFrame_nid_no_patch(registers);
+        }
         if (entry == nullptr) return false;
         sawRuntime = sawRuntime || module == runtime;
         const DWORD64 pc = context.Rip;

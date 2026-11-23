@@ -952,11 +952,17 @@ const std::uintptr_t* UnwindCursorSlots_nid_no_patch() {
     return CursorSlots;
 }
 
-bool LibcUnwindHasFrame_nid_no_patch(std::uintptr_t returnAddress) {
+bool LibcUnwindHasFrame_nid_no_patch(const std::uintptr_t* registers) {
     _Unwind_Context context {};
-    context.registers[16] = returnAddress;
+    for (unsigned index = 0; index < 17; ++index) context.registers[index] = registers[index];
     LibcUnwind::Frame frame {};
-    return LibcUnwind::DecodeFrame(context, frame);
+    if (LibcUnwind::DecodeFrame(context, frame)) return true;
+#ifdef _WIN32
+    frame = {};
+    return LibcUnwind::VirtualUnwind(context, frame);
+#else
+    return false;
+#endif
 }
 
 extern "C" {
@@ -1072,7 +1078,7 @@ const std::uintptr_t* UnwindCursorSlots_nid_no_patch() {
     return nullptr;
 }
 
-bool LibcUnwindHasFrame_nid_no_patch(std::uintptr_t) {
+bool LibcUnwindHasFrame_nid_no_patch(const std::uintptr_t*) {
     return false;
 }
 
