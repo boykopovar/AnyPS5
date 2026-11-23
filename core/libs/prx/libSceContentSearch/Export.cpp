@@ -3,7 +3,6 @@
 #include "prx/libSceContentSearch/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <limits>
@@ -33,13 +32,6 @@ constexpr std::uint32_t AvContentCreatedEventType = 0x1000001D;
 std::mutex g_avEventMutex;
 bool g_avEventConditionAdded = false;
 
-bool CopyGuestOutPreservingErrno_nid_no_patch(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return copied;
-}
-
 bool IsContentColumn(std::int32_t column) {
     switch (column) {
     case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 9: case 10: case 11: case 12: case 14: return true;
@@ -60,10 +52,7 @@ template <typename T>
 bool ReadGuestElement(T& value, const T* elements, std::size_t index) {
     const auto base = reinterpret_cast<std::uintptr_t>(elements);
     if (!base || index > (std::numeric_limits<std::uintptr_t>::max() - base) / sizeof(T)) return false;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(base + index * sizeof(T)), sizeof(T));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(base + index * sizeof(T)), sizeof(T));
 }
 
 bool ValidateColumnSets(const char* funcName, const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength) {
@@ -124,16 +113,13 @@ int APS5_VABI sceContentSearchGetContentIdByAvContentCreatedEvent(const void* ev
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (!event || !contentId) return ErrorInvalidArgument;
     unsigned char record[12];
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(record, event, sizeof(record));
-    errno = savedErrno;
-    if (!copied) return ErrorInvalidArgument;
+    if (!GuestCopyIn_nid_no_patch(record, event, sizeof(record))) return ErrorInvalidArgument;
     std::uint32_t type;
     std::memcpy(&type, record, sizeof(type));
     if (type != AvContentCreatedEventType) return ErrorInvalidArgument;
     std::uint64_t id;
     std::memcpy(&id, record + 4, sizeof(id));
-    return CopyGuestOutPreservingErrno_nid_no_patch(contentId, &id, sizeof(id)) ? 0 : ErrorInvalidArgument;
+    return GuestCopyOut_nid_no_patch(contentId, &id, sizeof(id)) ? 0 : ErrorInvalidArgument;
 }
 
 
@@ -141,10 +127,7 @@ int APS5_VABI sceContentSearchInit(const ContentSearchInitParam* init_param) {
     if (g_initialized.load()) return ErrorAlreadyInitialized;
     if (init_param == nullptr) return ErrorInvalidArgument;
     ContentSearchInitParam localParam{};
-    const int savedErrno = errno;
-    const bool read = GuestCopyIn_nid_no_patch(&localParam, init_param, sizeof(localParam));
-    errno = savedErrno;
-    if (!read || localParam.memory_size == 0 || localParam.memory_size % 16384 != 0) return ErrorInvalidArgument;
+    if (!GuestCopyIn_nid_no_patch(&localParam, init_param, sizeof(localParam)) || localParam.memory_size == 0 || localParam.memory_size % 16384 != 0) return ErrorInvalidArgument;
     bool expected = false;
     if (!g_initialized.compare_exchange_strong(expected, true)) return ErrorAlreadyInitialized;
     return 0;
@@ -185,8 +168,8 @@ int APS5_VABI sceContentSearchSearchContent(const ContentSearchContentColumnSet*
     if (!ValidateColumnSets(__func__, columnSet, columnSetLength) || !ValidateOrderBy(__func__, orderByConditions, orderByConditionsLength)) return ErrorInvalidArgument;
     const std::int64_t zero = 0;
     const std::int64_t updateId = LibraryUpdateId;
-    if (!CopyGuestOutPreservingErrno_nid_no_patch(numOfContent, &zero, sizeof(zero))) return ErrorInvalidArgument;
-    if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(numOfContent, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
     return 0;
 }
 
@@ -194,7 +177,7 @@ int APS5_VABI sceContentSearchGetContentLastUpdateId(std::int64_t* lastUpdateId)
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (lastUpdateId == nullptr) return ErrorInvalidArgument;
     const std::int64_t val = LibraryUpdateId;
-    if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &val, sizeof(val))) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(lastUpdateId, &val, sizeof(val))) return ErrorInvalidArgument;
     return 0;
 }
 
@@ -211,8 +194,8 @@ int APS5_VABI sceContentSearchGetTotalContentSize(const ContentSearchContentColu
     if (!ValidateColumnSets(__func__, columnSet, columnSetLength)) return ErrorInvalidArgument;
     const std::int64_t zero = 0;
     const std::int64_t updateId = LibraryUpdateId;
-    if (!CopyGuestOutPreservingErrno_nid_no_patch(size, &zero, sizeof(zero))) return ErrorInvalidArgument;
-    if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(size, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
     return 0;
 }
 
@@ -222,8 +205,8 @@ int APS5_VABI sceContentSearchGetNumOfContent(const ContentSearchContentColumnSe
     if (!ValidateColumnSets(__func__, columnSet, columnSetLength)) return ErrorInvalidArgument;
     const std::int64_t zero = 0;
     const std::int64_t updateId = LibraryUpdateId;
-    if (!CopyGuestOutPreservingErrno_nid_no_patch(numOfContent, &zero, sizeof(zero))) return ErrorInvalidArgument;
-    if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(numOfContent, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
     return 0;
 }
 
@@ -261,17 +244,14 @@ int APS5_VABI sceContentSearchGetApplicationLastUpdateId(std::int64_t* lastUpdat
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (lastUpdateId == nullptr) return ErrorInvalidArgument;
     const std::int64_t val = LibraryUpdateId;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(lastUpdateId, &val, sizeof(val));
-    errno = savedErrno;
-    if (!copied) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(lastUpdateId, &val, sizeof(val))) return ErrorInvalidArgument;
     return 0;
 }
 int APS5_VABI sceContentSearchGetMyApplicationIndex(std::int32_t* index) {
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (index == nullptr) return ErrorInvalidArgument;
     const std::int32_t zero = 0;
-    if (!CopyGuestOutPreservingErrno_nid_no_patch(index, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(index, &zero, sizeof(zero))) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -281,8 +261,8 @@ int APS5_VABI sceContentSearchGetNumOfApplication(const ContentSearchContentColu
     if (!ValidateColumnSets(__func__, columnSet, columnSetLength) || !ValidateOrderBy(__func__, orderByConditions, orderByConditionsLength)) return ErrorInvalidArgument;
     const std::int64_t zero = 0;
     const std::int64_t updateId = LibraryUpdateId;
-    if (!CopyGuestOutPreservingErrno_nid_no_patch(numOfApplication, &zero, sizeof(zero))) return ErrorInvalidArgument;
-    if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(numOfApplication, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
     return 0;
 }
 int APS5_VABI sceContentSearchSearchApplication(const void* columnSet, std::uint32_t columnSetLength, const void* orderByConditions, std::uint32_t orderByConditionsLength, const void* aggregatedConditions, std::uint32_t aggregatedConditionsLength, std::uint32_t offset, std::uint32_t limit, std::int64_t* numOfApplications, void* infos, std::int64_t* lastUpdateId) {
@@ -292,15 +272,13 @@ int APS5_VABI sceContentSearchSearchApplication(const void* columnSet, std::uint
     if (limit > MaxSearchLimit) return ErrorLimitTooBig;
     if (numOfApplications == nullptr || infos == nullptr || lastUpdateId == nullptr) return ErrorInvalidArgument;
     const std::int64_t zero = 0;
-    if (!CopyGuestOutPreservingErrno_nid_no_patch(numOfApplications, &zero, sizeof(zero))) return ErrorInvalidArgument;
-    if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(numOfApplications, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(lastUpdateId, &zero, sizeof(zero))) return ErrorInvalidArgument;
     int userId = 0;
     const int userResult = sceUserServiceGetInitialUser(&userId);
     if (userResult < 0) return userResult;
     std::int32_t sdkVersion = 0;
-    const int savedErrno = errno;
     const int sdkResult = sceKernelGetCompiledSdkVersion(&sdkVersion);
-    errno = savedErrno;
     if (sdkResult != 0) return sdkResult;
     return static_cast<std::uint32_t>(sdkVersion) < DirectServiceErrorSdk ? ErrorLegacyServiceUnavailable : ErrorServiceUnavailable;
 }

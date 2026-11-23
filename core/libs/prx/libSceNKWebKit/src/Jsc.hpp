@@ -122,6 +122,7 @@ struct OpaqueJSContextGroup {
     bool hasTimeLimit = false;
     double timeLimitSeconds = 0.0;
     std::chrono::steady_clock::time_point deadline{};
+    double cpuDeadlineSeconds = 0.0;
     bool deadlineArmed = false;
     int vmEntryDepth = 0;
     JSShouldTerminateCallback terminateCallback = nullptr;
@@ -170,6 +171,7 @@ struct OpaqueJSContext {
     JSValue dateConstructor = JS_UNDEFINED;
     JSValue errorConstructor = JS_UNDEFINED;
     JSValue regExpConstructor = JS_UNDEFINED;
+    JSValue reflectSet = JS_UNDEFINED;
     std::unordered_map<OpaqueJSClass*, OpaqueJSValue*> classPrototypes;
     OpaqueJSValue* unhandledRejectionCallback = nullptr;
     std::vector<std::pair<JSValue, JSValue>> pendingUnhandledRejections;
@@ -246,6 +248,7 @@ std::string JsStringToUtf8(const GuestJSString* str);
 GuestJSString* Utf8ToJsString(const std::string& utf8);
 GuestJSString* JsValueToJsString(JSContext* qctx, JSValueConst val);
 JSValue JsStringToJsValue(JSContext* qctx, const GuestJSString* str);
+void InstallErrorInfo(JSContext* qctx, JSValueConst global);
 JSAtom JsStringToAtom(JSContext* qctx, const GuestJSString* str);
 GuestJSString* AtomToJsString(JSContext* qctx, JSAtom atom);
 std::string AtomToUtf8(JSContext* qctx, JSAtom atom);
