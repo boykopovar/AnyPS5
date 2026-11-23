@@ -2971,6 +2971,7 @@ static void CheckConnectPortZero() {
         }
         const std::array<std::uint8_t, 28> portZero = loopback;
         const int listener = sceNetSocket("port-zero-listener", family, 1, 6);
+        if (listener < 0 && family == 28 && *sceNetErrnoLoc() == 47) continue;
         const int receiver = sceNetSocket("port-zero-receiver", family, 2, 17);
         Require(listener >= 0 && receiver >= 0);
         if (sceNetBind_nid_postfix(listener, loopback.data(), addressSize) != 0) {
