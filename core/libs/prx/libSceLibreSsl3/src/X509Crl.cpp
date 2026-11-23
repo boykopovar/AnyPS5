@@ -1457,6 +1457,10 @@ bool IssuerMatches(const LibreSslX509Name* crlIssuer, const LibreSslX509Name* ce
 
 }
 
+LibreSslX509Name* LibreSsl3DecodeX509Name_nid_no_patch(std::span<const unsigned char>& input) {
+    return DecodeName(input);
+}
+
 extern "C" {
 
 LibreSsl3X509Crl* APS5_VABI d2i_X509_CRL_nid_postfix(

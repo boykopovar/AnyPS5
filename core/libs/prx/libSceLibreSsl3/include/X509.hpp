@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include "prx/libSceLibreSsl/include/Api.hpp"
 
 struct LibreSsl3X509CertInfo {
@@ -24,3 +25,5 @@ static_assert(sizeof(LibreSsl3X509CertInfo) == 104);
 static_assert(offsetof(LibreSsl3X509CertInfo, encModified) == 96);
 static_assert(sizeof(LibreSsl3X509) == 32);
 static_assert(offsetof(LibreSsl3X509, references) == 28);
+
+LibreSslX509Name* LibreSsl3DecodeX509Name_nid_no_patch(std::span<const unsigned char>& input);
