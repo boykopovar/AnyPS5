@@ -224,11 +224,11 @@ static void TestLegacyByteLayout() {
 struct OperationSlots {
     void (APS5_VABI* completeDestructor)(WebCore::PerspectiveTransformOperation*);
     void (APS5_VABI* deletingDestructor)(WebCore::PerspectiveTransformOperation*);
-    WebCore::TransformOperation** (APS5_VABI* clone)(WebCore::TransformOperation**, const WebCore::PerspectiveTransformOperation*);
-    bool (APS5_VABI* equals)(const WebCore::PerspectiveTransformOperation*, const WebCore::TransformOperation&);
+    WebCore::LegacyTransformOperation** (APS5_VABI* clone)(WebCore::LegacyTransformOperation**, const WebCore::PerspectiveTransformOperation*);
+    bool (APS5_VABI* equals)(const WebCore::PerspectiveTransformOperation*, const WebCore::LegacyTransformOperation&);
     bool (APS5_VABI* isIdentity)(const WebCore::PerspectiveTransformOperation*);
     bool (APS5_VABI* apply)(const WebCore::PerspectiveTransformOperation*, WebCore::TransformationMatrix&, const WebCore::FloatSize&);
-    WebCore::TransformOperation** (APS5_VABI* blend)(WebCore::TransformOperation**, WebCore::PerspectiveTransformOperation*, const WebCore::TransformOperation*, double, bool);
+    WebCore::LegacyTransformOperation** (APS5_VABI* blend)(WebCore::LegacyTransformOperation**, WebCore::PerspectiveTransformOperation*, const WebCore::LegacyTransformOperation*, double, bool);
     bool (APS5_VABI* isAffectedByTransformOrigin)(const WebCore::PerspectiveTransformOperation*);
     bool (APS5_VABI* isRepresentableIn2D)(const WebCore::PerspectiveTransformOperation*);
     void (APS5_VABI* dump)(const WebCore::PerspectiveTransformOperation*, void*);
@@ -295,7 +295,7 @@ static void TestLifecycle() {
     Require(std::memcmp(&applied, &expected, sizeof(applied)) == 0);
     Require(slots.equals(created, created->m_base));
 
-    WebCore::TransformOperation* cloned = nullptr;
+    WebCore::LegacyTransformOperation* cloned = nullptr;
     Require(slots.clone(&cloned, created) == &cloned);
     auto* copy = reinterpret_cast<WebCore::PerspectiveTransformOperation*>(cloned);
     Require(copy != nullptr && copy != created);
@@ -304,12 +304,12 @@ static void TestLifecycle() {
     Require(std::memcmp(&copy->m_p, &fixed, sizeof(fixed)) == 0);
     Require(slots.equals(created, copy->m_base) && slots.equals(copy, created->m_base));
     created->m_base.m_refCount = 7;
-    WebCore::TransformOperation* second = nullptr;
+    WebCore::LegacyTransformOperation* second = nullptr;
     _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(&second, created);
     Require(second->m_refCount == 1);
     SlotsOf(reinterpret_cast<WebCore::PerspectiveTransformOperation*>(second)).deletingDestructor(reinterpret_cast<WebCore::PerspectiveTransformOperation*>(second));
 
-    WebCore::TransformOperation* blended = nullptr;
+    WebCore::LegacyTransformOperation* blended = nullptr;
     Require(ThrowsNotImplemented([&] { slots.blend(&blended, created, nullptr, 0.5, false); }));
     Require(ThrowsNotImplemented([&] { slots.dump(created, nullptr); }));
 
@@ -342,7 +342,7 @@ static void TestLifecycle() {
     Require(ThrowsCalculatedLength([&] { _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(reinterpret_cast<WebCore::PerspectiveTransformOperation*>(raw), &calculated); }));
     Require(raw[0] == 0xA5 && raw[23] == 0xA5);
     WebCore::PerspectiveTransformOperation holdsCalculated = Make(calculated);
-    WebCore::TransformOperation* none = nullptr;
+    WebCore::LegacyTransformOperation* none = nullptr;
     Require(ThrowsCalculatedLength([&] { _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(&none, &holdsCalculated); }));
     Require(none == nullptr);
     Require(ThrowsCalculatedLength([&] { _ZN7WebCore29PerspectiveTransformOperationD1Ev(&holdsCalculated); }));

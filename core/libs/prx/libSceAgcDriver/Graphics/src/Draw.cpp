@@ -3583,7 +3583,7 @@ void noteAttachments(AttachmentEvent event) {
     AgcDriver::ProfilePrint_nid_no_patch("[pass-attachments] 10 s: %llu hits; misses: %llu no memo, %llu pass, %llu serials, %llu targets, %llu images, %llu depth; %llu stored, %llu ineligible; verify %llu checked, %llu differed\n", taken[0], taken[1], taken[2], taken[3], taken[4], taken[5], taken[6], taken[7], taken[8], taken[9], taken[10]);
 }
 
-bool memoAttachments(const Context& context, const State& state, PreparedDraw& prepared, bool fill) {
+bool matchAttachmentMemo(const Context& context, const State& state, InlineList<std::shared_ptr<StorageTexture>, 8>& residents, std::span<const VkImageView> expectedViews) {
     const auto& memo = attachmentMemo();
     const auto miss = [](AttachmentEvent why) { noteAttachments(why); return false; };
     if (!memo.valid || memo.device != context.device) return miss(AttachmentEvent::NoMemo);
@@ -3599,20 +3599,33 @@ bool memoAttachments(const Context& context, const State& state, PreparedDraw& p
     if (state.depth) {
         if (!sameDepthTarget(*state.depth, *memo.depth) || state.depthWrite != memo.depthWrite || state.stencilTest != memo.stencilTest || writesStencilTarget(state) != memo.stencilWritten || DepthSurfacesSerial() != memo.depthSerial || DepthSurfacesReleased() != memo.depthReleased) return miss(AttachmentEvent::Depth);
     }
-    auto& targets = prepared.targets;
+    if (!expectedViews.empty()) {
+        if (expectedViews.size() != memo.views.size() + (state.depth ? 1u : 0u)) return miss(AttachmentEvent::Targets);
+        for (std::size_t index = 0; index < memo.views.size(); ++index) {
+            if (expectedViews[index] != memo.views[index]) return miss(AttachmentEvent::Targets);
+        }
+        if (state.depth && expectedViews.back() != memo.depthView) return miss(AttachmentEvent::Depth);
+    }
     for (std::size_t index = 0; index < memo.residents.size(); ++index) {
         auto resident = memo.residents[index].lock();
-        if (resident == nullptr || resident->Version() != memo.versions[index] || !StorageImageCached(context, resident.get()) || !StorageImageServesKeys(*resident, SurfaceForTarget(state.colors[index]).dccAddress)) {
-            for (std::size_t filled = 0; filled < index; ++filled) targets[filled].resident.reset();
-            return miss(AttachmentEvent::Images);
-        }
-        if (fill) targets[index].resident = std::move(resident);
+        if (resident == nullptr || resident->Version() != memo.versions[index] || !StorageImageCached(context, resident.get()) || !StorageImageServesKeys(*resident, SurfaceForTarget(state.colors[index]).dccAddress)) return miss(AttachmentEvent::Images);
+        residents.EmplaceBack(std::move(resident));
     }
+    return true;
+}
+
+bool memoAttachments(const Context& context, const State& state, PreparedDraw& prepared, bool fill) {
+    InlineList<std::shared_ptr<StorageTexture>, 8> residents;
+    if (!matchAttachmentMemo(context, state, residents, {})) return false;
     if (!fill) return true;
+    const auto& memo = attachmentMemo();
     noteAttachments(AttachmentEvent::Hit);
+    auto& targets = prepared.targets;
     auto& targetViews = prepared.targetViews;
+    auto matched = residents.Span();
     for (std::size_t index = 0; index < state.colors.size(); ++index) {
         auto& binding = targets[index];
+        binding.resident = std::move(matched[index]);
         binding.color = state.colors[index];
         binding.gpuTiling = memo.gpuTiling[index];
         binding.proxied = memo.proxied[index];
@@ -3622,16 +3635,43 @@ bool memoAttachments(const Context& context, const State& state, PreparedDraw& p
     return true;
 }
 
-void checkAttachments(const State& state, const PreparedDraw& prepared) {
+void checkAttachmentViews(const State& state, std::span<const VkImageView> views, const auto& residentAt) {
     const auto& memo = attachmentMemo();
-    bool same = prepared.targetViews.size() == memo.views.size() + (memo.depth ? 1u : 0u);
-    for (std::size_t index = 0; same && index < memo.views.size(); ++index) same = prepared.targets[index].resident == memo.residents[index].lock() && prepared.targetViews[index] == memo.views[index];
-    if (same && state.depth) same = prepared.targetViews.back() == memo.depthView;
+    bool same = views.size() == memo.views.size() + (memo.depth ? 1u : 0u);
+    for (std::size_t index = 0; same && index < memo.views.size(); ++index) same = residentAt(index) == memo.residents[index].lock() && views[index] == memo.views[index];
+    if (same && state.depth) same = views.back() == memo.depthView;
     noteAttachments(same ? AttachmentEvent::Verified : AttachmentEvent::Mismatch);
     if (!same) {
         static std::atomic<int> reports{0};
         if (reports.fetch_add(1, std::memory_order_relaxed) < 20) std::fprintf(stderr, "[pass-attachments] verify: the memo's attachments differ from the full lookup (target 0x%llx, depth 0x%llx)\n", static_cast<unsigned long long>(state.hasColorTarget ? state.color.address : 0), static_cast<unsigned long long>(state.depth ? state.depth->address : 0));
     }
+}
+
+void checkAttachments(const State& state, const PreparedDraw& prepared) {
+    checkAttachmentViews(state, prepared.targetViews, [&](std::size_t index) { return prepared.targets[index].resident; });
+}
+
+void storeAttachmentMemoHeader(AttachmentMemo& memo, const Context& context, const State& state, const Recorder& recorder, std::uint64_t epoch, std::span<const VkImageView> views) {
+    memo.valid = true;
+    memo.device = context.device;
+    memo.recorder = recorder.Id();
+    memo.generation = recorder.RenderPassGeneration();
+    memo.epoch = epoch;
+    memo.proof = GuestMemory::ProofSerial();
+    memo.pending = StorageTexture::PendingSerial();
+    memo.depthSerial = DepthSurfacesSerial();
+    memo.depthReleased = DepthSurfacesReleased();
+    memo.colors.assign(state.colors.begin(), state.colors.end());
+    memo.residents.clear();
+    memo.versions.clear();
+    memo.gpuTiling.clear();
+    memo.proxied.clear();
+    memo.views.clear();
+    memo.depth = state.depth;
+    memo.depthWrite = state.depthWrite;
+    memo.stencilTest = state.stencilTest;
+    memo.stencilWritten = state.depth ? writesStencilTarget(state) : false;
+    memo.depthView = state.depth ? views.back() : VK_NULL_HANDLE;
 }
 
 void rememberAttachments(const Context& context, const State& state, const PreparedDraw& prepared) {
@@ -3644,21 +3684,7 @@ void rememberAttachments(const Context& context, const State& state, const Prepa
         noteAttachments(AttachmentEvent::Ineligible);
         return;
     }
-    memo.valid = true;
-    memo.device = context.device;
-    memo.recorder = recorder->Id();
-    memo.generation = recorder->RenderPassGeneration();
-    memo.epoch = epoch;
-    memo.proof = GuestMemory::ProofSerial();
-    memo.pending = StorageTexture::PendingSerial();
-    memo.depthSerial = DepthSurfacesSerial();
-    memo.depthReleased = DepthSurfacesReleased();
-    memo.colors.assign(state.colors.begin(), state.colors.end());
-    memo.residents.clear();
-    memo.versions.clear();
-    memo.gpuTiling.clear();
-    memo.proxied.clear();
-    memo.views.clear();
+    storeAttachmentMemoHeader(memo, context, state, *recorder, epoch, prepared.targetViews);
     for (std::size_t index = 0; index < prepared.targets.size(); ++index) {
         const auto& binding = prepared.targets[index];
         memo.residents.emplace_back(binding.resident);
@@ -3667,11 +3693,26 @@ void rememberAttachments(const Context& context, const State& state, const Prepa
         memo.proxied.push_back(binding.proxied);
         memo.views.push_back(prepared.targetViews[index]);
     }
-    memo.depth = state.depth;
-    memo.depthWrite = state.depthWrite;
-    memo.stencilTest = state.stencilTest;
-    memo.stencilWritten = state.depth ? writesStencilTarget(state) : false;
-    memo.depthView = state.depth ? prepared.targetViews.back() : VK_NULL_HANDLE;
+    noteAttachments(AttachmentEvent::Stored);
+}
+
+void rememberRecipeAttachments(const Context& context, const State& state, const Recorder* recorder, std::span<const std::shared_ptr<StorageTexture>> residents, std::span<const VkImageView> views) {
+    auto& memo = attachmentMemo();
+    const auto epoch = GuestMemory::CollectEpoch();
+    const bool eligible = epoch != 0 && recorder != nullptr && recorder->RenderPassOpen() && (!state.depth || state.depth->samples == 1u) && views.size() == residents.size() + (state.depth ? 1u : 0u) && std::ranges::all_of(residents, [](const std::shared_ptr<StorageTexture>& resident) { return resident != nullptr; }) && std::ranges::all_of(state.colors, [](const ColorTarget& color) { return color.samples == 1u && !color.staged && color.partialWriteMask == 0; });
+    if (!eligible) {
+        memo.valid = false;
+        noteAttachments(AttachmentEvent::Ineligible);
+        return;
+    }
+    storeAttachmentMemoHeader(memo, context, state, *recorder, epoch, views);
+    for (std::size_t index = 0; index < residents.size(); ++index) {
+        memo.residents.emplace_back(residents[index]);
+        memo.versions.push_back(residents[index]->Version());
+        memo.gpuTiling.push_back(state.colors[index].tileMode == ColorTileMode::RenderTarget && context.detiler != nullptr);
+        memo.proxied.push_back(false);
+        memo.views.push_back(views[index]);
+    }
     noteAttachments(AttachmentEvent::Stored);
 }
 
@@ -4409,7 +4450,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     // The state is copied only when a mask must change.
     auto& masked = prepared.masked;
     masked = maskedState(state, inputs.fragmentOutputs);
-    if (std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied; })) recipeOut = nullptr;
+    if (std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied || binding.stagedTemporary != nullptr || binding.dump != nullptr; })) recipeOut = nullptr;
     for (std::size_t index = 0; index < targets.size(); ++index) {
         if (!targets[index].proxied) continue;
         if (!masked.has_value()) masked = state;
@@ -5058,26 +5099,43 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     auto& memo = ThreadTargetMemo();
     if (ownsTargetMemo(memo) && (memo.colors.valid || memo.depth.valid)) noteTargetMemo(TargetMemoEvent::RecipeInvalidated);
     memo.Invalidate();
+    const bool passAttachments = PassAttachmentMemoEnabled();
+    const bool verifyAttachments = passAttachments && VerifyPassAttachments() && [&] {
+        InlineList<std::shared_ptr<StorageTexture>, 8> ignored;
+        return matchAttachmentMemo(context, state, ignored, recipe.targetViews);
+    }();
     InlineList<std::shared_ptr<StorageTexture>, 8> targets;
-    for (std::size_t index = 0; index < recipe.targets.size(); ++index) {
-        timer.phase(PhaseSetup);
-        if (state.colors[index].fmaskAddress != 0) GuardOneFragmentFmask(context, state.colors[index]);
-        auto stored = recipe.targets[index].lock();
-        if (stored == nullptr || !StorageImageCached(context, stored.get()) || !StorageImageServesKeys(*stored, SurfaceForTarget(state.colors[index]).dccAddress)) return miss(DrawRecipeMiss::TargetGone);
-        auto resident = refreshResidentTarget(context, state, state.colors[index], outcome, profile, [&] {
-            if (state.colors[index].arrayLastSlice != 0) stored->RefreshLayers(state.colors[index].arraySlice, state.colors[index].layers);
-            else stored->Refresh();
-            return stored;
-        });
-        timer.phase(PhaseReadTarget);
-        if (resident == nullptr) return miss(DrawRecipeMiss::TargetGone);
-        targets.EmplaceBack(std::move(resident));
-    }
-    if (recipe.hasDepth) {
-        timer.phase(PhaseSetup);
-        const auto depthView = DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state), overwrittenStencil(state));
-        timer.phase(PhaseReadTarget);
-        if (recipe.targetViews.back() != depthView) return miss(DrawRecipeMiss::TargetGone);
+    const bool attachmentsFromMemo = passAttachments && !VerifyPassAttachments() && matchAttachmentMemo(context, state, targets, recipe.targetViews);
+    if (attachmentsFromMemo) {
+        noteAttachments(AttachmentEvent::Hit);
+        for (std::size_t index = 0; index < state.colors.size(); ++index) {
+            if (state.colors[index].fmaskAddress != 0) GuardOneFragmentFmask(context, state.colors[index]);
+        }
+    } else {
+        for (std::size_t index = 0; index < recipe.targets.size(); ++index) {
+            timer.phase(PhaseSetup);
+            if (state.colors[index].fmaskAddress != 0) GuardOneFragmentFmask(context, state.colors[index]);
+            auto stored = recipe.targets[index].lock();
+            if (stored == nullptr || !StorageImageCached(context, stored.get()) || !StorageImageServesKeys(*stored, SurfaceForTarget(state.colors[index]).dccAddress)) return miss(DrawRecipeMiss::TargetGone);
+            auto resident = refreshResidentTarget(context, state, state.colors[index], outcome, profile, [&] {
+                if (state.colors[index].arrayLastSlice != 0) stored->RefreshLayers(state.colors[index].arraySlice, state.colors[index].layers);
+                else stored->Refresh();
+                return stored;
+            });
+            timer.phase(PhaseReadTarget);
+            if (resident == nullptr) return miss(DrawRecipeMiss::TargetGone);
+            targets.EmplaceBack(std::move(resident));
+        }
+        if (recipe.hasDepth) {
+            timer.phase(PhaseSetup);
+            const auto depthView = DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state), overwrittenStencil(state));
+            timer.phase(PhaseReadTarget);
+            if (recipe.targetViews.back() != depthView) return miss(DrawRecipeMiss::TargetGone);
+        }
+        if (verifyAttachments) {
+            const auto matchedTargets = targets.Span();
+            checkAttachmentViews(state, recipe.targetViews, [&](std::size_t index) { return matchedTargets[index]; });
+        }
     }
     timer.phase(PhasePrepare);
     // The template's proof (rules R6/R7): ProveCurrent, T1 included, the alias checks the trimmed
@@ -5139,6 +5197,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     record.pushStages = recipe.pushStages;
     record.depthLocations = passDepthLocations(context, state, *record.pipeline);
     recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs, trace);
+    if (passAttachments) rememberRecipeAttachments(context, state, recorder, targets.Span(), recipe.targetViews);
     if (profile) {
         result.recordUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - recordStart).count();
         auto& stats = Profile();
