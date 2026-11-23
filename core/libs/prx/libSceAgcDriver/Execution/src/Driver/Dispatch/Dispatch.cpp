@@ -319,6 +319,12 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
                 if (last) targets = std::move(read);
             }
             const auto ran = std::min(localDevice->SplitTargets()[ShaderRecompiler::SplitStateAbi::RoundDword], rounds);
+            static std::mutex gpuBatchMutex;
+            static std::set<std::pair<std::uint32_t, std::uint32_t>> gpuBatchesReported;
+            {
+                std::lock_guard gpuBatchLock(gpuBatchMutex);
+                if (gpuBatchesReported.emplace(rounds, ran).second) std::fprintf(stderr, "[gpu] split table call rounds selected on the GPU: a batch of %u rounds ran %u\n", rounds, ran);
+            }
             round += ran;
             gpuBatch = ran == rounds ? std::min(gpuBatch * 2u, 256u) : 4u;
         }

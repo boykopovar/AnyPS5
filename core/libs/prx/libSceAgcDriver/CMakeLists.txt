@@ -937,6 +937,15 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test(NAME agc_driver_split_table_call_driver_gpu_rounds COMMAND agc_driver_split_table_call_driver_tests)
+    add_test(NAME agc_driver_split_table_call_driver_cpu_rounds COMMAND agc_driver_split_table_call_driver_tests --cpu-rounds)
+    set_tests_properties(agc_driver_split_table_call_driver_gpu_rounds agc_driver_split_table_call_driver_cpu_rounds PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 60 SKIP_RETURN_CODE 77)
+    set_tests_properties(agc_driver_split_table_call_driver_gpu_rounds PROPERTIES PASS_REGULAR_EXPRESSION "a batch of [0-9]+ rounds ran [1-9][0-9]*.*split table call driver test passed")
+    set_tests_properties(agc_driver_split_table_call_driver_cpu_rounds PROPERTIES FAIL_REGULAR_EXPRESSION "rounds selected on the GPU")
+    if(WIN32)
+        set_tests_properties(agc_driver_split_table_call_driver_gpu_rounds agc_driver_split_table_call_driver_cpu_rounds PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     foreach(partialStoreTest agc_driver_depth_plane_partial_store_unimported agc_driver_depth_plane_partial_store_image_copy agc_driver_depth_plane_partial_store_buffer_copy agc_driver_depth_plane_partial_store_upload_image)
         set_tests_properties(${partialStoreTest} PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_HOST_IMPORT=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
