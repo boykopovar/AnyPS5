@@ -117,9 +117,7 @@ EGLBoolean APS5_VABI eglGetConfigAttrib_nid_postfix(EGLDisplay display, EGLConfi
     if (it == configAttributes.end()) return EglError_nid_no_patch(0x3004);
     if (!value) return EglError_nid_no_patch(0x300c);
     const EGLint result = it->second;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
-    errno = savedErrno;
     if (!copied) return EglError_nid_no_patch(0x300c);
     return 1;
 }
@@ -155,15 +153,11 @@ EGLBoolean APS5_VABI eglChooseConfig_nid_postfix(EGLDisplay display, const EGLin
         else if (key != 0x3035 && key != 0x3036 && key != 0x3037) match &= actual == value;
     }
     const EGLint countValue = match && (!configs || size > 0) ? 1 : 0;
-    const int savedErrno = errno;
     const bool countCopied = GuestCopyOut_nid_no_patch(count, &countValue, sizeof(countValue));
-    errno = savedErrno;
     if (!countCopied) return EglError_nid_no_patch(0x300c);
     if (configs && countValue) {
         const EGLConfig config = &configToken;
-        const int savedErrno2 = errno;
         const bool configsCopied = GuestCopyOut_nid_no_patch(configs, &config, sizeof(config));
-        errno = savedErrno2;
         if (!configsCopied) return EglError_nid_no_patch(0x300c);
     }
     return 1;
@@ -330,9 +324,7 @@ EGLBoolean APS5_VABI eglQueryContext_nid_postfix(EGLDisplay display, EGLContext 
     case 0x3086: result = context->bound ? 0x3084 : 0x3038; break;
     default: return EglError_nid_no_patch(0x3004);
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
-    errno = savedErrno;
     if (!copied) return EglError_nid_no_patch(0x300c);
     return 1;
 }

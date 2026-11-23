@@ -1060,6 +1060,7 @@ std::span<const unsigned char> DigestIdentifier(int type) {
     static constexpr unsigned char Sha256[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01};
     static constexpr unsigned char Sha384[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02};
     static constexpr unsigned char Sha512[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03};
+    static constexpr unsigned char Sha512_256[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x06};
     switch (type) {
     case 4: return Md5;
     case 64: return Sha1;
@@ -1069,6 +1070,7 @@ std::span<const unsigned char> DigestIdentifier(int type) {
     case 673: return Sha384;
     case 674: return Sha512;
     case 675: return Sha224;
+    case 1030: return Sha512_256;
     default: return {};
     }
 }
@@ -1208,10 +1210,8 @@ LibreSsl3Bignum* DuplicateRsaBignum_nid_no_patch(const LibreSsl3Bignum* number) 
 void FreeRsa_nid_no_patch(LibreSsl3Rsa* rsa) {
     if (!rsa) return;
     LibreSsl3Rsa copy{};
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&copy, rsa, sizeof(copy));
     const bool writable = readable && GuestWritable_nid_no_patch(rsa, sizeof(*rsa));
-    errno = savedErrno;
     if (!readable) throw std::invalid_argument(std::string(__func__) + ": unreadable rsa");
     if (!writable) throw std::invalid_argument(std::string(__func__) + ": unwritable rsa");
     const int remaining = std::atomic_ref<std::int32_t>(rsa->references).fetch_add(-1) - 1;
@@ -1855,10 +1855,8 @@ extern "C" {
 void APS5_VABI RSA_free_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa) {
     if (!rsa) return;
     LibreSsl3Rsa copy{};
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&copy, rsa, sizeof(copy));
     const bool writable = readable && GuestWritable_nid_no_patch(rsa, sizeof(*rsa));
-    errno = savedErrno;
     if (!readable) throw std::invalid_argument(std::string(__func__) + ": unreadable rsa");
     if (!writable) throw std::invalid_argument(std::string(__func__) + ": unwritable rsa");
     if (copy.method) {
@@ -1891,15 +1889,18 @@ int APS5_VABI RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(LibreSsl3Rsa* rsa, unsi
 int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
     constexpr auto function = "RSA_check_key";
     if (!rsa) NotImplemented_nid_no_patch("RSA_check_key of a null key");
-    if (!rsa->p || !rsa->q || !rsa->n || !rsa->e || !rsa->d) {
+    LibreSsl3Rsa key{};
+    const bool readable = GuestCopyIn_nid_no_patch(&key, rsa, sizeof(key));
+    if (!readable) throw std::invalid_argument(std::string(function) + ": unreadable rsa");
+    if (!key.p || !key.q || !key.n || !key.e || !key.d) {
         QueueError(ReasonValueMissing);
         return 0;
     }
-    const auto p = ComponentNumber(RequireComponent(rsa->p, function, "p"), function);
-    const auto q = ComponentNumber(RequireComponent(rsa->q, function, "q"), function);
-    const auto n = ComponentNumber(RequireComponent(rsa->n, function, "n"), function);
-    const auto e = ComponentNumber(RequireComponent(rsa->e, function, "e"), function);
-    const auto d = ComponentNumber(RequireComponent(rsa->d, function, "d"), function);
+    const auto p = ComponentNumber(RequireComponent(key.p, function, "p"), function);
+    const auto q = ComponentNumber(RequireComponent(key.q, function, "q"), function);
+    const auto n = ComponentNumber(RequireComponent(key.n, function, "n"), function);
+    const auto e = ComponentNumber(RequireComponent(key.e, function, "e"), function);
+    const auto d = ComponentNumber(RequireComponent(key.d, function, "d"), function);
     auto result = 1;
     if (IsOne(e)) {
         result = 0;
@@ -1947,10 +1948,10 @@ int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
         result = 0;
         QueueError(ReasonDeNotCongruentToOne);
     }
-    if (!rsa->dmp1 || !rsa->dmq1 || !rsa->iqmp) return result;
-    const auto dmp1 = ComponentNumber(RequireComponent(rsa->dmp1, function, "dmp1"), function);
-    const auto dmq1 = ComponentNumber(RequireComponent(rsa->dmq1, function, "dmq1"), function);
-    const auto iqmp = ComponentNumber(RequireComponent(rsa->iqmp, function, "iqmp"), function);
+    if (!key.dmp1 || !key.dmq1 || !key.iqmp) return result;
+    const auto dmp1 = ComponentNumber(RequireComponent(key.dmp1, function, "dmp1"), function);
+    const auto dmq1 = ComponentNumber(RequireComponent(key.dmq1, function, "dmq1"), function);
+    const auto iqmp = ComponentNumber(RequireComponent(key.iqmp, function, "iqmp"), function);
     Number reduced;
     if (!Magnitude(pMinusOne, function) || !Magnitude(qMinusOne, function)) return -1;
     if (!CheckedRemainder(reduced, d, pMinusOne, function)) return -1;

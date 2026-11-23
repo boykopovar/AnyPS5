@@ -26,8 +26,10 @@ enum class RuntimeSwitch : std::size_t {
     NoAliasViews,
     NoTargetMemo,
     NoTargetMemoOverlapCache,
+    NoStagePoolReuse,
     IndexInPlaceBehindWriter,
     WideLibraryKeys,
+    NoWideTableCopyHle,
     Count,
 };
 

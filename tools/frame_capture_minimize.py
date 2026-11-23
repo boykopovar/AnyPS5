@@ -56,9 +56,13 @@ class Minimizer:
             valid_kinds = Minimizer.CALL_KINDS if label == "calls" else Minimizer.CHUNK_KINDS
             if kind not in valid_kinds:
                 raise RuntimeError(f"capture inspection {label}[{position}] has an unknown kind {kind!r}")
-            if label == "calls" and kind == "memory":
+            if label == "calls":
                 group = entry.get("memory_group")
-                if isinstance(group, bool) or not isinstance(group, int) or group < 0:
+                if kind == "memory":
+                    valid_group = type(group) is int and group >= 0
+                else:
+                    valid_group = "memory_group" in entry and group is None
+                if not valid_group:
                     raise RuntimeError(f"capture inspection calls[{position}] has an invalid memory group")
             if label == "chunks":
                 group = entry.get("group")
@@ -171,10 +175,8 @@ class Minimizer:
                         break
                 if changed:
                     continue
-                for part in partitions:
+                for part in partitions if len(partitions) > 2 else ():
                     candidate = list(part)
-                    if len(candidate) == len(current):
-                        continue
                     discarded = set(current) - set(candidate)
                     calls = removed_calls | (discarded if is_call else set())
                     chunks = removed_chunks | (discarded if not is_call else set())

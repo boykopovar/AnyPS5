@@ -6,7 +6,6 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 
 static_assert(offsetof(SdecHevcConfig, magic) == 0x00);
 static_assert(offsetof(SdecHevcConfig, defaultDepthMode) == 0x04);
@@ -41,23 +40,9 @@ struct LayoutSizes {
     std::uint64_t partB;
 };
 
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return copied;
-}
-
-bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return copied;
-}
-
 std::uint64_t ReadQuad(const void* source, std::size_t offset, const char* function) {
     std::uint64_t value = 0;
-    if (!CopyInPreservingErrno(&value, static_cast<const unsigned char*>(source) + offset, sizeof(value))) {
+    if (!GuestCopyIn_nid_no_patch(&value, static_cast<const unsigned char*>(source) + offset, sizeof(value))) {
         NotImplemented_nid_no_patch(function);
     }
     return value;
@@ -263,7 +248,7 @@ extern "C" {
 
 int APS5_VABI sceSdecCreateSwHevc(const void* param) {
     std::uint32_t first = 0;
-    if (!CopyInPreservingErrno(&first, param, sizeof(first))) NotImplemented_nid_no_patch(__func__);
+    if (!GuestCopyIn_nid_no_patch(&first, param, sizeof(first))) NotImplemented_nid_no_patch(__func__);
     if (first != 1) return SCE_SDEC_SW_HEVC_UNSUPPORTED_PARAM;
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -275,7 +260,7 @@ int APS5_VABI sceSdecDestroySwHevc(void* handle) {
     if (ReadQuad(handle, 0x8, __func__) != 0) {
         const std::uint64_t cleared = 0;
         auto* field = static_cast<unsigned char*>(handle) + 0x8;
-        if (!CopyOutPreservingErrno(field, &cleared, sizeof(cleared))) NotImplemented_nid_no_patch(__func__);
+        if (!GuestCopyOut_nid_no_patch(field, &cleared, sizeof(cleared))) NotImplemented_nid_no_patch(__func__);
     }
     return 0;
 }
@@ -295,20 +280,18 @@ int APS5_VABI sceSdecGetFrameSwHevc(void* handle) {
 void APS5_VABI sceSdecGetVersionSwHevc(std::uint32_t* version) {
     if (version == nullptr) return;
     const std::uint32_t value = 0x13590001u;
-    const auto preserved = errno;
     GuestCopyOut_nid_no_patch(version, &value, sizeof(value));
-    errno = preserved;
 }
 
 int APS5_VABI sceSdecQueryMemorySwHevc(const SdecHevcConfig* config, const SdecRecord* record, std::int32_t mode, SdecMemory* memory, std::uint32_t* dpbFrames, std::uint8_t* tooBig) {
     if (mode == 0 || config == nullptr || record == nullptr || memory == nullptr || dpbFrames == nullptr) return SCE_SDEC_SW_HEVC_UNSUPPORTED_PARAM;
     SdecHevcConfig localConfig{};
     SdecRecord localRecord{};
-    if (!CopyInPreservingErrno(&localConfig, config, sizeof(localConfig)) || !CopyInPreservingErrno(&localRecord, record, sizeof(localRecord))) return SCE_SDEC_SW_HEVC_UNSUPPORTED_PARAM;
+    if (!GuestCopyIn_nid_no_patch(&localConfig, config, sizeof(localConfig)) || !GuestCopyIn_nid_no_patch(&localRecord, record, sizeof(localRecord))) return SCE_SDEC_SW_HEVC_UNSUPPORTED_PARAM;
     if (!ValidRawDepths(localConfig)) return SCE_SDEC_SW_HEVC_UNSUPPORTED_PARAM;
     const LevelLimits limits = LevelLimitsFor(localConfig.levelIdc);
     const std::uint32_t frames = DpbFramesHevc(localConfig, limits);
-    if (!CopyOutPreservingErrno(dpbFrames, &frames, sizeof(frames))) return SCE_SDEC_SW_HEVC_UNSUPPORTED_PARAM;
+    if (!GuestCopyOut_nid_no_patch(dpbFrames, &frames, sizeof(frames))) return SCE_SDEC_SW_HEVC_UNSUPPORTED_PARAM;
     if (localRecord.unknown8 > MaxInstances) return SCE_SDEC_SW_HEVC_UNSUPPORTED_PARAM;
     if (localConfig.magic != 1 || localConfig.widthInMbs == 0 || localConfig.heightInMbs == 0 ||
         (localConfig.extraWidthPixels != 0 && localConfig.extraWidthPixels != 8) ||
@@ -318,13 +301,13 @@ int APS5_VABI sceSdecQueryMemorySwHevc(const SdecHevcConfig* config, const SdecR
     if (localConfig.widthInMbs > 0 && localConfig.heightInMbs > 0 && CappedPictureArea(localConfig, limits.maxLumaPs) > limits.maxLumaPs) {
         if (tooBig != nullptr) {
             const std::uint8_t one = 1;
-            CopyOutPreservingErrno(tooBig, &one, sizeof(one));
+            GuestCopyOut_nid_no_patch(tooBig, &one, sizeof(one));
         }
         return SCE_SDEC_SW_HEVC_UNSUPPORTED_PARAM;
     }
     SdecMemory result{};
     if (!ComputeQuerySizesHevc(localConfig, localRecord, limits, frames, &result)) return SCE_SDEC_SW_HEVC_UNSUPPORTED_PARAM;
-    return CopyOutPreservingErrno(memory, &result, sizeof(result)) ? 0 : SCE_SDEC_SW_HEVC_UNSUPPORTED_PARAM;
+    return GuestCopyOut_nid_no_patch(memory, &result, sizeof(result)) ? 0 : SCE_SDEC_SW_HEVC_UNSUPPORTED_PARAM;
 }
 
 int APS5_VABI sceSdecResetSwHevc(void* handle) {
