@@ -1299,15 +1299,23 @@ int ByteCount(const LibreSslBignum* number, const char* function) {
 
 extern "C" {
 
-int APS5_VABI RSA_flags_nid_postfix(const LibreSslRsa* rsa) {
+int LibreSslRsaFlags_nid_no_patch(const LibreSslRsa* rsa) {
     if (!rsa) return 0;
-    if (!rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null method");
+    if (!rsa->meth) throw std::invalid_argument("RSA_flags_nid_postfix: null method");
     return rsa->meth->flags;
 }
 
+int APS5_VABI RSA_flags_nid_postfix(const LibreSslRsa* rsa) {
+    return LibreSslRsaFlags_nid_no_patch(rsa);
+}
+
+int LibreSslRsaSize_nid_no_patch(const LibreSslRsa* rsa) {
+    if (!rsa) throw std::invalid_argument("RSA_size_nid_postfix: null key");
+    return ByteCount(static_cast<const LibreSslBignum*>(rsa->n), "RSA_size_nid_postfix");
+}
+
 int APS5_VABI RSA_size_nid_postfix(const LibreSslRsa* rsa) {
-    if (!rsa) throw std::invalid_argument(std::string(__func__) + ": null key");
-    return ByteCount(static_cast<const LibreSslBignum*>(rsa->n), __func__);
+    return LibreSslRsaSize_nid_no_patch(rsa);
 }
 
 LibreSslRsa* APS5_VABI RSA_new_nid_postfix(void) {
@@ -1348,38 +1356,54 @@ void APS5_VABI RSA_free_nid_postfix(LibreSslRsa* rsa) {
     LibreSslRsaFree_nid_no_patch(rsa);
 }
 
-int APS5_VABI RSA_public_encrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
-    if (!rsa || !rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null key or method");
+int LibreSslRsaPublicEncrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    if (!rsa || !rsa->meth) throw std::invalid_argument("RSA_public_encrypt_nid_postfix: null key or method");
     const auto encrypt = Operation<RsaCrypt>(*rsa->meth, OperationPublicEncrypt);
-    if (!encrypt) throw std::invalid_argument(std::string(__func__) + ": method without rsa_pub_enc");
+    if (!encrypt) throw std::invalid_argument("RSA_public_encrypt_nid_postfix: method without rsa_pub_enc");
     return encrypt(length, from, to, rsa, padding);
+}
+
+int APS5_VABI RSA_public_encrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    return LibreSslRsaPublicEncrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int LibreSslRsaPublicDecrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    if (!rsa || !rsa->meth) throw std::invalid_argument("RSA_public_decrypt_nid_postfix: null key or method");
+    const auto decrypt = Operation<RsaCrypt>(*rsa->meth, OperationPublicDecrypt);
+    if (!decrypt) throw std::invalid_argument("RSA_public_decrypt_nid_postfix: method without rsa_pub_dec");
+    return decrypt(length, from, to, rsa, padding);
 }
 
 int APS5_VABI RSA_public_decrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
-    if (!rsa || !rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null key or method");
-    const auto decrypt = Operation<RsaCrypt>(*rsa->meth, OperationPublicDecrypt);
-    if (!decrypt) throw std::invalid_argument(std::string(__func__) + ": method without rsa_pub_dec");
-    return decrypt(length, from, to, rsa, padding);
+    return LibreSslRsaPublicDecrypt_nid_no_patch(length, from, to, rsa, padding);
 }
 
-int APS5_VABI RSA_private_encrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
-    if (!rsa || !rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null key or method");
+int LibreSslRsaPrivateEncrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    if (!rsa || !rsa->meth) throw std::invalid_argument("RSA_private_encrypt_nid_postfix: null key or method");
     const auto encrypt = Operation<RsaCrypt>(*rsa->meth, OperationPrivateEncrypt);
-    if (!encrypt) throw std::invalid_argument(std::string(__func__) + ": method without rsa_priv_enc");
+    if (!encrypt) throw std::invalid_argument("RSA_private_encrypt_nid_postfix: method without rsa_priv_enc");
     return encrypt(length, from, to, rsa, padding);
 }
 
-int APS5_VABI RSA_private_decrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
-    if (!rsa || !rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null key or method");
+int APS5_VABI RSA_private_encrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    return LibreSslRsaPrivateEncrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int LibreSslRsaPrivateDecrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    if (!rsa || !rsa->meth) throw std::invalid_argument("RSA_private_decrypt_nid_postfix: null key or method");
     const auto decrypt = Operation<RsaCrypt>(*rsa->meth, OperationPrivateDecrypt);
-    if (!decrypt) throw std::invalid_argument(std::string(__func__) + ": method without rsa_priv_dec");
+    if (!decrypt) throw std::invalid_argument("RSA_private_decrypt_nid_postfix: method without rsa_priv_dec");
     return decrypt(length, from, to, rsa, padding);
 }
 
-int APS5_VABI RSA_sign_nid_postfix(int type, const unsigned char* digest, unsigned int digestLength, unsigned char* signature, unsigned int* signatureLength, LibreSslRsa* rsa) {
-    if (!rsa) throw std::invalid_argument(std::string(__func__) + ": null key");
+int APS5_VABI RSA_private_decrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    return LibreSslRsaPrivateDecrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int LibreSslRsaSign_nid_no_patch(int type, const unsigned char* digest, unsigned int digestLength, unsigned char* signature, unsigned int* signatureLength, LibreSslRsa* rsa) {
+    if (!rsa) throw std::invalid_argument("RSA_sign_nid_postfix: null key");
     if (rsa->flags & RsaFlagSignVerify) {
-        if (!rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null method");
+        if (!rsa->meth) throw std::invalid_argument("RSA_sign_nid_postfix: null method");
         if (rsa->meth->sign) return reinterpret_cast<RsaSign>(rsa->meth->sign)(type, digest, digestLength, signature, signatureLength, rsa);
     }
     const DigestObject* object = nullptr;
@@ -1397,12 +1421,12 @@ int APS5_VABI RSA_sign_nid_postfix(int type, const unsigned char* digest, unsign
             LibreSslPutError_nid_no_patch(4, 0xfff, type < 0 ? 117 : 116);
             return 0;
         }
-        object = &DigestObjectFor(type, __func__);
-        if (digestLength > INT_MAX) NotImplemented_nid_no_patch((std::string(__func__) + ": a digest length over INT_MAX").c_str());
+        object = &DigestObjectFor(type, "RSA_sign_nid_postfix");
+        if (digestLength > INT_MAX) NotImplemented_nid_no_patch("RSA_sign_nid_postfix: a digest length over INT_MAX");
         algorithmLength = 2 + static_cast<std::uint64_t>(object->length) + 2;
         contentLength = 1 + DerLengthBytes(algorithmLength) + algorithmLength + 1 + DerLengthBytes(digestLength) + digestLength;
         length = 1 + DerLengthBytes(contentLength) + contentLength;
-        if (length > INT_MAX) NotImplemented_nid_no_patch((std::string(__func__) + ": a DigestInfo over INT_MAX bytes").c_str());
+        if (length > INT_MAX) NotImplemented_nid_no_patch("RSA_sign_nid_postfix: a DigestInfo over INT_MAX bytes");
     }
     if (static_cast<std::int64_t>(length) > std::int64_t(RSA_size_nid_postfix(rsa)) - 11) {
         LibreSslPutError_nid_no_patch(4, 0xfff, 112);
@@ -1419,21 +1443,25 @@ int APS5_VABI RSA_sign_nid_postfix(int type, const unsigned char* digest, unsign
         encoded.push_back(0x05);
         encoded.push_back(0x00);
         AppendDerHeader(encoded, 0x04, digestLength);
-        RequireBuffer(digest, digestLength, __func__, "digest");
+        RequireBuffer(digest, digestLength, "RSA_sign_nid_postfix", "digest");
         if (digestLength) encoded.insert(encoded.end(), digest, digest + digestLength);
         data = encoded.data();
     }
     const int result = RSA_private_encrypt_nid_postfix(static_cast<int>(length), data, signature, rsa, PaddingPkcs1);
     if (result <= 0) return 0;
-    if (!signatureLength) throw std::invalid_argument(std::string(__func__) + ": null signature length");
+    if (!signatureLength) throw std::invalid_argument("RSA_sign_nid_postfix: null signature length");
     *signatureLength = static_cast<unsigned int>(result);
     return 1;
 }
 
-int APS5_VABI RSA_verify_nid_postfix(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* signature, unsigned int signatureLength, LibreSslRsa* rsa) {
-    if (!rsa) throw std::invalid_argument(std::string(__func__) + ": null key");
+int APS5_VABI RSA_sign_nid_postfix(int type, const unsigned char* digest, unsigned int digestLength, unsigned char* signature, unsigned int* signatureLength, LibreSslRsa* rsa) {
+    return LibreSslRsaSign_nid_no_patch(type, digest, digestLength, signature, signatureLength, rsa);
+}
+
+int LibreSslRsaVerify_nid_no_patch(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* signature, unsigned int signatureLength, LibreSslRsa* rsa) {
+    if (!rsa) throw std::invalid_argument("RSA_verify_nid_postfix: null key");
     if (rsa->flags & RsaFlagSignVerify) {
-        if (!rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null method");
+        if (!rsa->meth) throw std::invalid_argument("RSA_verify_nid_postfix: null method");
         if (rsa->meth->verify) return reinterpret_cast<RsaVerify>(rsa->meth->verify)(type, digest, digestLength, signature, signatureLength, rsa);
     }
     if (signatureLength != static_cast<unsigned int>(RSA_size_nid_postfix(rsa))) {
@@ -1447,15 +1475,19 @@ int APS5_VABI RSA_verify_nid_postfix(int type, const unsigned char* digest, unsi
     std::vector<unsigned char> block(signatureLength);
     const int length = RSA_public_decrypt_nid_postfix(static_cast<int>(signatureLength), signature, block.data(), rsa, PaddingPkcs1);
     if (length <= 0) return 0;
-    if (type != DigestMd5Sha1) return VerifyDigestInfo(type, digest, digestLength, block.data(), length, __func__);
+    if (type != DigestMd5Sha1) return VerifyDigestInfo(type, digest, digestLength, block.data(), length, "RSA_verify_nid_postfix");
     if (length != static_cast<int>(Md5Sha1Bytes)) {
         LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
         return 0;
     }
-    RequireBuffer(digest, Md5Sha1Bytes, __func__, "digest");
+    RequireBuffer(digest, Md5Sha1Bytes, "RSA_verify_nid_postfix", "digest");
     if (!std::memcmp(block.data(), digest, Md5Sha1Bytes)) return 1;
     LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
     return 0;
+}
+
+int APS5_VABI RSA_verify_nid_postfix(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* signature, unsigned int signatureLength, LibreSslRsa* rsa) {
+    return LibreSslRsaVerify_nid_no_patch(type, digest, digestLength, signature, signatureLength, rsa);
 }
 
 LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, std::int64_t length) {
@@ -1631,20 +1663,28 @@ int AddPss(EvpMdContext& context, const LibreSslRsa* rsa, unsigned char* em, con
 
 extern "C" {
 
-int APS5_VABI RSA_padding_add_PKCS1_PSS_nid_postfix(LibreSslRsa* rsa, unsigned char* em, const unsigned char* mHash, const EvpMd* hash, int saltLength) {
+int LibreSslRsaPaddingAddPkcs1Pss_nid_no_patch(LibreSslRsa* rsa, unsigned char* em, const unsigned char* mHash, const EvpMd* hash, int saltLength) {
     EvpMdContext context;
     EVP_MD_CTX_init_nid_postfix(&context);
-    const int result = AddPss(context, rsa, em, mHash, hash, saltLength, __func__);
+    const int result = AddPss(context, rsa, em, mHash, hash, saltLength, "RSA_padding_add_PKCS1_PSS_nid_postfix");
+    EVP_MD_CTX_cleanup_nid_postfix(&context);
+    return result;
+}
+
+int APS5_VABI RSA_padding_add_PKCS1_PSS_nid_postfix(LibreSslRsa* rsa, unsigned char* em, const unsigned char* mHash, const EvpMd* hash, int saltLength) {
+    return LibreSslRsaPaddingAddPkcs1Pss_nid_no_patch(rsa, em, mHash, hash, saltLength);
+}
+
+int LibreSslRsaVerifyPkcs1Pss_nid_no_patch(LibreSslRsa* rsa, const unsigned char* mHash, const EvpMd* hash, const unsigned char* em, int saltLength) {
+    EvpMdContext context;
+    EVP_MD_CTX_init_nid_postfix(&context);
+    const int result = VerifyPss(context, rsa, mHash, hash, em, saltLength, "RSA_verify_PKCS1_PSS_nid_postfix");
     EVP_MD_CTX_cleanup_nid_postfix(&context);
     return result;
 }
 
 int APS5_VABI RSA_verify_PKCS1_PSS_nid_postfix(LibreSslRsa* rsa, const unsigned char* mHash, const EvpMd* hash, const unsigned char* em, int saltLength) {
-    EvpMdContext context;
-    EVP_MD_CTX_init_nid_postfix(&context);
-    const int result = VerifyPss(context, rsa, mHash, hash, em, saltLength, __func__);
-    EVP_MD_CTX_cleanup_nid_postfix(&context);
-    return result;
+    return LibreSslRsaVerifyPkcs1Pss_nid_no_patch(rsa, mHash, hash, em, saltLength);
 }
 
 }

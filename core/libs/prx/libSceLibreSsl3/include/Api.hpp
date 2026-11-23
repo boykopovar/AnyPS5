@@ -302,6 +302,16 @@ int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa);
 void APS5_VABI RSA_get0_key_nid_postfix(const LibreSsl3Rsa* rsa, const void** n, const void** e, const void** d);
 void APS5_VABI RSA_free_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa);
 LibreSsl3Rsa* APS5_VABI RSA_new_nid_disambig1_nid_postfix();
+int APS5_VABI RSA_size_nid_disambig1_nid_postfix(const LibreSsl3Rsa* rsa);
+int APS5_VABI RSA_flags_nid_disambig1_nid_postfix(const LibreSsl3Rsa* rsa);
+int APS5_VABI RSA_public_encrypt_nid_disambig1_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSsl3Rsa* rsa, int padding);
+int APS5_VABI RSA_public_decrypt_nid_disambig1_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSsl3Rsa* rsa, int padding);
+int APS5_VABI RSA_private_encrypt_nid_disambig1_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSsl3Rsa* rsa, int padding);
+int APS5_VABI RSA_private_decrypt_nid_disambig1_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSsl3Rsa* rsa, int padding);
+int APS5_VABI RSA_sign_nid_disambig1_nid_postfix(int type, const unsigned char* message, unsigned int messageLength, unsigned char* signature, unsigned int* signatureLength, LibreSsl3Rsa* rsa);
+int APS5_VABI RSA_verify_nid_disambig1_nid_postfix(int type, const unsigned char* message, unsigned int messageLength, const unsigned char* signature, unsigned int signatureLength, LibreSsl3Rsa* rsa);
+int APS5_VABI RSA_padding_add_PKCS1_PSS_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa, unsigned char* encoded, const unsigned char* messageHash, const LibreSsl3::DigestMethod* digest, int saltLength);
+int APS5_VABI RSA_verify_PKCS1_PSS_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa, const unsigned char* messageHash, const LibreSsl3::DigestMethod* digest, const unsigned char* encoded, int saltLength);
 int APS5_VABI RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(LibreSsl3Rsa* rsa, unsigned char* encoded,
     const unsigned char* messageHash, const LibreSsl3::DigestMethod* digest, const LibreSsl3::DigestMethod* maskDigest,
     int saltLength);
