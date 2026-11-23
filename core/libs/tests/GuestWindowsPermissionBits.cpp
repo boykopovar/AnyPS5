@@ -86,6 +86,21 @@ void AuditFiles(const std::string& root) {
     Require(close_nid_postfix(descriptor) == 0, "close failed");
     Require(PathMode(secret) == (RegularType | 0600), "opening an existing file with O_CREAT keeps its mode");
 
+    const std::string truncated = root + "/truncated";
+    SetLastError(ERROR_ALREADY_EXISTS);
+    descriptor = Create(truncated, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC, 0640);
+    Require(DescriptorMode(descriptor) == (RegularType | 0640), "O_CREAT | O_TRUNC on an absent path must store the requested mode");
+    Require(close_nid_postfix(descriptor) == 0, "close failed");
+    descriptor = Create(truncated, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC, 0444);
+    Require(close_nid_postfix(descriptor) == 0, "close failed");
+    Require(PathMode(truncated) == (RegularType | 0640), "O_CREAT | O_TRUNC on an existing file keeps its mode");
+    Require((GetFileAttributesA(truncated.c_str()) & FILE_ATTRIBUTE_READONLY) == 0, "O_CREAT | O_TRUNC must not apply the mode to an existing file");
+
+    const std::string directory = root + "/directory";
+    Require(mkdir_nid_postfix(directory.c_str(), 0755) == 0, "mkdir failed");
+    Require(open_nid_postfix(directory.c_str(), SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0666) < 0, "O_CREAT on a directory must fail");
+    Require(*__error_nid_postfix() != 17, "O_CREAT without O_EXCL on a directory must not fail with EEXIST");
+
     const std::string special = root + "/special";
     descriptor = Create(special, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 07777);
     Require(close_nid_postfix(descriptor) == 0, "close failed");
