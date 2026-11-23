@@ -226,8 +226,8 @@ async function onMessage({ data }, currentWorker) {
   try {
     if (data.type === "progress") {
       if (data.message) {
-        logs.push(`${data.appName ? `${data.appName}: ` : ""}${data.message.trim()}`);
-        logs = logs.slice(-150);
+        const entry = `${data.appName ? `${data.appName}: ` : ""}${data.message.trim()}`;
+        logs = logs.concat(entry.split(/\r\n|[\r\n]/u)).slice(-150);
         $("log").textContent = logs.join("\n");
         return;
       }

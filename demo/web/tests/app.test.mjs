@@ -895,3 +895,18 @@ for (const supported of [false, true]) {
     assert.equal(get("save").querySelector('[value="memory"]').disabled, false);
   });
 }
+
+test("the live log and failure details keep the last 150 lines across worker messages", async t => {
+  const { get, workers } = await setup(t, "multiline-log");
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  const send = data => workers[0].onmessage({ data });
+  const lines = Array.from({ length: 151 }, (_, index) => "line " + index);
+  await send({ type: "progress", message: lines.join("\r\n") });
+  await send({ type: "progress", appName: "first.zip", message: "done" });
+  const expected = [...lines.slice(2), "first.zip: done"].join("\n");
+  assert.equal(get("log").textContent, expected);
+  await send({ type: "error", message: "conversion failed" });
+  const report = get("error").children[1].children[1].textContent;
+  assert.ok(report.endsWith("Conversion log (last 150 lines):\n" + expected));
+});
