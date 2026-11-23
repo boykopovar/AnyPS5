@@ -314,23 +314,27 @@ static void sleepUs(std::unique_lock<std::mutex>& lock, std::uint64_t us) {
     lock.lock();
 }
 
+static void waitForQueueSpace(const Port& port, std::uint32_t maxQueuedBytes, std::unique_lock<std::mutex>& lock) {
+    const auto devicePeriodUs = port.spec.freq > 0 ? 1000000ULL * port.spec.samples / port.spec.freq : 0;
+    auto lastProgress = sceKernelGetProcessTime();
+    auto queued = SDL_GetQueuedAudioSize(port.device);
+    while (queued > maxQueuedBytes) {
+        sleepUs(lock, DRAIN_SLEEP_US);
+        const auto remaining = SDL_GetQueuedAudioSize(port.device);
+        const auto now = sceKernelGetProcessTime();
+        if (remaining < queued) {
+            lastProgress = now;
+        } else if (now - lastProgress > devicePeriodUs + DRAIN_TIMEOUT_US) {
+            SDL_ClearQueuedAudio(port.device);
+            break;
+        }
+        queued = remaining;
+    }
+}
+
 static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex>& lock) {
     if (data == nullptr) {
-        const auto devicePeriodUs = port.spec.freq > 0 ? 1000000ULL * port.spec.samples / port.spec.freq : 0;
-        auto lastProgress = sceKernelGetProcessTime();
-        auto queued = SDL_GetQueuedAudioSize(port.device);
-        while (queued != 0) {
-            sleepUs(lock, DRAIN_SLEEP_US);
-            const auto remaining = SDL_GetQueuedAudioSize(port.device);
-            const auto now = sceKernelGetProcessTime();
-            if (remaining < queued) {
-                lastProgress = now;
-            } else if (now - lastProgress > devicePeriodUs + DRAIN_TIMEOUT_US) {
-                SDL_ClearQueuedAudio(port.device);
-                break;
-            }
-            queued = remaining;
-        }
+        waitForQueueSpace(port, 0, lock);
         return;
     }
 
@@ -356,16 +360,8 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
     const std::uint32_t buffers = bufferUs != 0
         ? static_cast<std::uint32_t>((TARGET_LATENCY_US + bufferUs - 1) / bufferUs)
         : 2u;
-    const std::uint32_t minQueued = queueSize * std::clamp(buffers, 2u, 16u);
-    const std::uint64_t waitStart = sceKernelGetProcessTime();
-
-    while (SDL_GetQueuedAudioSize(port.device) > minQueued) {
-        if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
-            SDL_ClearQueuedAudio(port.device);
-            break;
-        }
-        sleepUs(lock, DRAIN_SLEEP_US);
-    }
+    const std::uint32_t maxQueuedBytes = queueSize * std::clamp(buffers, 2u, 16u);
+    waitForQueueSpace(port, maxQueuedBytes, lock);
 
     if (SDL_QueueAudio(port.device, queueData, queueSize) < 0) {
         throw AudioOutQueueError(std::string("SDL_QueueAudio: ") + SDL_GetError());

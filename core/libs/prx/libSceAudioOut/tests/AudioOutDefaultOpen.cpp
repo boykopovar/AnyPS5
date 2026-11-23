@@ -113,7 +113,10 @@ int main(int argc, char** argv) {
             nextPlayback = start + DrainPeriodUs;
             Require(sceAudioOutOutput(port, samples.data()) == DrainFrames && pendingBytes == sizeof(samples), "block not queued");
             if (mode == "large_drain") {
-                Require(sceAudioOutOutput(port, samples.data()) == DrainFrames && pendingBytes == 2 * sizeof(samples), "second block not queued");
+                for (int i = 0; i < 3; ++i) {
+                    Require(sceAudioOutOutput(port, samples.data()) == DrainFrames, "additional block not queued");
+                }
+                Require(discardedBytes == 0 && pendingBytes == 3 * sizeof(samples), "queued blocks lost while waiting for space");
             }
             Require(sceAudioOutOutput(port, nullptr) == DrainFrames && pendingBytes == 0, "drain did not empty the queue");
             Require(discardedBytes == (mode == "large_drain" ? 0 : sizeof(samples)), "unexpected discarded audio");
