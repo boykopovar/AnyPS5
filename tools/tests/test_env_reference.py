@@ -856,13 +856,25 @@ class SourceFileFilterTests(unittest.TestCase):
     def test_source_files_matches_path_suffix_for_leading_dot_names(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "Source.cpp").write_text('getenv("APS5_SOURCE");\n', encoding="utf-8")
-            (root / ".tracked.cpp").write_text('getenv("APS5_TRACKED");\n', encoding="utf-8")
-            (root / "..cpp").write_text('getenv("APS5_PHANTOM");\n', encoding="utf-8")
-            (root / ".cpp").write_text('getenv("APS5_DOTONLY");\n', encoding="utf-8")
+            fixtures = (
+                ("Source.cpp", "APS5_SOURCE"),
+                (".tracked.cpp", "APS5_TRACKED"),
+                ("..cpp", "APS5_PHANTOM"),
+                (".cpp", "APS5_DOTONLY"),
+            )
+            for filename, env_name in fixtures:
+                (root / filename).write_text(f'getenv("{env_name}");\n', encoding="utf-8")
+            expected_names = sorted(
+                filename for filename, _ in fixtures
+                if Path(filename).suffix in env_reference.EXTENSIONS
+            )
+            expected_env = {
+                env_name for filename, env_name in fixtures
+                if Path(filename).suffix in env_reference.EXTENSIONS
+            }
             names = [path.name for path in env_reference.source_files(root)]
-            self.assertEqual(names, [".tracked.cpp", "Source.cpp"])
-            self.assertEqual(set(env_reference.reads([root])), {"APS5_SOURCE", "APS5_TRACKED"})
+            self.assertEqual(names, expected_names)
+            self.assertEqual(set(env_reference.reads([root])), expected_env)
 class HelperTests(unittest.TestCase):
     def test_library_of_names_the_library_or_core_component(self):
         self.assertEqual(env_reference.library_of("core/libs/prx/libSceFoo/Export.cpp"), "libSceFoo")
