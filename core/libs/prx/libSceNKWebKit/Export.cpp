@@ -8393,39 +8393,11 @@ int APS5_VABI WKBundlePageCopyRenderTreeExternalRepresentationForPrinting() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageCopyRenderTreeExternalRepresentation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageCopyTrackedRepaintRects() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageCreateScaledSnapshotInDocumentCoordinates() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageCreateSnapshotInDocumentCoordinates() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageCreateSnapshotInViewCoordinates() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageCreateSnapshotWithOptions() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageDumpHistoryForTesting() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI WKBundlePageExecuteEditingCommand() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageExtendIncrementalRenderingSuppression() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8438,10 +8410,6 @@ int APS5_VABI WKBundlePageFindString() {
 }
 
 int APS5_VABI WKBundlePageFlushPendingEditorStateUpdate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageForceRepaint() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8630,10 +8598,6 @@ int APS5_VABI WKBundlePageSizeAndMarginsInPixels() {
 }
 
 int APS5_VABI WKBundlePageStartMonitoringScrollOperations() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageStopExtendingIncrementalRenderingSuppression() {
     NotImplemented_nid_no_patch(__func__);
 }
 

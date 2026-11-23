@@ -284,6 +284,11 @@ public:
     Retained<Object> topOverhangImage;
     Retained<Object> bottomOverhangImage;
     std::uint64_t paintedObjectsCounterThreshold = 0;
+    std::string renderTreeExternalRepresentation;
+    Retained<Array> trackedRepaintRects;
+    std::uint64_t forceRepaintCount = 0;
+    std::uint32_t nextRenderingSuppressionToken = 0;
+    std::uint32_t lastStoppedRenderingSuppressionToken = 0;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
