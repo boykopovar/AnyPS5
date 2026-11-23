@@ -90,7 +90,11 @@ struct BlockCommand {
     std::uint64_t encodedSize, fileOffset, extent, first, second, index;
 
     bool Version3() const { return (extent >> 63) != 0; }
-    std::uint64_t LogicalSize() const { return Version3() ? extent & INT64_MAX : FullBlock; }
+    bool SingleStoredHalf() const { return !Version3() && extent == HalfBlock && encodedSize == HalfBlock; }
+    std::uint64_t LogicalSize() const {
+        if (Version3()) return extent & INT64_MAX;
+        return SingleStoredHalf() ? HalfBlock : FullBlock;
+    }
     std::uint64_t LogicalOffset() const { return Version3() ? second & OffsetMask44 : index * FullBlock; }
 };
 
@@ -104,7 +108,7 @@ int CopyStoredBlock(const void* source, void* destination, const BlockCommand& b
     if (length > FullBlock || size > UINT64_MAX - offset) return OutOfRange;
     const auto begin = std::max(start, offset);
     const auto end = std::min(start + length, offset + size);
-    if (end < begin) return OutOfRange;
+    if (end < begin || (block.SingleStoredHalf() && size != 0 && offset == start + length)) return OutOfRange;
 
     if (block.Version3()) {
         const auto firstSize = ((block.second >> 44) & 0x1ffff) + 1;
@@ -119,10 +123,9 @@ int CopyStoredBlock(const void* source, void* destination, const BlockCommand& b
     }
 
     const auto copySize = static_cast<std::size_t>(end - begin);
-    bytes.resize(std::max<std::size_t>(block.encodedSize, copySize));
+    bytes.resize(block.encodedSize);
     if (!CopyIn(bytes.data(), source, block.encodedSize) || !CopyOut(work, bytes.data(), block.encodedSize)) return InvalidArgument;
-    if (copySize && (!CopyIn(bytes.data(), AtOffset(work, begin - start), copySize) ||
-                     !CopyOut(AtOffset(destination, begin - offset), bytes.data(), copySize))) return InvalidArgument;
+    if (copySize && !CopyOut(AtOffset(destination, begin - offset), bytes.data() + (begin - start), copySize)) return InvalidArgument;
     return 0;
 }
 
