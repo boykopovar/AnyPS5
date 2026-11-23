@@ -227,37 +227,41 @@ def warning_counts(text):
     return {warning: text.count(warning) for warning in WARNINGS}
 
 
+SUMMARY_TOKENS = re.compile(r'"(?:[^"\\]|\\.)*(?:"|\\?$)|[{}\[\],]|[^{}\[\],"\s]+')
+SUMMARY_COLON = re.compile(r"[ \t\r\n]*:[ \t\r\n]*")
+
+
 def summary_protocol_prefix(line):
-    whitespace = re.compile(r"[ \t\r\n]*")
-    index = whitespace.match(line).end()
-    start = line.find("{", index)
+    start = line.find("{")
     if start < 0:
         return False
-    index = whitespace.match(line, start + 1).end()
-    decoder = json.JSONDecoder()
+    depth = 1
+    field_start = True
     summary_field, declared_format = False, None
-    while index < len(line):
-        try:
-            key, index = decoder.raw_decode(line, index)
-        except (ValueError, RecursionError):
-            break
-        index = whitespace.match(line, index).end()
-        if not isinstance(key, str) or line[index:index + 1] != ":":
-            break
-        summary_field |= key in SUMMARY_FIELDS
-        index = whitespace.match(line, index + 1).end()
-        try:
-            value, index = decoder.raw_decode(line, index)
-        except (ValueError, RecursionError):
-            break
-        if key == "format":
-            declared_format = value
-        index = whitespace.match(line, index).end()
-        if line[index:index + 1] != ",":
-            break
-        index = whitespace.match(line, index + 1).end()
-    compatible = not isinstance(declared_format, str) or declared_format in ("", "aps5-bench/1")
-    return declared_format == "aps5-bench/1" or bool(compatible and summary_field)
+    decoder = json.JSONDecoder()
+    for token in SUMMARY_TOKENS.finditer(line, start + 1):
+        value = token.group()
+        if value in ("{", "["):
+            depth += 1
+        elif value in ("}", "]"):
+            depth -= 1
+            if depth == 0:
+                break
+        elif value == "," and depth == 1:
+            field_start = True
+            continue
+        elif depth == 1 and field_start and value.startswith('"'):
+            colon = SUMMARY_COLON.match(line, token.end())
+            if colon:
+                try:
+                    key = json.loads(value)
+                    summary_field |= key in SUMMARY_FIELDS
+                    if key == "format" and line[colon.end():colon.end() + 1] == '"':
+                        declared_format, _ = decoder.raw_decode(line, colon.end())
+                except ValueError:
+                    pass
+        field_start = False
+    return declared_format == "aps5-bench/1" or (declared_format in (None, "") and summary_field)
 
 
 def read_summary(path):

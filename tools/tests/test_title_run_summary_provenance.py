@@ -38,6 +38,24 @@ class SummaryValidationProvenanceTests(unittest.TestCase):
             performance_bisect.sample_summary(path, "PPSA00001", self.commit)
 
 
+    def test_protocol_fields_after_a_broken_value_still_disqualify_the_run(self):
+        import performance_bisect
+        rows = ['{"other":tru,"commit":"bbbbbbbbbbbb"}',
+                '{"other":, "format":"aps5-bench/1"}',
+                r'{"values":[{"dirty":true},bad],"c\u006fmmit":"bbbbbbbbbbbb"}',
+                '{"other":bad,"details":{"commit":"bbbbbbbbbbbb"},"value":"dirty"}',
+                r'{"other":bad,"message":"comma, \"commit\":false"}',
+                '{"other":tru,"commit":"bbbbbbbbbbbb","format":"application-log"}']
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, summary_rows=rows)
+        self.assertEqual(run["native"]["summary_errors"], {"malformed_rows": 3})
+        self.assert_qualification(summary, "unknown")
+        self.assertNotIn("bbbbbbbbbbbb", json.dumps(run["native"]))
+        self.assertIn("unknown", markdown)
+        with self.assertRaisesRegex(ValueError, "native.*unknown"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
+
     def test_deep_malformed_protocol_row_keeps_valid_metrics_readable(self):
         import performance_bisect
         deep = '{"format":"aps5-bench/1","commit":"bbbbbbbbbbbb","dirty":false,"window":' + "[" * 1100 + "0"
