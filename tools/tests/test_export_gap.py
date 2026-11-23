@@ -1086,6 +1086,29 @@ class MaskCodeTests(unittest.TestCase):
         self.assertTrue(masked.startswith("call("))
         self.assertTrue(masked.endswith(");\n"))
 
+    def test_fast_mask_matches_token_regex_on_cpp_edge_cases(self):
+        samples = [
+            'int a = 1\'000\'000; const char* s = u8R"tag(APS5_VABI fake() /*)tag"; int b = 0;\n',
+            'char c = L\'x\'; const char* r = R"(line1\nline2)"; int ok = 1;\n',
+            '#define M(x) int APS5_VABI x(void) { return 0; }\n#error don\'t break\nint z = 1;\n',
+            'int x = 1; /* unclosed block comment\nint y = 2;\n',
+            'const char* u = "unclosed\nint keep = 3;\n',
+            'int a = 0x1\'2 + \'a\' + 0;\n',
+        ]
+        for token in (nid_names.CPP_TOKEN, export_gap.DIRECTIVE_TOKEN, export_gap.NON_DEFINE_DIRECTIVE_TOKEN):
+            for sample in samples:
+                expected = token.sub(
+                    lambda m: m.group() if m.group("code") is not None else "\n".join(" " * len(line) for line in m.group().split("\n")),
+                    sample,
+                )
+                with self.subTest(token=token.pattern[:24], sample=sample[:24]):
+                    self.assertEqual(export_gap.mask_code(sample, token), expected)
+
+    def test_collect_source_exports_handles_directive_in_direct_init_data_def(self):
+        source = 'extern "C" {\nint sceExampleData_nid_postfix(\n#if 1\n1\n#endif\n);\n}\n'
+        provided = export_gap.collect_source_exports([(Path("Data.cpp"), source)])
+        self.assertIn(nid_names.compute_nid("sceExampleData"), provided)
+
 
 class MaskDirectivesTests(unittest.TestCase):
     def test_directive_lines_and_continuations_are_blanked(self):
