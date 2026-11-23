@@ -2,8 +2,11 @@
 #include "prx/libSceFontGs.native/include/Api.hpp"
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -14,6 +17,48 @@ void Require(bool value) {
 int APS5_VABI Capture(void* dispatch, const FontGraphicsBackendList* list) {
     *static_cast<const FontGraphicsBackendList**>(dispatch) = list;
     return -1;
+}
+
+struct ServiceAllocator {
+    alignas(std::max_align_t) std::array<std::byte, 0x100> storage{};
+    int allocations = 0;
+    int releases = 0;
+};
+
+void* APS5_VABI AllocateService(void* context, std::uint32_t size) {
+    auto& allocator = *static_cast<ServiceAllocator*>(context);
+    Require(size == allocator.storage.size() && allocator.allocations == allocator.releases);
+    ++allocator.allocations;
+    return allocator.storage.data();
+}
+
+void APS5_VABI ReleaseService(void* context, void* object) {
+    auto& allocator = *static_cast<ServiceAllocator*>(context);
+    Require(object == allocator.storage.data() && allocator.allocations == allocator.releases + 1);
+    ++allocator.releases;
+}
+
+void CheckFailedServiceCreation(const FontGraphicsServiceParam* backend) {
+    ServiceAllocator allocator;
+    const FontMemoryInterface iface{AllocateService, ReleaseService};
+    FontMemory memory{};
+    Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, &allocator, nullptr, nullptr) == 0);
+    for (int attempt = 1; attempt <= 2; ++attempt) {
+        auto* service = reinterpret_cast<FontGraphicsService*>(1);
+        try {
+            sceFontCreateGraphicsService(&memory, backend, &service);
+            std::abort();
+        } catch (const std::runtime_error& error) {
+            Require(std::strcmp(error.what(), "sceFontSelectGraphicsAgc_backend_47000001 not implemented") == 0);
+        }
+        Require(service == nullptr && *backend->instanceSlot == nullptr);
+        if (allocator.allocations != attempt || allocator.releases != attempt) {
+            std::fprintf(stderr, "service create attempt %d: %d allocations, %d releases\n",
+                         attempt, allocator.allocations, allocator.releases);
+            std::abort();
+        }
+    }
+    Require(sceFontMemoryTerm(&memory) == 0);
 }
 
 void CheckTexture(std::uint64_t function) {
@@ -81,4 +126,5 @@ int main() {
     reinterpret_cast<void (APS5_VABI*)(void*)>(list->entries[1].value)(instanceState.data());
     Require(instanceState == before);
     CheckTexture(list->entries[20].value);
+    CheckFailedServiceCreation(header);
 }

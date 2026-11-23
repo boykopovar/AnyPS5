@@ -86,6 +86,10 @@ int APS5_VABI StructureTexture(void* object, ColorRegister* source, std::uint64_
     return sizeof(texture);
 }
 
+int APS5_VABI Initialize(void*, void*, std::uint64_t) {
+    NotImplemented_nid_no_patch("sceFontSelectGraphicsAgc_backend_47000001");
+}
+
 void APS5_VABI Terminate(void*) {}
 
 template<std::uint32_t Opcode>
@@ -112,7 +116,7 @@ int APS5_VABI Enumerate(void* dispatch, FontGraphicsBackendSink sink);
 
 const Backend backend = {
     {0x0e08, 5, 0x200, &instance, 0x20000, 0, Enumerate},
-    {PendingEntry<0x47000001>(), {0x47000002, 0, reinterpret_cast<std::uint64_t>(&Terminate)},
+    {{0x47000001, 0, reinterpret_cast<std::uint64_t>(&Initialize)}, {0x47000002, 0, reinterpret_cast<std::uint64_t>(&Terminate)},
      PendingEntry<0x4700002d>(), PendingEntry<0x4700002e>(), PendingEntry<0x470000c0>(),
      PendingEntry<0x470000cb>(), PendingEntry<0x470000ce>(), PendingEntry<0x470000d1>(),
      PendingEntry<0x470000d2>(), PendingEntry<0x470000d4>(), PendingEntry<0x470000e0>(),

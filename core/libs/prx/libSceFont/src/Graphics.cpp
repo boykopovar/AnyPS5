@@ -1245,7 +1245,14 @@ int CreateGraphicsService(const FontMemory* memory, const FontGraphicsServicePar
     auto* const data = static_cast<FontGraphicsServiceData*>(memory->iface->alloc(memory->mspace_handle, sizeof(FontGraphicsServiceData)));
     if (data == nullptr) return Fail(FONT_GRAPHICS_ERROR_ALLOCATION_FAILED);
     std::memset(data, 0, sizeof(*data));
-    if (const int error = AttachInstance(param); error != SCE_FONT_OK) {
+    int error;
+    try {
+        error = AttachInstance(param);
+    } catch (...) {
+        memory->iface->dealloc(memory->mspace_handle, data);
+        throw;
+    }
+    if (error != SCE_FONT_OK) {
         memory->iface->dealloc(memory->mspace_handle, data);
         return Fail(error);
     }
