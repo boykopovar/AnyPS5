@@ -679,8 +679,9 @@ void APS5_VABI _ZN3WTF11Persistence5CoderINS_7CStringEE6encodeERNS0_7EncoderERKS
 bool APS5_VABI _ZNK3WTF3URL10protocolIsEPKc(const URL* self, const char* protocol) {
     if (!self || !protocol) throw std::invalid_argument("URL::protocolIs: null argument");
     std::string copied;
-    if (!CopyGuestCString(copied, protocol)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    return _ZNK3WTF3URL10protocolIsENS_10StringViewE(self, {copied.data(), static_cast<unsigned>(copied.size()), true});
+    URL url;
+    if (!LoadURL(url, self) || !CopyGuestCString(copied, protocol)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return _ZNK3WTF3URL10protocolIsENS_10StringViewE(&url, {copied.data(), static_cast<unsigned>(copied.size()), true});
 }
 
 bool APS5_VABI _ZN3WTF3URL15hostIsIPAddressENS_10StringViewE(StringView host) {

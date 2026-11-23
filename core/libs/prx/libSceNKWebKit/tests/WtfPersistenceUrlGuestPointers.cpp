@@ -221,6 +221,22 @@ static void TestURL() {
     Require(!_ZNK3WTF3URL10protocolIsEPKc(&url, reinterpret_cast<const char*>(crossing + pageBytes - 2)));
     UnmapPages(crossing, 2);
 
+    unsigned char* urlPages = MapPages(2);
+    Protect(urlPages, 1, false);
+    Require(FaultsAsNotImplemented([&] { return _ZNK3WTF3URL10protocolIsEPKc(reinterpret_cast<const URL*>(urlPages), "https"); },
+        "_ZNK3WTF3URL10protocolIsEPKc"));
+    UnmapPages(urlPages, 2);
+    urlPages = MapPages(2);
+    std::memcpy(urlPages + pageBytes - sizeof(URL), &fields, sizeof(URL));
+    Require(_ZNK3WTF3URL10protocolIsEPKc(reinterpret_cast<const URL*>(urlPages + pageBytes - sizeof(URL)), "https"));
+    Require(!_ZNK3WTF3URL10protocolIsEPKc(reinterpret_cast<const URL*>(urlPages + pageBytes - sizeof(URL)), "http"));
+    std::memcpy(urlPages + pageBytes - sizeof(URL) / 2, &fields, sizeof(URL) / 2);
+    Protect(urlPages + pageBytes, 1, false);
+    Require(FaultsAsNotImplemented(
+        [&] { return _ZNK3WTF3URL10protocolIsEPKc(reinterpret_cast<const URL*>(urlPages + pageBytes - sizeof(URL) / 2), "https"); },
+        "_ZNK3WTF3URL10protocolIsEPKc"));
+    UnmapPages(urlPages, 2);
+
     unsigned char* page = MapPages(1);
     auto* readOnly = reinterpret_cast<URL*>(page);
     *readOnly = fields;
