@@ -300,6 +300,16 @@ def check_short_chained_fixups_command(patcher, directory):
     assert result.returncode != 0 and "load command" in result.stdout + result.stderr, (result.stdout, result.stderr)
     assert path.read_bytes() == image
 
+def check_load_command_count(patcher, directory):
+    image = bytearray(build_dylib([("_ab", 0, 0x100), ("_cd", 0, 0x108)], [], signed=True))
+    command_count = struct.unpack_from("<I", image, 16)[0]
+    struct.pack_into("<I", image, 16, command_count - 1)
+    original = bytes(image)
+    result, path = patch(patcher, directory, "hidden-code-signature.dylib", original)
+    assert result.returncode != 0 and "load command count" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert path.read_bytes() == original
+
+
 def check_short_imports(patcher, directory):
     imports = [("_sceXy", 1), ("_malloc", 2), ("_sceKernelFoo", 1), ("_sceNetRecv", 1)]
     result, path = patch(patcher, directory, "short.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], imports))
@@ -324,6 +334,7 @@ def main():
         check_shrinking(patcher, directory)
         check_growing(patcher, directory)
         check_short_chained_fixups_command(patcher, directory)
+        check_load_command_count(patcher, directory)
         check_short_imports(patcher, directory)
         check_preserved(patcher, directory)
         check_export_list(patcher, directory)
