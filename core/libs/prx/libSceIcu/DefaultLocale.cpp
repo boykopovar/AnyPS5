@@ -95,7 +95,6 @@ std::set<std::string>& DefaultNames() {
 const char* SetSystemDefault() {
     std::string name = Canonicalize(SystemLocaleId().c_str());
     if (LanguageLength(name) >= LanguageCapacity) name.clear();
-    std::lock_guard lock(defaultMutex);
     defaultName = DefaultNames().insert(std::move(name)).first->c_str();
     return defaultName;
 }
@@ -109,11 +108,8 @@ const char* APS5_VABI uprv_getDefaultLocaleID_nid_postfix() {
 }
 
 const char* APS5_VABI uloc_getDefault() {
-    {
-        std::lock_guard lock(defaultMutex);
-        if (defaultName) return defaultName;
-    }
-    return SetSystemDefault();
+    std::lock_guard lock(defaultMutex);
+    return defaultName ? defaultName : SetSystemDefault();
 }
 
 }
@@ -174,6 +170,7 @@ void APS5_VABI uloc_setDefault_nid_postfix(const char* newDefaultLocale, std::in
     if (!readable) NotImplemented_nid_no_patch("uloc_setDefault: unreadable UErrorCode");
     if (incoming > 0) return;
     if (!newDefaultLocale) {
+        std::lock_guard lock(defaultMutex);
         SetSystemDefault();
         return;
     }

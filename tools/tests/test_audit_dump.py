@@ -82,6 +82,17 @@ class AuditDumpTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
 
+    def test_empty_standard_module_directories_are_preserved(self):
+        for name in audit_dump.STANDARD_DIRECTORIES:
+            with self.subTest(name=name):
+                dump = self.root / ("dump-" + name)
+                (dump / name).mkdir(parents=True)
+                (dump / "eboot.bin").write_bytes(SELF)
+                source = self.root / ("source-" + name)
+                directories, extra = audit_dump.prepare(dump, source, log=lambda text: None)
+                self.assertTrue((source / name).is_dir())
+                self.assertEqual((directories, extra), ([], []))
+
     def test_every_module_location_is_staged_and_the_extra_ones_become_module_dirs(self):
         self.module("sce_module/libc.prx")
         self.module("Media/Modules/Il2CppUserAssemblies.prx")

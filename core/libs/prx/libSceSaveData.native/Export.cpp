@@ -776,7 +776,11 @@ static int read_backup_entry(const std::string& entry, SaveDataParam* param) {
 
 static void move_backup(const char* step, const std::string& from, const std::string& to, bool* moved = nullptr) {
     file_step(step, to);
-    std::filesystem::rename(from, to);
+    std::error_code error;
+    std::filesystem::rename(from, to, error);
+    if (error) {
+        throw std::filesystem::filesystem_error("SaveData: cannot move the backup", from, to, error);
+    }
     if (moved != nullptr) *moved = true;
     file_step("backup.flush", to);
     flush_path(std::filesystem::path(to).parent_path().string(), true);
@@ -2070,7 +2074,7 @@ static int getConvertProgress(float* progress) {
 
 int APS5_VABI sceSaveDataGetConvertProgress(float* progress) {
     const int rc = getConvertProgress(progress);
-    SAVEDATA_TRACE("getConvertProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), progress != nullptr && rc == SAVE_DATA_OK ? *progress : 0.0f);
+    SAVEDATA_TRACE("getConvertProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), rc == SAVE_DATA_OK ? g_convertProgress.load() : 0.0f);
     return rc;
 }
 
