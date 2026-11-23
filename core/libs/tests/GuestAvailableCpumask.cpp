@@ -534,7 +534,8 @@ int main() {
     Require(cpuset_setaffinity_nid_postfix(2, 2, -1, 8, processSet) == 0);
     Require(cpuset_setaffinity_nid_postfix(2, 1, 999999, 8, processSet) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
     Require(cpuset_setaffinity_nid_postfix(2, 2, 999999, 8, processSet) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
-    Require(throws([&] { cpuset_setaffinity_nid_postfix(3, 3, -1, 8, processSet); }));
+    Require(cpuset_setaffinity_nid_postfix(3, 3, -1, 8, processSet) == 0);
+    Require(cpuset_getaffinity_nid_postfix(2, 2, -1, 8, base) == 0 && base[0] == (processSet[0] & available));
     Require(throws([&] { cpuset_setaffinity_nid_postfix(3, 4, -1, 8, processSet); }));
     for (const int level : {1, 2}) {
         for (const int which : {4, 6, 7, 8, 99}) {
