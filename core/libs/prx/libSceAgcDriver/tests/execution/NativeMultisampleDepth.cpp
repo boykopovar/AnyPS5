@@ -3828,13 +3828,47 @@ bool CheckFillOverPendingImport(Context context, Recorder& recorder, std::uint32
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
     AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, metadataBytes, [&] { std::memset(metadata.Data(), 0, metadataBytes); });
     std::string error;
+    std::shared_ptr<Texture> sampled;
     try {
-        static_cast<void>(CachedSampledTexture(context, words));
+        sampled = CachedSampledTexture(context, words);
     } catch (const std::runtime_error& refusal) {
         error = refusal.what();
     }
     Require(error.empty(), "native depth sampled after a whole HTILE fill over a pending import refused: " + error);
+    Require(sampled != nullptr, "native depth sampled after a whole HTILE fill over a pending import gave no texture");
     std::printf("Native depth HTILE fill over a pending import samples=%u: the import is settled before the fill's watch check and sampling continues\n", fragments);
+    return true;
+}
+
+bool CheckSettleKeepsImportOwner(Context owner, Context other) {
+    TargetMemory metadata(65536u, true);
+    std::memset(metadata.Data(), 0, 65536u);
+    struct Cleanup {
+        Context owner;
+        Context other;
+        std::uint64_t htile;
+        ImportWatch decided;
+        ~Cleanup() {
+            {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                static_cast<void>(WatchedAfterSettle(owner, htile, 65536u));
+            }
+            SetImportWatch(owner, decided);
+            ClearHostImports(owner.device);
+            ClearHostImports(other.device);
+        }
+    } cleanup{owner, other, metadata.Address(), PrepareImportWatch(owner)};
+    SetImportWatch(owner, ImportWatch::Unwatch);
+    const auto* import = HostImportFor(owner, metadata.Address(), 65536u);
+    SetImportWatch(owner, cleanup.decided);
+    if (import == nullptr || !import->unwatched || AgcDriver::GuestMemory::Watched(metadata.Address(), 65536u)) return false;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        SettleOwnImports(other, metadata.Address(), 65536u);
+        SettleOwnImports(owner, metadata.Address(), 65536u);
+    }
+    Require(AgcDriver::GuestMemory::Watched(metadata.Address(), 65536u), "a pending host import did not settle when another device settled the same range first");
+    std::printf("A settle for a device that does not own the host imports leaves the owner's pending import, which then settles\n");
     return true;
 }
 
@@ -3852,6 +3886,12 @@ int CheckFillOverPendingImports() {
             if (CheckFillOverPendingImport(context, *recorder, samples)) ++checked;
             else ++unavailable;
         }
+        if (const auto otherDevice = OpenVulkanTestDevice()) {
+            recorder->Activate();
+            if (CheckSettleKeepsImportOwner(context, AgcDriver::VulkanDeviceTestAccess::ContextOf(*otherDevice))) ++checked;
+            else ++unavailable;
+        }
+        recorder->Activate();
         AgcDriverWaitIdle_nid_postfix();
         if (checked == 0u) {
             std::printf("skipped, the device does not defer the settle of a small host import: an HTILE fill over a pending import not tested\n");

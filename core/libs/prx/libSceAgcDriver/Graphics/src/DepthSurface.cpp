@@ -4871,7 +4871,7 @@ void settleImportsUnderFill(std::uint64_t address, std::size_t bytes) {
             if (covered && std::none_of(contexts.begin(), contexts.end(), [&](const Context& context) { return context.device == surface->context.device; })) contexts.push_back(surface->context);
         }
     }
-    for (const auto& context : contexts) static_cast<void>(WatchedAfterSettle(context, address, bytes));
+    for (const auto& context : contexts) SettleOwnImports(context, address, bytes);
 }
 
 }
