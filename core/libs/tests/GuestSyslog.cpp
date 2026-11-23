@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -32,7 +33,7 @@ static void RedirectStderr(int descriptor) {
 }
 #ifdef SYSLOG_RELOAD_TEST
 using Module = HMODULE;
-static Module LoadKernel(const char* path) { return LoadLibraryW(std::filesystem::path(path).c_str()); }
+static Module LoadKernel(const std::filesystem::path& path) { return LoadLibraryW(path.c_str()); }
 static const char** ProgramName(Module module) { return reinterpret_cast<const char**>(GetProcAddress(module, "__progname_nid_postfix")); }
 static void UnloadKernel(Module module) { Require(FreeLibrary(module) != 0); }
 #endif
@@ -58,7 +59,7 @@ int main(int argc, char** argv) {
 #ifdef SYSLOG_RELOAD_TEST
     const auto loadKernel = [&] {
         RedirectStderr(saved);
-        auto module = LoadKernel(argv[1]);
+        auto module = LoadKernel(ArgumentPath(argv, 1));
         RedirectStderr(captureDescriptor);
         Require(module != nullptr);
         return module;

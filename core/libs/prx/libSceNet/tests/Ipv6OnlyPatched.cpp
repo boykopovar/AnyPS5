@@ -1,4 +1,5 @@
 #include "prx/libSceNet/libSceNet.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <nid/NidCompute.hpp>
 #include <algorithm>
 #include <array>
@@ -34,7 +35,7 @@ static TFunction Function(void* module, const char* name) {
 
 int main(int argc, char** argv) {
     Require(argc == 2);
-    const auto path = std::filesystem::absolute(argv[1]) / "libSceNet.prx";
+    const auto path = std::filesystem::absolute(ArgumentPath(argv, 1)) / "libSceNet.prx";
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS);
     auto* module = static_cast<void*>(LoadLibraryExW(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH));

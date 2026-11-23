@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -48,7 +49,7 @@ void Check(SetSpeed setSpeed, unsigned char* attributes, std::uint32_t speed) {
 int main(int argc, char** argv) {
     Require(argc == 2, "expected the kernel library path");
 #ifdef _WIN32
-    const auto library = LoadLibraryA(argv[1]);
+    const auto library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     Require(library != nullptr, "could not load libkernel");
     const auto setSpeed = reinterpret_cast<SetSpeed>(GetProcAddress(library, "cfsetspeed_nid_postfix"));
     SYSTEM_INFO info{};
