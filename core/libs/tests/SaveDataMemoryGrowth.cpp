@@ -1,12 +1,12 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <random>
 #include <string>
 #include <vector>
 #ifdef _WIN32
@@ -29,9 +29,13 @@ static std::vector<char> Read(const std::filesystem::path& path) {
 
 int main(int argc, char**) {
     const auto previousDirectory = std::filesystem::current_path();
-    const auto root = std::filesystem::temp_directory_path() /
-        ("anyps5-save-growth-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+    const auto parent = std::filesystem::temp_directory_path();
+    std::filesystem::path root;
+    for (unsigned attempt = 0; attempt != 16 && root.empty(); ++attempt) {
+        const auto candidate = parent / ("anyps5-save-growth-" + std::to_string(std::random_device{}()));
+        if (std::filesystem::create_directory(candidate)) root = candidate;
+    }
+    Require(!root.empty());
     std::filesystem::current_path(root);
     const auto path = std::filesystem::path("_sd_mem/u7531/slot0.bin");
     std::filesystem::create_directories(path.parent_path());
