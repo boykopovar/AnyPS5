@@ -222,8 +222,16 @@ void TestAttr() {
     Case("pthread_attr_setstackaddr", [] {
         PthreadAttr attr = nullptr;
         void* dummy = reinterpret_cast<void*>(0x1000000);
-        if (pthread_attr_setstackaddr_nid_postfix(&attr, dummy) != GUEST_EINVAL) return false;
-        if (pthread_attr_setstackaddr_nid_postfix(nullptr, dummy) != GUEST_EINVAL) return false;
+        GuardPage guard;
+        auto* unmappedAttr = reinterpret_cast<PthreadAttr*>(0x10);
+        auto* guardAttr = static_cast<PthreadAttr*>(guard.Unwritable());
+        auto* boundaryAttr = reinterpret_cast<PthreadAttr*>(guard.RW() + guard.PageSize() - sizeof(PthreadAttr) / 2);
+        errno = 71;
+        if (pthread_attr_setstackaddr_nid_postfix(&attr, dummy) != GUEST_EINVAL || errno != 71) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(nullptr, dummy) != GUEST_EINVAL || errno != 71) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(unmappedAttr, dummy) != GUEST_EINVAL || errno != 71) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(guardAttr, dummy) != GUEST_EINVAL || errno != 71) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(boundaryAttr, dummy) != GUEST_EINVAL || errno != 71) return false;
         if (pthread_attr_init_nid_postfix(&attr) != 0 || attr == nullptr) return false;
         if (pthread_attr_setstackaddr_nid_postfix(&attr, nullptr) != GUEST_EINVAL) return false;
         if (pthread_attr_setstackaddr_nid_postfix(&attr, dummy) != 0) return false;

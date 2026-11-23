@@ -8,9 +8,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import export_gap
 import nid_names
 import stubgen
+from test_import_audit import build_elf, build_sce_module
 
 
 MODULE = "libSceExample"
@@ -87,6 +89,56 @@ def provides(name, nid):
 
 
 class ExportGapTests(unittest.TestCase):
+    def test_elf_matches_nid_inventory(self):
+        present, missing, unknown, imported = map(nid_of, ("Present", "Missing", "Unknown", "Imported"))
+        symbols = [(missing + "#B#C", 1, 0x12), (present, 1, 0x11), (unknown, 1, 0x22),
+                   (missing + "#A#A", 1, 0x12), (imported + "#A#A", 0, 0x12),
+                   (nid_of("Local"), 1, 0x02), ("module_start", 1, 0x12)]
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, _ = tree(directory)
+            write_module(prx, MODULE, {"Export.cpp": "int APS5_VABI Present(void) { return 1; }\n"})
+            db = write_db(directory, [(present, "Present"), (missing, "Missing"), (imported, "Imported")])
+            inventory = Path(directory) / "expected.txt"
+            inventory.write_text("\n".join(sorted([present, missing, unknown])), encoding="utf-8")
+            args = ["--module", MODULE, "--db", str(db)]
+            expected = run_tool(root, prx, args + ["--nids", str(inventory)])
+            self.assertEqual(expected[0], 0)
+            self.assertIn("1 missing, 1 already provided, 1 unknown", expected[1])
+            elf = Path(directory) / "module.prx"
+            for build in (build_elf, build_sce_module):
+                with self.subTest(build=build.__name__):
+                    elf.write_bytes(build(symbols))
+                    self.assertEqual(run_tool(root, prx, args + ["--elf", str(elf)]), expected)
+
+    def test_elf_input_errors_preserve_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, _ = tree(directory)
+            write_module(prx, MODULE, {})
+            elf = Path(directory) / "module.prx"
+            out = Path(directory) / "missing.txt"
+            out.write_bytes(b"keep")
+            db = write_db(directory, [(nid_of("Present"), "Present")])
+            args = ["--module", MODULE, "--db", str(db), "--elf", str(elf)]
+            for data, extra, reason in (
+                (b"unrecognized", [], "expected a console module in ELF format"),
+                (b"\x7fELF", [], "ELF header"),
+                (build_elf([("module_start", 1, 0x12)]), [], "no NID-shaped dynamic exports"),
+                (b"", ["--nids", str(out)], "exactly one"),
+                (b"", ["--module", MODULE], "single --module"),
+            ):
+                with self.subTest(reason=reason):
+                    elf.write_bytes(data)
+                    code, _, error = run_tool_with_stderr(root, prx, args + extra + ["--out", str(out)])
+                    self.assertEqual(code, 2)
+                    self.assertIn(reason, error)
+                    self.assertEqual(out.read_bytes(), b"keep")
+            elf.write_bytes(build_elf([(nid_of("Present"), 1, 0x12)]))
+            original = elf.read_bytes()
+            code, _, error = run_tool_with_stderr(root, prx, args + ["--out", str(elf)])
+            self.assertEqual(code, 2)
+            self.assertIn("overwrite input", error)
+            self.assertEqual(elf.read_bytes(), original)
+
     def test_test_definitions_aliases_and_macros_do_not_hide_missing_exports(self):
         missing = ["sceTestDefinition", "sceTestAlias", "sceTestMacro"]
         present = ["sceProductionHeader", "sceProductionFilename"]
@@ -706,6 +758,21 @@ class ExportGapTests(unittest.TestCase):
             code, _, error = run_tool_with_stderr(root, prx, ["--export-table", str(tables), "--db", str(db)])
             self.assertEqual(code, 2)
             self.assertIn("FAIL:", error)
+
+    def test_database_without_nid_records_fails(self):
+        for content in ("", "# comment only\n", "sceExampleAlpha,AAAAAAAAAAA\n"):
+            with self.subTest(content=content):
+                with tempfile.TemporaryDirectory() as directory:
+                    root, prx, tables = tree(directory)
+                    write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+                    nids_file = Path(directory) / "nids.txt"
+                    nids_file.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+                    db = Path(directory) / "db.csv"
+                    db.write_text(content, encoding="utf-8")
+                    code, output, error = run_tool_with_stderr(root, prx, ["--module", MODULE, "--nids", str(nids_file), "--db", str(db)])
+                    self.assertEqual(code, 2)
+                    self.assertEqual(output, "")
+                    self.assertEqual(error, f"FAIL: {db}: database contains no valid NID records\n")
 
     def test_both_export_table_and_nids_fails(self):
         with tempfile.TemporaryDirectory() as directory:
