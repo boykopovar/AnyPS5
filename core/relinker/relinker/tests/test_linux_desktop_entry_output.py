@@ -51,7 +51,7 @@ def unquote(value):
 def entry(path):
     lines = path.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "[Desktop Entry]", lines
-    return dict(line.split("=", 1) for line in lines[1:])
+    return {key: value.lstrip(" \t") for key, value in (line.split("=", 1) for line in lines[1:])}
 
 
 def main():
@@ -92,6 +92,13 @@ def main():
         if validator:
             checked = subprocess.run([validator, str(desktop)], capture_output=True, text=True)
             assert checked.returncode == 0 and not checked.stdout.strip(), checked.stdout
+
+        (app / "sce_sys" / "param.json").unlink()
+        result, output, desktop, icon = relink("  leading space")
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        fields = entry(desktop)
+        assert unescape(fields["Name"]) == output.stem, fields
+        assert unquote(unescape(fields["Exec"])) == str(output), fields
 
         for name, option in (("macos", "--macos"), ("windows.exe", "--windows")):
             result, output, desktop, icon = relink(name, option)
