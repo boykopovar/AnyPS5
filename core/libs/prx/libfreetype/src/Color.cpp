@@ -2,7 +2,6 @@
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include FT_COLOR_H
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 
 namespace {
 
@@ -15,10 +14,7 @@ static_assert(sizeof(FT_Color) == sizeof(LegacyFreeType::GuestColor));
 
 template <typename T>
 bool WriteOut(T* destination, const T& value) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
 }
 
 }
@@ -56,10 +52,7 @@ std::uint8_t APS5_VABI FT_Get_Color_Glyph_Layer_nid_postfix(FreeType::GuestFaceR
     if (glyphIndex && !GuestWritable_nid_no_patch(glyphIndex, sizeof(*glyphIndex))) return 0;
     if (colorIndex && !GuestWritable_nid_no_patch(colorIndex, sizeof(*colorIndex))) return 0;
     LegacyFreeType::GuestLayerIterator localIterator{};
-    const int savedErrno = errno;
-    const bool copiedIn = GuestCopyIn_nid_no_patch(&localIterator, iterator, sizeof(localIterator));
-    errno = savedErrno;
-    if (!copiedIn || !GuestWritable_nid_no_patch(iterator, sizeof(*iterator))) return 0;
+    if (!GuestCopyIn_nid_no_patch(&localIterator, iterator, sizeof(localIterator)) || !GuestWritable_nid_no_patch(iterator, sizeof(*iterator))) return 0;
     FT_LayerIterator native{localIterator.num_layers, localIterator.layer, localIterator.p};
     std::uint32_t nativeGlyph = 0;
     std::uint32_t nativeColor = 0;

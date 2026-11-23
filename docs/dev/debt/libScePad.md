@@ -7,18 +7,18 @@
 | Name | NID |
 | --- | --- |
 | `Unknown` | `1YXygubV1Gc` |
-| `Unknown` | `3LNwlXW4f54` |
+| `scePadInternalSetAssignLed` | `3LNwlXW4f54` |
 | `Unknown` | `7xA+hFtvBCA` |
 | `Unknown` | `KY0hSB+Uyfo` |
 | `Unknown` | `Ql4q5ePNaw0` |
-| `Unknown` | `UeUUvNOgXKU` |
+| `scePadIsChargingCableConnected` | `UeUUvNOgXKU` |
 | `Unknown` | `XFqNcPu1meI` |
 | `Unknown` | `eqldkyw7GAo` |
 | `Unknown` | `ickjfjk9okM` |
 | `Unknown` | `qJgegDoE0g8` |
-| `Unknown` | `r2S7Nuicg8s` |
-| `Unknown` | `wMvV6XbeFd0` |
-| `Unknown` | `ybhL4IoyGZA` |
+| `scePadSetVibrationRawStrength` | `r2S7Nuicg8s` |
+| `scePadVirtualDeviceInsertTriggerState` | `wMvV6XbeFd0` |
+| `scePadAstonGetDeviceInformation` | `ybhL4IoyGZA` |
 
 - [Later callable exports](../../../core/libs/prx/libScePad/InventoryExports.cpp) - 8 function exports of the primary logical library observed only in the 13.60-labelled image of the [PS5 13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscepad-190bd602e9.jsonl); they are absent from the older inventory and the pinned public 3.20 catalogue. The label does not authenticate retail firmware. `scePadIsInitialUserHandle` is not in the pinned public symbol database; the name comes from the inventory's `verified-name-map.jsonl` and hashes to its NID. The other seven have no known name and use literal NID aliases. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
 

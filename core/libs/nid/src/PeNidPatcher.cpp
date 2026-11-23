@@ -38,6 +38,24 @@ std::size_t RvaToOffset(const std::vector<std::uint8_t>& pe, std::uint32_t rva, 
     return static_cast<std::size_t>(offset);
 }
 
+std::string ReadRvaCStr(const std::vector<std::uint8_t>& pe, std::uint32_t rva, std::uint32_t peHeaderOffset, std::uint16_t numberOfSections, std::uint32_t sizeOfOptionalHeader, std::size_t skip = 0u) {
+    const std::size_t sectionOffset = FindSectionOffsetByRva(pe, rva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+    const auto section = Internal::Read<PeSectionHeader>(pe, sectionOffset);
+    const auto relative = rva - section.VirtualAddress;
+    if (relative >= section.SizeOfRawData) throw std::runtime_error("rva is not backed by section file data");
+    const auto offsetValue = std::uint64_t{section.PointerToRawData} + relative;
+    if (offsetValue >= pe.size()) throw std::runtime_error("rva maps outside the file");
+    const auto offset = static_cast<std::size_t>(offsetValue);
+    const auto available = static_cast<std::size_t>(std::min<std::uint64_t>(
+        std::uint64_t{section.SizeOfRawData} - relative, pe.size() - offset));
+    if (skip >= available) throw std::runtime_error("rva string exceeds section file data");
+    const auto begin = pe.begin() + static_cast<std::ptrdiff_t>(offset + skip);
+    const auto limit = pe.begin() + static_cast<std::ptrdiff_t>(offset + available);
+    const auto end = std::find(begin, limit, std::uint8_t{0});
+    if (end == limit) throw std::runtime_error("rva string exceeds section file data");
+    return std::string(begin, end);
+}
+
 }
 
 void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports, const PatchOptions& options) const {
@@ -111,8 +129,7 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         std::vector<std::string> names(exportTable.NumberOfNames);
         for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
             const auto nameRva = Read<std::uint32_t>(pe, namesArrayOffset + i * 4u);
-            const std::size_t nameOffset = RvaToOffset(pe, nameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
-            const std::string name = ReadCStr(pe, nameOffset);
+            const std::string name = ReadRvaCStr(pe, nameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
             if (name.empty()) throw std::runtime_error("empty exported name");
             nameRvas[i] = nameRva;
             names[i] = name;
@@ -135,7 +152,7 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
             throw std::runtime_error("could not determine strings region start");
 
         std::uint32_t rawLimit = ((edataSection.SizeOfRawData + fileAlignment - 1u) / fileAlignment) * fileAlignment;
-        const auto dllName = ReadCStr(pe, RvaToOffset(pe, exportTable.Name, peHeaderOffset, numberOfSections, sizeOfOptionalHeader));
+        const auto dllName = ReadRvaCStr(pe, exportTable.Name, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
         const bool repackDllName = exportTable.Name >= edataSection.VirtualAddress &&
             exportTable.Name - edataSection.VirtualAddress < rawLimit;
         if (repackDllName) stringsRegionStart = std::min(stringsRegionStart, exportTable.Name - edataSection.VirtualAddress);
@@ -153,7 +170,7 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
                 directRvas.push_back(rva);
                 continue;
             }
-            const auto target = ReadCStr(pe, RvaToOffset(pe, rva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader));
+            const auto target = ReadRvaCStr(pe, rva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
             if (target.size() + 1u > exportDir.Size - (rva - exportDir.VirtualAddress))
                 throw std::runtime_error("forwarder string outside export directory");
             forwarders.push_back({entryOffset, target});
@@ -240,8 +257,7 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
             const auto ordinal = Read<std::uint16_t>(pe, ordinalsArrayOffset + i * sizeof(std::uint16_t));
             if (ordinal >= exportTable.NumberOfFunctions)
                 throw std::runtime_error("export name ordinal out of bounds");
-            const auto nameOffset = RvaToOffset(pe, nameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
-            exportNames.push_back({ReadCStr(pe, nameOffset), nameRva, ordinal});
+            exportNames.push_back({ReadRvaCStr(pe, nameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader), nameRva, ordinal});
         }
         std::sort(exportNames.begin(), exportNames.end(), [](const ExportName& left, const ExportName& right) { return left.Name < right.Name; });
         for (std::size_t i = 0; i < exportNames.size(); ++i) {
@@ -311,7 +327,7 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
                 if (hintNameOffset + 2u >= pe.size())
                     throw std::runtime_error("import by name out of bounds");
 
-                const std::string funcName = ReadCStr(pe, hintNameOffset + 2u);
+                const std::string funcName = ReadRvaCStr(pe, hintNameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader, 2u);
                 if (!funcName.empty()) {
                     const auto addressOffset = RvaToOffset(pe, desc.FirstThunk, peHeaderOffset, numberOfSections, sizeOfOptionalHeader) + thunkOffset - RvaToOffset(pe, thunkRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
                     imports.push_back({hintNameOffset + 2u, thunkOffset, addressOffset, funcName});

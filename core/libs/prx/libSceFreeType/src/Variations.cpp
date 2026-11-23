@@ -5,7 +5,6 @@
 
 #include FT_MULTIPLE_MASTERS_H
 
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -20,17 +19,10 @@ using namespace FreeType;
 
 namespace {
 
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return ok;
-}
-
 FT_Library ReadGuestLibrary(GuestLibrary* library, const char* func) {
     if (!library) return nullptr;
     FT_Library host = nullptr;
-    if (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !CopyInPreservingErrno(&host, &library->host, sizeof(host))) NotImplemented_nid_no_patch(func);
+    if (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host))) NotImplemented_nid_no_patch(func);
     return host;
 }
 
