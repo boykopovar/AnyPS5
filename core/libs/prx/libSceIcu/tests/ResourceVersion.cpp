@@ -37,15 +37,14 @@ void CheckNullArguments() {
     std::uint8_t version[4] = {0xaa, 0xbb, 0xcc, 0xdd};
     errno = 73;
     ures_getVersion_nid_postfix(nullptr, version);
-    Require(version[0] == 0xaa && version[1] == 0xbb && version[2] == 0xcc && version[3] == 0xdd, "null bundle version untouched");
+    Require(version[0] == 0 && version[1] == 0 && version[2] == 0 && version[3] == 0, "null bundle version cleared");
     Require(errno == 73, "null bundle version errno");
 
     ures_getVersion_nid_postfix(nullptr, nullptr);
     Require(errno == 73, "null both version errno");
 
     auto* unmapped = reinterpret_cast<std::uint8_t*>(std::uintptr_t{0x10});
-    ures_getVersion_nid_postfix(nullptr, unmapped);
-    Require(errno == 73, "unmapped version pointer errno");
+    RequireThrows([&] { ures_getVersion_nid_postfix(nullptr, unmapped); }, "unmapped version pointer with null bundle throws");
 }
 
 void CheckWildAndNullVersionHandling() {

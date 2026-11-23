@@ -1473,7 +1473,17 @@ int APS5_VABI sceIcuLegacyUnknown_7sukzrX_minus_FQ4_nid_no_patch() {
 APS5_EXPORT("7sukzrX-FQ4", sceIcuLegacyUnknown_7sukzrX_minus_FQ4_nid_no_patch);
 
 void APS5_VABI ures_getVersion_nid_postfix(const UResourceBundle* resB, std::uint8_t* versionInfo) {
-    if (!resB) return;
+    if (!resB) {
+        if (!versionInfo) return;
+        constexpr std::uint8_t nullVersion[4]{};
+        const int copyOutErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(versionInfo, nullVersion, sizeof(nullVersion));
+        errno = copyOutErrno;
+        if (!copied) {
+            NotImplemented_nid_no_patch(__func__);
+        }
+        return;
+    }
     if (!versionInfo) NotImplemented_nid_no_patch(__func__);
     const char* version = ures_getVersionNumberInternal_nid_postfix(resB);
     char versionStr[32]{};
