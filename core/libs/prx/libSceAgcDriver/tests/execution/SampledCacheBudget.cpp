@@ -15,6 +15,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "TexelFetch.hpp"
 #include "VulkanTestDevice.hpp"
 #include <SDL_loadso.h>
 #ifdef _WIN32
@@ -48,6 +49,7 @@
 namespace {
 
 using namespace AgcDriver::Graphics;
+using TestSupport::FetchTexels;
 
 constexpr std::uint32_t Side = 256;
 constexpr std::uint32_t Format32UInt = 20;
@@ -1639,7 +1641,45 @@ bool surfaceImportTests(Context context) {
         recorder.Sync();
         ClearCachedTextures(context.device);
     }
-    std::puts(importing ? "sampled surface import: split surfaces imported whole from a partial import and from a pending write, short view refused" : "sampled surface import off: split surfaces stayed snapshots");
+    ClearCachedTextures(context.device);
+    {
+        SplitSurface split(context);
+        Recorder recorder(context);
+        recorder.Activate();
+        const auto commands = recorder.Commands();
+        const auto surfaceEnd = split.Surface() + surfaceBytes;
+        const std::array<std::uint64_t, 4> bounds{split.Surface(), split.Base() + SplitHeadBytes, split.Tail(), surfaceEnd};
+        constexpr std::array<std::uint32_t, 3> patterns{0x11d1e1f1u, 0x22d2e2f2u, 0x33d3e3f3u};
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        for (std::size_t piece = 0; piece < patterns.size(); ++piece) {
+            const auto begin = bounds[piece];
+            const auto bytes = static_cast<std::size_t>(bounds[piece + 1u] - begin);
+            const auto* import = HostImportFor(context, begin, bytes);
+            Require(import != nullptr && import->base <= begin && import->base + import->bytes >= begin + bytes, "the part of the split surface in allocation " + std::to_string(piece) + " was not imported for the GPU producer");
+            context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, import->buffer, HostImportOffset(*import, begin), bytes, patterns[piece]);
+            AgcDriver::GuestMemory::MarkWritten(begin, bytes);
+            recorder.NotePendingWrite(begin, bytes);
+        }
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
+        Require(Recorder::SnapshotWriteOverlaps(split.Surface(), static_cast<std::size_t>(surfaceBytes)), "the GPU producer's writes over the split surface are not pending");
+        Require(!HostImportCovers(context, split.Surface(), static_cast<std::size_t>(surfaceBytes)), "the GPU producer's imports cover the whole split surface before it is sampled");
+        ClearCachedTextures(context.device);
+        auto produced = Sampled(context, split.Surface(), SplitSide);
+        Require(produced != nullptr, "the split surface the GPU wrote was not sampled");
+        if (importing) Require(produced->ViewsStorageImage() && joinedOverSurface(split), "a split surface the GPU wrote through its allocations' imports was not imported as one joined run and viewed through its storage image");
+        else Require(!produced->ViewsStorageImage(), "a split surface the GPU wrote was viewed through a storage image with the sampled surface import off");
+        recorder.Sync();
+        const auto texels = FetchTexels(context, *produced, SplitSide);
+        for (std::size_t piece = 0; piece < patterns.size(); ++piece) {
+            const auto expected = static_cast<std::size_t>(bounds[piece + 1u] - bounds[piece]) / sizeof(std::uint32_t);
+            const auto found = static_cast<std::size_t>(std::count(texels.begin(), texels.end(), patterns[piece]));
+            Require(found == expected, std::string(importing ? "through the joined import, " : "through the snapshot, ") + "allocation " + std::to_string(piece) + " of the split surface sampled " + std::to_string(found) + " texels the GPU wrote there, not " + std::to_string(expected));
+        }
+        Require(std::all_of(texels.begin(), texels.end(), [&](std::uint32_t texel) { return std::find(patterns.begin(), patterns.end(), texel) != patterns.end(); }), std::string(importing ? "through the joined import, " : "through the snapshot, ") + "the split surface sampled texels the GPU producer did not write");
+        produced.reset();
+        ClearCachedTextures(context.device);
+    }
+    std::puts(importing ? "sampled surface import: split surfaces imported whole from a partial import and from a pending write, short view refused, GPU-written texels sampled through the joined import" : "sampled surface import off: split surfaces stayed snapshots, GPU-written texels sampled through the snapshot");
     return true;
 }
 
