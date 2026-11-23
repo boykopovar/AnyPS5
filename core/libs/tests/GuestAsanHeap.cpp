@@ -1,4 +1,5 @@
 #include "prx/libSceAddressSanitizer/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/MallocManagedSize.hpp"
@@ -15,10 +16,6 @@
 #include <string>
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern "C" int APS5_VABI scePthreadGetthreadid(void);
-extern "C" int APS5_VABI scePthreadRename(Pthread thread, const char* name);
-extern "C" Pthread APS5_VABI scePthreadSelf();
 
 namespace {
 

@@ -1,4 +1,5 @@
 #include "prx/libSceAddressSanitizer/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <csignal>
@@ -65,10 +66,6 @@ std::uint32_t AsanStacksGuards[3];
 }
 
 }
-
-extern "C" int APS5_VABI scePthreadGetthreadid(void);
-extern "C" int APS5_VABI scePthreadRename(Pthread thread, const char* name);
-extern "C" Pthread APS5_VABI scePthreadSelf();
 
 namespace {
 
