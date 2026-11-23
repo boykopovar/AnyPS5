@@ -323,7 +323,13 @@ std::int64_t APS5_VABI scePfsPread(void* buffer, std::uint64_t size, std::uint64
     const bool version3 = layout.version == 3;
     auto blockCount = (std::uint64_t{layout.blockCount} + 1) / 2;
     std::uint64_t index = offset / FullBlock;
+    std::uint64_t dataRegionSize = 0;
     if (version3) {
+        PfsIndexEntry region{};
+        bool foundRegion = false;
+        if (!FindIndexEntry(header, layout.indexCount, 7, region, foundRegion)) return InvalidArgument;
+        if (!foundRegion) return InvalidTable;
+        dataRegionSize = region.words[1] >> 16;
         const auto boundaries = tableCommand[0] / sizeof(PfsIndexEntry);
         if (boundaries < 2 || tableCommand[0] % sizeof(PfsIndexEntry) != 0) return InvalidTable;
         blockCount = boundaries - 1;
@@ -337,6 +343,10 @@ std::int64_t APS5_VABI scePfsPread(void* buffer, std::uint64_t size, std::uint64
         BlockCommand block{};
         const int commandResult = scePfsGetSingleBlockReadCommand(header, table, static_cast<int>(index), &block);
         if (commandResult != 0) return commandResult;
+        if (version3) {
+            const auto physicalOffset = block.first & OffsetMask44;
+            if (physicalOffset > dataRegionSize || block.encodedSize > dataRegionSize - physicalOffset) return InvalidTable;
+        }
         const auto blockStart = block.LogicalOffset();
         const auto length = block.LogicalSize();
         if (length > FullBlock || position < blockStart || position - blockStart >= length) return InvalidTable;

@@ -174,6 +174,12 @@ void StoredReads(std::uint16_t version, bool shortBlocks) {
         std::vector<std::uint8_t> throughLast(dataSize - first);
         Require(scePfsPread(throughLast.data(), throughLast.size(), first, image.data(), work.data()) == 0);
         Require(std::memcmp(throughLast.data(), data + first, throughLast.size()) == 0);
+        const auto regionIndex = sizeof(header) + sizeof(IndexEntry);
+        put(regionIndex, IndexEntry{{(dataOffset << 16) | 7, (dataSize - 1) << 16}});
+        std::uint8_t byte = 0xb5;
+        Require(scePfsPread(&byte, 1, ends[3], image.data(), work.data()) == InvalidTable);
+        Require(byte == 0xb5);
+        put(regionIndex, IndexEntry{{(dataOffset << 16) | 7, dataSize << 16}});
         auto extended = header;
         ++extended.uncompressedSize;
         put(0, extended);
