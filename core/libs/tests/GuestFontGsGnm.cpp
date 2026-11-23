@@ -719,7 +719,8 @@ int RunSelf(const std::filesystem::path& program, const char* mode, const std::f
 }
 
 void GnmSurfaceModes(const std::filesystem::path& program) {
-    const auto root = std::filesystem::temp_directory_path() / ("guest_font_gs_gnm_" + std::to_string(getpid_nid_postfix()));
+    auto root = std::filesystem::temp_directory_path() / ("guest_font_gs_gnm_" + std::to_string(getpid_nid_postfix()));
+    root += u8"_\u00e9\u6e2c";
     std::filesystem::remove_all(root);
     WriteParamSfo(root / "base", 0);
     WriteParamSfo(root / "neo", 0x00800000);
@@ -742,7 +743,7 @@ void ReportError() {
 
 int main(int argc, char** argv) {
     if (argc == 3) {
-        std::filesystem::current_path(argv[2]);
+        std::filesystem::current_path(ArgumentPath(argv, 2));
         GnmSurfaceInitCases(std::string(argv[1]) == "--surface-neo");
         return 0;
     }

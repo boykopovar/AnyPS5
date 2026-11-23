@@ -118,7 +118,7 @@ int RunSelf(const std::filesystem::path& program, std::string_view mode, const s
 
 int main(int argc, char** argv) {
     if (argc == 3) {
-        std::filesystem::current_path(argv[2]);
+        std::filesystem::current_path(ArgumentPath(argv, 2));
         const std::string_view mode = argv[1];
         if (mode == "--neo") {
             Require(sceKernelIsNeoMode() == 1, "a title with the Neo-mode bit is not in Neo mode");
@@ -159,7 +159,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const auto root = std::filesystem::temp_directory_path() / ("guest_kernel_sys_neo_mode_" + std::to_string(getpid_nid_postfix()));
+    auto root = std::filesystem::temp_directory_path() / ("guest_kernel_sys_neo_mode_" + std::to_string(getpid_nid_postfix()));
+    root += u8"_\u00e9\u6e2c";
     std::filesystem::remove_all(root);
     const struct {
         const char* name;

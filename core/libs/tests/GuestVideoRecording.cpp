@@ -222,7 +222,7 @@ int main(int argc, char** argv) {
     static std::array<std::byte, 64> process{};
     Require(ProcessParametersFixture::Install(process.data(), process.size()), "cannot install the process parameters");
     if (argc == 3) {
-        std::filesystem::current_path(argv[2]);
+        std::filesystem::current_path(ArgumentPath(argv, 2));
         const std::string_view mode = argv[1];
         if (mode != "--neo" && mode != "--base") return 1;
         CheckSize2(process, mode == "--neo");
@@ -317,7 +317,8 @@ int main(int argc, char** argv) {
     Require(sceVideoRecordingClose(1) == NotOpen, "a failed open left a recorder to close");
 
     CheckSize2Arguments();
-    const auto titles = std::filesystem::temp_directory_path() / "guest_video_recording_size2";
+    auto titles = std::filesystem::temp_directory_path() / "guest_video_recording_size2";
+    titles += u8"_\u00e9\u6e2c";
     std::filesystem::remove_all(titles);
     WriteTitle(titles / "base", 0);
     WriteTitle(titles / "neo", SupportNeoMode);

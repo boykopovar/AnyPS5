@@ -43,7 +43,7 @@ static void RequireMissingChunkMetadata(Operation&& operation) {
     Require(threw);
 }
 
-static int CheckPackageChunkTable(const char* root) {
+static int CheckPackageChunkTable(const std::filesystem::path& root) {
     constexpr int badChunkId = static_cast<int>(0x80B2000C);
     std::filesystem::current_path(root);
     PlayGoInitParams init{};
@@ -70,7 +70,7 @@ static int CheckPackageChunkTable(const char* root) {
     return 0;
 }
 
-static int CheckScenarioWithoutChunkTable(const char* root) {
+static int CheckScenarioWithoutChunkTable(const std::filesystem::path& root) {
     std::filesystem::current_path(root);
     PlayGoInitParams init{};
     int handle = 0;
@@ -100,7 +100,7 @@ static int CheckScenarioWithoutChunkTable(const char* root) {
     return 0;
 }
 
-static int CheckNoPlayGoFile(const char* root) {
+static int CheckNoPlayGoFile(const std::filesystem::path& root) {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     std::filesystem::current_path(root);
@@ -355,7 +355,7 @@ static int CheckNoPlayGoFile(const char* root) {
     return 0;
 }
 
-static int CheckRejectedLayout(const char* root, const char* fileName) {
+static int CheckRejectedLayout(const std::filesystem::path& root, const char* fileName) {
     std::filesystem::current_path(root);
     PlayGoInitParams init{};
     int handle = 0;
@@ -382,7 +382,7 @@ static void SetUnlistedChunks(const char* value) {
 #endif
 }
 
-static int CheckNoPlayGoFileAnswered(const char* root, const char* answer) {
+static int CheckNoPlayGoFileAnswered(const std::filesystem::path& root, const char* answer) {
     constexpr int badChunkId = static_cast<int>(0x80B2000C);
     SetUnlistedChunks(answer);
     std::filesystem::current_path(root);
@@ -401,7 +401,7 @@ static int CheckNoPlayGoFileAnswered(const char* root, const char* answer) {
     return 0;
 }
 
-static int CheckNoPlayGoFileExplicit(const char* root, const char* value) {
+static int CheckNoPlayGoFileExplicit(const std::filesystem::path& root, const char* value) {
     constexpr int badChunkId = static_cast<int>(0x80B2000C);
     SetUnlistedChunks(value);
     std::filesystem::current_path(root);
@@ -425,7 +425,7 @@ static int CheckNoPlayGoFileExplicit(const char* root, const char* value) {
     return 0;
 }
 
-static int CheckNoPlayGoFileExplicitInvalid(const char* root, const char* value) {
+static int CheckNoPlayGoFileExplicitInvalid(const std::filesystem::path& root, const char* value) {
     SetUnlistedChunks(value);
     std::filesystem::current_path(root);
     PlayGoInitParams init{};
@@ -444,12 +444,12 @@ static int CheckNoPlayGoFileExplicitInvalid(const char* root, const char* value)
     return 0;
 }
 
-static int CheckPackageChunkTableExplicit(const char* root) {
+static int CheckPackageChunkTableExplicit(const std::filesystem::path& root) {
     SetUnlistedChunks("0,1");
     return CheckPackageChunkTable(root);
 }
 
-static int CheckScenarioWithoutChunkTableExplicit(const char* root) {
+static int CheckScenarioWithoutChunkTableExplicit(const std::filesystem::path& root) {
     constexpr int badChunkId = static_cast<int>(0x80B2000C);
     SetUnlistedChunks("0,1");
     std::filesystem::current_path(root);
@@ -474,7 +474,7 @@ static int CheckScenarioWithoutChunkTableExplicit(const char* root) {
     return 0;
 }
 
-static int CheckScenarioWithoutChunkTableAnswered(const char* root, const char* answer) {
+static int CheckScenarioWithoutChunkTableAnswered(const std::filesystem::path& root, const char* answer) {
     constexpr int badChunkId = static_cast<int>(0x80B2000C);
     SetUnlistedChunks(answer);
     std::filesystem::current_path(root);
@@ -495,7 +495,7 @@ static int CheckScenarioWithoutChunkTableAnswered(const char* root, const char* 
     return 0;
 }
 
-static int CheckUnknownUnlistedChunkAnswer(const char* root) {
+static int CheckUnknownUnlistedChunkAnswer(const std::filesystem::path& root) {
     SetUnlistedChunks("maybe");
     std::filesystem::current_path(root);
     PlayGoInitParams init{};
@@ -515,7 +515,7 @@ static int CheckUnknownUnlistedChunkAnswer(const char* root) {
     return 0;
 }
 
-static int CheckChunkdefsRejected(const char* root) {
+static int CheckChunkdefsRejected(const std::filesystem::path& root) {
     std::filesystem::current_path(root);
     PlayGoInitParams init{};
     int handle = -1;
@@ -535,7 +535,8 @@ static int CheckChunkdefsRejected(const char* root) {
 }
 
 static void RunLayout(const std::filesystem::path& self, const char* mode, std::initializer_list<std::pair<const char*, std::string>> files) {
-    const auto root = std::filesystem::temp_directory_path() / ("guest_playgo_" + std::to_string(std::random_device{}()));
+    auto root = std::filesystem::temp_directory_path() / ("guest_playgo_" + std::to_string(std::random_device{}()));
+    root += u8"_\u00e9\u6e2c";
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "app0" / "sce_sys");
     for (const auto& [name, content] : files) {
@@ -562,25 +563,25 @@ static std::string ChunkTableFile(const char* magic = "plgx", char chunks = 3) {
 int main(int argc, char** argv) {
     if (argc == 3) {
         const std::string_view mode = argv[1];
-        if (mode == "--no-file") return CheckNoPlayGoFile(argv[2]);
-        if (mode == "--no-file-installed") return CheckNoPlayGoFileAnswered(argv[2], "installed");
-        if (mode == "--no-file-absent") return CheckNoPlayGoFileAnswered(argv[2], "absent");
-        if (mode == "--no-file-unknown-answer") return CheckUnknownUnlistedChunkAnswer(argv[2]);
-        if (mode == "--no-file-explicit") return CheckNoPlayGoFileExplicit(argv[2], "0,1");
-        if (mode == "--no-file-explicit-one") return CheckNoPlayGoFileExplicit(argv[2], "1");
-        if (mode == "--no-file-explicit-empty") return CheckNoPlayGoFileExplicitInvalid(argv[2], "0,");
-        if (mode == "--no-file-explicit-range") return CheckNoPlayGoFileExplicitInvalid(argv[2], "65536");
-        if (mode == "--no-file-explicit-text") return CheckNoPlayGoFileExplicitInvalid(argv[2], "0,x");
-        if (mode == "--package-chunk-table" || mode == "--scenario-with-chunk-table") return CheckPackageChunkTable(argv[2]);
-        if (mode == "--package-chunk-table-explicit") return CheckPackageChunkTableExplicit(argv[2]);
-        if (mode == "--scenario-only-explicit") return CheckScenarioWithoutChunkTableExplicit(argv[2]);
-        if (mode == "--scenario-only") return CheckScenarioWithoutChunkTable(argv[2]);
-        if (mode == "--scenario-only-installed") return CheckScenarioWithoutChunkTableAnswered(argv[2], "installed");
-        if (mode == "--scenario-only-absent") return CheckScenarioWithoutChunkTableAnswered(argv[2], "absent");
-        if (mode == "--ficm-only") return CheckRejectedLayout(argv[2], "playgo-ficm.dat");
-        if (mode == "--hash-table-only") return CheckRejectedLayout(argv[2], "playgo-hash-table.dat");
-        if (mode == "--invalid-chunk-table") return CheckRejectedLayout(argv[2], "playgo-chunk.dat");
-        if (mode == "--chunkdefs-range" || mode == "--chunkdefs-overflow") return CheckChunkdefsRejected(argv[2]);
+        if (mode == "--no-file") return CheckNoPlayGoFile(ArgumentPath(argv, 2));
+        if (mode == "--no-file-installed") return CheckNoPlayGoFileAnswered(ArgumentPath(argv, 2), "installed");
+        if (mode == "--no-file-absent") return CheckNoPlayGoFileAnswered(ArgumentPath(argv, 2), "absent");
+        if (mode == "--no-file-unknown-answer") return CheckUnknownUnlistedChunkAnswer(ArgumentPath(argv, 2));
+        if (mode == "--no-file-explicit") return CheckNoPlayGoFileExplicit(ArgumentPath(argv, 2), "0,1");
+        if (mode == "--no-file-explicit-one") return CheckNoPlayGoFileExplicit(ArgumentPath(argv, 2), "1");
+        if (mode == "--no-file-explicit-empty") return CheckNoPlayGoFileExplicitInvalid(ArgumentPath(argv, 2), "0,");
+        if (mode == "--no-file-explicit-range") return CheckNoPlayGoFileExplicitInvalid(ArgumentPath(argv, 2), "65536");
+        if (mode == "--no-file-explicit-text") return CheckNoPlayGoFileExplicitInvalid(ArgumentPath(argv, 2), "0,x");
+        if (mode == "--package-chunk-table" || mode == "--scenario-with-chunk-table") return CheckPackageChunkTable(ArgumentPath(argv, 2));
+        if (mode == "--package-chunk-table-explicit") return CheckPackageChunkTableExplicit(ArgumentPath(argv, 2));
+        if (mode == "--scenario-only-explicit") return CheckScenarioWithoutChunkTableExplicit(ArgumentPath(argv, 2));
+        if (mode == "--scenario-only") return CheckScenarioWithoutChunkTable(ArgumentPath(argv, 2));
+        if (mode == "--scenario-only-installed") return CheckScenarioWithoutChunkTableAnswered(ArgumentPath(argv, 2), "installed");
+        if (mode == "--scenario-only-absent") return CheckScenarioWithoutChunkTableAnswered(ArgumentPath(argv, 2), "absent");
+        if (mode == "--ficm-only") return CheckRejectedLayout(ArgumentPath(argv, 2), "playgo-ficm.dat");
+        if (mode == "--hash-table-only") return CheckRejectedLayout(ArgumentPath(argv, 2), "playgo-hash-table.dat");
+        if (mode == "--invalid-chunk-table") return CheckRejectedLayout(ArgumentPath(argv, 2), "playgo-chunk.dat");
+        if (mode == "--chunkdefs-range" || mode == "--chunkdefs-overflow") return CheckChunkdefsRejected(ArgumentPath(argv, 2));
     }
     RunLayout(ArgumentPath(argv, 0), "--no-file", {});
     RunLayout(ArgumentPath(argv, 0), "--no-file-installed", {});

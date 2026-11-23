@@ -46,7 +46,8 @@ static int RunSelf(const std::filesystem::path& program, std::string_view mode, 
 }
 
 static std::filesystem::path EnterTemporaryRoot(std::string_view name) {
-    const auto root = std::filesystem::temp_directory_path() / (std::string(name) + std::to_string(getpid_nid_postfix()));
+    auto root = std::filesystem::temp_directory_path() / (std::string(name) + std::to_string(getpid_nid_postfix()));
+    root += u8"_\u00e9\u6e2c";
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     std::filesystem::current_path(root);
@@ -55,7 +56,7 @@ static std::filesystem::path EnterTemporaryRoot(std::string_view name) {
 
 int main(int argc, char** argv) {
     if (argc == 3 && std::string_view(argv[1]) == "--without-param-json") {
-        std::filesystem::current_path(argv[2]);
+        std::filesystem::current_path(ArgumentPath(argv, 2));
         AppInfo info{};
         try { sceKernelGetAppInfo(getpid_nid_postfix(), &info); }
         catch (const std::runtime_error& error) {
@@ -64,7 +65,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (argc == 3 && std::string_view(argv[1]) == "--with-param-sfo") {
-        std::filesystem::current_path(argv[2]);
+        std::filesystem::current_path(ArgumentPath(argv, 2));
         AppInfo info{};
         Require(sceKernelGetAppInfo(getpid_nid_postfix(), &info) == 0);
         Require(std::strcmp(info.titleId, "CUSA00000") == 0);
@@ -110,12 +111,14 @@ int main(int argc, char** argv) {
     Require(errno == 71);
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
-    const auto empty = std::filesystem::temp_directory_path() / ("guest_app_info_empty_" + std::to_string(self));
+    auto empty = std::filesystem::temp_directory_path() / ("guest_app_info_empty_" + std::to_string(self));
+    empty += u8"_\u00e9\u6e2c";
     std::filesystem::remove_all(empty);
     std::filesystem::create_directories(empty);
     Require(RunSelf(ArgumentPath(argv, 0), "--without-param-json", empty) == 0);
     std::filesystem::remove_all(empty);
-    const auto sfo = std::filesystem::temp_directory_path() / ("guest_app_info_sfo_" + std::to_string(self));
+    auto sfo = std::filesystem::temp_directory_path() / ("guest_app_info_sfo_" + std::to_string(self));
+    sfo += u8"_\u00e9\u6e2c";
     std::filesystem::remove_all(sfo);
     std::filesystem::create_directories(sfo / "app0" / "sce_sys");
     WriteParamSfo(sfo / "app0" / "sce_sys" / "param.sfo");
