@@ -8347,35 +8347,11 @@ int APS5_VABI WKBundleAddOriginAccessAllowListEntry() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleClearHistoryForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleClearResourceLoadStatistics() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleCreateWKDataFromUInt8Array() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI WKBundleFrameCopyChildFrames() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleFrameCopyCounterValue() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleFrameCopyInnerText() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleFrameCopyLayerTreeAsText() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleFrameCopyMIMETypeForResourceWithURL() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8391,10 +8367,6 @@ int APS5_VABI WKBundleFrameCopySecurityOrigin() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleFrameCopySuggestedFilenameForResourceWithURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleFrameCopyURL() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8406,10 +8378,6 @@ int APS5_VABI WKBundleFrameCreateFrameHandle() {
 
 
 int APS5_VABI WKBundleFrameForJavaScriptContext() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleFrameGetDocumentBackgroundColor() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8464,11 +8432,6 @@ int APS5_VABI WKBundleGarbageCollectJavaScriptObjects() {
 int APS5_VABI WKBundleGetApplicationConnection() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI WKBundleGetJavaScriptObjectsCount() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI WKBundleHitTestResultCopyImage() {
     NotImplemented_nid_no_patch(__func__);
@@ -8858,10 +8821,6 @@ int APS5_VABI WKBundleRangeHandleGetBoundingRectInWindowCoordinates() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleReleaseMemory() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleRemoveOriginAccessAllowListEntry() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8871,10 +8830,6 @@ int APS5_VABI WKBundleReportException() {
 }
 
 int APS5_VABI WKBundleResetOriginAccessAllowLists() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleResourceLoadStatisticsNotifyObserver() {
     NotImplemented_nid_no_patch(__func__);
 }
 
