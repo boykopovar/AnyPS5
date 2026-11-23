@@ -541,6 +541,18 @@ class BuildErrorTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn(diagnostic, stderr.getvalue())
 
+    def test_targets_reports_ctest_regex_diagnostic_on_the_json_closing_line(self):
+        listing = '{\n  "tests": []\n}'
+        diagnostic = "RegularExpression::compile(): Unmatched []."
+        doc = listing + diagnostic + "\nCMake Error: Error in compile.\n"
+        with mock.patch.object(select_tests, "Build") as build, \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            build.return_value.tests.side_effect = json.JSONDecodeError("Extra data", doc, len(listing))
+            with self.assertRaises(SystemExit) as raised:
+                select_tests.main(["targets", "build", "["])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn(diagnostic, stderr.getvalue())
+
     def test_explain_rejects_malformed_saved_graph_without_a_traceback(self):
         graphs = (
             {},
