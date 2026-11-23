@@ -195,6 +195,8 @@ def validate_entry(directory, entry):
         raise ValueError("patch file has no valid targets")
     if set(targets) != {item["target"] for item in patches}:
         raise ValueError("target hashes must cover exactly the patch targets")
+    if type(parsed.get("format")) is not int or parsed["format"] != 1:
+        raise ValueError("patch file must have format 1")
     return patch, {name: digest.lower() for name, digest in targets.items()}, metadata
 
 

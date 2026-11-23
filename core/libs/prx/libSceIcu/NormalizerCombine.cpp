@@ -8,6 +8,7 @@
 //   Corporation and others.  All Rights Reserved.
 
 #include "Normalization.hpp"
+#include <stdexcept>
 
 namespace {
 
@@ -24,6 +25,7 @@ constexpr std::uint16_t Comp2TrailMask = 0xffc0;
 extern "C" {
 
 std::int32_t APS5_VABI _ZN6icu_6815Normalizer2Impl7combineEPKti_nid_postfix(const std::uint16_t* list, std::int32_t trail) {
+    if (!list) throw std::invalid_argument("Normalizer2Impl::combine: null list");
     const auto bits = static_cast<std::uint32_t>(trail);
     std::uint16_t firstUnit;
     if (trail < Comp1TrailLimit) {
