@@ -248,19 +248,19 @@ void TestResonanceTransactions() {
     context = 1;
     Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE(transaction.data(), &context) == kNotSignedIn);
     Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE21setOnFinishedCallbackEPFvliS9_PvEPFvliSD_ESD_(
-                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3), reinterpret_cast<void*>(0x4)) == kTransactionNotStarted);
+                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3)) == kTransactionNotStarted);
     void* headers = nullptr;
     Require(_ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE18getResponseHeadersERSB_(transaction.data(), &headers) == kTransactionNotStarted);
     Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE28setResponseInformationOptionEP37SceNpWebApi2ResponseInformationOption(transaction.data(), &context) == kTransactionNotStarted);
 
     Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE21setOnFinishedCallbackEPFvliS8_PvEPFvliSC_ESC_(
-                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3), reinterpret_cast<void*>(0x4)) == kTransactionNotStarted);
+                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3)) == kTransactionNotStarted);
     Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V122UploadDataResponseBodyEEENS4_INS6_7DataApi25UploadDataResponseHeadersEEEE21setOnFinishedCallbackEPFvliS8_PvEPFvliSD_ESD_(
-                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3), reinterpret_cast<void*>(0x4)) == kTransactionNotStarted);
+                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3)) == kTransactionNotStarted);
     Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6BinaryEEENS4_INS1_17TitleCloudStorage2V17DataApi27DownloadDataResponseHeadersEEEE21setOnFinishedCallbackEPFvliS6_PvEPFvliSD_ESD_(
-                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3), reinterpret_cast<void*>(0x4)) == kTransactionNotStarted);
+                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3)) == kTransactionNotStarted);
     Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_15DefaultResponseENS2_12IntrusivePtrINS1_17TitleCloudStorage2V17DataApi26SetDataInfoResponseHeadersEEEE21setOnFinishedCallbackEPFvliS4_PvEPFvliSC_ESC_(
-                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3), reinterpret_cast<void*>(0x4)) == kTransactionNotStarted);
+                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3)) == kTransactionNotStarted);
     Require(_ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE18getResponseHeadersERSA_(transaction.data(), &headers) == kTransactionNotStarted);
     Require(_ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponseENS2_12IntrusivePtrINS1_17TitleCloudStorage2V17DataApi26SetDataInfoResponseHeadersEEEE18getResponseHeadersERSA_(transaction.data(), &headers) == kTransactionNotStarted);
     Require(_ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS2_6BinaryEEENS4_INS1_17TitleCloudStorage2V17DataApi27DownloadDataResponseHeadersEEEE18getResponseHeadersERSB_(transaction.data(), &headers) == kTransactionNotStarted);

@@ -12,16 +12,19 @@ static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
 
 using Object = int (APS5_VABI*)(void*);
 using Call = int (APS5_VABI*)();
+using TransactionCall = int (APS5_VABI*)(void*, void*, void*, void*);
+using OptionCall = int (APS5_VABI*)(void*, void*);
+using HeadersCall = int (APS5_VABI*)(const void*, void*);
 using Initialize = int (*)(void*, std::uint64_t*);
 
 struct RequestFlow {
     Object transactionConstruct;
     Object transactionDestroy;
-    Call setOnFinishedCallback;
-    Call setResponseInformationOption;
+    TransactionCall setOnFinishedCallback;
+    OptionCall setResponseInformationOption;
     Call start;
     Call finish;
-    Call getResponseHeaders;
+    HeadersCall getResponseHeaders;
     Object parameterConstruct;
     Object parameterDestroy;
     Initialize initialize;
@@ -224,13 +227,15 @@ static void TestRequestFlow(const RequestFlow& flow) {
     NpCppWebApiTest::LibContext context;
 
     Require(flow.transactionConstruct(transaction) == 0);
-    Require(flow.setOnFinishedCallback() == 0);
-    Require(flow.setResponseInformationOption() == 0);
+    for (std::size_t index = 0; index < sizeof(transaction); ++index)
+        Require(transaction[index] == (index < 0x10 ? 0 : 0x5a));
+    Require(flow.setOnFinishedCallback(transaction, nullptr, nullptr, nullptr) == TransactionNotStarted);
+    Require(flow.setResponseInformationOption(transaction, nullptr) == TransactionNotStarted);
     Require(flow.parameterConstruct(parameter) == 0);
     Require(flow.initialize(parameter, context.value()) == 0);
     Require(flow.call() == NotSignedIn);
     Require(flow.start() == NotSignedIn);
-    Require(flow.getResponseHeaders() == NotSignedIn);
+    Require(flow.getResponseHeaders(transaction, nullptr) == TransactionNotStarted);
     Require(flow.finish() == TransactionNotStarted);
     Require(flow.terminate(parameter) == 0);
     Require(flow.parameterDestroy(parameter) == 0);
