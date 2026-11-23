@@ -90,16 +90,40 @@ bool IsNan(std::uint32_t value) {
     return (value & 0x7fffffffu) > 0x7f800000u;
 }
 
+std::string Hex(std::uint32_t value) {
+    char text[16];
+    std::snprintf(text, sizeof(text), "0x%08x", value);
+    return text;
+}
+
 bool Agrees(std::uint32_t op, std::uint32_t input, std::uint32_t wanted, std::uint32_t got, bool applied) {
     if (got == wanted) return true;
     if (IsNan(wanted) || IsNan(got)) return false;
-    if (((wanted | got) & 0x7fffffffu) == 0u) return false;
+    if ((wanted & 0x7fffffffu) == 0u || (got & 0x7fffffffu) == 0u) return false;
     const double scale = applied ? Scales[op] : 1.0;
     const float expected = static_cast<float>(static_cast<double>(std::bit_cast<float>(wanted)) / scale);
     const float actual = static_cast<float>(static_cast<double>(std::bit_cast<float>(got)) / scale);
     if (!std::isfinite(expected) || !std::isfinite(actual)) return false;
     if (op == Cos) return std::fabs(static_cast<double>(expected) - static_cast<double>(actual)) <= std::ldexp(1.0, -11);
     return Float32ResultsAgree(Probes[op], input, std::bit_cast<std::uint32_t>(expected), std::bit_cast<std::uint32_t>(actual));
+}
+
+void CheckComparator() {
+    constexpr std::array<std::uint32_t, 2> Zeros{0x00000000u, 0x80000000u};
+    constexpr std::array<std::uint32_t, 2> Smallest{0x00000001u, 0x80000001u};
+    for (std::uint32_t op = 0; op < Ops; ++op) {
+        for (const bool applied : {true, false}) {
+            for (const auto zero : Zeros) {
+                for (const auto denormal : Smallest) {
+                    Require(!Agrees(op, 0x3f800000u, zero, denormal, applied), std::string(Names[op]) + " accepted " + Hex(denormal) + " for the zero " + Hex(zero));
+                    Require(!Agrees(op, 0x3f800000u, denormal, zero, applied), std::string(Names[op]) + " accepted " + Hex(zero) + " for " + Hex(denormal));
+                }
+                Require(!Agrees(op, 0x3f800000u, zero, zero ^ 0x80000000u, applied), std::string(Names[op]) + " accepted " + Hex(zero ^ 0x80000000u) + " for the zero " + Hex(zero));
+            }
+        }
+        const auto wanted = ModifierApplied[1][op + 1u];
+        Require(Agrees(op, ModifierApplied[1][0], wanted, wanted + 1u, true), std::string(Names[op]) + " rejected a result 1 ulp from " + Hex(wanted));
+    }
 }
 
 alignas(256) std::array<std::uint32_t, Threads> Input{};
@@ -115,12 +139,6 @@ alignas(256) constexpr std::array<std::uint32_t, 25> Code{
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
 }
 
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t floatMode, bool ieeeMode, const Table& measured, bool applied) {
@@ -159,6 +177,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t floatMode, bool ieeeMode
 
 int main() {
     try {
+        CheckComparator();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Run(*device, 0xf0u, false, ModifierApplied, true);
