@@ -78,7 +78,7 @@ void TestEntriesOfAFreshMapAreWeak() {
     Require(JSWeakObjectMapGet(ctx, map, &key) == object);
     Require(map->entries.size() == 1);
 
-    JSWeakObjectMapSet(ctx, map, &key, nullptr);
+    Require(JSWeakObjectMapRemove(ctx, map, &key));
     Require(map->entries.empty());
     Require(JSWeakObjectMapGet(ctx, map, &key) == nullptr);
 
