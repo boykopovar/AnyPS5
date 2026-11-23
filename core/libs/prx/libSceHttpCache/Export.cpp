@@ -1109,7 +1109,7 @@ int APS5_VABI sceHttpCacheRetrieveWithMemoryPool(std::int32_t requestId, const H
         return FillPoolResponse(*found, response, pool, poolSize) ? 0 : ErrorInvalidValue;
     }
 
-    if (next == nullptr || nextRequest == nullptr) return ErrorInvalidValue;
+    if (next == nullptr) return ErrorInvalidValue;
     std::size_t requestSize = 0;
     if (!PoolRequestSize(*next, requestSize)) return ErrorInvalidValue;
     const bool includeResponse = found && StaleUsable(found.get());
@@ -1122,6 +1122,7 @@ int APS5_VABI sceHttpCacheRetrieveWithMemoryPool(std::int32_t requestId, const H
         }
         return CopyOut(requiredSize, &size, sizeof(size)) ? 0 : ErrorInvalidValue;
     }
+    if (nextRequest == nullptr) return ErrorInvalidValue;
     if (poolSize < requestSize || !FillPoolNextRequest(*next, nextRequest, pool, poolSize, requestSize)) return ErrorInvalidValue;
     if (!includeResponse) return 0;
     if (response == nullptr) return ErrorInvalidValue;
