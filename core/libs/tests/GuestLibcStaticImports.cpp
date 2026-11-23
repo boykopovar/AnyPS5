@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -122,6 +123,33 @@ void TestMtxTrylock() {
     _Mtx_destroy_nid_postfix(&recMutex);
 }
 
+void TestLibcxxStreambufDefaults() {
+    constexpr auto Sync = _ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE4syncEv_nid_postfix;
+    constexpr auto SetBuffer = _ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE6setbufEPcl_nid_postfix;
+    constexpr auto Overflow = _ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE8overflowEi_nid_postfix;
+    constexpr auto PutbackFailure = _ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE9pbackfailEi_nid_postfix;
+    constexpr auto Available = _ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE9showmanycEv_nid_postfix;
+    constexpr auto Underflow = _ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE9underflowEv_nid_postfix;
+
+    std::array<std::uintptr_t, 8> stream{0x12, 0x34, 0x56, 0x78};
+    std::array<char, 4> buffer{'k', 'e', 'e', 'p'};
+    const auto originalStream = stream;
+    const auto originalBuffer = buffer;
+
+    Require(Sync(stream.data()) == 0);
+    Require(Available(stream.data()) == 0);
+    Require(SetBuffer(stream.data(), buffer.data(), buffer.size()) == stream.data());
+    Require(SetBuffer(stream.data(), nullptr, std::numeric_limits<std::int64_t>::max()) == stream.data());
+    Require(Underflow(stream.data()) == -1);
+    for (const int character : {-1, 0, 0x41, 0xff}) {
+        Require(Overflow(stream.data(), character) == -1);
+        Require(PutbackFailure(stream.data(), character) == -1);
+    }
+
+    Require(stream == originalStream);
+    Require(buffer == originalBuffer);
+}
+
 void TestThrdSleep() {
     timespec before{};
     Require(clock_gettime(CLOCK_REALTIME, &before) == 0);
@@ -152,5 +180,6 @@ int main() {
     TestNearbyintf();
     TestMtxTrylock();
     TestThrdSleep();
+    TestLibcxxStreambufDefaults();
     return 0;
 }
