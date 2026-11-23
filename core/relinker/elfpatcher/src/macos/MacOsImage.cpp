@@ -1125,6 +1125,11 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     const auto codeSignatureOffset = file.size();
     const auto codeSignatureSize = CodeSignatureSize(codeSignatureOffset, input.Identifier);
     const auto linkeditSize = codeSignatureOffset + codeSignatureSize - linkeditOffset;
+    if (input.Executable && segments.back().Name == "__APS5LOW") {
+        auto& low = segments.back();
+        const auto linkeditPages = AlignUp(linkeditSize, PageSize);
+        if (LowReserveEnd - imageBase > low.Rva + linkeditPages) low.MemorySize = LowReserveEnd - imageBase - linkeditPages - low.Rva;
+    }
     const auto imageEnd = segments.back().Rva + AlignUp(segments.back().MemorySize, PageSize);
     if (codeSignatureOffset + codeSignatureSize > std::numeric_limits<std::uint32_t>::max())
         throw Domain::RelinkerException("Mach-O output exceeds 4 GiB");

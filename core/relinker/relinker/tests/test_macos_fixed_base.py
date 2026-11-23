@@ -1,12 +1,14 @@
 """Check that --macos-fixed-base places the lowest ELF load page at the requested address and rebases every address the Mach-O holds."""
 
 from pathlib import Path
+import hashlib
 import struct
 import subprocess
 import sys
 import tempfile
 
 from test_linux_fixed_base import ENTRY, SLOT, fixture
+from test_linux_load_alignment import PT_SCE_VERSION
 from test_macos_output import IMAGE_BASE, MachO
 
 BASE = 0x140010000
@@ -20,6 +22,44 @@ def relink(relinker, directory, name, image, *options):
     result = subprocess.run([str(relinker), "--macos", "--skip-sce-module", *options, str(source), str(output)],
                             capture_output=True, text=True, timeout=20)
     return result, output
+
+
+def many_exports(count):
+    strings = bytearray(b"\0")
+    symbols = bytearray(24)
+    for index in range(count):
+        name = hashlib.sha256(index.to_bytes(4, "little")).hexdigest()[:32]
+        symbols += struct.pack("<IBBHQQ", len(strings), 0x12, 0, 1, 0x210, 6)
+        strings += ("Export" + name + "#A#B").encode() + b"\0"
+    symtab = 0x1000 + (len(strings) + 7) // 8 * 8
+    size = (symtab + len(symbols) + 0xFFF) // 0x1000 * 0x1000
+    image = bytearray(0x4000 + size)
+    image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
+    struct.pack_into("<HHIQQQIHHHHHH", image, 16, 3, 62, 1, 0x210, 64, 0, 0, 64, 56, 6, 64, 0, 0)
+    tags = [(5, 0x1000), (10, len(strings)), (6, symtab), (11, 24), (7, 0x700), (8, 0), (9, 24), (0x6100003F, len(symbols)), (0, 0)]
+    struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 0x4000, 0, 0, size, size, 0x4000)
+    struct.pack_into("<IIQQQQQQ", image, 120, 2, 6, 0x4400, 0x400, 0x400, len(tags) * 16, len(tags) * 16, 8)
+    for index in range(2, 6):
+        struct.pack_into("<IIQQQQQQ", image, 64 + index * 56, PT_SCE_VERSION, 0, 0, 0, 0, 0, 0, 1)
+    for index, tag in enumerate(tags):
+        struct.pack_into("<qQ", image, 0x4400 + index * 16, *tag)
+    image[0x4210:0x4216] = bytes.fromhex("b82a000000c3")
+    image[0x5000:0x5000 + len(strings)] = strings
+    image[0x4000 + symtab:0x4000 + symtab + len(symbols)] = symbols
+    return image
+
+
+def check_large_exports(name, macho, base):
+    text = macho.segment("__TEXT")
+    linkedit = macho.segment("__LINKEDIT")
+    low = macho.segment("__APS5LOW")
+    start, size = macho.dyld_info[8:10]
+    assert size > 0x10000, f"{name}: the export trie holds only {size:#x} bytes"
+    assert first_load(macho)["vmaddr"] == base, f"{name}: the base was not applied"
+    assert linkedit["vmaddr"] + linkedit["vmsize"] == 0x100000000, f"{name}: __LINKEDIT does not end at 0x100000000: {linkedit}"
+    assert low["vmaddr"] + low["vmsize"] == linkedit["vmaddr"], f"{name}: the low reserve does not reach __LINKEDIT: {low}"
+    end = start + size - linkedit["fileoff"] + linkedit["vmaddr"] - text["vmaddr"]
+    assert end <= 0xFFFFFFFF, f"{name}: the export trie ends {end:#x} past __TEXT, beyond dyld's 32-bit runtime offset"
 
 
 def first_load(macho):
@@ -76,6 +116,12 @@ def main():
         lowest, lowest_path = relink(relinker, work, "lowest", fixture(), "--macos-fixed-base", "0x20000")
         assert lowest.returncode == 0, (lowest.stdout, lowest.stderr)
         assert first_load(MachO(lowest_path.read_bytes()))["vmaddr"] == 0x20000, "the lowest base was not applied"
+
+        large = many_exports(2500)
+        for name, options, base in (("large-default", [], IMAGE_BASE + LOAD_RVA), ("large-lowest", ["--macos-fixed-base", "0x20000"], 0x20000)):
+            result, output = relink(relinker, work, name, large, *options)
+            assert result.returncode == 0, (name, result.stdout, result.stderr)
+            check_large_exports(name, MachO(output.read_bytes()), base)
 
         for name, options, error in (
             ("unaligned", ["--macos-fixed-base", "0x140018000"], "--macos-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000"),
