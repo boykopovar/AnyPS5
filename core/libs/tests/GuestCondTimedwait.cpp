@@ -266,6 +266,47 @@ static void SignalToTargetOnly() {
     }
 }
 
+
+struct UnlockedTargetedWait {
+    PthreadMutex mutex = nullptr;
+    PthreadCond cond = nullptr;
+    std::atomic<bool> entered{false};
+    std::atomic<int> result{-1};
+};
+
+static void* APS5_VABI UntimedTargetWaiter(void* arg) {
+    auto& state = *static_cast<UnlockedTargetedWait*>(arg);
+    Require(scePthreadMutexLock(&state.mutex) == SCE_OK);
+    state.entered.store(true, std::memory_order_release);
+    state.result.store(scePthreadCondWait(&state.cond, &state.mutex), std::memory_order_release);
+    Require(scePthreadMutexUnlock(&state.mutex) == SCE_OK);
+    return nullptr;
+}
+
+static void SignalToWithoutMutex() {
+    for (int round = 0; round < 100; ++round) {
+        UnlockedTargetedWait state;
+        Require(scePthreadMutexInit(&state.mutex, nullptr, nullptr) == SCE_OK);
+        Require(scePthreadCondInit(&state.cond, nullptr, nullptr) == SCE_OK);
+        Pthread target = nullptr;
+        Require(scePthreadCreate(&target, nullptr, UntimedTargetWaiter, &state, nullptr) == SCE_OK);
+        while (!state.entered.load(std::memory_order_acquire))
+            std::this_thread::yield();
+
+        int signalResult = SCE_KERNEL_ERROR_EPERM;
+        while (signalResult == SCE_KERNEL_ERROR_EPERM) {
+            signalResult = scePthreadCondSignalto(&state.cond, target);
+            if (signalResult == SCE_KERNEL_ERROR_EPERM)
+                std::this_thread::yield();
+        }
+        Require(signalResult == SCE_OK);
+        Require(scePthreadJoin(target, nullptr) == SCE_OK);
+        Require(state.result.load(std::memory_order_acquire) == SCE_OK);
+        Require(scePthreadCondDestroy(&state.cond) == SCE_OK);
+        Require(scePthreadMutexDestroy(&state.mutex) == SCE_OK);
+    }
+}
+
 static void SignalToEveryRound(bool recursive) {
     for (int round = 0; round < 200; ++round) {
         Signalled signalled;
@@ -299,6 +340,7 @@ int main() {
     DistantAbsoluteDeadline();
     SignalTo();
     SignalToTargetOnly();
+    SignalToWithoutMutex();
     SignalToEveryRound(false);
     SignalToEveryRound(true);
 

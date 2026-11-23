@@ -1105,7 +1105,10 @@ if(BUILD_TESTING)
     add_test(NAME guest_cond_timedwait COMMAND guest_cond_timedwait_tests)
     set_tests_properties(guest_cond_timedwait PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_cond_timedwait PROPERTIES ENVIRONMENT_MODIFICATION
+        add_test(NAME guest_cond_timedwait_coarse COMMAND guest_cond_timedwait_tests)
+        set_tests_properties(guest_cond_timedwait_coarse PROPERTIES TIMEOUT 20
+            ENVIRONMENT "APS5_COARSE_TIMED_WAITS=1")
+        set_tests_properties(guest_cond_timedwait guest_cond_timedwait_coarse PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_pthread_condattr_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadCondattr.cpp)

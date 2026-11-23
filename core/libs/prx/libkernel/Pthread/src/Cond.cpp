@@ -102,13 +102,6 @@ RegisteredWaiter AddWaiter(const TimedWait::Condition* condition) {
     return {Waiters().emplace(condition, waiter), std::move(waiter)};
 }
 
-CondWake RemoveWaiter(const RegisteredWaiter& registered) {
-    std::lock_guard lock(WaiterMutex());
-    const auto wake = registered.waiter->wake;
-    Waiters().erase(registered.position);
-    return wake;
-}
-
 std::shared_ptr<CondWaiter> SelectWaiter(const TimedWait::Condition* condition, Pthread thread, CondWake wake) {
     std::lock_guard lock(WaiterMutex());
     const auto [first, last] = Waiters().equal_range(condition);
@@ -160,16 +153,23 @@ template <class TLock>
 std::pair<bool, CondWake> WaitRegistered(std::shared_ptr<TimedWait::Condition>& condition, TLock& lock,
                                          std::optional<std::uint64_t> deadlineNanos) {
     const auto registered = AddWaiter(condition.get());
+    std::unique_lock waiterLock(WaiterMutex());
+    ThreadCancel::BeginWait(&registered.waiter->condition);
+    lock.unlock();
+    const auto ready = [&] {
+        return registered.waiter->signaled.load(std::memory_order_acquire) || ThreadCancel::Requested();
+    };
     bool timedOut = false;
-    while (!registered.waiter->signaled.load(std::memory_order_acquire)) {
-        if (!ThreadCancel::Wait(registered.waiter->condition, lock, deadlineNanos)) {
-            timedOut = true;
-            break;
-        }
-        if (ThreadCancel::Requested())
-            break;
-    }
-    return {timedOut, RemoveWaiter(registered)};
+    if (deadlineNanos)
+        timedOut = !registered.waiter->condition.WaitUntil(waiterLock, *deadlineNanos, ready);
+    else
+        registered.waiter->condition.Wait(waiterLock, ready);
+    const auto wake = registered.waiter->wake;
+    Waiters().erase(registered.position);
+    waiterLock.unlock();
+    ThreadCancel::EndWait();
+    lock.lock();
+    return {timedOut, wake};
 }
 
 int mutexOwnership(PthreadMutex* mutex, PthreadMutex* owned) {
