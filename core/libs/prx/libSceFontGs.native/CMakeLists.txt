@@ -1,5 +1,6 @@
 add_library(libSceFontGs.native SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Surface.cpp
 )
 target_include_directories(libSceFontGs.native PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceFontGs.native PRIVATE libSceFont)
