@@ -3,6 +3,7 @@
 #include "RdnaDecoder/DiagnosticSink.hpp"
 #include "StencilReplay.hpp"
 #include <deque>
+#include <limits>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -1125,7 +1126,11 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
 void keepSpecializedWords(const SharedSpirv& spirv) {
     static const std::uint64_t budget = [] {
         const char* text = std::getenv("APS5_KEEP_SPECIALIZED_MIB");
-        return (text != nullptr ? std::strtoull(text, nullptr, 0) : 0ull) << 20u;
+        if (text == nullptr) return 0ull;
+        char* end = nullptr;
+        const auto mib = std::strtoull(text, &end, 0);
+        if (end == text || *end != '\0') throw std::runtime_error("ShaderRecompiler: APS5_KEEP_SPECIALIZED_MIB must be a whole number of MiB");
+        return std::min<std::uint64_t>(mib, std::numeric_limits<std::uint64_t>::max() >> 20u) << 20u;
     }();
     if (budget == 0u || spirv.empty()) return;
     static std::mutex mutex;
