@@ -570,7 +570,7 @@ void BdaResources::checkFault(const BdaResources& record) const {
     std::memcpy(&report, record.faultBytes().data(), sizeof(report));
     if (report.state == ShaderRecompiler::BdaAbi::FaultState::Empty) {
         Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.claim == 0, "BDA fault record has data without publication");
-        Require(!record.pagesOverflowed, "the GPU stored to more pages of resident heap mirrors in one use than the " + std::to_string(record.pageSlots) + " store pages hold (APS5_BDA_STORE_PAGES)");
+        if (record.pagesOverflowed) Require(false, "the GPU stored to more pages of resident heap mirrors in one use than the " + std::to_string(record.pageSlots) + " store pages hold (APS5_BDA_STORE_PAGES)");
         if (!reportOnly) checkSrtGuard(record);
         return;
     }
