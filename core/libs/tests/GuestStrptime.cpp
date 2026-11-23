@@ -84,6 +84,26 @@ static void TestTwelveHourAmPm() {
     Require(tm.tm_hour == 23);
     Require(tm.tm_min == 59);
     Require(tm.tm_sec == 59);
+
+    const char in5[] = "12";
+    rem = strptime_nid_postfix(in5, "%I", &tm);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tm.tm_hour == 12);
+
+    const char in6[] = "PM 02";
+    rem = strptime_nid_postfix(in6, "%p %I", &tm);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tm.tm_hour == 14);
+
+    const char in7[] = "AM 12";
+    rem = strptime_nid_postfix(in7, "%p %I", &tm);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tm.tm_hour == 0);
+
+    const char in8[] = "PM 12";
+    rem = strptime_nid_postfix(in8, "%p %I", &tm);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tm.tm_hour == 12);
 }
 
 static void TestTwoDigitYearAndCentury() {
@@ -167,7 +187,6 @@ static void TestTimezone() {
     rem = strptime_nid_postfix(in5, "%Y-%m-%d %Z", &tm);
     Require(rem != nullptr && *rem == '\0');
     Require(tm.tm_gmtoff == 0);
-    Require(tm.tm_zone != nullptr && std::strcmp(tm.tm_zone, "UTC") == 0);
 }
 
 static void TestWhitespaceAndRemainder() {

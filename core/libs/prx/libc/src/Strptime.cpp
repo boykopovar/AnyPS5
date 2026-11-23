@@ -6,10 +6,13 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
+#include <string>
 #include <string_view>
 
 namespace {
+
+constexpr std::size_t MaxInputLength = 65536;
+constexpr std::size_t MaxFormatLength = 4096;
 
 struct MonthName {
     std::string_view abbrev;
@@ -93,14 +96,16 @@ int CalculateDayOfYear(int year, int mon, int mday) {
 int CalculateDayOfWeek(int y, int m, int d) {
     constexpr int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
     if (m < 3) y -= 1;
-    return (y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7;
+    const int w = (y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7;
+    return w < 0 ? w + 7 : w;
 }
 
 struct ParseState {
     int century = -1;
     int yearTwoDigit = -1;
     int yearFull = -1;
-    int is12Hour = 0;
+    int hour12 = -1;
+    int hour24 = -1;
     int pmOffset = -1;
     bool hasYear = false;
     bool hasMon = false;
@@ -210,17 +215,13 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
             case 'H': {
                 int val = 0;
                 if (!ParseDigits(b, 1, 2, 0, 23, val)) return nullptr;
-                tm.tm_hour = val;
+                state.hour24 = val;
                 break;
             }
             case 'I': {
                 int val = 0;
                 if (!ParseDigits(b, 1, 2, 1, 12, val)) return nullptr;
-                tm.tm_hour = (val == 12 ? 0 : val);
-                state.is12Hour = 1;
-                if (state.pmOffset == 12) {
-                    tm.tm_hour += 12;
-                }
+                state.hour12 = val;
                 break;
             }
             case 'j': {
@@ -248,11 +249,9 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
                 if (MatchesCaseInsensitive(trial, "am")) {
                     b = trial;
                     state.pmOffset = 0;
-                    if (state.is12Hour && tm.tm_hour == 12) tm.tm_hour = 0;
                 } else if (MatchesCaseInsensitive(trial, "pm")) {
                     b = trial;
                     state.pmOffset = 12;
-                    if (state.is12Hour && tm.tm_hour < 12) tm.tm_hour += 12;
                 } else {
                     return nullptr;
                 }
@@ -333,7 +332,6 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
                 if (*b == 'Z' || *b == 'z') {
                     ++b;
                     tm.tm_gmtoff = 0;
-                    tm.tm_zone = "UTC";
                 } else if (*b == '+' || *b == '-') {
                     const char sign = *b++;
                     int hours = 0;
@@ -356,7 +354,6 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
                 if (b == start) return nullptr;
                 const std::string_view name(start, static_cast<std::size_t>(b - start));
                 if (name == "UTC" || name == "GMT") {
-                    tm.tm_zone = "UTC";
                     tm.tm_gmtoff = 0;
                 }
                 break;
@@ -369,6 +366,18 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
     }
 
     if (depth == 0) {
+        if (state.hour24 >= 0) {
+            tm.tm_hour = state.hour24;
+        } else if (state.hour12 >= 0) {
+            if (state.pmOffset == 0) {
+                tm.tm_hour = (state.hour12 == 12 ? 0 : state.hour12);
+            } else if (state.pmOffset == 12) {
+                tm.tm_hour = (state.hour12 == 12 ? 12 : state.hour12 + 12);
+            } else {
+                tm.tm_hour = state.hour12;
+            }
+        }
+
         if (state.hasYear) {
             tm.tm_year = state.yearFull - 1900;
         } else if (state.yearTwoDigit >= 0) {
@@ -404,11 +413,12 @@ extern "C" char* APS5_VABI strptime_nid_postfix(const char* buf, const char* for
     if (buf == nullptr || format == nullptr || timeptr == nullptr) {
         return nullptr;
     }
-    char probe = 0;
-    if (!GuestCopyIn_nid_no_patch(&probe, buf, sizeof(probe))) {
+    std::string input;
+    if (CopyGuestString_nid_no_patch(buf, MaxInputLength, input) != 0) {
         return nullptr;
     }
-    if (!GuestCopyIn_nid_no_patch(&probe, format, sizeof(probe))) {
+    std::string fmt;
+    if (CopyGuestString_nid_no_patch(format, MaxFormatLength, fmt) != 0) {
         return nullptr;
     }
     GuestTm tm{};
@@ -417,7 +427,7 @@ extern "C" char* APS5_VABI strptime_nid_postfix(const char* buf, const char* for
     }
 
     ParseState state{};
-    const char* const end = ParseInternal(buf, format, tm, state, 0);
+    const char* const end = ParseInternal(input.c_str(), fmt.c_str(), tm, state, 0);
     if (end == nullptr) {
         return nullptr;
     }
@@ -425,5 +435,6 @@ extern "C" char* APS5_VABI strptime_nid_postfix(const char* buf, const char* for
     if (!GuestCopyOut_nid_no_patch(timeptr, &tm, sizeof(tm))) {
         return nullptr;
     }
-    return const_cast<char*>(end);
+    const std::size_t consumed = static_cast<std::size_t>(end - input.c_str());
+    return const_cast<char*>(buf + consumed);
 }
