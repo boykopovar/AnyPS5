@@ -1,4 +1,5 @@
 #include "Recompiler.hpp"
+#include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
 #include <cstdint>
@@ -190,6 +191,18 @@ void verifyNarrowReadFirstLaneBudget() {
     require(spills.workgroupMemoryDwords == ((ldsDwords + 2u) & ~1u), "narrow readfirstlane budget: guest LDS did not move to device memory when the exchange would exceed 32 KiB");
     require(workgroupBytes(spills.spirv.Words()) <= 32768u, "narrow readfirstlane budget: 32 KiB module still exceeds its Workgroup limit");
     require(namedWorkgroupBytes(spills.spirv.Words(), "wave32_readfirstlane_exchange") == exchangeDwords * 4u, "narrow readfirstlane budget: spilled module lost the 528-byte exchange");
+
+    ShaderWorkgroupInputInfo derivativeWorkgroup{};
+    derivativeWorkgroup.threadsNum[0] = 128u;
+    derivativeWorkgroup.threadsNum[1] = 0u;
+    derivativeWorkgroup.threadsNum[2] = 1u;
+    const auto derivativeSize = WorkgroupLocalSize(derivativeWorkgroup, true, false, 1u);
+    require(derivativeSize == std::array<std::uint32_t, 3>{128u, 2u, 1u}, "narrow readfirstlane budget: derivative defaults do not match the emitter's effective local size");
+    const std::uint32_t derivativeThreads = derivativeSize[0] * derivativeSize[1] * derivativeSize[2];
+    const std::uint32_t derivativeExchangeDwords = derivativeThreads + (derivativeThreads + 31u) / 32u;
+    constexpr std::uint32_t derivativeLdsDwords = 31744u / 4u;
+    require((derivativeLdsDwords + (128u + 4u) + reservedDwords) * 4u <= 32768u, "narrow readfirstlane budget: derivative boundary no longer distinguishes the raw thread count");
+    require((derivativeLdsDwords + derivativeExchangeDwords + reservedDwords) * 4u > 32768u, "narrow readfirstlane budget: derivative-expanded exchange unexpectedly fits in 32 KiB");
 }
 
 alignas(256) std::array<std::uint8_t, 32768> Texture{};
