@@ -17,7 +17,7 @@ namespace {
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
-constexpr std::uint32_t Threads = 32;
+constexpr std::uint32_t Threads = 48;
 constexpr std::uint32_t Words = 8;
 alignas(256) std::array<std::uint32_t, Threads * Words> Input{};
 alignas(256) std::array<std::uint32_t, Threads * 2> Output{};
@@ -60,39 +60,115 @@ constexpr std::array<std::uint32_t, Threads * Words> Values{
     0x47e175f9u, 0x71608ce5u, 0xc52f6fd7u, 0x57f3285cu, 0xcb4ef484u, 0xffd76041u, 0x00000000u, 0x00000000u,
     0x8ec37699u, 0x7d081b1cu, 0x1e772796u, 0x39cc7ff0u, 0x264c68fau, 0x8002d00au, 0x00000001u, 0x00000000u,
     0x00000000u, 0x3ff00000u, 0x00000000u, 0x3ff00000u, 0x00000000u, 0xbff00000u, 0x00000000u, 0x00000000u,
-    0x00000000u, 0x3ff00000u, 0x00000000u, 0x3ff00000u, 0x00000000u, 0xbff00000u, 0x00000001u, 0x00000000u
+    0x00000000u, 0x3ff00000u, 0x00000000u, 0x3ff00000u, 0x00000000u, 0xbff00000u, 0x00000001u, 0x00000000u,
+    0x00000000u, 0x00100000u, 0xffffffffu, 0x3fefffffu, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0x00000000u, 0x80100000u, 0xffffffffu, 0x3fefffffu, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0xffffffffu, 0x000fffffu, 0x00000001u, 0x3ff00000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0xffffffffu, 0x800fffffu, 0x00000001u, 0x3ff00000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0x00000000u, 0x00100000u, 0xffffffffu, 0x3fefffffu, 0x00000000u, 0x80000000u, 0x00000000u, 0x00000000u,
+    0x00000000u, 0x00100000u, 0x00000000u, 0x3fe00000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0x00000001u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0x00000001u, 0x80000000u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0xffffffffu, 0x000fffffu, 0x00000000u, 0x40000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0x00000000u, 0x3ff00000u, 0x00000000u, 0x3ff00000u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0x00000000u, 0x3ff00000u, 0x00000000u, 0x3ff00000u, 0x00000001u, 0x80000000u, 0x00000000u, 0x00000000u,
+    0x00000000u, 0x08100000u, 0xffffffffu, 0x3fefffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u,
+    0x00000000u, 0x88100000u, 0xffffffffu, 0x3fefffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u,
+    0xfffffffeu, 0x080fffffu, 0x00000001u, 0x3ff00000u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u,
+    0xfffffffeu, 0x880fffffu, 0x00000001u, 0x3ff00000u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u,
+    0x00000000u, 0x3ff00000u, 0x00000000u, 0x3ff00000u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u
 };
 
-constexpr std::uint64_t Expected[3][Threads] = {
+constexpr std::uint64_t Expected[3][2][Threads] = {
     {
-        0x9bcaa1e9b8f0ac8cull, 0xd51c50e18315046full, 0x7fd0048afd8592f3ull, 0x7f13411e22a51467ull,
-        0x1d1bf0abe4e1535bull, 0x3df1de14056779d0ull, 0xc0055372a870a7b1ull, 0x88349192e51a755eull,
-        0x7ff0000000000000ull, 0x7ff0000000000000ull, 0xffefffffffffffffull, 0xffefffffffffffffull,
-        0x0000000000000000ull, 0x0000000000000000ull, 0xffefffffffffffffull, 0xffefffffffffffffull,
-        0xffefffffffffffffull, 0xbc16929d1943cd4eull, 0x36f3fa0ceea10415ull, 0x7ff0000000000000ull,
-        0xffd761993815f978ull, 0x5757a0db2f7c727full, 0x451e20dab376022bull, 0x9365c174ace1bcc8ull,
-        0xffe76996b00f63aaull, 0x3d5b6a616bbba89cull, 0x7ff0000000000000ull, 0x7ff0000000000000ull,
-        0x7ff0000000000000ull, 0x6ee57819788afba9ull, 0x0000000000000000ull, 0x0000000000000000ull
+        {
+            0x9bcaa1e9b8f0ac8cull, 0xd51c50e18315046full, 0x7fd0048afd8592f3ull, 0x7f13411e22a51467ull,
+            0x1d1bf0abe4e1535bull, 0x3df1de14056779d0ull, 0xc0055372a870a7b1ull, 0x88349192e51a755eull,
+            0x7ff0000000000000ull, 0x7ff0000000000000ull, 0xffefffffffffffffull, 0xffefffffffffffffull,
+            0x0000000000000000ull, 0x0000000000000000ull, 0xffefffffffffffffull, 0xffefffffffffffffull,
+            0xffefffffffffffffull, 0xbc16929d1943cd4eull, 0x36f3fa0ceea10415ull, 0x7ff0000000000000ull,
+            0xffd761993815f978ull, 0x5757a0db2f7c727full, 0x451e20dab376022bull, 0x9365c174ace1bcc8ull,
+            0xffe76996b00f63aaull, 0x3d5b6a616bbba89cull, 0x7ff0000000000000ull, 0x7ff0000000000000ull,
+            0x7ff0000000000000ull, 0x6ee57819788afba9ull, 0x0000000000000000ull, 0x0000000000000000ull,
+            0x0010000000000000ull, 0x800fffffffffffffull, 0x0010000000000000ull, 0x800fffffffffffffull,
+            0x0010000000000000ull, 0x0008000000000000ull, 0x0000000000000001ull, 0x8000000000000000ull,
+            0x001ffffffffffffeull, 0x3ff0000000000001ull, 0x3ff0000000000000ull, 0x0010000000000000ull,
+            0x800fffffffffffffull, 0x0010000000000000ull, 0x800fffffffffffffull, 0x37f0000000000000ull
+        },
+        {
+            0x9bcaa1e9b8f0ac8cull, 0xd51c50e18315046full, 0x7fd0048afd8592f3ull, 0x7f13411e22a51467ull,
+            0x1d1bf0abe4e1535bull, 0x3df1de14056779d0ull, 0xc0055372a870a7b1ull, 0x88349192e51a755eull,
+            0x7ff0000000000000ull, 0x7ff0000000000000ull, 0xffefffffffffffffull, 0xffefffffffffffffull,
+            0x0000000000000000ull, 0x0000000000000000ull, 0xffefffffffffffffull, 0xffefffffffffffffull,
+            0xffefffffffffffffull, 0xbc16929d1943cd4eull, 0x36f3fa0ceea10415ull, 0x7ff0000000000000ull,
+            0xffd761993815f978ull, 0x5757a0db2f7c727full, 0x451e20dab376022bull, 0x9365c174ace1bcc8ull,
+            0xffe76996b00f63aaull, 0x3d5b6a616bbba89cull, 0x7ff0000000000000ull, 0x7ff0000000000000ull,
+            0x7ff0000000000000ull, 0x6ee57819788afba9ull, 0x0000000000000000ull, 0x0000000000000000ull,
+            0x0000000000000000ull, 0x8000000000000000ull, 0x0010000000000000ull, 0x8000000000000000ull,
+            0x0000000000000000ull, 0x0000000000000000ull, 0x0000000000000000ull, 0x8000000000000000ull,
+            0x001ffffffffffffeull, 0x3ff0000000000001ull, 0x3ff0000000000000ull, 0x0000000000000000ull,
+            0x8000000000000000ull, 0x0010000000000000ull, 0x8000000000000000ull, 0x37f0000000000000ull
+        }
     },
     {
-        0x9bcaa1e9b8f0ac8dull, 0xd51c50e183150470ull, 0x7fd0048afd8592f2ull, 0x7f13411e22a51466ull,
-        0x1d1bf0abe4e1535aull, 0x3df1de14056779cfull, 0xc0055372a870a7b2ull, 0x88349192e51a755full,
-        0x7fefffffffffffffull, 0x7fefffffffffffffull, 0xfff0000000000000ull, 0xfff0000000000000ull,
-        0x8000000000000000ull, 0x8000000000000000ull, 0xfff0000000000000ull, 0xfff0000000000000ull,
-        0xfff0000000000000ull, 0xbc16929d1943cd4full, 0x36f3fa0ceea10414ull, 0x7fefffffffffffffull,
-        0xffd761993815f979ull, 0x5757a0db2f7c727eull, 0x451e20dab376022aull, 0x9365c174ace1bcc9ull,
-        0xffe76996b00f63abull, 0x3d5b6a616bbba89bull, 0x7fefffffffffffffull, 0x7fefffffffffffffull,
-        0x7fefffffffffffffull, 0x6ee57819788afba8ull, 0x8000000000000000ull, 0x8000000000000000ull
+        {
+            0x9bcaa1e9b8f0ac8dull, 0xd51c50e183150470ull, 0x7fd0048afd8592f2ull, 0x7f13411e22a51466ull,
+            0x1d1bf0abe4e1535aull, 0x3df1de14056779cfull, 0xc0055372a870a7b2ull, 0x88349192e51a755full,
+            0x7fefffffffffffffull, 0x7fefffffffffffffull, 0xfff0000000000000ull, 0xfff0000000000000ull,
+            0x8000000000000000ull, 0x8000000000000000ull, 0xfff0000000000000ull, 0xfff0000000000000ull,
+            0xfff0000000000000ull, 0xbc16929d1943cd4full, 0x36f3fa0ceea10414ull, 0x7fefffffffffffffull,
+            0xffd761993815f979ull, 0x5757a0db2f7c727eull, 0x451e20dab376022aull, 0x9365c174ace1bcc9ull,
+            0xffe76996b00f63abull, 0x3d5b6a616bbba89bull, 0x7fefffffffffffffull, 0x7fefffffffffffffull,
+            0x7fefffffffffffffull, 0x6ee57819788afba8ull, 0x8000000000000000ull, 0x8000000000000000ull,
+            0x000fffffffffffffull, 0x8010000000000000ull, 0x000fffffffffffffull, 0x8010000000000000ull,
+            0x000fffffffffffffull, 0x0008000000000000ull, 0x0000000000000000ull, 0x8000000000000001ull,
+            0x001ffffffffffffeull, 0x3ff0000000000000ull, 0x3fefffffffffffffull, 0x000fffffffffffffull,
+            0x8010000000000000ull, 0x000fffffffffffffull, 0x8010000000000000ull, 0x37f0000000000000ull
+        },
+        {
+            0x9bcaa1e9b8f0ac8dull, 0xd51c50e183150470ull, 0x7fd0048afd8592f2ull, 0x7f13411e22a51466ull,
+            0x1d1bf0abe4e1535aull, 0x3df1de14056779cfull, 0xc0055372a870a7b2ull, 0x88349192e51a755full,
+            0x7fefffffffffffffull, 0x7fefffffffffffffull, 0xfff0000000000000ull, 0xfff0000000000000ull,
+            0x8000000000000000ull, 0x8000000000000000ull, 0xfff0000000000000ull, 0xfff0000000000000ull,
+            0xfff0000000000000ull, 0xbc16929d1943cd4full, 0x36f3fa0ceea10414ull, 0x7fefffffffffffffull,
+            0xffd761993815f979ull, 0x5757a0db2f7c727eull, 0x451e20dab376022aull, 0x9365c174ace1bcc9ull,
+            0xffe76996b00f63abull, 0x3d5b6a616bbba89bull, 0x7fefffffffffffffull, 0x7fefffffffffffffull,
+            0x7fefffffffffffffull, 0x6ee57819788afba8ull, 0x8000000000000000ull, 0x8000000000000000ull,
+            0x0000000000000000ull, 0x8000000000000000ull, 0x0000000000000000ull, 0x8010000000000000ull,
+            0x0000000000000000ull, 0x0000000000000000ull, 0x0000000000000000ull, 0x8000000000000000ull,
+            0x001ffffffffffffeull, 0x3ff0000000000000ull, 0x3fefffffffffffffull, 0x0000000000000000ull,
+            0x8000000000000000ull, 0x0000000000000000ull, 0x8010000000000000ull, 0x37f0000000000000ull
+        }
     },
     {
-        0x9bcaa1e9b8f0ac8cull, 0xd51c50e18315046full, 0x7fd0048afd8592f2ull, 0x7f13411e22a51466ull,
-        0x1d1bf0abe4e1535aull, 0x3df1de14056779cfull, 0xc0055372a870a7b1ull, 0x88349192e51a755eull,
-        0x7fefffffffffffffull, 0x7fefffffffffffffull, 0xffefffffffffffffull, 0xffefffffffffffffull,
-        0x0000000000000000ull, 0x0000000000000000ull, 0xffefffffffffffffull, 0xffefffffffffffffull,
-        0xffefffffffffffffull, 0xbc16929d1943cd4eull, 0x36f3fa0ceea10414ull, 0x7fefffffffffffffull,
-        0xffd761993815f978ull, 0x5757a0db2f7c727eull, 0x451e20dab376022aull, 0x9365c174ace1bcc8ull,
-        0xffe76996b00f63aaull, 0x3d5b6a616bbba89bull, 0x7fefffffffffffffull, 0x7fefffffffffffffull,
-        0x7fefffffffffffffull, 0x6ee57819788afba8ull, 0x0000000000000000ull, 0x0000000000000000ull
+        {
+            0x9bcaa1e9b8f0ac8cull, 0xd51c50e18315046full, 0x7fd0048afd8592f2ull, 0x7f13411e22a51466ull,
+            0x1d1bf0abe4e1535aull, 0x3df1de14056779cfull, 0xc0055372a870a7b1ull, 0x88349192e51a755eull,
+            0x7fefffffffffffffull, 0x7fefffffffffffffull, 0xffefffffffffffffull, 0xffefffffffffffffull,
+            0x0000000000000000ull, 0x0000000000000000ull, 0xffefffffffffffffull, 0xffefffffffffffffull,
+            0xffefffffffffffffull, 0xbc16929d1943cd4eull, 0x36f3fa0ceea10414ull, 0x7fefffffffffffffull,
+            0xffd761993815f978ull, 0x5757a0db2f7c727eull, 0x451e20dab376022aull, 0x9365c174ace1bcc8ull,
+            0xffe76996b00f63aaull, 0x3d5b6a616bbba89bull, 0x7fefffffffffffffull, 0x7fefffffffffffffull,
+            0x7fefffffffffffffull, 0x6ee57819788afba8ull, 0x0000000000000000ull, 0x0000000000000000ull,
+            0x000fffffffffffffull, 0x800fffffffffffffull, 0x000fffffffffffffull, 0x800fffffffffffffull,
+            0x000fffffffffffffull, 0x0008000000000000ull, 0x0000000000000000ull, 0x8000000000000000ull,
+            0x001ffffffffffffeull, 0x3ff0000000000000ull, 0x3fefffffffffffffull, 0x000fffffffffffffull,
+            0x800fffffffffffffull, 0x000fffffffffffffull, 0x800fffffffffffffull, 0x37f0000000000000ull
+        },
+        {
+            0x9bcaa1e9b8f0ac8cull, 0xd51c50e18315046full, 0x7fd0048afd8592f2ull, 0x7f13411e22a51466ull,
+            0x1d1bf0abe4e1535aull, 0x3df1de14056779cfull, 0xc0055372a870a7b1ull, 0x88349192e51a755eull,
+            0x7fefffffffffffffull, 0x7fefffffffffffffull, 0xffefffffffffffffull, 0xffefffffffffffffull,
+            0x0000000000000000ull, 0x0000000000000000ull, 0xffefffffffffffffull, 0xffefffffffffffffull,
+            0xffefffffffffffffull, 0xbc16929d1943cd4eull, 0x36f3fa0ceea10414ull, 0x7fefffffffffffffull,
+            0xffd761993815f978ull, 0x5757a0db2f7c727eull, 0x451e20dab376022aull, 0x9365c174ace1bcc8ull,
+            0xffe76996b00f63aaull, 0x3d5b6a616bbba89bull, 0x7fefffffffffffffull, 0x7fefffffffffffffull,
+            0x7fefffffffffffffull, 0x6ee57819788afba8ull, 0x0000000000000000ull, 0x0000000000000000ull,
+            0x0000000000000000ull, 0x8000000000000000ull, 0x0000000000000000ull, 0x8000000000000000ull,
+            0x0000000000000000ull, 0x0000000000000000ull, 0x0000000000000000ull, 0x8000000000000000ull,
+            0x001ffffffffffffeull, 0x3ff0000000000000ull, 0x3fefffffffffffffull, 0x0000000000000000ull,
+            0x8000000000000000ull, 0x0000000000000000ull, 0x8000000000000000ull, 0x37f0000000000000ull
+        }
     }
 };
 
@@ -136,12 +212,12 @@ std::optional<std::string> Run(AgcDriver::VulkanDevice& device, ShaderRecompiler
     return std::nullopt;
 }
 
-void Check(std::uint32_t rounding, const std::string& mode) {
+void Check(std::uint32_t rounding, bool flush, const std::string& mode) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Values[tid * Words];
         const auto wide = [&](std::uint32_t index) { return in[index] | static_cast<std::uint64_t>(in[index + 1u]) << 32u; };
         const std::uint64_t actual = Output[tid * 2u] | static_cast<std::uint64_t>(Output[tid * 2u + 1u]) << 32u;
-        const std::uint64_t expected = Expected[rounding - 1u][tid];
+        const std::uint64_t expected = Expected[rounding - 1u][flush ? 1u : 0u][tid];
         Require(actual == expected, "v_div_fmas_f64 " + mode + " of " + Hex(wide(0u)) + ", " + Hex(wide(2u)) + ", " + Hex(wide(4u)) + (in[6] != 0u ? " with VCC" : "") + " is " + Hex(actual) + ", expected " + Hex(expected));
     }
 }
@@ -164,12 +240,13 @@ int main() {
                     const std::string declared = "FLOAT_MODE " + Hex(denormals | field) + (ieee ? ", IEEE=1" : ", IEEE=0");
                     const auto refusal = Run(*device, ShaderRecompiler::ShaderFloatMode{denormals | field, true, ieee, false}, Code);
                     Require(!refusal, declared + ": " + refusal.value_or(""));
-                    Check(rounding, declared);
+                    const bool flush = (denormals & 0x80u) == 0u;
+                    Check(rounding, flush, declared);
                     RuntimeCode[0] = 0xbfa40000u | field;
                     std::copy(Code.begin(), Code.end(), RuntimeCode.begin() + 1);
                     const auto runtimeRefusal = Run(*device, ShaderRecompiler::ShaderFloatMode{denormals, true, ieee, false}, RuntimeCode);
                     Require(!runtimeRefusal, "s_round_mode " + Hex(field) + " after " + declared + ": " + runtimeRefusal.value_or(""));
-                    Check(rounding, "s_round_mode " + Hex(field) + " after FLOAT_MODE " + Hex(denormals) + (ieee ? ", IEEE=1" : ", IEEE=0"));
+                    Check(rounding, flush, "s_round_mode " + Hex(field) + " after FLOAT_MODE " + Hex(denormals) + (ieee ? ", IEEE=1" : ", IEEE=0"));
                     checked += 2u;
                 }
             }
