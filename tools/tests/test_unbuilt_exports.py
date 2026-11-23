@@ -220,7 +220,7 @@ class UnbuiltExportTests(unittest.TestCase):
             self.assertEqual(command, ["ninja", "-C", "build", "-t", "compdb"])
             return subprocess.CompletedProcess(command, 0, json.dumps(database), "")
 
-        with patch.object(check_test_registration, "ninja", return_value=("ninja", "utf-8")), \
+        with patch.object(check_test_registration, "ninja", return_value=("ninja", "utf-8", [])), \
                 patch.object(check_test_registration.subprocess, "run", side_effect=run):
             sources = check_test_registration.compiled("build")
         self.assertEqual(sources, {(root / "core/libs/prx/libSceExample/Export.cpp").resolve(),

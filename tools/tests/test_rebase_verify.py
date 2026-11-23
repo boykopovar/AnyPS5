@@ -104,6 +104,28 @@ class RebaseVerifyTests(unittest.TestCase):
     def test_a_clean_rebase_keeps_every_line_author_and_commit(self):
         self.assertEqual(self.verify(), [])
 
+    @unittest.skipIf(os.name == "nt", "Windows does not support these filename characters")
+    def test_rebase_checks_added_and_deleted_lines_at_quoted_paths(self):
+        path = 'quoted-"-\\-\t-é.txt'
+        self.git("checkout", "-q", "main")
+        self.write(path, "old line\n")
+        self.git("add", "--", path)
+        self.git("commit", "-qm", "feat(tools): add a quoted path")
+        self.git("checkout", "-q", "-B", "old", "main")
+        self.write(path, "new line\n")
+        self.git("commit", "-qam", "fix(tools): change content at a quoted path")
+        self.git("checkout", "-q", "-B", "new", "main")
+        self.git("cherry-pick", "old")
+        self.assertEqual(self.verify(), [])
+
+        self.write(path, "old line\ndifferent line\n")
+        self.git("commit", "-qa", "--amend", "--no-edit")
+        self.assertEqual(self.verify(), [
+            f"{path}: an added line is missing (1x): new line",
+            f"{path}: a line is added that the branch did not add (1x): different line",
+            f"{path}: a deleted line is missing (1x): old line",
+        ])
+
     def test_rebase_reports_a_crlf_line_changed_to_lf(self):
         path = "windows.txt"
         self.git("checkout", "-q", "old")
@@ -137,6 +159,30 @@ class RebaseVerifyTests(unittest.TestCase):
                     status = rebase_verify.main(["old", "new", "--onto", "main", "--repo", str(nested)])
                 self.assertEqual(status, 1)
                 self.assertIn("error: f.txt: " + message, output.getvalue())
+
+    def test_rebase_rejects_moving_an_added_line_with_the_same_base_file(self):
+        self.assertEqual(self.verify(), [])
+        self.write("f.txt", "a\nb\nNEW\nc\ntail\n")
+        self.git("commit", "-qa", "--amend", "--no-edit")
+        self.assertEqual(self.verify(), [
+            "f.txt: rebased content differs although the base content is unchanged",
+        ])
+
+    def test_rebase_rejects_reordered_lines_in_a_new_file(self):
+        path = "new file.txt"
+        self.git("checkout", "-q", "old")
+        self.write(path, "first\nsecond\n")
+        self.git("add", "--", path)
+        self.git("commit", "-qm", "feat(tools): add an ordered file")
+        self.git("checkout", "-q", "new")
+        self.git("cherry-pick", "old")
+        self.assertEqual(self.verify(), [])
+
+        self.write(path, "second\nfirst\n")
+        self.git("commit", "-qa", "--amend", "--no-edit")
+        self.assertEqual(self.verify(), [
+            f"{path}: rebased content differs although the base content is unchanged",
+        ])
 
     def test_changed_lines_keep_repository_paths_from_a_subdirectory(self):
         nested = self.root / "nested"
@@ -521,6 +567,158 @@ class ModeDifferencesTests(unittest.TestCase):
     def test_non_utf8_paths_are_escaped(self):
         table = {"old_base": "b", "new_base": "b", ("b", "old"): {b"\xff": ("100644", "100755")}}
         self.assertEqual(self.differences(table), ["\\xff: file mode 100644, expected 100755"])
+
+
+class BinaryRebase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.git("init", "-q")
+        self.git("config", "user.name", "Test")
+        self.git("config", "user.email", "test@example.invalid")
+        self.git("config", "commit.gpgsign", "false")
+        self.git("config", "core.autocrlf", "false")
+        self.write(b"\0base")
+        self.git("add", "asset.bin")
+        self.git("commit", "-qm", "base")
+        self.base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-qb", "old")
+        self.write(b"\0expected")
+        self.git("add", "asset.bin")
+        self.git("commit", "--allow-empty", "-qm", "fix(tools): update asset")
+        self.old = self.git("rev-parse", "HEAD")
+
+    def git(self, *args):
+        result = subprocess.run(["git", "-C", str(self.root), *args], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+
+    def write(self, data):
+        (self.root / "asset.bin").write_bytes(data)
+
+    def new_commit(self, data):
+        self.git("checkout", "-q", "-b", "new", self.base)
+        self.write(data)
+        self.git("add", "asset.bin")
+        self.git("commit", "--allow-empty", "-qm", "fix(tools): update asset")
+        return self.git("rev-parse", "HEAD")
+
+    def test_unchanged_binary_change_is_accepted(self):
+        new = self.new_commit(b"\0expected")
+        self.assertEqual(rebase_verify.verify(self.root, self.old, new, self.base)[3], [])
+
+    def test_changed_binary_content_must_be_reported(self):
+        new = self.new_commit(b"\0corrupt")
+        self.assertTrue(rebase_verify.verify(self.root, self.old, new, self.base)[3])
+
+    def test_reverted_binary_content_must_be_reported(self):
+        new = self.new_commit(b"\0base")
+        self.assertTrue(rebase_verify.verify(self.root, self.old, new, self.base)[3])
+
+    def test_upstream_binary_change_with_same_result_is_valid(self):
+        self.git("checkout", "-q", "-b", "upstream", self.base)
+        self.write(b"\0upstream")
+        self.git("add", "asset.bin")
+        self.git("commit", "-qm", "upstream changed binary")
+        self.write(b"\0expected")
+        self.git("add", "asset.bin")
+        self.git("commit", "-qm", "fix(tools): update asset")
+        self.assertEqual(rebase_verify.verify(self.root, self.old, "HEAD", "upstream~1")[3], [])
+
+    def test_upstream_binary_conflict_requires_manual_review(self):
+        self.git("checkout", "-q", "-b", "upstream", self.base)
+        self.write(b"\0upstream")
+        self.git("add", "asset.bin")
+        self.git("commit", "-qm", "upstream changed binary")
+        self.git("checkout", "-qb", "new")
+        self.write(b"\0resolved")
+        self.git("add", "asset.bin")
+        self.git("commit", "-qm", "fix(tools): update asset")
+        problems = rebase_verify.verify(self.root, self.old, "HEAD", "upstream")[3]
+        self.assertTrue(any("binary" in problem.lower() and "review" in problem.lower() for problem in problems), problems)
+
+    def test_upstream_already_has_expected_binary(self):
+        self.git("checkout", "-q", "-b", "upstream", self.base)
+        self.write(b"\0expected")
+        self.git("add", "asset.bin")
+        self.git("commit", "-qm", "upstream changed binary")
+        self.git("checkout", "-qb", "new")
+        self.git("commit", "--allow-empty", "-qm", "fix(tools): update asset")
+        self.assertEqual(rebase_verify.verify(self.root, self.old, "HEAD", "upstream")[3], [])
+
+    def test_deleted_binary_is_checked(self):
+        self.git("checkout", "-q", "old")
+        self.git("rm", "-q", "asset.bin")
+        self.git("commit", "-q", "--amend", "--no-edit")
+        self.old = self.git("rev-parse", "HEAD")
+        new = self.new_commit(b"\0base")
+        self.assertTrue(any("binary" in problem.lower() for problem in rebase_verify.verify(self.root, self.old, new, self.base)[3]))
+
+    def test_new_unexpected_binary_change_requires_review(self):
+        self.git("checkout", "-q", "old")
+        self.write(b"\0base")
+        (self.root / "note.txt").write_text("content\n", encoding="utf-8")
+        self.git("add", "asset.bin", "note.txt")
+        self.git("commit", "-q", "--amend", "--no-edit")
+        self.old = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-b", "new", self.base)
+        self.write(b"\0unexpected")
+        (self.root / "note.txt").write_text("content\n", encoding="utf-8")
+        self.git("add", "asset.bin", "note.txt")
+        self.git("commit", "-qm", "fix(tools): update asset")
+        problems = rebase_verify.verify(self.root, self.old, "HEAD", self.base)[3]
+        self.assertTrue(any("binary" in problem.lower() and "review" in problem.lower() for problem in problems), problems)
+
+    def test_unicode_and_space_path(self):
+        self.git("checkout", "-q", "-b", "base2", self.base)
+        name = "asset é space.bin"
+        (self.root / name).write_bytes(b"\0base")
+        self.git("add", name)
+        self.git("commit", "-qm", "add binary asset")
+        base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-qb", "old2")
+        (self.root / name).write_bytes(b"\0expected")
+        self.git("add", name)
+        self.git("commit", "-qm", "fix(tools): update asset")
+        old = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-qb", "new2", base)
+        (self.root / name).write_bytes(b"\0other")
+        self.git("add", name)
+        self.git("commit", "-qm", "fix(tools): update asset")
+        problems = rebase_verify.verify(self.root, old, "HEAD", base)[3]
+        self.assertTrue(any(name in problem and "binary" in problem.lower() for problem in problems), problems)
+
+    def test_added_binary_is_checked(self):
+        self.git("checkout", "-q", "old")
+        (self.root / "added.bin").write_bytes(b"\0expected-new")
+        self.git("add", "added.bin")
+        self.git("commit", "-q", "--amend", "--no-edit")
+        self.old = self.git("rev-parse", "HEAD")
+        new = self.new_commit(b"\0expected")
+        problems = rebase_verify.verify(self.root, self.old, new, self.base)[3]
+        self.assertTrue(any("added.bin" in problem and "review" in problem.lower() for problem in problems), problems)
+
+    def test_added_binary_preserved_is_accepted(self):
+        self.git("checkout", "-q", "old")
+        (self.root / "added.bin").write_bytes(b"\0expected-new")
+        self.git("add", "added.bin")
+        self.git("commit", "-q", "--amend", "--no-edit")
+        self.old = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-b", "new", self.base)
+        self.write(b"\0expected")
+        (self.root / "added.bin").write_bytes(b"\0expected-new")
+        self.git("add", "asset.bin", "added.bin")
+        self.git("commit", "-qm", "fix(tools): update asset")
+        self.assertEqual(rebase_verify.verify(self.root, self.old, "HEAD", self.base)[3], [])
+
+    def test_cli_describes_binary_difference_as_needing_review(self):
+        output = io.StringIO()
+        with patch.object(rebase_verify, "default_onto", return_value="main"), \
+                patch.object(rebase_verify, "verify", return_value=("a" * 40, 1, 1, ["asset.bin: binary content differs; manual review required"])), \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(rebase_verify.main(["old", "new"]), 1)
+        self.assertIn("require review", output.getvalue())
+        self.assertNotIn("other than conflict resolution", output.getvalue())
 
 
 if __name__ == "__main__":
