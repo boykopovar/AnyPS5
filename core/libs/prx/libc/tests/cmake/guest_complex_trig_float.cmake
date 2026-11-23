@@ -1,0 +1,10 @@
+add_test_executable(guest_complex_trig_float_tests ${LIBS_INCLUDE_DIR}/tests/GuestComplexTrigFloat.cpp)
+target_include_directories(guest_complex_trig_float_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_complex_trig_float_tests PRIVATE libc)
+configure_windows_unwind(guest_complex_trig_float_tests)
+add_test(NAME guest_complex_trig_float COMMAND guest_complex_trig_float_tests)
+set_tests_properties(guest_complex_trig_float PROPERTIES TIMEOUT 20)
+if(WIN32)
+    set_tests_properties(guest_complex_trig_float PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()

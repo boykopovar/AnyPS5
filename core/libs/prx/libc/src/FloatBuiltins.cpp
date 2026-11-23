@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include <bit>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -620,5 +621,86 @@ long double APS5_VABI cargl_nid_postfix(__complex__ long double z) { return atan
 double APS5_VABI cabs_nid_postfix(__complex__ double z) { return hypot_nid_postfix(__real__ z, __imag__ z); }
 float APS5_VABI cabsf_nid_postfix(__complex__ float z) { return hypotf_nid_postfix(__real__ z, __imag__ z); }
 long double APS5_VABI cabsl_nid_postfix(__complex__ long double z) { return hypotl_nid_postfix(__real__ z, __imag__ z); }
+
+
+__complex__ float APS5_VABI cacosf_nid_postfix(__complex__ float z) {
+    const auto result = std::acos(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI cacoshf_nid_postfix(__complex__ float z) {
+    const auto result = std::acosh(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI casinf_nid_postfix(__complex__ float z) {
+    const auto result = std::asin(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI casinhf_nid_postfix(__complex__ float z) {
+    const auto result = std::asinh(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI catanf_nid_postfix(__complex__ float z) {
+    const auto result = std::atan(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI catanhf_nid_postfix(__complex__ float z) {
+    const auto result = std::atanh(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI ccosf_nid_postfix(__complex__ float z) {
+    const auto result = std::cos(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI ccoshf_nid_postfix(__complex__ float z) {
+    const auto result = std::cosh(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI cexpf_nid_postfix(__complex__ float z) {
+    const auto result = std::exp(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI clogf_nid_postfix(__complex__ float z) {
+    const auto result = std::log(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI csinf_nid_postfix(__complex__ float z) {
+    const auto result = std::sin(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI csinhf_nid_postfix(__complex__ float z) {
+    const auto result = std::sinh(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI csqrtf_nid_postfix(__complex__ float z) {
+    const auto result = std::sqrt(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI ctanf_nid_postfix(__complex__ float z) {
+    const auto result = std::tan(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI ctanhf_nid_postfix(__complex__ float z) {
+    const auto result = std::tanh(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI cpowf_nid_postfix(__complex__ float x, __complex__ float y) {
+    const auto result = std::pow(std::complex<float>(__real__ x, __imag__ x), std::complex<float>(__real__ y, __imag__ y));
+    return MakeComplex(result.real(), result.imag());
+}
 
 }
