@@ -63,7 +63,7 @@ std::uint8_t base64DecodeChar(char value) {
         return 62u;
     }
     if (value == '/') {
-        return 64u;
+        return 63u;
     }
     throw std::runtime_error("RequestSerializer: invalid base64 character");
 }
