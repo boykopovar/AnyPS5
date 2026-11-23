@@ -2117,14 +2117,14 @@ bool MultisampleTargetStorable(const Context& context, const ColorTarget& target
 
 namespace {
 
-bool probeResolveFollowsView(const Context& context, VkFormat viewFormat, VkFormat imageFormat, std::uint32_t samples, std::uint32_t elementBytes) {
+bool probeResolveFollowsView(const Context& context, VkFormat viewFormat, VkFormat imageFormat, std::uint32_t samples, std::uint32_t elementBytes, std::string& failure) {
     if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Device() == context.device) recorder->Sync();
     bool follows = false;
-    VkImageView sourceView = VK_NULL_HANDLE;
+    std::array<VkImageView, 2> sourceViews{};
     std::array<VkImageView, 2> resolveViews{};
     VkRenderPass pass = VK_NULL_HANDLE;
     std::array<VkFramebuffer, 2> framebuffers{};
-    std::shared_ptr<OwnedImage> source;
+    std::array<std::shared_ptr<OwnedImage>, 2> sources;
     std::array<std::shared_ptr<OwnedImage>, 2> resolved;
     try {
         constexpr VkExtent3D extent{8u, 8u, 1u};
@@ -2141,15 +2141,11 @@ bool probeResolveFollowsView(const Context& context, VkFormat viewFormat, VkForm
             info.usage = usage;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            auto owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
             VkImage image = VK_NULL_HANDLE;
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage resolve view probe");
-            auto owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-            try {
-                owned->Allocate(context, info, "vkAllocateMemory resolve view probe");
-            } catch (...) {
-                context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-                throw;
-            }
+            owned->image = image;
+            owned->Allocate(context, info, "vkAllocateMemory resolve view probe");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory resolve view probe");
             return owned;
         };
@@ -2164,12 +2160,13 @@ bool probeResolveFollowsView(const Context& context, VkFormat viewFormat, VkForm
             info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &info, nullptr, &created), "vkCreateImageView resolve view probe");
         };
-        source = make(viewFormat, samples, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0);
+        for (auto& source : sources) source = make(viewFormat, samples, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0);
         resolved[0] = make(imageFormat, 1u, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT);
         resolved[1] = make(viewFormat, 1u, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0);
-        view(source->image, sourceView);
-        view(resolved[0]->image, resolveViews[0]);
-        view(resolved[1]->image, resolveViews[1]);
+        for (std::size_t index = 0; index < resolved.size(); ++index) {
+            view(sources[index]->image, sourceViews[index]);
+            view(resolved[index]->image, resolveViews[index]);
+        }
         std::array<VkAttachmentDescription, 2> attachments{};
         attachments[0].format = viewFormat;
         attachments[0].samples = static_cast<VkSampleCountFlagBits>(samples);
@@ -2203,7 +2200,7 @@ bool probeResolveFollowsView(const Context& context, VkFormat viewFormat, VkForm
         CommandBatch batch(context);
         const auto commands = batch.Handle();
         for (std::size_t index = 0; index < resolved.size(); ++index) {
-            const std::array<VkImageView, 2> views{sourceView, resolveViews[index]};
+            const std::array<VkImageView, 2> views{sourceViews[index], resolveViews[index]};
             VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
             framebufferInfo.renderPass = pass;
             framebufferInfo.attachmentCount = static_cast<std::uint32_t>(views.size());
@@ -2234,9 +2231,13 @@ bool probeResolveFollowsView(const Context& context, VkFormat viewFormat, VkForm
         batch.SubmitAndWait();
         linear.Invalidate();
         follows = std::memcmp(linear.Bytes().data(), linear.Bytes().data() + texels, texels) == 0;
+    } catch (const std::exception& error) {
+        failure = error.what();
+        if (failure.empty()) failure = "no reason given";
     } catch (...) {
-        follows = false;
+        failure = "not a standard exception";
     }
+    if (!failure.empty()) follows = false;
     for (const auto framebuffer : framebuffers) {
         if (framebuffer != VK_NULL_HANDLE) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
     }
@@ -2244,7 +2245,9 @@ bool probeResolveFollowsView(const Context& context, VkFormat viewFormat, VkForm
     for (const auto created : resolveViews) {
         if (created != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, created, nullptr);
     }
-    if (sourceView != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, sourceView, nullptr);
+    for (const auto created : sourceViews) {
+        if (created != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, created, nullptr);
+    }
     return follows;
 }
 
@@ -2259,10 +2262,12 @@ bool resolveFollowsView(const Context& context, VkFormat viewFormat, VkFormat im
         const auto cached = std::find_if(probes.begin(), probes.end(), [&](const auto& entry) { return entry.first == key; });
         if (cached != probes.end()) return cached->second;
     }
-    const bool follows = probeResolveFollowsView(context, viewFormat, imageFormat, samples, elementBytes);
+    std::string failure;
+    const bool follows = probeResolveFollowsView(context, viewFormat, imageFormat, samples, elementBytes, failure);
     std::lock_guard lock(mutex);
     probes.emplace_back(key, follows);
-    std::fprintf(stderr, "[gpu] render-pass resolve of %u samples into a format %d view of a format %d image: %s\n", samples, static_cast<int>(viewFormat), static_cast<int>(imageFormat), follows ? "follows the view, resolved directly" : "does not follow the view, resolved through a copy");
+    const std::string outcome = !failure.empty() ? "the probe failed (" + failure + "), resolved through a copy" : follows ? "follows the view, resolved directly" : "does not follow the view, resolved through a copy";
+    std::fprintf(stderr, "[gpu] render-pass resolve of %u samples into a format %d view of a format %d image: %s\n", samples, static_cast<int>(viewFormat), static_cast<int>(imageFormat), outcome.c_str());
     return follows;
 }
 
