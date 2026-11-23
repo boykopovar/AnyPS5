@@ -215,6 +215,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path.startswith("/length-list/"):
             self.length_list(path)
             return
+        if path.startswith("/framing-status/"):
+            self.framing_status(path)
+            return
         if path.startswith("/client-unsupported/"):
             location = {"https": "https://{authority}/payload.bin", "scheme": "ftp://{authority}/payload.bin", "userinfo": "http://user@{authority}/payload.bin"}[path.removeprefix("/client-unsupported/")]
             self.send_response(307)
@@ -238,6 +241,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(404)
             self.send_header("Content-Length", "0")
             self.end_headers()
+            return
+        if path.startswith("/transfer-fields/"):
+            self.transfer_fields(path)
             return
         if path.startswith("/sync/"):
             ready = stalled[path.removeprefix("/sync/")].wait(2)
@@ -541,6 +547,115 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+
+    def transfer_fields(self, path):
+        _, _, mode, name, _ = path.split("/")
+        content = pathlib.Path("app0", "payload.bin").read_bytes() if mode != "empty" else b""
+        start = 0
+        end = len(content)
+        if mode == "range":
+            match = re.fullmatch(r"bytes=(\d+)-(\d+)", self.headers.get("Range", ""))
+            assert match is not None
+            start, last = map(int, match.groups())
+            end = min(start + 512, last + 1, len(content))
+            if start:
+                assert self.headers.get("If-Range") == '"transfer-v1"'
+        body = content[start:end]
+        fields = {
+            "single": ["chunked"],
+            "case": ["ChUnKeD"],
+            "ows": [" \tchunked\t "],
+            "repeat": ["chunked", "chunked"],
+            "repeat-ows": ["chunked", " \tchunked\t "],
+            "repeat-field-case": ["chunked", "chunked"],
+            "triple": ["chunked", "chunked", "chunked"],
+            "joined": ["chunked, chunked"],
+            "mixed-case": ["chunked", "Chunked"],
+            "before": ["gzip", "chunked"],
+            "after": ["chunked", "gzip"],
+            "empty": ["chunked", ""],
+            "late-repeat": ["chunked", "chunked"] if start else ["chunked"],
+        }
+        self.send_response(206 if mode == "range" else 200)
+        if mode == "range":
+            self.send_header("Content-Range", f"bytes {start}-{end - 1}/{len(content)}")
+        self.send_header("ETag", '"transfer-v1"')
+        for index, value in enumerate(fields[name]):
+            field = "tRaNsFeR-EnCoDiNg" if name == "repeat-field-case" and index else "Transfer-Encoding"
+            self.send_header(field, value)
+        self.send_header("Connection", "close")
+        self.end_headers()
+        if body:
+            self.wfile.write(f"{len(body):X}\r\n".encode() + body + b"\r\n")
+        self.wfile.write(b"0\r\n\r\n")
+
+    def framing_status(self, path):
+        _, _, name, _ = path.split("/")
+        self.close_connection = True
+        content = pathlib.Path("app0", "payload.bin").read_bytes()
+        match = re.fullmatch(r"bytes=(\d+)-(\d+)", self.headers.get("Range", ""))
+        assert match is not None
+        start, last = map(int, match.groups())
+        end = min(start + 512, last + 1, len(content))
+        if start:
+            assert self.headers.get("If-Range") == '"framing-v1"'
+        body = content[start:end]
+        full = name in {"status-four-digits", "both-200"}
+        if full:
+            body = content
+        status_line = b"HTTP/1.1 200 OK\r\n" if full else b"HTTP/1.1 206 Partial Content\r\n"
+        prefix = b""
+        extra_headers = b""
+        if name == "info-100":
+            prefix = b"HTTP/1.1 100 Continue\r\n\r\n"
+        elif name == "info-multiple":
+            prefix = (
+                b"HTTP/1.1 100 Continue\r\nX-Note: one\r\n\r\n"
+                b"HTTP/1.1 103 Early Hints\r\nLink: </a.bin>; rel=preload\r\n\r\n"
+            )
+        elif name == "bare-status":
+            status_line = b"HTTP/1.1 206\r\n"
+        elif name == "status-four-digits":
+            status_line = b"HTTP/1.1 2000 OK\r\n"
+        elif name == "status-missing-space":
+            status_line = b"HTTP/1.1 206Partial\r\n"
+        elif name == "status-tab":
+            status_line = b"HTTP/1.1 206\tPartial Content\r\n"
+        elif name == "status-del-reason":
+            status_line = b"HTTP/1.1 206 Partial\x7fContent\r\n"
+        elif name == "status-ctl-reason":
+            status_line = b"HTTP/1.1 206 Partial\x01Content\r\n"
+        elif name == "status-nul-reason":
+            status_line = b"HTTP/1.1 206 Partial\x00Content\r\n"
+        elif name == "info-http10":
+            prefix = b"HTTP/1.0 100 Continue\r\n\r\n"
+        elif name == "info-content-length":
+            prefix = b"HTTP/1.1 100 Continue\r\nContent-Length: 0\r\n\r\n"
+        elif name == "info-transfer-encoding":
+            prefix = b"HTTP/1.1 100 Continue\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+        elif name in {"both-200", "both-206"} or (name == "both-late" and start > 0):
+            extra_headers = f"Transfer-Encoding: chunked\r\nContent-Length: {len(body)}\r\n".encode()
+        elif name == "both-late":
+            extra_headers = b"Transfer-Encoding: chunked\r\n"
+        else:
+            raise AssertionError(name)
+        headers = bytearray()
+        headers.extend(prefix)
+        headers.extend(status_line)
+        if not full:
+            headers.extend(f"Content-Range: bytes {start}-{end - 1}/{len(content)}\r\n".encode())
+        headers.extend(b'ETag: "framing-v1"\r\n')
+        if extra_headers:
+            headers.extend(extra_headers)
+        else:
+            headers.extend(f"Content-Length: {len(body)}\r\n".encode())
+        headers.extend(b"Connection: close\r\n\r\n")
+        self.wfile.write(headers)
+        if b"Transfer-Encoding: chunked" in extra_headers:
+            self.wfile.write(f"{len(body):X}\r\n".encode() + body + b"\r\n0\r\n\r\n")
+        else:
+            self.wfile.write(body)
+        self.wfile.flush()
 
 with Server(("127.0.0.1", 0), Handler) as server, Server(("127.0.0.1", 0), Handler) as destination:
     server.redirect_authority = destination.redirect_authority = f"127.0.0.1:{destination.server_port}"

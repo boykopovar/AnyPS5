@@ -15,4 +15,6 @@ int main() {
     Require(FcInitBringUptoDate() == 1, "FcInitBringUptoDate reports the configuration up to date");
     Require(FcInitBringUptoDate() == 1, "a second FcInitBringUptoDate still reports it up to date");
     Require(FcConfigGetCurrent() == nullptr, "FcInitBringUptoDate creates no current configuration");
+    Require(FcInit() == 1, "FcInit reports the configuration initialized");
+    Require(FcConfigGetCurrent() == nullptr, "FcInit creates no current configuration");
 }

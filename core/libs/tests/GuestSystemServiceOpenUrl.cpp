@@ -12,6 +12,9 @@
 #include <stdexcept>
 #ifdef _WIN32
 #include <stdlib.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 #include <cstdlib>
 #include <string>
@@ -243,7 +246,7 @@ std::filesystem::path WriteOpener(const std::filesystem::path& directory) {
     const auto opener = directory / "opener.sh";
     {
         std::ofstream script(opener);
-        script << "#!/bin/sh\nprintf '%s\\n' \"$#\" \"$0\" \"$1\" > \"" << directory.string() << "/record.tmp\"\nmv \"" << directory.string() << "/record.tmp\" \""
+        script << "#!/bin/sh\nprintf '%s\\n' \"$#\" \"$0\" \"$1\" \"$([ -e /dev/fd/200 ] && echo open || echo closed)\" > \"" << directory.string() << "/record.tmp\"\nmv \"" << directory.string() << "/record.tmp\" \""
                << directory.string() << "/record\"\n";
     }
     std::filesystem::permissions(opener, std::filesystem::perms::owner_all);
@@ -267,15 +270,25 @@ void CheckPosixLauncher() {
     const auto directory = MakeScratchDirectory();
     const auto opener = WriteOpener(directory);
     const std::string url = "https://example.com/$(touch_pwned);id&x=1#a*b";
+    const int saved = fcntl(200, F_DUPFD_CLOEXEC, 201);
+    Require(saved >= 0 || errno == EBADF);
+    const int source = open("/dev/null", O_RDONLY);
+    Require(source >= 0);
+    if (source != 200) Require(dup2(source, 200) == 200 && close(source) == 0);
     {
         HostBrowserLauncher launcher(opener.string());
         Require(launcher.Launch(url));
     }
+    if (saved >= 0)
+        Require(dup2(saved, 200) == 200 && close(saved) == 0);
+    else
+        Require(close(200) == 0);
     const auto lines = WaitForRecord(directory);
-    Require(lines.size() == 3);
+    Require(lines.size() == 4);
     Require(lines[0] == "1");
     Require(lines[1] == opener.string());
     Require(lines[2] == url);
+    Require(lines[3] == "closed");
     Require(!std::filesystem::exists(directory / "touch_pwned"));
     Require(!std::filesystem::exists(std::filesystem::current_path() / "touch_pwned"));
 
@@ -307,8 +320,8 @@ void CheckPosixOutstandingBound() {
     const auto opener = directory / "blocking.sh";
     {
         std::ofstream script(opener);
-        script << "#!/bin/sh\ntouch \"" << directory.string() << "/started.$$\"\nwhile [ ! -e \"" << directory.string()
-               << "/release\" ]; do sleep 0.05; done\n";
+        script << "#!/bin/sh\ntouch \"" << directory.string() << "/started.$$\"\nparent=$PPID\ni=0\nwhile [ ! -e \"" << directory.string()
+               << "/release\" ] && kill -0 \"$parent\" 2>/dev/null && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done\n";
     }
     std::filesystem::permissions(opener, std::filesystem::perms::owner_all);
     HostBrowserLauncher launcher(opener.string());
@@ -316,7 +329,8 @@ void CheckPosixOutstandingBound() {
     Require(launcher.Launch("https://example.com/1"));
     Require(launcher.Launch("https://example.com/2"));
     for (int index = 0; index < 20; ++index) Require(!launcher.Launch("https://example.com/3"));
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    for (int attempt = 0; attempt < 500 && CountStarted(directory) < 2; ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     Require(CountStarted(directory) == 2);
 
     { std::ofstream release(directory / "release"); }
@@ -430,10 +444,15 @@ void CheckLaunchWebBrowser() {
     Require(call("HTTP://example.com/") == static_cast<int>(0x80a10008));
     Require(call("file:///etc/passwd") == static_cast<int>(0x80a10008));
     Require(call(nullptr) == static_cast<int>(0x80a10003));
+    Require(call(reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x80a10003));
     const std::string tooLong = "https://example.com/" + std::string(5990, 'a');
     Require(call(tooLong.c_str()) == unavailable);
     const std::string overLimit = "https://example.com/" + std::string(6000, 'a') + std::string(100, 'a');
     Require(call(overLimit.c_str()) == static_cast<int>(0x80a10007));
+    const std::string longest = "https://example.com/" + std::string(6015 - 20, 'a');
+    Require(longest.size() == 6015 && call(longest.c_str()) == unavailable);
+    const std::string firstRefused = longest + "a";
+    Require(call(firstRefused.c_str()) == static_cast<int>(0x80a10007));
     Require(confirmation.asked.size() == asked && launcher.launched.size() == launched);
 
     SetEnvironment("ANYPS5_OPEN_URLS", "bogus");

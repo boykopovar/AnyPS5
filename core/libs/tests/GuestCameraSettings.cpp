@@ -153,6 +153,20 @@ void CheckGetters() {
     target.sizeThis = 4;
     Require(sceCameraGetAutoExposureGain(1, Channel0, &enable, &target) == ErrorParam, "a target of the wrong size must be rejected");
     Require(sceCameraGetAutoExposureGain(1, Channel0, &enable, nullptr) == 0, "automatic exposure must be readable without a target");
+    errno = 71;
+    Require(sceCameraGetAutoExposureGain(1, Channel0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == ErrorParam, "an unwritable enable pointer must report PARAM");
+    Require(errno == 71, "errno was altered on unwritable enable pointer");
+    Require(sceCameraGetAutoExposureGain(1, Channel0, &enable, reinterpret_cast<CameraAutoExposureGainTarget*>(0x10)) == ErrorParam, "an unwritable target pointer must report PARAM");
+    Require(errno == 71, "errno was altered on unwritable target pointer");
+    alignas(16) std::uint32_t enableBuffer[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    alignas(16) CameraAutoExposureGainTarget targetBuffer[3] = {
+        {0x5a5a5a5a, 0x5a5a5a5a},
+        {sizeof(CameraAutoExposureGainTarget), 0x10},
+        {0x5a5a5a5a, 0x5a5a5a5a}
+    };
+    Require(sceCameraGetAutoExposureGain(1, Channel0, &enableBuffer[1], &targetBuffer[1]) == 0, "reading auto exposure gain to buffer failed");
+    Require(enableBuffer[0] == 0x5a5a5a5a && enableBuffer[1] == 0 && enableBuffer[2] == 0x5a5a5a5a, "adjacent enable memory was corrupted");
+    Require(targetBuffer[0].sizeThis == 0x5a5a5a5a && targetBuffer[1].sizeThis == 0 && targetBuffer[1].target == 0 && targetBuffer[2].sizeThis == 0x5a5a5a5a, "adjacent target memory was corrupted");
 }
 
 void CheckAttribute() {
@@ -205,6 +219,9 @@ void CheckAttribute() {
     attribute->sizeThis = sizeof(CameraAttribute) - 4;
     Require(sceCameraGetAttribute(1, attribute) == ErrorParam && sceCameraSetAttribute(1, attribute) == ErrorParam, "an attribute of the wrong size must be rejected");
     Require(sceCameraGetAttribute(1, nullptr) == ErrorParam && sceCameraSetAttribute(1, nullptr) == ErrorParam, "a null attribute must be rejected");
+    errno = 71;
+    Require(sceCameraSetAttribute(1, reinterpret_cast<const CameraAttribute*>(0x10)) == ErrorParam, "unreadable attribute rejected");
+    Require(errno == 71, "errno preserved");
 }
 
 void CheckSetter(SetU32 set, std::uint32_t largestValue) {
@@ -237,6 +254,10 @@ void CheckSetters() {
     Require(sceCameraSetExposureGain(1, Channel0, nullptr, nullptr) == ErrorParam, "a null exposure must be rejected");
     Require(sceCameraSetWhiteBalance(1, Channel0, nullptr, nullptr) == ErrorParam, "a null white balance must be rejected");
     Require(sceCameraSetGamma(1, Channel0, nullptr, nullptr) == ErrorParam, "a null gamma must be rejected");
+    errno = 71;
+    Require(sceCameraSetExposureGain(1, Channel0, reinterpret_cast<const CameraExposureGain*>(0x10), nullptr) == ErrorParam && errno == 71, "an unmapped exposure must be rejected");
+    Require(sceCameraSetWhiteBalance(1, Channel0, reinterpret_cast<const CameraWhiteBalance*>(0x10), nullptr) == ErrorParam && errno == 71, "an unmapped white balance must be rejected");
+    Require(sceCameraSetGamma(1, Channel0, reinterpret_cast<const CameraGamma*>(0x10), nullptr) == ErrorParam && errno == 71, "an unmapped gamma must be rejected");
     CameraAutoExposureGainTarget target{sizeof(CameraAutoExposureGainTarget), 0x20};
     Require(sceCameraSetAutoExposureGain(1, Channel0, 1, &target) == ErrorNotConnected, "the largest exposure target must be accepted");
     Require(sceCameraSetAutoExposureGain(1, Channel0, 1, nullptr) == ErrorNotConnected, "automatic exposure without a target must be accepted");
@@ -250,6 +271,9 @@ void CheckSetters() {
     }
     target = {4, 0x10};
     Require(sceCameraSetAutoExposureGain(1, Channel0, 1, &target) == ErrorParam, "an exposure target of the wrong size must be rejected");
+    errno = 71;
+    Require(sceCameraSetAutoExposureGain(1, Channel0, 1, reinterpret_cast<const CameraAutoExposureGainTarget*>(0x10)) == ErrorParam, "an unmapped exposure target must be rejected");
+    Require(errno == 71, "errno must be preserved");
 }
 
 void CheckConfig() {
@@ -259,13 +283,43 @@ void CheckConfig() {
         Require(extension.formatLevel[0] == 0 && extension.formatLevel[1] == 4 && extension.formatLevel[3] == 4, "the default formats are wrong");
         Require(extension.resolution == 0 && extension.framerate == 60 && extension.width == 0 && extension.baseOption == nullptr, "the default mode is wrong");
     }
+    errno = 71;
+    Require(sceCameraGetConfig(1, reinterpret_cast<CameraConfig*>(0x10)) == ErrorParam, "an unwritable config pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable config pointer");
+    alignas(16) CameraConfig getConfigBuffer[3];
+    std::memset(getConfigBuffer, 0x5a, sizeof(getConfigBuffer));
+    getConfigBuffer[1] = SizedConfig();
+    Require(sceCameraGetConfig(1, &getConfigBuffer[1]) == 0, "reading config to buffer failed");
+    Require(getConfigBuffer[0].sizeThis == 0x5a5a5a5a && getConfigBuffer[1].sizeThis == sizeof(CameraConfig) && getConfigBuffer[1].configType == 1 && getConfigBuffer[2].sizeThis == 0x5a5a5a5a, "adjacent memory was corrupted");
     Require(sceCameraSetConfig(1, &config) == ErrorNotConnected, "a new configuration must report NOT_CONNECTED");
     Require(sceCameraSetConfigInternal(1, &config) == ErrorNotConnected, "an internal configuration must report NOT_CONNECTED");
+    errno = 71;
+    Require(sceCameraSetConfig(1, reinterpret_cast<CameraConfig*>(0x10)) == ErrorParam, "an unreadable config pointer must be rejected");
+    Require(errno == 71, "errno was altered on unreadable config pointer");
+    errno = 71;
+    Require(sceCameraSetConfigInternal(1, reinterpret_cast<CameraConfig*>(0x10)) == ErrorParam, "an unreadable internal config pointer must be rejected");
+    Require(errno == 71, "errno was altered on unreadable internal config pointer");
     config = SizedConfig();
     Require(sceCameraGetDeviceConfig(1, &config) == 0 && config.sizeThis == sizeof(CameraConfig) && config.configType == 0, "the device configuration must be empty");
     Require(config.extension[1].baseOption == nullptr, "the device configuration must be cleared");
+    errno = 71;
+    Require(sceCameraGetDeviceConfig(1, reinterpret_cast<CameraConfig*>(0x10)) == ErrorParam, "an unwritable device config pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable device config pointer");
+    alignas(16) CameraConfig configBuffer[3];
+    std::memset(configBuffer, 0x5a, sizeof(configBuffer));
+    configBuffer[1] = SizedConfig();
+    Require(sceCameraGetDeviceConfig(1, &configBuffer[1]) == 0, "reading device config to buffer failed");
+    Require(configBuffer[0].sizeThis == 0x5a5a5a5a && configBuffer[1].sizeThis == sizeof(CameraConfig) && configBuffer[2].sizeThis == 0x5a5a5a5a, "adjacent memory was corrupted");
     config = SizedConfig();
     Require(sceCameraGetDeviceConfigWithoutHandle(&config) == 0 && config.sizeThis == 0 && config.configType == 0, "the handleless device configuration must be cleared");
+    errno = 71;
+    Require(sceCameraGetDeviceConfigWithoutHandle(reinterpret_cast<CameraConfig*>(0x10)) == ErrorParam, "an unwritable handleless device config pointer must be rejected");
+    Require(errno == 71, "errno was altered on unwritable handleless device config pointer");
+    alignas(16) CameraConfig handlelessBuffer[3];
+    std::memset(handlelessBuffer, 0x5a, sizeof(handlelessBuffer));
+    handlelessBuffer[1] = SizedConfig();
+    Require(sceCameraGetDeviceConfigWithoutHandle(&handlelessBuffer[1]) == 0, "reading handleless device config to buffer failed");
+    Require(handlelessBuffer[0].sizeThis == 0x5a5a5a5a && handlelessBuffer[1].sizeThis == 0 && handlelessBuffer[2].sizeThis == 0x5a5a5a5a, "adjacent memory was corrupted");
     config = SizedConfig();
     config.sizeThis = 96;
     Require(sceCameraGetConfig(1, &config) == ErrorParam && sceCameraSetConfig(1, &config) == ErrorParam, "a configuration of the wrong size must be rejected");

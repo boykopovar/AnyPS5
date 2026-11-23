@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "unicode/putil.h"
 #include <cstddef>
 #include <array>
 #include <cstdint>
@@ -158,9 +159,18 @@ void TimeZoneDirectory() {
     Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "/warn");
 
     u_setTimeZoneFilesDirectory_nid_postfix(nullptr, &status);
-    Require(status == 1);
+    Require(status == 0 && std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "");
+    u_setTimeZoneFilesDirectory_nid_postfix("/warn", &status);
+    status = -124;
+    u_setTimeZoneFilesDirectory_nid_postfix(nullptr, &status);
+    Require(status == -124 && std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "");
     status = 0;
-    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "");
+
+    UErrorCode bundled = U_ZERO_ERROR;
+    u_setTimeZoneFilesDirectory("bundled", &bundled);
+    Require(bundled == U_ZERO_ERROR && std::string(u_getTimeZoneFilesDirectory(&bundled)) == "bundled");
+    u_setTimeZoneFilesDirectory(nullptr, &bundled);
+    Require(bundled == U_ZERO_ERROR && std::string(u_getTimeZoneFilesDirectory(&bundled)) == "");
 
     u_setTimeZoneFilesDirectory_nid_postfix("/first", &status);
     u_setTimeZoneFilesDirectory_nid_postfix("", &status);
@@ -313,6 +323,31 @@ void UprvMemoryWithUserFunctions() {
     std::memset(g_arena, 0x55, sizeof(g_arena));
     char* empty = uprv_strndup_nid_postfix("abc", 0);
     Require(empty[0] == 0 && g_log.lastSize == 1);
+
+    const auto* const unreadable = reinterpret_cast<const char*>(0x10);
+    errno = 71;
+    RequireThrows([&] { uprv_strdup_nid_postfix(unreadable); });
+    RequireThrows([&] { uprv_strndup_nid_postfix(unreadable, 4); });
+    Require(errno == 71);
+    std::memset(g_arena, 0x55, sizeof(g_arena));
+    char* nothing = uprv_strndup_nid_postfix(unreadable, 0);
+    Require(nothing[0] == 0 && g_log.lastSize == 1);
+
+    std::memset(g_arena, 0x55, sizeof(g_arena));
+    const int before = g_log.allocations;
+    auto* cleared = static_cast<unsigned char*>(uprv_calloc_nid_postfix(5, 8));
+    Require(cleared == g_arena && g_log.allocations == before + 1 && g_log.lastSize == 40);
+    for (std::size_t index = 0; index < 40; ++index) Require(cleared[index] == 0);
+    Require(g_arena[40] == 0x55);
+
+    Require(uprv_calloc_nid_postfix(0, 8) == zero && uprv_calloc_nid_postfix(8, 0) == zero && g_log.allocations == before + 1);
+    Require(uprv_calloc_nid_postfix(2, (SIZE_MAX / 2) + 1) == zero && g_log.allocations == before + 1);
+    u_cleanup_nid_postfix();
+
+    status = 0;
+    u_setMemoryFunctions_nid_postfix(&marker, Allocate_nid_no_patch, Reallocate_nid_no_patch, Release_nid_no_patch, &status);
+    Require(status == 0);
+    Require(uprv_calloc_nid_postfix(4, 4) == nullptr);
     u_cleanup_nid_postfix();
 }
 
@@ -338,6 +373,11 @@ void UprvMemoryWithDefaultHeap() {
     char* whole = uprv_strndup_nid_postfix("heap", -5);
     Require(whole != nullptr && std::string(whole) == "heap");
     free_nid_postfix(whole);
+
+    auto* cleared = static_cast<unsigned char*>(uprv_calloc_nid_postfix(3, 100));
+    Require(cleared != nullptr);
+    for (std::size_t index = 0; index < 300; ++index) Require(cleared[index] == 0);
+    free_nid_postfix(cleared);
 }
 
 int main() {

@@ -1,5 +1,6 @@
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
+#include "PipelineSpecialization.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include "IntermediateRepresentation/IrBlock.hpp"
 #include "IntermediateRepresentation/IrValue.hpp"
@@ -150,12 +151,12 @@ std::uint32_t EmitExt(SpirvEmitterState& state, std::uint32_t type, std::uint32_
 namespace {
 
 std::uint32_t ExactMul(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs) {
-    if (state.fusedExactArithmetic) return EmitExt(state, TypeF32(state), GLSLstd450Fma, {lhs, rhs, ConstantF32(state, 0x80000000u)});
+    if (state.fusedExactArithmetic) return Exact(state, EmitExt(state, TypeF32(state), GLSLstd450Fma, {lhs, rhs, ConstantF32(state, 0x80000000u)}));
     return Exact(state, Binary(state, spv::OpFMul, TypeF32(state), lhs, rhs));
 }
 
 std::uint32_t ExactSub(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs) {
-    if (state.fusedExactArithmetic) return EmitExt(state, TypeF32(state), GLSLstd450Fma, {ConstantF32(state, 0xbf800000u), rhs, lhs});
+    if (state.fusedExactArithmetic) return Exact(state, EmitExt(state, TypeF32(state), GLSLstd450Fma, {ConstantF32(state, 0xbf800000u), rhs, lhs}));
     return Exact(state, Binary(state, spv::OpFSub, TypeF32(state), lhs, rhs));
 }
 
@@ -1248,8 +1249,41 @@ std::uint32_t EmitPackFloat2x16Rtz(SpirvEmitterState& state, std::uint32_t arg0,
     return Binary(state, spv::OpBitwiseOr, TypeU32(state), low, high);
 }
 
-std::uint32_t EmitFPSaturate32(SpirvEmitterState& state, std::uint32_t arg0) {
-    const auto bits = Unary(state, spv::OpBitcast, TypeU32(state), arg0);
+std::uint32_t EmitFPSaturate32(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    const auto uncast = [](const IrValue* value) {
+        value = value->Resolve();
+        while (value->Flags<std::uint64_t>() == 0u && (value->Opcode() == IrOpcode::BitCastU32F32 || value->Opcode() == IrOpcode::BitCastF32U32)) value = value->Argument(0)->Resolve();
+        return value;
+    };
+    const auto* source = uncast(inst.Argument(0));
+    if (inst.Flags<std::uint64_t>() == 0u && source->Flags<std::uint64_t>() == 0u && source->Opcode() == IrOpcode::FPMax32) {
+        for (std::uint32_t index = 0u; index < 2u; ++index) {
+            const auto* zero = source->Argument(index)->Resolve();
+            if (zero->HasImmediate() && zero->Type() == IrType::F32 && std::bit_cast<std::uint32_t>(zero->ImmediateF32()) == 0u) {
+                source = uncast(source->Argument(1u - index));
+                break;
+            }
+        }
+    }
+    if (inst.Flags<std::uint64_t>() == 0u && source->Flags<std::uint64_t>() == 0u && source->Opcode() == IrOpcode::SelectU32) {
+        const auto* test = source->Argument(0)->Resolve();
+        const auto* sign = source->Argument(1)->Resolve();
+        const auto* original = source->Argument(2)->Resolve();
+        const auto masked = [&](const IrValue* value, std::uint32_t mask) {
+            return value->Flags<std::uint64_t>() == 0u && value->Opcode() == IrOpcode::BitwiseAnd32 &&
+                ((uncast(value->Argument(0)) == uncast(original) && IsU32(value->Argument(1), mask)) || (uncast(value->Argument(1)) == uncast(original) && IsU32(value->Argument(0), mask)));
+        };
+        if (test->Flags<std::uint64_t>() == 0u && test->Opcode() == IrOpcode::IEqual32 && masked(sign, 0x80000000u) &&
+            ((IsU32(test->Argument(0), 0u) && masked(test->Argument(1)->Resolve(), 0x7f800000u)) || (IsU32(test->Argument(1), 0u) && masked(test->Argument(0)->Resolve(), 0x7f800000u)))) {
+            const auto bits = ctx.Def(original);
+            const auto range = Binary(state, spv::OpISub, TypeU32(state), bits, ConstantU32(state, 0x00800000u));
+            const auto positive = Binary(state, spv::OpULessThanEqual, TypeBool(state), range, ConstantU32(state, 0x7f000000u));
+            const auto upper = EmitExt(state, TypeU32(state), GLSLstd450UMin, {bits, ConstantU32(state, 0x3f800000u)});
+            return Unary(state, spv::OpBitcast, TypeF32(state), Select(state, TypeU32(state), positive, upper, ConstantU32(state, 0u)));
+        }
+    }
+    const auto bits = Unary(state, spv::OpBitcast, TypeU32(state), ctx.Arg(inst, 0));
     const auto positive = Binary(state, spv::OpULessThan, TypeBool(state), Binary(state, spv::OpISub, TypeU32(state), bits, ConstantU32(state, 1u)), ConstantU32(state, 0x7f800000u));
     const auto upper = EmitExt(state, TypeU32(state), GLSLstd450UMin, {bits, ConstantU32(state, 0x3f800000u)});
     return Unary(state, spv::OpBitcast, TypeF32(state), Select(state, TypeU32(state), positive, upper, ConstantU32(state, 0u)));
@@ -1576,6 +1610,115 @@ std::uint32_t EmitFPCos(SpirvEmitterState& state, std::uint32_t arg0) {
     return TrigLinearNearZero(state, value, distance, ConstantF32(state, 0x40c90fdbu), ConstantU32(state, 0x39800000u));
 }
 
+namespace {
+
+bool ImmediateBits(const IrValue* value, std::uint32_t bits) {
+    value = value->Resolve();
+    return value->HasImmediate() && value->ImmediateU32() == bits;
+}
+
+const IrValue* MaskedValue(const IrValue* value, std::uint32_t mask) {
+    value = value->Resolve();
+    if (value->Opcode() != IrOpcode::BitwiseAnd32) return nullptr;
+    if (ImmediateBits(value->Argument(1), mask)) return value->Argument(0)->Resolve();
+    if (ImmediateBits(value->Argument(0), mask)) return value->Argument(1)->Resolve();
+    return nullptr;
+}
+
+const IrValue* NanQuerySource(const IrValue* value) {
+    value = value->Resolve();
+    if (value->Opcode() == IrOpcode::FPIsNan32) return value->Argument(0)->Resolve();
+    if (value->Opcode() != IrOpcode::UGreaterThan32 || !ImmediateBits(value->Argument(1), 0x7f800000u)) return nullptr;
+    return MaskedValue(value->Argument(0), 0x7fffffffu);
+}
+
+class NormalizedSampleValues {
+public:
+    explicit NormalizedSampleValues(SpirvEmitterState& state) : program(state.program), known(state.normalizedSampleImages) {}
+
+    std::optional<std::vector<std::uint32_t>> Images(const IrValue* value) {
+        value = value->Resolve();
+        if (const auto found = known.find(value); found != known.end()) return found->second;
+        known.emplace(value, std::nullopt);
+        const auto result = compute(value);
+        known[value] = result;
+        return result;
+    }
+
+private:
+    std::optional<std::vector<std::uint32_t>> merge(const IrValue* lhs, const IrValue* rhs) {
+        auto first = Images(lhs);
+        const auto second = Images(rhs);
+        if (!first || !second) return std::nullopt;
+        first->insert(first->end(), second->begin(), second->end());
+        std::ranges::sort(*first);
+        first->erase(std::unique(first->begin(), first->end()), first->end());
+        return first;
+    }
+
+    std::optional<std::vector<std::uint32_t>> compute(const IrValue* value) {
+        if (value->HasImmediate()) return (value->ImmediateU32() & 0x7fffffffu) <= 0x3f800000u ? std::optional(std::vector<std::uint32_t>{}) : std::nullopt;
+        if (value->Flags<std::uint64_t>() != 0u) return std::nullopt;
+        switch (value->Opcode()) {
+            case IrOpcode::BitCastU32F32:
+            case IrOpcode::BitCastF32U32:
+            case IrOpcode::FPAbs32:
+            case IrOpcode::FPNeg32:
+                return Images(value->Argument(0));
+            case IrOpcode::BitwiseAnd32:
+                if (const auto source = MaskedValue(value, 0x7fffffffu)) return Images(source);
+                return std::nullopt;
+            case IrOpcode::BitwiseXor32:
+                if (ImmediateBits(value->Argument(1), 0x80000000u)) return Images(value->Argument(0));
+                if (ImmediateBits(value->Argument(0), 0x80000000u)) return Images(value->Argument(1));
+                return std::nullopt;
+            case IrOpcode::FPMul32:
+                return merge(value->Argument(0), value->Argument(1));
+            case IrOpcode::SelectU32:
+            case IrOpcode::SelectF32:
+                if (const auto source = NanQuerySource(value->Argument(0)); source != nullptr && Images(source)) return merge(source, value->Argument(2));
+                return merge(value->Argument(1), value->Argument(2));
+            case IrOpcode::CompositeExtractU32x4: {
+                const auto vector = value->Argument(0)->Resolve();
+                const auto component = value->Argument(1)->Resolve();
+                if (!component->HasImmediate() || component->ImmediateU32() >= 4u) return std::nullopt;
+                if (vector->Opcode() == IrOpcode::CompositeConstructU32x4) return Images(vector->Argument(component->ImmediateU32()));
+                if (vector->Opcode() != IrOpcode::ImageSampleRaw) return std::nullopt;
+                const auto& memory = program.Resources().memoryInfo.at(vector->Flags<MemoryFlags>().index);
+                const auto& image = program.Info().images.at(memory.resource);
+                if (memory.dataBits != 32u || (memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u || image.table != NoTable || image.numericClass != IrTextureNumericClass::Float || image.depthBits || image.packed) return std::nullopt;
+                return std::vector<std::uint32_t>{memory.resource};
+            }
+            default:
+                return std::nullopt;
+        }
+    }
+
+    const IrProgram& program;
+    std::unordered_map<const IrValue*, std::optional<std::vector<std::uint32_t>>>& known;
+};
+
+std::uint32_t SampleNanQuery(SpirvValueEmitContext& ctx, const IrValue* source, std::uint32_t fallback) {
+    NormalizedSampleValues values(ctx.state);
+    const auto images = values.Images(source);
+    if (!images || images->empty()) return fallback;
+    auto normalized = ConstantBool(ctx.state, true);
+    for (const auto image : *images) {
+        const auto flags = ctx.state.module.SpecializationConstant(TypeU32(ctx.state), PipelineSpecialization::NormalizedImageBase + image, 0u);
+        const auto bounded = Binary(ctx.state, spv::OpINotEqual, TypeBool(ctx.state), flags, ConstantU32(ctx.state, 0u));
+        normalized = Binary(ctx.state, spv::OpLogicalAnd, TypeBool(ctx.state), normalized, bounded);
+    }
+    return Select(ctx.state, TypeBool(ctx.state), normalized, ConstantBool(ctx.state, false), fallback);
+}
+
+}
+
+std::uint32_t EmitSampleNanQuery(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    const auto fallback = inst.Opcode() == IrOpcode::FPIsNan32 ? EmitFPIsNan32(ctx.state, ctx.Arg(inst, 0)) : EmitUGreaterThan32(ctx.state, ctx.Arg(inst, 0), ctx.Arg(inst, 1));
+    const auto source = NanQuerySource(&inst);
+    return source != nullptr ? SampleNanQuery(ctx, source, fallback) : fallback;
+}
+
 std::uint32_t EmitIdentity(SpirvValueEmitContext&, std::uint32_t value) {
     return value;
 }
@@ -1757,8 +1900,10 @@ std::uint32_t EmitPermuteU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
         const auto address = ctx.ShuffleInHalf(inst, 1, from);
         const auto active = ctx.ShuffleInHalf(inst, 2, from);
         const auto target = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 2u)), ConstantU32(state, 31u));
-        const auto hit = Binary(state, spv::OpLogicalAnd, TypeBool(state), active, Binary(state, spv::OpIEqual, TypeBool(state), target, own));
-        result = Select(state, TypeU32(state), hit, value, result);
+        const auto activeMask = Select(state, TypeU32(state), active, ConstantU32(state, ~0u), ConstantU32(state, 0u));
+        const auto targetMask = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), target, own), ConstantU32(state, ~0u), ConstantU32(state, 0u));
+        const auto hit = Binary(state, spv::OpBitwiseAnd, TypeU32(state), activeMask, targetMask);
+        result = Binary(state, spv::OpBitwiseOr, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), value, hit), Binary(state, spv::OpBitwiseAnd, TypeU32(state), result, Unary(state, spv::OpNot, TypeU32(state), hit)));
     }
     return result;
 }
@@ -2007,17 +2152,17 @@ std::uint32_t EmitFPUnordGreaterThanEqual32(SpirvEmitterState& state, std::uint3
 }
 
 std::uint32_t EmitFPAdd32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
-    if (state.fusedExactArithmetic) return EmitGlsl<GLSLstd450Fma, IrType::F32>(state, ConstantF32(state, 0x3f800000u), arg0, arg1);
+    if (state.fusedExactArithmetic) return Exact(state, EmitGlsl<GLSLstd450Fma, IrType::F32>(state, ConstantF32(state, 0x3f800000u), arg0, arg1));
     return Exact(state, EmitNative<spv::OpFAdd, IrType::F32>(state, arg0, arg1));
 }
 
 std::uint32_t EmitFPSub32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
-    if (state.fusedExactArithmetic) return EmitGlsl<GLSLstd450Fma, IrType::F32>(state, ConstantF32(state, 0xbf800000u), arg1, arg0);
+    if (state.fusedExactArithmetic) return Exact(state, EmitGlsl<GLSLstd450Fma, IrType::F32>(state, ConstantF32(state, 0xbf800000u), arg1, arg0));
     return Exact(state, EmitNative<spv::OpFSub, IrType::F32>(state, arg0, arg1));
 }
 
 std::uint32_t EmitFPMul32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
-    if (state.fusedExactArithmetic) return EmitGlsl<GLSLstd450Fma, IrType::F32>(state, arg0, arg1, ConstantF32(state, 0x80000000u));
+    if (state.fusedExactArithmetic) return Exact(state, EmitGlsl<GLSLstd450Fma, IrType::F32>(state, arg0, arg1, ConstantF32(state, 0x80000000u)));
     return Exact(state, EmitNative<spv::OpFMul, IrType::F32>(state, arg0, arg1));
 }
 
@@ -2096,11 +2241,11 @@ static std::uint32_t EmitNativeF32ToF16BitsRte(SpirvEmitterState& state, std::ui
     const auto pair = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeConstruct, state.module.Type(spv::OpTypeVector, f16, 2u), pair, half, state.module.Constant(spv::OpConstant, f16, 0u));
     const auto bits = Unary(state, spv::OpBitcast, u32, pair);
-    if (state.float16NarrowNans) return bits;
     const auto source = Unary(state, spv::OpBitcast, u32, value);
+    const auto sign = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, source, ConstantU32(state, 16u)), ConstantU32(state, 0x8000u));
+    if (state.float16NarrowNans) return Binary(state, spv::OpBitwiseOr, u32, sign, Binary(state, spv::OpBitwiseAnd, u32, bits, ConstantU32(state, 0x7fffu)));
     const auto magnitude = Binary(state, spv::OpBitwiseAnd, u32, source, ConstantU32(state, 0x7fffffffu));
     if (nanPayloadUnused) return Select(state, u32, Binary(state, spv::OpUGreaterThan, TypeBool(state), magnitude, ConstantU32(state, 0x7f800000u)), ConstantU32(state, 0x7e00u), bits);
-    const auto sign = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, source, ConstantU32(state, 16u)), ConstantU32(state, 0x8000u));
     const auto payload = Binary(state, spv::OpShiftRightLogical, u32, Binary(state, spv::OpBitwiseAnd, u32, magnitude, ConstantU32(state, 0x7fffffu)), ConstantU32(state, 13u));
     const auto nan = Binary(state, spv::OpBitwiseOr, u32, ConstantU32(state, 0x7e00u), payload);
     const auto result = Select(state, u32, Binary(state, spv::OpUGreaterThan, TypeBool(state), magnitude, ConstantU32(state, 0x7f800000u)), nan, Binary(state, spv::OpBitwiseAnd, u32, bits, ConstantU32(state, 0x7fffu)));

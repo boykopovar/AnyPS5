@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/LocaleMap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "locmap.h"
+#include "unicode/uloc.h"
 #include <cstdint>
 
 namespace {
@@ -28,6 +29,15 @@ std::uint32_t APS5_VABI uprv_convertToLCIDPlatform_nid_postfix(const char* local
 
 std::uint32_t APS5_VABI uprv_convertToLCID_nid_postfix(const char* languageID, const char* posixID, std::int32_t* error) {
     return uprv_convertToLCID(languageID, posixID, &Status(error));
+}
+
+std::uint32_t APS5_VABI uloc_getLCID_nid_postfix(const char* localeID) {
+    return uloc_getLCID(localeID);
+}
+
+std::int32_t APS5_VABI uloc_getLocaleForLCID_nid_postfix(std::uint32_t hostID, char* locale, std::int32_t capacity,
+                                                          std::int32_t* error) {
+    return uprv_convertToPosix_nid_postfix(hostID, locale, capacity, error);
 }
 
 }

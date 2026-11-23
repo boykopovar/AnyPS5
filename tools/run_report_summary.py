@@ -1,8 +1,11 @@
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
+
+DIAGNOSTIC_PREVIEW_LIMIT = 5
 
 def text(value):
     if not isinstance(value, str) or not value:
@@ -10,8 +13,34 @@ def text(value):
     return "".join(character if character.isprintable() else " " for character in value)
 
 
+def is_finite_number(value):
+    return type(value) is int or (type(value) is float and math.isfinite(value))
+
+
+def number_text(value):
+    return str(value) if is_finite_number(value) else "unknown"
+
+
 def count_text(value, noun):
-    return f"{value} {noun}{'' if value == 1 else 's'}"
+    return f"{number_text(value)} {noun}{'' if value == 1 else 's'}"
+
+
+def diagnostic_entries(report, section, key):
+    entries = report[section].get(key, [])
+    if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+        raise ValueError(f"report field '{section}.{key}' must be an array of objects")
+    return entries
+
+
+def total_count(items, key):
+    counts = [item.get(key, 0) for item in items if isinstance(item, dict)]
+    if any(not is_finite_number(count) for count in counts):
+        return None
+    try:
+        total = sum(counts)
+    except OverflowError:
+        return None
+    return total if is_finite_number(total) else None
 
 
 def render(report):
@@ -21,12 +50,17 @@ def render(report):
     for key in ("game", "system", "run", "coverage", "missing", "shaders", "truncated", "stop"):
         if not isinstance(report.get(key), dict):
             raise ValueError(f"report field {key!r} must be an object")
+    for key in ("milestones", "missing", "shaders", "unsupported"):
+        if type(report["coverage"].get(key)) is not bool:
+            raise ValueError(f"report field 'coverage.{key}' must be a boolean")
+    for key in ("recovered", "incomplete"):
+        if type(report["run"].get(key)) is not bool:
+            raise ValueError(f"report field 'run.{key}' must be a boolean")
 
     game = report["game"]
     system = report["system"]
     run = report["run"]
     coverage = report["coverage"]
-    missing = report["missing"]
     shaders = report["shaders"]
     truncated = report["truncated"]
     stop = report["stop"]
@@ -38,16 +72,17 @@ def render(report):
 
     result = text(run.get("exit"))
     if run.get("exitCode") is not None:
-        result += f" (exit code {run['exitCode']})"
+        result += f" (exit code {number_text(run['exitCode'])})"
     lines.append(f"Result: {result}")
-    lines.append(f"Progress: {text(run.get('stage'))} after {run.get('seconds', 'unknown')} seconds")
+    lines.append(f"Progress: {text(run.get('stage'))} after {number_text(run.get('seconds'))} seconds")
 
     frames = run.get("framesPresented")
     if coverage.get("milestones"):
         frame_summary = count_text(frames, "frame") if isinstance(frames, int) and not isinstance(frames, bool) else "unknown frame count"
         fps = run.get("averageFps")
-        if isinstance(fps, (int, float)) and not isinstance(fps, bool):
-            frame_summary += f", {fps:.2f} average FPS"
+        if is_finite_number(fps):
+            fps_text = f"{fps}.00" if type(fps) is int else f"{fps:.2f}"
+            frame_summary += f", {fps_text} average FPS"
         elif isinstance(frames, int) and not isinstance(frames, bool) and frames > 1:
             frame_summary += ", average FPS unavailable"
         lines.append(f"Rendering: {frame_summary}")
@@ -56,11 +91,12 @@ def render(report):
 
     gpu = system.get("gpu")
     gpu_name = gpu.get("name") if isinstance(gpu, dict) else None
-    system_summary = [text(system.get("os")).capitalize(), text(system.get("osVersion"))]
+    os_name = text(system.get("os"))
+    system_summary = [{"linux": "Linux", "windows": "Windows", "macos": "macOS"}.get(os_name, os_name), text(system.get("osVersion"))]
     if system.get("cpu"):
         system_summary.append(text(system["cpu"]))
     if system.get("ramGiB") is not None:
-        system_summary.append(f"{system['ramGiB']} GiB RAM")
+        system_summary.append(f"{number_text(system['ramGiB'])} GiB RAM")
     if gpu_name:
         system_summary.append(text(gpu_name))
     lines.append("System: " + ", ".join(system_summary))
@@ -73,30 +109,35 @@ def render(report):
     lines.append(f"Stop: {stop_summary}")
 
     if coverage.get("missing"):
-        functions = missing.get("functions", [])
-        calls = sum(item.get("calls", 0) for item in functions if isinstance(item, dict))
+        functions = diagnostic_entries(report, "missing", "functions")
+        calls = total_count(functions, "calls")
         lines.append(f"Missing functions: {count_text(calls, 'call')} across {count_text(len(functions), 'function')}")
-        for item in functions[:5]:
-            if isinstance(item, dict):
-                library = text(item.get("library"))
-                lines.append(f"  - {library}::{text(item.get('name'))} ({count_text(item.get('calls', 0), 'call')})")
+        for item in functions[:DIAGNOSTIC_PREVIEW_LIMIT]:
+            library = text(item.get("library"))
+            lines.append(f"  - {library}::{text(item.get('name'))} ({count_text(item.get('calls', 0), 'call')})")
+        if len(functions) > DIAGNOSTIC_PREVIEW_LIMIT:
+            remaining = len(functions) - DIAGNOSTIC_PREVIEW_LIMIT
+            lines.append(f"  - {remaining} more function{'' if remaining == 1 else 's'} in the full report")
         if truncated.get("functions", 0):
             lines.append(f"  - {count_text(truncated['functions'], 'additional function')} omitted")
     else:
         lines.append("Missing functions: not collected")
 
     if coverage.get("shaders"):
-        lines.append(f"Shaders: {shaders.get('compiled', 0)} compiled, {count_text(shaders.get('failed', 0), 'failure')}")
+        lines.append(f"Shaders: {number_text(shaders.get('compiled', 0))} compiled, {count_text(shaders.get('failed', 0), 'failure')}")
     else:
         lines.append("Shaders: compilation data was not collected")
     if coverage.get("unsupported"):
-        unsupported = shaders.get("unsupported", [])
-        total = sum(item.get("count", 0) for item in unsupported if isinstance(item, dict))
+        unsupported = diagnostic_entries(report, "shaders", "unsupported")
+        total = total_count(unsupported, "count")
         lines.append(f"Unsupported shader instructions: {count_text(total, 'occurrence')} across {count_text(len(unsupported), 'instruction')}")
-        for item in unsupported[:5]:
-            if isinstance(item, dict):
-                instruction = item.get("opcode") or item.get("opcodeValue") or "unknown instruction"
-                lines.append(f"  - {text(item.get('encoding'))}: {text(str(instruction))} ({count_text(item.get('count', 0), 'occurrence')})")
+        for item in unsupported[:DIAGNOSTIC_PREVIEW_LIMIT]:
+            opcode_value = item.get("opcodeValue")
+            instruction = item.get("opcode") or (opcode_value if opcode_value is not None else "unknown instruction")
+            lines.append(f"  - {text(item.get('encoding'))}: {text(str(instruction))} ({count_text(item.get('count', 0), 'occurrence')})")
+        if len(unsupported) > DIAGNOSTIC_PREVIEW_LIMIT:
+            remaining = len(unsupported) - DIAGNOSTIC_PREVIEW_LIMIT
+            lines.append(f"  - {remaining} more instruction{'' if remaining == 1 else 's'} in the full report")
         if truncated.get("unsupported", 0):
             lines.append(f"  - {count_text(truncated['unsupported'], 'additional instruction')} omitted")
     else:
@@ -113,11 +154,14 @@ def render(report):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Print a readable summary of a local AnyPS5 run report.")
     parser.add_argument("report", type=Path, help="path to anyps5-report.json")
     args = parser.parse_args()
     try:
-        report = json.loads(args.report.read_text(encoding="utf-8"))
+        report = json.loads(args.report.read_text(encoding="utf-8-sig"))
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8")
         print(render(report))

@@ -74,8 +74,8 @@ void Driver::deferCompletion(const Submission& submission) {
     completionDeferred() = true;
     static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
     if (traceGpu) std::fprintf(stderr, "[gpu] %.1f deferred completion serial=%llu to the draw pipeline\n", TraceMs(), static_cast<unsigned long long>(submission.serial));
-    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Completion, [this, serial = submission.serial, received, labelWrites = submission.labelWrites, progress = submission.progress, holdsFlip = submission.holdsFlip] {
-        completeSubmission(serial, received, labelWrites, progress, holdsFlip);
+    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Completion, [this, serial = submission.serial, received, labelWrites = submission.labelWrites, progress = submission.progress, flipWork = submission.holdsFlip ? submission.flipWork : nullptr] {
+        completeSubmission(serial, received, labelWrites, progress, flipWork);
     }, {});
 }
 
@@ -107,7 +107,7 @@ std::uint64_t Driver::submitFlipWork(std::uint32_t queue) {
     return localDevice != nullptr ? localDevice->SubmitAndEpoch() : 0;
 }
 
-void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites, const std::shared_ptr<SubmissionProgress>& progress, bool holdsFlip) {
+void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites, const std::shared_ptr<SubmissionProgress>& progress, const std::shared_ptr<FlipWork>& flipWork) {
     struct Complete {
         Driver& driver;
         std::uint64_t serial, received;
@@ -125,7 +125,7 @@ void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, st
             if (notify) driver.changed.notify_all();
         }
     } complete{*this, serial, received, labelWrites};
-    if (holdsFlip) finishFlipWork(submitFlipWork(0));
+    if (flipWork != nullptr) finishFlipWork(flipWork, submitFlipWork(0));
     else submitOpenWork(progress);
 }
 
@@ -154,9 +154,13 @@ void Driver::reapCompletionLabels() {
 
 void Driver::run(std::uint32_t id) noexcept {
     onWorkerThread() = true;
+    epochQueue() = id;
     char role[32];
     std::snprintf(role, sizeof role, "queue worker 0x%x", id);
     PinWorkerThread(role);
+    char threadName[16];
+    std::snprintf(threadName, sizeof threadName, "qworker 0x%x", id);
+    NameDriverThread(threadName);
 
     GuestMemory::TagGpuLockThread(id);
     StartWorkerSampler(id);
@@ -225,7 +229,7 @@ void Driver::run(std::uint32_t id) noexcept {
                             const auto quietUntil = std::chrono::steady_clock::now() + IdleResultsQuietPeriod;
                             const auto idleEpochAtWait = idleEpoch.load(std::memory_order_acquire);
                             changed.wait_until(lock, quietUntil, [&] {
-                                return ready() || idleEpoch.load(std::memory_order_acquire) != idleEpochAtWait;
+                                return ready() || idleEpoch.load(std::memory_order_acquire) != idleEpochAtWait || completionsPending();
                             });
                             queue0Dormant.store(false, std::memory_order_relaxed);
                             if (ready()) break;
@@ -288,7 +292,8 @@ void Driver::run(std::uint32_t id) noexcept {
                         OrderHold hold{orderHolders};
                         const auto released = [&] { return failure || stopping || orderReleased(id, submission.received); };
                         StallWatch stall(id);
-                        while (!released() && !poll(released)) stall.Check("order behind queue 0 for event", submission.received, &lock);
+                        const auto wake = [&](const auto& done) { return changed.wait_for(lock, std::chrono::microseconds(200), done); };
+                        while (!released() && !wake(released)) stall.Check("order behind queue 0 for event", submission.received, &lock);
                     }
                     rethrowFailure();
                 }

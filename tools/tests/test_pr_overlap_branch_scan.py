@@ -1,5 +1,6 @@
 import copy
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -33,11 +34,35 @@ def commit_on_base(base, message, files):
     return run("rev-parse", "HEAD")
 
 
-class BranchScanTests(unittest.TestCase):
+class RepositoryTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(directory.cleanup)
+        cls.template = Path(directory.name)
+        old = os.getcwd()
+        os.chdir(cls.template)
+        try:
+            cls.build()
+        finally:
+            os.chdir(old)
+
     def setUp(self):
         self.old = os.getcwd()
         self.tmp = tempfile.TemporaryDirectory()
-        os.chdir(self.tmp.name)
+        root = Path(self.tmp.name) / "repository"
+        shutil.copytree(self.template, root, symlinks=True)
+        os.chdir(root)
+        self.prs = copy.deepcopy(self.template_prs)
+
+    def tearDown(self):
+        os.chdir(self.old)
+        self.tmp.cleanup()
+
+
+class BranchScanTests(RepositoryTestCase):
+    @classmethod
+    def build(cls):
         run("init", "-q")
         run("config", "core.safecrlf", "false")
         for name in ("a.txt", "b.txt", "c.txt"):
@@ -56,12 +81,8 @@ class BranchScanTests(unittest.TestCase):
         }
         for number, sha in numbers.items():
             run("update-ref", f"refs/pr/{number}", sha)
-        self.prs = {n: {"ref": f"refs/pr/{n}", "sha": sha, "author": f"author{n}", "depends": set()} for n, sha in numbers.items()}
-        self.prs[0] = {"ref": branch, "author": None, "depends": set()}
-
-    def tearDown(self):
-        os.chdir(self.old)
-        self.tmp.cleanup()
+        cls.template_prs = {n: {"ref": f"refs/pr/{n}", "sha": sha, "author": f"author{n}", "depends": set()} for n, sha in numbers.items()}
+        cls.template_prs[0] = {"ref": branch, "author": None, "depends": set()}
 
     def test_reports_match_a_scan_of_every_pull_request(self):
         everything = copy.deepcopy(self.prs)
@@ -169,21 +190,17 @@ class BranchScanTests(unittest.TestCase):
         self.assertEqual(pr_overlap.overlaps(self.prs, 0, 5)["exports"], {"shared", "renamed"})
 
 
-class ExportSourceTests(unittest.TestCase):
-    def setUp(self):
-        self.old = os.getcwd()
-        self.tmp = tempfile.TemporaryDirectory()
-        os.chdir(self.tmp.name)
+class ExportSourceTests(RepositoryTestCase):
+    template_prs = {}
+
+    @classmethod
+    def build(cls):
         run("init", "-q")
         run("config", "core.safecrlf", "false")
         write("core/libs/prx/lib/Existing.cpp", "int Existing() { return 0; }\n")
         run("add", "-A")
         run("commit", "-q", "-m", "base")
         run("update-ref", "refs/pr/base", run("rev-parse", "HEAD"))
-
-    def tearDown(self):
-        os.chdir(self.old)
-        self.tmp.cleanup()
 
     def test_callbacks_in_test_directories_are_not_export_candidates(self):
         base = run("rev-parse", "refs/pr/base")

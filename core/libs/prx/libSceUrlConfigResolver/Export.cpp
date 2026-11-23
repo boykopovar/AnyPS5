@@ -50,9 +50,10 @@ int APS5_VABI sceUrlConfigResolverGetDefaultQueryParameter() {
     return 0;
 }
 
-int APS5_VABI sceUrlConfigResolverGetDeviceId() {
+int APS5_VABI sceUrlConfigResolverGetDeviceId(char* buffer, std::uint32_t size, std::uint32_t* length) {
+    if (buffer != nullptr) ZeroGuest(buffer, size, __func__);
+    if (length != nullptr) StoreGuest(length, 0, __func__);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceUrlConfigResolverGetJscHeapSizeSoftLimit(std::uint32_t* limit) {
@@ -60,14 +61,16 @@ int APS5_VABI sceUrlConfigResolverGetJscHeapSizeSoftLimit(std::uint32_t* limit) 
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceUrlConfigResolverGetReleaseVersion() {
+int APS5_VABI sceUrlConfigResolverGetReleaseVersion(char* buffer, std::uint32_t size, std::uint32_t* length) {
+    if (buffer != nullptr) ZeroGuest(buffer, size, __func__);
+    if (length != nullptr) StoreGuest(length, 0, __func__);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
-int APS5_VABI sceUrlConfigResolverGetSysVer() {
+int APS5_VABI sceUrlConfigResolverGetSysVer(char* buffer, std::uint32_t size, std::uint32_t* length) {
+    if (buffer != nullptr) ZeroGuest(buffer, size, __func__);
+    if (length != nullptr) StoreGuest(length, 0, __func__);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 bool APS5_VABI sceUrlConfigResolverIsUpdated() {

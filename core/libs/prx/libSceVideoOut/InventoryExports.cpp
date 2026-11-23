@@ -86,7 +86,23 @@ int APS5_VABI sceVideoOutConfigureOutputModeEx_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutConfigureOutputMode_() {
+int APS5_VABI sceVideoOutConfigureOutputMode_(int handle, std::uint32_t reserved, const void* mode, std::uint64_t forwarded, std::uint64_t unused, std::uint32_t size) {
+    (void)unused;
+    if (mode == nullptr || reserved != 0 || size != 0x10) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    if (!VideoOutDriver::Get().HasConfig(handle) || !VideoOutDriver::Get().IsOpen(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (VideoOutDriver::Get().GetConfig(handle)->busType != VIDEO_OUT_BUS_TYPE_MAIN) NotImplemented_nid_no_patch(__func__);
+    std::uint32_t recordSize;
+    std::uint64_t field8;
+    std::uint64_t field10;
+    const auto* bytes = static_cast<const std::uint8_t*>(mode);
+    std::memcpy(&recordSize, bytes, sizeof(recordSize));
+    std::memcpy(&field8, bytes + 8, sizeof(field8));
+    std::memcpy(&field10, bytes + 0x10, sizeof(field10));
+    if (field10 == 0xffffffff21ffffffull && (field8 == 13 || field8 == 16 || field8 == 18)) NotImplemented_nid_no_patch(__func__);
+    if (recordSize != 0x20) return VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE;
+    bool anyMode = forwarded == 0;
+    for (int offset = 4; anyMode && offset < 0x20; ++offset) anyMode = bytes[offset] == 0xff;
+    if (anyMode) return 0;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -198,7 +214,11 @@ int APS5_VABI sceVideoOutGetDeviceInfoExOts_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutGetDeviceInfoEx_() {
+int APS5_VABI sceVideoOutGetDeviceInfoEx_(int handle, const void* reserved, void* info, std::uint32_t size) {
+    if (size != 0x18) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    if (!VideoOutDriver::Get().HasConfig(handle) || !VideoOutDriver::Get().IsOpen(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (reserved != nullptr) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    if (info == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -295,8 +315,23 @@ int APS5_VABI sceVideoOutSetBlankAfterResume() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSetContentType() {
-    NotImplemented_nid_no_patch(__func__);
+static bool ValidContentRecord(const std::uint8_t* record) {
+    static constexpr std::uint8_t reserved[0x30]{};
+    std::uint16_t mode;
+    std::uint32_t flags;
+    std::memcpy(&mode, record, sizeof(mode));
+    std::memcpy(&flags, record + 8, sizeof(flags));
+    return mode <= 0x1c && (record[2] < 5 || record[2] == 0xff) &&
+           (record[3] == 0 || record[3] == 2) && record[4] <= 1 && flags <= 0xf &&
+           std::memcmp(record + 0x10, reserved, sizeof(reserved)) == 0;
+}
+
+int APS5_VABI sceVideoOutSetContentType(std::uint32_t type, void* record) {
+    if (!record) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    auto* bytes = static_cast<std::uint8_t*>(record);
+    if (type > 4 || !ValidContentRecord(bytes)) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    bytes[2] = static_cast<std::uint8_t>(type);
+    return 0;
 }
 
 int APS5_VABI sceVideoOutSetDisplayEventPosition() {
@@ -918,8 +953,12 @@ int APS5_VABI sceVideoOutPostProcessorRemoveCallback() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSetContentDynamicRange() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSetContentDynamicRange(std::uint32_t range, void* record) {
+    if (!record) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    auto* bytes = static_cast<std::uint8_t*>(record);
+    if (range > 1 || !ValidContentRecord(bytes)) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    bytes[4] = static_cast<std::uint8_t>(range);
+    return 0;
 }
 
 int APS5_VABI sceVideoOutSysCursorSetSize() {

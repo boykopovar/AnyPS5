@@ -49,6 +49,9 @@ namespace {
 #if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
 constexpr std::uintptr_t PageBytes = 4096;
 
+char g_unavailableReason[192];
+thread_local char t_registrationFailure[192];
+
 class Watch {
 public:
     static Watch& Get() {
@@ -62,6 +65,7 @@ public:
 
     void Register(std::uintptr_t begin, std::uintptr_t end) {
         if (!Available() || end <= begin) return;
+        t_registrationFailure[0] = '\0';
         std::unique_lock lock(_lock);
         remove(_ranges, begin, end);
         remove(_fresh, begin, end);
@@ -71,15 +75,21 @@ public:
         registration.range.len = end - begin;
         registration.mode = UFFDIO_REGISTER_MODE_WP;
         if (ioctl(_uffd, UFFDIO_REGISTER, &registration) != 0) {
+            const int error = errno;
+            std::snprintf(t_registrationFailure, sizeof(t_registrationFailure), "UFFDIO_REGISTER of 0x%llx+0x%llx failed (%s, errno %d)", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), std::strerror(error), error);
             static bool reported = false;
             if (!reported) {
                 reported = true;
-                std::fprintf(stderr, "[memory] write watch: cannot register 0x%llx+0x%llx (%s); the range stays unwatched\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), std::strerror(errno));
+                std::fprintf(stderr, "[memory] write watch: cannot register 0x%llx+0x%llx (%s); the range stays unwatched\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), std::strerror(error));
             }
             return;
         }
         insert(_ranges, begin, end);
         insert(_fresh, begin, end);
+    }
+
+    static const char* RegistrationFailure() {
+        return t_registrationFailure;
     }
 
     bool Unregister(std::uintptr_t begin, std::uintptr_t end) {
@@ -348,30 +358,38 @@ private:
 private:
     Watch() {
         if (std::getenv("APS5_NO_WRITE_WATCH") == nullptr) open();
+        else std::snprintf(g_unavailableReason, sizeof(g_unavailableReason), "disabled by APS5_NO_WRITE_WATCH");
     }
 
     void open() {
         _uffd = static_cast<int>(syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK));
         if (_uffd < 0 && errno == EPERM) _uffd = static_cast<int>(syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY));
-        if (_uffd < 0) return unavailable("userfaultfd");
+        if (_uffd < 0) return unavailable("userfaultfd", errno);
         uffdio_api api{};
         api.api = UFFD_API;
         api.features = UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_UNPOPULATED;
-        if (ioctl(_uffd, UFFDIO_API, &api) != 0 || (api.features & UFFD_FEATURE_WP_ASYNC) == 0 || (api.features & UFFD_FEATURE_WP_UNPOPULATED) == 0) return unavailable("asynchronous userfaultfd write protection");
+        if (ioctl(_uffd, UFFDIO_API, &api) != 0) return unavailable("asynchronous userfaultfd write protection", errno);
+        if ((api.features & UFFD_FEATURE_WP_ASYNC) == 0 || (api.features & UFFD_FEATURE_WP_UNPOPULATED) == 0) return unavailable("asynchronous userfaultfd write protection (UFFD_FEATURE_WP_ASYNC and UFFD_FEATURE_WP_UNPOPULATED)", 0);
         const int pagemap = ::open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
-        if (pagemap < 0) return unavailable("/proc/self/pagemap");
+        if (pagemap < 0) return unavailable("/proc/self/pagemap", errno);
         if (!probe(pagemap)) {
+            const int error = errno;
             close(pagemap);
-            return unavailable("PAGEMAP_SCAN");
+            return unavailable("PAGEMAP_SCAN", error);
         }
         _pagemap = pagemap;
     }
 
-    void unavailable(const char* what) {
-        const int error = errno;
+    void unavailable(const char* what, int error) {
         if (_uffd >= 0) close(_uffd);
         _uffd = -1;
-        std::fprintf(stderr, "[memory] write watch unavailable: %s failed (%s); guest memory is compared instead\n", what, std::strerror(error));
+        if (error != 0) {
+            std::snprintf(g_unavailableReason, sizeof(g_unavailableReason), "%s failed (%s, errno %d); the running kernel needs PAGEMAP_SCAN and asynchronous userfaultfd write protection (Linux 6.7 or newer)", what, std::strerror(error), error);
+            std::fprintf(stderr, "[memory] write watch unavailable: %s failed (%s); guest memory is compared instead\n", what, std::strerror(error));
+        } else {
+            std::snprintf(g_unavailableReason, sizeof(g_unavailableReason), "%s is not offered by the running kernel; it needs PAGEMAP_SCAN and asynchronous userfaultfd write protection (Linux 6.7 or newer)", what);
+            std::fprintf(stderr, "[memory] write watch unavailable: %s is not offered by the kernel; guest memory is compared instead\n", what);
+        }
     }
 
     bool protect(std::uintptr_t begin, std::uintptr_t end) const {
@@ -702,6 +720,7 @@ private:
     static constexpr std::uintptr_t FaultAheadBlock = 65536;
     static constexpr std::uint8_t ReadTrapped = 0x80;
     static constexpr std::size_t ResolveSlots = 32;
+    static constexpr std::size_t ResolvingCapacity = 4096;
     static constexpr std::size_t RetrySlots = 64;
     static constexpr unsigned UntrappedRetries = 16;
     static constexpr unsigned GenerationRetries = RetrySlots * UntrappedRetries;
@@ -858,8 +877,10 @@ private:
             auto* state = pageState(page);
             if (state == nullptr) return false;
             if ((*state & ReadTrapped) == 0) return retryUntrapped(page, *state, write);
+            const bool own = resolvingCovers(page, page + _page, Owner::Self) || pthread_equal(pthread_self(), _resolverThread);
             const auto bypass = _bypass.load(std::memory_order_acquire);
-            if (resolvingCovers(page, page + _page, Owner::Self) || pthread_equal(pthread_self(), _resolverThread) || (bypass != nullptr && bypass()) || (!trapCovers(page, page + _page) && !resolvingCovers(page, page + _page, Owner::Any))) {
+            if (own || (bypass != nullptr && bypass()) || (!trapCovers(page, page + _page) && !resolvingCovers(page, page + _page, Owner::Any))) {
+                if (own) deferCovering(page);
                 *state = static_cast<std::uint8_t>(*state & ~ReadTrapped);
                 ++_untrapGeneration;
                 return ::mprotect(reinterpret_cast<void*>(page), _page, untrappedProtection(*state)) == 0;
@@ -885,6 +906,8 @@ private:
     }
 
     void startResolver() {
+        _resolving.reserve(ResolvingCapacity);
+        _deferred.reserve(ResolvingCapacity);
         if (semaphore_create(mach_task_self(), &_wake, SYNC_POLICY_FIFO, 0) != KERN_SUCCESS) return;
         for (auto& slot : _slots)
             if (semaphore_create(mach_task_self(), &slot.done, SYNC_POLICY_FIFO, 0) != KERN_SUCCESS) return;
@@ -930,12 +953,42 @@ private:
         if (taken.empty()) return;
         const auto resolver = _resolver.load(std::memory_order_acquire);
         for (const auto& [first, last] : taken) resolver(first, last);
+        for (;;) {
+            std::pair<std::uintptr_t, std::uintptr_t> deferred;
+            {
+                const Lock lock(_lock);
+                const auto found = std::find_if(_deferred.begin(), _deferred.end(), [&](const Resolving& entry) { return pthread_equal(entry.owner, self); });
+                if (found == _deferred.end()) break;
+                deferred = {found->begin, found->end};
+                _deferred.erase(found);
+                auto [first, last] = _traps.equal_range(deferred.first);
+                while (first != last && first->second != deferred.second) ++first;
+                if (first == last) {
+                    const auto entry = std::find_if(_resolving.begin(), _resolving.end(), [&](const Resolving& resolving) { return resolving.begin == deferred.first && resolving.end == deferred.second && pthread_equal(resolving.owner, self); });
+                    if (entry != _resolving.end()) _resolving.erase(entry);
+                    continue;
+                }
+                _traps.erase(first);
+            }
+            taken.push_back(deferred);
+            resolver(deferred.first, deferred.second);
+        }
         const Lock lock(_lock);
         for (const auto& [first, last] : taken) {
             const auto found = std::find_if(_resolving.begin(), _resolving.end(), [&](const Resolving& entry) { return entry.begin == first && entry.end == last && pthread_equal(entry.owner, self); });
             if (found != _resolving.end()) _resolving.erase(found);
         }
         for (const auto& [first, last] : taken) untrap(first, last);
+    }
+
+    void deferCovering(std::uintptr_t page) {
+        const auto self = pthread_self();
+        for (auto it = _traps.begin(); it != _traps.end() && it->first < page + _page; ++it) {
+            if (it->second <= page || _deferred.size() == _deferred.capacity() || _resolving.size() == _resolving.capacity()) continue;
+            if (std::any_of(_deferred.begin(), _deferred.end(), [&](const Resolving& entry) { return entry.begin == it->first && entry.end == it->second; })) continue;
+            _resolving.push_back({it->first, it->second, self});
+            _deferred.push_back({it->first, it->second, self});
+        }
     }
 
     void waitForResolving(std::uintptr_t begin, std::uintptr_t end) {
@@ -988,21 +1041,15 @@ private:
 
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> takeTraps(std::uintptr_t begin, std::uintptr_t end) {
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> taken;
-        auto first = pageStart(begin);
-        auto last = pageEnd(end);
-        for (bool grew = true; grew;) {
-            grew = false;
-            for (auto it = _traps.begin(); it != _traps.end();) {
-                if (it->first >= last || it->second <= first) {
-                    ++it;
-                    continue;
-                }
-                first = std::min(first, pageStart(it->first));
-                last = std::max(last, pageEnd(it->second));
-                taken.emplace_back(*it);
-                it = _traps.erase(it);
-                grew = true;
+        const auto first = pageStart(begin);
+        const auto last = pageEnd(end);
+        for (auto it = _traps.begin(); it != _traps.end();) {
+            if (it->first >= last || it->second <= first) {
+                ++it;
+                continue;
             }
+            taken.emplace_back(*it);
+            it = _traps.erase(it);
         }
         return taken;
     }
@@ -1129,6 +1176,7 @@ private:
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _hostWrites;
     std::multimap<std::uintptr_t, std::uintptr_t> _traps;
     std::vector<Resolving> _resolving;
+    std::vector<Resolving> _deferred;
     std::array<Retry, RetrySlots> _retries{};
     std::uint64_t _retryUses = 0;
     std::uint64_t _retryGeneration = 0;
@@ -1156,6 +1204,16 @@ bool GuestWriteWatchAvailable_nid_postfix() {
     return Watch::Get().Available();
 #else
     return false;
+#endif
+}
+
+const char* GuestWriteWatchUnavailableReason_nid_postfix() {
+#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
+    return Watch::Get().Available() ? Watch::Get().RegistrationFailure() : g_unavailableReason;
+#elif defined(__linux__)
+    return "this build has no PAGEMAP_SCAN or UFFD_FEATURE_WP_ASYNC: its kernel headers are older than Linux 6.7";
+#else
+    return "";
 #endif
 }
 

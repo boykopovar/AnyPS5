@@ -12,11 +12,11 @@ namespace {
 constexpr int Dynamic = 0x01;
 constexpr int DynamicStrings = 0x04;
 constexpr int DynamicData = 0x08;
+constexpr unsigned char WipeTail[] {0x71, 0x82};
 
 const unsigned char* wipedData;
 std::size_t wipedLength;
 bool wipeChecked;
-bool tailChecked;
 int freeCalls;
 
 void Require(bool condition, const char* message) {
@@ -30,6 +30,14 @@ void* Allocate(std::size_t size) {
     if (!pointer) std::abort();
     std::memset(pointer, 0xA5, size);
     return pointer;
+}
+
+unsigned char* AllocateDataForWipe(std::size_t length) {
+    auto* data = static_cast<unsigned char*>(Allocate(length + sizeof(WipeTail)));
+    std::memcpy(data + length, WipeTail, sizeof(WipeTail));
+    wipedData = data;
+    wipedLength = length;
+    return data;
 }
 
 Asn1Object_nid_no_patch* AllocateObject(int flags, int length, const unsigned char* data, const char* shortName, const char* longName) {
@@ -47,7 +55,6 @@ void Reset() {
     wipedData = nullptr;
     wipedLength = 0;
     wipeChecked = false;
-    tailChecked = false;
     freeCalls = 0;
 }
 
@@ -72,27 +79,23 @@ void TestDynamicStringsAndData() {
     Reset();
     auto* shortName = static_cast<char*>(Allocate(3));
     auto* longName = static_cast<char*>(Allocate(4));
-    auto* data = static_cast<unsigned char*>(Allocate(6));
-    data[4] = 0x71;
-    data[5] = 0x82;
-    wipedData = data;
-    wipedLength = 4;
+    auto* data = AllocateDataForWipe(4);
     auto* object = AllocateObject(Dynamic | DynamicStrings | DynamicData, 4, data, shortName, longName);
     ASN1_OBJECT_free_nid_postfix(object);
     Require(freeCalls == 4, "dynamic object frees both names, OID data, and itself");
     Require(wipeChecked, "OID bytes are zeroed before their allocation is freed");
-    Require(tailChecked, "OID free leaves bytes beyond the encoded data length unchanged");
 }
 
 void TestDynamicDataWithoutDynamicObject() {
-    Reset();
-    auto* data = static_cast<unsigned char*>(Allocate(2));
-    wipedData = data;
-    wipedLength = 2;
-    Asn1Object_nid_no_patch object {nullptr, nullptr, 7, 2, data, DynamicData};
-    ASN1_OBJECT_free_nid_postfix(&object);
-    Require(freeCalls == 1 && wipeChecked, "dynamic data is erased and freed independently of the object");
-    Require(object.data == nullptr && object.length == 0, "freed data fields are cleared");
+    constexpr int lengths[] {2, 4095, 4096, 4097, 8199};
+    for (const int length : lengths) {
+        Reset();
+        auto* data = AllocateDataForWipe(static_cast<std::size_t>(length));
+        Asn1Object_nid_no_patch object {nullptr, nullptr, 7, length, data, DynamicData};
+        ASN1_OBJECT_free_nid_postfix(&object);
+        Require(freeCalls == 1 && wipeChecked, "dynamic data is erased and freed independently of the object");
+        Require(object.data == nullptr && object.length == 0, "freed data fields are cleared");
+    }
 }
 
 void TestNegativeDataLength() {
@@ -122,12 +125,13 @@ void TestNegativeLengthWithoutData() {
 extern "C" {
 
 void APS5_VABI free_nid_postfix(void* pointer) {
-    if (pointer == wipedData) {
+    if (wipedData && pointer == wipedData) {
         const auto* bytes = static_cast<const unsigned char*>(pointer);
         for (std::size_t index = 0; index < wipedLength; ++index)
-            if (bytes[index] != 0) std::abort();
+            Require(bytes[index] == 0, "OID free zeroes all declared data bytes");
+        Require(std::memcmp(bytes + wipedLength, WipeTail, sizeof(WipeTail)) == 0, "OID free preserves the trailing sentinels");
         wipeChecked = true;
-        if (wipedLength == 4) tailChecked = bytes[4] == 0x71 && bytes[5] == 0x82;
+        wipedData = nullptr;
     }
     ++freeCalls;
     std::free(pointer);

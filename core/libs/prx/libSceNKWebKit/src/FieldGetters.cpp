@@ -484,15 +484,15 @@ std::uint32_t APS5_VABI _ZNK9Inspector15ScriptArguments13argumentCountEv(const v
 }
 
 std::uint32_t APS5_VABI _ZNK9Inspector15ScriptCallFrame10lineNumberEv(const void* self) {
-    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x14);
+    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x1c);
 }
 
 std::uint32_t APS5_VABI _ZNK9Inspector15ScriptCallFrame12columnNumberEv(const void* self) {
-    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x18);
+    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x20);
 }
 
 std::uint32_t APS5_VABI _ZNK9Inspector15ScriptCallFrame8sourceIDEv(const void* self) {
-    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x10);
+    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x18);
 }
 
 std::uint32_t APS5_VABI _ZNK9Inspector15ScriptCallStack4sizeEv(const void* self) {
@@ -506,10 +506,6 @@ std::uint32_t APS5_VABI _ZNK9Inspector24RemoteControllableTarget16targetIdentifi
 
 std::uint64_t APS5_VABI _ZNK7WebCore10ScrollView12contentsSizeEv(const void* self) {
     return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0xe0);
-}
-
-std::uint64_t APS5_VABI WKAuthenticationChallengeGetDecisionListener(const void* self) {
-    return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0x228);
 }
 
 std::uint64_t APS5_VABI WKAXObjectFrame(const void* self) {

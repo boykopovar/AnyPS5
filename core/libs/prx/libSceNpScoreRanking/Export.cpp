@@ -4,10 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include "SceTypes.hpp"
@@ -100,7 +100,11 @@ int CheckComment(int reqId, const char* comment, void* option) {
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (!comment) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (!KnownRequest(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    if (strnlen(comment, COMMENT_MAX_LENGTH + 1) > COMMENT_MAX_LENGTH) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::string copy;
+    const int savedErrno = errno;
+    const int status = CopyGuestString_nid_no_patch(comment, COMMENT_MAX_LENGTH + 1, copy);
+    errno = savedErrno;
+    if (status != 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return Offline(reqId);
 }
 
@@ -297,7 +301,13 @@ int APS5_VABI sceNpScorePollAsync(int reqId, int* result) {
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (!request->second.result) return POLL_RUNNING;
-    if (result) *result = *request->second.result;
+    if (result) {
+        const int value = *request->second.result;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return POLL_FINISHED;
 }
 
@@ -565,7 +575,13 @@ int APS5_VABI sceNpScoreWaitAsync(int reqId, int* result) {
         const auto request = requests.find(reqId);
         return request != requests.end() && request->second.result;
     });
-    if (result) *result = *requests.at(reqId).result;
+    if (result) {
+        const int value = *requests.at(reqId).result;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return 0;
 }
 

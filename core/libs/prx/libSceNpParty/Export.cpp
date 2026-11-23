@@ -26,20 +26,22 @@ std::atomic<void*> g_handlerCallback{nullptr};
 std::atomic<void*> g_privateHandler{nullptr};
 std::atomic<bool> g_handlerRegistered{false};
 
+bool CopyInGuestPreservingErrno(void* dst, const void* src, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = savedErrno;
+    return copied;
+}
+
 template <typename T>
 bool ReadGuest(const void* base, std::size_t offset, T& value) {
-    const int savedErrno = errno;
-    if (!GuestCopyIn_nid_no_patch(&value, static_cast<const std::uint8_t*>(base) + offset, sizeof(value))) {
-        errno = savedErrno;
-        return false;
-    }
-    return true;
+    return CopyInGuestPreservingErrno(&value, static_cast<const std::uint8_t*>(base) + offset, sizeof(value));
 }
 
 bool GuestRangeIsZero(const void* base, std::size_t offset, std::size_t bytes) {
     std::uint8_t buffer[0x200];
     if (bytes > sizeof(buffer)) return false;
-    if (!GuestCopyIn_nid_no_patch(buffer, static_cast<const std::uint8_t*>(base) + offset, bytes)) return false;
+    if (!CopyInGuestPreservingErrno(buffer, static_cast<const std::uint8_t*>(base) + offset, bytes)) return false;
     for (std::size_t i = 0; i < bytes; ++i) {
         if (buffer[i] != 0) return false;
     }
@@ -49,13 +51,13 @@ bool GuestRangeIsZero(const void* base, std::size_t offset, std::size_t bytes) {
 bool GuestBlobIsReadable(std::uint64_t address, std::size_t bytes) {
     std::uint8_t buffer[0x800];
     if (bytes > sizeof(buffer)) return false;
-    return GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(address), bytes);
+    return CopyInGuestPreservingErrno(buffer, reinterpret_cast<const void*>(address), bytes);
 }
 
 bool EntriesAreUnique(std::uint64_t address, std::uint8_t count, std::size_t entrySize) {
     std::uint8_t entries[16][0x14] = {};
     for (std::uint8_t i = 0; i < count; ++i) {
-        if (!GuestCopyIn_nid_no_patch(entries[i], reinterpret_cast<const void*>(address + static_cast<std::uint64_t>(i) * entrySize), entrySize)) return false;
+        if (!CopyInGuestPreservingErrno(entries[i], reinterpret_cast<const void*>(address + static_cast<std::uint64_t>(i) * entrySize), entrySize)) return false;
     }
     for (std::uint8_t i = 0; i < count; ++i) {
         for (std::uint8_t j = static_cast<std::uint8_t>(i + 1); j < count; ++j) {
@@ -251,9 +253,7 @@ int APS5_VABI sceNpPartyInitialize(const void* param) {
     std::lock_guard lock(g_handlerMutex);
     if (!param) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     std::uint32_t version = 0;
-    const int savedErrno = errno;
-    if (!GuestCopyIn_nid_no_patch(&version, param, sizeof(version))) {
-        errno = savedErrno;
+    if (!CopyInGuestPreservingErrno(&version, param, sizeof(version))) {
         return NP_PARTY_ERROR_INVALID_ARGUMENT;
     }
     if (version == 0) return NP_PARTY_ERROR_INVALID_ARGUMENT;
@@ -278,16 +278,13 @@ int APS5_VABI sceNpPartyLeave(std::uint16_t userId, const NpPartyLeaveParam* par
     if (userId == 0) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     if (param != nullptr) {
         NpPartyLeaveParam local = {};
-        const int savedErrno = errno;
-        if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) {
-            errno = savedErrno;
+        if (!CopyInGuestPreservingErrno(&local, param, sizeof(local))) {
             return NP_PARTY_ERROR_INVALID_ARGUMENT;
         }
         if (local.size > 0x800) return NP_PARTY_ERROR_INVALID_ARGUMENT;
         if (local.data != nullptr && local.size != 0) {
             std::uint8_t buffer[0x800];
-            if (!GuestCopyIn_nid_no_patch(buffer, local.data, local.size)) {
-                errno = savedErrno;
+            if (!CopyInGuestPreservingErrno(buffer, local.data, local.size)) {
                 return NP_PARTY_ERROR_INVALID_ARGUMENT;
             }
         }

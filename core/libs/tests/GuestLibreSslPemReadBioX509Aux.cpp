@@ -239,6 +239,29 @@ void CheckAllocationFailures() {
     }
 }
 
+int APS5_VABI OversizedGets(Bio*, char* buffer, int size) {
+    for (int i = 0; i < size; ++i) buffer[i] = 'a';
+    return size;
+}
+
+void CheckOversizedGetsLine() {
+    static const BioMethod method{0, "PEM test", nullptr, nullptr, nullptr, OversizedGets, nullptr, nullptr, nullptr, nullptr};
+    Bio bio{};
+    bio.method = &method;
+    bio.initialized = 1;
+    LibreSslX509 certificate{};
+    LibreSslX509* output = &certificate;
+    ERR_clear_error_nid_postfix();
+    bool caught = false;
+    try {
+        PEM_read_bio_X509_AUX_nid_postfix(&bio, &output, nullptr, nullptr);
+    } catch (...) {
+        caught = true;
+    }
+    Require(caught, "oversized BIO_gets return count throws");
+    Require(output == &certificate, "oversized BIO_gets leaves output unchanged");
+}
+
 }
 
 int main() {
@@ -250,5 +273,6 @@ int main() {
     CheckNullBio();
     CheckUninitializedBio();
     CheckAllocationFailures();
+    CheckOversizedGetsLine();
     return 0;
 }

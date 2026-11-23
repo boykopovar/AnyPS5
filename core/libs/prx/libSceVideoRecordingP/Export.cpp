@@ -1,10 +1,14 @@
 #include "prx/libSceVideoRecordingP/include/Api.hpp"
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <cstddef>
+#include <limits>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 
 static_assert(sizeof(VideoRecordingQueryParam) == 64);
 static_assert(offsetof(VideoRecordingQueryParam, mode) == 12);
@@ -26,12 +30,20 @@ static_assert(offsetof(VideoRecordingParam2, format) == 36);
 
 namespace {
 constexpr int SceVideoRecordingStatusNone = 0;
+constexpr int ErrorNotPresent = static_cast<int>(0x80a80001);
 constexpr int ErrorInvalidArgument = static_cast<int>(0x80a80003);
 constexpr int ErrorNotOpen = static_cast<int>(0x80a80006);
 constexpr int ErrorNoVideoFormat = static_cast<int>(0x80a80008);
 constexpr int MinimumHeapSize = 0x1000;
 constexpr std::uint64_t MinimumParamSize = 0x10;
 constexpr std::uint32_t MaximumDuration = 3600;
+constexpr std::uint32_t MaximumWidth = 16384;
+constexpr std::uint64_t MinimumParam2Size = 0x18;
+constexpr std::uint32_t MaximumHddDuration = 180;
+constexpr std::uint32_t SdkLateBase = 0x2000000;
+constexpr std::uint32_t SdkLargeHeap = 0x3500000;
+constexpr std::uint32_t SdkLateOffsets = 0x4500000;
+constexpr std::uint64_t AuthorityBit = 1ull << 62;
 
 bool IsVideoFormat(std::uint32_t format) {
  switch (format) {
@@ -46,6 +58,25 @@ bool IsVideoFormat(std::uint32_t format) {
  default:
   return false;
  }
+}
+
+std::uint8_t Limited(double value) {
+    const long rounded = std::lround(value);
+    return static_cast<std::uint8_t>(std::clamp(rounded, 16L, 240L));
+}
+
+double Luma(double red, double green, double blue) {
+    return 16.0 + 219.0 * (0.2126 * red + 0.7152 * green + 0.0722 * blue);
+}
+
+double BlueDifference(double red, double green, double blue) {
+    const double luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    return 128.0 + 224.0 * (blue - luma) / 1.8556;
+}
+
+double RedDifference(double red, double green, double blue) {
+    const double luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    return 128.0 + 224.0 * (red - luma) / 1.5748;
 }
 
 int CheckParam(const VideoRecordingParam* param) {
@@ -75,6 +106,32 @@ int CheckParam(const VideoRecordingParam* param) {
     if (format == 0) return ErrorNoVideoFormat;
     return 0;
 }
+
+int ReadDuration2(const VideoRecordingParam2* param, std::uint32_t* duration) {
+    if (param == nullptr) return ErrorInvalidArgument;
+    std::uint64_t size = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&size, &param->size, sizeof(size)) && size >= MinimumParam2Size &&
+        GuestCopyIn_nid_no_patch(duration, &param->duration, sizeof(*duration));
+    errno = savedErrno;
+    return readable ? 0 : ErrorInvalidArgument;
+}
+
+std::uint32_t CompiledSdkVersion() {
+    std::int32_t version = 0;
+    if (sceKernelGetCompiledSdkVersion(&version) != 0) return 0xffffffffu;
+    return static_cast<std::uint32_t>(version);
+}
+
+int Authority() {
+    KernelAuthInfo info{};
+    if (get_authinfo_nid_postfix(0, &info) != 0) return -1;
+    return (info.capabilities[0] & AuthorityBit) != 0 ? 1 : 0;
+}
+
+bool LargeRecorder() {
+    return Authority() == 1 || sceKernelIsNeoMode() == 1;
+}
 }
 
 extern "C" {
@@ -97,12 +154,58 @@ int APS5_VABI sceVideoRecordingCloseByHandle(VideoRecordingContext* handle, int 
 }
 
 int APS5_VABI sceVideoRecordingCopyBGRAtoNV12(void* dst, const void* src, uint32_t width, uint32_t height) {
- (void)dst;
- (void)src;
- (void)width;
- (void)height;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (dst == nullptr || src == nullptr || width == 0 || height == 0) return ErrorInvalidArgument;
+    if (width > MaximumWidth) return ErrorInvalidArgument;
+    if ((width & 1u) != 0 || (height & 1u) != 0) return ErrorInvalidArgument;
+    const std::uint64_t pixels = static_cast<std::uint64_t>(width) * height;
+    if (pixels > std::numeric_limits<std::size_t>::max() / 4) return ErrorInvalidArgument;
+    const std::size_t rowBytes = static_cast<std::size_t>(width) * 4;
+    const std::size_t chromaBase = static_cast<std::size_t>(pixels);
+    std::vector<std::uint8_t> evenRow(rowBytes);
+    std::vector<std::uint8_t> oddRow(rowBytes);
+    std::vector<std::uint8_t> lumaRow(width);
+    std::vector<std::uint8_t> chromaRow(width);
+    auto* const destination = static_cast<std::uint8_t*>(dst);
+    const auto* const source = static_cast<const std::uint8_t*>(src);
+    const int savedErrno = errno;
+    for (std::uint32_t row = 0; row < height; ++row) {
+        std::vector<std::uint8_t>& input = (row & 1u) == 0 ? evenRow : oddRow;
+        if (!GuestCopyIn_nid_no_patch(input.data(), source + static_cast<std::size_t>(row) * rowBytes, rowBytes)) {
+            errno = savedErrno;
+            return ErrorInvalidArgument;
+        }
+        for (std::uint32_t column = 0; column < width; ++column) {
+            const std::size_t offset = static_cast<std::size_t>(column) * 4;
+            lumaRow[column] = Limited(Luma(input[offset + 2] / 255.0, input[offset + 1] / 255.0, input[offset] / 255.0));
+        }
+        if (!GuestCopyOut_nid_no_patch(destination + static_cast<std::size_t>(row) * width, lumaRow.data(), width)) {
+            errno = savedErrno;
+            return ErrorInvalidArgument;
+        }
+        if ((row & 1u) == 0) continue;
+        for (std::uint32_t column = 0; column < width; column += 2) {
+            double blueDifference = 0.0;
+            double redDifference = 0.0;
+            for (const auto* plane : {&evenRow, &oddRow}) {
+                for (std::uint32_t dx = 0; dx < 2; ++dx) {
+                    const std::size_t offset = static_cast<std::size_t>(column + dx) * 4;
+                    const double blue = (*plane)[offset] / 255.0;
+                    const double green = (*plane)[offset + 1] / 255.0;
+                    const double red = (*plane)[offset + 2] / 255.0;
+                    blueDifference += BlueDifference(red, green, blue);
+                    redDifference += RedDifference(red, green, blue);
+                }
+            }
+            chromaRow[column] = Limited(blueDifference / 4.0);
+            chromaRow[column + 1] = Limited(redDifference / 4.0);
+        }
+        if (!GuestCopyOut_nid_no_patch(destination + chromaBase + static_cast<std::size_t>(row / 2) * width, chromaRow.data(), width)) {
+            errno = savedErrno;
+            return ErrorInvalidArgument;
+        }
+    }
+    errno = savedErrno;
+    return 0;
 }
 
 int APS5_VABI sceVideoRecordingGetInfo(std::int32_t info, void*, std::size_t) {
@@ -174,9 +277,11 @@ int APS5_VABI sceVideoRecordingOpen2(const char* path, const VideoRecordingParam
 }
 
 std::int64_t APS5_VABI sceVideoRecordingQueryHddSize2(const VideoRecordingParam2* param) {
- (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    std::uint32_t duration = 0;
+    if (const int status = ReadDuration2(param, &duration); status < 0) return status;
+    if (duration > MaximumHddDuration) return ErrorInvalidArgument;
+    const std::int64_t factor = LargeRecorder() ? 20 : 14;
+    return static_cast<std::int64_t>(std::max(duration, 10u)) * factor * 0x20000;
 }
 
 int APS5_VABI sceVideoRecordingQueryMemSize(const VideoRecordingParam* param) {
@@ -186,15 +291,20 @@ int APS5_VABI sceVideoRecordingQueryMemSize(const VideoRecordingParam* param) {
 }
 
 int APS5_VABI sceVideoRecordingQueryMemSize2(const VideoRecordingParam2* param) {
- (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    std::uint32_t duration = 0;
+    if (const int status = ReadDuration2(param, &duration); status < 0) return status;
+    if (duration > MaximumDuration) return ErrorInvalidArgument;
+    const std::uint32_t sdk = CompiledSdkVersion();
+    const bool large = LargeRecorder();
+    const std::uint32_t extra = sdk < SdkLargeHeap ? 0x40000 : large ? 0xc0000 : 0x80000;
+    if (sdk < SdkLateBase) return static_cast<int>(duration * 0x278 + 0x22680 + extra);
+    const bool lateOffsets = sdk >= SdkLateOffsets;
+    if (sdk >= SdkLargeHeap && large) return static_cast<int>(duration * 0x2f0 + extra + (lateOffsets ? 0x4d220 : 0x3d220));
+    return static_cast<int>(duration * 0x278 + extra + (lateOffsets ? 0x45220 : 0x35220));
 }
 
-int APS5_VABI sceVideoRecordingRestModeProcessGetStatus(void* status) {
- (void)status;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceVideoRecordingRestModeProcessGetStatus(void) {
+ return static_cast<int>(0x80a80002);
 }
 
 int APS5_VABI sceVideoRecordingRestModeProcessStart(void* param) {
@@ -241,8 +351,20 @@ int APS5_VABI videoRecordingUnknown_iQS6DUtLybE(void) {
  return 0;
 }
 
-int APS5_VABI sceVideoRecordingGetCopyrightImageMemory() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoRecordingGetCopyrightImageMemory(void** addr, std::size_t* size) {
+    if (addr == nullptr || size == nullptr) {
+        return ErrorInvalidArgument;
+    }
+    const int savedErrno = errno;
+    void* outAddr = nullptr;
+    std::size_t outSize = 0;
+    if (!GuestCopyOut_nid_no_patch(addr, &outAddr, sizeof(outAddr)) ||
+        !GuestCopyOut_nid_no_patch(size, &outSize, sizeof(outSize))) {
+        errno = savedErrno;
+        return ErrorInvalidArgument;
+    }
+    errno = savedErrno;
+    return ErrorNotPresent;
 }
 
 int APS5_VABI sceVideoRecordingCloseWithTruncationByHandle() {

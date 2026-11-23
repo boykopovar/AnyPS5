@@ -1,6 +1,8 @@
 #include "prx/libSceIdu/libSceIdu.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -21,6 +23,8 @@ namespace {
 
 constexpr int invalidArgument = static_cast<int>(0xFFFFFF99u);
 constexpr int notInitialized = static_cast<int>(0xFFFFFF9Au);
+
+void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 void Require(bool value) {
     if (!value) std::abort();
@@ -97,6 +101,11 @@ int main() {
         Require(sceIduInstallPkg(nullptr, nullptr) == invalidArgument);
         Require(sceIduInstallPkg(any.data(), any.data()) == notInitialized);
 
+        Require(sceIduGetPkgInstallStatus(nullptr, any.data(), 0x220) == invalidArgument);
+        Require(sceIduGetPkgInstallStatus(name, nullptr, 0x220) == invalidArgument);
+        Require(sceIduGetPkgInstallStatus(name, any.data(), 0x21F) == invalidArgument);
+        Require(sceIduGetPkgInstallStatus(name, any.data(), 0x221) == invalidArgument);
+
         Require(sceIduGetTitleList(nullptr, 1) == invalidArgument);
         Require(sceIduGetTitleList(nullptr, -1) == invalidArgument);
         Require(sceIduGetTitleList(any.data(), 0) == invalidArgument);
@@ -139,12 +148,32 @@ int main() {
     }
 
     char* unreadable = UnreadablePage();
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
+    errno = 71;
+    Require(sceIduInit(any.data()) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceIduGetFsStats(fsStats.data()) == notInitialized);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceIduNotificationHide(name) == notInitialized);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceIduIsRifInstalled(name) == notInitialized);
+    Require(errno == 71);
+    errno = 71;
     RequireFault([&] { return sceIduInit(unreadable); });
+    Require(errno == 71);
     RequireFault([&] { return sceIduGetFsStats(unreadable); });
+    errno = 71;
     RequireFault([&] { return sceIduNotificationHide(unreadable); });
+    Require(errno == 71);
     RequireFault([&] { return sceIduIsRifInstalled(unreadable); });
     RequireFault([&] { return sceIduInstallRif(unreadable, any.data(), 1); });
     RequireFault([&] { return sceIduStartTitle(any.data(), 0, nullptr, unreadable); });
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     Require(sceIduInstallRif(name, unreadable, 1) == notInitialized);
     Require(sceIduStartTitle(unreadable, 0, nullptr, startParam.data()) == notInitialized);
     Require(sceIduStartTitle(any.data(), 1, unreadable, startParam.data()) == notInitialized);
