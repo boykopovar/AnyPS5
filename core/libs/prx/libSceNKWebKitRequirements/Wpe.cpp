@@ -8,6 +8,7 @@
 
 #include <cerrno>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 
@@ -30,6 +31,7 @@ void APS5_VABI wpe_pasteboard_string_initialize(NKWebKit::WpePasteboardString* s
         if (!readable) throw std::invalid_argument("wpe_pasteboard_string_initialize: unreadable string");
     }
     if (current.data) return;
+    if (length >= std::numeric_limits<std::size_t>::max()) throw std::bad_alloc();
 
     std::unique_ptr<char[]> staging(new char[length]);
     if (length) {
@@ -39,7 +41,7 @@ void APS5_VABI wpe_pasteboard_string_initialize(NKWebKit::WpePasteboardString* s
         if (!readable) throw std::invalid_argument("wpe_pasteboard_string_initialize: unreadable contents");
     }
 
-    std::unique_ptr<void, decltype(&free_nid_postfix)> allocation(calloc_nid_postfix(length, 1), free_nid_postfix);
+    std::unique_ptr<void, decltype(&free_nid_postfix)> allocation(calloc_nid_postfix(length + 1, 1), free_nid_postfix);
     if (!allocation) throw std::bad_alloc();
     if (length) {
         const int savedErrno = errno;

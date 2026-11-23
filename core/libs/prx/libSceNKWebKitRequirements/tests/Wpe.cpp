@@ -2,12 +2,14 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
 
-#include <cstddef>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <new>
 #include <stdexcept>
 
 namespace {
@@ -103,6 +105,8 @@ int Check(const char* name, Function function, const Case* cases, std::size_t co
     return failures;
 }
 
+std::size_t lastCallocSize = 0;
+
 int CheckPasteboardString() {
     NKWebKit::WpePasteboardString string{};
     char contents[] = {'a', '\0', 'b'};
@@ -112,12 +116,13 @@ int CheckPasteboardString() {
     contents[0] = 'c';
     wpe_pasteboard_string_initialize(&string, "d", 1);
     const bool preserved = string.data && string.data != contents && string.data == allocation &&
-        string.length == sizeof(expected) && std::memcmp(string.data, expected, sizeof(expected)) == 0;
+        string.length == sizeof(expected) && std::memcmp(string.data, expected, sizeof(expected)) == 0 &&
+        lastCallocSize == sizeof(expected) + 1 && string.data[string.length] == '\0';
     wpe_pasteboard_string_free(&string);
     const bool cleared = !string.data && string.length == 0;
     wpe_pasteboard_string_free(&string);
     wpe_pasteboard_string_initialize(&string, nullptr, 0);
-    const bool empty = string.length == 0;
+    const bool empty = string.data && string.length == 0 && lastCallocSize == 1 && string.data[0] == '\0';
     wpe_pasteboard_string_free(&string);
     bool rejectedString = false;
     try {
@@ -131,8 +136,14 @@ int CheckPasteboardString() {
     } catch (const std::invalid_argument&) {
         rejectedContents = true;
     }
+    bool rejectedOversize = false;
+    try {
+        wpe_pasteboard_string_initialize(&string, "a", std::numeric_limits<std::size_t>::max());
+    } catch (const std::bad_alloc&) {
+        rejectedOversize = true;
+    }
     const bool untouched = !string.data && string.length == 0;
-    if (!preserved || !cleared || !empty || !untouched || !rejectedString || !rejectedContents) {
+    if (!preserved || !cleared || !empty || !untouched || !rejectedString || !rejectedContents || !rejectedOversize) {
         std::fprintf(stderr, "WPE pasteboard string lifecycle failed.\n");
         return 1;
     }
@@ -145,7 +156,10 @@ namespace {
 
 void* APS5_VABI HeapAllocate(std::size_t bytes) { return std::malloc(bytes); }
 void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
-void* APS5_VABI HeapCallocate(std::size_t count, std::size_t bytes) { return std::calloc(count, bytes); }
+void* APS5_VABI HeapCallocate(std::size_t count, std::size_t bytes) {
+    lastCallocSize = count * bytes;
+    return std::calloc(count, bytes);
+}
 void* APS5_VABI HeapReallocate(void* pointer, std::size_t bytes) { return std::realloc(pointer, bytes); }
 void* APS5_VABI UnexpectedAlign(std::size_t, std::size_t) { std::abort(); }
 void* APS5_VABI UnexpectedRealign(void*, std::size_t, std::size_t) { std::abort(); }
