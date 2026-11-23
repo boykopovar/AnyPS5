@@ -64,6 +64,8 @@ struct Buffers {
     std::vector<char16_t> input;
     std::vector<char16_t> output;
     std::vector<char16_t> joint;
+    std::vector<char16_t> originalOverlap;
+    void* guestOverlap = nullptr;
     std::vector<std::int32_t> offsets;
     char16_t empty = 0;
     const char16_t* source = &empty;
@@ -83,6 +85,11 @@ struct Buffers {
             joint.resize((end - start) / sizeof(char16_t));
             auto* copiedSource = joint.data() + (sourceStart - start) / sizeof(char16_t);
             CopyIn(copiedSource, guestSource, read * sizeof(char16_t), caller);
+            const auto overlapStart = std::max(sourceStart, targetStart);
+            const auto overlapEnd = std::min(sourceEnd, targetEnd);
+            guestOverlap = reinterpret_cast<void*>(overlapStart);
+            const auto* shared = copiedSource + (overlapStart - sourceStart) / sizeof(char16_t);
+            originalOverlap.assign(shared, shared + (overlapEnd - overlapStart) / sizeof(char16_t));
             source = copiedSource;
             target = joint.data() + (targetStart - start) / sizeof(char16_t);
         } else {
@@ -135,20 +142,53 @@ void Write(Icu::ConverterToUnicodeArgs* guest, const char16_t* source, std::int3
         native.target = buffers.target;
         native.targetLimit = buffers.target + produced;
         native.offsets = buffers.offsets.empty() ? nullptr : buffers.offsets.data();
-        if (substitute)
-            ucnv_cbToUWriteSub(&native, offsetIndex, &status.value);
-        else
-            ucnv_cbToUWriteUChars(&native, buffers.source, length, offsetIndex, &status.value);
+        char16_t replacement = 0;
+        if (substitute) {
+            auto selection = original;
+            selection.target = &replacement;
+            selection.targetLimit = &replacement + 1;
+            selection.offsets = nullptr;
+            ucnv_cbToUWriteSub(&selection, offsetIndex, &status.value);
+            buffers.source = &replacement;
+        }
+        native.converter = nullptr;
+        ucnv_cbToUWriteUChars(&native, buffers.source, length, offsetIndex, &status.value);
         const auto written = native.target - buffers.target;
         if (written < 0 || static_cast<std::size_t>(written) != produced) NotImplemented_nid_no_patch(caller);
-        CopyOut(original.target, buffers.target, produced * sizeof(char16_t), caller);
-        if (original.offsets) CopyOut(original.offsets, buffers.offsets.data(), produced * sizeof(std::int32_t), caller);
         auto* newTarget = reinterpret_cast<char16_t*>(End(original.target, produced * sizeof(char16_t), caller));
         auto* newOffsets = original.offsets ?
             reinterpret_cast<std::int32_t*>(End(original.offsets, produced * sizeof(std::int32_t), caller)) : nullptr;
-        if (newOffsets != original.offsets) CopyOut(fields + offsetof(UConverterToUnicodeArgs, offsets), &newOffsets, sizeof(newOffsets), caller);
-        if (newTarget != original.target) CopyOut(fields + offsetof(UConverterToUnicodeArgs, target), &newTarget, sizeof(newTarget), caller);
-        status.Commit();
+        auto* offsetsField = fields + offsetof(UConverterToUnicodeArgs, offsets);
+        auto* targetField = fields + offsetof(UConverterToUnicodeArgs, target);
+        bool offsetsCommitted = false;
+        bool targetCommitted = false;
+        try {
+            CopyOut(original.target, buffers.target, produced * sizeof(char16_t), caller);
+            if (original.offsets) CopyOut(original.offsets, buffers.offsets.data(), produced * sizeof(std::int32_t), caller);
+            if (newOffsets != original.offsets) {
+                CopyOut(offsetsField, &newOffsets, sizeof(newOffsets), caller);
+                offsetsCommitted = true;
+            }
+            if (newTarget != original.target) {
+                CopyOut(targetField, &newTarget, sizeof(newTarget), caller);
+                targetCommitted = true;
+            }
+            status.Commit();
+        } catch (...) {
+            if (buffers.guestOverlap) GuestCopyOut_nid_no_patch(buffers.guestOverlap, buffers.originalOverlap.data(),
+                buffers.originalOverlap.size() * sizeof(char16_t));
+            if (targetCommitted) GuestCopyOut_nid_no_patch(targetField, &original.target, sizeof(original.target));
+            if (offsetsCommitted) GuestCopyOut_nid_no_patch(offsetsField, &original.offsets, sizeof(original.offsets));
+            throw;
+        }
+        if (original.converter && remaining) {
+            native.converter = original.converter;
+            native.targetLimit = native.target;
+            native.offsets = nullptr;
+            UErrorCode suffixStatus = U_ZERO_ERROR;
+            ucnv_cbToUWriteUChars(&native, buffers.source + produced, static_cast<std::int32_t>(remaining),
+                offsetIndex, &suffixStatus);
+        }
     } catch (const std::bad_alloc&) {
         status.value = U_MEMORY_ALLOCATION_ERROR;
         status.Commit();

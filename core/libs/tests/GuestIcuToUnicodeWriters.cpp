@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "unicode/ucnv.h"
 #include "unicode/ucnv_cb.h"
 #include <algorithm>
@@ -317,6 +318,15 @@ struct Guarded {
 #endif
     }
 
+    void Writable() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, page, PAGE_READWRITE, &previous) != 0, "restore writable test page");
+#else
+        Require(mprotect(memory, page, PROT_READ | PROT_WRITE) == 0, "restore writable test page");
+#endif
+    }
+
     void ReadOnly() {
 #ifdef _WIN32
         DWORD previous = 0;
@@ -341,7 +351,76 @@ void Unreadable(Call call) {
     Require(false, "unusable guest memory is refused");
 }
 
+Guarded* refusalPage;
+void* refusedAddress;
+bool copyAttempted;
+
+void RefuseCheckedCopy(std::uintptr_t address, std::size_t) {
+    if (address == reinterpret_cast<std::uintptr_t>(refusedAddress) && !copyAttempted) {
+        copyAttempted = true;
+        refusalPage->ReadOnly();
+    }
+}
+
+void LateCopyRefusal() {
+    auto converter = Open();
+    for (int pass = 0; pass < 3; ++pass) {
+        const bool substitution = pass == 2;
+        Guarded page;
+        char16_t unit = u'?';
+        std::int32_t offset = -1, status = 0;
+        auto* target = pass == 0 ? reinterpret_cast<char16_t*>(page.memory) : &unit;
+        auto* error = pass == 0 ? &status : reinterpret_cast<std::int32_t*>(page.memory);
+        auto pending = Arguments(converter.get(), &unit, &unit, nullptr);
+        Chars(reinterpret_cast<Icu::ConverterToUnicodeArgs*>(&pending), u"old", 3, 0, &status);
+        Require(status == U_BUFFER_OVERFLOW_ERROR, "seed pending converter output before refused copy");
+        *target = u'?';
+        *error = 0;
+        auto args = Arguments(converter.get(), target, target + (substitution ? 0 : 1), &offset);
+        auto* guest = reinterpret_cast<Icu::ConverterToUnicodeArgs*>(&args);
+        refusalPage = &page;
+        refusedAddress = pass == 0 ? static_cast<void*>(target) : static_cast<void*>(error);
+        copyAttempted = false;
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(RefuseCheckedCopy);
+        Unreadable([&] {
+            if (substitution) Substitute(guest, 7, error);
+            else Chars(guest, u"abc", 3, 7, error);
+        });
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+        Require(copyAttempted && *error == 0, "writable preflight succeeds and actual checked copy is refused");
+        Require(Drain(converter.get()) == std::vector<char16_t>{u'o', u'l', u'd'},
+            "late refusal preserves the preexisting native converter suffix");
+        Require(args.target == target && args.offsets == &offset, "late refusal restores guest cursors for retry");
+        page.Writable();
+        if (substitution) Substitute(guest, 7, error);
+        else Chars(guest, u"abc", 3, 7, error);
+        const auto expected = substitution ? std::vector<char16_t>{0xfffd} : std::vector<char16_t>{u'b', u'c'};
+        Require(*error == U_BUFFER_OVERFLOW_ERROR && Drain(converter.get()) == expected &&
+            Drain(converter.get()).empty(), "retry publishes its new suffix exactly once");
+        if (!substitution) Require(*target == u'a' && offset == 7, "retry writes the replacement prefix and offset");
+    }
+    Guarded page;
+    std::array<char16_t, 5> joint{u'a', u'b', u'c', u'd', u'e'};
+    auto args = Arguments(converter.get(), joint.data(), joint.data() + 2, nullptr);
+    auto* guest = reinterpret_cast<Icu::ConverterToUnicodeArgs*>(&args);
+    auto* error = reinterpret_cast<std::int32_t*>(page.memory);
+    *error = 0;
+    refusalPage = &page;
+    refusedAddress = error;
+    copyAttempted = false;
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(RefuseCheckedCopy);
+    Unreadable([&] { Chars(guest, joint.data() + 1, 4, 0, error); });
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    Require(copyAttempted && joint[1] == u'b' && args.target == joint.data() && Drain(converter.get()).empty(),
+        "late refusal preserves overlapped input and guest cursor for retry");
+    page.Writable();
+    Chars(guest, joint.data() + 1, 4, 0, error);
+    Require(joint[0] == u'b' && joint[1] == u'c' && Drain(converter.get()) == std::vector<char16_t>{u'd', u'e'},
+        "retry reads original overlapping input and publishes its suffix");
+}
+
 void GuardsCase() {
+    LateCopyRefusal();
     Guarded guard;
     auto converter = Open();
     auto* output = reinterpret_cast<char16_t*>(guard.memory + guard.page) - 1;
