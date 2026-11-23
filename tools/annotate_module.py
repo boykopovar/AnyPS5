@@ -18,6 +18,7 @@ import nid_names
 PT_LOAD = 1
 PT_DYNAMIC = 2
 PT_INTERP = 3
+PT_GNU_EH_FRAME = 0x6474e550
 PF_X = 1
 PF_W = 2
 DT_NULL = 0
@@ -78,6 +79,7 @@ class Module:
     def __init__(self, data):
         self.data = data
         self.loads = []
+        self.unwind_headers = []
         self.dynamic = None
         self.has_interpreter = False
         self.read_headers()
@@ -121,6 +123,8 @@ class Module:
             kind, flags, offset, vaddr, _, filesz, _, _ = self.unpack("<IIQQQQQQ", phoff + index * phentsize)
             if kind == PT_LOAD:
                 self.loads.append((vaddr, offset, filesz, flags))
+            elif kind == PT_GNU_EH_FRAME and filesz:
+                self.unwind_headers.append((vaddr, offset, filesz))
             elif kind == PT_INTERP:
                 self.has_interpreter = True
             elif kind == PT_DYNAMIC and self.dynamic is None:
@@ -309,6 +313,30 @@ class Module:
                         continue
                 yield address, "elf_%s_array_%d" % (name, index)
 
+    def unwind_starts(self):
+        for base, offset, size in self.unwind_headers:
+            if size < 4 or offset + size > len(self.data):
+                raise ModuleError("truncated PT_GNU_EH_FRAME")
+            if self.data[offset:offset + 4] != b"\x01\x1b\x03\x3b":
+                continue
+            if size < 12 or self.address(base, size) != offset:
+                raise ModuleError("invalid PT_GNU_EH_FRAME mapping")
+            frame_delta, count = self.unpack("<iI", offset + 4)
+            if count > (size - 12) // 8:
+                raise ModuleError("unwind search table exceeds PT_GNU_EH_FRAME")
+            frame = base + 4 + frame_delta
+            if count:
+                self.address(frame, 4)
+            for index in range(count):
+                pc_delta, fde_delta = self.unpack("<ii", offset + 12 + index * 8)
+                pc, fde = base + pc_delta, base + fde_delta
+                if fde < frame:
+                    raise ModuleError("unwind search table points before .eh_frame")
+                self.address(fde, 4)
+                if any(flags & PF_X and start <= pc < start + length and file_offset + pc - start < len(self.data)
+                       for start, file_offset, length, flags in self.loads):
+                    yield pc
+
     def code_segments(self):
         segments = []
         for vaddr, offset, size, flags in sorted(self.loads):
@@ -367,6 +395,11 @@ def ghidra_symbols(module, namer):
                                                      for start, offset, size, flags in module.loads):
             name = "irelative_resolver_%x" % address
             rows.add((address, True, name, name))
+    named_addresses = {address for address, _, _, _ in rows}
+    for address in module.unwind_starts():
+        if address not in named_addresses:
+            name = "unwind_%x" % address
+            rows.add((address, False, name, name))
     names, functions, lines = set(), set(), []
     for address, function, resolved, symbol in sorted(rows, key=lambda row: (row[0], not row[1], row[2] == row[3].split("#", 1)[0], row[2], row[3])):
         stem = re.sub(r"[^A-Za-z0-9_]", "_", resolved)
@@ -575,7 +608,7 @@ def parse_arguments(argv):
     parser.add_argument("--no-names", action="store_true", help="print NIDs without loading the database")
     formats = parser.add_mutually_exclusive_group()
     formats.add_argument("--symbols-json", action="store_true", help="inspect imports and exports as JSON offline without objdump or output files")
-    formats.add_argument("--symbols-ghidra", action="store_true", help="print an offline Ghidra ImportSymbolsScript map; omits TLS and unallocated common symbols; needs no objdump")
+    formats.add_argument("--symbols-ghidra", action="store_true", help="print an offline Ghidra ImportSymbolsScript map with labels for indexed unwind ranges; omits TLS and unallocated common symbols; needs no objdump")
     args = parser.parse_args(argv)
     if (args.symbols_json or args.symbols_ghidra) and args.out is not None:
         mode = "--symbols-json" if args.symbols_json else "--symbols-ghidra"
@@ -598,7 +631,10 @@ def main(argv=None):
         elif symbols_only:
             db = nid_names.read_db(db_path) if args.db or db_path.exists() else {}
         else:
-            db = nid_names.load_db(db_path)
+            try:
+                db = nid_names.load_db(db_path)
+            except ValueError as error:
+                raise ModuleError(str(error)) from error
         namer = Namer(db)
         if args.symbols_ghidra:
             for line in ghidra_symbols(Module(Path(args.module).read_bytes()), namer):

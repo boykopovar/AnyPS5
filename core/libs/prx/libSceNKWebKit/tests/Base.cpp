@@ -1529,6 +1529,91 @@ static void TestBundlePagination() {
     Require(threw);
 }
 
+static void TestBundleFrameForms() {
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    const void* ref = frame.Get();
+
+    Require(!WKBundleFrameContainsAnyFormElements(ref));
+    Require(!WKBundleFrameContainsAnyFormControls(ref));
+
+    frame->containsAnyFormElements = true;
+    Require(WKBundleFrameContainsAnyFormElements(ref));
+    Require(!WKBundleFrameContainsAnyFormControls(ref));
+
+    frame->containsAnyFormControls = true;
+    Require(WKBundleFrameContainsAnyFormElements(ref));
+    Require(WKBundleFrameContainsAnyFormControls(ref));
+
+    frame->containsAnyFormElements = false;
+    Require(!WKBundleFrameContainsAnyFormElements(ref));
+    Require(WKBundleFrameContainsAnyFormControls(ref));
+
+    bool threw = false;
+    try {
+        WKBundleFrameContainsAnyFormElements(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleFrameContainsAnyFormControls(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestBundleFrameActions() {
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    const void* ref = frame.Get();
+
+    Require(!frame->isFocused);
+    Require(!frame->hasOpener);
+
+    frame->hasOpener = true;
+    WKBundleFrameClearOpener(ref);
+    Require(!frame->hasOpener);
+
+    WKBundleFrameFocus(ref);
+    Require(frame->isFocused);
+
+    bool threw = false;
+    try {
+        WKBundleFrameClearOpener(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleFrameFocus(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        auto wrongObj = NKWebKit::Make<NKWebKit::String>();
+        WKBundleFrameClearOpener(wrongObj.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        auto wrongObj = NKWebKit::Make<NKWebKit::String>();
+        WKBundleFrameFocus(wrongObj.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -3428,6 +3513,31 @@ static void TestView() {
     WKViewSetViewScaleFactor(ref, 1.75);
     Require(WKViewGetViewScaleFactor(ref) == 1.75);
 
+    Require(!view->isActive);
+    Require(!view->isFocused);
+    Require(!view->isVisible);
+    Require(view->size.width == 0.0);
+    Require(view->size.height == 0.0);
+
+    WKViewSetActive(ref, true);
+    Require(view->isActive);
+    WKViewSetActive(ref, false);
+    Require(!view->isActive);
+
+    WKViewSetFocus(ref, true);
+    Require(view->isFocused);
+    WKViewSetFocus(ref, false);
+    Require(!view->isFocused);
+
+    WKViewSetVisible(ref, true);
+    Require(view->isVisible);
+    WKViewSetVisible(ref, false);
+    Require(!view->isVisible);
+
+    WKViewSetSize(ref, NKWebKit::SizeValue{ 1920.0, 1080.0 });
+    Require(view->size.width == 1920.0);
+    Require(view->size.height == 1080.0);
+
     WKViewSetDrawsBackground(ref, false);
     Require(!view->drawsBackground);
     WKViewSetDrawsBackground(ref, true);
@@ -3577,6 +3687,62 @@ static void TestView() {
         threw = true;
     }
     Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetSize(ref, NKWebKit::SizeValue{ -1.0, 1080.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetSize(ref, NKWebKit::SizeValue{ 1920.0, -1.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetSize(ref, NKWebKit::SizeValue{ std::numeric_limits<double>::quiet_NaN(), 1080.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetActive(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetFocus(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetVisible(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetSize(nullptr, NKWebKit::SizeValue{ 100.0, 100.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 int main() {
@@ -3601,6 +3767,8 @@ int main() {
     TestBundleNodeHandle();
     TestBundleFrameScroll();
     TestBundlePagination();
+    TestBundleFrameForms();
+    TestBundleFrameActions();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();

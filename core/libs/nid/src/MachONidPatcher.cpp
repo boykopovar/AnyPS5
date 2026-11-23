@@ -157,6 +157,7 @@ Image ParseImage(const std::vector<std::uint8_t>& binary) {
     RequireRange(binary, sizeof(MachHeader64), image.Header.CommandBytes);
     std::size_t cursor = sizeof(MachHeader64);
     const auto end = cursor + image.Header.CommandBytes;
+    bool hasChainedFixups = false;
     for (std::uint32_t index = 0; index < image.Header.CommandCount; ++index) {
         if (cursor + sizeof(LoadCommand) > end) throw std::runtime_error("load command out of bounds");
         const auto command = Read<LoadCommand>(binary, cursor);
@@ -166,7 +167,11 @@ Image ParseImage(const std::vector<std::uint8_t>& binary) {
             minimumSize = sizeof(SegmentCommand64);
             break;
         case kLcDyldExportsTrie:
+            minimumSize = sizeof(LinkeditDataCommand);
+            break;
         case kLcDyldChainedFixups:
+            if (hasChainedFixups) throw std::runtime_error("Mach-O image has more than one chained fixups command");
+            hasChainedFixups = true;
             minimumSize = sizeof(LinkeditDataCommand);
             break;
         case kLcDyldInfo:
@@ -436,6 +441,8 @@ void PatchChainedImports(std::vector<std::uint8_t>& binary, const Image& image, 
     }
     if (!fixups || fixups->DataSize == 0) return;
     RequireRange(binary, fixups->DataOffset, fixups->DataSize);
+    if (fixups->DataSize < sizeof(ChainedFixupsHeader))
+        throw std::runtime_error("chained fixups header out of bounds");
     const auto base = std::size_t{fixups->DataOffset};
     const auto header = Read<ChainedFixupsHeader>(binary, base);
     if (header.Version != 0) throw std::runtime_error("unsupported chained fixups version");
