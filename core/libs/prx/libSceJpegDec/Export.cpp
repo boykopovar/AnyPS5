@@ -298,9 +298,11 @@ void forgetStream(const Context* context) {
     streams.erase(context);
 }
 
-bool endFound(InputStream& stream);
+enum class ReadUntil { Scan, End };
 
-void pull(InputStream& stream, std::uint32_t size) {
+bool scanMarkers(InputStream& stream, ReadUntil until);
+
+void pull(InputStream& stream, std::uint32_t size, ReadUntil until) {
     while (size > 0 && stream.status == 0) {
         if (stream.chunkSize == 0) {
             JpegDecInputChunk chunk{};
@@ -323,11 +325,12 @@ void pull(InputStream& stream, std::uint32_t size) {
         stream.chunk += count;
         stream.chunkSize -= count;
         size -= count;
-        if (endFound(stream) && stream.end) return;
+        scanMarkers(stream, until);
+        if (stream.end || (until == ReadUntil::Scan && stream.inScan)) return;
     }
 }
 
-bool endFound(InputStream& stream) {
+bool scanMarkers(InputStream& stream, ReadUntil until) {
     const std::vector<std::uint8_t>& data = stream.data;
     std::size_t& at = stream.scanOffset;
     while (true) {
@@ -356,14 +359,17 @@ bool endFound(InputStream& stream) {
         if (length < 2) return true;
         if (at + 2 + length > data.size()) return false;
         at += 2 + length;
-        if (marker == 0xDA) stream.inScan = true;
+        if (marker == 0xDA) {
+            stream.inScan = true;
+            if (until == ReadUntil::Scan) return true;
+        }
     }
 }
 
 bool mayBecomeHeader(InputStream& stream) {
     if (stream.data.size() < 2) return true;
     if (stream.data[0] != 0xFF || stream.data[1] != 0xD8) return false;
-    return !endFound(stream);
+    return !scanMarkers(stream, ReadUntil::Scan);
 }
 
 std::int32_t parseStream(const Context* context, const JpegDecInputControlParam* param, JpegDecImageInfo* imageInfo) {
@@ -379,8 +385,9 @@ std::int32_t parseStream(const Context* context, const JpegDecInputControlParam*
     InputStream& stream = *use;
     stream.input = param->input;
     stream.argument = param->input_argument;
-    while (!(stream.header = Decoder::Jpeg::ParseHeader(stream.data)) && stream.status == 0 && mayBecomeHeader(stream)) pull(stream, INPUT_BLOCK_SIZE);
+    while (!stream.inScan && stream.status == 0 && mayBecomeHeader(stream)) pull(stream, INPUT_BLOCK_SIZE, ReadUntil::Scan);
     if (stream.status < 0) return stream.status;
+    stream.header = Decoder::Jpeg::ParseHeader(stream.data);
     if (!stream.header) return SCE_JPEG_DEC_ERROR_DECODE_ERROR;
     stream.downScale = param->down_scale;
     JpegDecImageInfo localInfo{};
@@ -417,7 +424,7 @@ std::int32_t decodeStream(const Context* context, const Context& localContext, c
                               param->down_scale, format, param->alpha_value, param->image_pitch};
     const std::int32_t checked = checkTarget(localContext, *stream.header, target);
     if (checked != 0) return checked;
-    while (!stream.end && !endFound(stream) && stream.status == 0) pull(stream, INPUT_BLOCK_SIZE);
+    while (!stream.end && !scanMarkers(stream, ReadUntil::End) && stream.status == 0) pull(stream, INPUT_BLOCK_SIZE, ReadUntil::End);
     if (stream.status < 0) return stream.status;
     const std::span<const std::uint8_t> jpeg(stream.data.data(), stream.end.value_or(stream.data.size()));
     return writeImage(*stream.header, jpeg, target, nullptr);
