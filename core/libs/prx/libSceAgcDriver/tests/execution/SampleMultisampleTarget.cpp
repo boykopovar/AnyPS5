@@ -19,6 +19,7 @@
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
+#include "DepthFastClearHarness.hpp"
 #include "tests/TemporaryFile.hpp"
 #include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
@@ -84,6 +85,7 @@ constexpr std::uint32_t Format8888Uint = 60;
 constexpr std::uint32_t Format8888Sint = 61;
 constexpr std::uint32_t Float10_11_11Info = 0x0718u;
 constexpr std::uint32_t Format11_11_10Float = 36;
+constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Type2DMsaa = 14;
 constexpr std::uint32_t TileRenderTarget = 0x1b;
 constexpr std::uint32_t TileZ64KBX = 0x18;
@@ -1889,6 +1891,38 @@ alignas(256) constexpr std::array<std::uint32_t, 10> NativeFmaskCode{0x34020084u
 alignas(256) std::array<std::uint32_t, Threads * 4u> NativeFmaskInput{};
 alignas(256) std::array<std::uint32_t, Threads * 4u + 4u> NativeFmaskOutput{};
 
+void MultisampleReadOverSingleSampleDepth(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    constexpr VkExtent2D extent{8u * Side, 8u * Side};
+    Block depth(BlockBytes, true), htile(BlockBytes, true);
+    std::memset(htile.data, 0xff, htile.bytes);
+    Block color(static_cast<std::size_t>(extent.width) * extent.height * 4u);
+    const std::span<std::byte> pixels(reinterpret_cast<std::byte*>(color.data), color.bytes);
+    const auto shaders = DepthFastClearHarness::Compile(device);
+    const DepthFastClearHarness::Surface surface{depth.Address(), 0u, htile.Address(), false, VK_FORMAT_D32_SFLOAT, 0u, 0u, TileZ64KBX};
+    const auto texture = TargetDescriptor(depth, SampleShift, Format32Float, TileZ64KBX);
+    const auto readAs = [&](float value, const char* what) {
+        DepthFastClearHarness::DrawOptions options;
+        options.depthCompare = VK_COMPARE_OP_ALWAYS;
+        options.depthWrite = true;
+        options.minDepth = value;
+        options.maxDepth = value;
+        Require(DepthFastClearHarness::Draw(device, shaders, surface, options, extent, pixels) == extent.width * extent.height, std::string("the single-sample depth draw did not cover the surface ") + what);
+        Require(DepthSurfaceAt(depth.Address()), std::string("the single-sample depth surface is not resident ") + what);
+        const auto loaded = LoadSamples(device, texture);
+        for (const auto& sample : loaded) Require(sample[0] == value, std::string("a four-sample read over a single-sample depth surface did not read the depth it published ") + what + ": " + std::to_string(sample[0]));
+    };
+    readAs(0.25f, "after the first draw");
+    readAs(0.75f, "after the depth was drawn again");
+    device.SubmitRecorded(true);
+    device.WaitIdle();
+    ClearCachedTextures(context.device);
+    ClearMultisampleTargets(context.device);
+    ClearDepthSurfaces(context.device);
+    std::puts("four-sample reads over a single-sample depth surface read the depth it published, before and after it is drawn again");
+}
+
 std::array<std::uint32_t, 8> NativeFmaskDescriptor(const Block& fmask, const Block& cmask, std::uint32_t pipeXor, std::uint32_t format) {
     const auto address = fmask.Address() | pipeXor;
     const auto metadata = cmask.Address();
@@ -2098,6 +2132,12 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--readback") { Readback(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--snapshot") { ColorSnapshots(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--snapshot_refusals") { ColorSnapshotRefusals(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--multisample-read-single-sample-depth") {
+            const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+            if ((context.limits.sampledImageColorSampleCounts & Samples) == 0u) return VulkanTestSkipped;
+            MultisampleReadOverSingleSampleDepth(*device);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--initial-nonuniform_lifetime") return NonuniformInitialLifetime(*device);
         if (argc == 2 && std::string_view(argv[1]) == "--initial-nonuniform_capabilities") return NonuniformInitialCapabilities(*device);
         if (argc == 2 && std::string_view(argv[1]) == "--initial-nonuniform_hook") return NonuniformInitialHook(*device);

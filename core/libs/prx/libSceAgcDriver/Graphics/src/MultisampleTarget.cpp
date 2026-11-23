@@ -1535,6 +1535,12 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
     return created;
 }
 
+void flushDepthPlanesUnder(const GuestTextureResource& resource) {
+    if (!DepthPlanesStale()) return;
+    const auto bytes = SurfaceGuestBytes(resource);
+    if (bytes != 0u) static_cast<void>(FlushDepthPlanes(resource.baseAddress, static_cast<std::size_t>(bytes)));
+}
+
 MultisampleTarget& createFilled(const Context& context, const GuestTextureResource& resource, VkFormat format, const char* access, bool written) {
     const auto refuse = [&](const std::string& reason) {
         char text[192];
@@ -1975,6 +1981,7 @@ VkFormat sampledFormat(const Context& context, std::uint32_t guestFormat) {
 }
 
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType viewType) {
+    flushDepthPlanesUnder(resource);
     TargetsLock lock;
     discardRetiredTargets();
     const auto format = sampledFormat(context, resource.format);
@@ -2000,6 +2007,7 @@ std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const 
 }
 
 std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, const GuestTextureResource& resource, VkComponentMapping components) {
+    flushDepthPlanesUnder(resource);
     TargetsLock lock;
     discardRetiredTargets();
     const auto format = sampledFormat(context, resource.format);
@@ -2040,6 +2048,7 @@ MultisampleColorSnapshot ReadMultisampleTargetColorSnapshot_nid_no_patch(const C
 }
 
 VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage) {
+    flushDepthPlanesUnder(resource);
     TargetsLock lock;
     discardRetiredTargets();
     const auto format = ResolveTextureFormat(resource.format);
