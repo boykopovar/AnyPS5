@@ -12,6 +12,7 @@
 #include <barrier>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <limits>
@@ -220,6 +221,60 @@ void Fields() {
     Require(ufieldpositer_next_nid_postfix(iterator, &begin, &end) == 7 && begin == 0 && end == 1,
         "successful reformat replaces partially consumed ranges and rewinds iterator");
     ufieldpositer_close_nid_postfix(iterator);
+}
+
+constexpr int PrefixUnits = 78;
+int failFieldProbe;
+int matchedBuffers;
+
+void* APS5_VABI FieldAllocate(const void*, std::size_t size) {
+    if (failFieldProbe && size == 2 * (PrefixUnits + 1) * sizeof(char16_t) && ++matchedBuffers == failFieldProbe) return nullptr;
+    return std::malloc(size);
+}
+
+void* APS5_VABI FieldReallocate(const void*, void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+void APS5_VABI FieldFree(const void*, void* pointer) { std::free(pointer); }
+
+void AllocationFailures() {
+    std::int32_t status = 0;
+    u_setMemoryFunctions_nid_postfix(nullptr, FieldAllocate, FieldReallocate, FieldFree, &status);
+    Require(status == 0, "install guest ICU allocation callbacks");
+    {
+        const auto pattern = u"'" + std::u16string(PrefixUnits, u'x') + u"'0";
+        Pair longPrefix(0, "en_US", pattern.c_str());
+        Pair plain(1, "en_US");
+        auto* iterator = ufieldpositer_open_nid_postfix(&status);
+        Require(iterator != nullptr, "open iterator for native allocation failures");
+        std::array<char16_t, 96> text{};
+        for (int i = 0; i < 4; ++i) {
+            status = 0;
+            Require(unum_formatDoubleForFields_nid_postfix(longPrefix.guest, 5, text.data(), text.size(), iterator, &status) ==
+                PrefixUnits + 1 && status <= 0 && text[PrefixUnits] == u'5', "warm the real long-prefix number formatter");
+        }
+        for (const int probe : {1, 2, 3}) {
+            status = 0;
+            Require(unum_formatDoubleForFields_nid_postfix(plain.guest, 77, text.data(), text.size(), iterator, &status) == 2,
+                "seed old field ranges");
+            text.fill(0xa55a);
+            const auto original = text;
+            matchedBuffers = 0;
+            failFieldProbe = probe;
+            status = 0;
+            const auto length = unum_formatDoubleForFields_nid_postfix(longPrefix.guest, 5, text.data(), text.size(), iterator, &status);
+            failFieldProbe = 0;
+            if (matchedBuffers != probe || length != 1 || status != 7 || text != original) {
+                std::fprintf(stderr, "native field probe %d: matches %d, length %d, status %d, unchanged %d\n",
+                    probe, matchedBuffers, length, status, text == original);
+            }
+            Require(matchedBuffers == probe && length == 1 && status == 7 && text == original,
+                "each native formatter probe returns the allocation error without publishing text");
+            std::int32_t begin = -1, end = -1;
+            Require(ufieldpositer_next_nid_postfix(iterator, &begin, &end) == 0 && begin == 0 && end == 2 &&
+                ufieldpositer_next_nid_postfix(iterator, nullptr, nullptr) == -1, "failed probe preserves original iterator");
+        }
+        ufieldpositer_close_nid_postfix(iterator);
+    }
+    u_cleanup_nid_postfix();
 }
 
 void Open() {
@@ -786,6 +841,7 @@ int main(int argc, char** argv) {
         if (mode == "open") Open();
         else if (mode == "format") Format();
         else if (mode == "fields") Fields();
+        else if (mode == "field_allocations") AllocationFailures();
         else if (mode == "attributes") Attributes();
         else if (mode == "lifetime") Lifetime();
         else if (mode == "memory") Memory();

@@ -170,8 +170,15 @@ std::int32_t Output(Operation operation, char16_t* output, std::int32_t capacity
     auto secondField = initial;
     error = before;
     auto secondError = before;
+    const auto fieldAllocationFailed = [&](std::int32_t result) {
+        if (operation != Operation::DoubleFields || result != MemoryAllocationError) return false;
+        WriteStatus(status, before, result);
+        return true;
+    };
     const auto length = function(first.data(), static_cast<std::int32_t>(count), position ? &field : nullptr, &error);
+    if (fieldAllocationFailed(error)) return length;
     const auto secondLength = function(second.data(), static_cast<std::int32_t>(count), position ? &secondField : nullptr, &secondError);
+    if (fieldAllocationFailed(secondError)) return secondLength;
     if (length != secondLength || error != secondError || std::memcmp(&field, &secondField, sizeof(field))) NotImplemented_nid_no_patch(__func__);
     if (error > 0 && error != Icu::BufferOverflow && !EarlyError(operation, error)) NotImplemented_nid_no_patch(__func__);
     FieldAlias(position, field, status);

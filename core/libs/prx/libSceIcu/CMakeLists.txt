@@ -834,7 +834,7 @@ if(BUILD_TESTING)
         set_tests_properties(guest_icu_number_format_nid PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:${icu_number_patched_dir}")
     endif()
-    foreach(mode open format fields attributes lifetime memory)
+    foreach(mode open format fields field_allocations attributes lifetime memory)
         add_test(NAME guest_icu_number_format_${mode} COMMAND guest_icu_number_format_tests ${mode})
         set_tests_properties(guest_icu_number_format_${mode} PROPERTIES TIMEOUT 20)
         if(WIN32)
