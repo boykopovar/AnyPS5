@@ -1441,8 +1441,7 @@ static void TestBundleNodeHandle() {
     }
     Require(threwSetterWrongType);
 
-    Require(!WKBundleNodeHandleGetHTMLInputElementAutoFilled(ref));
-    Require(!WKBundleNodeHandleGetHTMLInputElementAutofilled(ref));
+    Require(!handle->htmlInputElementAutoFilled);
     Require(!WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(ref));
     Require(!WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(ref));
     Require(handle->htmlInputElementSpellcheckEnabled);
@@ -1450,13 +1449,9 @@ static void TestBundleNodeHandle() {
     Require(handle->htmlInputElementValue.Get() == nullptr);
 
     WKBundleNodeHandleSetHTMLInputElementAutoFilled(ref, true);
-    Require(WKBundleNodeHandleGetHTMLInputElementAutoFilled(ref));
-    Require(WKBundleNodeHandleGetHTMLInputElementAutofilled(ref));
     Require(handle->htmlInputElementAutoFilled);
 
     WKBundleNodeHandleSetHTMLInputElementAutofilled(ref, false);
-    Require(!WKBundleNodeHandleGetHTMLInputElementAutoFilled(ref));
-    Require(!WKBundleNodeHandleGetHTMLInputElementAutofilled(ref));
     Require(!handle->htmlInputElementAutoFilled);
 
     WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(ref, true);
@@ -1492,12 +1487,8 @@ static void TestBundleNodeHandle() {
 
     requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutoFilled(nullptr, true); });
     requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutoFilled(docFrame.Get(), true); });
-    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementAutoFilled(nullptr); });
-    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementAutoFilled(docFrame.Get()); });
     requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutofilled(nullptr, true); });
     requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutofilled(docFrame.Get(), true); });
-    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementAutofilled(nullptr); });
-    requireThrows([&] { WKBundleNodeHandleGetHTMLInputElementAutofilled(docFrame.Get()); });
     requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(nullptr, true); });
     requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(docFrame.Get(), true); });
     requireThrows([&] { WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(nullptr, false); });

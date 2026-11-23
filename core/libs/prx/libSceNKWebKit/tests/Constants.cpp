@@ -45,6 +45,8 @@ int main() {
     Require(WKBundleNodeHandleCopyVisibleRange() == 0);
     Require(WKBundleNodeHandleGetHTMLInputElementAutoFillAvailable() == 0);
     Require(WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled() == 0);
+    Require(WKBundleNodeHandleGetHTMLInputElementAutoFilled() == 0);
+    Require(WKBundleNodeHandleGetHTMLInputElementAutofilled() == 0);
     Require(WKBundlePageCopyContextMenuAtPointInWindow() == 0);
     Require(WKBundlePageCopyContextMenuItems() == 0);
     Require(WKBundlePageGetBackForwardList() == 0);
