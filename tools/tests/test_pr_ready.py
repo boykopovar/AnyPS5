@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -67,6 +68,24 @@ class BlockerTests(unittest.TestCase):
     def test_bot_jobs_are_not_counted(self):
         checks = PASSING + [("intake", "completed", "failure"), ("labels", "in_progress", None), ("eligibility", "queued", None)]
         self.assertEqual(pr_ready.blockers(make(checks=checks)), [])
+
+    def test_the_conflict_label_job_does_not_block(self):
+        for state, conclusion in (("in_progress", None), ("completed", "cancelled"), ("completed", "failure")):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(pr_ready.blockers(make(checks=PASSING + [("pr", state, conclusion)])), [])
+
+    def test_each_bot_check_name_is_a_job_of_its_bot_workflow_only(self):
+        owners = {name: set() for name in pr_ready.BOT_CHECKS}
+        for workflow in (Path(__file__).resolve().parents[2] / ".github/workflows").glob("*.yml"):
+            text = workflow.read_text(encoding="utf-8")
+            if "\njobs:\n" not in text:
+                continue
+            for line in text.split("\njobs:\n", 1)[1].split("\n"):
+                name = line[2:].split(":", 1)[0]
+                if line.startswith("  ") and not line.startswith("   ") and line.rstrip().endswith(":") and name in owners:
+                    owners[name].add(workflow.name)
+        self.assertEqual(owners, {"intake": {"pr-intake.yml"}, "labels": {"pr-labels.yml"}, "eligibility": {"build.yml"},
+                                  "report": {"progress-report.yml"}, "pr": {"conflict-label-pr.yml"}})
 
     def test_a_failing_progress_report_does_not_block(self):
         self.assertEqual(pr_ready.blockers(make(checks=PASSING + [("report", "completed", "failure")])), [])
@@ -211,6 +230,15 @@ class MainTests(unittest.TestCase):
                     return json.dumps({"data": {"repository": {"pullRequests": {
                         "pageInfo": {"hasNextPage": False, "endCursor": None},
                         "nodes": [{"number": n} for n in closed]}}}})
+                if "--author" in argv:
+                    author = argv[argv.index("--author") + 1]
+                    self.assertIn("user(login: $login)", args[3])
+                    self.assertIn('baseRefName: "main"', args[3])
+                    self.assertIn(f"login={author}", args)
+                    nodes = [{"repository": {"nameWithOwner": "O/R"}, **pr} for pr in prs]
+                    nodes.append({"repository": {"nameWithOwner": "elsewhere/elsewhere"}, **node(number=3, author=author)})
+                    return json.dumps({"data": {"user": {"pullRequests": {
+                        "pageInfo": {"hasNextPage": False}, "nodes": nodes}}}})
                 return json.dumps(pages.pop(0))
             if args[:2] == ("issue", "view"):
                 return current
@@ -406,6 +434,44 @@ class MainTests(unittest.TestCase):
             "pageInfo": {"hasNextPage": True, "endCursor": None}, "nodes": [{"number": 5}]}}}}
         with patch("pr_ready.pr_labels.gh", return_value=json.dumps(page)), self.assertRaisesRegex(ValueError, "no cursor"):
             pr_ready.closed_with_label("o/r")
+
+
+class AuthorFetchTests(unittest.TestCase):
+    def test_author_lookup_follows_pages_and_keeps_only_the_requested_repository(self):
+        matching = {"repository": {"nameWithOwner": "Owner/Repo"}, **node(number=3)}
+        another = {"repository": {"nameWithOwner": "owner/other"}, **node(number=4)}
+        pages = [
+            {"pageInfo": {"hasNextPage": True, "endCursor": "next"}, "nodes": [another]},
+            {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [matching]},
+        ]
+        replies = [json.dumps({"data": {"user": {"pullRequests": page}}}) for page in pages]
+        with patch("pr_ready.pr_labels.gh", side_effect=replies) as gh, patch("pr_ready.fetch") as fetch:
+            self.assertEqual(pr_ready.fetch_author("owner/repo", "alice"), [make(number=3)])
+        self.assertEqual(gh.call_count, 2)
+        self.assertEqual(gh.call_args.args[-2:], ("-f", "after=next"))
+        fetch.assert_not_called()
+
+    def test_author_without_a_user_node_falls_back_to_the_repository(self):
+        missing = {"errors": [{"type": "NOT_FOUND", "path": ["user"]}]}
+        error = subprocess.CalledProcessError(1, ["gh"], output=json.dumps(missing))
+        with patch("pr_ready.pr_labels.gh", side_effect=error), patch("pr_ready.fetch", return_value=[]) as fetch:
+            self.assertEqual(pr_ready.fetch_author("owner/repo", "example[bot]"), [])
+        fetch.assert_called_once_with("owner/repo")
+
+    def test_deleted_authors_can_still_be_reported_as_ghost(self):
+        ghost = make(author=None)
+        with patch("pr_ready.pr_labels.gh") as gh, patch("pr_ready.fetch", return_value=[ghost]) as fetch:
+            self.assertEqual(pr_ready.fetch_author("owner/repo", "Ghost"), [ghost])
+        gh.assert_not_called()
+        fetch.assert_called_once_with("owner/repo")
+
+    def test_other_query_errors_do_not_start_a_repository_scan(self):
+        denied = {"errors": [{"type": "FORBIDDEN", "path": ["user"]}]}
+        error = subprocess.CalledProcessError(1, ["gh"], output=json.dumps(denied))
+        with patch("pr_ready.pr_labels.gh", side_effect=error), patch("pr_ready.fetch") as fetch:
+            with self.assertRaises(subprocess.CalledProcessError):
+                pr_ready.fetch_author("owner/repo", "alice")
+        fetch.assert_not_called()
 
 
 class PaginationTests(unittest.TestCase):

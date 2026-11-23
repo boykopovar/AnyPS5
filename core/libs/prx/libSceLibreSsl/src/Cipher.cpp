@@ -8,17 +8,13 @@ namespace {
 
 template <typename T>
 void CopyGuestInPreservingErrno(const void* guestAddress, T& hostValue, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&hostValue, guestAddress, sizeof(T));
-    errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
 }
 
 template <typename T>
 void CopyGuestOutPreservingErrno(void* guestAddress, const T& hostValue, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(guestAddress, &hostValue, sizeof(T));
-    errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
 }
 

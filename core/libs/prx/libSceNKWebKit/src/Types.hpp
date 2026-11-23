@@ -181,8 +181,18 @@ public:
     }
 };
 
+struct OpaqueJSContext;
+
 class Bundle final : public ObjectOf<ObjectType::Bundle> {
 public:
+    ~Bundle() override;
+
+    OpaqueJSContext* context = nullptr;
+    std::size_t javaScriptObjectsCount = 0;
+    std::uint32_t memoryReleaseCount = 0;
+    bool historyClearedForTesting = false;
+    bool resourceLoadStatisticsCleared = false;
+    std::uint32_t resourceLoadStatisticsNotifyCount = 0;
 };
 
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
@@ -197,6 +207,19 @@ public:
     std::vector<bool> pageBoxVisibility;
     bool containsAnyFormElements = false;
     bool containsAnyFormControls = false;
+    bool isFocused = false;
+    bool hasOpener = false;
+    bool allowsFollowingLink = true;
+    bool shouldCloseOnWebView = true;
+    std::optional<std::u16string> accessibleName;
+    std::optional<std::u16string> textDirection;
+    Retained<String> counterValue;
+    Retained<String> innerText;
+    Retained<String> layerTreeAsText;
+    Retained<String> mimeTypeForResource;
+    Retained<String> suggestedFilenameForResource;
+    bool hasDocumentBackgroundColor = false;
+    double documentBackgroundColor[4] = {0.0, 0.0, 0.0, 0.0};
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
@@ -256,6 +279,7 @@ public:
     bool isSuspended = false;
     bool usesEphemeralSession = false;
     std::uint64_t renderTreeSize = 0;
+    bool isFullScreen = false;
     bool hasComposition = false;
 };
 
@@ -373,6 +397,17 @@ public:
     Retained<Object> lastMessageName;
     Retained<Object> lastMessageBody;
     bool clientConfigured = false;
+};
+
+class MessageListener final : public ObjectOf<ObjectType::MessageListener> {
+public:
+    bool replied = false;
+    Retained<Object> reply;
+
+    void SendReply(Retained<Object> replyObj) {
+        replied = true;
+        reply = std::move(replyObj);
+    }
 };
 
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
@@ -512,6 +547,14 @@ class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListSt
 public:
     std::u16string path;
     std::map<std::u16string, Retained<Object>> filters;
+};
+
+class FramePolicyListener final : public ObjectOf<ObjectType::FramePolicyListener> {
+public:
+    enum class Decision { None, Use, UseInNewProcess, Download, Ignore };
+
+    Decision decision = Decision::None;
+    Retained<Object> policies;
 };
 
 }  // namespace NKWebKit
