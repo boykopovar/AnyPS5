@@ -184,6 +184,16 @@ bool NullStatusThrows(std::uint16_t ctxId) {
     return false;
 }
 
+template <typename Call>
+bool NotImplementedThrows(Call call) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()).find("not implemented") != std::string::npos;
+    }
+    return false;
+}
+
 }
 
 int main() {
@@ -280,9 +290,9 @@ int main() {
     Require(sceNpMatching2Initialize(&init) == InvalidArgument, "sceNpMatching2Initialize", "upper 32-bit size was taken");
     init.size = 0x30;
     Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initialization failed");
-    Require(sceNpMatching2SignalingCancelPeerNetInfo() == 0, "sceNpMatching2SignalingCancelPeerNetInfo", "a call after initialization did not return success");
-    Require(sceNpMatching2SignalingGetPeerNetInfo() == 0, "sceNpMatching2SignalingGetPeerNetInfo", "a call after initialization did not return success");
-    Require(sceNpMatching2SignalingGetPeerNetInfoResult() == 0, "sceNpMatching2SignalingGetPeerNetInfoResult", "a call after initialization did not return success");
+    Require(NotImplementedThrows(sceNpMatching2SignalingCancelPeerNetInfo), "sceNpMatching2SignalingCancelPeerNetInfo", "a call after initialization did not throw NOT_IMPLEMENTED");
+    Require(NotImplementedThrows(sceNpMatching2SignalingGetPeerNetInfo), "sceNpMatching2SignalingGetPeerNetInfo", "a call after initialization did not throw NOT_IMPLEMENTED");
+    Require(NotImplementedThrows(sceNpMatching2SignalingGetPeerNetInfoResult), "sceNpMatching2SignalingGetPeerNetInfoResult", "a call after initialization did not throw NOT_IMPLEMENTED");
     Require(sceNpMatching2Initialize(&init) == AlreadyInitialized, "sceNpMatching2Initialize", "initializing when already initialized did not return ALREADY_INITIALIZED");
     Require(sceNpMatching2Initialize(nullptr) == AlreadyInitialized, "sceNpMatching2Initialize", "the parameter was checked before the initialization state");
     Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == InvalidArgument, "sceNpMatching2SignalingGetLocalNetInfo", "a null info was not refused with INVALID_ARGUMENT");
