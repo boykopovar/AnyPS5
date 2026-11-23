@@ -42,6 +42,7 @@
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #endif
 #ifdef __linux__
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
@@ -1287,18 +1288,19 @@ int usage() {
     return 2;
 }
 
-Dump parseDump(std::string_view text) {
+Dump parseDump(const std::filesystem::path& argument) {
+    const auto& text = argument.native();
     const auto first = text.find(':');
-    const auto second = first == std::string_view::npos ? std::string_view::npos : text.find(':', first + 1);
-    if (second == std::string_view::npos) throw std::invalid_argument("frame replay: --dump takes <address>:<bytes>:<file>");
-    const auto number = [](std::string_view part) {
-        const std::string value(part);
+    const auto second = first == text.npos ? text.npos : text.find(':', first + 1);
+    if (second == text.npos) throw std::invalid_argument("frame replay: --dump takes <address>:<bytes>:<file>");
+    const auto number = [](const auto& part) {
+        const auto value = std::filesystem::path(part).string();
         char* end = nullptr;
         const auto parsed = std::strtoull(value.c_str(), &end, 0);
         if (value.empty() || end != value.c_str() + value.size()) throw std::invalid_argument("frame replay: '" + value + "' is not a number");
         return static_cast<std::uint64_t>(parsed);
     };
-    return {number(text.substr(0, first)), number(text.substr(first + 1, second - first - 1)), std::filesystem::path(std::string(text.substr(second + 1)))};
+    return {number(text.substr(0, first)), number(text.substr(first + 1, second - first - 1)), std::filesystem::path(text.substr(second + 1))};
 }
 
 void writeDump(const Dump& dump) {
@@ -1772,6 +1774,15 @@ void configureEnvironment(const Options& options) {
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    int count = 0;
+    wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (wide == nullptr || count != argc) return usage();
+    const std::vector<std::filesystem::path> paths(wide, wide + count);
+    LocalFree(wide);
+#else
+    const std::vector<std::filesystem::path> paths(argv, argv + argc);
+#endif
     Options options;
     if (const char* fault = std::getenv("APS5_REPLAY_RESET_FAULT_FOR_TEST"); fault != nullptr) options.resetFault = std::string_view(fault) == "owners" ? ResetFault::KeepOwners : std::string_view(fault) == "bytes" ? ResetFault::WrongByte : std::string_view(fault) == "omit" ? ResetFault::OmitOwners : std::string_view(fault) == "remap" ? ResetFault::Remap : ResetFault::None;
     for (int index = 1; index < argc; ++index) {
@@ -1787,7 +1798,7 @@ int main(int argc, char** argv) {
         else if (argument == "--shaders") options.shaders = true;
         else if (argument == "--shader-code" && index + 1 < argc) {
             options.shaders = true;
-            options.shaderCode = argv[++index];
+            options.shaderCode = paths[++index];
         }
         else if (argument == "--submits" && index + 1 < argc) {
             const std::string_view value = argv[++index];
@@ -1795,9 +1806,9 @@ int main(int argc, char** argv) {
             if (error != std::errc{} || end != value.data() + value.size() || options.submits == 0) return usage();
         } else if (argument == "--trace-serials") options.traceSerials = true;
         else if (argument == "--cold-pipelines") options.coldPipelines = true;
-        else if (argument == "--dump" && index + 1 < argc) options.dumps.push_back(parseDump(argv[++index]));
-        else if (argument == "--frames" && index + 1 < argc) options.frames = argv[++index];
-        else if (!argument.starts_with("-") && options.directory.empty()) options.directory = argument;
+        else if (argument == "--dump" && index + 1 < argc) options.dumps.push_back(parseDump(paths[++index]));
+        else if (argument == "--frames" && index + 1 < argc) options.frames = paths[++index];
+        else if (!argument.starts_with("-") && options.directory.empty()) options.directory = paths[index];
         else return usage();
     }
     if (options.directory.empty()) return usage();
