@@ -61,6 +61,17 @@ query($url: URI!) {
 }
 """ + PULL_FIELDS
 
+AUTHOR_QUERY = """
+query($login: String!, $after: String, $size: Int!) {
+  user(login: $login) {
+    pullRequests(states: OPEN, baseRefName: "main", first: $size, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { repository { nameWithOwner } ...Readiness }
+    }
+  }
+}
+""" + PULL_FIELDS
+
 CLOSED_QUERY = """
 query($owner: String!, $name: String!, $label: String!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -218,6 +229,40 @@ def fetch_one(repo, number):
     return None
 
 
+def missing_user(error):
+    try:
+        errors = json.loads(error.stdout or "{}").get("errors") or []
+    except (ValueError, AttributeError):
+        return False
+    return bool(errors) and all(isinstance(item, dict) and item.get("type") == "NOT_FOUND"
+                                and item.get("path") == ["user"] for item in errors)
+
+
+def fetch_author(repo, login):
+    if login.casefold() == "ghost":
+        return fetch(repo)
+    prs, after = [], None
+    seen = set()
+    while True:
+        args = ["api", "graphql", "-f", f"query={AUTHOR_QUERY}", "-f", f"login={login}", "-F", f"size={PAGE_SIZE}"]
+        if after:
+            args += ["-f", f"after={after}"]
+        try:
+            page = json.loads(pr_labels.gh(*args))
+        except subprocess.CalledProcessError as error:
+            if missing_user(error):
+                return fetch(repo)
+            raise
+        if page.get("errors"):
+            raise ValueError(str(page["errors"])[:300])
+        connection = page["data"]["user"]["pullRequests"]
+        prs += [pull(node) for node in listed(connection)
+                if node["repository"]["nameWithOwner"].casefold() == repo.casefold()]
+        if not connection["pageInfo"]["hasNextPage"]:
+            return prs
+        after = pagination_cursor(connection, seen, "author pull request")
+
+
 def closed_with_label(repo):
     owner, name = repo.split("/", 1)
     closed, after = [], None
@@ -274,7 +319,7 @@ def main(argv=None):
                 parser.error(f"#{args.explain} is not an open pull request to main")
             print("\n".join(blockers(pr)) or "nothing blocks it")
             return 0
-        prs = fetch(repo)
+        prs = fetch(repo) if args.author is None else fetch_author(repo, args.author)
         closed = closed_with_label(repo) if args.author is None else []
     except subprocess.CalledProcessError as error:
         parser.error((error.stderr or str(error)).strip())
