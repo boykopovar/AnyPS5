@@ -463,6 +463,8 @@ With `APS5_PROFILE_DRAW` set (any value), the driver prints a profile line on st
 
 With `APS5_PROFILE_DRAW=1`, the `lock wait` row in `[draw] driver phases` can include time spent enqueueing a draw, including waiting for space in the draw pipeline. Draws that acquire the GPU mutex also charge that acquisition to the same row. Use the per-thread `[lock]` counters or `GpuMutex.wait.<site>` trace slices to measure GPU mutex contention. For draw pipeline backpressure, use the `for room` time on the `[draw] pipelined` line. Check the producer's sampled stacks for `DrawPipeline::Enqueue` and the draw committer's trace to see where the time goes.
 
+With `APS5_PROFILE_DRAW` set, the queue worker hands no draw to the draw finisher (`APS5_DRAW_PIPELINE`) and finishes every draw itself, so the `[finisher]` line reports 0 draws handed to the draw finisher. A run with draw profiling does not measure the finisher: compare `APS5_DRAW_PIPELINE` with `main` in runs without `APS5_PROFILE_DRAW`, using the trace summaries (`APS5_TRACE_SUMMARY_EVERY`) instead.
+
 | Line | Counts |
 |---|---|
 | `[rescache] revalidate` | last 10 s |
