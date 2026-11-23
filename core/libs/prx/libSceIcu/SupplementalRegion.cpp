@@ -21,7 +21,11 @@
 namespace {
 
 constexpr std::int32_t kRegionBufferLength = 8;
+constexpr std::int32_t kFullNameCapacity = 157;
+constexpr std::int32_t kIllegalArgument = 1;
+constexpr std::int32_t kMissingResource = 2;
 constexpr std::int32_t kBufferOverflow = 15;
+constexpr std::int32_t kStringNotTerminated = -124;
 
 bool Failure(std::int32_t status) {
     return status > 0;
@@ -29,6 +33,15 @@ bool Failure(std::int32_t status) {
 
 char AsciiUpper(char character) {
     return character >= 'a' && character <= 'z' ? static_cast<char>(character - 'a' + 'A') : character;
+}
+
+bool Canonicalize(const char* localeID, char* buffer, std::int32_t* status) {
+    uloc_canonicalize(localeID, buffer, kFullNameCapacity, status);
+    if (*status == kStringNotTerminated || *status == kBufferOverflow) {
+        *status = kIllegalArgument;
+        return false;
+    }
+    return !Failure(*status);
 }
 
 std::string LikelySubtags(const char* localeID, std::int32_t* status) {
@@ -75,10 +88,15 @@ std::int32_t APS5_VABI ulocimp_getRegionForSupplementalData_nid_postfix(const ch
             length = 0;
         } else if (length == 0 && inferRegion != 0) {
             std::int32_t likelyStatus = 0;
-            const std::string likely = LikelySubtags(localeID, &likelyStatus);
-            if (!Failure(likelyStatus)) {
-                length = uloc_getCountry(likely.c_str(), buffer, kRegionBufferLength, &local);
-                if (Failure(local)) length = 0;
+            char canonical[kFullNameCapacity];
+            if (Canonicalize(localeID, canonical, &likelyStatus)) {
+                const std::string likely = LikelySubtags(canonical, &likelyStatus);
+                if (likelyStatus == kMissingResource)
+                    NotImplemented_nid_no_patch("ulocimp_getRegionForSupplementalData needs the ICU likely subtags data");
+                if (!Failure(likelyStatus)) {
+                    length = uloc_getCountry(likely.c_str(), buffer, kRegionBufferLength, &local);
+                    if (Failure(local)) length = 0;
+                }
             }
         }
     }

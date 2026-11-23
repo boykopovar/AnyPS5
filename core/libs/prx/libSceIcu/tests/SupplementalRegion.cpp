@@ -7,11 +7,13 @@
 #include <cstring>
 #include <exception>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#undef uloc_canonicalize
 #undef uloc_getCountry
 
 namespace {
@@ -79,6 +81,15 @@ bool RegisterLanguageInfo(const char* path) {
     return guestStatus == ZeroError;
 }
 
+std::string LongLocale(std::size_t canonicalLength) {
+    return "en@foo=" + std::string(canonicalLength - 7, 'a');
+}
+
+std::int32_t CanonicalLength(const char* locale) {
+    std::int32_t status = ZeroError;
+    return uloc_canonicalize(locale, nullptr, 0, &status);
+}
+
 template <typename TCall>
 void RequireThrows(TCall call, const std::string& message) {
     try {
@@ -96,11 +107,25 @@ int main(int argc, char** argv) {
     const bool likelyData = argc == 2;
     Require(!likelyData || RegisterLanguageInfo(argv[1]), "could not register langInfo.res");
 
-    RequireRegion("en", true, likelyData ? "US" : "");
-    RequireRegion("zh_Hant", true, likelyData ? "TW" : "");
-    RequireRegion("sr_Cyrl", true, likelyData ? "RS" : "");
-    RequireRegion("und", true, likelyData ? "US" : "");
-    RequireRegion("en@rg=frxxxx", true, likelyData ? "US" : "");
+    const std::string fits = LongLocale(156);
+    const std::string overflows = LongLocale(157);
+    Require(CanonicalLength(fits.c_str()) == 156, "the 156-byte locale has the wrong canonical length");
+    Require(CanonicalLength(overflows.c_str()) == 157, "the 157-byte locale has the wrong canonical length");
+    if (likelyData) {
+        RequireRegion("en", true, "US");
+        RequireRegion("zh_Hant", true, "TW");
+        RequireRegion("sr_Cyrl", true, "RS");
+        RequireRegion("und", true, "US");
+        RequireRegion("en@rg=frxxxx", true, "US");
+        RequireRegion(fits.c_str(), true, "US");
+        RequireRegion(overflows.c_str(), true, "");
+    } else {
+        for (const char* locale : {"en", "zh_Hant", "sr_Cyrl", "und", "en@rg=frxxxx", fits.c_str()})
+            RequireThrows([&] { Region(locale, true); },
+                          std::string(locale) + " inferred a region without the likely subtags data");
+        RequireRegion(overflows.c_str(), true, "");
+    }
+    RequireRegion(fits.c_str(), false, "");
     RequireRegion("en_US", false, "US");
     RequireRegion("en_US", true, "US");
     RequireRegion("en_US@rg=gbzzzz", false, "GB");
