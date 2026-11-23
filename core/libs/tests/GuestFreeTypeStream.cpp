@@ -1,4 +1,5 @@
 #include "prx/libSceFreeTypeOt/include/Stream.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <array>
 #include <cerrno>
@@ -577,7 +578,7 @@ int main(int argc, char** argv) {
     Require(argc == 3, "expected library and export mode");
     const bool patched = std::strcmp(argv[2], "patched") == 0;
 #ifdef _WIN32
-    const auto library = LoadLibraryA(argv[1]);
+    const auto library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     const auto symbol = [&](const char* name) { return reinterpret_cast<void*>(GetProcAddress(library, name)); };
 #else
     const auto library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);

@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "FreeTypeGuestOutputFixture.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include FT_STROKER_H
 
@@ -152,8 +153,8 @@ int main(int argc, char** argv) {
     const bool patched = std::strcmp(argv[2], "patched") == 0;
     Require(patched || std::strcmp(argv[2], "unpatched") == 0);
 #ifdef _WIN32
-    auto module = LoadLibraryW(std::filesystem::path(argv[1]).c_str());
-    auto kernel = LoadLibraryW((std::filesystem::path(argv[1]).parent_path() / "libkernel.prx").c_str());
+    auto module = LoadLibraryW(ArgumentPath(argv, 1).c_str());
+    auto kernel = LoadLibraryW((ArgumentPath(argv, 1).parent_path() / "libkernel.prx").c_str());
     Require(kernel != nullptr);
 #else
     auto module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);

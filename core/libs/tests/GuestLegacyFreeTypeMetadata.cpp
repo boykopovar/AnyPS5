@@ -22,6 +22,7 @@
 
 #ifdef _WIN32
 #include "prx/libkernel/libkernel.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -36,12 +37,12 @@ static void Require(bool condition, std::source_location location = std::source_
     }
 }
 
-static auto Load(const char* path) {
+static auto Load(const std::filesystem::path& path) {
 #ifdef _WIN32
-    auto module = LoadLibraryW(std::filesystem::path(path).c_str());
+    auto module = LoadLibraryW(path.c_str());
     if (!module) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
-    auto module = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    auto module = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!module) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(module != nullptr);
@@ -345,10 +346,10 @@ int main(int argc, char** argv) {
     Require(argc == 4);
     const bool patched = std::strcmp(argv[3], "patched") == 0;
     Require(patched || std::strcmp(argv[3], "unpatched") == 0);
-    auto module = Load(argv[1]);
-    auto base = Load(argv[2]);
+    auto module = Load(ArgumentPath(argv, 1));
+    auto base = Load(ArgumentPath(argv, 2));
 #ifdef _WIN32
-    auto kernel = Load((std::filesystem::path(argv[2]).parent_path() / "libkernel.prx").string().c_str());
+    auto kernel = Load(ArgumentPath(argv, 2).parent_path() / "libkernel.prx");
     const KernelApi kernelApi{
         Import<decltype(KernelApi::allocate)>(kernel, patched ? "rTXw65xmLIA" : "sceKernelAllocateDirectMemory"),
         Import<decltype(KernelApi::map)>(kernel, patched ? "L-Q3LEjIbgA" : "sceKernelMapDirectMemory"),

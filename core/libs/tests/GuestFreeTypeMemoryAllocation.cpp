@@ -1,4 +1,5 @@
 #include "prx/libSceFreeType/include/MemoryAllocation.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <bit>
 #include <cstdio>
 #include <cstdlib>
@@ -76,7 +77,7 @@ int main(int count, char** arguments) {
     const char* const qReallocSymbol = patched ? "KVbmKCGGowg" : "FT_QRealloc_nid_postfix";
     const char* const freeSymbol = patched ? "fHMsRluEMfI" : "FT_Free_nid_postfix";
 #ifdef _WIN32
-    const auto module = LoadLibraryW(std::filesystem::path(arguments[1]).c_str());
+    const auto module = LoadLibraryW(ArgumentPath(arguments, 1).c_str());
     Check(module != nullptr);
     const auto allocAddress = GetProcAddress(module, allocSymbol);
     const auto qAllocAddress = GetProcAddress(module, qAllocSymbol);
