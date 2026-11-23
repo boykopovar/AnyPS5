@@ -35,6 +35,8 @@ struct RasterTargetSpan {
 
 RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target);
 
+bool GuestReadable_nid_no_patch(const void* source, std::size_t bytes);
+
 struct GuestStreamBridge {
     GuestStreamRec* guest = nullptr;
     FT_StreamRec_ host{};

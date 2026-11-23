@@ -32,13 +32,17 @@ struct NativeOutline {
 
     bool Read(const GuestOutline* source, const char* function) {
         if (!GuestCopyIn_nid_no_patch(&guest, source, sizeof(guest))) return false;
+        const std::size_t pointBytes = std::size_t{guest.n_points} * sizeof(GuestVector);
+        const std::size_t tagBytes = guest.tags ? guest.n_points : 0;
+        const std::size_t contourBytes = std::size_t{guest.n_contours} * sizeof(std::uint16_t);
+        if (!GuestWritable_nid_no_patch(guest.points, pointBytes) || !GuestReadable_nid_no_patch(guest.points, pointBytes) ||
+            !GuestReadable_nid_no_patch(guest.tags, tagBytes) || !GuestReadable_nid_no_patch(guest.contours, contourBytes)) return false;
         std::vector<GuestVector> original(guest.n_points);
-        tags.resize(guest.tags ? guest.n_points : 0);
+        tags.resize(tagBytes);
         contours.resize(guest.n_contours);
-        if (!GuestCopyIn_nid_no_patch(original.data(), guest.points, original.size() * sizeof(GuestVector)) ||
-            !GuestWritable_nid_no_patch(guest.points, original.size() * sizeof(GuestVector)) ||
-            !GuestCopyIn_nid_no_patch(tags.data(), guest.tags, tags.size()) ||
-            !GuestCopyIn_nid_no_patch(contours.data(), guest.contours, contours.size() * sizeof(std::uint16_t))) return false;
+        if (!GuestCopyIn_nid_no_patch(original.data(), guest.points, pointBytes) ||
+            !GuestCopyIn_nid_no_patch(tags.data(), guest.tags, tagBytes) ||
+            !GuestCopyIn_nid_no_patch(contours.data(), guest.contours, contourBytes)) return false;
         points.reserve(original.size());
         for (const GuestVector& point : original) points.push_back({HostCoordinate(point.x, function), HostCoordinate(point.y, function)});
         outline = {guest.n_contours, guest.n_points, points.data(), guest.tags ? tags.data() : nullptr, contours.data(), guest.flags};

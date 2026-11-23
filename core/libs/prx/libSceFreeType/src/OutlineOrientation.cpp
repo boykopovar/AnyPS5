@@ -1,5 +1,5 @@
 #include "prx/libSceFreeType/include/Api.hpp"
-#include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -14,6 +14,18 @@
 
 using namespace FreeType;
 
+bool FreeType::GuestReadable_nid_no_patch(const void* source, std::size_t bytes) {
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    constexpr std::size_t page = 4096;
+    unsigned char value;
+    for (std::size_t offset = 0; offset < bytes; offset += page) {
+        if (!GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(start + offset), 1)) return false;
+    }
+    return GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(start + bytes - 1), 1);
+}
+
 namespace {
 
 struct OutlineArrays {
@@ -22,9 +34,12 @@ struct OutlineArrays {
 };
 
 OutlineArrays ReadOutlineArrays(const GuestOutline& outline, const char* function) {
+    const std::size_t pointBytes = std::size_t{outline.n_points} * sizeof(GuestVector);
+    const std::size_t contourBytes = std::size_t{outline.n_contours} * sizeof(std::uint16_t);
+    if (!GuestReadable_nid_no_patch(outline.points, pointBytes) || !GuestReadable_nid_no_patch(outline.contours, contourBytes)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     OutlineArrays arrays{std::vector<GuestVector>(outline.n_points), std::vector<std::uint16_t>(outline.n_contours)};
-    if (!GuestCopyIn_nid_no_patch(arrays.points.data(), outline.points, arrays.points.size() * sizeof(GuestVector))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    if (!GuestCopyIn_nid_no_patch(arrays.contours.data(), outline.contours, arrays.contours.size() * sizeof(std::uint16_t))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!GuestCopyIn_nid_no_patch(arrays.points.data(), outline.points, pointBytes)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!GuestCopyIn_nid_no_patch(arrays.contours.data(), outline.contours, contourBytes)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     for (const std::uint16_t last : arrays.contours) {
         if (last >= outline.n_points) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     }
@@ -81,15 +96,18 @@ int APS5_VABI FT_Outline_Copy_nid_postfix(const GuestOutline* source, GuestOutli
     if (!GuestCopyIn_nid_no_patch(&from, source, sizeof(from)) || !GuestCopyIn_nid_no_patch(&to, target, sizeof(to))) return FT_Err_Invalid_Outline;
     if (from.n_points != to.n_points || from.n_contours != to.n_contours) return FT_Err_Invalid_Argument;
     if (source == target) return FT_Err_Ok;
-    std::vector<GuestVector> points(from.n_points);
-    std::vector<unsigned char> tags(from.n_points);
-    std::vector<std::uint16_t> contours(from.n_contours);
-    const std::size_t pointBytes = points.size() * sizeof(GuestVector);
-    const std::size_t contourBytes = contours.size() * sizeof(std::uint16_t);
-    if (!GuestCopyIn_nid_no_patch(points.data(), from.points, pointBytes) || !GuestCopyIn_nid_no_patch(tags.data(), from.tags, tags.size()) ||
-        !GuestCopyIn_nid_no_patch(contours.data(), from.contours, contourBytes) || !GuestWritable_nid_no_patch(to.points, pointBytes) ||
-        !GuestWritable_nid_no_patch(to.tags, tags.size()) || !GuestWritable_nid_no_patch(to.contours, contourBytes) ||
+    const std::size_t pointBytes = std::size_t{from.n_points} * sizeof(GuestVector);
+    const std::size_t tagBytes = from.n_points;
+    const std::size_t contourBytes = std::size_t{from.n_contours} * sizeof(std::uint16_t);
+    if (!GuestReadable_nid_no_patch(from.points, pointBytes) || !GuestReadable_nid_no_patch(from.tags, tagBytes) ||
+        !GuestReadable_nid_no_patch(from.contours, contourBytes) || !GuestWritable_nid_no_patch(to.points, pointBytes) ||
+        !GuestWritable_nid_no_patch(to.tags, tagBytes) || !GuestWritable_nid_no_patch(to.contours, contourBytes) ||
         !GuestWritable_nid_no_patch(target, sizeof(to))) return FT_Err_Invalid_Outline;
+    std::vector<GuestVector> points(from.n_points);
+    std::vector<unsigned char> tags(tagBytes);
+    std::vector<std::uint16_t> contours(from.n_contours);
+    if (!GuestCopyIn_nid_no_patch(points.data(), from.points, pointBytes) || !GuestCopyIn_nid_no_patch(tags.data(), from.tags, tagBytes) ||
+        !GuestCopyIn_nid_no_patch(contours.data(), from.contours, contourBytes)) return FT_Err_Invalid_Outline;
     to.flags = (from.flags & ~FT_OUTLINE_OWNER) | (to.flags & FT_OUTLINE_OWNER);
     if (!GuestCopyOut_nid_no_patch(to.points, points.data(), pointBytes) || !GuestCopyOut_nid_no_patch(to.tags, tags.data(), tags.size()) ||
         !GuestCopyOut_nid_no_patch(to.contours, contours.data(), contourBytes) || !GuestCopyOut_nid_no_patch(target, &to, sizeof(to))) return FT_Err_Invalid_Outline;
