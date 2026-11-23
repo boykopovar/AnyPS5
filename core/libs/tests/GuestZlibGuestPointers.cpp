@@ -42,6 +42,11 @@ int main() {
     Check(sceZlibInflate(compressed.data(), compressed.size(), unalignedStorage.data() + 1, unalignedStorage.size(), &requestId) == invalidArgument);
     Check(requestId == 0x1122334455667788 && errno == EDOM);
     Check(unalignedStorage.front() == 0 && unalignedStorage[1] == 0);
+    alignas(2048) std::array<std::uint8_t, 3072> halfAlignedStorage{};
+    const auto originalHalfAligned = halfAlignedStorage;
+    Check(sceZlibInflate(compressed.data(), compressed.size(), halfAlignedStorage.data() + 1024, 2048, &requestId) == invalidArgument);
+    Check(requestId == 0x1122334455667788 && errno == EDOM);
+    Check(halfAlignedStorage == originalHalfAligned);
     std::uint64_t completed = 0;
     std::uint32_t timeout = 0;
     Check(sceZlibWaitForDone(&completed, &timeout) == timedOut);
