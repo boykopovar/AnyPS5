@@ -14,5 +14,6 @@ NKWebKit::WtfAbi::Vector<NKWebKit::WebCoreAbi::LegacyVaryingRequestHeader> APS5_
 bool APS5_VABI _ZN7WebCore27verifyVaryingRequestHeadersEPKNS_9CookieJarERKN3WTF6VectorISt4pairINS3_6StringES6_ELm0ENS3_15CrashOnOverflowELm16ENS3_10FastMallocEEERKNS_15ResourceRequestE(
     const NKWebKit::WebCoreAbi::LegacyCookieJar* cookieJar, const NKWebKit::WtfAbi::Vector<NKWebKit::WebCoreAbi::LegacyVaryingRequestHeader>* varyingRequestHeaders,
     const NKWebKit::WebCoreAbi::LegacyResourceRequestBase* request);
+NKWebKit::WebCoreAbi::LegacySameSiteInfo APS5_VABI _ZN7WebCore12SameSiteInfo6createERKNS_15ResourceRequestE(const NKWebKit::WebCoreAbi::LegacyResourceRequestBase* request);
 
 }
