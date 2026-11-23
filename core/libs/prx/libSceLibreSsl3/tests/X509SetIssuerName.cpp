@@ -193,6 +193,12 @@ void DeepCopiesValuesAndObjects() {
     Require(callerEntry != nullptr && storedEntry != nullptr);
     Require(callerEntry->value != storedEntry->value);
     Require(callerEntry->object != storedEntry->object);
+    auto* callerObject = static_cast<Asn1Object_nid_no_patch*>(callerEntry->object);
+    auto* storedObject = static_cast<Asn1Object_nid_no_patch*>(storedEntry->object);
+    Require(storedObject->shortName != nullptr && callerObject->shortName != nullptr);
+    Require(std::strcmp(storedObject->shortName, callerObject->shortName) == 0);
+    Require(storedObject->longName != nullptr && callerObject->longName != nullptr);
+    Require(std::strcmp(storedObject->longName, callerObject->longName) == 0);
     auto* callerValue = static_cast<Asn1String*>(callerEntry->value);
     auto* storedValue = static_cast<Asn1String*>(storedEntry->value);
     Require(storedValue->data != nullptr && storedValue->data != callerValue->data);
