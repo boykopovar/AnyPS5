@@ -43,6 +43,8 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdarg>
+#include <vector>
 #include <atomic>
 #include <cerrno>
 #include <cstddef>
@@ -929,6 +931,44 @@ int APS5_VABI execv_nid_postfix(const char* path, char* const* arguments) {
 
 int APS5_VABI execve_nid_postfix(const char* path, char* const* arguments, char* const* environment) {
     return ExecProgram(path, arguments, environment, false, false);
+}
+
+namespace {
+
+std::vector<char*> CollectArguments(const char* first, va_list list) {
+    std::vector<char*> arguments;
+    for (const char* next = first; next != nullptr; next = va_arg(list, const char*)) arguments.push_back(const_cast<char*>(next));
+    return arguments;
+}
+
+}
+
+int APS5_VABI execl_nid_postfix(const char* path, const char* arg, ...) {
+    va_list list;
+    va_start(list, arg);
+    auto arguments = CollectArguments(arg, list);
+    va_end(list);
+    arguments.push_back(nullptr);
+    return execv_nid_postfix(path, arguments.data());
+}
+
+int APS5_VABI execle_nid_postfix(const char* path, const char* arg, ...) {
+    va_list list;
+    va_start(list, arg);
+    auto arguments = CollectArguments(arg, list);
+    char* const* environment = va_arg(list, char* const*);
+    va_end(list);
+    arguments.push_back(nullptr);
+    return execve_nid_postfix(path, arguments.data(), environment);
+}
+
+int APS5_VABI execlp_nid_postfix(const char* file, const char* arg, ...) {
+    va_list list;
+    va_start(list, arg);
+    auto arguments = CollectArguments(arg, list);
+    va_end(list);
+    arguments.push_back(nullptr);
+    return execvp_nid_postfix(file, arguments.data());
 }
 
 int APS5_VABI sceKernelGetCurrentCpu(void) {
