@@ -11063,20 +11063,27 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         std::size_t segments;
         std::size_t importWindow;
         bool uniformHead;
+        bool lastWordDiffers;
     };
     const Case cases[] = {
-        {"a 64 KiB R_X 1024x1024 image over 64 adjacent 64 KiB pieces", 0, 4u << 20u, 0, window, false},
-        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces", piece, (4u << 20u) + 2 * piece, 2, window, false},
-        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, false},
-        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces, one repeated word but its last piece", piece, (4u << 20u) + 2 * piece, 2, window, true},
-        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows, one repeated word but its last piece", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, true},
+        {"a 64 KiB R_X 1024x1024 image over 64 adjacent 64 KiB pieces", 0, 4u << 20u, 0, window, false, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces", piece, (4u << 20u) + 2 * piece, 2, window, false, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, false, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces, one repeated word but its last piece", piece, (4u << 20u) + 2 * piece, 2, window, true, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows, one repeated word but its last piece", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, true, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces, one repeated word but the last byte before its last piece", piece, (4u << 20u) + 2 * piece, 2, window, true, true},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows, one repeated word but the last byte before its last piece", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, true, true},
     };
     struct Window {
         ~Window() { SetHostImportWindow(0); }
     } restore;
     std::string failures;
     for (const auto& test : cases) {
-        const auto pattern = [&](std::size_t i) { return test.uniformHead && i >= test.offset && i < test.offset + (4u << 20u) - piece ? std::uint8_t{0x5a} : static_cast<std::uint8_t>(i * 131u + 7u); };
+        const auto pattern = [&](std::size_t i) {
+            const auto uniformEnd = test.offset + (4u << 20u) - piece;
+            if (test.lastWordDiffers && i == uniformEnd - 1) return std::uint8_t{0xa5};
+            return test.uniformHead && i >= test.offset && i < uniformEnd ? std::uint8_t{0x5a} : static_cast<std::uint8_t>(i * 131u + 7u);
+        };
         SetHostImportWindow(test.importWindow);
         GuestTextureResource resource{};
         resource.width = 1024;
@@ -11094,13 +11101,13 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
 #ifdef _WIN32
         const bool resident = test.uniformHead;
         void* reserved = nullptr;
+        HANDLE section = nullptr;
         if (resident) {
             reserved = GuestArena::GuestArenaAllocate_nid_postfix(2 * window, window);
             Require(reserved != nullptr, "cannot reserve the resident upload block");
-            const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, static_cast<DWORD>(2 * window), nullptr);
+            section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, static_cast<DWORD>(2 * window), nullptr);
             Require(section != nullptr, "cannot create the resident upload block");
             GuestArena::GuestArenaMapDirect_nid_postfix(reserved, 2 * window, section, 0, PAGE_READWRITE);
-            CloseHandle(section);
         } else {
             reserved = VirtualAlloc(nullptr, 2 * window, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         }
@@ -11145,7 +11152,8 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         const auto segments = after.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made - before.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made;
         std::printf("%s: %zu segment imports, %s upload, %zu of %zu bytes kept through the round trip\n", test.name, static_cast<std::size_t>(segments), direct ? "GPU-direct" : "CPU", kept, surfaceBytes);
         if (!direct) failures += std::string(test.name) + ": the upload took the CPU path\n";
-        if (test.uniformHead && resident && headRead) failures += std::string(test.name) + ": the upload read a piece holding one repeated word from guest memory instead of filling it on the GPU\n";
+        if (test.lastWordDiffers && resident && !headRead) failures += std::string(test.name) + ": the upload filled a piece on the GPU although the last byte of its source differs\n";
+        if (test.uniformHead && !test.lastWordDiffers && resident && headRead) failures += std::string(test.name) + ": the upload read a piece holding one repeated word from guest memory instead of filling it on the GPU\n";
         if (segments != test.segments) failures += std::string(test.name) + ": " + std::to_string(segments) + " segment imports, expected " + std::to_string(test.segments) + "\n";
         if (kept != surfaceBytes) failures += std::string(test.name) + ": the upload and write-back changed " + std::to_string(surfaceBytes - kept) + " guest bytes\n";
         {
@@ -11158,6 +11166,8 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         if (resident) {
             GuestArena::GuestArenaReset_nid_postfix(reserved, 2 * window);
             GuestArena::GuestArenaRelease_nid_postfix(reserved, 2 * window);
+            GuestArena::GuestArenaForgetSection_nid_postfix(section);
+            CloseHandle(section);
         } else {
             VirtualFree(reserved, 0, MEM_RELEASE);
         }
