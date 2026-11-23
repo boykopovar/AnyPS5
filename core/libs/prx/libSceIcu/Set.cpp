@@ -35,15 +35,8 @@ GuestSet& Check(USet* set) {
     return const_cast<GuestSet&>(Check(static_cast<const USet*>(set)));
 }
 
-bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
-}
-
 void WriteError(std::int32_t* error, std::int32_t value, const char* caller) {
-    if (!CopyOut(error, &value, sizeof(value))) NotImplemented_nid_no_patch(caller);
+    if (!GuestCopyOut_nid_no_patch(error, &value, sizeof(value))) NotImplemented_nid_no_patch(caller);
 }
 
 }
@@ -58,9 +51,7 @@ extern "C" {
 const USet* APS5_VABI u_getBinaryPropertySet_nid_postfix(std::int32_t property, std::int32_t* error) {
     if (!error) APS5_INVALID_ARG_EX;
     std::int32_t incoming = 0;
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&incoming, error, sizeof(incoming));
-    errno = savedErrno;
     if (!readable) NotImplemented_nid_no_patch(__func__);
     if (incoming > 0) return nullptr;
     if (property < UCHAR_BINARY_START || property >= UCHAR_BINARY_LIMIT) {
@@ -123,9 +114,7 @@ std::int32_t APS5_VABI uset_getItem_nid_postfix(const USet* set, std::int32_t it
                                                 char16_t* string, std::int32_t capacity, std::int32_t* error) {
     if (!error) APS5_INVALID_ARG_EX;
     std::int32_t incoming = 0;
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&incoming, error, sizeof(incoming));
-    errno = savedErrno;
     if (!readable) NotImplemented_nid_no_patch(__func__);
     if (incoming > 0) return 0;
     if (itemIndex < 0) {
@@ -139,7 +128,7 @@ std::int32_t APS5_VABI uset_getItem_nid_postfix(const USet* set, std::int32_t it
         auto status = static_cast<UErrorCode>(incoming);
         std::int32_t first = 0, last = 0;
         uset_getItem(native, itemIndex, &first, &last, nullptr, 0, &status);
-        if (!CopyOut(start, &first, sizeof(first)) || !CopyOut(end, &last, sizeof(last))) APS5_INVALID_ARG_EX;
+        if (!GuestCopyOut_nid_no_patch(start, &first, sizeof(first)) || !GuestCopyOut_nid_no_patch(end, &last, sizeof(last))) APS5_INVALID_ARG_EX;
         return 0;
     }
     std::int32_t length = 0;
@@ -153,7 +142,7 @@ std::int32_t APS5_VABI uset_getItem_nid_postfix(const USet* set, std::int32_t it
     icu::UnicodeString(false, units, length).extract(string ? output.data() : nullptr, capacity, status);
     if (string && U_SUCCESS(status)) {
         const auto count = static_cast<std::size_t>(length) + (capacity > length);
-        if (!CopyOut(string, output.data(), count * sizeof(char16_t))) APS5_INVALID_ARG_EX;
+        if (!GuestCopyOut_nid_no_patch(string, output.data(), count * sizeof(char16_t))) APS5_INVALID_ARG_EX;
     }
     if (status != incoming) WriteError(error, status, __func__);
     return length;
