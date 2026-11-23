@@ -159,7 +159,7 @@ VkDeviceSize BufferPool::HostImageBudget() {
 }
 
 bool BufferPool::hostImagePooled(VkDeviceSize bytes, std::uint32_t memoryType) const {
-    return hostImageTier.budget != 0 && bytes != 0 && bytes <= hostImageTier.budget && memoryType < memoryProperties.memoryTypeCount && !DeviceTiered(memoryProperties.memoryTypes[memoryType].propertyFlags);
+    return hostImageTier.budget != 0 && bytes != 0 && bytes <= hostImageTier.budget && memoryType < memoryProperties.memoryTypeCount && (memoryProperties.memoryTypes[memoryType].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) == 0 && (memoryProperties.memoryHeaps[memoryProperties.memoryTypes[memoryType].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0;
 }
 
 bool BufferPool::imagePooled(VkDeviceSize bytes, std::uint32_t memoryType) const {

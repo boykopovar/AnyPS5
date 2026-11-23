@@ -479,6 +479,30 @@ void HostImageBudget() {
     Expect(mock.liveBytes == 0, "the host image pool leaked memory");
 }
 
+void HostImageWithoutStaging() {
+    mock = MockDevice{};
+    {
+        auto context = budgetContext();
+        context.memory.memoryTypeCount = 3;
+        context.memory.memoryTypes[2] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | HostVisible, 0};
+        VkMemoryAllocateInfo info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        info.allocationSize = 8 * MiB;
+        info.memoryTypeIndex = 0;
+        const auto device = AllocateImageMemory(context, info, 7, "vkAllocateMemory storage texture");
+        ReleaseImageMemory(context, device, info.allocationSize, 0);
+        Expect(!mock.memoryBytes.contains(device), "released device-local image memory was kept by the host image pool with the staging pool off");
+        info.memoryTypeIndex = 2;
+        const auto visible = AllocateImageMemory(context, info, 7, "vkAllocateMemory storage texture");
+        ReleaseImageMemory(context, visible, info.allocationSize, 2);
+        Expect(!mock.memoryBytes.contains(visible), "released host-visible device-local image memory was kept by the host image pool");
+        info.memoryTypeIndex = 1;
+        const auto host = AllocateImageMemory(context, info, 7, "vkAllocateMemory storage texture");
+        ReleaseImageMemory(context, host, info.allocationSize, 1);
+        Expect(mock.memoryBytes.contains(host), "released host-type image memory was freed with the staging pool off");
+    }
+    Expect(mock.liveBytes == 0, "the host image pool leaked memory with the staging pool off");
+}
+
 void SizeClassesAndDirections() {
     mock = MockDevice{};
     auto context = mockContext();
@@ -1722,6 +1746,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--host-image-budget") {
             HostImageBudget();
+            return failures == 0 ? 0 : 1;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--host-image-no-staging") {
+            HostImageWithoutStaging();
             return failures == 0 ? 0 : 1;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--small-device-retention") {
