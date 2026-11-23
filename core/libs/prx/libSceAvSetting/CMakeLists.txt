@@ -30,4 +30,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_avsetting_not_initialized PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvSetting>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_avsetting_guards_tests ${LIBS_INCLUDE_DIR}/tests/GuestAvSettingGuards.cpp)
+    target_include_directories(guest_avsetting_guards_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_avsetting_guards_tests PRIVATE libSceAvSetting libc)
+    configure_windows_unwind(guest_avsetting_guards_tests)
+    add_test(NAME guest_avsetting_guards COMMAND guest_avsetting_guards_tests)
+    if(WIN32)
+        set_tests_properties(guest_avsetting_guards PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvSetting>")
+    endif()
 endif()

@@ -1,40 +1,71 @@
 #include "prx/libSceVideoArbitration/include/Api.hpp"
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
+#include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 
 namespace {
 
 constexpr int SCE_VIDEO_ARBITRATION_ERROR_NOT_INITIALIZED = static_cast<int>(0x819E0001);
 constexpr int SCE_VIDEO_ARBITRATION_ERROR_INVALID_ARGUMENT = static_cast<int>(0x819E0002);
+constexpr int SCE_VIDEO_ARBITRATION_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x819E0003);
+constexpr int SCE_VIDEO_ARBITRATION_ERROR_NO_EVENT = static_cast<int>(0x819E0003);
 constexpr std::uint64_t VideoArbitrationParamSize = 0x18;
 
-}
+struct VideoArbitrationParam {
+    std::uint64_t size;
+    std::uint32_t priority;
+    std::uint32_t reserved;
+    std::uint64_t affinityMask;
+};
+static_assert(sizeof(VideoArbitrationParam) == VideoArbitrationParamSize);
+
+std::mutex g_mutex;
+bool g_initialized = false;
+bool g_hasPendingEvent = false;
+std::uint32_t g_pendingEvent = 0;
+void* g_callback = nullptr;
+
+} // namespace
 
 extern "C" {
 
-int APS5_VABI sceVideoArbitrationAcceptEvent() {
-    return SCE_VIDEO_ARBITRATION_ERROR_NOT_INITIALIZED;
+int APS5_VABI sceVideoArbitrationAcceptEvent(std::uint32_t event) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_initialized) return SCE_VIDEO_ARBITRATION_ERROR_NOT_INITIALIZED;
+    if (!g_hasPendingEvent || g_pendingEvent != event) {
+        return SCE_VIDEO_ARBITRATION_ERROR_NO_EVENT;
+    }
+    g_hasPendingEvent = false;
+    return 0;
 }
 
-int APS5_VABI sceVideoArbitrationEnable() {
-    return SCE_VIDEO_ARBITRATION_ERROR_NOT_INITIALIZED;
+int APS5_VABI sceVideoArbitrationEnable(std::uint64_t reserved, void* callback) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_initialized) return SCE_VIDEO_ARBITRATION_ERROR_NOT_INITIALIZED;
+    if (reserved != 0 || callback == nullptr) {
+        return SCE_VIDEO_ARBITRATION_ERROR_INVALID_ARGUMENT;
+    }
+    g_callback = callback;
+    return 0;
 }
 
 int APS5_VABI sceVideoArbitrationInitialize(const void* param) {
     if (param == nullptr) return SCE_VIDEO_ARBITRATION_ERROR_INVALID_ARGUMENT;
-    std::uint64_t size = 0;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&size, param, sizeof(size));
-    errno = savedErrno;
-    if (!copied) {
-        NotImplemented_nid_no_patch(__func__);
-        return 0;
+    VideoArbitrationParam localParam{};
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
+        return SCE_VIDEO_ARBITRATION_ERROR_INVALID_ARGUMENT;
     }
-    if (size != VideoArbitrationParamSize) return SCE_VIDEO_ARBITRATION_ERROR_INVALID_ARGUMENT;
-    NotImplemented_nid_no_patch(__func__);
+    if (localParam.size != VideoArbitrationParamSize) {
+        return SCE_VIDEO_ARBITRATION_ERROR_INVALID_ARGUMENT;
+    }
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_initialized) return SCE_VIDEO_ARBITRATION_ERROR_ALREADY_INITIALIZED;
+    g_initialized = true;
+    g_hasPendingEvent = false;
+    g_pendingEvent = 0;
+    g_callback = nullptr;
     return 0;
 }
 

@@ -21,22 +21,24 @@ int main() {
     Require(drand48_nid_postfix() == 0xb85403f4p-32, "drand48 did not advance the seeded state");
 
     const std::uint16_t replacement[3] = {0x1111, 0x2222, 0x3333};
-    std::uint16_t* previous = seed48_nid_postfix(replacement);
-    Require(previous != replacement, "seed48 returned the caller's replacement buffer");
-    Require(SeedIs(previous, 0x5101, 0x03f4, 0xb854), "seed48 did not return the advanced state");
+    std::uint16_t* installed = seed48_nid_postfix(replacement);
+    Require(installed != replacement, "seed48 returned the caller's replacement buffer");
+    Require(SeedIs(installed, 0x1111, 0x2222, 0x3333), "seed48 did not return the new seed");
+    Require(drand48_nid_postfix() == 0x14f99d82p-32, "seed48 did not install the new seed");
+    Require(SeedIs(installed, 0x1111, 0x2222, 0x3333), "seed48 returned the live state rather than a copy");
 
-    std::uint16_t* replaced = seed48_nid_postfix(previous);
-    Require(SeedIs(replaced, 0x1111, 0x2222, 0x3333), "seed48 did not preserve its return buffer when reused as input");
-    Require(drand48_nid_postfix() == 0x0fd1bab9p-32, "seed48 did not restart from its returned state");
+    std::uint16_t* const again = seed48_nid_postfix(installed);
+    Require(again == installed && SeedIs(again, 0x1111, 0x2222, 0x3333), "seed48 did not reuse its buffer when given it as input");
+    Require(drand48_nid_postfix() == 0x14f99d82p-32, "seed48 did not restart from its returned seed");
 
     const std::uint16_t parameters[7] = {1, 0, 0, 3, 0, 0, 5};
     lcong48_nid_postfix(parameters);
     const std::uint16_t resetSeed[3] = {0x4444, 0x5555, 0x6666};
-    previous = seed48_nid_postfix(resetSeed);
-    Require(SeedIs(previous, 1, 0, 0), "seed48 did not return the lcong48 state");
+    installed = seed48_nid_postfix(resetSeed);
+    Require(SeedIs(installed, 0x4444, 0x5555, 0x6666), "seed48 did not return the new seed after lcong48");
     Require(drand48_nid_postfix() == 0x7b5ed753p-32, "seed48 did not restore the default multiplier and addend");
 
     if (failures != 0) return 1;
-    std::puts("seed48 previous-state contract passed");
+    std::puts("seed48 new-seed contract passed");
     return 0;
 }

@@ -285,11 +285,11 @@ int APS5_VABI sceFontDestroyRenderer(FontRenderer* pRenderer) {
 }
 
 int APS5_VABI sceFontRendererGetOutlineBufferSize(FontRenderer fontRenderer, std::uint32_t* size) {
-    if (!size || !CopyOutGuest(size, std::uint32_t{0})) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (size && !CopyOutGuest(size, std::uint32_t{0})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* renderer = static_cast<RendererNative*>(fontRenderer);
     if (!renderer || renderer->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
     const auto workspaceSize = static_cast<std::uint32_t>(renderer->workspace_size);
-    if (!CopyOutGuest(size, workspaceSize)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!size || !CopyOutGuest(size, workspaceSize)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
@@ -303,7 +303,9 @@ int APS5_VABI sceFontRendererResetOutlineBuffer(FontRenderer fontRenderer) {
 int APS5_VABI sceFontRendererSetOutlineBufferPolicy(FontRenderer fontRenderer, std::uint64_t bufferPolicy, std::uint32_t basalSize, std::uint32_t limitSize) {
     (void)bufferPolicy;
     auto* renderer = static_cast<RendererNative*>(fontRenderer);
-    if (!renderer || renderer->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
+    if (!renderer) return SCE_FONT_ERROR_INVALID_RENDERER;
+    std::uint16_t magic = 0;
+    if (!CopyInGuest(magic, &renderer->magic) || magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (limitSize != 0 && basalSize > limitSize) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!renderer->alloc_fn || !renderer->free_fn || !renderer->alloc_ctx) return SCE_FONT_ERROR_INVALID_MEMORY;
     auto desiredSize = std::max(static_cast<std::uint64_t>(renderer->workspace_size), static_cast<std::uint64_t>(basalSize));

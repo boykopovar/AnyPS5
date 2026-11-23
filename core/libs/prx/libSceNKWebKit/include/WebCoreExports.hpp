@@ -10,6 +10,12 @@
 
 extern "C" {
 
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore20serializationForHTMLERKNS_5ColorE(const WebCore::Color* color);
+
+WebCore::FourCC APS5_VABI _ZN7WebCore12ISOWebVTTCue11boxTypeNameEv();
+std::size_t APS5_VABI _ZN7WebCore6ISOBox14minimumBoxSizeEv();
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore40defaultTextEncodingNameForSystemLanguageEv();
+WebCore::IntRect APS5_VABI _ZN7WebCore15HitTestLocation12rectForPointERKNS_11LayoutPointEjjjj(const WebCore::LayoutPoint& point, unsigned topPadding, unsigned rightPadding, unsigned bottomPadding, unsigned leftPadding);
 WebCore::FloatPoint APS5_VABI _ZN7WebCore10FloatPoint15narrowPrecisionEdd(double x, double y);
 void APS5_VABI _ZN7WebCore10FloatPoint9normalizeEv(WebCore::FloatPoint* self);
 void APS5_VABI _ZN7WebCore10FloatPointC1ERKNS_8IntPointE(WebCore::FloatPoint* self, const WebCore::IntPoint& p);
@@ -71,6 +77,8 @@ WebCore::ViewportAttributes APS5_VABI _ZN7WebCore25computeViewportAttributesENS_
 WebCore::FloatRect APS5_VABI _ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE( float aspectRatio, const WebCore::FloatRect& srcRect);
 WebCore::FloatRect APS5_VABI _ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE( float aspectRatio, const WebCore::FloatRect& srcRect);
 void APS5_VABI _ZN7WebCore40restrictMinimumScaleFactorToViewportSizeERNS_18ViewportAttributesENS_7IntSizeEf( WebCore::ViewportAttributes& result, WebCore::IntSize visibleViewport, float devicePixelRatio);
+unsigned int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal30constrainedAttachedWindowWidthEjj(unsigned int preferredWidth, unsigned int totalWindowWidth);
+unsigned int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal31constrainedAttachedWindowHeightEjj(unsigned int preferredHeight, unsigned int totalWindowHeight);
 unsigned int APS5_VABI _ZN7WebCore43initializeMaximumHTTPConnectionCountPerHostEv();
 float APS5_VABI _ZN7WebCore44computeMinimumScaleFactorForContentContainedERKNS_18ViewportAttributesERKNS_7IntSizeES5_( const WebCore::ViewportAttributes& result, const WebCore::IntSize& visibleViewport, const WebCore::IntSize& contentsSize);
 void APS5_VABI _ZN7WebCore50restrictScaleFactorToInitialScaleIfNotUserScalableERNS_18ViewportAttributesE(WebCore::ViewportAttributes& result);
@@ -127,9 +135,9 @@ WebCore::IntRect APS5_VABI _ZNK7WebCore20TransformationMatrix7mapRectERKNS_7IntR
 WebCore::FloatRect APS5_VABI _ZNK7WebCore20TransformationMatrix7mapRectERKNS_9FloatRectE( const WebCore::TransformationMatrix* self, const WebCore::FloatRect& r);
 WebCore::FloatPoint APS5_VABI _ZNK7WebCore20TransformationMatrix8mapPointERKNS_10FloatPointE( const WebCore::TransformationMatrix* self, const WebCore::FloatPoint& p);
 WebCore::TransformationMatrix APS5_VABI _ZNK7WebCore24MatrixTransformOperation6matrixEv( const WebCore::MatrixTransformOperation* self);
-WebCore::Color APS5_VABI _ZNK7WebCore5Color14colorWithAlphaEf(const WebCore::Color* self, float alpha);
-WebCore::Color APS5_VABI _ZNK7WebCore5Color8darkenedEv(const WebCore::Color* self);
-WebCore::Color APS5_VABI _ZNK7WebCore5Color9lightenedEv(const WebCore::Color* self);
+WebCore::Color* APS5_VABI _ZNK7WebCore5Color14colorWithAlphaEf(WebCore::Color* result, const WebCore::Color* self, float alpha);
+WebCore::Color* APS5_VABI _ZNK7WebCore5Color8darkenedEv(WebCore::Color* result, const WebCore::Color* self);
+WebCore::Color* APS5_VABI _ZNK7WebCore5Color9lightenedEv(WebCore::Color* result, const WebCore::Color* self);
 double APS5_VABI _ZNK7WebCore5Color9lightnessEv(const WebCore::Color* self);
 double APS5_VABI _ZNK7WebCore5Color9luminanceEv(const WebCore::Color* self);
 bool APS5_VABI _ZNK7WebCore7IntRect10intersectsERKS0_(const WebCore::IntRect* self, const WebCore::IntRect& other);

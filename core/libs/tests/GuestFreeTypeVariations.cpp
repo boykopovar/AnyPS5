@@ -1,4 +1,5 @@
 #include "FontFixture.hpp"
+#include "Type1Fixture.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -36,8 +37,6 @@ template <typename TCall> static bool ThrowsWith(TCall call, const std::string& 
     return false;
 }
 
-static constexpr bool kHostLong64 = sizeof(FT_Long) == sizeof(std::int64_t);
-
 struct Libraries {
     GuestLibrary guest{};
     FT_Library native = nullptr;
@@ -52,7 +51,8 @@ static Libraries& Shared() {
 }
 
 static std::vector<unsigned char> VariableFont() {
-    const std::vector<unsigned char> fvar = FontFixture::Words({1, 0, 16, 2, 1, 20, 0, 8, 0x7767, 0x6874, 0x0064, 0, 0x0190, 0, 0x0384, 0, 0, 256});
+    const std::vector<unsigned char> fvar = FontFixture::Words({1, 0, 16, 2, 1, 20, 1, 8,
+        0x7767, 0x6874, 0xff9c, 0, 0x0190, 0, 0x0384, 0, 1, 256, 257, 0, 600, 0});
     const std::vector<unsigned char> gvar = FontFixture::Words({1, 0, 1, 0, 0, 0, 3, 0, 0, 28, 0, 0, 0, 0});
     return FontFixture::BuildFont(3, {{"fvar", fvar}, {"gvar", gvar}});
 }
@@ -76,35 +76,74 @@ struct FacePair {
     }
 };
 
-static void SameVariations(const FT_MM_Var* actual, const FT_MM_Var* expected) {
-    Require(actual->num_axis == expected->num_axis && actual->num_designs == expected->num_designs && actual->num_namedstyles == expected->num_namedstyles);
-    for (FT_UInt index = 0; index < expected->num_axis; ++index) {
-        const FT_Var_Axis& left = actual->axis[index];
+struct GuestVariationAxis {
+    const char* name;
+    std::int64_t minimum;
+    std::int64_t def;
+    std::int64_t maximum;
+    std::uint64_t tag;
+    std::uint32_t strid;
+};
+
+struct GuestNamedStyle {
+    const std::int64_t* coords;
+    std::uint32_t strid;
+    std::uint32_t psid;
+};
+
+struct GuestVariation {
+    std::uint32_t numAxis;
+    std::uint32_t numDesigns;
+    std::uint32_t numNamedStyles;
+    const void* axes;
+    const void* namedStyles;
+};
+
+static_assert(sizeof(GuestVariation) == 32 && offsetof(GuestVariation, axes) == 16);
+static_assert(sizeof(GuestVariationAxis) == 48 && sizeof(GuestNamedStyle) == 16);
+
+template <typename T> static T ReadRecord(const void* data, std::size_t offset) {
+    T value;
+    std::memcpy(&value, static_cast<const std::byte*>(data) + offset, sizeof(value));
+    return value;
+}
+
+static void SameVariations(const void* actual, FT_MM_Var* expected) {
+    const auto guest = ReadRecord<GuestVariation>(actual, 0);
+    Require(guest.numAxis == expected->num_axis && guest.numDesigns == expected->num_designs && guest.numNamedStyles == expected->num_namedstyles);
+    for (std::uint32_t index = 0; index < guest.numAxis; ++index) {
+        const auto left = ReadRecord<GuestVariationAxis>(guest.axes, index * sizeof(GuestVariationAxis));
         const FT_Var_Axis& right = expected->axis[index];
         Require(left.minimum == right.minimum && left.def == right.def && left.maximum == right.maximum && left.tag == right.tag && left.strid == right.strid);
         Require((left.name == nullptr) == (right.name == nullptr) && (!left.name || std::strcmp(left.name, right.name) == 0));
+        FT_UInt nativeFlags = 0;
+        Require(FT_Get_Var_Axis_Flags(expected, index, &nativeFlags) == 0);
+        Require(ReadRecord<std::uint16_t>(actual, sizeof(GuestVariation) + index * sizeof(std::uint16_t)) == nativeFlags);
+    }
+    for (std::uint32_t index = 0; index < guest.numNamedStyles; ++index) {
+        const auto left = ReadRecord<GuestNamedStyle>(guest.namedStyles, index * sizeof(GuestNamedStyle));
+        const FT_Var_Named_Style& right = expected->namedstyle[index];
+        Require(left.strid == right.strid && left.psid == right.psid);
+        for (std::uint32_t axis = 0; axis < guest.numAxis; ++axis) Require(left.coords[axis] == right.coords[axis]);
     }
 }
 
 static void TestGetMMVar() {
-    FacePair pair(VariableFont());
-    void* actual = nullptr;
-    FT_MM_Var* expected = nullptr;
-    if constexpr (!kHostLong64) {
-        Require(FT_Get_MM_Var_nid_postfix(nullptr, &actual) == FT_Get_MM_Var(nullptr, &expected));
-        return;
+    for (const bool type1 : {false, true}) {
+        FacePair pair(type1 ? Type1Fixture::MultipleMasterFont() : VariableFont());
+        void* actual = nullptr;
+        FT_MM_Var* expected = nullptr;
+        Require(FT_Get_MM_Var(pair.oracle, &expected) == 0);
+        Require(FT_Get_MM_Var_nid_postfix(&pair.guest.rec, &actual) == 0 && actual && expected);
+        Require(expected->num_axis == 1 && expected->axis[0].minimum < 0);
+        FT_UInt flags = 0;
+        Require(FT_Get_Var_Axis_Flags(expected, 0, &flags) == 0);
+        Require(type1 ? (expected->num_namedstyles == 0 && flags == 0) :
+                        (expected->num_namedstyles != 0 && (flags & FT_VAR_AXIS_FLAG_HIDDEN) != 0));
+        SameVariations(actual, expected);
+        Require(FT_Done_MM_Var_nid_postfix(&Shared().guest, actual) == 0);
+        Require(FT_Done_MM_Var(Shared().native, expected) == 0);
     }
-    Require(FT_Get_MM_Var_nid_postfix(&pair.guest.rec, &actual) == FT_Get_MM_Var(pair.oracle, &expected));
-    Require(actual != nullptr && expected != nullptr);
-    SameVariations(static_cast<FT_MM_Var*>(actual), expected);
-    FT_Done_MM_Var(Shared().guest.host, static_cast<FT_MM_Var*>(actual));
-    FT_Done_MM_Var(Shared().native, expected);
-    FacePair plain(FontFixture::BuildFont(3, {}));
-    actual = reinterpret_cast<void*>(1);
-    expected = nullptr;
-    Require(FT_Get_MM_Var_nid_postfix(&plain.guest.rec, &actual) == FT_Get_MM_Var(plain.oracle, &expected));
-    Require(FT_Get_MM_Var_nid_postfix(&pair.guest.rec, nullptr) == FT_Get_MM_Var(pair.oracle, nullptr));
-    Require(FT_Get_MM_Var_nid_postfix(nullptr, &actual) == FT_Get_MM_Var(nullptr, &expected));
 }
 
 static void TestDoneMMVar() {
@@ -112,13 +151,8 @@ static void TestDoneMMVar() {
     for (int round = 0; round < 3; ++round) {
         void* actual = nullptr;
         FT_MM_Var* expected = nullptr;
-        if constexpr (kHostLong64) {
-            Require(FT_Get_MM_Var_nid_postfix(&pair.guest.rec, &actual) == 0 && FT_Get_MM_Var(pair.oracle, &expected) == 0);
-        } else {
-            FT_MM_Var* hosted = nullptr;
-            Require(FT_Get_MM_Var(pair.guest.host, &hosted) == 0 && FT_Get_MM_Var(pair.oracle, &expected) == 0);
-            actual = hosted;
-        }
+        Require(FT_Get_MM_Var_nid_postfix(&pair.guest.rec, &actual) == 0 && FT_Get_MM_Var(pair.oracle, &expected) == 0);
+        Require(FT_Done_MM_Var_nid_postfix(nullptr, actual) == FT_Err_Invalid_Library_Handle);
         Require(FT_Done_MM_Var_nid_postfix(&Shared().guest, actual) == FT_Done_MM_Var(Shared().native, expected));
     }
     Require(FT_Done_MM_Var_nid_postfix(&Shared().guest, nullptr) == FT_Done_MM_Var(Shared().native, nullptr));
@@ -243,18 +277,33 @@ static void TestSetMMDesign() {
 }
 
 static void TestGetMultiMaster() {
-    for (const bool variable : {true, false}) {
-        FacePair pair(variable ? VariableFont() : FontFixture::BuildFont(3, {}));
-        FT_Multi_Master actual{};
-        FT_Multi_Master expected{};
-        if constexpr (!kHostLong64) continue;
-        Require(FT_Get_Multi_Master_nid_postfix(&pair.guest.rec, &actual) == FT_Get_Multi_Master(pair.oracle, &expected));
-        Require(actual.num_axis == expected.num_axis && actual.num_designs == expected.num_designs);
-        Require(FT_Get_Multi_Master_nid_postfix(&pair.guest.rec, nullptr) == FT_Get_Multi_Master(pair.oracle, nullptr));
-    }
-    FT_Multi_Master actual{};
+    struct GuestAxis {
+        const char* name;
+        std::int64_t minimum;
+        std::int64_t maximum;
+    };
+    static_assert(sizeof(GuestAxis) == 24);
+    constexpr std::size_t headerSize = 2 * sizeof(std::uint32_t);
+    std::array<std::byte, headerSize + 4 * sizeof(GuestAxis)> output;
+    output.fill(std::byte{0xab});
+    FacePair type1(Type1Fixture::MultipleMasterFont());
     FT_Multi_Master expected{};
-    Require(FT_Get_Multi_Master_nid_postfix(nullptr, &actual) == FT_Get_Multi_Master(nullptr, &expected));
+    Require(FT_Get_Multi_Master(type1.oracle, &expected) == 0);
+    Require(expected.num_axis == 1 && expected.num_designs == 2);
+    Require(FT_Get_Multi_Master_nid_postfix(&type1.guest.rec, output.data()) == 0);
+    Require(ReadRecord<std::uint32_t>(output.data(), 0) == expected.num_axis);
+    Require(ReadRecord<std::uint32_t>(output.data(), sizeof(std::uint32_t)) == expected.num_designs);
+    const auto axis = ReadRecord<GuestAxis>(output.data(), headerSize);
+    Require(axis.name && expected.axis[0].name && std::strcmp(axis.name, expected.axis[0].name) == 0);
+    Require(axis.minimum == expected.axis[0].minimum && axis.maximum == expected.axis[0].maximum);
+    Require(axis.minimum == -20 && axis.maximum == 20);
+    for (std::size_t offset = headerSize + sizeof(GuestAxis); offset < output.size(); ++offset) Require(output[offset] == std::byte{0xab});
+
+    FacePair openType(VariableFont());
+    const auto before = output;
+    const auto error = FT_Get_Multi_Master(openType.oracle, &expected);
+    Require(error == FT_Err_Invalid_Argument);
+    Require(FT_Get_Multi_Master_nid_postfix(&openType.guest.rec, output.data()) == error && output == before);
 }
 
 static void TestProbeErrors() {
