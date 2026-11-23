@@ -2,6 +2,7 @@
 #include "prx/libSceFreeType/libSceFreeType.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "FontFixture.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -21,7 +22,6 @@
 
 #ifdef _WIN32
 #include "prx/libkernel/libkernel.hpp"
-#include "tests/CommandLineArgument.hpp"
 #include <windows.h>
 #else
 #include <dlfcn.h>
