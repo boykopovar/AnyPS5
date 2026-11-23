@@ -11,6 +11,7 @@
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
@@ -117,6 +118,7 @@ void ResetCheckpointSnapshots() noexcept;
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <utility>
 
@@ -750,6 +752,8 @@ struct VulkanDevice::State {
     std::map<ComputePipelineKey, std::shared_future<std::shared_ptr<ComputePipelineObjects>>> computePipelinesBuilding;
     std::set<ComputePipelineKey> computePipelinesQueued;
     std::set<ComputePipelineKey> computePipelinesFailed;
+    std::mutex prebuiltGraphicsKeysMutex;
+    std::unordered_set<std::uint64_t> prebuiltGraphicsKeys;
     // The journal replay building this device's pipelines on its own threads; drained first at teardown.
     std::shared_ptr<Graphics::PipelineJournalReplay> journalReplay;
     std::atomic<bool> journalReplayPending{false};
@@ -5175,6 +5179,24 @@ bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stage
     }
     const auto layouts = Graphics::DescribeSetLayouts(context, group);
     return Graphics::Pipeline::Prebuild(context, state, Graphics::VertexInputLayout{}, layouts.View(), group);
+}
+
+bool VulkanDevice::PrebuildGraphicsLibrariesOnFirstVisit(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders) {
+    std::uint64_t key = 0xcbf29ce484222325ull;
+    for (const auto& shader : shaders) key = (key ^ (shader.program != nullptr ? shader.program->variantId : 0ull)) * 0x100000001b3ull;
+    {
+        std::lock_guard keyLock(state->prebuiltGraphicsKeysMutex);
+        if (state->prebuiltGraphicsKeys.count(key) != 0) return false;
+    }
+    bool built = false;
+    try {
+        built = PrebuildGraphicsLibraries(stages, shaders);
+    } catch (const std::exception& error) {
+        APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
+    }
+    std::lock_guard keyLock(state->prebuiltGraphicsKeysMutex);
+    state->prebuiltGraphicsKeys.insert(key);
+    return built;
 }
 
 std::vector<std::uint32_t> VulkanDevice::DrawContentKey(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders) const {

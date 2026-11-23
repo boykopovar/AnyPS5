@@ -247,6 +247,19 @@ class EncodingTests(unittest.TestCase):
                           stderr.buffer.getvalue().decode("utf-8"))
             self.assertFalse(output.exists())
 
+    def test_a_source_root_outside_the_ansi_code_page_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary).resolve() / "исходники"
+            source.mkdir()
+            subprocess.run(["git", "init", "-q", str(source)], check=True)
+            (source / "file").write_text("fixture\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(source), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                            "commit", "-qm", "fixture"], check=True)
+            commit = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True,
+                                    check=True).stdout.decode("ascii").strip()
+            self.assertEqual(gate.identity(source, commit), {"source": str(source), "commit": commit})
+
 
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja") and shutil.which("ctest"), "requires CMake, Ninja and CTest")
 class FixtureTests(unittest.TestCase):

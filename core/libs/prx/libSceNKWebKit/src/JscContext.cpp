@@ -13,6 +13,20 @@ namespace {
 
 bool g_remoteInspectionEnabledByDefault = true;
 
+void ReleaseStoredValues(JSRuntime* rt, CallbackObjectData* data) {
+    if (!JS_IsUndefined(data->propStore)) {
+        JS_FreeValueRT(rt, data->propStore);
+        data->propStore = JS_UNDEFINED;
+    }
+    for (auto& [k, slot] : data->privateProperties) {
+        if (!JS_IsUndefined(slot.strongVal)) {
+            JS_FreeValueRT(rt, slot.strongVal);
+            slot.strongVal = JS_UNDEFINED;
+        }
+    }
+    data->privateProperties.clear();
+}
+
 int InterruptHandler(JSRuntime* rt, void* opaque) {
     auto* group = static_cast<OpaqueJSContextGroup*>(opaque);
     if (!group || !group->hasTimeLimit || !group->deadlineArmed) return 0;
@@ -289,18 +303,7 @@ OpaqueJSContextGroup::~OpaqueJSContextGroup() {
         handle->alive = false;
     }
     for (auto& [ptr, data] : callbackDataByPtr) {
-        if (!data) continue;
-        if (!JS_IsUndefined(data->propStore)) {
-            JS_FreeValueRT(rt, data->propStore);
-            data->propStore = JS_UNDEFINED;
-        }
-        for (auto& [k, slot] : data->privateProperties) {
-            if (!JS_IsUndefined(slot.strongVal)) {
-                JS_FreeValueRT(rt, slot.strongVal);
-                slot.strongVal = JS_UNDEFINED;
-            }
-        }
-        data->privateProperties.clear();
+        if (data) ReleaseStoredValues(rt, data);
     }
     if (toStringTagAtom != JS_ATOM_NULL) JS_FreeAtomRT(rt, toStringTagAtom);
     if (toPrimitiveAtom != JS_ATOM_NULL) JS_FreeAtomRT(rt, toPrimitiveAtom);
@@ -432,6 +435,15 @@ void OpaqueJSContextGroup::NotifyObjectFinalized(void* ptr, OpaqueJSValue* handl
     }
     if (ptr) {
         objectHandles.erase(ptr);
+        const auto left = callbackDataByPtr.find(ptr);
+        if (left != callbackDataByPtr.end()) {
+            CallbackObjectData* data = left->second;
+            callbackDataByPtr.erase(left);
+            if (data) {
+                ReleaseStoredValues(rt, data);
+                delete data;
+            }
+        }
     }
 }
 

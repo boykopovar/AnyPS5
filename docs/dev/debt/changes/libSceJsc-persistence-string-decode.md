@@ -1,0 +1,5 @@
+# libSceJsc
+
+## add Functional
+
+- [WTF::Persistence::Coder<CString>::decode and Coder<String>::decode](../../../core/libs/prx/libSceJsc/src/WtfSha1.cpp) (libSceJsc) - not compared with a console module. The `Decoder` layout (buffer, position, end; libSceNKWebKit's mirror has data, size, position) and the `Optional` layout (flag at byte 0, pointer at byte 8, hidden return) are unverified. An empty `String` throws through `NotImplemented_nid_no_patch` (no static empty string here). A flag byte other than 0 or 1, a length above `INT32_MAX`, null arguments, a cursor of 64 or more, a position past the end and no libSceNKWebKit fastMalloc throw. They invert libSceNKWebKit's encoders, per pinned [PersistentCoders.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/persistence/PersistentCoders.cpp): 32-bit length (salt 11), `0xFFFFFFFF` for null, the `String` 8-bit flag (salt 3), characters (salt 101); a short buffer gives `nullopt`. Closes when: compared with a console module.
