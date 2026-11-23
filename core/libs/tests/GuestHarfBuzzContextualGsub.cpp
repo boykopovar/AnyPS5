@@ -1,4 +1,5 @@
 #include "prx/libharfbuzz/libharfbuzz.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <hb-ot.h>
 #include <hb.h>
@@ -823,7 +824,7 @@ int main(int argc, char** argv) try {
     const bool patched = std::strcmp(argv[2], "patched") == 0;
     Require(patched || std::strcmp(argv[2], "unpatched") == 0);
 #ifdef _WIN32
-    auto module = LoadLibraryW(std::filesystem::path(argv[1]).c_str());
+    auto module = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     if (!module) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
     auto module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);

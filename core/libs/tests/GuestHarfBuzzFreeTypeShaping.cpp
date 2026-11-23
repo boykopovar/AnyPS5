@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libharfbuzz/libharfbuzz.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -451,12 +452,12 @@ static void CheckFreeTypeShaping(const Api& api, const FreeTypeApi& ft, const st
     Require(FT_Done_FreeType(nativeLibrary) == 0);
 }
 
-static auto OpenModule(const char* path) {
+static auto OpenModule(const std::filesystem::path& path) {
 #ifdef _WIN32
-    auto module = LoadLibraryW(std::filesystem::path(path).c_str());
+    auto module = LoadLibraryW(path.c_str());
     if (!module) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
-    auto module = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    auto module = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!module) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(module != nullptr);
@@ -467,8 +468,8 @@ int main(int argc, char** argv) try {
     Require(argc == 4);
     const bool patched = std::strcmp(argv[3], "patched") == 0;
     Require(patched || std::strcmp(argv[3], "unpatched") == 0);
-    auto module = OpenModule(argv[1]);
-    auto freeType = OpenModule(argv[2]);
+    auto module = OpenModule(ArgumentPath(argv, 1));
+    auto freeType = OpenModule(ArgumentPath(argv, 2));
 
     Api api{};
 #define LoadHarfBuzz(field, name, nid) api.field = Import<decltype(api.field)>(module, patched ? nid : #name "_nid_postfix")
