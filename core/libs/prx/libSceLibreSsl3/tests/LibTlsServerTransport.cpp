@@ -221,13 +221,13 @@ void Exchange(Peer& peer, TlsContext* server) {
     }
     Check(tls_error_nid_postfix(connection) == nullptr);
     tls_free_nid_postfix(connection);
-    CheckCallerOwnsSocket(descriptor, true);
-    Check(close_nid_postfix(descriptor) == 0);
-    CheckCallerOwnsSocket(descriptor, false);
     thread.join();
     Check(peer.handshakeOk);
     Check(peer.exchangeOk);
     Check(peer.sawCloseNotify);
+    CheckCallerOwnsSocket(descriptor, true);
+    Check(close_nid_postfix(descriptor) == 0);
+    CheckCallerOwnsSocket(descriptor, false);
 }
 
 void TestAcceptAndExchange() {
