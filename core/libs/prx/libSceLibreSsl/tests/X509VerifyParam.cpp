@@ -9,6 +9,7 @@
 #include <exception>
 #include <initializer_list>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -96,6 +97,10 @@ void Unsupported() {
         "an unreadable address text is rejected");
     Require(store->param->id->ipLength == 4 && std::memcmp(store->param->id->ip, "\x0a\x00\x00\x03", 4) == 0,
         "an unreadable address text keeps the previous address");
+    const std::vector<char> unterminated(65536, '1');
+    Require(X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(store->param, unterminated.data()) == 0, "an unterminated address text is rejected");
+    Require(store->param->id->ipLength == 4 && std::memcmp(store->param->id->ip, "\x0a\x00\x00\x03", 4) == 0,
+        "an unterminated address text keeps the previous address");
     Require(X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(nullptr, "bad") == 0, "a rejected address does not read the verify parameters");
     RequireInvalidArgument([] { X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(nullptr, "1.2.3.4"); }, "null verify parameters");
     X509_STORE_free_nid_postfix(store);
