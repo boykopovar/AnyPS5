@@ -578,13 +578,8 @@ bool IoctlRequestMalformed(std::uint64_t request) {
 
 int Ioctl(int fd, std::uint64_t request, void* argument) {
     if (IoctlRequestMalformed(request)) return Fail(GuestEnotty);
+    if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const auto command = static_cast<std::uint32_t>(request);
-    if (File::IsVirtualDirectoryDescriptor(fd)) {
-        if (command != ReadableRequest) return Fail(GuestEinval);
-        const int available = DirectoryReadableBytes;
-        if (!GuestCopyOut_nid_no_patch(argument, &available, sizeof(available))) return Fail(GuestEfault);
-        return 0;
-    }
     const std::uint32_t length = (command >> 16) & 0x1fff;
     const std::uint32_t copied = (command & RequestVoid) != 0 ? 0 : length;
     if ((command & RequestIn) && copied != 0 && argument == nullptr) return Fail(GuestEfault);
