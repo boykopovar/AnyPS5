@@ -50,23 +50,25 @@ int Failure(int error) {
     return -1;
 }
 
-int TemporaryFile(char* pattern, int flags) {
+int TemporaryFile(char* pattern, int flags, int suffixLength = 0) {
     if (!pattern) return Failure(14);
     std::string copy;
     if (const int error = CopyGuestPath_nid_no_patch(pattern, copy)) return Failure(error);
     const auto length = copy.size();
     if (length == 0) return Failure(22);
-    auto start = length;
+    if (suffixLength < 0 || static_cast<std::size_t>(suffixLength) > length) return Failure(22);
+    const auto end = length - static_cast<std::size_t>(suffixLength);
+    auto start = end;
     while (start > 0 && copy[start - 1] == 'X') --start;
-    const GuestArena::HostWrite destination(pattern + start, length - start);
-    if (!destination.Open() || !GuestWritable_nid_no_patch(pattern + start, length - start)) return Failure(14);
-    if (start != length) {
+    const GuestArena::HostWrite destination(pattern + start, end - start);
+    if (!destination.Open() || !GuestWritable_nid_no_patch(pattern + start, end - start)) return Failure(14);
+    if (start != end) {
         std::random_device random;
         std::uniform_int_distribution<unsigned int> character(0, sizeof(Characters) - 2);
-        for (auto position = start; position < length; ++position)
+        for (auto position = start; position < end; ++position)
             pattern[position] = Characters[character(random)];
     }
-    const std::string initial(pattern + start, length - start);
+    const std::string initial(pattern + start, end - start);
     if (const auto slash = std::string_view(pattern, start).find_last_of('/'); slash != std::string_view::npos && slash > 0) {
         const std::string directory(pattern, slash);
         FileStat status{};
@@ -94,12 +96,12 @@ int TemporaryFile(char* pattern, int flags) {
         }
         if (*__error_nid_postfix() != 17) return -1;
         auto position = start;
-        for (; position < length; ++position) {
+        for (; position < end; ++position) {
             const auto index = std::strchr(Characters, pattern[position]) - Characters;
             pattern[position] = Characters[(index + 1) % (sizeof(Characters) - 1)];
             if (pattern[position] != initial[position - start]) break;
         }
-        if (position == length) return -1;
+        if (position == end) return -1;
     }
 }
 
@@ -107,6 +109,10 @@ int TemporaryFile(char* pattern, int flags) {
 
 extern "C" int APS5_VABI mkstemp_nid_postfix(char* pattern) {
     return TemporaryFile(pattern, 0);
+}
+
+extern "C" int APS5_VABI mkstemps_nid_postfix(char* pattern, int suffixLength) {
+    return TemporaryFile(pattern, 0, suffixLength);
 }
 
 extern "C" int APS5_VABI mkostemp_nid_postfix(char* pattern, int flags) {
