@@ -8,7 +8,6 @@ project(Relinker CXX)
 set(ANYPS5_TEST_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 if(MINGW)
     enable_language(RC)
-    configure_file(cmake/WindowsManifest.rc.in WindowsManifest.rc @ONLY)
     function(add_test_executable_manifests_test)
         if(NOT BUILD_TESTING)
             return()
@@ -258,7 +257,8 @@ endif()
 
 if(MINGW)
     add_library(anyps5_windows_test_exit OBJECT cmake/WindowsTestExit.cpp)
-    add_library(anyps5_windows_test_manifest OBJECT "${CMAKE_BINARY_DIR}/WindowsManifest.rc")
+    add_library(anyps5_windows_test_manifest OBJECT cmake/WindowsManifest.rc)
+    set_source_files_properties(cmake/WindowsManifest.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/WindowsManifest.manifest)
 endif()
 
 if(BUILD_TESTING)
@@ -352,6 +352,9 @@ if(BUILD_TESTING)
             set_tests_properties(${shader_cache_sources_test_name} PROPERTIES TIMEOUT 180)
         endforeach()
         add_test(NAME tools_nid_name_audit COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_audit_nid_names.py)
+        add_test(NAME run_report_summary COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_run_report_summary.py)
+        set_tests_properties(run_report_summary PROPERTIES TIMEOUT 30)
         set_tests_properties(tools_nid_name_audit PROPERTIES TIMEOUT 20)
         add_test(NAME pr_overlap_encoding COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_encoding.py)
@@ -378,6 +381,10 @@ if(BUILD_TESTING)
         add_test(NAME progress_history_output COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryReportOutputTests)
         set_tests_properties(progress_history_output PROPERTIES TIMEOUT 20)
+        add_test(NAME progress_history_helpers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py
+            LocationAndSeriesTests UtcDayTests SpreadTests LabelledTests ShaderCountsTests)
+        set_tests_properties(progress_history_helpers PROPERTIES TIMEOUT 20)
         add_test(NAME progress_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress.py)
         add_test(NAME progress_open_pr_page COMMAND ${Python3_EXECUTABLE}
@@ -453,6 +460,7 @@ if(BUILD_TESTING)
         set_tests_properties(build_mingw_host_only_tests_script PROPERTIES TIMEOUT 60)
         add_test(NAME export_gap COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
+        set_tests_properties(isa_profiles PROPERTIES TIMEOUT 60)
         set_tests_properties(export_gap PROPERTIES TIMEOUT 30)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
@@ -581,9 +589,16 @@ if(BUILD_TESTING)
         set_tests_properties(pr_intake_reopen PROPERTIES TIMEOUT 60)
         add_test(NAME tools_pe_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_pe_symbol_inventory.py)
         set_tests_properties(tools_pe_inventory PROPERTIES TIMEOUT 20)
-        add_test(NAME rebase_verify COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py)
-        set_tests_properties(rebase_verify PROPERTIES TIMEOUT 60)
+        foreach(shard RANGE 0 2)
+            if(shard EQUAL 0)
+                set(rebase_verify_test_name rebase_verify)
+            else()
+                set(rebase_verify_test_name rebase_verify_shard_${shard})
+            endif()
+            add_test(NAME ${rebase_verify_test_name} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py --shard ${shard}/3)
+            set_tests_properties(${rebase_verify_test_name} PROPERTIES TIMEOUT 60)
+        endforeach()
         add_test(NAME check_test_registration_script COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_test_registration.py)
         set_tests_properties(check_test_registration_script PROPERTIES TIMEOUT 60)
@@ -662,6 +677,8 @@ if(BUILD_TESTING)
         set_tests_properties(configure_seed_parsing PROPERTIES TIMEOUT 20)
         add_test(NAME vulkan_validation_gate_reports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ReportTests)
+        add_test(NAME vulkan_validation_gate_encoding COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py EncodingTests)
         add_test(NAME vulkan_validation_gate_integration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py IntegrationTests)
         add_test(NAME vulkan_validation_gate_timeouts COMMAND ${Python3_EXECUTABLE}
@@ -931,6 +948,9 @@ if(BUILD_TESTING)
         add_test(NAME title_run_paths COMMAND ${Python3_EXECUTABLE} -u
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_paths.py -v)
         set_tests_properties(title_run_paths PROPERTIES TIMEOUT 300)
+        add_test(NAME title_run_summary_atomic COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_summary_atomic.py)
+        set_tests_properties(title_run_summary_atomic PROPERTIES TIMEOUT 30)
         add_test(NAME title_run_identity COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_identity.py)
         set_tests_properties(title_run_identity PROPERTIES TIMEOUT 30)
@@ -989,6 +1009,23 @@ if(BUILD_TESTING)
             cmake_language(DEFER CALL raise_windows_deferred_tooling_test_timeouts)
         endif()
     endif()
+    if(ANYPS5_ENABLE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(tsan_lavapipe_unload_tests tools/tests/TsanLavapipeUnload.cpp)
+        target_link_libraries(tsan_lavapipe_unload_tests PRIVATE ${CMAKE_DL_LIBS})
+        set(tsanUnloadLibraries)
+        foreach(libraryName vulkan_lvp LLVM pulsecommon)
+            add_library(tsan_unload_${libraryName} MODULE tools/tests/TsanLavapipeUnloadLibrary.cpp)
+            set_target_properties(tsan_unload_${libraryName} PROPERTIES
+                OUTPUT_NAME ${libraryName}
+                LIBRARY_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}/tsan_unload>")
+            add_dependencies(tsan_lavapipe_unload_tests tsan_unload_${libraryName})
+            list(APPEND tsanUnloadLibraries "$<TARGET_FILE:tsan_unload_${libraryName}>")
+        endforeach()
+        add_test(NAME tsan_lavapipe_unload COMMAND tsan_lavapipe_unload_tests ${tsanUnloadLibraries})
+        set_tests_properties(tsan_lavapipe_unload PROPERTIES
+            ENVIRONMENT "TSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tools/tsan-suppressions.txt"
+            TIMEOUT 60)
+    endif()
 endif()
 
 if(ANYPS5_RELINKER_ONLY)
@@ -1026,6 +1063,11 @@ endfunction()
 if(NOT ANYPS5_USE_SYSTEM_DEPS)
     anyps5_add_bundled_sdl2()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        get_directory_property(ANYPS5_SDL_WAYLAND DIRECTORY 3rdparty/SDL2 DEFINITION HAVE_WAYLAND)
+        if(ANYPS5_SDL_WAYLAND)
+            get_directory_property(ANYPS5_SDL_WAYLAND_LIBDECOR DIRECTORY 3rdparty/SDL2 DEFINITION HAVE_WAYLAND_LIBDECOR)
+            include(cmake/PatchSdlWayland.cmake)
+        endif()
         get_directory_property(ANYPS5_SDL_X11_XRANDR DIRECTORY 3rdparty/SDL2 DEFINITION HAVE_X11_XRANDR)
         if(NOT ANYPS5_SDL_X11_XRANDR)
             message(FATAL_ERROR "SDL has no XRandR support, so X11 display refresh rates cannot be queried. "
