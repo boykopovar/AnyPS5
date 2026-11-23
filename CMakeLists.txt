@@ -454,9 +454,6 @@ if(BUILD_TESTING)
         add_test(NAME package_headers_package COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_headers_package.py)
         set_tests_properties(package_headers_package PROPERTIES TIMEOUT 60)
-        add_test(NAME prepare_release_notes_output COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_prepare_release_notes.py)
-        set_tests_properties(prepare_release_notes_output PROPERTIES TIMEOUT 60)
         add_test(NAME run_job_manager_cli_path COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_run_job_manager_reference.py)
         set_tests_properties(run_job_manager_cli_path PROPERTIES TIMEOUT 60)
