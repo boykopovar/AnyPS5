@@ -405,6 +405,8 @@ def main(argv=None):
             db = nid_names.load_db(Path(args.db) if args.db else nid_names.DEFAULT_CACHE)
         except (OSError, UnicodeError) as error:
             raise GapError(f"{args.db or nid_names.DEFAULT_CACHE}: cannot read NID database: {error}") from error
+        except ValueError as error:
+            raise GapError(str(error)) from error
         console = load_console_nids(modules, args.export_table, args.nids, args.elf)
         report = []
         missing_nids = []

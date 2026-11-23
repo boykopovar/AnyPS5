@@ -759,6 +759,21 @@ class ExportGapTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("FAIL:", error)
 
+    def test_database_without_nid_records_fails(self):
+        for content in ("", "# comment only\n", "sceExampleAlpha,AAAAAAAAAAA\n"):
+            with self.subTest(content=content):
+                with tempfile.TemporaryDirectory() as directory:
+                    root, prx, tables = tree(directory)
+                    write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+                    nids_file = Path(directory) / "nids.txt"
+                    nids_file.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+                    db = Path(directory) / "db.csv"
+                    db.write_text(content, encoding="utf-8")
+                    code, output, error = run_tool_with_stderr(root, prx, ["--module", MODULE, "--nids", str(nids_file), "--db", str(db)])
+                    self.assertEqual(code, 2)
+                    self.assertEqual(output, "")
+                    self.assertEqual(error, f"FAIL: {db}: database contains no valid NID records\n")
+
     def test_both_export_table_and_nids_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             root, prx, tables = tree(directory)
