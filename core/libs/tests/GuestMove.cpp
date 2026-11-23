@@ -151,6 +151,8 @@ int main() {
 
     Require(sceMoveOpen(kInvalidUserId, 0, 0) == kInvalidPort);
     Require(sceMoveOpen(kInvalidUserId, 0, 1) == kInvalidPort);
+    Require(sceMoveOpen(kUserId, 1, 0) == kInvalidPort);
+    Require(sceMoveOpen(kUserId, -1, 0) == kInvalidPort);
 
     const std::int32_t first = sceMoveOpen(kUserId, 0, 0);
     const std::int32_t second = sceMoveOpen(kUserId, 0, 1);
@@ -241,6 +243,7 @@ int main() {
     Require(third == kFirstHandle + 3 * kHandleStep);
     Require(sceMoveClose(third) == kOk);
 
+    SetCompiledSdkVersion(kLastSdkAllowingNullData);
     std::array<std::int32_t, 8> slots{};
     int slotIndex = 0;
     for (int t = 0; t < 2; ++t) {
@@ -251,6 +254,7 @@ int main() {
     for (const auto h : slots) Require(h > 0);
     Require(sceMoveOpen(kUserId, 2, 0) == kMaxCombined);
     for (const auto h : slots) Require(sceMoveClose(h) == kOk);
+    SetCompiledSdkVersion(kFirstSdkRequiringData);
 
     Require(sceMoveTerm() == kOk);
 }
