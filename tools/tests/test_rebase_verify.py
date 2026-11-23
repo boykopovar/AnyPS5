@@ -104,6 +104,28 @@ class RebaseVerifyTests(unittest.TestCase):
     def test_a_clean_rebase_keeps_every_line_author_and_commit(self):
         self.assertEqual(self.verify(), [])
 
+    def test_revision_range_like_filename_does_not_break_validation(self):
+        (self.root / f"{self.old}..{self.base}").touch()
+        (self.root / f"{self.base}..{self.old}").touch()
+        self.assertEqual(self.verify(), [])
+
+    def test_non_utf8_text_edits_are_distinguished(self):
+        self.git("checkout", "-q", "-B", "old", self.base)
+        self.commit_bytes(b"changed: \xfe\n", "fix(tools): record identifier")
+        self.git("checkout", "-q", "-B", "new", "main")
+        self.commit_bytes(b"changed: \xff\n", "fix(tools): record identifier")
+        self.assertEqual(len(self.verify()), 2)
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX filenames containing non-UTF-8 bytes")
+    def test_non_utf8_paths_remain_distinct(self):
+        for branch, ref, suffix in (("old", self.base, b"\xfe"), ("new", "main", b"\xff")):
+            self.git("checkout", "-q", "-B", branch, ref)
+            name = os.fsdecode(b"file " + suffix + b".txt")
+            self.write(name, "same content\n")
+            self.git("add", "--", name)
+            self.git("commit", "-qm", "fix(tools): add a file")
+        self.assertEqual(len(self.verify()), 4)
+
     @unittest.skipIf(os.name == "nt", "Windows does not support these filename characters")
     def test_rebase_checks_added_and_deleted_lines_at_quoted_paths(self):
         path = 'quoted-"-\\-\t-é.txt'
@@ -469,6 +491,16 @@ class RebaseDiffTextTests(unittest.TestCase):
 
 
 class CountHelperTests(unittest.TestCase):
+    def test_people_keeps_unicode_line_separators_inside_each_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            run_git(root, "commit", "-q", "--allow-empty", "-m", "base")
+            run_git(root, "commit", "-q", "--allow-empty", "-m", "first\u2028second")
+            people = rebase_verify.people(root, "HEAD^", "HEAD")
+            self.assertEqual(sum(people.values()), 1)
+            self.assertIn("first\u2028second", next(iter(people)))
+
     def test_default_onto_returns_an_explicit_name_without_asking_git(self):
         self.assertEqual(rebase_verify.default_onto(Path("."), "origin/main"), "origin/main")
 
