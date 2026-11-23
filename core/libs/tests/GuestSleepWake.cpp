@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 extern "C" {
 
@@ -31,14 +34,25 @@ static void Idle(std::chrono::microseconds length) {
     while (std::chrono::steady_clock::now() < until) std::this_thread::yield();
 }
 
+static void Spin(std::chrono::microseconds length) {
+    const auto until = std::chrono::steady_clock::now() + length;
+    while (std::chrono::steady_clock::now() < until) {}
+}
+
 class Waker {
 public:
     Waker() : thread([this] {
+#ifdef _WIN32
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+#endif
         while (!stop.load()) {
             KernelWakeSleepers_nid_no_patch();
-            Idle(std::chrono::microseconds(50));
+            started.store(true);
+            Spin(std::chrono::microseconds(50));
         }
-    }) {}
+    }) {
+        while (!started.load()) std::this_thread::yield();
+    }
     ~Waker() {
         stop.store(true);
         thread.join();
@@ -46,6 +60,7 @@ public:
 
 private:
     std::atomic<bool> stop{false};
+    std::atomic<bool> started{false};
     std::thread thread;
 };
 
