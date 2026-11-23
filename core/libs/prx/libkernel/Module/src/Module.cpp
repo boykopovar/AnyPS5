@@ -10,6 +10,7 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -325,7 +326,13 @@ int APS5_VABI sceKernelStopUnloadModule(KernelModule handle, size_t args, const 
  (void)args;
  (void)argp;
  if (flags != 0 || opt != nullptr || handle == 0) return SCE_KERNEL_ERROR_EINVAL;
- if (res && !GuestWritable_nid_no_patch(res, sizeof(*res))) return SCE_KERNEL_ERROR_EFAULT;
+ if (res) {
+  const int savedErrno = errno;
+  const GuestArena::HostWrite write(res, sizeof(*res));
+  const bool writable = write.Open() && GuestWritable_nid_no_patch(res, sizeof(*res));
+  errno = savedErrno;
+  if (!writable) return SCE_KERNEL_ERROR_EFAULT;
+ }
  if (dlclose_nid_postfix(reinterpret_cast<void*>(static_cast<intptr_t>(handle))) != 0) return SCE_KERNEL_ERROR_ESRCH;
  if (res) StoreModuleResult(res, 0);
  return 0;
