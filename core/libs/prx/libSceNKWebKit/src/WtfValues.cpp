@@ -344,7 +344,7 @@ struct DecoderHeader {
     const uint8_t* bufferPosition;
 };
 
-bool DecoderHasRoom(const DecoderHeader& dec, unsigned long size) {
+bool DecoderHasRoom(const DecoderHeader& dec, std::size_t size) {
     if (!dec.bufferData || !dec.bufferPosition) return false;
     std::size_t remaining = (dec.bufferData + dec.bufferSize >= dec.bufferPosition) ? static_cast<std::size_t>((dec.bufferData + dec.bufferSize) - dec.bufferPosition) : 0;
     return size <= remaining;
