@@ -11,9 +11,7 @@ int APS5_VABI sceNpUniversalDataSystemCreateHandle(int* handle) {
         APS5_INVALID_ARG_EX;
     }
     const int value = NP_UNIVERSAL_DATA_SYSTEM_HANDLE_DEFAULT;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(handle, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
