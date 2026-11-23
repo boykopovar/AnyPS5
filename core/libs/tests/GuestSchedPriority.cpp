@@ -112,6 +112,15 @@ int main() {
         Require(getpriority_nid_postfix(PrioProcess, 0) == 0);
         Require(getpriority_nid_postfix(PrioProcess, self) == 0 && getpriority_nid_postfix(PrioGroup, 0) == 0 && getpriority_nid_postfix(PrioUser, 0) == 0);
     }
+    for (const int nice : {0, 5, 20, 25, 99}) {
+        RequireSet(PrioGroup, 0, nice);
+        RequireSet(PrioGroup, self, nice);
+        RequireNice(PrioProcess, 0);
+        RequireNice(PrioGroup, self);
+        RequireNice(PrioUser, 0);
+    }
+    RequireSetError(PrioGroup, self + 1, 5, 3);
+    RequireSetError(PrioUser, 1000, 5, 3);
     GuestRtPrio rtprio{7, 7};
     Require(rtprio_thread_nid_postfix(0, 0, &rtprio) == 0 && rtprio.type == 10 && rtprio.prio == 700);
     *__error_nid_postfix() = 0;

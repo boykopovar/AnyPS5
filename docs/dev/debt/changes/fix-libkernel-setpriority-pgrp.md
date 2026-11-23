@@ -1,0 +1,5 @@
+# libkernel
+
+## change [getpriority]
+
+- [getpriority](../../../core/libs/prx/libkernel/System/src/Process.cpp) (libkernel) - A `PRIO_USER` `setpriority` of 0 or more throws: `donice` runs on every process of that user the caller can see, which depends on the console's jail. A title is taken to run jailed, so a negative nice fails with `EACCES` (`PRIV_SCHED_SETPRIORITY`); a payload process accepted -25 and -5. Both calls follow FreeBSD 11.4's [`sys_getpriority` and `sys_setpriority`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/sys/kern/kern_resource.c#L93-L165) for the one guest process, taken to lead its own process group (see `kill`): ids other than 0, its pid or its user id fail with `ESRCH`, other `which` values with `EINVAL`. A `PRIO_PROCESS` set of 0 or more returns 0 without storing, as PS5 firmware 13.60 did in a payload process; `PRIO_PGRP` does the same, since it runs that `donice` on the guest alone, not measured. Nothing in the tree calls `setpriority`
