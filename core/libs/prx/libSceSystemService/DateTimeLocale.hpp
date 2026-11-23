@@ -118,7 +118,7 @@ inline std::optional<int> DateFormatOfLdml(std::string_view pattern) {
     Detail::VisitPatternLetters(pattern, [&](char letter, std::size_t run) {
         if (letter == 'd' && run <= 2) unique = Detail::AppendField(order, Detail::DAY) && unique;
         else if (letter == 'M' || letter == 'L') unique = Detail::AppendField(order, Detail::MONTH) && unique;
-        else if (letter == 'y') unique = Detail::AppendField(order, Detail::YEAR) && unique;
+        else if (letter == 'y' || letter == 'r') unique = Detail::AppendField(order, Detail::YEAR) && unique;
     });
     if (!unique) return std::nullopt;
     return Detail::DateFormatOfOrder(order);

@@ -1,0 +1,5 @@
+# libSceLibreSsl
+
+## change [File and socket BIO adapters]
+
+- [File and socket BIO adapters](../../../core/libs/prx/libSceLibreSsl/src/BioFileSocket.cpp) (`BIO_s_file`, `BIO_new_fp`, `BIO_new_socket`) extend the guest-ABI-compatible memory BIO implementation from #9536 using guest libc `FileStream` and `libSceNet` descriptors. File and socket BIOs have not been compared against the firmware or exercised on a console. Socket retry flags follow LibreSSL 2.5.4's pinned [bss_sock.c](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/bio/bss_sock.c#L131-L238), using guest sceNet errno for EINTR, EAGAIN, EINPROGRESS, EALREADY and ENOTCONN, clearing stale retry bits after I/O and stale errno before I/O. Socket pending-byte queries remain unimplemented; unsupported method controls return 0. A seek or tell on a file BIO without a stream returns -1 and `BIO_C_SET_FD` with a null or unreadable descriptor pointer throws, where LibreSSL 2.5.4 dereferences a null pointer. File and socket ownership follows the caller's close flag.
