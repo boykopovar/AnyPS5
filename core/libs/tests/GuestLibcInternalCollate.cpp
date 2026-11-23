@@ -4,6 +4,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -347,11 +348,11 @@ void CheckErrorBranches() {
     Require(liveAllocations == before, "error branches leak zero allocations");
 }
 
-void* LoadShared(const char* path) {
+void* LoadShared(const std::filesystem::path& path) {
 #ifdef _WIN32
-    return LoadLibraryA(path);
+    return LoadLibraryW(path.c_str());
 #else
-    return dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
 }
 
@@ -377,7 +378,7 @@ struct SharedLibraryGuard {
     ~SharedLibraryGuard() { CloseShared(handle); }
 };
 
-void CheckLibraryDispatch(const char* libraryPath, bool patchedNids) {
+void CheckLibraryDispatch(const std::filesystem::path& libraryPath, bool patchedNids) {
     const long before = liveAllocations;
     SharedLibraryGuard library{LoadShared(libraryPath)};
     Require(library.handle != nullptr, "libSceLibcInternal loads via dlopen/LoadLibrary");
@@ -535,7 +536,7 @@ int main(int argc, char** argv) {
     CheckErrorBranches();
     CheckLStrcoll();
     CheckLStrxfrm();
-    if (argc >= 2) CheckLibraryDispatch(argv[1], argc >= 3 && std::strcmp(argv[2], "patched") == 0);
+    if (argc >= 2) CheckLibraryDispatch(ArgumentPath(argv, 1), argc >= 3 && std::strcmp(argv[2], "patched") == 0);
 
     std::puts("libc internal collate<char> member and constructor checks passed");
     return 0;

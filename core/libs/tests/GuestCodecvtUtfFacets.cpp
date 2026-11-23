@@ -3,6 +3,7 @@
 #include "prx/libc/include/CodecvtUtf.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -244,11 +245,11 @@ void CheckLibcInternalForwarders() {
     Require(releasedCount == 0);
 }
 
-void* LoadShared(const char* path) {
+void* LoadShared(const std::filesystem::path& path) {
 #ifdef _WIN32
-    return LoadLibraryA(path);
+    return LoadLibraryW(path.c_str());
 #else
-    return dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
 }
 
@@ -274,7 +275,7 @@ struct SharedLibraryGuard {
     ~SharedLibraryGuard() { CloseShared(handle); }
 };
 
-void CheckLibraryNids(const char* libcPath, const char* internalPath, bool patched) {
+void CheckLibraryNids(const std::filesystem::path& libcPath, const std::filesystem::path& internalPath, bool patched) {
     SharedLibraryGuard libcLib{LoadShared(libcPath)};
     SharedLibraryGuard internalLib{LoadShared(internalPath)};
     Require(libcLib.handle != nullptr && internalLib.handle != nullptr);
@@ -327,6 +328,6 @@ int main(int argc, char** argv) {
     CheckDestructorExports();
     CheckQueryExports();
     CheckLibcInternalForwarders();
-    if (argc >= 3) CheckLibraryNids(argv[1], argv[2], argc >= 4 && std::strcmp(argv[3], "patched") == 0);
+    if (argc >= 3) CheckLibraryNids(ArgumentPath(argv, 1), ArgumentPath(argv, 2), argc >= 4 && std::strcmp(argv[3], "patched") == 0);
     std::puts("UTF codecvt facet checks passed");
 }

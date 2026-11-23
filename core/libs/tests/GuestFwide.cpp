@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cstdarg>
 #include <cstddef>
 #include <cstdio>
@@ -90,7 +91,7 @@ Function Symbol(
 int main(int argc, char** argv) {
     Require(argc == 3, "expected libc path and scratch filename");
 #ifdef _WIN32
-    const auto library = LoadLibraryA(argv[1]);
+    const auto library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
 #else
     const auto library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 #endif

@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <nid/NidCompute.hpp>
 #include <array>
 #include <cstdint>
@@ -183,7 +184,7 @@ static void Check(TFunction function, const Answer (&answers)[TSize]) {
 int main(int argc, char** argv) {
     Require(argc == 3);
     for (int index = 1; index <= 2; ++index) {
-        Module module(std::filesystem::absolute(argv[index]));
+        Module module(std::filesystem::absolute(ArgumentPath(argv, index)));
         const auto name = [&](const char* symbol) { return index == 1 ? std::string(symbol) + "_nid_postfix" : Nid::ComputeNid(symbol, "libc"); };
         Check(module.Resolve<decltype(&div_nid_postfix)>(name("div")), small);
         Check(module.Resolve<decltype(&ldiv_nid_postfix)>(name("ldiv")), wide);

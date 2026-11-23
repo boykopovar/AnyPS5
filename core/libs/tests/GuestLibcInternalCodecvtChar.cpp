@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdint>
@@ -357,7 +358,7 @@ int main(int argc, char** argv) {
     bool hasLibrary = false;
     if (argc >= 2) {
 #ifdef _WIN32
-        g_library = LoadLibraryA(argv[1]);
+        g_library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
 #else
         g_library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 #endif

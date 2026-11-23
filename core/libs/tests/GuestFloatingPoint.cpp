@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <algorithm>
 #include <array>
 #include <barrier>
@@ -352,7 +353,7 @@ void CheckHoldExcept(HoldExcept hold) {
 int main(int argc, char** argv) {
     Require(argc == 2, "expected libc path");
 #ifdef _WIN32
-    const auto library = LoadLibraryA(argv[1]);
+    const auto library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     Require(library != nullptr, "load libc for feholdexcept");
     const auto hold = reinterpret_cast<HoldExcept>(GetProcAddress(library, "feholdexcept_nid_postfix"));
 #else
