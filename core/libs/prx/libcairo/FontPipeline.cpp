@@ -153,9 +153,16 @@ int APS5_VABI cairo_scaled_font_text_to_glyphs(CairoScaledFont* scaledFont, doub
     Writable(clusters, __func__);
     Writable(clusterFlags, __func__);
     auto* originalGlyphs = Read(glyphs, __func__);
-    int glyphCount = originalGlyphs ? Read(numGlyphs, __func__) : 0;
+    const int glyphCapacity = originalGlyphs ? Read(numGlyphs, __func__) : 0;
     auto* originalClusters = clusters ? Read(clusters, __func__) : nullptr;
-    int clusterCount = originalClusters ? Read(numClusters, __func__) : 0;
+    const int clusterCapacity = originalClusters ? Read(numClusters, __func__) : 0;
+    if (glyphCapacity < 0 || clusterCapacity < 0) {
+        Write(numGlyphs, 0, __func__);
+        if (clusters) Write(numClusters, 0, __func__);
+        if (clusterFlags) Write(clusterFlags, 0, __func__);
+        return _cairo_error(CAIRO_STATUS_NEGATIVE_COUNT);
+    }
+
     std::string text;
     if (utf8 && utf8Length == -1) {
         if (CopyGuestString_nid_no_patch(utf8, 1024 * 1024, text)) NotImplemented_nid_no_patch(__func__);
@@ -164,27 +171,24 @@ int APS5_VABI cairo_scaled_font_text_to_glyphs(CairoScaledFont* scaledFont, doub
         if (!GuestCopyIn_nid_no_patch(text.data(), utf8, text.size())) NotImplemented_nid_no_patch(__func__);
     }
 
-    std::vector<cairo_glyph_t> glyphStorage(originalGlyphs && glyphCount > 0 ? glyphCount : 1);
-    std::vector<cairo_text_cluster_t> clusterStorage(originalClusters && clusterCount > 0 ? clusterCount : 1);
-    auto* initialGlyphs = originalGlyphs ? glyphStorage.data() : nullptr;
-    auto* initialClusters = originalClusters ? clusterStorage.data() : nullptr;
-    auto* nativeGlyphs = initialGlyphs;
-    auto* nativeClusters = initialClusters;
+    cairo_glyph_t* nativeGlyphs = nullptr;
+    cairo_text_cluster_t* nativeClusters = nullptr;
+    int glyphCount = 0, clusterCount = 0;
     cairo_text_cluster_flags_t flags{};
     const auto result = aps5_cairo_scaled_font_text_to_glyphs(font, x, y,
         utf8 ? text.c_str() : nullptr, utf8Length, &nativeGlyphs, &glyphCount,
         clusters ? &nativeClusters : nullptr, clusters ? &clusterCount : nullptr, clusterFlags ? &flags : nullptr);
     std::unique_ptr<cairo_glyph_t, decltype(&aps5_cairo_glyph_free)> allocatedGlyphs(
-        nativeGlyphs != initialGlyphs ? nativeGlyphs : nullptr, aps5_cairo_glyph_free);
+        nativeGlyphs, aps5_cairo_glyph_free);
     std::unique_ptr<cairo_text_cluster_t, decltype(&aps5_cairo_text_cluster_free)> allocatedClusters(
-        nativeClusters != initialClusters ? nativeClusters : nullptr, aps5_cairo_text_cluster_free);
+        nativeClusters, aps5_cairo_text_cluster_free);
     std::unique_ptr<CairoGlyph, decltype(&std::free)> guestGlyphs(nullptr, std::free);
     std::unique_ptr<CairoTextCluster, decltype(&std::free)> guestClusters(nullptr, std::free);
     auto* outputGlyphs = originalGlyphs;
     auto* outputClusters = originalClusters;
     if (result == CAIRO_STATUS_SUCCESS && glyphCount > 0) {
         const auto bytes = static_cast<std::size_t>(glyphCount) * sizeof(CairoGlyph);
-        if (allocatedGlyphs) {
+        if (glyphCount > glyphCapacity) {
             guestGlyphs.reset(static_cast<CairoGlyph*>(std::malloc(bytes)));
             if (!guestGlyphs) throw std::bad_alloc();
             outputGlyphs = guestGlyphs.get();
@@ -197,7 +201,7 @@ int APS5_VABI cairo_scaled_font_text_to_glyphs(CairoScaledFont* scaledFont, doub
     }
     if (result == CAIRO_STATUS_SUCCESS && clusters && clusterCount > 0) {
         const auto bytes = static_cast<std::size_t>(clusterCount) * sizeof(CairoTextCluster);
-        if (allocatedClusters) {
+        if (clusterCount > clusterCapacity) {
             guestClusters.reset(static_cast<CairoTextCluster*>(std::malloc(bytes)));
             if (!guestClusters) throw std::bad_alloc();
             outputClusters = guestClusters.get();

@@ -310,7 +310,26 @@ void Errors() {
         nullptr, reinterpret_cast<int*>(1), nullptr) == 0 && glyphCount == 1,
         "cluster count is ignored without clusters");
     cairo_glyph_free(glyphs);
+
+    CairoGlyph glyphStorage{};
+    CairoTextCluster clusterStorage{};
+    glyphs = &glyphStorage;
+    clusters = &clusterStorage;
+    glyphCount = clusterCount = std::numeric_limits<int>::max();
+    Check(cairo_scaled_font_text_to_glyphs(font.get(), 0, 0, "A", 1, &glyphs, &glyphCount,
+        &clusters, &clusterCount, &flags) == 0, "large advertised capacities allow a small conversion");
+    Check(glyphs == &glyphStorage && clusters == &clusterStorage && glyphCount == 1 && clusterCount == 1 &&
+        clusterStorage.numBytes == 1 && clusterStorage.numGlyphs == 1, "large capacities reuse caller buffers");
+
     glyphs = nullptr;
+    clusters = nullptr;
+    glyphCount = clusterCount = -1;
+    Check(cairo_scaled_font_text_to_glyphs(font.get(), 0, 0, "A", 1, &glyphs, &glyphCount,
+        &clusters, &clusterCount, &flags) == 0 && glyphCount == 1 && clusterCount == 1,
+        "counts are ignored when the caller provides no arrays");
+    cairo_glyph_free(glyphs);
+    std::free(clusters);
+
     Rejects([&] { cairo_scaled_font_glyph_extents(font.get(), reinterpret_cast<const CairoGlyph*>(1), 1,
         reinterpret_cast<CairoTextExtents*>(1)); });
     auto failed = Create(CairoMatrix{std::numeric_limits<double>::infinity(), 0, 0, 1, 0, 0});
