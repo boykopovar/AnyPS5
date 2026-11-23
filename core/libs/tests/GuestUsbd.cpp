@@ -702,6 +702,11 @@ int main(int argc, char** argv) {
     Require(sceUsbdGetStringDescriptorAscii(&foreign, 1, reinterpret_cast<std::uint8_t*>(0x10), 18) == invalidArgument && errno == 71, "unwritable ASCII string buffer accepted");
     Require(descriptor[0] == 0x55, "a rejected ASCII string request wrote the buffer");
     Require(Throws([&] { sceUsbdGetStringDescriptorAscii(&foreign, 1, descriptor, 18); }), "ASCII string request on a handle that was never opened did not throw");
+    std::uint8_t* const stringTail = page + GuardedPageSize() - 10;
+    std::memset(stringTail, 0xa5, 10);
+    Require(sceUsbdGetStringDescriptor(&foreign, 1, 0x409, stringTail, 18) == invalidArgument && errno == 71, "string descriptor output running into a guard page accepted");
+    Require(sceUsbdGetStringDescriptorAscii(&foreign, 1, stringTail, 18) == invalidArgument && errno == 71, "ASCII string output running into a guard page accepted");
+    Require(std::all_of(stringTail, stringTail + 10, [](std::uint8_t value) { return value == 0xa5; }), "a string output running into a guard page was written");
     Require(sceUsbdGetDescriptor(nullptr, 1, 0, descriptor, 18) == invalidArgument, "null handle descriptor request accepted");
     Require(sceUsbdGetDescriptor(&foreign, 1, 0, nullptr, 18) == invalidArgument && sceUsbdGetDescriptor(&foreign, 1, 0, descriptor, 0) == invalidArgument, "missing descriptor buffer accepted");
     Require(Throws([&] { sceUsbdGetDescriptor(&foreign, 1, 0, descriptor, 18); }), "descriptor request on a handle that was never opened did not throw");

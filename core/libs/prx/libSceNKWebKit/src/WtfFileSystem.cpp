@@ -59,8 +59,14 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/GuestFilesystemPrimitives.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
 
 namespace {
 
@@ -68,6 +74,8 @@ using NKWebKit::WtfAbi::CString;
 using NKWebKit::WtfAbi::String;
 
 constexpr std::size_t PathMax = 1024;
+constexpr int GuestEintr = 4;
+constexpr int CopyBufferSize = 1 << 16;
 
 CString FileSystemRepresentation(const String& path) {
     return _ZNK3WTF6String4utf8ENS_14ConversionModeE(&path, 0);
@@ -86,6 +94,52 @@ bool Status(const String& path, FileStat& status, bool followLinks) {
 
 bool IsDirectory(const FileStat& status) {
     return GuestFilesystem::TypeOfMode(status.st_mode) == GuestFilesystem::TypeDirectory;
+}
+
+int ReadFromFile(int handle, char* buffer, int length) {
+    for (;;) {
+        const auto bytesRead = read_nid_postfix(handle, buffer, static_cast<std::uint64_t>(length));
+        if (bytesRead >= 0) return static_cast<int>(bytesRead);
+        if (*__error_nid_postfix() != GuestEintr) return -1;
+    }
+}
+
+bool WriteToFile(int handle, const char* data, int length) {
+    int offset = 0;
+    while (offset < length) {
+        const auto bytesWritten = write_nid_postfix(handle, data + offset, length - offset);
+        if (bytesWritten < 0) {
+            if (*__error_nid_postfix() == GuestEintr) continue;
+            return false;
+        }
+        if (bytesWritten == 0) return false;
+        offset += static_cast<int>(bytesWritten);
+    }
+    return true;
+}
+
+struct FileCloser {
+    int handle;
+    ~FileCloser() { _ZN3WTF14FileSystemImpl9closeFileERi(handle); }
+};
+
+bool CopyFileContents(const String& targetPath, const String& linkPath) {
+    FileStat status{};
+    if (!Status(targetPath, status, true) || GuestFilesystem::TypeOfMode(status.st_mode) != GuestFilesystem::TypeRegular) return false;
+    FileCloser source{_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(targetPath, 0, true, false)};
+    if (source.handle == -1) return false;
+    FileCloser destination{_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(linkPath, 1, true, true)};
+    if (destination.handle == -1) return false;
+    fchmod_nid_postfix(destination.handle, status.st_mode & 07777);
+    std::array<char, CopyBufferSize> buffer{};
+    for (;;) {
+        const int bytesRead = ReadFromFile(source.handle, buffer.data(), CopyBufferSize);
+        if (bytesRead < 0 || !WriteToFile(destination.handle, buffer.data(), bytesRead)) {
+            _ZN3WTF14FileSystemImpl10deleteFileERKNS_6StringE(linkPath);
+            return false;
+        }
+        if (bytesRead == 0) return true;
+    }
 }
 
 }  // namespace
@@ -132,6 +186,16 @@ bool APS5_VABI _ZN3WTF14FileSystemImpl19filesHaveSameVolumeERKNS_6StringES3_(con
     FileStat statusB{};
     if (!Status(fileA, statusA, true) || !Status(fileB, statusB, true)) return false;
     return statusA.st_dev == statusB.st_dev;
+}
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl18hardLinkOrCopyFileERKNS_6StringES3_(const String& targetPath, const String& linkPath) {
+    const auto target = FileSystemRepresentation(targetPath);
+    const auto link = FileSystemRepresentation(linkPath);
+    const char* targetData = Data(target);
+    const char* linkData = Data(link);
+    if (!targetData || !linkData) return false;
+    if (link_nid_postfix(targetData, linkData) == 0) return true;
+    return CopyFileContents(targetPath, linkPath);
 }
 
 }
