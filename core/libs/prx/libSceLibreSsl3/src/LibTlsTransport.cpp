@@ -1,3 +1,24 @@
+/* Derived from LibreSSL 4.0.0 libtls tls_server.c, tls.c and tls_client.c at
+ * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libtls/tls_server.c
+ * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libtls/tls.c
+ * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libtls/tls_client.c */
+/* Altered: TLS roles, server context creation and the socket I/O use mbedTLS and guest descriptors instead of libssl. */
+/* $OpenBSD: tls_server.c,v 1.51 2024/03/26 08:54:48 joshua Exp $ */
+/*
+ * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
 #include "prx/libSceLibreSsl3/include/LibTls.hpp"
 
 #include "prx/libc/include/General.hpp"
@@ -16,6 +37,7 @@
 #include <mbedtls/entropy.h>
 #include <mbedtls/error.h>
 #include <mbedtls/net_sockets.h>
+#include <mbedtls/pk.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 
@@ -23,6 +45,7 @@
 #include <array>
 #include <climits>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -99,6 +122,8 @@ struct Session {
     mbedtls_ssl_config config;
     mbedtls_ssl_context ssl;
     mbedtls_x509_crt authorities;
+    mbedtls_x509_crt certificate;
+    mbedtls_pk_context key;
 
     Session(std::shared_ptr<void> owner, std::uintptr_t native, bool nameVerification)
         : socketOwner(std::move(owner)), socket(native), verifyName(nameVerification) {
@@ -107,12 +132,16 @@ struct Session {
         mbedtls_ssl_config_init(&config);
         mbedtls_ssl_init(&ssl);
         mbedtls_x509_crt_init(&authorities);
+        mbedtls_x509_crt_init(&certificate);
+        mbedtls_pk_init(&key);
     }
 
     ~Session() {
         mbedtls_ssl_free(&ssl);
         mbedtls_ssl_config_free(&config);
         mbedtls_x509_crt_free(&authorities);
+        mbedtls_x509_crt_free(&certificate);
+        mbedtls_pk_free(&key);
         mbedtls_ctr_drbg_free(&random);
         mbedtls_entropy_free(&entropy);
     }
@@ -176,14 +205,15 @@ struct Session {
     }
 
     int Configure(const TlsTransportConfig& settings, const char* servername) {
-        if (!settings.client) return MBEDTLS_ERR_SSL_BAD_CONFIG;
         if ((settings.protocols & (TlsProtocol12 | TlsProtocol13)) == 0) return MBEDTLS_ERR_SSL_BAD_CONFIG;
         int result = mbedtls_ctr_drbg_seed(&random, mbedtls_entropy_func, &entropy, nullptr, 0);
         if (result != 0) return result;
-        result = mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
-            MBEDTLS_SSL_PRESET_DEFAULT);
+        const bool client = settings.role == TlsRole::Client;
+        result = mbedtls_ssl_config_defaults(&config, client ? MBEDTLS_SSL_IS_CLIENT : MBEDTLS_SSL_IS_SERVER,
+            MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
         if (result != 0) return result;
-        mbedtls_ssl_conf_authmode(&config, MBEDTLS_SSL_VERIFY_REQUIRED);
+        mbedtls_ssl_conf_authmode(&config, client || settings.verifyClient
+            ? MBEDTLS_SSL_VERIFY_REQUIRED : MBEDTLS_SSL_VERIFY_NONE);
         mbedtls_ssl_conf_rng(&config, mbedtls_ctr_drbg_random, &random);
         mbedtls_ssl_conf_verify(&config, Verify, this);
         if ((settings.protocols & TlsProtocol12) != 0) {
@@ -204,44 +234,63 @@ struct Session {
 #else
         mbedtls_ssl_conf_max_tls_version(&config, MBEDTLS_SSL_VERSION_TLS1_2);
 #endif
-
-        std::vector<unsigned char> ca;
-        if (settings.ca && settings.caLength) {
-            ca.assign(settings.ca, settings.ca + settings.caLength);
-        } else {
-            const char* const sandbox = sceKernelGetFsSandboxRandomWord();
-            if (!sandbox) return MBEDTLS_ERR_X509_FILE_IO_ERROR;
-            const std::string path = std::string("/") + sandbox + "/common/cert/CA_LIST.cer";
-            const int descriptor = sceKernelOpen(path.c_str(), 0, 0);
-            if (descriptor < 0) return MBEDTLS_ERR_X509_FILE_IO_ERROR;
-            std::array<char, 16384> buffer{};
-            for (;;) {
-                const auto count = sceKernelRead(descriptor, buffer.data(), buffer.size());
-                if (count < 0) {
-                    sceKernelClose(descriptor);
-                    return MBEDTLS_ERR_X509_FILE_IO_ERROR;
-                }
-                if (count == 0) break;
-                ca.insert(ca.end(), buffer.begin(), buffer.begin() + count);
+        if (!client) {
+            if (settings.cert && settings.certLength) {
+                result = mbedtls_x509_crt_parse(&certificate, settings.cert, settings.certLength);
+                if (result != 0) return result;
+                if (certificate.raw.p == nullptr) return MBEDTLS_ERR_X509_BAD_INPUT_DATA;
             }
-            sceKernelClose(descriptor);
+            if (settings.key && settings.keyLength) {
+                result = mbedtls_pk_parse_key(&key, settings.key, settings.keyLength, nullptr, 0,
+                    mbedtls_ctr_drbg_random, &random);
+                if (result != 0) return result;
+            }
+            if (certificate.raw.p == nullptr || mbedtls_pk_get_type(&key) == MBEDTLS_PK_NONE ||
+                mbedtls_pk_check_pair(&certificate.pk, &key, mbedtls_ctr_drbg_random, &random) != 0)
+                return MBEDTLS_ERR_X509_BAD_INPUT_DATA;
+            result = mbedtls_ssl_conf_own_cert(&config, &certificate, &key);
+            if (result != 0) return result;
         }
-        if (ca.empty() || ca.back() != 0) ca.push_back(0);
-        result = mbedtls_x509_crt_parse(&authorities, ca.data(), ca.size());
-        if (result < 0 || authorities.raw.p == nullptr) {
-            return result < 0 ? result : MBEDTLS_ERR_X509_CERT_VERIFY_FAILED;
+        if (client || settings.verifyClient) {
+            std::vector<unsigned char> ca;
+            if (settings.ca && settings.caLength) {
+                ca.assign(settings.ca, settings.ca + settings.caLength);
+            } else {
+                const char* const sandbox = sceKernelGetFsSandboxRandomWord();
+                if (!sandbox) return MBEDTLS_ERR_X509_FILE_IO_ERROR;
+                const std::string path = std::string("/") + sandbox + "/common/cert/CA_LIST.cer";
+                const int descriptor = sceKernelOpen(path.c_str(), 0, 0);
+                if (descriptor < 0) return MBEDTLS_ERR_X509_FILE_IO_ERROR;
+                std::array<char, 16384> buffer{};
+                for (;;) {
+                    const auto count = sceKernelRead(descriptor, buffer.data(), buffer.size());
+                    if (count < 0) {
+                        sceKernelClose(descriptor);
+                        return MBEDTLS_ERR_X509_FILE_IO_ERROR;
+                    }
+                    if (count == 0) break;
+                    ca.insert(ca.end(), buffer.begin(), buffer.begin() + count);
+                }
+                sceKernelClose(descriptor);
+            }
+            if (ca.empty() || ca.back() != 0) ca.push_back(0);
+            result = mbedtls_x509_crt_parse(&authorities, ca.data(), ca.size());
+            if (result < 0 || authorities.raw.p == nullptr)
+                return result < 0 ? result : MBEDTLS_ERR_X509_CERT_VERIFY_FAILED;
+            mbedtls_ssl_conf_ca_chain(&config, &authorities, nullptr);
         }
-        mbedtls_ssl_conf_ca_chain(&config, &authorities, nullptr);
         result = mbedtls_ssl_setup(&ssl, &config);
         if (result != 0) return result;
-        if (servername) {
-            result = mbedtls_ssl_set_hostname(&ssl, servername);
-            if (result != 0) return result;
-        } else if (verifyName) {
-            return MBEDTLS_ERR_X509_BAD_INPUT_DATA;
-        } else {
-            result = mbedtls_ssl_set_hostname(&ssl, nullptr);
-            if (result != 0) return result;
+        if (client) {
+            if (servername) {
+                result = mbedtls_ssl_set_hostname(&ssl, servername);
+                if (result != 0) return result;
+            } else if (verifyName) {
+                return MBEDTLS_ERR_X509_BAD_INPUT_DATA;
+            } else {
+                result = mbedtls_ssl_set_hostname(&ssl, nullptr);
+                if (result != 0) return result;
+            }
         }
         mbedtls_ssl_set_bio(&ssl, this, Send, Receive, nullptr);
         connected = true;
@@ -309,9 +358,50 @@ std::int64_t Handshake(TlsContext* context, Session& session) {
     return -1;
 }
 
+int ValidateServer(const TlsTransportConfig& settings, char* error, std::size_t length) {
+    const auto fail = [error, length](const char* message) {
+        std::snprintf(error, length, "%s", message);
+        return -1;
+    };
+    const bool haveCert = settings.cert && settings.certLength;
+    const bool haveKey = settings.key && settings.keyLength;
+    if (!haveCert && !haveKey) return fail("private/public key mismatch");
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context random;
+    mbedtls_x509_crt certificate;
+    mbedtls_pk_context key;
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_init(&random);
+    mbedtls_x509_crt_init(&certificate);
+    mbedtls_pk_init(&key);
+    int outcome = 0;
+    if (mbedtls_ctr_drbg_seed(&random, mbedtls_entropy_func, &entropy, nullptr, 0) != 0) {
+        outcome = fail("failed to read private key");
+    } else if (haveCert && (mbedtls_x509_crt_parse(&certificate, settings.cert, settings.certLength) != 0 ||
+                            certificate.raw.p == nullptr)) {
+        outcome = fail("failed to load certificate");
+    } else if (haveKey && mbedtls_pk_parse_key(&key, settings.key, settings.keyLength, nullptr, 0,
+                                               mbedtls_ctr_drbg_random, &random) != 0) {
+        outcome = fail("failed to read private key");
+    } else if (!haveCert || !haveKey || mbedtls_pk_get_type(&key) == MBEDTLS_PK_NONE ||
+               mbedtls_pk_check_pair(&certificate.pk, &key, mbedtls_ctr_drbg_random, &random) != 0) {
+        outcome = fail("private/public key mismatch");
+    }
+    mbedtls_pk_free(&key);
+    mbedtls_x509_crt_free(&certificate);
+    mbedtls_ctr_drbg_free(&random);
+    mbedtls_entropy_free(&entropy);
+    return outcome;
+}
+
 }
 
 extern "C" {
+
+int TlsTransportValidateServer_nid_no_patch(const TlsTransportConfig* config, char* error, std::size_t length) {
+    if (!config || !error || !length) return -1;
+    return ValidateServer(*config, error, length);
+}
 
 int TlsTransportClose_nid_no_patch(TlsContext* context) {
     const auto session = Find(context);
@@ -366,7 +456,7 @@ int TlsTransportConnect_nid_no_patch(TlsContext* context, int socket, const char
         return -1;
     }
     TlsTransportConfig settings{};
-    if (!TlsTransportGetConfig_nid_no_patch(context, &settings) || !settings.client) {
+    if (!TlsTransportGetConfig_nid_no_patch(context, &settings) || settings.role != TlsRole::Client) {
         TlsTransportSetError_nid_no_patch(context, "not a client context");
         return -1;
     }
@@ -413,8 +503,56 @@ int TlsTransportConnect_nid_no_patch(TlsContext* context, int socket, const char
     return 0;
 }
 
+int TlsTransportAccept_nid_no_patch(TlsContext* context, TlsContext** cctx, int socket) {
+    if (cctx) *cctx = nullptr;
+    TlsTransportClearError_nid_no_patch(context);
+    if (!context || !cctx) {
+        TlsTransportSetError_nid_no_patch(context, "invalid operation for context");
+        return -1;
+    }
+    TlsTransportConfig settings{};
+    if (!TlsTransportGetConfig_nid_no_patch(context, &settings) || settings.role != TlsRole::Server) {
+        TlsTransportSetError_nid_no_patch(context, "not a server context");
+        return -1;
+    }
+    std::shared_ptr<void> owner;
+    std::uintptr_t native = 0;
+    if (socket < 0 || !KernelLookupSocketNative_nid_no_patch(socket, &owner, &native)) {
+        TlsTransportSetError_nid_no_patch(context, "ssl file descriptor failure");
+        return -1;
+    }
+    auto* accepted = TlsTransportAcceptContext_nid_no_patch(context);
+    if (!accepted) {
+        TlsTransportSetError_nid_no_patch(context, "connection context failure");
+        return -1;
+    }
+    auto session = std::make_shared<Session>(std::move(owner), native, settings.verifyName);
+    const int result = session->Configure(settings, nullptr);
+    if (result != 0) {
+        SetError(context, *session, result, "ssl failure");
+        tls_free_nid_postfix(accepted);
+        return -1;
+    }
+    {
+        std::lock_guard lock(sessionsMutex);
+        if (sessions.contains(accepted)) {
+            TlsTransportSetError_nid_no_patch(context, "context already connected");
+            tls_free_nid_postfix(accepted);
+            return -1;
+        }
+        sessions.emplace(accepted, std::move(session));
+    }
+    *cctx = accepted;
+    return 0;
+}
+
 int TlsTransportHandshake_nid_no_patch(TlsContext* context) {
     TlsTransportClearError_nid_no_patch(context);
+    TlsTransportConfig settings{};
+    if (!TlsTransportGetConfig_nid_no_patch(context, &settings) || settings.role == TlsRole::Server) {
+        TlsTransportSetError_nid_no_patch(context, "invalid operation for context");
+        return -1;
+    }
     const auto session = Find(context);
     if (!session) {
         TlsTransportSetError_nid_no_patch(context, "context not connected");

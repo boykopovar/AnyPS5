@@ -45,8 +45,8 @@ int APS5_VABI X509_set_pubkey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI tls_accept_socket_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI tls_accept_socket_nid_postfix(TlsContext* context, TlsContext** cctx, int socket) {
+    return TlsTransportAccept_nid_no_patch(context, cctx, socket);
 }
 
 int APS5_VABI EC_POINT_set_affine_coordinates_GFp_nid_postfix() {
