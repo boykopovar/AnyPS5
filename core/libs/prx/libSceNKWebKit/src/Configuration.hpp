@@ -152,6 +152,10 @@ public:
     bool canHandleHTTPSServerTrustEvaluation = true;
     Retained<String> customWebContentServiceBundleIdentifier;
     std::uint32_t terminatedNetworkProcessesCount = 0;
+    bool allowsAnySSLCertificateForWebSocketTesting = false;
+    bool allowsAnySSLCertificateForServiceWorkerTesting = false;
+    std::optional<double> serviceWorkerFetchTimeoutForTesting;
+    bool useTestingNetworkSession = false;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {

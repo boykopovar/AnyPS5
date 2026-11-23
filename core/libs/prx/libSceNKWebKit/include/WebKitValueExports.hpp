@@ -655,6 +655,11 @@ void APS5_VABI WKContextSetDiskCacheSpeculativeValidationEnabled(const void* con
 void APS5_VABI WKContextSetCanHandleHTTPSServerTrustEvaluation(const void* contextRef, bool value);
 void APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier(const void* contextRef, const void* bundleIdentifierRef);
 void APS5_VABI WKContextTerminateNetworkProcess(const void* contextRef);
+void APS5_VABI WKContextResetServiceWorkerFetchTimeoutForTesting(const void* contextRef);
+void APS5_VABI WKContextSetAllowsAnySSLCertificateForServiceWorkerTesting(const void* contextRef, bool allows);
+void APS5_VABI WKContextSetAllowsAnySSLCertificateForWebSocketTesting(const void* contextRef, bool allows);
+void APS5_VABI WKContextSetServiceWorkerFetchTimeoutForTesting(const void* contextRef, double seconds);
+void APS5_VABI WKContextUseTestingNetworkSession(const void* contextRef);
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, WKResultErrorFunction callback);
