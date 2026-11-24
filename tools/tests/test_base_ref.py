@@ -64,6 +64,13 @@ class BaseRefTests(unittest.TestCase):
         self.commit("first")
         self.assertEqual(base_ref.resolve(self.repo, "release/1.0"), "release/1.0")
 
+    def test_fatal_git_error_is_distinct_from_missing_refs(self):
+        outside = self.repo / "outside"
+        outside.mkdir()
+        (outside / ".git").write_text("invalid gitdir\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "Git could not resolve the base branch:.*fatal:"):
+            base_ref.resolve(outside)
+
     def test_no_base_branch_names_every_candidate(self):
         self.commit("first")
         with self.assertRaises(ValueError) as caught:
