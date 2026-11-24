@@ -130,13 +130,17 @@ void RequestMetrics() {
     Require(Equals(Request(2, 30 * 64, 10 * 64, 72, 72), 15, 8, 31457, 16132, 512, -128, 576, 1216), "bbox request scales each axis by the bbox");
     Require(Equals(Request(3, 10 * 64, 40 * 64, 0, 0), 8, 8, 16777, 16777, 512, -128, 640, 640), "cell request keeps the smaller scale");
     Require(Equals(Request(4, 0x8000, 0, 0, 0), 16, 16, 32768, 32768, 960, -256, 1216, 1280), "scales request copies the given scale to the missing axis");
+    Require(Equals(Request(4, 0, 0x8000, 0, 0), 16, 16, 32768, 32768, 960, -256, 1216, 1280), "scales request copies the given height scale to the missing axis");
     Require(Equals(Request(0, -16 * 64, 8 * 64, 0, 0), 65520, 8, -32768, 16384, 512, -128, 576, -1280), "negative widths keep their sign and truncate the ppem");
+    const auto resolvedNegative = Request(0, -12 * 64, 12 * 64, 96, 96);
+    Require(resolvedNegative.x_scale == -32736 && resolvedNegative.y_scale == 32768, "negative resolved sizes truncate before scaling");
+    Require(Equals(Request(0, 0, 0, 0, 0), 0, 0, 0, 0, 0, 0, 0, 0), "zero dimensions clear scalable metrics");
 
     for (const std::uint32_t type : {std::uint32_t{5}, std::numeric_limits<std::uint32_t>::max()}) {
         Fixture unsupported(1);
         const GuestSizeMetrics unsupportedBefore = unsupported.size.metrics;
         const GuestSizeRequestRec unsupportedRequest{type, 16 * 64, 16 * 64, 0, 0};
-        Require(FT_Request_Metrics_nid_postfix(&unsupported.face, &unsupportedRequest) == 0x06, "an unsupported request type is invalid");
+        Require(FT_Request_Metrics_nid_postfix(&unsupported.face, &unsupportedRequest) == 0x85, "an unsupported request type divides by zero");
         Require(std::memcmp(&unsupportedBefore, &unsupported.size.metrics, sizeof(unsupportedBefore)) == 0,
                 "an unsupported request type leaves the metrics untouched");
     }

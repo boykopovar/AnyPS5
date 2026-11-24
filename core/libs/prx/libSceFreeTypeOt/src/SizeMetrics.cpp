@@ -120,9 +120,14 @@ void ValidateRequest(const GuestSizeRequestRec& request, const char* function) {
     }
 }
 
-FT_Long ScaledRequest(FT_Long value, std::uint32_t resolution) {
+FT_Long ScaledRequest(FT_Long value, std::uint32_t resolution, const char* function) {
     if (!resolution) return value;
-    return FT_MulDiv(value, static_cast<FT_Long>(resolution), 72);
+    std::int64_t product = 0;
+    if (__builtin_mul_overflow(static_cast<std::int64_t>(value), static_cast<std::int64_t>(resolution), &product) ||
+        product > std::numeric_limits<std::int64_t>::max() - 36) {
+        throw std::invalid_argument(std::string(function) + ": scaled request overflow");
+    }
+    return RequestLong((product + 36) / 72, function);
 }
 
 FT_Long RequestPixelFloor(FT_Long value) {
@@ -198,12 +203,12 @@ std::int32_t RequestMetrics(GuestFaceRec* face, const GuestSizeRequestRec* reque
             goto CalculatePpem;
         case FT_SIZE_REQUEST_TYPE_MAX:
         default:
-            return FT_Err_Invalid_Argument;
+            break;
         }
         width = RequestMagnitude(width, function);
         height = RequestMagnitude(height, function);
-        scaledWidth = ScaledRequest(requestWidth, request.horiResolution);
-        scaledHeight = ScaledRequest(requestHeight, request.vertResolution);
+        scaledWidth = ScaledRequest(requestWidth, request.horiResolution, function);
+        scaledHeight = ScaledRequest(requestHeight, request.vertResolution, function);
         if (request.height || !request.width) {
             if (!height) {
                 error = FT_Err_Divide_By_Zero;
