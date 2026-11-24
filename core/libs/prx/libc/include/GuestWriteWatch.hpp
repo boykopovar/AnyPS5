@@ -30,6 +30,10 @@ void GuestWriteWatchSetReadTrapBypass_nid_postfix(bool (*bypass)());
 bool GuestWriteWatchTrapReads_nid_postfix(std::uintptr_t address, std::size_t bytes);
 void GuestWriteWatchReadTraps_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*trapped)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context);
 void GuestWriteWatchReleaseReads_nid_postfix(std::uintptr_t address, std::size_t bytes);
+std::uint64_t GuestWriteWatchReadTrapGeneration_nid_postfix();
+bool GuestWriteWatchAwaitsReadTrap_nid_postfix(std::uint64_t thread);
+bool GuestWriteWatchBeginUntrappedAccess_nid_postfix(const void* pointer, std::size_t bytes);
+void GuestWriteWatchEndUntrappedAccess_nid_postfix(const void* pointer, std::size_t bytes);
 
 }
 

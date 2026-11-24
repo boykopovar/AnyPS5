@@ -417,6 +417,77 @@ int APS5_VABI closedir_nid_postfix(void* handle) {
     return CloseDirectory_nid_no_patch(handle);
 }
 
+namespace {
+
+GuestDirectoryEntry* CopyDirectoryEntry(const GuestDirectoryEntry* source) {
+    auto* copy = static_cast<GuestDirectoryEntry*>(malloc_nid_postfix(sizeof(GuestDirectoryEntry)));
+    if (copy == nullptr) return nullptr;
+    std::memset(copy, 0, sizeof(*copy));
+    std::memcpy(copy, source, std::min<std::size_t>(source->recordLength, sizeof(*copy)));
+    copy->name[std::min<std::size_t>(copy->nameLength, sizeof(copy->name) - 1)] = '\0';
+    return copy;
+}
+
+void FreeDirectoryEntries(std::vector<GuestDirectoryEntry*>& entries) {
+    for (auto* entry : entries) free_nid_postfix(entry);
+    entries.clear();
+}
+
+}
+
+int APS5_VABI scandir_nid_postfix(const char* path, GuestDirectoryEntry*** namelist, int (APS5_VABI *select)(const GuestDirectoryEntry*), int (APS5_VABI *compar)(const GuestDirectoryEntry* const*, const GuestDirectoryEntry* const*)) {
+    if (path == nullptr || namelist == nullptr) throw std::invalid_argument("scandir: null path or result");
+    void* handle = opendir_nid_postfix(path);
+    if (handle == nullptr) return -1;
+    std::vector<GuestDirectoryEntry*> entries;
+    for (;;) {
+        errno = 0;
+        const auto* entry = readdir_nid_postfix(handle);
+        if (entry == nullptr) break;
+        if (select != nullptr && select(entry) == 0) continue;
+        auto* copy = CopyDirectoryEntry(entry);
+        if (copy == nullptr) {
+            FreeDirectoryEntries(entries);
+            closedir_nid_postfix(handle);
+            errno = 12;
+            return -1;
+        }
+        entries.push_back(copy);
+    }
+    const int readError = errno;
+    closedir_nid_postfix(handle);
+    if (readError != 0) {
+        FreeDirectoryEntries(entries);
+        errno = readError;
+        return -1;
+    }
+    if (compar != nullptr) {
+        std::sort(entries.begin(), entries.end(), [compar](GuestDirectoryEntry* left, GuestDirectoryEntry* right) {
+            const GuestDirectoryEntry* first = left;
+            const GuestDirectoryEntry* second = right;
+            return compar(&first, &second) < 0;
+        });
+    }
+    auto** array = static_cast<GuestDirectoryEntry**>(malloc_nid_postfix(std::max<std::size_t>(entries.size(), 1) * sizeof(GuestDirectoryEntry*)));
+    if (array == nullptr) {
+        FreeDirectoryEntries(entries);
+        errno = 12;
+        return -1;
+    }
+    std::copy(entries.begin(), entries.end(), array);
+    if (!GuestCopyOut_nid_no_patch(namelist, &array, sizeof(array))) {
+        free_nid_postfix(array);
+        FreeDirectoryEntries(entries);
+        errno = 14;
+        return -1;
+    }
+    return static_cast<int>(entries.size());
+}
+
+int APS5_VABI alphasort_nid_postfix(const GuestDirectoryEntry* const* left, const GuestDirectoryEntry* const* right) {
+    return strcoll_nid_postfix((*left)->name, (*right)->name);
+}
+
 void APS5_VABI rewinddir_nid_postfix(void* handle) {
     if (!handle) { errno = 9; return; }
     auto& directory = *static_cast<Directory*>(handle);

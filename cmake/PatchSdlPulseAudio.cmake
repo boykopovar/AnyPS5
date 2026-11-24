@@ -2,8 +2,21 @@ set(sdlPulsePatch "${CMAKE_CURRENT_BINARY_DIR}/sdl-pulseaudio.patch")
 set(sdlPulseSourceDir "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/SDL2")
 set(sdlPulsePatchDir "${CMAKE_CURRENT_BINARY_DIR}/sdl-pulseaudio-patch")
 set(sdlPulsePatchedDir "${CMAKE_CURRENT_BINARY_DIR}/sdl-pulseaudio")
-set(sdlPulsePatchedSources src/audio/pulseaudio/SDL_pulseaudio.c)
+set(sdlPulsePatchedSources src/audio/SDL_audio.c src/audio/pulseaudio/SDL_pulseaudio.c)
 file(CONFIGURE OUTPUT "${sdlPulsePatch}" CONTENT [=[
+--- a/src/audio/SDL_audio.c
++++ b/src/audio/SDL_audio.c
+@@ -1532,9 +1532,9 @@
+     }
+
+     if (id == SDL_arraysize(open_devices)) {
++        SDL_UnlockMutex(current_audio.detectionLock);
+         close_audio_device(device);
+         SDL_SetError("Too many open audio devices");
+-        SDL_UnlockMutex(current_audio.detectionLock);
+         return 0;
+     }
+
 --- a/src/audio/pulseaudio/SDL_pulseaudio.c
 +++ b/src/audio/pulseaudio/SDL_pulseaudio.c
 @@ -31,6 +31,7 @@

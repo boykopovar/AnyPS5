@@ -1345,7 +1345,7 @@ std::vector<std::uint64_t> PagesOf(std::span<const std::pair<std::uint64_t, std:
 
 std::vector<std::uint8_t> TrappedPages(std::span<const std::uint64_t> pages) {
     std::vector<std::uint8_t> trapped(pages.size(), 0);
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
     for (std::size_t from = 0; from < pages.size();) {
         auto to = from + 1;
@@ -2684,12 +2684,11 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     const auto stop = (address + bytes + page - 1) & ~(page - 1);
     const bool covered = tracker.covers(first, static_cast<std::size_t>(stop - first));
     const auto runImport = [&] {
-#ifdef __APPLE__
+#if defined(__APPLE__)
         const OwnHostWrite own;
         std::optional<GuestArena::HostWrite> open;
         if (importMayWriteGuest && !open.emplace(reinterpret_cast<void*>(first), static_cast<std::size_t>(stop - first), GuestArena::HostWrite::Try).Open()) return false;
-#endif
-#ifndef __APPLE__
+#else
         static_cast<void>(importMayWriteGuest);
 #endif
         return import();
