@@ -2176,6 +2176,7 @@ std::string budgetSource(const Context& context, const HostImports& state, std::
     return text;
 }
 
+constexpr std::uint64_t LabelImportWindow = 64ull << 10u;
 std::atomic<std::uint64_t> rangeImportWindow{64ull << 20u};
 std::atomic<std::uint64_t> importMaxBytes{0};
 
@@ -2340,7 +2341,9 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     }
     const auto budget = evict ? 0 : effectiveBudget(context, state);
     const auto index = leasedIndexContaining(lease, address);
-    const auto windowBounds = index != lease.size() && end != 0 ? importWindowBounds(*lease[index], address, end, context.hostImportAlignment) : std::nullopt;
+    const auto window = requester == ImportRequester::Label ? std::max<std::uint64_t>(LabelImportWindow, context.hostImportAlignment) : rangeImportWindow.load(std::memory_order_relaxed);
+    const auto windowBounds = index != lease.size() && end != 0 ? importWindowBounds(*lease[index], address, end, context.hostImportAlignment, window) : std::nullopt;
+    if (requester == ImportRequester::Label && !windowBounds) return nullptr;
     const bool complete = !windowBounds || (windowBounds->first == lease[index]->address && windowBounds->second == lease[index]->address + lease[index]->bytes);
     if (budget != 0 && index != lease.size() && complete && stillRefused(state, rememberedRun(state.refusals, lease, index, index), budget) && findImport(state, address, address + 1) == nullptr) {
         auto& counts = state.counts[static_cast<std::size_t>(requester)];
@@ -2357,7 +2360,7 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
         if (const auto* current = findImport(state, address, bounds.found ? lease[bounds.last]->address + lease[bounds.last]->bytes : address + 1)) return current;
     }
     auto run = bounds.found ? leasedRun(lease, bounds.first, bounds.last) : ImportRun{};
-    if (end != 0) run = windowRun(state, std::move(run), address, end, context.hostImportAlignment);
+    if (end != 0) run = windowRun(state, std::move(run), address, end, context.hostImportAlignment, window);
     if (run.ranges.empty()) return nullptr;
     return importRunAt(context, state, std::move(run), false, address, lease, end, evict, requester);
 }
