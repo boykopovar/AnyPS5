@@ -26,6 +26,7 @@
 
 #include "prx/libSceNKWebKit/include/CacheValidationExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
+#include "prx/libSceNKWebKit/src/ResourceResponseStatusAbi.hpp"
 
 #include <array>
 #include <stdexcept>
@@ -122,7 +123,7 @@ WTF::Seconds APS5_VABI _ZN7WebCore37computeFreshnessLifetimeForHTTPFamilyERKNS_1
     const auto expires = _ZNK7WebCore20ResourceResponseBase7expiresEv(&response);
     if (expires.hasValue)
         return {expires.seconds - effectiveDate};
-    switch (response.httpStatusCode) {
+    switch (reinterpret_cast<const NKWebKit::WebCoreAbi::ResourceResponseStatusLayout&>(response).httpStatusCode) {
     case 301:
     case 410:
         return {24.0 * 60 * 60 * 365};

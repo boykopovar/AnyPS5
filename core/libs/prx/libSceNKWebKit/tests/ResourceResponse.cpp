@@ -10,6 +10,7 @@
 #include <string_view>
 
 using NKWebKit::WebCoreAbi::ResourceResponseBase;
+using NKWebKit::WebCoreAbi::ResourceResponseStatusLayout;
 using NKWebKit::WtfAbi::StringImpl;
 
 static void Check(bool value, int line) {
@@ -113,7 +114,8 @@ static void ReleaseHeaders(NKWebKit::HttpAbi::HeaderVector<Entry>& entries) {
 }
 
 struct ResponseFixture {
-    ResourceResponseBase response{};
+    ResourceResponseStatusLayout layout{};
+    ResourceResponseBase& response = layout.head;
 
     ~ResponseFixture() {
         ReleaseHeaders(response.httpHeaderFields.common);
@@ -313,14 +315,14 @@ static void TestFreshnessLifetime() {
     Require(Freshness(response, 784111777) == 360);
     fixture.Set(HTTPHeaderName::Date, Text("Sun, 06 Nov 1994 08:49:37 GMT"));
     Require(Freshness(response, 0) == 360);
-    response.httpStatusCode = 301;
+    fixture.layout.httpStatusCode = 301;
     Require(Freshness(response, 0) == 31536000);
-    response.httpStatusCode = 410;
+    fixture.layout.httpStatusCode = 410;
     Require(Freshness(response, 0) == 31536000);
-    response.httpStatusCode = 404;
+    fixture.layout.httpStatusCode = 404;
     Require(Freshness(response, 0) == 360);
     fixture.Set(HTTPHeaderName::Expires, Text("Sun, 06 Nov 1994 08:50:37 GMT"));
-    response.httpStatusCode = 301;
+    fixture.layout.httpStatusCode = 301;
     Require(Freshness(response, 0) == 60);
     fixture.Set(HTTPHeaderName::CacheControl, Text("max-age=5"));
     Require(Freshness(response, 0) == 5);

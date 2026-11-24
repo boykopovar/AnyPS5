@@ -24,30 +24,6 @@ struct ResponseOptionalTime {
     ResponseOptionalTime(ResponseOptionalTime&& other) noexcept : ResponseOptionalTime(other) {}
 };
 
-struct ByteVector {
-    std::uint8_t* buffer;
-    std::uint32_t capacity;
-    std::uint32_t size;
-};
-
-struct CertificateChain {
-    ByteVector* buffer;
-    std::uint32_t capacity;
-    std::uint32_t size;
-};
-
-struct CertificateInfo {
-    int verificationError;
-    CertificateChain certificateChain;
-    ByteVector privateKey;
-    StringSlot privateKeyPassword;
-};
-
-struct OptionalCertificateInfo {
-    CertificateInfo value;
-    bool hasValue;
-};
-
 struct ResourceResponseBase {
     WtfAbi::URL url;
     StringSlot mimeType;
@@ -56,9 +32,6 @@ struct ResourceResponseBase {
     StringSlot httpStatusText;
     StringSlot httpVersion;
     ResponseHeaderStorage httpHeaderFields;
-    void* networkLoadMetrics;
-    OptionalCertificateInfo certificateInfo;
-    short httpStatusCode;
 };
 
 static_assert(sizeof(StringSlot) == 8);
@@ -76,17 +49,5 @@ static_assert(offsetof(ResourceResponseBase, textEncodingName) == 56);
 static_assert(offsetof(ResourceResponseBase, httpStatusText) == 64);
 static_assert(offsetof(ResourceResponseBase, httpVersion) == 72);
 static_assert(offsetof(ResourceResponseBase, httpHeaderFields) == 80);
-static_assert(sizeof(ByteVector) == 16);
-static_assert(sizeof(CertificateChain) == 16);
-static_assert(sizeof(CertificateInfo) == 48);
-static_assert(offsetof(CertificateInfo, verificationError) == 0);
-static_assert(offsetof(CertificateInfo, certificateChain) == 8);
-static_assert(offsetof(CertificateInfo, privateKey) == 24);
-static_assert(offsetof(CertificateInfo, privateKeyPassword) == 40);
-static_assert(sizeof(OptionalCertificateInfo) == 56);
-static_assert(offsetof(OptionalCertificateInfo, hasValue) == 48);
-static_assert(offsetof(ResourceResponseBase, networkLoadMetrics) == 112);
-static_assert(offsetof(ResourceResponseBase, certificateInfo) == 120);
-static_assert(offsetof(ResourceResponseBase, httpStatusCode) == 176);
 
 }
