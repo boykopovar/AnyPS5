@@ -2703,6 +2703,27 @@ bool deferredSettleTests(const Device& device) {
         unregisterRange(pair);
         HostImportFor(context, pairAddress, pairBytes);
     }
+    {
+        constexpr std::size_t pairBytes = 2 * unit;
+        void* pair = AllocateWatched(pairBytes, unit);
+        struct ReleasePair {
+            void* pair;
+            ~ReleasePair() { ReleaseWatched(pair, pairBytes); }
+        } releasePair{pair};
+        const auto pairAddress = reinterpret_cast<std::uint64_t>(pair);
+        auto queueless = context;
+        queueless.settleQueue = VK_NULL_HANDLE;
+        queueless.settleQueueMutex = nullptr;
+        const auto settledBefore = HostImportsSettled();
+        const auto submittedBefore = HostImportSettles().submitted;
+        registerRange(pair, pairBytes);
+        const auto* pairImport = HostImportFor(queueless, pairAddress, pairBytes);
+        Require(pairImport != nullptr && pairImport->unwatched && !Watched(pairAddress, pairBytes), "(d) a 128 KiB import through a context with no settle queue was not left compared");
+        HostImportFor(queueless, pairAddress, pairBytes);
+        Require(HostImportsSettled() == settledBefore && HostImportSettles().submitted == submittedBefore, "(d) an import through a context with no settle queue was settled");
+        unregisterRange(pair);
+        HostImportFor(queueless, pairAddress, pairBytes);
+    }
     const auto address = reinterpret_cast<std::uint64_t>(small);
     std::memset(small, 0x11, unit);
     registerRange(small, unit);
