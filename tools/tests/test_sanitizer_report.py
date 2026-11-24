@@ -50,7 +50,7 @@ class SanitizerReportTests(unittest.TestCase):
             case("switched_off", "disabled"),
         ))
         self.assertEqual(sanitizer_report.results(path), {
-            "passes": "passed", "fails": "failed", "skips": "skipped", "never_built": "failed", "switched_off": "skipped",
+            "passes": "passed", "fails": "failed", "skips": "skipped", "never_built": "notrun", "switched_off": "skipped",
         })
 
     def test_not_run_tests_are_skips_only_with_a_ctest_skip_status(self):
@@ -62,11 +62,28 @@ class SanitizerReportTests(unittest.TestCase):
             case("no_message", "notrun", "<skipped/>"),
         ))
         self.assertEqual(sanitizer_report.results(path), {
-            "skip_code": "skipped", "skip_regex": "skipped", "missing": "failed", "no_message": "failed",
+            "skip_code": "skipped", "skip_regex": "skipped", "missing": "notrun", "no_message": "notrun",
         })
         code, stdout, _ = self.run_main(path)
         self.assertEqual(code, 1)
         self.assertIn("4 tests: 0 passed, 2 skipped, 2 failed.", stdout)
+
+    def test_known_failure_cannot_hide_a_test_that_did_not_run(self):
+        path = self.write(suite(
+            case("fiber", "notrun", '<skipped message="Unable to find executable"/>'),
+            case("switch", "fail", "<failure/>"),
+            case("intentional", "notrun", '<skipped message="SKIP_RETURN_CODE=77"/>'),
+        ))
+        known = self.write_known("fiber address missing executable", "switch address stack switch")
+        code, stdout, _ = self.run_main(path, "--known", known, "--sanitizer", "address")
+        self.assertEqual(code, 1)
+        self.assertIn("| Failed test |\n| - |\n| `fiber` |", stdout)
+        self.assertIn("| `switch` | stack switch |", stdout)
+        code, stdout, _ = self.run_main(path, "--known", known, "--sanitizer", "address", "--json")
+        self.assertEqual(code, 1)
+        data = json.loads(stdout)
+        self.assertEqual([(test["name"], test["outcome"], test["unexpected"]) for test in data["tests"]],
+                         [("fiber", "failed", True), ("intentional", "skipped", False), ("switch", "failed", False)])
 
     def test_unknown_ctest_status_is_not_counted_as_passed(self):
         for status in ("garbage", "RUN", "", "skippedd"):

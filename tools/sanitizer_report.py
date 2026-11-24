@@ -36,6 +36,8 @@ def results(path):
         reason = (skipped.get("message") or "").strip() if skipped is not None else ""
         if case.find("failure") is not None or case.find("error") is not None:
             outcome = "failed"
+        elif status == "notrun" and not CTEST_SKIP.fullmatch(reason):
+            outcome = "notrun"
         elif status in SKIPPED_STATUSES or (skipped is not None and (CTEST_SKIP.fullmatch(reason) or status not in FAILED_STATUSES)):
             outcome = "skipped"
         elif status in FAILED_STATUSES:
@@ -106,10 +108,10 @@ def test_name(text):
 
 def summarize(title, found, known=None, details=None):
     known, details = known or {}, details or {}
-    counts = {outcome: sum(1 for value in found.values() if value == outcome) for outcome in ("passed", "skipped", "failed")}
-    failed = sorted(name for name, outcome in found.items() if outcome == "failed" and name not in known)
+    counts = {outcome: sum(1 for value in found.values() if value == outcome) for outcome in ("passed", "skipped")}
+    failed = sorted(name for name, outcome in found.items() if unexpected_failure(name, outcome, known))
     expected = sorted(name for name, outcome in found.items() if outcome == "failed" and name in known)
-    tally = f"{counts['failed']} failed" + (f" ({len(expected)} known)" if expected else "")
+    tally = f"{len(failed) + len(expected)} failed" + (f" ({len(expected)} known)" if expected else "")
     lines = [f"### {title}", "",
              f"{len(found)} tests: {counts['passed']} passed, {counts['skipped']} skipped, {tally}.", ""]
     if failed and any(name in details for name in failed):
@@ -126,6 +128,10 @@ def summarize(title, found, known=None, details=None):
     if absent:
         lines += ["| Listed as known but not in this run |", "| - |"] + [f"| {test_name(name)} |" for name in absent] + [""]
     return "\n".join(lines) + "\n", bool(failed)
+
+
+def unexpected_failure(name, outcome, known):
+    return outcome == "notrun" or (outcome == "failed" and name not in known)
 
 
 def main(argv=None):
@@ -156,8 +162,9 @@ def main(argv=None):
         output = text
         if args.json:
             output = json.dumps({"title": args.title, "unexpected_failure": failing,
-                                 "tests": [{"name": name, "outcome": found[name], "known_reason": known.get(name),
-                                            "report": details.get(name), "unexpected": found[name] == "failed" and name not in known}
+                                 "tests": [{"name": name, "outcome": "failed" if found[name] == "notrun" else found[name],
+                                            "known_reason": known.get(name), "report": details.get(name),
+                                            "unexpected": unexpected_failure(name, found[name], known)}
                                            for name in sorted(found)],
                                  "known_not_run": sorted(set(known) - set(found))}, ensure_ascii=False, indent=2) + "\n"
         if args.summary:
