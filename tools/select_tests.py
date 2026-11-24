@@ -143,7 +143,33 @@ class Build:
 
     def target(self, test):
         command = test.get("command") or []
-        return self.output(command[0]) if command else None
+        if not command:
+            return None
+        if command[1:3] != ["-E", "env"] or Path(command[0]).stem.casefold() != "cmake":
+            return self.output(command[0])
+        arguments = iter(command[3:])
+        for part in arguments:
+            if part == "--":
+                executable = next(arguments, "")
+                break
+            if part == "--modify":
+                next(arguments, None)
+            elif part.startswith("--unset="):
+                continue
+            elif part.startswith("-"):
+                return None
+            elif "=" not in part:
+                executable = part
+                break
+        else:
+            return None
+        if not os.path.isabs(executable):
+            if not os.path.dirname(executable) or os.path.splitdrive(executable)[0]:
+                return None
+            directory = next((prop["value"] for prop in test.get("properties", ())
+                              if prop["name"] == "WORKING_DIRECTORY"), self.path)
+            executable = os.path.join(directory, executable)
+        return self.output(executable)
 
 
 @functools.lru_cache(maxsize=None)
