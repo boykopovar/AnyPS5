@@ -397,6 +397,20 @@ class ExecutableImportTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn("import descriptor table is not terminated within import directory", result.stderr)
             self.assertEqual(path.read_bytes(), image)
+    def test_exec_rejects_thunk_crossing_raw_tail_without_writing(self):
+        image = bytearray(self.pe())
+        section = 0x58 + 240
+        struct.pack_into("<I", image, section + 16, 0x44)
+        struct.pack_into("<Q", image, 576, (1 << 63) | 1)
+        struct.pack_into("<Q", image, 584, 0)
+        original = bytes(image)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(original)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("thunk entry out of bounds", result.stderr)
+            self.assertEqual(path.read_bytes(), original)
 
     def test_exec_accepts_macho_without_exports(self):
         from test_macho_nids import LC_DYLD_EXPORTS_TRIE, command_fields
