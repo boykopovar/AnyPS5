@@ -532,7 +532,7 @@ int APS5_VABI sceNpWebApiGetConnectionStats(int titleUserCtxId, const void* targ
 }
 
 int APS5_VABI sceNpWebApiGetErrorCode(std::int32_t httpStatus, const char* json, std::size_t length) {
-    const int result = compiledSdkVersion() >= SDK_VERSION_2_50
+    const int result = ApplicationCompiledSdkVersion() >= SDK_VERSION_2_50
         ? sceNpServerErrorJsonMultiGetErrorCode(httpStatus, json, length)
         : sceNpServerErrorJsonGetErrorCode(httpStatus, json, length);
     if (result == SCE_NP_SERVER_ERROR_JSON_BAD_CODE) return SCE_NP_WEBAPI_ERROR_SERVER_JSON_BAD_CODE;
