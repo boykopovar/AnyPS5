@@ -5,6 +5,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 namespace NKWebKit {
 
@@ -12,11 +13,30 @@ namespace {
 
 bool g_remoteInspectionEnabledByDefault = true;
 
+void ReleaseStoredValues(JSRuntime* rt, CallbackObjectData* data) {
+    if (!JS_IsUndefined(data->propStore)) {
+        JS_FreeValueRT(rt, data->propStore);
+        data->propStore = JS_UNDEFINED;
+    }
+    for (auto& [k, slot] : data->privateProperties) {
+        if (!JS_IsUndefined(slot.strongVal)) {
+            JS_FreeValueRT(rt, slot.strongVal);
+            slot.strongVal = JS_UNDEFINED;
+        }
+    }
+    data->privateProperties.clear();
+}
+
 int InterruptHandler(JSRuntime* rt, void* opaque) {
     auto* group = static_cast<OpaqueJSContextGroup*>(opaque);
     if (!group || !group->hasTimeLimit || !group->deadlineArmed) return 0;
     const auto now = std::chrono::steady_clock::now();
     if (now < group->deadline) return 0;
+    const double cpuNow = _ZN3WTF7CPUTime16forCurrentThreadEv().m_value;
+    if (cpuNow < group->cpuDeadlineSeconds) {
+        group->deadline = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(group->cpuDeadlineSeconds - cpuNow));
+        return 0;
+    }
     group->deadlineArmed = false;
     if (group->terminateCallback) {
         OpaqueJSContext* ctx = group->activeContext ? group->activeContext : group->DefaultContext();
@@ -72,7 +92,8 @@ struct ConstraintMarker : JSMarker {
 
 bool APS5_VABI MarkerIsMarked(JSMarker* baseMarker, JSObjectRef object) {
     auto* marker = static_cast<ConstraintMarker*>(baseMarker);
-    if (!marker || !object || !object->alive) return false;
+    if (!object) return true;
+    if (!marker || !object->alive) return false;
     if (object->protectCount > 0) return true;
     if (marker->group->activeCallbackPins.count(object) > 0) return true;
     for (auto* ctx : marker->group->contexts) {
@@ -282,18 +303,7 @@ OpaqueJSContextGroup::~OpaqueJSContextGroup() {
         handle->alive = false;
     }
     for (auto& [ptr, data] : callbackDataByPtr) {
-        if (!data) continue;
-        if (!JS_IsUndefined(data->propStore)) {
-            JS_FreeValueRT(rt, data->propStore);
-            data->propStore = JS_UNDEFINED;
-        }
-        for (auto& [k, slot] : data->privateProperties) {
-            if (!JS_IsUndefined(slot.strongVal)) {
-                JS_FreeValueRT(rt, slot.strongVal);
-                slot.strongVal = JS_UNDEFINED;
-            }
-        }
-        data->privateProperties.clear();
+        if (data) ReleaseStoredValues(rt, data);
     }
     if (toStringTagAtom != JS_ATOM_NULL) JS_FreeAtomRT(rt, toStringTagAtom);
     if (toPrimitiveAtom != JS_ATOM_NULL) JS_FreeAtomRT(rt, toPrimitiveAtom);
@@ -425,6 +435,15 @@ void OpaqueJSContextGroup::NotifyObjectFinalized(void* ptr, OpaqueJSValue* handl
     }
     if (ptr) {
         objectHandles.erase(ptr);
+        const auto left = callbackDataByPtr.find(ptr);
+        if (left != callbackDataByPtr.end()) {
+            CallbackObjectData* data = left->second;
+            callbackDataByPtr.erase(left);
+            if (data) {
+                ReleaseStoredValues(rt, data);
+                delete data;
+            }
+        }
     }
 }
 
@@ -533,12 +552,9 @@ void OpaqueJSContextGroup::DrainMicrotasks() {
 
 void OpaqueJSContextGroup::RefreshDeadline() {
     constexpr double maxTimeLimitSeconds = 1.0e9;
-    if (!(timeLimitSeconds > 0.0)) {
-        deadline = std::chrono::steady_clock::now();
-    } else {
-        const double seconds = std::min(timeLimitSeconds, maxTimeLimitSeconds);
-        deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
-    }
+    const double seconds = timeLimitSeconds > 0.0 ? std::min(timeLimitSeconds, maxTimeLimitSeconds) : 0.0;
+    cpuDeadlineSeconds = _ZN3WTF7CPUTime16forCurrentThreadEv().m_value + seconds;
+    deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
 }
 
 void OpaqueJSContextGroup::EnterVm() {
@@ -586,6 +602,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     : group(grp), remoteInspectionEnabled(g_remoteInspectionEnabledByDefault) {
     group->refCount.fetch_add(1, std::memory_order_relaxed);
     qctx = JS_NewContext(group->rt);
+    InstallDateConstructor(group, qctx);
     JS_SetContextOpaque(qctx, this);
     group->contexts.push_back(this);
     for (auto& [ptr, data] : group->callbackDataByPtr) {
@@ -603,6 +620,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     JSValue objCtor = JS_GetPropertyStr(qctx, rawGlobal, "Object");
     JSValue objProto = JS_GetPropertyStr(qctx, objCtor, "prototype");
     JS_FreeValue(qctx, objCtor);
+    DefineConsoleObject(this, rawGlobal);
     JS_SetClassProto(qctx, group->callbackObjectClassId, JS_DupValue(qctx, objProto));
     JS_SetClassProto(qctx, group->callbackCallableClassId, objProto);
     globalObject = group->ToHandle(this, rawGlobal);
@@ -779,10 +797,7 @@ void APS5_VABI JSContextGroupClearExecutionTimeLimit(JSContextGroupRef group) {
 void APS5_VABI JSContextGroupAddHeapFinalizer(JSContextGroupRef group, JSHeapFinalizer finalizer, void* userData) {
     if (!group || !finalizer) return;
     auto* mutGroup = const_cast<OpaqueJSContextGroup*>(group);
-    const std::pair<JSHeapFinalizer, void*> entry{finalizer, userData};
-    if (std::find(mutGroup->heapFinalizers.begin(), mutGroup->heapFinalizers.end(), entry) == mutGroup->heapFinalizers.end()) {
-        mutGroup->heapFinalizers.push_back(entry);
-    }
+    mutGroup->heapFinalizers.emplace_back(finalizer, userData);
 }
 
 void APS5_VABI JSContextGroupRemoveHeapFinalizer(JSContextGroupRef group, JSHeapFinalizer finalizer, void* userData) {
@@ -1136,8 +1151,8 @@ JSObjectRef APS5_VABI JSWeakGetObject(JSWeakRef weak) {
 }
 
 void APS5_VABI JSWeakObjectMapSet(JSContextRef ctx, JSWeakObjectMapRef map, void* key, JSObjectRef object) {
-    if (!ctx || !map) return;
-    if (!object || !object->alive) {
+    if (!ctx || !map || !object) return;
+    if (!object->alive) {
         map->entries.erase(key);
         return;
     }

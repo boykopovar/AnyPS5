@@ -15,7 +15,7 @@ import annotate_module
 import nid_names
 from test_annotate_module import (DEFAULT_SYMBOLS, DEFAULT_TAGS, GNU_HASH, IMPORT_NAME, EXPORT_NAME, SECOND_IMPORT_NAME,
                                   TLS_NAME, CODE_ADDRESS, DATA_ADDRESS, CALL_ADDRESS, EXPORT_ADDRESS, build_module,
-                                  append_dynamic_tags, code_bytes, nid, symbol_name)
+                                  append_dynamic_tags, code_bytes, nid, symbol_name, unwind_image)
 
 
 def lifecycle_array_image(tag=25, values=(CODE_ADDRESS, EXPORT_ADDRESS), fixups=(), symbols=(), **options):
@@ -81,20 +81,9 @@ class GhidraSymbolsTests(unittest.TestCase):
                 if address == EXPORT_ADDRESS:
                     self.assertIn(f"{EXPORT_NAME} {EXPORT_ADDRESS:#x} f", rows)
 
-    def unwind_image(self, addresses, encoding=b"\x01\x1b\x03\x3b"):
-        image = bytearray(build_module(relocations=()))
-        base = DATA_ADDRESS + 0x500
-        size = 12 + 8 * len(addresses)
-        struct.pack_into("<H", image, 56, 4)
-        struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 0x6474e550, 4, 0x2500, base, base, size, size, 4)
-        struct.pack_into("<4siI", image, 0x2500, encoding, 0xfc, len(addresses))
-        for index, address in enumerate(addresses):
-            struct.pack_into("<ii", image, 0x250c + 8 * index, address - base, 0x110 + index * 16)
-        return image
-
     def test_unwind_index_labels_unnamed_code_ranges_offline(self):
         source = self.root / "ranges.prx"
-        source.write_bytes(self.unwind_image([CODE_ADDRESS, CODE_ADDRESS, EXPORT_ADDRESS, DATA_ADDRESS, 0x9000]))
+        source.write_bytes(unwind_image([CODE_ADDRESS, CODE_ADDRESS, EXPORT_ADDRESS, DATA_ADDRESS, 0x9000], relocations=()))
         result = self.cli(source, "--no-names")
         self.assertEqual((result.returncode, result.stderr), (0, ""))
         rows = result.stdout.splitlines()
@@ -102,12 +91,12 @@ class GhidraSymbolsTests(unittest.TestCase):
         self.assertTrue(any(row.endswith("0x100b f") for row in rows))
 
     def test_unwind_index_skips_unsupported_encoding(self):
-        image = self.unwind_image([CODE_ADDRESS], encoding=b"\x01\x1b\x03\xff")
+        image = unwind_image([CODE_ADDRESS], encoding=b"\x01\x1b\x03\xff", relocations=())
         rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({}))
         self.assertFalse(any(row.startswith("unwind_") for row in rows))
 
     def test_truncated_unwind_index_fails_before_printing_a_map(self):
-        image = self.unwind_image([CODE_ADDRESS])
+        image = unwind_image([CODE_ADDRESS], relocations=())
         struct.pack_into("<I", image, 0x2508, 2)
         source = self.root / "truncated.prx"
         source.write_bytes(image)

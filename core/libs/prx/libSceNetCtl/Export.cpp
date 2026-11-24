@@ -131,9 +131,7 @@ static int RegisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], NetCtlCall
     std::lock_guard lock(g_callbackLock);
     for (int index = 0; index < MAX_CALLBACKS; ++index) {
         if (!callbacks[index].func) {
-            const int savedErrno = errno;
             const bool copied = GuestCopyOut_nid_no_patch(cid, &index, sizeof(index));
-            errno = savedErrno;
             if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
             callbacks[index] = {func, arg, 0};
             return 0;
@@ -971,10 +969,7 @@ static bool WriteInfoV6Address(NetCtlInfoV6* info, const HostIpv6Address& addres
     char buffer[NET_CTL_IPV6_ADDR_STR_LEN + 1] = {};
     inet_ntop(AF_INET6, &address.address, buffer, NET_CTL_IPV6_ADDR_STR_LEN);
     buffer[NET_CTL_IPV6_ADDR_STR_LEN] = static_cast<char>(static_cast<std::uint8_t>(address.prefix));
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(info->opaque, buffer, sizeof(buffer));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyOut_nid_no_patch(info->opaque, buffer, sizeof(buffer));
 }
 
 extern "C" std::uint64_t NetCtlReadByteCounter_nid_no_patch(const char* path) {
@@ -1067,9 +1062,7 @@ int APS5_VABI sceNetCtlGetIfStat(NetCtlIfStat* stat) {
     if (!HostHasAddress(AF_UNSPEC)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
     NetCtlIfStat localStat{};
     HostTraffic(localStat.tx_bytes, localStat.rx_bytes);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(stat, &localStat, sizeof(localStat));
-    errno = savedErrno;
     if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
@@ -1117,9 +1110,7 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!info) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     std::uint32_t size = 0;
-    const int savedErrno = errno;
     const bool copiedSize = GuestCopyIn_nid_no_patch(&size, info, sizeof(size));
-    errno = savedErrno;
     if (!copiedSize) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (size != sizeof(NetCtlNatInfo)) return SCE_NET_CTL_ERROR_INVALID_SIZE;
     HostIpv4Interface host;
@@ -1155,9 +1146,7 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
             config.hasCachedResult = true;
         }
     }
-    const int copyErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(info, &discovered, sizeof(discovered));
-    errno = copyErrno;
     return copied ? 0 : SCE_NET_CTL_ERROR_INVALID_ADDR;
 }
 
@@ -1382,9 +1371,7 @@ int APS5_VABI sceNetCtlGetResultV6(int event_type, int* error_code) {
         throw std::runtime_error("sceNetCtlGetResultV6: event type " + std::to_string(event_type) + " is not implemented");
     }
     const int val = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(error_code, &val, sizeof(val));
-    errno = savedErrno;
     if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
