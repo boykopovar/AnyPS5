@@ -3,8 +3,14 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
+#include <algorithm>
 #include <array>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 
@@ -90,6 +96,220 @@ void RequireNotices() {
     ModalDialogSetPresenter_nid_postfix(false);
     PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
     Require(sceNpCommerceDialogTerminate() == 0);
+}
+
+class SyncBarrier {
+public:
+    explicit SyncBarrier(int count) : total(count) {}
+
+    void ArriveAndWait() {
+        std::unique_lock<std::mutex> lock(mutex);
+        const std::uint64_t current = generation;
+        if (++arrived == total) {
+            arrived = 0;
+            ++generation;
+            cv.notify_all();
+        } else {
+            cv.wait(lock, [&]() { return generation != current; });
+        }
+    }
+
+private:
+    const int total;
+    int arrived = 0;
+    std::uint64_t generation = 0;
+    std::mutex mutex;
+    std::condition_variable cv;
+};
+
+void RequireConcurrentLifecycle() {
+    std::uint32_t sdkVersion = 0x03500000;
+    std::memcpy(process.data() + 16, &sdkVersion, sizeof(sdkVersion));
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    Require(sceNpCommerceDialogGetStatus() == statusNone);
+
+    constexpr int threadCount = 4;
+    constexpr int rounds = 256;
+    SyncBarrier barrier(threadCount + 1);
+    std::vector<int> initResults(threadCount, -1);
+    std::vector<int> termResults(threadCount, -1);
+    std::vector<std::thread> lifecycleThreads;
+    lifecycleThreads.reserve(threadCount);
+    for (int i = 0; i < threadCount; ++i) {
+        lifecycleThreads.emplace_back([&, i]() {
+            for (int round = 0; round < rounds; ++round) {
+                barrier.ArriveAndWait();
+                initResults[i] = ((i + round) % 2 == 0) ? sceNpCommerceDialogInitialize() : sceNpCommerceDialogInitializeInternal();
+                barrier.ArriveAndWait();
+                barrier.ArriveAndWait();
+                termResults[i] = sceNpCommerceDialogTerminate();
+                barrier.ArriveAndWait();
+            }
+        });
+    }
+
+    for (int round = 0; round < rounds; ++round) {
+        std::fill(initResults.begin(), initResults.end(), -1);
+        barrier.ArriveAndWait();
+        barrier.ArriveAndWait();
+
+        int initSuccessCount = 0;
+        int alreadyInitCount = 0;
+        for (int rc : initResults) {
+            if (rc == 0) {
+                ++initSuccessCount;
+            } else {
+                Require(rc == COMMON_DIALOG_ERROR_ALREADY_INITIALIZED);
+                ++alreadyInitCount;
+            }
+        }
+        Require(initSuccessCount == 1);
+        Require(alreadyInitCount == threadCount - 1);
+        Require(sceNpCommerceDialogGetStatus() == statusInitialized);
+
+        std::fill(termResults.begin(), termResults.end(), -1);
+        barrier.ArriveAndWait();
+        barrier.ArriveAndWait();
+
+        int termSuccessCount = 0;
+        int notInitCount = 0;
+        for (int rc : termResults) {
+            if (rc == 0) {
+                ++termSuccessCount;
+            } else {
+                Require(rc == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+                ++notInitCount;
+            }
+        }
+        Require(termSuccessCount == 1);
+        Require(notInitCount == threadCount - 1);
+        Require(sceNpCommerceDialogGetStatus() == statusNone);
+    }
+    for (auto& thread : lifecycleThreads) thread.join();
+
+    Require(sceNpCommerceDialogInitialize() == 0);
+    {
+        NpCommerceDialogParam2 throwParam{};
+        throwParam.base.size = sizeof(throwParam.base);
+        throwParam.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&throwParam)) - 1060003575u;
+        throwParam.size = sizeof(throwParam);
+        throwParam.userId = USER_SERVICE_INITIAL_USER_ID;
+        throwParam.mode = 2;
+        throwParam.contentMode = 1;
+        bool threw = false;
+        try {
+            sceNpCommerceDialogOpen2(&throwParam);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+        Require(sceNpCommerceDialogGetStatus() == statusInitialized);
+    }
+
+    constexpr std::array<std::uint64_t, 4> sentinels{
+        0x1122334455667788ull,
+        0x2233445566778899ull,
+        0x99aabbccddeeff00ull,
+        0x8899aabbccddeeffull,
+    };
+    constexpr int iterations = 200;
+    SyncBarrier startGate(9);
+    std::atomic<int> resultChecks{0};
+    std::vector<std::thread> workers;
+    workers.reserve(8);
+
+    for (int i = 0; i < 2; ++i) {
+        workers.emplace_back([&, i]() {
+            NpCommerceDialogParam param{};
+            param.base.size = sizeof(param.base);
+            param.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param)) - 1060003575u;
+            param.size = sizeof(param);
+            param.userId = USER_SERVICE_INITIAL_USER_ID;
+            param.mode = 5;
+            param.argument = 1;
+            param.userData = sentinels[i];
+            startGate.ArriveAndWait();
+            for (int iter = 0; iter < iterations; ++iter) {
+                Require(sceNpCommerceDialogOpen(&param) == 0);
+            }
+        });
+    }
+
+    for (int i = 0; i < 2; ++i) {
+        workers.emplace_back([&, i]() {
+            NpCommerceDialogParam2 param2{};
+            param2.base.size = sizeof(param2.base);
+            param2.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param2)) - 1060003575u;
+            param2.size = sizeof(param2);
+            param2.userId = USER_SERVICE_INITIAL_USER_ID;
+            param2.mode = 5;
+            param2.argument = 1;
+            param2.userData = sentinels[i + 2];
+            startGate.ArriveAndWait();
+            for (int iter = 0; iter < iterations; ++iter) {
+                Require(sceNpCommerceDialogOpen2(&param2) == 0);
+            }
+        });
+    }
+
+    for (int i = 0; i < 2; ++i) {
+        workers.emplace_back([&]() {
+            startGate.ArriveAndWait();
+            for (int iter = 0; iter < iterations; ++iter) {
+                const int status = sceNpCommerceDialogGetStatus();
+                Require(status == statusInitialized || status == statusFinished);
+                const int updated = sceNpCommerceDialogUpdateStatus();
+                Require(updated == statusInitialized || updated == statusFinished);
+            }
+        });
+    }
+
+    for (int i = 0; i < 2; ++i) {
+        workers.emplace_back([&]() {
+            startGate.ArriveAndWait();
+            for (int iter = 0; iter < iterations; ++iter) {
+                NpCommerceDialogResult result;
+                std::memset(&result, 0x33, sizeof(result));
+                const int rc = sceNpCommerceDialogGetResult(&result);
+                if (rc == static_cast<int>(0x80B80005u)) continue;
+                Require(rc == resultUserCanceled);
+                Require(result.result == resultUserCanceled);
+                Require(result.authorized == 0);
+                bool matched = false;
+                for (std::uint64_t sentinel : sentinels) {
+                    if (result.userData == sentinel) {
+                        matched = true;
+                        break;
+                    }
+                }
+                Require(matched);
+                for (const auto value : result.padding) Require(value == 0x33);
+                for (const auto value : result.reserved) Require(value == 0);
+                resultChecks.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+
+    startGate.ArriveAndWait();
+    for (auto& worker : workers) worker.join();
+
+    Require(sceNpCommerceDialogGetStatus() == statusFinished);
+    NpCommerceDialogResult finalResult;
+    std::memset(&finalResult, 0x33, sizeof(finalResult));
+    Require(sceNpCommerceDialogGetResult(&finalResult) == resultUserCanceled);
+    bool finalMatched = false;
+    for (std::uint64_t sentinel : sentinels) {
+        if (finalResult.userData == sentinel) {
+            finalMatched = true;
+            break;
+        }
+    }
+    Require(finalMatched);
+    for (const auto value : finalResult.padding) Require(value == 0x33);
+    for (const auto value : finalResult.reserved) Require(value == 0);
+    Require(resultChecks.load(std::memory_order_relaxed) >= 0);
+    Require(sceNpCommerceDialogTerminate() == 0);
+    Require(sceNpCommerceDialogGetStatus() == statusNone);
 }
 
 }
@@ -282,6 +502,7 @@ int main() {
     Require(sceNpCommerceDialogGetStatus() == statusNone);
     Require(sceNpCommerceDialogUpdateStatus() == statusNone);
     RequireNotices();
+    RequireConcurrentLifecycle();
     Require(sceNpCommerceHidePsStoreIcon() == 0);
     Require(sceNpCommerceShowPsStoreIcon(0) == 0);
     Require(sceNpCommerceShowPsStoreIcon(1) == 0);

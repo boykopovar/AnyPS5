@@ -1,9 +1,11 @@
 #include "prx/libSceNpCommerce/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "SceTypes.hpp"
@@ -13,6 +15,7 @@
 
 namespace {
 
+std::mutex g_mutex;
 int g_status = COMMON_DIALOG_STATUS_NONE;
 std::uint64_t g_userData = 0;
 
@@ -80,8 +83,10 @@ extern "C" {
 
 // The store dialog has nothing to show: every open finishes at once as cancelled by the user.
 int APS5_VABI sceNpCommerceDialogInitialize() {
+ std::lock_guard<std::mutex> lock(g_mutex);
  if (g_status != COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
  g_status = COMMON_DIALOG_STATUS_INITIALIZED;
+ g_userData = 0;
  return 0;
 }
 
@@ -93,29 +98,38 @@ int APS5_VABI sceNpCommerceDialogOpen(const NpCommerceDialogParam* param) {
  errno = savedErrno;
  if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
  if (localParam.base.size != sizeof(localParam.base) || localParam.base.magic != static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param)) - 1060003575u || !std::all_of(std::begin(localParam.base.reserved), std::end(localParam.base.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (!validateParam(localParam)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- g_userData = localParam.userData;
- g_status = COMMON_DIALOG_STATUS_FINISHED;
+ {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+  if (!validateParam(localParam)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+  g_userData = localParam.userData;
+  g_status = COMMON_DIALOG_STATUS_FINISHED;
+ }
  PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
  return 0;
 }
 
 int APS5_VABI sceNpCommerceDialogUpdateStatus(void) {
+ std::lock_guard<std::mutex> lock(g_mutex);
  return g_status;
 }
 
 int APS5_VABI sceNpCommerceDialogGetStatus(void) {
+ std::lock_guard<std::mutex> lock(g_mutex);
  return g_status;
 }
 
 int APS5_VABI sceNpCommerceDialogGetResult(NpCommerceDialogResult* result) {
  if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (g_status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
+ std::uint64_t userData = 0;
+ {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+  if (g_status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
+  userData = g_userData;
+ }
  const std::int32_t cancelResult = COMMON_DIALOG_RESULT_USER_CANCELED;
  const std::uint8_t authorized = 0;
- const std::uint64_t userData = g_userData;
  const int savedErrno = errno;
  if (!GuestCopyOut_nid_no_patch(&result->result, &cancelResult, sizeof(cancelResult)) ||
      !GuestCopyOut_nid_no_patch(&result->authorized, &authorized, sizeof(authorized)) ||
@@ -136,6 +150,7 @@ int APS5_VABI sceNpCommerceDialogGetResult(NpCommerceDialogResult* result) {
 }
 
 int APS5_VABI sceNpCommerceDialogClose(void) {
+ std::lock_guard<std::mutex> lock(g_mutex);
  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
  if (g_status != COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_NOT_RUNNING;
  g_status = COMMON_DIALOG_STATUS_FINISHED;
@@ -143,8 +158,10 @@ int APS5_VABI sceNpCommerceDialogClose(void) {
 }
 
 int APS5_VABI sceNpCommerceDialogTerminate() {
+ std::lock_guard<std::mutex> lock(g_mutex);
  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
  g_status = COMMON_DIALOG_STATUS_NONE;
+ g_userData = 0;
  return 0;
 }
 
@@ -170,10 +187,13 @@ int APS5_VABI sceNpCommerceDialogOpen2(const NpCommerceDialogParam2* param) {
  errno = savedErrno;
  if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
  if (localParam.base.size != sizeof(localParam.base) || localParam.base.magic != static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param)) - 1060003575u || !std::all_of(std::begin(localParam.base.reserved), std::end(localParam.base.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (!validateParam2(localParam)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- g_userData = localParam.userData;
- g_status = COMMON_DIALOG_STATUS_FINISHED;
+ {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+  if (!validateParam2(localParam)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+  g_userData = localParam.userData;
+  g_status = COMMON_DIALOG_STATUS_FINISHED;
+ }
  PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
  return 0;
 }
