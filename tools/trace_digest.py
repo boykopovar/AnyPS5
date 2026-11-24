@@ -568,6 +568,18 @@ def validate_interval(record):
         raise ValueError("graphics_track must map names to non-negative integers")
     if "trace_dropped" in record and type(record["trace_dropped"]) is not bool:
         raise ValueError("trace_dropped must be a boolean")
+    details = record.get("trace_dropped_threads", {})
+    if not isinstance(details, dict):
+        raise ValueError("trace_dropped_threads must be an object")
+    for name, thread in details.items():
+        field = f"trace_dropped_threads.{name}"
+        if not isinstance(thread, dict):
+            raise ValueError(f"{field} must be an object")
+        events_lost = thread.get("events_lost", 0)
+        if type(events_lost) is not int or events_lost < 0:
+            raise ValueError(f"{field}.events_lost must be a non-negative integer")
+        if type(thread.get("totals_full", False)) is not bool:
+            raise ValueError(f"{field}.totals_full must be a boolean")
     for field in INTERVAL_IDENTITY_STRINGS:
         if field in record and not isinstance(record[field], str):
             raise ValueError(f"{field} must be a string")

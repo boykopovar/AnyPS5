@@ -1662,6 +1662,9 @@ class IntervalSchemaTests(unittest.TestCase):
         changes += [("worker_busy_pct", value) for value in ([], None, {"worker": "busy"}, {"worker": -1})]
         changes += [("top_phases_ms_per_frame", value) for value in ([], {"phase": True}, {"phase": float("nan")})]
         changes += [("trace_dropped", value) for value in (None, 0, "false")]
+        changes += [("trace_dropped_threads", value) for value in
+                    (None, [], {"worker": None}, {"worker": {"events_lost": True}},
+                     {"worker": {"events_lost": -1}}, {"worker": {"totals_full": 1}})]
         for field, value in changes:
             with self.subTest(field=field, value=value):
                 self.write({**baseline, field: value})

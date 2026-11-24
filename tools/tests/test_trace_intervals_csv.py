@@ -15,6 +15,20 @@ from test_trace_digest import interval_line
 
 
 class IntervalCsvTests(unittest.TestCase):
+    def test_invalid_thread_loss_details_are_a_cli_error(self):
+        record = interval_line(0.0, 30.0, 20.0, 5.0)
+        record.pop("trace_dropped")
+        record["trace_dropped_threads"] = {"worker": {"totals_full": 1}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, trace_intervals_csv.__file__, str(path)],
+                                    capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("trace_dropped_threads.worker.totals_full must be a boolean", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_dropped_column_distinguishes_unknown_clean_and_loss_inferred_from_details(self):
         first = interval_line(0.0, 30.0, 20.0, 5.0)
         first.pop("trace_dropped")
