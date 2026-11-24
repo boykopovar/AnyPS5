@@ -294,10 +294,10 @@ private:
                 addrinfo* raw = nullptr;
                 const auto service = std::to_string(job->port);
                 const auto hook = LookupHookSlot().load(std::memory_order_acquire);
-                const int result = hook && hook(job->host.c_str()) != 0 ? EAI_NONAME :
-                    getaddrinfo(job->host.c_str(), service.c_str(), &hints, &raw);
+                const int hooked = hook != nullptr ? hook(job->host.c_str()) : 0;
+                const int result = hooked != 0 ? hooked : getaddrinfo(job->host.c_str(), service.c_str(), &hints, &raw);
                 std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> addresses(raw, freeaddrinfo);
-                if (result != 0) job->error = static_cast<int>(0x804101e6);
+                if (result != 0) job->error = result == EAI_AGAIN ? static_cast<int>(0x804101e2) : static_cast<int>(0x804101e6);
                 for (auto* entry = raw; entry; entry = entry->ai_next) {
                     Address address;
                     if (entry->ai_family == AF_INET) {
@@ -608,7 +608,7 @@ struct Request::State {
 #endif
         std::shared_ptr<Lookup> job;
         for (std::int32_t attempt = 0;; ++attempt) {
-            const auto deadline = Deadline(settings.resolveTimeout, 0);
+            const auto deadline = Total();
             job = Dns().Submit(url);
             std::unique_lock lock(job->mutex);
             while (!job->complete) {

@@ -143,6 +143,18 @@ class SelectTests(SelectFixture):
                 self.assertIsNone(selected)
                 self.assertIn(changed, output)
 
+class DuplicateGraphKeyTests(unittest.TestCase):
+    def test_rejects_duplicate_graph_object_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.json"
+            for content in ('{"tests":{},"tests":{},"closures":{}}',
+                            '{"tests":{},"closures":{},"closures":{}}'):
+                with self.subTest(content=content):
+                    path.write_text(content, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "duplicate"):
+                        select_tests.load_graph(path)
+
+
 class FixtureSelectionTests(unittest.TestCase):
     def test_changed_setup_selects_all_consumers_and_their_other_setups(self):
         def test(target, sets=(), requires=()):
@@ -306,6 +318,28 @@ class TargetsTests(SelectFixture):
 
 
 class SelectArgumentTests(SelectFixture):
+    def test_cmake_env_wrapper_uses_its_test_executable(self):
+        cmake = self.source / "alpha/CMakeLists.txt"
+        original = cmake.read_text(encoding="utf-8")
+        configure = ["cmake", "-S", str(self.source), "-B", str(self.build)]
+        try:
+            cmake.write_text(original + '\nadd_test(NAME alpha_env COMMAND ${CMAKE_COMMAND} -E env '
+                             '--unset=SELECTOR_MODE SELECTOR-CHECK=1 -- "$<TARGET_FILE:alpha_tests>")\n'
+                             'add_test(NAME alpha_env_relative COMMAND ${CMAKE_COMMAND} -E env '
+                             '"./$<TARGET_FILE_NAME:alpha_tests>" WORKING_DIRECTORY "$<TARGET_FILE_DIR:alpha_tests>")\n',
+                             encoding="utf-8")
+            subprocess.run(configure, check=True, capture_output=True)
+            relative = subprocess.run(["ctest", "--test-dir", str(self.build), "-R", "^alpha_env_relative$",
+                                       "--no-tests=error", "--output-on-failure"], capture_output=True, text=True)
+            self.assertEqual(relative.returncode, 0, relative.stdout + relative.stderr)
+            graph = self.build / "env-graph.json"
+            self.tool("dump", self.build, graph)
+            self.assertEqual(self.select("beta/main.c", graph=graph)[1], {"beta", "beta_setup", "script"})
+            self.assertEqual(self.select("alpha/alpha.h", graph=graph)[1], {"alpha", "alpha_data", "alpha_env", "alpha_env_relative", "script"})
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            subprocess.run(configure, check=True, capture_output=True)
+
     def test_script_test_builds_the_executable_it_gets_as_a_definition(self):
         cmake, script = self.source / "alpha/CMakeLists.txt", self.source / "data/run.cmake"
         original = cmake.read_text(encoding="utf-8")

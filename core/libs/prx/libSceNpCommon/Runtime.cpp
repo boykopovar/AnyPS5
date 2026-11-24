@@ -796,7 +796,8 @@ void APS5_VABI sceNpHeapDestroy(NpHeap* heap) {
 }
 
 void APS5_VABI sceNpHeapGetAllocator(NpHeap* heap, NpAllocator* allocator) {
-    *allocator = {HeapAllocate, HeapReallocate, HeapRelease, heap};
+    const NpAllocator value{HeapAllocate, HeapReallocate, HeapRelease, heap};
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 int APS5_VABI sceNpHeapGetStat(const NpHeap* heap, NpHeapStat* stat) {
@@ -838,19 +839,27 @@ void APS5_VABI sceNpMemoryHeapDestroy(NpMemoryHeap* heap) {
 }
 
 void APS5_VABI sceNpMemoryHeapGetAllocator(NpMemoryHeap* heap, NpAllocator* allocator) {
-    *allocator = MemoryHeapAllocator(heap);
+    const NpAllocator value = MemoryHeapAllocator(heap);
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 void APS5_VABI sceNpMemoryHeapGetAllocatorEx(NpMemoryHeap* heap, int outOfMemoryError, NpAllocatorEx* allocator) {
-    *allocator = {MemoryHeapAllocator(heap), outOfMemoryError};
+    NpAllocatorEx value{};
+    value.allocator = MemoryHeapAllocator(heap);
+    value.outOfMemoryError = outOfMemoryError;
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 void APS5_VABI sceNpGlobalHeapGetAllocator(NpAllocator* allocator) {
-    *allocator = MemoryHeapAllocator(&g_globalHeap);
+    const NpAllocator value = MemoryHeapAllocator(&g_globalHeap);
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 void APS5_VABI sceNpGlobalHeapGetAllocatorEx(NpAllocatorEx* allocator) {
-    *allocator = {MemoryHeapAllocator(&g_globalHeap), NP_ERROR_OUT_OF_MEMORY};
+    NpAllocatorEx value{};
+    value.allocator = MemoryHeapAllocator(&g_globalHeap);
+    value.outOfMemoryError = NP_ERROR_OUT_OF_MEMORY;
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 NpAllocator* APS5_VABI sceNpGlobalHeapGetAllocatorPtr(void) {

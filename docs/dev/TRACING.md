@@ -100,6 +100,8 @@ A title's `files` in `tools/titles.json` adds files to its prepared folders befo
 
 ## CSV exports
 
-- `tools/performance_csv.py <baseline> <candidate>` exports a performance comparison as CSV. Empty metric cells mean the value was not reported; `--require-matching-context` fails when the two captures differ in machine or scene, and `--spreadsheet-safe` escapes cells that spreadsheets would evaluate.
+- `tools/performance_csv.py <baseline> <candidate>` exports a performance comparison as CSV. Empty metric cells mean the value was not reported. `--require-matching-context` rejects differences in recorded configuration and machine or title metadata. Verify scene and input separately. `--spreadsheet-safe` modifies formula-like text cells for spreadsheet import.
 - `tools/trace_intervals_csv.py <summary>` exports the trace interval summaries as CSV. `--require-complete` requires at least one interval, a consistent capture identity, no dropped events, and contiguous interval times and present numbers.
 - `tools/ab_split_csv.py <log> [--program P] [--class C]` exports the existing in-run A/B comparison of a log as CSV.
+  On Windows PowerShell 5.1, capture the log through `cmd /d /c "<command> 2> run.log"`. PowerShell's own
+  `2>` can write UTF-16 and wrap long report lines, which the A/B tools cannot use.

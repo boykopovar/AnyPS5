@@ -258,61 +258,7 @@ int APS5_VABI WKPageIsMockRealtimeMediaSourceCenterEnabled() {
     return 0;
 }
 
-int APS5_VABI WKPlugInInformationReplacementObscuredKey() {
-    return 0;
-}
 
-int APS5_VABI WKPluginInformationBundleIdentifierKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationBundleShortVersionKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationBundleVersionKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationDefaultLoadPolicyKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationDisplayNameKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationFrameURLKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationHasSandboxProfileKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationMIMETypeKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationPageURLKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationPathKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationPluginURLKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationPluginspageAttributeURLKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey() {
-    return 0;
-}
 
 int APS5_VABI WKPreferencesGetQTKitEnabled() {
     return 0;
