@@ -397,7 +397,6 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::FPAdd16x2: return Invoke(EmitFPAdd16x2, ctx, inst);
         case IrOpcode::FPMul16x2: return Invoke(EmitFPMul16x2, ctx, inst);
         case IrOpcode::FPFma16x2: return Invoke(EmitFPFma16x2, ctx, inst);
-        case IrOpcode::SplatLowU16x2: return Invoke(EmitSplatLowU16x2, ctx, inst);
         case IrOpcode::IAdd16x2: return Invoke(EmitIAdd16x2, ctx, inst);
         case IrOpcode::ISub16x2: return Invoke(EmitISub16x2, ctx, inst);
         case IrOpcode::IMul16x2: return Invoke(EmitIMul16x2, ctx, inst);
