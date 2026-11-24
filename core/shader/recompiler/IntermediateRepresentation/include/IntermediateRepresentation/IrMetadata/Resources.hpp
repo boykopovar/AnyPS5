@@ -11,6 +11,8 @@
 
 namespace ShaderRecompiler {
 
+inline constexpr std::uint32_t NoTable = std::numeric_limits<std::uint32_t>::max();
+
 struct BufferResource {
     static constexpr std::uint32_t NoImageAlias = std::numeric_limits<std::uint32_t>::max();
 
@@ -26,6 +28,7 @@ struct BufferResource {
     std::uint32_t formattedReadMask = 0;
     bool scalar = false;
     std::uint8_t typedAlignment = 1;
+    std::uint32_t table = NoTable;
 
     bool operator==(const BufferResource& other) const = default;
 };
@@ -68,8 +71,6 @@ inline constexpr std::uint32_t BorderTransparentBlack = 0u;
 inline constexpr std::uint32_t BorderOpaqueBlack = 1u;
 inline constexpr std::uint32_t BorderOpaqueWhite = 2u;
 }
-
-inline constexpr std::uint32_t NoTable = std::numeric_limits<std::uint32_t>::max();
 
 enum class TableOperation : std::uint8_t { Supported, Unsupported };
 

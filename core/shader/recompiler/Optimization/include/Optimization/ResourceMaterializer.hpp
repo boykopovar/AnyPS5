@@ -3,6 +3,7 @@
 
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/SrtWalker.hpp"
+#include "BufferTableAbi.hpp"
 #include "ImageTableAbi.hpp"
 #include <array>
 #include <cstdint>
@@ -30,6 +31,11 @@ struct ImageTableSamplerElement {
     bool point = false;
 };
 
+struct ImageTableBufferElement {
+    std::array<std::uint32_t, 4> words{};
+    std::uint32_t maxByteExtent = 0;
+};
+
 struct ImageTablePoisonRecord {
     std::array<std::uint32_t, 8> words{};
     std::uint32_t dwordCount = 0;
@@ -41,7 +47,9 @@ struct ResolvedImageTables {
     std::vector<std::uint32_t> map;
     std::vector<ImageTableElement> elements;
     std::vector<ImageTableSamplerElement> samplers;
+    std::vector<ImageTableBufferElement> bufferElements;
     std::vector<ImageTablePoisonRecord> poison;
+    std::vector<std::uint32_t> bufferRecordOffsets;
     std::uint32_t faults = 0;
 };
 

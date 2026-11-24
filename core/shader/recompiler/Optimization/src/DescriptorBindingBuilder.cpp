@@ -1,4 +1,5 @@
 #include "Optimization/DescriptorBindingBuilder.hpp"
+#include "BufferTableAbi.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
@@ -510,6 +511,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         if (registrationModules && modes.size() > 1u) plan.specialization.push_back({PipelineSpecialization::ImageBase + static_cast<std::uint32_t>(index) * PipelineSpecialization::ImageWords, imageModes[index]});
     }
     for (std::uint32_t index = 0; index < info.buffers.size(); ++index) {
+        if (info.buffers[index].table != NoTable) continue;
         const auto& descriptor = snapshot.buffers.at(index);
         if (descriptor.dwordCount != 4u) fail("buffer specialization requires four descriptor words");
         const auto& buffer = info.buffers[index];
@@ -647,6 +649,10 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         physical.kind = PhysicalKindFor(compact.kind);
         physical.role = RoleFor(compact.kind);
         if (physical.role == DescriptorRole::GuestBuffers) {
+            if (std::ranges::any_of(info.buffers, [](const BufferResource& buffer) { return buffer.table != NoTable; })) {
+                physical.firstTableBuffer = static_cast<std::uint32_t>(compact.resources.size());
+                physical.count = physical.firstTableBuffer + BufferTableAbi::MaxBufferElements;
+            }
             for (const auto resource : compact.resources) {
                 const auto& buffer = info.buffers.at(resource);
                 physical.bufferAtomic.push_back(buffer.atomic);
@@ -775,6 +781,22 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
         switch (physical.role) {
         case DescriptorRole::GuestBuffers:
             physical.guestDescriptor = GuestBuffersDescriptor(entry.resources, snapshot);
+            if (physical.firstTableBuffer != std::numeric_limits<std::uint32_t>::max()) {
+                if (tables == nullptr || tables->bufferElements.size() > BufferTableAbi::MaxBufferElements) fail("buffer table bindings were not resolved within their capacity");
+                for (const auto& element : tables->bufferElements) {
+                    physical.guestDescriptor.insert(physical.guestDescriptor.end(), element.words.begin(), element.words.end());
+                    physical.bufferAtomic.push_back(false);
+                    physical.bufferWritten.push_back(false);
+                    physical.bufferRead.push_back(true);
+                    physical.bufferExtent.push_back(element.maxByteExtent);
+                    ++readOnlyHere;
+                }
+                physical.guestDescriptor.resize(static_cast<std::size_t>(physical.count) * 4u, 0u);
+                physical.bufferAtomic.resize(physical.count, false);
+                physical.bufferWritten.resize(physical.count, false);
+                physical.bufferRead.resize(physical.count, false);
+                physical.bufferExtent.resize(physical.count, 0u);
+            }
             writtenHere += entry.writtenBuffers;
             readOnlyHere += entry.readOnlyBuffers;
             break;
