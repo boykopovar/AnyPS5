@@ -24,7 +24,6 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
