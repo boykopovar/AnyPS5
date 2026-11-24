@@ -3009,28 +3009,6 @@ bool refreshedFromLoggedChanges(const Context& context, HostImports& state) {
         else spans[merged++] = span;
     }
     spans.resize(merged);
-    auto& checked = state.loggedImports;
-    checked.clear();
-    std::uint64_t unchecked = 0;
-    for (const auto& [begin, end] : spans) {
-        auto it = state.imports.lower_bound(std::max(begin / window * window, unchecked));
-        if (it != state.imports.begin() && std::prev(it)->first >= unchecked && std::prev(it)->first + std::prev(it)->second.bytes > begin) --it;
-        for (; it != state.imports.end() && it->first / window * window < end; ++it) checked.push_back(&it->second);
-        unchecked = it == state.imports.end() ? std::numeric_limits<std::uint64_t>::max() : it->first;
-    }
-    for (const auto base : state.pendingImports) {
-        if (const auto found = state.imports.find(base); found != state.imports.end()) checked.push_back(&found->second);
-    }
-    auto& mapped = state.loggedMapped;
-    mapped.clear();
-    for (const auto* entry : checked) {
-        for (const auto& range : entry->ranges) mapped.emplace_back(range);
-    }
-    const auto local = mapped.empty() ? GuestAllocations::Lease{} : GuestAllocations::GuestAllocationsAcquireMapped_nid_no_patch(mapped);
-    mapped.clear();
-    for (const auto* entry : checked) {
-        if (!sameRange(*entry, local)) return false;
-    }
     const auto touched = [&](std::uint64_t base, std::uint64_t bytes) {
         const auto low = base / window * window;
         const auto high = std::max(low + window, base + bytes);
@@ -3060,6 +3038,31 @@ bool refreshedFromLoggedChanges(const Context& context, HostImports& state) {
     }
     for (const auto& [base, joins] : state.sparseRunJoins) {
         if (touched(base, 1)) return false;
+    }
+    auto& checked = state.loggedImports;
+    checked.clear();
+    std::uint64_t unchecked = 0;
+    for (const auto& [begin, end] : spans) {
+        auto it = state.imports.lower_bound(std::max(begin / window * window, unchecked));
+        if (it != state.imports.begin() && std::prev(it)->first >= unchecked && std::prev(it)->first + std::prev(it)->second.bytes > begin) --it;
+        for (; it != state.imports.end() && it->first / window * window < end; ++it) checked.push_back(&it->second);
+        unchecked = it == state.imports.end() ? std::numeric_limits<std::uint64_t>::max() : it->first;
+    }
+    const auto walked = checked.size();
+    for (const auto base : state.pendingImports) {
+        const auto seen = std::lower_bound(checked.begin(), checked.begin() + walked, base, [](const HostImport* entry, std::uint64_t value) { return entry->base < value; });
+        if (seen != checked.begin() + walked && (*seen)->base == base) continue;
+        if (const auto found = state.imports.find(base); found != state.imports.end()) checked.push_back(&found->second);
+    }
+    auto& mapped = state.loggedMapped;
+    mapped.clear();
+    for (const auto* entry : checked) {
+        for (const auto& range : entry->ranges) mapped.emplace_back(range);
+    }
+    const auto local = mapped.empty() ? GuestAllocations::Lease{} : GuestAllocations::GuestAllocationsAcquireMapped_nid_no_patch(mapped);
+    mapped.clear();
+    for (const auto* entry : checked) {
+        if (!sameRange(*entry, local)) return false;
     }
     const auto alignment = context.hostImportAlignment;
     for (const auto* entry : checked) {
