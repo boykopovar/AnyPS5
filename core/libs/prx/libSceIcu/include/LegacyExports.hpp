@@ -1426,7 +1426,12 @@ int APS5_VABI uprv_tzset_nid_postfix();
 int APS5_VABI _ZN6icu_6820CheckedArrayByteSink15GetAppendBufferEiiPciPi_nid_postfix();
 int APS5_VABI _ZN6icu_6813UnicodeString9setToUTF8ENS_11StringPieceE_nid_postfix();
 int APS5_VABI _ZN6icu_6816ReorderingBuffer19appendSupplementaryEihR10UErrorCode_nid_postfix();
-int APS5_VABI uloc_getDisplayVariant_nid_postfix();
+std::int32_t APS5_VABI uloc_getDisplayVariant_nid_postfix(
+    const char* locale,
+    const char* displayLocale,
+    char16_t* variant,
+    std::int32_t variantCapacity,
+    std::int32_t* status);
 int APS5_VABI _ZN6icu_6820CheckedArrayByteSinkC1EPci_nid_postfix();
 int APS5_VABI _ZN6icu_687UVectorC1EPFvPvEPFa8UElementS4_EiR10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6813UnicodeString8copyFromERKS0_a_nid_postfix();

@@ -14,6 +14,8 @@ static_assert(std::is_same_v<decltype(&uloc_getDisplayScript_nid_postfix),
     std::int32_t (APS5_VABI*)(const char*, const char*, char16_t*, std::int32_t, std::int32_t*)>);
 static_assert(std::is_same_v<decltype(&uloc_getDisplayCountry_nid_postfix),
     std::int32_t (APS5_VABI*)(const char*, const char*, char16_t*, std::int32_t, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&uloc_getDisplayVariant_nid_postfix),
+    std::int32_t (APS5_VABI*)(const char*, const char*, char16_t*, std::int32_t, std::int32_t*)>);
 
 namespace {
 
@@ -103,6 +105,20 @@ void CheckBehavior() {
     CheckCase(uloc_getDisplayCountry, uloc_getDisplayCountry_nid_postfix, "en_US", "en", -1);
     CheckCase(uloc_getDisplayCountry, uloc_getDisplayCountry_nid_postfix, "en_US", "en", 8, -127);
     CheckCase(uloc_getDisplayCountry, uloc_getDisplayCountry_nid_postfix, "en_US", "en", 8, 1);
+
+    constexpr const char* variantLocales[] = {"en_US_POSIX", "ca_ES_VALENCIA", "sl_ROZAJ", "de__PHONEBOOK", "en_US"};
+    for (const auto* locale : variantLocales)
+        for (const auto* display : displays)
+            for (const auto capacity : capacities)
+                CheckCase(uloc_getDisplayVariant, uloc_getDisplayVariant_nid_postfix, locale, display, capacity);
+    for (const auto capacity : capacities) {
+        CheckCase(uloc_getDisplayVariant, uloc_getDisplayVariant_nid_postfix, nullptr, "en", capacity);
+        CheckCase(uloc_getDisplayVariant, uloc_getDisplayVariant_nid_postfix, "en_US_POSIX", nullptr, capacity);
+        CheckCase(uloc_getDisplayVariant, uloc_getDisplayVariant_nid_postfix, nullptr, nullptr, capacity);
+    }
+    CheckCase(uloc_getDisplayVariant, uloc_getDisplayVariant_nid_postfix, "en_US_POSIX", "en", -1);
+    CheckCase(uloc_getDisplayVariant, uloc_getDisplayVariant_nid_postfix, "en_US_POSIX", "en", 8, -127);
+    CheckCase(uloc_getDisplayVariant, uloc_getDisplayVariant_nid_postfix, "en_US_POSIX", "en", 8, 1);
 }
 
 template <typename Action>
@@ -164,6 +180,12 @@ void CheckGuestPointers() {
         uloc_getDisplayCountry_nid_postfix("en_US", "en", reinterpret_cast<char16_t*>(0x10), 16, &status);
     });
     Require(errno == 77 && status == 0);
+    status = 0;
+    errno = 78;
+    RequireInvalidArgument([&] {
+        uloc_getDisplayVariant_nid_postfix("en_US_POSIX", "en", reinterpret_cast<char16_t*>(0x10), 16, &status);
+    });
+    Require(errno == 78 && status == 0);
     status = 1;
     Require(uloc_getDisplayScript_nid_postfix(
         reinterpret_cast<const char*>(0x10),
