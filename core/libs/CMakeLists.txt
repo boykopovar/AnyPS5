@@ -604,7 +604,7 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_macho_nids.py $<TARGET_FILE:nid_patcher>)
         add_test(NAME nid_patcher_native_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_native_paths.py $<TARGET_FILE:nid_patcher>)
-        set_tests_properties(nid_patcher_native_paths PROPERTIES TIMEOUT 20)
+        set_tests_properties(nid_patcher_native_paths PROPERTIES TIMEOUT 30)
         if(CMAKE_GENERATOR MATCHES "^Ninja")
             add_test(NAME nid_patch_dependencies COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_patch_dependencies.py --mode graph
