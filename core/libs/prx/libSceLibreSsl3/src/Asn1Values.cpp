@@ -78,12 +78,25 @@ bool ScanGuestStringLength(const void* data, int& outLength) {
 
 extern "C" {
 
+struct GuestBufferGuard {
+    unsigned char* pointer = nullptr;
+    ~GuestBufferGuard() {
+        if (pointer) free_nid_postfix(pointer);
+    }
+    unsigned char* Release() {
+        unsigned char* out = pointer;
+        pointer = nullptr;
+        return out;
+    }
+};
+
 int APS5_VABI ASN1_STRING_set_nid_postfix(Asn1String* string, const void* data, int length) {
     ErrnoGuard errnoGuard;
     if (length == -1) {
         if (!data || !ScanGuestStringLength(data, length)) return 0;
     }
     Asn1String value = ReadString(string, "ASN1_STRING_set: unreadable object");
+    if (length < 0 || length == std::numeric_limits<int>::max()) return 0;
     if (data && length > 0 && value.data && value.length >= 0 && !(value.flags & BorrowedData)) {
         const auto source = reinterpret_cast<std::uintptr_t>(data);
         const auto old = reinterpret_cast<std::uintptr_t>(value.data);
@@ -91,23 +104,21 @@ int APS5_VABI ASN1_STRING_set_nid_postfix(Asn1String* string, const void* data, 
             (old > source && old - source < static_cast<std::uintptr_t>(length)))
             throw std::invalid_argument("ASN1_STRING_set: source aliases the data being released");
     }
-    ClearData(string, value, true);
-    if (length < 0 || length == std::numeric_limits<int>::max()) return 0;
-    auto* output = static_cast<unsigned char*>(calloc_nid_postfix(static_cast<std::size_t>(length) + 1, 1));
-    if (!output) {
+    GuestBufferGuard output{static_cast<unsigned char*>(calloc_nid_postfix(static_cast<std::size_t>(length) + 1, 1))};
+    if (!output.pointer) {
         LibreSslPutError_nid_no_patch(13, 0xfff, 65);
         return 0;
     }
-    if (data && length && !GuestCopyIn_nid_no_patch(output, data, static_cast<std::size_t>(length))) {
-        free_nid_postfix(output);
+    if (data && length && !GuestCopyIn_nid_no_patch(output.pointer, data, static_cast<std::size_t>(length))) {
         return 0;
     }
-    value.data = output;
+    ClearData(string, value, true);
+    value.data = output.pointer;
     value.length = length;
     if (!GuestCopyOut_nid_no_patch(string, &value, sizeof(value))) {
-        free_nid_postfix(output);
         throw std::invalid_argument("ASN1_STRING_set: unwritable object");
     }
+    output.Release();
     return 1;
 }
 

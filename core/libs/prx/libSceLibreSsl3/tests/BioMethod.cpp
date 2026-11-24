@@ -170,7 +170,19 @@ void TestAsn1ValuesBounds() {
         errno = 71;
         Require(ASN1_STRING_set_nid_postfix(&pageEnd, reinterpret_cast<const void*>(std::uintptr_t{0x10}), -1) == 0);
         Require(errno == 71 && pageEnd.data == keptData && pageEnd.length == 4);
+        Require(ASN1_STRING_set_nid_postfix(&pageEnd, "kept", -2) == 0);
+        Require(pageEnd.data == keptData && pageEnd.length == 4 && pageEnd.type == 4);
+        Require(ASN1_STRING_set_nid_postfix(&pageEnd, reinterpret_cast<const void*>(std::uintptr_t{0x10}), 3) == 0);
+        Require(pageEnd.data == keptData && pageEnd.length == 4 && pageEnd.type == 4);
         free_nid_postfix(pageEnd.data);
+
+        unsigned char borrowedBuf[5] = {'b', 'o', 'r', 'r', 0};
+        Asn1String borrowed{4, 12, borrowedBuf, 0x10 | 0x24};
+        Require(ASN1_STRING_set_nid_postfix(&borrowed, "next", 4) == 1);
+        Require(borrowed.type == 12 && borrowed.flags == 0x24 && borrowed.length == 4);
+        Require(borrowed.data != borrowedBuf && std::memcmp(borrowed.data, "next", 5) == 0);
+        Require(std::memcmp(borrowedBuf, "borr", 5) == 0);
+        free_nid_postfix(borrowed.data);
         Require(liveBlocks == 0);
 #ifdef _WIN32
         VirtualFree(pages, 0, MEM_RELEASE);
