@@ -243,15 +243,18 @@ class PerformanceCompareTests(unittest.TestCase):
         self.assertEqual(report["metrics_ms"]["frame_ms.p50"]["change"], 0)
         self.assertEqual(report["candidate"], self.candidate)
 
-    def test_thread_event_losses_are_reported_even_with_false_aggregate_flag(self):
-        self.candidate.update(trace_dropped=False, trace_dropped_threads={"worker": {"events_lost": 3}})
+    def test_thread_loss_cannot_disagree_with_the_aggregate_flag(self):
         self.write(self.before, self.baseline)
-        self.write(self.after, self.candidate)
-        for args in ((), ("--json",)):
-            with self.subTest(args=args):
-                result = self.run_process(*args)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("candidate: trace events were dropped", result.stdout)
+        for details in ({"events_lost": 3}, {"totals_full": True}):
+            self.candidate.update(trace_dropped=False, trace_dropped_threads={"worker": details})
+            self.write(self.after, self.candidate)
+            for args in ((), ("--json",)):
+                with self.subTest(details=details, args=args):
+                    result = self.run_process(*args)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("after.jsonl:2: trace_dropped_threads.worker disagrees with trace_dropped",
+                                  result.stderr)
 
     def test_legacy_trace_loss_warning_is_preserved_without_thread_details(self):
         for dropped in (False, True):
