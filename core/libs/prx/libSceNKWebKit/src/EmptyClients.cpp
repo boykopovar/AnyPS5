@@ -87,4 +87,7 @@ void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchUnableToImplementPol
 void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE() {
 }
 
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchDidReachLayoutMilestoneEN3WTF9OptionSetINS_15LayoutMilestoneEEE(void*, std::uint16_t) {
+}
+
 }
