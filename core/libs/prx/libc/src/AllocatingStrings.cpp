@@ -37,25 +37,25 @@ GuestWriteHook_nid_no_patch LibcGetGuestWriteHook_nid_no_patch() {
 char* APS5_VABI strndup_nid_postfix(const char* source, std::size_t limit) {
     if (!source && limit != 0) { errno = 22; return nullptr; }
     const int savedErrno = errno;
-    std::string text;
-    const auto base = reinterpret_cast<std::uintptr_t>(source);
-    for (std::size_t offset = 0; offset < limit;) {
-        if (offset > std::numeric_limits<std::uintptr_t>::max() - base) { errno = 14; return nullptr; }
-        const auto current = base + offset;
-        char buffer[256];
-        const auto toPageEnd = 4096 - static_cast<std::size_t>(current % 4096);
-        const std::size_t chunk = limit - offset < sizeof(buffer) ? limit - offset : sizeof(buffer);
-        const std::size_t copied = toPageEnd < chunk ? toPageEnd : chunk;
-        if (!GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(current), copied)) { errno = 14; return nullptr; }
-        if (const auto* end = static_cast<const char*>(std::memchr(buffer, '\0', copied))) {
-            text.append(buffer, static_cast<std::size_t>(end - buffer));
-            break;
-        }
-        text.append(buffer, copied);
-        offset += copied;
-    }
-    errno = savedErrno;
     try {
+        std::string text;
+        const auto base = reinterpret_cast<std::uintptr_t>(source);
+        for (std::size_t offset = 0; offset < limit;) {
+            if (offset > std::numeric_limits<std::uintptr_t>::max() - base) { errno = 14; return nullptr; }
+            const auto current = base + offset;
+            char buffer[256];
+            const auto toPageEnd = 4096 - static_cast<std::size_t>(current % 4096);
+            const std::size_t chunk = limit - offset < sizeof(buffer) ? limit - offset : sizeof(buffer);
+            const std::size_t copied = toPageEnd < chunk ? toPageEnd : chunk;
+            if (!GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(current), copied)) { errno = 14; return nullptr; }
+            if (const auto* end = static_cast<const char*>(std::memchr(buffer, '\0', copied))) {
+                text.append(buffer, static_cast<std::size_t>(end - buffer));
+                break;
+            }
+            text.append(buffer, copied);
+            offset += copied;
+        }
+        errno = savedErrno;
         auto* result = static_cast<char*>(ApplicationHeapAllocate_nid_no_patch(text.size() + 1));
         if (!result) { errno = 12; return nullptr; }
         std::memcpy(result, text.data(), text.size());
