@@ -602,6 +602,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     : group(grp), remoteInspectionEnabled(g_remoteInspectionEnabledByDefault) {
     group->refCount.fetch_add(1, std::memory_order_relaxed);
     qctx = JS_NewContext(group->rt);
+    InstallDateConstructor(group, qctx);
     JS_SetContextOpaque(qctx, this);
     group->contexts.push_back(this);
     for (auto& [ptr, data] : group->callbackDataByPtr) {
@@ -619,6 +620,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     JSValue objCtor = JS_GetPropertyStr(qctx, rawGlobal, "Object");
     JSValue objProto = JS_GetPropertyStr(qctx, objCtor, "prototype");
     JS_FreeValue(qctx, objCtor);
+    DefineConsoleObject(this, rawGlobal);
     JS_SetClassProto(qctx, group->callbackObjectClassId, JS_DupValue(qctx, objProto));
     JS_SetClassProto(qctx, group->callbackCallableClassId, objProto);
     globalObject = group->ToHandle(this, rawGlobal);

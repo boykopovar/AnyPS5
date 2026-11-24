@@ -2,8 +2,11 @@
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
+
+extern "C" int APS5_VABI libScePadUnknown_oARLr0ca9N8_nid_no_patch(int handle, std::uint8_t* out);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -82,4 +85,11 @@ int main() {
     Require(scePadIsControllerUpdateRequired(special) == static_cast<int>(0x80920007));
     Require(scePadGetContainerIdInformation(special, &container) == static_cast<int>(0x80920007));
     Require(scePadClose_nid_postfix(special) == PAD_OK);
+
+    const int remote = scePadOpen_nid_postfix(PAD_USER_ID_SYSTEM, PAD_PORT_TYPE_REMOTE, 0, nullptr);
+    Require(remote > 0);
+    std::uint8_t unknownOut = 0x5A;
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(remote, &unknownOut) == PAD_ERROR_INVALID_HANDLE);
+    Require(unknownOut == 0x5A);
+    Require(scePadClose_nid_postfix(remote) == PAD_OK);
 }
