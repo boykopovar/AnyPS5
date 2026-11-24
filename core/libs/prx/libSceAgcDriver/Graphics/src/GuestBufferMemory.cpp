@@ -16,6 +16,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ResidentMirror.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ReferenceStorage.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
@@ -1523,6 +1524,10 @@ void rewatchSettledImports(HostImports& state) {
         const auto stop = (base + import->second.bytes + settleBlockBytes - 1) & ~(settleBlockBytes - 1);
         if ((first != base || stop != base + import->second.bytes) && comparedImportShares(state, base, first, stop)) continue;
         const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{first, stop}}};
+        if (MultisampleDccUnwatchLocksGpu(span)) {
+            ++state.settlesKeptCompared;
+            continue;
+        }
         static const bool keepUnderImages = std::getenv("APS5_NO_REWATCH_UNDER_IMAGES") != nullptr;
         if (keepUnderImages && StorageTexture::AnyLiveOverlaps(span)) {
             ++state.settlesKeptCompared;
@@ -1537,7 +1542,7 @@ void rewatchSettledImports(HostImports& state) {
     }
     state.settleReady.clear();
     if (ranges.empty()) return;
-    GuestMemory::Rewatch(ranges);
+    GuestMemory::RewatchSettled(ranges);
     for (const auto base : bases) {
         const auto import = state.imports.find(base);
         if (import == state.imports.end() || !GuestMemory::Watched(base, static_cast<std::size_t>(import->second.bytes))) continue;
@@ -2057,7 +2062,7 @@ void rewatchRetired(const HostImports& state, std::vector<std::pair<std::uint64_
         const auto stop = (span.second + writeWatchBlockBytes - 1) & ~(writeWatchBlockBytes - 1);
         return DepthSurfacePendingResultsOverlap(first, stop - first);
     });
-    if (!spans.empty()) GuestMemory::Rewatch(spans);
+    if (!spans.empty()) GuestMemory::RewatchSettled(spans);
 }
 
 std::uint64_t retireLeastRecent(const Context& context, HostImports& state, const GuestAllocations::Lease& lease, std::uint64_t wanted, std::uint64_t begin, std::uint64_t end) {
@@ -2970,7 +2975,7 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
     std::vector<std::uint64_t> kept;
     const auto check = [&](std::map<std::uint64_t, HostImport>::iterator it) {
         if (sameRange(it->second, lease)) {
-            if (it->second.unwatched) GuestMemory::Unwatch(it->first, it->second.bytes);
+            if (it->second.unwatched) GuestMemory::UnwatchImportBookkeeping(it->first, it->second.bytes);
             kept.push_back(it->first);
             return std::next(it);
         }

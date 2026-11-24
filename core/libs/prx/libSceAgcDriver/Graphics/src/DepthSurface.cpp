@@ -2010,7 +2010,8 @@ public:
         const auto bytes = static_cast<std::size_t>(StencilMirrorBytes());
         GuestMemory::CollectWrites(resource.baseAddress, bytes);
         const auto generation = GuestMemory::TrackerGeneration();
-        const bool changed = stencilGeneration != 0u && GuestMemory::WrittenSince(resource.baseAddress, bytes, stencilGeneration);
+        const bool changed = stencilGeneration != 0u && GuestMemory::WrittenSince(resource.baseAddress, bytes, stencilGeneration) &&
+            !GuestMemory::OnlyRewatchedSince(resource.baseAddress, bytes, stencilGeneration);
         stencilGeneration = generation;
         if (!changed || (pendingClear & VK_IMAGE_ASPECT_STENCIL_BIT) != 0) return;
         StorageTexture::NoteRefreshWork();

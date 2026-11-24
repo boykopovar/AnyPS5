@@ -46,6 +46,7 @@
 #include <thread>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #ifdef _WIN32
@@ -842,6 +843,26 @@ std::size_t ImagePagesSize() {
     return Pages().image.size;
 }
 
+namespace {
+std::mutex explicitUnwatchMutex;
+std::unordered_set<std::uint64_t> explicitUnwatchPages;
+std::atomic<bool> forgetOnInvalidation{false};
+
+void clearExplicitUnwatchPages(std::uintptr_t address, std::size_t bytes) {
+    constexpr std::uint64_t page = 4096;
+    if (bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address) return;
+    std::lock_guard lock(explicitUnwatchMutex);
+    for (auto at = address & ~(page - 1); at < address + bytes; at += page) explicitUnwatchPages.erase(at);
+}
+}
+
+void ForgetPages(std::uintptr_t address, std::size_t bytes);
+
+void invalidateAllocatedMemory(std::uintptr_t address, std::size_t bytes) {
+    clearExplicitUnwatchPages(address, bytes);
+    if (forgetOnInvalidation.load(std::memory_order_relaxed)) ForgetPages(address, bytes);
+}
+
 void ForgetPages(std::uintptr_t address, std::size_t bytes) {
     bumpSubscriptions(address, bytes, WriteBumpSource::Forget);
     forgetCalls.fetch_add(1, std::memory_order_relaxed);
@@ -912,7 +933,8 @@ void PageStates::initialize() {
             imageCached = image.allocate();
         }
 #endif
-        if (arenaCached || imageCached || WriteIndexEnabled()) GuestAllocations::GuestAllocationsSetInvalidator_nid_postfix(&ForgetPages);
+        forgetOnInvalidation.store(arenaCached || imageCached || WriteIndexEnabled(), std::memory_order_relaxed);
+        GuestAllocations::GuestAllocationsSetInvalidator_nid_postfix(&invalidateAllocatedMemory);
         if (arenaCached || imageCached) GuestArena::GuestArenaSetAccessObserver_nid_postfix(&ForgetInaccessiblePages);
     });
     ready.store(true, std::memory_order_release);
@@ -1668,6 +1690,8 @@ struct WriteTracker {
     std::unordered_map<std::uint64_t, DriverPieces> driverPieces;
     std::unordered_map<std::uint64_t, std::uint64_t> rewatchStamps;
     std::atomic<bool> anyRewatchStamp{false};
+    std::unordered_map<std::uint64_t, std::uint64_t> genuineStamps;
+    std::atomic<bool> anyGenuineStamp{false};
 
     struct CpuPages {
         std::array<std::uint64_t, WritePagesPerBlock> pages{};
@@ -2141,7 +2165,14 @@ void stampWrittenRun(void* context, std::uintptr_t begin, std::uintptr_t end) {
     else {
         const auto generation = tracker.generation.load(std::memory_order_relaxed);
         noteWrittenRun(runs, begin, end, generation);
-        for (auto block = tracker.blockOf(begin); block <= tracker.blockOf(end - 1); ++block) tracker.stamp(block, generation, runs.kind);
+        for (auto block = tracker.blockOf(begin); block <= tracker.blockOf(end - 1); ++block) {
+            tracker.stamp(block, generation, runs.kind);
+            if (runs.kind == StampKind::Cpu) {
+                auto& genuine = tracker.genuineStamps[block];
+                genuine = std::max(genuine, generation);
+                tracker.anyGenuineStamp.store(true, std::memory_order_release);
+            }
+        }
     }
 #ifndef _WIN32
     collectDirtyRuns.fetch_add(1, std::memory_order_relaxed);
@@ -2163,7 +2194,13 @@ void stampWindowRuns(StampRuns& runs) {
             const bool kept = held[index++] != 0;
             noteWrittenRun(runs, static_cast<std::uintptr_t>(page), static_cast<std::uintptr_t>(page + WritePageBytes), generation, !kept);
             if (!kept) tracker.notePages(tracker.windowPages, page, page + WritePageBytes, generation);
-            tracker.stamp(tracker.blockOf(page), generation, kept ? runs.window->held : runs.kind);
+            const auto block = tracker.blockOf(page);
+            tracker.stamp(block, generation, kept ? runs.window->held : runs.kind);
+            if (runs.kind == StampKind::Cpu && !kept) {
+                auto& genuine = tracker.genuineStamps[block];
+                genuine = std::max(genuine, generation);
+                tracker.anyGenuineStamp.store(true, std::memory_order_release);
+            }
         }
     }
 }
@@ -2930,13 +2967,33 @@ void SetFreshCollectHook(FreshCollectHook hook) {
 }
 #endif
 
-void Unwatch(std::uint64_t address, std::size_t bytes) {
+namespace {
+
+void unwatchRange(std::uint64_t address, std::size_t bytes, bool explicitGuest) {
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return;
+    Pages().initialize();
     beforeUnwatch(address, bytes);
+    constexpr std::uint64_t page = 4096;
+    std::vector<std::uint64_t> pages;
+    if (explicitGuest) for (auto at = address & ~(page - 1); at < address + bytes; at += page) pages.push_back(at);
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     unwatchLocked(tracker, address, bytes);
+    if (explicitGuest) {
+        std::lock_guard mark(explicitUnwatchMutex);
+        for (const auto at : pages) explicitUnwatchPages.insert(at);
+    }
+}
+
+}
+
+void Unwatch(std::uint64_t address, std::size_t bytes) {
+    unwatchRange(address, bytes, true);
+}
+
+void UnwatchImportBookkeeping(std::uint64_t address, std::size_t bytes) {
+    unwatchRange(address, bytes, false);
 }
 
 void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
@@ -2949,9 +3006,13 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     for (const auto& [begin, end] : ranges) {
         if (end <= begin || begin < tracker.base || end - tracker.base > tracker.size || (begin - tracker.base) % WritePageBytes != 0 || (end - tracker.base) % WritePageBytes != 0) continue;
         const auto bytes = static_cast<std::size_t>(end - begin);
-        if (tracker.coverage.Covers(begin, bytes)) continue;
+        if (tracker.coverage.Covers(begin, bytes)) {
+            clearExplicitUnwatchPages(begin, bytes);
+            continue;
+        }
         GuestArena::GuestArenaCompareWhenShared_nid_no_patch(static_cast<std::uintptr_t>(begin), bytes);
         if (!walkWrites(tracker, begin, end, StampKind::Cpu) || !tracker.coverage.Restore(begin, bytes)) continue;
+        clearExplicitUnwatchPages(begin, bytes);
         ++tracker.generation;
         tracker.noteCpuStore(begin, end, tracker.generation);
         for (auto block = tracker.blockOf(begin); block <= tracker.blockOf(end - 1); ++block) {
@@ -2965,6 +3026,34 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     if (restored) unwatchSerial.fetch_add(1, std::memory_order_release);
 #else
     static_cast<void>(ranges);
+#endif
+}
+
+void RewatchSettled(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+#ifdef _WIN32
+    constexpr std::uint64_t page = WritePageBytes;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> filtered;
+    {
+        std::lock_guard mark(explicitUnwatchMutex);
+        for (const auto& [address, limit] : ranges) {
+            if (limit <= address || limit > std::numeric_limits<std::uint64_t>::max() - page + 1) continue;
+            const auto begin = address & ~(page - 1);
+            const auto end = (limit + page - 1) & ~(page - 1);
+            std::uint64_t run = 0;
+            for (auto at = begin; at < end; at += page) {
+                if (explicitUnwatchPages.contains(at)) {
+                    if (run != 0) {
+                        filtered.emplace_back(run, at);
+                        run = 0;
+                    }
+                } else if (run == 0) run = at;
+            }
+            if (run != 0) filtered.emplace_back(run, end);
+        }
+    }
+    Rewatch(filtered);
+#else
+    Rewatch(ranges);
 #endif
 }
 
@@ -3079,6 +3168,10 @@ bool OnlyRewatchedSince(std::uint64_t address, std::size_t bytes, std::uint64_t 
     if (tracker.newestUnstampedStamp(address, end) > generation) return false;
     bool rewatched = false;
     for (auto block = tracker.blockOf(address); block <= tracker.blockOf(end - 1); ++block) {
+        if (tracker.anyGenuineStamp.load(std::memory_order_acquire)) {
+            const auto genuine = tracker.genuineStamps.find(block);
+            if (genuine != tracker.genuineStamps.end() && genuine->second > generation) return false;
+        }
         const auto stamp = tracker.stampOf(block);
         if (stamp <= generation) continue;
         const auto found = tracker.rewatchStamps.find(block);
