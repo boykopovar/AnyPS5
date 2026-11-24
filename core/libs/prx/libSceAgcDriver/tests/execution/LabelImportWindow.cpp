@@ -78,6 +78,7 @@ int Store(AgcDriver::VulkanDevice& device, std::uint64_t address, std::uint32_t 
 int main() {
     try {
         GuestBlock work(WindowBytes);
+        GuestBlock small(WindowBytes);
         GuestBlock large(std::size_t{1} << 20u);
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -100,6 +101,19 @@ int main() {
             device->WaitIdle();
             Require(large.Word(3 * WindowBytes + 64) == 0x1abe1u, "the label recorded through its window did not land");
             Require(large.Word(3 * WindowBytes + 60) == 0 && large.Word(3 * WindowBytes + 68) == 0, "the label changed neighbouring words");
+        }
+        {
+            Require(device->FillBuffer(work.Address(), 4096, pattern), "cannot record work before the small-block label");
+            const auto before = LabelCounts();
+            const auto live = AgcDriver::Graphics::HostImportLiveBytes();
+            const std::uint32_t value = 0x5a11u;
+            const auto address = small.Address() + 128;
+            const int reason = Store(*device, address, value, 2);
+            Require(reason == 7, "a label in an allocation no larger than a window did not keep its CPU path (reason " + std::to_string(reason) + ")");
+            Require(LabelCounts().made == before.made && AgcDriver::Graphics::HostImportLiveBytes() == live, "a label in a small allocation imported it");
+            device->WaitIdle();
+            AgcDriver::GuestMemory::Write(address, std::as_bytes(std::span(&value, 1)), 4);
+            Require(small.Word(128) == value, "the CPU label did not land");
         }
         AgcDriver::Graphics::SetHostImportBudget(0);
         std::puts("label import window tests passed");
