@@ -235,9 +235,18 @@ def chunks(names):
         yield batch
 
 
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate test graph JSON key {key!r}")
+        result[key] = value
+    return result
+
+
 def load_graph(path):
     try:
-        graph = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        graph = json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=_unique_json_object)
     except RecursionError as error:
         raise ValueError(f"{path}: test graph is nested too deeply") from error
     if not isinstance(graph, dict) or not isinstance(graph.get("tests"), dict) or not isinstance(graph.get("closures"), dict):
