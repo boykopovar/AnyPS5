@@ -73,6 +73,21 @@ class ComputedEnvironmentTests(unittest.TestCase):
                             'if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n')
         self.assertEqual(env_reference.reads([root / "core"], BOTH), {})
 
+    def test_computed_names_resolve_binary_and_suffixed_integer_literals(self):
+        for start, bound, offset, constants in (
+            ("0u", "0b10UL", "1u", ""),
+            ("0b0", "Count", "0b1", "constexpr std::size_t Count = 0b1'0ULL;\n"),
+            ("0ULL", "items.size()", "0x1u",
+             "using Items = std::array<int, 0b10U>;\nItems items;\n"),
+        ):
+            with self.subTest(start=start, bound=bound, offset=offset):
+                root = self.fixture(constants + f'for (std::size_t slot = {start}; slot < {bound}; ++slot) {{\n'
+                                    f'    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + {offset}) + "_SERIAL";\n'
+                                    '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                                    '}\n')
+                names = env_reference.reads([root / "core"], BOTH)
+                self.assertEqual(set(names), {"ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL"})
+
     def test_a_loop_bound_through_a_constant_array_size_resolves_every_slot(self):
         root = self.fixture('inline constexpr std::size_t Slots = 4;\n'
                             'using Serials = std::array<std::string, Slots>;\n'

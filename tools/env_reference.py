@@ -46,6 +46,7 @@ STRING_READERS = {"GetEnvironmentVariableA", "GetEnvironmentVariableW", "addWide
 NULL_TEST = re.compile(r"[!=]=\s*(nullptr|NULL|0)\b|!\s*(?:std::)?_?w?getenv\s*\(")
 INTEGER_TEST = re.compile(r"\b(atoi|strtol|strtoul|strtoll|strtoull|stoi|stol|stoul|from_chars|atoi64|_wtoi|_wtol|_wtoi64)\s*\(")
 INTEGER = r"(?:0[xX][0-9A-Fa-f]+(?:'[0-9A-Fa-f]+)*|[0-9]+(?:'[0-9]+)*)"
+COMPUTED_INTEGER = r"(?:0[bB][01]+(?:'[01]+)*|" + INTEGER + r")(?:[uU](?:ll|LL|[lL])?|(?:ll|LL|[lL])[uU]?)?"
 GREP = (r'(getenv|_wgetenv|wgetenv|IsEnvironmentSet|kibSetting|MaskFromEnvironment|EnvInt|GetEnvironmentVariable[AW]'
         r'|configured|PipelineSwitch|environmentCount|EnvironmentNumber|MebibytesFromEnvironment|addWideString)'
         r'\([[:space:]]*(u|L)?"(APS5|ANYPS5)_[A-Za-z0-9_]+"')
@@ -214,8 +215,8 @@ def computed_forms(prefixes=PREFIXES):
     prefix = "|".join(re.escape(prefix) for prefix in prefixes)
     declaration = re.compile(r'\b(?P<ident>[A-Za-z_]\w*)\s*=\s*(?:u8|u|U|L)?"(?P<prefix>(?:' + prefix + r')[A-Za-z0-9_]*)"'
                              r'\s*\+\s*(?:std::)?to_string\s*\(\s*(?P<slot>[A-Za-z_]\w*)\s*'
-                             r'(?:(?P<sign>[+-])\s*(?P<offset>' + INTEGER + r'))?\s*\)\s*\+\s*"(?P<suffix>[A-Za-z0-9_]*)"')
-    loop = re.compile(r'\bfor\s*\(\s*[^;{}]*?\b(?P<slot>[A-Za-z_]\w*)\s*=\s*(?P<start>' + INTEGER + r')\s*;\s*'
+                             r'(?:(?P<sign>[+-])\s*(?P<offset>' + COMPUTED_INTEGER + r'))?\s*\)\s*\+\s*"(?P<suffix>[A-Za-z0-9_]*)"')
+    loop = re.compile(r'\bfor\s*\(\s*[^;{}]*?\b(?P<slot>[A-Za-z_]\w*)\s*=\s*(?P<start>' + COMPUTED_INTEGER + r')\s*;\s*'
                       r'(?P=slot)\s*<\s*(?P<bound>[^;{}]+?)\s*;\s*(?:(?P=slot)\s*\+\+|\+\+\s*(?P=slot))\s*\)')
     reader = re.compile(r'(?<![\w:])(?:std::)?(?P<reader>' + "|".join(IDENTIFIER_READERS) + r')\s*\(\s*'
                         r'(?P<ident>[A-Za-z_]\w*)\.c_str\s*\(\s*\)')
@@ -223,7 +224,9 @@ def computed_forms(prefixes=PREFIXES):
 
 
 def _integer(value):
-    value = value.replace("'", "")
+    value = value.replace("'", "").rstrip("uUlL")
+    if value[:2] in ("0b", "0B"):
+        return int(value[2:], 2)
     if value[:2] in ("0x", "0X"):
         return int(value[2:], 16)
     if len(value) > 1 and value[0] == "0":
@@ -233,10 +236,10 @@ def _integer(value):
 
 def _loop_bound(bound, text):
     bound = bound.strip()
-    if re.fullmatch(INTEGER, bound):
+    if re.fullmatch(COMPUTED_INTEGER, bound):
         return _integer(bound)
     constant = re.search(r'\b(?:constexpr|const)\s+[A-Za-z_][\w:]*\s+' + re.escape(bound)
-                         + r'\s*=\s*(' + INTEGER + r')\b', text)
+                         + r'\s*=\s*(' + COMPUTED_INTEGER + r')\b', text)
     if constant:
         return _integer(constant.group(1))
     sized = re.fullmatch(r'(?:std::)?size\s*\(\s*([A-Za-z_]\w*)\s*\)|([A-Za-z_]\w*)\.size\s*\(\s*\)', bound)
@@ -247,14 +250,14 @@ def _loop_bound(bound, text):
     if not declared:
         return None
     alias = re.search(r'\busing\s+' + re.escape(declared.group(1))
-                      + r'\s*=\s*std::array\s*<[^;]*?,\s*(' + INTEGER + r'|[A-Za-z_]\w*)\s*>', text)
+                      + r'\s*=\s*std::array\s*<[^;]*?,\s*(' + COMPUTED_INTEGER + r'|[A-Za-z_]\w*)\s*>', text)
     if not alias:
         return None
     size = alias.group(1)
-    if re.fullmatch(INTEGER, size):
+    if re.fullmatch(COMPUTED_INTEGER, size):
         return _integer(size)
     constant = re.search(r'\b(?:constexpr|const)\s+[A-Za-z_][\w:]*\s+' + re.escape(size)
-                         + r'\s*=\s*(' + INTEGER + r')\b', text)
+                         + r'\s*=\s*(' + COMPUTED_INTEGER + r')\b', text)
     return _integer(constant.group(1)) if constant else None
 
 
