@@ -1559,9 +1559,17 @@ if(BUILD_TESTING)
         add_test(NAME prx_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
             -DMODULES=$<TARGET_FILE_DIR:libc> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
         set_tests_properties(prx_thread_local_destructors PROPERTIES TIMEOUT 300)
-        add_test(NAME test_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
-            -DPATTERN=*.exe -DMODULES=$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
-        set_tests_properties(test_thread_local_destructors PROPERTIES TIMEOUT 300)
+        foreach(shard RANGE 0 3)
+            if(shard EQUAL 0)
+                set(thread_local_destructors_test_name test_thread_local_destructors)
+            else()
+                set(thread_local_destructors_test_name test_thread_local_destructors_shard_${shard})
+            endif()
+            add_test(NAME ${thread_local_destructors_test_name} COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
+                -DPATTERN=*.exe -DSHARD=${shard} -DSHARDS=4 -DMODULES=$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
+            set_tests_properties(${thread_local_destructors_test_name} PROPERTIES TIMEOUT 300)
+        endforeach()
         add_test(NAME thread_local_destructors_unusable_nm COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_CURRENT_BINARY_DIR}/missing/nm
             -DOBJDUMP=${CMAKE_OBJDUMP} -DPATTERN=ThreadLocalDestructors.cmake -DMODULES=${CMAKE_CURRENT_SOURCE_DIR}/tests
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
