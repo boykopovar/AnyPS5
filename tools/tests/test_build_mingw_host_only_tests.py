@@ -134,7 +134,8 @@ class CmakeReplyTests(unittest.TestCase):
             build_mingw_host_only_tests.read_reply(self.root)
 
     def test_deeply_nested_index_has_a_controlled_diagnostic(self):
-        self.index.write_text("[" * 20000 + "]" * 20000, encoding="utf-8")
+        depth = 1_000_000
+        self.index.write_text("[" * depth + "]" * depth, encoding="utf-8")
         with self.assertRaisesRegex(ValueError, r"index-001\.json: CMake reply is nested too deeply"):
             build_mingw_host_only_tests.read_reply(self.root)
 
