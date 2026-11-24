@@ -581,7 +581,20 @@ int main(int argc, char **argv) {
         subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja",
                         f"-DCMAKE_C_COMPILER={compiler}"], check=True, capture_output=True)
         targets = {name: name for name in ("producer", "aux_producer", "validator", "verifier", "cleaner", "unrelated")}
-        build_changed_guest_tests.run(build, ["producer"], targets)
+        report = io.StringIO()
+        with contextlib.redirect_stdout(report):
+            build_changed_guest_tests.run(build, ["producer"], targets)
+        phases = (
+            "library build [requested_targets=1]",
+            "selected test executable build [requested_targets=1]",
+            "additional fixture executable build [requested_targets=4]",
+            "CTest run [scheduled_tests=5, selected_indices=3]",
+        )
+        lines = report.getvalue().splitlines()
+        self.assertEqual([line for line in lines if line.startswith("Starting ")],
+                         [f"Starting {phase}" for phase in phases])
+        self.assertEqual([line.partition(" for ")[2] for line in lines if line.startswith("Elapsed ")],
+                         list(phases))
         for marker in ("artifact", "auxiliary", "validated", "verified", "cleaned"):
             self.assertTrue((build / marker).is_file(), marker)
         self.assertFalse((build / "unrelated").exists())
@@ -671,15 +684,20 @@ int main(int argc, char **argv) {
             if cmd[0] == "ctest" and "--show-only=json-v1" not in cmd:
                 raise subprocess.CalledProcessError(2, cmd)
             return run_result(self.listing() if "--show-only=json-v1" in cmd else "")
-        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=fail):
+        report = io.StringIO()
+        with contextlib.redirect_stdout(report), mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=fail):
             code = self.main(build, ["core/libs/tests/Guest.cpp"])
         self.assertEqual(code, 1)
+        self.assertRegex(report.getvalue(), r"Elapsed \d+\.\d{2}s for CTest run \[scheduled_tests=3, selected_indices=1\]")
 
     def test_a_libs_build_failure_propagates(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
-        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=subprocess.CalledProcessError(2, "cmake")):
+        report = io.StringIO()
+        with contextlib.redirect_stdout(report), mock.patch.object(
+                build_changed_guest_tests.subprocess, "run", side_effect=subprocess.CalledProcessError(2, "cmake")):
             code = self.main(build, ["core/libs/prx/libc/src/FloatBuiltins.cpp"])
         self.assertEqual(code, 1)
+        self.assertRegex(report.getvalue(), r"Elapsed \d+\.\d{2}s for library build \[requested_targets=1\]")
 
     def test_symbolic_link_loop_build_directory_is_reported_cleanly(self):
         root = Path(self.temporary.name)
@@ -754,27 +772,27 @@ class ScheduledTestOwnersTests(unittest.TestCase):
         with mock.patch.object(build_changed_guest_tests.subprocess, "run") as run, \
                 mock.patch.object(build_changed_guest_tests, "registered_test_commands", return_value=registered):
             run.return_value.stdout = json.dumps({"tests": tests})
-            owners = build_changed_guest_tests.scheduled_test_owners(Path("build"), "indices.txt", self.TARGETS)
+            owners, count = build_changed_guest_tests.scheduled_test_owners(Path("build"), "indices.txt", self.TARGETS)
         self.assertEqual(run.call_args.args[0], ["ctest", "--test-dir", "build", "--show-only=json-v1", "-I", "indices.txt"])
-        return owners
+        return owners, count
 
     def test_scheduled_tests_contribute_owners(self):
         tests = [
             {"name": "py_beta", "command": ["python", "bin/beta.exe"]},
             {"name": "py_alpha", "command": ["python", "bin/alpha.exe"]},
         ]
-        self.assertEqual(self.owners(tests, {}), {"Alpha", "beta"})
+        self.assertEqual(self.owners(tests, {}), ({"Alpha", "beta"}, 2))
 
     def test_registered_commands_are_used_when_the_listed_command_has_no_owner(self):
         tests = [{"name": "py_beta", "command": ["python", "script.py"]}, {"name": "unbuilt"}]
         tool = (Path.cwd() / "bin/alpha.exe").as_posix()
         registered = {"py_beta": ["python", "bin/beta.exe"], "unbuilt": ["cmake", f"-DTOOL={tool}", "-P", "verify.cmake"]}
-        self.assertEqual(self.owners(tests, registered), {"Alpha", "beta"})
-        self.assertEqual(self.owners(tests, {}), set())
+        self.assertEqual(self.owners(tests, registered), ({"Alpha", "beta"}, 2))
+        self.assertEqual(self.owners(tests, {}), (set(), 2))
 
     def test_owner_is_reported_once(self):
         tests = [{"name": "py_a", "command": ["bin/alpha.exe"]}, {"name": "py_b", "command": ["bin/alpha.exe", "--x"]}]
-        self.assertEqual(self.owners(tests, {}), {"Alpha"})
+        self.assertEqual(self.owners(tests, {}), ({"Alpha"}, 2))
 
 
 class CtestResolutionsTests(unittest.TestCase):
