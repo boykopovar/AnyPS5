@@ -1,2 +1,15 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/../libSceAjm.native/AjmLibrary.cmake)
 add_sce_ajm_library(libSceAjm ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_ajm_driver_requests_tests ${LIBS_INCLUDE_DIR}/tests/GuestAjmDriverRequests.cpp)
+    target_include_directories(guest_ajm_driver_requests_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ajm_driver_requests_tests PRIVATE libSceAjm libc)
+    configure_windows_unwind(guest_ajm_driver_requests_tests)
+    add_test(NAME guest_ajm_driver_requests COMMAND guest_ajm_driver_requests_tests)
+    set_tests_properties(guest_ajm_driver_requests PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_ajm_driver_requests PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjm>")
+    endif()
+endif()
