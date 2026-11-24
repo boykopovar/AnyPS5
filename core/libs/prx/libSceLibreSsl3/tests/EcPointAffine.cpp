@@ -211,6 +211,18 @@ void Run() {
     Require(Bytes(x) == negatedX);
     Require(Bytes(y) == generatorYBytes);
 
+    const std::string negativePrimeHex = "-" + Hex(prime);
+    Bignum* negativePrime = nullptr;
+    ClearErrors();
+    Require(BN_hex2bn_nid_postfix(&negativePrime, negativePrimeHex.c_str()) > 0);
+    Require(negativePrime != nullptr);
+    Require(EC_POINT_set_affine_coordinates_GFp_nid_postfix(group, point, AsNative(negativePrime), AsNative(generatorY), nullptr) == 0);
+    Require(ERR_get_error_nid_postfix() == ErrorCode(EcRPointIsNotOnCurve));
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(EC_POINT_get_affine_coordinates_GFp_nid_postfix(group, point, AsNative(x), AsNative(y), nullptr) == 1);
+    Require(Bytes(x).empty());
+    Require(Bytes(y) == generatorYBytes);
+
     Require(EC_POINT_set_affine_coordinates_GFp_nid_postfix(group, point, AsNative(generatorX), AsNative(generatorY), nullptr) == 1);
 
     const unsigned char one = 1;
@@ -231,6 +243,7 @@ void Run() {
     BN_free_nid_postfix(raisedBignumX);
     BN_free_nid_postfix(raisedBignumY);
     BN_free_nid_postfix(negativeX);
+    BN_free_nid_postfix(negativePrime);
     BN_free_nid_postfix(scalar);
     BN_free_nid_postfix(generatorX);
     BN_free_nid_postfix(generatorY);
