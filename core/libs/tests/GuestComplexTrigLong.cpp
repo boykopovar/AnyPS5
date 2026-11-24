@@ -16,6 +16,10 @@ __complex__ long double Make(long double real, long double imaginary) {
     return result;
 }
 
+bool Close(long double value, long double expected) {
+    return std::fabs(value - expected) <= 1e-17L * std::fabs(expected);
+}
+
 bool Near(__complex__ long double value, long double real, long double imaginary) {
     constexpr long double tolerance = 1e-12L;
     return std::fabs(__real__ value - real) < tolerance && std::fabs(__imag__ value - imaginary) < tolerance;
@@ -68,5 +72,37 @@ int main() {
     const __complex__ long double negative = Make(-0.5L, -0.75L);
     Require(Near(casinhl_nid_postfix(negative), -0.6063349998873513L, -0.6822039655834323L));
     Require(Near(catanhl_nid_postfix(negative), -0.3104282830771958L, -0.7232206661240675L));
+
+    Require(Near(ctanhl_nid_postfix(one + i), 1.0839233273386946L, 0.2717525853195118L));
+    Require(Near(ctanhl_nid_postfix(Make(-3.0L, -2.0L)), -1.00323862735361L, 0.003764025641504249L));
+    for (const long double x : {20.0L, 25.5L, 26.0L, 26.5L, 40.0L, 2000.0L}) {
+        for (const long double y : {1.0L, -2.5L}) {
+            const long double denominator = std::cosh(2 * x) + std::cos(2 * y);
+            const __complex__ long double value = ctanhl_nid_postfix(Make(x, y));
+            Require(Close(__real__ value, std::sinh(2 * x) / denominator));
+            Require(Close(__imag__ value, std::sin(2 * y) / denominator));
+            const __complex__ long double mirrored = ctanl_nid_postfix(Make(y, x));
+            Require(Close(__real__ mirrored, std::sin(2 * y) / denominator));
+            Require(Close(__imag__ mirrored, std::sinh(2 * x) / denominator));
+        }
+    }
+    for (const long double x : {6000.0L, 11357.0L, 1e5L, 1e4000L}) {
+        const __complex__ long double positive = ctanhl_nid_postfix(Make(x, 1.0L));
+        Require(__real__ positive == 1.0L && __imag__ positive == 0.0L && !std::signbit(__imag__ positive));
+        const __complex__ long double negativeReal = ctanhl_nid_postfix(Make(-x, -1.0L));
+        Require(__real__ negativeReal == -1.0L && __imag__ negativeReal == 0.0L && std::signbit(__imag__ negativeReal));
+        const __complex__ long double tangent = ctanl_nid_postfix(Make(1.0L, x));
+        Require(__real__ tangent == 0.0L && __imag__ tangent == 1.0L);
+    }
+    const long double infinity = HUGE_VALL;
+    const long double nan = std::nanl("");
+    const __complex__ long double atInfinity = ctanhl_nid_postfix(Make(-infinity, 2.0L));
+    Require(__real__ atInfinity == -1.0L && __imag__ atInfinity == 0.0L && std::signbit(__imag__ atInfinity));
+    const __complex__ long double bothInfinite = ctanhl_nid_postfix(Make(infinity, infinity));
+    Require(__real__ bothInfinite == 1.0L && __imag__ bothInfinite == 0.0L);
+    const __complex__ long double nanReal = ctanhl_nid_postfix(Make(nan, -0.0L));
+    Require(std::isnan(__real__ nanReal) && __imag__ nanReal == 0.0L && std::signbit(__imag__ nanReal));
+    const __complex__ long double infiniteImaginary = ctanhl_nid_postfix(Make(1.0L, infinity));
+    Require(std::isnan(__real__ infiniteImaginary) && std::isnan(__imag__ infiniteImaginary));
     return 0;
 }
