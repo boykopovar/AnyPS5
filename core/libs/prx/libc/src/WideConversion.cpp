@@ -3,7 +3,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
-#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
