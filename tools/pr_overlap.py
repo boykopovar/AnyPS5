@@ -354,11 +354,35 @@ def fetch_heads(base_sha, prs):
     remote = f"https://github.com/{REPO}.git"
     commits = [base_sha] + [pr["sha"] for pr in prs.values()]
     for start in range(0, len(commits), FETCH_REFS):
-        git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *commits[start:start + FETCH_REFS])
+        batch = commits[start:start + FETCH_REFS]
+        try:
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *batch)
+        except subprocess.CalledProcessError:
+            fetch_each(remote, batch, base_sha, prs)
         progress(f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
     for pr in prs.values():
         pr["ref"] = pr["sha"]
     return base_sha
+
+
+def fetch_each(remote, batch, base_sha, prs):
+    owners = {}
+    for number, pr in prs.items():
+        owners.setdefault(pr["sha"], []).append(number)
+    for sha in batch:
+        try:
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, sha)
+            continue
+        except subprocess.CalledProcessError:
+            if sha == base_sha or sha not in owners:
+                raise
+        for number in owners[sha]:
+            moved = git("ls-remote", "--exit-code", remote, f"refs/pull/{number}/head").split()[0]
+            if moved == sha:
+                raise ValueError(f"cannot fetch the head {sha} of pull request #{number}")
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, moved)
+            progress(f"pull request #{number} moved from {sha[:10]} to {moved[:10]} during this run; comparing {moved[:10]}")
+            prs[number]["sha"] = moved
 
 
 def merge(*args):

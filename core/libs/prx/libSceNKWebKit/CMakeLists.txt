@@ -20,7 +20,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/3rdparty/quickjs/LICENSE DESTINATION licenses/
 file(GLOB nkWebKitSources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 add_library(libSceNKWebKit SHARED EXCLUDE_FROM_ALL Export.cpp DateParsing.cpp CharactersToNumber.cpp ${nkWebKitSources})
 target_include_directories(libSceNKWebKit PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceNKWebKit PUBLIC libSceJsc libSceIcu PRIVATE qjs libc libkernel libkernel_sys icu_common libSceLibreSsl libcairo libSceNKWebKitRequirements)
+target_link_libraries(libSceNKWebKit PUBLIC libSceJsc libSceIcu PRIVATE qjs libc libkernel libkernel_sys icu_common libSceLibreSsl libcairo libScePosixForWebKit libSceNKWebKitRequirements)
 include(${CMAKE_SOURCE_DIR}/cmake/LibPsl.cmake)
 target_link_libraries(libSceNKWebKit PRIVATE psl)
 configure_windows_unwind(libSceNKWebKit)
