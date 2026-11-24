@@ -347,6 +347,11 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     const bool waveOperations = state.laneCount != 1u || state.requirements.subgroupBallot || state.requirements.subgroupShuffle;
     const bool faults = program.Info().usesDma || program.Info().usesFaultBuffer;
     state.bdaFaultMasksWrites = state.bdaStopsInvocations && faults && (waveOperations || state.spannedWave) && program.Resources().stage != IrShaderStage::Pixel;
+    if (program.Resources().stage == IrShaderStage::Compute && workgroup != nullptr && !state.spannedWave) {
+        const auto threads = std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u);
+        state.endedWavesStay = threads > program.WaveSize() && EndedWavesMayStay(program);
+    }
+    if (state.endedWavesStay) state.endedWaveVariable = state.module.DefineInitializedGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeBool(state)), spv::StorageClassPrivate, ConstantBool(state, false));
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);

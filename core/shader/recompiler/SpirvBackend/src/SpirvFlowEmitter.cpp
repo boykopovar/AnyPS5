@@ -207,6 +207,43 @@ std::uint32_t EmitBranchCondition(SpirvValueEmitContext& ctx, const BlockInfo& i
     return EmitWaveAny(state, Binary(state, spv::OpLogicalOr, TypeBool(state), own, other));
 }
 
+bool WritesGuestState(IrOpcode opcode);
+
+bool EndsProgram(const IrProgram& program, std::uint32_t id) {
+    const IrBlock* block = TargetBlock(program, id);
+    if (BlockInfoFor(program, block)->terminator.kind != TerminatorKind::Return) return false;
+    for (const IrValue* instruction : block->Instructions()) {
+        if (instruction->Opcode() == IrOpcode::Barrier || WritesGuestState(instruction->Opcode())) return false;
+    }
+    return true;
+}
+
+bool ReachesBarrierBefore(const IrProgram& program, std::uint32_t start, std::uint32_t stop) {
+    std::vector<std::uint32_t> pending{start};
+    std::unordered_set<std::uint32_t> visited;
+    while (!pending.empty()) {
+        const auto id = pending.back();
+        pending.pop_back();
+        if (id == stop || id == InvalidControlFlowId || !visited.insert(id).second) continue;
+        const IrBlock* block = TargetBlock(program, id);
+        for (const IrValue* instruction : block->Instructions()) {
+            if (instruction->Opcode() == IrOpcode::Barrier) return true;
+        }
+        const Terminator& term = BlockInfoFor(program, block)->terminator;
+        if (term.kind == TerminatorKind::Branch || term.kind == TerminatorKind::ConditionalBranch) pending.push_back(term.trueBlock);
+        if (term.kind == TerminatorKind::ConditionalBranch) pending.push_back(term.falseBlock);
+        pending.insert(pending.end(), term.indirectTargets.begin(), term.indirectTargets.end());
+    }
+    return false;
+}
+
+bool KeepsEndedWave(const IrProgram& program, const Terminator& term) {
+    if (term.kind != TerminatorKind::ConditionalBranch || term.loopHeader || term.mergeBlock == InvalidControlFlowId || term.trueBlock == term.falseBlock) return false;
+    const bool trueEnds = term.trueBlock == term.mergeBlock;
+    if (trueEnds == (term.falseBlock == term.mergeBlock) || !EndsProgram(program, term.mergeBlock)) return false;
+    return ReachesBarrierBefore(program, trueEnds ? term.falseBlock : term.trueBlock, term.mergeBlock);
+}
+
 void EmitStructuredTerminator(SpirvValueEmitContext& ctx, const IrProgram& program, const BlockInfo& info) {
     auto& state = ctx.state;
     const Terminator& term = info.terminator;
@@ -258,6 +295,16 @@ void EmitStructuredTerminator(SpirvValueEmitContext& ctx, const IrProgram& progr
             }
             static const bool debug = std::getenv("APS5_SRT_DEBUG") != nullptr;
             if (debug) std::fprintf(stderr, "[spirv] block %u branches on %%%u = %s (kind %d)\n", static_cast<unsigned>(info.id), condition, std::string(IrOpcodeName(info.condition->Resolve()->Opcode())).c_str(), static_cast<int>(info.terminator.condition));
+            if (state.endedWavesStay && KeepsEndedWave(program, term)) {
+                const bool trueEnds = term.trueBlock == term.mergeBlock;
+                const auto leaves = trueEnds ? condition : Unary(state, spv::OpLogicalNot, TypeBool(state), condition);
+                const auto ended = state.module.AllocateId();
+                state.module.AddFunction(spv::OpLoad, TypeBool(state), ended, state.endedWaveVariable);
+                state.module.AddFunction(spv::OpStore, state.endedWaveVariable, Binary(state, spv::OpLogicalOr, TypeBool(state), ended, leaves));
+                emitMerge();
+                state.module.AddFunction(spv::OpBranchConditional, ConstantBool(state, true), ctx.Label(trueEnds ? falseBlock : trueBlock), ctx.Label(trueEnds ? trueBlock : falseBlock));
+                return;
+            }
             emitMerge();
             state.module.AddFunction(spv::OpBranchConditional, condition, ctx.Label(trueBlock), ctx.Label(falseBlock));
             return;
@@ -786,7 +833,12 @@ void EmitUnlessInvocationFaulted(SpirvValueEmitContext& ctx, StructuredFunctionS
     const bool returnsValue = inst.Type() != IrType::Void;
     const auto result = returnsValue ? ctx.Result(inst) : 0u;
     ctx.definitions.Erase(&inst);
-    const auto faulted = BdaInvocationFaulted(state);
+    auto faulted = state.bdaFaultMasksWrites ? BdaInvocationFaulted(state) : 0u;
+    if (state.endedWavesStay) {
+        const auto ended = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeBool(state), ended, state.endedWaveVariable);
+        faulted = faulted == 0u ? ended : Binary(state, spv::OpLogicalOr, TypeBool(state), faulted, ended);
+    }
     const auto body = state.module.AllocateId();
     const auto skip = state.module.AllocateId();
     const auto merge = state.module.AllocateId();
@@ -1328,7 +1380,7 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
             state.laneHalf = half;
             state.laneValueShared = shared;
             if (half == 0 || (inst->Opcode() != IrOpcode::Barrier && inst->Opcode() != IrOpcode::MeshAllocate)) {
-                if (state.bdaFaultMasksWrites && WritesGuestState(inst->Opcode())) EmitUnlessInvocationFaulted(lane, functionState, *inst);
+                if ((state.bdaFaultMasksWrites || state.endedWavesStay) && WritesGuestState(inst->Opcode())) EmitUnlessInvocationFaulted(lane, functionState, *inst);
                 else EmitStructuredInstruction(lane, functionState, *inst);
             }
         }
@@ -1377,6 +1429,13 @@ bool PrecedesEveryMemoryAccess(const IrProgram& program, const IrValue& barrier)
     return false;
 }
 
+}
+
+bool EndedWavesMayStay(const IrProgram& program) {
+    for (const BlockInfo& info : program.Metadata().blockInfo) {
+        if (KeepsEndedWave(program, info.terminator)) return true;
+    }
+    return false;
 }
 
 void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& functionState, const IrProgram& program) {

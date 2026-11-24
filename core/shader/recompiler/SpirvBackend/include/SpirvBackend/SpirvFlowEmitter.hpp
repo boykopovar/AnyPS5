@@ -9,6 +9,7 @@
 namespace ShaderRecompiler {
 
 void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& functionState, const IrProgram& program);
+bool EndedWavesMayStay(const IrProgram& program);
 
 }
 

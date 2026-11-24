@@ -216,6 +216,8 @@ struct SpirvEmitterState {
     // False for programs with workgroup barriers: faulting BDA accesses then continue (see BdaInvocationsMayStop).
     bool bdaStopsInvocations = true;
     bool bdaFaultMasksWrites = false;
+    bool endedWavesStay = false;
+    std::uint32_t endedWaveVariable = 0;
     std::array<std::uint32_t, 2> bdaFaultedVariables {};
     bool continueTarget = false;
     // Execution scope of the barriers that keep one guest wave's LDS accesses in program order across
