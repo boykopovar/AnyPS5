@@ -40,7 +40,7 @@ const short* APS5_VABI _Getctyptab_nid_postfix();
 const char* APS5_VABI _Getdst_nid_postfix(const char* s);
 int APS5_VABI _Getfld_nid_postfix();
 int APS5_VABI _Getfloat_nid_postfix();
-int APS5_VABI _Getgloballocale_nid_postfix();
+void* APS5_VABI _Getgloballocale_nid_postfix();
 int APS5_VABI _Getint_nid_postfix();
 LibcCollationState* APS5_VABI _Getpcostate_nid_postfix();
 LibcCollationState* APS5_VABI _Getpwcostate_nid_postfix();

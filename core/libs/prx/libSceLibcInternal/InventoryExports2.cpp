@@ -26,11 +26,6 @@ int APS5_VABI _Scanf_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Setgloballocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Skip_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
