@@ -1659,9 +1659,7 @@ int APS5_VABI _ZN7WebCore12PrintContextD1Ev();
 int APS5_VABI _ZN7WebCore12PrintContextD2Ev();
 int APS5_VABI _ZN7WebCore12RenderObject16paintingRootRectERNS_10LayoutRectE();
 int APS5_VABI _ZN7WebCore12SharedBufferC1EON3WTF14FileSystemImpl14MappedFileDataE();
-int APS5_VABI _ZN7WebCore12SharedBufferC1Ev();
 int APS5_VABI _ZN7WebCore12SharedBufferC2EON3WTF14FileSystemImpl14MappedFileDataE();
-int APS5_VABI _ZN7WebCore12SharedBufferC2Ev();
 int APS5_VABI _ZN7WebCore12SourceBuffer30setMaximumQueueDepthForTrackIDERKN3WTF10AtomStringEm();
 int APS5_VABI _ZN7WebCore12SourceBuffer41minimumUpcomingPresentationTimeForTrackIDERKN3WTF10AtomStringE();
 int APS5_VABI _ZN7WebCore12TextIterator7advanceEv();
@@ -4665,7 +4663,6 @@ int APS5_VABI _ZNK7WebCore12RenderObject39pixelSnappedAbsoluteClippedOverflowRec
 int APS5_VABI _ZNK7WebCore12RenderObject44hasNonEmptyVisibleRectRespectingParentFramesEv();
 int APS5_VABI _ZNK7WebCore12RenderObject7childAtEj();
 int APS5_VABI _ZNK7WebCore12RenderWidget14windowClipRectEv();
-int APS5_VABI _ZNK7WebCore12SharedBuffer4dataEv();
 int APS5_VABI _ZNK7WebCore12TextIterator4nodeEv();
 int APS5_VABI _ZNK7WebCore12TextIterator5rangeEv();
 int APS5_VABI _ZNK7WebCore12WebAnimation14timeToNextTickEv();
