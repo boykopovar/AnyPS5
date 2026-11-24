@@ -3785,6 +3785,28 @@ static void TestView() {
     WKViewDidExitFullScreen(ref);
     Require(!WKViewIsFullScreen(ref));
 
+    Require(view->scrollOffset.x == 0.0);
+    Require(view->scrollOffset.y == 0.0);
+    Require(view->paintCount == 0);
+    Require(view->paintToCurrentGLContextCount == 0);
+
+    WKViewPaint(ref);
+    Require(view->paintCount == 1);
+    WKViewPaint(ref);
+    Require(view->paintCount == 2);
+
+    WKViewPaintToCurrentGLContext(ref);
+    Require(view->paintToCurrentGLContextCount == 1);
+    WKViewPaintToCurrentGLContext(ref);
+    Require(view->paintToCurrentGLContextCount == 2);
+
+    WKViewScrollBy(ref, NKWebKit::PointValue{ 15.0, 30.0 });
+    Require(view->scrollOffset.x == 15.0);
+    Require(view->scrollOffset.y == 30.0);
+    WKViewScrollBy(ref, NKWebKit::PointValue{ -5.0, 10.0 });
+    Require(view->scrollOffset.x == 10.0);
+    Require(view->scrollOffset.y == 40.0);
+
     bool threw = false;
     try {
         WKViewSetPageScaleFactor(ref, 0.0);
@@ -3956,6 +3978,46 @@ static void TestView() {
     threw = false;
     try {
         WKViewSetSize(nullptr, NKWebKit::SizeValue{ 100.0, 100.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewScrollBy(ref, NKWebKit::PointValue{ std::numeric_limits<double>::infinity(), 0.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewScrollBy(ref, NKWebKit::PointValue{ 0.0, std::numeric_limits<double>::quiet_NaN() });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewPaint(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewPaintToCurrentGLContext(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewScrollBy(nullptr, NKWebKit::PointValue{ 0.0, 0.0 });
     } catch (const std::invalid_argument&) {
         threw = true;
     }

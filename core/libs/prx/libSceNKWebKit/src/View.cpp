@@ -84,4 +84,23 @@ void APS5_VABI WKViewWillExitFullScreen(const void* viewRef) {
     NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
 }
 
+void APS5_VABI WKViewPaint(const void* viewRef) {
+    auto* view = NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
+    ++view->paintCount;
+}
+
+void APS5_VABI WKViewPaintToCurrentGLContext(const void* viewRef) {
+    auto* view = NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
+    ++view->paintToCurrentGLContextCount;
+}
+
+void APS5_VABI WKViewScrollBy(const void* viewRef, NKWebKit::PointValue offset) {
+    auto* view = NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
+    if (!std::isfinite(offset.x) || !std::isfinite(offset.y)) {
+        throw std::invalid_argument(std::string(__func__) + ": invalid scroll offset");
+    }
+    view->scrollOffset.x += offset.x;
+    view->scrollOffset.y += offset.y;
+}
+
 }

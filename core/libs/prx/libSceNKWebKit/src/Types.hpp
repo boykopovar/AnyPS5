@@ -547,6 +547,9 @@ public:
     bool isFocused = false;
     bool isVisible = false;
     SizeValue size{ 0.0, 0.0 };
+    PointValue scrollOffset{ 0.0, 0.0 };
+    std::uint32_t paintCount = 0;
+    std::uint32_t paintToCurrentGLContextCount = 0;
 };
 
 class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
