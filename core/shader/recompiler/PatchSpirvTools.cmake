@@ -44,9 +44,17 @@ set(spirvToolsOldTraversal [=[
   for (size_t next_node = 0; next_node < todo.size(); next_node++) {
     modified |= EliminateRedundanciesInBB(todo[next_node].node->bb_, vnTable,
                                           &todo[next_node].value_to_id_map);
-    for (DominatorTreeNode* child : todo[next_node].node->children_) {
-      todo.push_back({child, todo[next_node].value_to_id_map});
+    const auto& children = todo[next_node].node->children_;
+    for (size_t child_index = 0; child_index < children.size(); ++child_index) {
+      if (child_index + 1 == children.size()) {
+        todo.push_back({children[child_index],
+                        std::move(todo[next_node].value_to_id_map)});
+      } else {
+        todo.push_back(
+            {children[child_index], todo[next_node].value_to_id_map});
+      }
     }
+    todo[next_node].value_to_id_map.clear();
   }
 ]=])
 set(spirvToolsNewTraversal [=[
@@ -129,7 +137,7 @@ string(FIND "${spirvToolsValidator}" "#include <unordered_set>" spirvToolsValida
 if(spirvToolsValidatorInclude EQUAL -1)
     message(FATAL_ERROR "SPIRV-Tools validator includes have changed; review the local lifetime fix")
 endif()
-string(REPLACE "#include <unordered_set>" "#include <algorithm>\n#include <iterator>" spirvToolsValidator "${spirvToolsValidator}")
+string(REPLACE "#include <unordered_set>" "#include <algorithm>\n#include <iterator>\n#include <unordered_set>" spirvToolsValidator "${spirvToolsValidator}")
 foreach(table IN ITEMS allow deny)
     set(oldDeclaration "static std::unordered_set<spv::Op> instruction_${table}_set{")
     set(newDeclaration "static constexpr spv::Op instruction_${table}_set[]{")
@@ -170,41 +178,12 @@ endforeach()
 set(spirvToolsBinarySource "${spirvToolsValidatorSourceDir}/binary.cpp")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${spirvToolsBinarySource}")
 file(READ "${spirvToolsBinarySource}" spirvToolsBinary)
-set(spirvToolsOldOperandInitialization [=[
-  parsed_operand.number_kind = SPV_NUMBER_NONE;
-  parsed_operand.number_bit_width = 0;
-]=])
-set(spirvToolsNewOperandInitialization [=[
+set(spirvToolsExpectedOperandInitialization [=[
   parsed_operand.number_kind = SPV_NUMBER_NONE;
   parsed_operand.number_bit_width = 0;
   parsed_operand.fp_encoding = SPV_FP_ENCODING_UNKNOWN;
 ]=])
-string(FIND "${spirvToolsBinary}" "${spirvToolsOldOperandInitialization}" spirvToolsOperandInitializationPosition)
-string(FIND "${spirvToolsBinary}" "${spirvToolsNewOperandInitialization}" spirvToolsFixedOperandInitializationPosition)
-if(spirvToolsOperandInitializationPosition EQUAL -1 OR NOT spirvToolsFixedOperandInitializationPosition EQUAL -1)
-    message(FATAL_ERROR "SPIRV-Tools operand initialization has changed; review the local parser fix")
+string(FIND "${spirvToolsBinary}" "${spirvToolsExpectedOperandInitialization}" spirvToolsOperandInitializationPosition)
+if(spirvToolsOperandInitializationPosition EQUAL -1)
+    message(FATAL_ERROR "SPIRV-Tools operand initialization has changed; review the upstream parser fix")
 endif()
-string(REPLACE "${spirvToolsOldOperandInitialization}" "${spirvToolsNewOperandInitialization}" spirvToolsBinary "${spirvToolsBinary}")
-set(spirvToolsPatchedBinary "${spirvToolsPatchedDir}/binary.cpp")
-file(CONFIGURE OUTPUT "${spirvToolsPatchedBinary}" CONTENT "${spirvToolsBinary}" @ONLY)
-foreach(parserTarget IN ITEMS SPIRV-Tools-static SPIRV-Tools-shared)
-    if(NOT TARGET ${parserTarget})
-        continue()
-    endif()
-    get_target_property(parserSources ${parserTarget} SOURCES)
-    set(patchedParserSources)
-    set(parserReplacements 0)
-    foreach(source IN LISTS parserSources)
-        get_filename_component(sourcePath "${source}" ABSOLUTE BASE_DIR "${spirvToolsValidatorSourceDir}")
-        if(sourcePath STREQUAL spirvToolsBinarySource)
-            list(APPEND patchedParserSources "${spirvToolsPatchedBinary}")
-            math(EXPR parserReplacements "${parserReplacements} + 1")
-        else()
-            list(APPEND patchedParserSources "${source}")
-        endif()
-    endforeach()
-    if(NOT parserReplacements EQUAL 1)
-        message(FATAL_ERROR "SPIRV-Tools parser sources have changed; review the local parser fix")
-    endif()
-    set_property(TARGET ${parserTarget} PROPERTY SOURCES "${patchedParserSources}")
-endforeach()
