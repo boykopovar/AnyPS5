@@ -86,13 +86,12 @@ class UnrelatedHistoryTests(unittest.TestCase):
             }]),
         ))
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), patch.object(
-                pr_overlap, "gh", return_value=pages) as gh:
+                pr_overlap, "gh", side_effect=[json.dumps({"changed_files": 2}), pages]):
             files, added, existing, diff = pr_overlap.pull_file_data({"_number": 7})
         self.assertEqual(files, {"core/libs/prx/libSceExample/Export.cpp", "docs/example.md"})
         self.assertEqual(added, {"docs/example.md"})
         self.assertEqual(existing, {"core/libs/prx/libSceExample/Export.cpp"})
         self.assertIn(self.DIFF, diff)
-        gh.assert_called_once_with("api", "--paginate", "repos/owner/project/pulls/7/files?per_page=100")
 
     def test_pull_file_data_expands_rename_like_no_renames_diff(self):
         response = json.dumps([{
@@ -102,7 +101,7 @@ class UnrelatedHistoryTests(unittest.TestCase):
             "patch": self.PATCH,
         }])
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), patch.object(
-                pr_overlap, "gh", return_value=response):
+                pr_overlap, "gh", side_effect=[json.dumps({"changed_files": 1}), response]):
             files, added, existing, diff = pr_overlap.pull_file_data({"_number": 7})
         self.assertEqual(files, {
             "core/libs/prx/libOld/Export.cpp",
@@ -121,7 +120,7 @@ class UnrelatedHistoryTests(unittest.TestCase):
             "status": "modified",
         }])
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), patch.object(
-                pr_overlap, "gh", return_value=response):
+                pr_overlap, "gh", side_effect=[json.dumps({"changed_files": 1}), response]):
             with self.assertRaisesRegex(RuntimeError, "has no patch"):
                 pr_overlap.pull_file_data({"_number": 7})
 
@@ -132,8 +131,19 @@ class UnrelatedHistoryTests(unittest.TestCase):
             "status": "renamed",
         }])
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), patch.object(
-                pr_overlap, "gh", return_value=response):
+                pr_overlap, "gh", side_effect=[json.dumps({"changed_files": 1}), response]):
             with self.assertRaisesRegex(RuntimeError, "has no patch"):
+                pr_overlap.pull_file_data({"_number": 7})
+
+    def test_pull_file_data_fails_closed_when_file_list_is_truncated(self):
+        response = json.dumps([{
+            "filename": "docs/example.md",
+            "status": "modified",
+            "patch": "@@ -1 +1 @@\n-old\n+new",
+        }])
+        with patch.object(pr_overlap, "REPO", "owner/project", create=True), patch.object(
+                pr_overlap, "gh", side_effect=[json.dumps({"changed_files": 2}), response]):
+            with self.assertRaisesRegex(RuntimeError, "returned 1 of 2 changed files"):
                 pr_overlap.pull_file_data({"_number": 7})
 
     def test_probe_uses_github_file_data_without_merge_base(self):

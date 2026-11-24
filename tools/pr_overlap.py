@@ -604,10 +604,16 @@ def pull_file_data(pr):
     number = pr.get("_number")
     if number is None:
         raise RuntimeError("pull request number is required when histories have no merge base")
+    metadata = json.loads(gh("api", f"repos/{REPO}/pulls/{number}"))
+    changed_files = metadata.get("changed_files")
+    if type(changed_files) is not int or changed_files < 0:
+        raise ValueError(f"pull request {number} returned an invalid changed_files count")
     pages = json_pages(gh("api", "--paginate", f"repos/{REPO}/pulls/{number}/files?per_page=100"))
     files, added, existing, patches = set(), set(), set(), []
+    entries = 0
     for page_items in pages:
         for item in page_items:
+            entries += 1
             path = item.get("filename")
             status = item.get("status")
             if not isinstance(path, str) or not path or not isinstance(status, str):
@@ -638,6 +644,8 @@ def pull_file_data(pr):
                 raise ValueError(f"pull request {number} returned an invalid patch for {path}")
             before = old_path if status == "renamed" else path
             patches.append(f"diff --git a/{before} b/{path}\n--- a/{before}\n+++ b/{path}\n{patch}")
+    if entries != changed_files:
+        raise RuntimeError(f"pull request {number} returned {entries} of {changed_files} changed files")
     return files, added, existing, "\n".join(patches)
 
 
