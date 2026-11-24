@@ -15,7 +15,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         found = checks(args.cache)
-    except UnicodeError as error:
+    except ValueError as error:
         parser.error(f"{args.cache}: {error}")
     except OSError as error:
         parser.error(str(error))

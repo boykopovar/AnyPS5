@@ -488,6 +488,37 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
 
 
 class ChecksParsingTests(unittest.TestCase):
+    def test_duplicate_checks_fail_without_replacing_an_existing_seed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "CMakeCache.txt"
+            seed = root / "seed.cmake"
+            baseline = root / "baseline.txt"
+            baseline.write_text("//Test EXAMPLE\nEXAMPLE:INTERNAL=1\n", encoding="utf-8")
+            seed.write_bytes(b"existing seed\n")
+            for name, first, second in (("EXAMPLE", "EXAMPLE", "EXAMPLE"),
+                                        ("EXAMPLE", '"EXAMPLE"', "EXAMPLE"),
+                                        ("EXAMPLE", "EXAMPLE", '"EXAMPLE"'),
+                                        ("HAS:FEATURE", '"HAS:FEATURE"', '"HAS:FEATURE"')):
+                for late in ("0", "1"):
+                    cache.write_text(f"//Test feature\n{first}:INTERNAL=1\n\n//Test feature\n{second}:INTERNAL={late}\n",
+                                     encoding="utf-8")
+                    commands = (
+                        (TOOL, cache, "--stdout"),
+                        (TOOL, cache, seed),
+                        (TOOL.with_name("check_configure_seed.py"), cache, seed),
+                        (TOOL.with_name("compare_configure_checks.py"), baseline, cache),
+                    )
+                    for command in commands:
+                        with self.subTest(name=name, first=first, second=second, late=late, script=command[0].name):
+                            seed.write_bytes(b"existing seed\n")
+                            result = subprocess.run([sys.executable, *map(str, command)], capture_output=True,
+                                                    text=True, encoding="utf-8", timeout=10)
+                            self.assertEqual((result.returncode, result.stdout), (2, ""))
+                            self.assertIn(f"{cache}: 5:", result.stderr)
+                            self.assertIn(f"duplicate configure check {name!r}", result.stderr)
+                            self.assertEqual(seed.read_bytes(), b"existing seed\n")
+
     def test_later_non_check_assignment_supersedes_a_check(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "CMakeCache.txt"
