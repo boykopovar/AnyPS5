@@ -1,6 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
