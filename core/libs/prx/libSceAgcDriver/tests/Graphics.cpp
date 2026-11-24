@@ -11819,7 +11819,9 @@ void aliasedBufferViewTests() {
     state.stages.path = AgcDriver::Graphics::ShaderPath::Vertex;
     ShaderRecompiler::RecompileResult vertex;
     vertex.spirv = makeModule({});
-    const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+    VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+    subgroup.supportedStages = VK_SHADER_STAGE_FRAGMENT_BIT;
+    subgroup.supportedOperations = VK_SUBGROUP_FEATURE_BASIC_BIT;
     for (const auto& [words, views] : cases) {
         auto request = orderedPixelRequest(0x20600u, capabilities, words);
         request.target.supportedExtensions = extensions;
