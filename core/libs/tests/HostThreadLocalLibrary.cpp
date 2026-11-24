@@ -14,6 +14,7 @@ struct Value {
 };
 struct First {};
 struct Second {};
+struct Unused {};
 }
 
 #ifdef _WIN32
@@ -23,9 +24,15 @@ struct Second {};
 #endif
 
 extern "C" TEST_EXPORT void TouchHostThreadLocal() {
+#ifdef _WIN32
+    if (FindHostThreadLocal<Value, Unused>() != nullptr) std::abort();
+#endif
     auto& first = HostThreadLocal<Value, First>();
     auto& second = HostThreadLocal<Value, Second>();
     if (&first == &second || &first != &HostThreadLocal<Value, First>()) std::abort();
+#ifdef _WIN32
+    if (FindHostThreadLocal<Value, First>() != &first || FindHostThreadLocal<Value, Second>() != &second) std::abort();
+#endif
 }
 
 extern "C" TEST_EXPORT unsigned DestroyedHostThreadLocals() { return destroyed.load(); }

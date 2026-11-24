@@ -177,6 +177,10 @@ static void LargeTransfers(const std::filesystem::path& root) {
     Require(sceKernelLseek(file, 0, SEEK_CUR) == Length);
     Require(sceKernelPread(file, region, Span, Slot) == Length - static_cast<std::int64_t>(Slot));
     Require(sceKernelLseek(file, 0, SEEK_CUR) == Length);
+    Require(sceKernelLseek(file, 0, SEEK_SET) == 0);
+    Require(read_nid_postfix(file, region, Span) == Length);
+    Require(pread_nid_postfix(file, region, Span, Slot) == Length - static_cast<std::int64_t>(Slot));
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == Length);
     KernelAioResult result{-1, 0};
     KernelAioRwRequest request{0, Span, region, &result, file};
     std::int32_t id = 0;
@@ -192,6 +196,14 @@ static void LargeTransfers(const std::filesystem::path& root) {
     Require(sceKernelLseek(file, 0, SEEK_CUR) == Length);
     std::memset(marks, 0, sizeof(marks));
     Require(sceKernelPreadv(file, pieces, 5, 0) == Length);
+    Require(std::memcmp(marks, "abcdefghijklmnopABCDEFGHIJKLMNOP", sizeof(marks)) == 0);
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == Length);
+    Require(sceKernelLseek(file, 0, SEEK_SET) == 0);
+    std::memset(marks, 0, sizeof(marks));
+    Require(readv_nid_postfix(file, pieces, 5) == Length);
+    Require(std::memcmp(marks, "abcdefghijklmnopABCDEFGHIJKLMNOP", sizeof(marks)) == 0);
+    std::memset(marks, 0, sizeof(marks));
+    Require(preadv_nid_postfix(file, pieces, 5, 0) == Length);
     Require(std::memcmp(marks, "abcdefghijklmnopABCDEFGHIJKLMNOP", sizeof(marks)) == 0);
     Require(sceKernelLseek(file, 0, SEEK_CUR) == Length);
 

@@ -13,6 +13,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/DescriptorAccess.hpp"
 
 struct KernelStatfs;
 
@@ -38,25 +39,48 @@ std::int64_t NativePositioned_nid_no_patch(int descriptor, void* buf, std::size_
 extern "C" bool DescriptorIsOpen_nid_no_patch(int descriptor);
 
 namespace File {
+class IoDescriptor {
+public:
+    explicit IoDescriptor(int descriptor);
+    ~IoDescriptor();
+    IoDescriptor(const IoDescriptor&) = delete;
+    IoDescriptor& operator=(const IoDescriptor&) = delete;
+    int Value() const { return value; }
+
+private:
+    int value;
+    GuestDescriptorAccess access;
+    std::optional<GuestDescriptorAccess::Operation> operation;
+};
+
+template <class TCall>
+std::int64_t WithIoDescriptor(int descriptor, TCall&& call) {
+    IoDescriptor retained(descriptor);
+    if (retained.Value() < 0) return -1;
+    return call(retained.Value());
+}
+
 #ifdef _WIN32
 std::optional<std::filesystem::path> WindowsDescriptorPath_nid_no_patch(int descriptor);
 #endif
 int HostStandardError();
 void ForgetClosedDescriptor(int descriptor);
+#ifdef _WIN32
+struct PositionedTransferState;
 class PositionedTransferLock {
 public:
-    explicit PositionedTransferLock(std::shared_ptr<std::mutex> mutex) : _mutex(std::move(mutex)), _lock(*_mutex) {}
+    explicit PositionedTransferLock(std::shared_ptr<PositionedTransferState> state) : state(std::move(state)) {}
     PositionedTransferLock(PositionedTransferLock&&) = default;
     PositionedTransferLock& operator=(PositionedTransferLock&&) = delete;
-    void unlock() { _lock.unlock(); }
+    ~PositionedTransferLock();
+    void unlock();
 
 private:
-    std::shared_ptr<std::mutex> _mutex;
-    std::unique_lock<std::mutex> _lock;
+    std::shared_ptr<PositionedTransferState> state;
 };
 [[nodiscard]] PositionedTransferLock LockPositionedTransfer(int descriptor);
 void SharePositionedTransfer(int from, int to);
-#ifdef _WIN32
+std::optional<PositionedTransferLock> IoPositionedTransfer(int descriptor);
 std::int64_t WriteAtEnd(int descriptor, const void* buf, std::size_t nbytes);
 #elif defined(__APPLE__)
 std::int64_t WritevAtEnd(int descriptor, const iovec* iov, int iovcnt);

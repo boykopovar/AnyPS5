@@ -20,6 +20,7 @@
 #include "prx/libkernel/File/include/HostStreams.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "SceTypes.hpp"
 
@@ -79,12 +80,14 @@ static int NativeRead(int fd, void* buf, std::size_t n) {
         errno = EISDIR;
         return -1;
     }
-    const auto positioned = File::LockPositionedTransfer(fd);
+    const auto positioned = File::IoPositionedTransfer(fd);
+    if (!positioned) return -1;
     if (WindowsDescriptorHandle_nid_no_patch(fd) == INVALID_HANDLE_VALUE) {
         errno = EBADF;
         return -1;
     }
-    const int result = ::_read(fd, buf, static_cast<unsigned int>(n));
+    const int result = ThreadCancel::Native([&] { return ::_read(fd, buf, static_cast<unsigned int>(n)); });
+    if (result < 0 && _doserrno == ERROR_OPERATION_ABORTED) errno = EINTR;
     if (result < 0 && _doserrno == ERROR_NO_DATA) errno = EAGAIN;
     return result;
 }
@@ -171,7 +174,7 @@ static std::int64_t NativeLseek(int fd, std::int64_t offset, int whence) {
 static std::int64_t NativeRead(int fd, void* buf, std::size_t n) {
     const iovec whole{buf, n};
     const auto parts = File::TransferInParts(fd, &whole, 1, nullptr, false);
-    return parts == -2 ? ::read(fd, buf, n) : parts;
+    return parts == -2 ? ThreadCancel::Native([&] { return ::read(fd, buf, n); }) : parts;
 }
 static std::int64_t NativeWrite(int fd, const void* buf, std::size_t n) {
     const auto result = File::WriteSharedMemory_nid_no_patch(fd, buf, n);
@@ -379,8 +382,10 @@ void* BeginClosingStreamDescriptor(int descriptor) {
 #endif
 }
 
-void EndClosingStreamDescriptor(void* closing) {
+void EndClosingStreamDescriptor([[maybe_unused]] void* closing) {
+#ifdef _WIN32
     delete static_cast<File::PositionedTransferLock*>(closing);
+#endif
 }
 
 struct ClosedDescriptorRegistration {
@@ -435,6 +440,7 @@ int OpenInDirectory_nid_no_patch(int directory, const char* path, int flags, std
 
 int APS5_VABI sceKernelClose(int d) {
     if (File::IsHostStream(d)) return SCE_KERNEL_ERROR_EPERM;
+    const GuestDescriptorAccess descriptorLock(d, GuestDescriptorAccess::Mode::Close);
     int socketError = 0;
     if (KernelCloseSocket_nid_no_patch(d, &socketError)) return socketError == 0 ? 0 : SceKernelError(socketError);
     if (GuestSockets::IsOpen(d)) return GuestSockets::Close(d) == 0 ? 0 : SceKernelError(*__error_nid_postfix());

@@ -28,7 +28,6 @@ static constexpr const char* Reused = "guest_stream_close_reused.txt";
 static constexpr const char* Racing = "guest_stream_close_racing.bin";
 static constexpr int ReadWrite = 0x0002;
 static constexpr int CreateReadWrite = 0x0202;
-static constexpr std::int64_t BadDescriptor = static_cast<std::int32_t>(0x80020009u);
 static constexpr int Append = 0x0008;
 static constexpr int CreateWriteAppend = 0x0209;
 static constexpr int Truncate = 0x0400;
@@ -55,27 +54,56 @@ static FileStream* Reopen(int closed, const char* mode) {
     return stream;
 }
 
+static std::atomic<int> observedEvents{0};
+static std::atomic<bool> releaseWrite{false};
+static int observedDescriptor = -1;
+
+static bool Await(auto&& ready) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!ready()) {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+static void ObserveClose(int descriptor, int event) {
+    if (descriptor != observedDescriptor) return;
+    observedEvents.fetch_or(1 << event);
+    if (event == 0) Require(Await([] { return releaseWrite.load(); }));
+}
+
 static void CloseWaitsForPositionedWrites() {
-    const std::vector<char> data(std::size_t{8} << 20, 'p');
-    for (int round = 0; round < 16; ++round) {
+#ifdef _WIN32
+    const std::vector<char> data(4096, 'p');
+    for (bool reopen : {false, true}) {
         const int descriptor = sceKernelOpen(Racing, CreateReadWrite | Truncate, 0644);
         Require(descriptor >= 0);
         auto* stream = fdopen_nid_postfix(descriptor, "r+");
         Require(stream != nullptr);
-        std::atomic<bool> started = false;
+        observedDescriptor = descriptor;
+        observedEvents = 0;
+        releaseWrite = false;
+        FileStreamSetCloseHookForTest_nid_no_patch(ObserveClose);
         std::int64_t written = 0;
         std::thread writer([&] {
-            started = true;
             written = sceKernelPwrite(descriptor, data.data(), data.size(), 0);
         });
-        while (!started) std::this_thread::yield();
-        std::this_thread::sleep_for(std::chrono::milliseconds(round % 4));
-        if (round % 2 != 0) stream = freopen_nid_postfix(Reused, "r", stream);
-        Require(stream != nullptr && fclose_nid_postfix(stream) == 0);
+        Require(Await([] { return (observedEvents.load() & 1) != 0; }));
+        std::thread closer([&] {
+            if (reopen) stream = freopen_nid_postfix(Reused, "r", stream);
+            Require(stream != nullptr && fclose_nid_postfix(stream) == 0);
+        });
+        Require(Await([] { return (observedEvents.load() & 2) != 0; }));
+        releaseWrite = true;
         writer.join();
-        Require(written == static_cast<std::int64_t>(data.size()) || written == BadDescriptor);
+        closer.join();
+        FileStreamSetCloseHookForTest_nid_no_patch(nullptr);
+        Require(written == static_cast<std::int64_t>(data.size()));
+        Require(Contents(Racing) == std::string(data.begin(), data.end()));
     }
     std::remove(Racing);
+#endif
 }
 
 static void CloseWaitsForALockedStream() {
@@ -83,19 +111,18 @@ static void CloseWaitsForALockedStream() {
     Require(descriptor >= 0);
     auto* stream = fdopen_nid_postfix(descriptor, "r+");
     Require(stream != nullptr);
-    std::atomic<bool> locked = false;
-    std::int64_t position = -1;
-    std::thread holder([&] {
-        flockfile_nid_postfix(stream);
-        locked = true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        position = sceKernelLseek(descriptor, 0, FromStart);
-        funlockfile_nid_postfix(stream);
-    });
-    while (!locked) std::this_thread::yield();
-    Require(fclose_nid_postfix(stream) == 0);
-    holder.join();
-    Require(position == 0);
+    observedDescriptor = descriptor;
+    observedEvents = 0;
+    FileStreamSetCloseHookForTest_nid_no_patch(ObserveClose);
+    flockfile_nid_postfix(stream);
+    std::thread closer([&] { Require(fclose_nid_postfix(stream) == 0); });
+    Require(Await([] { return (observedEvents.load() & 4) != 0; }));
+    Require(sceKernelLseek(descriptor, 0, FromStart) == 0);
+    char byte = 0;
+    Require(read_nid_postfix(descriptor, &byte, 1) == 0);
+    funlockfile_nid_postfix(stream);
+    closer.join();
+    FileStreamSetCloseHookForTest_nid_no_patch(nullptr);
     std::remove(Racing);
 }
 

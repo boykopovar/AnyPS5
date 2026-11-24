@@ -38,6 +38,8 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Cond.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Attr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Thread.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/NativeIo.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/IoSignals.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Tsd.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/GuestTlsMacOs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Rwlock.cpp
@@ -1779,9 +1781,29 @@ if(BUILD_TESTING)
     target_include_directories(guest_raise_exception_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_raise_exception_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_raise_exception_tests)
-    add_test(NAME guest_raise_exception COMMAND guest_raise_exception_tests)
-    set_tests_properties(guest_raise_exception PROPERTIES TIMEOUT 60)
-    add_asan_test_options(guest_raise_exception detect_stack_use_after_return=0)
+    set(raiseCases self busy waiting host leaving context starting locks finished nested_later nested_outer address_waking address_waiting address_idle)
+    if(WIN32)
+        list(APPEND raiseCases continuing selfing looping vectors drain)
+    endif()
+    foreach(raiseCase IN LISTS raiseCases)
+        set(raiseBatches 1)
+        if(raiseCase STREQUAL "address_waking" OR raiseCase STREQUAL "address_waiting")
+            set(raiseBatches 5)
+        endif()
+        foreach(raiseBatch RANGE 1 ${raiseBatches})
+            set(raiseTest guest_raise_exception_${raiseCase})
+            if(raiseBatches GREATER 1)
+                string(APPEND raiseTest _${raiseBatch})
+            endif()
+            add_test(NAME ${raiseTest} COMMAND guest_raise_exception_tests ${raiseCase})
+            set_tests_properties(${raiseTest} PROPERTIES TIMEOUT 25)
+            add_asan_test_options(${raiseTest} detect_stack_use_after_return=0)
+            if(WIN32)
+                set_tests_properties(${raiseTest} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+            endif()
+        endforeach()
+    endforeach()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test_executable(guest_raise_released_thread_tests ${LIBS_INCLUDE_DIR}/tests/GuestRaiseReleasedThread.cpp)
         target_include_directories(guest_raise_released_thread_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -1790,8 +1812,6 @@ if(BUILD_TESTING)
         set_tests_properties(guest_raise_released_thread PROPERTIES TIMEOUT 30)
     endif()
     if(WIN32)
-        set_tests_properties(guest_raise_exception PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         add_test_executable(guest_raise_nested_sleep_tests ${LIBS_INCLUDE_DIR}/tests/GuestRaiseNestedSleep.cpp)
         target_include_directories(guest_raise_nested_sleep_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_raise_nested_sleep_tests PRIVATE libkernel libc)
