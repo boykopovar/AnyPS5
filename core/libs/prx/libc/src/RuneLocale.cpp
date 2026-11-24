@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -125,6 +126,7 @@ const RangeEntry* FindEntry(const Range& range, std::int32_t rune) {
 int Is(std::uint32_t c, std::uint64_t mask) {
     const Locale* locale = ActiveLocale();
     if (c < 256) return (locale->types[c] & mask) != 0;
+    if (c > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) return 0;
     const auto rune = static_cast<std::int32_t>(c);
     const RangeEntry* entry = FindEntry(locale->typeRanges, rune);
     if (entry == nullptr) return 0;
@@ -137,6 +139,7 @@ int Is(std::uint32_t c, std::uint64_t mask) {
 std::uint32_t MapCase(std::uint32_t c, const std::int32_t (Locale::*table)[256], const Range Locale::*ranges) {
     const Locale* locale = ActiveLocale();
     if (c < 256) return static_cast<std::uint32_t>((locale->*table)[c]);
+    if (c > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) return c;
     const auto rune = static_cast<std::int32_t>(c);
     const RangeEntry* entry = FindEntry(locale->*ranges, rune);
     if (entry == nullptr) return c;

@@ -144,7 +144,7 @@ static void CheckRuneLocaleRanges() {
     Require(iswalpha_nid_postfix(0x03b3) == 0);
     Require(towupper_nid_postfix(0x03b3) == 0x0393);
 
-    for (const std::uint32_t miss : {0x0394u, 0xffffffffu}) {
+    for (const std::uint32_t miss : {0x0394u, 0x80000000u, 0xffffffffu}) {
         Require(iswalpha_nid_postfix(miss) == 0);
         Require(iswupper_nid_postfix(miss) == 0);
         Require(iswlower_nid_postfix(miss) == 0);
