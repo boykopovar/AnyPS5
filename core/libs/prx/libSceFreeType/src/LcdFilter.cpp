@@ -6,7 +6,6 @@
 #include FT_LCD_FILTER_H
 
 #include <array>
-#include <cerrno>
 #include <cstdint>
 
 using namespace FreeType;
