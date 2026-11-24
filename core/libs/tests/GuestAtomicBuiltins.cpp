@@ -8,11 +8,11 @@
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-template<typename TFunction>
-static void RequireThrows(TFunction function) {
+template<typename TException, typename TFunction>
+static void RequireException(TFunction function) {
     try {
         function();
-    } catch (const std::runtime_error&) {
+    } catch (const TException&) {
         return;
     }
     std::abort();
@@ -34,10 +34,48 @@ static void CheckLockFree() {
 static void CheckGenericTraps() {
     alignas(16) unsigned char object[24] = {};
     unsigned char other[24] = {};
-    RequireThrows([&] { __atomic_load_nid_postfix(sizeof(object), object, other, 5); });
-    RequireThrows([&] { __atomic_store_nid_postfix(sizeof(object), object, other, 5); });
-    RequireThrows([&] { __atomic_exchange_nid_postfix(sizeof(object), object, other, other, 5); });
-    RequireThrows([&] { __atomic_compare_exchange_nid_postfix(sizeof(object), object, other, other, 5, 5); });
+    RequireException<std::runtime_error>([&] { __atomic_load_nid_postfix(sizeof(object), object, other, 5); });
+    RequireException<std::runtime_error>([&] { __atomic_store_nid_postfix(sizeof(object), object, other, 5); });
+    RequireException<std::runtime_error>([&] { __atomic_exchange_nid_postfix(sizeof(object), object, other, other, 5); });
+    RequireException<std::runtime_error>(
+        [&] { __atomic_compare_exchange_nid_postfix(sizeof(object), object, other, other, 5, 5); });
+}
+
+static void CheckSixteenByteInvalidTargets() {
+    alignas(16) unsigned char sentinel[32];
+    for (unsigned char& byte : sentinel) {
+        byte = 0xA5;
+    }
+    auto* unaligned = reinterpret_cast<Uint128*>(sentinel + 8);
+    const auto checkBoth = [unaligned](auto fn) {
+        RequireException<std::invalid_argument>([&] { fn(nullptr, Make(1, 2)); });
+        RequireException<std::invalid_argument>([&] { fn(unaligned, Make(1, 2)); });
+    };
+    checkBoth(__sync_fetch_and_add_16_nid_postfix);
+    checkBoth(__sync_fetch_and_sub_16_nid_postfix);
+    checkBoth(__sync_fetch_and_and_16_nid_postfix);
+    checkBoth(__sync_fetch_and_or_16_nid_postfix);
+    checkBoth(__sync_fetch_and_xor_16_nid_postfix);
+    checkBoth(__sync_lock_test_and_set_16_nid_postfix);
+    for (unsigned char byte : sentinel) {
+        Require(byte == 0xA5);
+    }
+}
+
+static void CheckSixteenByteZeroSeed() {
+    alignas(16) Uint128 zeroAdd = 0;
+    Require(__sync_fetch_and_add_16_nid_postfix(&zeroAdd, 0) == 0 && zeroAdd == 0);
+    Require(__sync_fetch_and_add_16_nid_postfix(&zeroAdd, Make(1, 2)) == 0 && zeroAdd == Make(1, 2));
+    alignas(16) Uint128 zeroSub = 0;
+    Require(__sync_fetch_and_sub_16_nid_postfix(&zeroSub, 1) == 0 && zeroSub == Make(~0ull, ~0ull));
+    alignas(16) Uint128 zeroAnd = 0;
+    Require(__sync_fetch_and_and_16_nid_postfix(&zeroAnd, Make(7, 8)) == 0 && zeroAnd == 0);
+    alignas(16) Uint128 zeroOr = 0;
+    Require(__sync_fetch_and_or_16_nid_postfix(&zeroOr, Make(2, 3)) == 0 && zeroOr == Make(2, 3));
+    alignas(16) Uint128 zeroXor = 0;
+    Require(__sync_fetch_and_xor_16_nid_postfix(&zeroXor, Make(4, 5)) == 0 && zeroXor == Make(4, 5));
+    alignas(16) Uint128 zeroTas = 0;
+    Require(__sync_lock_test_and_set_16_nid_postfix(&zeroTas, Make(6, 7)) == 0 && zeroTas == Make(6, 7));
 }
 
 static void CheckSixteenByte() {
@@ -68,6 +106,8 @@ static void CheckConcurrentAdds() {
 int main() {
     CheckLockFree();
     CheckGenericTraps();
+    CheckSixteenByteInvalidTargets();
+    CheckSixteenByteZeroSeed();
     CheckSixteenByte();
     CheckConcurrentAdds();
     return 0;
