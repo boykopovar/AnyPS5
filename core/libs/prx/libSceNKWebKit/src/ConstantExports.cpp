@@ -154,10 +154,6 @@ int APS5_VABI WKContextGetIconDatabase() {
     return 0;
 }
 
-int APS5_VABI WKContextGetMaximumNumberOfProcesses() {
-    return static_cast<int>(0xffffffffu);
-}
-
 int APS5_VABI WKContextMenuCopySubmenuItems() {
     return 0;
 }
@@ -315,10 +311,6 @@ int APS5_VABI WKPluginInformationPluginspageAttributeURLKey() {
 }
 
 int APS5_VABI WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey() {
-    return 0;
-}
-
-int APS5_VABI WKPreferencesGetAccelerated2DCanvasEnabled() {
     return 0;
 }
 

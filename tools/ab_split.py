@@ -198,6 +198,11 @@ def noise(values, phases):
 
 
 def split_report(lines, programs, classes):
+    programs, classes = tuple(programs), tuple(classes)
+    reserved = {"gputime", *programs}
+    for name in classes:
+        if name in reserved:
+            raise ValueError(f"--class {name} would overwrite the {name} ms/present metric")
     config, phases = read_log(lines)
     if not phases:
         raise ValueError("no [ab] phase lines (was APS5_AB set?)")

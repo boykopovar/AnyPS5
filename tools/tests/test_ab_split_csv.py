@@ -108,6 +108,19 @@ class AbCsvTests(unittest.TestCase):
                                  "change": "", "change_pct": "", "noise_mean": "0.5",
                                  "noise_se": "0.25", "noise_sd": "0.75", "noise_n": "4"}])
 
+    def test_colliding_class_filters_emit_no_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.txt"
+            path.write_text("".join(log()), encoding="utf-8")
+            for tool in (ab_split, ab_split_csv):
+                for name in ("gputime", "0x1000"):
+                    with self.subTest(tool=tool.__name__, name=name):
+                        args = [sys.executable, tool.__file__, str(path), "--program", "0x1000", "--class", name]
+                        result = subprocess.run(args, capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 2)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn(f"{name} ms/present", result.stderr)
+
     def test_invalid_inputs_emit_no_csv(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "log.txt"
@@ -118,6 +131,30 @@ class AbCsvTests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 2, completed.stderr)
                 self.assertEqual(completed.stdout, b"")
                 self.assertNotIn(b"Traceback", completed.stderr)
+
+    def test_spreadsheet_safe_prefixes_formula_cells_only_when_requested(self):
+        for trigger in ("=1+1", "+cmd", "-1", "@SUM(A1)", "\t=1+1"):
+            with self.subTest(trigger=trigger):
+                result = {"config": trigger, "phases": [1, 2],
+                          "metrics": [{"metric": trigger, "a": 1.0, "b": 2.0, "change": 1.0, "change_pct": 100.0, "noise": None},
+                                      {"metric": "frame_ms", "a": 1.0, "b": 2.0, "change": 1.0, "change_pct": 100.0, "noise": None}]}
+                raw = list(csv.DictReader(io.StringIO(ab_split_csv.render(result), newline="")))
+                safe = list(csv.DictReader(io.StringIO(ab_split_csv.render(result, spreadsheet_safe=True), newline="")))
+                self.assertEqual(raw[0]["config"], trigger)
+                self.assertEqual(raw[0]["metric"], trigger)
+                self.assertEqual(safe[0]["config"], "\t" + trigger)
+                self.assertEqual(safe[0]["metric"], "\t" + trigger)
+                self.assertEqual(safe[1]["metric"], "frame_ms")
+                self.assertEqual(safe[0]["phases"], "2")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.txt"
+            path.write_text("".join(log()), encoding="utf-8")
+            completed = subprocess.run([sys.executable, str(Path(ab_split_csv.__file__)), str(path), "--spreadsheet-safe"],
+                                       capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            expected = ab_split_csv.render(ab_split.split(log()), spreadsheet_safe=True)
+            self.assertEqual(completed.stdout.decode("utf-8"), expected)
+            self.assertIn('"[ab] in-run A/B:', expected)
 
 
 if __name__ == "__main__":

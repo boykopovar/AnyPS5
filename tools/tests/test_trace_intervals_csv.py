@@ -110,6 +110,23 @@ class IntervalCsvTests(unittest.TestCase):
             self.assertEqual(empty.returncode, 0, empty.stderr)
             self.assertEqual(len(list(csv.reader(io.StringIO(empty.stdout.decode())))), 1)
 
+    def test_require_complete_needs_a_recorded_drop_status_for_every_interval(self):
+        first = interval_line(0, 30, 20, 5)
+        second = interval_line(30, 60, 20, 5)
+        second["window"]["first_present"] = first["presents"]
+        del second["trace_dropped"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            path.write_text("\n".join(map(json.dumps, (first, second))), encoding="utf-8")
+            command = [sys.executable, trace_intervals_csv.__file__, str(path)]
+            regular = subprocess.run(command, capture_output=True)
+            self.assertEqual(regular.returncode, 0, regular.stderr)
+            strict = subprocess.run([*command, "--require-complete"], capture_output=True)
+            self.assertEqual(strict.returncode, 2)
+            self.assertEqual(strict.stdout, b"")
+            self.assertIn(b"interval 2", strict.stderr)
+            self.assertIn(b"trace_dropped", strict.stderr)
+
     def test_require_complete_rejects_empty_capture_and_changed_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "summary.jsonl"
@@ -123,7 +140,9 @@ class IntervalCsvTests(unittest.TestCase):
                     self.assertEqual(completed.returncode, 2, completed.stderr)
                     self.assertEqual(completed.stdout, b"")
                     self.assertIn(b"error: capture is empty, has dropped events or changing identity", completed.stderr)
-            path.write_bytes((json.dumps(first) + "\n" + json.dumps(interval_line(30.0, 60.0, 20.0, 5.0, commit="a" * 40)) + "\n").encode())
+            second = interval_line(30.0, 60.0, 20.0, 5.0, commit="a" * 40)
+            second["window"]["first_present"] = first["presents"]
+            path.write_text("\n".join(map(json.dumps, (first, second))) + "\n", encoding="utf-8")
             same = subprocess.run(command, capture_output=True)
             self.assertEqual(same.returncode, 0, same.stderr)
             self.assertEqual(len(list(csv.DictReader(io.StringIO(same.stdout.decode(), newline="")))), 2)
