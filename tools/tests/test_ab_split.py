@@ -94,8 +94,11 @@ class AbSplitTests(unittest.TestCase):
                                          capture_output=True, text=True, encoding="utf-8", timeout=5)
                     self.assertEqual(run.returncode, 0, run.stderr)
                     if flags:
-                        self.assertTrue(all(row["noise"] is None for row in json.loads(run.stdout)["metrics"]))
+                        rows = json.loads(run.stdout)["metrics"]
+                        self.assertEqual(rows, result["metrics"])
+                        self.assertTrue(all(row["noise"] is None for row in rows))
                     else:
+                        self.assertRegex(run.stdout, r"GPU busy ms/frame +105\.00 +130\.00 +\+25\.00 +\+23\.8% +-")
                         self.assertNotIn("(n 1)", run.stdout)
 
     def test_concatenated_runs_cannot_mix_phase_statistics(self):
@@ -131,6 +134,27 @@ class AbSplitTests(unittest.TestCase):
         start = next(i for i, line in enumerate(lines) if line.startswith("[ab] phase B 1 begins"))
         result = ab_split.split(lines[start:])
         self.assertEqual([phase["index"] for phase in result["phases"]], [1, 2, 3])
+
+    def test_corrupt_phase_markers_cannot_disappear_from_the_report(self):
+        invalid = (
+            ("A 0 begins", "C 0 begins"),
+            ("A 0 begins", "A -1 begins"),
+            ("A 0 begins at present 100", "A 0 begins at present -100"),
+            ("t 10.000 s)", "t -10.000 s)"),
+            ("t 12.000 s)", "t 12.000)"),
+            ("t 12.000 s)", "t 12.000 s"),
+            ("t 12.000 s)", "t 12.000 s) corrupt"),
+            ("A 0 settled at present", "A 0 settling at present"),
+            ("B 1 begins at present", "B 1 begins present"),
+        )
+        original = log()
+        for before, after in invalid:
+            index = next(i for i, line in enumerate(original) if before in line)
+            with self.subTest(after=after):
+                lines = original[:]
+                lines[index] = lines[index].replace(before, after, 1)
+                with self.assertRaisesRegex(ValueError, rf"line {index + 1}: invalid A/B phase marker"):
+                    ab_split.split(lines)
 
     def test_settled_phase_requires_matching_kind_and_index(self):
         lines = [

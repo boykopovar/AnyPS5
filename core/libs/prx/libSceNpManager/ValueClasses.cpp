@@ -23,19 +23,14 @@ constexpr std::size_t NP_ONLINE_ID_SIZE = 16;
 
 template <typename T>
 bool ReadGuest(const T* source, T& destination) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
 }
 
 template <typename T>
 bool ProbeGuestWritable(T* destination) {
     T value{};
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&value, destination, sizeof(value)) &&
         GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
-    errno = savedErrno;
     return ok;
 }
 

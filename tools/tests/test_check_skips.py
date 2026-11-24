@@ -36,6 +36,8 @@ LIMITATIONS = [
     "skipped, the host cannot allocate a buffer of more than 2 GiB",
     "skipped, the host has no interface that can join 224.0.0.251",
     "skipped, the host mounts /dev/shm noexec, so named shared memory is not mapped executable",
+    "skipped, the host has no image that ends inside a 16 KiB page with free memory above it",
+    "skipped, the host has no image segment that starts inside a 16 KiB page holding no other loaded segment below it",
     "skipped, unproven on CPU Vulkan (llvmpipe): host write over a shadowed unit: the import made without the GPU lock was refused",
     "skipped, host imports unavailable: carried shadows not tested",
     "skipped, host import of the test block refused: carried shadows not tested",
@@ -256,6 +258,42 @@ class CtestSkipPolicyTests(unittest.TestCase):
                                                 capture_output=True, encoding="utf-8")
                         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                         self.assertIn(f"error: guest_video_out_colorimetry_metadata_bounds skipped: {expected}", result.stdout)
+
+    def test_summary_skips_emulator_log_lines_before_the_first_reason_line(self):
+        banner = "[src/HostCpu.cpp:220 operator()] host CPU AMD Ryzen 9 7950X3D 16-Core Processor: has SSE, SSE2, AVX2; lacks none"
+        reports = (
+            (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>{banner}\n[pipeline-journal] loaded 3 entries\nthe test wrote this</system-out>',
+             "the test stated no reason; its output starts with: the test wrote this"),
+            (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>{banner}</system-out>',
+             f"the test stated no reason; its output starts with: {banner}"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, expected in reports:
+                with self.subTest(report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"],
+                                            capture_output=True, encoding="utf-8")
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(f"error: guest_probe skipped: {expected}", result.stdout)
+
+    def test_worker_affinity_without_a_reserved_core_is_expected_on_linux(self):
+        banner = "[src/HostCpu.cpp:220 operator()] host CPU AMD Ryzen 9 7950X3D 16-Core Processor: has SSE, SSE2, AVX2; lacks none"
+        cases = (
+            ("agc_worker_affinity", f"{banner}\nthis host reserves no committer core", 0),
+            ("agc_worker_affinity_explicit", f"{banner}\n[time] scheduler tick raised to 0.5 ms\nthis host reserves no committer core", 0),
+            ("agc_worker_affinity", "this host reserves no committer core\nanother line", 1),
+            ("agc_worker_affinity", banner, 1),
+            ("guest_probe", f"{banner}\nthis host reserves no committer core", 1),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for name, output, code in cases:
+                with self.subTest(name=name, output=output):
+                    junit.write_text(f'<testsuite><testcase name="{name}"><skipped message="SKIP_RETURN_CODE=77"/><system-out>{output}</system-out></testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"],
+                                            capture_output=True, encoding="utf-8")
+                    self.assertEqual(result.returncode, code, result.stdout + result.stderr)
 
     def test_stated_reason_is_quoted_unchanged(self):
         reports = (
@@ -711,6 +749,11 @@ class SkipReportTests(unittest.TestCase):
     def test_running_test_without_skipped_marker_is_not_a_skip(self):
         self.assertEqual(self.skipped('<testsuite><testcase name="coverage" status="run"/></testsuite>'), [])
 
+    def test_unknown_ctest_status_is_rejected(self):
+        for status, children in (("typo", ""), ("", ""), ("pass", '<skipped message="no display"/>')):
+            with self.subTest(status=status), self.assertRaisesRegex(ValueError, "invalid testcase status.*coverage"):
+                self.skipped(f'<testsuite><testcase name="coverage" status="{status}">{children}</testcase></testsuite>')
+
     def test_skip_message_preserves_the_device_reason(self):
         found = self.skipped('<testsuite><testcase name="gpu"><skipped message="the device has no required extension"/></testcase></testsuite>')
         self.assertEqual(len(found), 1)
@@ -759,7 +802,10 @@ class NotRunTests(unittest.TestCase):
                     self.assertNotIn("Traceback", checked.stderr)
 
 
-
+class HighRefreshLimitationTests(unittest.TestCase):
+    def test_high_refresh_limitation_matches_only_the_refresh_message(self):
+        self.assertTrue(check_skips.high_refresh_limitation('test: skipped, current display does not provide 120 Hz\n'))
+        self.assertFalse(check_skips.high_refresh_limitation('test: skipped, other reason\n'))
 
 
 class DeviceLimitationsTests(unittest.TestCase):

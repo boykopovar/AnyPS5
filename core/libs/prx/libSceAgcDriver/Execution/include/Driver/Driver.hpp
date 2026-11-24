@@ -269,7 +269,7 @@ private:
     static std::array<WriteRecord, 16384>& writeHistory();
     static AgcDriver::Mutex& writeHistoryMutex();
     static std::size_t& writeCursor();
-    static void dumpPackets(std::span<const std::uint32_t> commands, const std::uint32_t* guest = nullptr);
+    static void dumpPackets(std::span<const std::uint32_t> commands, std::uint32_t queue, const std::uint32_t* guest = nullptr);
     static void validate(const Submission& submission, const std::uint32_t* guest = nullptr, bool report = true);
     static bool matchesFillKernel(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute);
     static bool fillClearEnabled();

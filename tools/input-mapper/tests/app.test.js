@@ -106,6 +106,7 @@ async function setup(t, name) {
             querySelectorAll: selector => selector.startsWith('[data-i18n') || selector === '[data-view]' ? [] : root.querySelectorAll(selector)
         },
         window: Object.assign(new EventTarget(), {scrollTo() {}}),
+        navigator: {clipboard: {}},
         location: {hash: ''},
         history: {pushState() {}},
         localStorage: {getItem() { return null; }, setItem() {}},
@@ -218,6 +219,22 @@ test('cancelling replacement keeps the previous import report hidden and preserv
     assert.equal(app.get('preview').value, '');
 });
 
+test('the import report is named by its translated heading', async t => {
+    const app = await setup(t, 'report-name');
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    const section = /<section\b[^>]*\bid="import-report"[^>]*>/u.exec(html)[0];
+    assert.doesNotMatch(section, /\saria-label=/u);
+    const labelledBy = /\saria-labelledby="([^"]+)"/u.exec(section)?.[1];
+    assert.ok(labelledBy);
+    for (const [text, heading] of [['NotAnAction = KEY:Space\n', 'Import rejected'], ['Cross = KEY:Space\n', 'Import read successfully']]) {
+        await app.importFile('report.ini', text);
+        const title = app.get('import-report').children[0];
+        assert.equal(title.tagName, 'H2');
+        assert.equal(title.textContent, heading);
+        assert.equal(title.id, labelledBy);
+    }
+});
+
 test('cancelling replacement preserves an earlier import report until replacement is confirmed', async t => {
     const app = await setup(t, 'cancel-existing');
     app.get('mappings').querySelector('.add-binding').click();
@@ -238,6 +255,31 @@ test('cancelling replacement preserves an earlier import report until replacemen
     assert.equal(app.dialogOpens(), 2);
     assert.equal(app.get('import-report').children[0].textContent, 'Import read successfully');
     assert.equal(app.get('preview').value, 'Cross = KEY:Space\n');
+});
+
+test('successful imports use the destination from a recognized profile filename', async t => {
+    const app = await setup(t, 'import-profile');
+    const titleId = app.get('profile-title-id');
+    const preview = app.get('preview-name');
+    const binding = 'Cross = KEY:X\n';
+    await app.importFile('anyps5-input.PPSA00001.ini', binding);
+    assert.equal(titleId.value, 'PPSA00001');
+    assert.equal(preview.textContent, 'anyps5-input.PPSA00001.ini');
+
+    await app.importFile('anyps5-input.PPSA00002.ini', 'Cross = invalid\n');
+    assert.equal(titleId.value, 'PPSA00001');
+    await app.importFile('anyps5-input.PPSA00003.backup.ini', binding);
+    assert.equal(titleId.value, 'PPSA00001');
+
+    app.get('mappings').querySelector('.add-binding').click();
+    await app.importFile('anyps5-input.PPSA00004.ini', binding);
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(titleId.value, 'PPSA00001');
+
+    app.setDialogDecision('discard');
+    await app.importFile('anyps5-input.ini', binding);
+    assert.equal(titleId.value, '');
+    assert.equal(preview.textContent, 'anyps5-input.ini');
 });
 
 test('replacing a built-in search result keeps the new binding reachable until it has a value', async t => {
@@ -263,6 +305,84 @@ test('replacing a built-in search result keeps the new binding reachable until i
     assert.equal(app.get('preview').value, 'Screenshot = KEY:K\n');
 });
 
+for (const result of ['success', 'failure']) {
+    test(`a late clipboard ${result} leaves a newer import saved`, async t => {
+        const app = await setup(t, `late-copy-${result}`);
+        const clipboard = Promise.withResolvers();
+        const writes = [];
+        navigator.clipboard.writeText = text => {
+            writes.push(text);
+            return clipboard.promise;
+        };
+        const preview = app.get('preview');
+        preview.select = () => {};
+        await app.importFile('first.ini', 'Cross = KEY:F\n');
+        app.get('copy').click();
+        assert.deepEqual(writes, ['Cross = KEY:F\n']);
+        await app.importFile('second.ini', 'Cross = KEY:J\n');
+        const status = app.get('status').textContent;
+
+        if (result === 'success') clipboard.resolve();
+        else clipboard.reject(new Error('Clipboard unavailable'));
+        await setImmediate();
+
+        assert.equal(preview.value, 'Cross = KEY:J\n');
+        assert.equal(app.get('status').textContent, status);
+        assert.equal(preview.focused, false);
+        assert.equal(window.dispatchEvent(new Event('beforeunload', {cancelable: true})), true);
+    });
+}
+
+test('a late clipboard failure leaves focus on a newer import report', async t => {
+    const app = await setup(t, 'late-copy-report');
+    const clipboard = Promise.withResolvers();
+    navigator.clipboard.writeText = () => clipboard.promise;
+    const preview = app.get('preview');
+    preview.select = () => {};
+    await app.importFile('first.ini', 'Cross = KEY:F\n');
+    app.get('copy').click();
+    await app.importFile('broken.ini', 'NotAnAction = KEY:Space\n');
+    const status = app.get('status').textContent;
+
+    clipboard.reject(new Error('Clipboard unavailable'));
+    await setImmediate();
+
+    assert.equal(document.activeElement, app.get('import-report'));
+    assert.equal(preview.focused, false);
+    assert.equal(app.get('status').textContent, status);
+});
+
+for (const [failure, detail, size, read] of [
+    ['size', 'INI file must be smaller than 1 MiB.', 1024 * 1024 + 1, () => assert.fail('Unexpected file read')],
+    ['read', 'The file could not be read.', 1, () => { throw new Error('The file could not be read.'); }],
+    ['encoding', 'The file must be valid UTF-8 text.', 1, () => Uint8Array.of(0xff).buffer]
+]) {
+    for (const result of ['success', 'failure']) {
+        test(`a late clipboard ${result} preserves an import ${failure} error`, async t => {
+            const app = await setup(t, `late-copy-import-${failure}-${result}`);
+            const clipboard = Promise.withResolvers();
+            navigator.clipboard.writeText = () => clipboard.promise;
+            const preview = app.get('preview');
+            preview.select = () => {};
+            await app.importFile('first.ini', 'Cross = KEY:F\n');
+            app.get('copy').click();
+            const input = app.get('file');
+            input.files = [{name: 'second.ini', size, arrayBuffer: read}];
+            input.dispatchEvent(new Event('change'));
+            await setImmediate();
+            assert.equal(app.get('status').textContent, `Import failed: ${detail}`);
+
+            if (result === 'success') clipboard.resolve();
+            else clipboard.reject(new Error('Clipboard unavailable'));
+            await setImmediate();
+
+            assert.equal(app.get('status').textContent, `Import failed: ${detail}`);
+            assert.equal(preview.focused, false);
+            assert.equal(preview.value, 'Cross = KEY:F\n');
+        });
+    }
+}
+
 test('a chord search result stays visible while changing its buttons in the open picker', async t => {
     const app = await setup(t, 'search-edit-chord');
     await app.importFile('input.ini', 'Screenshot = PAD:L1+R1\n');
@@ -284,4 +404,35 @@ test('a chord search result stays visible while changing its buttons in the open
     picker.dispatchEvent(new Event('toggle'));
     assert.equal(action.hidden, true);
     assert.equal(document.activeElement, search);
+});
+
+test('controller overrides can be added, edited, disabled and inherited alongside imported settings', async t => {
+    const app = await setup(t, 'controller-remaps');
+    const control = name => {
+        const row = app.get('controller-remaps').children.find(item => item.querySelector('span').textContent === `SDLButton:${name}`);
+        assert.ok(row, name);
+        return row.querySelector('select');
+    };
+    const assign = (name, destination) => {
+        const select = control(name);
+        select.value = destination;
+        select.dispatchEvent(new Event('change'));
+    };
+    const settings = 'Square = KEY:J\nMouseSensitivity = 2\n';
+    await app.importFile('game.ini', settings + 'SDLButton:b = Cross\n');
+    assert.equal(control('b').value, 'Cross');
+    assert.equal(control('a').value, '');
+    assign('a', 'Circle');
+    assign('b', 'None');
+    assert.equal(app.get('preview').value, settings + 'SDLButton:b = None\nSDLButton:a = Circle\n');
+    assign('b', '');
+    assert.equal(app.get('preview').value, settings + 'SDLButton:a = Circle\n');
+    await app.importFile('empty.ini', '');
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(control('a').value, 'Circle');
+    app.setDialogDecision('discard');
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(control('a').value, '');
+    assert.equal(app.get('preview').value, '');
 });

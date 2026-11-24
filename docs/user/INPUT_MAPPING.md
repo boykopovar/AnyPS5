@@ -1,6 +1,6 @@
 # Controller, keyboard and mouse input
 
-AnyPS5 accepts SDL-mapped game controllers as well as its built-in keyboard and mouse bindings. Up to 4 controllers are supported simultaneously. The first connected controller is assigned to Player 1 and composed with keyboard and mouse input; additional controllers are sequentially assigned to Players 2, 3, and 4 (matching `libSceUserService` users). Xbox-style controllers and PlayStation controllers recognized by SDL use the standard PS button layout; sticks and analog triggers are passed through, and controllers can be connected or disconnected dynamically while the game is running. AnyPS5 uses its built-in input bindings when no configuration file is present. To change input bindings, create `anyps5-input.ini` beside the generated game executable. Set `ANYPS5_INPUT_CONFIG` to use a file at another path. Both the game directory and that path may contain any characters, such as `ü` or `日本`. With `ANYPS5_PAD_PORT0_STATE=controller`, keyboard and mouse input reaches the game only while a controller is bound to Player 1; see [Controller connection and user 0](USAGE.md#controller-connection-and-user-0).
+AnyPS5 accepts SDL-mapped game controllers as well as its built-in keyboard and mouse bindings. Up to 4 controllers are supported simultaneously. By default, controllers fill Players 1 through 4 in discovery order (matching `libSceUserService` users). Only the controller in the Player 1 slot is combined with keyboard and mouse input. See [stable player assignment](#stable-player-assignment) to reserve slots by serial. Xbox-style controllers and PlayStation controllers recognized by SDL use the standard PS button layout; sticks and analog triggers are passed through, and controllers can be connected or disconnected dynamically while the game is running. AnyPS5 uses its built-in input bindings when no configuration file is present. To change input bindings, create `anyps5-input.ini` beside the generated game executable. Set `ANYPS5_INPUT_CONFIG` to use a file at another path. Both the game directory and that path may contain any characters, such as `ü` or `日本`. With `ANYPS5_PAD_PORT0_STATE=controller`, keyboard and mouse input reaches the game only while a controller is bound to Player 1; see [Controller connection and user 0](USAGE.md#controller-connection-and-user-0).
 
 For an Xbox-layout controller, A/B/X/Y map to Cross/Circle/Square/Triangle, LB/RB map to L1/R1, and LT/RT map to analog L2/R2. Start maps to Options. D-pad and stick-click buttons are supported. On a PlayStation controller, touchpad clicks and the positions of up to two fingers on the touchpad are forwarded. On other controllers, View (Back) presses the touchpad at its center.
 
@@ -148,6 +148,10 @@ Events start relative to when the application first observes the new command. Bu
 
 The runtime evaluates scheduled events at each controller read, including their automatic releases. A new pulse or timeline replaces the remaining sequence. Physical controller buttons still add to injected buttons. Existing commands at the application's first controller read are ignored. This schedules wall-time input: events can be missed while the application is not reading its controller, and it does not reproduce frame timing or game state. Use gaps and holds long enough for the title's input loop.
 
+### Automated title runs
+
+`tools/title_run.py` queues a title timeline only after both the `after_s` minimum delay and a fresh recording sample from controller port 0. This keeps a timeline queued during startup from being discarded as an old command at the first controller read. For scripted input, an absent or empty `APS5_PAD_RECORD` defaults to `pad-record.txt` in the run trace directory. Nonempty overrides are preserved; relative paths resolve in the title work directory. Warmup and capture each wait for a new sample, and `pad_queued_s` stays null if the process ends before readiness.
+
 ## Recording and replaying controller input
 
 Set `APS5_PAD_RECORD` to a file path to record what a title reads from controller port 0 while you play: every change of its buttons, sticks and analog triggers, whatever device produced it, timed in milliseconds from the title's first controller read. Set `APS5_PAD_REPLAY` to that file on a later run to feed the same states back at the same times from that run's first read, without any device. A replay replaces port 0's buttons, sticks and analog triggers at every read; after the last recorded change it keeps the last state. A recording path that cannot be written, or a replay file that cannot be read or is not in the format below, stops the title at its first controller read with an error naming the variable.
@@ -172,7 +176,7 @@ By default, connected controllers fill the first free player slot in SDL's disco
 For example, to bind two controllers and leave the other player slots automatic:
 
 ```sh
-ANYPS5_PAD_PLAYER_1_SERIAL=ABC123 ANYPS5_PAD_PLAYER_2_SERIAL=XYZ789 ./AnyPS5
+ANYPS5_PAD_PLAYER_1_SERIAL=ABC123 ANYPS5_PAD_PLAYER_2_SERIAL=XYZ789 ./app.elf
 ```
 
 Serials may differ when a controller is connected through another transport or exposed by a different SDL backend. Check the connection log for the exact value reported by the current host.
@@ -248,9 +252,11 @@ The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse, w
 
 For an emulator action such as `ToggleFullscreen`, add a binding, choose `PAD` as the input type and select one or more controller buttons in the binding value. Open an imported `PAD:` binding the same way to edit its buttons.
 
-On the Configuration page, enter the game's exact title ID to download a [per-game profile](#per-game-profiles), such as `anyps5-input.PPSA00001.ini`. Leave the field blank to download the shared `anyps5-input.ini`.
+On the Configuration page, enter the game's exact title ID to download a [per-game profile](#per-game-profiles), such as `anyps5-input.PPSA00001.ini`. Leave the field blank to download the shared `anyps5-input.ini`. Importing `anyps5-input.<TITLEID>.ini` fills the field from the filename. Importing `anyps5-input.ini` clears it.
 
-Add settings, such as `MouseSensitivity` or `ToggleActions`, and `SDLButton:` lines by hand. The configurator validates them on import and preserves them in the INI preview, in copied text and in the downloaded file. Invalid or duplicate settings and controller entries are reported with their line number.
+On the Configuration page, open **Controller buttons** to assign an SDL button to a PlayStation button. Choose `None` to disable it or **No override** to omit its `SDLButton:` line and keep the inherited mapping. These assignments apply to all connected controllers.
+
+Add settings such as `MouseSensitivity` or `ToggleActions` by hand. The configurator validates settings and controller assignments on import and preserves them in the preview, clipboard and downloaded file. Invalid or duplicate entries are reported with their line number.
 
 From the repository root, with Node.js 22 or later:
 
