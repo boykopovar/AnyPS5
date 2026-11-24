@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <cerrno>
@@ -18,7 +19,23 @@ constexpr int AnyFunction = 0xfff;
 constexpr int ErrRPassedNullParameter = 67;
 constexpr int EcRIncompatibleObjects = 101;
 constexpr int EcRPointAtInfinity = 106;
+constexpr int EcRPointIsNotOnCurve = 107;
 constexpr unsigned char UncompressedPoint = 0x04;
+
+struct Mpi {
+    Mpi() {
+        mbedtls_mpi_init(&value);
+    }
+
+    ~Mpi() {
+        mbedtls_mpi_free(&value);
+    }
+
+    Mpi(const Mpi&) = delete;
+    Mpi& operator=(const Mpi&) = delete;
+
+    mbedtls_mpi value;
+};
 
 void PutError(int reason) {
     LibreSslPutError_nid_no_patch(EcLibrary, AnyFunction, reason);
@@ -41,6 +58,31 @@ std::vector<unsigned char> Magnitude(const LibreSsl3Bignum* number, const char* 
         BN_bn2bin_nid_postfix(reinterpret_cast<const Bignum*>(number), bytes.data()) != length)
         NotImplemented_nid_no_patch(caller);
     return bytes;
+}
+
+std::vector<unsigned char> Coordinate(const LibreSsl3Bignum* number, const EcGroup& group, const char* caller) {
+    LibreSsl3Bignum record{};
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&record, number, sizeof(record));
+    errno = savedErrno;
+    if (!readable) NotImplemented_nid_no_patch(caller);
+    const std::vector<unsigned char> magnitude = Magnitude(number, caller);
+    Mpi value;
+    if (mbedtls_mpi_read_binary(&value.value, magnitude.data(), magnitude.size()) != 0)
+        NotImplemented_nid_no_patch(caller);
+    if (mbedtls_mpi_mod_mpi(&value.value, &value.value, &group.group.P) != 0)
+        NotImplemented_nid_no_patch(caller);
+    if (record.negative && mbedtls_mpi_cmp_int(&value.value, 0) != 0) {
+        Mpi negated;
+        if (mbedtls_mpi_sub_mpi(&negated.value, &group.group.P, &value.value) != 0)
+            NotImplemented_nid_no_patch(caller);
+        if (mbedtls_mpi_copy(&value.value, &negated.value) != 0) NotImplemented_nid_no_patch(caller);
+    }
+    const std::size_t size = FieldSize(group);
+    std::vector<unsigned char> encoded(size);
+    if (size != 0 && mbedtls_mpi_write_binary(&value.value, encoded.data(), size) != 0)
+        NotImplemented_nid_no_patch(caller);
+    return encoded;
 }
 
 }
@@ -86,14 +128,19 @@ int APS5_VABI EC_POINT_set_affine_coordinates_GFp_nid_postfix(const EcGroup* gro
         return 0;
     }
     const std::size_t size = FieldSize(*group);
-    const std::vector<unsigned char> xb = Magnitude(x, __func__);
-    const std::vector<unsigned char> yb = Magnitude(y, __func__);
-    if (xb.size() > size || yb.size() > size) return 0;
+    const std::vector<unsigned char> xb = Coordinate(x, *group, __func__);
+    const std::vector<unsigned char> yb = Coordinate(y, *group, __func__);
     std::vector<unsigned char> encoded(1 + 2 * size, 0);
     encoded[0] = UncompressedPoint;
-    std::memcpy(encoded.data() + 1 + (size - xb.size()), xb.data(), xb.size());
-    std::memcpy(encoded.data() + 1 + size + (size - yb.size()), yb.data(), yb.size());
-    return mbedtls_ecp_point_read_binary(&group->group, &point->point, encoded.data(), encoded.size()) == 0 ? 1 : 0;
+    std::memcpy(encoded.data() + 1, xb.data(), size);
+    std::memcpy(encoded.data() + 1 + size, yb.data(), size);
+    if (mbedtls_ecp_point_read_binary(&group->group, &point->point, encoded.data(), encoded.size()) != 0)
+        return 0;
+    if (mbedtls_ecp_check_pubkey(&group->group, &point->point) != 0) {
+        PutError(EcRPointIsNotOnCurve);
+        return 0;
+    }
+    return 1;
 }
 
 }

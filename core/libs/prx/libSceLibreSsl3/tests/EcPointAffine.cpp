@@ -41,6 +41,11 @@ constexpr int EcLibrary = 16;
 constexpr int ErrRPassedNullParameter = 67;
 constexpr int EcRIncompatibleObjects = 101;
 constexpr int EcRPointAtInfinity = 106;
+constexpr int EcRPointIsNotOnCurve = 107;
+
+const std::array<unsigned char, 32> PrimeP{
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
 const std::array<unsigned char, 32> GeneratorX{
     0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2,
@@ -64,6 +69,46 @@ LibreSsl3Bignum* AsNative(Bignum* value) {
 
 const LibreSsl3Bignum* AsNative(const Bignum* value) {
     return reinterpret_cast<const LibreSsl3Bignum*>(value);
+}
+
+std::vector<unsigned char> AddBigEndian(const std::vector<unsigned char>& a, const std::vector<unsigned char>& b) {
+    const std::size_t size = a.size() > b.size() ? a.size() : b.size();
+    std::vector<unsigned char> sum(size + 1, 0);
+    unsigned carry = 0;
+    for (std::size_t index = 0; index < size; ++index) {
+        const unsigned left = index < a.size() ? a[a.size() - 1 - index] : 0;
+        const unsigned right = index < b.size() ? b[b.size() - 1 - index] : 0;
+        const unsigned total = left + right + carry;
+        sum[size - index] = static_cast<unsigned char>(total);
+        carry = total >> 8;
+    }
+    sum[0] = static_cast<unsigned char>(carry);
+    if (sum.front() == 0) sum.erase(sum.begin());
+    return sum;
+}
+
+std::vector<unsigned char> SubtractBigEndian(const std::vector<unsigned char>& a, const std::vector<unsigned char>& b) {
+    std::vector<unsigned char> difference(a.size(), 0);
+    int borrow = 0;
+    for (std::size_t index = 0; index < a.size(); ++index) {
+        const int left = a[a.size() - 1 - index];
+        const int right = index < b.size() ? b[b.size() - 1 - index] : 0;
+        int value = left - right - borrow;
+        borrow = value < 0 ? 1 : 0;
+        if (value < 0) value += 256;
+        difference[a.size() - 1 - index] = static_cast<unsigned char>(value);
+    }
+    return difference;
+}
+
+std::string Hex(const std::vector<unsigned char>& bytes) {
+    static const char digits[] = "0123456789abcdef";
+    std::string text;
+    for (const unsigned char byte : bytes) {
+        text += digits[byte >> 4];
+        text += digits[byte & 0x0f];
+    }
+    return text;
 }
 
 std::vector<unsigned char> Bytes(const Bignum* value) {
@@ -100,6 +145,11 @@ void Run() {
     Require(EC_POINT_get_affine_coordinates_GFp_nid_postfix(group, point, AsNative(onlyX), nullptr, nullptr) == 1);
     Require(Bytes(onlyX) == std::vector<unsigned char>(GeneratorX.begin(), GeneratorX.end()));
 
+    Bignum* onlyY = BN_bin2bn_nid_postfix(nullptr, 0, nullptr);
+    Require(onlyY != nullptr);
+    Require(EC_POINT_get_affine_coordinates_GFp_nid_postfix(group, point, nullptr, AsNative(onlyY), nullptr) == 1);
+    Require(Bytes(onlyY) == std::vector<unsigned char>(GeneratorY.begin(), GeneratorY.end()));
+
     ClearErrors();
     Require(EC_POINT_set_affine_coordinates_GFp_nid_postfix(group, point, nullptr, AsNative(generatorY), nullptr) == 0);
     Require(ERR_get_error_nid_postfix() == ErrorCode(ErrRPassedNullParameter));
@@ -119,6 +169,50 @@ void Run() {
     Require(ERR_get_error_nid_postfix() == ErrorCode(EcRIncompatibleObjects));
     Require(ERR_get_error_nid_postfix() == 0);
 
+    ClearErrors();
+    Require(EC_POINT_get_affine_coordinates_GFp_nid_postfix(otherCurve, point, AsNative(x), AsNative(y), nullptr) == 0);
+    Require(ERR_get_error_nid_postfix() == ErrorCode(EcRIncompatibleObjects));
+    Require(ERR_get_error_nid_postfix() == 0);
+
+    const unsigned char unit = 1;
+    Bignum* unitBignum = BN_bin2bn_nid_postfix(&unit, 1, nullptr);
+    Require(unitBignum != nullptr);
+    ClearErrors();
+    Require(EC_POINT_set_affine_coordinates_GFp_nid_postfix(group, point, AsNative(unitBignum), AsNative(unitBignum), nullptr) == 0);
+    Require(ERR_get_error_nid_postfix() == ErrorCode(EcRPointIsNotOnCurve));
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(EC_POINT_get_affine_coordinates_GFp_nid_postfix(group, point, AsNative(x), AsNative(y), nullptr) == 1);
+    Require(Bytes(x) == std::vector<unsigned char>{0x01});
+    Require(Bytes(y) == std::vector<unsigned char>{0x01});
+
+    const std::vector<unsigned char> prime(PrimeP.begin(), PrimeP.end());
+    const std::vector<unsigned char> generatorXBytes(GeneratorX.begin(), GeneratorX.end());
+    const std::vector<unsigned char> generatorYBytes(GeneratorY.begin(), GeneratorY.end());
+    const std::vector<unsigned char> raisedX = AddBigEndian(generatorXBytes, prime);
+    const std::vector<unsigned char> raisedY = AddBigEndian(generatorYBytes, prime);
+    Bignum* raisedBignumX = BN_bin2bn_nid_postfix(raisedX.data(), static_cast<int>(raisedX.size()), nullptr);
+    Bignum* raisedBignumY = BN_bin2bn_nid_postfix(raisedY.data(), static_cast<int>(raisedY.size()), nullptr);
+    Require(raisedBignumX != nullptr && raisedBignumY != nullptr);
+    Require(EC_POINT_set_affine_coordinates_GFp_nid_postfix(group, point, AsNative(raisedBignumX), AsNative(raisedBignumY), nullptr) == 1);
+    Require(EC_POINT_get_affine_coordinates_GFp_nid_postfix(group, point, AsNative(x), AsNative(y), nullptr) == 1);
+    Require(Bytes(x) == generatorXBytes);
+    Require(Bytes(y) == generatorYBytes);
+
+    const std::vector<unsigned char> negatedX = SubtractBigEndian(prime, generatorXBytes);
+    const std::string negatedHex = "-" + Hex(generatorXBytes);
+    Bignum* negativeX = nullptr;
+    ClearErrors();
+    Require(BN_hex2bn_nid_postfix(&negativeX, negatedHex.c_str()) > 0);
+    Require(negativeX != nullptr);
+    Require(EC_POINT_set_affine_coordinates_GFp_nid_postfix(group, point, AsNative(negativeX), AsNative(generatorY), nullptr) == 0);
+    Require(ERR_get_error_nid_postfix() == ErrorCode(EcRPointIsNotOnCurve));
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(EC_POINT_get_affine_coordinates_GFp_nid_postfix(group, point, AsNative(x), AsNative(y), nullptr) == 1);
+    Require(Bytes(x) == negatedX);
+    Require(Bytes(y) == generatorYBytes);
+
+    Require(EC_POINT_set_affine_coordinates_GFp_nid_postfix(group, point, AsNative(generatorX), AsNative(generatorY), nullptr) == 1);
+
     const unsigned char one = 1;
     Bignum* scalar = BN_bin2bn_nid_postfix(&one, 1, nullptr);
     Require(scalar != nullptr);
@@ -130,8 +224,13 @@ void Run() {
     Require(Bytes(y) == std::vector<unsigned char>(GeneratorY.begin(), GeneratorY.end()));
 
     BN_free_nid_postfix(onlyX);
+    BN_free_nid_postfix(onlyY);
     BN_free_nid_postfix(x);
     BN_free_nid_postfix(y);
+    BN_free_nid_postfix(unitBignum);
+    BN_free_nid_postfix(raisedBignumX);
+    BN_free_nid_postfix(raisedBignumY);
+    BN_free_nid_postfix(negativeX);
     BN_free_nid_postfix(scalar);
     BN_free_nid_postfix(generatorX);
     BN_free_nid_postfix(generatorY);
