@@ -2714,13 +2714,17 @@ void Recorder::NoteAccess(CommandClass which, const Access& access) {
 }
 
 void Recorder::CountPresent() {
-    const auto serial = presentSerial.fetch_add(1, std::memory_order_relaxed) + 1;
-    (serial % ClassTimingPeriod() == 0 ? timingPresents : unsampledPresents).fetch_add(1, std::memory_order_relaxed);
+    const auto frame = presentSerial.fetch_add(1, std::memory_order_relaxed);
+    (frame % ClassTimingPeriod() == 0 ? timingPresents : unsampledPresents).fetch_add(1, std::memory_order_relaxed);
     ReferenceStorage::Shared().ReleaseIdle();
 }
 
 std::uint64_t Recorder::Presents() {
     return presentSerial.load(std::memory_order_relaxed);
+}
+
+std::uint64_t Recorder::TimedPresents() {
+    return timingPresents.load(std::memory_order_relaxed);
 }
 
 void Recorder::NoteFrameGpuBusy(double milliseconds) {

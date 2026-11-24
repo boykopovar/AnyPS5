@@ -698,6 +698,7 @@ public:
     static bool BatchStampsEnabled();
     static std::uint64_t ClassTimingPeriod();
     static bool ClassTimingSampled();
+    static std::uint64_t TimedPresents();
     std::uint32_t BeginGpuTiming(std::uint64_t key);
     std::uint32_t BeginInPassGpuTiming(std::uint64_t key);
     // `bytes`: what the range moved (a fill's, a copy's), summed per key on the [gputime] line.

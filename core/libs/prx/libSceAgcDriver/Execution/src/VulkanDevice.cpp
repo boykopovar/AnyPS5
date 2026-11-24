@@ -4472,8 +4472,8 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     check(state->DeviceFunction<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(commands, &begin), "vkBeginCommandBuffer");
     APS5_LOG_OUT_DEBUG("Presentation command buffer begin commands=%p image=%p", reinterpret_cast<void*>(commands), reinterpret_cast<void*>(state->images[index]));
     using CommandClass = Graphics::Recorder::CommandClass;
-    Graphics::Recorder::CountPresent();
     slot.blitTimed = Graphics::Recorder::ClassTimingSampled();
+    Graphics::Recorder::CountPresent();
     if (slot.blitTimed) {
         if (slot.queries == VK_NULL_HANDLE) {
             VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};

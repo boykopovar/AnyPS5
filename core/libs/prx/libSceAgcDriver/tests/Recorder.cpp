@@ -2097,7 +2097,9 @@ int gpuTimingSampledTests(const Device& device) {
         Require(missing == 0 && batches.size() == 1 && batches.front().serial == serial, "sampled GPU timing batch completion record is missing");
         Require(batches.front().gpuStartNs > 0 && batches.front().gpuEndNs >= batches.front().gpuStartNs, "a batch lost its whole-batch stamps");
         if (sampled && ++sampledPresents == 1) poolsAfterFirst = recorder.TimingPoolsCreated();
+        const auto timedBefore = Recorder::TimedPresents();
         Recorder::CountPresent();
+        Require(Recorder::TimedPresents() - timedBefore == (sampled ? 1u : 0u), sampled ? "the present of a class-timed frame was not counted with the sampled presents" : "the present of an untimed frame was counted with the sampled presents");
     }
     Require(sampledPresents == 6 / period, "the presents with class ranges are not one in the period");
     Require(poolsAfterFirst == 3 && recorder.TimingPoolsCreated() == poolsAfterFirst, "a finished batch's query pools were not reused by the next batches");
