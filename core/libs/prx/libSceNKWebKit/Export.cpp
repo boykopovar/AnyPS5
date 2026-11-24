@@ -8122,10 +8122,6 @@ int APS5_VABI _ZNK7WebCore6Widget25convertFromContainingViewERKNS_8IntPointE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore13HTTPHeaderMap12isolatedCopyEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore4Page15setFooterHeightEi() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8285,21 +8281,7 @@ int APS5_VABI WKBundleGetApplicationConnection() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleHitTestResultCopyImage() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-
-
-int APS5_VABI WKBundleHitTestResultGetFrame() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
-
-int APS5_VABI WKBundleHitTestResultGetTargetFrame() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKBundleNodeHandleCopySnapshotWithOptions() {
     NotImplemented_nid_no_patch(__func__);

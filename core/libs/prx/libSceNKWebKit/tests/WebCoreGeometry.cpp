@@ -11,7 +11,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
+#include <string>
+#include <utility>
 #include <emmintrin.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -27,6 +35,35 @@ static bool AlmostEqual(float a, float b, float eps = 1e-4f) {
 
 static bool AlmostEqual(double a, double b, double eps = 1e-6) {
     return std::abs(a - b) <= eps;
+}
+
+template <typename Function>
+static bool FaultsAsNotImplemented(Function function, const char* name) {
+    try {
+        static_cast<void>(function());
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(name) + " not implemented";
+    }
+    return false;
+}
+
+static void* MapReadOnlyPage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY);
+    Require(page != nullptr);
+#else
+    void* page = mmap(nullptr, 4096, PROT_READ, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    return page;
+}
+
+static void UnmapPage(void* page) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, 4096) == 0);
+#endif
 }
 
 static void TestFloatPoint() {
@@ -450,6 +487,56 @@ static void TestColor() {
     Require((cLightened.m_colorAndFlags & 0xFFFFFFFFull) == 0x545454FFull);
 }
 
+static void TestColorGuestPointers() {
+    auto* unreadable = reinterpret_cast<WebCore::Color*>(0x10);
+    auto* readOnly = static_cast<WebCore::Color*>(MapReadOnlyPage());
+    WebCore::Color source;
+    source.m_colorAndFlags = 0x11223344ull;
+    WebCore::Color target;
+    target.m_colorAndFlags = 0x55667788ull;
+
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1ERKS0_(&target, *unreadable); return 0; }, "_ZN7WebCore5ColorC1ERKS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2ERKS0_(&target, *unreadable); return 0; }, "_ZN7WebCore5ColorC2ERKS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull);
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1ERKS0_(readOnly, source); return 0; }, "_ZN7WebCore5ColorC1ERKS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2ERKS0_(readOnly, source); return 0; }, "_ZN7WebCore5ColorC2ERKS0_"));
+
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1EOS0_(&target, std::move(*unreadable)); return 0; }, "_ZN7WebCore5ColorC1EOS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2EOS0_(&target, std::move(*unreadable)); return 0; }, "_ZN7WebCore5ColorC2EOS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull);
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1EOS0_(readOnly, std::move(source)); return 0; }, "_ZN7WebCore5ColorC1EOS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2EOS0_(readOnly, std::move(source)); return 0; }, "_ZN7WebCore5ColorC2EOS0_"));
+    Require(source.m_colorAndFlags == 0x11223344ull);
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1EOS0_(&target, std::move(*readOnly)); return 0; }, "_ZN7WebCore5ColorC1EOS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2EOS0_(&target, std::move(*readOnly)); return 0; }, "_ZN7WebCore5ColorC2EOS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(&target, std::move(*readOnly)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull);
+
+    target.m_colorAndFlags = 0x55667788ull;
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSERKS0_(unreadable, source); }, "_ZN7WebCore5ColoraSERKS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSERKS0_(&target, *unreadable); }, "_ZN7WebCore5ColoraSERKS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSERKS0_(readOnly, source); }, "_ZN7WebCore5ColoraSERKS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(unreadable, std::move(source)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(&target, std::move(*unreadable)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(readOnly, std::move(source)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull && source.m_colorAndFlags == 0x11223344ull);
+    Require(_ZN7WebCore5ColoraSERKS0_(&target, source) == &target && target.m_colorAndFlags == 0x11223344ull);
+
+    WebCore::Color derived;
+    derived.m_colorAndFlags = 0x55667788ull;
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color14colorWithAlphaEf(&derived, unreadable, 0.5f); }, "_ZNK7WebCore5Color14colorWithAlphaEf"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color8darkenedEv(&derived, unreadable); }, "_ZNK7WebCore5Color8darkenedEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color9lightenedEv(&derived, unreadable); }, "_ZNK7WebCore5Color9lightenedEv"));
+    Require(derived.m_colorAndFlags == 0x55667788ull);
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color14colorWithAlphaEf(readOnly, &source, 0.5f); }, "_ZNK7WebCore5Color14colorWithAlphaEf"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color8darkenedEv(readOnly, &source); }, "_ZNK7WebCore5Color8darkenedEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color9lightenedEv(readOnly, &source); }, "_ZNK7WebCore5Color9lightenedEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color9lightnessEv(unreadable); }, "_ZNK7WebCore5Color9lightnessEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color9luminanceEv(unreadable); }, "_ZNK7WebCore5Color9luminanceEv"));
+    Require(AlmostEqual(_ZNK7WebCore5Color9lightnessEv(readOnly), 0.0));
+    UnmapPage(readOnly);
+}
+
 static void TestAffineTransform() {
     WebCore::AffineTransform at;
     Require(_ZNK7WebCore15AffineTransform10isIdentityEv(&at));
@@ -821,6 +908,7 @@ int main() {
     TestLayoutRect();
     TestRoundedRect();
     TestColor();
+    TestColorGuestPointers();
     TestAffineTransform();
     TestTransformationMatrix();
     TestApplyPerspective();

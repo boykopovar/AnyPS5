@@ -308,6 +308,8 @@ int APS5_VABI putenv_nid_postfix(char* text);
 char* APS5_VABI strerror_nid_postfix(int error);
 extern const char* const sys_siglist_nid_postfix[];
 extern const int sys_nsig_nid_postfix;
+extern const char* const sys_errlist_nid_postfix[];
+extern const int sys_nerr_nid_postfix;
 const char* APS5_VABI StrerrorText_nid_no_patch(int error);
 int APS5_VABI strerror_r_nid_postfix(int error, char* buffer, std::size_t length);
 void APS5_VABI perror_nid_postfix(const char* prefix);
