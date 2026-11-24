@@ -357,6 +357,8 @@ int main() {
     Require(sceSystemServiceShowControllerSettings() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceShowDisplaySafeAreaSettings() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceOpenChallengeActivity() == SYSTEM_SERVICE_OK);
+    SystemServiceTournamentOccurrenceParam tournament{sizeof(tournament), "occurrence", USER_SERVICE_INITIAL_USER_ID, 0, "context"};
+    Require(sceSystemServiceOpenTournamentOccurrence(&tournament) == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceLaunchWebBrowser("http:") == browserUnavailable);
     Require(sceSystemServiceLaunchWebBrowser("https:") == browserUnavailable);
     Require(sceSystemServiceLaunchWebBrowser("psno:") == browserUnavailable);

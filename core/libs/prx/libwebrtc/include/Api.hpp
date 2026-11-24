@@ -25,6 +25,7 @@
 #include "prx/libwebrtc/include/FieldTrial.hpp"
 #include "prx/libwebrtc/include/RtcpNack.hpp"
 #include "prx/libwebrtc/include/IpAddress.hpp"
+#include "prx/libwebrtc/include/NetworkManager.hpp"
 #include "prx/libwebrtc/include/RtcStatsReport.hpp"
 #include "prx/libwebrtc/include/LogMessage.hpp"
 #include "prx/libwebrtc/include/PendingTaskSafetyFlag.hpp"
@@ -190,7 +191,7 @@ int APS5_VABI libwebrtcUnknown14(void);
 int APS5_VABI _ZNK6webrtc19I420BufferInterface11ChromaWidthEv_nid_postfix(const void* buffer);
 int APS5_VABI _ZNK6webrtc19I420BufferInterface12ChromaHeightEv_nid_postfix(const void* buffer);
 const void* APS5_VABI _ZNK6webrtc16VideoFrameBuffer7GetI420Ev_nid_postfix(const void*);
-int APS5_VABI _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(void);
+WebRtcVideoFrame* APS5_VABI _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(WebRtcVideoFrame* result, WebRtcVideoFrameBuilder* builder);
 WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder22set_video_frame_bufferERKNS_13scoped_refptrINS_16VideoFrameBufferEEE_nid_postfix(WebRtcVideoFrameBuilder* builder, void* const* buffer);
 int APS5_VABI _ZNK6webrtc10VideoFrame5widthEv_nid_postfix(const WebRtcVideoFrameDimensions* frame);
 int APS5_VABI _ZNK6webrtc10VideoFrame6heightEv_nid_postfix(const WebRtcVideoFrameDimensions* frame);
@@ -446,13 +447,13 @@ int APS5_VABI libwebrtcUnknown47(void);
 void* APS5_VABI _ZNK3rtc14NetworkManager16GetMdnsResponderEv_nid_postfix(const void* manager);
 void* APS5_VABI _ZThn8_NK3rtc14NetworkManager16GetMdnsResponderEv_nid_postfix(const void* provider);
 int APS5_VABI libwebrtcUnknown48(void);
-int APS5_VABI _ZNK3rtc18NetworkManagerBase22enumeration_permissionEv_nid_postfix(void);
+std::int32_t APS5_VABI _ZNK3rtc18NetworkManagerBase22enumeration_permissionEv_nid_postfix(const WebRtcNetworkManagerBase* manager);
 int APS5_VABI libwebrtcUnknown49(void);
 int APS5_VABI libwebrtcUnknown50(void);
 int APS5_VABI libwebrtcUnknown51(void);
-int APS5_VABI _ZN3rtc18NetworkManagerBase27set_default_local_addressesERKNS_9IPAddressES3__nid_postfix(void);
-int APS5_VABI _ZNK3rtc18NetworkManagerBase22GetDefaultLocalAddressEiPNS_9IPAddressE_nid_postfix(void);
-int APS5_VABI _ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(void);
+void APS5_VABI _ZN3rtc18NetworkManagerBase27set_default_local_addressesERKNS_9IPAddressES3__nid_postfix(WebRtcNetworkManagerBase* manager, const WebRtcIpAddress* ipv4, const WebRtcIpAddress* ipv6);
+bool APS5_VABI _ZNK3rtc18NetworkManagerBase22GetDefaultLocalAddressEiPNS_9IPAddressE_nid_postfix(const WebRtcNetworkManagerBase* manager, std::int32_t family, WebRtcIpAddress* address);
+WebRtcNetwork* APS5_VABI _ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(const WebRtcNetworkManagerBase* manager, const WebRtcIpAddress* ip);
 int APS5_VABI libwebrtcUnknown52(void);
 int APS5_VABI _ZN3rtc7NetworkD1Ev_nid_postfix(void);
 int APS5_VABI _ZN7cricket18AsyncStunTCPSocketC1EPN3rtc6SocketE_nid_postfix(void);

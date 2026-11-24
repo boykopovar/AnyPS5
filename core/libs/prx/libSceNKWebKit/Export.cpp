@@ -19429,10 +19429,6 @@ int APS5_VABI _ZN7WebCore29createDefaultParagraphElementERNS_8DocumentE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore29updateRequestForAccessControlERNS_15ResourceRequestERNS_14SecurityOriginENS_23StoredCredentialsPolicyE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore30InspectorInstrumentationPublic12hasFrontendsEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -19602,10 +19598,6 @@ int APS5_VABI _ZN7WebCore37computeFreshnessLifetimeForHTTPFamilyERKNS_16Resource
 }
 
 int APS5_VABI _ZN7WebCore38updateResponseHeadersAfterRevalidationERNS_16ResourceResponseERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore39cleanHTTPRequestHeadersForAccessControlERNS_15ResourceRequestEN3WTF9OptionSetINS_29HTTPHeadersToKeepFromCleaningEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -21885,10 +21877,6 @@ int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_16FilterOperationsE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_16FloatRoundedRectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_16VisibleSelectionE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -21898,10 +21886,6 @@ int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_33StickyPositionViewportCons
 }
 
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9ImageDataE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9RectEdgesIfEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

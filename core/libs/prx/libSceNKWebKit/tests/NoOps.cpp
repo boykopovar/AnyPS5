@@ -24,7 +24,6 @@ int main() {
     WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled();
     WKBundlePageClickMenuItem();
     WKBundlePageSetContextMenuClient();
-    WKBundlePageSetPaintedObjectsCounterThreshold();
     WKContextAddSupportedPlugin();
     WKContextAllowSpecificHTTPSCertificateForHost();
     WKContextClearSupportedPlugins();

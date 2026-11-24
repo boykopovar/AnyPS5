@@ -330,14 +330,24 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
             return std::nullopt;
         }
         case ImeHostInputKind::Home: {
-            const std::size_t units = session.caret;
-            session.caret = 0;
+            std::size_t target = 0;
+            if (input.moveToLineBoundary && (session.param.option & OptionMultiline) != 0 && session.caret > 0) {
+                const std::size_t previous = session.text.find_last_of(u"\r\n", session.caret - 1);
+                if (previous != std::u16string::npos) target = previous + 1;
+            }
+            const std::size_t units = session.caret - target;
+            session.caret = static_cast<uint32_t>(target);
             QueueCaretSteps(session, CaretMoveLeft, units);
             return std::nullopt;
         }
         case ImeHostInputKind::End: {
-            const std::size_t units = session.text.size() - session.caret;
-            session.caret = static_cast<uint32_t>(session.text.size());
+            std::size_t target = session.text.size();
+            if (input.moveToLineBoundary && (session.param.option & OptionMultiline) != 0) {
+                const std::size_t next = session.text.find_first_of(u"\r\n", session.caret);
+                if (next != std::u16string::npos) target = next;
+            }
+            const std::size_t units = target - session.caret;
+            session.caret = static_cast<uint32_t>(target);
             QueueCaretSteps(session, CaretMoveRight, units);
             return std::nullopt;
         }

@@ -798,6 +798,16 @@ class CtestResolutionsTests(unittest.TestCase):
     def test_every_test_with_a_known_owner_is_resolved_with_its_position(self):
         self.assertEqual(self.resolve(self.ctest_entries()), {"a1": ("alpha", 1), "b1": ("beta", 2), "c1": ("alpha", 4)})
 
+    def test_cmake_env_preserves_the_owner_before_an_application_separator(self):
+        tests = [
+            {"name": "env_application_separator", "command": [
+                "C:/Tools/cmake.exe", "-E", "env", "--modify", "MODE=set:bin/beta.exe",
+                "bin/alpha.exe", "--", "bin/beta.exe"]},
+            {"name": "env_wrapper_separator", "command": [
+                "C:/Tools/cmake.exe", "-E", "env", "--unset=MODE", "--", "bin/beta.exe", "--", "sample"]},
+        ]
+        self.assertEqual(self.resolve(tests), {"env_application_separator": ("alpha", 1), "env_wrapper_separator": ("beta", 2)})
+
     def test_selection_matches_the_owner_or_a_referenced_target(self):
         self.assertEqual(self.resolve(self.ctest_entries(), selected={"beta"}), {"b1": ("beta", 2), "c1": ("alpha", 4)})
         self.assertEqual(self.resolve(self.ctest_entries(), selected=set()), {})

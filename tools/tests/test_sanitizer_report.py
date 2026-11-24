@@ -477,6 +477,15 @@ class SummaryInputAliasTests(unittest.TestCase):
             self.assertEqual(source.read_text(), suite(case("unit")))
 
 
+class CellTextTests(unittest.TestCase):
+    def test_cell_collapses_whitespace_and_escapes_pipes(self):
+        self.assertEqual(sanitizer_report.cell(' a  b|c '), 'a b\\|c')
+        self.assertEqual(sanitizer_report.detail_cell('x|y'), 'x\\|y')
+
+    def test_test_name_uses_backticks_unless_the_name_has_pipes_or_breaks(self):
+        self.assertEqual(sanitizer_report.test_name('ok'), '`ok`')
+        self.assertEqual(sanitizer_report.test_name('a|b'), '<code>a&#124;b</code>')
+
 
 if __name__ == "__main__":
     unittest.main()
