@@ -68,6 +68,21 @@ std::string ReadRvaCStr(const std::vector<std::uint8_t>& pe, std::uint32_t rva, 
     return std::string(begin, end);
 }
 
+std::string ReadCoffString(const std::vector<std::uint8_t>& pe, const std::size_t tableOffset, const std::size_t stringOffset) {
+    if (tableOffset > pe.size() || sizeof(std::uint32_t) > pe.size() - tableOffset)
+        throw std::runtime_error("COFF string table out of bounds");
+    const auto tableSize = Internal::Read<std::uint32_t>(pe, tableOffset);
+    if (tableSize < sizeof(std::uint32_t) || tableSize > pe.size() - tableOffset)
+        throw std::runtime_error("COFF string table out of bounds");
+    if (stringOffset < sizeof(std::uint32_t) || stringOffset >= tableSize)
+        throw std::runtime_error("COFF string offset out of bounds");
+    const auto begin = pe.begin() + static_cast<std::ptrdiff_t>(tableOffset + stringOffset);
+    const auto limit = pe.begin() + static_cast<std::ptrdiff_t>(tableOffset + tableSize);
+    const auto end = std::find(begin, limit, std::uint8_t{0});
+    if (end == limit) throw std::runtime_error("COFF string is not terminated within string table");
+    return std::string(begin, end);
+}
+
 }
 
 void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports, const PatchOptions& options) const {
@@ -94,7 +109,9 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         if (pe[offset] != '/' || !symbolTable) continue;
         const std::string reference(reinterpret_cast<const char*>(pe.data() + offset), 8);
         const auto stringOffset = std::stoul(reference.substr(1));
-        const auto name = ReadCStr(pe, static_cast<std::size_t>(symbolTable) + static_cast<std::size_t>(symbolCount) * 18 + stringOffset);
+        const auto stringTableOffsetValue = std::uint64_t{symbolTable} + std::uint64_t{symbolCount} * 18u;
+        if (stringTableOffsetValue > pe.size()) throw std::runtime_error("COFF string table out of bounds");
+        const auto name = ReadCoffString(pe, static_cast<std::size_t>(stringTableOffsetValue), stringOffset);
         if (name == ".eh_frame") {
             const char shortName[8] = ".ehfram";
             std::memcpy(pe.data() + offset, shortName, 8);
@@ -318,13 +335,16 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
 
         const std::uint32_t thunkRva = desc.OriginalFirstThunk != 0u ? desc.OriginalFirstThunk : desc.FirstThunk;
         std::size_t thunkOffset = RvaToOffset(pe, thunkRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const auto thunkSectionOffset = FindSectionOffsetByRva(pe, thunkRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const auto thunkSection = Internal::Read<PeSectionHeader>(pe, thunkSectionOffset);
+        const auto thunkRawEnd = std::uint64_t{thunkSection.PointerToRawData} + thunkSection.SizeOfRawData;
 
         const bool is64 = magic == 0x20bu;
         const std::size_t thunkEntrySize = is64 ? 8u : 4u;
         const std::uint64_t ordinalFlag = is64 ? (std::uint64_t{1} << 63u) : (std::uint64_t{1} << 31u);
 
         while (true) {
-            if (thunkOffset + thunkEntrySize > pe.size())
+            if (thunkOffset > thunkRawEnd || thunkEntrySize > thunkRawEnd - thunkOffset || thunkOffset > pe.size() || thunkEntrySize > pe.size() - thunkOffset)
                 throw std::runtime_error("thunk entry out of bounds");
 
             const std::uint64_t thunk = is64
