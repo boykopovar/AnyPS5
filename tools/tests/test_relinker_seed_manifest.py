@@ -1,13 +1,18 @@
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 TOOLS = Path(__file__).resolve().parents[1]
 TOOL = TOOLS / "relinker_seed_manifest.py"
+sys.path.insert(0, str(TOOLS))
+import relinker_seed_manifest
 
 
 class SeedManifestTests(unittest.TestCase):
@@ -32,6 +37,17 @@ class SeedManifestTests(unittest.TestCase):
             repeated = subprocess.run([sys.executable, str(TOOL), str(output)], check=True, capture_output=True, text=True)
             self.assertEqual(json.loads(repeated.stdout), report)
             self.assertEqual({p.name: p.read_bytes() for p in output.iterdir()}, before)
+
+    def test_refuses_to_describe_a_seed_changed_during_hashing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "seed"
+            path.write_bytes(b"seed")
+            before = path.stat()
+            after = SimpleNamespace(st_size=before.st_size, st_mtime_ns=before.st_mtime_ns + 1,
+                                    st_ctime_ns=before.st_ctime_ns)
+            with patch.object(os, "fstat", side_effect=[before, after]):
+                with self.assertRaisesRegex(ValueError, "corpus entry changed while reading"):
+                    relinker_seed_manifest.describe(path)
 
     def test_empty_arbitrary_and_multichunk_files(self):
         with tempfile.TemporaryDirectory() as directory:
