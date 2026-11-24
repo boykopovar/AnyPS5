@@ -61,6 +61,7 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "src/ResolverTestHooks.hpp"
+#include "common/DnsOverride.hpp"
 
 // Guest socket descriptors retain PS5 semantics while their transport is backed by host sockets.
 
@@ -3214,6 +3215,19 @@ int lookup_host(int rid, const char* hostname, const char* func, int family, std
         if (!lookup(guestHostname.c_str(), family, addresses) || addresses.empty()) {
             set_errno(NET_ENOENT);
             log_soft(func, "host DNS lookup failed");
+            return end_lookup(rid, generation, NET_ERROR_RESOLVER_ENODNS);
+        }
+        return end_lookup(rid, generation, 0);
+    }
+    DnsOverride::Address overridden{};
+    if (DnsOverride::LookupOverride(guestHostname.c_str(), overridden)) {
+        if (family == AF_INET) {
+            std::array<std::uint8_t, 16> address{};
+            std::memcpy(address.data(), overridden.data(), overridden.size());
+            if (std::find(addresses.begin(), addresses.end(), address) == addresses.end()) addresses.push_back(address);
+        }
+        if (addresses.empty()) {
+            set_errno(NET_ENOENT);
             return end_lookup(rid, generation, NET_ERROR_RESOLVER_ENODNS);
         }
         return end_lookup(rid, generation, 0);

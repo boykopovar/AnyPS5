@@ -1943,3 +1943,21 @@ if(BUILD_TESTING)
 endif()
 
 include(prx/libSceBeisobmf/Tests.cmake)
+
+if(BUILD_TESTING)
+    add_test_executable(dns_override_parser_tests ${LIBS_INCLUDE_DIR}/tests/DnsOverrideParser.cpp
+        ${LIBS_INCLUDE_DIR}/common/DnsOverride.cpp)
+    target_include_directories(dns_override_parser_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(dns_override_parser_tests)
+    add_test(NAME dns_override_parser COMMAND dns_override_parser_tests)
+    set_tests_properties(dns_override_parser PROPERTIES TIMEOUT 20)
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(dns_override_lookup_tests ${LIBS_INCLUDE_DIR}/tests/DnsOverrideLookup.cpp
+        ${LIBS_INCLUDE_DIR}/common/DnsOverride.cpp)
+    target_include_directories(dns_override_lookup_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(dns_override_lookup_tests)
+    add_test(NAME dns_override_lookup COMMAND dns_override_lookup_tests)
+    set_tests_properties(dns_override_lookup PROPERTIES TIMEOUT 20)
+endif()

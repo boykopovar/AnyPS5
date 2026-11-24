@@ -1,5 +1,6 @@
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libSceNet/include/Net.hpp"
+#include "common/DnsOverride.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -17,6 +18,7 @@
 #include "prx/libc/include/HostErrno.hpp"
 #include "prx/libkernel/Socket/include/SocketError.hpp"
 #include <cstdint>
+#include <cstdio>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -214,7 +216,8 @@ GuestResolver::HostEntry* ResolveHost(const char* name) {
         char* numericAddresses[]{reinterpret_cast<char*>(numericAddress.data()), nullptr};
         hostent nativeEntry{const_cast<char*>(name), numericAliases, AF_INET, 4, numericAddresses};
         hostent* native = &nativeEntry;
-        const bool numeric = NumericAddress(name, numericAddress);
+        bool numeric = NumericAddress(name, numericAddress);
+        if (!numeric && DnsOverride::LookupOverride(name, numericAddress)) numeric = true;
 #ifdef _WIN32
         if (!numeric) native = ::gethostbyname(name);
         if (!native) {
@@ -436,6 +439,17 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
         }
         if ((hints->flags & 4) || NumericAddress(node, v4) || numericV6) numericName = node;
     }
+    std::array<char, 16> overriddenNode{};
+    const char* queryNode = node;
+    if (node && !(hints && (hints->flags & 4))) {
+        DnsOverride::Address overridden{};
+        if (DnsOverride::LookupOverride(node, overridden)) {
+            std::snprintf(overriddenNode.data(), overriddenNode.size(), "%u.%u.%u.%u",
+                overridden[0], overridden[1], overridden[2], overridden[3]);
+            queryNode = overriddenNode.data();
+            numericName = node;
+        }
+    }
     std::array<addrinfo, 2> queries{nativeHints, nativeHints};
     std::size_t queryCount = 1;
     if (!nativeHints.ai_socktype && !nativeHints.ai_protocol) {
@@ -460,7 +474,7 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     int lookupFailure = 0;
     for (std::size_t query = 0; query < queryCount; ++query) {
         addrinfo* native = nullptr;
-        const auto error = ::getaddrinfo(node, service, &queries[query], &native);
+        const auto error = ::getaddrinfo(queryNode, service, &queries[query], &native);
         if (error) {
             if (error == EAI_SERVICE) { lookupFailure = 9; continue; }
             failure = GuestError(error);
