@@ -493,6 +493,14 @@ public:
         if (!unmap(GetCurrentProcess(), reinterpret_cast<void*>(base), 0)) fail("unmap shared guest alias");
     }
 
+    bool ProtectsItself(std::uintptr_t address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < address + bytes; ++it) {
+            if (!it->second.resident || it->second.aliasDemoted) return true;
+        }
+        return false;
+    }
+
     bool Protection(std::uintptr_t address, std::uint32_t* protection) {
         std::lock_guard lock(mutex);
         const auto found = views.find(address & ~(pageBytes - 1));
