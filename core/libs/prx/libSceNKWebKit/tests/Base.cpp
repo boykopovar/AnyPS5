@@ -1784,13 +1784,22 @@ static void TestBundleHitTestResult() {
 
     Require(WKBundleHitTestResultCopyNodeHandle(ref) == nullptr);
     Require(WKBundleHitTestResultCopyURLElementHandle(ref) == nullptr);
+    Require(WKBundleHitTestResultCopyImage(ref) == nullptr);
+    Require(WKBundleHitTestResultGetFrame(ref) == nullptr);
+    Require(WKBundleHitTestResultGetTargetFrame(ref) == nullptr);
     auto defaultRect = WKBundleHitTestResultGetImageRect(ref);
     Require(defaultRect.origin.x == 0.0 && defaultRect.size.width == 0.0);
 
     auto node = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
     auto urlElem = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    auto testFrame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto testTargetFrame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto testImage = NKWebKit::Make<NKWebKit::Image>(64, 48);
     hit->nodeHandle = node;
     hit->urlElementHandle = urlElem;
+    hit->frame = testFrame;
+    hit->targetFrame = testTargetFrame;
+    hit->image = testImage;
     hit->imageRect = NKWebKit::RectValue{{10.0, 20.0}, {30.0, 40.0}};
 
     auto* copiedNode = WKBundleHitTestResultCopyNodeHandle(ref);
@@ -1801,6 +1810,13 @@ static void TestBundleHitTestResult() {
     Require(copiedUrlElem == urlElem.Get());
     WKRelease(copiedUrlElem);
 
+    Require(WKBundleHitTestResultGetFrame(ref) == testFrame.Get());
+    Require(WKBundleHitTestResultGetTargetFrame(ref) == testTargetFrame.Get());
+
+    auto* copiedImage = WKBundleHitTestResultCopyImage(ref);
+    Require(copiedImage == testImage.Get());
+    WKRelease(copiedImage);
+
     auto rect = WKBundleHitTestResultGetImageRect(ref);
     Require(rect.origin.x == 10.0 && rect.origin.y == 20.0);
     Require(rect.size.width == 30.0 && rect.size.height == 40.0);
@@ -1809,6 +1825,9 @@ static void TestBundleHitTestResult() {
     auto* createdHit = WKBundleFrameCreateHitTestResult(frame.Get(), NKWebKit::PointValue{15.0, 25.0});
     Require(createdHit != nullptr);
     Require(WKGetTypeID(createdHit) == WKBundleHitTestResultGetTypeID());
+    Require(WKBundleHitTestResultGetFrame(createdHit) == frame.Get());
+    Require(WKBundleHitTestResultGetTargetFrame(createdHit) == nullptr);
+    Require(WKBundleHitTestResultCopyImage(createdHit) == nullptr);
     auto* hitNode = WKBundleHitTestResultCopyNodeHandle(createdHit);
     Require(hitNode != nullptr);
     auto* hitFrame = WKBundleNodeHandleCopyDocumentFrame(hitNode);
@@ -1879,6 +1898,54 @@ static void TestBundleHitTestResult() {
     threw = false;
     try {
         WKBundleHitTestResultMediaIsInFullscreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultCopyImage(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetTargetFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultCopyImage(frame.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetFrame(frame.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetTargetFrame(frame.Get());
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -3184,6 +3251,69 @@ static void TestAuthentication() {
     Require(WKAuthenticationChallengeGetTypeID() == 2);
     Require(WKAuthenticationDecisionListenerGetTypeID() == 3);
 
+    {
+        auto fresh = NKWebKit::Make<NKWebKit::AuthenticationChallenge>();
+        const void* freshRef = fresh.Get();
+        Require(WKAuthenticationChallengCopyRequestURL(freshRef) == nullptr);
+        Require(WKAuthenticationChallengeGetPreviousFailureCount(freshRef) == 0);
+        Require(!WKAuthenticationChallengeIsForMainResource(freshRef));
+        Require(!WKAuthenticationChallengeIsInMainFrame(freshRef));
+
+        const void* freshListener = WKAuthenticationChallengeGetDecisionListener(freshRef);
+        Require(freshListener != nullptr);
+        Require(WKGetTypeID(freshListener) == WKAuthenticationDecisionListenerGetTypeID());
+        Require(WKAuthenticationChallengeGetDecisionListener(freshRef) == freshListener);
+        Require(fresh->decisionListener.Get() == freshListener);
+        Require(fresh->decisionListener->decision == NKWebKit::AuthenticationDecisionListener::Decision::None);
+        WKAuthenticationDecisionListenerCancel(freshListener);
+        Require(fresh->decisionListener->decision == NKWebKit::AuthenticationDecisionListener::Decision::Cancel);
+
+        const void* freshCredential = WKAuthenticationChallengeGetProposedCredential(freshRef);
+        Require(freshCredential != nullptr);
+        Require(WKGetTypeID(freshCredential) == WKCredentialGetTypeID());
+        Require(WKAuthenticationChallengeGetProposedCredential(freshRef) == freshCredential);
+        Require(fresh->proposedCredential.Get() == freshCredential);
+        auto* freshUser = WKCredentialCopyUser(freshCredential);
+        Require(WKStringIsEmpty(freshUser));
+        WKRelease(freshUser);
+
+        const void* freshSpace = WKAuthenticationChallengeGetProtectionSpace(freshRef);
+        Require(freshSpace != nullptr);
+        Require(WKGetTypeID(freshSpace) == WKProtectionSpaceGetTypeID());
+        Require(WKAuthenticationChallengeGetProtectionSpace(freshRef) == freshSpace);
+        Require(fresh->protectionSpace.Get() == freshSpace);
+        auto* freshHost = WKProtectionSpaceCopyHost(freshSpace);
+        Require(WKStringIsEmpty(freshHost));
+        WKRelease(freshHost);
+        auto* freshRealm = WKProtectionSpaceCopyRealm(freshSpace);
+        Require(WKStringIsEmpty(freshRealm));
+        WKRelease(freshRealm);
+        Require(WKProtectionSpaceGetPort(freshSpace) == 0);
+        Require(WKProtectionSpaceGetServerType(freshSpace) == 1);
+        Require(WKProtectionSpaceGetAuthenticationScheme(freshSpace) == 1);
+        Require(!WKProtectionSpaceGetIsProxy(freshSpace));
+        Require(!WKProtectionSpaceGetReceivesCredentialSecurely(freshSpace));
+
+        auto other = NKWebKit::Make<NKWebKit::AuthenticationChallenge>();
+        const void* otherRef = other.Get();
+        Require(WKAuthenticationChallengeGetDecisionListener(otherRef) != nullptr);
+        Require(WKAuthenticationChallengeGetDecisionListener(otherRef) != freshListener);
+        Require(WKAuthenticationChallengeGetProposedCredential(otherRef) != nullptr);
+        Require(WKAuthenticationChallengeGetProposedCredential(otherRef) != freshCredential);
+        Require(WKAuthenticationChallengeGetProtectionSpace(otherRef) != nullptr);
+        Require(WKAuthenticationChallengeGetProtectionSpace(otherRef) != freshSpace);
+
+        fresh->requestURL = std::string();
+        auto* emptyUrl = WKAuthenticationChallengCopyRequestURL(freshRef);
+        Require(emptyUrl != nullptr);
+        Require(WKGetTypeID(emptyUrl) == WKURLGetTypeID());
+        auto* emptyText = WKURLCopyString(emptyUrl);
+        Require(WKStringIsEmpty(emptyText));
+        WKRelease(emptyText);
+        WKRelease(emptyUrl);
+        Require(WKAuthenticationChallengCopyRequestURL(otherRef) == nullptr);
+    }
+
     auto challenge = NKWebKit::Make<NKWebKit::AuthenticationChallenge>();
     challenge->requestURL = "https://auth.example.com/login";
     challenge->previousFailureCount = 2;
@@ -3202,6 +3332,14 @@ static void TestAuthentication() {
     const void* challengeRef = challenge.Get();
     auto* reqUrl = WKAuthenticationChallengCopyRequestURL(challengeRef);
     Require(reqUrl != nullptr);
+    Require(WKGetTypeID(reqUrl) == WKURLGetTypeID());
+    auto* reqText = WKURLCopyString(reqUrl);
+    Require(WKStringIsEqualToUTF8CString(reqText, "https://auth.example.com/login"));
+    WKRelease(reqText);
+    auto* reqUrlAgain = WKAuthenticationChallengCopyRequestURL(challengeRef);
+    Require(reqUrlAgain != nullptr);
+    Require(reqUrlAgain != reqUrl);
+    WKRelease(reqUrlAgain);
     WKRelease(reqUrl);
 
     Require(WKAuthenticationChallengeGetDecisionListener(challengeRef) == listener.Get());

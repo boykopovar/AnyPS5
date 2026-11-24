@@ -23,10 +23,7 @@ int main() {
     WKBundleExtendClassesForParameterCoder();
     WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled();
     WKBundlePageClickMenuItem();
-    WKBundlePageSetBottomOverhangImage();
     WKBundlePageSetContextMenuClient();
-    WKBundlePageSetPaintedObjectsCounterThreshold();
-    WKBundlePageSetTopOverhangImage();
     WKContextAddSupportedPlugin();
     WKContextAllowSpecificHTTPSCertificateForHost();
     WKContextClearSupportedPlugins();
@@ -36,17 +33,11 @@ int main() {
     WKContextPreconnectToServer();
     WKContextRefreshPlugIns();
     WKContextSetAdditionalPluginsDirectory();
-    WKContextSetCanHandleHTTPSServerTrustEvaluation();
-    WKContextSetCustomWebContentServiceBundleIdentifier();
-    WKContextSetDiskCacheSpeculativeValidationEnabled();
     WKContextSetIconDatabasePath();
-    WKContextSetMaximumNumberOfProcesses();
     WKContextSetPlugInAutoStartOriginHashes();
     WKContextSetPlugInAutoStartOrigins();
     WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTime();
     WKContextSetPrimaryWebsiteDataStore();
-    WKContextSetProcessModel();
-    WKContextSetUsesNetworkProcess();
     WKCookieManagerDeleteAllCookies();
     WKCookieManagerSetHTTPCookieAcceptPolicy();
     WKIconDatabaseCheckIntegrityBeforeOpening();

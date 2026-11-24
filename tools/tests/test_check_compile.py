@@ -1516,5 +1516,18 @@ class CheckCompileResolveSourceTests(unittest.TestCase):
             self.assertEqual(key, check_compile.real(file).as_posix())
 
 
+class CheckCompileCommandArgumentsTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "the POSIX command splitter is used off Windows")
+    def test_command_arguments_splits_quoted_words(self):
+        self.assertEqual(check_compile.command_arguments("cc -c 'a b.cpp' -o x.o"), ["cc", "-c", "a b.cpp", "-o", "x.o"])
+
+
+class CheckCompileEntriesTests(unittest.TestCase):
+    def test_entries_rejects_a_build_that_is_not_a_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                check_compile.entries(Path(directory) / "missing-build")
+
+
 if __name__ == "__main__":
     unittest.main()
