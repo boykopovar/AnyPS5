@@ -1418,6 +1418,7 @@ struct CachedStorageTexture {
     std::uint32_t mip;
     std::shared_ptr<StorageTexture> texture;
     std::uint64_t accounted = 0;
+    std::uint64_t lastPresent = 0;
 };
 
 // As TextureCache: use order with a hash index by key, plus one by image for StorageImageCached.
@@ -1600,6 +1601,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (layers) it->texture->RefreshLayers(layers->first, layers->second);
             else it->texture->Refresh();
             cache.entries.splice(cache.entries.begin(), cache.entries, it);
+            it->lastPresent = Recorder::Presents();
             texture = it->texture;
             if (TextureCountersReported()) counters.storageHits.fetch_add(1, std::memory_order_relaxed);
             if (profile) LookupOutcomes::Add(LookupOutcomes::StorageHit, start);
@@ -1615,6 +1617,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             }
             created->AdoptHandOver(std::move(handOver));
             CachedStorageTexture entry{key, mip, std::move(created)};
+            entry.lastPresent = Recorder::Presents();
             static const bool keepNew = std::getenv("APS5_NO_KEEP_NEW_STORAGE") == nullptr;
             if (auto* recorder = Recorder::Active(); keepNew && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) recorder->Keep(entry.texture);
             entry.accounted = heldBytes(*entry.texture);
@@ -1873,9 +1876,10 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
                         }
                         storageKept = 0;
                         bool spared = false;
+                        const auto present = Recorder::Presents();
                         for (auto it = cache.entries.end(); it != cache.entries.begin();) {
                             --it;
-                            if (it->texture->Dirty()) {
+                            if (it->texture->Dirty() || (present != 0u && it->lastPresent + 1u >= present)) {
                                 ++storageKept;
                                 continue;
                             }
