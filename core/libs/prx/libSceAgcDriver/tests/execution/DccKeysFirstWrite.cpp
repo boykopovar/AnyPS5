@@ -39,7 +39,6 @@
 #include <string_view>
 #include <vector>
 
-#ifndef _WIN32
 namespace AgcDriver {
 
 struct VulkanDeviceTestAccess {
@@ -47,7 +46,6 @@ struct VulkanDeviceTestAccess {
 };
 
 }
-#endif
 
 namespace {
 
@@ -978,21 +976,12 @@ void RunSharedImport(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
 
 }
 
-// Blended draw into a mipmapped fast-cleared target: the starting content is the clear code's
-// colour, not the stale texels, and the viewed mip's keys end uncompressed.
 constexpr std::uint32_t MipDrawSide = 128;
 constexpr std::uint32_t MipDrawLevels = 8;
 constexpr std::uint32_t MipDrawScissor = 64;
-// A 128x128 RGBA8 surface fills one 64 KiB pipe block exactly, so the viewed mip 0 is a full
-// block (the game's case), not a tail. AMD addrlib chain layout for the keys (HwlComputeDccInfo):
-// mips 1 to 7 are the mip tail and share one 4096-key block at offset 0; mip 0 follows it.
 constexpr std::size_t MipDrawMip0OffsetKeys = 4096u;
 constexpr std::size_t MipDrawMip0Keys = 4096;
-// The chain (mip 0's full block plus the tail mips' block) sits in the first two blocks; the
-// keys after it.
 constexpr std::size_t MipDrawKeysOffset = 2 * 65536;
-// The guest allocation for the chain test: the chain's two blocks plus the 8 x 4096 keys,
-// rounded up to whole blocks. (BlockBytes stays two blocks for the older tests.)
 constexpr std::size_t MipDrawBlockBytes = 3 * 65536;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> MipDrawVertexCode{
@@ -1003,8 +992,6 @@ constexpr std::array<std::array<float, 4>, 3> MipDrawTriangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-// Premultiplied (0.5, 0.5, 0.5, 0.5): ONE / ONE_MINUS_SRC_COLOR leaves 50% of the starting
-// content in the result, so the starting content is observable through the blend.
 alignas(256) constexpr std::array<std::uint32_t, 11> MipDrawPixelCode{
     0x7e0002ffu | (4u << 17u), 0x3f000000u,
     0x7e0002ffu | (5u << 17u), 0x3f000000u,
@@ -1080,12 +1067,9 @@ void MipDrawBlended(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::
 }
 
 void RunMipmappedClearDraw(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
-#ifndef _WIN32
     auto* texels = block;
     auto* keys = block + MipDrawKeysOffset;
     const auto meta = AddressOf(keys);
-    // Stale texels everywhere; the small mips uncompressed; the viewed mip's key slice a 0000
-    // clear code (AMD addrlib layout: small mips first, mip 0 last).
     std::memset(texels, 0x55, 2 * 65536);
     std::memset(keys, 0xff, std::size_t{MipDrawLevels} * 4096u);
     std::memset(keys + MipDrawMip0OffsetKeys, 0x00, MipDrawMip0Keys);
@@ -1109,12 +1093,6 @@ void RunMipmappedClearDraw(AgcDriver::VulkanDevice& device, std::uint8_t* block)
     device.WaitIdle();
     const auto layout = AgcDriver::Graphics::ColorTargetLayout(MipDrawSide, MipDrawSide, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
     Require(layout.Bytes() == color.bytes, "the viewed mip's layout differs from the target's bytes");
-    // The bind and the draw touched the image only: guest memory still holds the stale bytes
-    // everywhere (the CPU settle would have written the clear over the whole mip here), and the
-    // write-back below stores the whole mip, so the undrawn part then reads the clear, not the
-    // stale bytes. Read the raw buffer directly: the GuestMemory access hook would otherwise store
-    // the pending clear first (the write-back is exactly what we are testing happens next), so a
-    // hooked read cannot observe the pre-write-back state.
     {
         const auto* before = reinterpret_cast<const std::uint8_t*>(color.address);
         Require(std::all_of(before, before + color.bytes, [](std::uint8_t b) { return b == 0x55u; }),
@@ -1128,9 +1106,6 @@ void RunMipmappedClearDraw(AgcDriver::VulkanDevice& device, std::uint8_t* block)
         for (std::uint32_t x = 0; x < MipDrawSide; ++x) {
             const auto offset = layout.Offset(x, y);
             const bool inside = x < MipDrawScissor;
-            // 0.5 premultiplied over the starting content: 128 inside the scissor, the starting
-            // content itself outside. A 0000 clear makes the starting content 0x00 -- the stale
-            // 0x55 texels would give 170 inside and 0x55 outside instead.
             const int expected = inside ? 128 : 0;
             for (std::size_t channel = 0; channel < 4; ++channel) {
                 const int actual = static_cast<int>(stored[offset + channel]);
@@ -1142,23 +1117,12 @@ void RunMipmappedClearDraw(AgcDriver::VulkanDevice& device, std::uint8_t* block)
     AgcDriver::GuestMemory::Read(meta + MipDrawMip0OffsetKeys, keyBytes, 1);
     Require(std::ranges::all_of(keyBytes, [](std::byte key) { return key == std::byte{0xff}; }),
             "the drawn mip of a mipmapped DCC target kept its clear code in the viewed mip's keys");
-#else
-    static_cast<void>(device);
-    static_cast<void>(block);
-#endif
 }
 
-// A recorded key fill of the clear code that has not landed yet: the bind takes the GPU clear
-// from the landed code (no sync, no CPU store at bind), and after everything lands the keys are
-// uncompressed and the blended draw saw the clear colour.
 void RunMipmappedClearPendingClearFill(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
-#ifndef _WIN32
     auto* texels = block;
     auto* keys = block + MipDrawKeysOffset;
     const auto meta = AddressOf(keys);
-    // Stale texels; every key uncompressed (0xff) -- the pending fill below leaves the viewed
-    // mip's slice the 0000 clear code. The CURRENT bytes are not the clear code: the bind must
-    // take the clear from the landed value, not the current one.
     std::memset(texels, 0x55, 2 * 65536);
     std::memset(keys, 0xff, std::size_t{MipDrawLevels} * 4096u);
     AgcDriver::GuestMemory::BumpCollectEpoch();
@@ -1176,27 +1140,18 @@ void RunMipmappedClearPendingClearFill(AgcDriver::VulkanDevice& device, std::uin
     Require(color.mipCount == MipDrawLevels && color.dccAddress == meta + MipDrawMip0OffsetKeys,
             "the pending-fill target lost its key slice");
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    // A recorded fill of the clear code over the viewed mip's keys, still in flight at bind.
     const auto slice = meta + MipDrawMip0OffsetKeys;
     const std::array<std::uint32_t, 4> zeroPattern{0u, 0u, 0u, 0u};
     Require(device.FillBuffer(slice, MipDrawMip0Keys, zeroPattern), "the pending clear-code fill was not recorded");
-    // A second pending fill over the small mips' keys (a key reset still in flight, as the game
-    // re-issues its key fills every frame): the unverified path's pending-write check spans the
-    // surface's key extent from the chain base, so this is what refuses the GPU clear there and
-    // forces the CPU store at bind (the in-game cost).
     const std::array<std::uint32_t, 4> smallMipPattern{0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu};
     Require(device.FillBuffer(meta, 512, smallMipPattern), "the pending small-mip key fill was not recorded");
     MipDrawBlended(device, color);
-    // No sync at bind: the recorded fill has not been made to land -- the guest's key bytes are
-    // still the pre-fill 0xff, not the fill's 0x00 (the bind answered from the landed value).
     {
         const auto* keyBytes = reinterpret_cast<const std::uint8_t*>(slice);
         Require(std::all_of(keyBytes, keyBytes + MipDrawMip0Keys, [](std::uint8_t b) { return b == 0xffu; }),
                 "the bind of a mipmapped DCC target with a pending clear-code key fill synced the fill (the guest keys changed before any wait)");
     }
     device.WaitIdle();
-    // The bind took the GPU clear from the landed code: the guest texels were not written at
-    // bind (the clear is on the image, the bytes follow at the write-back).
     {
         const auto* before = reinterpret_cast<const std::uint8_t*>(color.address);
         Require(std::all_of(before, before + color.bytes, [](std::uint8_t b) { return b == 0x55u; }),
@@ -1222,16 +1177,9 @@ void RunMipmappedClearPendingClearFill(AgcDriver::VulkanDevice& device, std::uin
     AgcDriver::GuestMemory::Read(meta + MipDrawMip0OffsetKeys, keyBytes, 1);
     Require(std::ranges::all_of(keyBytes, [](std::byte key) { return key == std::byte{0xff}; }),
             "after a pending clear-code key fill and the GPU clear, the viewed mip's keys must be uncompressed");
-#else
-    static_cast<void>(device);
-    static_cast<void>(block);
-#endif
 }
 
-// A recorded key fill of 0xff (uncompressed) that has not landed yet: the bind must NOT clear
-// (the landed keys are uncompressed, so there is no clear to materialize).
 void RunMipmappedClearPendingUncompressedFill(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
-#ifndef _WIN32
     auto* texels = block;
     auto* keys = block + MipDrawKeysOffset;
     const auto meta = AddressOf(keys);
@@ -1251,15 +1199,11 @@ void RunMipmappedClearPendingUncompressedFill(AgcDriver::VulkanDevice& device, s
     cx[0x3a8] = static_cast<std::uint32_t>(meta >> 40u);
     const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    // A recorded fill of 0xff over the viewed mip's keys, still in flight at bind.
     const auto slice = meta + MipDrawMip0OffsetKeys;
     const std::array<std::uint32_t, 4> ffPattern{0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu};
     Require(device.FillBuffer(slice, MipDrawMip0Keys, ffPattern), "the pending 0xff fill was not recorded");
     MipDrawBlended(device, color);
     device.WaitIdle();
-    // The landed keys are 0xff (uncompressed), so there is no clear: the blended draw (0.5 white
-    // over 0.5 of the destination) saw the stale 0x55 texels: 170 inside the scissor, 0x55 outside.
-    // (The slice currently holds the 0000 clear code on disk; the code must use the LANDED value.)
     AgcDriver::Graphics::StorageTexture::FlushPending(color.address, color.bytes, nullptr, "pending-uncompressed read-back");
     device.WaitIdle();
     const auto layout = AgcDriver::Graphics::ColorTargetLayout(MipDrawSide, MipDrawSide, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
@@ -1275,22 +1219,12 @@ void RunMipmappedClearPendingUncompressedFill(AgcDriver::VulkanDevice& device, s
             }
         }
     }
-#else
-    static_cast<void>(device);
-    static_cast<void>(block);
-#endif
 }
 
-// A recorded PARTIAL key fill (a clear code over half the slice, 0xff over the other half) that
-// has not landed yet: the landed keys are mixed, so the bind must take the fallback path (still
-// correct).
 void RunMipmappedClearPendingPartialFill(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
-#ifndef _WIN32
     auto* texels = block;
     auto* keys = block + MipDrawKeysOffset;
     const auto meta = AddressOf(keys);
-    // Stale texels; every key uncompressed (0xff) -- the pending fill below leaves the first half
-    // of the viewed mip's slice a clear code and the second half still 0xff (mixed when landed).
     std::memset(texels, 0x55, 2 * 65536);
     std::memset(keys, 0xff, std::size_t{MipDrawLevels} * 4096u);
     AgcDriver::GuestMemory::BumpCollectEpoch();
@@ -1306,15 +1240,11 @@ void RunMipmappedClearPendingPartialFill(AgcDriver::VulkanDevice& device, std::u
     cx[0x3a8] = static_cast<std::uint32_t>(meta >> 40u);
     const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    // A recorded PARTIAL fill: clear code over the first half of the slice, 0xff over the second
-    // half. The landed keys are mixed, so the bind takes the fallback path.
     const auto slice = meta + MipDrawMip0OffsetKeys;
     const std::array<std::uint32_t, 4> zeroPattern{0u, 0u, 0u, 0u};
     Require(device.FillBuffer(slice, MipDrawMip0Keys / 2, zeroPattern), "the pending partial fill was not recorded");
     MipDrawBlended(device, color);
     device.WaitIdle();
-    // The landed keys are mixed, so the bind took the fallback path (no clear): the draw is over
-    // the stale texels -- 170 inside the scissor, 0x55 outside.
     AgcDriver::Graphics::StorageTexture::FlushPending(color.address, color.bytes, nullptr, "pending-partial read-back");
     device.WaitIdle();
     const auto layout = AgcDriver::Graphics::ColorTargetLayout(MipDrawSide, MipDrawSide, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
@@ -1330,14 +1260,9 @@ void RunMipmappedClearPendingPartialFill(AgcDriver::VulkanDevice& device, std::u
             }
         }
     }
-#else
-    static_cast<void>(device);
-    static_cast<void>(block);
-#endif
 }
 
 void RunMipmappedTarget(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
-#ifndef _WIN32
     constexpr std::uint32_t ChainSide = 64;
     constexpr std::uint32_t ChainLevels = 7;
     auto* texels = block;
@@ -1369,27 +1294,17 @@ void RunMipmappedTarget(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     image->MarkDirty();
     Require(AgcDriver::Graphics::CurrentDccKeys(meta, bytes) == DccKeys::Uncompressed, "the first write into a mipmapped DCC target left its keys cleared");
     Require(AgcDriver::Graphics::TextureClearKeys(resource, bytes) == DccKeys::Uncompressed, "a sampled view of a rendered mipmapped DCC target still reads its clear");
-#else
-    static_cast<void>(device);
-    static_cast<void>(block);
-#endif
 }
 
-// HwlComputeDccInfo (Mesa src/amd/addrlib/src/gfx10/gfx10addrlib.cpp): a 4096-key metadata block covers
-// 1 MiB of texels (512x512 at 4 bytes, 512x256 at 8 bytes); with a mip tail the tail levels share one
-// block at offset 0 and the levels above it follow from the smallest to mip 0.
 void RunMipKeyOffsets() {
     using AgcDriver::Graphics::DccMipKeyOffset;
-    // 3200x1800, 8 bytes, 5 mips, no tail: mips 4, 3, 2, 1 take 1, 1, 4 and 16 blocks, so mip 0 starts at 22 blocks.
     Require(DccMipKeyOffset(3200, 1800, 8, 5, 5, 0) == std::optional<std::size_t>{90112}, "mip 0 of the 3200x1800 chain does not start at key 90112");
     Require(DccMipKeyOffset(3200, 1800, 8, 5, 5, 1) == std::optional<std::size_t>{6 * 4096}, "mip 1 of the 3200x1800 chain does not start after mips 4, 3 and 2");
     Require(DccMipKeyOffset(3200, 1800, 8, 5, 5, 4) == std::optional<std::size_t>{0}, "the smallest mip of a chain without a tail does not start at key 0");
-    // 1024x1024, 4 bytes, 11 mips, tail from mip 4: the tail block, then mips 3, 2, 1 (one block each).
     Require(DccMipKeyOffset(1024, 1024, 4, 11, 4, 0) == std::optional<std::size_t>{4 * 4096}, "mip 0 of a chain with a tail does not start after the tail block and mips 3 to 1");
     Require(DccMipKeyOffset(1024, 1024, 4, 11, 4, 3) == std::optional<std::size_t>{4096}, "the lowest mip above the tail does not start right after the tail block");
     Require(DccMipKeyOffset(1024, 1024, 4, 11, 4, 5) == std::optional<std::size_t>{0}, "a mip in the tail does not read the shared tail block at offset 0");
     Require(!DccMipKeyOffset(1024, 1024, 4, 11, 4, 11).has_value(), "a level past the chain was given a key offset");
-    // 2048x1024, 8 bytes, 12 mips, tail from mip 5: tail block + mip 4 (128x64, 1) + mip 3 (1) + mip 2 (1) + mip 1 (1024x512: 2x2 = 4).
     Require(DccMipKeyOffset(2048, 1024, 8, 12, 5, 0) == std::optional<std::size_t>{8 * 4096}, "mip 0 of the 2048x1024 8-byte chain does not start at 8 blocks");
 }
 

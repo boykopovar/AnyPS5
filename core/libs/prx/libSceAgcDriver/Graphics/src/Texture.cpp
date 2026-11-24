@@ -5239,9 +5239,6 @@ void StorageTexture::appendStoredLayers(std::uint64_t address, std::size_t bytes
 bool StorageTexture::storesWhole() const {
     if (descriptor.dccAddress == 0) return false;
     if (uploadedKeys != DccKeys::Uncompressed) return true;
-    // A pending ClearMip fill: the undrawn part of the filled mip is the clear, so the write-back
-    // must store it whole, not only the units a partial access overlaps (the same rule as an image
-    // uploaded under a clear code).
     if (holdsClearFill && anyLayerPending()) return true;
     if (descriptor.mipCount <= 1) return false;
     auto& live = Live();
@@ -7199,11 +7196,6 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
 }
 
 bool StorageTexture::ClearMip(const std::array<std::byte, 16>& texel, std::uint32_t level, bool verifiedCodeClear, const char*& refusal) {
-    // The fast clear of the viewed mip of a mipmapped chain, cleared on the GPU instead of the CPU
-    // store of storeClearTexels: the chain image holds the stored texels (its keys are not one
-    // clear code), so a draw into the target would start from the stale bytes. The image holds the
-    // clear and the guest bytes follow at the write-back, which stores the filled mip whole
-    // (holdsClearFill): no CPU memset of the mip, no generation bump, no re-upload.
     if (level >= descriptor.mipCount || descriptor.mipCount <= 1) { refusal = "level"; return false; }
     if (geometry.thick || geometry.imageDepth != 1 || geometry.layers != 1) { refusal = "geometry"; return false; }
     const auto& mip = geometry.mips[level];
@@ -7222,11 +7214,6 @@ bool StorageTexture::ClearMip(const std::array<std::byte, 16>& texel, std::uint3
         return false;
     }
     if (descriptor.dccAddress != 0 && !verifiedCodeClear) {
-        // A recorded key write still landing is not in the bytes yet: refuse (the caller stores on
-        // the CPU, as before). The verified-code path skips both checks: the caller read the
-        // landed code (LandedDccKeys, from the pending fills themselves, no sync) and passed its
-        // exact texel, and the clear is recorded after the fill in the same queue (the
-        // register-clear flow does the same, which the keys' own scan cannot see through).
         if (Recorder::SnapshotWriteOverlaps(descriptor.dccAddress, static_cast<std::size_t>(guestBytes / 256)) || TextureClearKeys(descriptor, guestBytes) != DccKeys::Uncompressed) {
             refusal = "keys";
             return false;
@@ -7237,8 +7224,6 @@ bool StorageTexture::ClearMip(const std::array<std::byte, 16>& texel, std::uint3
         refusal = "no recorder";
         return false;
     }
-    // Other images over the range hold content the clear supersedes: stamped below, they re-upload
-    // at their next use (behind this image's write-back).
     bool aliasedKeys = false;
     {
         auto& live = Live();
@@ -7252,8 +7237,6 @@ bool StorageTexture::ClearMip(const std::array<std::byte, 16>& texel, std::uint3
     static const bool trace = std::getenv("APS5_TRACE_FILL_COVER") != nullptr;
     static std::atomic<int> traced{0};
     if (trace && (descriptor.dccAddress != 0 || aliasedKeys) && traced.fetch_add(1) < 16) std::fprintf(stderr, "[fill-cover] clear of mip %u of 0x%llx+0x%llx (format %u, keys 0x%llx%s): pattern %08x %08x %08x %08x\n", level, static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), descriptor.format, static_cast<unsigned long long>(descriptor.dccAddress), aliasedKeys ? " aliased" : "", pattern[0], pattern[1], pattern[2], pattern[3]);
-    // A neighbour's results shadowed in the range's edge units reach the import before the stamp
-    // below makes those units stale (nothing for a 64 KiB-multiple range).
     PublishShadow(begin, bytes, PublishScope::PartialUnits, PublishReason::FillClear);
     GuestMemory::MarkWritten(begin, bytes);
     const auto commands = recorder->Commands();
@@ -7264,7 +7247,6 @@ bool StorageTexture::ClearMip(const std::array<std::byte, 16>& texel, std::uint3
         const std::pair<VkImage, bool> cleared{image, true};
         recorder->NoteAccess(Recorder::CommandClass::FillClear, Recorder::Access{{}, {}, std::span(&cleared, 1), VK_PIPELINE_STAGE_TRANSFER_BIT});
     }
-    // The mip's subresource alone: the other levels keep their content (unlike a whole-image fill).
     VkImageSubresourceRange subresource{VK_IMAGE_ASPECT_COLOR_BIT, level, 1u, 0u, 1u};
     VkImageMemoryBarrier toClear{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     toClear.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -7284,8 +7266,6 @@ bool StorageTexture::ClearMip(const std::array<std::byte, 16>& texel, std::uint3
     toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
     recorder->EndGpuTiming(timing, bytes);
-    // The image holds the fill and guest memory what it held: the texels reach it at the
-    // write-back, which keeps the 64 KiB blocks the CPU writes from now on.
     const bool watched = GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     if (watched) {
         layerOriginal.assign(trackedLayers, false);
@@ -7293,9 +7273,6 @@ bool StorageTexture::ClearMip(const std::array<std::byte, 16>& texel, std::uint3
         releaseUnheldOriginal();
     }
     if (blockUnits) {
-        // The units the mip covers, rounded out for the edge unit (its other bytes are outside the
-        // surface or the next mip: the store clips at the surface end, and the publish above already
-        // carries the partial scope).
         const auto first = static_cast<std::uint32_t>((begin - descriptor.baseAddress) / trackedLayerBytes);
         const auto count = static_cast<std::uint32_t>((bytes + trackedLayerBytes - 1) / trackedLayerBytes);
         if (!watched) {

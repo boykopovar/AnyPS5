@@ -466,11 +466,6 @@ std::optional<std::uint8_t> overwrittenStencil(const State& state) {
 
 std::size_t colorKeyCount(const ColorTarget& color, std::size_t bytes) {
     if (color.mipCount == 1 && color.depth == 1 && color.dccPipeAligned) return DccKeyCount(ColorTextureTileMode(color.tileMode), color.elementBytes, color.extent.width, color.extent.height, bytes);
-    // A 2D mipmapped pipe-aligned R64KBX chain (see DecodeColorBuffer): the viewed mip's key array
-    // spans its own padded console extent (AMD addrlib HwlComputeDccInfo), not the guestBytes/256 of
-    // its texels. Marks and overlap checks over the viewed mip's keys use this; key reads keep the
-    // historical per-256-bytes count, and other targets (non-pipe-aligned, non-R64KBX, mipCount 0)
-    // keep their old counts.
     if (color.mipCount > 1 && color.depth == 1 && color.dccPipeAligned && ColorTextureTileMode(color.tileMode) == TextureTileMode::kR64KBX) return DccMipKeySlice(color.extent.width, color.extent.height, color.elementBytes);
     return DccKeyBytes(bytes);
 }
@@ -2208,26 +2203,9 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
 // over the target's pages, the DCC key scan of TextureClearKeys, then UnchangedSince), with the
 // [draws] target-lookup accounting. `lookup` makes (or finds) the image; DrawWithRecipe refreshes
 // the stored object instead.
-// A mipmapped DCC target's viewed mip can be fast-cleared by its own key slice while the chain
-// image the draw reads from still holds the stored texels (the chain's keys are not one clear
-// code, so the upload keeps them): the draw would start from the stale bytes instead of the
-// console's fast clear. Clear the mip on the resident image -- no CPU store of the mip and no
-// re-upload: the guest bytes follow through the write-back, which stores the filled mip whole
-// (the undrawn part is the clear, not the stored bytes) -- and mark the slice's keys
-// uncompressed, as the CPU path did. Without a resident image, or when it cannot take the clear
-// (a pattern it cannot encode, a tail mip), materialize the clear on the CPU as before; the
-// keys are already uncompressed, so the next upload reads the clear bytes. Returns false when
-// the keys are not one clear code (nothing to do here). Single-level targets already get this
-// from the image being uploaded under the clear, and ClearSingle expands stored texels, which
-// the target's own write-back owns.
 bool materializeMipClear(const Context& context, const ColorTarget& color, std::shared_ptr<StorageTexture>& resident) {
     if (color.dccAddress == 0 || color.mipCount <= 1 || color.mipTail) return false;
     const auto keyCount = std::max<std::size_t>(colorKeyCount(color, color.bytes), 1u);
-    // The keys may still be landing (a recorded key fill is in flight). Answer from the landed
-    // value without syncing: when every pending writer is a fill that leaves one fillable clear
-    // code over the slice, take the GPU clear (the clear is recorded after the fill in the same
-    // queue, so order is kept). When they leave 0xff there is no clear; when they are mixed,
-    // partial, or an unknown writer, fall back to the current keys (the previous behaviour).
     const auto landed = LandedDccKeys(color.dccAddress, color.bytes, keyCount);
     DccKeys keys;
     bool verified;
@@ -2241,9 +2219,6 @@ bool materializeMipClear(const Context& context, const ColorTarget& color, std::
     if (!IsDccClear(keys) || keys == DccKeys::ClearSingle || (keys == DccKeys::ClearRegister && color.elementBytes > 8u)) return false;
     const auto texel = clearTexel(color, keys);
     if (resident != nullptr) {
-        // The fill records the exact clear the slice's code names; `verified` lifts the pending-
-        // key-write refusal (the caller read the landed code), and the slice is expanded once the
-        // fill is in.
         const char* refusal = nullptr;
         if (resident->ClearMip(texel, color.mip, verified, refusal)) {
             MarkDccUncompressed(context, color.dccAddress, color.bytes, keyCount);
@@ -2251,9 +2226,6 @@ bool materializeMipClear(const Context& context, const ColorTarget& color, std::
         }
         MarkDccUncompressed(context, color.dccAddress, color.bytes, keyCount);
     }
-    // No resident image, or it refused the clear (an unencodable pattern, a tail mip, an unknown
-    // pending writer): the CPU store; the keys are already uncompressed, so write the captured
-    // clear.
     StorageTexture::FlushPending(color.address, color.bytes, nullptr, "fast-clear materialization");
     writeTexels(color, texel);
     return true;
@@ -5348,8 +5320,6 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
             }
         }
         if (color.mipCount > 1 && resident == nullptr) {
-            // A mipmapped target's resident is the chain image (a different byte size, so
-            // metadataPassResident is null): clear the viewed mip on it instead of the CPU store.
             std::shared_ptr<StorageTexture> chain = CachedStorageSurface(context, SurfaceForTarget(color));
             if (materializeMipClear(context, color, chain)) continue;
         }

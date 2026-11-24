@@ -25,14 +25,7 @@ const char* DccKeysName(DccKeys keys);
 std::size_t DccKeyBytes(std::uint64_t surfaceBytes);
 std::size_t DccKeyCount(TextureTileMode tileMode, std::uint32_t elementBytes, std::uint32_t width, std::uint32_t height, std::uint64_t surfaceBytes);
 std::size_t DccKeyCount(const GuestTextureResource& surface, std::uint64_t surfaceBytes);
-// The DCC key slice of one mip of a 2D SW_64KB_R_X mip chain, per AMD addrlib Gfx10Lib::HwlComputeDccInfo:
-// a metadata block is always 4096 keys covering 1 MiB of texels (texel extent 512 x 1 MiB/512/element bytes),
-// so a mip's slice is (ceil(width/512) x ceil(height/block height) x 4096) keys. Mip chains place the small
-// mips first, each a whole number of blocks, mip 0 last.
 std::size_t DccMipKeySlice(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes);
-// The key offset of one mip of such a chain (HwlComputeDccInfo): the mip-tail levels share one
-// 4096-key block at offset 0, then the levels above the tail follow from the smallest to mip 0, each
-// sized by DccMipKeySlice of its ShiftCeil extent. A level in the tail answers 0 (the shared block).
 std::optional<std::size_t> DccMipKeyOffset(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, std::uint32_t mipCount, std::uint32_t firstTailLevel, std::uint32_t level);
 
 template<typename ReadFollowed, typename ReadNamed>
@@ -48,12 +41,6 @@ bool IsDccClear(DccKeys keys);
 std::optional<std::uint8_t> LandedUniformMetadataByte(std::uint64_t address, std::size_t bytes);
 DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
 DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount);
-// What the keys read once the recorded GPU writes over the range land, without syncing: the
-// uniform landed byte when every pending writer is a known fill (or copy) covering the range,
-// Unreadable when they are mixed, partial, or a writer that is not a known fill. When nothing is
-// pending this is CurrentDccKeys. Used by the mipmapped color-target fast clear to take the GPU
-// clear when the pending key fill is the clear code itself (order is kept: the clear is recorded
-// after the fill in the same queue).
 DccKeys LandedDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount);
 std::optional<DccKeys> KnownPendingDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
 std::optional<std::uint8_t> CurrentUniformMetadataByte(std::uint64_t address, std::size_t bytes);

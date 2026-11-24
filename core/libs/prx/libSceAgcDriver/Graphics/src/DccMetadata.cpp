@@ -487,8 +487,6 @@ std::size_t DccKeyCount(const GuestTextureResource& surface, std::uint64_t surfa
 std::size_t DccMipKeySlice(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes) {
     constexpr std::uint32_t MetaBlockEdge = 512;
     constexpr std::size_t MetaBlockKeys = 4096;
-    // A metadata block is 4096 keys covering 1 MiB of texels, so its texel extent is
-    // 512 x (1 MiB / 512 / element bytes); 512x512 for 4-byte elements, 512x256 for 8-byte.
     const auto MetaBlockHeight = 1048576u / MetaBlockEdge / elementBytes;
     const auto pitch = (width + MetaBlockEdge - 1u) / MetaBlockEdge;
     const auto rows = (height + MetaBlockHeight - 1u) / MetaBlockHeight;
@@ -612,8 +610,6 @@ DccKeys LandedDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std
     if (recorder == nullptr || !recorder->PendingWriteOverlaps(metaAddress, keyCount)) {
         return CurrentDccKeys(metaAddress, surfaceBytes, keyCount);
     }
-    // Recorded writes over the keys are still landing: answer from them without syncing. A shadow
-    // (another image's result over the keys) means the landed bytes are not what the writes say.
     if (AnyShadowedOverlaps(metaAddress, keyCount)) return DccKeys::Unreadable;
     const auto landed = KeysAfterPendingWrites(*recorder, metaAddress, keyCount);
     if (landed.mixed || landed.unknown || landed.value < 0) return DccKeys::Unreadable;

@@ -2447,8 +2447,6 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dstSelY = 5;
     surface.dstSelZ = 6;
     surface.dstSelW = 7;
-    // A mipmapped target's own keys sit at a per-mip offset (see DecodeColorBuffer); the resident
-    // surface spans the whole chain and keeps the chain's key base.
     surface.dccAddress = color.chainDccAddress != 0 ? color.chainDccAddress : color.dccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
     surface.dccPipeAligned = color.dccPipeAligned;
@@ -2739,12 +2737,6 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.chainDccAddress = dccBase;
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
             color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
-            // A 2D mipmapped DCC color target carries the whole chain's metadata, but only the viewed
-            // mip is written. Give that mip its own key range (AMD addrlib HwlComputeDccInfo layout: small
-            // mips first, each a whole number of 4096-key blocks, mip 0 last) so the single-level handling
-            // applies -- start from the clear colour when the mip's keys are one clear code, mark them
-            // uncompressed after drawing, keep stored texels for mixed keys. Arrays and 3D keep the chain
-            // address only (their keys are not modeled).
             if (color.dccPipeAligned && ColorTextureTileMode(color.tileMode) == TextureTileMode::kR64KBX && !RuntimeSwitches::Set(RuntimeSwitch::NoDccMipFastClear)) {
                 if (const auto offset = DccMipKeyOffset(color.surfaceExtent.width, color.surfaceExtent.height, color.elementBytes, color.mipCount, std::min(firstTailLevel, color.mipCount), color.mip)) color.dccAddress = dccBase + *offset;
             }
