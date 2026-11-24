@@ -1242,12 +1242,11 @@ private:
                     const auto high = ImageTableAbi::ScalarAddressDword(pointer, hop.offset, hop.immediate + 4u);
                     if (!low.has_value() || !high.has_value() || (*low & 3u) != 0u || *high != *low + sizeof(std::uint32_t) || !AddressAccessible(*low) || !AddressAccessible(*high)) {
                         records.states[entry] = RecordState::Unmapped;
-                        break;
+                        return;
                     }
                     pointer = (static_cast<std::uint64_t>(Read(*high)) << 32u) | Read(*low);
                     tables.ranges.emplace_back(*low, 2u * sizeof(std::uint32_t));
                 }
-                if (records.states[entry] != RecordState::Read) return;
                 if (column.buffer) records.pointers[entry] = pointer;
                 DescriptorValue value;
                 value.dwordCount = column.sampler || column.buffer ? 4u : 8u;
@@ -1286,7 +1285,7 @@ private:
                     if (address.has_value() && (*address & 3u) != 0u) address.reset();
                     if (!address.has_value() || !AddressAccessible(*address)) {
                         records.states[entry] = RecordState::Unmapped;
-                        break;
+                        return;
                     }
                     value.dwords[dword] = Read(*address);
                     value.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
