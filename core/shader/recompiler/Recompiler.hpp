@@ -736,6 +736,7 @@ struct DescriptorBinding {
     ElementFlags bufferRead;
     std::vector<std::uint32_t> bufferExtent;
     std::vector<ImageOverwrite> imageOverwrites;
+    std::vector<bool> bufferDeferredTypeFault;
 };
 
 struct ImageTableEntryPoison {

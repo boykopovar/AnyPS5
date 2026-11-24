@@ -92,12 +92,12 @@ static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update
 #if defined(__cpp_lib_atomic_shared_ptr)
 static_assert(sizeof(RecompileResult) == 560, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
-static_assert(sizeof(DescriptorBinding) == 944, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 984, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
-static_assert(sizeof(CompiledShaderInfo) == 352, "CompiledShaderInfo changed: update the info encoder");
-static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
+static_assert(sizeof(CompiledShaderInfo) == 392, "CompiledShaderInfo changed: update the info encoder");
+static_assert(sizeof(ShaderInfo) == 272, "ShaderInfo changed: update the info encoder");
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
 static_assert(sizeof(ImageResource) == 244, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
@@ -109,7 +109,7 @@ static_assert(sizeof(IrDescriptorBinding) == 32, "IrDescriptorBinding changed: u
 static_assert(sizeof(BindingAllocationResult) == 184, "BindingAllocationResult changed: update the allocation encoder");
 static_assert(sizeof(CompiledBindingLayout) == 88, "CompiledBindingLayout changed: update the allocation encoder");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
-static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update EncodePlan and DecodePlan");
+static_assert(sizeof(IrResourcePlan) == 768, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(sizeof(IrValue) == 144, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
@@ -143,7 +143,7 @@ constexpr std::size_t fieldCount() {
     }
 }
 
-static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
+static_assert(fieldCount<ShaderInfo>() == 25, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 52, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
@@ -311,6 +311,11 @@ public:
         for (const bool flag : flags) Value(flag);
     }
 
+    void Flags(const std::vector<bool>& flags) {
+        Value<std::uint64_t>(flags.size());
+        for (const bool flag : flags) Value(flag);
+    }
+
     void Compact(std::uint64_t value) {
         while (value >= 0x80u) {
             Raw(static_cast<std::uint8_t>(value | 0x80u));
@@ -408,6 +413,12 @@ public:
     }
 
     void Flags(ElementFlags& flags) {
+        const auto count = Count(1);
+        flags.clear();
+        for (std::size_t i = 0; i < count; ++i) flags.push_back(Get<bool>());
+    }
+
+    void Flags(std::vector<bool>& flags) {
         const auto count = Count(1);
         flags.clear();
         for (std::size_t i = 0; i < count; ++i) flags.push_back(Get<bool>());
@@ -524,6 +535,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Values(std::span<const std::uint64_t>(binding.imageSamplers));
     writer.Flags(binding.bufferRead);
     writer.Values(std::span<const std::uint32_t>(binding.bufferExtent));
+    writer.Flags(binding.bufferDeferredTypeFault);
     writer.List(binding.imageOverwrites, [](Writer& out, const ImageOverwrite& proof) { encodeOverwrite(out, proof); });
 }
 
@@ -555,6 +567,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Values(binding.imageSamplers);
     reader.Flags(binding.bufferRead);
     reader.Values(binding.bufferExtent);
+    reader.Flags(binding.bufferDeferredTypeFault);
     reader.List(binding.imageOverwrites, 133, [](Reader& in, ImageOverwrite& proof) { decodeOverwrite(in, proof); });
 }
 
@@ -922,6 +935,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
     writer.Value(info.usesDma);
     writer.Value(info.bdaWrites);
     writer.Value(info.usesFaultBuffer);
+    writer.Flags(info.deferInvalidBufferTypeFaults);
     writer.Value(info.dispatchThreadLimit);
     writer.Value(info.rasterPrimitive);
     writer.Value(info.layerExported);
@@ -1042,6 +1056,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     reader.Value(info.usesDma);
     reader.Value(info.bdaWrites);
     reader.Value(info.usesFaultBuffer);
+    reader.Flags(info.deferInvalidBufferTypeFaults);
     reader.Value(info.dispatchThreadLimit);
     reader.Value(info.rasterPrimitive);
     reader.Value(info.layerExported);

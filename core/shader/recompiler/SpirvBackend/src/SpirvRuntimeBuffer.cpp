@@ -185,7 +185,14 @@ RuntimeDescriptor descriptor(SpirvValueEmitContext& context, const IrValue& inst
         }
     }
     const bool covered = memory.gpuDescriptor && memory.kind != ResourceKind::ScalarBuffer && faultCheckCovered(state, faultCheckKey(context, instruction, 8u), guard);
-    if (memory.gpuDescriptor && !covered) faultIf(context, instruction, invalid, base, 0u, BdaAbi::FaultReason::InvalidDescriptor);
+    const auto& deferredFaults = state.program.Info().deferInvalidBufferTypeFaults;
+    const bool deferInvalidType = state.program.Resources().stage == IrShaderStage::Pixel && memory.resource < deferredFaults.size() && deferredFaults[memory.resource];
+    if (memory.gpuDescriptor) {
+        if (!covered) faultIf(context, instruction, invalid, base, 0u, BdaAbi::FaultReason::InvalidDescriptor);
+    } else if (deferInvalidType) {
+        EmitIfCondition(state, invalid, [&] { RecordBdaFaultWords(state, ConstantU32(state, 0u), ConstantU32(state, 0u), ConstantU32(state, 0u), BdaInstructionPc(state, instruction), BdaAbi::FaultReason::InvalidDescriptor); });
+        StopBdaInvocationIf(state, invalid);
+    }
     const auto stride = field(state, word1, 16u, 14u);
     auto baseHigh = runtime ? word1 : context.Arg(*handle, 1u);
     if (!runtime && GcnGuestShaders()) baseHigh = Binary(state, spv::OpBitwiseAnd, u32, baseHigh, ConstantU32(state, GcnBufferWord1Mask));

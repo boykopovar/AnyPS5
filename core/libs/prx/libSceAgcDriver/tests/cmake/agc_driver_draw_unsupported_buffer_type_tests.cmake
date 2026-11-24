@@ -12,5 +12,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_draw_unsupported_buffer_type_skip_refused agc_driver_draw_unsupported_buffer_type_skip_refused_finisher agc_driver_draw_unsupported_buffer_type_skip_refused_draw_pipeline PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_draw_unsupported_buffer_type_deferred_fault COMMAND agc_driver_draw_unsupported_buffer_type_tests --deferred-fault)
+    set_tests_properties(agc_driver_draw_unsupported_buffer_type_deferred_fault PROPERTIES
+        ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_draw_unsupported_buffer_type_deferred_fault PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     agc_add_draw_pipeline_test(agc_driver_draw_unsupported_buffer_type)
 endif()

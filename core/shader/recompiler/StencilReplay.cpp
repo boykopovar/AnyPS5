@@ -1440,8 +1440,13 @@ bool StencilReplayNeedsStore(const IrProgram& program, std::span<const std::uint
     return StencilReplayLanesFixed(capabilities) && !StencilReplaySafe(program, false);
 }
 
+static bool DeferredBufferFaultsOnly(const IrProgram& program) {
+    const auto& deferred = program.Info().deferInvalidBufferTypeFaults;
+    return !program.Info().usesDma && std::ranges::any_of(deferred, [](bool value) { return value; });
+}
+
 bool StencilReplaySafe(const IrProgram& program, bool lanesFixed) {
-    if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || (program.Info().usesFaultBuffer && program.Resources().guardedSrtSlots.empty())) return false;
+    if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || (program.Info().usesFaultBuffer && program.Resources().guardedSrtSlots.empty() && !DeferredBufferFaultsOnly(program))) return false;
     if (program.Info().usesFaultBuffer && !FaultControlFlowAcyclic(program)) return false;
     for (const auto& input : program.Info().inputs) if (input.kind == StageInputKind::PrimitiveId) return false;
     bool masks = false;
