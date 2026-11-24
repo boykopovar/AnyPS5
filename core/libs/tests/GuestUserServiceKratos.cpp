@@ -112,6 +112,7 @@ void TestNullOutputPointers() {
     Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetTraditionalChineseInputType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 
     for (int invalidId : {0, -1, USER_SERVICE_USER_ID_INVALID, 123}) {
         Require(sceUserServiceGetUserNumber(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -121,6 +122,7 @@ void TestNullOutputPointers() {
         Require(sceUserServiceGetJapaneseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
         Require(sceUserServiceGetTraditionalChineseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
         Require(sceUserServiceGetNpAccountId(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetIsSpartacusEnabled(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     }
 }
 
@@ -147,6 +149,10 @@ void TestStandardUserProfileBounds() {
 
         Require(sceUserServiceIsGuestUser(userId) == 0);
         Require(sceUserServiceIsSharePlayClientUser(userId) == 0);
+
+        bool spartacus = false;
+        Require(sceUserServiceGetIsSpartacusEnabled(userId, &spartacus) == USER_SERVICE_OK);
+        Require(spartacus);
     }
 
     const std::uint32_t guests[] = {0x20000000u, 0x20000001u, 0x2abcdef0u, 0x2fffffffu, 0x30000000u, 0x3fffffffu};
