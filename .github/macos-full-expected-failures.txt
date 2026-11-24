@@ -12,8 +12,6 @@ guest_throw_bad_array_new_length
 guest_libc_internal_exception_virtuals
 # #21538 #22091 #23395
 run_report
-# #21538 #22091 #23395
-guest_kernel_app_archive_mmap
 # #21720
 file_streams
 # #22443 #22623
@@ -22,5 +20,3 @@ guest_sce_net
 guest_socket_port_zero
 # #20161
 guest_poll
-# #16510
-nkwebkit_filteroperation
