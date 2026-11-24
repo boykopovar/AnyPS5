@@ -366,6 +366,11 @@ bool Multicast(const sockaddr_storage& address) {
     if (address.ss_family == AF_INET) return (reinterpret_cast<const unsigned char*>(&reinterpret_cast<const sockaddr_in&>(address).sin_addr)[0] & 0xf0) == 0xe0;
     return address.ss_family == AF_INET6 && reinterpret_cast<const unsigned char*>(&reinterpret_cast<const sockaddr_in6&>(address).sin6_addr)[0] == 0xff;
 }
+bool ConnectedDatagramDestination(const Socket& socket, const sockaddr_storage& destination) {
+    if (socket.type != 2 || (socket.family != 2 && socket.family != 28)) return false;
+    if (destination.ss_family == AF_INET6 && reinterpret_cast<const sockaddr_in6&>(destination).sin6_port == 0) return false;
+    return PeerConnected(socket);
+}
 constexpr std::int64_t NotAnswered = -2;
 std::int64_t ZeroPortSend(const Socket& socket, const sockaddr_storage& destination, std::uint64_t length) {
     if (socket.type != 2 || socket.family != 2 || destination.ss_family != AF_INET) return NotAnswered;
@@ -1103,7 +1108,10 @@ bool SendBeforeConnect(Socket& socket) {
 #ifdef __linux__
     if (socket.connectPending) {
         pollfd entry{socket.value, POLLOUT, 0};
-        if (::poll(&entry, 1, 0) == 0) return true;
+        int ready;
+        do ready = ::poll(&entry, 1, 0); while (ready < 0 && errno == EINTR);
+        if (ready < 0) throw std::runtime_error("send: polling a pending connect failed, errno " + std::to_string(errno));
+        if (ready == 0) return true;
         socket.connectPending = false;
     }
 #endif
@@ -2387,6 +2395,7 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
         sockaddr_storage native{};
         socklen_t size;
         if (!Address(socket->family, address, addressLength, native, size)) return socket->type == 2 && SourceFaults(buffer, length) ? Fail(14) : -1;
+        if (ConnectedDatagramDestination(*socket, native)) return Fail(SourceFaults(buffer, length) ? 14 : 56);
         if (const auto answered = ZeroPortSend(*socket, native, length); answered != NotAnswered)
             return socket->type == 2 && SourceFaults(buffer, length) ? Fail(14) : answered;
 #ifdef _WIN32

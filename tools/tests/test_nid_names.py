@@ -945,6 +945,44 @@ class NidEncodingTests(unittest.TestCase):
             db = nid_names.read_db(path)
             self.assertEqual(db, {"AAAAAAAAAAA": "first", "CCCCCCCCCCC": "third"})
 
+class PureHelperTests(unittest.TestCase):
+    def test_strip_nid_postfix_removes_the_postfix_and_disambiguator(self):
+        self.assertEqual(nid_names.strip_nid_postfix("sceFoo_nid_postfix"), "sceFoo")
+        self.assertEqual(nid_names.strip_nid_postfix("sceFoo_nid_disambig3_nid_postfix"), "sceFoo")
+        self.assertEqual(nid_names.strip_nid_postfix("sceFoo_nid_disambig3"), "sceFoo")
+        self.assertEqual(nid_names.strip_nid_postfix("plain"), "plain")
+
+    def test_option_name_matches_exact_and_unique_abbreviated_options(self):
+        options = ("--nid", "--name", "-h")
+        self.assertEqual(nid_names.option_name("-h", options), "-h")
+        self.assertEqual(nid_names.option_name("--nid=abc", options), "--nid")
+        self.assertEqual(nid_names.option_name("--na", options), "--name")
+
+    def test_option_name_ignores_values_and_ambiguous_prefixes(self):
+        options = ("--nid", "--name", "-h")
+        self.assertIsNone(nid_names.option_name("abc", options))
+        self.assertIsNone(nid_names.option_name("-", options))
+        self.assertIsNone(nid_names.option_name("--unknown", options))
+        self.assertEqual(nid_names.option_name("--n", options), "--n")
+class SourceScanHelperTests(unittest.TestCase):
+    def test_source_files_lists_cpp_files_outside_test_folders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("a.cpp", "sub/d.cpp", "test/b.cpp", "Tests/c.cpp", "e.h"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("", encoding="utf-8")
+            found = [path.relative_to(root).as_posix() for path in nid_names.source_files(root)]
+            self.assertEqual(found, ["a.cpp", "sub/d.cpp"])
+
+    def test_source_assembly_definitions_yield_the_quoted_function_name(self):
+        self.assertEqual(list(nid_names.source_assembly_definitions('APS5_ASM_FUNCTION("sceFoo")\n')), ["sceFoo"])
+        self.assertEqual(list(nid_names.source_assembly_definitions('APS5_SIGNAL_ASM_FUNCTION("sceBar")\n')), ["sceBar"])
+
+    def test_source_assembly_definitions_ignore_invalid_names_and_other_macros(self):
+        self.assertEqual(list(nid_names.source_assembly_definitions('APS5_ASM_FUNCTION("bad name")\n')), [])
+        self.assertEqual(list(nid_names.source_assembly_definitions('OTHER_MACRO("sceFoo")\n')), [])
+
     def test_read_db_prefers_a_verified_duplicate_in_either_order(self):
         symbol = "sceKernelUsleep"
         nid = nid_names.compute_nid(symbol)

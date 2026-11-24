@@ -40,6 +40,7 @@ static constexpr int GUEST_RLIMIT_KQUEUES = 13;
 static constexpr int GUEST_RLIMIT_UMTXP = 14;
 static constexpr int GUEST_RLIM_NLIMITS = 15;
 static constexpr std::int64_t GUEST_RLIM_INFINITY = std::numeric_limits<std::int64_t>::max();
+static constexpr std::int64_t GUEST_OPEN_FILES_PER_PROCESS = 12555;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -118,26 +119,21 @@ static void CheckOpenFileLimit() {
     RequireDescriptorsEndAt(limit);
 #endif
     Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &limit) == 0);
-    const GuestResourceLimit lowered{limit.rlim_max > 1 ? limit.rlim_max - 1 : 1, limit.rlim_max};
+    const std::int64_t normalizedMax = std::min(limit.rlim_max, GUEST_OPEN_FILES_PER_PROCESS);
+    const std::int64_t normalizedCur = std::min(limit.rlim_cur, normalizedMax);
+    const GuestResourceLimit normalized = GuestLimit(GUEST_RLIMIT_NOFILE);
+    Require(normalized.rlim_cur == normalizedCur && normalized.rlim_max == normalizedMax);
+    const GuestResourceLimit lowered{normalizedMax > 1 ? normalizedMax - 1 : 1, normalizedMax};
     Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &lowered) == 0);
     const GuestResourceLimit updated = GuestLimit(GUEST_RLIMIT_NOFILE);
-    Require(updated.rlim_cur == lowered.rlim_cur);
-    Require(updated.rlim_max == lowered.rlim_max);
-    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &limit) == 0);
+    Require(updated.rlim_cur == lowered.rlim_cur && updated.rlim_max == lowered.rlim_max);
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &normalized) == 0);
     const GuestResourceLimit restored = GuestLimit(GUEST_RLIMIT_NOFILE);
-    Require(restored.rlim_cur == limit.rlim_cur);
-    Require(restored.rlim_max == limit.rlim_max);
-    if (limit.rlim_max != GUEST_RLIM_INFINITY) {
-        const GuestResourceLimit raised{limit.rlim_cur, limit.rlim_max + 1};
-        bool raisedRejected = false;
-        try {
-            setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &raised);
-
-        } catch (const std::runtime_error&) {
-            raisedRejected = true;
-        }
-        Require(raisedRejected);
-    }
+    Require(restored.rlim_cur == normalized.rlim_cur && restored.rlim_max == normalized.rlim_max);
+    const GuestResourceLimit aboveCap{GUEST_OPEN_FILES_PER_PROCESS + 1, GUEST_OPEN_FILES_PER_PROCESS + 1};
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &aboveCap) == 0);
+    const GuestResourceLimit capped = GuestLimit(GUEST_RLIMIT_NOFILE);
+    Require(capped.rlim_cur == GUEST_OPEN_FILES_PER_PROCESS && capped.rlim_max == GUEST_OPEN_FILES_PER_PROCESS);
 }
 
 static void RequireError(int resource, GuestResourceLimit* limit, int error) {

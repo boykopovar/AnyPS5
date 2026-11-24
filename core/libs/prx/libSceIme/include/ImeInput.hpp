@@ -23,6 +23,7 @@ struct ImeHostInput {
     char text[32] = {};
     std::int32_t start = 0;
     std::int32_t length = 0;
+    bool moveToLineBoundary = false;
 };
 
 extern "C" void ImePublishInput_nid_postfix(const ImeHostInput& input);
@@ -49,5 +50,9 @@ using ImeHostPadSink = void (*)(const ImeHostPad& pad);
 extern "C" bool ImeCapturesPad_nid_postfix();
 extern "C" void ImePublishPad_nid_postfix(const ImeHostPad& pad);
 extern "C" void ImeSetHostPadSink_nid_no_patch(ImeHostPadSink sink);
+
+using ImeHostClipboardSink = void (*)(const char* utf8, std::size_t size);
+
+extern "C" void ImeSetHostClipboardSink_nid_no_patch(ImeHostClipboardSink sink);
 
 #endif

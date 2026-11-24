@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import io
 import json
 import math
 import os
@@ -100,7 +101,7 @@ def parse_replay_host_report(stderr, expected_commit=None):
             raise ValueError("unsupported invocation host report format")
         end = markers[index + 1].start() if index + 1 < len(markers) else len(stderr)
         portion = stderr[marker.start():end]
-        source_lines = portion.splitlines(keepends=True)
+        source_lines = io.StringIO(portion, newline="\n").readlines()
         lines = [line.rstrip("\r\n") for line in source_lines[1:]]
         if not lines or not lines[0].startswith("commit: "):
             raise ValueError("host report commit is missing")
@@ -283,7 +284,7 @@ def parse_replay_result(stdout, stderr="", expected_commit=None):
     diagnostics = (stream[:MAX_LOG_BYTES].decode("utf-8", errors="replace") if isinstance(stream, bytes)
                    else stream[:MAX_LOG_BYTES] if isinstance(stream, str) else ""
                    for stream in (stdout, stderr))
-    if any(re.search(r"(?:Validation Error|VUID-[A-Za-z0-9_-]+)", stream) for stream in diagnostics):
+    if any(re.search(r"(?:Validation Error|VUID-[A-Za-z0-9_-]+|SYNC-HAZARD-[A-Za-z0-9_-]+)", stream) for stream in diagnostics):
         result["issues"].append("Vulkan validation diagnostics were recorded; inspect the raw stdout/stderr logs")
     result["issues"] = list(dict.fromkeys(result["issues"]))
     result["unknowns"] = list(dict.fromkeys(result["unknowns"]))

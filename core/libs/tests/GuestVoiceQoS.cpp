@@ -189,6 +189,63 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSGetLocalEndpoint(connection, reinterpret_cast<std::int32_t*>(0x10)) == argumentInvalid);
     Require(sceVoiceQoSGetRemoteEndpoint(connection, reinterpret_cast<std::int32_t*>(0x10)) == argumentInvalid);
     Require(errno == 71 && queriedLocal == local && queriedRemote == remote);
+    auto getStatusInt = [](std::int32_t target, std::int32_t status) {
+        std::int32_t result = -7;
+        Require(sceVoiceQoSGetStatus(target, status, &result, sizeof(result)) == 0);
+        return result;
+    };
+    auto getStatusFloat = [](std::int32_t target, std::int32_t status) {
+        float result = -7.0f;
+        Require(sceVoiceQoSGetStatus(target, status, &result, sizeof(result)) == 0);
+        return result;
+    };
+    auto getDebugStatusInt = [](std::int32_t target, std::int32_t status) {
+        std::int32_t result = -7;
+        Require(sceVoiceQoSDebugGetStatus(target, status, &result, sizeof(result)) == 0);
+        return result;
+    };
+    auto getDebugStatusFloat = [](std::int32_t target, std::int32_t status) {
+        float result = -7.0f;
+        Require(sceVoiceQoSDebugGetStatus(target, status, &result, sizeof(result)) == 0);
+        return result;
+    };
+    Require(getStatusInt(connection, 0) == bitrateCap);
+    Require(getStatusInt(connection, 1) == bitrateCap);
+    Require(getStatusInt(connection, 2) == bitrateCap);
+    Require(getStatusFloat(connection, 3) == 0.0f);
+    Require(getStatusInt(connection, 4) == 1);
+    const std::int32_t unusedConnection = connectionLimit - 1;
+    Require(getStatusInt(unusedConnection, 2) == bitrateCap);
+    Require(getStatusFloat(unusedConnection, 3) == 0.0f);
+    for (std::int32_t status : {0, 1, 4}) {
+        Require(NotImplementedMessage([&] {
+            std::int32_t result = 0;
+            sceVoiceQoSGetStatus(unusedConnection, status, &result, sizeof(result));
+        }, "unconnected connection"));
+    }
+    for (std::int32_t target : {connection, unusedConnection}) {
+        for (std::int32_t status : {200, 201, 202, 203, 204, 205, 207}) Require(getDebugStatusInt(target, status) == 0);
+        for (std::int32_t status : {206, 208, 209}) Require(getDebugStatusFloat(target, status) == 0.0f);
+        Require(getDebugStatusFloat(target, 210) == 1.0f);
+    }
+    std::int32_t statusOut = 77;
+    for (std::int32_t target : {-1, connectionLimit, 100}) {
+        Require(sceVoiceQoSGetStatus(target, 2, &statusOut, 4) == argumentInvalid);
+        Require(sceVoiceQoSDebugGetStatus(target, 200, &statusOut, 4) == argumentInvalid);
+    }
+    for (std::int32_t status : {-1, 5, 100, 200}) Require(sceVoiceQoSGetStatus(connection, status, &statusOut, 4) == argumentInvalid);
+    for (std::int32_t status : {-1, 0, 4, 199, 211}) Require(sceVoiceQoSDebugGetStatus(connection, status, &statusOut, 4) == argumentInvalid);
+    for (std::int32_t size : {0, 1, 3, 8, -1}) {
+        Require(sceVoiceQoSGetStatus(connection, 2, &statusOut, size) == argumentInvalid);
+        Require(sceVoiceQoSDebugGetStatus(connection, 200, &statusOut, size) == argumentInvalid);
+    }
+    Require(statusOut == 77);
+    Require(sceVoiceQoSGetStatus(connection, 2, nullptr, 4) == argumentInvalid);
+    Require(sceVoiceQoSDebugGetStatus(connection, 200, nullptr, 4) == argumentInvalid);
+    errno = 71;
+    Require(sceVoiceQoSGetStatus(connection, 2, reinterpret_cast<void*>(std::uintptr_t{0x10}), 4) == argumentInvalid);
+    Require(sceVoiceQoSDebugGetStatus(connection, 200, reinterpret_cast<void*>(std::uintptr_t{0x10}), 4) == argumentInvalid);
+    Require(errno == 71);
     std::int32_t duplicate = -1;
     Require(sceVoiceQoSConnect(&duplicate, local, remote) == 0 && duplicate > 0 && duplicate != connection);
     Require(sceVoiceQoSDisconnect(duplicate) == 0);
@@ -228,6 +285,10 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSWritePacket(connection, nullptr, &packetSize) == argumentInvalid);
     Require(sceVoiceQoSWritePacket(connection, packet.data(), nullptr) == argumentInvalid);
     Require(sceVoiceQoSWritePacket(connection + 100, packet.data(), &packetSize) == argumentInvalid);
+    Require(NotImplementedMessage([&] { getStatusInt(connection, 2); }, "after voice packet traffic"));
+    Require(NotImplementedMessage([&] { getDebugStatusInt(connection, 200); }, "after voice packet traffic"));
+    Require(sceVoiceQoSGetStatus(connection, 5, &statusOut, 4) == argumentInvalid);
+    Require(sceVoiceQoSDebugGetStatus(connection, 211, &statusOut, 4) == argumentInvalid);
 
     Require(NotImplemented([&] { sceVoiceQoSSetRemoteEndpointAttribute(remote, 7, &level, 1); }));
     Require(sceVoiceQoSDisconnect(connection) == 0);
@@ -290,8 +351,8 @@ int main(int argc, char** argv) {
     Require(NotImplemented([] { sceVoiceQoSGetRemoteEndpointAttribute(1, 1, nullptr, 0); }));
     Require(sceVoiceQoSGetConnectionAttribute(1, 9, &bitrateOut, 4) == notInitialized);
     Require(setBitrate(1, 9, 5000) == notInitialized);
-    Require(NotImplemented([] { sceVoiceQoSGetStatus(1, 1, nullptr, 0); }));
-    Require(NotImplemented([] { sceVoiceQoSDebugGetStatus(0, 200, nullptr, 4); }));
+    Require(sceVoiceQoSGetStatus(1, 1, nullptr, 0) == notInitialized);
+    Require(sceVoiceQoSDebugGetStatus(0, 200, nullptr, 4) == notInitialized);
     Require(NotImplemented([] { sceVoiceQoSSetMode(); }));
     Require(sceVoiceEnd_nid_postfix() == voiceNotInitialized);
 }
