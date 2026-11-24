@@ -61,9 +61,7 @@ std::string ReadText(const char* source, const char* caller) {
         char chunk[0x1000];
         const auto address = reinterpret_cast<std::uintptr_t>(source) + text.size();
         const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(chunk, source + text.size(), count);
-        errno = savedErrno;
         if (!copied) throw std::invalid_argument(std::string(caller) + ": unreadable string");
         const auto* end = static_cast<const char*>(std::memchr(chunk, 0, count));
         text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : count);

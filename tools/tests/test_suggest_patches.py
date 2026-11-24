@@ -822,7 +822,7 @@ class ValidateMetadataTests(unittest.TestCase):
 class ValidateEntryTests(unittest.TestCase):
     DIGEST = "A" * 64
 
-    def setup(self, directory, patch_text='[[patch]]\ntarget = "eboot.bin"\n'):
+    def setup(self, directory, patch_text='format = 1\n[[patch]]\ntarget = "eboot.bin"\n'):
         (Path(directory) / "p.toml").write_text(patch_text, encoding="utf-8")
         return {"titleId": "PPSA00001", "contentVersion": "01.00", "patch": "p.toml", "targets": {"eboot.bin": self.DIGEST}}
 
@@ -834,6 +834,13 @@ class ValidateEntryTests(unittest.TestCase):
             self.assertEqual(patch, (Path(directory) / "p.toml").resolve())
             self.assertEqual(targets, {"eboot.bin": "a" * 64})
             self.assertEqual(metadata, {"name": "Name"})
+
+    def test_patch_format_is_checked_before_relinker_verification(self):
+        for prefix in ("", "format = 2\n", "format = true\n"):
+            with self.subTest(prefix=prefix), tempfile.TemporaryDirectory() as directory:
+                entry = self.setup(directory, prefix + '[[patch]]\ntarget = "eboot.bin"\n')
+                with self.assertRaisesRegex(ValueError, "patch file must have format 1"):
+                    suggest_patches.validate_entry(Path(directory), entry)
 
     def test_missing_or_unknown_fields_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:

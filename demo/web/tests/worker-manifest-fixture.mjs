@@ -16,6 +16,7 @@ async function load(release, options = {}) {
       requests.push(url);
       if (url === "./release.json") return { ok: true, json: async () => release };
       if (url.startsWith("https:")) return options.latestResponse ?? (options.rateLimit ? { ok: false, status: 403, headers: new Map([["x-ratelimit-remaining", "0"]]) } : { ok: true, json: async () => ({ tag_name: release.tag }) });
+      if (options.noBody) return new Response(null, { status: 204 });
       const contents = options.contents ?? bytes;
       return { ok: true, body: new ReadableStream({ start(controller) { controller.enqueue(contents); if (!options.keepOpen) controller.close(); }, cancel() { cancelled = true; } }) };
     } });
@@ -77,4 +78,6 @@ await assert.rejects(corrupt.api.downloadLibraries("linux"), /checksum mismatch/
 const oversized = await load(valid("linux"), { contents: new Uint8Array([1, 2, 3, 4]), keepOpen: true });
 await assert.rejects(oversized.api.downloadLibraries("linux"), /download is incomplete/);
 assert.equal(oversized.cancelled(), true);
+const noBody = await load(valid("linux"), { noBody: true });
+await assert.rejects(noBody.api.downloadLibraries("linux"), /download is incomplete/);
 console.log(JSON.stringify({ invalid: invalid.length + 1, valid: validCount }));

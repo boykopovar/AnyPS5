@@ -1,0 +1,5 @@
+# libSceIcu
+
+## change [ICU numbering system exports]
+
+- [ICU numbering system exports](../../../core/libs/prx/libSceIcu/NumberingSystem.cpp) implement only the early returns of ICU 68.2 ([unumsys.cpp](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/i18n/unumsys.cpp): `unumsys_close` 40-44, `unumsys_getName` 50-54, `unumsys_isAlgorithmic` 62-66, `unumsys_open` 21-26, `unumsys_openAvailableNames` 46-49, `unumsys_openByName` 29-37). A null handle returns without action for `unumsys_close`; `unumsys_getName` and `unumsys_isAlgorithmic` have no early return and throw for every input. A failing `UErrorCode` (above zero) returns early with the status untouched; warnings reach the argument checks that precede object use. Non-null handles, valid calls, a null `UErrorCode` and every path that needs `UNumberingSystem` objects and numbering system data throw `NotImplemented_nid_no_patch`. Unverified on a console. Closes when: those are implemented and compared with the console.

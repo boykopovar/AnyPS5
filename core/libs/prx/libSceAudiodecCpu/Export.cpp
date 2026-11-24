@@ -1,6 +1,5 @@
 #include "prx/libSceAudiodecCpu/include/Api.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -78,27 +77,21 @@ bool ValidGuestRange(const void* address, std::size_t bytes) {
     return start != 0 && (bytes == 0 || bytes - 1 <= std::numeric_limits<std::uintptr_t>::max() - start);
 }
 
-void CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes, const char* message) {
+void CopyIn(void* destination, const void* source, std::size_t bytes, const char* message) {
     if (bytes == 0) return;
-    const int savedErrno = errno;
     const bool copied = ValidGuestRange(source, bytes) && GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!copied) throw std::runtime_error(message);
 }
 
-void CopyOutPreservingErrno(void* destination, const void* source, std::size_t bytes, const char* message) {
+void CopyOut(void* destination, const void* source, std::size_t bytes, const char* message) {
     if (bytes == 0) return;
-    const int savedErrno = errno;
     const bool copied = ValidGuestRange(destination, bytes) && GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!copied) throw std::runtime_error(message);
 }
 
 void EnsureWritable(void* destination, std::size_t bytes, const char* message) {
     if (bytes == 0) return;
-    const int savedErrno = errno;
     const bool writable = ValidGuestRange(destination, bytes) && GuestWritable_nid_no_patch(destination, bytes);
-    errno = savedErrno;
     if (!writable) throw std::runtime_error(message);
 }
 
@@ -112,7 +105,7 @@ void* LpcmStateAddress(const AudiodecCpuMemory& memory) {
 
 void ResetLpcm(const AudiodecCpuMemory& memory) {
     const std::uint32_t state[2]{0xffffffffu, 0xffffffffu};
-    CopyOutPreservingErrno(LpcmStateAddress(memory), state, sizeof(state), "sceAudiodecCpu: unwritable LPCM memory");
+    CopyOut(LpcmStateAddress(memory), state, sizeof(state), "sceAudiodecCpu: unwritable LPCM memory");
 }
 
 void UnknownCodec(const char* function, std::uint32_t type) {
@@ -149,7 +142,7 @@ int DecodeLpcmBd(const AudiodecCtrl& localCtrl, const AudiodecCpuMemory& localMe
     static constexpr std::uint32_t rates[] = {48, 96, 192};
     static constexpr std::uint32_t bits[] = {16, 24, 24};
     LpcmParam localParam{};
-    CopyInPreservingErrno(&localParam, localCtrl.pParam, sizeof(localParam), "sceAudiodecCpuDecode: unreadable decoder parameter");
+    CopyIn(&localParam, localCtrl.pParam, sizeof(localParam), "sceAudiodecCpuDecode: unreadable decoder parameter");
     if (localParam.size != LpcmParamSize) return ErrorLpcmParam;
     const std::uint32_t channelConfig = static_cast<std::uint8_t>(localParam.header >> 32);
     const std::uint32_t rateIndex = static_cast<std::uint8_t>(localParam.header >> 40);
@@ -165,14 +158,14 @@ int DecodeLpcmBd(const AudiodecCtrl& localCtrl, const AudiodecCpuMemory& localMe
     if (localPcm.ui_pcm_size < samples * 4) NotImplemented_nid_no_patch("sceAudiodecCpuDecode: a PCM buffer smaller than the decoded frame");
 
     LpcmBsiInfo localInfo{};
-    CopyInPreservingErrno(&localInfo, localCtrl.pBsiInfo, sizeof(localInfo), "sceAudiodecCpuDecode: unreadable BSI info");
+    CopyIn(&localInfo, localCtrl.pBsiInfo, sizeof(localInfo), "sceAudiodecCpuDecode: unreadable BSI info");
     void* stateAddress = LpcmStateAddress(localMemory);
     std::uint32_t lpcmState[2]{};
-    CopyInPreservingErrno(lpcmState, stateAddress, sizeof(lpcmState), "sceAudiodecCpuDecode: unreadable LPCM memory");
+    CopyIn(lpcmState, stateAddress, sizeof(lpcmState), "sceAudiodecCpuDecode: unreadable LPCM memory");
 
     const std::size_t inputBytes = static_cast<std::size_t>(std::min(samples, LpcmOutputSamples)) * width;
     std::vector<std::uint8_t> input(inputBytes);
-    CopyInPreservingErrno(input.data(), localAu.p_au_addr, input.size(), "sceAudiodecCpuDecode: unreadable AU buffer");
+    CopyIn(input.data(), localAu.p_au_addr, input.size(), "sceAudiodecCpuDecode: unreadable AU buffer");
 
     std::vector<float> output(samples);
     for (std::uint32_t index = 0; index < samples; ++index) {
@@ -202,42 +195,42 @@ int DecodeLpcmBd(const AudiodecCtrl& localCtrl, const AudiodecCpuMemory& localMe
     localInfo.pcmBytes = localPcm.ui_pcm_size;
 
     if (samples != 0) {
-        CopyOutPreservingErrno(localPcm.p_pcm_addr, output.data(), samples * 4, "sceAudiodecCpuDecode: unwritable PCM buffer");
+        CopyOut(localPcm.p_pcm_addr, output.data(), samples * 4, "sceAudiodecCpuDecode: unwritable PCM buffer");
     }
-    CopyOutPreservingErrno(localCtrl.pParam, &localParam, sizeof(localParam), "sceAudiodecCpuDecode: unwritable decoder parameter");
-    CopyOutPreservingErrno(localCtrl.pBsiInfo, &localInfo, sizeof(localInfo), "sceAudiodecCpuDecode: unwritable BSI info");
-    CopyOutPreservingErrno(localCtrl.pAuInfo, &localAu, sizeof(localAu), "sceAudiodecCpuDecode: unwritable AU info");
-    CopyOutPreservingErrno(localCtrl.pPcmItem, &localPcm, sizeof(localPcm), "sceAudiodecCpuDecode: unwritable PCM item");
-    CopyOutPreservingErrno(stateAddress, lpcmState, sizeof(lpcmState), "sceAudiodecCpuDecode: unwritable LPCM memory");
+    CopyOut(localCtrl.pParam, &localParam, sizeof(localParam), "sceAudiodecCpuDecode: unwritable decoder parameter");
+    CopyOut(localCtrl.pBsiInfo, &localInfo, sizeof(localInfo), "sceAudiodecCpuDecode: unwritable BSI info");
+    CopyOut(localCtrl.pAuInfo, &localAu, sizeof(localAu), "sceAudiodecCpuDecode: unwritable AU info");
+    CopyOut(localCtrl.pPcmItem, &localPcm, sizeof(localPcm), "sceAudiodecCpuDecode: unwritable PCM item");
+    CopyOut(stateAddress, lpcmState, sizeof(lpcmState), "sceAudiodecCpuDecode: unwritable LPCM memory");
     return 0;
 }
 
 int QueryMemSize(const char* function, const AudiodecCtrl* ctrl, AudiodecCpuMemory* memory, std::uint32_t type) {
     if (!ctrl) return ErrorCtrl;
     const void* param = nullptr;
-    CopyInPreservingErrno(&param, ctrl, sizeof(param), "sceAudiodecCpuQueryMemSize: unreadable control pointer");
+    CopyIn(&param, ctrl, sizeof(param), "sceAudiodecCpuQueryMemSize: unreadable control pointer");
     if (!param) return ErrorParam;
     if (!memory) return ErrorMemory;
     std::uint32_t memorySize = 0;
-    CopyInPreservingErrno(&memorySize, memory, sizeof(memorySize), "sceAudiodecCpuQueryMemSize: unreadable memory descriptor");
+    CopyIn(&memorySize, memory, sizeof(memorySize), "sceAudiodecCpuQueryMemSize: unreadable memory descriptor");
     if (memorySize != StructSize) return ErrorMemorySize;
     if (!KnownType(type)) return ErrorType;
     if (!Lpcm(type)) UnknownCodec(function, type);
     const std::uint32_t outputSize = LpcmMemorySize;
     auto* destination = reinterpret_cast<std::uint8_t*>(memory) + offsetof(AudiodecCpuMemory, ui_memory_size);
-    CopyOutPreservingErrno(destination, &outputSize, sizeof(outputSize), "sceAudiodecCpuQueryMemSize: unwritable memory-size output");
+    CopyOut(destination, &outputSize, sizeof(outputSize), "sceAudiodecCpuQueryMemSize: unwritable memory-size output");
     return 0;
 }
 
 int InitDecoder(const char* function, const AudiodecCtrl* ctrl, const AudiodecCpuMemory* memory, std::uint32_t type) {
     if (!ctrl) return ErrorCtrl;
     AudiodecCtrl localCtrl{};
-    CopyInPreservingErrno(&localCtrl, ctrl, sizeof(localCtrl), "sceAudiodecCpuInitDecoder: unreadable control pointer");
+    CopyIn(&localCtrl, ctrl, sizeof(localCtrl), "sceAudiodecCpuInitDecoder: unreadable control pointer");
     if (!localCtrl.pParam) return ErrorParam;
     if (!localCtrl.pBsiInfo) return ErrorBsiInfo;
     if (!memory) return ErrorMemory;
     AudiodecCpuMemory localMemory{};
-    CopyInPreservingErrno(&localMemory, memory, sizeof(localMemory), "sceAudiodecCpuInitDecoder: unreadable memory descriptor");
+    CopyIn(&localMemory, memory, sizeof(localMemory), "sceAudiodecCpuInitDecoder: unreadable memory descriptor");
     if (!localMemory.p_memory) return ErrorMemoryAddress;
     if (localMemory.ui_size != StructSize) return ErrorMemorySize;
     if (!KnownType(type)) return ErrorType;
@@ -250,16 +243,16 @@ int InitDecoder(const char* function, const AudiodecCtrl* ctrl, const AudiodecCp
 int Decode(const char* function, const AudiodecCtrl* ctrl, const AudiodecCpuMemory* memory, std::uint32_t type) {
     if (!ctrl) return ErrorCtrl;
     AudiodecCtrl localCtrl{};
-    CopyInPreservingErrno(&localCtrl, ctrl, sizeof(localCtrl), "sceAudiodecCpuDecode: unreadable control pointer");
+    CopyIn(&localCtrl, ctrl, sizeof(localCtrl), "sceAudiodecCpuDecode: unreadable control pointer");
     if (!localCtrl.pParam) return ErrorParam;
     if (!localCtrl.pBsiInfo) return ErrorBsiInfo;
     if (!localCtrl.pAuInfo) return ErrorAuInfo;
     AudiodecAuInfo localAu{};
-    CopyInPreservingErrno(&localAu, localCtrl.pAuInfo, sizeof(localAu), "sceAudiodecCpuDecode: unreadable AU info");
+    CopyIn(&localAu, localCtrl.pAuInfo, sizeof(localAu), "sceAudiodecCpuDecode: unreadable AU info");
     if (!localAu.p_au_addr && !(type == TypeTrhd && localAu.ui_au_size == 0)) return ErrorAuAddress;
     if (!localCtrl.pPcmItem) return ErrorPcmItem;
     AudiodecPcmItem localPcm{};
-    CopyInPreservingErrno(&localPcm, localCtrl.pPcmItem, sizeof(localPcm), "sceAudiodecCpuDecode: unreadable PCM item");
+    CopyIn(&localPcm, localCtrl.pPcmItem, sizeof(localPcm), "sceAudiodecCpuDecode: unreadable PCM item");
     if (!localPcm.p_pcm_addr) return ErrorPcmAddress;
     if (localAu.ui_au_size == 0 && type != TypeTrhd) return ErrorAuBytes;
     if (localPcm.ui_pcm_size == 0) return ErrorPcmBytes;
@@ -267,7 +260,7 @@ int Decode(const char* function, const AudiodecCtrl* ctrl, const AudiodecCpuMemo
     if (localPcm.ui_size != StructSize) return ErrorPcmSize;
     if (!memory) return ErrorMemory;
     AudiodecCpuMemory localMemory{};
-    CopyInPreservingErrno(&localMemory, memory, sizeof(localMemory), "sceAudiodecCpuDecode: unreadable memory descriptor");
+    CopyIn(&localMemory, memory, sizeof(localMemory), "sceAudiodecCpuDecode: unreadable memory descriptor");
     if (!localMemory.p_memory) return ErrorMemoryAddress;
     if (localMemory.ui_size != StructSize) return ErrorMemorySize;
     if (!KnownType(type)) return ErrorType;
@@ -278,7 +271,7 @@ int Decode(const char* function, const AudiodecCtrl* ctrl, const AudiodecCpuMemo
 int ClearContext(const char* function, const AudiodecCpuMemory* memory, std::uint32_t type) {
     if (!memory) return ErrorClearMemory;
     AudiodecCpuMemory localMemory{};
-    CopyInPreservingErrno(&localMemory, memory, sizeof(localMemory), "sceAudiodecCpuClearContext: unreadable memory descriptor");
+    CopyIn(&localMemory, memory, sizeof(localMemory), "sceAudiodecCpuClearContext: unreadable memory descriptor");
     if (!localMemory.p_memory) return ErrorMemoryAddress;
     if (localMemory.ui_size != StructSize) return ErrorMemorySize;
     if (!KnownType(type)) return ErrorType;
