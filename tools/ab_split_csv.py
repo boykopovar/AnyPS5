@@ -33,7 +33,7 @@ def main(argv=None):
     parser.add_argument("--class", dest="classes", action="append", default=[])
     args = parser.parse_args(argv)
     try:
-        with args.log.open(encoding="utf-8-sig", errors="replace") as lines:
+        with ab_split.open_log(args.log) as lines:
             text = render(ab_split.split(lines, args.program, args.classes))
     except (OSError, ValueError, OverflowError) as error:
         parser.error(str(error))

@@ -103,6 +103,18 @@ class Tests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
 
+    def test_comments_raw_strings_and_digit_separators_do_not_create_false_includes(self):
+        directory = self.fixture()
+        (directory / "Api.hpp").write_bytes(
+            b'#include <cstdint>\n'
+            b'// #include "MissingLineComment.hpp"\n'
+            b'/*\n#include "MissingBlockComment.hpp"\n*/\n'
+            b'constexpr auto kRaw = R"delim(\n#include "MissingRaw.hpp"\n)delim";\n'
+            b'constexpr uint64_t kNum = 1\'000\'000;\n'
+            b'constexpr char kQuote = \'"\';\n'
+        )
+        self.assert_manifest_matches_recursive_package_bytes()
+
     def test_linked_header_directories_keep_the_package_manifest(self):
         self.fixture()
         expected = self.run_tool("--root", self.root)

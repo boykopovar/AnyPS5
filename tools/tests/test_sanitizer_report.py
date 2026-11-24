@@ -267,6 +267,13 @@ class SanitizerReportTests(unittest.TestCase):
         line = 'FATAL: ThreadSanitizer: unexpected memory mapping 0x1000-0x2000'
         self.assertEqual(sanitizer_report.first_report(line + '\n'), line)
 
+    def test_a_bare_deadly_signal_is_reported_after_the_other_diagnostics(self):
+        self.assertEqual(sanitizer_report.first_report("AddressSanitizer:DEADLYSIGNAL\r\nAddressSanitizer:DEADLYSIGNAL\r\n"),
+                         "AddressSanitizer:DEADLYSIGNAL")
+        self.assertEqual(sanitizer_report.first_report("AddressSanitizer:DEADLYSIGNAL\n"
+                                                       "SUMMARY: AddressSanitizer: stack-overflow\n"),
+                         "SUMMARY: AddressSanitizer: stack-overflow")
+
     def test_first_report_keeps_source_paths_with_spaces(self):
         locations = (r"D:\build folder\src\value.cpp:12:3", "/build folder/src/value.cpp:12:3",
                      "/build \u03a9 folder/src/value.cpp:12:3")

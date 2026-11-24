@@ -109,6 +109,7 @@ struct OpaqueJSContextGroup {
     OpaqueJSValue trueHandle{};
     OpaqueJSValue falseHandle{};
     std::vector<OpaqueJSContext*> contexts;
+    std::vector<OpaqueJSContext*> releasedContexts;
     std::vector<OpaqueJSValue*> allHandles;
     std::unordered_map<void*, OpaqueJSValue*> objectHandles;
     std::unordered_map<void*, CallbackObjectData*> callbackDataByPtr;
@@ -133,13 +134,14 @@ struct OpaqueJSContextGroup {
     ~OpaqueJSContextGroup();
 
     OpaqueJSContext* DefaultContext() const;
+    void DestroyReleasedContexts();
     OpaqueJSValue* ToHandle(OpaqueJSContext* ctx, JSValue v);
     OpaqueJSValue* BorrowHandle(OpaqueJSContext* ctx, JSValueConst v);
     CallbackObjectData* FindCallbackData(const OpaqueJSValue* handle) const;
     CallbackObjectData* FindCallbackDataByPtr(void* ptr) const;
     void NotifyObjectFinalized(void* ptr, OpaqueJSValue* handle);
     void CollectGarbage();
-    void DrainMicrotasks(OpaqueJSContext* ctx);
+    void DrainMicrotasks();
     void RefreshDeadline();
     void EnterVm();
     void ExitVm();

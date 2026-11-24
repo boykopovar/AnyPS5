@@ -66,6 +66,22 @@ class AbCsvTests(unittest.TestCase):
             expected = ab_split_csv.render(ab_split.split(lines)).encode("utf-8")
             self.assertEqual(completed.stdout, expected)
 
+    def test_both_commands_explain_a_powershell_utf16_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.txt"
+            text = "".join(log()).replace("\n", "\r\n")
+            for encoding in ("utf-16-le", "utf-16-be"):
+                path.write_bytes(("﻿" + text).encode(encoding))
+                for tool in (ab_split_csv, ab_split):
+                    with self.subTest(encoding=encoding, tool=tool.__name__):
+                        completed = subprocess.run([sys.executable, str(Path(tool.__file__)), str(path)],
+                                                   capture_output=True, text=True, encoding="utf-8")
+                        self.assertEqual(completed.returncode, 2, completed.stderr)
+                        self.assertEqual(completed.stdout, "")
+                        self.assertIn("is UTF-16, as Windows PowerShell 5.1 writes", completed.stderr)
+                        self.assertIn('cmd /d /c "<command> 2> run.log"', completed.stderr)
+                        self.assertNotIn("was APS5_AB set", completed.stderr)
+
     def test_cli_preserves_producer_decoding_and_line_boundaries(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "capture.txt"

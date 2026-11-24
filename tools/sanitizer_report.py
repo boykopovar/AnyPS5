@@ -14,6 +14,7 @@ REPORT_LINES = (
     re.compile(r"SUMMARY: \w+Sanitizer: .*"),
     re.compile(r"(?:ERROR|WARNING|FATAL): \w+Sanitizer: .*"),
     re.compile(r"^.*runtime error: .*", re.MULTILINE),
+    re.compile(r"^\w+Sanitizer:DEADLYSIGNAL\b", re.MULTILINE),
 )
 REPORT_LENGTH = 200
 

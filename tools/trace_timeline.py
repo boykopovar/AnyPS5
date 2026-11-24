@@ -1,4 +1,5 @@
 import argparse
+import heapq
 import html
 import math
 import sys
@@ -38,7 +39,7 @@ def layout(slices, start_us, end_us, width_px, max_slices=5000):
     span = max(end_us - start_us, 1e-9)
     rows = sorted({(slice_["thread"], slice_["tid"]) for slice_ in slices})
     row_of = {thread: row for row, thread in enumerate(rows)}
-    kept = sorted(slices, key=lambda slice_: -slice_["dur"])[:max_slices]
+    kept = heapq.nlargest(max_slices, slices, key=lambda slice_: slice_["dur"])
     bars = []
     for slice_ in kept:
         x = LABEL_WIDTH + (slice_["ts"] - start_us) / span * width_px
