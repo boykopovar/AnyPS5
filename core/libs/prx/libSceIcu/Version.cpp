@@ -2,7 +2,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 
