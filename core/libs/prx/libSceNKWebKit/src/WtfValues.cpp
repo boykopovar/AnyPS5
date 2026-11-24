@@ -356,7 +356,7 @@ struct DecoderHeader {
     const uint8_t* bufferPosition;
 };
 
-bool DecoderHasRoom(const DecoderHeader& dec, unsigned long size) {
+bool DecoderHasRoom(const DecoderHeader& dec, std::size_t size) {
     if (!dec.bufferData || !dec.bufferPosition) return false;
     std::size_t remaining = (dec.bufferData + dec.bufferSize >= dec.bufferPosition) ? static_cast<std::size_t>((dec.bufferData + dec.bufferSize) - dec.bufferPosition) : 0;
     return size <= remaining;
@@ -632,7 +632,7 @@ NKWebKit::WtfAbi::Encoder& APS5_VABI _ZN3WTF11Persistence7EncoderlsEd(Encoder* s
     return *self;
 }
 
-bool APS5_VABI _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(const Decoder* self, unsigned long size) {
+bool APS5_VABI _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(const Decoder* self, std::size_t size) {
     if (!self) throw std::invalid_argument("Decoder::bufferIsLargeEnoughToContain: null this");
     DecoderHeader header;
     if (!GuestCopyIn_nid_no_patch(&header, self, sizeof(header))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
