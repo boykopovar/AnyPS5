@@ -384,6 +384,17 @@ class RunnerTests(ReplayFixture):
             self.assertEqual(runner.main(["report", str(self.root / "evidence"), "--json"]), 2)
         self.assertEqual(len(json.loads(output.getvalue())["runs"]), 4)
 
+    def test_report_prints_a_path_outside_the_ansi_code_page_as_utf8(self):
+        self.recipe["warmups"] = 0
+        self.recipe["capture"] = "测-capture"
+        (self.root / "capture").rename(self.root / self.recipe["capture"])
+        self.run_comparison()
+        stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(runner.main(["report", str(self.root / "evidence"), "--json"]), 0)
+            stdout.flush()
+        self.assertIn("测-capture", stdout.buffer.getvalue().decode("utf-8"))
+
     def test_offline_recomputes_assessments_from_original_logs(self):
         self.recipe["warmups"] = 0
         self.run_comparison()

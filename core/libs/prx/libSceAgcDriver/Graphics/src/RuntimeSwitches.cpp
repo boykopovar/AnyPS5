@@ -23,6 +23,7 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_OWNED_DRAW_INPUTS",
     "APS5_NO_PASS_ATTACHMENT_MEMO",
     "APS5_NO_IMPORT_SEGMENT_MEMO",
+    "APS5_PROVEN_OVERWRITE",
     "APS5_NO_SIZE_ONLY_SURFACE_BYTES",
     "APS5_NO_SPACE_REUSE_RECORDS",
     "APS5_PIPELINE_DISPATCH_MISSES",
@@ -36,6 +37,7 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_STAGE_POOL_REUSE",
     "APS5_INDEX_IN_PLACE_BEHIND_WRITER",
     "APS5_WIDE_LIBRARY_KEYS",
+    "APS5_NO_WIDE_TABLE_COPY_HLE",
 };
 
 struct SwitchValues {
@@ -48,6 +50,7 @@ struct SwitchValues {
             std::getenv("APS5_NO_OWNED_DRAW_INPUTS") != nullptr,
             std::getenv("APS5_NO_PASS_ATTACHMENT_MEMO") != nullptr,
             std::getenv("APS5_NO_IMPORT_SEGMENT_MEMO") != nullptr,
+            std::getenv("APS5_PROVEN_OVERWRITE") != nullptr,
             std::getenv("APS5_NO_SIZE_ONLY_SURFACE_BYTES") != nullptr,
             std::getenv("APS5_NO_SPACE_REUSE_RECORDS") != nullptr,
             std::getenv("APS5_PIPELINE_DISPATCH_MISSES") != nullptr,
@@ -61,6 +64,7 @@ struct SwitchValues {
             std::getenv("APS5_NO_STAGE_POOL_REUSE") != nullptr,
             std::getenv("APS5_INDEX_IN_PLACE_BEHIND_WRITER") != nullptr,
             std::getenv("APS5_WIDE_LIBRARY_KEYS") != nullptr,
+            std::getenv("APS5_NO_WIDE_TABLE_COPY_HLE") != nullptr,
         };
         for (std::size_t index = 0; index < SwitchCount; ++index) set[index].store(environment[index], std::memory_order_relaxed);
     }

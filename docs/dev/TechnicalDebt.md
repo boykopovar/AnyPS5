@@ -20,7 +20,7 @@ A pull request does not edit the debt files to add, change or remove entries. It
   ## remove [sceBaz]
   ```
 
-`add` puts entries after the last entry of that `###` section that links the same file, or at the end of the section, creating it if needed. `change` and `remove` name text that occurs in exactly one entry of the file, usually its link; table rows count as entries. Links are written as in the debt file. [`tools/debt_fold.py`](../../tools/debt_fold.py) `--show <name>` prints a debt file with the pending fragments applied and `--check` validates them, as the Conventions check does. Without options it applies every fragment and deletes it, and it refuses two fragments that change the same entry. Headings and text outside entries are still edited in place.
+`add` puts entries after the last entry of that `###` section that links the same file, or at the end of the section, creating it if needed. `change` and `remove` name text that occurs in exactly one entry of the file, usually its link; table rows count as entries. Links are written exactly as they will appear in the target debt file: relative links resolve from `docs/dev/debt/<name>.md` (or `docs/dev/TechnicalDebt.md` for `# TechnicalDebt`), not from the fragment path under `docs/dev/debt/changes/`. [`tools/debt_fold.py`](../../tools/debt_fold.py) `--show <name>` prints a debt file with the pending fragments applied and `--check` validates them, as the Conventions check does. Without options it applies every fragment and deletes it, and it refuses two fragments that change the same entry. Headings and text outside entries are still edited in place.
 
 ### Build
 

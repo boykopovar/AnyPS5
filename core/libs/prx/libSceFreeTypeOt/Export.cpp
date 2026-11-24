@@ -110,8 +110,8 @@ int APS5_VABI sceFreeTypeOtUnknown_ZhtAXOoLNyo_nid_no_patch() {
 }
 APS5_EXPORT("ZhtAXOoLNyo", sceFreeTypeOtUnknown_ZhtAXOoLNyo_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch(FreeType::GuestGlyphRec* glyph, std::uint32_t mode, FreeType::GuestBBox* box) {
+    FreeTypeGlyphGetCBox_nid_no_patch(glyph, mode, box);
 }
 APS5_EXPORT("avLzN0tTxLI", sceFreeTypeOtGlyphGetCBox_nid_no_patch);
 
@@ -352,10 +352,5 @@ void* APS5_VABI ft_service_list_lookup_nid_postfix(const GuestServiceDesc* descr
     }
     return nullptr;
 }
-
-int APS5_VABI sceFreeTypeOtUnknown_uSNqxrARpEQ_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("uSNqxrARpEQ", sceFreeTypeOtUnknown_uSNqxrARpEQ_nid_no_patch);
 
 }

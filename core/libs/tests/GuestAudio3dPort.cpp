@@ -589,6 +589,18 @@ void CheckBed() {
     const float floats[8] = {};
     Require(sceAudio3dBedWrite(0, 2, 1, floats, 4) == 0, "float bed write");
     consume();
+    const float nonFiniteFloats[8] = {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+        0.25f,
+        std::numeric_limits<float>::quiet_NaN(),
+        -std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::infinity(),
+        -0.25f,
+    };
+    Require(sceAudio3dBedWrite(0, 2, 1, nonFiniteFloats, 4) == 0, "non-finite float bed write");
+    consume();
     const std::uint32_t granularity = parameters.granularity;
     std::vector<std::int16_t> wide(static_cast<std::size_t>(granularity) * 8, 0);
     Require(sceAudio3dBedWrite(0, 6, 0, wide.data(), granularity) == 0, "6 channel bed write");
@@ -808,7 +820,7 @@ int RunAsPs4Process(const char* program) {
     const std::wstring command = L"\"cd /d \"" + directory.wstring() + L"\" && \"" + executable + L"\" ps4-process\"";
     const int status = _wsystem(command.c_str());
 #else
-    const std::string command = "cd \"" + directory.string() + "\" && \"" + program + "\" ps4-process";
+    const std::string command = "cd \"" + directory.string() + "\" && \"" + std::filesystem::absolute(program).string() + "\" ps4-process";
     const int status = std::system(command.c_str());
 #endif
     std::filesystem::remove_all(directory);
@@ -818,6 +830,11 @@ int RunAsPs4Process(const char* program) {
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    _putenv_s("SDL_AUDIODRIVER", "dummy");
+#else
+    setenv("SDL_AUDIODRIVER", "dummy", 1);
+#endif
     if (argc == 2 && std::string_view(argv[1]) == "ps4-process") {
         CheckPs4Process();
         return 0;

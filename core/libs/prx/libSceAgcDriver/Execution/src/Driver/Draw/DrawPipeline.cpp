@@ -20,6 +20,10 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 namespace AgcDriver::DriverDetail {
 
@@ -64,6 +68,14 @@ namespace {
 thread_local bool finisherThread = false;
 thread_local bool finisherProducer = false;
 thread_local DrawPipeline* committerPipeline = nullptr;
+
+std::uint64_t CurrentThreadId() {
+#if defined(__linux__)
+    return static_cast<std::uint64_t>(::syscall(SYS_gettid));
+#else
+    return 0;
+#endif
+}
 }
 
 DrawFinisher& DrawFinisher::Get() {
@@ -282,7 +294,7 @@ std::size_t DrawPipeline::Depth() {
     static const std::size_t depth = [] {
         const char* text = std::getenv("APS5_PIPELINED_DRAWS");
         if (std::getenv("APS5_LOCKED_DRAW_PREPARE") != nullptr || std::getenv("APS5_DRAW_DRAIN") != nullptr || std::getenv("APS5_DRAIN_ALL") != nullptr || std::getenv("APS5_NO_WORDWISE_CAPTURE") != nullptr) return std::size_t{0};
-        if (text == nullptr) return std::size_t{32};
+        if (text == nullptr) return std::size_t{128};
         const auto value = std::strtoull(text, nullptr, 10);
         return value == 0 ? std::size_t{0} : value == 1 ? std::size_t{8} : static_cast<std::size_t>(std::min<unsigned long long>(value, 256));
     }();
@@ -486,6 +498,7 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 
 
 void DrawPipeline::run() {
+    committerThread.store(CurrentThreadId(), std::memory_order_release);
     NameDriverThread("draw-commit");
     struct CommitterScope {
         explicit CommitterScope(DrawPipeline* self) { committerPipeline = self; }
