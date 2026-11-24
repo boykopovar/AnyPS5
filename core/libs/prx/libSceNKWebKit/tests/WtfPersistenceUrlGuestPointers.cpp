@@ -144,6 +144,55 @@ static void TestEncoder() {
     }
 }
 
+static void TestEncoderGrowthThenFailedAppend(const String* prefix, unsigned failingLength) {
+    constexpr std::size_t encoderPages = (sizeof(Encoder) + pageBytes - 1) / pageBytes;
+    unsigned char* unreadableData = MapPages(1);
+    Protect(unreadableData, 1, false);
+    NKWebKit::WtfAbi::StringImpl unreadableImpl{2, failingLength, unreadableData, 4};
+    String unreadableText(&unreadableImpl);
+
+    auto* reference = new Encoder;
+    _ZN3WTF11Persistence7EncoderC1Ev(reference);
+    unsigned char* guestPages = MapPages(encoderPages);
+    auto* guest = reinterpret_cast<Encoder*>(guestPages);
+    _ZN3WTF11Persistence7EncoderC1Ev(guest);
+    if (prefix) {
+        _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(*reference, *prefix);
+        _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(*guest, *prefix);
+    }
+    _ZN3WTF11Persistence7EncoderlsEj(reference, failingLength);
+    _ZN3WTF11Persistence7EncoderlsEb(reference, true);
+    unsigned capacityBefore = guest->capacity;
+    Require(guest->size + 5 + failingLength > capacityBefore);
+
+    Require(FaultsAsNotImplemented([&] { _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(*guest, unreadableText); return 0; },
+        "_ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_"));
+    Require(guest->buffer != guest->inlineBuffer);
+    Require(guest->capacity > capacityBefore && guest->capacity >= guest->size + failingLength);
+    Require(guest->size == reference->size && std::memcmp(guest->buffer, reference->buffer, reference->size) == 0);
+    Require(std::memcmp(&guest->sha1, &reference->sha1, sizeof(reference->sha1)) == 0);
+
+    _ZN3WTF11Persistence7EncoderlsEj(guest, 0x01020304U);
+    _ZN3WTF11Persistence7EncoderlsEj(reference, 0x01020304U);
+    Require(guest->size == reference->size && std::memcmp(guest->buffer, reference->buffer, reference->size) == 0);
+    Require(std::memcmp(&guest->sha1, &reference->sha1, sizeof(reference->sha1)) == 0);
+
+    _ZN3WTF11Persistence7EncoderD1Ev(guest);
+    Require(guest->buffer == nullptr);
+    _ZN3WTF11Persistence7EncoderD1Ev(reference);
+    delete reference;
+    UnmapPages(guestPages, encoderPages);
+    unreadableText.impl = nullptr;
+    UnmapPages(unreadableData, 1);
+}
+
+static void TestEncoderGrowthThenFailedAppends() {
+    TestEncoderGrowthThenFailedAppend(nullptr, 5000);
+    std::string longText(5000, 'q');
+    String large = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(longText.data()), static_cast<unsigned>(longText.size()));
+    TestEncoderGrowthThenFailedAppend(&large, 4000);
+}
+
 static void TestDecoder() {
     auto* unreadable = reinterpret_cast<Decoder*>(0x10);
     Require(FaultsAsNotImplemented([&] { return _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(unreadable, 1); },
@@ -221,6 +270,22 @@ static void TestURL() {
     Require(!_ZNK3WTF3URL10protocolIsEPKc(&url, reinterpret_cast<const char*>(crossing + pageBytes - 2)));
     UnmapPages(crossing, 2);
 
+    unsigned char* urlPages = MapPages(2);
+    Protect(urlPages, 1, false);
+    Require(FaultsAsNotImplemented([&] { return _ZNK3WTF3URL10protocolIsEPKc(reinterpret_cast<const URL*>(urlPages), "https"); },
+        "_ZNK3WTF3URL10protocolIsEPKc"));
+    UnmapPages(urlPages, 2);
+    urlPages = MapPages(2);
+    std::memcpy(urlPages + pageBytes - sizeof(URL), &fields, sizeof(URL));
+    Require(_ZNK3WTF3URL10protocolIsEPKc(reinterpret_cast<const URL*>(urlPages + pageBytes - sizeof(URL)), "https"));
+    Require(!_ZNK3WTF3URL10protocolIsEPKc(reinterpret_cast<const URL*>(urlPages + pageBytes - sizeof(URL)), "http"));
+    std::memcpy(urlPages + pageBytes - sizeof(URL) / 2, &fields, sizeof(URL) / 2);
+    Protect(urlPages + pageBytes, 1, false);
+    Require(FaultsAsNotImplemented(
+        [&] { return _ZNK3WTF3URL10protocolIsEPKc(reinterpret_cast<const URL*>(urlPages + pageBytes - sizeof(URL) / 2), "https"); },
+        "_ZNK3WTF3URL10protocolIsEPKc"));
+    UnmapPages(urlPages, 2);
+
     unsigned char* page = MapPages(1);
     auto* readOnly = reinterpret_cast<URL*>(page);
     *readOnly = fields;
@@ -255,6 +320,7 @@ static void TestURL() {
 
 int main() {
     TestEncoder();
+    TestEncoderGrowthThenFailedAppends();
     TestDecoder();
     TestURL();
     return 0;
