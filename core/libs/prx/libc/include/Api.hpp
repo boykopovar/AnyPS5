@@ -272,6 +272,8 @@ void* APS5_VABI opendir_nid_postfix(const char* path);
 GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void* handle);
 int APS5_VABI readdir_r_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result);
 int APS5_VABI closedir_nid_postfix(void* handle);
+int APS5_VABI scandir_nid_postfix(const char* path, GuestDirectoryEntry*** namelist, int (APS5_VABI *select)(const GuestDirectoryEntry*), int (APS5_VABI *compar)(const GuestDirectoryEntry* const*, const GuestDirectoryEntry* const*));
+int APS5_VABI alphasort_nid_postfix(const GuestDirectoryEntry* const* left, const GuestDirectoryEntry* const* right);
 void APS5_VABI rewinddir_nid_postfix(void* handle);
 std::int64_t APS5_VABI telldir_nid_postfix(void* handle);
 void APS5_VABI seekdir_nid_postfix(void* handle, std::int64_t location);
