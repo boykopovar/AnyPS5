@@ -18,6 +18,7 @@ export class OutputDirectoryTransaction {
       try {
         await parent.getDirectoryHandle(name);
       } catch (error) {
+        if (error.name === "TypeMismatchError") throw new Error(translate(locale, "outputPathCollision", { name }));
         if (error.name !== "NotFoundError") throw error;
         if (!isCurrent()) return null;
         const directory = await parent.getDirectoryHandle(name, { create: true });

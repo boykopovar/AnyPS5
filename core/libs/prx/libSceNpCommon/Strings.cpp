@@ -271,7 +271,6 @@ char PlusSign(bool positive, std::uint32_t flags) {
 template <typename Parse>
 int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* saturated) {
     char* end = nullptr;
-    errno = 0;
     parse(str, &end);
     if (end == str) return NP_ERROR_OUT_OF_RANGE;
     if (*saturated && errno == ERANGE) return NP_ERROR_OUT_OF_RANGE;

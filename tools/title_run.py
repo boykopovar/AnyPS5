@@ -123,7 +123,12 @@ def stage_files(files, work, content):
                 missing.append(content_name)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.unlink(missing_ok=True)
+        try:
+            target.unlink(missing_ok=True)
+        except PermissionError as error:
+            if os.name != "nt" or linked_path(target) or not target.is_file() or target.stat().st_mode & stat.S_IWRITE:
+                raise
+            remove_read_only(os.unlink, target, error)
         if content_file is None:
             with target.open("w", encoding="utf-8", newline="\n") as output:
                 output.write(source["text"])
@@ -566,10 +571,26 @@ def render_markdown(summary, previous=None):
     return "\n".join(lines + [""])
 
 
+def package_parameters(directory):
+    checks = PathChecks()
+    seen = set()
+    for directory_path, subdirs, _ in os.walk(directory):
+        folder = Path(directory_path)
+        identity = checks.identity(folder)
+        if identity is None or identity in seen:
+            subdirs.clear()
+            continue
+        seen.add(identity)
+        subdirs.sort()
+        param = folder / "sce_sys/param.json"
+        if param.is_file():
+            yield param
+
+
 def discover(directories, wanted=(), packages=None):
     found = {}
     for directory in directories:
-        for param in sorted(Path(directory).glob("**/sce_sys/param.json")):
+        for param in sorted(package_parameters(directory)):
             package = param.parent.parent
             if not (package / "eboot.bin").is_file():
                 continue
@@ -639,15 +660,24 @@ def copy_asset(source, target):
 
 
 def link_tree(source, target, skip):
-    for path in sorted(source.rglob("*")):
-        relative = path.relative_to(source)
-        if relative.parts[0] in skip:
-            continue
-        if path.is_dir():
-            (target / relative).mkdir(parents=True, exist_ok=True)
-        else:
-            (target / relative).parent.mkdir(parents=True, exist_ok=True)
-            copy_asset(path, target / relative)
+    checks = PathChecks()
+    pending = [(source, target, frozenset())]
+    while pending:
+        folder, destination, ancestors = pending.pop()
+        identity = checks.identity(folder)
+        if identity in ancestors:
+            raise ValueError(f"asset directory cycle at {folder}")
+        parents = ancestors | {identity}
+        for path in sorted(folder.iterdir()):
+            if folder == source and path.name in skip:
+                continue
+            staged = destination / path.name
+            if path.is_dir():
+                staged.mkdir(parents=True, exist_ok=True)
+                pending.append((path, staged, parents))
+            else:
+                destination.mkdir(parents=True, exist_ok=True)
+                copy_asset(path, staged)
 
 
 def lock_work(path):
