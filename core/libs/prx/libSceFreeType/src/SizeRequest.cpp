@@ -2,7 +2,6 @@
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include <cerrno>
 #include <cstddef>
 #include <limits>
 
