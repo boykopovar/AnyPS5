@@ -60,6 +60,37 @@ int main() {
         Require(libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch(type, 1, 2, 3, 4, 5, &output) == unknownType);
     }
     Require(output == 0);
+
+    std::uint64_t queryOut = 0;
+    for (const std::uint32_t badProfile : std::array<std::uint32_t, 4>{0, 3, 6, 0xFFFFu}) {
+        queryOut = 0xA5A5A5A5A5A5A5A5ull;
+        errno = 71;
+        Require(libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch(2, 1920, 1080, 0, badProfile, 4, &queryOut) == invalidArgument);
+        Require(queryOut == 0 && errno == 71);
+    }
+    for (const std::uint32_t goodProfile : std::array<std::uint32_t, 3>{4, 5, 0x10004u}) {
+        for (const std::uint32_t badLevel : std::array<std::uint32_t, 7>{0, 3, 5, 7, 9, 11, 12}) {
+            queryOut = 0xA5A5A5A5A5A5A5A5ull;
+            errno = 71;
+            Require(libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch(2, 1920, 1080, 0, goodProfile, badLevel, &queryOut) == invalidArgument);
+            Require(queryOut == 0 && errno == 71);
+        }
+    }
+    for (const std::uint32_t badProfile : std::array<std::uint32_t, 7>{0, 0x41, 0x4E, 0x63, 0x65, 0x7F, 0x81}) {
+        queryOut = 0xA5A5A5A5A5A5A5A5ull;
+        errno = 71;
+        Require(libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch(4, 1920, 1080, 0, badProfile, 40, &queryOut) == invalidArgument);
+        Require(queryOut == 0 && errno == 71);
+    }
+    for (const std::uint32_t goodProfile : std::array<std::uint32_t, 5>{0x42, 0x4D, 0x64, 0x80, 0x20064u}) {
+        for (const std::uint32_t badLevel : std::array<std::uint32_t, 10>{0, 9, 14, 19, 23, 33, 43, 52, 110, 112}) {
+            queryOut = 0xA5A5A5A5A5A5A5A5ull;
+            errno = 71;
+            Require(libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch(4, 1920, 1080, 0, goodProfile, badLevel, &queryOut) == invalidArgument);
+            Require(queryOut == 0 && errno == 71);
+        }
+    }
+
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
