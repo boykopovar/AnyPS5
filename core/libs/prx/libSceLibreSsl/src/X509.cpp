@@ -2284,12 +2284,13 @@ void* APS5_VABI X509_get_ext_d2i_nid_postfix(const LibreSslX509* certificate, in
     }
     const std::int64_t start = index ? static_cast<std::int64_t>(*index) + 1 : 0;
     const LibreSslX509Extension* found = nullptr;
+    std::int64_t foundPosition = -1;
     for (std::int64_t position = std::max<std::int64_t>(start, 0); position < extensions->num; ++position) {
         const auto* extension = reinterpret_cast<const LibreSslX509Extension*>(extensions->data[position]);
         if (!extension) throw std::invalid_argument(std::string(__func__) + ": a null extension");
         if (LibreSslObjectNid_nid_no_patch(extension->object) != nid) continue;
         if (index) {
-            *index = static_cast<int>(position);
+            foundPosition = position;
             found = extension;
             break;
         }
@@ -2304,8 +2305,10 @@ void* APS5_VABI X509_get_ext_d2i_nid_postfix(const LibreSslX509* certificate, in
         if (critical) *critical = -1;
         return nullptr;
     }
+    void* value = ExtensionDecode(found);
+    if (index) *index = static_cast<int>(foundPosition);
     if (critical) *critical = found->critical > 0 ? 1 : 0;
-    return ExtensionDecode(found);
+    return value;
 }
 
 void* APS5_VABI X509_get_issuer_name_nid_postfix(const LibreSslX509* certificate) {
