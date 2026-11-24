@@ -491,11 +491,11 @@ public:
 
 class AuthenticationChallenge final : public ObjectOf<ObjectType::AuthenticationChallenge> {
 public:
-    std::string requestURL;
-    Retained<AuthenticationDecisionListener> decisionListener;
+    std::optional<std::string> requestURL;
+    Retained<AuthenticationDecisionListener> decisionListener = Make<AuthenticationDecisionListener>();
     int previousFailureCount = 0;
-    Retained<Object> proposedCredential;
-    Retained<Object> protectionSpace;
+    mutable Retained<Object> proposedCredential;
+    mutable Retained<Object> protectionSpace;
     bool isForMainResource = false;
     bool isInMainFrame = false;
 };

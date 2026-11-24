@@ -62,6 +62,10 @@ public:
     Retained<Object> websitePolicies;
     std::uint32_t layoutMilestones = 0;
     std::uint32_t mockCameraOrientation = 0;
+    float mediaVolume = 1.0f;
+    std::uint32_t mutedState = 0;
+    bool mayStartMediaWhenInWindow = true;
+    std::uint32_t mediaState = 0;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
@@ -142,6 +146,13 @@ public:
     bool initialProcessWarmed = false;
     bool useSeparateServiceWorkerProcess = false;
     bool currentModifierStateCleared = false;
+    std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
+    std::uint32_t processModel = 0;
+    bool usesNetworkProcess = true;
+    bool diskCacheSpeculativeValidationEnabled = false;
+    bool canHandleHTTPSServerTrustEvaluation = true;
+    Retained<String> customWebContentServiceBundleIdentifier;
+    std::uint32_t terminatedNetworkProcessesCount = 0;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
