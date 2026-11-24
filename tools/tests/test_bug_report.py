@@ -25,8 +25,8 @@ class RedactTests(unittest.TestCase):
         self.assertEqual(out, "~\\AppData")
 
     def test_user_is_matched_as_a_whole_word(self):
-        out = bug_report.redact("banana ana ana.txt ana-dir", home="", user="ana", host="")
-        self.assertEqual(out, "banana <user> <user>.txt ana-dir")
+        out = bug_report.redact("banana ana ana.txt ana-dir ANA", home="/home/ana", user="ana", host="")
+        self.assertEqual(out, "banana <user> <user>.txt ana-dir ANA")
 
     def test_windows_home_matches_mixed_case_and_separators(self):
         out = bug_report.redact(
@@ -64,6 +64,11 @@ class RedactTests(unittest.TestCase):
         text = "a b /x"
         self.assertEqual(bug_report.redact(text, home="/x", user="a", host="b"), "a b /x")
 
+    def test_a_fully_qualified_host_name_is_replaced_whole(self):
+        text = "resolved box.corp.example. and BOX.corp.example, then box and boxer"
+        out = bug_report.redact(text, home="/home/ana", user="ana", host="box.corp.example")
+        self.assertEqual(out, "resolved <host>. and <host>, then <host> and boxer")
+
     def test_text_without_matches_is_unchanged(self):
         text = "frames=120 averageFps=59.9 version 1.2.3"
         self.assertEqual(bug_report.redact(text, home="/home/ana", user="ana", host="box"), "frames=120 averageFps=59.9 version 1.2.3")
@@ -87,6 +92,12 @@ class SettingsTests(unittest.TestCase):
 
 
 class BundleTests(unittest.TestCase):
+    def test_host_section_is_redacted_like_the_other_bundle_sections(self):
+        with patch.object(bug_report, "host_text", return_value="os: serverfestivo build for ana\n"):
+            out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(bundle.read("host.txt"), b"os: <host> build for <user>\n")
+
     identity = {"home": "/home/ana", "user": "ana", "host": "serverfestivo"}
 
     def setUp(self):
@@ -107,6 +118,21 @@ class BundleTests(unittest.TestCase):
         names = bug_report.make_bundle(self.report, out, log=kwargs.pop("log", self.log), input_config=kwargs.pop("input_config", self.ini), **self.identity)
         return out, names
 
+    def test_ambiguous_or_nonfinite_report_does_not_create_bundle(self):
+        cases = (
+            ('{"run":{},"run":{"frames":5}}', "duplicate JSON"),
+            ('{"run":{"frames":0,"frames":5}}', "duplicate JSON"),
+            ('{"run":{"averageFps":NaN}}', "Out of range float"),
+            ('{"run":{"averageFps":1e999}}', "Out of range float"),
+        )
+        for index, (text, error) in enumerate(cases):
+            with self.subTest(text=text):
+                out = self.root / f"invalid-{index}.zip"
+                self.report.write_text(text, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, error):
+                    bug_report.make_bundle(self.report, out, **self.identity)
+                self.assertFalse(out.exists())
+
     def test_members_are_redacted_and_no_identity_text_remains(self):
         out, names = self.bundle()
         self.assertEqual(names, ["README.txt", "anyps5-input.ini", "anyps5-report.json", "anyps5.log", "host.txt"])
@@ -119,6 +145,15 @@ class BundleTests(unittest.TestCase):
         for name, text in contents.items():
             for secret in ("/home/ana", "serverfestivo", "192.168.1.20", "10.0.0.7"):
                 self.assertNotIn(secret, text, f"{secret} leaked into {name}")
+
+    def test_bundle_keeps_an_unpaired_character_in_runtime_settings(self):
+        out = self.root / "runtime-settings.zip"
+        names = bug_report.make_bundle(self.report, out, environ={"APS5_TRACE_DIR": "capture\udcff"},
+                                       **self.identity)
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(sorted(bundle.namelist()), names)
+            self.assertEqual(bundle.read("anyps5-settings.txt").decode("utf-8"),
+                             "APS5_TRACE_DIR=capture\\udcff\n")
 
     def test_escaped_home_paths_are_redacted_in_nested_json(self):
         cases = (
@@ -136,6 +171,16 @@ class BundleTests(unittest.TestCase):
                     archived = json.loads(bundle.read("anyps5-report.json"))
                 details["path"] = f"opened ~{suffix}"
                 self.assertEqual(archived, report)
+
+    def test_windows_username_case_is_redacted_in_report_and_log(self):
+        identity = {"home": r"C:\Profiles\Example", "user": "Example", "host": ""}
+        self.report.write_text(json.dumps({"run": {"note": "opened by EXAMPLE"}}), encoding="utf-8")
+        self.log.write_text("account eXaMpLe; sibling EXAMPLE-backup\n", encoding="utf-8")
+        out = self.root / "bundle.zip"
+        bug_report.make_bundle(self.report, out, log=self.log, **identity)
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(json.loads(bundle.read("anyps5-report.json")), {"run": {"note": "opened by <user>"}})
+            self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), "account <user>; sibling EXAMPLE-backup\n")
 
     def test_json_object_keys_are_redacted(self):
         report = {
@@ -171,11 +216,33 @@ class BundleTests(unittest.TestCase):
         _, names = self.bundle(log=self.root / "absent.log", input_config=None)
         self.assertEqual(names, ["README.txt", "anyps5-report.json", "host.txt"])
 
+    def test_log_keeps_driver_versions_and_redacts_ipv4_endpoints(self):
+        self.log.write_text(
+            "[gpu]\ndriver_version: 621.14.0.0\ndriver_version: 580.95.5.1\n"
+            "peer http://192.168.1.20:8080/ from ::ffff:127.000.0.001\n"
+            "route 0.0.0.0 to 255.255.255.255\n"
+            "host 999.192.168.1.20\n", encoding="utf-8")
+        out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(bundle.read("anyps5.log"),
+                             b"[gpu]\ndriver_version: 621.14.0.0\ndriver_version: 580.95.5.1\n"
+                             b"peer http://<ip>:8080/ from ::ffff:<ip>\nroute <ip> to <ip>\nhost 999.<ip>\n")
+
     def test_report_that_is_not_json_is_refused(self):
         self.report.write_text("not json", encoding="utf-8")
         with self.assertRaises(ValueError):
             self.bundle()
         self.assertFalse((self.root / "bundle.zip").exists())
+
+    def test_failed_bundle_write_can_be_retried(self):
+        out = self.root / "bundle.zip"
+        with patch.object(zipfile.ZipFile, "writestr", side_effect=OSError("injected write failure")):
+            with self.assertRaisesRegex(OSError, "injected write failure"):
+                self.bundle()
+        self.assertFalse(out.exists())
+        _, names = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(sorted(bundle.namelist()), names)
 
     def test_existing_bundle_is_not_overwritten(self):
         (self.root / "bundle.zip").write_bytes(b"keep")
@@ -214,6 +281,19 @@ class MainTests(unittest.TestCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = bug_report.main(argv)
         return code, out.getvalue(), err.getvalue()
+
+    def test_hostname_case_is_redacted_in_network_paths(self):
+        self.log.write_text(
+            "opened //SERVERFESTIVO/share/title.elf via serverfestivo.local\n"
+            "opened //serverfestivo-backup/share/title.elf\n", encoding="utf-8")
+        target = self.root / "bundle.zip"
+        code, _, error = self.run_main(["--report", str(self.report), "--log", str(self.log),
+                                        "--input-config", "", "--out", str(target)])
+        self.assertEqual(code, 0, error)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(bundle.read("anyps5.log").decode("utf-8"),
+                             "opened //<host>/share/title.elf via <host>.local\n"
+                             "opened //serverfestivo-backup/share/title.elf\n")
 
     def test_writes_the_bundle_with_identities_redacted(self):
         target = self.root / "bundle.zip"
@@ -317,14 +397,32 @@ class MainTests(unittest.TestCase):
         self.assertIn("bug_report:", err)
         self.assertFalse((self.root / "b.zip").exists())
 
+    def test_non_ascii_paths_with_cp1252_stdio_are_reported_as_utf8(self):
+        env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+        out = self.root / "bundle-\u2603.zip"
+        success = subprocess.run(
+            [sys.executable, bug_report.__file__, "--report", str(self.report), "--log", "", "--input-config", "", "--out", str(out)],
+            env=env, capture_output=True, timeout=5)
+        self.assertEqual(success.returncode, 0, success.stderr.decode("utf-8", errors="replace"))
+        self.assertTrue(out.is_file())
+        self.assertIn(out.name, success.stdout.decode("utf-8"))
+
+        missing = self.root / "missing-\u2603.json"
+        failure = subprocess.run(
+            [sys.executable, bug_report.__file__, "--report", str(missing), "--log", "", "--input-config", "", "--out", str(self.root / "unused.zip")],
+            env=env, capture_output=True, timeout=5)
+        self.assertEqual(failure.returncode, 1)
+        self.assertIn(missing.name, failure.stderr.decode("utf-8"))
+
 
 class IdentityTests(unittest.TestCase):
-    def test_host_is_cut_at_the_first_dot(self):
+    def test_host_keeps_its_domain_so_both_forms_are_redacted(self):
         with patch.object(bug_report.getpass, "getuser", return_value="ana"), patch.object(bug_report.socket, "gethostname", return_value="box.example.org"):
             identity = bug_report.identities()
         self.assertEqual(identity["user"], "ana")
-        self.assertEqual(identity["host"], "box")
+        self.assertEqual(identity["host"], "box.example.org")
         self.assertEqual(identity["home"], str(Path.home()))
+        self.assertEqual(bug_report.redact("box.example.org box", **identity), "<host> <host>")
 
     def test_user_is_empty_when_it_cannot_be_determined(self):
         with patch.object(bug_report.getpass, "getuser", side_effect=OSError("no user")), patch.object(bug_report.socket, "gethostname", return_value="box"):

@@ -14,6 +14,7 @@ REPORT_LINES = (
     re.compile(r"SUMMARY: \w+Sanitizer: .*"),
     re.compile(r"(?:ERROR|WARNING|FATAL): \w+Sanitizer: .*"),
     re.compile(r"^.*runtime error: .*", re.MULTILINE),
+    re.compile(r"^\w+Sanitizer:DEADLYSIGNAL\b", re.MULTILINE),
 )
 REPORT_LENGTH = 200
 
@@ -30,9 +31,13 @@ def results(path):
         if name in found:
             raise ValueError(f"{path}: testcase {name} is listed more than once")
         skipped, status = case.find("skipped"), case.get("status")
+        if status is not None and status not in ("run", "fail", "notrun", "disabled", "None"):
+            raise ValueError(f"{path}: invalid testcase status {status!r} for {name}")
         reason = (skipped.get("message") or "").strip() if skipped is not None else ""
         if case.find("failure") is not None or case.find("error") is not None:
             outcome = "failed"
+        elif status == "notrun" and not CTEST_SKIP.fullmatch(reason):
+            outcome = "notrun"
         elif status in SKIPPED_STATUSES or (skipped is not None and (CTEST_SKIP.fullmatch(reason) or status not in FAILED_STATUSES)):
             outcome = "skipped"
         elif status in FAILED_STATUSES:
@@ -56,8 +61,11 @@ def first_report(output):
 def reports(path):
     found = {}
     for case in ET.parse(path).getroot().iter("testcase"):
-        output = "\n".join(case.findtext(channel) or "" for channel in ("system-out", "system-err"))
-        if report := first_report(output):
+        output = [case.findtext(channel) or "" for channel in ("system-out", "system-err")]
+        for element in case:
+            if element.tag in ("failure", "error"):
+                output.extend((element.text or "", element.get("message", "")))
+        if report := first_report("\n".join(output)):
             found[case.get("name")] = report
     return found
 
@@ -103,10 +111,10 @@ def test_name(text):
 
 def summarize(title, found, known=None, details=None):
     known, details = known or {}, details or {}
-    counts = {outcome: sum(1 for value in found.values() if value == outcome) for outcome in ("passed", "skipped", "failed")}
-    failed = sorted(name for name, outcome in found.items() if outcome == "failed" and name not in known)
+    counts = {outcome: sum(1 for value in found.values() if value == outcome) for outcome in ("passed", "skipped")}
+    failed = sorted(name for name, outcome in found.items() if unexpected_failure(name, outcome, known))
     expected = sorted(name for name, outcome in found.items() if outcome == "failed" and name in known)
-    tally = f"{counts['failed']} failed" + (f" ({len(expected)} known)" if expected else "")
+    tally = f"{len(failed) + len(expected)} failed" + (f" ({len(expected)} known)" if expected else "")
     lines = [f"### {title}", "",
              f"{len(found)} tests: {counts['passed']} passed, {counts['skipped']} skipped, {tally}.", ""]
     if failed and any(name in details for name in failed):
@@ -123,6 +131,10 @@ def summarize(title, found, known=None, details=None):
     if absent:
         lines += ["| Listed as known but not in this run |", "| - |"] + [f"| {test_name(name)} |" for name in absent] + [""]
     return "\n".join(lines) + "\n", bool(failed)
+
+
+def unexpected_failure(name, outcome, known):
+    return outcome == "notrun" or (outcome == "failed" and name not in known)
 
 
 def main(argv=None):
@@ -153,14 +165,18 @@ def main(argv=None):
         output = text
         if args.json:
             output = json.dumps({"title": args.title, "unexpected_failure": failing,
-                                 "tests": [{"name": name, "outcome": found[name], "known_reason": known.get(name),
-                                            "report": details.get(name), "unexpected": found[name] == "failed" and name not in known}
+                                 "tests": [{"name": name, "outcome": "failed" if found[name] == "notrun" else found[name],
+                                            "known_reason": known.get(name), "report": details.get(name),
+                                            "unexpected": unexpected_failure(name, found[name], known)}
                                            for name in sorted(found)],
                                  "known_not_run": sorted(set(known) - set(found))}, ensure_ascii=False, indent=2) + "\n"
         if args.summary:
             with args.summary.open("a", encoding="utf-8") as summary:
                 summary.write(text)
-    except (OSError, ET.ParseError, ValueError, RuntimeError) as error:
+    except ET.ParseError as error:
+        print(f"sanitizer_report: {args.junit}: {error}", file=sys.stderr)
+        return 2
+    except (OSError, ValueError, RuntimeError) as error:
         print(f"sanitizer_report: {error}", file=sys.stderr)
         return 2
     sys.stdout.write(output)

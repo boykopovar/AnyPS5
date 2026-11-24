@@ -1430,7 +1430,6 @@ void CheckRawGetcwdErrors() {
     Require(unlinkat_nid_postfix(-100, directory.c_str(), 0x800) == 0);
 }
 
-#ifndef _WIN32
 void CheckRawGetcwdPathLimit() {
     std::array<char, 4096> previous{};
     Require(getcwd_nid_postfix(previous.data(), previous.size()) == previous.data());
@@ -1476,7 +1475,6 @@ void CheckRawGetcwdPathLimit() {
     Require(chdir_nid_postfix(previous.data()) == 0);
     Require(unlinkat_nid_postfix(-100, root.c_str(), 0x800) == 0);
 }
-#endif
 
 void CheckRawGetcwd() {
     std::array<char, 4096> expected{};
@@ -1586,6 +1584,27 @@ static void LongDirectoryFchdir(const std::filesystem::path& root) {
     for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(verbatim(*level).c_str()) != FALSE);
     longTree.clear();
 }
+#else
+static void CheckUnreadableEmptyRmdir(const std::filesystem::path& root) {
+    if (::geteuid() == 0) return;
+    const auto native = root / "native-unreadable-empty";
+    Require(std::filesystem::create_directory(native));
+    std::filesystem::permissions(native, std::filesystem::perms::none);
+    Require(::rmdir(native.c_str()) == 0);
+    const auto direct = root / "direct-unreadable-empty";
+    Require(std::filesystem::create_directory(direct));
+    std::filesystem::permissions(direct, std::filesystem::perms::none);
+    Require(rmdir_nid_postfix(direct.string().c_str()) == 0);
+    Require(!std::filesystem::exists(direct));
+    const auto guest = root / "guest-unreadable-empty";
+    Require(std::filesystem::create_directory(guest));
+    std::filesystem::permissions(guest, std::filesystem::perms::none);
+    const int base = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(base >= 0);
+    Require(unlinkat_nid_postfix(base, "guest-unreadable-empty", 0x800) == 0);
+    Require(!std::filesystem::exists(guest));
+    Require(sceKernelClose(base) == 0);
+}
 #endif
 
 int main() {
@@ -1597,9 +1616,7 @@ int main() {
     Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
     CheckRawGetcwdErrors();
-#ifndef _WIN32
     CheckRawGetcwdPathLimit();
-#endif
     CheckRawGetcwd();
     CheckKqueueFromEqueue();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
@@ -1630,6 +1647,8 @@ int main() {
 #ifdef _WIN32
     LongDirectoryAtCalls(root);
     LongDirectoryFchdir(root);
+#else
+    CheckUnreadableEmptyRmdir(root);
 #endif
     DirectoryRenameTests(root);
     OwnershipAndLinkTests(root);
@@ -2449,6 +2468,7 @@ int main() {
     Require(fstatat_nid_postfix(base, "", &stat, 0) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0x0200) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "missing.bin", nullptr, 0x0200) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0x0200) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", &stat, 0x4000) == -1 && Error() == 22);

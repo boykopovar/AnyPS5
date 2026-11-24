@@ -112,7 +112,7 @@ void APS5_VABI _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(WebRtcRtpPacketRece
         packet->additionalData = nullptr;
         if (RefCount(data).fetch_sub(1, std::memory_order_acq_rel) == 1) {
             const void* const* vtable = *static_cast<const void* const* const*>(data);
-            reinterpret_cast<DeletingDestructor>(vtable[DeletingDestructorSlot])(data);
+            reinterpret_cast<DeletingDestructor>(const_cast<void*>(vtable[DeletingDestructorSlot]))(data);
         }
     }
     _ZN3rtc17CopyOnWriteBufferD1Ev_nid_postfix(&packet->buffer);

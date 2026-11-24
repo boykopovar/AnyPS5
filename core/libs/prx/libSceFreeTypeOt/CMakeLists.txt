@@ -3,6 +3,7 @@ add_library(libSceFreeTypeOt SHARED EXCLUDE_FROM_ALL Export.cpp ../libSceFreeTyp
         ../libSceFreeType/src/MemoryRecord.cpp)
 target_include_directories(libSceFreeTypeOt PRIVATE ${LIBS_INCLUDE_DIR})
 include("${CMAKE_CURRENT_LIST_DIR}/Stream.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/ModuleService.cmake")
 target_link_libraries(libSceFreeTypeOt PRIVATE freetype)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libSceFreeTypeOt PRIVATE LINKER:--exclude-libs,ALL)
@@ -30,6 +31,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_freetype_ot_stroker_export PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_freetype_ot_stroker_export PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
+    endif()
+
+    add_test_executable(guest_freetype_ot_glyph_cbox_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtGlyphCBox.cpp)
+    target_include_directories(guest_freetype_ot_glyph_cbox_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_ot_glyph_cbox_tests PRIVATE libSceFreeTypeOt libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_ot_glyph_cbox_tests)
+    add_test(NAME guest_freetype_ot_glyph_cbox COMMAND guest_freetype_ot_glyph_cbox_tests)
+    set_tests_properties(guest_freetype_ot_glyph_cbox PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_ot_glyph_cbox PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
     endif()
 
