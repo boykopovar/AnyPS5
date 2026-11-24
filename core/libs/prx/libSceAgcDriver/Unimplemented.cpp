@@ -2,8 +2,10 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 namespace {
 
@@ -52,21 +54,19 @@ int APS5_VABI sceAgcDriverSetSubmitValidationConfig(const void* config) {
     return DEBUG_UNAVAILABLE;
 }
 
-int APS5_VABI sceAgcDriverGetHsOffchipParam(uint16_t* first, uint16_t* second) {
-    (void)first;
-    (void)second;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceAgcDriverNopDataWritePacket(void* destination, uint32_t address, const void* data, uint32_t bytes) {
     const auto alignedBytes = (static_cast<std::uint64_t>(bytes) + 3) & ~std::uint64_t{3};
     const auto totalBytes = alignedBytes + 8;
-    std::memset(destination, 0, static_cast<std::size_t>(totalBytes));
+    std::vector<std::byte> packet(static_cast<std::size_t>(totalBytes), std::byte{0});
     const auto header = (static_cast<std::uint32_t>(totalBytes) << 14) + 0x3ffe0000U | 0xc0001000U;
-    std::memcpy(destination, &header, sizeof(header));
-    std::memcpy(static_cast<std::byte*>(destination) + 4, &address, sizeof(address));
-    if (data != nullptr && bytes != 0) std::memcpy(static_cast<std::byte*>(destination) + 8, data, bytes);
+    std::memcpy(packet.data(), &header, sizeof(header));
+    std::memcpy(packet.data() + 4, &address, sizeof(address));
+    if (data != nullptr && bytes != 0 && !GuestBytes(data).CopyIn(packet.data() + 8, bytes)) {
+        return DRIVER_NULL_OUTPUT;
+    }
+    if (!GuestBytes(destination).CopyOut(packet.data(), packet.size())) {
+        return DRIVER_NULL_OUTPUT;
+    }
     return data == nullptr || bytes == 0 ? 2 : static_cast<int>(totalBytes / 4);
 }
 

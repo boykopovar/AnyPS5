@@ -1,6 +1,9 @@
 #ifndef CORE_LIBS_PRX_LIBSCEOPUSDEC_INCLUDE_OPUSDECODER_HPP
 #define CORE_LIBS_PRX_LIBSCEOPUSDEC_INCLUDE_OPUSDECODER_HPP
 
+#include "prx/libc/include/General.hpp"
+#include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -26,9 +29,13 @@ public:
         for (const auto& [id, owner] : contexts)
             if (owner == context) fail("context already initialized");
         if (nextContext == 0) fail("context identifiers exhausted");
-        const auto id = nextContext++;
+        const auto id = nextContext;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(context, &id, sizeof(id));
+        errno = savedErrno;
+        if (!copied) return error(13);
+        ++nextContext;
         contexts.emplace(id, context);
-        *context = id;
         return 0;
     }
 
@@ -76,18 +83,35 @@ public:
         std::lock_guard lock(mutex);
         const auto found = decoders.find(state);
         if (found == decoders.end()) return error(1);
-        if (bytes == 0) fail("packet loss concealment is not implemented");
         auto& decoder = *found->second;
         if (decoder.unknownFlag != 0) fail("decoding with request 4050 set is not implemented");
-        if (celtOnly && (data[0] >> 3) < 16) fail("SILK and hybrid packets are not implemented");
-        const int samples = opus_packet_get_nb_samples(data, bytes, decoder.sampleRate);
-        if (samples <= 0) fail("invalid packet duration");
-        const int outputBytes = samples * decoder.channels * 2;
+        int samples;
+        std::vector<std::int16_t> decoded;
+        if (bytes == 0) {
+            const int plcFrameSamples = decoder.sampleRate / 400;
+            opus_int32 lastDuration = 0;
+            if (opus_decoder_ctl(decoder.codec.get(), OPUS_GET_LAST_PACKET_DURATION(&lastDuration)) != OPUS_OK) fail("libopus did not report the last packet duration");
+            if (lastDuration == 0) lastDuration = decoder.sampleRate / 50;
+            const int fittingSamples = capacity / (decoder.channels * static_cast<int>(sizeof(std::int16_t)));
+            samples = std::min(static_cast<int>(lastDuration), fittingSamples);
+            samples -= samples % plcFrameSamples;
+            if (samples == 0) fail("PCM buffer is too small");
+            decoded.resize(static_cast<std::size_t>(samples) * decoder.channels);
+            samples = opus_decode(decoder.codec.get(), nullptr, 0, decoded.data(), samples, 0);
+            if (samples < 0) fail("libopus rejected the packet loss concealment duration");
+        } else {
+            if (celtOnly && (data[0] >> 3) < 16) fail("SILK and hybrid packets are not implemented");
+            samples = opus_packet_get_nb_samples(data, bytes, decoder.sampleRate);
+            if (samples <= 0) fail("invalid packet duration");
+            const int outputBytes = samples * decoder.channels * static_cast<int>(sizeof(std::int16_t));
+            if (capacity < outputBytes) fail("PCM buffer is too small");
+            decoded.resize(static_cast<std::size_t>(samples) * decoder.channels);
+            const int result = opus_decode(decoder.codec.get(), data, bytes, decoded.data(), samples, 0);
+            if (result < 0) fail("libopus rejected the packet");
+            if (result != samples) fail("unexpected libopus PCM duration");
+        }
+        const int outputBytes = samples * decoder.channels * static_cast<int>(sizeof(std::int16_t));
         if (capacity < outputBytes) fail("PCM buffer is too small");
-        std::vector<std::int16_t> decoded(static_cast<std::size_t>(samples) * decoder.channels);
-        const int result = opus_decode(decoder.codec.get(), data, bytes, decoded.data(), samples, 0);
-        if (result < 0) fail("libopus rejected the packet");
-        if (result != samples) fail("unexpected libopus PCM duration");
         opus_uint32 range = 0;
         if (opus_decoder_ctl(decoder.codec.get(), OPUS_GET_FINAL_RANGE(&range)) != OPUS_OK) fail("libopus did not report the final range");
         decoder.finalRange = range;

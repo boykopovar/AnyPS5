@@ -1,21 +1,25 @@
 import argparse
 import collections
+import functools
 import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 REGISTRATION_SPEC = importlib.util.spec_from_file_location("check_test_registration", Path(__file__).with_name("check_test_registration.py"))
 REGISTRATION = importlib.util.module_from_spec(REGISTRATION_SPEC)
 REGISTRATION_SPEC.loader.exec_module(REGISTRATION)
 
-FULL = re.compile(r"^CMakeLists\.txt$|^core/CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
+FULL = re.compile(r"^CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
                   r"|^3rdparty/|^cmake/|^\.gitmodules$|^tools/select_tests\.py$")
 LOCAL = re.compile(r"(^|/)CMakeLists\.txt$|\.cmake$")
 BATCH = 20000
+CTEST_INDEX_PREFIX = "0,0,0,"
 
 
 class Build:
@@ -37,7 +41,12 @@ class Build:
                               encoding=self.encoding, check=True).stdout
 
     def absolute(self, path):
-        return os.path.normpath(path if os.path.isabs(path) else os.path.join(self.path, path))
+        absolute = os.path.normpath(path if os.path.isabs(path) else os.path.join(self.path, path))
+        for root in (self.path, self.source):
+            real = real_path(root)
+            if inside(absolute, real) and not inside(absolute, root):
+                return root.rstrip(os.sep) + absolute[len(real.rstrip(os.sep)):]
+        return absolute
 
     def key(self, path):
         return os.path.normcase(self.absolute(path))
@@ -66,9 +75,10 @@ class Build:
         return found
 
     def walk(self, roots):
+        built = {line.rpartition(": ")[0] for line in self.run("-t", "targets", "all").splitlines()}
         nodes, todo = {}, list(roots)
         while todo:
-            batch = sorted({t for t in todo if t not in nodes})
+            batch = sorted({t for t in todo if t not in nodes and t in built})
             if not batch:
                 break
             nodes.update(self.query(batch))
@@ -76,17 +86,13 @@ class Build:
         return nodes
 
     def leaves(self):
-        nodes = self.walk(["all"])
         leaves, todo, seen = set(), ["all"], set()
         while todo:
-            name = todo.pop()
-            if name in seen or name not in nodes:
-                continue
-            seen.add(name)
-            if nodes[name]["phony"]:
-                todo.extend(nodes[name]["inputs"])
-            else:
-                leaves.add(name)
+            batch = sorted(set(todo) - seen)
+            seen.update(batch)
+            nodes = self.query(batch) if batch else {}
+            todo = [i for t in batch if nodes.get(t, {}).get("phony") for i in nodes[t]["inputs"]]
+            leaves.update(t for t in batch if t in nodes and not nodes[t]["phony"])
         return sorted(leaves)
 
     def outputs(self, paths):
@@ -95,7 +101,7 @@ class Build:
 
     def tests(self, *arguments):
         listing = json.loads(subprocess.run(["ctest", "--test-dir", self.path, "--show-only=json-v1", *arguments],
-                                            capture_output=True, text=True, check=True).stdout)
+                                            capture_output=True, text=True, encoding="utf-8", check=True).stdout)
         missing = {test["name"] for test in listing["tests"] if not test.get("command")}
         if missing:
             commands = self.test_commands(missing)
@@ -138,6 +144,11 @@ class Build:
     def target(self, test):
         command = test.get("command") or []
         return self.output(command[0]) if command else None
+
+
+@functools.lru_cache(maxsize=None)
+def real_path(path):
+    return os.path.realpath(path)
 
 
 def inside(path, root):
@@ -222,14 +233,15 @@ def load_graph(path):
 
 
 def dump(build, out):
+    repo, key = functools.lru_cache(maxsize=None)(build.repo), functools.lru_cache(maxsize=None)(build.key)
     deps = collections.defaultdict(set)
     current = None
     recorded = subprocess.run([build.program, "-C", build.path, "-t", "deps"], capture_output=True, check=True).stdout
     for line in recorded.splitlines():
         if not line.startswith(b" ") and b": #deps" in line:
-            current = build.key(line.split(b": #deps")[0].decode(build.encoding))
+            current = key(line.split(b": #deps")[0].decode(build.encoding))
         elif line.strip() and current:
-            path = build.repo(dependency_path(line.strip(), build.path))
+            path = repo(dependency_path(line.strip(), build.path))
             if path:
                 deps[current].add(path)
     listing, listed = build.tests()
@@ -247,20 +259,20 @@ def dump(build, out):
             if name in seen:
                 continue
             seen.add(name)
-            path = build.repo(name)
+            path = repo(name)
             if path:
                 files.add(path)
-            files |= deps.get(build.key(name), set())
+            files |= deps.get(key(name), set())
             todo.extend(nodes.get(name, {"inputs": []})["inputs"])
         closures[target] = sorted(files)
     tests = {}
     for test in listed:
         registered, node = set(), test.get("backtrace")
         while node is not None:
-            registered.add(build.repo(graph["files"][graph["nodes"][node]["file"]]))
+            registered.add(repo(graph["files"][graph["nodes"][node]["file"]]))
             node = graph["nodes"][node].get("parent")
         props = {p["name"]: p["value"] for p in test.get("properties", [])}
-        inputs = {build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None}
+        inputs = {repo(a) for a in paths((test.get("command") or [])[1:])} - {None}
         inputs.update(path for target in arguments[test["name"]] & outputs for path in closures[target])
         tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": sorted(inputs),
                                "requires": props.get("FIXTURES_REQUIRED", []), "sets": props.get("FIXTURES_SETUP", []),
@@ -278,13 +290,17 @@ def select(graph, changed, reasons=None):
     known = set().union(*closures.values(), *(t["arguments"] for t in tests.values()))
     files = set(changed)
     dirs = tuple(f.rpartition("/")[0] + "/" for f in changed if "/" in f and (LOCAL.search(f) or f not in known))
+    affected = {target for target, scope in closures.items()
+                if not files.isdisjoint(scope) or (dirs and any(path.startswith(dirs) for path in scope))}
     picked = set()
     for name, test in tests.items():
-        scope = closures.get(test["target"], set()) | set(test["arguments"])
-        if (test["target"] is None or files & set(test["registered"]) or files & scope
-                or any(f.startswith(dirs) for f in scope | set(test["registered"]))):
+        arguments, registered = set(test["arguments"]), set(test["registered"])
+        if (test["target"] is None or test["target"] in affected
+                or not files.isdisjoint(registered) or not files.isdisjoint(arguments)
+                or (dirs and any(path.startswith(dirs) for path in arguments | registered))):
             picked.add(name)
             if reasons is not None:
+                scope = closures.get(test["target"], set()) | arguments
                 reasons[name] = (["no build executable"] if test["target"] is None else [])
                 reasons[name] += ["input: " + path for path in sorted(files & scope)]
                 reasons[name] += ["registration: " + path for path in sorted(files & set(test["registered"]))]
@@ -318,13 +334,27 @@ def select(graph, changed, reasons=None):
     return picked, []
 
 
+@contextmanager
+def ctest_index_file(indices):
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "indices.txt"
+        path.write_text(indices + "\n", encoding="utf-8")
+        yield str(path)
+
+
+def disabled(test):
+    return any(p.get("name") == "DISABLED" and p.get("value") is True for p in test.get("properties") or [])
+
+
 def plan(build, graph, picked):
     _, listed = build.tests()
-    run = [i for i, t in enumerate(listed, 1) if t["name"] in picked or t["name"] not in graph["tests"]]
+    run = [i for i, t in enumerate(listed, 1)
+           if not disabled(t) and (t["name"] in picked or t["name"] not in graph["tests"])]
     if not run:
         skip = {build.target(t) for t in listed} - {None}
         return [], [t for t in build.leaves() if t not in skip], len(listed)
-    _, selected = build.tests("-I", "0,0,0," + ",".join(map(str, run)))
+    with ctest_index_file(CTEST_INDEX_PREFIX + ",".join(map(str, run))) as index_file:
+        _, selected = build.tests("-I", index_file)
     names = {t["name"] for t in selected}
     run = [i for i, t in enumerate(listed, 1) if t["name"] in names]
     if any(not t.get("command") for t in listed if t["name"] in names):
@@ -355,17 +385,26 @@ def main(argv=None):
     e = sub.add_parser("explain", help="explain saved-graph selections without a configured build; CTest may add fixtures")
     e.add_argument("graph", type=Path)
     e.add_argument("changed", type=Path, help="file with newline-separated or Git -z NUL-separated changed paths")
+    t = sub.add_parser("targets", help="print the build outputs that the tests matching a ctest regular expression, and the fixtures ctest adds to them, run")
+    t.add_argument("build")
+    t.add_argument("regex", help="ctest -R regular expression")
     c = sub.add_parser("ctest", help="run ctest on a tree, limited to the selected tests if select wrote any")
     c.add_argument("build")
     c.add_argument("arguments", nargs=argparse.REMAINDER, help="ctest arguments")
     args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
+        command = ["ctest", "--test-dir", args.build]
         try:
-            extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
+            indices = selected.read_text(encoding="utf-8-sig").strip()
+        except FileNotFoundError:
+            return subprocess.run([*command, "--no-tests=error", *args.arguments]).returncode
         except (OSError, UnicodeDecodeError) as error:
             parser.error(f"{selected}: {error}")
-        return subprocess.run(["ctest", "--test-dir", args.build, *args.arguments, *extra]).returncode
+        if indices != CTEST_INDEX_PREFIX:
+            command.append("--no-tests=error")
+        with ctest_index_file(indices) as index_file:
+            return subprocess.run([*command, *args.arguments, "-I", index_file]).returncode
     if args.command == "explain":
         try:
             graph = load_graph(args.graph)
@@ -382,6 +421,14 @@ def main(argv=None):
         build = Build(args.build)
     except (OSError, KeyError) as error:
         parser.error(f"{args.build}: not a configured CMake build directory ({error})")
+    if args.command == "targets":
+        _, listed = build.tests("-R", args.regex)
+        if not listed:
+            parser.error(f"no test matches {args.regex}")
+        wanted = {build.output(path) for test in listed for path in paths(test.get("command") or [])} - {None}
+        for target in build.outputs(sorted(wanted)):
+            print(target)
+        return 0
     if args.command == "dump":
         dump(build, args.graph)
         return 0
@@ -402,7 +449,7 @@ def main(argv=None):
     run, targets, total = plan(build, graph, picked)
     Path(build.path, "select.ninja").write_text("include build.ninja\nbuild selected: phony "
                                                 + " ".join(escape(t) for t in targets) + "\n", encoding=build.encoding)
-    Path(build.path, "select.tests").write_text("0,0,0," + ",".join(map(str, run)) + "\n", encoding="utf-8")
+    Path(build.path, "select.tests").write_text(CTEST_INDEX_PREFIX + ",".join(map(str, run)) + "\n", encoding="utf-8")
     print(f"selected {len(run)}/{total} tests, {len(targets)} build targets")
     return 0
 

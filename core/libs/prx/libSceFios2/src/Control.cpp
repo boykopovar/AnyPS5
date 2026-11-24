@@ -6,7 +6,10 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <memory>
 #include <mutex>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -46,6 +49,13 @@ struct OverlayRecord {
 
 static_assert(sizeof(OverlayRecord) == 0x258);
 
+struct ResolvedOverlay {
+    std::uint8_t type;
+    std::uint8_t order;
+    std::string destination;
+    std::string source;
+};
+
 struct CacheFilterConfig {
     std::uint64_t size{};
     std::uint64_t workBufferSize{};
@@ -80,8 +90,49 @@ std::mutex g_ioFiltersMutex;
 std::vector<CacheFilterRegistration> g_cacheFilters;
 std::mutex g_cacheFiltersMutex;
 std::vector<OverlayRecord> g_overlays;
+std::shared_ptr<const std::vector<ResolvedOverlay>> g_overlaySnapshot;
 std::mutex g_overlaysMutex;
 std::int32_t g_lastOverlayId = 0;
+
+std::string NormalizeOverlayPath(const std::string& path) {
+    std::string normalized;
+    std::size_t start = 0;
+    const bool absolute = !path.empty() && path.front() == '/';
+    while (start <= path.size()) {
+        const std::size_t end = std::min(path.find('/', start), path.size());
+        const std::string part = path.substr(start, end - start);
+        if (!part.empty() && part != ".") {
+            if (!normalized.empty() || absolute) normalized += '/';
+            normalized += part;
+        }
+        start = end + 1;
+    }
+    return normalized.empty() && absolute ? "/" : normalized;
+}
+
+std::shared_ptr<const std::vector<ResolvedOverlay>> OverlaySnapshot() {
+    const std::lock_guard lock(g_overlaysMutex);
+    if (g_overlaySnapshot) return g_overlaySnapshot;
+    auto snapshot = std::make_shared<std::vector<ResolvedOverlay>>();
+    snapshot->reserve(g_overlays.size());
+    for (const auto& overlay : g_overlays) {
+        if (overlay.order <= 0x7f) snapshot->push_back({overlay.type, overlay.order, NormalizeOverlayPath(overlay.destination), NormalizeOverlayPath(overlay.source)});
+    }
+    std::stable_sort(snapshot->begin(), snapshot->end(), [](const auto& left, const auto& right) { return left.order < right.order; });
+    g_overlaySnapshot = snapshot;
+    return snapshot;
+}
+
+bool OverlayTakesSource(std::uint8_t type, std::int32_t flag, const std::string& source, const std::string& original) {
+    if (type == 0) return true;
+    if (type == 3 && flag == 1) return true;
+    SceFiosStat sourceStat{};
+    if (Fios::StatPath(source, sourceStat) != SCE_FIOS_OK) return false;
+    if (type != 2) return true;
+    SceFiosStat originalStat{};
+    if (Fios::StatPath(original, originalStat) != SCE_FIOS_OK) return true;
+    return !originalStat.modificationDate || sourceStat.modificationDate > originalStat.modificationDate;
+}
 
 struct PsarcDescriptor {
     std::uint64_t size;
@@ -453,6 +504,7 @@ int APS5_VABI sceFiosOverlayRemove(std::int32_t id) {
     const auto found = std::find_if(g_overlays.begin(), g_overlays.end(), [id](const OverlayRecord& overlay) { return overlay.id == id; });
     if (found == g_overlays.end()) return SCE_FIOS_ERROR_BAD_OVERLAY;
     g_overlays.erase(found);
+    g_overlaySnapshot.reset();
     return SCE_FIOS_OK;
 }
 
@@ -472,6 +524,7 @@ int APS5_VABI sceFiosOverlayModify(std::int32_t id, const void* overlay) {
     if (found == g_overlays.end()) return SCE_FIOS_ERROR_BAD_OVERLAY;
     record.id = id;
     *found = record;
+    g_overlaySnapshot.reset();
     return SCE_FIOS_OK;
 }
 
@@ -493,12 +546,40 @@ int APS5_VABI sceFiosOverlayAdd(const void* overlay, void* context) {
     record.id = id;
     if (context != nullptr && !Fios::CopyOut(context, &id, sizeof(id))) return SCE_FIOS_ERROR_BAD_PTR;
     g_overlays.push_back(record);
+    g_overlaySnapshot.reset();
     return SCE_FIOS_OK;
 }
 
-int APS5_VABI sceFiosOverlayResolveSync(std::uint32_t capacity, const char*, const char*, void*) {
+int APS5_VABI sceFiosOverlayResolveSync(std::int32_t flag, const char* path, char* result, std::size_t capacity) {
+    if (path == nullptr || result == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
     if (capacity > 0x400) return SCE_FIOS_ERROR_BAD_SIZE;
-    return SCE_FIOS_ERROR_BAD_OVERLAY;
+    std::string input;
+    const int copyError = CopyGuestString_nid_no_patch(path, capacity, input);
+    if (copyError == 14) return SCE_FIOS_ERROR_BAD_PTR;
+    if (copyError != 0) return SCE_FIOS_ERROR_PATH_TOO_LONG;
+    if (!Fios::CopyOut(result, input.c_str(), input.size() + 1)) return SCE_FIOS_ERROR_BAD_PTR;
+    if (flag != 0 && flag != 1) return SCE_FIOS_ERROR_BAD_RESOLVE_FLAG;
+    const auto overlays = OverlaySnapshot();
+    const std::string normalized = NormalizeOverlayPath(input);
+    for (const auto& overlay : *overlays) {
+        const std::string& destination = overlay.destination;
+        if (!normalized.starts_with(destination)) continue;
+        std::string_view suffix = std::string_view(normalized).substr(destination.size());
+        if (!suffix.empty() && destination != "/") {
+            if (suffix.front() != '/') continue;
+            suffix.remove_prefix(1);
+        }
+        std::string candidate = overlay.source;
+        if (!suffix.empty()) {
+            if (candidate != "/") candidate += '/';
+            candidate += suffix;
+        }
+        if (!OverlayTakesSource(overlay.type, flag, candidate, normalized)) continue;
+        if (candidate.size() + 1 > capacity) return SCE_FIOS_ERROR_PATH_TOO_LONG;
+        if (!Fios::CopyOut(result, candidate.c_str(), candidate.size() + 1)) return SCE_FIOS_ERROR_BAD_PTR;
+        break;
+    }
+    return SCE_FIOS_OK;
 }
 
 int APS5_VABI sceFiosResolveSync(const SceFiosOpAttr*, const void* request, void* result) {

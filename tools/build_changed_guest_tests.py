@@ -1,14 +1,16 @@
 import argparse
+from collections import defaultdict
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
-import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_mingw_host_only_tests as host_only
-from select_tests import chunks
+from check_test_registration import testfile_commands
+from select_tests import chunks, ctest_index_file, paths
 
 BROAD_CHANGES = {
     "CMakeLists.txt",
@@ -16,6 +18,11 @@ BROAD_CHANGES = {
     "tools/build_mingw_host_only_tests.py",
     "tools/build_changed_guest_tests.py",
 }
+LIBRARY_LOAD_TEST = "patched_libraries_tests"
+PUBLIC_HEADER_TESTS = re.compile(r"^public_headers(_compile_\d+)?$")
+NID_TESTS = re.compile(r"^nid_")
+PUBLIC_HEADER_INPUTS = {"core/libs/tests/test_public_headers.py", "tools/nid_names.py"}
+HEADER_SUFFIXES = (".h", ".hpp", ".hh", ".inl")
 
 
 def reaches_libs(changed):
@@ -23,6 +30,68 @@ def reaches_libs(changed):
         path == "CMakeLists.txt" or path.startswith(("core/libs/", ".github/workflows/build.yml", "tools/") + host_only.BUILD_WIDE_PREFIXES)
         for path in changed
     )
+
+
+def checks_public_headers(changed):
+    return any(
+        path in BROAD_CHANGES or path in PUBLIC_HEADER_INPUTS or path.startswith(host_only.BUILD_WIDE_PREFIXES)
+        or path in ("core/libs/CMakeLists.txt",) or path.startswith("core/libs/") and path.endswith(HEADER_SUFFIXES)
+        for path in (Path(item).as_posix() for item in changed if item)
+    )
+
+
+def checks_nid(changed):
+    return any(
+        path in BROAD_CHANGES or path.startswith(host_only.BUILD_WIDE_PREFIXES)
+        or path == "core/libs/CMakeLists.txt" or path.startswith("core/libs/nid/")
+        for path in (Path(item).as_posix() for item in changed if item)
+    )
+
+
+def script_test_patterns(changed):
+    return [pattern for check, pattern in ((checks_public_headers, PUBLIC_HEADER_TESTS), (checks_nid, NID_TESTS)) if check(changed)]
+
+
+def ctest_tests(build_dir, *arguments):
+    result = subprocess.run(
+        ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1", *arguments],
+        capture_output=True, text=True, encoding="utf-8", check=True)
+    return json.loads(result.stdout).get("tests", [])
+
+
+def script_test_indices(build_dir, patterns):
+    names = [test["name"] for test in ctest_tests(build_dir)]
+    indices = set()
+    for pattern in patterns:
+        matched = {index for index, name in enumerate(names, 1) if pattern.match(name)}
+        if not matched:
+            raise ValueError("no ctest registration matched " + pattern.pattern)
+        indices |= matched
+    return sorted(indices)
+
+
+def registered_test_commands(build_dir):
+    commands = {}
+    for entries in testfile_commands(build_dir):
+        for command, arguments in entries:
+            if command == "add_test" and arguments:
+                commands[arguments[0]] = arguments[1:]
+    return commands
+
+
+def scheduled_test_owners(build_dir, selection, targets_by_name):
+    tests = ctest_tests(build_dir, "-I", selection)
+    registered = registered_test_commands(build_dir)
+    owners = set()
+    for test in tests:
+        for command in (test.get("command", []), registered.get(test["name"], [])):
+            owner = test_owner(command, targets_by_name)
+            if owner is None:
+                owner = test_owner(list(paths(command[1:])), targets_by_name)
+            if owner is not None:
+                owners.add(owner)
+                break
+    return owners
 
 
 def guest_test_targets(source_root, targets, changed_paths=None):
@@ -36,39 +105,32 @@ def guest_test_targets(source_root, targets, changed_paths=None):
         except ValueError:
             continue
         sources = [source_root / source["path"] for source in target.get("sources", []) if not source.get("isGenerated")]
-        if not any("tests" in source.parts and source.is_relative_to(source_root / "core" / "libs") for source in sources):
+        if not any(host_only.is_core_libs_test_source(source, source_root / "core" / "libs") for source in sources):
             continue
         if not host_only.links_guest_libc(target):
             continue
-        selected.append(target["name"])
-    selected = sorted(set(selected), key=str.casefold)
+        selected.append(target)
     if changed_paths is None:
-        return selected
+        return sorted({target["name"] for target in selected}, key=str.casefold)
     changed = {Path(path).as_posix() for path in changed_paths if path}
     broad_change = any(path in BROAD_CHANGES or path.startswith(host_only.BUILD_WIDE_PREFIXES) or path.startswith("core/libs/") and (
         path.endswith((".h", ".hpp", ".hh", ".inl", ".cmake")) or Path(path).name == "CMakeLists.txt"
     ) for path in changed)
+    loads_libraries = broad_change or any(path.startswith("core/libs/prx/") for path in changed)
+    load_test = [LIBRARY_LOAD_TEST] if loads_libraries and any(
+        target.get("name") == LIBRARY_LOAD_TEST and target.get("type") == "EXECUTABLE" for target in targets.values()) else []
     if broad_change:
-        return selected
-    changed_source = {
-        relative
-        for target in targets.values()
-        if target.get("name") in selected
-        for item in target.get("sources", []) if not item.get("isGenerated")
-        for relative in [host_only.source_relative_path(source_root, source_root / item["path"])]
-        if relative is not None
-    }
-    matched_sources = changed & changed_source
-    if matched_sources:
-        return [
-            target["name"] for target in targets.values()
-            if target.get("name") in selected
-            and any(
-                host_only.source_relative_path(source_root, source_root / item["path"]) in matched_sources
-                for item in target.get("sources", []) if not item.get("isGenerated")
-            )
-        ]
-    return []
+        return sorted({target["name"] for target in selected} | set(load_test), key=str.casefold)
+    return [
+        target["name"] for target in selected
+        if changed & host_only.target_reached_sources(target, targets, source_root)
+    ] + load_test
+
+
+def core_lib_test_targets(source_root, targets, changed_paths=None):
+    guest = guest_test_targets(source_root, targets, changed_paths)
+    host = host_only.host_only_test_targets(source_root, targets, changed_paths)
+    return sorted(set(guest) | set(host), key=str.casefold)
 
 
 def target_artifact_names(target):
@@ -87,10 +149,15 @@ def target_artifact_names(target):
 def test_owner(command, targets_by_name):
     candidates = [command[0]] if command else []
     if "--" in command:
-        owner_index = command.index("--") + 1
-        candidates += command[owner_index:owner_index + 1]
+        separator = command.index("--")
+        if command[1:3] == ["-E", "env"] and Path(command[0]).stem.casefold() == "cmake":
+            program = next((part for part in command[3:separator] if not part.startswith("-") and "=" not in part), None)
+            if program:
+                candidates.append(program)
+        candidates += command[separator + 1:separator + 2]
     else:
-        candidates += [part for part in command[1:] if not part.startswith("-") and Path(part).suffix.casefold() == ".exe"]
+        candidates += [part for part in command[1:] if not part.startswith("-")
+                       and (Path(part).suffix.casefold() == ".exe" or "/" in part or "\\" in part)]
     for part in candidates:
         name = Path(part).name.casefold()
         if name.endswith(".exe"):
@@ -100,13 +167,29 @@ def test_owner(command, targets_by_name):
     return None
 
 
+def fixture_consumers(tests, selected):
+    setups = {}
+    consumers = defaultdict(list)
+    for index, test in enumerate(tests, 1):
+        properties = {item["name"]: item["value"] for item in test.get("properties", [])}
+        setups[index] = properties.get("FIXTURES_SETUP", [])
+        for fixture in properties.get("FIXTURES_REQUIRED", []):
+            consumers[fixture].append(index)
+    added = set()
+    pending = list(selected)
+    while pending:
+        for fixture in setups[pending.pop()]:
+            for consumer in consumers[fixture]:
+                if consumer not in selected and consumer not in added:
+                    added.add(consumer)
+                    pending.append(consumer)
+    return sorted(added)
+
+
 def ctest_resolutions(build_dir, targets_by_name, selected=None):
-    result = subprocess.run(
-        ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
-        capture_output=True, text=True, check=True)
-    document = json.loads(result.stdout)
+    tests = ctest_tests(build_dir)
     resolutions = {}
-    for index, test in enumerate(document.get("tests", []), 1):
+    for index, test in enumerate(tests, 1):
         command = [str(part) for part in test.get("command", [])]
         owner = test_owner(command, targets_by_name)
         references = {
@@ -115,51 +198,55 @@ def ctest_resolutions(build_dir, targets_by_name, selected=None):
         }
         if owner is not None and (selected is None or owner in selected or references & selected):
             resolutions[test["name"]] = (owner, index)
+
+    for index in fixture_consumers(tests, {index for _, index in resolutions.values()}):
+        resolutions[tests[index - 1]["name"]] = (None, index)
     return resolutions
 
 
-def run(build_dir, selected, targets_by_name, output_log=None):
+def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None):
     subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
+    indices = set(script_test_indices(build_dir, script_tests)) if script_tests else set()
+    selected_names = set(selected)
     if selected:
         for batch in chunks(selected):
             subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
-        selected_names = set(selected)
         resolutions = ctest_resolutions(build_dir, targets_by_name, selected_names)
-        additional = sorted({owner for owner, _ in resolutions.values()} - selected_names, key=str.casefold)
-        for batch in chunks(additional):
-            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
         missing = sorted(selected_names - {owner for owner, _ in resolutions.values()})
         if missing:
             raise ValueError("no ctest registration resolved for: " + ", ".join(missing))
-        with tempfile.TemporaryDirectory(prefix="anyps5-guest-ctest-") as directory:
-            selection = Path(directory) / "selected-tests.txt"
-            selection.write_text("0,0,0," + ",".join(str(index) for _, index in resolutions.values()) + "\n", encoding="ascii")
-            subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
-                            "--parallel", "4", "--no-tests=error", "-I", str(selection),
-                            *(["--output-log", str(output_log)] if output_log else [])], check=True)
-    else:
-        print("No guest core/libs test sources changed; the libs build still ran")
+        indices.update(index for _, index in resolutions.values())
+    if not indices:
+        print("No core/libs test sources changed; the libs build still ran")
+        return
+    with ctest_index_file("0,0,0," + ",".join(map(str, sorted(indices)))) as selection:
+        additional = scheduled_test_owners(build_dir, selection, targets_by_name) - selected_names
+        for batch in chunks(sorted(additional, key=str.casefold)):
+            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
+        subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
+                        "--parallel", "4", "--no-tests=error", "-I", selection,
+                        *(["--output-log", str(output_log)] if output_log else [])], check=True)
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="build and run changed core/libs tests that link guest libc")
+    parser = argparse.ArgumentParser(description="build and run changed guest and host-only core/libs tests")
     parser.add_argument("build_dir", type=Path)
     parser.add_argument("changed_paths", nargs="?", type=Path)
     parser.add_argument("--output-log", type=Path)
     args = parser.parse_args(argv)
     try:
-        if args.changed_paths is not None:
-            listed = {Path(path).as_posix() for path in args.changed_paths.read_text(encoding="utf-8").splitlines() if path}
-            if not reaches_libs(listed):
-                print("No changed guest core/libs tests require a run")
+        changed_paths = args.changed_paths.read_text(encoding="utf-8-sig").splitlines() if args.changed_paths else None
+        if changed_paths is not None:
+            listed = {Path(path).as_posix() for path in changed_paths if path}
+            if not reaches_libs(listed) and not script_test_patterns(listed):
+                print("No changed core/libs tests require a run")
                 return 0
         source_root, targets = host_only.read_reply(Path(os.path.realpath(args.build_dir)))
-        changed_paths = args.changed_paths.read_text(encoding="utf-8").splitlines() if args.changed_paths else None
-        selected = guest_test_targets(source_root, targets, changed_paths)
+        selected = core_lib_test_targets(source_root, targets, changed_paths)
         if not selected:
-            print("No guest core/libs test sources changed")
+            print("No core/libs test sources changed")
         else:
-            print("Guest core/libs tests:")
+            print("Core/libs tests:")
             print("\n".join(selected))
         by_name = {target.get("name"): target for target in targets.values()}
         targets_by_name = {}
@@ -167,7 +254,8 @@ def main(argv=None):
             if target.get("type") == "EXECUTABLE":
                 targets_by_name.update(target_artifact_names(target))
                 targets_by_name[name.casefold()] = name
-        run(args.build_dir, selected, targets_by_name, args.output_log)
+        script_tests = script_test_patterns(changed_paths) if changed_paths is not None else None
+        run(args.build_dir, selected, targets_by_name, args.output_log, script_tests)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)
         return 1

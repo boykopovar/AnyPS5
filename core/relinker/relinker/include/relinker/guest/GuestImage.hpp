@@ -52,6 +52,7 @@ struct GuestImage {
     std::vector<Domain::ProgramHeader> Headers;
     std::vector<GuestSymbol> Symbols;
     std::vector<std::string> Dependencies;
+    std::vector<std::pair<std::size_t, std::string>> BindingAliases;
     Domain::SysVDynamicSection Dynamic;
     std::vector<std::uint64_t> InitArray;
     std::vector<std::uint64_t> FiniArray;
@@ -85,11 +86,17 @@ struct GuestModuleInput {
     std::vector<GamePatch::PatchedRange> PatchedRanges;
 };
 
-std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, bool functionSymbolRoots = false);
+struct BackupCopy {
+    std::filesystem::path Copy;
+    std::filesystem::path Kept;
+    std::string Match;
+};
+
+std::vector<BackupCopy> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, bool functionSymbolRoots = false);
 
 class GuestModuleBuilder {
 public:
-    std::vector<GuestArtifact> Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool macos, bool toIntel, bool toRosetta, ISyscallScanner& syscallScanner, bool lazyBinding, bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress, bool functionSymbolRoots = false) const;
+    std::vector<GuestArtifact> Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool macos, bool toIntel, Codegen::Amd64OnlyTarget target, ISyscallScanner& syscallScanner, bool lazyBinding, bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress, bool functionSymbolRoots = false) const;
 };
 
 }

@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -23,6 +24,8 @@ int main() {
     constexpr int memory = static_cast<int>(0x80770007);
     constexpr std::size_t statusSize = 0xF8;
     constexpr std::size_t currentContexts = 0x64;
+    constexpr std::size_t allocatorCounters = 0xC8;
+    constexpr std::size_t allocatorCountersSize = 0x10;
     alignas(16) static unsigned char pool[0x10000];
 
     std::array<unsigned char, 0x200> status;
@@ -50,16 +53,20 @@ int main() {
     Require(sceRudpInit_nid_postfix(pool + 8, 0xC58) == 0);
     Require(sceRudpInit_nid_postfix(nullptr, 0) == alreadyInitialized);
     Require(sceRudpGetMaxSegmentSize(nullptr) == invalidArgument);
+    Require(sceRudpGetMaxSegmentSize(reinterpret_cast<std::uint16_t*>(0x10)) == invalidArgument);
     Require(sceRudpGetMaxSegmentSize(&mss) == 0);
     Require(mss == 1410);
     Require(sceRudpProcessEvents(0) == 0);
     Require(sceRudpNetFlush() == 0);
-    Require(sceRudpNetReceived(0, nullptr, 0, nullptr, 0) == 0);
+    Require(sceRudpNetReceived(0, nullptr, 0, nullptr, 0) == invalidArgument);
 
     Require(sceRudpGetStatus(nullptr, statusSize) == invalidArgument);
     Require(sceRudpGetStatus(nullptr, 0) == invalidArgument);
     Require(sceRudpGetStatus(status.data(), 0) == invalidArgument);
     Require(sceRudpGetStatus(status.data(), statusSize + 1) == invalidArgument);
+    errno = 71;
+    Require(sceRudpGetStatus(reinterpret_cast<void*>(0x10), statusSize) == invalidArgument);
+    Require(errno == 71);
     Require(status == untouched);
 
     Require(sceRudpGetStatus(status.data(), statusSize) == 0);
@@ -69,7 +76,9 @@ int main() {
     int first = -1;
     int second = -1;
     Require(sceRudpCreateContext(Handler, nullptr, &first) == 0);
+    Require(sceRudpCreateContext(Handler, nullptr, reinterpret_cast<int*>(0x10)) == invalidArgument);
     Require(sceRudpCreateContext(Handler, nullptr, &second) == 0);
+    Require(second == first + 1);
     status.fill(0x5a);
     Require(sceRudpGetStatus(status.data(), statusSize) == 0);
     std::uint32_t contexts = 0;
@@ -79,10 +88,29 @@ int main() {
         if (i < currentContexts || i >= currentContexts + sizeof(contexts)) Require(status[i] == 0);
     }
 
-    status.fill(0x5a);
-    Require(sceRudpGetStatus(status.data(), 1) == 0);
-    Require(status[0] == 0);
-    for (std::size_t i = 1; i < status.size(); ++i) Require(status[i] == 0x5a);
+    const auto requireStatusSize = [&](std::size_t size) {
+        status.fill(0x5a);
+        Require(sceRudpGetStatus(status.data(), size) == 0);
+        std::array<unsigned char, 0x200> expected;
+        expected.fill(0x5a);
+        for (std::size_t i = 0; i < size; ++i) expected[i] = 0;
+        std::size_t contextBytes = 0;
+        if (size > currentContexts) {
+            contextBytes = size - currentContexts;
+            if (contextBytes > sizeof(contexts)) contextBytes = sizeof(contexts);
+        }
+        std::memcpy(expected.data() + currentContexts, &contexts, contextBytes);
+        Require(status == expected);
+    };
+    requireStatusSize(1);
+    requireStatusSize(currentContexts + 1);
+    requireStatusSize(currentContexts + 2);
+    requireStatusSize(currentContexts + 3);
+    requireStatusSize(currentContexts + sizeof(contexts));
+    requireStatusSize(allocatorCounters + 1);
+    requireStatusSize(allocatorCounters + allocatorCountersSize / 2);
+    requireStatusSize(allocatorCounters + allocatorCountersSize - 1);
+    requireStatusSize(allocatorCounters + allocatorCountersSize);
 
     Require(sceRudpTerminate(first) == 0);
     Require(sceRudpTerminate(first) == invalidContextId);

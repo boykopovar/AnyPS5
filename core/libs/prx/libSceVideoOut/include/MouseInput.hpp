@@ -10,6 +10,7 @@ public:
     void SetPresentation(std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t presentedWidth, std::uint32_t presentedHeight);
     bool CaptureWanted(bool allowed) const;
     void UpdateCapture(bool allowed);
+    void SetPadOwnsMouse(bool owns);
 
 private:
     std::int32_t scaled(std::int32_t delta, double scale, double& remainder);
@@ -17,6 +18,7 @@ private:
     bool focused = true;
     bool captured = false;
     bool suspended = false;
+    bool padOwnsMouse = false;
     double scaleX = 1.0;
     double scaleY = 1.0;
     double remainderX = 0.0;

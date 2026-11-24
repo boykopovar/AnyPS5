@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostErrno.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstddef>
@@ -86,6 +87,16 @@ FileStream* __stdinp_nid_postfix = &input;
 FileStream* __stdoutp_nid_postfix = &_Stdout_nid_postfix;
 FileStream* __stderrp_nid_postfix = &_Stderr_nid_postfix;
 int __isthreaded_nid_postfix = 1;
+int _thread_autoinit_dummy_decl_nid_postfix = 0;
+#if defined(__EMSCRIPTEN__) || defined(_MSC_VER)
+int _thread_autoinit_dummy_decl_stub_nid_postfix = 0;
+#elif defined(__APPLE__)
+__asm__(".globl \"__thread_autoinit_dummy_decl_stub_nid_postfix\"\n\t"
+        ".set \"__thread_autoinit_dummy_decl_stub_nid_postfix\", __thread_autoinit_dummy_decl_nid_postfix");
+#else
+__asm__(".globl \"_thread_autoinit_dummy_decl_stub_nid_postfix\"\n\t"
+        ".set \"_thread_autoinit_dummy_decl_stub_nid_postfix\", _thread_autoinit_dummy_decl_nid_postfix");
+#endif
 
 int APS5_VABI fwide_nid_postfix(FileStream* stream, int mode) {
     return stream->Orientation(mode);
@@ -95,9 +106,14 @@ int APS5_VABI fgetc_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
-    if (!stream->SwitchToReading()) return -1;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
     const int result = std::fgetc(native);
+    const int nativeError = errno;
     stream->SyncStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result == -1);
     return result;
 }
@@ -139,31 +155,61 @@ std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* strea
     if (!stream->IsOpen()) { errno = 9; return -1; }
     stream->Orientation(1);
     if (value == -1) return -1;
-    if (value < 0 || value > 255) {
+    if (value < 0 || value > 0xffff) {
         errno = 86;
         stream->SetError();
         return -1;
     }
-    auto* native = GetNativeStream(stream);
+    static_cast<void>(GetNativeStream(stream));
     if (!stream->OpenForReading()) return -1;
     if (!stream->SwitchToReading()) return -1;
-    const int result = std::ungetc(value, native);
+    const char16_t low = value >= 0xd800 && value < 0xdc00 ? stream->TakeLowSurrogate() : 0;
+    const std::uint32_t code = low != 0 ? 0x10000 + ((static_cast<std::uint32_t>(value) & 0x3ff) << 10) + (low & 0x3ffu) : static_cast<std::uint32_t>(value);
+    unsigned char bytes[4];
+    std::size_t count = 0;
+    if (code < 0x80) {
+        bytes[count++] = static_cast<unsigned char>(code);
+    } else if (code < 0x800) {
+        bytes[count++] = static_cast<unsigned char>(0xc0 | (code >> 6));
+        bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
+    } else if (code < 0x10000) {
+        bytes[count++] = static_cast<unsigned char>(0xe0 | (code >> 12));
+        bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 6) & 0x3f));
+        bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
+    } else {
+        bytes[count++] = static_cast<unsigned char>(0xf0 | (code >> 18));
+        bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 12) & 0x3f));
+        bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 6) & 0x3f));
+        bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
+    }
+    const std::size_t total = count;
+    int result = 0;
+    while (count != 0 && result != -1) result = stream->PushBack(bytes[--count]);
     stream->SyncStatus();
-    if (result != -1) stream->NotePushback();
-    return result;
+    if (result == -1) {
+        if (low != 0 && count + 1 == total) stream->SetLowSurrogate(low);
+        return -1;
+    }
+    stream->NotePushback();
+    return value;
 }
 int APS5_VABI getc_nid_postfix(FileStream* stream) { return fgetc_nid_postfix(stream); }
 int APS5_VABI getc_unlocked_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
-    if (!stream->SwitchToReadingUnlocked()) return -1;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReadingUnlocked()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
 #ifdef _WIN32
     const int result = _fgetc_nolock(native);
 #else
     const int result = getc_unlocked(native);
 #endif
+    const int nativeError = errno;
     stream->SyncUnlockedStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result == -1);
     return result;
 }
@@ -202,8 +248,13 @@ int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToWriting()) return -1;
+    const int previousError = errno;
+    errno = 0;
     const int result = std::fputc(value, native);
+    const int nativeError = errno;
+    if (result == EOF) stream->DropFailedUnbufferedWrite();
     stream->SyncStatus();
+    errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
 }
 int APS5_VABI putc_nid_postfix(int value, FileStream* stream) { return fputc_nid_postfix(value, stream); }
@@ -211,13 +262,18 @@ int APS5_VABI putc_unlocked_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     if (!stream->SwitchToWritingUnlocked()) return -1;
+    const int previousError = errno;
+    errno = 0;
 #ifdef _WIN32
     const int result = _fputc_nolock(value, native);
 #else
     const int result = putc_unlocked(value, native);
 #endif
+    const int nativeError = errno;
+    if (result == EOF) stream->DropFailedUnbufferedWrite();
     stream->SyncUnlockedStatus();
     stream->Orientation(-1);
+    errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
 }
 int APS5_VABI __swbuf_nid_postfix(int value, FileStream* stream) { return fputc_nid_postfix(value, stream); }
@@ -226,10 +282,10 @@ int APS5_VABI putchar_unlocked_nid_postfix(int value) { return putc_unlocked_nid
 int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (value != EOF && stream && !stream->OpenForReading()) return -1;
-    auto* native = GetNativeStream(stream);
+    static_cast<void>(GetNativeStream(stream));
     stream->Orientation(-1);
     if (value != EOF && !stream->SwitchToReading()) return -1;
-    const int result = std::ungetc(value, native);
+    const int result = stream->PushBack(value);
     stream->SyncStatus();
     return result;
 }
@@ -238,9 +294,14 @@ char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
     if (stream) stream->Orientation(-1);
     auto* native = GetNativeStream(stream);
-    if (!stream->SwitchToReading()) return nullptr;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return nullptr; }
     auto* result = std::fgets(buffer, size, native);
+    const int nativeError = errno;
     stream->SyncStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result == nullptr);
     return result;
 }
@@ -289,6 +350,7 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (mode < 0 || mode > 2) return -1;
     const int native = mode == 0 ? _IOFBF : mode == 1 ? _IOLBF : _IONBF;
+    if (native != _IONBF && (size & 0x80000000u) != 0) return -1;
     if (native != _IONBF && size == 0) {
         buffer = nullptr;
         size = BUFSIZ;
@@ -298,6 +360,10 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
     if (handle == __acrt_iob_func(1) && KeepHostStandardOutput_nid_no_patch() < 0) return -1;
     if (handle == __acrt_iob_func(2) && KeepHostStandardError_nid_no_patch() < 0) return -1;
     buffer = nullptr;
+    if (native != _IONBF) {
+        if (size > 0x7FFFFFFFu) throw std::length_error("setvbuf: buffer size above the host C library's limit");
+        if (size < 2) size = 2;
+    }
     ::_lock_file(handle);
     const int result = std::setvbuf(handle, buffer, native, size);
     if (result == 0 && native == _IONBF) reinterpret_cast<UcrtStreamState*>(handle)->bufferSize = 1;

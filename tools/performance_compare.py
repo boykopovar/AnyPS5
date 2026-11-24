@@ -10,6 +10,14 @@ CONTEXT = ("gpu", "driver", "os", "resolution")
 OPTIONAL_STRINGS = ("cpu", "title_id", "title", "content_version")
 OPTIONAL_INTEGERS = ("cpu_threads", "memory_mib")
 PERCENTILES = ("p50", "p90", "p99", "max")
+GRAPHICS_LABELS = {
+    "render_passes": "render passes",
+    "continued_draws": "continued draws",
+    "barriers": "barriers",
+    "merged_barriers": "merged barriers",
+    "copies": "copies",
+    "copy_mib": "copy MiB",
+}
 
 
 def number(value, name):
@@ -77,6 +85,9 @@ def validate(summary):
         raise ValueError("top_phases_ms_per_frame must be an object")
     for name, value in phases.items():
         number(value, f"top_phases_ms_per_frame.{name}")
+    graphics = summary.get("graphics_track", {})
+    if not isinstance(graphics, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in graphics.items()):
+        raise ValueError("graphics_track must map names to non-negative integers")
     return summary
 
 
@@ -92,20 +103,23 @@ def unique_json_object(pairs):
 def load_summary(path, trace=None):
     selected = None
     count = 0
-    with Path(path).open(encoding="utf-8-sig") as source:
-        for line_number, line in enumerate(source, 1):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line, object_pairs_hook=unique_json_object)
-                if not isinstance(record, dict):
-                    raise ValueError("summary must be an object")
-            except (ValueError, RecursionError) as error:
-                raise ValueError(f"{path}:{line_number}: {error}") from error
-            if trace is None or record.get("trace") == trace:
-                count += 1
-                if count == 1:
-                    selected = (line_number, record)
+    try:
+        with Path(path).open(encoding="utf-8-sig") as source:
+            for line_number, line in enumerate(source, 1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line, object_pairs_hook=unique_json_object)
+                    if not isinstance(record, dict):
+                        raise ValueError("summary must be an object")
+                except (ValueError, RecursionError) as error:
+                    raise ValueError(f"{path}:{line_number}: {error}") from error
+                if trace is None or record.get("trace") == trace:
+                    count += 1
+                    if count == 1:
+                        selected = (line_number, record)
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{path}: {error}") from error
     if count != 1:
         selection = f" matching trace {trace!r}" if trace is not None else ""
         raise ValueError(f"{path}: expected one summary{selection}, found {count}; "
@@ -128,6 +142,24 @@ def delta(baseline, candidate):
     return {"baseline": baseline, "candidate": candidate, "change": change, "change_pct": percent}
 
 
+def graphics_metrics(summary):
+    track = summary.get("graphics_track")
+    if track is None:
+        return {name: None for name in GRAPHICS_LABELS}
+    presents = summary["presents"]
+    try:
+        return {
+            "render_passes": track.get("Graphics.RenderPass", 0) / presents,
+            "continued_draws": track.get("Graphics.RenderPass.Continued", 0) / presents,
+            "barriers": sum(value for name, value in track.items() if name.startswith("Graphics.Barrier.")) / presents,
+            "merged_barriers": sum(value for name, value in track.items() if name.startswith("Graphics.BarrierMerged.")) / presents,
+            "copies": track.get("Graphics.Copy", 0) / presents,
+            "copy_mib": track.get("Graphics.Copy.bytes", 0) / presents / (1024 * 1024),
+        }
+    except OverflowError:
+        raise ValueError("graphics track rate is outside the finite numeric range") from None
+
+
 def compare(baseline, candidate):
     metrics = {f"frame_ms.{key}": delta(baseline["frame_ms"][key], candidate["frame_ms"][key])
                for key in PERCENTILES}
@@ -141,6 +173,9 @@ def compare(baseline, candidate):
     before_workers, after_workers = baseline["worker_busy_pct"], candidate["worker_busy_pct"]
     workers = {name: delta(before_workers.get(name), after_workers.get(name))
                for name in sorted(before_workers.keys() | after_workers.keys())}
+    before_graphics = graphics_metrics(baseline)
+    after_graphics = graphics_metrics(candidate)
+    graphics = {name: delta(before_graphics[name], after_graphics[name]) for name in GRAPHICS_LABELS}
     contexts = []
     for summary in (baseline, candidate):
         context = {key: summary[key] for key in CONTEXT}
@@ -148,7 +183,8 @@ def compare(baseline, candidate):
         context["window.spec"] = summary["window"]["spec"]
         if re.fullmatch(r"seconds [0-9]+:[0-9]+", summary["window"]["spec"]) is None:
             context["window.first_present"] = summary["window"]["first_present"]
-        context.update({f"env.{key}": value for key, value in summary["env"].items()})
+        context.update({f"env.{key}": value for key, value in summary["env"].items()
+                        if key != "APS5_TRACE_DIR"})
         contexts.append(context)
     differences = {key: {"baseline": contexts[0].get(key), "candidate": contexts[1].get(key)}
                    for key in sorted(contexts[0].keys() | contexts[1].keys())
@@ -158,6 +194,8 @@ def compare(baseline, candidate):
              "A missing top phase is unreported, not zero; its change is unavailable.",
              "Worker busy changes are percentage points; change (%) is relative to the baseline. "
              "Workers are matched by their recorded names; a missing worker is unreported, not idle."]
+    if any(values["baseline"] is not None or values["candidate"] is not None for values in graphics.values()):
+        notes.append("Graphics-track rates are per present; a capture without a graphics track is unknown, not zero.")
     if differences:
         notes.append("Recorded configuration differs; these measurements do not isolate the code change.")
     for label, summary in (("baseline", baseline), ("candidate", candidate)):
@@ -176,10 +214,13 @@ def compare(baseline, candidate):
         if missing:
             notes.append(f"{label}: missing configuration: {', '.join(missing)}.")
     return {"baseline": baseline, "candidate": candidate, "configuration_differences": differences,
-            "metrics_ms": metrics, "top_phases_ms_per_frame": phases, "worker_busy_pct": workers, "notes": notes}
+            "metrics_ms": metrics, "top_phases_ms_per_frame": phases, "worker_busy_pct": workers,
+            "graphics_track": graphics, "notes": notes}
 
 
 def cell(value):
+    if value is None:
+        return "<em>not recorded</em>"
     text = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("|", "&#124;").replace("\r", " ").replace("\n", " ")
 
@@ -205,6 +246,13 @@ def markdown(report):
             columns = ["n/a" if values[field] is None else format(values[field], "+.3f" if field.startswith("change") else ".3f")
                        for field in ("baseline", "candidate", "change", "change_pct")]
             lines.append(f"| {cell(name)} | {' | '.join(columns)} |")
+    if any(values["baseline"] is not None or values["candidate"] is not None for values in report["graphics_track"].values()):
+        lines.extend(["", "## Graphics track (per present)", "", "| Metric | Baseline | Candidate | Change | Change (%) |",
+                      "| --- | ---: | ---: | ---: | ---: |"])
+        for name, values in report["graphics_track"].items():
+            columns = ["n/a" if values[field] is None else format(values[field], "+.3f" if field.startswith("change") else ".3f")
+                       for field in ("baseline", "candidate", "change", "change_pct")]
+            lines.append(f"| {cell(GRAPHICS_LABELS.get(name, name))} | {' | '.join(columns)} |")
     return "\n".join(lines) + "\n"
 
 

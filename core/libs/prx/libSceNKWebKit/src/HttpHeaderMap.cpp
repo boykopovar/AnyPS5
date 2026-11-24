@@ -164,11 +164,10 @@ String Join(const String& first, const String& second) {
 void Update(HTTPHeaderMap& map, const String& name, const String& value, bool add, bool append) {
     HTTPHeaderName known;
     if (FindName(name, known)) {
-        auto& vector = map.common;
-        const auto index = append ? vector.size : Find(vector, [&](const auto& entry) { return entry.key == known; });
-        if (index == vector.size) Append(vector, CommonHeader { known, String(value) }, 6);
-        else if (add) Replace(vector.buffer[index].value, Join(vector.buffer[index].value, value));
-        else Replace(vector.buffer[index].value, value);
+        if (append)
+            Append(map.common, CommonHeader { known, String(value) }, 6);
+        else
+            UpdateCommonHeader_nid_no_patch(map, known, value, add);
         return;
     }
     auto& vector = map.uncommon;
@@ -191,6 +190,15 @@ bool Remove(HeaderVector<TEntry>& vector, TMatch match) {
     return true;
 }
 
+}
+
+void NKWebKit::HttpAbi::UpdateCommonHeader_nid_no_patch(HTTPHeaderMap& map, HTTPHeaderName name, const String& value, bool add) {
+    if (static_cast<unsigned>(name) >= headerNames.size()) throw std::out_of_range("invalid HTTPHeaderName");
+    auto& vector = map.common;
+    const auto index = Find(vector, [&](const auto& entry) { return entry.key == name; });
+    if (index == vector.size) Append(vector, CommonHeader { name, String(value) }, 6);
+    else if (add) Replace(vector.buffer[index].value, Join(vector.buffer[index].value, value));
+    else Replace(vector.buffer[index].value, value);
 }
 
 extern "C" {
@@ -218,6 +226,18 @@ void APS5_VABI _ZN7WebCore13HTTPHeaderMap6appendERKN3WTF6StringES4_(NKWebKit::Ht
 NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHeaderNameE(const NKWebKit::HttpAbi::HTTPHeaderMap* self, NKWebKit::HttpAbi::HTTPHeaderName name) {
     const auto& vector = Map(self).common;
     const auto index = Find(vector, [&](const auto& entry) { return entry.key == name; });
+    return index == vector.size ? String() : String(vector.buffer[index].value);
+}
+
+String APS5_VABI _ZNK7WebCore13HTTPHeaderMap3getERKN3WTF6StringE(const HTTPHeaderMap* self, const String& name) {
+    HTTPHeaderName known;
+    if (FindName(name, known)) return _ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHeaderNameE(self, known);
+    return _ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE(self, name);
+}
+
+String APS5_VABI _ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE(const HTTPHeaderMap* self, const String& name) {
+    const auto& vector = Map(self).uncommon;
+    const auto index = Find(vector, [&](const auto& entry) { return Equal(entry.key, name); });
     return index == vector.size ? String() : String(vector.buffer[index].value);
 }
 

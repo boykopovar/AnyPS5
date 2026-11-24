@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "ThreadOwned.hpp"
 #include <cstdlib>
 
@@ -65,7 +66,7 @@ bool Driver::labelTryEachPacket() {
 std::chrono::microseconds Driver::labelFlushDeadline() {
     static const std::chrono::microseconds value = [] {
         const char* text = std::getenv("APS5_LABEL_FLUSH_US");
-        return std::chrono::microseconds(text ? std::atoi(text) : (LabelBatchSubmit() ? 1000 : 250));
+        return std::chrono::microseconds(text ? std::atoi(text) : (LabelBatchSubmit() ? 100 : 250));
     }();
     return value;
 }
@@ -89,7 +90,7 @@ bool Driver::reapEachPacket() {
 std::uint64_t Driver::batchCap() {
     static const std::uint64_t value = [] {
         const char* text = std::getenv("APS5_BATCH_CAP");
-        return text ? std::strtoull(text, nullptr, 10) : 64ull;
+        return text ? std::strtoull(text, nullptr, 10) : 512ull;
     }();
     return value;
 }
@@ -124,8 +125,9 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
         first = false;
         countLabelOutcome(reason);
         if (reason != 0 && reason != 5) {
-            if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
+            if (reason != 1 && reason != 7 && localDevice != nullptr) localDevice->WaitIdle();
             GuestMemory::Write(label.address, bytes, 4);
+            KernelWakeSleepers_nid_no_patch();
         }
         noteLabelStore(label.address, bytes, stamp, queue);
     }
@@ -208,10 +210,17 @@ void Driver::runCaptureCheckHook() {
     if (const auto hook = captureCheckHook.load(std::memory_order_acquire)) hook();
 }
 
-bool Driver::capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared) {
+bool Driver::capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared, const PreparedShaderState::UserDataLink* linking) {
     if (recapturing()) return false;
     const bool mark = compared.size() == regions.size();
-    for (std::size_t i = 0; i < regions.size(); ++i) {
+    std::vector<VouchedRegions> vouched;
+    if (linking != nullptr && vouchedValidation() && !validateLegacy()) linking->VouchRegions(regions, vouched);
+    for (std::size_t i = 0, range = 0; i < regions.size(); ++i) {
+        while (range < vouched.size() && i >= vouched[range].end) ++range;
+        if (range < vouched.size() && i >= vouched[range].begin) {
+            if (mark) compared[i].compared = true;
+            continue;
+        }
         const auto outcome = GuestMemory::CompareMapped(regions[i].guestAddress, regions[i].bytes);
         if (outcome == GuestMemory::Compare::Differs) return true;
         if (mark && outcome == GuestMemory::Compare::Equal) compared[i].compared = true;

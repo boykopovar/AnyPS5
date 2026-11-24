@@ -367,8 +367,12 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto context = device->graphicsContext();
-        if (!context.textureCompressionBC || !context.imageViewMinLod) {
-            std::puts("skipped, the device has no BC texture compression or VK_EXT_image_view_min_lod");
+        if (!context.textureCompressionBC || !context.imageViewMinLod || !TargetHasCapability(device->Target(), spv::CapabilityMinLod)) {
+            std::puts("skipped, the device has no BC texture compression, VK_EXT_image_view_min_lod or shaderResourceMinLod");
+            return VulkanTestSkipped;
+        }
+        if (!TargetHasCapability(device->Target(), spv::CapabilityMinLod)) {
+            std::puts("skipped, the device has no shaderResourceMinLod");
             return VulkanTestSkipped;
         }
         if (!SparseBc1(context)) {
@@ -382,7 +386,8 @@ int main() {
         Require(clearedAboveMinLod != 0 && clearedAboveMinLod == clearedWhole, "sparse texture levels: a cleared texture with levels 0 and 1 unmapped holds " + std::to_string(clearedAboveMinLod) + " bytes at MIN_LOD 2 and " + std::to_string(clearedWhole) + " at MIN_LOD 0; the clear covers every level, so it must be made whole");
         const auto first = SampleTexture(*device, streamed.Texels(), MinLodLevel, "levels above the minimum LOD unmapped");
         const auto full = SampleTexture(*device, whole.Texels(), MinLodLevel, "every level mapped");
-        Require(first.bytes != 0 && first.bytes < full.bytes, "sparse texture levels: the texture with unmapped levels above its minimum LOD holds " + std::to_string(first.bytes) + " bytes, the one with every level mapped " + std::to_string(full.bytes));
+        const auto unclamped = SampleTexture(*device, whole.Texels(), 0u, "every level mapped");
+        Require(first.bytes != 0 && first.bytes == full.bytes && full.bytes < unclamped.bytes, "sparse texture levels: at MIN_LOD 2 the texture with unmapped levels holds " + std::to_string(first.bytes) + " bytes and the one with every level mapped " + std::to_string(full.bytes) + ", which must be equal and below the " + std::to_string(unclamped.bytes) + " of the unclamped texture");
         Require(first.results == full.results, "sparse texture levels: the texture with unmapped levels samples differently from the one with every level mapped (MIN_LOD 2)");
         streamed.Commit(streamedLevel);
         FillLevels(streamed.Texels(), MinLodLevel - 1u);
@@ -391,7 +396,7 @@ int main() {
         const auto fullLowered = SampleTexture(*device, whole.Texels(), MinLodLevel - 1u, "every level mapped");
         Require(mapped.results == full.results, "sparse texture levels: mapping level 1 changed what the texture samples at MIN_LOD 2");
         Require(lowered.results == fullLowered.results, "sparse texture levels: after level 1 was mapped and MIN_LOD lowered to 1, the texture samples differently from the one with every level mapped");
-        Require(lowered.bytes != 0 && lowered.bytes < fullLowered.bytes, "sparse texture levels: at MIN_LOD 1 with level 0 unmapped the texture holds " + std::to_string(lowered.bytes) + " bytes, the one with every level mapped " + std::to_string(fullLowered.bytes));
+        Require(lowered.bytes != 0 && lowered.bytes == fullLowered.bytes && fullLowered.bytes < unclamped.bytes, "sparse texture levels: at MIN_LOD 1 the texture with level 0 unmapped holds " + std::to_string(lowered.bytes) + " bytes and the one with every level mapped " + std::to_string(fullLowered.bytes) + ", which must be equal and below the " + std::to_string(unclamped.bytes) + " of the unclamped texture");
         std::printf("sparse texture levels: MIN_LOD 2 holds %llu bytes with levels 0 and 1 unmapped and %llu with every level mapped; MIN_LOD 1 after level 1 was mapped holds %llu bytes, %llu with every level mapped\n", static_cast<unsigned long long>(first.bytes), static_cast<unsigned long long>(full.bytes), static_cast<unsigned long long>(lowered.bytes), static_cast<unsigned long long>(fullLowered.bytes));
         std::puts("sparse texture levels tests passed");
         return 0;

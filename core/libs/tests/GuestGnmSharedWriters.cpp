@@ -66,6 +66,18 @@ void RequireRefused(int result) {
     RequireWords({});
 }
 
+std::size_t DecodePacketWords(const std::uint32_t* words, std::size_t capacity) {
+    std::size_t offset = 0;
+    while (offset < capacity) {
+        const auto header = words[offset];
+        if ((header >> 30) != 3) return capacity + 1;
+        const auto packetWords = static_cast<std::size_t>((header >> 16) & 0x3fffu) + 2;
+        if (packetWords > capacity - offset) return capacity + 1;
+        offset += packetWords;
+    }
+    return offset;
+}
+
 void CheckVs() {
     Require(UpdateVsShader(Fresh(), 0x1d, Regs, 0) == 0);
     RequireWords({0xc0027600u, 0x48, 0x1000, 0, 0xc0027600u, 0x4a, 0x2000, 0x3000, 0xc0011000u, 0xc01e0207u, 0x6000,
@@ -115,11 +127,11 @@ void CheckGsHsCs() {
     RequireRefused(UpdateGsShader(Fresh(), 0x1d, nullptr));
     RequireRefused(UpdateGsShader(Fresh(), 0x1d, BadRegs));
 
-    Require(UpdateHsShader(Fresh(), 0x1d, Regs, 0x77) == 0);
+    Require(UpdateHsShader(Fresh(), 0x1e, Regs, 0x77) == 0);
     RequireWords({0xc0027600u, 0x108, 0x1000, 0, 0xc0027600u, 0x10a, 0x2000, 0x3000, 0xc0021000u, 0xc01e0286u, 0x5000, 0x6000,
         0xc0011000u, 0xc01e02dbu, 0x4000, 0xc0011000u, 0xc01e02d6u, 0x77, 0xc00a1000u, 0});
-    RequireRefused(UpdateHsShader(Fresh(), 0x1c, Regs, 0));
-    RequireRefused(UpdateHsShader(Fresh(), 0x1d, BadRegs, 0));
+    RequireRefused(UpdateHsShader(Fresh(), 0x1d, Regs, 0));
+    RequireRefused(UpdateHsShader(Fresh(), 0x1e, BadRegs, 0));
 
     Require(SetCsShaderWithModifier(Fresh(), 0x19, Regs, 0x3c0) == 0);
     RequireWords({0xc0027600u, 0x20c, 0x1000, 0, 0xc0027600u, 0x212, 0x23c0, 0x3000, 0xc0037600u, 0x207, 0x4000, 0x5000, 0x6000,
@@ -131,6 +143,17 @@ void CheckGsHsCs() {
     RequireRefused(SetCsShaderWithModifier(Fresh(), 0x19, Regs, 0x400));
     RequireRefused(SetCsShaderWithModifier(Fresh(), 0x18, Regs, 0));
     RequireRefused(SetCsShaderWithModifier(Fresh(), 0x19, BadRegs, 0));
+}
+
+void CheckHsPacketBoundary() {
+    auto* words = Fresh();
+    constexpr std::size_t ReservationWords = 0x1e;
+    Require(UpdateHsShader(words, ReservationWords, Regs, 0x77) == 0);
+    words[ReservationWords] = 0xc0001000u;
+    words[ReservationWords + 1] = 0;
+    Require(DecodePacketWords(words, ReservationWords) == ReservationWords);
+    Require(words[ReservationWords] == 0xc0001000u);
+    Require(DecodePacketWords(words, ReservationWords + 2) == ReservationWords + 2);
 }
 
 void CheckDispatches() {
@@ -188,6 +211,7 @@ int main() {
     CheckVs();
     CheckPs();
     CheckGsHsCs();
+    CheckHsPacketBoundary();
     CheckDispatches();
     CheckNullBuffers();
     CheckDispatchFlags();

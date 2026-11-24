@@ -1,4 +1,5 @@
 import argparse
+import codecs
 import json
 import math
 import re
@@ -13,11 +14,14 @@ began. Presents per 10 s and frame time come from the [ab] lines (settled line t
 and idle gaps per frame from [present], GPU time per present from [gputime] (APS5_PROFILE_GPU), the committer and
 drains from [draw] pipelined, unlocked hook waits from [syncwait] (APS5_PROFILE_DRAW). The noise column compares
 each B phase with the mean of its neighbouring A phases, which cancels a linear drift: mean difference, standard
-error, standard deviation and count. A requested program's phase metric is omitted if a report lists 12 programs
-without it: the list may be truncated, so the program's time is unknown."""
+error, standard deviation and count. A counted GPU timing report that dropped ranges refuses the comparison.
+A requested program's phase metric is omitted if a report lists 12 programs
+without it: the list may be truncated, so the program's time is unknown.
+A counted present report with missing batch completion records also refuses the comparison."""
 
-PHASE = re.compile(r"^\[ab\] phase ([AB]) (\d+) (begins|settled) at present (\d+) \(t ([\d.]+) s\)")
-KINDS = (("present", "[present] "), ("gputime", "[gputime] "), ("draw", "[draw] pipelined"), ("syncwait", "[syncwait] "))
+PHASE = re.compile(r"\[ab\] phase ([AB]) ([0-9]+) (begins|settled) at present ([0-9]+) \(t ([0-9]+(?:\.[0-9]+)?) s\)(:.*)?")
+KINDS = (("present", re.compile(r"\[present\] \d+ presents")), ("gputime", re.compile(r"\[gputime\] [\d.]+ ms of GPU time")),
+         ("draw", re.compile(r"\[draw\] pipelined \(")), ("syncwait", re.compile(r"\[syncwait\] unlocked hook waits")))
 
 
 def finite(value):
@@ -47,14 +51,20 @@ def parse_report(kind, text):
         busy, gaps = number(r"GPU busy ([\d.]+) ms", text), number(r"idle gaps ([\d.]+) ms", text)
         if None in (presents, dropped, busy, gaps):
             return None
+        missing = re.search(r"\((\d+) batches without a completion record\)", text)
+        if missing and int(missing.group(1)):
+            raise ValueError("missing batch completion records in a settled A/B phase; GPU busy and idle timing is incomplete")
         return {"frames": presents + dropped, "busy": busy, "gaps": gaps}
     if kind == "gputime":
         total, presents = number(r"^\[gputime\] ([\d.]+) ms of GPU time", text), number(r"; (\d+) presents;", text)
         if total is None or presents is None or "; by class:" not in text:
             return None
+        dropped = re.search(r"; (\d+) ranges dropped at the \d+ cap\)", text)
+        if dropped and int(dropped.group(1)):
+            raise ValueError("GPU timing ranges were dropped in a settled A/B phase; timing statistics are incomplete")
         programs_text, classes_text = text.split("by program:", 1)[-1].split("; by class:", 1)
         programs, classes = {}, {}
-        for key, ms in re.findall(r" (?<!draw )(0x[0-9a-f]+) x\d+ ([\d.]+)ms", programs_text):
+        for key, ms in re.findall(r" (?<!draw )(?<!drawset )(0x[0-9a-f]+) x\d+ ([\d.]+)ms", programs_text):
             programs[key] = programs.get(key, 0.0) + finite(float(ms))
         for name, ms in re.findall(r" ([a-z][a-z-]*) x\d+ ([\d.]+)ms [\d.]+MiB \(per present", classes_text):
             classes[name] = classes.get(name, 0.0) + finite(float(ms))
@@ -79,16 +89,20 @@ def parse_report(kind, text):
 def read_log(lines):
     config, phases, current = None, [], None
     previous = {kind: None for kind, _ in KINDS}
-    for line in lines:
+    unmatched_settlement = None
+    for line_number, line in enumerate(lines, 1):
         text = line.rstrip("\r\n")
         if text.startswith("[ab] in-run A/B:"):
             if config is not None or phases:
                 raise ValueError("multiple A/B runs in one log; split the captures before comparing phases")
             config = text
             continue
-        match = PHASE.match(text)
-        if match:
-            kind, index, event, present, seconds = match.group(1), int(match.group(2)), match.group(3), int(match.group(4)), finite(float(match.group(5)))
+        if text.startswith("[ab] phase "):
+            marker = PHASE.fullmatch(text.rstrip())
+            if marker is None or (marker[3] == "settled" and marker[6] is not None):
+                raise ValueError(f"line {line_number}: invalid A/B phase marker")
+            kind, raw_index, event, raw_present, raw_seconds, _ = marker.groups()
+            index, present, seconds = int(raw_index), int(raw_present), finite(float(raw_seconds))
             point = (present, seconds)
 
             if event == "begins":
@@ -96,6 +110,8 @@ def read_log(lines):
                     raise ValueError("phase index restarts in one log (multiple A/B runs); split the captures before comparing phases")
 
                 if current is not None:
+                    if current["settled"] is None and unmatched_settlement is not None:
+                        raise ValueError(f"phase {unmatched_settlement[0]} {unmatched_settlement[1]} settled does not match active phase {current['kind']} {current['index']}")
                     previous_point = current["settled"] or current["begin"]
                     if point[0] < previous_point[0] or point[1] < previous_point[1]:
                         raise ValueError("phase began before the previous phase boundary")
@@ -103,19 +119,24 @@ def read_log(lines):
 
                 current = {"kind": kind, "index": index, "begin": point, "settled": None, "end": None,
                            "reports": {name: [] for name, _ in KINDS}}
+                unmatched_settlement = None
                 phases.append(current)
 
-            elif current is not None and current["index"] == index and current["kind"] == kind:
-                if current["settled"] is not None:
-                    raise ValueError("phase settled more than once")
-                previous_point = current["begin"]
-                if point[0] < previous_point[0] or point[1] < previous_point[1]:
-                    raise ValueError("phase settled before it began")
-                current["settled"] = point
+            elif current is not None:
+                if current["index"] != index or current["kind"] != kind:
+                    unmatched_settlement = (kind, index)
+                else:
+                    if current["settled"] is not None:
+                        raise ValueError("phase settled more than once")
+                    previous_point = current["begin"]
+                    if point[0] < previous_point[0] or point[1] < previous_point[1]:
+                        raise ValueError("phase settled before it began")
+                    current["settled"] = point
+                    unmatched_settlement = None
 
             continue
-        for name, prefix in KINDS:
-            if text.startswith(prefix):
+        for name, report_line in KINDS:
+            if report_line.match(text):
                 state = (current["index"], current["settled"] is not None) if current is not None else None
                 if state is not None and state[1] and previous[name] == state:
                     report = parse_report(name, text)
@@ -177,6 +198,11 @@ def noise(values, phases):
 
 
 def split_report(lines, programs, classes):
+    programs, classes = tuple(programs), tuple(classes)
+    reserved = {"gputime", *programs}
+    for name in classes:
+        if name in reserved:
+            raise ValueError(f"--class {name} would overwrite the {name} ms/present metric")
     config, phases = read_log(lines)
     if not phases:
         raise ValueError("no [ab] phase lines (was APS5_AB set?)")
@@ -237,6 +263,15 @@ def program_key(value):
     return "0x" + value[2:].lower().lstrip("0").rjust(1, "0")
 
 
+def open_log(path):
+    with Path(path).open("rb") as raw:
+        bom = raw.read(2)
+    if bom in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE):
+        raise ValueError(f"{path} is UTF-16, as Windows PowerShell 5.1 writes a redirected 2>, which also wraps long lines; "
+                         'capture the run with cmd /d /c "<command> 2> run.log" instead')
+    return Path(path).open(encoding="utf-8-sig", errors="replace")
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("log", help="the run's standard error log with the [ab] lines")
@@ -244,7 +279,7 @@ def main(arguments=None):
     parser.add_argument("--class", dest="classes", action="append", default=[], help="also report this [gputime] command class per present (repeatable)")
     parser.add_argument("--json", action="store_true", help="print the phases and metrics as JSON")
     options = parser.parse_args(arguments)
-    with Path(options.log).open(encoding="utf-8-sig", errors="replace") as source:
+    with open_log(options.log) as source:
         result = split(source, options.program, options.classes)
     sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else text_report(result))
     return 0

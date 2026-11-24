@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libSceLibcInternal/include/RecoveredInventory.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -10,7 +11,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
 
 struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base; };
 
@@ -23,8 +27,13 @@ extern const TypeRecord _ZTISt9exception_nid_postfix;
 extern const TypeRecord _ZTISt11logic_error_nid_postfix;
 extern const TypeRecord _ZTISt13runtime_error_nid_postfix;
 extern const TypeRecord _ZTISt14overflow_error_nid_postfix;
+extern const TypeRecord _ZTISt12system_error_nid_postfix;
+extern const void* const _ZTVSt18bad_variant_access_nid_postfix[5];
 
 void APS5_VABI SceV2Catch(Thrower thrower, const void* argument);
+int APS5_VABI libSceLibcInternalInventory_275_nid_no_patch(const void* table);
+[[noreturn]] void APS5_VABI sceLibcInternalPending4_123_nid_no_patch(const char* message, const GuestLocale::String* path1,
+    const GuestLocale::String* path2, LibcException::ErrorCode code);
 
 const void* SceV2CatchType = nullptr;
 const void* SceV2OtherType = nullptr;
@@ -94,6 +103,55 @@ void CheckCategories() {
         _ZSt15system_categoryv_nid_postfix(), "system", "_System_error_category D1 frees nothing");
     CheckCompleteDestructor(&sceLibcInternalGenericErrorCategoryDestructor_nid_no_patch,
         _ZSt16generic_categoryv_nid_postfix(), "generic", "_Generic_error_category D1 frees nothing");
+    CheckDeletingDestructor(&_ZNSt23_Generic_error_categoryD0Ev_nid_postfix,
+        _ZSt16generic_categoryv_nid_postfix(), "_Generic_error_category D0 releases the object");
+    CheckCompleteDestructor(&_ZNSt22_Future_error_categoryD1Ev_nid_postfix,
+        _ZSt15future_categoryv_nid_postfix(), "future", "_Future_error_category D1 frees nothing");
+}
+
+void CheckBadVariantAccess() {
+    const void* vtable = &_ZTVSt18bad_variant_access_nid_postfix[2];
+    LibcException::ExceptionObject object{vtable, nullptr};
+    releases = 0;
+    _ZNSt18bad_variant_accessD1Ev_nid_postfix(&object);
+    Require(releases == 0 && object.vtable == vtable, "bad_variant_access D1 frees nothing");
+
+    auto* allocated = static_cast<LibcException::ExceptionObject*>(_Znwm_nid_postfix(sizeof(void*)));
+    allocated->vtable = vtable;
+    releases = 0;
+    lastReleased = nullptr;
+    _ZNSt18bad_variant_accessD0Ev_nid_postfix(allocated);
+    Require(releases == 1 && lastReleased == allocated, "bad_variant_access D0 releases the object through operator delete");
+}
+
+void CheckBadException() {
+    auto* allocated = static_cast<LibcException::ExceptionObject*>(_Znwm_nid_postfix(sizeof(void*)));
+    allocated->vtable = &_ZTVSt18bad_variant_access_nid_postfix[2];
+    releases = 0;
+    lastReleased = nullptr;
+    _ZNSt13bad_exceptionD0Ev_nid_postfix(allocated);
+    Require(releases == 1 && lastReleased == allocated, "bad_exception D0 releases the object through operator delete");
+}
+
+void CheckFacetDeletingDestructors() {
+    using Destructor = void (APS5_VABI *)(void*);
+    const std::array<std::pair<Destructor, const char*>, 8> destructors{{
+        {libSceLibcInternalInventory_110_nid_no_patch, "collate<wchar_t> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_116_nid_no_patch, "num_get<char> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_124_nid_no_patch, "num_get<wchar_t> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_131_nid_no_patch, "num_put<char> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_136_nid_no_patch, "num_put<wchar_t> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_208_nid_no_patch, "money_get<char> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_212_nid_no_patch, "money_get<wchar_t> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_223_nid_no_patch, "money_put<char> D0 releases the facet through operator delete"},
+    }};
+    for (const auto& [destructor, label] : destructors) {
+        void* allocated = _Znwm_nid_postfix(16);
+        releases = 0;
+        lastReleased = nullptr;
+        destructor(allocated);
+        Require(releases == 1 && lastReleased == allocated, label);
+    }
 }
 
 TypeRecord Named(const char* name) {
@@ -116,6 +174,57 @@ void CatchOverflow(const char* message, const void* catchType, const void* other
     Require(caughtWhat == expected, label);
 }
 
+struct CrtSetupTable {
+    std::uint64_t size;
+    std::uintptr_t unknown;
+    std::uintptr_t primary[8];
+    std::uintptr_t extended[4];
+    std::uintptr_t trailing[10];
+};
+
+void CheckNewSetup() {
+    CrtSetupTable table{};
+    Require(libSceLibcInternalInventory_275_nid_no_patch(nullptr) == 0, "_new_setup accepts a null table");
+    table.size = 0x4f;
+    Require(libSceLibcInternalInventory_275_nid_no_patch(&table) == 1, "_new_setup refuses a table shorter than 0x50 bytes");
+    table.size = 0x50;
+    Require(libSceLibcInternalInventory_275_nid_no_patch(&table) == 0, "_new_setup accepts a table without slots");
+    table.primary[0] = 0x1000;
+    Require(libSceLibcInternalInventory_275_nid_no_patch(&table) == 1, "_new_setup refuses a partly filled slot group");
+}
+
+GuestLocale::String ShortGuestString(const char* text) {
+    GuestLocale::String string{};
+    string.size = std::strlen(text);
+    string.capacity = 15;
+    std::memcpy(string.buffer, text, string.size + 1);
+    return string;
+}
+
+void APS5_VABI ThrowFilesystemErrorTwoPaths(const void* argument) {
+    const auto* paths = static_cast<const GuestLocale::String*>(argument);
+    sceLibcInternalPending4_123_nid_no_patch("copy_file", &paths[0], &paths[1], {0, 17, _ZSt16generic_categoryv_nid_postfix()});
+}
+
+void CheckFilesystemErrorTwoPaths() {
+    const GuestLocale::String paths[2]{ShortGuestString("from"), ShortGuestString("to")};
+    SceV2CatchType = &_ZTISt12system_error_nid_postfix;
+    SceV2OtherType = &_ZTISt14overflow_error_nid_postfix;
+    SceV2Selector = 0;
+    caughtType.clear();
+    SceV2Catch(ThrowFilesystemErrorTwoPaths, paths);
+    Require(SceV2Selector == 2, "filesystem::_Xfilesystem_error with two paths throws a std::system_error");
+    Require(caughtType == "NSt10filesystem16filesystem_errorE", "filesystem::_Xfilesystem_error with two paths throws a filesystem_error");
+
+    bool rejected = false;
+    try {
+        sceLibcInternalPending4_123_nid_no_patch("copy_file", &paths[0], nullptr, {0, 17, _ZSt16generic_categoryv_nid_postfix()});
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected, "filesystem::_Xfilesystem_error with a null second path throws std::invalid_argument");
+}
+
 void CheckOverflow() {
     const TypeRecord versioned = Named("NSt8__sce_v214overflow_errorE");
     CatchOverflow("value too large", &_ZTISt14overflow_error_nid_postfix, &versioned, "value too large",
@@ -132,6 +241,29 @@ constexpr int recursive = 0x100;
 
 int InitWithOverride(PthreadMutex* mutex, int type, const char* name) {
     return _ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix(reinterpret_cast<void**>(mutex), type, name);
+}
+
+void CheckErrno() {
+    int* const slot = _Geterrno_nid_postfix();
+    Require(slot != nullptr && slot == __error_nid_postfix(), "_Geterrno returns the libc errno slot");
+    Require(_Geterrno_nid_postfix() == slot, "_Geterrno returns the same slot on one thread");
+    *__error_nid_postfix() = 34;
+    Require(*_Geterrno_nid_postfix() == 34, "_Geterrno reads what libc stored");
+    *_Geterrno_nid_postfix() = 22;
+    Require(*__error_nid_postfix() == 22, "libc reads what was stored through _Geterrno");
+    int* other = nullptr;
+    int otherValue = -1;
+    bool otherMatches = false;
+    std::thread worker([&] {
+        other = _Geterrno_nid_postfix();
+        otherMatches = other == __error_nid_postfix();
+        *other = 5;
+        otherValue = *__error_nid_postfix();
+    });
+    worker.join();
+    Require(other != nullptr && other != slot && otherMatches && otherValue == 5, "_Geterrno gives each thread its own slot");
+    Require(*_Geterrno_nid_postfix() == 22, "another thread's store leaves this thread's errno alone");
+    *slot = 0;
 }
 
 void CheckMutex() {
@@ -175,8 +307,14 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
 
     CheckCategories();
+    CheckBadVariantAccess();
+    CheckBadException();
+    CheckFacetDeletingDestructors();
     CheckOverflow();
     CheckMutex();
+    CheckErrno();
+    CheckNewSetup();
+    CheckFilesystemErrorTwoPaths();
 
     if (failures != 0) return 1;
     std::puts("libc internal libc forward checks passed");

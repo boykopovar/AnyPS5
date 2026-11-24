@@ -100,11 +100,38 @@ void DepthCopyProgramsAreNotCaptured() {
         for (std::uint32_t i = 0; i < words; ++i) queue.shader[0x00cu + i] = 0u;
         queue.context[0x1b3u] = queue.context[0x1b4u] = 0x8002u;
         queue.context[0x1c5u] = 1u;
+        queue.context[0x31cu] = 10u << 2u;
         queue.context[0x08eu] = 0xfu;
         queue.context[0x08fu] = 1u;
         queue.context[0x203u] = 0u;
         Require(ProgramSnapshot(registry, address, {1}) == copy, "the depth copy program is not the registered one");
         CheckDraw(multisampled ? "multisampled depth copy draw" : "single-sample depth copy draw", queue, registry, vertex, address);
+    }
+}
+
+void StencilCopyProgramsAreNotCaptured() {
+    using namespace AgcDriver::DriverDetail;
+    for (const bool multisampled : {false, true}) {
+        GuestVertex vertex;
+        const auto copy = std::make_shared<const ShaderSnapshot>(PrepareStencilCopyPixelProgram(multisampled));
+        ShaderRegistry registry;
+        for (const auto& snapshot : {std::shared_ptr<const ShaderSnapshot>(vertex.snapshot), copy}) registry.emplace(snapshot->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{snapshot});
+        AgcDriver::QueueState queue{};
+        vertex.Bind(queue);
+        const auto address = StencilCopyPixelProgramAddress(multisampled);
+        const auto words = DepthCopyPixelUserWords(multisampled);
+        queue.shader[0x008u] = static_cast<std::uint32_t>(address >> 8u);
+        queue.shader[0x009u] = static_cast<std::uint32_t>(address >> 40u);
+        queue.shader[0x00bu] = words << 1u;
+        for (std::uint32_t i = 0; i < words; ++i) queue.shader[0x00cu + i] = 0u;
+        queue.context[0x1b3u] = queue.context[0x1b4u] = 0x8002u;
+        queue.context[0x1c5u] = 2u;
+        queue.context[0x31cu] = 10u << 2u;
+        queue.context[0x08eu] = 0xfu;
+        queue.context[0x08fu] = 3u;
+        queue.context[0x203u] = 0u;
+        Require(ProgramSnapshot(registry, address, {1}) == copy, "the stencil copy program is not the registered one");
+        CheckDraw(multisampled ? "multisampled stencil copy draw" : "single-sample stencil copy draw", queue, registry, vertex, address);
     }
 }
 
@@ -144,6 +171,7 @@ void NullPixelProgramIsNotCaptured(const AgcDriver::VulkanDevice& device) {
 int main() {
     try {
         DepthCopyProgramsAreNotCaptured();
+        StencilCopyProgramsAreNotCaptured();
         UnregisteredNullPixelProgramIsNotCaptured();
         auto device = OpenVulkanTestDevice();
         if (device) {

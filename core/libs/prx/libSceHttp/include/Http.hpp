@@ -2,7 +2,9 @@
 
 #include "SceTypes.hpp"
 
-struct HttpConnectionStat;
+struct HttpConnectionStat {
+    std::uint32_t words[4];
+};
 struct HttpRequestStat;
 
 struct HttpCookieStats {
@@ -129,7 +131,7 @@ int APS5_VABI sceHttpSetPriorityOption(int id, int priority);
 int APS5_VABI sceHttpSetPolicyOption(int id, int policy);
 int APS5_VABI sceHttpRequestGetAllHeaders(int requestId, HttpRequestHeader* headers, std::uint32_t* headerCount, char* contentLength, std::size_t* contentLengthSize);
 int APS5_VABI sceHttpSetDefaultAcceptEncodingGZIPEnabled(int httpCtxId, int enable);
-int APS5_VABI sceHttpSetProxy(int id, int, int, const char* hostname, std::uint16_t);
+int APS5_VABI sceHttpSetProxy(int id, int httpProxyConf, int wlanProxyConf, const char* host, std::uint16_t port);
 int APS5_VABI sceHttpSetSocketCreationCallback(std::int32_t id, HttpSocketCreationCallback callback, void* userArg);
 int APS5_VABI sceHttpSetHttp09Enabled(int id, int enabled);
 int APS5_VABI sceHttpGetRegisteredCtxIds(int contextId, int* netPoolId, int* sslContextId);

@@ -9,6 +9,7 @@
 #include <ctime>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <source_location>
 #include <stdexcept>
@@ -30,10 +31,11 @@
 
 static constexpr int GuestEperm = 1;
 static constexpr int GuestEnoent = 2;
-static constexpr int GuestEbadf = 9;
+static constexpr int GuestEnodev = 19;
 static constexpr int GuestEinval = 22;
 static constexpr int GuestEspipe = 29;
 static constexpr int GuestEopnotsupp = 45;
+static constexpr int GuestEbadf = 9;
 static constexpr int GuestEpipe = 32;
 static constexpr int GuestEagain = 35;
 static constexpr int SetStatusFlags = 4;
@@ -88,6 +90,7 @@ static constexpr int SceOk = 0;
 static constexpr int SceEnoent = static_cast<int>(0x80020002);
 static constexpr int SceEbadf = static_cast<int>(0x80020009);
 static constexpr int SceEinval = static_cast<int>(0x80020016);
+static constexpr int SceEnodev = static_cast<int>(0x80020013);
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (!value) {
@@ -183,6 +186,12 @@ static void BadPointersFaultAndBatchesFill() {
     const KernelTimespec zero{0, 0};
     RequireFailure(kevent_nid_postfix(kq, unmapped, 1, nullptr, 0, nullptr), fault);
     RequireFailure(kevent_nid_postfix(kq, nullptr, 0, events, 16, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    RequireFailure(kevent_nid_postfix(-1, nullptr, 0, nullptr, 0, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, events, -1, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    int ends[2];
+    Require(pipe_nid_postfix(ends) == 0);
+    RequireFailure(kevent_nid_postfix(ends[0], nullptr, 0, nullptr, 0, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    Require(close_nid_postfix(ends[0]) == 0 && close_nid_postfix(ends[1]) == 0);
     RequireFailure(kevent_nid_postfix(kq, nullptr, 0, unmapped, 16, &zero), fault);
     void* page = nullptr;
     Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
@@ -200,6 +209,21 @@ static void BadPointersFaultAndBatchesFill() {
     std::vector<KernelEvent> plenty(2000);
     Require(Poll(kq, plenty.data(), 2000) == 1024);
     for (std::uintptr_t ident = 1000; ident < 2030; ++ident) Require(Apply(kq, Change(ident, EvfiltUser, EvDelete)) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+static void KqueueDescriptorMetadata() {
+    constexpr int GuestEnotty = 25;
+    constexpr std::uint64_t Fionread = 0x4004667f;
+    const int kq = kqueue_nid_postfix();
+    Require(kq >= 0);
+    FileStat status;
+    std::memset(&status, 0xff, sizeof(status));
+    Require(fstat_nid_disambig1_nid_postfix(kq, &status) == 0);
+    Require(status.st_mode == 0010000 && status.st_size == 0 && status.st_nlink == 0 && status.st_ino == 0);
+    int available = 0;
+    RequireFailure(ioctl_nid_postfix(kq, Fionread, &available), GuestEnotty);
+    RequireFailure(fchmod_nid_postfix(kq, 0644), GuestEinval);
     Require(close_nid_postfix(kq) == 0);
 }
 
@@ -320,7 +344,7 @@ static void TimerReadd() {
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, 0)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, INTPTR_MAX)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd | EvClear, 0, 5)); }));
-    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvEnable, 0, 5)); }));
+    Require(Apply(kq, Change(11, EvfiltTimer, EvEnable, 0, 5)) == 0);
     Require(Apply(kq, Change(12, EvfiltTimer, EvAdd | EvDisable, 0, 100000)) == 0);
     Require(Apply(kq, Change(12, EvfiltTimer, EvAdd, 0, 5)) == 0);
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
@@ -485,6 +509,27 @@ static void UserEvents() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void UserEventWakesEveryWaiter() {
+    const int kq = kqueue_nid_postfix();
+    Require(Apply(kq, Change(8, EvfiltUser, EvAdd)) == 0);
+    std::chrono::steady_clock::duration waited[2]{};
+    auto wait = [kq, &waited](int index) {
+        const KernelTimespec limit{5, 0};
+        KernelEvent event{};
+        const auto start = std::chrono::steady_clock::now();
+        Require(kevent_nid_postfix(kq, nullptr, 0, &event, 1, &limit) == 1 && event.ident == 8);
+        waited[index] = std::chrono::steady_clock::now() - start;
+    };
+    std::thread first(wait, 0);
+    std::thread second(wait, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(Apply(kq, Change(8, EvfiltUser, 0, NoteTrigger)) == 0);
+    first.join();
+    second.join();
+    Require(waited[0] < std::chrono::seconds(2) && waited[1] < std::chrono::seconds(2));
+    Require(close_nid_postfix(kq) == 0);
+}
+
 static void SignalEvents() {
     constexpr int Sigalrm = 14;
     constexpr int Sigusr1 = 30;
@@ -581,10 +626,14 @@ static void PipeWrite() {
     Require(empty >= PipeAtomic);
     Require(write_nid_postfix(pipe[1], "abc", 3) == 3);
     Require(Poll(kq, events, 4) == 1 && events[0].data == empty - 3);
-#ifndef _WIN32
+    std::int64_t queued = 3;
+#ifdef _WIN32
+    const std::string fill(static_cast<std::size_t>(empty - queued), 'x');
+    Require(write_nid_postfix(pipe[1], fill.data(), static_cast<std::int64_t>(fill.size())) == static_cast<std::int64_t>(fill.size()));
+    queued += static_cast<std::int64_t>(fill.size());
+#else
     Require(fcntl_nid_postfix(pipe[1], SetStatusFlags, NonBlocking) == 0);
     const std::string chunk(4096, 'x');
-    std::int64_t queued = 3;
     for (;;) {
         const std::int64_t written = write_nid_postfix(pipe[1], chunk.data(), static_cast<std::int64_t>(chunk.size()));
         if (written < 0) {
@@ -593,6 +642,7 @@ static void PipeWrite() {
         }
         queued += written;
     }
+#endif
     Require(queued > PipeAtomic);
     Require(Poll(kq, events, 4) == 0);
     const KernelTimespec limit{5, 0};
@@ -613,11 +663,6 @@ static void PipeWrite() {
     Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
     Require(events[0].ident == writeEnd && events[0].data >= PipeAtomic && (events[0].flags & EvEof) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].data == empty);
-#else
-    char back[3];
-    Require(read_nid_postfix(pipe[0], back, 3) == 3);
-    Require(Poll(kq, events, 4) == 1 && events[0].data == empty);
-#endif
     Require(close_nid_postfix(pipe[0]) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].data == 0 && (events[0].flags & EvEof) != 0);
     const int late = kqueue_nid_postfix();
@@ -1369,9 +1414,6 @@ static void Errors() {
     Require(pipe_nid_postfix(pipe) == 0);
     Require(Throws([kq, &pipe] { Apply(kq, Change(static_cast<std::uintptr_t>(pipe[1]), EvfiltRead, EvAdd)); }));
     Require(Throws([kq, &pipe] { Apply(kq, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltWrite, EvAdd)); }));
-#ifdef __APPLE__
-    Require(Throws([kq, &pipe] { Apply(kq, Change(static_cast<std::uintptr_t>(pipe[1]), EvfiltWrite, EvAdd)); }));
-#endif
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
     const KernelEvent skipped = Change(1, 0, EvAdd);
     const KernelTimespec zero{0, 0};
@@ -1385,6 +1427,47 @@ static void Errors() {
 
 static std::string TemporaryName(const char* stem) {
     return std::string("anyps5-kqueue-") + stem + "-" + std::to_string(getpid_nid_postfix()) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+}
+
+static void RandomDeviceReadWrite() {
+    const int kq = kqueue_nid_postfix();
+    Require(kq >= 0);
+    for (const char* path : {"/dev/random", "/dev/urandom"}) {
+        const int random = open_nid_postfix(path, 0, 0);
+        Require(random >= 0);
+        const auto ident = static_cast<std::uintptr_t>(random);
+        for (const std::int16_t filter : {EvfiltRead, EvfiltWrite}) {
+            RequireFailure(Apply(kq, Change(ident, filter, EvAdd)), GuestEnodev);
+            const KernelEvent attach = Change(ident, filter, EvAdd, 7, 9);
+            KernelEvent failed[1]{};
+            Require(kevent_nid_postfix(kq, &attach, 1, failed, 1, nullptr) == 1);
+            Require(failed[0].ident == ident && failed[0].filter == filter && failed[0].flags == EvError);
+            Require(failed[0].data == GuestEnodev && failed[0].fflags == 0);
+            RequireFailure(Apply(kq, Change(ident, filter, EvDelete)), GuestEnoent);
+        }
+        KernelEqueue eq = 0;
+        Require(sceKernelCreateEqueue(&eq, "random device") == SceOk);
+        Require(sceKernelAddReadEvent(eq, random, 1, nullptr) == SceEnodev);
+        Require(sceKernelAddWriteEvent(eq, random, 1, nullptr) == SceEnodev);
+        Require(sceKernelAddReadEvent(0, random, 1, nullptr) == SceEbadf);
+        Require(sceKernelDeleteEqueue(eq) == SceOk);
+        Require(close_nid_postfix(random) == 0);
+    }
+    const int random = open_nid_postfix("/dev/urandom", 0, 0);
+    Require(random > 0 && dup2_nid_postfix(random, 0) == 0);
+    RequireFailure(Apply(kq, Change(0, EvfiltRead, EvAdd)), GuestEnodev);
+    const KernelEvent attach = Change(0, EvfiltRead, EvAdd, 7, 9);
+    KernelEvent failed[1]{};
+    Require(kevent_nid_postfix(kq, &attach, 1, failed, 1, nullptr) == 1);
+    Require(failed[0].ident == 0 && failed[0].flags == EvError && failed[0].data == GuestEnodev && failed[0].fflags == 0);
+#ifdef _WIN32
+    const int null = _open("NUL", _O_RDONLY);
+#else
+    const int null = ::open("/dev/null", O_RDONLY);
+#endif
+    Require(null > 0 && dup2_nid_postfix(null, 0) == 0 && close_nid_postfix(null) == 0);
+    Require(close_nid_postfix(random) == 0);
+    Require(close_nid_postfix(kq) == 0);
 }
 
 static void ProcdescOnFiles() {
@@ -1558,6 +1641,31 @@ static void DirectoryWatch() {
     Require(std::filesystem::remove_all(path) == 1);
 }
 
+#ifdef _WIN32
+static void LongDirectoryWatch() {
+    const auto root = TemporaryName("long");
+    std::vector<std::string> levels{root};
+    for (int level = 0; level < 5; ++level) levels.push_back(levels.back() + "/" + std::string(60, 'd'));
+    for (const auto& level : levels) Require(mkdir_nid_postfix(level.c_str(), 0755) == 0);
+    const auto& path = levels.back();
+    Require(std::filesystem::absolute(path).native().size() > MAX_PATH);
+    const int directory = open_nid_postfix(path.c_str(), Directory, 0);
+    Require(directory >= 0);
+    const int kq = kqueue_nid_postfix();
+    KernelEvent events[4]{};
+    const auto ident = static_cast<std::uintptr_t>(directory);
+    Require(Apply(kq, Change(ident, EvfiltVnode, EvAdd | EvClear, NoteWrite)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    const int child = open_nid_postfix((path + "/child.bin").c_str(), ReadWrite | Create, 0644);
+    Require(child >= 0 && close_nid_postfix(child) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == ident && (events[0].fflags & NoteWrite) != 0);
+    Require(close_nid_postfix(directory) == 0);
+    Require(close_nid_postfix(kq) == 0);
+    Require(unlink_nid_postfix((path + "/child.bin").c_str()) == 0);
+    for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(rmdir_nid_postfix(level->c_str()) == 0);
+}
+#endif
+
 static void DeleteWatchedFile() {
     const auto path = TemporaryName("deleted");
     const int file = open_nid_postfix(path.c_str(), ReadWrite | Create, 0644);
@@ -1647,6 +1755,24 @@ static void DropBackupPrivileges() {
     Require(::CloseHandle(token) != FALSE);
 }
 
+static std::wstring ResolvedDirectory(const std::wstring& directory) {
+    const HANDLE handle = ::CreateFileW(directory.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    Require(handle != INVALID_HANDLE_VALUE);
+    std::wstring resolved(MAX_PATH, L'\0');
+    DWORD length = ::GetFinalPathNameByHandleW(handle, resolved.data(), static_cast<DWORD>(resolved.size()), FILE_NAME_NORMALIZED);
+    if (length >= resolved.size()) {
+        resolved.resize(length);
+        length = ::GetFinalPathNameByHandleW(handle, resolved.data(), length, FILE_NAME_NORMALIZED);
+    }
+    Require(::CloseHandle(handle) != FALSE);
+    Require(length != 0 && length < resolved.size());
+    resolved.resize(length);
+    if (resolved.starts_with(LR"(\\?\UNC\)")) resolved.replace(0, 8, LR"(\\)");
+    else if (resolved.starts_with(LR"(\\?\)")) resolved.erase(0, 4);
+    return resolved;
+}
+
 static void DeniedParentWatch() {
     DropBackupPrivileges();
     const auto path = TemporaryName("denied");
@@ -1655,6 +1781,7 @@ static void DeniedParentWatch() {
     Require(file >= 0);
     PSECURITY_DESCRIPTOR owner = nullptr;
     const auto directory = std::filesystem::absolute(path).wstring();
+    const auto resolved = ResolvedDirectory(directory);
     const PACL original = DenyListing(directory, owner);
     const int kq = kqueue_nid_postfix();
     KernelEvent events[4]{};
@@ -1668,7 +1795,7 @@ static void DeniedParentWatch() {
     ::LocalFree(owner);
     RequireContext(message, "parent");
     RequireContext(message, "error=5");
-    RequireContextInsensitive(message, Utf8(directory));
+    RequireContextInsensitive(message, Utf8(resolved));
     Require(Apply(kq, Change(ident, EvfiltVnode, EvAdd | EvClear, NoteWrite)) == 0);
     Require(write_nid_postfix(file, "abc", 3) == 3);
     Require(Wait(kq, events, 4) == 1 && events[0].ident == ident);
@@ -1741,6 +1868,37 @@ static void TimerDisableEnableRearm() {
     Require(events[0].data >= 1 && events[0].data <= 2);
     Require(Throws([kq] { Apply(kq, Change(1, EvfiltTimer, EvAdd | EvEnable)); }));
     Require(Apply(kq, Change(1, EvfiltTimer, EvDelete)) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+static void TimerToggleTakesNewPeriod() {
+    const int kq = kqueue_nid_postfix();
+    int marker = 0;
+    int other = 0;
+    KernelEvent events[4]{};
+    Require(Apply(kq, Change(1, EvfiltTimer, EvAdd, NoteUseconds, 30000, &marker)) == 0);
+    Require(Apply(kq, Change(1, EvfiltTimer, EvDisable, NoteUseconds, 250000, &other)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    Require(Apply(kq, Change(1, EvfiltTimer, EvEnable, 0, 0, &other)) == 0);
+    Require(Wait(kq, events, 4) == 1);
+    Require(events[0].ident == 1 && events[0].udata == &other && events[0].data == 1);
+    const auto first = std::chrono::steady_clock::now();
+    Require(Wait(kq, events, 4) == 1);
+    Require(events[0].data == 1);
+    Require(std::chrono::steady_clock::now() - first >= std::chrono::milliseconds(150));
+    Require(Apply(kq, Change(1, EvfiltTimer, EvDelete)) == 0);
+    Require(Apply(kq, Change(2, EvfiltTimer, EvAdd, NoteUseconds, 400000)) == 0);
+    Require(Apply(kq, Change(2, EvfiltTimer, EvDisable)) == 0);
+    Require(Apply(kq, Change(2, EvfiltTimer, EvAdd | EvEnable, NoteUseconds, 20000, &marker)) == 0);
+    const auto readded = std::chrono::steady_clock::now();
+    Require(Wait(kq, events, 4) == 1);
+    Require(events[0].ident == 2 && events[0].udata == &marker && events[0].data == 1);
+    Require(Wait(kq, events, 4) == 1);
+    Require(events[0].ident == 2 && events[0].data >= 1);
+    Require(std::chrono::steady_clock::now() - readded < std::chrono::milliseconds(780));
+    Require(Throws([kq] { Apply(kq, Change(2, EvfiltTimer, EvDisable, NoteUseconds, -5)); }));
+    Require(Apply(kq, Change(2, EvfiltTimer, EvDelete)) == 0);
+    RequireFailure(Apply(kq, Change(3, EvfiltTimer, EvEnable, NoteUseconds, 1000)), GuestEnoent);
     Require(close_nid_postfix(kq) == 0);
 }
 
@@ -1854,10 +2012,24 @@ static void KqueueDescriptorOperations() {
     RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 1)), GuestEopnotsupp);
     Require(read_nid_postfix(kq, &byte, 0) == 0);
     RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 0)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(read_nid_postfix(kq, nullptr, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(_read_nid_postfix(kq, nullptr, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(write_nid_postfix(kq, nullptr, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(_write_nid_postfix(kq, nullptr, 1)), GuestEopnotsupp);
+    Require(read_nid_postfix(kq, nullptr, 0) == 0);
+    KernelIovec one{&byte, 1};
+    KernelIovec none{&byte, 0};
+    RequireFailure(static_cast<int>(readv_nid_postfix(kq, &one, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(writev_nid_postfix(kq, &one, 1)), GuestEopnotsupp);
+    Require(readv_nid_postfix(kq, &none, 1) == 0);
+    RequireFailure(static_cast<int>(writev_nid_postfix(kq, &none, 1)), GuestEopnotsupp);
     RequireFailure(static_cast<int>(lseek_nid_postfix(kq, 0, 0)), GuestEspipe);
     RequireFailure(fsync_nid_postfix(kq), GuestEinval);
     RequireFailure(fdatasync_nid_postfix(kq), GuestEinval);
     RequireFailure(flock_nid_postfix(kq, 1), GuestEopnotsupp);
+    RequireFailure(futimes_nid_postfix(kq, nullptr), GuestEinval);
+    const KernelTimeval times[2] = {{1, 0}, {2, 0}};
+    Require(sceKernelFutimes(kq, times) == SceEinval);
     Require(close_nid_postfix(kq) == 0);
 }
 
@@ -1872,10 +2044,12 @@ int main(int argc, char** argv) {
     EqueueIsKqueueDescriptor();
     SocketReplacesDescriptor();
     KqueueDescriptorOperations();
+    KqueueDescriptorMetadata();
     Timers();
     TimerReadd();
     UnsupportedFilters();
     ProcdescOnFiles();
+    RandomDeviceReadWrite();
     SignalEvents();
     PipeRead();
 #ifndef __APPLE__
@@ -1883,6 +2057,7 @@ int main(int argc, char** argv) {
 #endif
     FilesystemEvents();
     UserEvents();
+    UserEventWakesEveryWaiter();
     ProcessExitOnSelf();
     WatchKqueue();
     SocketPair();
@@ -1909,6 +2084,7 @@ int main(int argc, char** argv) {
     VnodeOneshotWatchStops();
     PeriodicTimerFiresTwice();
     TimerDisableEnableRearm();
+    TimerToggleTakesNewPeriod();
 #endif
 #ifdef _WIN32
     RecycleBinDeleteWatchedFile();
@@ -1919,6 +2095,7 @@ int main(int argc, char** argv) {
     DirectoryWatch();
     DeleteWatchedFile();
 #ifdef _WIN32
+    LongDirectoryWatch();
     DeniedParentWatch();
 #endif
     Timeout();

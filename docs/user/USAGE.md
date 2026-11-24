@@ -1,6 +1,6 @@
 # Relinker usage
 
-[**Online relinker**](https://boykopovar.github.io/AnyPS5/) - files stay on your device.
+[**Web converter**](https://boykopovar.github.io/AnyPS5/) - files stay on your device.
 
 ### Browser folder output
 
@@ -10,11 +10,47 @@ The online converter can save Linux output as an uncompressed folder in supporte
 
 Select or drop multiple app ZIP archives to convert them into one ZIP bundle. The converter inspects each app separately and puts its executable, libraries and `app0/` files in a numbered folder, so archives with the same filename remain separate. Batch output uses ZIP mode; saving to an uncompressed folder remains available for one Linux app at a time. The 256 MiB memory-download limit applies to the whole bundle, so use **Save ZIP to disk** for larger batches. If a batch is cancelled or any app fails, the converter aborts the incomplete bundle; any cleanup failure is reported instead of offering it as a completed result.
 
+For **Save ZIP to disk**, Cancel is available until the browser starts committing the completed ZIP.
+
+## Verify a release download
+
+Download the file from the [official AnyPS5 releases](https://github.com/boykopovar/AnyPS5/releases). Under **Assets** for that release, copy the `sha256:` digest next to the exact file name. If the file downloaded successfully, calculate its SHA-256 hash before opening it:
+
+- Windows PowerShell: `Get-FileHash -Algorithm SHA256 -LiteralPath "path\to\downloaded-file"`
+- Linux: `sha256sum -- "path/to/downloaded-file"`
+
+- macOS: `shasum -a 256 -- "path/to/downloaded-file"`
+
+Compare the hash with the part after `sha256:`, ignoring letter case. If it differs, discard the file. A matching hash confirms that the file matches the published asset.
+
+If a browser or antivirus blocks the download, leave it blocked. Report the release link, file name, exact warning and the browser or antivirus that showed it. Include the file size in bytes and the hash if the file is available.
+
 ## Input and conversion
 
-The SELF unwrapper refuses containers requiring more than 64 MiB of total alignment padding before allocating the output buffer. This limit counts padding across file-backed and empty segments, not segment data; a refusal preserves the input and any existing output file.
+The relinker does not extract or decrypt package files. It needs an extracted, decrypted ELF executable and its bundled modules.
 
-Use a clean ELF executable. Place its bundled ELF modules in `sce_module/`, `sce_modules/`, or `prx/` beside the input executable, or under the parent directory selected with `--sce-module-path <path>`. The option accepts absolute paths and paths relative to the current working directory; do not include the `sce_module` directory itself. Only files directly inside the module directories are processed. SELF/fSELF containers are skipped with a warning; unwrap them before relinking if they need to be included. `tools/unwrap_self.py <input.self> <output.elf>` does that for a decrypted container: it places the segments at the offsets of the SELF segment records and restores `p_offset % p_align == p_vaddr % p_align`, and it refuses a container whose load segments all look encrypted. The relinker, on the command line and in the online converter, skips an ELF module as a backup copy, with a message, when its file name extends the name of another ELF module in the same directory and both have the same SONAME, such as a dumper's `libX.prx.esbak` or `libX.prxbak` beside an ELF `libX.prx`; a single backup beside a SELF container is still relinked. `prx/` can coexist with either `sce_module/` or `sce_modules/`. Both `sce_module/` and `sce_modules/` present is an error. All three absent is an error unless an explicit `--module-dir` is supplied.
+### SELF size limit
+
+The SELF unwrapper refuses a container that needs more than 64 MiB of total alignment padding. It checks this before it allocates the output buffer. The limit counts padding across file-backed and empty segments, not segment data. If it refuses, your input and any existing output file stay untouched.
+
+### Where to put the files
+
+Use a clean ELF executable. Put its bundled ELF modules in `sce_module/`, `sce_modules/`, or `prx/` beside the input executable, or under the parent directory selected with `--sce-module-path <path>`.
+
+- `--sce-module-path` accepts absolute paths and paths relative to the current working directory. Give the parent directory, not the `sce_module` directory itself.
+- Only files directly inside the module directories are processed.
+- SELF/fSELF containers are skipped with a warning. Unwrap them before relinking if they need to be included.
+  - `tools/unwrap_self.py <input.self> <output.elf>` does that for a decrypted container. It places the segments at the offsets of the SELF segment records and restores `p_offset % p_align == p_vaddr % p_align`. It refuses a container whose load segments all look encrypted.
+- Backup copies are skipped with a message, both on the command line and in the online converter. An ELF module counts as a backup when its file name extends the name of another ELF module in the same directory and both have the same SONAME, or, when neither has a SONAME, both export the same module names. Example: a dumper's `libX.prx.esbak` or `libX.prxbak` beside an ELF `libX.prx`. A single backup beside a SELF container is still relinked.
+- `prx/` can exist together with either `sce_module/` or `sce_modules/`.
+- Having both `sce_module/` and `sce_modules/` is an error.
+- Having none of the three is an error, unless you give an explicit `--module-dir`.
+
+### Module start-up on Linux, macOS and Windows
+
+If the executable imports `sceKernelLoadStartModule`, a bundled module that neither the executable nor a required module needs is not started at launch. It initializes when the title loads it, with the arguments from `sceKernelLoadStartModule`. Without that import, every bundled module starts at launch. On macOS, loading a deferred module this way has not been run.
+
+### Layout and command
 
 ```text
 source/
@@ -27,11 +63,30 @@ source/
 relinker [options] <input.elf> <output>
 ```
 
-`relinker --dry-run [options] <input.elf> <output>` runs conversion in memory, including bundled modules, extra executables, import analysis and byte patches. It lists every planned output, including registry files, needed-library files, patch manifests, Windows diagnostics and Linux desktop metadata, without creating directories, writing files or changing permissions. Existing outputs are preserved. Conversion failures return `2`, as in a normal run. The output path is still required because it determines the layout. This mode does not check destination write access or probe filesystem aliases of files that do not yet exist; those checks require a normal conversion. `--dry-run` conflicts with `--autorun` and `--verify-patches`.
+### Dry run
 
-An explicit `--module-dir` also works when the module parent has no `sce_module`, `sce_modules` or `prx` directory. For a homebrew bundle with shared libraries beside its executable, use `--module-dir .`; no empty standard directory is required. Without an explicit module directory, the standard-directory requirement remains.
+`relinker --dry-run [options] <input.elf> <output>` runs the conversion in memory, including bundled modules, extra executables, import analysis and byte patches.
 
-A module the executable needs that is not converted is looked for under the module parent directory, outside the module directories. Each SELF container or `ET_SCE_DYNAMIC` ELF found there whose name matches, up to the `.prx`, `.sprx`, `.suprx` or `.debug_prx` suffix (ignoring case with `--windows`, as the guest module match does), is reported after the conversion with the `--module-dir` that would include it; the output still refers to a host library of that name. A file that cannot be read is not reported.
+- It lists every planned output: registry files, needed-library files, patch manifests, Windows diagnostics and Linux desktop metadata.
+- It creates no directories, writes no files and changes no permissions. Existing outputs are kept.
+- Conversion failures return `2`, as in a normal run.
+- The output path is still required because it decides the layout.
+- It does not check write access to the destination, and it does not probe filesystem aliases of files that do not exist yet. Only a normal conversion does those checks.
+- `--dry-run` conflicts with `--autorun` and `--verify-patches`.
+
+### Module directories without a standard name
+
+An explicit `--module-dir` also works when the module parent has no `sce_module`, `sce_modules` or `prx` directory. For a homebrew bundle with shared libraries beside its executable, use `--module-dir .`. No empty standard directory is needed. Without an explicit module directory, the standard-directory requirement remains.
+
+### Needed modules that were not converted
+
+A module the executable needs but that is not converted is looked for under the module parent directory, outside the module directories. A file counts as a match if it is a SELF container or an `ET_SCE_DYNAMIC` ELF whose name matches, up to the `.prx`, `.sprx`, `.suprx` or `.debug_prx` suffix. Case is ignored with `--windows`, as in the guest module match.
+
+- Each match is reported after the conversion, together with the `--module-dir` that would include it.
+- The output still refers to a host library of that name.
+- A file that cannot be read is not reported.
+
+### Example commands
 
 Linux output:
 
@@ -51,13 +106,50 @@ macOS output (x86-64 Mach-O, which runs under Rosetta on Apple silicon):
 relinker --macos source/input.elf eboot
 ```
 
-Add `--to-intel` for Intel hosts, or `--to-rosetta` for Rosetta; a title that runs under Rosetta on Apple silicon is relinked with `--macos --to-rosetta`. `--to-intel` rewrites AMD-specific instructions found in the executable and bundled modules; it cannot translate AMD-specific instructions generated by a title at runtime, so such titles require an AMD host. The output format defaults to Linux ELF regardless of the filename; `.exe` alone does not select Windows.
+The executable and the module libraries carry an ad-hoc code signature, so they run without `codesign`. Signing one again with `codesign -s - -f` or your own identity replaces it. After editing one with `install_name_tool` or `strip`, sign it again.
 
-A converted title is an ordinary program: it runs with your user account's permissions and can read and write whatever your account can, with none of the console's sandbox. Convert and run only titles and modules you trust, and run them as a separate user or in a container or virtual machine to keep them away from your files. Its executable is not placed by address space layout randomization either: Linux loads it at `0x400000` or at the `--linux-fixed-base` address, unless the deprecated `--lazy-binding` keeps it position independent; Windows loads its lowest ELF load page at the preferred `0x400000` when that range is free, or at the `--windows-fixed-base` address, without `DYNAMIC_BASE`; and the macOS executable is written without `MH_PIE`.
+Add `--to-intel` for Intel hosts, or `--to-rosetta` for Rosetta. A title that runs under Rosetta on Apple silicon is relinked with `--macos --to-rosetta`.
 
-Titles run natively, so the host CPU needs the extensions of the PS5's Zen 2 CPU that compiled code uses without checking, among them AVX2, FMA, F16C, BMI1, BMI2, LZCNT and MOVBE. On Linux and Windows a converted title logs the host CPU's extensions at start-up and stops before running any title code, naming the CPU and the missing extensions, if one is absent ([list](../dev/debt/libkernel.md)).
+- `--to-intel` rewrites AMD-specific instructions found in the executable and bundled modules. It cannot translate AMD-specific instructions that a title generates at runtime, so such titles need an AMD host. Without it, the first such instruction on a CPU that lacks it ends the run, and the crash report names the instruction on Linux and Windows.
+- The output format defaults to Linux ELF whatever the filename is. `.exe` alone does not select Windows.
 
-The executable, registry, Windows import diagnostics, icon and desktop entry output files must not refer to the input executable or a bundled module being converted, including through a hard link or symbolic link. These collisions fail before any output is written. An existing output file can be replaced if it is separate from those inputs. An output path that is an existing directory also fails before any output is written.
+### Security warning
+
+A converted title is an ordinary program. It runs with your user account's permissions and can read and write whatever your account can. It has none of the console's sandbox. Convert and run only titles and modules you trust. Run them as a separate user, or in a container or virtual machine, to keep them away from your files.
+
+Its executable is also not placed by address space layout randomization:
+
+- **Linux:** loaded at `0x400000` or at the `--linux-fixed-base` address, unless the deprecated `--lazy-binding` keeps it position independent.
+- **Windows:** the lowest ELF load page is loaded at the preferred `0x400000` when that range is free, or at the `--windows-fixed-base` address, without `DYNAMIC_BASE`.
+- **macOS:** the executable is written without `MH_PIE`.
+
+### CPU requirements
+
+Titles run natively, so the host CPU needs the extensions of the PS5's Zen 2 CPU that compiled code uses without checking. Among them are AVX2, FMA, F16C, BMI1, BMI2, LZCNT and MOVBE.
+
+On Linux and Windows, a converted title logs the host CPU's extensions at start-up. If one is absent, it stops before running any title code and names the CPU and the missing extensions ([list](../dev/debt/libkernel.md)).
+
+### Linux system requirements
+
+The Linux system libraries need glibc 2.38 or later and the C++ library of GCC 13 or later (`GLIBCXX_3.4.31`), as in Ubuntu 24.04, Debian 13, Fedora 39 and their later releases. On an older system, such as Ubuntu 22.04, Debian 12 or Fedora 38, none of them loads, and the title stops before it starts with a line such as:
+
+```text
+./app.elf: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found (required by /path/to/libs/libc.prx)
+```
+
+The v0.1.4 and v0.1.5 `prx-linux` archives need glibc 2.43, as in Ubuntu 26.04 and Fedora 44.
+
+The Linux `relinker-<version>` release file is linked statically and also runs on older systems. A browser download has no execute permission, so run `chmod +x relinker-<version>` once.
+
+### Output file collisions
+
+The executable, registry, Windows import diagnostics, icon and desktop entry output files must not refer to the input executable or to a bundled module being converted. This includes hard links and symbolic links.
+
+- These collisions fail before any output is written.
+- An existing output file can be replaced if it is separate from those inputs.
+- An output path that is an existing directory also fails before any output is written.
+
+On Linux and macOS, replacing a regular output file requires write access to its directory. If creating the temporary file or replacing the old file fails, you get an error. The previous file is never overwritten in place.
 
 ## Options
 
@@ -67,9 +159,10 @@ All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath`
 |-------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `--help`                      | Print usage to stdout and exit with code `0`; input and output paths are not required.                                                                                                                                                                                                                                                                                                                                                                                      |
 | `--version`                  | Print the relinker build revision reported by `git describe` to stdout and exit with code `0`; input and output paths are not required. |
+| `--`                          | Treat all remaining arguments as paths, including names that start with `-`. |
 | `--windows`                   | Produce a Windows PE executable.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `--macos`                     | Produce an x86-64 Mach-O executable, with bundled modules as Mach-O libraries under `app0/`, each in the directory it was found in (`sce_module`, `sce_modules`, `prx` or a `--module-dir`). Conflicts with `--windows`.                                                                                                                                                                                                                                                                                                                                             |
-| `--windows-diagnostics`       | Include startup dependency diagnostics. Requires `--windows`.                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `--windows-diagnostics`       | Write startup dependency diagnostics to `windows-diagnostics-imports.txt` beside the output executable. Requires `--windows`.                                                                                                                                                                                                                                                                                                                                               |
 | `--windows-gui`               | Select the Windows GUI subsystem instead of the console subsystem. Requires `--windows`.                                                                                                                                                                                                                                                                                                                                                                                    |
 | `--windows-fixed-base <address>` | Map the lowest ELF load page at this fixed Windows address instead of the preferred `0x400000`, given in decimal or hexadecimal (`0x`). Requires `--windows`, a 64 KiB-aligned address from `0x20000` through `0x7fffffff0000`, and a complete image fitting in the user address space. The main executable has no ASLR or base relocations; an occupied address fails to load. Bundled modules keep their normal placement. |
 | `--trace-imports`             | Pass each function import through the libc.prx call tracer, see [tracing system library calls](#tracing-system-library-calls). Windows, Linux and macOS output; conflicts with `--lazy-binding`.                                                                                                                                                                                                                                                                             |
@@ -77,31 +170,33 @@ All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath`
 | `--macos-fixed-base <address>` | Map the lowest ELF load page of the macOS executable at this fixed address, given in decimal or hexadecimal (`0x`). Requires `--macos`, a 64 KiB-aligned address from `0x20000` through `0x7fffffff0000`, and an image that ends in the macOS user address space. `__PAGEZERO` ends 64 KiB below the address and the Mach-O header occupies those 64 KiB. The executable has no ASLR; an address the process cannot map fails to load. Bundled modules keep their normal placement. |
 | `--to-intel`                  | Convert supported AMD-only instructions in the executable and bundled modules. Unsupported instructions or unreachable conversion stubs cause an error.                                                                                                                                                                                                                                                                                                                     |
 | `--to-rosetta`                | Convert as `--to-intel` does and also lower what Rosetta lacks: ANDN becomes scalar NOT/AND, BLSI, BLSMSK and BLSR become scalar LEA/AND/XOR/NEG sequences, SHLX, SHRX, SARX and RORX become flag-preserving scalar shifts and rotates, BZHI and BEXTR become scalar shift-and-mask sequences, RDSEED becomes RDRAND, CLWB a NOP, XSAVEOPT becomes XSAVE, and RDPID and the ECX of RDTSCP return processor 0. Implies `--to-intel`. Independent of `--macos`: `--macos` alone leaves these instructions as they are. Conflicts with `--windows`. |
+| `--to-avx`                    | Convert as `--to-intel` does and also lower what a CPU with AVX but without AVX2 lacks: ANDN, BLSI, BLSMSK, BLSR, SHLX, SHRX, SARX, RORX, BZHI, BEXTR, MULX, CLWB and RDPID as `--to-rosetta` lowers them, TZCNT and LZCNT become BSF and BSR with a CMOV for a zero source, and MOVBE becomes MOV and BSWAP. VINSERTI128, VEXTRACTI128, VPERM2I128, VPBLENDD, VBROADCASTI128 and the memory forms of VPBROADCASTD and VPBROADCASTQ become their AVX equivalents VINSERTF128, VEXTRACTF128, VPERM2F128, VBLENDPS, VBROADCASTF128, VBROADCASTSS and VBROADCASTSD or VMOVDDUP in place, and 256-bit lane-local integer instructions (additions, logic, compares, packs, unpacks, shuffles within a lane, shifts by an immediate or by an XMM count, VPBLENDVB, VMPSADBW and VPMOVMSKB) run as two 128-bit halves in a stub, and the cross-lane permutes VPERMQ, VPERMPD, VPERMD and VPERMPS, the 256-bit widening moves VPMOVZX and VPMOVSX and the register-source and byte or word broadcasts run in AVX stubs. The Rosetta workarounds for 256-bit stores, scalar compares, masked stores, RDTSCP, XSAVEOPT and RDSEED are not applied. Other AVX2 instructions, F16C, PDEP and PEXT are not lowered yet ([list](../dev/debt/relinker.md)). Implies `--to-intel`. Requires `--macos`, because only the macOS runtime starts without checking the host CPU. |
 | `unused-filter=0`             | Keep all imported NID references.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `unused-filter=1`             | Filter unused non-PLT imports using control-flow and GOT access analysis, treating address-taken code as reachable; preserve PLT imports.                                                                                                                                                                                                                                                                                                                                   |
 | `unused-filter=2`             | Apply strict unused-import analysis and compact the PLT. Unsupported analysis cases cause an error.                                                                                                                                                                                                                                                                                                                                                                         |
 | `--registry`                  | Write `<output-stem>.registry.json` beside the output executable, and `<output-stem>.<module>.registry.json` for each converted bundled module.                                                                                                                                                                                                                                                                                                                             |
-| `--rpath <path>`              | Set the system library search path. Quote `$ORIGIN` to prevent shell expansion, for example `--rpath '$ORIGIN/libs'` in Bash or PowerShell. On Linux every colon-separated entry must be nonempty, and with guest modules each must be absolute or begin with `$ORIGIN`. Windows requires a nonempty ASCII path and supports `$ORIGIN` as the executable directory.                                                                                                         |
-| `--omit-unavailable-dependencies` | Linux output: leave out a bundled module's dependency that no converted module provides, from which the module imports nothing, and that no `--rpath` directory holds when converting. Every run path directory must exist at that time. Without the switch such a dependency is kept and the conversion prints a note naming it. Use it only when the run path holds every system library: a library found later through `LD_LIBRARY_PATH` is no longer loaded. |
-| `--autorun`                   | Run the output after conversion, print its exit code, and wait for Enter. Requires the target OS and prepared runtime layout.                                                                                                                                                                                                                                                                                                                                               |
+| `--rpath <path>`              | Set the system library search path. Quote `$ORIGIN` to prevent shell expansion, for example `--rpath '$ORIGIN/libs'` in Bash or PowerShell. On Linux and macOS every colon-separated entry must be nonempty, and with guest modules each must be absolute or begin with `$ORIGIN`. Windows requires a nonempty ASCII path and supports `$ORIGIN` as the executable directory.                                                                                               |
+| `--omit-unavailable-dependencies` | Linux output: leave out a bundled module's dependency that no converted module provides, from which the module imports nothing, and that no `--rpath` directory holds when converting. Every run path directory must exist at that time. Without the switch such a dependency is kept and the conversion prints a note naming it. Use it only when the run path holds every system library: a library found later through `LD_LIBRARY_PATH` is no longer loaded. Cannot be used with `--windows` or `--macos`. |
+| `--autorun`                   | Run the output after conversion, print its exit code, and wait for Enter. Set `ANYPS5_AUTORUN_NO_PAUSE=1` to skip the wait. Requires the target OS and prepared runtime layout.                                                                                                                                                                                                                                                                                                                                               |
+| `--dry-run`                   | Convert in memory, including bundled modules, extra executables, import analysis and byte patches, and list the planned outputs without creating directories, writing files or changing permissions. Conversion failures return `2`; the output path is still required. Conflicts with `--autorun` and `--verify-patches`.                                                                                                                                                                                                |
 | `--sce-module-path <path>`    | Parent of the module directories, not the module directory itself. Default: input ELF parent; relative input paths resolve from the process working directory. Explicit absolute path: used directly. Explicit relative path (including `.` and `..`): relative to the process working directory. Output path has no effect. Requires one nonempty value; repeats, nonexistent or nondirectory paths, access failures, and combination with `--skip-sce-module` are errors. |
 | `--module-dir <dir>`          | Relink the ELF modules of a directory under the module parent directory, besides `sce_module`/`sce_modules`/`prx`; outputs keep the relative path. Needed modules are mapped at startup. On Linux, modules in these extra directories initialize only when explicitly loaded, with the arguments from `sceKernelLoadStartModule` (for example Unity plugins in `Media/Plugins`). On Windows, such a module initializes when explicitly loaded, after the modules it needs that initialize the same way (they receive the same start arguments), unless a module outside these directories needs it, directly or through other modules, then it initializes at startup; the first explicit load of any such module also initializes, best effort, the others that a module depends on. On macOS, a module another module or the executable needs initializes at startup. Other modules initialize when loaded. Repeatable; `.` is the parent itself, without the input ELF. Conflicts with `--skip-sce-module`.  |
 | `--executable <path>`         | Also convert another executable of the title, which it starts with `sceSystemServiceLoadExec`; the path is relative to the module parent directory, for example `picker/picker.bin`. It is written beside the output, named after the path with `/` replaced by `.` and given the output's extension (`picker.picker.bin.exe`), and uses the same `libs/`, `app0/` and guest modules. It is an error if a guest module converts differently for it. Repeatable. Conflicts with `--skip-sce-module`. |
 | `--patches <file>`            | Apply the byte patches of this file during conversion, see [game patches](#game-patches). Overrides `relinker-patches.toml` discovery. Conflicts with `--no-patches`. |
 | `--no-patches`                | Do not apply patches, and do not load `relinker-patches.toml` from the input directory. |
 | `--verify-patches <file>`     | Check a patch file against `<path>` without writing anything, see [game patches](#game-patches). Takes one path and no output path. |
-| `--verify-output`             | With `--verify-patches`, treat `<path>` as a converted Linux output instead of an input executable. |
+| `--verify-output`             | With `--verify-patches`, treat `<path>` as a converted Linux or Windows output instead of an input executable. |
 | `--function-symbol-roots`     | Treat defined function symbols as code entry points instead of trusting their `st_size` ranges during export validation and Windows/macOS code analysis. For modules whose symbol sizes describe different code, such as generated loader companions. Function entries must remain executable and file-backed; data, TLS and unwind ranges keep their checks. The original symbol sizes are preserved. |
 | `--skip-sce-module`           | Deprecated. Disable bundled module processing and module directory checks. Conflicts with explicit `--sce-module-path`.                                                                                                                                                                                                                                                                                                                                                     |
 | `--exclude-sce-module <file>` | Deprecated. Exclude a bundled module by exact filename, not path. Repeat for multiple files; a missing filename is an error. Conflicts with `--skip-sce-module`.                                                                                                                                                                                                                                                                                                            |
 | `--skip-syscall-check`        | Deprecated. Disable syscall scanning in the executable and bundled modules.                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `--trap-sdk-syscall-stubs`    | Replace the exact ps5-payload-dev generic and numbered syscall wrapper stubs and the recognized inline mmap/mprotect sequences from SDK libc/mman.c, and the inlined `__syscall6` stubs (`mount`, `nmount`, `unmount`) from SDK libc/mount.c with `UD2`, so unused wrappers do not block relinking. Other syscall instructions still cause an error. If a trapped wrapper runs, it raises an illegal-instruction exception. For debugging only.                            |
+| `--trap-sdk-syscall-stubs`    | Deprecated. For debugging only. Replace the exact ps5-payload-dev generic and numbered syscall wrapper stubs and the recognized inline mmap/mprotect sequences from SDK libc/mman.c, and the inlined `__syscall6` stubs (`mount`, `nmount`, `unmount`) from SDK libc/mount.c with `UD2`, so unused wrappers do not block relinking. Other syscall instructions still cause an error, except an `int 0x80; ret` between the `int 0x7f; ret` and `int 0x81; ret` entries of a software interrupt table, which is replaced with `UD2` even without this option. If a trapped wrapper runs, it raises an illegal-instruction exception.                            |
 | `--frame-red-zone`            | Windows only: give leaf functions that keep values below RSP (the System V red zone) a frame, so an exception Windows delivers on a guest thread cannot overwrite them. Covers leaves with a `push rbp; mov rbp, rsp; push ...` prologue, leaves that only push registers, with or without a `sub` allocation after the pushes, and leaves with neither; a prologue or exit shorter than a jump takes in the instructions next to it. In leaves without a frame pointer, RSP is lowered only as far as the leaf reaches below it and their RSP operands are moved with it, in place or, when their encoding cannot hold the moved displacement, in a stub. Function bounds come from the executable's `.eh_frame`, and the relinker stops with an error when it has none. The relinker prints how many it framed and why it skipped the others, and refuses a game patch over a framed site. |
 | `--lazy-binding`              | Deprecated. Enable lazy symbol binding instead of eager binding. Incompatible with bundled ELF modules. The Linux executable stays position independent (`ET_DYN`) instead of being placed at `0x400000`. Windows and Linux output only. |
 
 Specify `unused-filter=0|1|2` without `--`, at most once. Unknown options and extra positional arguments are errors. Use `relinker --help` to print the usage syntax to stdout and exit with code `0` without converting files. Invoking `relinker` without arguments prints the usage syntax to stderr and exits with code `1`.
 
-The `--skip-sce-module`, `--exclude-sce-module <file>`, `--skip-syscall-check`, and `--lazy-binding` flags are deprecated. If the application runs with these flags enabled, it will be extremely unstable and unsuitable for general use. These flags are only for debugging.
+The `--skip-sce-module`, `--exclude-sce-module <file>`, `--skip-syscall-check`, `--lazy-binding` and `--trap-sdk-syscall-stubs` flags are deprecated. If the application runs with these flags enabled, it will be extremely unstable and unsuitable for general use. These flags are only for debugging.
 
 `--trap-sdk-syscall-stubs` is also for debugging. It preserves a runtime failure if a syscall wrapper is called; it does not implement FreeBSD syscalls or make these applications generally safe to run.
 
@@ -112,7 +207,7 @@ A patch file changes bytes of the input executable or of a bundled module before
 The advisor and catalog validator require Python 3.11 or newer. To check a local patch catalog, run:
 
 ```sh
-python3 tools/suggest_patches.py --catalog <directory> --param-json <sce_sys/param.json> --input <input.elf> --relinker <relinker> [--sce-module-path <directory>] [--module-dir <directory>]... [--executable <path>]... [--skip-sce-module] [--timeout-seconds <seconds>] [--list-verified]
+python3 tools/suggest_patches.py --catalog <directory> --param-json <sce_sys/param.json> --input <input.elf> --relinker <relinker> [--sce-module-path <directory>] [--module-dir <directory>]... [--executable <path>]... [--skip-sce-module] [--timeout-seconds <seconds>] [--list-verified] [--json]
 ```
 
 To check every entry in a catalog before sharing it, without game files or a relinker, run:
@@ -175,6 +270,8 @@ The advisor validates patch files only for entries matching the requested title 
 
 With `--list-verified`, the advisor prints every entry that passes metadata, hash and relinker checks, in catalog order. Each result includes its catalog number, patch file, target hashes and conversion options. It exits `0` when at least one entry verifies, even if another entry was rejected; with no verified entries, the existing `1` or `2` exit status still applies. Without this option, a single verified entry is recommended and multiple verified entries remain ambiguous. The listing tells users to choose one patch file. It does not combine patch files or apply them during conversion; review the chosen patch before applying it.
 
+Use `--json` for one machine-readable result on stdout. `schemaVersion` is `1` for every result, including errors; consumers should check it before reading other fields. The existing `status`, `entries`, `recommended_entry` and exit codes keep their meanings. Each entry with `status: "verified"` also has `conversion_options`: an array of individual arguments such as `["--patches", "/absolute/catalog/patch.toml", "--skip-sce-module"]`. These are the same options printed by the text mode, in the same order; they do not include the relinker program or input ELF. Relative module paths retain the meaning they had in the advisor invocation. Rejected entries have no conversion options. The array describes one verified patch file, not a combination of entries, and does not apply a patch automatically. Argument parsing errors still use argparse's stderr output and exit status.
+
 The target hashes identify the exact unwrapped files changed by a patch, which might not include the main executable. Different dump tools could produce different bytes for the same title version; the advisor then rejects a patch even if it would work. It has not been confirmed that all dump tools produce identical files. The hashes do not authenticate a catalog or establish that a patch is safe or that the title is fully playable. Use catalogs from sources you trust and review the patch before applying it.
 
 If the patch targets another title executable, pass `--executable <path>` to the advisor for each additional executable, using paths relative to the module parent directory, such as `picker/picker.bin`. The advisor hashes those target files and forwards the same options to `relinker --verify-patches`. Use the same `--executable` options when converting with `--patches`.
@@ -206,9 +303,10 @@ description = "pool size"
 
 | Entry key | Meaning |
 |-----------|---------|
-| `name` | Optional. A setting name of `[a-z0-9_]`, unique within the file and not one of the reserved top-level key names (`format` and the eight keys above), used by a later `--set` option. Shown in the progress line, the manifest and the verify report. |
+| `name` | Optional. A setting name of `[a-z0-9_]`, unique within the file and not one of the reserved top-level key names (`format` and the eight keys above). Shown in the progress line, the manifest and the verify report. |
 | `target` | Required. The main executable's file name, or for `--executable` files and bundled modules the path relative to the module parent directory, for example `sce_module/libc.prx`. |
 | `va` | Required. The virtual address of the ELF as a disassembler shows it. |
+| `output_rva` | Optional, from `0` to `0xffffffff`. Written to the manifest by a `--windows` conversion: the address of the entry's first byte in the PE output, relative to its image base. Used only by `--verify-output`; a conversion ignores it and writes its own. |
 | `type` | Optional: `u8 u16 u32 u64 i8 i16 i32 i64`. Then `expected`, `value`, `min`, `max` and `align` are integers, range-checked and written little-endian. Without it, `expected` and `value` are hexadecimal byte strings of the same length. |
 | `expected` | Required. The bytes the input must hold. |
 | `value` | Required. The bytes to write. |
@@ -219,11 +317,19 @@ x86 `mov r/m64, imm32` and `add`/`sub`/`cmp r/m64, imm32` sign-extend their imme
 
 Entries apply in file order. A patch range must lie in the file bytes of one `PT_LOAD` and outside the ELF header and program header table. The conversion fails before writing any output if bytes differ from `expected`, a range is not valid, two entries overlap, a target matches no file or more than one file, or a range overlaps bytes the relinker itself rewrites (`--to-intel` replacements and trampolines, relinker patches, syscall traps) or the 8-byte target of a relocation of the file.
 
+A PLT stub of the executable or of a bundled module that no longer starts with the linked `jmp` through its GOT entry is reported during the conversion, because the import of that entry is not called through it:
+
+```
+Replaced PLT stub: [<target>] va=0x<address> <linked> -> <found> [(jump to 0x<address>)]; import <NID> is not called through it; a --patches entry with expected = "<found>" and value = "<linked>" restores the linked stub
+```
+
+`<target>` is the module's patch target and is left out for the executable. The bytes are the 6-byte jump, or the whole 16-byte stub when its `push` and `jmp` to the PLT header differ as well. The conversion is otherwise unchanged and converts the replacement as it is. A table in which no stub is linked that way is not reported. When a syscall instruction is refused in the code such a stub jumps to, before that code's first return or jump, the error names the stub. Restoring the stub leaves that code unreferenced but still scanned, so a second entry has to overwrite it before the file converts.
+
 When at least one patch is applied, `<output-stem>.patches.toml` is written beside the output. It lists every applied entry for every converted file, with `main_target`, `linux_base` (the address a Linux `ET_EXEC` output is placed at) and `config` (the patch file path in forward-slash form, reduced to its file name when the path holds a `"`, backslash or control character; the conversion fails before writing any output when even that cannot be held); typed entries keep their `type`, integers and `min`, `max` and `align`, and `--patches` accepts it to reproduce the conversion. The manifest must not replace the patch file it was read from.
 
 `--verify-patches <file> <path>` writes nothing and exits `0` when no entry is a mismatch. Without `--verify-output`, `<path>` is the input executable of any type, modules are found as in a conversion (module options and `--executable` apply), and each entry is `applicable` (the input holds `expected`) or `mismatch`. A target that matches nothing is an error that suggests `--verify-output`.
 
-With `--verify-output`, `<path>` is a converted Linux ELF; PE and Mach-O outputs are refused. The file must have `main_target`, so verify the generated manifest, not a hand-written file. Entries are checked at their `va` plus the manifest's `linux_base` in an `ET_EXEC` output, which requires `linux_base`; an `ET_DYN` output, from `--lazy-binding`, requires a manifest without it. The entry whose target is `main_target` is checked against `<path>`, and entries for the `--executable` strings given are checked against the output file derived as in a conversion; an entry holding `value` is `applied`. Every other entry is `not-checked (module, or executable not named with --executable)`, including a mistyped module target. Two targets with the same name, such as an `--executable` equal to `main_target`, are an `ambiguous patch target` error. Module discovery options are rejected with `--verify-output`.
+With `--verify-output`, `<path>` is a converted Linux ELF or Windows PE; Mach-O outputs are refused. The file must have `main_target`, so verify the generated manifest, not a hand-written file. Entries are checked at their `va` plus the manifest's `linux_base` in an `ET_EXEC` output, which requires `linux_base`; an `ET_DYN` output, from `--lazy-binding`, requires a manifest without it. In a PE output, which also requires a manifest without `linux_base`, each entry is checked at its `output_rva`, which every checked entry must have; bytes of a section past its file data are the zeros the loader maps there, and the report says when a range holds only such bytes. The entry whose target is `main_target` is checked against `<path>`, and entries for the `--executable` strings given are checked against the output file derived as in a conversion; an entry holding `value` is `applied`. Every other entry is `not-checked (module, or executable not named with --executable)`, including a mistyped module target. Two targets with the same name, such as an `--executable` equal to `main_target`, are an `ambiguous patch target` error. Module discovery options are rejected with `--verify-output`.
 
 Verify mode rejects the conversion options (`--windows`, `--macos`, `--to-intel`, `--rpath`, `--patches`, `--no-patches` and the like) and a second path.
 
@@ -233,7 +339,7 @@ The Windows executable has no `DYNAMIC_BASE` and prefers to load with its lowest
 
 For an executable that assumes its image starts at `0x400000`, as Ruffle (PPSA68091), VLC (PPSA85300) and XPSemu (PPSA97358) do when they read their `app0/imports.txt`, use `relinker --macos --macos-fixed-base 0x400000 source/input.elf app` on macOS. Use this option only when the executable requires a fixed address; without it, macOS output places the lowest ELF load page at `0x140010000`. Linux output places virtual address 0 at `0x400000` without an option, inside the 40-bit window that a title's own `sceLibcMspaceCreate` checks; `--linux-fixed-base` selects another address, and with `--lazy-binding` the executable stays position independent.
 
-The same base is applied to executables selected with `--executable`; bundled PRX modules are not rebased.
+The `--linux-fixed-base` and `--macos-fixed-base` addresses also apply to executables selected with `--executable`; `--windows-fixed-base` applies only to the main executable, and the others keep the preferred base with relocations. Bundled PRX modules are not rebased.
 
 Paths are relative to the output executable:
 
@@ -252,15 +358,17 @@ Use `sce_modules/` or `prx/` instead of `sce_module/` if that is the input direc
 
 Some applications also need their original `app0/sce_sys/param.json` at runtime. AnyPS5 reads this file for the title ID and display name; it must contain a non-empty `titleId` string and a non-empty `localizedParameters` object with a language entry that has a non-empty `titleName`. It selects the entry named by `defaultLanguage` (inside `localizedParameters`, or at the top level); if that entry is absent, it tries `en-US`, then the first object-valued language entry. Preserve the values from the title's own metadata and place the file under the same `app0/` directory as the other app resources. At startup, its presence in the working directory creates `data/`; a non-zero `downloadDataSize` also creates `download0/`. Without `param.json`, AnyPS5 reads `app0/sce_sys/param.sfo` (`TITLE`, `TITLE_ID` and `DOWNLOAD_DATA_SIZE`) instead, with the same effect on `data/` and `download0/`; without either file, neither directory is created. If both are missing or the one read is invalid, metadata calls such as title/window setup can fail with a `param.json` or `param.sfo` error.
 
-Resources can also be packed into `app0.zar` beside `app0/`, a [ZArchive](https://github.com/Exzap/ZArchive) whose root is the `app0/` directory. A file present in `app0/` is read from there and any other file from the archive; the executable, `sce_module/` and `sce_sys/` stay in `app0/`. The archive is read only through `sceKernelOpen`/`open`, the read, seek and stat calls on its descriptors and `sceKernelStat`; other calls on an archived path, listing a directory that the archive also contains and opening a file in it for writing fail as described in [technical debt](../dev/debt/libkernel.md). An archive that cannot be opened stops the title at its first file access.
+Resources can also be packed into `app0.zar` beside `app0/`, a [ZArchive](https://github.com/Exzap/ZArchive) whose root is the `app0/` directory. A file present in `app0/` is read from there and any other file from the archive; the executable, `sce_module/` and `sce_sys/` stay in `app0/`. The archive is read only through `sceKernelOpen`/`open`, the read, seek and stat calls on its descriptors, `sceKernelStat`, the APR file reads (`sceKernelAprResolveFilepathsToIds` and the read commands), `fopen` for reading, `access` and `sceNgs2ParseWaveformFile`; other calls on an archived path, listing a directory that the archive also contains and opening a file in it for writing fail as described in [technical debt](../dev/debt/libkernel.md). An archive that cannot be opened stops the title at its first file access.
 
 For bundled title modules, use the `.guest.prx` files the relinker writes into `app0/` and lists in the layout it prints. `libs/` is for AnyPS5 system libraries, not the original PS5 `.prx` files. Placing an original PS5 module in `libs/` on Windows makes Windows try to load it as a DLL and can fail with error 193 (not a valid Win32 application). A module the title loads while it runs that was not relinked, such as one in a directory not given to `--module-dir`, is not loaded either: the title gets an error and continues, and the runtime prints `[module] dlopen: <path> was not relinked: ...` once for each file. Relink that module's directory with `--module-dir <dir>`.
 
-On Windows, a self-built `libs/` also needs `libgcc_s_seh-1.dll`, `libstdc++-6.dll` and `libwinpthread-1.dll` from the `mingw64/bin` directory of the toolchain that built the libraries; the release archives already contain them. The libraries are loaded without searching `PATH`, so a copy elsewhere on the system is not used, and a library that needs one of them fails with error 126 (the specified module could not be found) although its `.prx` file is present. With `APS5_MIMALLOC` set, the title loads `mimalloc.dll` and `mimalloc-redirect.dll` from `libs/` and allocates through mimalloc. Copy both from `build/core/libs/libs`; the release archives contain them. Without them the title keeps the C runtime's heap and prints nothing.
+On Windows, a self-built `libs/` also needs `libgcc_s_seh-1.dll`, `libstdc++-6.dll` and `libwinpthread-1.dll` from the `mingw64/bin` directory of the toolchain that built the libraries; the release archives already contain them. The libraries are loaded without searching `PATH`, so a copy elsewhere on the system is not used, and a library that needs one of them fails with error 126 (the specified module could not be found) although its `.prx` file is present. With `APS5_MIMALLOC` present in the environment, even with an empty value or `0`, the title loads `mimalloc.dll` and `mimalloc-redirect.dll` from `libs/` and allocates through mimalloc. Copy both from `build/core/libs/libs`; the release archives contain them. Without them the title keeps the C runtime's heap and prints nothing.
 
-On macOS, with `APS5_MIMALLOC` set, the title starts again at once with `libmimalloc.dylib` from `libs/` loaded and allocates through mimalloc; the self-built `build/core/libs/libs` already contains it. Without the file the title keeps the system allocator and prints nothing.
+On Linux and macOS, `APS5_MIMALLOC=1` enables mimalloc. An unset or empty value, `0`, `false`, `off` or `no` disables it. The words are case-insensitive. Other nonempty values enable it. Unset `APS5_MIMALLOC` to disable it on every platform.
 
-On Linux, with `APS5_MIMALLOC` set, the title starts again at once with `libmimalloc.so` from `libs/` in `LD_PRELOAD` and allocates through mimalloc; the release archives and the self-built `build/core/libs/libs` contain it. Without the file the title keeps the system allocator and prints nothing. A `libs/` path with a space or a colon cannot be listed in `LD_PRELOAD`: the title then prints one line and keeps the system allocator. After the restart `APS5_MIMALLOC` and `LD_PRELOAD` stay set, so the title's own environment and every process it starts carry them. mimalloc keeps more memory than the system allocator: in PPSA21564 about 0.9 GiB less host memory was available with it.
+On macOS, when mimalloc is enabled, the title starts again at once with `libmimalloc.dylib` from `libs/` loaded and allocates through mimalloc; the self-built `build/core/libs/libs` already contains it. Without the file the title keeps the system allocator and prints nothing.
+
+On Linux, when mimalloc is enabled, the title starts again at once with `libmimalloc.so` from `libs/` in `LD_PRELOAD` and allocates through mimalloc; the release archives and the self-built `build/core/libs/libs` contain it. Without the file the title keeps the system allocator and prints nothing. A `libs/` path with a space or a colon cannot be listed in `LD_PRELOAD`: the title then prints one line and keeps the system allocator. After the restart `APS5_MIMALLOC` and `LD_PRELOAD` stay set, so the title's own environment and every process it starts carry them. mimalloc keeps more memory than the system allocator: in PPSA21564 about 0.9 GiB less host memory was available with it.
 
 On Windows, direct memory (`sceKernelAllocateDirectMemory`, up to 13824 MiB per title) is committed when the title maps it, not when the title allocates it or first uses its pages. The system commit limit (installed memory plus page file size, the second value of Committed in Task Manager) must cover the mapped direct memory together with all other committed memory. Otherwise `sceKernelMapDirectMemory` throws `replace guest placeholder with resident direct memory` with the Windows error (`commit direct memory pages` when a page is mapped at a second address, `keep unmapped direct memory` when it is unmapped); enlarge the page file or close other applications.
 
@@ -284,11 +392,13 @@ A Windows executable started without a standard output or error handle, such as 
 
 ### Display resolution and window size
 
-The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. F11 switches between window and fullscreen; set `ANYPS5_FULLSCREEN` to a non-empty value other than `0` to open the window fullscreen from the start. Changing the window size does not change the game's render resolution. The only host setting that changes the resolution a game reads is `APS5_OUTPUT_RESOLUTION`, described below; otherwise AnyPS5 provides no render-resolution override, so use a game's own display setting when it offers one.
+The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. F11 switches between window and fullscreen and returns the window to the size it had before. Set `ANYPS5_FULLSCREEN` to `1` or `borderless` to open the window fullscreen at the desktop resolution from the start, or to `0` or `windowed` (the default) to keep it windowed. Any other non-empty value, such as `true` or `yes`, still opens it fullscreen as before, and a warning on stderr names the value. Fullscreen goes to the display the window is on, which is the one `ANYPS5_DISPLAY_INDEX` selects at start. The mouse cursor is hidden while the window is fullscreen unless the game has opened a mouse. Changing the window size does not change the game's render resolution. The only host setting that changes the resolution a game reads is `APS5_OUTPUT_RESOLUTION`, described below; otherwise AnyPS5 provides no render-resolution override, so use a game's own display setting when it offers one.
 
 `APS5_OUTPUT_RESOLUTION=<width>x<height>`, for example `APS5_OUTPUT_RESOLUTION=1920x1080`, makes the game's video output status report the 1080p class when the width is below 3840 and the height below 2160, and the 2160p class otherwise, instead of the class of the display's current mode. The two numbers must be positive integers separated by `x` or `X`. An empty value is the same as an unset one; any other value stops the game with an error that names the variable.
 
 `ANYPS5_DISPLAY_INDEX=<n>` opens the window centred on display `n`, counted from 0 in the order SDL lists the displays. Unset, the first display is used. A value that is not the index of a connected display, including an empty value, stops the game at start with an error that names the variable.
+
+On Linux, the bundled SDL2 requests server-side window decorations when the Wayland compositor advertises xdg-decoration. Compositors without xdg-decoration, including GNOME, use libdecor when it is available. If libdecor fails to configure the window within three seconds, AnyPS5 retries with xdg-shell. The retry can open without decorations, and startup reports an error if the compositor fails to configure that window too. Set `SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR=0` to disable libdecor, `SDL_VIDEO_WAYLAND_PREFER_LIBDECOR=1` to try it first, or `SDL_VIDEODRIVER=x11` to select X11 or XWayland.
 
 ### VR compatibility
 
@@ -315,7 +425,15 @@ Run the helper in a second terminal. Commands are polled at most every 100 ms du
 
 Set `APS5_NO_PAD_INPUT` to any value, an empty one included, to make the window ignore its keyboard and mouse events. The keyboard and mouse bindings, the mouse stick and the window keys (F10, F11 and F12 among them) then do nothing. Controllers and the `APS5_PAD_INPUT_FILE` commands are not affected.
 
-On Windows, set `APS5_NO_WGI` to any value to turn off SDL's Windows Gaming Input controller backend. AnyPS5 turns off DirectInput there in every case, and this variable is read once when the video output driver is created.
+On Windows, AnyPS5 disables SDL's DirectInput controller backend by default. Set `SDL_DIRECTINPUT_ENABLED=1` to enable it for controllers that need DirectInput. Windows Gaming Input is enabled by default. Set `APS5_NO_WGI` to any value to disable it when the video output driver starts. An explicit `SDL_JOYSTICK_WGI` setting takes precedence, so `SDL_JOYSTICK_WGI=1` keeps it enabled.
+
+### Host microphone selection
+
+By default, `libSceAudioIn` captures from SDL's default host input device. Set `ANYPS5_AUDIO_IN_DEVICE` to an exact capture-device name reported by SDL to select another microphone. An unset or empty value, or `default`, keeps SDL's default. If the selected name is missing, appears more than once, or cannot be opened, the game's AudioIn open call returns the invalid-device error `0x8026010F`; AnyPS5 does not silently switch to another microphone. SDL2 identifies capture devices by name, so duplicate names cannot be selected individually. The setting is read each time the game opens an AudioIn port.
+
+```sh
+ANYPS5_AUDIO_IN_DEVICE="USB Microphone" ./app.elf
+```
 
 ### Controller vibration strength
 
@@ -329,6 +447,10 @@ ANYPS5_RUMBLE=0 ./app.elf
 The setting covers the rumble motors, the impulse-trigger rumble of controllers that have it, and the vibration a game plays as audio, both when it is played on a DualSense's own sound card and when it is turned into motor rumble. It does not change DualSense adaptive trigger effects (resistance and trigger vibration profiles), which still reach the controller as the game sends them. A value that is empty, signed, fractional or above 100 stops the game at start with an error naming `ANYPS5_RUMBLE`.
 
 This is a host-side comfort setting, not console behaviour: it is applied by AnyPS5 between the game and your controller, it is read once at start, and there is no hotkey or overlay entry for it. It is not a model of any console setting.
+
+### Vibration while the window has no focus
+
+By default the controller stops vibrating while the AnyPS5 window has no focus, and vibrates again with the next pulse when the focus returns. Set `ANYPS5_RUMBLE_ON_FOCUS_LOSS=0` to keep vibration on while the window is in the background. Only the vibration motors are affected: the light bar and the controller's state are not changed, and identify pulses still work while the window has focus. Any value other than `0` or `1` stops the game at start with an error naming the variable.
 
 ### Controller connection and user 0
 
@@ -355,6 +477,10 @@ This is a host-side convenience, not console behaviour: the game does not send t
 ### Video-out and pad telemetry
 
 Set `APS5_VIDEOOUT_TELEMETRY_DIR` to a directory before launching the application to write the run's presents and pad changes to `<directory>/videoout.jsonl`, one JSON object per line, appended when the file already exists. Every line starts with `"v":1`, the host's steady-clock nanoseconds in `t_ns` and the event name in `ev`. A run starts with a `contract` line, `{"v":1,"t_ns":<ns>,"ev":"contract","contract":"v1-pad","commit":"<12 hex>","pid":<pid>,"prx":"libSceVideoOut"}`: `commit` is the source commit the libraries were built from (`unknown` when Git was not found at configuration) and `pid` tells apart the runs that appended to the same file. A `pad` line is written when the pad state the title reads changes in its buttons, sticks or triggers, `{"v":1,"t_ns":<ns>,"ev":"pad","n":<present>,"buttons":<bits>,"sticks":[<left x>,<left y>,<right x>,<right y>],"triggers":[<L2>,<R2>]}`, where `n` is the number of presents completed when the change was published, the count the window title shows. `buttons` is the button bit field in decimal, stick axes run 0-255 with 128 at the centre, and both triggers run 0-255. Motion, touch and the device kind are not compared, so a run that only moves the controller writes no `pad` line. The state a `pad` line reports is the controller and keyboard/mouse input read through SDL; input fed by `APS5_PAD_INPUT_FILE` is applied later, in `libScePad`, so a scripted run writes no `pad` line. A `present` line is written after the first present and every 30 presents after that, `{"v":1,"t_ns":<ns>,"ev":"present","n":<present>,"fps":<rate>}`, with the count and rate the window title shows. A background thread writes the lines and the title is not waited for: when it falls behind, the line is dropped and a `drops` line with the number dropped so far, `{"v":1,"t_ns":<ns>,"ev":"drops","dropped":<count>}`, is written every ten seconds while the count grows, and once at a normal exit, only when lines were dropped; an exit that skips static destructors writes no last line. A pad line the full queue refused counts as dropped even though a later publish writes the change. Without the variable no file is opened and no thread is started; an empty value is the same as an unset one, and a directory that cannot be written stops the title when video output starts, with an error naming the file.
+
+To measure completed guest flip cadence, set `APS5_VIDEOOUT_FLIP_TIMING=FIRST:COUNT` and use a fresh `APS5_VIDEOOUT_TELEMETRY_DIR` for each run. For example, `601:600` records flips 601 through 1200. The first flip number is positive and the count is 2–100000. The capture uses the first main output that completes a flip. The contract adds `flip_start` and `flip_count`, and each `flip_complete` line gives the completion sequence `n`, output `generation`, and guest flip status timestamp `process_us` in monotonic microseconds since process start. Adjacent `process_us` values measure the interval between completed flips, including cleared frames.
+
+Use one ordered, contiguous sequence covering the contract’s entire window in a single generation. Missing records indicate an incomplete capture, for example after a queue drop, output reopen, or early exit. Use the existing `drops` event to inspect lost telemetry records.
 
 ### Controller-speaker fallback audio
 
@@ -412,15 +538,17 @@ A missing or malformed `trophyNN.ucp` or `udsNN.ucp` turns off only what it prov
 
 ### PlayGo dumps without metadata
 
-When a dump has neither `sce_sys/playgo-chunk.dat` nor `sce_sys/playgo-scenario.json`, AnyPS5 cannot tell which nonzero PlayGo chunk IDs exist. Requests for those IDs stop with an error by default. Set `APS5_PLAYGO_UNLISTED_CHUNKS` to choose an answer for that dump:
+When a dump has neither `sce_sys/playgo-chunk.dat` nor `sce_sys/playgo-scenario.json`, AnyPS5 cannot tell which nonzero PlayGo chunk IDs exist. By default, when `sce_sys` holds no `playgo-` file at all, chunk IDs 0 to 999 answer as installed (`LOCAL_FAST`) and IDs from 1000 up return `SCE_PLAYGO_ERROR_BAD_CHUNK_ID`; the bound of 1000 comes from title runs, not from a console. Set `APS5_PLAYGO_UNLISTED_CHUNKS` to choose another answer for that dump:
 
 | Value | Answer for an unlisted chunk ID | Observed title that needs it |
 |-------|---------------------------------|------------------------------|
-| `installed` | Report it as installed (`LOCAL_FAST`). | High on Life (PPSA15388) needs this to load its saves. |
-| `absent` | Return `SCE_PLAYGO_ERROR_BAD_CHUNK_ID`. | Sifu (PPSA03001) and Demon Slayer: Kimetsu no Yaiba - The Hinokami Chronicles (PPSA03490) use this result to end their chunk-ID search. With `installed`, PPSA03490 keeps asking about higher chunk IDs forever, so its chunk list grows until startup fails with a `Ran out of memory allocating 5565054976 bytes` error. |
+| `installed` | Report it as installed (`LOCAL_FAST`). | None known: High on Life (PPSA15388), which needed it to load its saves, asks only IDs 0 to 999, which the default answers. |
+| `absent` | Return `SCE_PLAYGO_ERROR_BAD_CHUNK_ID`. | Sifu (PPSA03001), Demon Slayer: Kimetsu no Yaiba - The Hinokami Chronicles (PPSA03490) and Guilty Gear -Strive- (PPSA02257) use this result to end their chunk-ID search. With `installed`, PPSA03490 keeps asking about higher chunk IDs forever, so its chunk list grows until startup fails with a `Ran out of memory allocating 5565054976 bytes` error. PPSA02257 fails the same way after about 245 million `scePlayGoGetLocus` calls in 30 seconds. |
 | A comma-separated list of IDs, e.g. `0,1` | Report those IDs as installed (`LOCAL_FAST`) and every other unlisted ID as absent (`SCE_PLAYGO_ERROR_BAD_CHUNK_ID`). | The Medium (PPSA03718) needs chunks 0 and 1; with `installed` it asks about every ID and UE4 runs out of memory. |
 
-Leave the variable unset to keep the explicit error. A list holds decimal chunk IDs from 0 to 65535 and is added to chunk 0; it only applies when the dump has neither `playgo-chunk.dat` nor `playgo-scenario.json`. Any other value also stops with an error. Dumps that include `playgo-chunk.dat` or `playgo-scenario.json` are unaffected. These title-specific results come from emulator runs and have not been verified against a console.
+Leave the variable unset or empty to keep the default above. If `sce_sys/playgo-scenario.json` is the only chunk metadata, IDs 0 to 999 are listed. For IDs from 1000 up, `installed` reports the chunk as installed and `absent` returns `SCE_PLAYGO_ERROR_BAD_CHUNK_ID`. An unset or empty value or a list of IDs still stops with an error for those chunks.
+
+A list holds decimal chunk IDs from 0 to 65535 and is added to chunk 0. It applies only when the dump lacks `app0/playgo-chunkdefs.xml` and `sce_sys` holds no `playgo-` file. Other values stop with an error when used. If `app0/playgo-chunkdefs.xml` or `sce_sys/playgo-chunk.dat` supplies the chunk list, the variable has no effect. These title-specific results come from emulator runs and have not been verified against a console.
 
 ### Screenshots
 
@@ -438,15 +566,17 @@ Set `ANYPS5_MUTE_ON_FOCUS_LOSS=1` to mute the audio while the display window has
 
 The keys work while the display window has focus. Not measured on a real audio device or on a console.
 
+Set `ANYPS5_AUDIO_IN_MUTE_ON_FOCUS_LOSS=1` to return silent microphone samples to the guest while the display window has no focus. Capture remains open in SDL, but queued samples are cleared when focus changes so speech captured while muted is not delivered after focus returns. `0` or unset leaves microphone input unchanged; an invalid value stops the game with an error naming the variable.
+
 ### GPU selection
 
 The game runs on the first Vulkan 1.1 device with graphics and compute queues and swapchain presentation, preferring a discrete GPU over an integrated one. Set `ANYPS5_GPU` to a part of a device name, compared without regard to case, to run on another device; the names are printed at start-up in the `Physical device candidate` lines. When no usable device contains the text, the start fails and the error lists the device names.
 
-The window presents with vertical sync (`fifo`). Set `ANYPS5_PRESENT_MODE` to `fifo_latest_ready`, `mailbox` or `immediate` to keep the game from waiting for the display: `fifo_latest_ready` and `mailbox` still show whole frames at the display's refresh and drop the ones in between, `immediate` presents at once and can tear. The start fails on any other value and when the surface does not offer the mode (`fifo_latest_ready` needs `VK_KHR_present_mode_fifo_latest_ready` or its EXT form). Flips stay paced at 59.94 Hz in every mode. A Wayland compositor can stop delivering frames to a window it does not show, for example one on another workspace: on Hyprland with the NVIDIA driver a `fifo` swapchain then presents about once per second, while `fifo_latest_ready` and `immediate` keep the game at its normal rate.
+The window presents with vertical sync (`fifo`). Set `ANYPS5_PRESENT_MODE` to `fifo_latest_ready`, `mailbox` or `immediate` to keep the game from waiting for the display: `fifo_latest_ready` and `mailbox` still show whole frames at the display's refresh and drop the ones in between, `immediate` presents at once and can tear. The start fails on any other value and when the surface does not offer the mode (`fifo_latest_ready` needs `VK_KHR_present_mode_fifo_latest_ready` or its EXT form). A Wayland compositor can stop delivering frames to a window it does not show, for example one on another workspace: on Hyprland with the NVIDIA driver a `fifo` swapchain then presents about once per second, while `fifo_latest_ready` and `immediate` keep the game at its normal rate.
 
 Set `ANYPS5_FPS_LIMIT` to a number of frames per second, from 0.5 to 1000000 with at most three decimals (`30`, `59.94`), to present at most that many. Each flip of the window waits for its turn before it is presented and the title's flip completes then, so the title is paced as by a display of that rate; the title is not told, and its vblank events and refresh rate stay those of the output. `0`, an empty value and an unset variable mean no limit, the behaviour without the variable. Any other value stops the game at its first flip with an error that names the variable.
 
-The limit applies on top of the flip pacing above, which holds flips to the output's refresh (59.94 Hz, or 119.88 Hz in the output mode of that name; every second or third vblank when the title sets a flip rate of 1 or 2) in every present mode: it lowers the rate below that and does nothing above it, and a title already slower than the limit is not delayed. A stall is not made up with a burst: a frame late by under one period is made up by the next, and after a longer stall at most one frame is presented early. The wait sleeps until shortly before its deadline and spins for the rest. Window events are handled between flips, so under a low limit the window answers about once per frame. With `fifo` the display still shows a frame at each of its refreshes, so a limit that does not divide the refresh rate shows some frames for one refresh and some for two. The cap is a host choice; the console has none.
+In every present mode, the output paces flips at 59.94 Hz by default or 119.88 Hz in the output mode of that name. When the title sets a flip rate of 1 or 2, flips wait for every second or third vblank. The limit can lower that rate further. A title already slower than the limit is not delayed. A stall is not made up with a burst: a frame late by under one period is made up by the next, and after a longer stall at most one frame is presented early. The wait sleeps until shortly before its deadline and spins for the rest. Window events are handled between flips, so under a low limit the window answers about once per frame. With `fifo` the display still shows a frame at each of its refreshes, so a limit that does not divide the refresh rate shows some frames for one refresh and some for two. The cap is a host choice; the console has none.
 
 On Windows, the OpenCL, OpenGL, and Vulkan Compatibility Pack can install Mesa Dozen, which exposes D3D12 devices through Vulkan. Some D3D12 drivers can crash while the Vulkan loader enumerates adapters, even when AnyPS5 would select a native Vulkan device. If this happens and the system has another Vulkan driver, disable Dozen for the current PowerShell session before launching AnyPS5:
 
@@ -455,7 +585,7 @@ $env:VK_LOADER_DRIVERS_DISABLE = '*dzn*'
 .\app.exe
 ```
 
-Do not disable Dozen if it is the only Vulkan driver available; the application would have no device to use. `VK_LOADER_DRIVERS_DISABLE` matches Vulkan driver manifest filenames and requires a Vulkan loader built with headers 1.3.234 or later ([loader documentation](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderInterfaceArchitecture.md#filter-environment-variables)).
+Do not disable Dozen if it is the only Vulkan driver available; the application would have no device to use. `VK_LOADER_DRIVERS_DISABLE` matches Vulkan driver manifest filenames and requires a Vulkan loader built with headers 1.3.234 or later ([loader documentation](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderInterfaceArchitecture.md#filter-environment-variables)). Loaders up to version 1.4.365 ignore it in an elevated process, such as one started from a PowerShell opened with **Run as administrator**.
 
 On Windows, NVIDIA driver 610.47 can crash in its shader compiler while pipelines are created: the log ends in `FATAL: unhandled exception 0xc0000005` with `nvgpucomp64.dll` in `rip`, on a driver thread. PPSA25344 on an RTX 3060 stopped this way in 3 of 3 New Game loads, also with `APS5_NO_PIPELINE_LTO=1`; with driver 617.42 the same build and scene ran for 40 minutes. Update the driver when the crash is in `nvgpucomp64.dll`.
 
@@ -463,7 +593,7 @@ On Windows, NVIDIA driver 610.47 can crash in its shader compiler while pipeline
 
 Set `ANYPS5_HOST_REPORT=1` to print what a bug report needs to stderr once, when the game's Vulkan device has been chosen. Attach the whole block to the issue; it replaces typing the OS, GPU and driver by hand. `0`, an empty value or no variable prints nothing, and any other value stops the start with an error that names the variable.
 
-The report has fixed sections in a fixed order, so two runs on one machine print the same text: `[system]` (commit, OS (kernel release and machine type on Linux and macOS, version and build on Windows), CPU model, hardware threads, physical memory in MiB, and the CPU check), `[sdl]` (the SDL version linked at run time and the one built against), `[gpu]` (device name and type, PCI vendor and device ids, Vulkan version, driver name and info from `VK_KHR_driver_properties`, the raw driver version, subgroup size, the largest device-local heap, every Vulkan device found, the surface's present modes and the one `ANYPS5_PRESENT_MODE` asked for), `[vulkan]` (each extension and feature the game needs and the optional extensions it uses, marked `present` or `missing`), `[shader_cache]` (`disabled`, `absent` or `present` with its size in MiB) and `[environment]` (the `APS5_`, `ANYPS5_`, `VK_` and `SDL_` variables that are set). A fact that could not be read prints `unavailable` and is explained in a final `[unavailable]` section. The `cpu_gate` line says `passed` whenever the report appears, because a host CPU that lacks a required extension stops the game before the Vulkan device is chosen (see the CPU requirement under Input and conversion); it says `unavailable` where that check does not run, such as macOS. The shader cache size counts at most 200000 files.
+The report has fixed sections in a fixed order, so two runs on one machine print the same text: `[system]` (commit, OS (kernel release and machine type on Linux and macOS, version and build on Windows), CPU model, hardware threads, physical memory in MiB, and the CPU check), `[sdl]` (the SDL version linked at run time and the one built against), `[gpu]` (device name and type, PCI vendor and device ids, Vulkan version, driver name and info from `VK_KHR_driver_properties`, the driver version decoded as NVIDIA's driver, Intel's Windows driver or Vulkan's version macros encode it (`unknown` without `VK_KHR_driver_properties` and on MoltenVK) and its raw value, subgroup size, the largest device-local heap, every Vulkan device found, the surface's present modes and the one `ANYPS5_PRESENT_MODE` asked for), `[vulkan]` (each extension and feature the game needs and the optional extensions it uses, marked `present` or `missing`), `[shader_cache]` (`disabled`, `absent` or `present` with its size in MiB) and `[environment]` (the `APS5_`, `ANYPS5_`, `VK_` and `SDL_` variables that are set). A fact that could not be read prints `unavailable` and is explained in a final `[unavailable]` section. The `cpu_gate` line says `passed` whenever the report appears, because a host CPU that lacks a required extension stops the game before the Vulkan device is chosen (see the CPU requirement under Input and conversion); it says `unavailable` where that check does not run, such as macOS. The shader cache size counts at most 200000 files.
 
 The report holds no user names, host names, serial numbers or MAC addresses. Any word that looks like a path (starting with `/` or `~`, containing a backslash or starting with a drive letter) prints as `<path>`, URLs print as `<url>`, MAC addresses as `<redacted>`, and the account name, host name and home directory name are replaced wherever they appear as a whole word. Check the text before posting it anyway, since the values of the variables it lists are printed as set.
 
@@ -513,7 +643,51 @@ An empty value of either variable is the same as an unset one. The start fails o
 
 ### Benchmark reports
 
-To measure how a title runs on a machine, start it with `APS5_TRACE_SUMMARY_EVERY=30 APS5_TRACE_BENCH=1`, play the scene for a few minutes and quit. Every 30 seconds the runtime rewrites `aps5-bench-<commit>-<pid>.json.gz` in `APS5_TRACE_DIR` or the working directory and appends a line to `aps5-summary.jsonl`. The file holds the time between every two presents, the commit, GPU, driver, OS, CPU name, thread count and physical memory, and, when `app0/sce_sys/param.json` is present, the title ID, name and content version. It holds no game data. The first interval includes shader compilation; compare later intervals. The interval still open when the title exits is not written. The fields are described under [summaries for a long session](../dev/BUILD.md#summaries-for-a-long-session).
+To measure how a title runs on a machine, start it with `APS5_TRACE_SUMMARY_EVERY=30 APS5_TRACE_BENCH=1`, play the scene for a few minutes and quit. Every 30 seconds the runtime rewrites `aps5-bench-<commit>-<pid>.json.gz` in `APS5_TRACE_DIR` or the working directory and appends a line to `aps5-summary.jsonl`. The file holds the time between every two presents, the commit, GPU, driver, OS, CPU name, thread count and physical memory, and, when `app0/sce_sys/param.json` is present, the title ID, name and content version. It holds no game data. Only completed intervals are saved, keeping the most recent 240; `intervals_dropped` counts older intervals removed from the file. The interval still open when the title exits is not written. The fields are described under [summaries for a long session](../dev/BUILD.md#summaries-for-a-long-session).
+
+Read a capture with Python 3 from the source checkout:
+
+```sh
+python3 tools/benchmark_compare.py summarize captures/run.json.gz
+python3 tools/benchmark_compare.py summarize captures/run.json.gz --intervals 1:2 --json
+```
+
+`--intervals START:COUNT` selects whole completed intervals by their zero-based position in the retained file: `1:2` selects positions 1 and 2. Without it, all retained intervals are included. An interval recorded during loading or shader compilation stays included unless you select a later range. The report shows the selected intervals' recorded times and global present numbers, including when earlier history was dropped. A selected range that crosses a gap is refused.
+
+FPS uses the frame count divided by the sum of the selected intervals' elapsed times. Mean frame time and p50, p90, p99 and maximum frame time pool their recorded frame durations, which are truncated to microseconds. Those values can differ from the reciprocal of FPS. Saturated durations produce a warning and make affected raw-duration metrics unavailable.
+
+For repeated A/B runs, write a series JSON beside the captures. List attempts in the order they ran, using `baseline` and `candidate` as the arms. Give each intended matched pair the same `pair` value. This example records A, B, B, A, then two unsuccessful attempts:
+
+```json
+{
+  "format": "aps5-bench-series/1",
+  "recipe": {
+    "scene": "Load the same save and stand still after loading",
+    "save": "Local save slot 1",
+    "input": "No input during the selected intervals",
+    "cache": "Warm caches"
+  },
+  "runs": [
+    {"id": "A1", "arm": "baseline", "pair": "1", "capture": "captures/base-1.json.gz", "intervals": [1, 2]},
+    {"id": "B1", "arm": "candidate", "pair": "1", "capture": "captures/change-1.json.gz", "intervals": [1, 2]},
+    {"id": "B2", "arm": "candidate", "pair": "2", "capture": "captures/change-2.json.gz", "intervals": [1, 2]},
+    {"id": "A2", "arm": "baseline", "pair": "2", "capture": "captures/base-2.json.gz", "intervals": [1, 2]},
+    {"id": "B3", "arm": "candidate", "pair": "3", "status": "failed", "reason": "No benchmark was produced"},
+    {"id": "A3", "arm": "baseline", "pair": "3", "status": "excluded", "reason": "The display slept during the run"}
+  ]
+}
+```
+
+Capture paths are relative to the series file. `intervals` is `[START, COUNT]` and may be omitted to include all retained intervals. An included run may supply `sha256` to require that the original capture bytes match that digest. Failed and excluded attempts require a reason and have no capture. Keep them in the series so the report shows every supplied attempt. Reusing the same capture, including a renamed or recompressed copy, is refused as duplicate evidence.
+
+```sh
+python3 tools/benchmark_compare.py compare series.json
+python3 tools/benchmark_compare.py compare series.json --require-matching-context --json
+```
+
+The comparison preserves run order, reports each pair and counts complete pairs separately. Changes are candidate minus baseline; the aggregate reports the mean and range of paired percentage changes. A pair with a failed, excluded or missing arm contributes no paired change.
+
+Recorded context differences, dirty builds and missing identity fields appear in the report. `--require-matching-context` rejects recorded context differences. The recipe records the operator's account of the scene, save, input and caches. Check that the runs reached the same scene: matching metadata and hashes do not prove independent runs or that a code change caused a speed difference. The tool reads existing files and prints Markdown, or JSON with `--json`.
 
 ### Run report
 
@@ -521,7 +695,7 @@ Every run of a converted game writes `anyps5-report.json` when it ends through `
 
 The report is on by default. `--aps5-report=off` on the launch command line or `APS5_REPORT=0` in the environment turns it off, and `--aps5-report=on` or `APS5_REPORT=1` turns it on for a process that is not a converted game; the flag wins over the variable. The game sees the flag in its own arguments. With the report off nothing is collected and nothing is written.
 
-The report is written next to the game's executable. When that folder cannot be written it goes to `reports/<run id>/anyps5-report.json` in the data folder (`$XDG_DATA_HOME/AnyPS5` or `~/.local/share/AnyPS5` on Linux, `%LOCALAPPDATA%\AnyPS5` on Windows, `~/Library/Application Support/AnyPS5` on macOS). On Windows only the guest's `exit` and `_exit` write a report; a return from the entry writes none. A run that is killed, crashes or aborts writes no report.
+The report is written next to the game's executable. When that folder cannot be written it goes to `reports/<run id>/anyps5-report.json` in the data folder (`$XDG_DATA_HOME/AnyPS5` or `~/.local/share/AnyPS5` on Linux, `%LOCALAPPDATA%\AnyPS5` on Windows, `~/Library/Application Support/AnyPS5` on macOS). On Windows only the guest's `exit` and `_exit` write a report; a return from the entry writes none. A run that stops on an exception nothing catches (`std::terminate`), such as a call to a function that is not implemented, writes the report with exit `abort` before the terminate handler runs, or after it when the game installed its own handler. A run that is killed or crashes writes no report.
 
 Which milestones a run records depends on the system:
 
@@ -537,7 +711,7 @@ To share a run, attach `anyps5-report.json` to the title's discussion. The runti
 
 ### Tracing system library calls
 
-Windows, Linux and macOS. An executable converted with `--trace-imports` records the calls it makes to the libraries named in `APS5_TRACE_CALLS`, a comma-separated list such as `libkernel,libSceSaveData`, or `all`. Without the variable nothing is recorded. If an import has no library label, the tracer uses the filename of the host module containing its function; select that name, such as `libSceAvPlayer.native`, rather than a guest alias. The crash and abort reports then end with the last 64 calls (on Linux and macOS, which have no crash report, only an abort prints them): sequence number, thread, library, import name as the executable imports it (a NID) and the caller's address. The last 32 of these calls made by the reporting thread follow, taken from the 65536 most recent calls, so a thread whose calls were pushed out of the last 64 by a busier one still shows them. Then come the 32 most called imports since start-up, with their number of calls.
+Windows, Linux and macOS. An executable converted with `--trace-imports` records the calls it makes to the libraries named in `APS5_TRACE_CALLS`, a comma-separated list such as `libkernel,libSceSaveData`, or `all`. Without the variable nothing is recorded. If an import has no library label, the tracer uses the filename of the host module containing its function; select that name, such as `libSceAvPlayer.native`, rather than a guest alias. The crash and abort reports then end with the last 64 calls (on macOS, which has no crash report, only an abort prints them): sequence number, thread, library, import name as the executable imports it (a NID) and the caller's address. The last 32 of these calls made by the reporting thread follow, taken from the 65536 most recent calls, so a thread whose calls were pushed out of the last 64 by a busier one still shows them. Then come the 32 most called imports since start-up, with their number of calls.
 
 ```
 last traced system library calls (APS5_TRACE_CALLS):
@@ -559,7 +733,7 @@ Limits are listed in the [libc](../dev/debt/libc.md) and [relinker](../dev/debt/
 
 ### Performance overlay
 
-F10 cycles a performance overlay over the presented image through three states: off, page 1 (the table below), page 2 (a detailed page, the second table), then off again. `ANYPS5_OVERLAY=1` shows page 1 from the first frame and `ANYPS5_OVERLAY=2` page 2; F10 then goes on from there. `ANYPS5_OVERLAY=0` is the same as unset. `ANYPS5_OVERLAY_POS` puts it in a corner of the window: `tl` (top left, the default), `tr`, `bl` or `br`. For either variable an empty value is the same as an unset one, and any other value stops the game at its first frame with an error that names the variable. The key can be moved with `TogglePerformanceOverlay` in the [input mapping](INPUT_MAPPING.md). The text scales with the window height, at a whole multiple of its 5x7 pixel font; on an HDR10 swapchain the overlay is drawn at 203 nits.
+F10 cycles a performance overlay over the presented image through three states: off, page 1 (the table below), page 2 (a detailed page, the second table), then off again. `ANYPS5_OVERLAY=1` shows page 1 from the first frame and `ANYPS5_OVERLAY=2` page 2; F10 then goes on from there. `ANYPS5_OVERLAY=0` is the same as unset. `ANYPS5_OVERLAY_POS` puts it in a corner of the window: `tl` (top left, the default), `tr`, `bl` or `br`. For either variable an empty value is the same as an unset one, and any other value stops the game at its first frame with an error that names the variable. The key can be moved with `TogglePerformanceOverlay` in the [input mapping](INPUT_MAPPING.md). The text scales with the window height, at a whole multiple of its 5x7 pixel font; on an HDR10 swapchain the overlay is drawn at 203 nits. `ANYPS5_OVERLAY_SCALE=N` (1 to 8) asks for a text scale N; the overlay still shrinks to fit the window.
 
 | Line | Meaning |
 |------|---------|
@@ -573,6 +747,7 @@ F10 cycles a performance overlay over the presented image through three states: 
 | `DRAWS` | Draw packets per frame over the last second, or of the last frame below 1 fps, then dispatch packets per frame (`DISPATCH`), as the packet workers execute them; packets that predication skips are not counted. Shown once the title has submitted either. |
 | `SHADERS` | Pipelines created in the last second, or during the last frame below 1 fps, then since the start (`TOTAL`): a graphics pipeline for each draw state the pipeline cache had not seen and a compute pipeline for each new dispatch shader. A rise while the game stutters points at pipeline compilation. Shown once a pipeline was created. |
 | `VRAM` | Usage and budget of the GPU's largest device-local memory heap from `VK_EXT_memory_budget`, read once a second. Not shown when the driver lacks the extension. |
+| `CPU` | CPU package temperature in degrees Celsius, read once a second from the Linux sysfs thermal and hwmon sensors (`/sys/class`). Not shown when no sensor reports one, and not read on Windows. |
 | `RAM` | The process's private memory, read once a second: `PrivateUsage` of `GetProcessMemoryInfo` on Windows, `RssAnon` plus `VmSwap` of `/proc/self/status` on Linux. The title's direct memory is shared memory on both systems and is not included. |
 | `RES` | The display buffer's size, then the window's swapchain size, for example `RES: 1920X1080 / 2560X1440`. Not shown for frames without a display buffer. |
 
@@ -587,7 +762,7 @@ Page 2 is wider, 46 characters, and has no graph. It reads its sources once a se
 | phases | The 5 phases with the most CPU time per frame over the last second, in ms, summed over the driver's threads and named as in the trace summary's `top_phases_ms_per_frame`: a timed scope, or a scope and one of its stages. A scope's time includes the scopes and stages within it, and threads that work at once each count, so the phases can add up to more than `FRAME`. From the trace totals. |
 | `Q0 WAIT MS/FRAME` | Time per frame that queue 0's packet worker waited, in ms: `MEM` in packets that wait for guest memory or for rendering to finish, `LOCK` for the GPU lock, `GPU` in the recorder's syncs and serial waits and in command batches' fence waits. A memory wait that syncs the GPU counts in `MEM` and in `GPU`. From the trace totals. |
 | `RENDER PASSES/FRAME` | Render passes begun per frame; a draw that continues the open pass begins none. From the trace totals; not shown while an `APS5_TRACE_*` variable is set. |
-| `PIPELINES` | `COMPILING`: shader preparations and pipeline-library prebuilds queued or running. `NEW/S`: pipelines created in the last second, as `SHADERS` on page 1. |
+| `PIPELINES` | `COMPILING`: shader preparations and pipeline-library prebuilds queued or running. `NEW/S`: pipelines created in the last second, as `SHADERS` on page 1. `LEFT`: `COMPILING` divided by `NEW/S`, the seconds left at the current rate; shown only while `NEW/S` is above zero. It is an estimate, and it rises when new work arrives. |
 | `HIT %` | `DRAW CACHE`: the share of the draw cache's lookups in the last second that found an entry whose stages all matched. `PIPELINES`: the share of the pipeline cache's lookups that found the pipeline. Each is left out for a second without lookups. |
 | `FLIPS/S`, `PRESENTS/S` | The title's flips per second against the frames presented per second. |
 | `DROPPED/S`, `REPEATED/S` | Per second: flips not presented because no swapchain image was free (the `dropped` count of the `[present]` line of `APS5_PROFILE_DRAW=1`), and presents of the same display buffer as the present before. |
@@ -595,7 +770,7 @@ Page 2 is wider, 46 characters, and has no graph. It reads its sources once a se
 | `HOST IMPORTS` | Host memory imports in use, then their size against the import budget, in GB. Not shown on a device that can't import host memory. |
 | `CPU COPIES` | Guest memory copied per second by address-based resource builds, for the ranges that no host import or mirror serves, in MB of 2^20 bytes. `CAP`: the largest of those builds in the last second against the copy cap, `APS5_ADDRESS_COPY_MAX_MIB` (64 MiB unless set), past which a build stops the game. |
 | `UNIMPLEMENTED` | Calls per second to functions AnyPS5 doesn't implement, then their total since the start. Such a call throws an error, so a count above 0 means the title caught it and went on. |
-| `REFUSED SHADERS` | Shaders whose draws are skipped. Shown only with `APS5_SKIP_REFUSED_DRAWS=1`; without it a refused shader stops the game. |
+| `REFUSED SHADERS` | Shaders whose draws or dispatches are skipped. Shown only with `APS5_SKIP_REFUSED_DRAWS=1` or `APS5_SKIP_REFUSED_DISPATCHES=1`; without them a refused shader stops the game. |
 | `TITLE`, `PRESENT` | The title ID from the title's `param.json`, and the swapchain's present mode, as `ANYPS5_PRESENT_MODE` names it. |
 | `FPS LIMIT` | The value of `ANYPS5_FPS_LIMIT`, on a line of its own after `TITLE` and `PRESENT` and formatted as `FPS` is (`59.94` reads `59.9`), in thousands from 10000. Not shown without a limit. |
 
@@ -620,11 +795,21 @@ ANYPS5_LOG_FILE=run.log ./app.elf
 - With no console, for example a Windows executable started without one, only the file receives the log.
 - On Windows the file was checked with a console, with the output redirected to a file or read through a pipe, and with no console, and the crash report path and the handover to a replacement executable are run by the tests.
 
+### Bug report bundle
+
+`python3 tools/bug_report.py` gathers what a bug report needs into one zip file: the run report `anyps5-report.json`, the log, and the input mapping, with your personal details redacted. It also writes `host.txt` with the operating system, machine and Python version, and a `README.txt` that says what was redacted.
+
+- By default it reads `./anyps5-report.json`, the log named by `ANYPS5_LOG_FILE` and the input mapping named by `ANYPS5_INPUT_CONFIG` (or `./anyps5-input.ini`), and writes `bug-report.zip`. Use `--report`, `--log`, `--input-config` and `--out` to choose other files.
+- The bundle includes `anyps5-settings.txt` with redacted values for `ANYPS5_*` and `APS5_*` variables set in the environment of the bundling command. Run it with the same settings used to launch the game to record those settings.
+- If the report names a title, the tool looks for `anyps5-input.<TITLEID>.ini` beside the shared mapping, even if the shared file is absent. The bundle includes that title's overrides as `anyps5-input-profile.ini`.
+- Redaction replaces your home directory with `~`, your user and host names with `<user>` and `<host>`, and IPv4 addresses with `<ip>`. It matches whole words only, so a user name inside another word is not changed. It does not know other personal details, such as a name typed into a title, a file name that contains your name, or an IPv6 address; open the bundle and check it before you attach it.
+- A missing log or input mapping is left out of the bundle. The run report must be valid JSON. An existing bundle is never overwritten: the command exits with status 1 and names the file.
+
 ### Controller status panel
 
 A small panel over the presented image lists the controllers of the four player slots, one line for each slot that has had a controller since the game started (with `ANYPS5_PAD_STATUS` unset or 0, since the first F9 press, because controllers are not tracked before that): `P1 DUALSENSE  WIRED`, `P2 XBOX  BATTERY MEDIUM`, `P3 DISCONNECTED`. It is never shown permanently: it disappears 4 seconds after the last thing that showed it. With no controller seen yet it reads `NO CONTROLLER`.
 
-F9 shows it, in the game window; pressing F9 while it is shown starts the 4 seconds again. The key is `ShowPadStatus` in the [input mapping](INPUT_MAPPING.md) and accepts only keyboard keys. With `ANYPS5_PAD_STATUS=1` it also appears by itself when a controller connects (including a controller already connected when the game starts), disconnects, is replaced by another one in its slot, or its battery enters a lower class (full, medium, low, empty); each new event starts the 4 seconds again. `ANYPS5_PAD_STATUS=0` is the same as unset: only F9 shows it. For this variable an empty value is the same as an unset one, and any other value stops the game when video output starts, with an error that names the variable.
+Press F9 (the default `ShowPadStatus` binding) to show the panel in the game window. Triggering the action again restarts the four-second timer. You can bind it to another key or a `PAD:` chord in the [input mapping](INPUT_MAPPING.md). With `ANYPS5_PAD_STATUS=1` it also appears by itself when a controller connects (including a controller already connected when the game starts), disconnects, is replaced by another one in its slot, or its battery enters a lower class (full, medium, low, empty); each new event starts the 4 seconds again. With `ANYPS5_PAD_STATUS=0` or the variable unset, the panel appears only when you trigger `ShowPadStatus`. For this variable an empty value is the same as an unset one, and any other value stops the game when video output starts, with an error that names the variable.
 
 A line is the player number (the controller's slot: a controller that reconnects takes the lowest free slot, which can be another player), the controller type and its power. The type is `DUALSENSE`, `DUALSHOCK 4`, `DUALSHOCK 3`, `XBOX` or `SWITCH`; for any other controller it is the name SDL reports, reduced to the characters of the overlay font and cut to 12 characters with a final dot, or `PAD` when SDL gives no name. The power is `WIRED` or one of SDL's battery classes, `BATTERY EMPTY` (up to 5%), `BATTERY LOW` (up to 20%), `BATTERY MEDIUM` (up to 70%) and `BATTERY FULL`; a controller whose driver or connection reports no level reads `BATTERY UNKNOWN`. What is reported depends on SDL, the operating system and the controller.
 
@@ -635,6 +820,19 @@ The panel uses the font and scale of the [performance overlay](#performance-over
 Some system dialogs need PlayStation Network: the profile, the friend list, the store, the invitation dialog, the Facebook link and the authorized-apps dialog. AnyPS5 does not provide PlayStation Network, so these dialogs finish at once with the same answer as a cancel, and nothing is shown. The web browser dialog is not known to need PlayStation Network, so its notice only says that the system feature is not available.
 
 Set `ANYPS5_PSN_DIALOGS=show` to show a notice on the game's screen when one of these dialogs opens. The notice has one OK button and takes the controller until it is answered. It is not shown again within two seconds of the previous one, and it is not shown while another dialog or notice is showing. The game's result is the same either way. `silent`, an unset variable and an empty one show nothing. Any other value stops the game at its first such dialog with an error that names `ANYPS5_PSN_DIALOGS`.
+
+### Linux crash report
+
+On Linux x86-64, a `SIGSEGV`, `SIGBUS`, `SIGILL` or `SIGFPE` that nothing else handles prints a report to stderr, and to the log file when `ANYPS5_LOG_FILE` is set, before the process ends with that signal:
+
+- the signal, its `si_code`, the fault address and the thread ID;
+- `rip`, as an address and as the mapped file plus its offset in that file, for example `app.elf+0xc77cda` or `libkernel.prx+0xc7e30`;
+- `guest abort()` for `int 0x45`, or `guest assert/break` for `int 0x41`, when the kernel's general-protection context and readable instruction bytes identify that interrupt;
+- the sixteen general registers;
+- the return addresses of the `rbp` frame chain, up to 32;
+- up to 24 stack words within 32 KiB above `rsp` that point at executable mappings.
+
+With `--trace-imports` and `APS5_TRACE_CALLS`, the last traced calls follow, as in the abort report. An offset in a guest module or the executable can be disassembled from the converted file at that file offset.
 
 ### Windows crash diagnostics
 
@@ -667,25 +865,27 @@ relinker --registry source/input.elf app.elf
 python3 tools/import_audit.py app.registry.json app.libc.prx.guest.prx.registry.json --libs build/core/libs/libs --modules source/sce_module
 ```
 
-`--registry` writes `app.registry.json` for the executable and one `app.<module>.registry.json` for each converted bundled module; pass all of them. `--libs` is the directory the `libs` target fills ([build instructions](../dev/BUILD.md)); the exports are read from the built `.prx` files, so the result matches what the loader finds. Imports are counted once per NID and library, and every reference lands in exactly one class:
+`--registry` writes `app.registry.json` for the executable and one `app.<module>.registry.json` for each converted bundled module; pass all of them. When a module's registry is passed with the executable's registry, the audit takes the module's imports from that registry and omits the module file name from those records. An ELF module in `--modules` supplies its exports and needed libraries, and supplies its guest imports when its registry is absent. A converted Windows PE `*.guest.prx` supplies exports only. Pass its registry to include its guest imports. `--libs` is the directory the `libs` target fills ([build instructions](../dev/BUILD.md)); the exports are read from the built `.prx` files, so the result matches what the loader finds. Imports are counted once per NID and library, and every reference lands in exactly one class:
 
 | Class | Meaning |
 |-------|---------|
 | `implemented` | A built library exports the NID and its function is not a throwing stub. |
 | `partial` | Exported, but the function throws for inputs whose behaviour is unknown. |
 | `stub` | Exported, but the whole function calls `NotImplemented_nid_no_patch`: the game loads and throws when it calls it. |
-| `absent` | No built library exports the NID: the loader fails. |
+| `absent` | No built library that the loader searches exports the NID: the loader fails. |
 | `module` | The import names a title library found in `--modules` that exports the symbol or its NID. |
 
 An import that names a library requires the literal export name. If its implementation is found only by hashing the import name, it still counts as `implemented` or `stub`, but the report lists the name mismatch, sets `symbol_mismatch` on the JSON import record and counts it in the summary, and exits with code 1. A strong import with a name mismatch is a current stop. Imports without a library retain the audit's name-to-NID fallback.
 
 Module registries mark ELF weak imports with `"weak": true`, allowing the audit's current-stop selection to skip them. Strong imports omit the field. Older module registries do not preserve weak bindings; regenerate them to distinguish optional imports.
 
-ELF modules in `--modules` are audited regardless of filename: their undefined symbols are classified against the built libraries and the other modules' exports, with the module file named in the report, and the libraries they need must have a file in `--libs` or `--modules`. Ordinary non-module sidecars are ignored; malformed ELF, SELF containers and non-ELF files with module extensions remain errors; the converted `*.guest.prx` PE modules of a Windows build are accepted, and any other PE file is an error. The audit reads dynamic tables from ELF section headers or, for sectionless files, from `PT_DYNAMIC` and a SysV or GNU hash table.
+ELF modules in `--modules` are audited regardless of filename: their undefined symbols are classified against the built libraries and the other modules' exports, with the module file named in the report, and the libraries they need must have a file in `--libs` or `--modules`. A module whose registry is passed with the executable's registry has its imports counted from that registry instead, and they are not marked with its file name; the libraries it needs are still read from its file. Ordinary non-module sidecars are ignored; malformed ELF, SELF containers and non-ELF files with module extensions remain errors; the converted `*.guest.prx` PE modules of a Windows build are accepted, and any other PE file is an error. The audit reads dynamic tables from ELF section headers or, for sectionless files, from `PT_DYNAMIC` and a SysV or GNU hash table. When both views are present, their import, export and dependency inventories must agree; contradictory metadata is an error. A PS4 module has no `DT_STRTAB` or `DT_SYMTAB`: the SCE tags `0x61000035` and `0x61000039` give the offsets of its string and symbol tables in its SCE dynamic library data segment (`0x61000000`), `0x61000037` and `0x6100003b` give the string table size and the symbol entry size, and `0x6100003f` gives the symbol table size. A module that names both standard and SCE tables is an error; the `0x6100003f` that PS5 modules carry beside their standard tables does not change how they are read.
 
 Each registry has a companion with the same prefix and the suffix `.needed.json`, listing its host library dependencies, including declared `DT_NEEDED` entries with no imports. Dependencies supplied by converted bundled modules, including their aliases, are omitted. The executable's companion includes host dependencies of its bundled modules. The audit reads these companions automatically; keep them beside the registries. Older registries without companions still work, but cannot report dependencies that have no imports; regenerate them with `--registry` to include those dependencies.
 
 The report also lists needed libraries that have no file in `--libs` or `--modules`, including dependencies with zero imports. These do not increase the import or reference counts. Windows can skip a missing dependency when no import needs it; Linux still needs the file. The audit also lists imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
+
+On a Windows build with companions, an import without a library counts only what the entry stub searches: the title's modules, the libraries the companions list, the kernel family when one of them is a kernel library, and `libc.prx` when one is a kernel library or `libSceLibcInternal.prx`. An import that only other built libraries export is `absent`; its JSON import record lists them in `unsearched_providers`, and the summary and the report count them per library. The companions of all registries passed are pooled, so pass the registries of one executable and its modules together, with every folder that holds the title's converted modules in `--modules`: an import that only a title module provides counts as `absent` when that module's folder is missing. When no companion lists a library, and on a Linux build, every built library still counts.
 
 The audit also walks the built libraries' own host dependencies: each `.prx` under `--libs` has its PE imports (or ELF `DT_NEEDED` entries) checked for `.prx` names with no file in `--libs` or `--modules`, following present libraries transitively. Gaps fail the audit and are reported as `Importer: <root> Chain: <root> -> ... -> <missing>` lines, since the loader fails on them even when every game import resolves.
 
@@ -695,13 +895,14 @@ The audit also walks the built libraries' own host dependencies: each `.prx` und
 | `--modules <dir>` | Directory of the title's own modules; repeat for several. |
 | `--source <dir>` | `core/libs/prx` tree that is searched for throwing stubs. Defaults to this repository's. |
 | `--strict-stubs` | Also exit with code `1` when an import has class `stub`, weak imports and the imports of `--modules` files included. `partial` imports do not count. |
+| `--strict-partial` | Also exit with code `1` when an import has class `partial`. Use `--strict-stubs` too to reject both classes. |
 | `--strict-providers` | Also exit with code `1` when an import that names a library is exported only by another library. `module` imports and imports that `libc.prx` exports do not count. |
 | `--names <file>` | NID and name per line, as in `aerolib.csv` from [`tools/nid_names.py`](../../tools/nid_names.py); names the absent imports. Never downloaded; a name that does not hash to its NID is marked. |
 | `--json <file>` | Full result, stamped with the repository's commit and whether its tree was modified. |
 
 Registry `nid` fields may contain either encoded NIDs or ordinary ELF symbol names such as `strcmp`. Imports are matched against literal exports first, then against their computed NIDs when the literal lookup misses. Reports retain the original import name. Export availability does not establish that every platform loader supports that lookup path.
 
-Exit codes: `0` nothing blocks loading, `1` there are `absent` imports, import name mismatches, needed libraries or library host dependencies without a file, or, with `--strict-stubs` or `--strict-providers`, `stub` imports or imports exported only by another library, `2` an input could not be read; the message names the file and the value.
+The audit exits with `0` when it passes. It exits with `1` for `absent` imports, import name mismatches, needed libraries or library host dependencies without a file, or findings rejected by `--strict-stubs`, `--strict-partial` or `--strict-providers`. It exits with `2` for invalid arguments or an input or output error.
 
 A module registry lists `nid`, `library` and `targetOffset` for each relocation against a function that no other bundled module exports, without the `#` suffix of the executable's NIDs.
 

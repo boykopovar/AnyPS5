@@ -1,26 +1,38 @@
+import { translate } from "./i18n.mjs";
+
 export class OutputDirectoryTransaction {
   #state = "open";
   #discard;
+  #locale;
 
-  constructor(parent, name, directory) {
+  constructor(parent, name, directory, locale = "en") {
     this.parent = parent;
     this.name = name;
     this.directory = directory;
+    this.#locale = locale;
   }
 
-  static async create(parent, name) {
-    try {
-      await parent.getDirectoryHandle(name);
-    } catch (error) {
-      if (error.name !== "NotFoundError") throw error;
-      const directory = await parent.getDirectoryHandle(name, { create: true });
-      return new OutputDirectoryTransaction(parent, name, directory);
-    }
-    throw new Error(`The folder ${name} already exists. Choose another destination or rename the existing folder.`);
+  static create(parent, name, locks, locale = "en", isCurrent = () => true) {
+    return locks.request("anyps5-output-directory", async () => {
+      if (!isCurrent()) return null;
+      try {
+        await parent.getDirectoryHandle(name);
+      } catch (error) {
+        if (error.name === "TypeMismatchError") throw new Error(translate(locale, "outputPathCollision", { name }));
+        if (error.name !== "NotFoundError") throw error;
+        if (!isCurrent()) return null;
+        const directory = await parent.getDirectoryHandle(name, { create: true });
+        const transaction = new OutputDirectoryTransaction(parent, name, directory, locale);
+        if (isCurrent()) return transaction;
+        await transaction.discard();
+        return null;
+      }
+      throw new Error(translate(locale, "folderAlreadyExists", { name }));
+    });
   }
 
   commit() {
-    if (this.#state !== "open") throw new Error("Output directory transaction is no longer active");
+    if (this.#state !== "open") throw new Error(translate(this.#locale, "transactionInactive"));
     this.#state = "committed";
   }
 
@@ -36,15 +48,15 @@ export class OutputDirectoryTransaction {
   }
 }
 
-export async function abortAndDiscardOutput(transaction, sink) {
+export async function abortAndDiscardOutput(transaction, sink, locale = "en") {
   const failures = [];
   if (sink) {
     try { await sink.abort(); }
-    catch (error) { failures.push(`Could not discard the output file: ${error instanceof Error ? error.message : String(error)}`); }
+    catch (error) { failures.push(translate(locale, "discardFileFailed", { message: error instanceof Error ? error.message : String(error) })); }
   }
   if (transaction) {
     try { await transaction.discard(); }
-    catch (error) { failures.push(`Could not remove incomplete output folder ${transaction.name}/: ${error instanceof Error ? error.message : String(error)}`); }
+    catch (error) { failures.push(translate(locale, "discardFolderFailed", { name: transaction.name, message: error instanceof Error ? error.message : String(error) })); }
   }
   return failures;
 }

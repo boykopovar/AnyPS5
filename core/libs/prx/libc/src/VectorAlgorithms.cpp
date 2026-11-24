@@ -34,7 +34,7 @@ const void* FindLast(const void* first, const void* last, TValue value) {
     if (first == last) return last;
     const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
     const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
-    if (!first || !last || endAddress < beginAddress || (endAddress - beginAddress) % sizeof(TValue) != 0) NotImplemented_nid_no_patch(__func__);
+    if (!first || !last || endAddress < beginAddress || (endAddress - beginAddress) % sizeof(TValue) != 0) throw std::invalid_argument(std::string(__func__) + ": null, reversed or partial-element range");
     const auto* begin = static_cast<const unsigned char*>(first);
     auto* current = static_cast<const unsigned char*>(last);
     while (current != begin) {
@@ -111,6 +111,9 @@ void Reverse(void* first, void* last) {
 
 template<std::size_t Size>
 void ReverseCopy(const void* first, const void* last, void* destination) {
+    const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
+    const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
+    if (endAddress < beginAddress || (endAddress - beginAddress) % Size != 0) throw std::invalid_argument(std::string(__func__) + ": reversed or partial-element range");
     auto* begin = static_cast<const unsigned char*>(first);
     auto* end = static_cast<const unsigned char*>(last);
     auto* out = static_cast<unsigned char*>(destination);

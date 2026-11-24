@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import subprocess
@@ -93,8 +94,11 @@ class AbSplitTests(unittest.TestCase):
                                          capture_output=True, text=True, encoding="utf-8", timeout=5)
                     self.assertEqual(run.returncode, 0, run.stderr)
                     if flags:
-                        self.assertTrue(all(row["noise"] is None for row in json.loads(run.stdout)["metrics"]))
+                        rows = json.loads(run.stdout)["metrics"]
+                        self.assertEqual(rows, result["metrics"])
+                        self.assertTrue(all(row["noise"] is None for row in rows))
                     else:
+                        self.assertRegex(run.stdout, r"GPU busy ms/frame +105\.00 +130\.00 +\+25\.00 +\+23\.8% +-")
                         self.assertNotIn("(n 1)", run.stdout)
 
     def test_concatenated_runs_cannot_mix_phase_statistics(self):
@@ -131,6 +135,27 @@ class AbSplitTests(unittest.TestCase):
         result = ab_split.split(lines[start:])
         self.assertEqual([phase["index"] for phase in result["phases"]], [1, 2, 3])
 
+    def test_corrupt_phase_markers_cannot_disappear_from_the_report(self):
+        invalid = (
+            ("A 0 begins", "C 0 begins"),
+            ("A 0 begins", "A -1 begins"),
+            ("A 0 begins at present 100", "A 0 begins at present -100"),
+            ("t 10.000 s)", "t -10.000 s)"),
+            ("t 12.000 s)", "t 12.000)"),
+            ("t 12.000 s)", "t 12.000 s"),
+            ("t 12.000 s)", "t 12.000 s) corrupt"),
+            ("A 0 settled at present", "A 0 settling at present"),
+            ("B 1 begins at present", "B 1 begins present"),
+        )
+        original = log()
+        for before, after in invalid:
+            index = next(i for i, line in enumerate(original) if before in line)
+            with self.subTest(after=after):
+                lines = original[:]
+                lines[index] = lines[index].replace(before, after, 1)
+                with self.assertRaisesRegex(ValueError, rf"line {index + 1}: invalid A/B phase marker"):
+                    ab_split.split(lines)
+
     def test_settled_phase_requires_matching_kind_and_index(self):
         lines = [
             "[ab] phase A 0 begins at present 100 (t 10.000 s)\n",
@@ -149,6 +174,14 @@ class AbSplitTests(unittest.TestCase):
 
         _, phases = ab_split.read_log(lines)
         self.assertEqual(phases[0]["settled"], (103, 13.0))
+
+    def test_notices_after_a_settled_line_do_not_start_a_report_window(self):
+        notices = ["[present] the overlay plane is not composited over an HDR10 presentation", "[present] flip 3",
+                   "[gputime] disabled", "[draw] pipelined depth 64", "[syncwait] disabled"]
+        lines = log()
+        settled = next(index for index, line in enumerate(lines) if " settled at " in line)
+        noticed = lines[:settled + 1] + [notice + "\n" for notice in notices] + lines[settled + 1:]
+        self.assertEqual(ab_split.split(noticed, ["0x1000"], ["staging-in"]), ab_split.split(lines, ["0x1000"], ["staging-in"]))
 
     def test_phases_count_only_reports_inside_a_settled_phase(self):
         result = ab_split.split(log(), ["0x1000"], ["staging-in"])
@@ -192,6 +225,33 @@ class AbSplitTests(unittest.TestCase):
         row = ab_split.parse_report("gputime", gputime(400.0, 40.0, 8.0).replace("0x2000 x4 5ms", "draw 0x2000 x3 30ms 0x2000 x4 5ms"))
         self.assertEqual(row["programs"], {"0x1000": 40.0, "0x2000": 5.0})
 
+    def test_drawset_ids_are_not_program_keys(self):
+        text = gputime(400.0, 40.0, 8.0).replace(
+            "0x2000 x4 5ms", "drawset 0x1000 x3 30ms drawset 0x3000 x4 5ms 0x2000 x4 5ms")
+        row = ab_split.parse_report("gputime", text)
+        self.assertEqual(row["programs"], {"0x1000": 40.0, "0x2000": 5.0})
+        self.assertEqual(row["total"], 400.0)
+        self.assertEqual(row["classes"], {"staging-in": 8.0, "present-blit": 4.0})
+
+    def test_program_metrics_leave_out_drawset_time(self):
+        lines = [line.replace("0x2000 x4 5ms", "0x2000 x4 5ms drawset 0x1000 x9 90ms") for line in log()]
+        result = ab_split.split(lines, ["0x1000"])
+        self.assertAlmostEqual(result["phases"][0]["metrics"]["0x1000 ms/present"], 1.0)
+
+    def test_drawsets_occupy_top_twelve_slots(self):
+        for count in (1, 6, 12):
+            with self.subTest(drawsets=count):
+                entries = [f"drawset 0x{index:x} x1 1ms" for index in range(1, count + 1)]
+                entries += [f"0x{index:x} x1 1ms" for index in range(count + 1, 13)]
+                text = gputime(400.0, 40.0, 8.0)
+                text = text.split("by program:")[0] + "by program: " + " ".join(entries) + "; by class:"
+                row = ab_split.parse_report("gputime", text)
+                self.assertTrue(row["programs_truncated"])
+                self.assertEqual(set(row["programs"]), {f"0x{index:x}" for index in range(count + 1, 13)})
+                phase = {"settled": None, "end": None, "reports": {name: [] for name, _ in ab_split.KINDS}}
+                phase["reports"]["gputime"] = [row]
+                self.assertNotIn("0xff ms/present", ab_split.metrics(phase, ["0xff"], []))
+
     def test_program_metrics_leave_out_draw_variant_time(self):
         lines = [line.replace("0x2000 x4 5ms", "0x2000 x4 5ms draw 0x1000 x9 90ms") for line in log()]
         result = ab_split.split(lines, ["0x1000"])
@@ -200,6 +260,43 @@ class AbSplitTests(unittest.TestCase):
     def test_dropped_presents_count_as_frames(self):
         row = ab_split.parse_report("present", present(90.0, 10.0, presents=30, dropped=10))
         self.assertEqual(row, {"frames": 40, "busy": 90.0, "gaps": 10.0})
+
+    def test_missing_completion_records_only_refuse_counted_present_reports(self):
+        lines = log()
+        early = next(i for i, line in enumerate(lines) if line.startswith("[present]"))
+        lines[early] = lines[early].replace("0 batches without", "2 batches without")
+        self.assertTrue(ab_split.split(lines)["metrics"])
+        settled = next(i for i, line in enumerate(lines) if line.startswith("[ab] phase B 1 settled"))
+        counted = [i for i in range(settled, len(lines)) if lines[i].startswith("[present]")][1]
+        lines[counted] = lines[counted].replace("0 batches without", "2 batches without")
+        with self.assertRaisesRegex(ValueError, "completion records"):
+            ab_split.split(lines)
+
+    def test_dropped_gpu_ranges_in_a_counted_report_refuse_the_comparison(self):
+        lines = log()
+        index = next(i for i, line in enumerate(lines) if line.startswith("[ab] phase B 1 settled"))
+        index = next(i for i in range(index, len(lines)) if lines[i].startswith("[gputime]"))
+        index = next(i for i in range(index + 1, len(lines)) if lines[i].startswith("[gputime]"))
+        lines[index] = lines[index].replace("0 ranges dropped", "3 ranges dropped")
+        with self.assertRaisesRegex(ValueError, "GPU timing ranges were dropped"):
+            ab_split.split(lines, ["0x1000"], ["staging-in"])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "dropped.log"
+            path.write_text("".join(lines), encoding="utf-8")
+            for script, flags in (("ab_split.py", []), ("ab_split.py", ["--json"]), ("ab_split_csv.py", [])):
+                with self.subTest(script=script, flags=flags):
+                    run = subprocess.run([sys.executable, str(Path(ab_split.__file__).with_name(script)), str(path), *flags],
+                                         capture_output=True, text=True, encoding="utf-8", timeout=5)
+                    self.assertNotEqual(run.returncode, 0)
+                    self.assertEqual(run.stdout, "")
+                    self.assertIn("GPU timing ranges were dropped", run.stderr)
+                    self.assertNotIn("Traceback", run.stderr)
+
+    def test_dropped_gpu_ranges_outside_counted_reports_are_ignored(self):
+        lines = log()
+        index = next(i for i, line in enumerate(lines) if line.startswith("[gputime]"))
+        lines[index] = lines[index].replace("0 ranges dropped", "3 ranges dropped")
+        self.assertTrue(ab_split.split(lines)["metrics"])
 
     def test_unrecognised_reports_are_skipped(self):
         self.assertIsNone(ab_split.parse_report("gputime", "[gputime] disabled"))
@@ -233,6 +330,12 @@ class AbSplitTests(unittest.TestCase):
             phase = {"settled": None, "end": None, "reports": {name: [] for name, _ in ab_split.KINDS}}
             phase["reports"]["gputime"] = [short, report]
             self.assertNotIn("0xff ms/present", ab_split.metrics(phase, ["0xff"], []))
+
+    def test_weighted_mean_uses_row_weights_and_is_none_without_weight(self):
+        rows = [{"value": 2.0, "weight": 1.0}, {"value": 8.0, "weight": 3.0}]
+        self.assertAlmostEqual(ab_split.weighted(rows, "value", "weight"), 6.5)
+        self.assertIsNone(ab_split.weighted([{"value": 5.0, "weight": 0.0}], "value", "weight"))
+        self.assertIsNone(ab_split.weighted([], "value", "weight"))
 
     def test_a_log_without_phases_is_refused(self):
         with self.assertRaisesRegex(ValueError, "no \\[ab\\] phase lines"):
@@ -290,7 +393,7 @@ class AbSplitTests(unittest.TestCase):
         lines = []
         for k, i, busy in (("A", 0, "1"), ("B", 1, "9" * 308), ("A", 2, "1"), ("B", 3, "1")):
             lines += [f"[ab] phase {k} {i} begins at present {i * 10} (t {i * 10} s)", phase(k, i),
-                      "[present] warmup", f"[present] 1 presents (0 dropped GPU busy {busy} ms idle gaps 1 ms"]
+                      "[present] 1 presents (0 dropped GPU busy 1 ms idle gaps 1 ms", f"[present] 1 presents (0 dropped GPU busy {busy} ms idle gaps 1 ms"]
         with self.assertRaises(ValueError):
             ab_split.split(lines)
         with tempfile.TemporaryDirectory() as directory:
@@ -312,7 +415,7 @@ class AbSplitTests(unittest.TestCase):
         lines = []
         for k, i, busy in (("A", 0, "0." + "0" * 300 + "1"), ("B", 1, "1" + "0" * 300)):
             lines += [f"[ab] phase {k} {i} begins at present {i * 10} (t {i * 10} s)", f"[ab] phase {k} {i} settled at present {i * 10 + 1} (t {i * 10 + 1} s)",
-                      "[present] warmup", f"[present] 1 presents (0 dropped GPU busy {busy} ms idle gaps 1 ms"]
+                      "[present] 1 presents (0 dropped GPU busy 1 ms idle gaps 1 ms", f"[present] 1 presents (0 dropped GPU busy {busy} ms idle gaps 1 ms"]
         with self.assertRaisesRegex(ValueError, "non-finite"):
             ab_split.split(lines)
 
@@ -340,5 +443,87 @@ class AbSplitTests(unittest.TestCase):
         for lines in cases:
             with self.subTest(lines=lines), self.assertRaises(ValueError):
                 ab_split.read_log(lines)
+
+    def test_mismatched_settlement_cannot_silently_change_phase_means(self):
+        for replacement in ("phase B 0 settled", "phase A 7 settled"):
+            with self.subTest(replacement=replacement):
+                lines = [line.replace("phase A 0 settled", replacement) for line in log()]
+                with self.assertRaisesRegex(ValueError, "settled does not match active phase"):
+                    ab_split.split(lines)
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "mismatched.log"
+                    path.write_text("".join(lines), encoding="utf-8")
+                    for script, flags in (("ab_split.py", []), ("ab_split.py", ["--json"]), ("ab_split_csv.py", [])):
+                        run = subprocess.run([sys.executable, str(Path(ab_split.__file__).with_name(script)), str(path), *flags],
+                                             capture_output=True, text=True, encoding="utf-8", timeout=5)
+                        self.assertEqual(run.returncode, 2)
+                        self.assertEqual(run.stdout, "")
+                        self.assertIn("settled does not match active phase", run.stderr)
+                        self.assertNotIn("Traceback", run.stderr)
+
+
+class FiniteHelperTests(unittest.TestCase):
+    def test_finite_returns_finite_values_unchanged(self):
+        self.assertEqual(ab_split.finite({"a": [1.5, 2.0], "b": (3,)}), {"a": [1.5, 2.0], "b": (3,)})
+
+    def test_finite_refuses_non_finite_values_inside_containers(self):
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            ab_split.finite({"a": [1.0, float("inf")]})
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            ab_split.finite((float("nan"),))
+
+    def test_finite_sum_adds_finite_values_and_refuses_an_overflowing_total(self):
+        self.assertEqual(ab_split.finite_sum([1.5, 2.5]), 4.0)
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            ab_split.finite_sum([1e308, 1e308])
+
+    def test_number_returns_the_first_captured_float(self):
+        self.assertEqual(ab_split.number(r"busy ([\d.]+) ms", "busy 12.5 ms, busy 3 ms"), 12.5)
+
+    def test_number_returns_none_when_the_pattern_is_absent(self):
+        self.assertIsNone(ab_split.number(r"busy ([\d.]+) ms", "idle only"))
+
+
+class ProgramKeyTests(unittest.TestCase):
+    def test_program_key_lowercases_and_strips_leading_zeros(self):
+        self.assertEqual(ab_split.program_key("0x1000"), "0x1000")
+        self.assertEqual(ab_split.program_key("0xABC"), "0xabc")
+        self.assertEqual(ab_split.program_key("0x0000"), "0x0")
+
+    def test_program_key_refuses_a_value_without_the_hex_prefix(self):
+        with self.assertRaises(argparse.ArgumentTypeError):
+            ab_split.program_key("1000")
+class TextReportTests(unittest.TestCase):
+    def result(self, config="[ab] cfg", rate=5.0, rows=None):
+        phase = {"kind": "A", "index": 1, "begin_present": 10, "settled_present": None, "end_present": 20,
+                 "clean_reports": {"present": 1, "gputime": 2, "draw": 3, "syncwait": 4},
+                 "metrics": {"presents/10s": rate}}
+        return {"config": config, "phases": [phase], "metrics": rows or []}
+
+    def test_text_report_prints_the_phase_row_with_counts_and_rate(self):
+        lines = ab_split.text_report(self.result()).split("\n")
+        phase_line = next(line for line in lines if line.startswith("A 1"))
+        self.assertIn("10 /       - /      20", phase_line)
+        self.assertIn("1/2/3/4", phase_line)
+        self.assertTrue(phase_line.endswith("5.00"))
+
+    def test_text_report_formats_a_metric_row_without_noise(self):
+        lines = ab_split.text_report(self.result(rows=[{"metric": "m", "a": 1.0, "b": 2.0, "change": 1.0,
+                                                        "change_pct": 100.0, "noise": None}])).split("\n")
+        metric_line = next(line for line in lines if line.startswith("m "))
+        self.assertIn("+1.00", metric_line)
+        self.assertIn("+100.0%", metric_line)
+        self.assertTrue(metric_line.endswith("-"))
+
+    def test_text_report_names_a_missing_configuration_and_unfinished_phases(self):
+        text = ab_split.text_report(self.result(config=None, rate=None))
+        self.assertTrue(text.startswith("[ab] configuration line missing"))
+        self.assertIn("unfinished", text)
+class ReadLogRefusalTests(unittest.TestCase):
+    def test_read_log_refuses_two_runs_in_one_log(self):
+        with self.assertRaisesRegex(ValueError, 'multiple A/B runs in one log'):
+            ab_split.read_log(['[ab] in-run A/B: first', '[ab] in-run A/B: second'])
+
+
 if __name__ == "__main__":
     unittest.main()

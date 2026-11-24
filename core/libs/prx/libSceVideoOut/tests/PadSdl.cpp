@@ -35,6 +35,57 @@ void Forward(const ImeHostPad& pad) {
     forwarded.push_back(pad);
 }
 
+void ConfiguredControllerUsesItsPlayerSlot() {
+    Pad::ControllerSerials configured{};
+    configured[1] = "player-two-serial";
+    Pad::ControllerAssignment assignment(configured);
+    std::array<bool, Pad::ControllerAssignmentSlots> occupied{};
+    Require(assignment.SelectSlot("player-two-serial", occupied) == 1);
+}
+
+void AutomaticControllersSkipReservedPlayerSlots() {
+    Pad::ControllerSerials configured{};
+    configured[1] = "player-two-serial";
+    Pad::ControllerAssignment assignment(configured);
+    std::array<bool, Pad::ControllerAssignmentSlots> occupied{};
+    occupied[0] = true;
+    Require(assignment.SelectSlot("unconfigured-serial", occupied) == 2);
+    Require(assignment.SelectSlot("", occupied) == 2);
+}
+
+void ConnectedSerialCannotClaimAnotherPlayerSlot() {
+    Pad::ControllerAssignment assignment;
+    std::array<bool, Pad::ControllerAssignmentSlots> occupied{};
+    Require(assignment.SelectSlot("controller-serial", occupied) == 0);
+    assignment.Connect(0, "controller-serial");
+    occupied[0] = true;
+    Require(assignment.SelectSlot("controller-serial", occupied) == -1);
+}
+
+void DisconnectedControllerCanReconnectToItsPlayerSlot() {
+    Pad::ControllerSerials configured{};
+    configured[2] = "player-three-serial";
+    Pad::ControllerAssignment assignment(configured);
+    std::array<bool, Pad::ControllerAssignmentSlots> occupied{};
+    Require(assignment.SelectSlot("player-three-serial", occupied) == 2);
+    assignment.Connect(2, "player-three-serial");
+    assignment.Disconnect(2);
+    Require(assignment.SelectSlot("player-three-serial", occupied) == 2);
+}
+
+void DuplicateConfiguredSerialIsRejected() {
+    Pad::ControllerSerials configured{};
+    configured[0] = "same-serial";
+    configured[3] = "same-serial";
+    bool rejected = false;
+    try {
+        static_cast<void>(Pad::ControllerAssignment(configured));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
+}
+
 void HandOff(PadInput& padInput, const DisplayWindow& window, int device) {
     constexpr std::uint32_t Cross = 0x4000;
     constexpr std::uint32_t R2 = 0x0200;
@@ -205,9 +256,128 @@ void InjectedPressAfterUnreadRelease(PadInput& padInput, const DisplayWindow& wi
     ModalDialogSetPresenter_nid_postfix(false);
 }
 
+void ControllerRemapping(PadInput& padInput, DisplayWindow& window, int device, const std::filesystem::path& configPath) {
+    constexpr std::uint32_t Cross = 0x4000;
+    constexpr std::uint32_t Circle = 0x2000;
+    constexpr std::uint32_t Square = 0x8000;
+    constexpr std::uint32_t R2 = 0x0200;
+    constexpr std::uint32_t TouchPad = 0x100000;
+    Pad::Initialize();
+    SDL_Joystick* joystick = SDL_JoystickFromInstanceID(SDL_JoystickGetDeviceInstanceID(device));
+    Require(joystick != nullptr);
+    const auto button = [&](SDL_GameControllerButton which, bool down) {
+        Require(SDL_JoystickSetVirtualButton(joystick, which, down ? 1 : 0) == 0);
+        padInput.Update(window);
+    };
+    const auto keyboard = [&](Uint32 type, SDL_Scancode key) {
+        SDL_Event event{};
+        event.type = type;
+        event.key.keysym.scancode = key;
+        padInput.HandleEvent(event, window);
+    };
+    const auto reload = [&] {
+        keyboard(SDL_KEYDOWN, SDL_SCANCODE_F1);
+        keyboard(SDL_KEYUP, SDL_SCANCODE_F1);
+    };
+    const auto writeConfig = [&](const char* contents) {
+        std::ofstream config(configPath, std::ios::trunc);
+        config << contents;
+        Require(config.good());
+    };
+
+    button(SDL_CONTROLLER_BUTTON_A, true);
+    Require(Pad::ReadState(0).buttons == Cross);
+    writeConfig("SDLButton:a = Circle\n"
+                "SDLButton:b = Cross\n"
+                "SDLButton:x = None\n"
+                "SDLButton:y = R2\n"
+                "SDLButton:back = Square\n"
+                "SDLButton:rightstick = TouchPad\n"
+                "ReloadInputMapping = KEY:F1\n"
+                "ReloadInputMapping = PAD:Circle\n");
+    reload();
+    Require(Pad::ReadState(0).buttons == Circle);
+    button(SDL_CONTROLLER_BUTTON_A, false);
+    button(SDL_CONTROLLER_BUTTON_B, true);
+    Require(Pad::ReadState(0).buttons == Cross);
+    button(SDL_CONTROLLER_BUTTON_B, false);
+    button(SDL_CONTROLLER_BUTTON_X, true);
+    Require(Pad::ReadState(0).buttons == 0);
+    button(SDL_CONTROLLER_BUTTON_X, false);
+    button(SDL_CONTROLLER_BUTTON_Y, true);
+    Require(Pad::ReadState(0).buttons == R2 && Pad::ReadState(0).analog_buttons_r2 == 255);
+    button(SDL_CONTROLLER_BUTTON_Y, false);
+    Require(Pad::ReadState(0).analog_buttons_r2 == 0);
+    button(SDL_CONTROLLER_BUTTON_BACK, true);
+    Require(Pad::ReadState(0).buttons == Square && Pad::ReadState(0).touch_data_touch_num == 0);
+    button(SDL_CONTROLLER_BUTTON_BACK, false);
+    button(SDL_CONTROLLER_BUTTON_RIGHTSTICK, true);
+    const auto touch = Pad::ReadState(0);
+    Require(touch.buttons == TouchPad && touch.touch_data_touch_num == 1);
+    Require(touch.touch_data_touch0_x == kTouchPadWidth / 2 && touch.touch_data_touch0_y == kTouchPadHeight / 2);
+    button(SDL_CONTROLLER_BUTTON_RIGHTSTICK, false);
+    keyboard(SDL_KEYDOWN, SDL_SCANCODE_RETURN);
+    Require(Pad::ReadState(0).buttons == Cross);
+    keyboard(SDL_KEYUP, SDL_SCANCODE_RETURN);
+
+    writeConfig("SDLButton:a = Circle\nSDLButton:A = Cross\n");
+    reload();
+    button(SDL_CONTROLLER_BUTTON_B, true);
+    Require(Pad::ReadState(0).buttons == Cross);
+    button(SDL_CONTROLLER_BUTTON_B, false);
+
+    writeConfig("");
+    SDL_Event event{};
+    event.type = SDL_CONTROLLERBUTTONUP;
+    event.cbutton.which = SDL_JoystickInstanceID(joystick);
+    event.cbutton.button = SDL_CONTROLLER_BUTTON_A;
+    padInput.HandleEvent(event, window);
+    Require(SDL_JoystickSetVirtualButton(joystick, SDL_CONTROLLER_BUTTON_A, 1) == 0);
+    SDL_GameControllerUpdate();
+    event.type = SDL_CONTROLLERBUTTONDOWN;
+    padInput.HandleEvent(event, window);
+    Require(Pad::ReadState(0).buttons == Cross);
+    button(SDL_CONTROLLER_BUTTON_A, false);
+
+    writeConfig("SDLButton:a = Circle\nReloadInputMapping = KEY:F1\nReloadInputMapping = PAD:R2\n");
+    reload();
+    writeConfig("SDLButton:a = Square\nReloadInputMapping = PAD:R2\n");
+    const auto trigger = [&](Sint16 value) {
+        Require(SDL_JoystickSetVirtualAxis(joystick, SDL_CONTROLLER_AXIS_TRIGGERRIGHT, value) == 0);
+        SDL_GameControllerUpdate();
+        SDL_Event axis{};
+        axis.type = SDL_CONTROLLERAXISMOTION;
+        axis.caxis.which = SDL_JoystickInstanceID(joystick);
+        axis.caxis.axis = SDL_CONTROLLER_AXIS_TRIGGERRIGHT;
+        padInput.HandleEvent(axis, window);
+    };
+    const auto requireButtonsWithA = [&](std::uint32_t buttons, std::source_location where = std::source_location::current()) {
+        button(SDL_CONTROLLER_BUTTON_A, true);
+        Require(Pad::ReadState(0).buttons == buttons, where);
+        button(SDL_CONTROLLER_BUTTON_A, false);
+    };
+    trigger(SDL_JOYSTICK_AXIS_MIN + 16);
+    requireButtonsWithA(Circle);
+    trigger(SDL_JOYSTICK_AXIS_MAX / 2);
+    requireButtonsWithA(Square | R2);
+    writeConfig("SDLButton:a = Cross\nReloadInputMapping = PAD:R2\n");
+    trigger(SDL_JOYSTICK_AXIS_MAX);
+    requireButtonsWithA(Square | R2);
+    trigger(SDL_JOYSTICK_AXIS_MIN);
+    requireButtonsWithA(Square);
+    trigger(SDL_JOYSTICK_AXIS_MAX / 2);
+    requireButtonsWithA(Cross | R2);
+    trigger(SDL_JOYSTICK_AXIS_MIN);
+}
+
 }
 
 int main() {
+    ConfiguredControllerUsesItsPlayerSlot();
+    AutomaticControllersSkipReservedPlayerSlots();
+    ConnectedSerialCannotClaimAnotherPlayerSlot();
+    DisconnectedControllerCanReconnectToItsPlayerSlot();
+    DuplicateConfiguredSerialIsRejected();
 #ifdef SDL_JOYSTICK_HIDAPI
     std::puts("pad_sdl: SDL drives controllers through HIDAPI");
 #else
@@ -220,10 +390,19 @@ int main() {
         std::filesystem::path path;
         ~Cleanup() { std::error_code error; std::filesystem::remove(path, error); }
     } cleanup{commandPath};
+    auto configPath = commandPath;
+    configPath.replace_extension(".ini");
+    Cleanup configCleanup{configPath};
+    {
+        std::ofstream config(configPath);
+        Require(config.good());
+    }
 #ifdef _WIN32
     Require(_wputenv_s(L"APS5_PAD_INPUT_FILE", commandPath.c_str()) == 0);
+    Require(_wputenv_s(L"ANYPS5_INPUT_CONFIG", configPath.c_str()) == 0);
 #else
     Require(setenv("APS5_PAD_INPUT_FILE", commandPath.string().c_str(), 1) == 0);
+    Require(setenv("ANYPS5_INPUT_CONFIG", configPath.string().c_str(), 1) == 0);
 #endif
 
     Require(SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) == 0);
@@ -249,11 +428,28 @@ int main() {
     const int dev0 = SDL_JoystickAttachVirtualEx(&desc);
     Require(dev0 >= 0);
     Require(SDL_IsGameController(dev0));
+    SDL_GameController* serialProbe = SDL_GameControllerOpen(dev0);
+    Require(serialProbe != nullptr);
+    Require(SDL_GameControllerGetSerial(serialProbe) == nullptr);
+    SDL_GameControllerClose(serialProbe);
+
+    const std::array<const char*, Pad::ControllerAssignmentSlots> serialVariables{
+        "ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL",
+        "ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"};
+    for (std::size_t slot = 0; slot < serialVariables.size(); ++slot) {
+        const char* value = slot == 1 ? "reserved-test-serial" : "";
+#ifdef _WIN32
+        Require(_putenv_s(serialVariables[slot], value) == 0);
+#else
+        Require(setenv(serialVariables[slot], value, 1) == 0);
+#endif
+    }
 
     DisplayWindow window;
     PadInput padInput;
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
+    Require(!padInput.SlotOccupied(2));
 
     SDL_Event add0{};
     add0.type = SDL_CONTROLLERDEVICEADDED;
@@ -261,6 +457,7 @@ int main() {
     padInput.HandleEvent(add0, window);
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
+    Require(!padInput.SlotOccupied(2));
 
     desc.name = "Virtual Controller 1";
     const int dev1 = SDL_JoystickAttachVirtualEx(&desc);
@@ -272,9 +469,9 @@ int main() {
     add1.cdevice.which = dev1;
     padInput.HandleEvent(add1, window);
     Require(padInput.SlotOccupied(0));
-    Require(padInput.SlotOccupied(1));
-    Require(!padInput.SlotOccupied(2));
-    Require(Pad::IsConnected(1));
+    Require(!padInput.SlotOccupied(1));
+    Require(padInput.SlotOccupied(2));
+    Require(Pad::IsConnected(2));
 
     const SDL_JoystickID id0 = SDL_JoystickGetDeviceInstanceID(dev0);
     SDL_Event rem0{};
@@ -282,13 +479,16 @@ int main() {
     rem0.cdevice.which = id0;
     padInput.HandleEvent(rem0, window);
     Require(!padInput.SlotOccupied(0));
-    Require(padInput.SlotOccupied(1));
-    Require(Pad::IsConnected(1));
+    Require(!padInput.SlotOccupied(1));
+    Require(padInput.SlotOccupied(2));
+    Require(Pad::IsConnected(2));
 
     padInput.HandleEvent(add0, window);
     Require(padInput.SlotOccupied(0));
-    Require(padInput.SlotOccupied(1));
+    Require(!padInput.SlotOccupied(1));
+    Require(padInput.SlotOccupied(2));
     HandOff(padInput, window, dev0);
+    ControllerRemapping(padInput, window, dev0, configPath);
 
     const SDL_JoystickID id1 = SDL_JoystickGetDeviceInstanceID(dev1);
     SDL_Event rem1{};
@@ -297,11 +497,13 @@ int main() {
     padInput.HandleEvent(rem1, window);
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
-    Require(!Pad::IsConnected(1));
+    Require(!padInput.SlotOccupied(2));
+    Require(!Pad::IsConnected(2));
 
     padInput.HandleEvent(rem0, window);
     Require(!padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
+    Require(!padInput.SlotOccupied(2));
     InjectedAnswer(padInput, window, commandPath);
     InjectedPressAfterUnreadRelease(padInput, window, commandPath, 3, false);
     InjectedPressAfterUnreadRelease(padInput, window, commandPath, 4, true);

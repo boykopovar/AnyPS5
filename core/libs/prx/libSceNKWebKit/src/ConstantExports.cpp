@@ -70,6 +70,42 @@ int APS5_VABI WKBundleFrameGetJavaScriptWrapperForFileForWorld() {
     return 0;
 }
 
+int APS5_VABI WKBundleFrameHandlesPageScaleGesture() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionCopyDownloadAttribute() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionCopyFormElement() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionCopyHitTestResult() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetEventModifiers() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetEventMouseButton() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetNavigationType() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetShouldOpenExternalURLs() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetShouldTryAppLinks() {
+    return 0;
+}
+
 int APS5_VABI WKBundleNodeHandleCopyHTMLFrameElementContentFrame() {
     return 0;
 }
@@ -90,14 +126,6 @@ int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled() {
     return 0;
 }
 
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFilled() {
-    return 0;
-}
-
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutofilled() {
-    return 0;
-}
-
 int APS5_VABI WKBundlePageCopyContextMenuAtPointInWindow() {
     return 0;
 }
@@ -107,6 +135,10 @@ int APS5_VABI WKBundlePageCopyContextMenuItems() {
 }
 
 int APS5_VABI WKBundlePageGetBackForwardList() {
+    return 0;
+}
+
+int APS5_VABI WKBundlePageIsUsingDarkAppearance() {
     return 0;
 }
 
@@ -120,10 +152,6 @@ int APS5_VABI WKContextDownloadURLRequest() {
 
 int APS5_VABI WKContextGetIconDatabase() {
     return 0;
-}
-
-int APS5_VABI WKContextGetMaximumNumberOfProcesses() {
-    return static_cast<int>(0xffffffffu);
 }
 
 int APS5_VABI WKContextMenuCopySubmenuItems() {
@@ -175,10 +203,6 @@ int APS5_VABI WKContextResumeDownload() {
 }
 
 int APS5_VABI WKFrameCreateFrameInfo() {
-    return 0;
-}
-
-int APS5_VABI WKFrameIsFrameSet() {
     return 0;
 }
 
@@ -290,23 +314,7 @@ int APS5_VABI WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey
     return 0;
 }
 
-int APS5_VABI WKPreferencesGetAccelerated2DCanvasEnabled() {
-    return 0;
-}
-
-int APS5_VABI WKPreferencesGetApplicationChromeModeEnabled() {
-    return 0;
-}
-
 int APS5_VABI WKPreferencesGetQTKitEnabled() {
-    return 0;
-}
-
-int APS5_VABI WKPreferencesGetTypeID() {
-    return static_cast<int>(0x00000058u);
-}
-
-int APS5_VABI WKUserContentExtensionStoreCreate() {
     return 0;
 }
 

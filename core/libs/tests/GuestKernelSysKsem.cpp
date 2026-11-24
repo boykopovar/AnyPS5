@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include <array>
@@ -8,6 +9,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -15,6 +18,12 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -94,6 +103,78 @@ void Timed() {
     Require(ksem_post_nid_postfix(id) == 0);
     const auto later = FromNow(std::chrono::seconds(5));
     Require(ksem_timedwait_nid_postfix(id, &later) == 0 && Value(id) == 0);
+    Require(ksem_destroy_nid_postfix(id) == 0);
+}
+
+bool SameTime(const KernelTimespec& left, const KernelTimespec& right) {
+    return left.tv_sec == right.tv_sec && left.tv_nsec == right.tv_nsec;
+}
+
+bool Later(const KernelTimespec& left, const KernelTimespec& right) {
+    return left.tv_sec > right.tv_sec || (left.tv_sec == right.tv_sec && left.tv_nsec > right.tv_nsec);
+}
+
+FileStat Status(int descriptor) {
+    FileStat status;
+    std::memset(&status, 0xff, sizeof(status));
+    Require(_fstat_nid_postfix(descriptor, &status) == 0);
+    FileStat kernel;
+    std::memset(&kernel, 0xee, sizeof(kernel));
+    Require(sceKernelFstat(descriptor, &kernel) == 0 && std::memcmp(&kernel, &status, sizeof(status)) == 0);
+    return status;
+}
+
+void Metadata() {
+    const auto start = std::chrono::system_clock::now();
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 1) == 0 && id >= 0);
+    const int d = static_cast<int>(id);
+    const FileStat created = Status(d);
+    Require(created.st_mode == (0100000 | (0770 & ~File::GetCreationMask_nid_no_patch())));
+    Require(created.st_dev == 0 && created.st_ino == 0 && created.st_nlink == 0 && created.st_rdev == 0);
+    Require(created.st_uid == static_cast<std::uint32_t>(getuid_nid_postfix()) && created.st_gid == static_cast<std::uint32_t>(getgid_nid_postfix()));
+    Require(created.st_size == 0 && created.st_blocks == 0 && created.st_blksize == 0 && created.st_flags == 0 && created.st_gen == 0);
+    const auto born = std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(
+        std::chrono::seconds(created.st_birthtim.tv_sec) + std::chrono::nanoseconds(created.st_birthtim.tv_nsec)));
+    Require(born + std::chrono::microseconds(1) >= start && created.st_birthtim.tv_nsec % 1000 == 0);
+    Require(SameTime(created.st_atim, created.st_birthtim) && SameTime(created.st_mtim, created.st_birthtim) && SameTime(created.st_ctim, created.st_birthtim));
+    Require(fchmod_nid_postfix(d, 07604) == 0 && Status(d).st_mode == 0100604);
+    Require(sceKernelFchmod(d, 0640) == 0);
+    FileStat changed = Status(d);
+    Require(changed.st_mode == 0100640 && SameTime(changed.st_ctim, created.st_ctim) && SameTime(changed.st_atim, created.st_atim));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    Require(ksem_post_nid_postfix(id) == 0);
+    const FileStat posted = Status(d);
+    Require(Later(posted.st_ctim, created.st_ctim) && SameTime(posted.st_atim, created.st_atim) && SameTime(posted.st_mtim, created.st_mtim));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    Require(ksem_trywait_nid_postfix(id) == 0 && ksem_trywait_nid_postfix(id) == 0);
+    const FileStat waited = Status(d);
+    Require(Later(waited.st_atim, posted.st_ctim) && SameTime(waited.st_ctim, posted.st_ctim) && SameTime(waited.st_mtim, created.st_mtim));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    Require(ksem_trywait_nid_postfix(id) == -1 && Error() == Eagain);
+    const FileStat refused = Status(d);
+    Require(Later(refused.st_atim, waited.st_atim) && SameTime(refused.st_ctim, posted.st_ctim));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    int value = -1;
+    Require(ksem_getvalue_nid_postfix(id, &value) == 0 && value == 0);
+    const FileStat read = Status(d);
+    Require(Later(read.st_atim, refused.st_atim));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    Require(ksem_getvalue_nid_postfix(id, nullptr) == -1 && Error() == Efault);
+    Require(Later(Status(d).st_atim, read.st_atim));
+    KernelEqueue queue = 0;
+    Require(sceKernelCreateEqueue(&queue, "ksem") == 0);
+    for (const bool write : {false, true}) {
+        bool threw = false;
+        try {
+            if (write) sceKernelAddWriteEvent(queue, d, 1, nullptr);
+            else sceKernelAddReadEvent(queue, d, 1, nullptr);
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        Require(threw);
+    }
+    Require(sceKernelDeleteEqueue(queue) == 0);
     Require(ksem_destroy_nid_postfix(id) == 0);
 }
 
@@ -222,13 +303,76 @@ void Limit() {
 
 }
 
+class UnreadablePage {
+public:
+    UnreadablePage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS));
+        Require(memory != nullptr);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0);
+        size = static_cast<std::size_t>(pageSize);
+        memory = static_cast<char*>(mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+#endif
+    }
+
+    ~UnreadablePage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, size);
+#endif
+    }
+
+    UnreadablePage(const UnreadablePage&) = delete;
+    UnreadablePage& operator=(const UnreadablePage&) = delete;
+
+    void* Address() const { return memory; }
+
+private:
+    char* memory = nullptr;
+    std::size_t size = 0;
+};
+
+void BadPointers() {
+    UnreadablePage page;
+    void* const bad[] = {reinterpret_cast<void*>(0x10), page.Address()};
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 0) == 0 && id >= 0);
+    for (void* pointer : bad) {
+        Require(ksem_init_nid_postfix(static_cast<std::intptr_t*>(pointer), 1) == -1 && Error() == Efault);
+        Require(ksem_timedwait_nid_postfix(id, static_cast<const KernelTimespec*>(pointer)) == -1 && Error() == Efault);
+        Require(ksem_timedwait_nid_postfix(-1, static_cast<const KernelTimespec*>(pointer)) == -1 && Error() == Efault);
+    }
+    Require(ksem_destroy_nid_postfix(id) == 0);
+    const auto openDescriptors = [] {
+        std::intptr_t probe = -1;
+        Require(ksem_init_nid_postfix(&probe, 0) == 0);
+        const auto first = probe;
+        Require(ksem_destroy_nid_postfix(probe) == 0);
+        return first;
+    };
+    const auto before = openDescriptors();
+    Require(ksem_init_nid_postfix(reinterpret_cast<std::intptr_t*>(0x10), 1) == -1 && Error() == Efault);
+    Require(openDescriptors() == before);
+    KernelTimespec valid = FromNow(std::chrono::milliseconds(1));
+    Require(ksem_init_nid_postfix(&id, 1) == 0 && ksem_timedwait_nid_postfix(id, &valid) == 0 && ksem_destroy_nid_postfix(id) == 0);
+}
+
 int main() {
+    BadPointers();
     Counting();
     Timed();
     AbsoluteTimeouts();
     TimedWakeup();
     Blocking();
     Identifiers();
+    Metadata();
     Duplicates();
     Limit();
     std::puts("ksem unnamed semaphores passed");

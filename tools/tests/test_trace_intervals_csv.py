@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import trace_digest
 import trace_intervals_csv
 from test_trace_digest import interval_line
@@ -40,6 +41,60 @@ class IntervalCsvTests(unittest.TestCase):
         self.assertEqual(float(rows[0]["busiest_worker_pct"]), 120.0)
         self.assertTrue(all(rows[1][key] == "" for key in ("top_phase", "top_phase_ms_per_frame", "busiest_worker", "busiest_worker_pct")))
 
+    def test_spreadsheet_safe_mode_escapes_formula_names_without_changing_default_csv(self):
+        for name in ("=1+1", "   @SUM(1)", "\uff1d1+1", "\r\n+1"):
+            with self.subTest(name=name):
+                line = interval_line(0.0, 30.0, 20.0, 5.0, worker_busy_pct={name: 70.0},
+                                     top_phases_ms_per_frame={name: 3.0})
+                result = trace_digest.digest_intervals([line])
+                raw = list(csv.DictReader(io.StringIO(trace_intervals_csv.render(result), newline="")))[0]
+                self.assertEqual((raw["busiest_worker"], raw["top_phase"]), (name, name))
+                safe = list(csv.DictReader(io.StringIO(trace_intervals_csv.render(result, spreadsheet_safe=True), newline="")))[0]
+                self.assertEqual((safe["busiest_worker"], safe["top_phase"]), ("\t" + name, "\t" + name))
+                self.assertEqual(safe["p50_ms"], raw["p50_ms"])
+
+    def test_spreadsheet_safe_cli_writes_escaped_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            line = interval_line(0.0, 30.0, 20.0, 5.0, worker_busy_pct={"=1+1": 70.0})
+            path.write_text(json.dumps(line) + "\n", encoding="utf-8")
+            completed = subprocess.run([sys.executable, str(Path(trace_intervals_csv.__file__)), str(path), "--spreadsheet-safe"],
+                                       capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            row = list(csv.DictReader(io.StringIO(completed.stdout.decode(), newline="")))[0]
+            self.assertEqual(row["busiest_worker"], "\t=1+1")
+
+    def test_spreadsheet_safe_cli_distinguishes_flags_from_numbers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            first = interval_line(0.0, 30.0, 20.0, 5.0, commit="a" * 40)
+            second = interval_line(30.0, 60.0, 40.0, 10.0, commit="b" * 40, trace_dropped=True)
+            path.write_text("\n".join(map(json.dumps, (first, second))) + "\n", encoding="utf-8")
+            command = [sys.executable, str(Path(trace_intervals_csv.__file__)), str(path), "--spreadsheet-safe"]
+            completed = subprocess.run(command, capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            rows = list(csv.DictReader(io.StringIO(completed.stdout.decode(), newline=""), quoting=csv.QUOTE_NONNUMERIC))
+            self.assertEqual([(row["trace_dropped"], row["identity_changed"]) for row in rows],
+                             [("False", "False"), ("True", "True")])
+            self.assertEqual([row["gpu_busy_ms_per_present"] for row in rows], [5.0, 10.0])
+
+    def test_spreadsheet_safe_cli_with_complete_capture_requirement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            line = interval_line(0.0, 30.0, 20.0, 5.0, worker_busy_pct={"=1+1": 70.0})
+            command = [sys.executable, str(Path(trace_intervals_csv.__file__)), str(path),
+                       "--require-complete", "--spreadsheet-safe"]
+            path.write_text(json.dumps(line) + "\n", encoding="utf-8")
+            complete = subprocess.run(command, capture_output=True)
+            self.assertEqual(complete.returncode, 0, complete.stderr)
+            row = list(csv.DictReader(io.StringIO(complete.stdout.decode(), newline="")))[0]
+            self.assertEqual(row["busiest_worker"], "\t=1+1")
+            line["trace_dropped"] = True
+            path.write_text(json.dumps(line) + "\n", encoding="utf-8")
+            dropped = subprocess.run(command, capture_output=True)
+            self.assertEqual(dropped.returncode, 2, dropped.stderr)
+            self.assertEqual(dropped.stdout, b"")
+
     def test_actual_cli_and_empty_input(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "summary.jsonl"
@@ -54,6 +109,43 @@ class IntervalCsvTests(unittest.TestCase):
             empty = subprocess.run(command, capture_output=True)
             self.assertEqual(empty.returncode, 0, empty.stderr)
             self.assertEqual(len(list(csv.reader(io.StringIO(empty.stdout.decode())))), 1)
+
+    def test_require_complete_needs_a_recorded_drop_status_for_every_interval(self):
+        first = interval_line(0, 30, 20, 5)
+        second = interval_line(30, 60, 20, 5)
+        second["window"]["first_present"] = first["presents"]
+        del second["trace_dropped"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            path.write_text("\n".join(map(json.dumps, (first, second))), encoding="utf-8")
+            command = [sys.executable, trace_intervals_csv.__file__, str(path)]
+            regular = subprocess.run(command, capture_output=True)
+            self.assertEqual(regular.returncode, 0, regular.stderr)
+            strict = subprocess.run([*command, "--require-complete"], capture_output=True)
+            self.assertEqual(strict.returncode, 2)
+            self.assertEqual(strict.stdout, b"")
+            self.assertIn(b"interval 2", strict.stderr)
+            self.assertIn(b"trace_dropped", strict.stderr)
+
+    def test_require_complete_rejects_empty_capture_and_changed_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            command = [sys.executable, str(Path(trace_intervals_csv.__file__)), str(path), "--require-complete"]
+            first = interval_line(0.0, 30.0, 20.0, 5.0, commit="a" * 40)
+            second = interval_line(30.0, 60.0, 20.0, 5.0, commit="b" * 40)
+            for contents in (b"", (json.dumps(first) + "\n" + json.dumps(second) + "\n").encode()):
+                with self.subTest(contents=contents[:20]):
+                    path.write_bytes(contents)
+                    completed = subprocess.run(command, capture_output=True)
+                    self.assertEqual(completed.returncode, 2, completed.stderr)
+                    self.assertEqual(completed.stdout, b"")
+                    self.assertIn(b"error: capture is empty, has dropped events or changing identity", completed.stderr)
+            second = interval_line(30.0, 60.0, 20.0, 5.0, commit="a" * 40)
+            second["window"]["first_present"] = first["presents"]
+            path.write_text("\n".join(map(json.dumps, (first, second))) + "\n", encoding="utf-8")
+            same = subprocess.run(command, capture_output=True)
+            self.assertEqual(same.returncode, 0, same.stderr)
+            self.assertEqual(len(list(csv.DictReader(io.StringIO(same.stdout.decode(), newline="")))), 2)
 
     def test_unusable_input_is_a_cli_error(self):
         with tempfile.TemporaryDirectory() as directory:

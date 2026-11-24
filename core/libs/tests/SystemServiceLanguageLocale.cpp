@@ -1,4 +1,5 @@
 #include "prx/libSceSystemService/LanguageLocale.hpp"
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -31,6 +32,13 @@ void RequireBcp47Parsing() {
         {"es-419", "es", "", "419"},
         {"zh-Hant-TW", "zh", "Hant", "TW"},
         {"zh-hans-cn", "zh", "Hans", "CN"},
+        {"zh-cmn-Hant-TW", "cmn", "Hant", "TW"},
+        {"ZH-YUE-hans-cn", "yue", "Hans", "CN"},
+        {"ar-aao-DZ", "ar", "", "DZ"},
+        {"zh-gan-Hant-TW", "zh", "Hant", "TW"},
+        {"no-bok", "no", "", ""},
+        {"no-nyn", "no", "", ""},
+        {"en-yue-US", "en", "", "US"},
         {"ZH-HANT", "zh", "Hant", ""},
         {"sr-Latn-RS", "sr", "Latn", "RS"},
         {"fil", "fil", "", ""},
@@ -63,6 +71,10 @@ void RequirePosixNormalisation() {
         {"pt_BR", "pt-BR"},
         {"zh_TW", "zh-TW"},
         {"zh_Hant_TW", "zh-Hant-TW"},
+        {"zh_cmn_Hant_TW.UTF-8@latin", "zh-cmn-Hant-TW"},
+        {"zh_cmn_Hant_TW.UTF-8@cyrillic", "zh-cmn-Hant-TW"},
+        {"zh_cmn_TW@latin", "zh-cmn-Latn-TW"},
+        {"ar_aao_DZ@latin", "ar-aao-Latn-DZ"},
         {"ca_ES@valencia", "ca-ES"},
         {"sr_RS@latin", "sr-Latn-RS"},
         {"sr@latin", "sr-Latn"},
@@ -155,7 +167,7 @@ void RequireIberianRows() {
         {"pt-CV", PortuguesePortugal}, {"pt-TL", PortuguesePortugal},
     };
     RequireLanguages(entries);
-    constexpr const char* latinAmerica[] = {"MX", "AR", "BO", "CL", "CO", "CR", "CU", "DO", "EC", "GT", "HN", "NI", "PA", "PE", "PR", "PY", "SV", "US", "UY", "VE", "419"};
+    constexpr const char* latinAmerica[] = {"MX", "AR", "BO", "BR", "BZ", "CL", "CO", "CR", "CU", "DO", "EC", "GT", "HN", "NI", "PA", "PE", "PR", "PY", "SV", "US", "UY", "VE", "419"};
     for (const char* region : latinAmerica) Require(LanguageOf(std::string("es-") + region) == SpanishLatinAmerica, region);
 }
 
@@ -168,7 +180,12 @@ void RequireChineseRows() {
         {"zh-HK", ChineseTraditional}, {"zh_HK.UTF-8", ChineseTraditional}, {"zh-MO", ChineseTraditional}, {"zh-Hant-HK", ChineseTraditional}, {"zh-Hant-MO", ChineseTraditional},
         {"zh-Hans-TW", ChineseSimplified}, {"zh-Hans-HK", ChineseSimplified}, {"zh-Hant-CN", ChineseTraditional},
         {"cmn", ChineseSimplified}, {"cmn-Hans-CN", ChineseSimplified}, {"cmn-Hant", ChineseTraditional}, {"cmn-TW", ChineseTraditional},
+        {"cmn-Hans-TW", ChineseSimplified},
         {"yue", ChineseTraditional}, {"yue-HK", ChineseTraditional}, {"yue-Hans-CN", ChineseSimplified},
+        {"zh-cmn-Hant", ChineseTraditional}, {"zh_cmn_Hant_TW.UTF-8", ChineseTraditional},
+        {"zh_cmn_Hant_TW.UTF-8@latin", ChineseTraditional}, {"zh_yue_Hant_HK.UTF-8@cyrillic", ChineseTraditional},
+        {"zh-cmn-Hans-TW", ChineseSimplified}, {"zh-cmn-TW", ChineseTraditional},
+        {"zh-yue", ChineseTraditional}, {"zh-yue-HK", ChineseTraditional}, {"zh-yue-Hans", ChineseSimplified},
     };
     RequireLanguages(entries);
 }
@@ -275,6 +292,10 @@ void RequireHostResolution() {
     Require(Resolve({"es", "fr", "de_DE.UTF-8"}, notices) == Spanish && notices.empty(), "LANGUAGE order");
     Require(Resolve({"en-GB", "fr"}, notices) == EnglishUk && notices.empty(), "first entry before later ones");
     Require(Resolve({"zh-Hant-TW"}, notices) == ChineseTraditional && notices.empty(), "zh-Hant-TW");
+    Require(Resolve({"zh-cmn-Hant"}, notices) == ChineseTraditional && notices.empty(), "Mandarin extlang keeps its script");
+    Require(Resolve({"zh_cmn_Hant_TW.UTF-8@latin"}, notices) == ChineseTraditional && notices.empty(), "an explicit script wins over a modifier after extlang");
+    Require(Resolve({"zh-yue", "en-US"}, notices) == ChineseTraditional && notices.empty(), "Cantonese extlang uses its language mapping");
+    Require(Resolve({"zh-yue-Hans"}, notices) == ChineseSimplified && notices.empty(), "Cantonese extlang keeps its script");
     Require(Resolve({"lt_LT.UTF-8"}, notices) == EnglishUs && notices.size() == 1, "unlisted language");
     Require(notices[0] == "ANYPS5_LANGUAGE=auto: the host locale \"lt_LT.UTF-8\" has no console language, using English (United States), language number 1", notices[0]);
     notices.clear();
@@ -287,6 +308,24 @@ void RequireHostResolution() {
     Require(notices[0] == "ANYPS5_LANGUAGE=auto: the host reports no locale, using English (United States), language number 1", notices[0]);
     notices.clear();
     Require(Resolve({"garbage!", "ja_JP"}, notices) == Japanese && notices.empty(), "malformed entry is skipped");
+}
+
+void RequirePosixLanguageFallback() {
+    using namespace SystemServiceLocale;
+    const auto require = [](const std::string& preference, int language, std::size_t noticeCount) {
+        std::vector<std::string> notices;
+        Require(Resolve(Posix({{"LANG", "de_DE.UTF-8"}, {"LANGUAGE", preference}}), notices) == language && notices.size() == noticeCount, preference);
+    };
+    for (const std::string marker : {"C", "POSIX", "C.UTF-8"}) {
+        require("lt:" + marker + ":fr", EnglishUs, 1);
+        require("lt:" + marker, EnglishUs, 1);
+        require("fr:" + marker + ":de", French, 0);
+        require("::lt::" + marker + "::fr:", EnglishUs, 1);
+        require(marker + ":fr", EnglishUs, 1);
+    }
+    for (const char* preference : {"lt:c:fr", "lt:c.UTF-8:fr", "lt:C@latin:fr", "lt:POSIX.UTF-8:fr", "lt::fr"}) {
+        require(preference, French, 0);
+    }
 }
 
 }
@@ -304,4 +343,5 @@ int main() {
     RequireFallbackRules();
     RequirePosixSource();
     RequireHostResolution();
+    RequirePosixLanguageFallback();
 }

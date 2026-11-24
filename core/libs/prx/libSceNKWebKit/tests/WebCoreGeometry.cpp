@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <emmintrin.h>
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -85,6 +87,21 @@ static void TestFloatSize() {
     WebCore::FloatSize clamped = _ZNK7WebCore9FloatSize18constrainedBetweenERKS0_S2_(&curS, minS, maxS);
     Require(AlmostEqual(clamped.m_width, 5.0f));
     Require(AlmostEqual(clamped.m_height, 60.0f));
+}
+
+static void TestFloatSizeFromIntSize() {
+    WebCore::IntSize dimensions{-17, 23};
+
+    WebCore::FloatSize c1{};
+    _ZN7WebCore9FloatSizeC1ERKNS_7IntSizeE(&c1, dimensions);
+    Require(c1.m_width == -17.0f);
+    Require(c1.m_height == 23.0f);
+
+    dimensions = {std::numeric_limits<int>::min(), std::numeric_limits<int>::max()};
+    WebCore::FloatSize c2{};
+    _ZN7WebCore9FloatSizeC2ERKNS_7IntSizeE(&c2, dimensions);
+    Require(c2.m_width == static_cast<float>(std::numeric_limits<int>::min()));
+    Require(c2.m_height == static_cast<float>(std::numeric_limits<int>::max()));
 }
 
 static void TestFloatRect() {
@@ -302,6 +319,60 @@ static void TestLayoutRect() {
     Require(_ZNK7WebCore10LayoutRect8containsERKS0_(&lrA, insideLr));
 }
 
+static WebCore::Color RawColor(std::uint64_t bits) {
+    WebCore::Color color;
+    color.m_colorAndFlags = bits;
+    return color;
+}
+
+static void TestColorMoveAssignEqual() {
+    constexpr std::uint64_t first = 0x11040000FF0000FFull;
+    constexpr std::uint64_t second = 0x110400000000FFFFull;
+
+    WebCore::Color same = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&same, std::move(same));
+    Require(same.m_colorAndFlags == first);
+
+    WebCore::Color target = RawColor(first);
+    WebCore::Color equal = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&target, std::move(equal));
+    Require(target.m_colorAndFlags == first);
+    Require(equal.m_colorAndFlags == first);
+
+    WebCore::Color invalid = RawColor(0);
+    WebCore::Color alsoInvalid = RawColor(0);
+    _ZN7WebCore5ColoraSEOS0_(&invalid, std::move(alsoInvalid));
+    Require(invalid.m_colorAndFlags == 0 && alsoInvalid.m_colorAndFlags == 0);
+
+    WebCore::Color different = RawColor(second);
+    _ZN7WebCore5ColoraSEOS0_(&target, std::move(different));
+    Require(target.m_colorAndFlags == second);
+    Require(different.m_colorAndFlags == 0);
+
+    WebCore::Color fromInvalid = RawColor(0);
+    _ZN7WebCore5ColoraSEOS0_(&target, std::move(fromInvalid));
+    Require(target.m_colorAndFlags == 0 && fromInvalid.m_colorAndFlags == 0);
+
+    WebCore::Color nearlyEqual = RawColor(first ^ 1ull);
+    WebCore::Color original = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&original, std::move(nearlyEqual));
+    Require(original.m_colorAndFlags == (first ^ 1ull));
+    Require(nearlyEqual.m_colorAndFlags == 0);
+
+    WebCore::Color flagged = RawColor(first | (1ull << 48));
+    WebCore::Color plain = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&plain, std::move(flagged));
+    Require(plain.m_colorAndFlags == (first | (1ull << 48)));
+    Require(flagged.m_colorAndFlags == 0);
+
+    WebCore::Color copied = RawColor(first);
+    WebCore::Color source = RawColor(first);
+    _ZN7WebCore5ColoraSERKS0_(&copied, source);
+    Require(copied.m_colorAndFlags == first && source.m_colorAndFlags == first);
+    _ZN7WebCore5ColoraSERKS0_(&copied, copied);
+    Require(copied.m_colorAndFlags == first);
+}
+
 static void TestRoundedRect() {
     WebCore::LayoutRect lr{WebCore::LayoutPoint{0, 0}, WebCore::LayoutSize{6400, 6400}};
     WebCore::LayoutSize sz{640, 640};
@@ -353,8 +424,11 @@ static void TestColor() {
     _ZN7WebCore5ColoraSEOS0_(&cMoveAssign, std::move(cAssign));
     Require(cMoveAssign.m_colorAndFlags == c1.m_colorAndFlags);
 
-    WebCore::Color cAlpha = _ZNK7WebCore5Color14colorWithAlphaEf(&c1, 0.5f);
+    WebCore::Color cAlpha;
+    cAlpha.m_colorAndFlags = 0xFFFFFFFFull;
+    Require(_ZNK7WebCore5Color14colorWithAlphaEf(&cAlpha, &c1, 0.5f) == &cAlpha);
     Require((cAlpha.m_colorAndFlags & 0xFF) == 128);
+    Require(((cAlpha.m_colorAndFlags ^ c1.m_colorAndFlags) & 0xFFFFFF00ull) == 0);
 
     WebCore::Color cWhite;
     cWhite.m_colorAndFlags = 0xFFFFFFFFull;
@@ -366,11 +440,14 @@ static void TestColor() {
     Require(AlmostEqual(_ZNK7WebCore5Color9lightnessEv(&cBlack), 0.0));
     Require(AlmostEqual(_ZNK7WebCore5Color9luminanceEv(&cBlack), 0.0));
 
-    WebCore::Color cDarkened = _ZNK7WebCore5Color8darkenedEv(&cWhite);
-    Require(((cDarkened.m_colorAndFlags >> 24) & 0xFF) < 255);
+    WebCore::Color cDarkened;
+    Require(_ZNK7WebCore5Color8darkenedEv(&cDarkened, &cWhite) == &cDarkened);
+    Require((cDarkened.m_colorAndFlags & 0xFFFFFFFFull) == 0xABABABFFull);
 
-    WebCore::Color cLightened = _ZNK7WebCore5Color9lightenedEv(&cBlack);
-    Require(((cLightened.m_colorAndFlags >> 24) & 0xFF) > 0);
+    WebCore::Color cLightened;
+    cLightened.m_colorAndFlags = 0xFFFFFFFFull;
+    Require(_ZNK7WebCore5Color9lightenedEv(&cLightened, &cBlack) == &cLightened);
+    Require((cLightened.m_colorAndFlags & 0xFFFFFFFFull) == 0x545454FFull);
 }
 
 static void TestAffineTransform() {
@@ -501,6 +578,28 @@ static void TestTransformationMatrix() {
     _ZN7WebCore20TransformationMatrix6rotateEd(&rotMat, 90.0);
     Require(AlmostEqual(rotMat.m_matrix[0][1], 1.0));
 
+    for (const double turns : {360.0, -360.0, 720.0, 3600.0, 0.0, -0.0}) {
+        WebCore::TransformationMatrix turned;
+        Require(&_ZN7WebCore20TransformationMatrix6rotateEd(&turned, turns) == &turned);
+        Require(turned.m_matrix[0][0] == 1.0 && turned.m_matrix[0][1] == 0.0);
+        Require(turned.m_matrix[1][0] == 0.0 && turned.m_matrix[1][1] == 1.0);
+        const WebCore::IntRect whole{WebCore::IntPoint{0, 0}, WebCore::IntSize{100, 100}};
+        const WebCore::IntRect mapped = _ZNK7WebCore20TransformationMatrix7mapRectERKNS_7IntRectE(&turned, whole);
+        Require(mapped.m_location.m_x == 0 && mapped.m_location.m_y == 0);
+        Require(mapped.m_size.m_width == 100 && mapped.m_size.m_height == 100);
+    }
+    WebCore::TransformationMatrix sheared;
+    _ZN7WebCore20TransformationMatrix4skewEdd(&sheared, 30.0, 45.0);
+    const WebCore::TransformationMatrix shearedBefore = sheared;
+    _ZN7WebCore20TransformationMatrix6rotateEd(&sheared, 360.0);
+    for (int row = 0; row < 4; ++row)
+        for (int column = 0; column < 4; ++column)
+            Require(sheared.m_matrix[row][column] == shearedBefore.m_matrix[row][column]);
+    WebCore::TransformationMatrix half;
+    _ZN7WebCore20TransformationMatrix6rotateEd(&half, 180.0);
+    Require(half.m_matrix[0][0] == -1.0 && half.m_matrix[1][1] == -1.0);
+    Require(half.m_matrix[0][1] != 0.0 && AlmostEqual(half.m_matrix[0][1], 0.0));
+
     WebCore::TransformationMatrix rot3dMat;
     _ZN7WebCore20TransformationMatrix8rotate3dEddd(&rot3dMat, 0.0, 90.0, 0.0);
     Require(_ZNK7WebCore20TransformationMatrix12isInvertibleEv(&rot3dMat));
@@ -547,6 +646,111 @@ static void TestTransformationMatrix() {
     Require(AlmostEqual(fromAt2.m_matrix[0][0], at.m_transform[0]));
 }
 
+static WebCore::TransformationMatrix ReferencePerspective(const WebCore::TransformationMatrix& input, double perspective) {
+    const std::array<double, 16> transform{
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, perspective != 0.0 ? -1.0 / perspective : 0.0,
+        0.0, 0.0, 0.0, 1.0
+    };
+    WebCore::TransformationMatrix result;
+    for (unsigned row = 0; row < 4; ++row) {
+        for (unsigned column = 0; column < 4; column += 2) {
+            auto value = _mm_mul_pd(_mm_loadu_pd(&input.m_matrix[0][column]), _mm_set1_pd(transform[row * 4]));
+            for (unsigned term = 1; term < 4; ++term) {
+                value = _mm_add_pd(value, _mm_mul_pd(_mm_loadu_pd(&input.m_matrix[term][column]),
+                                                  _mm_set1_pd(transform[row * 4 + term])));
+            }
+            _mm_storeu_pd(&result.m_matrix[row][column], value);
+        }
+    }
+    return result;
+}
+
+static void RequirePerspectiveResult(const WebCore::TransformationMatrix& actual, const WebCore::TransformationMatrix& expected) {
+    for (unsigned row = 0; row < 4; ++row) {
+        for (unsigned column = 0; column < 4; ++column) {
+            const double value = actual.m_matrix[row][column];
+            const double reference = expected.m_matrix[row][column];
+            if (std::isnan(reference)) {
+                Require(std::isnan(value));
+            } else if (reference == 0.0 || std::isinf(reference)) {
+                Require(std::bit_cast<std::uint64_t>(value) == std::bit_cast<std::uint64_t>(reference));
+            } else {
+                Require(std::isfinite(value));
+                Require(std::abs(value - reference) <= 8.0 * std::numeric_limits<double>::epsilon()
+                    * std::max(std::abs(value), std::abs(reference)));
+            }
+        }
+    }
+}
+
+static void TestApplyPerspective() {
+    static_assert(sizeof(WebCore::TransformationMatrix) == 128);
+    static_assert(alignof(WebCore::TransformationMatrix) == 16);
+    struct GuardedMatrix {
+        std::array<std::uint64_t, 2> before;
+        WebCore::TransformationMatrix value;
+        std::array<std::uint64_t, 2> after;
+    };
+    static_assert(offsetof(GuardedMatrix, value) == 16);
+    static_assert(offsetof(GuardedMatrix, after) == 144);
+    const std::array<std::uint64_t, 2> canary{0x123456789abcdef0ULL, 0xfedcba9876543210ULL};
+    std::array<WebCore::TransformationMatrix, 7> inputs;
+    inputs[1].m_matrix[3][0] = 5.0;
+    inputs[1].m_matrix[3][1] = -7.0;
+    inputs[1].m_matrix[3][2] = 12.0;
+    inputs[2].m_matrix[0][0] = 2.0;
+    inputs[2].m_matrix[1][1] = 3.0;
+    inputs[2].m_matrix[2][2] = -4.0;
+    inputs[3].m_matrix[2][3] = -0.125;
+    for (unsigned row = 0; row < 4; ++row) {
+        for (unsigned column = 0; column < 4; ++column) {
+            const double magnitude = 1.0 + row * 4 + column;
+            inputs[4].m_matrix[row][column] = column % 2 ? -magnitude : magnitude;
+            inputs[5].m_matrix[row][column] = -0.0;
+        }
+    }
+    inputs[6].m_matrix[0][0] = std::numeric_limits<double>::infinity();
+    inputs[6].m_matrix[1][1] = std::numeric_limits<double>::quiet_NaN();
+    inputs[6].m_matrix[3][2] = -std::numeric_limits<double>::infinity();
+    const std::array<double, 12> perspectives{
+        4.0, -8.0, 0.0, -0.0,
+        std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::min(), -std::numeric_limits<double>::min(),
+        std::numeric_limits<double>::denorm_min(), -std::numeric_limits<double>::denorm_min(), 3.25
+    };
+    auto* applyPerspective = &_ZN7WebCore20TransformationMatrix16applyPerspectiveEd;
+    for (const auto& input : inputs) {
+        const auto original = std::bit_cast<std::array<std::uint64_t, 16>>(input);
+        for (double perspective : perspectives) {
+            GuardedMatrix guarded{canary, input, canary};
+            const auto expected = ReferencePerspective(input, perspective);
+            Require(&applyPerspective(&guarded.value, perspective) == &guarded.value);
+            RequirePerspectiveResult(guarded.value, expected);
+            Require(guarded.before == canary && guarded.after == canary);
+        }
+        GuardedMatrix guarded{canary, input, canary};
+        auto expected = input;
+        for (double perspective : {4.0, -8.0, 16.0, 0.0}) {
+            expected = ReferencePerspective(expected, perspective);
+            Require(&applyPerspective(&guarded.value, perspective) == &guarded.value);
+            RequirePerspectiveResult(guarded.value, expected);
+            Require(guarded.before == canary && guarded.after == canary);
+        }
+        Require((std::bit_cast<std::array<std::uint64_t, 16>>(input) == original));
+    }
+    WebCore::TransformationMatrix identity;
+    applyPerspective(&identity, 4.0);
+    Require(identity.m_matrix[2][3] == -0.25);
+    auto translated = inputs[1];
+    applyPerspective(&translated, 4.0);
+    Require(translated.m_matrix[2][0] == -1.25);
+    Require(translated.m_matrix[2][1] == 1.75);
+    Require(translated.m_matrix[2][2] == -2.0);
+}
+
 static void TestMatrixTransformOperation() {
     WebCore::MatrixTransformOperation op{};
     op.m_a = 2.0;
@@ -576,19 +780,52 @@ static void TestIntRectScaleOverflowGivesIntMin() {
     Require(ir.m_size.m_height == 30);
 }
 
+static bool BackendSizeIs(float width, float height, float scale, int expectedWidth, int expectedHeight) {
+    WebCore::FloatSize size{width, height};
+    WebCore::IntSize result = _ZN7WebCore18ImageBufferBackend20calculateBackendSizeERKNS_9FloatSizeEf(size, scale);
+    return result.m_width == expectedWidth && result.m_height == expectedHeight;
+}
+
+static void TestCalculateBackendSize() {
+    Require(BackendSizeIs(10.2f, 5.1f, 2.0f, 21, 11));
+    Require(BackendSizeIs(100.0f, 50.0f, 1.0f, 100, 50));
+    Require(BackendSizeIs(0.1f, 0.1f, 1.0f, 1, 1));
+    Require(BackendSizeIs(-0.5f, 4.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(0.0f, 10.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(10.0f, -3.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(10.0f, 10.0f, 0.0f, 0, 0));
+    Require(BackendSizeIs(10.0f, 10.0f, -1.0f, 0, 0));
+    Require(BackendSizeIs(3e9f, 10.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(10.0f, 2147483648.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(std::numeric_limits<float>::quiet_NaN(), 10.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(10.0f, std::numeric_limits<float>::infinity(), 1.0f, 0, 0));
+    Require(BackendSizeIs(1073741824.0f, 1.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(1073741823.0f, 1.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(536870912.0f, 1.0f, 1.0f, 536870912, 1));
+    Require(BackendSizeIs(1.0f, 1000000000.0f, 1.0f, 1, 1000000000));
+    Require(BackendSizeIs(70000.0f, 70000.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(32768.0f, 32767.0f, 1.0f, 32768, 32767));
+    Require(BackendSizeIs(32768.0f, 32768.0f, 1.0f, 0, 0));
+    Require(BackendSizeIs(1.0f, 1073741824.0f, 1.0f, 0, 0));
+}
+
 int main() {
     TestFloatPoint();
     TestFloatSize();
+    TestFloatSizeFromIntSize();
     TestFloatRect();
     TestFloatQuad();
     TestFloatRoundedRect();
     TestIntPointIntSizeIntRect();
+    TestColorMoveAssignEqual();
     TestLayoutRect();
     TestRoundedRect();
     TestColor();
     TestAffineTransform();
     TestTransformationMatrix();
+    TestApplyPerspective();
     TestMatrixTransformOperation();
     TestIntRectScaleOverflowGivesIntMin();
+    TestCalculateBackendSize();
     return 0;
 }

@@ -42,6 +42,42 @@ class TimelinePreviewTests(unittest.TestCase):
         self.assertEqual([list(map(int, line.split())) for line in compiled.splitlines()[1:]],
                          [[event["at_ms"], event["hold_ms"], event["buttons"]] for event in result["events"]])
 
+    def test_stick_positions_are_previewed(self):
+        document = {"version": 1, "events": [{"at_ms": 0, "hold_ms": 300, "buttons": [], "left_stick": [255, 128]},
+                                             {"at_ms": 400, "hold_ms": 100, "buttons": ["cross"]}]}
+        result = preview_pad_timeline.preview(document)
+        self.assertEqual(result["events"][0], {"at_ms": 0, "hold_ms": 300, "buttons": 0, "left_stick": [255, 128], "right_stick": [128, 128]})
+        self.assertEqual(result["events"][1], {"at_ms": 400, "hold_ms": 100, "buttons": pad_timeline.BUTTONS["cross"]})
+
+    def test_cli_text_output_lists_stick_positions(self):
+        document = {"version": 1, "events": [{"at_ms": 0, "hold_ms": 300, "buttons": [], "left_stick": [255, 128]},
+                                             {"at_ms": 400, "hold_ms": 100, "buttons": ["cross"]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            timeline = Path(directory) / "timeline.json"
+            timeline.write_text(json.dumps(document), encoding="utf-8")
+            result = subprocess.run([sys.executable, preview_pad_timeline.__file__, str(timeline)],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines(), [
+                "Preview only: 2 events, ending at 500 ms. No controller command file was written.",
+                "at_ms hold_ms button_mask",
+                "0 300 0x0 left [255, 128] right [128, 128]",
+                f"400 100 0x{pad_timeline.BUTTONS['cross']:x}"])
+
+    def test_missing_timeline_is_a_usage_error_without_a_preview(self):
+        with tempfile.TemporaryDirectory() as directory:
+            timeline = Path(directory) / "missing.json"
+            for options in ([], ["--json"]):
+                with self.subTest(options=options):
+                    result = subprocess.run([sys.executable, preview_pad_timeline.__file__, str(timeline), *options],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=5)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertTrue(result.stderr.startswith("preview_pad_timeline.py: "), result.stderr)
+                    self.assertIn("missing.json", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(list(Path(directory).iterdir()), [])
+
     def test_cli_previews_without_creating_or_changing_command_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -76,6 +112,13 @@ class TimelinePreviewTests(unittest.TestCase):
             with self.subTest(repeat=repeat, gap=gap), self.assertRaises(ValueError):
                 preview_pad_timeline.preview(DOCUMENT, repeat, gap)
 
+    def test_preview_accounts_for_full_command_header(self):
+        document = {"version": 1, "events": [{"at_ms": 0, "hold_ms": 1, "buttons": ["cross"],
+                                                "left_stick": [255, 255], "right_stick": [255, 255]}]}
+        self.assertEqual(preview_pad_timeline.preview(document, repeat=2296, gap_ms=0)["event_count"], 2296)
+        with self.assertRaisesRegex(ValueError, "runtime reads at most 65536"):
+            preview_pad_timeline.preview(document, repeat=2297, gap_ms=0)
+
     def test_bad_json_and_invalid_events_return_usage_errors_without_a_preview(self):
         with tempfile.TemporaryDirectory() as directory:
             timeline = Path(directory) / "timeline.json"
@@ -86,6 +129,17 @@ class TimelinePreviewTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertEqual(result.stdout, b"")
                 self.assertNotIn(b"Traceback", result.stderr)
+
+    def test_duplicate_json_fields_are_not_previewed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            timeline = Path(directory) / "timeline.json"
+            timeline.write_text('{"version":1,"events":[{"at_ms":0,"hold_ms":100,"buttons":["cross"],"buttons":["circle"]}]}',
+                                encoding="utf-8")
+            result = subprocess.run([sys.executable, str(Path(preview_pad_timeline.__file__)), str(timeline), "--json"],
+                                    capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn(b"duplicate timeline field 'buttons'", result.stderr)
+            self.assertEqual(result.stdout, b"")
 
 
 if __name__ == "__main__":
