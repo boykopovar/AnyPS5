@@ -33,6 +33,12 @@ int main() {
         "http://[:1]/",
         "http://[1:]/",
         "http://[::ffff:999.0.0.1]/",
+        "http://[::ffff:01.0.0.1]/",
+        "http://[1:2:3:4:5:6:7:1.2.3.4]/",
+        "http://[1:2:3:4::5:6:7:8]/",
+        "http://[1.2.3.4::1]/",
+        "http://[::ffff:192.0.2]/",
+        "http://[::ffff:1.2.3.4.5]/",
     };
     for (const std::string_view url : invalidIpv6Urls)
         Require(ValidateHostUrl(url) == HostUrlVerdict::BadAuthority);
@@ -42,6 +48,10 @@ int main() {
         "http://[::1]:8080/path",
         "https://[2001:db8::1]/",
         "http://[::ffff:192.0.2.1]/",
+        "http://[1:2:3:4:5:6:192.0.2.1]/",
+        "http://[1:2:3::5:6:7:8]/",
+        "http://[::192.0.2.1]/",
+        "http://[0:0:0:0:0:ffff:0.0.0.0]/",
         "http://[2001:0db8:85a3:0000:0000:8a2e:0370:7334]/",
     };
     for (const std::string_view url : validIpv6Urls)
