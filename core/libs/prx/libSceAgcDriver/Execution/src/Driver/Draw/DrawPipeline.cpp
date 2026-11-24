@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <array>
@@ -138,9 +139,96 @@ DrawFinisher::LabelLookup DrawFinisher::PendingLabel(std::uint64_t address, std:
     return LabelLookup::NotHeld;
 }
 
+namespace {
+
+constexpr unsigned PendingWriteBlockShift = 20;
+constexpr std::uint64_t PendingWriteWideBlocks = 256;
+std::atomic<std::uint64_t> pendingBlocksAnswered{0};
+std::atomic<std::uint64_t> pendingBlocksVerified{0};
+
+bool pendingWriteWide(const DrawFinisher::Range& range) {
+    return ((range.second - 1u) >> PendingWriteBlockShift) - (range.first >> PendingWriteBlockShift) >= PendingWriteWideBlocks;
+}
+
+}
+
+bool DrawFinisher::PendingWriteBlocks() {
+    return !Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::NoPendingWriteBlocks);
+}
+
+bool DrawFinisher::VerifyPendingWriteBlocks() {
+    return Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::VerifyPendingWriteBlocks);
+}
+
+DrawFinisher::PendingBlockCounts DrawFinisher::PendingBlockTotals() {
+    return {pendingBlocksAnswered.load(std::memory_order_relaxed), pendingBlocksVerified.load(std::memory_order_relaxed)};
+}
+
+void DrawFinisher::countPendingWrites(Pending& held) {
+    held.countedUnknown = held.unknown;
+    held.countedWrites.clear();
+    if (held.unknown) {
+        ++pendingUnknownJobs;
+        return;
+    }
+    held.countedWrites = held.writes;
+    for (const auto& range : held.countedWrites) {
+        if (range.second <= range.first) continue;
+        if (pendingWriteWide(range)) {
+            ++pendingWideRanges;
+            continue;
+        }
+        for (auto block = range.first >> PendingWriteBlockShift; block <= (range.second - 1u) >> PendingWriteBlockShift; ++block) ++pendingWriteBlocks[block];
+    }
+}
+
+void DrawFinisher::uncountPendingWrites(Pending& held) {
+    if (held.countedUnknown) {
+        --pendingUnknownJobs;
+        held.countedUnknown = false;
+        return;
+    }
+    for (const auto& range : held.countedWrites) {
+        if (range.second <= range.first) continue;
+        if (pendingWriteWide(range)) {
+            --pendingWideRanges;
+            continue;
+        }
+        for (auto block = range.first >> PendingWriteBlockShift; block <= (range.second - 1u) >> PendingWriteBlockShift; ++block) {
+            const auto found = pendingWriteBlocks.find(block);
+            if (found != pendingWriteBlocks.end() && --found->second == 0u) pendingWriteBlocks.erase(found);
+        }
+    }
+    held.countedWrites.clear();
+}
+
+bool DrawFinisher::pendingBlocksClear(std::span<const Range> ranges) const {
+    if (pendingUnknownJobs != 0 || pendingWideRanges != 0) return false;
+    for (const auto& range : ranges) {
+        if (range.second <= range.first) continue;
+        if (pendingWriteWide(range)) return false;
+        for (auto block = range.first >> PendingWriteBlockShift; block <= (range.second - 1u) >> PendingWriteBlockShift; ++block) {
+            if (pendingWriteBlocks.contains(block)) return false;
+        }
+    }
+    return true;
+}
+
 bool DrawFinisher::PendingOverlapsAny(std::span<const Range> ranges) {
     if (!Busy() || !finisherProducer) return false;
     std::lock_guard lock(mutex);
+    if (PendingWriteBlocks() && pendingBlocksClear(ranges)) {
+        pendingBlocksAnswered.fetch_add(1, std::memory_order_relaxed);
+        if (!VerifyPendingWriteBlocks()) return false;
+        for (const auto& held : pending) {
+            const bool overlaps = held.unknown || std::any_of(held.writes.begin(), held.writes.end(), [&](const Range& written) {
+                return std::any_of(ranges.begin(), ranges.end(), [&](const Range& range) { return range.first < written.second && written.first < range.second; });
+            });
+            if (overlaps) throw std::runtime_error("APS5_VERIFY_PENDING_WRITE_BLOCKS: the pending write blocks answered no overlap, but a pending finisher job writes the ranges or has unknown writes");
+        }
+        pendingBlocksVerified.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     for (const auto& held : pending) {
         if (held.unknown) return true;
         for (const auto& [first, last] : held.writes) {
@@ -218,6 +306,7 @@ void DrawFinisher::Enqueue(Job job, Pending held) {
     if (jobs.size() >= depth && GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("draw finisher full while the enqueuing thread holds the GPU lock");
     idle.wait(lock, [&] { return jobs.size() < depth; });
     jobs.push_back(std::move(job));
+    countPendingWrites(held);
     pending.push_back(std::move(held));
     outstanding.fetch_add(1, std::memory_order_release);
     if (!running) {
@@ -256,6 +345,7 @@ void DrawFinisher::run() {
         if (error != nullptr && failure == nullptr) failure = error;
         ran.push_back(std::move(jobs.front()));
         jobs.pop_front();
+        uncountPendingWrites(pending.front());
         pending.pop_front();
         outstanding.fetch_sub(1, std::memory_order_release);
         idle.notify_all();
