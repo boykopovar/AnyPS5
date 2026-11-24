@@ -17,7 +17,11 @@
 
 using namespace VorbisDec;
 
-extern "C" int anyps5_ov_test_open64(OggVorbis_File* vf, ogg_int64_t (*tell64)(void*));
+extern "C" {
+int anyps5_ov_test_open64(OggVorbis_File* vf, ogg_int64_t (*tell64)(void*));
+ogg_int64_t anyps5_ov_bitrate64(OggVorbis_File* vf, int link);
+ogg_int64_t anyps5_ov_bitrate_instant64(OggVorbis_File* vf);
+}
 
 static_assert(sizeof(vorbis_comment) == sizeof(GuestComment));
 static_assert(offsetof(vorbis_comment, user_comments) == offsetof(GuestComment, user_comments));
@@ -169,11 +173,11 @@ int APS5_VABI sceVorbisDecClear(void* vf) {
 }
 
 std::int64_t APS5_VABI sceVorbisDecBitrate(void* vf, int link) {
-    return WithHandle(vf, __func__, [&](Handle& handle) -> std::int64_t { return ov_bitrate(&handle.file, link); });
+    return WithHandle(vf, __func__, [&](Handle& handle) -> std::int64_t { return anyps5_ov_bitrate64(&handle.file, link); });
 }
 
 std::int64_t APS5_VABI sceVorbisDecBitrateInstant(void* vf) {
-    return WithHandle(vf, __func__, [](Handle& handle) -> std::int64_t { return ov_bitrate_instant(&handle.file); });
+    return WithHandle(vf, __func__, [](Handle& handle) -> std::int64_t { return anyps5_ov_bitrate_instant64(&handle.file); });
 }
 
 GuestComment* APS5_VABI sceVorbisDecComment(void* vf, int link) {

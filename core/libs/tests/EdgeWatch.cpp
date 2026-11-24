@@ -155,6 +155,21 @@ void Errors() {
         threw = true;
     }
     Require(threw, "invalid descriptor was accepted");
+    errno = EDOM;
+    {
+        EdgeWatch::Watch invalid(-1);
+    }
+    Require(errno == EDOM, "invalid EdgeWatch::Watch destruction clobbered errno");
+    {
+        EdgeWatch::Watch invalid(-1);
+        bool takeThrew = false;
+        try {
+            (void)invalid.TakeEdge();
+        } catch (const std::runtime_error&) {
+            takeThrew = true;
+        }
+        Require(takeThrew, "TakeEdge on invalid descriptor did not throw");
+    }
 }
 
 }

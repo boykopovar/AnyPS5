@@ -24,6 +24,7 @@
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
 extern std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix;
+void APS5_VABI sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(void* self, const void* info, std::size_t refs);
 }
 
 namespace {
@@ -260,7 +261,6 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
     Require(Throws([] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED0Ev_nid_postfix(nullptr); }), "char time_put D0 null throws");
     Require(Throws([] { libSceLibcInternalInventory_197_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
     Require(Throws([] { libSceLibcInternalInventory_198_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
-    Require(Throws([] { libSceLibcInternalInventory_199_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
     Require(NotImplementedCalls_nid_no_patch() > before, "B2 error paths reported");
 
     if (hasLibrary) {
@@ -364,6 +364,14 @@ void CheckGroup1ConstructionAndLifetime() {
     _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC2Em_nid_postfix(&putDefault.base, 1);
     Require(putDefault.base.vtable != nullptr && putDefault.base.references == 1, "time_put<char> C2 default ctor");
     Require(std::memcmp(&putDefault.names, expectedTimes, sizeof(*expectedTimes)) == 0, "time_put<char> C2 populates TimeInfo");
+
+    TimePutCharStorage putBaseFromLocinfo{};
+    sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(&putBaseFromLocinfo.base, &info, 4);
+    Require(putBaseFromLocinfo.base.vtable == putFromLocinfo.base.vtable && putBaseFromLocinfo.base.references == 4 && putBaseFromLocinfo.base.reserved == 0,
+        "time_put<char> C2 locinfo ctor sets the facet header as C1 does");
+    Require(std::memcmp(&putBaseFromLocinfo.names, expectedTimes, sizeof(*expectedTimes)) == 0, "time_put<char> C2 locinfo ctor populates TimeInfo");
+    Require(Throws([&] { sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(nullptr, &info, 0); }), "time_put<char> C2 locinfo ctor null self throws");
+    Require(Throws([&] { sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(&putBaseFromLocinfo.base, nullptr, 0); }), "time_put<char> C2 locinfo ctor null locinfo throws");
 
     GuestTm tm{};
     tm.tm_year = 126;

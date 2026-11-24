@@ -203,6 +203,20 @@ static void RequireMeasuredStrings(void* latin, void* eucJp) {
     }
 
     const auto* letters = reinterpret_cast<const std::uint8_t*>("ABC");
+    {
+        std::uint8_t zeroContext[512]{};
+        const std::uint8_t input[] = {'A', 'B', 'C', 0, 'D'};
+        std::uint8_t output[16];
+        std::memset(output, 0xBB, sizeof(output));
+        std::uint32_t read = 7;
+        std::uint32_t written = 7;
+
+        const int result = sceCesMbcsStrToUtf8Str(zeroContext, input, 3, &read, output, sizeof(output), &written);
+        Require(result == 0);
+        Require(read == 0 && written == 0);
+        Require(output[0] == 0 && output[1] == 0xBB);
+    }
+
     std::uint8_t output[4] = {0xBB, 0xBB, 0xBB, 0xBB};
     std::uint32_t read = 7;
     std::uint32_t written = 7;

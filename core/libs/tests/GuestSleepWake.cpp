@@ -114,6 +114,30 @@ static void GapStartsNewRun() {
     Require(early);
 }
 
+static void ExhaustRun() {
+    KernelNoteGpuSubmit_nid_no_patch();
+    for (unsigned i = 0; i < EARLY_WAKES_PER_RUN + 8; ++i) Usleep(WAKEABLE_MICROS);
+}
+
+static void LongSleepKeepsRunLimit() {
+    Waker waker;
+    ExhaustRun();
+    for (unsigned i = 0; i < 4; ++i) {
+        Require(Usleep(LONG_MICROS) >= std::chrono::microseconds(LONG_MICROS));
+        Require(Usleep(WAKEABLE_MICROS) >= std::chrono::microseconds(WAKEABLE_MICROS));
+    }
+}
+
+static void ZeroSleepCountsAsSleep() {
+    Waker waker;
+    ExhaustRun();
+    for (unsigned i = 0; i < 4; ++i) {
+        Idle(std::chrono::microseconds(WAKEABLE_MICROS + 200));
+        Require(sceKernelUsleep_nid_postfix(0) == 0);
+        Require(Usleep(WAKEABLE_MICROS) >= std::chrono::microseconds(WAKEABLE_MICROS));
+    }
+}
+
 int main() {
 #ifdef _WIN32
     if (std::getenv("APS5_COARSE_TIMED_WAITS") != nullptr) {
@@ -127,5 +151,7 @@ int main() {
     RunOfSleepsEndsEarlyAtMostEightTimes();
     SubmitStartsNewRun();
     GapStartsNewRun();
+    LongSleepKeepsRunLimit();
+    ZeroSleepCountsAsSleep();
     return 0;
 }

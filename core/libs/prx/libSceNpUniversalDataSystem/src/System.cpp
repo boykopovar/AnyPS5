@@ -24,9 +24,7 @@ int APS5_VABI sceNpUniversalDataSystemInitialize(const NpUniversalDataSystemInit
         return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     }
     NpUniversalDataSystemInitParam copy{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&copy, param, sizeof(copy));
-    errno = savedErrno;
     if (!copied) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     if (copy.size != sizeof(NpUniversalDataSystemInitParam)) {
         return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_PARAM_SIZE;
@@ -50,9 +48,7 @@ int APS5_VABI sceNpUniversalDataSystemGetMemoryStat(NpUniversalDataSystemMemoryS
         APS5_INVALID_ARG_EX;
     }
     const NpUniversalDataSystemMemoryStat value{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(stat, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -62,9 +58,7 @@ int APS5_VABI sceNpUniversalDataSystemGetStorageStat(int context, NpUniversalDat
         APS5_INVALID_ARG_EX;
     }
     const NpUniversalDataSystemStorageStat value{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(stat, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }

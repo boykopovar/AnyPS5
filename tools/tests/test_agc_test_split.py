@@ -308,6 +308,89 @@ class ExecutionTargetsTests(unittest.TestCase):
             (root / agc_test_split.EXECUTION).mkdir(parents=True)
             self.assertEqual(agc_test_split.execution_targets(root), [])
 
+class DedentTests(unittest.TestCase):
+    def test_dedent_removes_the_amount_only_where_present(self):
+        self.assertEqual(agc_test_split.dedent(["    a", "  b", "c"], 2), ["  a", "b", "c"])
+
+
+class LoopListTests(unittest.TestCase):
+    def test_loop_list_returns_the_items_after_items(self):
+        self.assertEqual(agc_test_split.loop_list("FOREACH(ITEMS a b)"), ["a", "b"])
+
+
+class FindLoopTests(unittest.TestCase):
+    def test_find_loop_returns_none_or_refuses_duplicates(self):
+        lines = ["x", "y"]
+        self.assertIsNone(agc_test_split.find_loop(lines, lambda index, text: False, "marker"))
+        with self.assertRaises(agc_test_split.SplitError):
+            agc_test_split.find_loop(lines, lambda index, text: True, "marker")
+class TokenHelperTests(unittest.TestCase):
+    def test_until_returns_the_arguments_before_the_first_keyword(self):
+        self.assertEqual(agc_test_split.until(["a", "--", "b"], {"--"}), ["a"])
+        self.assertEqual(agc_test_split.until(["a", "b"], {"--"}), ["a", "b"])
+
+    def test_literal_refuses_names_with_variables_or_generator_expressions(self):
+        self.assertTrue(agc_test_split.literal("abc"))
+        self.assertFalse(agc_test_split.literal("${X}"))
+        self.assertFalse(agc_test_split.literal("$<CONFIG>"))
+
+    def test_expand_substitutes_every_listed_value(self):
+        self.assertEqual(agc_test_split.expand("lib${X}", {"X": ["a", "b"]}), ["liba", "libb"])
+        self.assertEqual(agc_test_split.expand("plain", {}), ["plain"])
+
+    def test_expand_yields_nothing_for_an_unknown_variable(self):
+        self.assertEqual(agc_test_split.expand("lib${Y}", {"X": ["a"]}), [])
+
+    def test_leading_walks_back_over_comment_lines_only(self):
+        self.assertEqual(agc_test_split.leading(["x", "# a", "# b", "code"], 3), 1)
+        self.assertEqual(agc_test_split.leading(["code", "y"], 1), 1)
+class GraphHelperTests(unittest.TestCase):
+    def test_union_find_joins_sets_transitively(self):
+        find, join = agc_test_split.union_find(4)
+        join(0, 1)
+        join(2, 3)
+        self.assertEqual(find(0), find(1))
+        self.assertNotEqual(find(0), find(2))
+        join(1, 3)
+        self.assertEqual(find(0), find(2))
+
+    def test_flatten_yields_each_branch_header_before_its_children(self):
+        header = agc_test_split.Command("if", [], 1, 1)
+        inner = agc_test_split.Command("set", [], 2, 2)
+        other_header = agc_test_split.Command("else", [], 3, 3)
+        other = agc_test_split.Command("unset", [], 4, 4)
+        end = agc_test_split.Command("endif", [], 5, 5)
+        block = agc_test_split.Block(header)
+        block.branches = [(header, [inner]), (other_header, [other])]
+        block.end = end
+        self.assertEqual(list(agc_test_split.flatten(block)), [header, inner, other_header, other, end])
+        self.assertEqual(list(agc_test_split.flatten(inner)), [inner])
+class ReadSetTests(unittest.TestCase):
+    def test_reads_uses_defines_and_accumulates(self):
+        class Facts:
+            def __init__(self, uses, defines, accumulates):
+                self.uses, self.defines, self.accumulates = set(uses), set(defines), set(accumulates)
+        self.assertEqual(agc_test_split.reads(Facts({'a'}, set(), set())), {'a'})
+        self.assertEqual(agc_test_split.reads(Facts({'a'}, {'a'}, set())), set())
+        self.assertEqual(agc_test_split.reads(Facts(set(), {'a'}, {'b'})), {'b'})
+class SubjectNameTests(unittest.TestCase):
+    class Facts:
+        def __init__(self):
+            self.subject_targets, self.subject_tests, self.dynamic, self.test_patterns = set(), set(), set(), set()
+
+    def test_subject_records_literal_targets_and_variable_uses(self):
+        facts = self.Facts()
+        agc_test_split.subject(facts, ['libA', 'lib${X}'], 'target')
+        self.assertEqual(facts.subject_targets, {'libA'})
+        self.assertEqual(facts.dynamic, {'X'})
+
+    def test_subject_keeps_a_variable_test_name_as_a_pattern(self):
+        facts = self.Facts()
+        agc_test_split.subject(facts, ['t${Y}'], 'test')
+        self.assertEqual(facts.subject_tests, set())
+        self.assertEqual(facts.dynamic, {'Y'})
+        self.assertEqual(facts.test_patterns, {'t${Y}'})
+
 
 if __name__ == "__main__":
     unittest.main()

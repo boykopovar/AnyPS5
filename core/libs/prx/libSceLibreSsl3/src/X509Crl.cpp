@@ -1457,6 +1457,10 @@ bool IssuerMatches(const LibreSslX509Name* crlIssuer, const LibreSslX509Name* ce
 
 }
 
+LibreSslX509Name* LibreSsl3DecodeX509Name_nid_no_patch(std::span<const unsigned char>& input) {
+    return DecodeName(input);
+}
+
 extern "C" {
 
 LibreSsl3X509Crl* APS5_VABI d2i_X509_CRL_nid_postfix(
@@ -1465,13 +1469,14 @@ LibreSsl3X509Crl* APS5_VABI d2i_X509_CRL_nid_postfix(
         PutError(BadObjectHeader);
         return nullptr;
     }
+    if (output) {
+        X509_CRL_free_nid_postfix(*output);
+        *output = nullptr;
+    }
     std::span<const unsigned char> remaining(*input, static_cast<std::size_t>(length));
     LibreSsl3X509Crl* crl = DecodeCrl(remaining);
     if (!crl) return nullptr;
-    if (output) {
-        X509_CRL_free_nid_postfix(*output);
-        *output = crl;
-    }
+    if (output) *output = crl;
     *input += static_cast<std::size_t>(length) - remaining.size();
     return crl;
 }

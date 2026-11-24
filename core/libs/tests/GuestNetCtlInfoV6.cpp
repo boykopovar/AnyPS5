@@ -144,6 +144,10 @@ int main() {
     Require(sceNetCtlGetInfoV6(1, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlInit() == 0);
     {
+        auto* const unwritable = reinterpret_cast<int*>(std::uintptr_t{0x10});
+        Require(sceNetCtlGetResult(0, unwritable) == kErrInvalidAddr);
+        Require(sceNetCtlGetResultV6(0, unwritable) == kErrInvalidAddr);
+
         int resultCode = 0x5a5a5a5a;
         bool threw = false;
         try {
@@ -165,6 +169,7 @@ int main() {
         Require(sceNetCtlGetResultV6(1, nullptr) == kErrInvalidAddr);
         Require(sceNetCtlGetResultV6(1, &resultCode) == 0);
         Require(resultCode == 0);
+
         GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(&ClobberWriteErrno);
         int stateOut = -1;
         errno = 71;
