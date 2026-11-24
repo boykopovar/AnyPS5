@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 extern "C" {
 
@@ -31,14 +34,25 @@ static void Idle(std::chrono::microseconds length) {
     while (std::chrono::steady_clock::now() < until) std::this_thread::yield();
 }
 
+static void Spin(std::chrono::microseconds length) {
+    const auto until = std::chrono::steady_clock::now() + length;
+    while (std::chrono::steady_clock::now() < until) {}
+}
+
 class Waker {
 public:
     Waker() : thread([this] {
+#ifdef _WIN32
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+#endif
         while (!stop.load()) {
             KernelWakeSleepers_nid_no_patch();
-            std::this_thread::sleep_for(std::chrono::microseconds(50));
+            started.store(true);
+            Spin(std::chrono::microseconds(50));
         }
-    }) {}
+    }) {
+        while (!started.load()) std::this_thread::yield();
+    }
     ~Waker() {
         stop.store(true);
         thread.join();
@@ -46,6 +60,7 @@ public:
 
 private:
     std::atomic<bool> stop{false};
+    std::atomic<bool> started{false};
     std::thread thread;
 };
 
@@ -114,6 +129,30 @@ static void GapStartsNewRun() {
     Require(early);
 }
 
+static void ExhaustRun() {
+    KernelNoteGpuSubmit_nid_no_patch();
+    for (unsigned i = 0; i < EARLY_WAKES_PER_RUN + 8; ++i) Usleep(WAKEABLE_MICROS);
+}
+
+static void LongSleepKeepsRunLimit() {
+    Waker waker;
+    ExhaustRun();
+    for (unsigned i = 0; i < 4; ++i) {
+        Require(Usleep(LONG_MICROS) >= std::chrono::microseconds(LONG_MICROS));
+        Require(Usleep(WAKEABLE_MICROS) >= std::chrono::microseconds(WAKEABLE_MICROS));
+    }
+}
+
+static void ZeroSleepCountsAsSleep() {
+    Waker waker;
+    ExhaustRun();
+    for (unsigned i = 0; i < 4; ++i) {
+        Idle(std::chrono::microseconds(WAKEABLE_MICROS + 200));
+        Require(sceKernelUsleep_nid_postfix(0) == 0);
+        Require(Usleep(WAKEABLE_MICROS) >= std::chrono::microseconds(WAKEABLE_MICROS));
+    }
+}
+
 int main() {
 #ifdef _WIN32
     if (std::getenv("APS5_COARSE_TIMED_WAITS") != nullptr) {
@@ -127,5 +166,7 @@ int main() {
     RunOfSleepsEndsEarlyAtMostEightTimes();
     SubmitStartsNewRun();
     GapStartsNewRun();
+    LongSleepKeepsRunLimit();
+    ZeroSleepCountsAsSleep();
     return 0;
 }

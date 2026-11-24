@@ -10,6 +10,12 @@
 
 extern "C" {
 
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore20serializationForHTMLERKNS_5ColorE(const WebCore::Color* color);
+
+WebCore::FourCC APS5_VABI _ZN7WebCore12ISOWebVTTCue11boxTypeNameEv();
+std::size_t APS5_VABI _ZN7WebCore6ISOBox14minimumBoxSizeEv();
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore40defaultTextEncodingNameForSystemLanguageEv();
+WebCore::IntRect APS5_VABI _ZN7WebCore15HitTestLocation12rectForPointERKNS_11LayoutPointEjjjj(const WebCore::LayoutPoint& point, unsigned topPadding, unsigned rightPadding, unsigned bottomPadding, unsigned leftPadding);
 WebCore::FloatPoint APS5_VABI _ZN7WebCore10FloatPoint15narrowPrecisionEdd(double x, double y);
 void APS5_VABI _ZN7WebCore10FloatPoint9normalizeEv(WebCore::FloatPoint* self);
 void APS5_VABI _ZN7WebCore10FloatPointC1ERKNS_8IntPointE(WebCore::FloatPoint* self, const WebCore::IntPoint& p);
@@ -20,6 +26,7 @@ void APS5_VABI _ZN7WebCore10LayoutRectC1ERKNS_9FloatRectE(WebCore::LayoutRect* s
 void APS5_VABI _ZN7WebCore10LayoutRectC2ERKNS_9FloatRectE(WebCore::LayoutRect* self, const WebCore::FloatRect& r);
 void APS5_VABI _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_( WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight, const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight);
 void APS5_VABI _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_( WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight, const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight);
+WebCore::LayoutPoint APS5_VABI _ZN7WebCore14ScrollableArea34constrainScrollPositionForOverhangERKNS_10LayoutRectERKNS_10LayoutSizeERKNS_11LayoutPointES9_ii(const WebCore::LayoutRect& visibleContentRect, const WebCore::LayoutSize& totalContentsSize, const WebCore::LayoutPoint& scrollPosition, const WebCore::LayoutPoint& scrollOrigin, int headerHeight, int footerHeight);
 WebCore::IntRect APS5_VABI _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(const WebCore::FloatRect& rect);
 void APS5_VABI _ZN7WebCore15AffineTransform12makeIdentityEv(WebCore::AffineTransform* self);
 void APS5_VABI _ZN7WebCore15AffineTransformC1Ev(WebCore::AffineTransform* self);
@@ -70,6 +77,8 @@ WebCore::ViewportAttributes APS5_VABI _ZN7WebCore25computeViewportAttributesENS_
 WebCore::FloatRect APS5_VABI _ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE( float aspectRatio, const WebCore::FloatRect& srcRect);
 WebCore::FloatRect APS5_VABI _ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE( float aspectRatio, const WebCore::FloatRect& srcRect);
 void APS5_VABI _ZN7WebCore40restrictMinimumScaleFactorToViewportSizeERNS_18ViewportAttributesENS_7IntSizeEf( WebCore::ViewportAttributes& result, WebCore::IntSize visibleViewport, float devicePixelRatio);
+unsigned int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal30constrainedAttachedWindowWidthEjj(unsigned int preferredWidth, unsigned int totalWindowWidth);
+unsigned int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal31constrainedAttachedWindowHeightEjj(unsigned int preferredHeight, unsigned int totalWindowHeight);
 unsigned int APS5_VABI _ZN7WebCore43initializeMaximumHTTPConnectionCountPerHostEv();
 float APS5_VABI _ZN7WebCore44computeMinimumScaleFactorForContentContainedERKNS_18ViewportAttributesERKNS_7IntSizeES5_( const WebCore::ViewportAttributes& result, const WebCore::IntSize& visibleViewport, const WebCore::IntSize& contentsSize);
 void APS5_VABI _ZN7WebCore50restrictScaleFactorToInitialScaleIfNotUserScalableERNS_18ViewportAttributesE(WebCore::ViewportAttributes& result);
@@ -116,6 +125,9 @@ WebCore::IntSize APS5_VABI _ZNK7WebCore15AffineTransform7mapSizeERKNS_7IntSizeE(
 WebCore::FloatSize APS5_VABI _ZNK7WebCore15AffineTransform7mapSizeERKNS_9FloatSizeE( const WebCore::AffineTransform* self, const WebCore::FloatSize& size);
 WebCore::FloatPoint APS5_VABI _ZNK7WebCore15AffineTransform8mapPointERKNS_10FloatPointE( const WebCore::AffineTransform* self, const WebCore::FloatPoint& point);
 WebCore::IntPoint APS5_VABI _ZNK7WebCore15AffineTransform8mapPointERKNS_8IntPointE( const WebCore::AffineTransform* self, const WebCore::IntPoint& point);
+bool APS5_VABI _ZNK7WebCore19ProtectionSpaceBase15isPasswordBasedEv(const WebCore::ProtectionSpaceBase* self);
+bool APS5_VABI _ZNK7WebCore19ProtectionSpaceBase26receivesCredentialSecurelyEv(const WebCore::ProtectionSpaceBase* self);
+bool APS5_VABI _ZNK7WebCore19ProtectionSpaceBase7isProxyEv(const WebCore::ProtectionSpaceBase* self);
 bool APS5_VABI _ZNK7WebCore20TransformationMatrix12isInvertibleEv(const WebCore::TransformationMatrix* self);
 WebCore::AffineTransform APS5_VABI _ZNK7WebCore20TransformationMatrix17toAffineTransformEv( const WebCore::TransformationMatrix* self);
 WebCore::FloatQuad APS5_VABI _ZNK7WebCore20TransformationMatrix7mapQuadERKNS_9FloatQuadE( const WebCore::TransformationMatrix* self, const WebCore::FloatQuad& q);
@@ -123,9 +135,9 @@ WebCore::IntRect APS5_VABI _ZNK7WebCore20TransformationMatrix7mapRectERKNS_7IntR
 WebCore::FloatRect APS5_VABI _ZNK7WebCore20TransformationMatrix7mapRectERKNS_9FloatRectE( const WebCore::TransformationMatrix* self, const WebCore::FloatRect& r);
 WebCore::FloatPoint APS5_VABI _ZNK7WebCore20TransformationMatrix8mapPointERKNS_10FloatPointE( const WebCore::TransformationMatrix* self, const WebCore::FloatPoint& p);
 WebCore::TransformationMatrix APS5_VABI _ZNK7WebCore24MatrixTransformOperation6matrixEv( const WebCore::MatrixTransformOperation* self);
-WebCore::Color APS5_VABI _ZNK7WebCore5Color14colorWithAlphaEf(const WebCore::Color* self, float alpha);
-WebCore::Color APS5_VABI _ZNK7WebCore5Color8darkenedEv(const WebCore::Color* self);
-WebCore::Color APS5_VABI _ZNK7WebCore5Color9lightenedEv(const WebCore::Color* self);
+WebCore::Color* APS5_VABI _ZNK7WebCore5Color14colorWithAlphaEf(WebCore::Color* result, const WebCore::Color* self, float alpha);
+WebCore::Color* APS5_VABI _ZNK7WebCore5Color8darkenedEv(WebCore::Color* result, const WebCore::Color* self);
+WebCore::Color* APS5_VABI _ZNK7WebCore5Color9lightenedEv(WebCore::Color* result, const WebCore::Color* self);
 double APS5_VABI _ZNK7WebCore5Color9lightnessEv(const WebCore::Color* self);
 double APS5_VABI _ZNK7WebCore5Color9luminanceEv(const WebCore::Color* self);
 bool APS5_VABI _ZNK7WebCore7IntRect10intersectsERKS0_(const WebCore::IntRect* self, const WebCore::IntRect& other);
@@ -142,5 +154,10 @@ bool APS5_VABI _ZNK7WebCore9FloatRect8containsERKNS_10FloatPointENS0_12ContainsM
 bool APS5_VABI _ZNK7WebCore9FloatRect8containsERKS0_(const WebCore::FloatRect* self, const WebCore::FloatRect& other);
 WebCore::FloatSize APS5_VABI _ZNK7WebCore9FloatSize18constrainedBetweenERKS0_S2_( const WebCore::FloatSize* self, const WebCore::FloatSize& min, const WebCore::FloatSize& max);
 bool APS5_VABI _ZNK7WebCore9FloatSize6isZeroEv(const WebCore::FloatSize* self);
+WebCore::LayoutPoint APS5_VABI _ZN7WebCore9FrameView27computeLayoutViewportOriginERKNS_10LayoutRectERKNS_11LayoutPointES6_S3_NS_30ScrollBehaviorForFixedElementsE(const WebCore::LayoutRect& visualViewport, const WebCore::LayoutPoint& stableLayoutViewportOriginMin, const WebCore::LayoutPoint& stableLayoutViewportOriginMax, const WebCore::LayoutRect& layoutViewport, WebCore::ScrollBehaviorForFixedElements fixedBehavior);
+WebCore::LayoutRect APS5_VABI _ZN7WebCore9FrameView32computeUpdatedLayoutViewportRectERKNS_10LayoutRectES3_RKNS_10LayoutSizeES3_S6_RKNS_11LayoutPointES9_NS0_24LayoutViewportConstraintE(const WebCore::LayoutRect& layoutViewport, const WebCore::LayoutRect& documentRect, const WebCore::LayoutSize& unobscuredContentSize, const WebCore::LayoutRect& unobscuredContentRect, const WebCore::LayoutSize& baseLayoutViewportSize, const WebCore::LayoutPoint& stableLayoutViewportOriginMin, const WebCore::LayoutPoint& stableLayoutViewportOriginMax, WebCore::LayoutViewportConstraint constraint);
+WebCore::LayoutSize APS5_VABI _ZN7WebCore9FrameView26expandedLayoutViewportSizeERKNS_10LayoutSizeES3_d(const WebCore::LayoutSize& baseLayoutViewportSize, const WebCore::LayoutSize& documentSize, double heightExpansionFactor);
+WebCore::LayoutPoint APS5_VABI _ZN7WebCore9FrameView30scrollPositionForFixedPositionERKNS_10LayoutRectERKNS_10LayoutSizeERKNS_11LayoutPointES9_fbNS_30ScrollBehaviorForFixedElementsEii(const WebCore::LayoutRect& visibleContentRect, const WebCore::LayoutSize& totalContentsSize, const WebCore::LayoutPoint& scrollPosition, const WebCore::LayoutPoint& scrollOrigin, float frameScaleFactor, bool fixedElementsLayoutRelativeToFrame, WebCore::ScrollBehaviorForFixedElements behaviorForFixed, int headerHeight, int footerHeight);
+WebCore::FloatPoint APS5_VABI _ZN7WebCore9FrameView27positionForRootContentLayerERKNS_10FloatPointES3_ff(const WebCore::FloatPoint& scrollPosition, const WebCore::FloatPoint& scrollOrigin, float topContentInset, float headerHeight);
 
 }

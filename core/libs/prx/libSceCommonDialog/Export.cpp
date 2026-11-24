@@ -29,6 +29,7 @@ bool CommonDialogSystemInitialized_nid_no_patch() {
 }
 
 bool CommonDialogAcquire_nid_no_patch() {
+    if (!g_initialized.load()) return false;
     bool expected = false;
     return g_used.compare_exchange_strong(expected, true);
 }

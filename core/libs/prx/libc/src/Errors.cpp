@@ -4,6 +4,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <cstdarg>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -65,14 +67,18 @@ const char* ExtendedMessage(int error) {
 }
 
 void Describe(int error, char (&text)[128]) {
-    if (error == 0) std::snprintf(text, sizeof(text), "No error");
-    else if (NamedByStrerror(error)) std::snprintf(text, sizeof(text), "%s", messages[error]);
-    else if (const char* extended = ExtendedMessage(error)) std::snprintf(text, sizeof(text), "%s", extended);
+    if (const char* fixed = StrerrorText_nid_no_patch(error)) std::snprintf(text, sizeof(text), "%s", fixed);
     else std::snprintf(text, sizeof(text), "error_code=0x%08x", static_cast<unsigned>(error));
 }
 }
 
 extern "C" {
+const char* APS5_VABI StrerrorText_nid_no_patch(int error) {
+    if (error == 0) return "No error";
+    if (NamedByStrerror(error)) return messages[error];
+    return ExtendedMessage(error);
+}
+
 char* APS5_VABI strerror_nid_postfix(int error) {
     thread_local char buffer[128];
     Describe(error, buffer);
@@ -107,5 +113,23 @@ void APS5_VABI perror_nid_postfix(const char* prefix) {
     if (prefix && CopyGuestString_nid_no_patch(prefix, 65536, copied) == 0 && !copied.empty()) std::fprintf(stream, "%s: %s\n", copied.c_str(), message);
     else std::fprintf(stream, "%s\n", message);
     *__error_nid_postfix() = saved;
+}
+
+[[noreturn]] void APS5_VABI _ZNSt3__122__libcpp_verbose_abortEPKcz_nid_postfix(const char* format, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+#else
+    std::va_list args;
+    va_start(args, format);
+#endif
+    vfprintf_nid_postfix(&_Stderr_nid_postfix, format, reinterpret_cast<VaList*>(args));
+#ifdef _WIN32
+    __builtin_sysv_va_end(args);
+#else
+    va_end(args);
+#endif
+    fflush_nid_postfix(&_Stderr_nid_postfix);
+    std::abort();
 }
 }

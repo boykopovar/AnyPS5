@@ -22,8 +22,16 @@ void* operator new(std::size_t bytes) {
     if (void* pointer = std::malloc(bytes ? bytes : 1)) return pointer;
     throw std::bad_alloc();
 }
+void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept {
+    if (bytes != 0 && failHostAllocationOfSize == bytes) {
+        failHostAllocationOfSize = 0;
+        return nullptr;
+    }
+    return std::malloc(bytes ? bytes : 1);
+}
 void operator delete(void* pointer) noexcept { std::free(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+void operator delete(void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
 #endif
 
 using Bn = Bignum;
@@ -257,6 +265,16 @@ static void CheckHostAllocationFault(bool provided, bool freeThrows) {
     BN_free_nid_postfix(original);
     Require(heapBlocks == std::array<HeapBlock, 16>{});
 }
+
+static void CheckNothrowAllocationFault() {
+    ResetTracking();
+    failHostAllocationOfSize = sizeof(BnCtx);
+    BnCtx* const ctx = BN_CTX_new_nid_postfix();
+    const bool consumed = failHostAllocationOfSize == 0;
+    failHostAllocationOfSize = 0;
+    Require(!ctx && consumed && callocCalls == 0);
+    Require(heapBlocks == std::array<HeapBlock, 16>{});
+}
 #endif
 
 static void CleanupFailures() {
@@ -269,7 +287,15 @@ static void CleanupFailures() {
     CheckHostAllocationFault(false, false);
     CheckHostAllocationFault(false, true);
     CheckHostAllocationFault(true, false);
+    CheckNothrowAllocationFault();
 #endif
+    ResetTracking();
+    BnCtx* const ctx = BN_CTX_new_nid_postfix();
+    Require(ctx != nullptr);
+    BN_CTX_start_nid_postfix(ctx);
+    BN_CTX_end_nid_postfix(ctx);
+    BN_CTX_free_nid_postfix(ctx);
+    Require(heapBlocks == std::array<HeapBlock, 16>{});
     for (Operation operation : {Operation::Binary, Operation::Hexadecimal, Operation::Inverse}) {
         for (bool throwing : {false, true}) {
             CheckFault(operation, false, 1, throwing, false);
@@ -471,6 +497,20 @@ int main(int argc, char** argv) {
             BN_free_nid_postfix(operand);
             BN_free_nid_postfix(modulus);
         }
+        constexpr std::uint64_t divisionByZero = ((3u & 0xffu) << 24) | ((0xfffu & 0xfffu) << 12) | (103u & 0xfffu);
+        Bn* zero = FromHex("0");
+        for (const char* text : {"3", "0", "-3"}) {
+            Bn* operand = FromHex(text);
+            for (bool supplied : {false, true}) {
+                Require(BN_set_word_nid_postfix(r, 0x1234) == 1);
+                Require(BN_mod_inverse_nid_postfix(supplied ? r : nullptr, operand, zero, ctx) == nullptr);
+                Require(Hex(r) == "1234");
+                Require(ERR_get_error_nid_postfix() == divisionByZero);
+                Require(ERR_get_error_nid_postfix() == 0);
+            }
+            BN_free_nid_postfix(operand);
+        }
+        BN_free_nid_postfix(zero);
         Bn* allocated = BN_mod_inverse_nid_postfix(nullptr, three, eleven, ctx);
         Require(allocated && Hex(allocated) == "4");
         Bn* minusThree = FromHex("-3");

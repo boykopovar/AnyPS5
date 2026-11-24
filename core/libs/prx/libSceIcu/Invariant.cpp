@@ -40,6 +40,11 @@ char* APS5_VABI u_austrcpy_nid_postfix(char* chars, const char16_t* units) {
 }
 
 char* APS5_VABI u_austrncpy_nid_postfix(char* chars, const char16_t* units, std::int32_t length) {
+    if (length < 0) {
+        if (!chars) APS5_INVALID_ARG_EX;
+        chars[0] = 0;
+        return chars;
+    }
     if (length > 0 && (!chars || !units)) APS5_INVALID_ARG_EX;
     if (length <= 0) return chars;
     std::int32_t copied = 0;
@@ -50,6 +55,35 @@ char* APS5_VABI u_austrncpy_nid_postfix(char* chars, const char16_t* units, std:
     for (std::int32_t index = 0; index < copied; ++index) chars[index] = static_cast<char>(units[index]);
     if (copied < length) chars[copied] = 0;
     return chars;
+}
+
+char16_t* APS5_VABI u_uastrcpy_nid_postfix(char16_t* units, const char* chars) {
+    if (!units || !chars) APS5_INVALID_ARG_EX;
+    std::int32_t length = 0;
+    while (chars[length] != 0) {
+        if (static_cast<std::uint8_t>(chars[length]) > 0x7f) NotImplemented_nid_no_patch(__func__);
+        ++length;
+    }
+    for (std::int32_t index = 0; index <= length; ++index) units[index] = static_cast<char16_t>(chars[index]);
+    return units;
+}
+
+char16_t* APS5_VABI u_uastrncpy_nid_postfix(char16_t* units, const char* chars, std::int32_t length) {
+    if (length < 0) {
+        if (!units) APS5_INVALID_ARG_EX;
+        units[0] = 0;
+        return units;
+    }
+    if (length > 0 && (!units || !chars)) APS5_INVALID_ARG_EX;
+    if (length <= 0) return units;
+    std::int32_t copied = 0;
+    while (copied < length && chars[copied] != 0) {
+        if (static_cast<std::uint8_t>(chars[copied]) > 0x7f) NotImplemented_nid_no_patch(__func__);
+        ++copied;
+    }
+    for (std::int32_t index = 0; index < copied; ++index) units[index] = static_cast<char16_t>(chars[index]);
+    if (copied < length) units[copied] = 0;
+    return units;
 }
 
 }

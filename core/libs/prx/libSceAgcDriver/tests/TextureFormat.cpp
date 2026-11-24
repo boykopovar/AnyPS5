@@ -84,6 +84,7 @@ int channelLowBit(VkFormat format, VkComponentSwizzle channel) {
         case VK_FORMAT_R5G5B5A1_UNORM_PACK16: return std::array{11, 6, 1, 0}[index];
         case VK_FORMAT_A1R5G5B5_UNORM_PACK16: return std::array{10, 5, 0, 15}[index];
         case VK_FORMAT_B4G4R4A4_UNORM_PACK16: return std::array{4, 8, 12, 0}[index];
+        case VK_FORMAT_R4G4_UNORM_PACK8: return std::array{4, 0, -1, -1}[index];
         default: throw std::runtime_error("no channel layout for packed format " + std::to_string(format));
     }
 }
@@ -118,7 +119,7 @@ void scaledFormatTests() {
 }
 
 void packedChannelTests() {
-    constexpr std::array<std::pair<std::uint32_t, std::array<int, 4>>, 4> packed{{{133u, {0, 5, 11, 0}}, {134u, {0, 5, 10, 15}}, {135u, {0, 1, 6, 11}}, {136u, {0, 4, 8, 12}}}};
+    constexpr std::array<std::pair<std::uint32_t, std::array<int, 4>>, 5> packed{{{133u, {0, 5, 11, 0}}, {134u, {0, 5, 10, 15}}, {135u, {0, 1, 6, 11}}, {136u, {0, 4, 8, 12}}, {137u, {0, 4, -1, -1}}}};
     constexpr std::array components{VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
     for (const auto& [format, lowBits] : packed) {
         for (std::size_t component = 0; component < components.size(); ++component) {
@@ -203,6 +204,10 @@ void convertedDccClearTests() {
         resource.format = format;
         return TextureClearKeys(resource, keys.size() * 256u);
     };
+    reject([&] { read(131u, 0x40); }, "DCC clear code 0001 of converted texture format 131");
+    reject([&] { read(131u, 0x80); }, "DCC clear code 1110 of converted texture format 131");
+    reject([&] { read(131u, 0xc0); }, "DCC clear code 1111 of converted texture format 131");
+    Require(read(131u, 0x00) == DccKeys::Clear0000, "format 131 must keep its 0000 DCC clear code");
     for (const std::uint32_t format : {30u, 34u, 37u, 41u, 44u, 48u}) {
         reject([&] { read(format, 0x40); }, "DCC clear code 0001 of converted texture format " + std::to_string(format));
         reject([&] { read(format, 0x80); }, "DCC clear code 1110 of converted texture format " + std::to_string(format));
@@ -371,6 +376,10 @@ void RunTextureFormatTests() {
     Require(BytesPerElement(34) == BytesPerElement(20), "remapped format 34 must share the width of format 20");
     Require(ResolveTextureFormat(30) == ResolveTextureFormat(20), "format 30 must remap to format 20");
     Require(BytesPerElement(30) == 4u, "remapped format 30 must be four bytes wide");
+    Require(ResolveTextureFormat(131) == VK_FORMAT_R32_UINT && BytesPerElement(131) == 4u && !IsBlockCompressed(131), "format 131 must be held in a four-byte R32_UINT image");
+    Require(IsConvertedTextureFormat(131) && !IsRepackedTextureFormat(131), "format 131 must be converted in the shader and have no repacked copy");
+    Require(ShaderRecompiler::SampledTextureNumericClass(ShaderRecompiler::IrBufferFormat::Format6E4Float) == ShaderRecompiler::IrTextureNumericClass::Uint, "format 131 must be read as unsigned integer words");
+    Require(ShaderRecompiler::RemapTextureFormat(ShaderRecompiler::IrBufferFormat::Format6E4Float) == ShaderRecompiler::IrBufferFormat::Format32UInt && ShaderRecompiler::RemapStorageTextureFormat(ShaderRecompiler::IrBufferFormat::Format6E4Float) == ShaderRecompiler::IrBufferFormat::Format32UInt, "format 131 must remap to a 32-bit unsigned integer format");
     for (std::uint32_t format = 0; format < 512u; ++format) {
         const auto remapped = static_cast<std::uint32_t>(ShaderRecompiler::RemapTextureFormat(static_cast<ShaderRecompiler::IrBufferFormat>(format)));
         if (remapped == format) continue;
