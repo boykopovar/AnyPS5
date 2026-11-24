@@ -1588,10 +1588,166 @@ static unsigned char GuestEntryType(int fd, const struct dirent& entry, bool fol
     return entry.d_type;
 }
 
-int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
-    if (GuestSockets::IsOpen(fd) || File::IsArchivedFile(fd)) return SceErrorFromErrno(GUEST_EINVAL);
+enum class StagedEntry { Added, NoRoom, NameTooLong };
+
+static StagedEntry StageEntry(int fd, const struct dirent& entry, bool followLinks, int nbytes, std::string& staged) {
     constexpr std::size_t GuestHeaderBytes = 8;
     constexpr std::size_t GuestMaxName = 255;
+    const std::size_t nameLength = entry.d_namlen;
+    if (nameLength > GuestMaxName) return StagedEntry::NameTooLong;
+    const auto record = (GuestHeaderBytes + nameLength + 1 + 3) & ~std::size_t{3};
+    const auto written = staged.size();
+    if (written + record > static_cast<std::size_t>(nbytes)) return StagedEntry::NoRoom;
+    staged.resize(written + record);
+    char* out = staged.data() + written;
+    const auto fileNumber = static_cast<std::uint32_t>(entry.d_ino);
+    const auto recordLength = static_cast<std::uint16_t>(record);
+    std::memcpy(out, &fileNumber, sizeof(fileNumber));
+    std::memcpy(out + 4, &recordLength, sizeof(recordLength));
+    out[6] = static_cast<char>(GuestEntryType(fd, entry, followLinks));
+    out[7] = static_cast<char>(static_cast<std::uint8_t>(nameLength));
+    std::memcpy(out + GuestHeaderBytes, entry.d_name, nameLength);
+    return StagedEntry::Added;
+}
+
+static std::size_t StageEntries(int fd, const std::vector<char>& entries, bool followLinks, int nbytes, std::string& staged, StagedEntry& stopped) {
+    std::size_t consumed = 0;
+    stopped = StagedEntry::Added;
+    while (consumed < entries.size()) {
+        const auto* entry = reinterpret_cast<const struct dirent*>(entries.data() + consumed);
+        stopped = StageEntry(fd, *entry, followLinks, nbytes, staged);
+        if (stopped != StagedEntry::Added) break;
+        consumed += entry->d_reclen;
+    }
+    return consumed;
+}
+
+static bool WellFormedHostEntries(const std::vector<char>& entries) {
+    constexpr std::size_t HeaderBytes = offsetof(struct dirent, d_name);
+    for (std::size_t offset = 0; offset < entries.size();) {
+        if (entries.size() - offset < HeaderBytes) return false;
+        const auto* entry = reinterpret_cast<const struct dirent*>(entries.data() + offset);
+        if (entry->d_reclen < HeaderBytes + entry->d_namlen + 1 || entry->d_reclen > entries.size() - offset) return false;
+        offset += entry->d_reclen;
+    }
+    return true;
+}
+
+static bool RefusedHostRead(int error, const std::vector<char>& entries, std::size_t request) {
+    if (error == EINVAL) return true;
+    if (error != 0) return false;
+    return !WellFormedHostEntries(entries) || (entries.empty() && request < sizeof(struct dirent));
+}
+
+static int UnstagedEntryError(StagedEntry stopped) {
+    return stopped == StagedEntry::NameTooLong ? static_cast<int>(0x80020000u | GUEST_ENAMETOOLONG) : SceErrorFromErrno(GUEST_EINVAL);
+}
+
+static int ReadHostDirectory(int fd, std::vector<char>& entries, std::size_t bytes, off_t& base) {
+    entries.resize(bytes);
+    const auto read = ::__getdirentries64(fd, entries.data(), bytes, &base);
+    const int error = errno;
+    entries.resize(read < 0 ? 0 : static_cast<std::size_t>(read));
+    return read < 0 ? error : 0;
+}
+
+static int RereadHostDirectory(int fd, off_t base, std::size_t bytes, std::vector<char>& entries) {
+    if (::lseek(fd, base, SEEK_SET) < 0) return errno;
+    off_t rereadBase = 0;
+    return ReadHostDirectory(fd, entries, bytes, rereadBase);
+}
+
+static int ReadHostDirectoryLeftovers(int fd, char* buf, int nbytes, int64_t* basep, File::HostDirectoryLeftovers& leftovers) {
+    std::string staged;
+    StagedEntry stopped = StagedEntry::Added;
+    const auto consumed = StageEntries(fd, leftovers.entries, InsideApp0(fd), nbytes, staged, stopped);
+    if (staged.empty()) return UnstagedEntryError(stopped);
+    if (!GuestCopyOut_nid_no_patch(buf, staged.data(), staged.size()) ||
+        (basep != nullptr && !GuestCopyOut_nid_no_patch(basep, &leftovers.base, sizeof(leftovers.base))))
+        return SceErrorFromErrno(GUEST_EFAULT);
+    leftovers.entries.erase(leftovers.entries.begin(), leftovers.entries.begin() + static_cast<std::ptrdiff_t>(consumed));
+    return static_cast<int>(staged.size());
+}
+
+static int ReadHostDirectoryEntries(int fd, char* buf, int nbytes, int64_t* basep) {
+    if (const auto leftovers = File::FindHostDirectoryLeftovers(fd)) {
+        std::lock_guard lock(leftovers->mutex);
+        if (!leftovers->entries.empty()) return ReadHostDirectoryLeftovers(fd, buf, nbytes, basep, *leftovers);
+    }
+    constexpr std::size_t MaxHostChunk = 64 * 1024;
+    constexpr std::size_t MinHostChunk = 48;
+    const bool followLinks = InsideApp0(fd);
+    std::string staged;
+    std::vector<char> entries;
+    std::vector<char> leftovers;
+    std::optional<off_t> start;
+    off_t leftoversBase = 0;
+    for (;;) {
+        const auto room = static_cast<std::size_t>(nbytes) - staged.size();
+        if (!staged.empty() && room < MinHostChunk) break;
+        auto request = std::clamp(room, MinHostChunk, MaxHostChunk);
+        off_t base = 0;
+        int error = ReadHostDirectory(fd, entries, request, base);
+        while (staged.empty() && request < MaxHostChunk && RefusedHostRead(error, entries, request)) {
+            if (error == 0) ::lseek(fd, base, SEEK_SET);
+            request = std::min(std::max(request * 2, error == 0 && entries.empty() ? sizeof(struct dirent) : std::size_t{0}), MaxHostChunk);
+            error = ReadHostDirectory(fd, entries, request, base);
+        }
+        if (error != 0) {
+            if (staged.empty()) return SceErrorFromErrno(error);
+            break;
+        }
+        if (!WellFormedHostEntries(entries)) {
+            ::lseek(fd, base, SEEK_SET);
+            if (staged.empty()) throw std::runtime_error("sceKernelGetdirentries: the host returned a malformed directory record for a 64 KiB read");
+            break;
+        }
+        if (!start) start = base;
+        if (entries.empty()) break;
+        const auto stagedBefore = staged.size();
+        StagedEntry stopped = StagedEntry::Added;
+        auto consumed = StageEntries(fd, entries, followLinks, nbytes, staged, stopped);
+        if (consumed == entries.size()) continue;
+        if (consumed == 0 || stagedBefore != 0) {
+            ::lseek(fd, base, SEEK_SET);
+            staged.resize(stagedBefore);
+            if (staged.empty()) return UnstagedEntryError(stopped);
+            break;
+        }
+        staged.resize(stagedBefore);
+        if (consumed >= MinHostChunk && RereadHostDirectory(fd, base, consumed, entries) == 0 && !entries.empty() &&
+            WellFormedHostEntries(entries)) {
+            consumed = StageEntries(fd, entries, followLinks, nbytes, staged, stopped);
+            if (consumed == entries.size()) continue;
+            staged.resize(stagedBefore);
+        }
+        if (const int reread = RereadHostDirectory(fd, base, request, entries); reread != 0) return SceErrorFromErrno(reread);
+        if (!WellFormedHostEntries(entries)) {
+            ::lseek(fd, base, SEEK_SET);
+            throw std::runtime_error("sceKernelGetdirentries: the host returned a malformed directory record when read again");
+        }
+        consumed = StageEntries(fd, entries, followLinks, nbytes, staged, stopped);
+        if (consumed == entries.size()) continue;
+        if (staged.empty()) {
+            ::lseek(fd, base, SEEK_SET);
+            return UnstagedEntryError(stopped);
+        }
+        leftovers.assign(entries.begin() + static_cast<std::ptrdiff_t>(consumed), entries.end());
+        leftoversBase = base;
+        break;
+    }
+    const auto guestBase = static_cast<int64_t>(*start);
+    if ((!staged.empty() && !GuestCopyOut_nid_no_patch(buf, staged.data(), staged.size())) ||
+        (basep != nullptr && !GuestCopyOut_nid_no_patch(basep, &guestBase, sizeof(guestBase)))) {
+        ::lseek(fd, *start, SEEK_SET);
+        return SceErrorFromErrno(GUEST_EFAULT);
+    }
+    if (!leftovers.empty()) File::KeepHostDirectoryLeftovers(fd, std::move(leftovers), static_cast<int64_t>(leftoversBase));
+    return static_cast<int>(staged.size());
+}
+
+int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
+    if (GuestSockets::IsOpen(fd) || File::IsArchivedFile(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     const bool tracked = File::IsDirectoryDescriptor(fd);
     struct stat status{};
     if (!tracked && ::fstat(fd, &status) != 0) return SceErrorFromErrno(errno);
@@ -1599,62 +1755,10 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
     if (nbytes <= 0) return SceErrorFromErrno(GUEST_EINVAL);
     if (tracked) return File::ReadDirectoryDescriptor(fd, buf, nbytes, basep);
-    const off_t base = ::lseek(fd, 0, SEEK_CUR);
-    if (base < 0) return SceErrorFromErrno(errno);
-    if (::lseek(fd, 0, SEEK_SET) < 0) return SceErrorFromErrno(errno);
-    std::vector<char> listing;
-    for (;;) {
-        constexpr std::size_t Chunk = 64 * 1024;
-        const auto start = listing.size();
-        listing.resize(start + Chunk);
-        off_t position = 0;
-        const auto read = ::__getdirentries64(fd, listing.data() + start, Chunk, &position);
-        if (read < 0) {
-            const int error = errno;
-            ::lseek(fd, base, SEEK_SET);
-            return SceErrorFromErrno(error);
-        }
-        listing.resize(start + static_cast<std::size_t>(read));
-        if (read == 0) break;
-    }
-    const bool followLinks = InsideApp0(fd);
-    std::string staged;
-    std::size_t written = 0;
-    const auto finish = [&](off_t resumeAt, int result) {
-        const auto guestBase = static_cast<int64_t>(base);
-        if ((written != 0 && !GuestCopyOut_nid_no_patch(buf, staged.data(), written)) ||
-            (basep != nullptr && !GuestCopyOut_nid_no_patch(basep, &guestBase, sizeof(guestBase)))) {
-            ::lseek(fd, base, SEEK_SET);
-            return SceErrorFromErrno(GUEST_EFAULT);
-        }
-        if (::lseek(fd, resumeAt, SEEK_SET) < 0) return SceErrorFromErrno(errno);
-        return result;
-    };
-    off_t index = 0;
-    for (std::size_t offset = 0; offset < listing.size(); ++index) {
-        const auto* entry = reinterpret_cast<const struct dirent*>(listing.data() + offset);
-        if (entry->d_reclen == 0) break;
-        offset += entry->d_reclen;
-        if (index < base) continue;
-        const auto nameLength = std::strlen(entry->d_name);
-        const auto record = (GuestHeaderBytes + nameLength + 1 + 3) & ~std::size_t{3};
-        if (nameLength > GuestMaxName || written + record > static_cast<std::size_t>(nbytes)) {
-            if (written != 0) return finish(index, static_cast<int>(written));
-            return finish(index, nameLength > GuestMaxName ? static_cast<int>(0x80020000u | GUEST_ENAMETOOLONG) : SceErrorFromErrno(GUEST_EINVAL));
-        }
-        staged.resize(written + record);
-        char* out = staged.data() + written;
-        const auto fileNumber = static_cast<std::uint32_t>(entry->d_ino);
-        const auto recordLength = static_cast<std::uint16_t>(record);
-        const auto nameBytes = static_cast<std::uint8_t>(nameLength);
-        std::memcpy(out, &fileNumber, sizeof(fileNumber));
-        std::memcpy(out + 4, &recordLength, sizeof(recordLength));
-        out[6] = static_cast<char>(GuestEntryType(fd, *entry, followLinks));
-        out[7] = static_cast<char>(nameBytes);
-        std::memcpy(out + GuestHeaderBytes, entry->d_name, nameLength);
-        written += record;
-    }
-    return finish(index, static_cast<int>(written));
+    const int savedErrno = errno;
+    const int result = ReadHostDirectoryEntries(fd, buf, nbytes, basep);
+    if (result >= 0) errno = savedErrno;
+    return result;
 }
 #else
 static unsigned char GuestEntryType(int fd, const struct dirent64& entry, bool followLinks) {

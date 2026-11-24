@@ -3,7 +3,10 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <optional>
+#include <vector>
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 struct FileStat;
@@ -30,6 +33,17 @@ void ForgetDirectoryDescriptor(int fd);
 void DuplicateDirectoryDescriptor(int from, int to);
 std::optional<std::int64_t> SeekDirectoryDescriptor(int fd, std::int64_t offset, int whence);
 int ReadDirectoryDescriptor(int fd, char* buf, int nbytes, std::int64_t* base = nullptr);
+
+#ifdef __APPLE__
+struct HostDirectoryLeftovers {
+    std::mutex mutex;
+    std::vector<char> entries;
+    std::int64_t base = 0;
+};
+
+std::shared_ptr<HostDirectoryLeftovers> FindHostDirectoryLeftovers(int fd);
+void KeepHostDirectoryLeftovers(int fd, std::vector<char> entries, std::int64_t base);
+#endif
 
 }
 
