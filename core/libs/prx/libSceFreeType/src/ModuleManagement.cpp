@@ -6,7 +6,6 @@
 #include FT_MODULE_H
 #include FT_RENDER_H
 
-#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <limits>
