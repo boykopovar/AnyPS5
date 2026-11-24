@@ -137,7 +137,6 @@ int APS5_VABI _ZN7WebCore15JSDOMWindowBaseC2ERN3JSC2VMEPNS1_9StructureEON3WTF6Re
 int APS5_VABI _ZN7WebCore24RotateTransformOperationC1EddddNS_18TransformOperation13OperationTypeE();
 int APS5_VABI _ZN7WebCore11MediaSampleD0Ev();
 int APS5_VABI libSceNKWebKitLegacyUnknown_2xwKcxPCnpA_nid_no_patch();
-int APS5_VABI WKContextTerminateNetworkProcess();
 int APS5_VABI _ZN7WebCore13rangesOverlapEPKNS_5RangeES2_();
 int APS5_VABI _ZN7WebCore9FrameView12setMediaTypeERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore26IdentityTransformOperationD1Ev();

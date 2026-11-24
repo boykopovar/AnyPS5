@@ -191,7 +191,6 @@ int APS5_VABI WKContextGetGeolocationManager();
 int APS5_VABI WKContextGetGlobalStatistics();
 int APS5_VABI WKContextGetIconDatabase();
 int APS5_VABI WKContextGetKeyValueStorageManager();
-int APS5_VABI WKContextGetMaximumNumberOfProcesses();
 int APS5_VABI WKContextGetNotificationManager();
 int APS5_VABI WKContextGetResourceCacheManager();
 int APS5_VABI WKContextGetWebsiteDataStore();

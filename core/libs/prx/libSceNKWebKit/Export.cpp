@@ -576,10 +576,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_2xwKcxPCnpA_nid_no_patch() {
 }
 APS5_EXPORT("2xwKcxPCnpA", libSceNKWebKitLegacyUnknown_2xwKcxPCnpA_nid_no_patch);
 
-int APS5_VABI WKContextTerminateNetworkProcess() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore13rangesOverlapEPKNS_5RangeES2_() {
     NotImplemented_nid_no_patch(__func__);
 }

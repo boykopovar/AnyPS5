@@ -641,6 +641,14 @@ void APS5_VABI WKContextRegisterURLSchemeAsSecure(const void* contextRef, const 
 void APS5_VABI WKContextClearCurrentModifierStateForTesting(const void* contextRef);
 void APS5_VABI WKContextSetUseSeparateServiceWorkerProcess(const void* contextRef, bool useSeparateServiceWorkerProcess);
 void APS5_VABI WKContextWarmInitialProcess(const void* contextRef);
+std::uint32_t APS5_VABI WKContextGetMaximumNumberOfProcesses(const void* contextRef);
+void APS5_VABI WKContextSetMaximumNumberOfProcesses(const void* contextRef, std::uint32_t numberOfProcesses);
+void APS5_VABI WKContextSetProcessModel(const void* contextRef, std::uint32_t processModel);
+void APS5_VABI WKContextSetUsesNetworkProcess(const void* contextRef, bool usesNetworkProcess);
+void APS5_VABI WKContextSetDiskCacheSpeculativeValidationEnabled(const void* contextRef, bool enabled);
+void APS5_VABI WKContextSetCanHandleHTTPSServerTrustEvaluation(const void* contextRef, bool value);
+void APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier(const void* contextRef, const void* bundleIdentifierRef);
+void APS5_VABI WKContextTerminateNetworkProcess(const void* contextRef);
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, void (*callback)(const void*, const void*, void*));
