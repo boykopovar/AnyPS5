@@ -5,7 +5,6 @@
 #include "prx/libc/include/SonyCrt.hpp"
 #include <cfenv>
 #include <climits>
-#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
