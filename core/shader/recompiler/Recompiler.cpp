@@ -1123,8 +1123,62 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
     return materialized;
 }
 
+std::vector<std::byte> specializedCacheKey(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    constexpr std::string_view tag = "specialized-spirv";
+    std::vector<std::byte> key(tag.size());
+    std::memcpy(key.data(), tag.data(), tag.size());
+    const auto put = [&key](std::uint64_t value) {
+        const auto offset = key.size();
+        key.resize(offset + sizeof(value));
+        std::memcpy(key.data() + offset, &value, sizeof(value));
+    };
+    const auto content = artifact.spirv.ContentHash();
+    put(content.low);
+    put(content.high);
+    put(artifact.vertexInputPatches.size());
+    put(artifact.vertexInputs.size());
+    put(artifact.hostSubgroupSize);
+    put(artifact.bdaAbiVersion);
+    put(artifact.runtimeAbiVersion);
+    put(classes.size());
+    for (const auto value : classes) put(value);
+    put(constants.size());
+    for (const auto& constant : constants) put((static_cast<std::uint64_t>(constant.id) << 32u) | constant.value);
+    put(target.vulkanVersion);
+    put(target.spirvVersion);
+    put(target.subgroupSize);
+    put(target.bdaAbiVersion);
+    put(target.fragmentShaderBarycentricEnabled);
+    for (const auto value : target.maxWorkgroupSize) put(value);
+    put(target.maxWorkgroupInvocations);
+    put(target.maxWorkgroupSharedMemoryBytes);
+    put(target.featureDigest[0]);
+    put(target.featureDigest[1]);
+    put(target.mesh.has_value());
+    if (const auto& mesh = target.mesh) {
+        for (const auto value : mesh->maxWorkgroupSize) put(value);
+        for (const auto value : {mesh->maxWorkgroupInvocations, mesh->maxSharedMemoryBytes, mesh->maxOutputVertices, mesh->maxOutputPrimitives, mesh->maxOutputComponents, mesh->maxOutputMemoryBytes, mesh->outputPerVertexGranularity, mesh->outputPerPrimitiveGranularity}) put(value);
+    }
+    put(target.tessellation.has_value());
+    if (const auto& tessellation = target.tessellation) {
+        for (const auto value : {tessellation->maxPatchSize, tessellation->maxControlPerVertexInputComponents, tessellation->maxControlPerVertexOutputComponents, tessellation->maxControlPerPatchOutputComponents, tessellation->maxControlTotalOutputComponents, tessellation->maxEvaluationInputComponents, tessellation->maxEvaluationOutputComponents}) put(value);
+    }
+    return key;
+}
+
+std::vector<std::uint32_t> cachedSpecializeWords(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    static const bool enabled = std::getenv("APS5_NO_SPECIALIZED_CACHE") == nullptr && ShaderDiskCache::Enabled();
+    if (!enabled) return specializeWords(artifact, classes, constants, target);
+    auto key = specializedCacheKey(artifact, classes, constants, target);
+    std::vector<std::uint32_t> words;
+    if (ShaderDiskCache::LoadSpecialized(key, words)) return words;
+    words = specializeWords(artifact, classes, constants, target);
+    ShaderDiskCache::StoreSpecialized(std::move(key), words);
+    return words;
+}
+
 SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
-    auto materialized = specializeWords(artifact, classes, constants, target);
+    auto materialized = cachedSpecializeWords(artifact, classes, constants, target);
     auto module = std::make_shared<SpecializedModule>();
     std::map<std::uint32_t, std::uint32_t> supplied;
     for (const auto& constant : constants) supplied.emplace(constant.id, constant.value);

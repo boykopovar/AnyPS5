@@ -1225,6 +1225,39 @@ void verifyStore() {
     require(ShaderDiskCache::Load(key, loaded), "a rewritten entry does not load");
 }
 
+void verifySpecializedStore() {
+    require(ShaderDiskCache::Enabled(), "the disk cache is not enabled");
+    const std::vector<std::byte> key{std::byte{0x73}, std::byte{0x70}, std::byte{0x65}, std::byte{0x63}, std::byte{0x01}};
+    auto other = key;
+    other.back() = std::byte{0x02};
+    const std::vector<std::uint32_t> words{0x07230203u, 0x00010600u, 0u, 16u, 0u, 0x00020011u, 1u};
+    const auto before = ShaderDiskCache::Totals();
+    std::vector<std::uint32_t> loaded;
+    require(!ShaderDiskCache::LoadSpecialized(key, loaded), "a specialized module loads before it was stored");
+    ShaderDiskCache::StoreSpecialized(key, words);
+    ShaderDiskCache::Flush();
+    require(ShaderDiskCache::Totals().specializedWrites == before.specializedWrites + 1, "the store did not write the specialized module");
+    require(ShaderDiskCache::LoadSpecialized(key, loaded) && loaded == words, "a stored specialized module does not load back unchanged");
+    require(!ShaderDiskCache::LoadSpecialized(other, loaded), "another key loads the stored specialized module");
+    const auto after = ShaderDiskCache::Totals();
+    require(after.specializedHits == before.specializedHits + 1 && after.specializedMisses == before.specializedMisses + 2, "the specialized loads were not counted");
+    require(after.writes == before.writes && after.planWrites == before.planWrites, "a specialized module was counted as another entry kind");
+
+    const auto path = ShaderDiskCache::EntryDirectory() / ShaderDiskCache::EntryName(key);
+    std::vector<std::byte> file;
+    require(ReadWholeFile(path, file), "cannot read the specialized entry back");
+#ifdef _WIN32
+    if (PosixReplaceUnsupported(path.parent_path())) return;
+#endif
+    require(WriteFileAtomically(path, std::span(file).first(file.size() - 2)), "cannot truncate the specialized entry");
+    require(!ShaderDiskCache::LoadSpecialized(key, loaded), "a truncated specialized entry loads");
+    auto corrupt = file;
+    corrupt[corrupt.size() - 3] ^= std::byte{0x40};
+    require(WriteFileAtomically(path, corrupt), "cannot damage the specialized entry");
+    require(!ShaderDiskCache::LoadSpecialized(key, loaded), "a corrupt specialized entry loads");
+    require(ShaderDiskCache::Totals().specializedLoadFailures == after.specializedLoadFailures + 2, "the rejected specialized entries were not counted");
+}
+
 void verifyPersist() {
     SampleRequest sample;
     const auto key = sample.Key();
@@ -3075,6 +3108,7 @@ int main(int argc, char** argv) {
         verifyPlanKey();
         verifySharedPlans();
         verifyStore();
+        verifySpecializedStore();
         verifyPersist();
         verifyReleaseMapped();
         verifyAcrossProcesses(argv[0]);
