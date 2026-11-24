@@ -164,30 +164,30 @@ class DatabaseCacheTests(unittest.TestCase):
             for option in ("--name", "--symbol", "--na", "--sym"):
                 for json_output in (False, True):
                     with self.subTest(option=option, json_output=json_output):
-                        result = subprocess.run(
-                            [sys.executable, str(Path(nid_names.__file__)), option, "--db", directory,
-                             *(["--json"] if json_output else [])], capture_output=True, text=True)
-                        self.assertEqual(result.returncode, 0, result.stderr)
-                        self.assertEqual(result.stderr, "")
+                        with contextlib.redirect_stdout(io.StringIO()) as output, \
+                                contextlib.redirect_stderr(io.StringIO()) as error:
+                            code = nid_names.main([option, "--db", directory, *(["--json"] if json_output else [])])
+                        self.assertEqual(code, 0, error.getvalue())
+                        self.assertEqual(error.getvalue(), "")
                         if json_output:
-                            self.assertEqual(json.loads(result.stdout), {"symbols": []})
+                            self.assertEqual(json.loads(output.getvalue()), {"symbols": []})
                         else:
-                            self.assertEqual(result.stdout.split(), ["NAME", "NID"])
+                            self.assertEqual(output.getvalue().split(), ["NAME", "NID"])
 
     def test_empty_nid_filters_do_not_open_database(self):
         with tempfile.TemporaryDirectory() as directory:
             for option in ("--nid", "--ni"):
                 for json_output in (False, True):
                     with self.subTest(option=option, json_output=json_output):
-                        result = subprocess.run(
-                            [sys.executable, str(Path(nid_names.__file__)), option, "--db", directory,
-                             *(["--json"] if json_output else [])], capture_output=True, text=True, timeout=5)
-                        self.assertEqual(result.returncode, 0, result.stderr)
-                        self.assertEqual(result.stderr, "")
+                        with contextlib.redirect_stdout(io.StringIO()) as output, \
+                                contextlib.redirect_stderr(io.StringIO()) as error:
+                            code = nid_names.main([option, "--db", directory, *(["--json"] if json_output else [])])
+                        self.assertEqual(code, 0, error.getvalue())
+                        self.assertEqual(error.getvalue(), "")
                         if json_output:
-                            self.assertEqual(json.loads(result.stdout), {"db_entries": 0, "rows": []})
+                            self.assertEqual(json.loads(output.getvalue()), {"db_entries": 0, "rows": []})
                         else:
-                            self.assertIn("0 unknowns, 0 suggestions (0 names already in use)", result.stdout)
+                            self.assertIn("0 unknowns, 0 suggestions (0 names already in use)", output.getvalue())
 
     def test_environment_variable_selects_the_database_and_help_names_it(self):
         script = str(Path(nid_names.__file__))
