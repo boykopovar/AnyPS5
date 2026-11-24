@@ -242,6 +242,14 @@ void Validation(int file, int readOnly) {
     Require(aio_fsync_nid_postfix(OSync, &pipeSync) == -1 && Error() == Einval);
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
 
+    std::intptr_t semaphore = -1;
+    Require(ksem_init_nid_postfix(&semaphore, 0) == 0 && semaphore >= 0);
+    auto ksemRead = Request(static_cast<int>(semaphore), buffer, sizeof(buffer));
+    Require(aio_read_nid_postfix(&ksemRead) == -1 && Error() == Eopnotsupp && ksemRead.error == Eopnotsupp);
+    auto ksemSync = Request(static_cast<int>(semaphore), nullptr, 0);
+    Require(aio_fsync_nid_postfix(OSync, &ksemSync) == -1 && Error() == Einval);
+    Require(ksem_destroy_nid_postfix(semaphore) == 0);
+
     auto sync = Request(file, nullptr, 0);
     Require(aio_fsync_nid_postfix(0, &sync) == -1 && Error() == Einval);
     Require(aio_fsync_nid_postfix(ODsync, &sync) == -1 && Error() == Einval);

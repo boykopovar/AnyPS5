@@ -1,0 +1,5 @@
+# libSceJpegDec
+
+## change [sceJpegDecDecodeWithInputControl]
+
+- [sceJpegDecDecodeWithInputControl](../../../core/libs/prx/libSceJpegDec/Export.cpp) (libSceJpegDec): mode 1, formats 9/10, unlisted parse scales, decode without parse or at another scale throw. Y8 is unmeasured (see above). A missing frame header returns 0x80650012 on firmware 13.42; ParseHeader returns 0x80650010 or 0x80650002. The host reads through the first scan header and matches [13.42 callback counts](https://github.com/boykopovar/AnyPS5/pull/9760#issuecomment-6412520723) on testorig.jpg. Other valid layouts and native decode refill counts are unverified. Malformed SOS handling follows the bundled header reader, with no console comparison. Malformed input counts differ; the host does not model the 13.60 refill threshold of 0x3F0. Freeing work memory without Delete leaks the host input buffer. Reentrant calls reading the same stream throw; the console response is unknown. Delete or a new parse during a call leaves it reading its own stream.

@@ -1,5 +1,8 @@
+// Derived from Source/WebCore/platform/graphics/HEVCUtilities.cpp@c55364d53f971f63a709976f168d932d558b8909
+// Derived from Source/WTF/wtf/text/StringView.h@c55364d53f971f63a709976f168d932d558b8909
+// Derived from Source/WTF/wtf/text/StringToIntegerConversion.h@c55364d53f971f63a709976f168d932d558b8909
 /*
- * Copyright (C) 2018-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,7 +52,7 @@
  */
 
 /*
- * Copyright (C) 2018-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -74,14 +77,17 @@
  */
 
 #include "prx/libSceNKWebKit/include/DoViCodecParameters.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include <algorithm>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
 
 namespace {
 using namespace NKWebKit::WtfAbi;
-using WebCore::DoViParameters;
+using WebCore::DoViOptionalParameterSet;
+using WebCore::DoViParameterSet;
 
 struct View {
     StringView input;
@@ -94,8 +100,7 @@ struct View {
         if (length != text.size())
             return false;
         for (unsigned i = 0; i < length; ++i) {
-            auto c = At(i);
-            if (c >= 0x80 || (c | 0x20) != static_cast<unsigned char>(text[i]))
+            if (At(i) != static_cast<unsigned char>(text[i]))
                 return false;
         }
         return true;
@@ -116,11 +121,15 @@ struct View {
     }
 };
 
-bool IsWhitespace(char16_t c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
+bool IsSpaceOrNewline(char16_t c) {
+    if (c <= 0xFF)
+        return c == ' ' || (c >= '\t' && c <= '\r');
+    return c == 0x1680 || (c >= 0x2000 && c <= 0x200A) || c == 0x2028 || c == 0x205F || c == 0x3000;
+}
 
-std::optional<uint8_t> ParseInteger(View view) {
+std::optional<uint8_t> ToIntegralType(View view) {
     unsigned position = 0;
-    while (position < view.length && IsWhitespace(view.At(position)))
+    while (position < view.length && IsSpaceOrNewline(view.At(position)))
         ++position;
     if (position < view.length && view.At(position) == '+')
         ++position;
@@ -132,32 +141,33 @@ std::optional<uint8_t> ParseInteger(View view) {
         if (value > 255)
             return std::nullopt;
     } while (position < view.length && view.At(position) >= '0' && view.At(position) <= '9');
-    while (position < view.length && IsWhitespace(view.At(position)))
+    while (position < view.length && IsSpaceOrNewline(view.At(position)))
         ++position;
     if (position != view.length)
         return std::nullopt;
     return static_cast<uint8_t>(value);
 }
 
-std::optional<DoViParameters::Codec> ParseDoViCodecType(View string) {
-    using Codec = DoViParameters::Codec;
-    if (string.Equals("dva1")) return Codec::AVC1;
-    if (string.Equals("dvav")) return Codec::AVC3;
-    if (string.Equals("dvh1")) return Codec::HVC1;
-    if (string.Equals("dvhe")) return Codec::HEV1;
-    return std::nullopt;
+std::string_view codecStringForDoViCodecType(View codec)
+{
+    if (codec.Equals("dvhe")) return "hev1";
+    if (codec.Equals("dvh1")) return "hvc1";
+    if (codec.Equals("dvav")) return "avc3";
+    if (codec.Equals("dva1")) return "avc1";
+    return {};
 }
 
-std::optional<uint16_t> ProfileIDForAlphabeticDoViProfile(View profile) {
-    if (profile.Equals("dvav.se")) return 9;
-    if (profile.Equals("dvhe.dtb")) return 7;
+std::optional<unsigned short> profileIDForAlphabeticDoViProfile(View profile)
+{
     if (profile.Equals("dvhe.dtr")) return 4;
-    if (profile.Equals("dvhe.st")) return 8;
     if (profile.Equals("dvhe.stn")) return 5;
+    if (profile.Equals("dvhe.dtb")) return 7;
+    if (profile.Equals("dvhe.st")) return 8;
+    if (profile.Equals("dvav.se")) return 9;
     return std::nullopt;
 }
 
-static bool isValidDoViProfileID(uint16_t profileID)
+static bool isValidDoViProfileID(unsigned short profileID)
 {
     switch (profileID) {
     case 4:
@@ -171,7 +181,7 @@ static bool isValidDoViProfileID(uint16_t profileID)
     }
 }
 
-static std::optional<uint16_t> maximumLevelIDForDoViProfileID(uint16_t profileID)
+static std::optional<unsigned short> maximumLevelIDForDoViProfileID(unsigned short profileID)
 {
     switch (profileID) {
     case 4: return 9;
@@ -183,73 +193,79 @@ static std::optional<uint16_t> maximumLevelIDForDoViProfileID(uint16_t profileID
     }
 }
 
-static bool isValidProfileIDForCodec(uint16_t profileID, DoViParameters::Codec codec)
+static bool isValidProfileIDForCodecName(unsigned short profileID, std::string_view codecName)
 {
     if (profileID == 9)
-        return codec == DoViParameters::Codec::AVC1 || codec == DoViParameters::Codec::AVC3;
-    return codec == DoViParameters::Codec::HVC1 || codec == DoViParameters::Codec::HEV1;
+        return codecName == "avc1" || codecName == "avc3";
+    return codecName == "hvc1" || codecName == "hev1";
 }
 
-std::optional<DoViParameters> parseDoViCodecParameters(View codecView)
+DoViOptionalParameterSet parseDoViCodecParameters(View codecView)
 {
     auto codecSplit = codecView.Split('.');
     auto nextElement = codecSplit.begin();
     if (nextElement == codecSplit.end())
-        return std::nullopt;
+        return {};
 
-    DoViParameters parameters;
-
-    auto codec = ParseDoViCodecType(*nextElement);
-    if (!codec)
-        return std::nullopt;
-    parameters.codec = *codec;
+    const std::string_view codecName = codecStringForDoViCodecType(*nextElement);
+    if (codecName.empty())
+        return {};
 
     if (++nextElement == codecSplit.end())
-        return std::nullopt;
+        return {};
 
     auto profileID = *nextElement;
     if (!profileID.length)
-        return std::nullopt;
+        return {};
 
+    unsigned short bitstreamProfileID = 0;
     auto firstCharacter = profileID.At(0);
     if (firstCharacter == '0') {
-        auto bitstreamProfileID = ParseInteger(profileID);
-        if (!bitstreamProfileID)
-            return std::nullopt;
-        parameters.bitstreamProfileID = *bitstreamProfileID;
+        auto numericProfileID = ToIntegralType(profileID);
+        if (!numericProfileID)
+            return {};
+        bitstreamProfileID = *numericProfileID;
     } else {
-        auto bitstreamProfileID = ProfileIDForAlphabeticDoViProfile(codecView.Left(5 + profileID.length));
-        if (!bitstreamProfileID)
-            return std::nullopt;
-        parameters.bitstreamProfileID = *bitstreamProfileID;
+        auto alphabeticProfileID = profileIDForAlphabeticDoViProfile(codecView.Left(5 + profileID.length));
+        if (!alphabeticProfileID)
+            return {};
+        bitstreamProfileID = *alphabeticProfileID;
     }
 
-    if (!isValidDoViProfileID(parameters.bitstreamProfileID))
-        return std::nullopt;
+    if (!isValidDoViProfileID(bitstreamProfileID))
+        return {};
 
-    if (!isValidProfileIDForCodec(parameters.bitstreamProfileID, parameters.codec))
-        return std::nullopt;
+    if (!isValidProfileIDForCodecName(bitstreamProfileID, codecName))
+        return {};
 
     if (++nextElement == codecSplit.end())
-        return std::nullopt;
+        return {};
 
-    auto bitstreamLevelID = ParseInteger(*nextElement);
+    auto levelID = *nextElement;
+    if (!levelID.length)
+        return {};
+
+    auto bitstreamLevelID = ToIntegralType(levelID);
     if (!bitstreamLevelID)
-        return std::nullopt;
-    parameters.bitstreamLevelID = *bitstreamLevelID;
+        return {};
 
-    auto maximumLevelID = maximumLevelIDForDoViProfileID(parameters.bitstreamProfileID);
-    if (!maximumLevelID || parameters.bitstreamLevelID > *maximumLevelID)
-        return std::nullopt;
+    auto maximumLevelID = maximumLevelIDForDoViProfileID(bitstreamProfileID);
+    if (!maximumLevelID || *bitstreamLevelID > *maximumLevelID)
+        return {};
 
-    return parameters;
+    DoViParameterSet parameters {
+        _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(codecName.data()), static_cast<unsigned>(codecName.size())),
+        bitstreamProfileID,
+        *bitstreamLevelID,
+    };
+    return DoViOptionalParameterSet(std::move(parameters));
 }
 
 }  // namespace
 
-std::optional<WebCore::DoViParameters> APS5_VABI _ZN7WebCore24parseDoViCodecParametersERKN3WTF6StringE(const NKWebKit::WtfAbi::String& input) {
+WebCore::DoViOptionalParameterSet APS5_VABI _ZN7WebCore24parseDoViCodecParametersERKN3WTF6StringE(const NKWebKit::WtfAbi::String& input) {
     if (!input.impl)
-        return std::nullopt;
+        return {};
     if (input.impl->length && !input.impl->data)
         throw std::invalid_argument("DoVi codec string has null storage");
     return parseDoViCodecParameters({{input.impl->data, input.impl->length, !!(input.impl->hashAndFlags & 4)}, 0, input.impl->length});

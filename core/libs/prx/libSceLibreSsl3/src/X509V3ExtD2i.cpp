@@ -30,10 +30,12 @@ constexpr int WrongTag = 168;
 constexpr int InvalidObjectEncoding = 216;
 constexpr int InvalidBitStringBitsLeft = 220;
 constexpr int TypeNotPrimitive = 231;
+constexpr int NullIsWrongLength = 144;
 
 constexpr std::uint32_t IntegerTag = 2;
 constexpr std::uint32_t BitStringTag = 3;
 constexpr std::uint32_t OctetStringTag = 4;
+constexpr std::uint32_t NullTag = 5;
 constexpr std::uint32_t ObjectTag = 6;
 constexpr std::uint32_t EnumeratedTag = 10;
 constexpr std::uint32_t SequenceTag = 16;
@@ -62,6 +64,7 @@ enum class Decoder {
     Object,
     OcspNonce,
     AuthorityKeyId,
+    Null,
 };
 
 struct Method {
@@ -92,26 +95,26 @@ constexpr Method Methods[] = {
     {140, Decoder::Integer},
     {141, Decoder::Enumerated},
     {142, Decoder::GeneralizedTime},
-    {143, Decoder::Unsupported},
     {177, Decoder::Unsupported},
     {290, Decoder::Unsupported},
     {291, Decoder::Unsupported},
     {366, Decoder::OcspNonce},
     {367, Decoder::Unsupported},
     {368, Decoder::Unsupported},
-    {369, Decoder::Unsupported},
     {370, Decoder::GeneralizedTime},
     {371, Decoder::Unsupported},
     {398, Decoder::Unsupported},
     {401, Decoder::Unsupported},
     {430, Decoder::Object},
-    {663, Decoder::Unsupported},
     {666, Decoder::Unsupported},
     {747, Decoder::Unsupported},
     {748, Decoder::Integer},
     {770, Decoder::Unsupported},
     {771, Decoder::Unsupported},
     {857, Decoder::Unsupported},
+    {1018, Decoder::Unsupported},
+    {1019, Decoder::Null},
+    {1021, Decoder::Unsupported},
 };
 
 static_assert(sizeof(Methods) / sizeof(Methods[0]) == 42);
@@ -371,9 +374,38 @@ void* NewObject(std::span<const unsigned char> content) {
     return object;
 }
 
+void* NewNull(std::span<const unsigned char> value) {
+    Header header;
+    if (!ReadIdentifier(value, header)) {
+        PutHeaderError(BadObjectHeader);
+        return nullptr;
+    }
+    if (header.tagClass != 0 || header.tag != NullTag) {
+        PutHeaderError(WrongTag);
+        return nullptr;
+    }
+    if (!ReadLength(value, header) || (header.indefinite && !header.constructed)) {
+        PutHeaderError(BadObjectHeader);
+        return nullptr;
+    }
+    if (!header.indefinite && header.length > value.size()) {
+        PutHeaderError(TooLong);
+        return nullptr;
+    }
+    if (header.constructed) {
+        PutError(TypeNotPrimitive);
+        return nullptr;
+    }
+    if (header.length != 0) {
+        PutError(NullIsWrongLength);
+        return nullptr;
+    }
+    return reinterpret_cast<void*>(std::uintptr_t{1});
+}
+
 struct AuthorityKeyId {
     Asn1String* keyId;
-    void* issuer;
+    LibreSslStack* issuer;
     Asn1String* serial;
 };
 
@@ -381,6 +413,7 @@ static_assert(sizeof(AuthorityKeyId) == 24 && offsetof(AuthorityKeyId, serial) =
 
 void FreeAuthorityKeyId(AuthorityKeyId* id) {
     ASN1_OCTET_STRING_free_nid_postfix(id->keyId);
+    GENERAL_NAMES_free_nid_postfix(id->issuer);
     ASN1_INTEGER_free_nid_postfix(id->serial);
     free_nid_postfix(id);
 }
@@ -398,6 +431,71 @@ bool ReadElement(std::span<const unsigned char>& input, Header& header, std::spa
     content = input.first(header.length);
     input = input.subspan(header.length);
     return true;
+}
+
+bool DecodeIssuerName(const Header& header, std::span<const unsigned char> content, LibreSslGeneralName& name) {
+    constexpr int ExplicitLengthMismatch = 119;
+    constexpr int ExplicitTagNotConstructed = 120;
+    constexpr std::uint32_t DirectoryName = 4;
+    if (header.tagClass != ContextClass || header.tag > 8) {
+        PutHeaderError(WrongTag);
+        return false;
+    }
+    if (header.tag == DirectoryName) {
+        if (!header.constructed) {
+            PutHeaderError(ExplicitTagNotConstructed);
+            return false;
+        }
+        name.value = LibreSsl3DecodeX509Name_nid_no_patch(content);
+        if (name.value && !content.empty()) {
+            PutHeaderError(ExplicitLengthMismatch);
+            return false;
+        }
+        return name.value != nullptr;
+    }
+    if (header.tag == 0 || header.tag == 3 || header.tag == 5) {
+        NotImplemented_nid_no_patch("AUTHORITY_KEYID issuer GeneralName type");
+    }
+    if (header.constructed) {
+        PutHeaderError(TypeNotPrimitive);
+        return false;
+    }
+    name.value = header.tag == 8 ? NewObject(content) : NewString(header.tag == 7 ? OctetStringType : Ia5StringType, content);
+    return name.value != nullptr;
+}
+
+LibreSslStack* DecodeIssuerNames(const Header& field, std::span<const unsigned char> content) {
+    constexpr int TypeNotConstructed = 156;
+    if (!field.constructed) {
+        PutHeaderError(TypeNotConstructed);
+        return nullptr;
+    }
+    std::unique_ptr<LibreSslStack, decltype(&GENERAL_NAMES_free_nid_postfix)> names(
+        sk_new_nid_postfix(nullptr), GENERAL_NAMES_free_nid_postfix);
+    if (!names) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    while (!content.empty()) {
+        Header header;
+        std::span<const unsigned char> bytes;
+        if (!ReadElement(content, header, bytes)) return nullptr;
+        std::unique_ptr<LibreSslGeneralName, decltype(&GENERAL_NAME_free_nid_postfix)> name(
+            static_cast<LibreSslGeneralName*>(calloc_nid_postfix(1, sizeof(LibreSslGeneralName))),
+            GENERAL_NAME_free_nid_postfix);
+        if (!name) {
+            PutError(MallocFailure);
+            return nullptr;
+        }
+        name->type = static_cast<int>(header.tag);
+        if (!DecodeIssuerName(header, bytes, *name)) return nullptr;
+        if (!sk_push_nid_postfix(names.get(), name.get())) {
+            PutError(MallocFailure);
+            return nullptr;
+        }
+        name.release();
+    }
+    return names.release();
 }
 
 void* NewAuthorityKeyId(std::span<const unsigned char> value) {
@@ -433,7 +531,9 @@ void* NewAuthorityKeyId(std::span<const unsigned char> value) {
             if (!id->keyId) return nullptr;
             next = 1;
         } else if (context && header.tag == 1 && next <= 1) {
-            NotImplemented_nid_no_patch("AUTHORITY_KEYID issuer");
+            id->issuer = DecodeIssuerNames(header, content);
+            if (!id->issuer) return nullptr;
+            next = 2;
         } else if (context && header.tag == 2) {
             if (header.constructed) {
                 PutError(TypeNotPrimitive);
@@ -488,6 +588,8 @@ void* Decode(const LibreSsl3X509Extension& extension, Decoder decoder) {
     }
     case Decoder::AuthorityKeyId:
         return NewAuthorityKeyId(value);
+    case Decoder::Null:
+        return NewNull(value);
     case Decoder::Unsupported:
         break;
     }

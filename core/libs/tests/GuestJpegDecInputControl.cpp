@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
 #include <source_location>
 #include <utility>
 #include <vector>
@@ -147,6 +149,88 @@ void RequireImageBoundary(const std::vector<std::uint8_t>& jpeg, std::uint32_t w
     Require(sceJpegDecDelete(decoder.handle) == 0);
 }
 
+void RequireHeaderBoundary(const std::vector<std::uint8_t>& jpeg, std::size_t chunkSize, std::size_t headerBytes) {
+    constexpr std::uint32_t width = 227, height = 149;
+    JpegHandle decoder(width);
+    Source source{jpeg, chunkSize};
+    source.failure = -123;
+    source.failureAt = headerBytes;
+    auto parse = StreamParam(0x10, source);
+    JpegDecImageInfo info{};
+    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &parse, &info) == 0);
+    Require(info.image_width == width && info.image_height == height);
+    Require(source.offset == headerBytes && source.calls == headerBytes / chunkSize);
+
+    Source remainder{{jpeg.begin() + static_cast<std::ptrdiff_t>(source.offset), jpeg.end()}, 127};
+    auto decode = StreamParam(0x20, remainder);
+    std::int32_t expected = 0;
+    const auto reference = Reference(jpeg, width, height, 1, &expected);
+    std::vector<std::uint8_t> image(reference.size());
+    decode.image_mem_addr = image.data();
+    decode.image_mem_size = static_cast<std::uint32_t>(image.size());
+    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &decode, nullptr) == expected && expected > 0);
+    Require(image == reference && sceJpegDecDelete(decoder.handle) == 0);
+}
+
+void RequireInvalidScan(const std::vector<std::uint8_t>& jpeg, std::initializer_list<std::uint8_t> scan) {
+    std::vector<std::uint8_t> bytes(jpeg.begin(), jpeg.begin() + 609);
+    bytes.insert(bytes.end(), {0xff, 0xda});
+    bytes.insert(bytes.end(), scan);
+    for (const std::int32_t failure : {-123, 0}) {
+        JpegHandle decoder(227);
+        Source source{bytes, 1};
+        source.failure = failure;
+        source.failureAt = bytes.size();
+        auto parse = StreamParam(0x10, source);
+        JpegDecImageInfo info{};
+        info.image_width = 0xaabbccdd;
+        info.image_height = 0x11223344;
+        const auto expected = failure < 0 ? failure : static_cast<std::int32_t>(0x80650012);
+        Require(sceJpegDecDecodeWithInputControl(decoder.handle, &parse, &info) == expected);
+        Require(source.calls == bytes.size() + 1 && info.image_width == 0xaabbccdd && info.image_height == 0x11223344);
+        Require(sceJpegDecDelete(decoder.handle) == 0);
+    }
+}
+
+void CheckFirmwareHeaderFixture() {
+    std::ifstream file(JPEG_TEST_IMAGE, std::ios::binary);
+    Require(file.is_open());
+    std::vector<std::uint8_t> jpeg{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    Require(jpeg.size() > 1000 && jpeg[609] == 0xff && jpeg[610] == 0xda);
+    RequireInvalidScan(jpeg, {0, 2, 0});
+    RequireInvalidScan(jpeg, {0, 0});
+    RequireInvalidScan(jpeg, {0, 1, 0});
+    RequireInvalidScan(jpeg, {0, 8, 1, 1, 0, 0, 63});
+    RequireInvalidScan(jpeg, {0, 8, 2, 1, 0, 0, 63, 0});
+    RequireInvalidScan(jpeg, {0, 8, 1, 9, 0, 0, 63, 0});
+    RequireInvalidScan(jpeg, {0, 10, 2, 1, 0, 1, 0, 0, 63, 0});
+    RequireHeaderBoundary(jpeg, 100, 700);
+    RequireHeaderBoundary(jpeg, 1000, 1000);
+    RequireHeaderBoundary(jpeg, 4000, 4000);
+
+    JpegHandle decoder(227);
+    Source beforeEnd{jpeg, 1};
+    beforeEnd.failure = -123;
+    beforeEnd.failureAt = 622;
+    auto parse = StreamParam(0x10, beforeEnd);
+    JpegDecImageInfo info{};
+    info.image_width = 0xaabbccdd;
+    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &parse, &info) == -123);
+    Require(beforeEnd.calls == 623 && info.image_width == 0xaabbccdd);
+    Require(sceJpegDecDelete(decoder.handle) == 0);
+
+    std::vector<std::uint8_t> comment(3000, 'c');
+    comment[0] = 0xff;
+    comment[1] = 0xfe;
+    comment[2] = 0x0b;
+    comment[3] = 0xb6;
+    comment[100] = 0xff;
+    comment[101] = 0xda;
+    jpeg.insert(jpeg.begin() + 609, comment.begin(), comment.end());
+    RequireHeaderBoundary(jpeg, 100, 3700);
+    RequireHeaderBoundary(jpeg, 1, 3623);
+}
+
 void RequirePreEndError(const std::vector<std::uint8_t>& jpeg) {
     JpegHandle decoder(96);
     Source source{jpeg, 1};
@@ -206,6 +290,7 @@ void RequireStreamOutlivesHandle(const std::vector<std::uint8_t>& jpeg, std::uin
 }  // namespace
 
 int main() {
+    CheckFirmwareHeaderFixture();
     constexpr std::int32_t invalidAddr = static_cast<std::int32_t>(0x80650001);
     constexpr std::int32_t invalidSize = static_cast<std::int32_t>(0x80650002);
     constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x80650003);

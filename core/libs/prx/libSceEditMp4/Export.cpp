@@ -4,7 +4,6 @@
 #include <array>
 #include <cerrno>
 #include <cstring>
-#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -48,8 +47,7 @@ int APS5_VABI sceEditMp4Initialize(const void* param, void* handle) {
     const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&first, param, sizeof(first));
     errno = savedErrno;
-    if (!copied) throw std::invalid_argument("libSceEditMp4: unreadable param");
-    if (first == 0) return ErrorInvalidParam;
+    if (!copied || first == 0) return ErrorInvalidParam;
     NotImplemented_nid_no_patch(__func__);
 }
 

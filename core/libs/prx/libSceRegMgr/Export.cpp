@@ -261,8 +261,7 @@ int APS5_VABI sceRegMgrGetStrInitVal(void) {
 }
 
 int APS5_VABI sceRegMgrGetVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x01140001);
 }
 
 int APS5_VABI sceRegMgrIsChange(std::uint32_t optionId, std::uint32_t consumer) {
@@ -457,14 +456,15 @@ int APS5_VABI sceRegMgrEvtGetRegIdForPS4(void) {
     return 0;
 }
 
-int APS5_VABI sceRegMgrStrncpy(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+char* APS5_VABI sceRegMgrStrncpy(char* destination, const char* source, std::size_t size) {
+    if (destination == nullptr || source == nullptr)
+        return reinterpret_cast<char*>(static_cast<std::uintptr_t>(1));
+    return std::strncpy(destination, source, size);
 }
 
-int APS5_VABI sceRegMgrMemset(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI sceRegMgrMemset(void* destination, int value, std::size_t size) {
+    if (destination == nullptr) return reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
+    return std::memset(destination, value, size);
 }
 
 int APS5_VABI sceRegMgrSetbin(void) {
