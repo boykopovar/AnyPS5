@@ -93,13 +93,6 @@ std::int32_t BeforeInitialize(std::int32_t answer, const char* name) {
     return answer;
 }
 
-std::uint32_t CompiledSdkVersion() {
-    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, processParameters + 0x10, sizeof(version));
-    return version;
-}
-
 bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
     const auto preserved = errno;
     const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
@@ -118,7 +111,7 @@ std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
         return Hmd2::NotInitialized;
     }
     localInfo.status = Hmd2::DeviceStatus::NotDetected;
-    if (CompiledSdkVersion() < Hmd2::UserIdSdkVersion) localInfo.userId = -1;
+    if (ApplicationCompiledSdkVersion() < Hmd2::UserIdSdkVersion) localInfo.userId = -1;
     localInfo.panelWidth = 4000;
     localInfo.panelHeight = 2040;
     localInfo.latency90Hz = 5555;
@@ -252,7 +245,7 @@ std::int32_t APS5_VABI sceHmd2Open(std::int32_t userId, std::int32_t type, std::
     if (!initialized) return Hmd2::NotInitialized;
     if (type != 0 || index != 0 || param) return Hmd2::ParameterInvalid;
     if (userId != USER_SERVICE_INITIAL_USER_ID) {
-        if (CompiledSdkVersion() >= Hmd2::UserIdSdkVersion) return Hmd2::ParameterInvalid;
+        if (ApplicationCompiledSdkVersion() >= Hmd2::UserIdSdkVersion) return Hmd2::ParameterInvalid;
         throw std::runtime_error("sceHmd2Open: user is not the initial user");
     }
     if (openHandle != 0) return Hmd2::AlreadyOpened;

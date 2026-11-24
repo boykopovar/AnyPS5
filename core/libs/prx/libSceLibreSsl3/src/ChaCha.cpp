@@ -206,10 +206,17 @@ bool SameTag(const unsigned char* left, const unsigned char* right, std::size_t 
     return difference == 0;
 }
 
+void ClearEncryptTag(const LibreSslEvpCipherCtx* ctx, ChaCha20Poly1305State& state) {
+    if (!ctx->encrypt) return;
+    state.tagLength = 0;
+    Wipe(state.tag, sizeof(state.tag));
+}
+
 int APS5_VABI ChaCha20Poly1305Init(LibreSslEvpCipherCtx* ctx, const unsigned char* key, const unsigned char* iv, int) {
     auto& state = StateOf<ChaCha20Poly1305State>(ctx, "chacha20_poly1305_init");
     if (!key && !iv) return 1;
     state.started = 0;
+    ClearEncryptTag(ctx, state);
     if (key) std::memcpy(state.key, key, KeyBytes);
     if (iv) {
         if (state.nonceLength == 0 || state.nonceLength > NonceBytes)
@@ -325,6 +332,8 @@ int APS5_VABI ChaCha20Poly1305Control(LibreSslEvpCipherCtx* ctx, int type, int a
         if (arg != static_cast<int>(NonceBytes)) return 0;
         if (!pointer) throw std::invalid_argument("chacha20_poly1305_ctrl: null fixed IV");
         std::memcpy(state.nonce, pointer, NonceBytes);
+        state.started = 0;
+        ClearEncryptTag(ctx, state);
         return 1;
     default:
         return 0;

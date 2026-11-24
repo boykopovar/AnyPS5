@@ -1086,6 +1086,29 @@ class MaskCodeTests(unittest.TestCase):
         self.assertTrue(masked.startswith("call("))
         self.assertTrue(masked.endswith(");\n"))
 
+    def test_fast_mask_matches_token_regex_on_cpp_edge_cases(self):
+        samples = [
+            'int a = 1\'000\'000; const char* s = u8R"tag(APS5_VABI fake() /*)tag"; int b = 0;\n',
+            'char c = L\'x\'; const char* r = R"(line1\nline2)"; int ok = 1;\n',
+            '#define M(x) int APS5_VABI x(void) { return 0; }\n#error don\'t break\nint z = 1;\n',
+            'int x = 1; /* unclosed block comment\nint y = 2;\n',
+            'const char* u = "unclosed\nint keep = 3;\n',
+            'int a = 0x1\'2 + \'a\' + 0;\n',
+        ]
+        for token in (nid_names.CPP_TOKEN, export_gap.DIRECTIVE_TOKEN, export_gap.NON_DEFINE_DIRECTIVE_TOKEN):
+            for sample in samples:
+                expected = token.sub(
+                    lambda m: m.group() if m.group("code") is not None else "\n".join(" " * len(line) for line in m.group().split("\n")),
+                    sample,
+                )
+                with self.subTest(token=token.pattern[:24], sample=sample[:24]):
+                    self.assertEqual(export_gap.mask_code(sample, token), expected)
+
+    def test_collect_source_exports_handles_directive_in_direct_init_data_def(self):
+        source = 'extern "C" {\nint sceExampleData_nid_postfix(\n#if 1\n1\n#endif\n);\n}\n'
+        provided = export_gap.collect_source_exports([(Path("Data.cpp"), source)])
+        self.assertIn(nid_names.compute_nid("sceExampleData"), provided)
+
 
 class MaskDirectivesTests(unittest.TestCase):
     def test_directive_lines_and_continuations_are_blanked(self):
@@ -1147,6 +1170,36 @@ class LoadConsoleNidsTests(unittest.TestCase):
         parse.assert_called_once_with("nids.txt")
         self.assertEqual(console, {"libA": ["AAAAAAAAAAA", "BBBBBBBBBBB"], "libB": ["AAAAAAAAAAA", "BBBBBBBBBBB"]})
         self.assertIsNot(console["libA"], console["libB"])
+
+    def test_source_texts_and_self_calls_handle_dot_files_and_non_word_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Source.cpp").write_text(
+                "struct Number { int operator+(int x) { return x; } };\n"
+                "int f() { return Number{}.operator+(1) + Number{}.operator+ (2); }\n",
+                encoding="utf-8",
+            )
+            (root / ".tracked.cpp").write_text("int APS5_VABI sceTracked_nid_postfix(void) { return 0; }\n", encoding="utf-8")
+            (root / "..cpp").write_text("int APS5_VABI scePhantom_nid_postfix(void) { return 0; }\n", encoding="utf-8")
+            (root / ".cpp").write_text("int APS5_VABI sceDotOnly_nid_postfix(void) { return 0; }\n", encoding="utf-8")
+            fixture_names = ("Source.cpp", ".tracked.cpp", "..cpp", ".cpp")
+            expected_names = sorted(
+                name for name in fixture_names
+                if Path(name).suffix.lower() in export_gap._SOURCE_SUFFIXES
+            )
+            names = [path.name for path, _ in export_gap.source_texts(root)]
+            self.assertEqual(names, expected_names)
+            provided = export_gap.collect_provided(root)
+            self.assertIn(export_gap.nid_names.compute_nid("sceTracked"), provided)
+            self.assertNotIn(export_gap.nid_names.compute_nid("sceDotOnly"), provided)
+            phantom_nid = export_gap.nid_names.compute_nid("scePhantom")
+            if Path("..cpp").suffix.lower() in export_gap._SOURCE_SUFFIXES:
+                self.assertIn(phantom_nid, provided)
+            else:
+                self.assertNotIn(phantom_nid, provided)
+            calls = export_gap.find_self_calls(root, {"AAAAAAAAAAA": "operator+"})
+            self.assertEqual([c[0] for c in calls], ["operator+", "operator+", "operator+"])
+            self.assertEqual([c[3] for c in calls], [1, 2, 2])
 
 
 if __name__ == "__main__":
