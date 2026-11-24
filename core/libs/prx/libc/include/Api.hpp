@@ -108,6 +108,16 @@ struct CategoryObject { const void* vtable; };
 
 struct ExceptionObject { const void* vtable; const char* message; };
 
+struct TypeRecord { const void* const* vtable; const char* name; const TypeRecord* base; };
+
+struct ExceptionVtable {
+    std::ptrdiff_t offset;
+    const TypeRecord* type;
+    void (APS5_VABI *destroy)(ExceptionObject*);
+    void (APS5_VABI *deleteObject)(ExceptionObject*);
+    const char* (APS5_VABI *what)(const ExceptionObject*);
+};
+
 struct ErrorCode { int reserved; int value; const CategoryObject* category; };
 
 struct SystemErrorObject { ExceptionObject base; ErrorCode code; };
@@ -1689,6 +1699,10 @@ void APS5_VABI _ZNSt12bad_weak_ptrD1Ev_nid_postfix(LibcException::ExceptionObjec
 void APS5_VABI _ZNSt12bad_weak_ptrD2Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt12bad_weak_ptrD0Ev_nid_postfix(LibcException::ExceptionObject* self);
 const char* APS5_VABI _ZNKSt12bad_weak_ptr4whatEv_nid_postfix(const LibcException::ExceptionObject* self);
+
+void APS5_VABI _ZNSt3__112bad_weak_ptrD1Ev_nid_postfix(LibcException::ExceptionObject* self) noexcept;
+extern const LibcException::TypeRecord _ZTINSt3__112bad_weak_ptrE_nid_postfix;
+extern const LibcException::ExceptionVtable _ZTVNSt3__112bad_weak_ptrE_nid_postfix;
 void APS5_VABI _ZNSt19bad_optional_accessD1Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt19bad_optional_accessD2Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt19bad_optional_accessD0Ev_nid_postfix(LibcException::ExceptionObject* self);
