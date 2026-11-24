@@ -146,9 +146,6 @@ int APS5_VABI WKContextCopyPlugInAutoStartOriginHashes() {
     return 0;
 }
 
-int APS5_VABI WKContextGetMaximumNumberOfProcesses() {
-    return static_cast<int>(0xffffffffu);
-}
 int APS5_VABI WKContextMenuCopySubmenuItems() {
     return 0;
 }

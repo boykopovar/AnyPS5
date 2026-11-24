@@ -50,7 +50,6 @@ int main() {
     Require(WKBundlePageGetBackForwardList() == 0);
     Require(WKBundlePageIsUsingDarkAppearance() == 0);
     Require(WKContextCopyPlugInAutoStartOriginHashes() == 0);
-    Require(WKContextGetMaximumNumberOfProcesses() == static_cast<int>(0xffffffffu));
     Require(WKContextMenuCopySubmenuItems() == 0);
     Require(WKContextMenuItemCopyTitle() == 0);
     Require(WKContextMenuItemCreateAsAction() == 0);
