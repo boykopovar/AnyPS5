@@ -99,6 +99,22 @@ void TestMarkAddsSlashToDirectories(const std::filesystem::path&) {
     globfree_nid_postfix(&glob);
 }
 
+void TestTrailingSlashKeepsSlash(const std::filesystem::path&) {
+    TestGlob glob{};
+    Require(glob_nid_postfix("/anyps5-glob-test/dir*/", 0, nullptr, &glob) == 0);
+    const std::vector<std::string> expected = {"/anyps5-glob-test/dir1/"};
+    Require(Paths(glob) == expected);
+    globfree_nid_postfix(&glob);
+}
+
+void TestRepeatedSeparatorsAreKept(const std::filesystem::path&) {
+    TestGlob glob{};
+    Require(glob_nid_postfix("/anyps5-glob-test//dir*/x.txt", 0, nullptr, &glob) == 0);
+    const std::vector<std::string> expected = {"/anyps5-glob-test//dir1/x.txt"};
+    Require(Paths(glob) == expected);
+    globfree_nid_postfix(&glob);
+}
+
 void TestTrailingSlashMatchesDirectoriesOnly(const std::filesystem::path&) {
     TestGlob glob{};
     Require(glob_nid_postfix("/anyps5-glob-test/a*/", 0, nullptr, &glob) == GlobNomatch);
@@ -173,6 +189,8 @@ int main() {
     TestHiddenFilesNeedExplicitDot(root);
     TestNestedComponents(root);
     TestMarkAddsSlashToDirectories(root);
+    TestTrailingSlashKeepsSlash(root);
+    TestRepeatedSeparatorsAreKept(root);
     TestTrailingSlashMatchesDirectoriesOnly(root);
     TestNoMatchAndNocheck();
     TestAppendAndDooffs();

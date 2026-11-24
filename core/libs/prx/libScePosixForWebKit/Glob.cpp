@@ -49,8 +49,13 @@ struct GuestGlob {
 };
 static_assert(sizeof(GuestGlob) == 88 && offsetof(GuestGlob, pathv) == 32 && offsetof(GuestGlob, errfunc) == 40);
 
+struct Segment {
+    std::string separators;
+    std::string text;
+};
+
 struct Walk {
-    std::vector<std::string> components;
+    std::vector<Segment> components;
     std::vector<std::string> matches;
     bool dirOnly = false;
     bool noescape = false;
@@ -82,10 +87,18 @@ std::string Unescape(const std::string& text, bool noescape) {
     return output;
 }
 
-std::string Join(const std::string& prefix, const std::string& name) {
-    if (prefix.empty()) return name;
-    if (prefix.back() == '/') return prefix + name;
-    return prefix + "/" + name;
+std::vector<Segment> Split(const std::string& pattern) {
+    std::vector<Segment> segments;
+    std::size_t position = 0;
+    while (position < pattern.size()) {
+        std::size_t separatorsEnd = position;
+        while (separatorsEnd < pattern.size() && pattern[separatorsEnd] == '/') ++separatorsEnd;
+        std::size_t textEnd = pattern.find('/', separatorsEnd);
+        if (textEnd == std::string::npos) textEnd = pattern.size();
+        segments.push_back({pattern.substr(position, separatorsEnd - position), pattern.substr(separatorsEnd, textEnd - separatorsEnd)});
+        position = textEnd;
+    }
+    return segments;
 }
 
 bool IsDirectory(const FileStat& status) {
@@ -118,10 +131,11 @@ void Expand(Walk& walk, const std::string& prefix, std::size_t index) {
         Finish(walk, prefix);
         return;
     }
-    const std::string& component = walk.components[index];
+    const Segment& segment = walk.components[index];
     const bool last = index + 1 == walk.components.size();
-    if (!HasMagic(component, walk.noescape)) {
-        const std::string next = Join(prefix, Unescape(component, walk.noescape));
+    const std::string base = prefix + segment.separators;
+    if (!HasMagic(segment.text, walk.noescape)) {
+        const std::string next = base + Unescape(segment.text, walk.noescape);
         if (!last) {
             FileStat status{};
             if (stat_nid_postfix(next.c_str(), &status) != 0 || !IsDirectory(status)) return;
@@ -129,7 +143,7 @@ void Expand(Walk& walk, const std::string& prefix, std::size_t index) {
         Expand(walk, next, index + 1);
         return;
     }
-    const std::string directory = prefix.empty() ? std::string(".") : prefix;
+    const std::string directory = base.empty() ? std::string(".") : base;
     void* handle = opendir_nid_postfix(directory.c_str());
     if (handle == nullptr) {
         const int error = *__error_nid_postfix();
@@ -139,33 +153,44 @@ void Expand(Walk& walk, const std::string& prefix, std::size_t index) {
     std::vector<std::string> names;
     while (GuestDirectoryEntry* entry = readdir_nid_postfix(handle)) names.emplace_back(entry->name, entry->nameLength);
     closedir_nid_postfix(handle);
-    const bool dotPattern = component[0] == '.';
+    const bool dotPattern = segment.text[0] == '.';
     for (const std::string& name : names) {
         if (name.empty() || (name[0] == '.' && !dotPattern)) continue;
-        if (fnmatch_nid_postfix(component.c_str(), name.c_str(), walk.noescape ? FnmNoescapeFlag : 0) != 0) continue;
-        Expand(walk, Join(prefix, name), index + 1);
+        if (fnmatch_nid_postfix(segment.text.c_str(), name.c_str(), walk.noescape ? FnmNoescapeFlag : 0) != 0) continue;
+        Expand(walk, base + name, index + 1);
         if (walk.status != 0) return;
     }
 }
 
 int Publish(GuestGlob& guest, void* pglob, const std::vector<std::string>& matches, bool append, std::size_t offs, int flags, bool magic, int (APS5_VABI *errfunc)(const char*, int)) {
+    std::vector<char*> texts;
+    const auto release = [&texts] {
+        for (char* text : texts) free_nid_postfix(text);
+    };
+    for (const std::string& match : matches) {
+        char* text = static_cast<char*>(malloc_nid_postfix(match.size() + 1));
+        if (text == nullptr) {
+            release();
+            return GlobNospace;
+        }
+        std::memcpy(text, match.data(), match.size());
+        text[match.size()] = '\0';
+        texts.push_back(text);
+    }
     const std::size_t oldCount = append ? guest.pathc : 0;
     char** array = append ? guest.pathv : nullptr;
     const std::size_t newCount = oldCount + matches.size();
     if (!matches.empty() || (array == nullptr && offs != 0)) {
         const std::size_t slots = offs + newCount + 1;
         char** storage = static_cast<char**>(array != nullptr ? realloc_nid_postfix(array, slots * sizeof(char*)) : malloc_nid_postfix(slots * sizeof(char*)));
-        if (storage == nullptr) return GlobNospace;
+        if (storage == nullptr) {
+            release();
+            return GlobNospace;
+        }
         if (array == nullptr)
             for (std::size_t index = 0; index < offs; ++index) storage[index] = nullptr;
         array = storage;
-        for (std::size_t index = 0; index < matches.size(); ++index) {
-            char* text = static_cast<char*>(malloc_nid_postfix(matches[index].size() + 1));
-            if (text == nullptr) return GlobNospace;
-            std::memcpy(text, matches[index].data(), matches[index].size());
-            text[matches[index].size()] = '\0';
-            array[offs + oldCount + index] = text;
-        }
+        for (std::size_t index = 0; index < texts.size(); ++index) array[offs + oldCount + index] = texts[index];
         array[offs + newCount] = nullptr;
     }
     guest.pathc = newCount;
@@ -193,17 +218,11 @@ extern "C" int APS5_VABI glob_nid_postfix(const char* pattern, int flags, int (A
     walk.err = (flags & GlobErr) != 0;
     walk.errfunc = errfunc;
     walk.dirOnly = !copy.empty() && copy.back() == '/';
-    const bool absolute = !copy.empty() && copy.front() == '/';
-    std::size_t begin = 0;
-    while (begin < copy.size()) {
-        const std::size_t end = std::min(copy.find('/', begin), copy.size());
-        if (end > begin) walk.components.push_back(copy.substr(begin, end - begin));
-        begin = end + 1;
-    }
+    walk.components = Split(copy);
     bool magic = false;
-    for (const std::string& component : walk.components) magic = magic || HasMagic(component, walk.noescape);
+    for (const Segment& segment : walk.components) magic = magic || HasMagic(segment.text, walk.noescape);
 
-    if (!copy.empty()) Expand(walk, absolute ? std::string("/") : std::string(), 0);
+    if (!copy.empty()) Expand(walk, std::string(), 0);
     if (walk.status == 0 && !(flags & GlobNosort)) std::sort(walk.matches.begin(), walk.matches.end());
     if (walk.status == 0 && walk.matches.empty() && ((flags & GlobNocheck) || ((flags & GlobNomagic) && !magic)))
         walk.matches.push_back(copy);
