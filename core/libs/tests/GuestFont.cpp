@@ -445,6 +445,10 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     const std::uint32_t hebrewLetterCodes[]{0xFB1D};
     const std::uint32_t arabicFormCodes[]{0xFE70};
     const std::uint32_t digitHebrewCodes[]{'1', ' ', 0x05D0};
+    const std::uint32_t arabicNumericPrefix[]{0x0662, 0x066B, 0x0665, ' ', 0x0633};
+    const std::uint32_t easternArabicNumericPrefix[]{0x06F2, ' ', 0x067E};
+    const std::uint32_t arabicNumbersOnly[]{0x0661, 0x066C, 0x0665, 0x066A};
+    const std::uint32_t arabicNumericPrefixLatin[]{0x0667, ' ', 'A', 0x05D0};
     const std::uint32_t hebrewLatinCodes[]{0x05D0, 'A'};
     const std::uint32_t latinHebrewCodes[]{'A', 0x05D0};
     const std::uint32_t rlmLatinCodes[]{0x200F, 'A'};
@@ -467,6 +471,10 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
         {hebrewLetterCodes, 1, 0x10, 0x11},
         {arabicFormCodes, 1, 0x10, 0x11},
         {digitHebrewCodes, 3, 0x10, 0x11},
+        {arabicNumericPrefix, 5, 0x10, 0x11},
+        {easternArabicNumericPrefix, 3, 0x10, 0x11},
+        {arabicNumbersOnly, 4, 0x10, 0x12},
+        {arabicNumericPrefixLatin, 4, 0x10, 0x12},
         {hebrewLatinCodes, 2, 0x10, 0x11},
         {latinHebrewCodes, 2, 0x10, 0x12},
         {rlmLatinCodes, 2, 0x10, 0x11},

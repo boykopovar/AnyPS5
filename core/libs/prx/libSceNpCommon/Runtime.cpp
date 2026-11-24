@@ -1390,9 +1390,14 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     for (std::size_t line = 0; line < size; line += NP_DUMP_LINE_BYTES) {
         const std::size_t count = std::min(NP_DUMP_LINE_BYTES, size - line);
+        std::uint8_t copied[NP_DUMP_LINE_BYTES];
+        const int savedErrno = errno;
+        const bool readable = GuestCopyIn_nid_no_patch(copied, bytes + line, count);
+        errno = savedErrno;
+        if (!readable) break;
         for (std::size_t i = 0; i < NP_DUMP_LINE_BYTES; ++i) {
             if (i < count) {
-                std::printf("%02x", bytes[line + i]);
+                std::printf("%02x", copied[i]);
             } else {
                 std::printf("  ");
             }
@@ -1400,7 +1405,7 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
         }
         std::putchar(' ');
         for (std::size_t i = 0; i < count; ++i) {
-            const std::uint8_t c = bytes[line + i];
+            const std::uint8_t c = copied[i];
             std::putchar(c >= 0x20 && c <= 0x7E ? c : '.');
         }
         std::putchar('\n');
