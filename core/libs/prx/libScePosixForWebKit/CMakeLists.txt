@@ -1,4 +1,4 @@
-add_library(libScePosixForWebKit SHARED EXCLUDE_FROM_ALL Export.cpp Resolver.cpp Filesystem.cpp TemporaryFile.cpp Wrap.cpp)
+add_library(libScePosixForWebKit SHARED EXCLUDE_FROM_ALL Export.cpp Resolver.cpp Filesystem.cpp TemporaryFile.cpp Wrap.cpp Alarm.cpp)
 target_include_directories(libScePosixForWebKit PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libScePosixForWebKit PRIVATE libSceNet libkernel_sys libSceLibcInternal)
 target_sources(libScePosixForWebKit PRIVATE Times.cpp)
@@ -16,6 +16,12 @@ if(BUILD_TESTING)
         set_tests_properties(guest_posix_getpwuid PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
     endif()
+    add_test_executable(guest_posix_ualarm_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixUalarm.cpp)
+    target_include_directories(guest_posix_ualarm_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_posix_ualarm_tests PRIVATE libScePosixForWebKit libkernel libc)
+    configure_windows_unwind(guest_posix_ualarm_tests)
+    add_test(NAME guest_posix_ualarm COMMAND guest_posix_ualarm_tests)
+    set_tests_properties(guest_posix_ualarm PROPERTIES TIMEOUT 30)
 endif()
 configure_windows_unwind(libScePosixForWebKit)
 
