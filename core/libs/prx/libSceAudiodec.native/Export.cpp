@@ -1,5 +1,4 @@
 #include "prx/libSceAudiodec.native/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -33,18 +32,12 @@ alignas(8) unsigned char g_moduleContext[32]{};
 
 template <typename T>
 bool ReadGuest(T& value, const T* source) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
 }
 
 template <typename T>
 bool WriteGuest(T* destination, const T& value) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
 }
 
 int DecodeInternal(void* context, std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priority, std::uint32_t decode2) {
@@ -152,9 +145,7 @@ int APS5_VABI sceAudiodecDeleteDecoderEx(void* context, std::uint32_t handle) {
 int APS5_VABI sceAudiodecGetAjmContext(const void* context, std::uint32_t* ajmiContext, std::uint32_t* ajmContext) {
     if (context == nullptr) return AudiodecErrorArgument;
     std::uint32_t ids[2];
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(ids, context, sizeof(ids));
-    errno = savedErrno;
     if (!copied) return AudiodecErrorArgument;
     if (ajmiContext != nullptr && !WriteGuest(ajmiContext, ids[0])) {
         return AudiodecErrorArgument;
