@@ -11,6 +11,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #ifndef _WIN32
 #include <sys/stat.h>
 #include <unistd.h>
@@ -42,6 +43,13 @@ void Require(bool condition) {
     if (!condition) {
         std::abort();
     }
+}
+
+// Scratch names must differ between test processes started at the same moment
+// (ctest -j, repeated parallel runs), so a clock reading alone is not enough.
+std::string UniqueTestId() {
+    static std::random_device device;
+    return std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(device()) + std::to_string(device());
 }
 
 template <typename Function, typename... Args>
@@ -741,7 +749,7 @@ static void TestMappedFiles() {
     readOnly(&mapped, -1, 0, success);
     Require(!success && !mapped.data && !mapped.size);
     destroy(&mapped);
-    const auto root = std::filesystem::current_path() / ("nkwebkit-mapped-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root = std::filesystem::current_path() / ("nkwebkit-mapped-" + UniqueTestId());
     Require(std::filesystem::create_directory(root));
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/nkwebkit-mapped", reinterpret_cast<const char*>(hostPath.c_str()));
@@ -809,7 +817,7 @@ static void TestFileHandles() {
     const auto truncate = &_ZN3WTF14FileSystemImpl12truncateFileEix;
     const auto openAndLock = &_ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE;
     const auto unlockAndClose = &_ZN3WTF14FileSystemImpl18unlockAndCloseFileEi;
-    const auto root = std::filesystem::current_path() / ("nkwebkit-handles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root = std::filesystem::current_path() / ("nkwebkit-handles-" + UniqueTestId());
     Require(std::filesystem::create_directory(root));
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/nkwebkit-handles", reinterpret_cast<const char*>(hostPath.c_str()));
@@ -910,7 +918,7 @@ static void TestFileSystemHelpers() {
     const auto moveFile = &_ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_;
     const auto realPath = &_ZN3WTF14FileSystemImpl8realPathERKNS_6StringE;
     const auto sameVolume = &_ZN3WTF14FileSystemImpl19filesHaveSameVolumeERKNS_6StringES3_;
-    const auto root = std::filesystem::current_path() / ("nkwebkit-fs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root = std::filesystem::current_path() / ("nkwebkit-fs-" + UniqueTestId());
     Require(std::filesystem::create_directory(root));
     Require(std::filesystem::create_directory(root / "sub"));
     Require(std::filesystem::create_directory(root / "full"));
@@ -998,7 +1006,7 @@ static void TestStackBounds() {
 }
 
 static std::string CaptureLog(void (*body)()) {
-    const auto path = (std::filesystem::temp_directory_path() / ("nkwebkit_timing_scope_" + std::to_string(_ZN3WTF13MonotonicTime3nowEv().m_value) + ".log")).string();
+    const auto path = (std::filesystem::temp_directory_path() / ("nkwebkit_timing_scope_" + UniqueTestId() + ".log")).string();
     std::fflush(stdout);
     std::fflush(stderr);
 #ifdef _WIN32
@@ -1029,7 +1037,8 @@ static std::string CaptureLog(void (*body)()) {
     std::ifstream input(path, std::ios::binary);
     std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     input.close();
-    std::filesystem::remove(path);
+    std::error_code removeError;
+    std::filesystem::remove(path, removeError);
     return text;
 }
 
@@ -1078,7 +1087,7 @@ static void TestTimingScope() {
 }
 
 static void TestUniStdExtras() {
-    const auto root = std::filesystem::current_path() / ("nkwebkit-unistd-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root = std::filesystem::current_path() / ("nkwebkit-unistd-" + UniqueTestId());
     Require(std::filesystem::create_directory(root));
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/nkwebkit-unistd", reinterpret_cast<const char*>(hostPath.c_str()));
@@ -1136,7 +1145,7 @@ static void TestSleepSeconds() {
 
 static void TestMakeAllDirectories() {
     const auto make = &_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE;
-    const auto root = std::filesystem::current_path() / ("nkwebkit-dirs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root = std::filesystem::current_path() / ("nkwebkit-dirs-" + UniqueTestId());
     Require(std::filesystem::create_directory(root));
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/nkwebkit-dirs", reinterpret_cast<const char*>(hostPath.c_str()));
