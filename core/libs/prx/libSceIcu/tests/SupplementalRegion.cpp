@@ -111,20 +111,13 @@ int main(int argc, char** argv) {
     const std::string overflows = LongLocale(157);
     Require(CanonicalLength(fits.c_str()) == 156, "the 156-byte locale has the wrong canonical length");
     Require(CanonicalLength(overflows.c_str()) == 157, "the 157-byte locale has the wrong canonical length");
-    if (likelyData) {
-        RequireRegion("en", true, "US");
-        RequireRegion("zh_Hant", true, "TW");
-        RequireRegion("sr_Cyrl", true, "RS");
-        RequireRegion("und", true, "US");
-        RequireRegion("en@rg=frxxxx", true, "US");
-        RequireRegion(fits.c_str(), true, "US");
-        RequireRegion(overflows.c_str(), true, "");
-    } else {
-        for (const char* locale : {"en", "zh_Hant", "sr_Cyrl", "und", "en@rg=frxxxx", fits.c_str()})
-            RequireThrows([&] { Region(locale, true); },
-                          std::string(locale) + " inferred a region without the likely subtags data");
-        RequireRegion(overflows.c_str(), true, "");
-    }
+    RequireRegion("en", true, "US");
+    RequireRegion("zh_Hant", true, "TW");
+    RequireRegion("sr_Cyrl", true, "RS");
+    RequireRegion("und", true, "US");
+    RequireRegion("en@rg=frxxxx", true, "US");
+    RequireRegion(fits.c_str(), true, "US");
+    RequireRegion(overflows.c_str(), true, "");
     RequireRegion(fits.c_str(), false, "");
     RequireRegion("en_US", false, "US");
     RequireRegion("en_US", true, "US");
