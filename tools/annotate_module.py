@@ -35,9 +35,11 @@ DT_SYMENT = 11
 DT_RELAENT = 9
 DT_REL = 17
 DT_RELA_KIND = 7
+STT_OBJECT = 1
 STT_FUNC = 2
 STT_TLS = 6
 STT_GNU_IFUNC = 10
+SHN_LORESERVE = 0xFF00
 SHN_COMMON = 0xFFF2
 GHIDRA_MAX_NAME_LENGTH = 2000
 DT_GNU_HASH = 0x6ffffef5
@@ -79,6 +81,7 @@ class Module:
     def __init__(self, data):
         self.data = data
         self.loads = []
+        self.load_memory_ranges = []
         self.unwind_headers = []
         self.dynamic = None
         self.has_interpreter = False
@@ -120,9 +123,10 @@ class Module:
         if (phnum and phoff < 64) or phoff + phnum * phentsize > len(self.data):
             raise ModuleError("ELF program header table is outside its supported file range")
         for index in range(phnum):
-            kind, flags, offset, vaddr, _, filesz, _, _ = self.unpack("<IIQQQQQQ", phoff + index * phentsize)
+            kind, flags, offset, vaddr, _, filesz, memsz, _ = self.unpack("<IIQQQQQQ", phoff + index * phentsize)
             if kind == PT_LOAD:
                 self.loads.append((vaddr, offset, filesz, flags))
+                self.load_memory_ranges.append(range(vaddr, vaddr + memsz))
             elif kind == PT_GNU_EH_FRAME and filesz:
                 self.unwind_headers.append((vaddr, offset, filesz))
             elif kind == PT_INTERP:
@@ -337,6 +341,9 @@ class Module:
                        for start, file_offset, length, flags in self.loads):
                     yield pc
 
+    def unwind_labels(self, named_addresses):
+        return {address: "unwind_%x" % address for address in self.unwind_starts() if address not in named_addresses}
+
     def code_segments(self):
         segments = []
         for vaddr, offset, size, flags in sorted(self.loads):
@@ -396,10 +403,8 @@ def ghidra_symbols(module, namer):
             name = "irelative_resolver_%x" % address
             rows.add((address, True, name, name))
     named_addresses = {address for address, _, _, _ in rows}
-    for address in module.unwind_starts():
-        if address not in named_addresses:
-            name = "unwind_%x" % address
-            rows.add((address, False, name, name))
+    for address, name in module.unwind_labels(named_addresses).items():
+        rows.add((address, False, name, name))
     names, functions, lines = set(), set(), []
     for address, function, resolved, symbol in sorted(rows, key=lambda row: (row[0], not row[1], row[2] == row[3].split("#", 1)[0], row[2], row[3])):
         stem = re.sub(r"[^A-Za-z0-9_]", "_", resolved)
@@ -494,7 +499,7 @@ def find_stubs(listing, slots, namer):
     return stubs
 
 
-def line_note(line, slots, branch_targets, namer):
+def line_note(line, slots, branch_targets, namer, address_exports=None):
     note = ""
     branch = BRANCH.search(line)
     if branch and int(branch.group(1), 16) in branch_targets:
@@ -502,19 +507,25 @@ def line_note(line, slots, branch_targets, namer):
     reference = referenced_address(line)
     if reference in slots:
         note = "   ; GOT " + namer.resolve(slots[reference])
+    elif address_exports and reference in address_exports and LEA.match(line) and ("(%rip)" in line or "(%eip)" in line):
+        note = "   ; address of " + ", ".join(sorted(address_exports[reference]))
     return note
 
 
-def annotate_listing(listing, slots, exports, branch_targets, namer, entry=None):
+def annotate_listing(listing, slots, exports, branch_targets, namer, entry=None, unwind_labels=None, address_exports=None):
     out = []
     for line in listing:
         head = LINE_ADDRESS.match(line)
-        if head and int(head.group(1), 16) == entry:
-            out.append("; ===== ELF entry point")
-        if head and int(head.group(1), 16) in exports:
-            out.append("")
-            out.extend("; ===== export " + namer.resolve(name) for name in exports[int(head.group(1), 16)])
-        out.append(line + line_note(line, slots, branch_targets, namer))
+        if head:
+            address = int(head.group(1), 16)
+            if address == entry:
+                out.append("; ===== ELF entry point")
+            if address in exports:
+                out.append("")
+                out.extend("; ===== export " + namer.resolve(name) for name in exports[address])
+            if unwind_labels and address in unwind_labels:
+                out.append("; ===== unwind range " + unwind_labels[address])
+        out.append(line + line_note(line, slots, branch_targets, namer, address_exports))
     return out
 
 
@@ -583,14 +594,31 @@ def annotate(module_path, prefix, namer):
         listing.extend(disassemble(code, vaddr))
     stubs = find_stubs(listing, slots, namer)
     functions = {}
+    address_exports = {}
     for symbol, section, address, kind in module.exported_symbols():
         if kind == STT_FUNC and section != SHN_COMMON and any(start <= address < start + len(code) for start, code in segments):
-            functions.setdefault(address, set()).add(namer.resolve(symbol))
+            name = namer.resolve(symbol)
+            functions.setdefault(address, set()).add(name)
+        elif kind == STT_OBJECT and any(address in span for span in module.load_memory_ranges):
+            name = namer.resolve(symbol)
+        else:
+            continue
+        if section < SHN_LORESERVE:
+            address_exports.setdefault(address, set()).add(name)
     branch_targets = {address: ", ".join(sorted(names)) for address, names in functions.items()}
     branch_targets.update(stubs)
+    try:
+        unwind_labels = module.unwind_labels(exports.keys() | stubs.keys() | slots.keys() | {entry})
+    except ModuleError as error:
+        print(f"{source}: skipping unwind labels: {error}", file=sys.stderr)
+        unwind_labels = {}
+    if unwind_labels:
+        decoded = (int(head.group(1), 16) for line in listing if (head := LINE_ADDRESS.match(line)))
+        unwind_labels = {address: unwind_labels[address] for address in decoded if address in unwind_labels}
+        branch_targets.update(unwind_labels)
     write_lines(prefix + ".imports.txt", ["%#x %s %s" % (slot, slots[slot], namer.resolve(slots[slot])) for slot in sorted(slots)])
     write_lines(prefix + ".exports.txt", export_lines(exports, thread_local, namer))
-    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, branch_targets, namer, entry))
+    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, branch_targets, namer, entry, unwind_labels, address_exports))
     export_count = sum(len(names) for names in exports.values())
     tls_count = sum(len(names) for names in thread_local.values())
     return "%s: %d imports, %d exports, %d tls, %d stubs, %d lines" % (prefix, len(slots), export_count, tls_count, len(stubs), len(listing))

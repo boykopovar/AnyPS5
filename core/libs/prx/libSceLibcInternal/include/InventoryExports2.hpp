@@ -11,7 +11,6 @@ void* APS5_VABI _Ttotm_nid_postfix(void* time, std::int64_t seconds, int isdst);
 int APS5_VABI _Restore_state_nid_postfix();
 int APS5_VABI _WGenld_nid_postfix();
 int APS5_VABI _ZNKSt7_MpunctIcE14do_frac_digitsEv_nid_postfix();
-int APS5_VABI _Strxfrmx_nid_postfix();
 int APS5_VABI _Tzoff_nid_postfix();
 int APS5_VABI _ZNKSt7_MpunctIcE13do_pos_formatEv_nid_postfix();
 int APS5_VABI _WPutstr_nid_postfix();
@@ -25,9 +24,8 @@ int APS5_VABI _WLitob_nid_postfix();
 int APS5_VABI _WGetfld_nid_postfix();
 void APS5_VABI _Unlock_spin_lock_nid_postfix(volatile char* lock, int mode = 0);
 int APS5_VABI _ZNKSt7_MpunctIcE11do_groupingEv_nid_postfix();
-int APS5_VABI _Setgloballocale_nid_postfix();
+void APS5_VABI _Setgloballocale_nid_postfix(void* pointer);
 int APS5_VABI _Wctomb_nid_postfix();
-int APS5_VABI _Wcsxfrmx_nid_postfix();
 int APS5_VABI _WGetint_nid_postfix();
 int APS5_VABI _WScanf_nid_postfix();
 int APS5_VABI _WFwprep_nid_postfix();
@@ -41,7 +39,6 @@ int APS5_VABI _ZNKSt7_MpunctIcE16do_decimal_pointEv_nid_postfix();
 int APS5_VABI _ZNKSt19istreambuf_iteratorIcSt11char_traitsIcEE5equalERKS2__nid_postfix();
 int APS5_VABI _ZNKSt7_MpunctIcE13do_neg_formatEv_nid_postfix();
 int APS5_VABI _Strcollx_nid_postfix();
-int APS5_VABI _Wcscollx_nid_postfix();
 int APS5_VABI _Tgamma_nid_postfix();
 
 }

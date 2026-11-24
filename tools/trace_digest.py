@@ -84,6 +84,8 @@ class Trace:
         self.losses = []
         if not isinstance(document, (list, dict)):
             raise ValueError("trace must be an event array or object")
+        if isinstance(document, dict) and document and "traceEvents" not in document:
+            raise ValueError("trace object must contain a traceEvents array")
         events = document if isinstance(document, list) else document.get("traceEvents", [])
         if not isinstance(events, list):
             raise ValueError("traceEvents must be an array")
@@ -228,7 +230,7 @@ def load_summary(path, trace_path):
 
 def load_stacks(path):
     stacks = []
-    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").splitlines(), 1):
+    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
         if line.startswith("#") or not line.strip():
             continue
         frames, _, count = line.rpartition(" ")
@@ -702,11 +704,12 @@ def main(arguments=None):
     summary = load_summary(options.summary, options.trace)
     try:
         result = digest(trace, summary, stacks, options.frames, options.top)
+        if options.thread:
+            result["thread_filter"] = sorted(set(options.thread))
+        output = json.dumps(result, indent=1) + "\n" if options.json else markdown(result)
     except KeyError as error:
         parser.exit(2, f"FAIL: the summary line has no {error} field\n")
-    if options.thread:
-        result["thread_filter"] = sorted(set(options.thread))
-    sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown(result))
+    sys.stdout.write(output)
     return 0
 
 

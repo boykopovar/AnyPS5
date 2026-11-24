@@ -82,6 +82,9 @@ WebCore::Color& APS5_VABI _ZN7WebCore5ColoraSEOS0_(WebCore::Color* self, WebCore
     if (WebCore::IsOutOfLine(*self) || WebCore::IsOutOfLine(other)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
+    if (self->m_colorAndFlags == other.m_colorAndFlags) {
+        return *self;
+    }
     self->m_colorAndFlags = other.m_colorAndFlags;
     other.m_colorAndFlags = 0;
     return *self;
