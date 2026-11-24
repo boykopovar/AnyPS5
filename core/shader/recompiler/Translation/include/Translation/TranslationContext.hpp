@@ -92,6 +92,9 @@ private:
     void write16Bits(const RdnaOperand& operand, IrU32 value);
     void writeF16(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources, IrValue* invalid = nullptr);
     bool directedF16Rounding() const;
+    std::uint32_t floatRoundMode(std::uint32_t roundShift) const;
+    bool keepsDenormalResults(std::uint32_t keepBit) const;
+    IrValue& roundedLimit(std::uint32_t rounding, IrU32 sign, IrValue& away, IrValue& towardZero);
     IrU32 flushF16Bits(IrU32 bits, std::uint32_t keepBit);
     IrU32 flushF16Input(IrU32 bits);
     IrU32 flushF16Result(IrU32 bits);
@@ -121,6 +124,7 @@ private:
     IrF32 readF16AsF32(const RdnaOperand& operand, bool nanPayloadUnused = false);
     IrU32 readF16SourceBits(const RdnaOperand& operand);
     IrF32 readMixF32(const RdnaOperand& operand);
+    IrF32 mixNanSourceF32(const RdnaOperand& operand, IrF32 value);
     IrU32 readU16LaneRaw(const RdnaOperand& operand, bool highLane);
     IrU32 readU16LaneAsU32(const RdnaOperand& operand, bool highLane, bool signExtend);
     IrU32 readU16AsU32(const RdnaOperand& operand, bool signExtend);

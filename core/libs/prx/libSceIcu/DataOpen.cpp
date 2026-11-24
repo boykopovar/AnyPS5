@@ -82,9 +82,7 @@ UDataMemory* OpenData(const char* path, const char* type, const char* name, std:
     if (choice && choice->exception) std::rethrow_exception(choice->exception);
     const auto outgoing = static_cast<std::int32_t>(hostStatus);
     if (outgoing != entered) {
-        const int savedErrno = errno;
         const bool written = GuestCopyOut_nid_no_patch(status, &outgoing, sizeof(outgoing));
-        errno = savedErrno;
         if (!written) NotImplemented_nid_no_patch(caller);
     }
     return data.release();

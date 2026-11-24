@@ -452,6 +452,23 @@ class TraceDigestTests(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(result.stdout, "")
 
+    def test_cli_reports_a_summary_line_without_a_field_of_the_markdown_header(self):
+        summary = self.trace.with_name("aps5-summary.jsonl")
+        records = [({key: value for key, value in SUMMARY.items() if key != name}, name)
+                   for name in ("frame_ms", "presents", "gpu_busy_ms_per_present", "gpu", "driver", "os", "resolution", "commit", "trace_dropped")]
+        records += [(dict(SUMMARY, window={"first_present": 600, "ms": 40.0}), "spec"),
+                    (dict(SUMMARY, window={"spec": "frames 600:3", "ms": 40.0}), "first_present"),
+                    (dict(SUMMARY, frame_ms={"p50": 10.0, "p90": 20.0, "max": 20.0}), "p99")]
+        for record, name in records:
+            with self.subTest(name=name):
+                summary.write_text(json.dumps(record) + "\n", encoding="utf-8")
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace)],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertTrue(result.stderr.startswith(f"FAIL: the summary line has no '{name}' field"), result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def test_cli_rejects_invalid_summary_windows(self):
         summary = self.trace.with_name("aps5-summary.jsonl")
         invalid = [(None, "window must be an object"), ([], "window must be an object")]
@@ -596,6 +613,20 @@ class TraceDigestTests(unittest.TestCase):
                 path.write_text("\n".join(json.dumps(record, ensure_ascii=False) for record in (summary, interval)), encoding="utf-8")
                 self.assertEqual(trace_digest.load_summary(path, self.trace), summary)
                 self.assertEqual(trace_digest.load_intervals(path), [interval])
+
+    def test_cli_rejects_duplicate_trace_keys_without_partial_output(self):
+        cases = ((b'{"traceEvents":[{}],"traceEvents":[]}', "traceEvents"),
+                 (b'[{"ph":"X","tid":1,"name":"work","ts":0,"dur":20,"dur":5}]', "dur"))
+        for data, field in cases:
+            for compressed in (False, True):
+                with self.subTest(field=field, compressed=compressed):
+                    path = Path(self.directory.name) / ("duplicate.json.gz" if compressed else "duplicate.json")
+                    path.write_bytes(gzip.compress(data) if compressed else data)
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), "--json"],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn(f"duplicate JSON field: {field!r}", result.stderr)
+                    self.assertEqual(result.stdout, "")
 
     def test_cli_rejects_invalid_event_container_shapes_without_partial_output(self):
         cases = [(value, "trace must be an event array or object") for value in (None, True, 7, "trace")]
@@ -753,6 +784,23 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(empty_list.presents, [])
         empty_events = trace_digest.Trace({"traceEvents": []})
         self.assertEqual(empty_events.presents, [])
+
+    def test_trace_tools_reject_a_run_report_as_an_event_trace(self):
+        fixture = Path(__file__).resolve().parents[2] / "docs/run-report-fixtures/stop-none.json"
+        data = fixture.read_bytes()
+        timeline = Path(trace_digest.__file__).with_name("trace_timeline.py")
+        output = Path(self.directory.name) / "timeline.html"
+        for compressed in (False, True):
+            path = output.with_name("anyps5-report.json.gz" if compressed else "anyps5-report.json")
+            path.write_bytes(gzip.compress(data) if compressed else data)
+            for tool, options in ((trace_digest.__file__, ["--json"]), (timeline, ["--output", str(output)])):
+                with self.subTest(tool=tool, compressed=compressed):
+                    result = subprocess.run([sys.executable, str(tool), str(path), *options],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn("trace object must contain a traceEvents array", result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertFalse(output.exists())
 
     def result(self):
         return trace_digest.digest(trace_digest.load_trace(self.trace), trace_digest.load_summary(None, self.trace),
@@ -1137,6 +1185,14 @@ class TraceDigestTests(unittest.TestCase):
         self.assertNotIn("a.prx+0x10", total)
         self.assertEqual(total, {"a.prx+0x20": 60.0, "a.prx+0x30": 40.0, "a.prx+0x40": 20.0})
 
+    def test_tied_stack_leaders_are_stable_when_sample_rows_are_reordered(self):
+        stacks = [(["root", "leaf-z"], 2), (["root", "leaf-a"], 2)]
+        for entries in (stacks, list(reversed(stacks))):
+            result = trace_digest.digest(trace_digest.Trace([]), stacks=entries, top=1)["stacks"]
+            for field in ("self", "total"):
+                with self.subTest(field=field, entries=entries):
+                    self.assertEqual(result[field], [{"frame": "leaf-a", "pct": 50.0}])
+
     def test_largest_gpu_batches_with_their_recording(self):
         def tagged(tid, name, ts, dur, batch):
             return dict(complete(tid, name, ts, dur), args={"batch": batch})
@@ -1452,19 +1508,46 @@ class IntervalDigestTests(unittest.TestCase):
                         self.assertEqual(trace_digest.main([str(self.path)]), 0)
                     self.assertIn("| Driver.Packet 7.0 |", output.getvalue())
 
+    def test_tied_interval_leaders_are_stable_when_json_keys_are_reordered(self):
+        fields = {
+            "worker_busy_pct": [("worker-z", 20), ("worker-a", 20)],
+            "top_phases_ms_per_frame": [("phase-z", 10), ("phase-a", 10)],
+            "graphics_track": [("Graphics.RenderPass.Close.z", 5), ("Graphics.RenderPass.Close.a", 5)],
+        }
+        for reverse in (False, True):
+            record = interval_line(0, 1, 20, 1, **{
+                key: dict(values[::-1] if reverse else values) for key, values in fields.items()
+            })
+            report = trace_digest.digest_intervals([record])
+            with self.subTest(field="busiest_worker", reverse=reverse):
+                self.assertEqual(report["intervals"][0]["busiest_worker"]["thread"], "worker-a")
+            with self.subTest(field="top_phase", reverse=reverse):
+                self.assertEqual(report["intervals"][0]["top_phase"]["name"], "phase-a")
+            with self.subTest(field="top_close", reverse=reverse):
+                self.assertIn("| 1 | 0 | 0 | 10 | a |", trace_digest.markdown_intervals(report))
+
     def test_command_line_table_and_json(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             self.assertEqual(trace_digest.main([str(self.path)]), 0)
         text = output.getvalue()
-        self.assertIn("**4 intervals**, 0.0 to 120.5 s, 7200 presents", text)
-        self.assertIn("| 2 | 30-60 (dropped) | 1800 | 16.6 | 18.0 | 40.0 | 45.0 | 10.0 | 50 % | Driver.Packet 7.0 |", text)
+        self.assertIn("**4 intervals**, 0.000 to 120.500 s, 7200 presents", text)
+        self.assertIn("| 2 | 30.000-60.500 (dropped) | 1800 | 16.6 | 18.0 | 40.0 | 45.0 | 10.0 | 50 % | Driver.Packet 7.0 |", text)
         self.assertIn("p99 ms  +@.+  0-40.0", text)
         self.assertIn("changed at interval 4", text)
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            trace_digest.main([str(self.path), "--json"])
+            self.assertEqual(trace_digest.main([str(self.path), "--json"]), 0)
         self.assertEqual(len(json.loads(output.getvalue())["intervals"]), 4)
+
+    def test_markdown_preserves_subsecond_interval_bounds(self):
+        line = interval_line(0.123, 0.456, 20.0, 5.0)
+        self.path.write_text(json.dumps(line) + "\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, trace_digest.__file__, str(self.path)],
+                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("0.123 to 0.456 s", result.stdout)
+        self.assertIn("| 1 | 0.123-0.456 |", result.stdout)
 
     def test_file_without_intervals(self):
         self.path.write_text(json.dumps(SUMMARY) + "\n", encoding="utf-8")
@@ -1495,7 +1578,7 @@ class IntervalDigestTests(unittest.TestCase):
                 self.assertEqual(len(rows), 3)
                 self.assertTrue(all(line.count("|") == 11 for line in rows), rows)
                 cells = [cell.strip() for cell in rows[2].split("|")[1:-1]]
-                self.assertEqual(cells, ["1", "0-30", "1800", "16.6", "18.0", "20.0", "25.0", "5.0", "50 %", escaped + " 7.5"])
+                self.assertEqual(cells, ["1", "0.000-30.000", "1800", "16.6", "18.0", "20.0", "25.0", "5.0", "50 %", escaped + " 7.5"])
 
     def test_interval_identity_cannot_create_markdown_sections(self):
         line = interval_line(0.0, 30.0, 20.0, 5.0)
@@ -1594,6 +1677,47 @@ class IntervalSchemaTests(unittest.TestCase):
                     self.write(record)
                     with self.assertRaisesRegex(ValueError, r"summary\.jsonl:4:"):
                         trace_digest.load_intervals(self.path)
+
+    def test_invalid_identity_fields_are_rejected_before_interval_export(self):
+        baseline = interval_line(0, 1, 20, 1)
+        invalid = {
+            "commit": 123,
+            "gpu": ["GPU"],
+            "driver": {},
+            "os": False,
+            "resolution": [1920, 1080],
+            "cpu": 3,
+            "title_id": [],
+            "title": True,
+            "content_version": 1.0,
+            "cpu_threads": True,
+            "memory_mib": -1,
+            "dirty": 1,
+            "env": {"APS5_TRACE_SUMMARY_EVERY": 30},
+        }
+        for field, value in invalid.items():
+            with self.subTest(field=field):
+                self.write(dict(baseline, **{field: value}))
+                with self.assertRaisesRegex(ValueError, rf"summary\.jsonl:4: {field}\b"):
+                    trace_digest.load_intervals(self.path)
+
+    def test_null_dirty_and_omitted_identity_are_valid(self):
+        record = interval_line(0, 1, 20, 1, dirty=None)
+        for field in ("commit", "gpu", "driver", "os", "resolution", "env"):
+            del record[field]
+        self.write(record)
+        self.assertEqual(trace_digest.load_intervals(self.path), [record])
+
+    def test_complete_csv_rejects_boolean_core_counts_that_compare_equal_to_one(self):
+        first = interval_line(0, 1, 20, 1, cpu_threads=1)
+        second = interval_line(1, 2, 20, 1, cpu_threads=True)
+        self.path.write_text("\n".join(json.dumps(row) for row in (first, second)) + "\n", encoding="utf-8")
+        script = Path(trace_digest.__file__).with_name("trace_intervals_csv.py")
+        result = subprocess.run([sys.executable, str(script), str(self.path), "--require-complete"],
+                                capture_output=True, text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("summary.jsonl:2: cpu_threads", result.stderr)
+        self.assertEqual(result.stdout, "")
 
     def test_missing_interval_bound_is_rejected_by_both_cli_reports(self):
         for field in ("interval_start_s", "interval_end_s"):

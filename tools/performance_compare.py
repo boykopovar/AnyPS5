@@ -180,7 +180,8 @@ def compare(baseline, candidate):
         context["window.spec"] = summary["window"]["spec"]
         if re.fullmatch(r"seconds [0-9]+:[0-9]+", summary["window"]["spec"]) is None:
             context["window.first_present"] = summary["window"]["first_present"]
-        context.update({f"env.{key}": value for key, value in summary["env"].items()})
+        context.update({f"env.{key}": value for key, value in summary["env"].items()
+                        if key != "APS5_TRACE_DIR"})
         contexts.append(context)
     differences = {key: {"baseline": contexts[0].get(key), "candidate": contexts[1].get(key)}
                    for key in sorted(contexts[0].keys() | contexts[1].keys())
@@ -215,6 +216,8 @@ def compare(baseline, candidate):
 
 
 def cell(value):
+    if value is None:
+        return "<em>not recorded</em>"
     text = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("|", "&#124;").replace("\r", " ").replace("\n", " ")
 

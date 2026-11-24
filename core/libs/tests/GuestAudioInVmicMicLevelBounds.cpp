@@ -153,13 +153,13 @@ void TestVmicLifecycleAndHandleBoundaries() {
 
         Require(sceAudioInGetSilentState(vmicHandle) == audioInErrorInvalidHandle);
         Require(sceAudioInGetRerouteCount(vmicHandle) == audioInErrorInvalidHandle);
-        Require(sceAudioInIsPadEmbeddedMic(vmicHandle) == audioInErrorInvalidHandle);
+        Require(sceAudioInIsPadEmbeddedMic(vmicHandle) == audioInErrorInvalidState);
         Require(sceAudioInGetHandleStatusInfo(vmicHandle, nullptr) == audioInErrorInvalidHandle);
     }
 
-    Require(sceAudioInIsSharedDevice(0x00040008) == audioInErrorInvalidHandle);
-    Require(sceAudioInIsSharedDevice(0x00040009) == audioInErrorInvalidHandle);
-    Require(sceAudioInIsSharedDevice(0x000400ff) == audioInErrorInvalidHandle);
+    Require(sceAudioInIsSharedDevice(0x00040008) == audioInErrorInvalidState);
+    Require(sceAudioInIsSharedDevice(0x00040009) == audioInErrorInvalidState);
+    Require(sceAudioInIsSharedDevice(0x000400ff) == audioInErrorInvalidState);
     Require(sceAudioInIsSharedDevice(0x00040000) == audioInErrorInvalidState);
     Require(sceAudioInIsSharedDevice(0x00040001) == audioInErrorInvalidState);
 }

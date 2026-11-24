@@ -59,17 +59,29 @@ void DefaultConverterLifecycle() {
         u_releaseDefaultConverter_nid_postfix(below);
     }
 
-    status = 1;
-    Require(!u_getDefaultConverter_nid_postfix(&status) && status == 1, "incoming failure leaves the cache untouched");
+    for (const std::int32_t incoming : {1, 7, 27, 0x10000}) {
+        status = incoming;
+        auto* cached = u_getDefaultConverter_nid_postfix(&status);
+        Require(cached == first && status == incoming, "an incoming failure still takes the cached converter");
+        u_releaseDefaultConverter_nid_postfix(cached);
+    }
     status = 0;
     auto* reused = u_getDefaultConverter_nid_postfix(&status);
     Require(reused == first && status <= 0, "get, release, get reuses the cached converter");
+    for (const std::int32_t incoming : {1, 7}) {
+        status = incoming;
+        Require(!u_getDefaultConverter_nid_postfix(&status) && status == incoming,
+                "an incoming failure opens no converter while the cache is empty");
+    }
+    status = 0;
     auto* second = u_getDefaultConverter_nid_postfix(&status);
     Require(second && second != reused && status <= 0, "checked-out converters are distinct");
     u_releaseDefaultConverter_nid_postfix(second);
     u_flushDefaultConverter_nid_postfix();
     u_releaseDefaultConverter_nid_postfix(reused);
     u_flushDefaultConverter_nid_postfix();
+    status = 1;
+    Require(!u_getDefaultConverter_nid_postfix(&status) && status == 1, "an incoming failure opens no converter after a flush");
 }
 
 UConverter* AcquireDefaultConverter() {

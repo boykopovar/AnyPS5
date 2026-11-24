@@ -2136,7 +2136,37 @@ void DisabledColorTests() {
         mipped.context[0x002] = 1u << 26u;
         mipped.context[0x010] |= 1u << 29u;
         mipped.context[0x005] = 0x300;
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(mipped); }, "HTILE for the depth view mip");
+        const auto htileSecond = AgcDriver::Graphics::DecodeState(mipped);
+        Require(htileSecond.depth && htileSecond.depth->htileAddress == 0x30000u + 0x8000u, "the HTILE of view mip 1 of a 1024x1024 three-mip chain is not after the smaller levels' meta blocks");
+        mipped.context[0x002] = 0;
+        const auto htileFirst = AgcDriver::Graphics::DecodeState(mipped);
+        Require(htileFirst.depth && htileFirst.depth->htileAddress == 0x30000u + 0x10000u, "the HTILE of view mip 0 of a 1024x1024 three-mip chain is not last in the chain");
+        mipped.context[0x002] = (1u << 26u) | 1u | (1u << 13u);
+        const auto htileSliced = AgcDriver::Graphics::DecodeState(mipped);
+        Require(htileSliced.depth && htileSliced.depth->htileAddress == htileSecond.depth->htileAddress + 0x20000u, "slice 1 of a mip chain's HTILE does not step by the whole chain's HTILE");
+        mipped.context[0x002] = 2u << 26u;
+        mipped.context[0x007] = 0x003f003f;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(mipped); }, "into the packed mip tail is unsupported");
+        mipped.context[0x007] = 0x05ff05ff;
+        mipped.context[0x010] = 0xa0040183u;
+        mipped.context[0x002] = 0;
+        const auto shadow = AgcDriver::Graphics::DecodeState(mipped);
+        Require(shadow.depth && shadow.depth->extent.width == 1536u && shadow.depth->extent.height == 1536u && shadow.depth->htileAddress == 0x30000u + 0x28000u, "the HTILE of view mip 0 of a 1536x1536 five-mip D32 chain is not after the 32, 32, 32 and 64 KiB of the smaller levels");
+        mipped.context[0x002] = 1u << 26u;
+        const auto shadowSecond = AgcDriver::Graphics::DecodeState(mipped);
+        Require(shadowSecond.depth && shadowSecond.depth->htileAddress == 0x30000u + 0x18000u, "the HTILE of view mip 1 of a 1536x1536 five-mip D32 chain is not after the three smaller levels");
+        mipped.context[0x007] = 0x03ff0800;
+        mipped.context[0x010] = 0xa0010183u;
+        mipped.context[0x002] = 0;
+        const auto odd = AgcDriver::Graphics::DecodeState(mipped);
+        Require(odd.depth && odd.depth->extent.width == 2049u && odd.depth->extent.height == 1024u && odd.depth->htileAddress == 0x30000u + 0x10000u, "the HTILE of view mip 0 of a 2049x1024 two-mip D32 chain is not after the two meta blocks of mip 1, whose rounded-up extent is 1025x512");
+        mipped.context[0x002] = 1u | (1u << 13u);
+        const auto oddSliced = AgcDriver::Graphics::DecodeState(mipped);
+        Require(oddSliced.depth && oddSliced.depth->htileAddress == odd.depth->htileAddress + 0x40000u, "slice 1 of a 2049x1024 two-mip chain's HTILE does not step by its 2 + 6 meta blocks");
+        mipped.context[0x002] = 1u << 26u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(mipped); }, "needs more HTILE than its extent covers");
+        mipped.context[0x007] = 0x03ff03ff;
+        mipped.context[0x002] = 1u << 26u;
         mipped.context[0x010] = (0x80000181u | (2u << 16u)) & ~(31u << 4u);
         expectFailure([&] { AgcDriver::Graphics::DecodeState(mipped); }, "uses a swizzle other than 64 KiB Z_X");
     }
@@ -3999,6 +4029,24 @@ void gcnColorSliceTests() {
         const auto target = DecodeColorBuffer(queue.context, 0);
         Require(target.address == base + slice * GcnSliceBytes && target.bytes == GcnSliceBytes, "a GCN color view of one array slice does not address that slice");
     }
+    for (const std::uint32_t slice : {0u, 1u}) {
+        for (const std::uint32_t exports : {0u, (1u << 18u) - 1u, ~(1u << 18u)}) {
+            queue.context[0x207] = exports;
+            queue.context[0x31b] = slice | (2u << 13u);
+            const auto target = DecodeColorBuffer(queue.context, 0);
+            Require(target.address == base + slice * GcnSliceBytes && target.bytes == GcnSliceBytes && target.layers == 1u, "a GCN color view of several slices without a vertex render target index does not draw into its first slice");
+        }
+    }
+    queue.context.erase(0x207);
+    queue.context[0x31b] = 1u | (2u << 13u);
+    Require(DecodeColorBuffer(queue.context, 0).address == base + GcnSliceBytes, "a GCN color view of several slices decoded without PA_CL_VS_OUT_CNTL does not draw into its first slice");
+    queue.context[0x207] = 1u << 18u;
+    expectFailure([&] { static_cast<void>(DecodeColorBuffer(queue.context, 0)); }, "GCN layered rendering into several array slices through the vertex render target index is not implemented");
+    queue.context[0x31b] = 1u | (1u << 13u);
+    Require(DecodeColorBuffer(queue.context, 0).address == base + GcnSliceBytes, "a GCN color view of one slice is refused for a vertex render target index");
+    queue.context[0x207] = 0;
+    queue.context[0x31b] = 2u | (1u << 13u);
+    expectFailure([&] { static_cast<void>(DecodeColorBuffer(queue.context, 0)); }, "the color view ends before its first slice");
 }
 
 void cmaskTests() {
@@ -4636,7 +4684,7 @@ void multisampleTests() {
     }
     queue = multisampled();
     queue.context[0x31d] = 0x1000;
-    expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
+    Require(DecodeState(queue).samples == 1 && DecodeState(queue).colors[0].coverageSamples == 2, "a 2-sample one-fragment target under a 2x rasterizer without a depth target did not rasterize sample 0 alone");
     queue.context[0x31d] = 0;
     queue.context[0x293] = 0x10000u;
     Require(DecodeState(queue).samples == 1 && !DecodeState(queue).perSampleShading, "PS_ITER_SAMPLE into a one-sample target did not rasterize sample 0 alone");
@@ -4764,7 +4812,7 @@ void multisampleTests() {
     queue.context[0x2f8] = 0;
     queue.context[0x0] = 0;
     queue.context[0x202] = 0xcc0020;
-    expectFailure([&] { DecodeColorMetadataPass(queue); }, "multisampled color target");
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "fast-clear eliminate of a multisampled target without a CMASK address");
     queue.context[0x31c] |= 0x10000000u;
     queue.context[0x325] = 0;
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "multisampled DCC targets require pipe-aligned single-layer SW_64KB_R_X");
@@ -4785,6 +4833,15 @@ void multisampleTests() {
     Require(fmaskPass->targets[0].dccControl == 0x00100038u, "FMASK decompress lost its DCC control");
     queue.context[0x31e] |= 0x80u;
     Require(DecodeColorMetadataPass(queue)->targets[0].dccControl == 0x001000b8u, "FMASK decompress hid an unsupported DCC control from the importer");
+    queue.context[0x318] = static_cast<std::uint32_t>(resolvedAddress >> 8u);
+    queue.context[0x390] = static_cast<std::uint32_t>(resolvedAddress >> 40u);
+    queue.context[0x31e] = 0x00100038u;
+    queue.context[0x3b8] = 0x4dc6c000u;
+    queue.context[0x202] = 0x00cc0020;
+    const auto eliminatePass = DecodeColorMetadataPass(queue);
+    Require(eliminatePass.has_value() && eliminatePass->mode == ColorMetadataPass::Mode::EliminateFastClear && eliminatePass->targets.size() == 1 && eliminatePass->targets[0].samples == 4 && eliminatePass->targets[0].cmaskAddress == cmaskAddress && eliminatePass->targets[0].cmaskFastClear && eliminatePass->targets[0].dccAddress != 0, "a fast-clear eliminate of a 4x multisampled target with CMASK and DCC did not decode");
+    queue.context[0x202] = 0x00cc0060;
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "CB DCC decompress over a multisampled color target");
     queue = makeState();
     queue.context[0x0] = 0;
     queue.context[0x202] = 0x00cc0050;
@@ -5299,7 +5356,10 @@ void multisampledDepthTests() {
     queue = oneFragment();
     queue.context[0x010] = 0;
     queue.context[0x011] = 0;
-    expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
+    queue.context[0x201] = 0x00022200;
+    state = DecodeState(queue);
+    Require(state.samples == 1 && !state.depth && state.colors.size() == 1 && state.colors[0].samples == 1 && state.colors[0].coverageSamples == 4 && !state.truncatedCoverage && !state.mergedCoverage && !state.perSampleShading, "a 4-sample color target with one fragment and no depth target under a 4x rasterizer (CUSA00419's registers) did not draw sample 0's coverage into its one fragment");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a 4-sample color target with one fragment and no depth target");
     queue = singleSampleScan();
     queue.context[0x010] = 0x22900983;
     expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
@@ -5911,11 +5971,66 @@ void TwoSampleDitheredAlphaToCoverageTests() {
     singleSample.context[0x2f8] = 0;
     singleSample.context[0x292] = 2;
     singleSample.context[0x203] &= ~0x800u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(singleSample); }, "requires two matched raster/DB_EQAA samples");
-    Require(AgcDriver::Graphics::DrawRejection(singleSample, false).find("requires two matched raster/DB_EQAA samples") != std::string::npos, "the precheck accepted DB_ALPHA_TO_MASK 0xe701 on a single-sample target");
-    singleSample.context[0x2dc] = 0x18701;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(singleSample); }, "requires eight matched raster/DB_EQAA samples");
-    Require(AgcDriver::Graphics::DrawRejection(singleSample, false).find("requires eight matched raster/DB_EQAA samples") != std::string::npos, "the precheck accepted DB_ALPHA_TO_MASK 0x18701 on a single-sample target");
+    singleSample.context[0x201] = 0;
+    for (const auto alpha : {0xe701u, 0x18701u}) {
+        singleSample.context[0x2dc] = alpha;
+        for (const auto format : {4u, 9u}) {
+            singleSample.context[0x1c5] = format;
+            const auto decoded = AgcDriver::Graphics::DecodeState(singleSample);
+            const auto pattern = alpha == 0xe701u ? ShaderRecompiler::SingleSampleDither::E701 : ShaderRecompiler::SingleSampleDither::Rounded18701;
+            Require(decoded.alphaToCoverage && decoded.ditheredAlphaToCoverage && decoded.ditheredAlphaSamples == 1u && decoded.singleSampleDither == pattern && decoded.samples == 1u, "a measured single-sample dither did not reach the shader state");
+            Require(AgcDriver::Graphics::DrawRejection(singleSample, false).empty(), "the precheck refused a measured single-sample dither");
+            Require(AgcDriver::Graphics::CanonicalPipelineState(decoded).singleSampleDither == ShaderRecompiler::SingleSampleDither::None, "shader-only alpha dither entered the pipeline journal state");
+            for (const auto& locations : std::array{
+                std::array{0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+                std::array{0x77777777u, 0x77777777u, 0x77777777u, 0x77777777u},
+                std::array{0x88888888u, 0x88888888u, 0x88888888u, 0x88888888u},
+                std::array{0x01234567u, 0x89abcdefu, 0xfedcba98u, 0x76543210u}}) {
+                auto shifted = singleSample;
+                for (std::uint32_t pixel = 0; pixel < locations.size(); ++pixel) shifted.context[0x2feu + pixel * 4u] = locations[pixel];
+                const auto state = AgcDriver::Graphics::DecodeState(shifted);
+                Require(state.samples == 1u && state.singleSampleDither == pattern && !state.customSampleLocations && !state.sampleLocationGrid && std::ranges::all_of(state.sampleLocations, [](auto location) { return location == 0; }), "single-sample dither retained ignored sample locations without MSAA_ENABLE");
+                Require(AgcDriver::Graphics::DrawRejection(shifted, false).empty(), "the single-sample dither precheck refused ignored sample locations without MSAA_ENABLE");
+            }
+        }
+        for (const auto eqaa : {0x100u, 0x1000u, 0x10u, 0x1u}) {
+            auto invalid = singleSample;
+            invalid.context[0x201] = eqaa;
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(invalid); }, "matched raster/DB_EQAA samples");
+            Require(!AgcDriver::Graphics::DrawRejection(invalid, false).empty(), "the precheck accepted unmeasured single-sample EQAA");
+        }
+        auto invalid = singleSample;
+        invalid.context[0x292] |= 1u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(invalid); }, "matched raster/DB_EQAA samples");
+        Require(!AgcDriver::Graphics::DrawRejection(invalid, false).empty(), "the precheck accepted MSAA_ENABLE for the single-sample dither");
+        invalid = singleSample;
+        invalid.context[0x1c5] = 5u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(invalid); }, "FP16_ABGR or 32_ABGR");
+        Require(!AgcDriver::Graphics::DrawRejection(invalid, false).empty(), "the precheck accepted an unmeasured single-sample export packing");
+        invalid = singleSample;
+        invalid.context[0x203] |= 0x800u;
+        const auto disabled = AgcDriver::Graphics::DecodeState(invalid);
+        Require(!disabled.alphaToCoverage && disabled.singleSampleDither == ShaderRecompiler::SingleSampleDither::None, "the single-sample dither ignored the shader disable override");
+    }
+}
+
+void SingleSampleDitherStateProbe() {
+    auto state = makeState();
+    state.context[0x1b3] = 2u;
+    state.context[0x1b4] = 2u;
+    state.context[0x2f8] = 0u;
+    state.context[0x292] = 2u;
+    state.context[0x203] &= ~0x800u;
+    state.context[0x201] = 0u;
+    for (const auto alpha : {0xe701u, 0x18701u}) {
+        state.context[0x2dc] = alpha;
+        for (const auto format : {4u, 9u}) {
+            state.context[0x1c5] = format;
+            const auto decoded = AgcDriver::Graphics::DecodeState(state);
+            Require(decoded.alphaToCoverage && decoded.ditheredAlphaToCoverage && decoded.ditheredAlphaSamples == 1u && decoded.samples == 1u, "single-sample dither registers did not decode as one sample");
+            Require(AgcDriver::Graphics::DrawRejection(state, false).empty(), "single-sample dither registers failed the draw precheck");
+        }
+    }
 }
 
 void AlphaToCoverageTests() {
@@ -6631,6 +6746,7 @@ AgcDriver::Graphics::Context mockContext() {
     context.limits.maxPerStageDescriptorStorageBuffers = 16;
     context.limits.maxPerStageResources = 128;
     context.limits.maxDescriptorSetStorageBuffers = 32;
+    context.storageBufferUpdateAfterBind = true;
     context.limits.maxImageArrayLayers = 2048;
     return context;
 }
@@ -7975,6 +8091,29 @@ void resourceTests() {
         fragment.bindings.front().binding = 1;
         fragment.bindings.front().guestDescriptor = vsharp(guestFirst.data(), 16);
     }
+    {
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        for (std::uint32_t i = 0; i < 12; ++i) vertex.bindings.push_back(makeBinding(Role::GuestBuffers, i, 1, vsharp(guestFirst.data(), 16)));
+        for (std::uint32_t i = 0; i < 12; ++i) fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 12 + i, 1, vsharp(guestSecond.data(), 32)));
+        for (auto& binding : fragment.bindings) binding.descriptorSet = ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet;
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        auto limited = mockContext();
+        limited.limits.maxPerStageDescriptorStorageBuffers = 16;
+        limited.limits.maxDescriptorSetStorageBuffers = 10;
+        limited.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 16;
+        limited.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers = 20;
+        limited.descriptorIndexingLimits.maxPerStageUpdateAfterBindResources = 128;
+        limited.storageBufferUpdateAfterBind = true;
+        auto cache = std::make_unique<AgcDriver::Graphics::DescriptorCache>(limited);
+        limited.descriptorCache = cache.get();
+        expectFailure([&] { DescribeSetLayouts(limited, shaders); }, "typed heaps exceed descriptor set storage buffer capacity: required 24, device limit 20");
+        vertex.bindings.resize(10);
+        fragment.bindings.resize(10);
+        const auto layouts = DescribeSetLayouts(limited, shaders);
+        Require(layouts.layouts.split, "split layouts expected for separated vertex and fragment buffer bindings");
+        limited.descriptorCache = nullptr;
+    }
 }
 
 void unsetFormatStorageImageTests() {
@@ -8199,6 +8338,8 @@ void descriptorCacheTests() {
     Require(mock.live == 0, "the descriptor cache leaked a pool or layout");
     mock = MockVulkan{};
     context.limits.maxDescriptorSetStorageBuffers = 16;
+    context.storageBufferUpdateAfterBind = true;
+    context.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 8192;
     context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers = 8192;
     context.descriptorIndexingLimits.maxPerStageUpdateAfterBindResources = 16384;
     context.limits.maxPerStageDescriptorSampledImages = 2048;
@@ -8237,6 +8378,14 @@ void descriptorCacheTests() {
         cache.Free(larger);
         cache.Free(same);
         expectFailure([&] { cache.Allocate(fittingLayout, fitting, false, 3u); }, "descriptor set exceeds the device's per-set descriptor limit");
+        const std::array<VkDescriptorSetLayoutBinding, 1> excessiveBindings{{{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8193, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
+        const std::array<VkDescriptorBindingFlags, 1> excessiveFlags{VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT};
+        const std::array<std::uint32_t, 5> excessiveKey{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8193, VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT};
+        expectFailure([&] { cache.Layout(excessiveKey, excessiveBindings, true, excessiveFlags); }, "typed heaps exceed per-stage storage buffer capacity");
+        const std::array<VkDescriptorSetLayoutBinding, 1> regularExcessiveBindings{{{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 17, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
+        const std::array<VkDescriptorBindingFlags, 1> regularFlags{0};
+        const std::array<std::uint32_t, 4> regularExcessiveKey{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 17, VK_SHADER_STAGE_FRAGMENT_BIT};
+        expectFailure([&] { cache.Layout(regularExcessiveKey, regularExcessiveBindings, false, regularFlags); }, "typed heaps exceed descriptor set storage buffer capacity");
     }
     Require(mock.live == 0, "the combined descriptor cache leaked a pool or layout");
     mock = MockVulkan{};
@@ -10197,6 +10346,12 @@ void framebufferOwnerTests() {
         auto first = pipeline.AcquireFramebuffer(views, owners, {4, 4});
         auto repeated = pipeline.AcquireFramebuffer(views, owners, {4, 4});
         Require(first == repeated, "a live framebuffer owner did not reuse its framebuffer");
+        auto aliasOwner = std::shared_ptr<void>(std::make_shared<int>(3), owners[0].get());
+        owners[0].swap(aliasOwner);
+        auto aliased = pipeline.AcquireFramebuffer(views, owners, {4, 4});
+        Require(aliased != first, "the same pointer with a different owner reused a framebuffer");
+        owners[0].swap(aliasOwner);
+        aliasOwner.reset();
         auto retainedOwner = owners[0];
         owners[0] = std::make_shared<int>(2);
         auto distinct = pipeline.AcquireFramebuffer(views, owners, {4, 4});
@@ -12302,6 +12457,13 @@ void uintTargetTests() {
     auto halfwords = queue;
     halfwords.context[0x31c] = (halfwords.context.at(0x31c) & ~0x1f7cu) | (2u << 2u) | (4u << 8u);
     Require(AgcDriver::Graphics::DecodeState(halfwords).color.packing == ColorExportPacking::UintClamp16, "a 32_ABGR export into a 16-bit UINT target did not get the clamping packing");
+    auto tenBits = queue;
+    tenBits.context[0x31c] = (tenBits.context.at(0x31c) & ~0x1f7cu) | (9u << 2u) | (4u << 8u);
+    for (const auto& [exportFormat, packing] : std::array<std::pair<std::uint32_t, ColorExportPacking>, 4>{{{1u, ColorExportPacking::UintMask10_10_10_2}, {2u, ColorExportPacking::UintClamp10_10_10_2}, {3u, ColorExportPacking::Uint}, {9u, ColorExportPacking::UintClamp10_10_10_2}}}) {
+        tenBits.context[0x1c5] = exportFormat;
+        const auto ten = AgcDriver::Graphics::DecodeState(tenBits);
+        Require(ten.color.format == VK_FORMAT_A2B10G10R10_UINT_PACK32 && ten.color.elementBytes == 4 && ten.color.componentMapping == 0xe4u && ten.color.packing == packing && AgcDriver::Graphics::ExportPackings(ten)[0] == packing && !ten.blends.at(0).blendEnable, "a 32-bit export into a 2_10_10_10 UINT target did not get the packing of its export format");
+    }
     for (const auto& [exportFormat, eightPacking, sixteenPacking] : std::array<std::tuple<std::uint32_t, ColorExportPacking, ColorExportPacking>, 3>{{{1u, ColorExportPacking::UintMask8, ColorExportPacking::UintMask16}, {2u, ColorExportPacking::UintClamp8, ColorExportPacking::UintClamp16}, {3u, ColorExportPacking::Uint, ColorExportPacking::Uint}}}) {
         auto narrow = bytes;
         narrow.context[0x1c5] = exportFormat;
@@ -12317,7 +12479,7 @@ void uintTargetTests() {
     Require(uint16.color.packing == ColorExportPacking::None && uint16.color.uintExport, "a UINT16_ABGR export into a UINT target was retyped twice");
     auto halves = queue;
     halves.context[0x1c5] = 4u;
-    for (const auto& [format, vkFormat, packing] : std::array<std::tuple<std::uint32_t, VkFormat, ColorExportPacking>, 5>{{{4u, VK_FORMAT_R32_UINT, ColorExportPacking::Uint}, {1u, VK_FORMAT_R8_UINT, ColorExportPacking::UintClamp8}, {10u, VK_FORMAT_R8G8B8A8_UINT, ColorExportPacking::UintClamp8}, {2u, VK_FORMAT_R16_UINT, ColorExportPacking::UintClamp16}, {12u, VK_FORMAT_R16G16B16A16_UINT, ColorExportPacking::UintClamp16}}}) {
+    for (const auto& [format, vkFormat, packing] : std::array<std::tuple<std::uint32_t, VkFormat, ColorExportPacking>, 6>{{{4u, VK_FORMAT_R32_UINT, ColorExportPacking::Uint}, {1u, VK_FORMAT_R8_UINT, ColorExportPacking::UintClamp8}, {10u, VK_FORMAT_R8G8B8A8_UINT, ColorExportPacking::UintClamp8}, {2u, VK_FORMAT_R16_UINT, ColorExportPacking::UintClamp16}, {12u, VK_FORMAT_R16G16B16A16_UINT, ColorExportPacking::UintClamp16}, {9u, VK_FORMAT_A2B10G10R10_UINT_PACK32, ColorExportPacking::UintClamp10_10_10_2}}}) {
         halves.context[0x31c] = (queue.context.at(0x31c) & ~0x1f7cu) | (format << 2u) | (4u << 8u);
         const auto half = AgcDriver::Graphics::DecodeState(halves);
         Require(half.color.format == vkFormat && half.color.packing == packing && !half.color.uintExport && AgcDriver::Graphics::ExportPackings(half)[0] == packing && !half.blends.at(0).blendEnable, "an FP16_ABGR export into a UINT target did not get the packing that clamps to its channel width");
@@ -12882,7 +13044,7 @@ void float11_11_10TargetTests() {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
     Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the packed float export did not reach attachment 0");
     auto invalid = request;
-    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(9);
+    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(static_cast<std::uint8_t>(ColorExportPacking::UintMask10_10_10_2) + 1u);
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(invalid)); }, "invalid prepared fragment export packing");
 }
 
@@ -13222,6 +13384,55 @@ void validationTests() {
         Require(AgcDriver::Graphics::VertexBufferReadOffset(attribute, 2, 7) == 64, "vertex range includes records before the first vertex");
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 112, "an index past the records still spans its fetch");
         {
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(attribute, 0) == 0x1000 + 80, "a descriptor's end is not its last record's end");
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(attribute, 4) == 0x1000 + 84, "a descriptor's end left out the widened bytes");
+            auto instanced = attribute;
+            instanced.fetchIndex = 1;
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(instanced, 0) == 0x1000 + 80, "an instance attribute's descriptor end differs");
+            auto empty = attribute;
+            empty.resource.fields[2] = 0;
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(empty, 0) == 0, "a descriptor without records has an end");
+            auto constant = attribute;
+            constant.resource.fields[1] = 0;
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(constant, 0) == 0, "a zero-stride descriptor has an end");
+        }
+        {
+            using AgcDriver::Graphics::GrownVertexCopyBytes;
+            constexpr std::size_t mib = std::size_t{1} << 20u;
+            Require(GrownVertexCopyBytes(1000, 0) == 1000 && GrownVertexCopyBytes(1000, 1000) == 1000, "a vertex copy grew without room past its read");
+            Require(GrownVertexCopyBytes(1000, 2000) == 1250 && GrownVertexCopyBytes(3, 2000) == 3, "a vertex copy did not grow by a quarter of its read");
+            Require(GrownVertexCopyBytes(1000, 1100) == 1100, "a vertex copy grew past its limit");
+            Require(GrownVertexCopyBytes(800 * mib, 2048 * mib) == 1000 * mib && GrownVertexCopyBytes(900 * mib, 1024 * mib) == 1024 * mib, "a vertex copy within the draw input budget did not grow");
+            Require(GrownVertexCopyBytes(900 * mib, 1025 * mib) == 900 * mib && GrownVertexCopyBytes(900 * mib, 2048 * mib) == 900 * mib, "a vertex copy grew past the draw input budget");
+        }
+        {
+            using AgcDriver::Graphics::DepthTarget;
+            using AgcDriver::Graphics::VertexCopyGrowEnd;
+            const AgcDriver::Graphics::State none{};
+            Require(VertexCopyGrowEnd(none, 0x2000, 0x3000) == 0x3000, "a vertex copy's limit was cut without a target");
+            Require(VertexCopyGrowEnd(none, 0x2000, 0x1800) == 0x2000, "a vertex copy's limit fell before its read's end");
+            auto color = none;
+            color.hasColorTarget = true;
+            color.color.address = 0x2800;
+            Require(VertexCopyGrowEnd(color, 0x2000, 0x3000) == 0x2800, "a vertex copy's limit passed the color target");
+            Require(VertexCopyGrowEnd(color, 0x2800, 0x3000) == 0x2800, "a color target at a vertex copy's read end left it headroom");
+            Require(VertexCopyGrowEnd(color, 0x2000, 0x2700) == 0x2700 && VertexCopyGrowEnd(color, 0x2000, 0x2800) == 0x2800 && VertexCopyGrowEnd(color, 0x2900, 0x3000) == 0x3000, "a color target outside a vertex copy's headroom moved its limit");
+            color.hasColorTarget = false;
+            Require(VertexCopyGrowEnd(color, 0x2000, 0x3000) == 0x3000, "an unbound color target cut a vertex copy's limit");
+            auto colors = none;
+            colors.colors.resize(3);
+            colors.colors[0].address = 0x2c00;
+            colors.colors[1].address = 0x2400;
+            colors.colors[2].address = 0x2a00;
+            Require(VertexCopyGrowEnd(colors, 0x2000, 0x3000) == 0x2400, "a vertex copy's limit passed a color target of the set");
+            for (const auto member : {&DepthTarget::address, &DepthTarget::stencilAddress, &DepthTarget::htileAddress}) {
+                auto depth = none;
+                depth.depth = DepthTarget{};
+                (*depth.depth).*member = 0x2600;
+                Require(VertexCopyGrowEnd(depth, 0x2000, 0x3000) == 0x2600, "a vertex copy's limit passed a depth, stencil or HTILE address");
+            }
+        }
+        {
             auto wider = attribute;
             wider.resource.fields[2] = 9;
             auto instanced = attribute;
@@ -13260,7 +13471,7 @@ void validationTests() {
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "record count");
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "vertex fetch exceeds descriptor record count: OOB_SELECT 2, stride 32, NUM_RECORDS 3, vertex index 3");
         attribute.resource.fields[3] = 0x3004dfacu;
-        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "record count");
+        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 16 && AgcDriver::Graphics::VertexBufferExtent(attribute) == 16, "a short select-3 descriptor did not use the zero binding");
         attribute.resource.fields[3] = 77u << 12u;
         attribute.fetchIndex = 1;
         attribute.resource.fields[1] = 0;
@@ -13272,8 +13483,8 @@ void validationTests() {
             zeroStride(0, records);
             Require(AgcDriver::Graphics::VertexFetchOutOfRange(attribute), "OOB_SELECT 0 must read every zero-stride fetch as zero");
             Require(AgcDriver::Graphics::ZeroStrideAvailableBytes(attribute) == 0, "OOB_SELECT 0 zero-stride fetch has bytes to read");
-            expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1); }, "byte range");
-            expectFailure([&] { AgcDriver::Graphics::VertexBufferExtent(attribute); }, "empty or oversized");
+            Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1) == 16, "a zero fetch did not size its constant host binding");
+            Require(AgcDriver::Graphics::VertexBufferExtent(attribute) == 16, "a zero indirect fetch did not size its constant host binding");
         }
         zeroStride(1, 16);
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 100, 2) == 16, "zero stride must repeat one value");
@@ -13307,7 +13518,7 @@ void validationTests() {
         for (const auto records : {1u, 8u, 15u}) {
             zeroStride(3, records);
             Require(AgcDriver::Graphics::VertexFetchOutOfRange(attribute), "OOB_SELECT 3 must read a fetch that only partly fits as zero");
-            expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1); }, "byte range");
+            Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1) == 16, "a zero fetch did not size its constant host binding");
         }
         for (const auto records : {16u, 17u, 0xffffffffu}) {
             zeroStride(3, records);
@@ -13624,6 +13835,11 @@ void meshArgumentTests() {
     Require(same(ResolveMeshArguments(record(200, 3, 150), rules(triangles, 300)), {2, 3, 1, 150, 150}), "count clamped to the index buffer");
     Require(same(ResolveMeshArguments(record(9, 1, 300), rules(triangles, 300)), {0, 0, 0, 0, 300}), "first index past the index buffer draws nothing");
     Require(same(ResolveMeshArguments(record(2, 1, 0), rules(triangles, 300)), {0, 0, 0, 2, 0}), "no complete triangle draws nothing");
+    const auto autoRules = [&](const ShaderRecompiler::MeshConfiguration& mesh) { return AgcDriver::Graphics::MeshArgumentRulesFor(context, mesh, AgcDriver::Pm4::DrawParameters{0, 0, 0, 1, 0, false}); };
+    Require(same(ResolveMeshArguments(record(99, 2, 0), autoRules(triangles)), {2, 2, 1, 99, 0}), "a non-indexed record keeps its vertex count");
+    Require(same(ResolveMeshArguments(record(99, 2, 0xfffffff0u), autoRules(triangles)), {2, 2, 1, 99, 0}), "a non-indexed record's start vertex neither clamps nor offsets it");
+    Require(same(ResolveMeshArguments(record(2, 1, 5), autoRules(triangles)), {0, 0, 0, 2, 0}), "a non-indexed record with no complete triangle draws nothing");
+    Require(same(ResolveMeshArguments(record(200, 3, 150), AgcDriver::Graphics::MeshArgumentRulesFor(context, triangles, AgcDriver::Pm4::DrawParameters{0, 300, 2, 1, 0, true})), {2, 3, 1, 150, 150}), "an indexed draw keeps its index buffer clamp");
     Require(same(ResolveMeshArguments(record(10, 1, 0), rules(strip, 64)), {1, 1, 1, 10, 0}), "eight strip triangles are one group");
     Require(same(ResolveMeshArguments(record(11, 1, 0), rules(strip, 64)), {2, 1, 1, 11, 0}), "a ninth strip triangle starts a group");
     Require(same(ResolveMeshArguments(record(10, 1, 0), rules(fan, 64)), {1, 1, 1, 10, 0}), "eight fan triangles are one group");
@@ -14942,6 +15158,149 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
     Require(mock.live == 0, "the pipeline journal test leaked Vulkan objects");
 }
 
+VkBuffer retentionIndex = VK_NULL_HANDLE;
+VkBuffer retentionVertex = VK_NULL_HANDLE;
+std::set<VkBuffer> retentionDestroyed;
+
+VKAPI_ATTR void VKAPI_CALL retentionDestroyBuffer(VkDevice device, VkBuffer buffer, const VkAllocationCallbacks* allocator) {
+    retentionDestroyed.insert(buffer);
+    mockDestroyBuffer(device, buffer, allocator);
+}
+VKAPI_ATTR void VKAPI_CALL retentionBindIndex(VkCommandBuffer, VkBuffer buffer, VkDeviceSize, VkIndexType) { retentionIndex = buffer; }
+VKAPI_ATTR void VKAPI_CALL retentionBindVertex(VkCommandBuffer, std::uint32_t, std::uint32_t count, const VkBuffer* buffers, const VkDeviceSize*) {
+    Require(count == 1, "retention test expected one vertex binding");
+    retentionVertex = buffers[0];
+}
+VKAPI_ATTR void VKAPI_CALL retentionDrawIndexed(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::int32_t, std::uint32_t) {}
+std::vector<VkFence> retentionFences;
+VKAPI_ATTR VkResult VKAPI_CALL retentionQueueSubmit(VkQueue queue, std::uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
+    if (fence != VK_NULL_HANDLE) retentionFences.push_back(fence);
+    return mockQueueSubmit(queue, count, submits, fence);
+}
+
+PFN_vkVoidFunction VKAPI_CALL retentionProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkQueueSubmit") == 0) return reinterpret_cast<PFN_vkVoidFunction>(retentionQueueSubmit);
+    if (std::strcmp(name, "vkDestroyBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(retentionDestroyBuffer);
+    if (std::strcmp(name, "vkCmdBindIndexBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(retentionBindIndex);
+    if (std::strcmp(name, "vkCmdBindVertexBuffers") == 0) return reinterpret_cast<PFN_vkVoidFunction>(retentionBindVertex);
+    if (std::strcmp(name, "vkCmdDrawIndexed") == 0) return reinterpret_cast<PFN_vkVoidFunction>(retentionDrawIndexed);
+    return depthOrderProc(device, name);
+}
+
+void recordedDrawRetentionTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.deviceProc = retentionProc;
+    context.formatProperties = [](VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
+        *properties = {};
+        properties->bufferFeatures = VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT;
+    };
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    context.limits.maxFramebufferLayers = 1;
+    context.limits.maxViewports = 1;
+    context.limits.maxViewportDimensions[0] = context.limits.maxViewportDimensions[1] = 64;
+    context.limits.viewportBoundsRange[0] = -64;
+    context.limits.viewportBoundsRange[1] = 64;
+    context.limits.maxPushConstantsSize = PipelinePushConstantBytes;
+    context.limits.maxFramebufferWidth = context.limits.maxFramebufferHeight = 64;
+    Recorder recorder(context);
+    context.recorder = &recorder;
+    recorder.Activate();
+    DescriptorCache descriptors(context);
+    context.descriptorCache = &descriptors;
+    State state{};
+    state.stages.path = ShaderPath::Vertex;
+    state.rasterizerDiscard = true;
+    state.renderExtent = {16, 16};
+    state.scissor = {{0, 0}, {16, 16}};
+    state.viewport = {0, 0, 16, 16, 0, 1};
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({.vertexInput = true});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 5001;
+    fragment.variantId = 5002;
+    const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}};
+    std::array<std::uint16_t, 3> indices{0, 1, 2};
+    std::array<float, 12> vertices{};
+    const auto vertexAddress = reinterpret_cast<std::uint64_t>(vertices.data());
+    vertex.vertexAttributes = {{0, 4, {{static_cast<std::uint32_t>(vertexAddress), static_cast<std::uint32_t>(vertexAddress >> 32u) | (16u << 16u), 3u, 77u << 12u}}, 0}};
+    context.limits.maxVertexInputBindings = context.limits.maxVertexInputAttributes = 16;
+    context.limits.maxVertexInputBindingStride = 2048;
+    context.limits.maxVertexInputAttributeOffset = 2048;
+    context.limits.maxDrawIndexedIndexValue = std::numeric_limits<std::uint32_t>::max();
+    const AgcDriver::Pm4::DrawParameters draw{reinterpret_cast<std::uint64_t>(indices.data()), 3, 2, 1, 0, true};
+    retentionDestroyed.clear();
+    retentionIndex = retentionVertex = VK_NULL_HANDLE;
+    std::shared_ptr<const AgcDriver::DrawRecipe> recipe;
+    Draw(context, state, draw, shaders, {}, &recipe);
+    Require(recipe != nullptr, "retention draw did not produce a recipe");
+    Require(retentionIndex != VK_NULL_HANDLE && retentionVertex != VK_NULL_HANDLE, "retention draw did not bind copied inputs");
+    auto replacement = std::make_shared<Buffer>(context, sizeof(vertices), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    recorder.KeepDrawSnapshot(draw.indexAddress, sizeof(indices), 1, 0, replacement, Recorder::SnapshotUse::Index16);
+    recorder.KeepDrawSnapshot(vertexAddress, sizeof(vertices), 1, 0, replacement, Recorder::SnapshotUse::Vertex);
+    const auto indexUsage = mock.bufferUsage.at(retentionIndex);
+    const auto vertexUsage = mock.bufferUsage.at(retentionVertex);
+    Require((indexUsage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0, "retention probe would look for indices in a non-index buffer");
+    Require((vertexUsage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0, "retention probe would look for vertices in a non-vertex buffer");
+    const auto available = [&](VkBuffer buffer, std::size_t bytes, VkBufferUsageFlags usage) {
+        if (retentionDestroyed.contains(buffer)) return true;
+        auto pool = GetBufferPool(context);
+        auto allocation = pool->Take(bytes, usage);
+        const bool returned = allocation && allocation->buffer == buffer;
+        if (allocation) pool->Put(*allocation);
+        return returned;
+    };
+    Require(!available(retentionIndex, sizeof(indices), indexUsage), "recorded indices were recycled before completion");
+    Require(!available(retentionVertex, sizeof(vertices), vertexUsage), "recorded vertices were recycled before completion");
+    auto pipeline = recipe->pipeline.lock();
+    Require(pipeline != nullptr, "recorded pipeline expired");
+    for (std::uint32_t size = 17; size < 30; ++size) pipeline->AcquireFramebuffer({}, {}, {size, size});
+    Require(!recipe->framebuffer.expired(), "recorded framebuffer was evicted before completion");
+    pipeline.reset();
+    ClearCachedPipelines(context.device);
+    SharedResourceCache().Clear();
+    Require(!recipe->pipeline.expired(), "recorded pipeline was released before completion");
+    Require(!recipe->templateRef.expired(), "recorded resources were released before completion");
+    recorder.OnComplete([&] {
+        Require(!recipe->pipeline.expired() && !recipe->framebuffer.expired() && !recipe->templateRef.expired(), "recorded owners expired before a completion action");
+        throw std::runtime_error("retention completion failure");
+    });
+    recorder.Sync();
+    Require(available(retentionIndex, sizeof(indices), indexUsage), "recorded indices survived completion");
+    Require(available(retentionVertex, sizeof(vertices), vertexUsage), "recorded vertices survived completion");
+    Require(recipe->pipeline.expired() && recipe->framebuffer.expired() && recipe->templateRef.expired(), "recorded owners survived completion");
+
+    mock.deferFences = true;
+    retentionFences.clear();
+    std::shared_ptr<const AgcDriver::DrawRecipe> replayed;
+    Draw(context, state, draw, shaders, {}, &replayed);
+    Require(replayed != nullptr, "retention replay draw did not produce a recipe");
+    const auto owned = [&] { return !replayed->pipeline.expired() && !replayed->framebuffer.expired() && !replayed->templateRef.expired(); };
+    const auto released = [&] { return replayed->pipeline.expired() && replayed->framebuffer.expired() && replayed->templateRef.expired(); };
+    auto replayedPipeline = replayed->pipeline.lock();
+    Require(replayedPipeline != nullptr, "retention replay pipeline expired");
+    for (std::uint32_t size = 17; size < 30; ++size) replayedPipeline->AcquireFramebuffer({}, {}, {size, size});
+    replayedPipeline.reset();
+    ClearCachedPipelines(context.device);
+    SharedResourceCache().Clear();
+    Require(owned(), "recorded owners were released with their cache entries before completion");
+    recorder.Submit();
+    Require(retentionFences.size() == 1, "the first replay batch was not submitted");
+    const auto hit = DrawWithRecipe(context, state, draw, shaders, {}, *replayed);
+    Require(hit.recorded, "the replay draw did not record from its recipe");
+    Require(owned(), "recorded owners expired after a recipe hit in the next batch");
+    mock.signaled.at(retentionFences.front()) = true;
+    Require(recorder.Reap(), "the first replay batch was not retired");
+    Require(owned(), "recorded owners were released with the first batch while the second still used them");
+    recorder.Submit();
+    Require(retentionFences.size() == 2, "the second replay batch was not submitted");
+    Require(!recorder.Reap() && owned(), "recorded owners were released before the last batch that used them completed");
+    mock.signaled.at(retentionFences.back()) = true;
+    Require(recorder.Reap(), "the second replay batch was not retired");
+    Require(released(), "recorded owners survived the completion of the last batch that used them");
+}
+
 void faultOnlyTemplateRecordTests() {
     const bool keep = std::getenv("APS5_KEEP_TEMPLATE_RECORDS") != nullptr;
     const bool guarded = std::getenv("APS5_LOOP_GUARD") != nullptr;
@@ -15410,6 +15769,10 @@ int main(int argc, char** argv) {
             pushConstantTests();
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--recorded-draw-retention") {
+            recordedDrawRetentionTests();
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--stencil-ref-export") {
             stencilRefExportTests();
             return 0;
@@ -15707,6 +16070,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--descriptor-layout-flags") {
             descriptorLayoutFlagTests();
             std::cout << "Descriptor layout native and captured binding flags passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--single-sample-dither-state") {
+            SingleSampleDitherStateProbe();
+            std::cout << "Measured single-sample dither state passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--alpha-to-coverage-state") {
