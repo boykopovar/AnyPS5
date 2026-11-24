@@ -17,7 +17,8 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
 - Run `tools/import_audit.py` on the registries. Exit code 1 means an import or a needed library is missing; the report also lists `stub` imports, which throw when called, and `--strict-stubs` makes them fail the audit too.
   `tools/audit_dump.py <app0> --relinker <relinker> --libs build/core/libs/libs` (`--windows` on Windows) does the
   unwrapping, the conversion with `--registry` and the audit in one step, from every module folder above and `.prx`
-  files beside `eboot.bin`, into a temporary directory (or `--work <dir>`), reading the dump only.
+  files beside `eboot.bin`, into a temporary directory (or `--work <dir>`), reading the dump only. `--trap-sdk-syscall-stubs`
+  and `--function-symbol-roots` pass the relinker options of the same name, for a title converted with them.
 - Run one title at a time. Titles share the GPU and the controller file. Some titles start a second process (Peace Walker's `mgspw.mgspw.elf`) that can outlive a time cap on the first: check that every process of the previous run is gone.
 
 ## Launch
