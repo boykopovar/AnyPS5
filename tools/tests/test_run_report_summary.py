@@ -18,6 +18,22 @@ class RunReportSummaryTests(unittest.TestCase):
     def report(self, name):
         return json.loads((ROOT / "docs/run-report-fixtures" / name).read_text(encoding="utf-8"))
 
+    def test_input_audit_cli_rejects_ambiguous_or_deep_json(self):
+        report = json.dumps(self.report("stop-none.json"))
+        cases = (report[:-1] + ', "version": 1}',
+                 "[" * 20000 + "0" + "]" * 20000)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            for index, text in enumerate(cases):
+                with self.subTest(index=index):
+                    path.write_text(text, encoding="utf-8")
+                    result = subprocess.run([sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                                            capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("run_report_summary:", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(result.stdout, "")
+
     def test_cli_prints_unicode_even_with_ascii_default_encoding(self):
         report = self.report("stop-none.json")
         report["game"]["name"] = "Café Game"
@@ -97,6 +113,29 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("Missing functions: not collected", summary)
         self.assertIn("Shaders: compilation data was not collected", summary)
         self.assertIn("Unsupported shader instructions: not collected", summary)
+
+    def test_negative_average_fps_is_reported_as_unavailable(self):
+        report = self.report("stop-none.json")
+        report["run"]["averageFps"] = -1.5
+        summary = render(report)
+        self.assertIn("Rendering: 12580 frames, average FPS unavailable", summary)
+        self.assertNotIn("-1.50 average FPS", summary)
+
+    def test_negative_frame_count_is_not_rendered_as_a_measurement(self):
+        report = self.report("stop-none.json")
+        report["run"]["framesPresented"] = -5
+        report["run"]["averageFps"] = 60
+        summary = render(report)
+        self.assertIn("Rendering: unknown frame count", summary)
+        self.assertNotIn("60.00 average FPS", summary)
+
+    def test_fps_is_not_reported_with_fewer_than_two_frames(self):
+        report = self.report("stop-none.json")
+        report["run"]["framesPresented"] = 1
+        report["run"]["averageFps"] = 60
+        summary = render(report)
+        self.assertIn("Rendering: 1 frame", summary)
+        self.assertNotIn("average FPS", summary)
 
     def test_cli_rejects_malformed_collected_diagnostic_lists(self):
         with tempfile.TemporaryDirectory() as directory:

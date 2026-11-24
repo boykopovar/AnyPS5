@@ -1,5 +1,8 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
 #include <atomic>
+#include <array>
+#include <cerrno>
+#include <limits>
 #include <cstdint>
 #include <cstddef>
 #include <cstdlib>
@@ -7,10 +10,34 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <stdexcept>
+#include <string>
 #include <unordered_set>
 #include <unordered_map>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+template <typename T>
+static int SetSessionScalar(void* self, std::size_t offset, const T* value, const char* function) {
+    constexpr std::size_t Width = sizeof(T);
+    static_assert(Width == 1 || Width == sizeof(int));
+    const auto address = reinterpret_cast<std::uintptr_t>(self);
+    if (!self || address > std::numeric_limits<std::uintptr_t>::max() - offset - Width)
+        throw std::invalid_argument(std::string(function) + ": unwritable model");
+    auto* target = reinterpret_cast<void*>(address + offset);
+    std::array<std::uint8_t, Width + 1> field{};
+    field.back() = 1;
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(field.data(), value, Width);
+    const bool written = read && GuestWritable_nid_no_patch(target, field.size()) &&
+                         GuestCopyOut_nid_no_patch(target, field.data(), field.size());
+    errno = savedErrno;
+    if (!read) throw std::invalid_argument(std::string(function) + ": unreadable value");
+    if (!written) throw std::invalid_argument(std::string(function) + ": unwritable model");
+    int result = 0;
+    std::memcpy(&result, field.data(), Width);
+    return result;
+}
 
 static constexpr int SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN = static_cast<int>(0x80552907);
 static constexpr std::size_t ReferenceCountOffset = 0;
@@ -2257,8 +2284,8 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2
     return self->object;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession16setMaxSpectatorsERKi() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession16setMaxSpectatorsERKi(void* self, const int* value) {
+    return SetSessionScalar(self, 0x14, value, __func__);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139RequestPlayerSessionMemberPlayerFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_32RequestCreatePlayerSessionPlayerEEEEEPNS9_INS3_32RequestPlayerSessionMemberPlayerEEE() {
@@ -2324,8 +2351,8 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2
     return self->object;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession20setInvitableUserTypeERKNS3_17InvitableUserTypeE() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession20setInvitableUserTypeERKNS3_17InvitableUserTypeE(void* self, const int* value) {
+    return SetSessionScalar(self, 0x78, value, __func__);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V132RequestCreatePlayerSessionPlayerEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext) {
@@ -2524,8 +2551,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_14
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession19setJoinableUserTypeERKNS3_16JoinableUserTypeE() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession19setJoinableUserTypeERKNS3_16JoinableUserTypeE(void* self, const int* value) {
+    return SetSessionScalar(self, 0x70, value, __func__);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession17setExpirationTimeERKi(void* rawSelf, const int* value) {
@@ -3378,8 +3405,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V137RequestPlayerSessionInvit
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody19setJoinableUserTypeERKNS3_22CustomJoinableUserTypeE() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody19setJoinableUserTypeERKNS3_22CustomJoinableUserTypeE(void* self, const int* value) {
+    return SetSessionScalar(self, 0x3c, value, __func__);
 }
 
 const void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V127ResponsePlayerSessionPlayer11getPlatformEv(const void* self) {
@@ -3540,8 +3567,8 @@ std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118LeaderWithOnli
     return value;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody20setInvitableUserTypeERKNS3_23CustomInvitableUserTypeE() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody20setInvitableUserTypeERKNS3_23CustomInvitableUserTypeE(void* self, const int* value) {
+    return SetSessionScalar(self, 0x44, value, __func__);
 }
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V129GetPlayerSessionsResponseBody17getPlayerSessionsEv(void* out, void* self) {
@@ -6037,24 +6064,24 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V118RequestGameSession14setCu
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V118RequestGameSession16setMaxSpectatorsERKi() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V118RequestGameSession16setMaxSpectatorsERKi(void* self, const int* value) {
+    return SetSessionScalar(self, 0x14, value, __func__);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V118RequestGameSession19setUsePlayerSessionERKb() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V118RequestGameSession19setUsePlayerSessionERKb(void* self, const bool* value) {
+    return SetSessionScalar(self, 0x91, value, __func__);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession16setSwapSupportedERKb() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession16setSwapSupportedERKb(void* self, const bool* value) {
+    return SetSessionScalar(self, 0x119, value, __func__);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession19setLeaderPrivilegesERKNS1_6Common6VectorINS5_6StringEEE() {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V124RequestGameSessionPlayer12setJoinStateERKNS3_16InitialJoinStateE() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V124RequestGameSessionPlayer12setJoinStateERKNS3_16InitialJoinStateE(void* self, const int* value) {
+    return SetSessionScalar(self, 0x74, value, __func__);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V124RequestGameSessionPlayer15setPushContextsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_22GameSessionPushContextEEEEE() {
@@ -6073,8 +6100,8 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V128PostGameSessionsRespons
     return CopyMemberIntrusivePtr(out, self, 0x30, VectorReferenceCountOffset);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V128RequestJoinGameSessionPlayer12setJoinStateERKNS3_16InitialJoinStateE() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V128RequestJoinGameSessionPlayer12setJoinStateERKNS3_16InitialJoinStateE(void* self, const int* value) {
+    return SetSessionScalar(self, 0x74, value, __func__);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V128RequestJoinGameSessionPlayer15setPushContextsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_22GameSessionPushContextEEEEE() {
@@ -6105,8 +6132,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V137PatchGameSessionsSessionI
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V137PatchGameSessionsSessionIdRequestBody16setMaxSpectatorsERKi() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V137PatchGameSessionsSessionIdRequestBody16setMaxSpectatorsERKi(void* self, const int* value) {
+    return SetSessionScalar(self, 0x18, value, __func__);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V137RequestGameSessionMemberPlayerFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_24RequestGameSessionPlayerEEEEEPNS9_INS3_30RequestGameSessionMemberPlayerEEE() {
@@ -6121,8 +6148,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessio
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody16setMaxSpectatorsERKi() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody16setMaxSpectatorsERKi(void* self, const int* value) {
+    return SetSessionScalar(self, 0x18, value, __func__);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V144PatchGameSessionsSessionIdRequestBodyFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_37PatchGameSessionsSessionIdRequestBodyEEE() {
@@ -8383,9 +8410,8 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead21g
     return CopyMemberIntrusivePtr(out, self, 0x90, 0x38);
 }
 
-void APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession15setJoinDisabledERKb(void* self, const bool* value) {
-    (void)self;
-    (void)value;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession15setJoinDisabledERKb(void* self, const bool* value) {
+    return SetSessionScalar(self, 0x38, value, __func__);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession22setDisableSystemUiMenuERKNS1_6Common6VectorINS5_6StringEEE(void* self, const IntrusivePtr* value) {
@@ -8423,24 +8449,20 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V132RequestCreatePlayerSessio
     return 0;
 }
 
-void APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V137PatchGameSessionsSessionIdRequestBody13setMaxPlayersERKi(void* self, const int* value) {
-    (void)self;
-    (void)value;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V137PatchGameSessionsSessionIdRequestBody13setMaxPlayersERKi(void* self, const int* value) {
+    return SetSessionScalar(self, 0x10, value, __func__);
 }
 
-void APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody13setMaxPlayersERKi(void* self, const int* value) {
-    (void)self;
-    (void)value;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody13setMaxPlayersERKi(void* self, const int* value) {
+    return SetSessionScalar(self, 0x10, value, __func__);
 }
 
-void APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody15setJoinDisabledERKb(void* self, const bool* value) {
-    (void)self;
-    (void)value;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody15setJoinDisabledERKb(void* self, const bool* value) {
+    return SetSessionScalar(self, 0x1d, value, __func__);
 }
 
-void APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody16setSwapSupportedERKb(void* self, const bool* value) {
-    (void)self;
-    (void)value;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody16setSwapSupportedERKb(void* self, const bool* value) {
+    return SetSessionScalar(self, 0xe9, value, __func__);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody22setDisableSystemUiMenuERKNS1_6Common6VectorINS5_6StringEEE(void* self, const IntrusivePtr* value) {

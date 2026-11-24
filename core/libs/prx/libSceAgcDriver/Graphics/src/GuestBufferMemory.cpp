@@ -350,6 +350,10 @@ thread_local std::uint32_t importsHeld = 0;
 class ImportsMutex {
 public:
     void lock() noexcept {
+        if (importsLockOrderChecked && MapImportGate::LeafLockHeld()) {
+            std::fprintf(stderr, "[lock] ASSERT: the host imports mutex is taken while this thread holds the live or pending storage image mutex\n");
+            std::abort();
+        }
         mutex.lock();
         if (importsLockOrderChecked) ++importsHeld;
     }
@@ -616,6 +620,22 @@ struct RetiredImport {
 std::uint64_t pinnedTotal(const HostImports& state) {
     return state.liveBytes + retiredPinnedBytes.load(std::memory_order_acquire);
 }
+
+class UntrappedImport {
+public:
+    UntrappedImport(std::uint64_t base, std::uint64_t bytes) : pointer(reinterpret_cast<const void*>(base)), size(static_cast<std::size_t>(bytes)), held(GuestWriteWatch::GuestWriteWatchBeginUntrappedAccess_nid_postfix(pointer, size)) {}
+    ~UntrappedImport() {
+        if (held) GuestWriteWatch::GuestWriteWatchEndUntrappedAccess_nid_postfix(pointer, size);
+    }
+    UntrappedImport(const UntrappedImport&) = delete;
+    UntrappedImport& operator=(const UntrappedImport&) = delete;
+    bool Held() const { return held; }
+
+private:
+    const void* pointer;
+    std::size_t size;
+    bool held;
+};
 
 bool holdsRangeOver(const HostImport& entry, std::uint64_t begin, std::uint64_t end) {
     const auto over = [&](const std::shared_ptr<const GuestAllocations::Range>& range) { return range != nullptr && range->address < end && begin < range->address + range->bytes; };
@@ -1225,6 +1245,13 @@ constexpr std::uint64_t writeWatchBlockBytes = 0x10000;
 #ifdef _WIN32
 constexpr std::uint64_t settleBlockBytes = writeWatchBlockBytes;
 constexpr std::uint64_t settlePageBytes = 0x1000;
+std::uint64_t PrivateSettleFloorBytes() {
+    static const std::uint64_t bytes = [] {
+        const char* text = std::getenv("APS5_SETTLE_FLOOR_KIB");
+        return text != nullptr ? std::strtoull(text, nullptr, 10) << 10u : settleBlockBytes + 1;
+    }();
+    return bytes;
+}
 constexpr auto settlePollPeriod = std::chrono::microseconds(100);
 std::atomic<bool> deferredSettles{std::getenv("APS5_NO_DEFERRED_SETTLES") == nullptr};
 #endif
@@ -1386,7 +1413,7 @@ void submitSettleBatch(const Context& context, HostImports& state) {
         for (const auto base : batch.bases) state.pendingSettles.erase(base);
         batch.bases.clear();
         dropWantedSettles(state);
-        std::fprintf(stderr, "[gpu] settling host imports under %llu KiB without waiting failed at %s (%d); they stay compared\n", static_cast<unsigned long long>(settleFloorBytes >> 10u), step, static_cast<int>(result));
+        std::fprintf(stderr, "[gpu] settling host imports under %llu KiB without waiting failed at %s (%d); they stay compared\n", static_cast<unsigned long long>(PrivateSettleFloorBytes() >> 10u), step, static_cast<int>(result));
     };
     if (const char* step = prepareSettleBatch(context, deviceSettle, batch, result)) return fail(step);
     if ((result = context.Function<PFN_vkResetFences>("vkResetFences")(context.device, 1, &batch.fence)) != VK_SUCCESS) return fail("vkResetFences (settle batch)");
@@ -1643,7 +1670,7 @@ struct ImportWatching {
 ImportWatching importWatching(const Context& context, HostImports& state, bool alias, bool writable, std::uint64_t bytes) {
     decideImportWatch(context, state);
 #ifdef _WIN32
-    const bool settled = !alias && state.watchPrivateImports && writable && bytes >= settleFloorBytes;
+    const bool settled = !alias && state.watchPrivateImports && writable && bytes >= PrivateSettleFloorBytes();
     const bool watched = alias || !state.unwatchImports || settled;
     return {settled, watched, watched};
 #else
@@ -2531,6 +2558,8 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         ++state.budgetRefusals;
         return nullptr;
     }
+    const UntrappedImport untrapped(base, bytes);
+    if (!untrapped.Held()) return nullptr;
     if (live + bytes > budget) retireLeastRecent(context, state, lease, live + bytes - budget, base, base + bytes);
     ImportConstruction owner(context, base, bytes);
     auto& entry = owner.entry;
@@ -4165,7 +4194,7 @@ void reportMirrors() {
 #ifdef _WIN32
     auto& imports = Imports();
     std::lock_guard importsLock(imports.mutex);
-    if (imports.settlesSubmitted != 0 || imports.settlesWaited != 0 || !imports.settles.empty()) AgcDriver::ProfilePrint_nid_no_patch("[buffers] host imports under %llu KiB: %llu settle reads submitted, %llu back in the write watch, %llu kept compared under a storage image, %llu retired during their read (%llu unmaps waited for it), %zu pending; %llu larger imports settled inside their window\n", static_cast<unsigned long long>(settleFloorBytes >> 10u), static_cast<unsigned long long>(imports.settlesSubmitted), static_cast<unsigned long long>(imports.settlesRewatched), static_cast<unsigned long long>(imports.settlesKeptCompared), static_cast<unsigned long long>(imports.settlesParked), static_cast<unsigned long long>(imports.settleUnmapWaits), imports.settles.size(), static_cast<unsigned long long>(imports.settlesWaited));
+    if (imports.settlesSubmitted != 0 || imports.settlesWaited != 0 || !imports.settles.empty()) AgcDriver::ProfilePrint_nid_no_patch("[buffers] host imports under %llu KiB: %llu settle reads submitted, %llu back in the write watch, %llu kept compared under a storage image, %llu retired during their read (%llu unmaps waited for it), %zu pending; %llu larger imports settled inside their window\n", static_cast<unsigned long long>(PrivateSettleFloorBytes() >> 10u), static_cast<unsigned long long>(imports.settlesSubmitted), static_cast<unsigned long long>(imports.settlesRewatched), static_cast<unsigned long long>(imports.settlesKeptCompared), static_cast<unsigned long long>(imports.settlesParked), static_cast<unsigned long long>(imports.settleUnmapWaits), imports.settles.size(), static_cast<unsigned long long>(imports.settlesWaited));
 #endif
 }
 
@@ -5345,6 +5374,23 @@ bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t
     // Imports of a replaced device are not this device's; a stale registry only means an import
     // may be dropped at the next reconcile, which the binding path handles.
     return state.device == context.device && peekImport(state, address, address + bytes) != nullptr;
+}
+
+bool ReadTrappableHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes, std::uint64_t page) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || page == 0 || (page & (page - 1)) != 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address - page) return false;
+    const auto first = address & ~(page - 1);
+    const auto last = (address + bytes + page - 1) & ~(page - 1);
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != context.device || peekImport(state, address, address + bytes) == nullptr) return false;
+    auto it = state.imports.upper_bound(first);
+    if (it != state.imports.begin()) --it;
+    for (; it != state.imports.end() && it->first < last; ++it) {
+        const auto& entry = it->second;
+        if (entry.base + entry.bytes <= first) continue;
+        if (!entry.dmaBuf && !context.readTrapsOverHostPointerImports) return false;
+    }
+    return true;
 }
 
 bool HostImportOverlaps(const Context& context, std::uint64_t address, std::size_t bytes) {

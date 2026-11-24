@@ -25,7 +25,6 @@ public:
     SizeValue fixedLayoutSize{ 0.0, 0.0 };
     std::uint32_t paginationMode = 0;
     bool paginationBehavesLikeColumns = false;
-    bool paginationLineGridEnabled = false;
     double gapBetweenPages = 0.0;
     double pageLength = 0.0;
     bool isPinnedToLeftSide = true;
@@ -146,13 +145,15 @@ public:
     bool initialProcessWarmed = false;
     bool useSeparateServiceWorkerProcess = false;
     bool currentModifierStateCleared = false;
-    std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
+std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
     std::uint32_t processModel = 0;
     bool usesNetworkProcess = true;
     bool diskCacheSpeculativeValidationEnabled = false;
     bool canHandleHTTPSServerTrustEvaluation = true;
     Retained<String> customWebContentServiceBundleIdentifier;
     std::uint32_t terminatedNetworkProcessesCount = 0;
+mutable Retained<IconDatabase> iconDatabase;
+    std::optional<std::u16string> iconDatabasePath;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {

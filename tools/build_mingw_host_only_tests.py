@@ -250,7 +250,9 @@ def main(argv=None):
         print("Host-only core/libs test executables:")
         print("\n".join(selected))
         if not args.list_only:
-            subprocess.run(["cmake", "--build", str(args.build_dir), "--parallel", "3", "--target", *selected], check=True)
+            from select_tests import chunks
+            for batch in chunks(selected):
+                subprocess.run(["cmake", "--build", str(args.build_dir), "--parallel", "3", "--target", *batch], check=True)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)
         return 1
