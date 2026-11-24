@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBKERNEL_PTHREAD_POSIX_COMMON_HPP
 #define CORE_LIBS_PRX_LIBKERNEL_PTHREAD_POSIX_COMMON_HPP
 
+#include <algorithm>
 #include <cstdint>
 #include <chrono>
 #include <limits>
@@ -31,14 +32,29 @@ inline std::uint64_t WaitMicrosecondsBetween(
     const KernelTimespec& deadline,
     std::int64_t maxSeconds,
     std::uint64_t maxWaitMicros) {
-    if (deadline.tv_sec < now.tv_sec - 1) {
+    if (maxWaitMicros == 0 || maxSeconds < 0) {
         return 0;
     }
-    const std::int64_t seconds = deadline.tv_sec - now.tv_sec;
-    if (seconds > maxSeconds) {
+    if (deadline.tv_sec < now.tv_sec) {
+        const std::uint64_t behindSeconds = static_cast<std::uint64_t>(now.tv_sec) - static_cast<std::uint64_t>(deadline.tv_sec);
+        if (behindSeconds > 1 || deadline.tv_nsec <= now.tv_nsec) {
+            return 0;
+        }
+        const std::int64_t remaining = static_cast<std::int64_t>(deadline.tv_nsec) - static_cast<std::int64_t>(now.tv_nsec) - 1000000000LL;
+        if (remaining <= 0) {
+            return 0;
+        }
+        const std::uint64_t rounded = static_cast<std::uint64_t>((remaining + 999LL) / 1000LL);
+        return rounded >= maxWaitMicros ? maxWaitMicros : rounded;
+    }
+    const std::uint64_t aheadSeconds = static_cast<std::uint64_t>(deadline.tv_sec) - static_cast<std::uint64_t>(now.tv_sec);
+    constexpr std::uint64_t maxSafeSeconds = static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max() - 1000000000LL) / 1000000000LL);
+    const std::uint64_t effectiveMaxSeconds = std::min(static_cast<std::uint64_t>(maxSeconds), maxSafeSeconds);
+    if (aheadSeconds > effectiveMaxSeconds) {
         return maxWaitMicros;
     }
-    const std::int64_t remaining = seconds * 1000000000LL + deadline.tv_nsec - now.tv_nsec;
+    const std::int64_t nsecDiff = static_cast<std::int64_t>(deadline.tv_nsec) - static_cast<std::int64_t>(now.tv_nsec);
+    const std::int64_t remaining = static_cast<std::int64_t>(aheadSeconds) * 1000000000LL + nsecDiff;
     if (remaining <= 0) {
         return 0;
     }

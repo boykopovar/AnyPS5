@@ -390,6 +390,16 @@ void TestPosixThreadDeadlineHelpers() {
     Require(PosixThread::WaitMicrosecondsBetween(baseNow, KernelTimespec{10 + horizonSeconds + 1, 0}, horizonSeconds, horizonMaxMicros) == horizonMaxMicros);
     Require(PosixThread::WaitMicrosecondsBetween(baseNow, KernelTimespec{10 + horizonSeconds, 500}, horizonSeconds, horizonMaxMicros) == horizonMaxMicros);
 
+    constexpr std::int64_t minSec = std::numeric_limits<std::int64_t>::min();
+    constexpr std::int64_t maxSec = std::numeric_limits<std::int64_t>::max();
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{minSec, 0}, KernelTimespec{minSec, 0}, horizonSeconds, horizonMaxMicros) == 0);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{minSec, 0}, KernelTimespec{minSec, 1}, horizonSeconds, horizonMaxMicros) == 1);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{minSec, 999999999}, KernelTimespec{minSec, 0}, horizonSeconds, horizonMaxMicros) == 0);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{minSec, 0}, KernelTimespec{maxSec, 0}, horizonSeconds, horizonMaxMicros) == horizonMaxMicros);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{maxSec, 0}, KernelTimespec{minSec, 999999999}, horizonSeconds, horizonMaxMicros) == 0);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{0, 0}, KernelTimespec{minSec, 999999999}, horizonSeconds, horizonMaxMicros) == 0);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{-10, 0}, KernelTimespec{maxSec, 0}, relativeMaxSeconds, relativeMaxMicros) == relativeMaxMicros);
+
     const KernelTimespec pastDeadline{1, 0};
     KernelUseconds pastUsec = 999;
     Require(PosixThread::RelativeMicroseconds(0, &pastDeadline, &pastUsec));
