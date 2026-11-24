@@ -99,7 +99,7 @@ public:
     void* AllocateFromHint(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) {
         RequireAllocatable(alignment);
         std::lock_guard lock(_lock);
-        auto candidate = hint >= _end ? 0 : InsideHostRegion(hint) ? HighestFreeLocked(bytes, alignment, hint) : FindAtOrAbove(hint, bytes, alignment);
+        auto candidate = hint >= _end ? 0 : InsideSealedRegion(hint) ? HighestFreeLocked(bytes, alignment, hint) : FindAtOrAbove(hint, bytes, alignment);
         if (candidate == 0 && hint > _base) candidate = FindAtOrAbove(hint < DefaultAllocationStart ? _base : DefaultAllocationStart, bytes, alignment);
         return Claim(candidate, bytes);
     }
@@ -111,9 +111,9 @@ public:
         return HighestFreeLocked(bytes, alignment, _base);
     }
 
-    bool InsideHostRegion(std::uintptr_t address) const {
+    bool InsideSealedRegion(std::uintptr_t address) const {
         if (address >= SystemReservedStart && address < SystemReservedEnd) return false;
-        return _hostIndex.Overlaps(_hostRegions, address, 1);
+        return std::any_of(_sealedRegions.begin(), _sealedRegions.end(), [&](const auto& region) { return address >= region.first && address < region.second; });
     }
 
     std::uintptr_t HighestFreeLocked(std::size_t bytes, std::size_t alignment, std::uintptr_t floor) const {
@@ -259,7 +259,7 @@ private:
         return EINVAL;
     }
 #elif defined(__APPLE__)
-    static std::vector<std::pair<std::uintptr_t, std::uintptr_t>> HostMappings() {
+    static std::vector<std::pair<std::uintptr_t, std::uintptr_t>> HostMappings(std::vector<std::pair<std::uintptr_t, std::uintptr_t>>* sealed = nullptr) {
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> mappings;
         mach_vm_address_t address = ArenaStart;
         while (address < ApplicationAreaEnd) {
@@ -271,6 +271,7 @@ private:
             if (result == KERN_INVALID_ADDRESS) break;
             if (result != KERN_SUCCESS) throw std::runtime_error("guest arena: mach_vm_region failed");
             mappings.emplace_back(static_cast<std::uintptr_t>(address), static_cast<std::uintptr_t>(address + size));
+            if (sealed != nullptr && info.max_protection == VM_PROT_NONE) sealed->push_back(mappings.back());
             address += size;
         }
         return mappings;
@@ -286,7 +287,11 @@ private:
 
 #if defined(__linux__) || defined(__APPLE__)
     void SeedHostUsedRanges() {
+#ifdef __APPLE__
+        for (const auto& [begin, end] : HostMappings(&_sealedRegions)) {
+#else
         for (const auto& [begin, end] : HostMappings()) {
+#endif
             if (end <= ArenaStart || begin >= ApplicationAreaEnd) continue;
             const auto first = std::max(begin, ArenaStart);
             const auto last = std::min(end, ApplicationAreaEnd);
@@ -381,6 +386,7 @@ private:
     std::map<std::uintptr_t, std::uintptr_t> _used;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _holes;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _hostRegions;
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _sealedRegions;
     HostRegionIndex _hostIndex;
     void RequireAllocatable(std::size_t alignment) const {
         if (_base == 0) throw std::runtime_error("guest address space arena is unavailable");
