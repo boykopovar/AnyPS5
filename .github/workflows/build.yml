@@ -848,7 +848,7 @@ jobs:
           fi
           echo "$(cygpath -w "$(dirname "$dll")")" >> "$GITHUB_PATH"
           echo "loader: $dll"
-      - uses: hendrikmuhs/ccache-action@v1.2.24
+      - uses: hendrikmuhs/ccache-action@v1.2.26
         with:
           key: ${{ github.event_name == 'workflow_dispatch' && 'dispatch-windows' || 'windows' }}
           restore-keys: ${{ github.event_name == 'workflow_dispatch' && 'windows' || '' }}
@@ -944,7 +944,7 @@ jobs:
         run: python tools/check_skips.py build/video_out.xml --job windows --require-tests
       - name: Upload the video output test report
         if: ${{ !cancelled() && github.event_name != 'pull_request' }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: video-out-report
           path: |
