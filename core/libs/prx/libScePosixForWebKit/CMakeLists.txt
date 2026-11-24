@@ -24,6 +24,8 @@ if(BUILD_TESTING)
     set_tests_properties(guest_posix_mkstemps PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_posix_mkstemps PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
+    endif()
     add_test_executable(guest_posix_nftw_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixNftw.cpp)
     target_include_directories(guest_posix_nftw_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_posix_nftw_tests PRIVATE libScePosixForWebKit libkernel libc)
