@@ -3,6 +3,7 @@
 ## Code
 
 - Follow the [coding conventions](docs/dev/CONVENTIONS.md): naming, no comments except [technical debt](docs/dev/TechnicalDebt.md), Conventional Commits.
+- Every `APS5_*` or `ANYPS5_*` name a pull request adds to the code has a row in [docs/dev/ENVIRONMENT.md](docs/dev/ENVIRONMENT.md). A row for a name the pull request stops reading is removed. `tools/check_conventions.py` reports a violation as `env-reference`.
 - **Every exported PS5 function with `APS5_VABI` must have exactly one declaration in a header reachable through the library's `<library>.hpp`. Duplicate declarations in headers, `.cpp` files and tests are forbidden. This is checked by the Python test [`public_headers`](core/libs/tests/test_public_headers.py).**
 - Every function either does exactly what it is supposed to or throws. Unimplemented exports call `NotImplemented_nid_no_patch(__func__)` (see [libSceAudioIn](core/libs/prx/libSceAudioIn/Export.cpp)).
 - Pull requests that add or change shader instruction semantics say where they come from: measured on hardware (which GPU and what was checked, e.g. with the [hardware oracle](docs/dev/HW_ORACLE.md)) or the exact source (ISA section, LLVM, ACO or Mesa file). Reviewers check the semantics on hardware. Cases the source doesn't settle throw, and behaviour not verified on hardware is recorded in [technical debt](docs/dev/TechnicalDebt.md).
