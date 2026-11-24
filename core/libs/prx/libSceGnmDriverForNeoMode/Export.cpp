@@ -36,11 +36,12 @@ bool ReadShaderRegs(const std::uint32_t* regs, std::array<std::uint32_t, Words>&
 
 template <std::size_t Words, typename Fn>
 int WriteSharedCommandBuffer(std::uint32_t* cmdbuf, Fn&& write) {
-    int result = CommandFailed;
-    const int status = WriteCommandBuffer<Words>(cmdbuf, [&](std::uint32_t* buffer) {
-        result = write(buffer);
-    });
-    return status == 0 ? result : status;
+    if (!cmdbuf) return CommandFailed;
+    std::array<std::uint32_t, Words> local{};
+    if (!GuestCopyIn_nid_no_patch(local.data(), cmdbuf, sizeof(local))) return CommandFailed;
+    const int result = write(local.data());
+    if (result != 0) return result;
+    return GuestCopyOut_nid_no_patch(cmdbuf, local.data(), sizeof(local)) ? 0 : CommandFailed;
 }
 
 template <std::size_t Words>

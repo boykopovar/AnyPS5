@@ -954,46 +954,89 @@ int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(std::uint64_t,
 
 }
 
+namespace {
+
+template <std::size_t Words, typename Fn>
+int WriteSharedCommandBuffer(std::uint32_t* cmdbuf, Fn&& write) {
+    if (!cmdbuf) return -1;
+    std::array<std::uint32_t, Words> local{};
+    if (!GuestCopyIn_nid_no_patch(local.data(), cmdbuf, sizeof(local))) return -1;
+    const int result = write(local.data());
+    if (result != 0) return result;
+    return GuestCopyOut_nid_no_patch(cmdbuf, local.data(), sizeof(local)) ? 0 : -1;
+}
+
+template <std::size_t Words>
+bool ReadShaderRegs(const std::uint32_t* regs, std::array<std::uint32_t, Words>& local) {
+    return regs && GuestCopyIn_nid_no_patch(local.data(), regs, sizeof(local)) && local[1] == 0;
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI sceGnmDispatchDirect_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t threadsX, std::uint32_t threadsY, std::uint32_t threadsZ, std::uint32_t flags) {
-    return GnmCommandWriters::DispatchDirect(cmdbuf, size, threadsX, threadsY, threadsZ, flags);
+    if (!cmdbuf || size != 9 || static_cast<std::int32_t>(threadsX | threadsY | threadsZ) < 0) return -1;
+    return WriteSharedCommandBuffer<9>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::DispatchDirect(buffer, size, threadsX, threadsY, threadsZ, flags); });
 }
 
 int APS5_VABI sceGnmDispatchIndirect_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t dataOffset, std::uint32_t flags) {
-    return GnmCommandWriters::DispatchIndirect(cmdbuf, size, dataOffset, flags);
+    if (!cmdbuf || size != 7) return -1;
+    return WriteSharedCommandBuffer<7>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::DispatchIndirect(buffer, size, dataOffset, flags); });
 }
 
 int APS5_VABI sceGnmDispatchIndirectOnMec_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t args, std::uint32_t modifier) {
-    return GnmCommandWriters::DispatchIndirectOnMec(cmdbuf, size, args, modifier);
+    if (!cmdbuf || size != 8 || args == 0 || (args & 3) != 0) return -1;
+    return WriteSharedCommandBuffer<8>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::DispatchIndirectOnMec(buffer, size, args, modifier); });
 }
 
 int APS5_VABI sceGnmSetCsShaderWithModifier_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
-    return GnmCommandWriters::SetCsShaderWithModifier(cmdbuf, size, regs, modifier);
+    if (!cmdbuf || size <= 0x18 || !regs || (modifier & 0xfffffc3fu) != 0) return -1;
+    std::array<std::uint32_t, 7> localRegs{};
+    if (!ReadShaderRegs(regs, localRegs)) return -1;
+    return WriteSharedCommandBuffer<0x19>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::SetCsShaderWithModifier(buffer, size, localRegs.data(), modifier); });
 }
 
 int APS5_VABI sceGnmSetPsShader350_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
-    return GnmCommandWriters::SetPsShader350(cmdbuf, size, regs);
+    if (!cmdbuf || size <= 0x27) return -1;
+    std::array<std::uint32_t, 12> localRegs{};
+    if (regs && !ReadShaderRegs(regs, localRegs)) return -1;
+    return WriteSharedCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::SetPsShader350(buffer, size, regs ? localRegs.data() : nullptr); });
 }
 
 int APS5_VABI sceGnmUpdateGsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
-    return GnmCommandWriters::UpdateGsShader(cmdbuf, size, regs);
+    if (!cmdbuf || size < 0x1d || !regs) return -1;
+    std::array<std::uint32_t, 7> localRegs{};
+    if (!ReadShaderRegs(regs, localRegs)) return -1;
+    return WriteSharedCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::UpdateGsShader(buffer, size, localRegs.data()); });
 }
 
 int APS5_VABI sceGnmUpdateHsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t lsHsConfig) {
-    return GnmCommandWriters::UpdateHsShader(cmdbuf, size, regs, lsHsConfig);
+    if (!cmdbuf || size < 0x1e || !regs) return -1;
+    std::array<std::uint32_t, 7> localRegs{};
+    if (!ReadShaderRegs(regs, localRegs)) return -1;
+    return WriteSharedCommandBuffer<0x1e>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::UpdateHsShader(buffer, size, localRegs.data(), lsHsConfig); });
 }
 
 int APS5_VABI sceGnmUpdatePsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
-    return GnmCommandWriters::UpdatePsShader(cmdbuf, size, regs);
+    if (!cmdbuf || size <= 0x27) return -1;
+    std::array<std::uint32_t, 12> localRegs{};
+    if (regs && !ReadShaderRegs(regs, localRegs)) return -1;
+    return WriteSharedCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::UpdatePsShader(buffer, size, regs ? localRegs.data() : nullptr); });
 }
 
 int APS5_VABI sceGnmUpdatePsShader350_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
-    return GnmCommandWriters::UpdatePsShader350(cmdbuf, size, regs);
+    if (!cmdbuf || size <= 0x27) return -1;
+    std::array<std::uint32_t, 12> localRegs{};
+    if (regs && !ReadShaderRegs(regs, localRegs)) return -1;
+    return WriteSharedCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::UpdatePsShader350(buffer, size, regs ? localRegs.data() : nullptr); });
 }
 
 int APS5_VABI sceGnmUpdateVsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
-    return GnmCommandWriters::UpdateVsShader(cmdbuf, size, regs, modifier);
+    if (!cmdbuf || size <= 0x1c || !regs || (modifier & 0xfcfffc3fu) != 0) return -1;
+    std::array<std::uint32_t, 7> localRegs{};
+    if (!ReadShaderRegs(regs, localRegs)) return -1;
+    return WriteSharedCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::UpdateVsShader(buffer, size, localRegs.data(), modifier); });
 }
 
 }

@@ -1,6 +1,7 @@
 #include "prx/libSceGnmDriver/libSceGnmDriver.hpp"
 #include "prx/libSceGnmDriverForNeoMode/libSceGnmDriverForNeoMode.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -186,6 +187,17 @@ void CheckNullBuffers() {
     Require(SetCsShaderWithModifier(nullptr, 0x19, Regs, 0) == -1);
 }
 
+void CheckCopyFailures() {
+    auto* words = Fresh();
+    Require(UpdateGsShader(words, 0x1d, reinterpret_cast<const std::uint32_t*>(0x10)) == -1);
+    RequireWords({});
+    Require(DispatchDirect(reinterpret_cast<std::uint32_t*>(0x10), 9, 1, 1, 1, 0) == -1);
+
+    static constexpr std::array<std::uint32_t, 9> ReadOnly{U, U, U, U, U, U, U, U, U};
+    Require(DispatchDirect(const_cast<std::uint32_t*>(ReadOnly.data()), 9, 1, 1, 1, 0) == -1);
+    Require(std::all_of(ReadOnly.begin(), ReadOnly.end(), [](auto word) { return word == U; }));
+}
+
 void CheckDispatchFlags() {
     for (std::uint32_t flags = 0; flags < 32; ++flags) {
         Require(DispatchDirect(Fresh(), 9, 0, 0x7fffffff, 1, flags) == 0);
@@ -214,5 +226,6 @@ int main() {
     CheckHsPacketBoundary();
     CheckDispatches();
     CheckNullBuffers();
+    CheckCopyFailures();
     CheckDispatchFlags();
 }
