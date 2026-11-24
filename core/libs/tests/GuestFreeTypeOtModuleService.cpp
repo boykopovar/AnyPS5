@@ -143,6 +143,7 @@ void FullLibrary() {
 }
 
 void InvalidRecords() {
+    static_assert(alignof(GuestServiceModuleRec) == 8);
     Module own;
     GuestServiceLibraryRec library{};
     own.record.library = &library;
@@ -158,7 +159,12 @@ void InvalidRecords() {
     own.record.library = reinterpret_cast<GuestServiceLibraryRec*>(1);
     RequireThrows([&] { Lookup(&own.record, nullptr); });
     own.record.library = &library;
+    alignas(8) unsigned char shiftedModule[sizeof(GuestServiceModuleRec) + 4];
+    std::memcpy(shiftedModule + 4, &own.record, sizeof(own.record));
+    RequireThrows([&] { Lookup(reinterpret_cast<GuestServiceModuleRec*>(shiftedModule + 4), nullptr); });
     library.numModules = 1;
+    RequireThrows([&] { Lookup(&own.record, nullptr); });
+    library.modules[0] = reinterpret_cast<GuestServiceModuleRec*>(shiftedModule + 4);
     RequireThrows([&] { Lookup(&own.record, nullptr); });
     library.modules[0] = reinterpret_cast<GuestServiceModuleRec*>(1);
     RequireThrows([&] { Lookup(&own.record, nullptr); });
