@@ -1,7 +1,6 @@
 #include "prx/libSceIcu/CharsetDetection.hpp"
 #include "prx/libc/include/General.hpp"
 #include "unicode/ucsdet.h"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 
