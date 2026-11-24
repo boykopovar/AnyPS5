@@ -202,11 +202,14 @@ static void CheckConstructor() {
 }
 
 static void CheckGuardNesting() {
-    std::array<std::uint64_t, 80> deepGuards {};
+    std::array<std::uint64_t, 200> deepGuards {};
     for (std::size_t i = 0; i < deepGuards.size(); ++i)
         Require(__cxa_guard_acquire_nid_postfix(&deepGuards[i]) == 1, 60);
-    for (std::size_t i = deepGuards.size(); i > 0; --i)
-        __cxa_guard_release_nid_postfix(&deepGuards[i - 1]);
+    for (std::size_t i = 0; i < deepGuards.size(); i += 2)
+        __cxa_guard_release_nid_postfix(&deepGuards[i]);
+    for (std::size_t i = deepGuards.size(); i > 0; --i) {
+        if ((i - 1) % 2 == 1) __cxa_guard_release_nid_postfix(&deepGuards[i - 1]);
+    }
     for (std::size_t i = 0; i < deepGuards.size(); ++i)
         Require(__cxa_guard_acquire_nid_postfix(&deepGuards[i]) == 0, 61);
 
