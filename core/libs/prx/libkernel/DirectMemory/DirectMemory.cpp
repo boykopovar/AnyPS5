@@ -168,6 +168,12 @@ static bool AtStackReserveBottom(std::uintptr_t start, std::uintptr_t end) {
 }
 
 static int mprotect(void* addr, size_t len, int prot) {
+    struct TrapFence {
+        void* addr;
+        size_t len;
+        TrapFence(void* fencedAddr, size_t fencedLen) : addr(fencedAddr), len(fencedLen) { GuestWriteWatch::GuestWriteWatchBeginHostWrite_nid_postfix(addr, len); }
+        ~TrapFence() { GuestWriteWatch::GuestWriteWatchEndHostWrite_nid_postfix(addr, len); }
+    } const fence(addr, len);
     GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(addr), len, WinProtFromPosix(prot));
     if (prot != PROT_NONE && KernelArena::Get().Owns(addr, len)) CommitArenaRange(addr, len, WinProtFromPosix(prot));
     auto cursor = reinterpret_cast<std::uintptr_t>(addr);
