@@ -6,7 +6,6 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
 #include <atomic>
-#include <cerrno>
 #include <cstdint>
 #include <mutex>
 #include <stdexcept>
