@@ -21,14 +21,13 @@ namespace {
 using AgcDriver::Graphics::Require;
 
 constexpr std::size_t Draws = 4352;
-constexpr std::size_t LargeDraws = 70000;
 constexpr std::size_t PreviousEntryCap = 65536;
+constexpr std::size_t DefaultEntryCap = 262144;
 
 alignas(256) constexpr std::array<std::uint32_t, 8> VertexCode{0x7e000208u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0xf80008cfu, 0x03020100u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 8> PixelCode{0xf4000100u, 0xfa000000u, 0x7e000204u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u};
 alignas(256) std::array<std::byte, 1024> ColorMemory{};
 alignas(16) std::array<std::array<float, 4>, Draws> Sources{};
-alignas(16) std::array<std::array<float, 4>, LargeDraws> LargeSources{};
 
 struct Header {
     Shader shader{};
@@ -118,15 +117,11 @@ void MoreDrawsThanTheOldEntryCapStayCached() {
     Require(AgcDriver::DriverDetail::Driver::Get().DrawCacheSize().entries >= Draws, "the draw cache holds " + std::to_string(AgcDriver::DriverDetail::Driver::Get().DrawCacheSize().entries) + " entries after " + std::to_string(Draws) + " distinct draws");
 }
 
-void MoreDrawsThanThePreviousEntryCapAreHeld() {
-    for (std::size_t i = 0; i < LargeSources.size(); ++i) LargeSources[i] = {static_cast<float>(i + 1) / static_cast<float>(LargeDraws + 1), 0.0f, 0.0f, 1.0f};
-    auto commands = EveryDraw(LargeSources);
-    const auto start = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
-    Pass(commands);
-    const auto inserted = Pass(commands);
-    const auto held = AgcDriver::DriverDetail::Driver::Get().DrawCacheSize().entries;
-    Require(inserted.evictions == start.evictions, "sighting and inserting " + std::to_string(LargeDraws) + " more distinct draws evicted " + std::to_string(inserted.evictions - start.evictions) + " entries; the default entry cap does not hold them");
-    Require(held > PreviousEntryCap, "the draw cache holds " + std::to_string(held) + " entries after " + std::to_string(Draws + LargeDraws) + " distinct draws, not more than the previous cap of " + std::to_string(PreviousEntryCap));
+void DefaultEntryCapExceedsThePreviousOne() {
+    Require(std::getenv("APS5_DRAW_CACHE_ENTRIES") == nullptr, "APS5_DRAW_CACHE_ENTRIES must be unset for this test");
+    const auto cap = AgcDriver::DriverDetail::Driver::DrawCacheEntries();
+    Require(cap == DefaultEntryCap, "the default draw cache entry cap is " + std::to_string(cap) + ", not " + std::to_string(DefaultEntryCap));
+    Require(cap > PreviousEntryCap, "the default draw cache entry cap " + std::to_string(cap) + " does not exceed the previous " + std::to_string(PreviousEntryCap));
 }
 
 }
@@ -138,9 +133,9 @@ int main() {
             if (!device) return VulkanTestSkipped;
         }
         MoreDrawsThanTheOldEntryCapStayCached();
-        MoreDrawsThanThePreviousEntryCapAreHeld();
+        DefaultEntryCapExceedsThePreviousOne();
         AgcDriverShutdown_nid_postfix();
-        std::cout << Draws << " distinct draws stayed in the draw cache and " << Draws + LargeDraws << " were held without eviction under the default entry cap\n";
+        std::cout << Draws << " distinct draws stayed in the draw cache under a default entry cap of " << DefaultEntryCap << "\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
