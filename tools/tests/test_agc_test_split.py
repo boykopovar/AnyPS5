@@ -217,6 +217,21 @@ class ResolveTests(unittest.TestCase):
         self.assertNotEqual(self.git("rebase", "main", check=False).returncode, 0)
         return self.tool("resolve")
 
+    @unittest.skipIf(os.name == "nt", "Windows paths cannot end in a space")
+    def test_split_runs_in_a_checkout_whose_path_ends_in_a_space(self):
+        parent = self.root
+        self.root = parent / "checkout "
+        self.root.mkdir()
+        self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
+        self.git("init", "-q", "-b", "main")
+        self.write(LISTS, original())
+        self.write(agc_test_split.EXECUTION + "/Image.cpp", "")
+        result = self.tool("split")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("4 fragments", result.stdout)
+        self.assertTrue((self.root / FRAGMENTS / "agc_alpha_tests.cmake").is_file())
+        self.assertNotIn("add_test_executable(agc_alpha_tests", self.read(LISTS))
+
     def test_resolve_moves_a_new_test_executable_into_its_own_fragment(self):
         result = self.rebase(original(blocks=(ALPHA, BETA, DELTA)))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -289,21 +304,6 @@ class ResolveTests(unittest.TestCase):
         result = self.tool("split")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("already includes", result.stderr)
-
-    @unittest.skipIf(os.name == "nt", "Windows paths cannot end in a space")
-    def test_split_runs_in_a_checkout_whose_path_ends_in_a_space(self):
-        parent = self.root
-        self.root = parent / "checkout "
-        self.root.mkdir()
-        self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
-        self.git("init", "-q", "-b", "main")
-        self.write(LISTS, original())
-        self.write(agc_test_split.EXECUTION + "/Image.cpp", "")
-        result = self.tool("split")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("4 fragments", result.stdout)
-        self.assertTrue((self.root / FRAGMENTS / "agc_alpha_tests.cmake").is_file())
-        self.assertNotIn("add_test_executable(agc_alpha_tests", self.read(LISTS))
 
 
 class ExecutionTargetTests(unittest.TestCase):
