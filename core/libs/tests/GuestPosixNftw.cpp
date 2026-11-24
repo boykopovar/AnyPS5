@@ -32,7 +32,9 @@ constexpr int FtwSln = 6;
 constexpr int FtwDp = 3;
 constexpr int FtwPhys = 0x01;
 constexpr int FtwDepth = 0x04;
+constexpr int FtwMount = 0x02;
 constexpr int FtwChdir = 0x08;
+constexpr int FtwUnknown = 0x10;
 constexpr int GuestEnoent = 2;
 constexpr int GuestEinval = 22;
 
@@ -49,6 +51,8 @@ struct Record {
 };
 
 std::vector<Record> g_records;
+std::vector<std::string> g_directories;
+std::vector<bool> g_reachable;
 int g_stopAt = 0;
 int g_stopReturn = 0;
 
@@ -141,7 +145,7 @@ void TestRejectsBadArguments() {
 
     bool thrown = false;
     try {
-        nftw_nid_postfix("/anyps5-nftw-test", Recorder, 4, FtwChdir);
+        nftw_nid_postfix("/anyps5-nftw-test", Recorder, 4, FtwUnknown);
     } catch (const std::exception&) {
         thrown = true;
     }
@@ -184,6 +188,84 @@ void TestTrailingSlashBase() {
     Require(nftw_nid_postfix("/anyps5-nftw-test/", Recorder, 4, 0) == 0);
     Require(!g_records.empty());
     Require(g_records[0].base == static_cast<int>(g_records[0].path.size()));
+}
+
+std::string CurrentDirectory() {
+    char buffer[1024];
+    Require(getcwd_nid_postfix(buffer, sizeof(buffer)) != nullptr);
+    return buffer;
+}
+
+int APS5_VABI DirectoryRecorder(const char* path, const void* status, int type, void* info) {
+    const auto* ftw = static_cast<const GuestFtw*>(info);
+    g_directories.push_back(CurrentDirectory());
+    FileStat entry{};
+    g_reachable.push_back(stat_nid_postfix(path + ftw->base, &entry) == 0);
+    return Recorder(path, status, type, info);
+}
+
+std::string DirectoryAt(const std::string& path) {
+    for (std::size_t index = 0; index < g_records.size(); ++index)
+        if (g_records[index].path == path) return g_directories[index];
+    Require(false);
+    return {};
+}
+
+void WalkWithDirectories(const std::string& root, int flags, int expected) {
+    g_records.clear();
+    g_directories.clear();
+    g_reachable.clear();
+    *__error_nid_postfix() = 0;
+    Require(nftw_nid_postfix(root.c_str(), DirectoryRecorder, 4, flags) == expected);
+}
+
+void TestChangeDirectory(const std::string& root) {
+    const std::string start = CurrentDirectory();
+    for (const int flags : {FtwPhys | FtwChdir, FtwPhys | FtwChdir | FtwDepth}) {
+        WalkWithDirectories(root, flags, 0);
+        Require(g_records.size() == 7);
+        Require(CurrentDirectory() == start);
+        for (std::size_t index = 0; index < g_records.size(); ++index)
+            if (g_records[index].level > 0) Require(g_reachable[index]);
+        Require(DirectoryAt(root) == start);
+        const std::string top = DirectoryAt(root + "/g.txt");
+        const std::string inner = DirectoryAt(root + "/h/i.txt");
+        const std::string innermost = DirectoryAt(root + "/h/j/k.txt");
+        Require(top != start && inner != top && innermost != inner);
+        Require(DirectoryAt(root + "/h") == top);
+        Require(DirectoryAt(root + "/l") == top);
+        Require(DirectoryAt(root + "/h/j") == inner);
+    }
+
+    WalkWithDirectories(root, FtwChdir, 0);
+    Require(g_records.size() == 7);
+    for (const std::string& directory : g_directories) Require(directory == start);
+    Require(CurrentDirectory() == start);
+}
+
+void TestChangeDirectoryRefused() {
+    const std::string start = CurrentDirectory();
+    for (const int flags : {FtwPhys | FtwChdir, FtwPhys | FtwChdir | FtwDepth}) {
+        WalkWithDirectories("/anyps5-nftw-test", flags, -1);
+        Require(*__error_nid_postfix() != 0);
+        Require(CurrentDirectory() == start);
+        const auto records = ByPath(g_records);
+        Require(records.size() == ((flags & FtwDepth) != 0 ? 3u : 4u));
+        if ((flags & FtwDepth) == 0) Require(records.at("/anyps5-nftw-test") == std::make_pair(FtwD, 0));
+        for (const char* name : {"a.txt", "d", "f"})
+            Require(records.at(std::string("/anyps5-nftw-test/") + name) == std::make_pair(FtwNs, 1));
+    }
+}
+
+void TestMountWithinOneFilesystem() {
+    for (const int flags : {0, FtwPhys, FtwDepth, FtwPhys | FtwDepth}) {
+        g_records.clear();
+        Require(nftw_nid_postfix("/anyps5-nftw-test", Recorder, 4, flags) == 0);
+        const auto plain = ByPath(g_records);
+        g_records.clear();
+        Require(nftw_nid_postfix("/anyps5-nftw-test", Recorder, 4, flags | FtwMount) == 0);
+        Require(ByPath(g_records) == plain);
+    }
 }
 
 void DirectoryLink(const std::filesystem::path& link, const std::filesystem::path& target) {
@@ -277,6 +359,21 @@ int main() {
     TestStopBelowRoot();
     TestTrailingSlashBase();
     TestPhysicalFollowsRootLink(root);
+    TestChangeDirectoryRefused();
+    TestMountWithinOneFilesystem();
+    {
+        const std::string inside = "anyps5-nftw-chdir-" + std::to_string(random());
+        const auto tree = std::filesystem::current_path() / inside;
+        Require(std::filesystem::create_directory(tree));
+        std::ofstream(tree / "g.txt") << "x";
+        Require(std::filesystem::create_directory(tree / "h"));
+        std::ofstream(tree / "h" / "i.txt") << "x";
+        Require(std::filesystem::create_directory(tree / "h" / "j"));
+        std::ofstream(tree / "h" / "j" / "k.txt") << "x";
+        Require(std::filesystem::create_directory(tree / "l"));
+        TestChangeDirectory(inside);
+        Require(std::filesystem::remove_all(tree) > 0);
+    }
 #ifndef _WIN32
     TestSymlinks(root);
 #endif
