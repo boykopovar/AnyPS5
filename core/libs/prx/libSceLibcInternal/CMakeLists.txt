@@ -1,4 +1,4 @@
-add_library(libSceLibcInternal SHARED EXCLUDE_FROM_ALL Export.cpp FileTime.cpp Getopt.cpp SignalList.cpp Spawn.cpp UserContext.cpp)
+add_library(libSceLibcInternal SHARED EXCLUDE_FROM_ALL Export.cpp FileTime.cpp Getopt.cpp SignalList.cpp Spawn.cpp UserContext.cpp UnknownExports4.cpp)
 target_include_directories(libSceLibcInternal PRIVATE ${LIBS_INCLUDE_DIR})
 target_sources(libSceLibcInternal PRIVATE WideCharacterTables.cpp)
 if(BUILD_TESTING)

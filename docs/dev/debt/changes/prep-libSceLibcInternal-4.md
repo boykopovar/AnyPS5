@@ -1,0 +1,54 @@
+# libSceLibcInternal
+
+## add Unknown function info
+
+- [+8jItptyeQQ](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [+9ypoH8eJko](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [+CUrIMpVuaM](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [+Le0VsFb9mE](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [+Pxwa79wvyA](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [+TtUFzALoDc](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [+hlZqs-XpUM](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [--fMWwCvo+c](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [-7c7thUsi1c](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [-89UFw-Igq0](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [-hOAbTf3Cqc](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [-jpk31lZR6E](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [-l+ODHZ96LI](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [-rrEEMmyz5g](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [-svZFUiG3T4](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [007PjrBCaUM](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [0Hu7rUmhqJM](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [0JlZYApT0UM](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [0ND8MZiuTR8](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [0WY1SH7eoIs](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [0Ys3rv0tw7Y](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [0ZdjsAWtbG8](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [0mi6NtGz04Y](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [0x4NT++LU9s](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [1KngsM7trps](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [1a7K+jO+ST0](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [1jUJO+TZm5k](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [1nylaCTiH08](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [22g2xONdXV4](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [230scaAkbIU](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [2FezsYwelgk](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [2G1UznxkcgU](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [2GWRrgT8o20](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [2NjHdps7Ug8](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [2ZqL1jnL8so](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [2cMMrC53G9o](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [2cXiHqvKFUM](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [2d5UH9BnfVY](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [2e96MkSXo3U](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [2ud1bFeR0h8](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [2veyNsXFZuw](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [3+5qZWL6APo](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [31lJOpD3GGk](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [33t+tvosxCI](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [37CMzzbbHn8](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [3CtP20nk8fs](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [3Fd+8Pk6fgE](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [3P+CcdakSi0](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [3THnS7v0D+M](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
+- [3eGXiXpFLt0](../../../core/libs/prx/libSceLibcInternal/UnknownExports4.cpp) (libSceLibcInternal) - unknown name, signature
