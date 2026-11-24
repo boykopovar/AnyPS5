@@ -19,11 +19,20 @@
 #include <span>
 #include <string>
 
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
+
 namespace {
 
 using AgcDriver::Graphics::Require;
 
 constexpr std::size_t WindowBytes = 65536;
+constexpr std::uint64_t LabelLimitBytes = std::uint64_t{16} << 20u;
 
 class GuestBlock {
 public:
@@ -80,6 +89,7 @@ int main() {
         GuestBlock work(WindowBytes);
         GuestBlock small(WindowBytes);
         GuestBlock large(std::size_t{1} << 20u);
+        GuestBlock many(static_cast<std::size_t>(LabelLimitBytes) + 4 * WindowBytes);
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
@@ -89,6 +99,7 @@ int main() {
             return VulkanTestSkipped;
         }
         AgcDriver::Graphics::SetHostImportBudget(AgcDriver::Graphics::HostImportLiveBytes() + large.Bytes() / 4);
+        const bool largeWatched = AgcDriver::GuestMemory::Watched(large.Address() + 3 * WindowBytes, WindowBytes);
         {
             const auto before = LabelCounts();
             const auto live = AgcDriver::Graphics::HostImportLiveBytes();
@@ -114,6 +125,41 @@ int main() {
             device->WaitIdle();
             AgcDriver::GuestMemory::Write(address, std::as_bytes(std::span(&value, 1)), 4);
             Require(small.Word(128) == value, "the CPU label did not land");
+        }
+        {
+            const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+            Require(device->FillBuffer(work.Address(), 4096, pattern), "cannot record work before the label windows");
+            const auto before = LabelCounts();
+            const auto room = static_cast<std::size_t>((LabelLimitBytes - AgcDriver::Graphics::HostImportCounters().labelBytes) / WindowBytes);
+            for (std::size_t index = 0; index < room; ++index) {
+                const int reason = Store(*device, many.Address() + index * WindowBytes + 16, 0xc0de0000u + static_cast<std::uint32_t>(index), 10 + index);
+                Require(reason == 0, "label " + std::to_string(index) + " was not recorded on the GPU (reason " + std::to_string(reason) + ")");
+            }
+            Require(LabelCounts().made == before.made + room && AgcDriver::Graphics::HostImportCounters().labelBytes == LabelLimitBytes, "the labels did not fill the label windows to their limit");
+            const auto held = many.Address() + room * WindowBytes + 16;
+            const std::uint32_t heldValue = 0xc0de0000u + static_cast<std::uint32_t>(room);
+            const int heldReason = Store(*device, held, heldValue, 10 + room);
+            Require(heldReason == 7, "a label past the limit while every label window is held did not keep its CPU path (reason " + std::to_string(heldReason) + ")");
+            Require(AgcDriver::Graphics::HostImportCounters().labelBytes == LabelLimitBytes, "a label past the limit grew the label windows");
+            device->WaitIdle();
+            AgcDriver::GuestMemory::Write(held, std::as_bytes(std::span(&heldValue, 1)), 4);
+            {
+                AgcDriver::Graphics::GuestBufferMemory memory(context);
+                memory.AddReadable(work.Address(), 32);
+                memory.UploadPrepare(false);
+                memory.UploadFinish(false);
+            }
+            Require(device->FillBuffer(work.Address(), 4096, pattern), "cannot record work after the build");
+            const auto last = many.Address() + (room + 1) * WindowBytes + 16;
+            const std::uint32_t lastValue = 0xc0de0000u + static_cast<std::uint32_t>(room + 1);
+            const int reason = Store(*device, last, lastValue, 11 + room);
+            Require(reason == 0, "a label past the limit was not recorded on the GPU once older windows were released (reason " + std::to_string(reason) + ")");
+            Require(AgcDriver::Graphics::HostImportCounters().labelBytes == LabelLimitBytes, "the label windows exceed their limit");
+            Require(!AgcDriver::Graphics::HostImportCovers(context, large.Address() + 3 * WindowBytes + 64, 4), "the least recently used label window was not the one retired");
+            Require(AgcDriver::GuestMemory::Watched(large.Address() + 3 * WindowBytes, WindowBytes) == largeWatched, "the retired label window did not get back the write watch it had before its import");
+            Require(AgcDriver::Graphics::HostImportCovers(context, many.Address() + 16, 4) && AgcDriver::Graphics::HostImportCovers(context, last, 4), "a more recent label window was retired");
+            device->WaitIdle();
+            for (std::size_t index = 0; index <= room + 1; ++index) Require(many.Word(index * WindowBytes + 16) == 0xc0de0000u + index, "label " + std::to_string(index) + " did not land");
         }
         AgcDriver::Graphics::SetHostImportBudget(0);
         std::puts("label import window tests passed");
