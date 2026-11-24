@@ -30,6 +30,8 @@ namespace {
 
 constexpr std::array<const char*, static_cast<std::size_t>(DrawPipeline::DrainReason::Count)> DrainNames{"packet", "flush", "labels", "capture", "indirect", "submission"};
 
+constexpr std::array<const char*, static_cast<std::size_t>(DrawPipeline::DrainReason::Count)> DrainScopes{"DrawPipeline.Drain.packet", "DrawPipeline.Drain.flush", "DrawPipeline.Drain.labels", "DrawPipeline.Drain.capture", "DrawPipeline.Drain.indirect", "DrawPipeline.Drain.submission"};
+
 constexpr std::array<const char*, static_cast<std::size_t>(DrawPipeline::CommitKind::Count)> KindNames{"other", "draw", "indirect", "colormeta", "dispatch", "sampledump", "dmafill", "dmawrite", "dmacopy", "store", "endofpipe", "seal", "submitend", "completion", "bufferfill"};
 
 std::atomic<unsigned> runningCommitters{0};
@@ -577,7 +579,7 @@ void DrawPipeline::ReleaseRetired() {
     reclaimedItems += done.size();
 }
 
-void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode) {
+void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode, const char* site) {
     drainRequests[std::min<std::uint32_t>(opcode, 0x100)].fetch_add(1, std::memory_order_relaxed);
     reasonRequests[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
     const bool finisherBusy = DrawFinisher::Busy() && !DrawFinisher::OnFinisherThread();
@@ -585,6 +587,7 @@ void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode) {
     if (finisherBusy) DrawFinisher::Get().Drain();
     if (!Busy()) return;
     const auto start = std::chrono::steady_clock::now();
+    auto* const trace = PerformanceTrace::Recording() ? PerformanceTrace::Thread() : nullptr;
     SpinUntil(HandoffSpinWindow() * 2, [&] { return !Busy(); });
     std::unique_lock lock(mutex);
     while (!items.empty()) {
@@ -597,6 +600,8 @@ void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode) {
     ++drainOpcodes[std::min<std::uint32_t>(opcode, 0x100)];
     drainWaitNs[index] += elapsedNs(start);
     rethrowFailure();
+    lock.unlock();
+    if (trace != nullptr) trace->Add(DrainScopes[index], site, start, std::chrono::steady_clock::now());
 }
 
 std::uint64_t DrawPipeline::DrainRequestsByOpcode(std::uint32_t opcode) {

@@ -80,7 +80,7 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
                 return DrawVerdict::Drawn;
             }
         }
-        if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu);
+        if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu, "metadata_pass");
         if (expand && drawParameters.indirect) {
             recordQueuedLabelsBeforeRead(submission.queue);
             if (!indirectRecordsDraw(*drawParameters.indirect)) return DrawVerdict::Nothing;
@@ -100,7 +100,7 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
         return draw(copyDraw, packet, submission, packetOffset, rejected);
     }
     if (const auto control = Graphics::DecodeDepthRenderControl(queue); control && Graphics::DepthRenderControlDrains(*control)) {
-        if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu);
+        if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu, "depth_render_control");
         Graphics::NoteDepthRenderControl(*control);
     }
     if (Graphics::DepthResummarizeDrawsNothing(queue)) return DrawVerdict::Nothing;

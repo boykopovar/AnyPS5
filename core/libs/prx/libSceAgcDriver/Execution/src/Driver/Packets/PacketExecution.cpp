@@ -124,24 +124,16 @@ bool& drawnSinceSeal() {
     return drawn;
 }
 
-const char* packetDrainReason(std::span<const std::uint32_t> packet, std::uint32_t header, std::uint32_t opcode) {
+const char* packetDrainSite(std::span<const std::uint32_t> packet, std::uint32_t header, std::uint32_t opcode) {
     if (header == FlipPacketHeader) return "flip";
     if (header == RenderingWaitPacketHeader) return "rendering";
     if (opcode == 0x15 || opcode == 0x16) return "dispatch";
     if ((opcode != 0x3c && opcode != 0x93) || packet.size() < 5) return "other";
+    if (!PerformanceTrace::Recording()) return "label";
     const auto bytes = Pm4::WaitAwaitedBytes(packet);
     const std::uint64_t awaited = (packet[2] & (bytes == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u);
-    if (const auto value = DrawPipeline::Queue0().PendingLabel(awaited, bytes)) return Pm4::WaitComparesValue(packet, *value) ? "awaited_queued_match" : "awaited_queued_mismatch";
-    return DrawPipeline::Queue0().Overlaps(awaited, bytes) ? "awaited_queued_unknown" : "awaited_not_queued";
-}
-
-template <typename Reason>
-void drainForPacket(std::uint32_t opcode, Reason reason) {
-    auto* const trace = PerformanceTrace::Recording() ? PerformanceTrace::Thread() : nullptr;
-    const char* const stage = trace != nullptr ? reason() : nullptr;
-    const auto begin = trace != nullptr ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, opcode);
-    if (trace != nullptr) trace->Add("Driver.Packet.pipeline_drain", stage, begin, std::chrono::steady_clock::now());
+    if (const auto value = DrawPipeline::Queue0().PendingLabel(awaited, bytes)) return Pm4::WaitComparesValue(packet, *value) ? "label_queued_match" : "label_queued_mismatch";
+    return DrawPipeline::Queue0().Overlaps(awaited, bytes) ? "label_queued_unknown" : "label_not_queued";
 }
 
 }
@@ -212,13 +204,13 @@ void Driver::execute(Submission& submission) {
         ~PipelineDrain() {
             if (!pipelined || std::uncaught_exceptions() == 0) return;
             try {
-                DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Submission);
+                DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Submission, 0x100, "exception");
             } catch (...) {
             }
         }
     } pipelineDrain{pipelined};
     static const bool orderedCompletion = std::getenv("APS5_PIPELINE_DRAIN_SUBMISSIONS") == nullptr && orderedWaits;
-    if (pipelined && (submission.suspend || !orderedCompletion)) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Submission);
+    if (pipelined && (submission.suspend || !orderedCompletion)) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Submission, 0x100, submission.suspend ? "suspend" : "unordered_completion");
     if (submission.suspend) {
         PerformanceContext timingContext(submissionTiming);
         PerformanceTimer timing("Driver.Suspend");
@@ -375,8 +367,8 @@ void Driver::execute(Submission& submission) {
             }
         }
         timing.Mark("pipeline_prepare");
-        if (pipelined && DrawPipeline::Queue0().Busy() && !keepsDrawPipeline(packet, header, opcode)) drainForPacket(header == FlipPacketHeader ? 0xffu : opcode, [&] { return packetDrainReason(packet, header, opcode); });
-        if (pipelined && predicated && DrawPipeline::Queue0().Busy() && DrawPipeline::Queue0().Overlaps(queue.predication.address, Pm4::PredicationBytes(queue.predication))) drainForPacket(opcode, [] { return "predication"; });
+        if (pipelined && DrawPipeline::Queue0().Busy() && !keepsDrawPipeline(packet, header, opcode)) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, header == FlipPacketHeader ? 0xffu : opcode, packetDrainSite(packet, header, opcode));
+        if (pipelined && predicated && DrawPipeline::Queue0().Busy() && DrawPipeline::Queue0().Overlaps(queue.predication.address, Pm4::PredicationBytes(queue.predication))) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, opcode, "predication");
         timing.Mark("pipeline_drain");
         std::shared_lock deviceUse(deviceReplacement, std::defer_lock);
         if (opcode != 0x3c && opcode != 0x93 && header != RenderingWaitPacketHeader && header != FlipPacketHeader) deviceUse.lock();
@@ -681,7 +673,7 @@ void Driver::execute(Submission& submission) {
             return;
         }
     }
-    if (pipelined) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Submission);
+    if (pipelined) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Submission, 0x100, "end");
     if (!deferredLabels().labels.empty() || Graphics::Recorder::PendingLabelSince().has_value() || Graphics::Recorder::RecordedWorkSinceSubmit() != 0) {
         auto& costs = submissionCosts(submission.queue);
         if (!submitAtEnd && submission.rewindTail == nullptr && submission.queue == 0 && workerQueued() != nullptr && workerQueued()->load(std::memory_order_acquire) != 0) {
