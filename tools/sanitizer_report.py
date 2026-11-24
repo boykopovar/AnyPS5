@@ -170,7 +170,10 @@ def main(argv=None):
         if args.summary:
             with args.summary.open("a", encoding="utf-8") as summary:
                 summary.write(text)
-    except (OSError, ET.ParseError, ValueError, RuntimeError) as error:
+    except ET.ParseError as error:
+        print(f"sanitizer_report: {args.junit}: {error}", file=sys.stderr)
+        return 2
+    except (OSError, ValueError, RuntimeError) as error:
         print(f"sanitizer_report: {error}", file=sys.stderr)
         return 2
     sys.stdout.write(output)

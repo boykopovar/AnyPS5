@@ -130,10 +130,12 @@ class SanitizerReportTests(unittest.TestCase):
     def test_unreadable_reports_exit_with_2(self):
         for text in ("<results/>", suite('<testcase status="run"/>'), "not xml"):
             with self.subTest(text=text):
-                code, stdout, stderr = self.run_main(self.write(text))
+                path = self.write(text)
+                code, stdout, stderr = self.run_main(path)
                 self.assertEqual(code, 2)
                 self.assertEqual(stdout, "")
                 self.assertTrue(stderr.startswith("sanitizer_report: "))
+                self.assertIn(str(path), stderr)
         code, _, stderr = self.run_main(Path(self.directory.name) / "missing.xml")
         self.assertEqual(code, 2)
 
