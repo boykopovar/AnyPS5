@@ -1730,12 +1730,28 @@ void TestNumbers() {
         "the length is reported before the 32-bit range check");
     std::int64_t value64 = 0;
     Require(sceNpStrToInt64("-9223372036854775808", &value64, 10, nullptr) == 0 && value64 == INT64_MIN, "the 64-bit minimum parses");
+    errno = ERANGE;
+    value64 = 71;
+    Require(sceNpStrToInt64("-9223372036854775808", &value64, 10, nullptr) == NpOutOfRange && value64 == 71,
+        "a stale range error rejects the saturated 64-bit minimum");
+    Require(sceNpStrToInt64("9223372036854775807", &value64, 10, nullptr) == NpOutOfRange && value64 == 71,
+        "a stale range error rejects the saturated 64-bit maximum");
+    errno = 71;
+    Require(sceNpStrToInt64("9223372036854775807", &value64, 10, nullptr) == 0 && value64 == INT64_MAX,
+        "a non-range errno does not reject the saturated 64-bit maximum");
+    errno = ERANGE;
+    Require(sceNpStrToInt64("12", &value64, 10, nullptr) == 0 && value64 == 12, "a stale range error does not reject an unsaturated value");
     Require(sceNpStrToInt64("99999999999999999999", &value64, 10, nullptr) == NpOutOfRange, "64-bit overflow is an error");
     std::uint32_t unsigned32 = 0;
     Require(sceNpStrToUInt32("4294967295", &unsigned32, 10, nullptr) == 0 && unsigned32 == UINT32_MAX, "the 32-bit maximum parses");
     Require(sceNpStrToUInt32("4294967296", &unsigned32, 10, nullptr) == NpOutOfRange, "32-bit unsigned overflow is an error");
     std::uint64_t unsigned64 = 0;
+    errno = 71;
     Require(sceNpStrToUInt64("0xFFFFFFFFFFFFFFFF", &unsigned64, 0, nullptr) == 0 && unsigned64 == UINT64_MAX, "the 64-bit maximum parses");
+    errno = ERANGE;
+    unsigned64 = 71;
+    Require(sceNpStrToUInt64("0xFFFFFFFFFFFFFFFF", &unsigned64, 0, nullptr) == NpOutOfRange && unsigned64 == 71,
+        "a stale range error rejects the saturated unsigned 64-bit maximum");
     Require(sceNpStrToUInt64("18446744073709551616", &unsigned64, 10, nullptr) == NpOutOfRange, "64-bit unsigned overflow is an error");
     Require(sceNpStrToInt32("12", reinterpret_cast<std::int32_t*>(0x10), 10, &parsed) == NpInvalidArgument, "an unwritable 32-bit value is refused");
     Require(sceNpStrToInt32("12", &value32, 10, reinterpret_cast<std::size_t*>(0x10)) == NpInvalidArgument, "an unwritable parsed length is refused");

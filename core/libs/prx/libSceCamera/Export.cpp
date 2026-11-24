@@ -12,9 +12,7 @@ namespace {
 int CheckAudioDataBuffer(const void* data) {
     if (!data) return SCE_CAMERA_ERROR_PARAM;
     std::uint8_t probe = 0;
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&probe, data, sizeof(probe));
-    errno = savedErrno;
     return readable ? 0 : SCE_CAMERA_ERROR_PARAM;
 }
 

@@ -9,7 +9,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-import jsonschema
+try:
+    import jsonschema
+except ModuleNotFoundError:
+    print("error: jsonschema is required to validate run report dumps (see tools/requirements-run-report.txt)", file=sys.stderr)
+    sys.exit(2)
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = json.loads((ROOT / "docs/run-report.schema.json").read_text(encoding="utf-8"))
