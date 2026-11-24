@@ -303,6 +303,7 @@ public:
     Retained<Object> originatingPage;
     std::uint64_t id = 0;
     Retained<Data> resumeData;
+    Retained<String> bundlePath;
     Retained<Array> redirectChain;
     bool wasUserInitiated = true;
     bool isCancelled = false;
