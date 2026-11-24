@@ -129,6 +129,18 @@ Titles run natively, so the host CPU needs the extensions of the PS5's Zen 2 CPU
 
 On Linux and Windows, a converted title logs the host CPU's extensions at start-up. If one is absent, it stops before running any title code and names the CPU and the missing extensions ([list](../dev/debt/libkernel.md)).
 
+### Linux system requirements
+
+The Linux system libraries need glibc 2.38 or later and the C++ library of GCC 13 or later (`GLIBCXX_3.4.31`), as in Ubuntu 24.04, Debian 13, Fedora 39 and their later releases. On an older system, such as Ubuntu 22.04, Debian 12 or Fedora 38, none of them loads, and the title stops before it starts with a line such as:
+
+```text
+./app.elf: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found (required by /path/to/libs/libc.prx)
+```
+
+The v0.1.4 and v0.1.5 `prx-linux` archives need glibc 2.43, as in Ubuntu 26.04 and Fedora 44.
+
+The Linux `relinker-<version>` release file is linked statically and also runs on older systems. A browser download has no execute permission, so run `chmod +x relinker-<version>` once.
+
 ### Output file collisions
 
 The executable, registry, Windows import diagnostics, icon and desktop entry output files must not refer to the input executable or to a bundled module being converted. This includes hard links and symbolic links.
@@ -346,7 +358,7 @@ Use `sce_modules/` or `prx/` instead of `sce_module/` if that is the input direc
 
 Some applications also need their original `app0/sce_sys/param.json` at runtime. AnyPS5 reads this file for the title ID and display name; it must contain a non-empty `titleId` string and a non-empty `localizedParameters` object with a language entry that has a non-empty `titleName`. It selects the entry named by `defaultLanguage` (inside `localizedParameters`, or at the top level); if that entry is absent, it tries `en-US`, then the first object-valued language entry. Preserve the values from the title's own metadata and place the file under the same `app0/` directory as the other app resources. At startup, its presence in the working directory creates `data/`; a non-zero `downloadDataSize` also creates `download0/`. Without `param.json`, AnyPS5 reads `app0/sce_sys/param.sfo` (`TITLE`, `TITLE_ID` and `DOWNLOAD_DATA_SIZE`) instead, with the same effect on `data/` and `download0/`; without either file, neither directory is created. If both are missing or the one read is invalid, metadata calls such as title/window setup can fail with a `param.json` or `param.sfo` error.
 
-Resources can also be packed into `app0.zar` beside `app0/`, a [ZArchive](https://github.com/Exzap/ZArchive) whose root is the `app0/` directory. A file present in `app0/` is read from there and any other file from the archive; the executable, `sce_module/` and `sce_sys/` stay in `app0/`. The archive is read only through `sceKernelOpen`/`open`, the read, seek and stat calls on its descriptors and `sceKernelStat`; other calls on an archived path, listing a directory that the archive also contains and opening a file in it for writing fail as described in [technical debt](../dev/debt/libkernel.md). An archive that cannot be opened stops the title at its first file access.
+Resources can also be packed into `app0.zar` beside `app0/`, a [ZArchive](https://github.com/Exzap/ZArchive) whose root is the `app0/` directory. A file present in `app0/` is read from there and any other file from the archive; the executable, `sce_module/` and `sce_sys/` stay in `app0/`. The archive is read only through `sceKernelOpen`/`open`, the read, seek and stat calls on its descriptors, `sceKernelStat`, the APR file reads (`sceKernelAprResolveFilepathsToIds` and the read commands), `fopen` for reading, `access` and `sceNgs2ParseWaveformFile`; other calls on an archived path, listing a directory that the archive also contains and opening a file in it for writing fail as described in [technical debt](../dev/debt/libkernel.md). An archive that cannot be opened stops the title at its first file access.
 
 For bundled title modules, use the `.guest.prx` files the relinker writes into `app0/` and lists in the layout it prints. `libs/` is for AnyPS5 system libraries, not the original PS5 `.prx` files. Placing an original PS5 module in `libs/` on Windows makes Windows try to load it as a DLL and can fail with error 193 (not a valid Win32 application). A module the title loads while it runs that was not relinked, such as one in a directory not given to `--module-dir`, is not loaded either: the title gets an error and continues, and the runtime prints `[module] dlopen: <path> was not relinked: ...` once for each file. Relink that module's directory with `--module-dir <dir>`.
 
