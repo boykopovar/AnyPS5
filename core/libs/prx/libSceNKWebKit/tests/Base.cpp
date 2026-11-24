@@ -1784,13 +1784,22 @@ static void TestBundleHitTestResult() {
 
     Require(WKBundleHitTestResultCopyNodeHandle(ref) == nullptr);
     Require(WKBundleHitTestResultCopyURLElementHandle(ref) == nullptr);
+    Require(WKBundleHitTestResultCopyImage(ref) == nullptr);
+    Require(WKBundleHitTestResultGetFrame(ref) == nullptr);
+    Require(WKBundleHitTestResultGetTargetFrame(ref) == nullptr);
     auto defaultRect = WKBundleHitTestResultGetImageRect(ref);
     Require(defaultRect.origin.x == 0.0 && defaultRect.size.width == 0.0);
 
     auto node = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
     auto urlElem = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    auto testFrame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto testTargetFrame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto testImage = NKWebKit::Make<NKWebKit::Image>(64, 48);
     hit->nodeHandle = node;
     hit->urlElementHandle = urlElem;
+    hit->frame = testFrame;
+    hit->targetFrame = testTargetFrame;
+    hit->image = testImage;
     hit->imageRect = NKWebKit::RectValue{{10.0, 20.0}, {30.0, 40.0}};
 
     auto* copiedNode = WKBundleHitTestResultCopyNodeHandle(ref);
@@ -1801,6 +1810,13 @@ static void TestBundleHitTestResult() {
     Require(copiedUrlElem == urlElem.Get());
     WKRelease(copiedUrlElem);
 
+    Require(WKBundleHitTestResultGetFrame(ref) == testFrame.Get());
+    Require(WKBundleHitTestResultGetTargetFrame(ref) == testTargetFrame.Get());
+
+    auto* copiedImage = WKBundleHitTestResultCopyImage(ref);
+    Require(copiedImage == testImage.Get());
+    WKRelease(copiedImage);
+
     auto rect = WKBundleHitTestResultGetImageRect(ref);
     Require(rect.origin.x == 10.0 && rect.origin.y == 20.0);
     Require(rect.size.width == 30.0 && rect.size.height == 40.0);
@@ -1809,6 +1825,9 @@ static void TestBundleHitTestResult() {
     auto* createdHit = WKBundleFrameCreateHitTestResult(frame.Get(), NKWebKit::PointValue{15.0, 25.0});
     Require(createdHit != nullptr);
     Require(WKGetTypeID(createdHit) == WKBundleHitTestResultGetTypeID());
+    Require(WKBundleHitTestResultGetFrame(createdHit) == frame.Get());
+    Require(WKBundleHitTestResultGetTargetFrame(createdHit) == nullptr);
+    Require(WKBundleHitTestResultCopyImage(createdHit) == nullptr);
     auto* hitNode = WKBundleHitTestResultCopyNodeHandle(createdHit);
     Require(hitNode != nullptr);
     auto* hitFrame = WKBundleNodeHandleCopyDocumentFrame(hitNode);
@@ -1879,6 +1898,54 @@ static void TestBundleHitTestResult() {
     threw = false;
     try {
         WKBundleHitTestResultMediaIsInFullscreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultCopyImage(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetTargetFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultCopyImage(frame.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetFrame(frame.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetTargetFrame(frame.Get());
     } catch (const std::invalid_argument&) {
         threw = true;
     }

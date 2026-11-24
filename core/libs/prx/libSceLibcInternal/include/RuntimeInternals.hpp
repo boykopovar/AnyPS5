@@ -62,7 +62,7 @@ int APS5_VABI _Locvar_nid_postfix();
 int APS5_VABI _Makeloc_nid_postfix();
 int APS5_VABI _Makestab_nid_postfix();
 int APS5_VABI _Makewct_nid_postfix();
-int APS5_VABI _Mbtowc_nid_postfix();
+int APS5_VABI _Mbtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state);
 int APS5_VABI _Printf_nid_postfix();
 int APS5_VABI _Putfld_nid_postfix();
 int APS5_VABI _Putstr_nid_postfix();
