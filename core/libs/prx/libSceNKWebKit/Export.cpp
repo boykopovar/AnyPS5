@@ -298,10 +298,6 @@ int APS5_VABI _ZNK7WebCore12SharedBufferneERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore16SQLiteFileSystem28deleteEmptyDatabaseDirectoryERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore21NetworkStorageSession27removeStorageAccessForFrameEN3WTF16ObjectIdentifierINS_19FrameIdentifierTypeEEENS2_INS_18PageIdentifierTypeEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1707,10 +1703,6 @@ int APS5_VABI _ZN7WebCore23AuthenticationChallengeD1Ev() {
 }
 
 int APS5_VABI _ZNK7WebCore5Range19boundaryPointsValidEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16SQLiteFileSystem24databaseModificationTimeERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6899,10 +6891,6 @@ int APS5_VABI _ZN7WebCore11DisplayList10StrokeRectC2ERKNS_9FloatRectEf() {
 }
 
 int APS5_VABI _ZN7WebCore18JSHTMLImageElement19getNamedConstructorERN3JSC2VMEPNS1_14JSGlobalObjectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16SQLiteFileSystem28appendDatabaseFileNameToPathERKN3WTF6StringES4_() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -7,6 +7,7 @@
 #include "prx/libSceNKWebKit/include/HitTestLocationExports.hpp"
 #include "prx/libSceNKWebKit/include/KeyedDecoderExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacySecurityOriginTupleExports.hpp"
+#include "prx/libSceNKWebKit/include/LegacySQLiteFileSystemExports.hpp"
 #include "prx/libSceNKWebKit/include/ParallelEnvironmentExports.hpp"
 #include "prx/libSceNKWebKit/include/NicosiaSceneExports.hpp"
 #include "prx/libSceNKWebKit/include/SecurityPolicyExports.hpp"
