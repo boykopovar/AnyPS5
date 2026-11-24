@@ -1729,7 +1729,7 @@ private:
         if (block == nullptr) {
             return GiveUp(web, "a descriptor Phi has no block");
         }
-        if (web.selectors.size() == DescriptorWeb::maxStates) {
+        if (web.selectors.size() >= DescriptorWeb::maxStates) {
             return GiveUp(web, "more than 512 descriptor states");
         }
         const auto& predecessors = block->Predecessors();
@@ -1769,7 +1769,7 @@ private:
         if (block == nullptr || first.ArgumentCount() != (select ? 3u : 2u)) {
             return GiveUp(web, "a per-lane descriptor selection has an unexpected form");
         }
-        if (web.selectors.size() == DescriptorWeb::maxStates) {
+        if (web.selectors.size() >= DescriptorWeb::maxStates) {
             return GiveUp(web, "more than 512 descriptor states");
         }
         IrValue* shared = first.Argument(select ? 0u : 1u);
