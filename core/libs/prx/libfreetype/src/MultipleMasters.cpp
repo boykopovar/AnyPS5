@@ -4,7 +4,6 @@
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <limits>
 #include <vector>
 
