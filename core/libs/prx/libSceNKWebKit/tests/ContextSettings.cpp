@@ -110,6 +110,19 @@ int main() {
     WKContextSetStorageAccessAPIEnabled(poolRef, false);
     Require(!pool->storageAccessAPIEnabled);
 
+    Require(!pool->cachedCredentialsCleared);
+    Require(!pool->legacyPrivateBrowsingLocalStorageCleared);
+    Require(!pool->localStorageSynced);
+
+    WKContextClearCachedCredentials(poolRef);
+    Require(pool->cachedCredentialsCleared);
+
+    WKContextClearLegacyPrivateBrowsingLocalStorage(poolRef);
+    Require(pool->legacyPrivateBrowsingLocalStorageCleared);
+
+    WKContextSyncLocalStorage(poolRef);
+    Require(pool->localStorageSynced);
+
     RequireInvalidArgument([] { WKContextGetAccessibilityEnabled(nullptr); });
     RequireInvalidArgument([] { WKContextSetAccessibilityEnabled(nullptr, false); });
     RequireInvalidArgument([] { WKContextSetAlwaysUsesComplexTextCodePath(nullptr, true); });
@@ -121,6 +134,16 @@ int main() {
     RequireInvalidArgument([] { WKContextSetJavaScriptGarbageCollectorTimerEnabled(nullptr, false); });
     RequireInvalidArgument([] { WKContextGarbageCollectJavaScriptObjects(nullptr); });
     RequireInvalidArgument([] { WKContextSetStorageAccessAPIEnabled(nullptr, true); });
+    RequireInvalidArgument([] { WKContextClearCachedCredentials(nullptr); });
+    RequireInvalidArgument([] { WKContextClearLegacyPrivateBrowsingLocalStorage(nullptr); });
+    RequireInvalidArgument([] { WKContextSyncLocalStorage(nullptr); });
+
+    auto pageConfig = NKWebKit::Make<NKWebKit::PageConfiguration>();
+    const void* invalidRef = NKWebKit::ToRef(pageConfig);
+    RequireInvalidArgument([&] { WKContextClearCachedCredentials(invalidRef); });
+    RequireInvalidArgument([&] { WKContextClearLegacyPrivateBrowsingLocalStorage(invalidRef); });
+    RequireInvalidArgument([&] { WKContextSyncLocalStorage(invalidRef); });
+    WKRelease(invalidRef);
 
     WKRelease(poolRef);
     return 0;

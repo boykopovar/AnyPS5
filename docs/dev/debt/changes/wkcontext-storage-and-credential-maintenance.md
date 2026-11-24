@@ -1,0 +1,5 @@
+# libSceNKWebKit
+
+## change [Process pool context settings and maintenance]
+
+- [Process pool context settings and maintenance](../../../core/libs/prx/libSceNKWebKit/src/ContextSettings.cpp) (libSceNKWebKit) - `WKContextGetCacheModel`, `WKContextSetCacheModel`, `WKContextGetAccessibilityEnabled`, `WKContextSetAccessibilityEnabled`, `WKContextSetAlwaysUsesComplexTextCodePath`, `WKContextSetMemoryCacheDisabled`, `WKContextSetHTTPPipeliningEnabled`, `WKContextSetShouldUseFontSmoothing`, `WKContextJavaScriptConfigurationFileEnabled`, `WKContextSetJavaScriptConfigurationFileEnabled`, `WKContextSetJavaScriptGarbageCollectorTimerEnabled`, `WKContextGarbageCollectJavaScriptObjects`, `WKContextSetStorageAccessAPIEnabled`, `WKContextClearCachedCredentials`, `WKContextClearLegacyPrivateBrowsingLocalStorage` and `WKContextSyncLocalStorage` inspect and configure process pool settings and maintenance in host memory. Subprocess IPC, persistent disk synchronization and credential cache eviction are unmodeled.
