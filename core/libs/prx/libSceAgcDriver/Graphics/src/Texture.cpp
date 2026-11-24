@@ -4826,6 +4826,7 @@ std::uint64_t StorageTexture::OccasionalLabelStores() {
 }
 
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
+    if (count != 0 && !anyLayerPending()) holdsClearFill = false;
     if (count != 0) {
         const auto begin = layerBegin(first);
         const auto end = layerBegin(first + count - 1) + layerBytes(first + count - 1);
