@@ -2148,7 +2148,12 @@ int APS5_VABI sceIcuLegacyUnknown_xrnmEo_plus_rNiU_nid_no_patch();
 int APS5_VABI _ZN6icu_686Locale14forLanguageTagENS_11StringPieceER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6817StringEnumerationD1Ev_nid_postfix();
 int APS5_VABI uprv_getMaxCharNameLength_nid_postfix();
-int APS5_VABI uloc_getDisplayCountry_nid_postfix();
+std::int32_t APS5_VABI uloc_getDisplayCountry_nid_postfix(
+    const char* locale,
+    const char* displayLocale,
+    char16_t* country,
+    std::int32_t countryCapacity,
+    std::int32_t* status);
 int APS5_VABI sceIcuLegacyUnknown_xzLgzGOHQto_nid_no_patch();
 int APS5_VABI utrace_setLevel_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_y0dJq9TC59U_nid_no_patch();

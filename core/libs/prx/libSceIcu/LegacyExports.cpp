@@ -9252,10 +9252,6 @@ int APS5_VABI uprv_getMaxCharNameLength_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_getDisplayCountry_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_xzLgzGOHQto_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
