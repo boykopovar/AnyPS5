@@ -9,8 +9,10 @@
 #include "prx/libSceNKWebKit/include/LegacySecurityOriginTupleExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacySQLiteFileSystemExports.hpp"
 #include "prx/libSceNKWebKit/include/ParallelEnvironmentExports.hpp"
+#include "prx/libSceNKWebKit/include/PasteboardCustomDataExports.hpp"
 #include "prx/libSceNKWebKit/include/NicosiaSceneExports.hpp"
 #include "prx/libSceNKWebKit/include/SecurityPolicyExports.hpp"
+#include "prx/libSceNKWebKit/include/SharedBufferExports.hpp"
 #include "prx/libSceNKWebKit/include/VaryingRequestHeadersExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreRegistrationSlotsExports.hpp"
 #include "prx/libSceNKWebKit/include/CredentialBaseExports.hpp"
@@ -140,5 +142,3 @@
 #include "prx/libSceNKWebKit/include/EmptyLoaderLegacyCallbackExports.hpp"
 #include "prx/libSceNKWebKit/include/SQLiteExports.hpp"
 #include "prx/libSceNKWebKit/include/SQLiteFileSystemDatabaseExports.hpp"
-
-#include "prx/libSceNKWebKit/include/SharedBufferExports.hpp"
