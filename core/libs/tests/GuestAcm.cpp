@@ -566,6 +566,113 @@ int main() {
     Require(notificationWords[0] == 0xE && notificationWords[1] == reinterpret_cast<std::uintptr_t>(notification + 128));
     Require(notification[128] == std::byte{0} && notification[255] == std::byte{0});
 
+    alignas(128) std::byte guardedBuffer[1024];
+    std::memset(guardedBuffer, 0xCC, sizeof(guardedBuffer));
+    errno = 71;
+    Require(sceAcm_FFT(reinterpret_cast<AcmBatchInfo*>(0x10), 512, 1, 0, sources, 0, outputs, 0) == BadPointer);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceAcm_IFFT(reinterpret_cast<AcmBatchInfo*>(0x10), 512, 1, 0, sources, 0, outputs, 0) == BadPointer);
+    Require(errno == 71);
+    AcmBatchInfo unmappedBufferBatch{reinterpret_cast<void*>(0x10), 0, sizeof(guardedBuffer)};
+    errno = 71;
+    Require(sceAcm_FFT(&unmappedBufferBatch, 512, 1, 0, sources, 0, outputs, 0) == BadPointer && unmappedBufferBatch.offset == 0 && unmappedBufferBatch.buffer_size == sizeof(guardedBuffer));
+    Require(errno == 71);
+    errno = 71;
+    Require(sceAcm_IFFT(&unmappedBufferBatch, 1024, 1, 1, sources, 0, outputs, 1) == BadPointer && unmappedBufferBatch.offset == 0);
+    Require(errno == 71);
+    commandBatch = {guardedBuffer, 0, sizeof(guardedBuffer)};
+    errno = 71;
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, reinterpret_cast<const void* const*>(0x1000), 0, outputs, 0) == BadPointer && commandBatch.offset == 0);
+    Require(errno == 71);
+    commandBatch = {guardedBuffer, 0, sizeof(guardedBuffer)};
+    errno = 71;
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, reinterpret_cast<void* const*>(0x1000), 0) == BadPointer && commandBatch.offset == 0);
+    Require(errno == 71);
+#ifdef _WIN32
+    auto* const entryArrayMem = static_cast<std::byte*>(VirtualAlloc(nullptr, 2 * acmPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(entryArrayMem != nullptr);
+    DWORD entryOldProtect = 0;
+    Require(VirtualProtect(entryArrayMem + acmPageSize, acmPageSize, PAGE_NOACCESS, &entryOldProtect) != 0);
+#else
+    auto* const entryArrayMem = static_cast<std::byte*>(mmap(nullptr, 2 * acmPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(entryArrayMem != MAP_FAILED);
+    Require(mprotect(entryArrayMem + acmPageSize, acmPageSize, PROT_NONE) == 0);
+#endif
+    auto* const splitSources = reinterpret_cast<const void**>(entryArrayMem + acmPageSize - 8);
+    splitSources[0] = sourceData;
+    commandBatch = {guardedBuffer, 0, sizeof(guardedBuffer)};
+    errno = 71;
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, splitSources, 0, outputs, 2) == BadPointer && commandBatch.offset == 0);
+    Require(errno == 71);
+    auto* const splitOutputs = reinterpret_cast<void**>(entryArrayMem + acmPageSize - 8);
+    splitOutputs[0] = sourceData;
+    commandBatch = {guardedBuffer, 0, sizeof(guardedBuffer)};
+    errno = 71;
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, splitOutputs, 4) == BadPointer && commandBatch.offset == 0);
+    Require(errno == 71);
+#ifdef _WIN32
+    auto* const fftReadOnlyMem = static_cast<std::byte*>(VirtualAlloc(nullptr, acmPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(fftReadOnlyMem != nullptr);
+    std::memset(fftReadOnlyMem, 0xCC, acmPageSize);
+    DWORD fftOldProtect = 0;
+    Require(VirtualProtect(fftReadOnlyMem, acmPageSize, PAGE_READONLY, &fftOldProtect) != 0);
+#else
+    auto* const fftReadOnlyMem = static_cast<std::byte*>(mmap(nullptr, acmPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(fftReadOnlyMem != MAP_FAILED);
+    std::memset(fftReadOnlyMem, 0xCC, acmPageSize);
+    Require(mprotect(fftReadOnlyMem, acmPageSize, PROT_READ) == 0);
+#endif
+    commandBatch = {fftReadOnlyMem, 0, acmPageSize};
+    errno = 71;
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, outputs, 0) == BadPointer && commandBatch.offset == 0);
+    Require(errno == 71);
+    for (std::size_t index = 0; index < 72; ++index) Require(fftReadOnlyMem[index] == std::byte{0xCC});
+    commandBatch = {fftReadOnlyMem, 0, acmPageSize};
+    errno = 71;
+    Require(sceAcm_IFFT(&commandBatch, 1024, 1, 1, sources, 0, outputs, 1) == BadPointer && commandBatch.offset == 0);
+    Require(errno == 71);
+    AcmReverbInput probeReverbInput{512, 4, 1, 0, 0, 0, roHistory, roInputChannels, 0};
+    AcmBatchInfo fftFailBatch{fftReadOnlyMem, 0, acmPageSize};
+    errno = 71;
+    Require(sceAcm_ConvReverb_SharedInput(&fftFailBatch, 1, &probeReverbInput, 1, roFilters, nullptr, roOutputs) == BadPointer && fftFailBatch.offset == 0);
+    Require(errno == 71 && probeReverbInput.currentBlock == 3 && probeReverbInput.availableBlocks == 1);
+    for (std::size_t index = 0; index < 120; ++index) Require(fftReadOnlyMem[index] == std::byte{0xCC});
+#ifdef _WIN32
+    auto* const reverbGuardMem = static_cast<std::byte*>(VirtualAlloc(nullptr, 2 * acmPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(reverbGuardMem != nullptr);
+#else
+    auto* const reverbGuardMem = static_cast<std::byte*>(mmap(nullptr, 2 * acmPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(reverbGuardMem != MAP_FAILED);
+#endif
+    std::memset(reverbGuardMem, 0xCC, 2 * acmPageSize);
+    const std::size_t reverbGuardCapacity = acmPageSize + 0x280;
+    AcmBatchInfo reverbGuardBatch{reverbGuardMem, 0, reverbGuardCapacity};
+    Require(sceAcm_ConvReverb_SharedInput(&reverbGuardBatch, 1, &probeReverbInput, 1, roFilters, nullptr, roOutputs) == 0 && reverbGuardBatch.offset == 120);
+    probeReverbInput.currentBlock = 0;
+    probeReverbInput.availableBlocks = 0;
+    reverbGuardBatch = {reverbGuardMem, 0, reverbGuardCapacity};
+    std::memset(reverbGuardMem + acmPageSize, 0xCC, acmPageSize);
+#ifdef _WIN32
+    DWORD reverbOldProtect = 0;
+    Require(VirtualProtect(reverbGuardMem + acmPageSize, acmPageSize, PAGE_READONLY, &reverbOldProtect) != 0);
+#else
+    Require(mprotect(reverbGuardMem + acmPageSize, acmPageSize, PROT_READ) == 0);
+#endif
+    errno = 71;
+    Require(sceAcm_ConvReverb_SharedInput(&reverbGuardBatch, 1, &probeReverbInput, 1, roFilters, nullptr, roOutputs) == BadPointer && reverbGuardBatch.offset == 0);
+    Require(errno == 71 && probeReverbInput.currentBlock == 3 && probeReverbInput.availableBlocks == 1);
+    for (std::size_t index = acmPageSize; index < reverbGuardCapacity; ++index) Require(reverbGuardMem[index] == std::byte{0xCC});
+#ifdef _WIN32
+    VirtualFree(fftReadOnlyMem, 0, MEM_RELEASE);
+    VirtualFree(reverbGuardMem, 0, MEM_RELEASE);
+    VirtualFree(entryArrayMem, 0, MEM_RELEASE);
+#else
+    munmap(fftReadOnlyMem, acmPageSize);
+    munmap(reverbGuardMem, 2 * acmPageSize);
+    munmap(entryArrayMem, 2 * acmPageSize);
+#endif
+
     Require(sceAcmContextDestroy(context1) == 0);
     Require(sceAcmContextDestroy(context1) == BadContext);
     Require(sceAcmBatchStartBuffer(context1, nullptr, 0, nullptr, &batch1) == BadContext);
