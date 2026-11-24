@@ -265,10 +265,6 @@ bool Replay(const std::filesystem::path& path) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--device-atomic-workgroup-memory-barriers] [--shader-fma] [--shader-int16] [--f16-widen-nans] [--f16-narrow-nans] [--f16-host-nans] [--spanned-shuffle-memory] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
-        return 2;
-    }
 #ifdef _WIN32
     int wideCount = 0;
     wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &wideCount);
@@ -283,6 +279,10 @@ int main(int argc, char** argv) {
         std::string argument;
         for (const auto unit : path.native()) argument.push_back(static_cast<unsigned>(unit) < 0x80 ? static_cast<char>(unit) : '\x7f');
         arguments.push_back(std::move(argument));
+    }
+    if (arguments.size() < 2) {
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--device-atomic-workgroup-memory-barriers] [--shader-fma] [--shader-int16] [--f16-widen-nans] [--f16-narrow-nans] [--f16-host-nans] [--spanned-shuffle-memory] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
+        return 2;
     }
     int failures = 0;
     for (std::size_t i = 1; i < arguments.size(); ++i) {
