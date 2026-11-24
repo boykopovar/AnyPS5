@@ -60,7 +60,8 @@ bool NextName(char* pattern, std::size_t start, std::size_t length, const std::s
     return position != length;
 }
 
-int TemporaryFile(char* pattern, int flags) {
+template <typename Attempt>
+int CreateFromTemplate(char* pattern, Attempt attempt) {
     if (!pattern) return Failure(14);
     std::string copy;
     if (const int error = CopyGuestPath_nid_no_patch(pattern, copy)) return Failure(error);
@@ -84,27 +85,35 @@ int TemporaryFile(char* pattern, int flags) {
         if ((status.st_mode & 0170000) != 0040000) return Failure(20);
     }
     for (;;) {
-        const int descriptor = open_nid_postfix(pattern, SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL |
-            (flags & ~(SharedLock | ExclusiveLock)), 0600);
-        if (descriptor >= 0) {
-            try {
-                if ((flags & (SharedLock | ExclusiveLock)) &&
-                    flock_nid_postfix(descriptor, (flags & ExclusiveLock) ? 2 : 1) != 0) {
-                    const int error = *__error_nid_postfix();
-                    close_nid_postfix(descriptor);
-                    return Failure(error);
-                }
-            } catch (...) {
-                const int error = *__error_nid_postfix();
-                close_nid_postfix(descriptor);
-                *__error_nid_postfix() = error;
-                throw;
-            }
-            return descriptor;
-        }
+        const int result = attempt(pattern);
+        if (result >= 0) return result;
         if (*__error_nid_postfix() != 17) return -1;
         if (!NextName(pattern, start, length, initial)) return -1;
     }
+}
+
+int OpenExclusive(char* pattern, int flags) {
+    const int descriptor = open_nid_postfix(pattern, SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL |
+        (flags & ~(SharedLock | ExclusiveLock)), 0600);
+    if (descriptor < 0) return -1;
+    try {
+        if ((flags & (SharedLock | ExclusiveLock)) &&
+            flock_nid_postfix(descriptor, (flags & ExclusiveLock) ? 2 : 1) != 0) {
+            const int error = *__error_nid_postfix();
+            close_nid_postfix(descriptor);
+            return Failure(error);
+        }
+    } catch (...) {
+        const int error = *__error_nid_postfix();
+        close_nid_postfix(descriptor);
+        *__error_nid_postfix() = error;
+        throw;
+    }
+    return descriptor;
+}
+
+int TemporaryFile(char* pattern, int flags) {
+    return CreateFromTemplate(pattern, [flags](char* name) { return OpenExclusive(name, flags); });
 }
 
 }
@@ -115,32 +124,7 @@ extern "C" int APS5_VABI mkstemp_nid_postfix(char* pattern) {
 
 extern "C" char* APS5_VABI mkdtemp_nid_postfix(char* pattern) {
     if (!pattern) throw std::invalid_argument("mkdtemp: null template");
-    std::string copy;
-    if (const int error = CopyGuestPath_nid_no_patch(pattern, copy)) {
-        Failure(error);
-        return nullptr;
-    }
-    const auto length = copy.size();
-    if (length < 6 || copy.compare(length - 6, 6, "XXXXXX") != 0) {
-        Failure(22);
-        return nullptr;
-    }
-    const auto start = length - 6;
-    const GuestArena::HostWrite destination(pattern + start, 6);
-    if (!destination.Open() || !GuestWritable_nid_no_patch(pattern + start, 6)) {
-        Failure(14);
-        return nullptr;
-    }
-    std::random_device random;
-    std::uniform_int_distribution<unsigned int> character(0, sizeof(Characters) - 2);
-    for (auto position = start; position < length; ++position)
-        pattern[position] = Characters[character(random)];
-    const std::string initial(pattern + start, 6);
-    for (;;) {
-        if (mkdir_nid_postfix(pattern, 0700) == 0) return pattern;
-        if (*__error_nid_postfix() != 17) return nullptr;
-        if (!NextName(pattern, start, length, initial)) return nullptr;
-    }
+    return CreateFromTemplate(pattern, [](char* name) { return mkdir_nid_postfix(name, 0700); }) < 0 ? nullptr : pattern;
 }
 
 extern "C" int APS5_VABI mkostemp_nid_postfix(char* pattern, int flags) {
