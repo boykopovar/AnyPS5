@@ -75,6 +75,26 @@ ShaderBufferResource decodeBufferDescriptor(const DescriptorValue& value) {
     return result;
 }
 
+bool plainReadFlags(const ImageResource& mode) {
+    const bool multisampled = mode.dimension == RdnaImageDimension::Dim2DMsaa || mode.dimension == RdnaImageDimension::Dim2DMsaaArray;
+    return !multisampled && !mode.constantSwizzle && mode.packedFormat == IrBufferFormat::Invalid && !mode.depthBits && !mode.depthUnorm16 && !mode.srgbDecode && !mode.cube && !mode.layerRows && (mode.emulatedCompare & EmulatedCompare::Enabled) == 0u;
+}
+
+bool rawSintFormat(IrBufferFormat format) {
+    switch (format) {
+        case IrBufferFormat::Format8_8SInt: case IrBufferFormat::Format8_8_8_8SInt:
+        case IrBufferFormat::Format16SInt: case IrBufferFormat::Format16_16SInt: case IrBufferFormat::Format16_16_16_16SInt:
+        case IrBufferFormat::Format32SInt: case IrBufferFormat::Format32_32SInt: case IrBufferFormat::Format32_32_32_32SInt:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool rawFloat16Format(IrBufferFormat format) {
+    return format == IrBufferFormat::Format16Float || format == IrBufferFormat::Format16_16Float || format == IrBufferFormat::Format16_16_16_16Float;
+}
+
 bool nullImageDescriptor(const DescriptorValue& descriptor) {
     return descriptor.dwords[0] == 0u && (descriptor.dwords[1] & 0xffu) == 0u;
 }
@@ -2671,6 +2691,26 @@ std::uint32_t ResourceMaterializer::RuntimeImageMode(const ImageResource& image,
     const auto match = TryRuntimeImageMode(image, descriptor, modes);
     if (!match.mode.has_value()) throw std::runtime_error(match.detail);
     return *match.mode;
+}
+
+std::uint32_t ResourceMaterializer::StorageReadImage(const ShaderInfo& info, std::uint32_t sampled) {
+    const auto& read = info.images.at(sampled);
+    if (read.resourceClass != ImageResourceClass::Sampled || read.table != NoTable || read.depthCompare || read.packed || read.byElements != 0u) return NoTable;
+    for (std::uint32_t index = 0u; index < info.images.size(); ++index) {
+        const auto& image = info.images[index];
+        if (image.resourceClass != ImageResourceClass::Storage || image.source != read.source || image.dimension != read.dimension || image.r128 != read.r128) continue;
+        if (image.written && !image.atomic && !image.targetMerge && image.table == NoTable && image.mipMode == ImageMipMode::None && !image.packed && image.byElements == 0u) return index;
+    }
+    return NoTable;
+}
+
+bool ResourceMaterializer::StorageReadCandidate(const ImageResource& storage, const ImageResource& sampled) {
+    if (!plainReadFlags(storage) || !plainReadFlags(sampled) || storage.dimension != sampled.dimension) return false;
+    if (sampled.conversionFormat != IrBufferFormat::Invalid) return storage.conversionFormat == sampled.conversionFormat && storage.numericClass == IrTextureNumericClass::Uint && sampled.numericClass == IrTextureNumericClass::Uint && GetImageFormatInfo(sampled.conversionFormat).packedBitfield;
+    if (storage.conversionFormat == IrBufferFormat::Invalid) return storage.numericClass == sampled.numericClass && (sampled.numericClass == IrTextureNumericClass::Uint || sampled.numericClass == IrTextureNumericClass::Float);
+    if (storage.numericClass != IrTextureNumericClass::Uint) return false;
+    if (sampled.numericClass == IrTextureNumericClass::Sint) return rawSintFormat(storage.conversionFormat);
+    return sampled.numericClass == IrTextureNumericClass::Float && rawFloat16Format(storage.conversionFormat);
 }
 
 std::uint32_t ResourceMaterializer::VolumeGatherState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {

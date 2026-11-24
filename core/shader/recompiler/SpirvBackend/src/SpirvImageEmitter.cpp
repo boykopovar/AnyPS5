@@ -1398,6 +1398,69 @@ void EmitByReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     }));
 }
 
+struct StorageReadAlias {
+    std::uint32_t image = NoTable;
+    std::vector<std::uint32_t> modes;
+};
+
+StorageReadAlias StorageReadAliasFor(SpirvEmitterState& state, const ImageEmitAccess& access) {
+    if (state.registrationModules || access.mem.imagePacked || access.mem.imageHasMip || access.mem.imageDimension != access.image.dimension || access.image.table != NoTable) return {};
+    if (std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStorageImageReadWithoutFormat)) == state.supportedCapabilities.end()) return {};
+    const auto& info = state.program.Info();
+    StorageReadAlias alias;
+    alias.image = ResourceMaterializer::StorageReadImage(info, access.mem.resource);
+    if (alias.image == NoTable || alias.image >= info.runtimeImageModes.size()) return {};
+    const auto& modes = info.runtimeImageModes[alias.image];
+    for (std::uint32_t index = 0u; index < modes.size(); ++index) {
+        if (ResourceMaterializer::StorageReadCandidate(modes[index], access.image)) alias.modes.push_back(index);
+    }
+    return alias;
+}
+
+std::uint32_t StorageReadTexel(SpirvEmitterState& state, std::uint32_t image, const ImageResource& mode, std::uint32_t coord, IrTextureNumericClass numericClass) {
+    const auto* sampled = state.runtimeImage;
+    state.runtimeImage = &mode;
+    const auto pointer = StorageImageDescriptorPointer(state, image);
+    state.runtimeImage = sampled;
+    state.module.EmitCapability(spv::CapabilityStorageImageReadWithoutFormat);
+    const auto descriptor = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, ImageType(state, mode), descriptor, pointer);
+    const auto raw = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageRead, ImageVectorType(state, mode.numericClass, 4), raw, descriptor, coord);
+    if (mode.conversionFormat == IrBufferFormat::Invalid || GetImageFormatInfo(mode.conversionFormat).packedBitfield) return raw;
+    const auto format = GetFormatInfo(mode.conversionFormat);
+    const bool sint = numericClass == IrTextureNumericClass::Sint;
+    const auto scalar = sint ? TypeI32(state) : TypeF32(state);
+    std::array<std::uint32_t, 4> components{};
+    for (std::uint32_t component = 0u; component < 4u; ++component) {
+        if (component >= format.componentCount) {
+            components[component] = sint ? ConstantI32(state, component == 3u ? 1 : 0) : ConstantF32Value(state, component == 3u ? 1.0f : 0.0f);
+            continue;
+        }
+        const auto word = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), word, raw, component);
+        if (sint) {
+            const auto shift = ConstantU32(state, 32u - format.componentBits[component]);
+            const auto value = Unary(state, spv::OpBitcast, scalar, word);
+            components[component] = format.componentBits[component] >= 32u ? value : Binary(state, spv::OpShiftRightArithmetic, scalar, Binary(state, spv::OpShiftLeftLogical, scalar, value, shift), shift);
+            continue;
+        }
+        const auto pair = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, TypeF32Vector(state, 2u), pair, GlslStd450(state), GLSLstd450UnpackHalf2x16, word);
+        const auto unpacked = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, scalar, unpacked, pair, 0u);
+        const auto u32 = TypeU32(state);
+        const auto special = Binary(state, spv::OpIEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, u32, word, ConstantU32(state, 0x7c00u)), ConstantU32(state, 0x7c00u));
+        const auto sign = Binary(state, spv::OpShiftLeftLogical, u32, Binary(state, spv::OpBitwiseAnd, u32, word, ConstantU32(state, 0x8000u)), ConstantU32(state, 16u));
+        const auto mantissa = Binary(state, spv::OpShiftLeftLogical, u32, Binary(state, spv::OpBitwiseAnd, u32, word, ConstantU32(state, 0x3ffu)), ConstantU32(state, 13u));
+        const auto exact = Binary(state, spv::OpBitwiseOr, u32, Binary(state, spv::OpBitwiseOr, u32, sign, ConstantU32(state, 0x7f800000u)), mantissa);
+        components[component] = Unary(state, spv::OpBitcast, scalar, Select(state, u32, special, exact, Unary(state, spv::OpBitcast, u32, unpacked)));
+    }
+    const auto texel = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, ImageVectorType(state, numericClass, 4), texel, components[0], components[1], components[2], components[3]);
+    return texel;
+}
+
 void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     if (access.mem.imageByElements != 0u) {
         EmitByReadOp(ctx, access);
@@ -1429,7 +1492,17 @@ void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
         if (access.mem.imagePacked) {
             return PackedImageTexel(ctx, access, color);
         }
-        return LoadedTexelResult(ctx, access, color, numericClass);
+        const auto alias = dimensionInfo.multisampled == 0u ? StorageReadAliasFor(state, access) : StorageReadAlias{};
+        if (alias.modes.empty()) return LoadedTexelResult(ctx, access, color, numericClass);
+        const auto vector = ImageVectorType(state, numericClass, 4);
+        const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::StorageReadBase + access.mem.resource, 0u);
+        const auto& modes = state.program.Info().runtimeImageModes[alias.image];
+        auto texel = color;
+        for (const auto mode : alias.modes) {
+            const auto chosen = Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, mode + 1u));
+            texel = EmitValueOrDefaultIfCondition(state, chosen, vector, texel, [&]() { return StorageReadTexel(state, alias.image, modes[mode], coord, numericClass); });
+        }
+        return LoadedTexelResult(ctx, access, texel, numericClass);
     }));
 }
 

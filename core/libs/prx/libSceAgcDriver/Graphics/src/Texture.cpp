@@ -1703,6 +1703,24 @@ bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat) {
     }
 }
 
+std::array<std::uint64_t, 2> StorageReadFormats(PFN_vkGetPhysicalDeviceFormatProperties2 formatProperties, VkPhysicalDevice physical) {
+    std::array<std::uint64_t, 2> formats{};
+    for (std::uint32_t guest = 1u; guest < 128u; ++guest) {
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        try {
+            format = ResolveTextureFormat(guest);
+        } catch (const std::exception&) {
+            continue;
+        }
+        if (format == VK_FORMAT_UNDEFINED || PackedStorageViewFormat(format) != VK_FORMAT_UNDEFINED) continue;
+        VkFormatProperties3 features{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3};
+        VkFormatProperties2 properties{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, &features};
+        formatProperties(physical, format, &properties);
+        if ((features.optimalTilingFeatures & VK_FORMAT_FEATURE_2_STORAGE_READ_WITHOUT_FORMAT_BIT) != 0u) formats[guest / 64u] |= 1ull << (guest % 64u);
+    }
+    return formats;
+}
+
 VkFormat HostStorageFormat(const Context& context, VkFormat format) {
     return StorageFormatOrUndefined(context, format);
 }

@@ -33,7 +33,8 @@ static_assert(PipelineSpecialization::GatherLodBiasBase + ShaderInfo::MaxSampler
 static_assert(PipelineSpecialization::GatherImageMinLodBase + ShaderInfo::MaxImages <= PipelineSpecialization::FmaskFormatBase);
 static_assert(PipelineSpecialization::FmaskFormatBase + ShaderInfo::MaxImages <= PipelineSpecialization::VolumeGatherBase);
 static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::GatherImageShapeBase);
-static_assert(PipelineSpecialization::GatherImageShapeBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
+static_assert(PipelineSpecialization::GatherImageShapeBase + ShaderInfo::MaxImages <= PipelineSpecialization::StorageReadBase);
+static_assert(PipelineSpecialization::StorageReadBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
 static_assert(PipelineSpecialization::ImageComponentBase + ShaderInfo::MaxImages <= PipelineSpecialization::NormalizedImageBase);
 
 namespace {
@@ -405,6 +406,11 @@ std::vector<std::uint32_t> ShaderDataDwordsFor(const IrBindingLayout& layout, st
     return result;
 }
 
+bool StorageReadFormat(std::span<const std::uint64_t> formats, const DescriptorValue& descriptor) {
+    const auto code = (descriptor.dwords[1] >> 20u) & 0x1ffu;
+    return (descriptor.dwords[3] & 0xfffu) == ShaderImageIdentitySwizzle && code / 64u < formats.size() && ((formats[code / 64u] >> (code % 64u)) & 1u) != 0u;
+}
+
 }
 
 bool ReducesBetweenTexels(std::uint32_t word0, std::uint32_t filter) {
@@ -442,7 +448,7 @@ BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, s
     return {descriptor.dwords[1] & 0xffff0000u, descriptor.dwords[3], present ? descriptor.dwords[0] & 3u : 0u, present ? tail : 0u, present};
 }
 
-DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes, bool shaderImageMinLod) const {
+DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes, bool shaderImageMinLod, std::span<const std::uint64_t> storageReadFormats) const {
     if (stage == IrShaderStage::Pixel && exportMappings.size() != 8u) fail("fragment runtime export mappings are missing");
     if (info.images.size() > ShaderInfo::MaxImages) fail("runtime image count exceeds the static capacity (" + std::to_string(info.images.size()) + " of " + std::to_string(ShaderInfo::MaxImages) + ")");
     DescriptorBindingPlan plan;
@@ -550,6 +556,13 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
             const auto clamp = RelativeMinLod(words)[0];
             if (clamp != 0u) RequireShaderMinLod(info, snapshot, index, modes.at(imageModes[index]), clamp);
             plan.specialization.push_back({PipelineSpecialization::MinLodBase + index, std::bit_cast<std::uint32_t>(static_cast<float>(clamp) / 256.0f)});
+        }
+        const auto storage = ResourceMaterializer::StorageReadImage(info, index);
+        if (storage != NoTable) {
+            const auto& descriptor = snapshot.images.at(index);
+            const auto& written = info.runtimeImageModes.at(storage).at(imageModes[storage]);
+            const bool enabled = ResourceMaterializer::StorageReadCandidate(written, modes.at(imageModes[index])) && descriptor == snapshot.images.at(storage) && StorageReadFormat(storageReadFormats, descriptor);
+            plan.specialization.push_back({PipelineSpecialization::StorageReadBase + index, enabled ? imageModes[storage] + 1u : 0u});
         }
         const auto& image = info.images[index];
         if (image.resourceClass != ImageResourceClass::Storage || !image.written || image.atomic) continue;

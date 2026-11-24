@@ -366,6 +366,7 @@ struct SpirvTarget {
     bool featureDigestSealed = false;
     bool nonConstantImageOffsets = false;
     std::uint32_t srgbDecodeFormats = 0;
+    std::array<std::uint64_t, 2> storageReadFormats{};
     std::uint32_t maxImageArrayLayers = 0;
     bool narrowSubgroupClock = false;
     bool fixedPushSlots = false;
