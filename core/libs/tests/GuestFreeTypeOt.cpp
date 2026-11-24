@@ -629,6 +629,37 @@ void Resolve(Function& function, void* library, bool patched, const char* nid, c
     Require(function != nullptr, "missing export");
 }
 
+void ValidatorInitialization(decltype(&ft_validator_init_nid_postfix) initialize) {
+    struct Validator {
+        const std::uint8_t* base;
+        const std::uint8_t* limit;
+        std::int32_t level;
+        std::int32_t error;
+        std::array<std::uint8_t, 96> jumpBuffer;
+    };
+    const std::array<std::uint8_t, 8> table{1, 2, 3, 4, 5, 6, 7, 8};
+    Validator validator{};
+    validator.jumpBuffer.fill(0xA5);
+    const auto originalJumpBuffer = validator.jumpBuffer;
+    for (const std::int32_t level : {0, 1, 2, -1}) {
+        validator.error = 0x08;
+        initialize(&validator, table.data(), table.data() + table.size(), level);
+        Require(validator.base == table.data() && validator.limit == table.data() + table.size(), "validator table bounds");
+        Require(validator.level == level && validator.error == 0, "validator level and cleared error");
+        Require(validator.jumpBuffer == originalJumpBuffer, "validator jump buffer left alone");
+    }
+    initialize(&validator, nullptr, nullptr, 0);
+    Require(validator.base == nullptr && validator.limit == nullptr && validator.level == 0 && validator.error == 0,
+            "validator stores null bounds");
+    Require(validator.jumpBuffer == originalJumpBuffer, "reinitialization preserves jump buffer");
+    try {
+        initialize(nullptr, table.data(), table.data() + table.size(), 0);
+    } catch (const std::exception&) {
+        return;
+    }
+    Require(false, "validator rejects an inaccessible destination");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -642,6 +673,9 @@ int main(int argc, char** argv) {
     if (!library) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(library != nullptr, "load requested library");
+    decltype(&ft_validator_init_nid_postfix) initializeValidator = nullptr;
+    Resolve(initializeValidator, library, patched, "2WLueaP8Qyc", "ft_validator_init_nid_postfix");
+    ValidatorInitialization(initializeValidator);
     Resolve(ot.outlineBitmap, library, patched, "4RRjK-Wd1lU", "sceFreeTypeOtOutlineGetBitmap_nid_no_patch");
     Require(ot.outlineBitmap(nullptr, nullptr, nullptr) == FT_Outline_Get_Bitmap(nullptr, nullptr, nullptr),
             "outline bitmap without library");
