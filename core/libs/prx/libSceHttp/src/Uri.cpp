@@ -325,9 +325,7 @@ int APS5_VABI sceHttpUriUnescape(char* out, size_t* requiredSize, size_t capacit
     }
 
     if (!source.empty()) {
-        std::uint32_t sdkVersion = 0;
-        const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-        std::memcpy(&sdkVersion, parameters + 0x10, sizeof(sdkVersion));
+        const std::uint32_t sdkVersion = ApplicationCompiledSdkVersion();
         if (sdkVersion < 0x1000000) {
             for (size_t index = 0; index < source.size(); ++index) {
                 const char value = source[index];
