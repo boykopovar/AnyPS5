@@ -236,6 +236,15 @@ class Gfx1013ProfileTests(unittest.TestCase):
 
 
 class ScanTests(unittest.TestCase):
+    def test_raw_literals_keep_braces_and_comment_markers_inside_the_string(self):
+        body = 'auto text = u8R"tag(" } // inside\n/* inside */ { \\ )tag"; return 7;'
+        source = f'int first() {{ {body} }} // removed\nint second() {{ return 2; }}'
+        stripped = shader_scan.strip_comments(source)
+        self.assertEqual(len(stripped), len(source))
+        self.assertEqual(shader_scan.function_body(stripped, "first").strip(), body)
+        self.assertEqual(shader_scan.function_body(stripped, "second").strip(), "return 2;")
+        self.assertNotIn("removed", stripped)
+
     def test_digit_separators_keep_following_braces_and_comments_visible(self):
         source = "int first() { return 0xDEAD'BEEF'CAFE'0001; } // removed\nint second() { return 1'000; }"
         stripped = shader_scan.strip_comments(source)

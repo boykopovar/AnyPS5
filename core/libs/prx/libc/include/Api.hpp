@@ -116,6 +116,33 @@ struct FutureErrorObject { const void* vtable; GuestLocale::String message; Erro
 
 }
 
+namespace GuestCLocale {
+
+struct Ctypevec {
+    const short* table;
+    std::int32_t deleteFlag;
+};
+static_assert(sizeof(Ctypevec) == 16);
+static_assert(offsetof(Ctypevec, deleteFlag) == 8);
+
+struct Collvec {
+    std::uint64_t handle;
+    std::uint64_t page;
+};
+static_assert(sizeof(Collvec) == 16);
+
+struct Cvtvec {
+    std::uint32_t page;
+    std::uint32_t maxBytes;
+    std::uint8_t reserved[32];
+};
+static_assert(sizeof(Cvtvec) == 40);
+static_assert(offsetof(Cvtvec, reserved) == 8);
+
+constexpr int DateOrderNone = 2;
+
+}
+
 extern "C" {
 
 
@@ -245,6 +272,8 @@ void* APS5_VABI opendir_nid_postfix(const char* path);
 GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void* handle);
 int APS5_VABI readdir_r_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result);
 int APS5_VABI closedir_nid_postfix(void* handle);
+int APS5_VABI scandir_nid_postfix(const char* path, GuestDirectoryEntry*** namelist, int (APS5_VABI *select)(const GuestDirectoryEntry*), int (APS5_VABI *compar)(const GuestDirectoryEntry* const*, const GuestDirectoryEntry* const*));
+int APS5_VABI alphasort_nid_postfix(const GuestDirectoryEntry* const* left, const GuestDirectoryEntry* const* right);
 void APS5_VABI rewinddir_nid_postfix(void* handle);
 std::int64_t APS5_VABI telldir_nid_postfix(void* handle);
 void APS5_VABI seekdir_nid_postfix(void* handle, std::int64_t location);
@@ -673,6 +702,12 @@ void APS5_VABI _ZNSt8_LocinfoD1Ev_nid_postfix(GuestLocale::LocinfoStorage* self)
 int APS5_VABI _Mbtowcx_nid_postfix(std::uint16_t* dst, const char* src, std::size_t count, mbstate_t* st);
 int APS5_VABI _Wctombx_nid_postfix(char* dst, std::uint16_t src, mbstate_t* st);
 const short* APS5_VABI _Getpctype_nid_postfix();
+GuestCLocale::Ctypevec APS5_VABI _Getctype_nid_postfix();
+GuestCLocale::Collvec APS5_VABI _Getcoll_nid_postfix();
+GuestCLocale::Cvtvec APS5_VABI _Getcvt_nid_postfix();
+int APS5_VABI _Getdateorder_nid_postfix();
+int APS5_VABI _Strcoll_nid_postfix(const char* first1, const char* last1, const char* first2, const char* last2, const void* collation);
+std::size_t APS5_VABI _Strxfrm_nid_postfix(char* dest, char* destEnd, const char* src, const char* srcEnd, const void* collation);
 const short* APS5_VABI _Getptolower_nid_postfix();
 const short* APS5_VABI _Getptoupper_nid_postfix();
 mbstate_t* APS5_VABI _Getpmbstate_nid_postfix();
@@ -1252,6 +1287,8 @@ void* APS5_VABI memmem_nid_postfix(const void* haystack, size_t haystacklen, con
 int APS5_VABI strcmp_nid_postfix(const char* s1, const char* s2);
 int APS5_VABI strncmp_nid_postfix(const char* s1, const char* s2, size_t n);
 size_t APS5_VABI strlen_nid_postfix(const char* s);
+void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE5eraseEmm_nid_postfix(
+    void* string, std::uint64_t position, std::uint64_t count);
 char* APS5_VABI strcpy_nid_postfix(char* dest, const char* src);
 char* APS5_VABI strncpy_nid_postfix(char* dest, const char* src, size_t count);
 char* APS5_VABI strcat_nid_postfix(char* dest, const char* src);

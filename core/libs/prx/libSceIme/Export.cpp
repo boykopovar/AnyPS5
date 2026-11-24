@@ -1,13 +1,16 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceIme/include/InventoryExports.hpp"
 #include "prx/libSceIme/include/Api.hpp"
+#include "prx/libSceIme/include/ImeClipboard.hpp"
 #include <atomic>
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -69,6 +72,11 @@ constexpr uint32_t EventUpdateText = 1;
 constexpr uint32_t EventUpdateCaret = 2;
 constexpr uint32_t EventPressClose = 4;
 constexpr uint32_t EventPressEnter = 5;
+#ifdef __APPLE__
+constexpr bool kAppleBuild = true;
+#else
+constexpr bool kAppleBuild = false;
+#endif
 constexpr uint32_t CaretMoveLeft = 1;
 constexpr uint32_t CaretMoveRight = 2;
 
@@ -100,6 +108,7 @@ std::optional<Session> g_session;
 std::atomic<ImeHostTextSink> g_textSink{nullptr};
 std::atomic<ImeHostPreeditSink> g_preeditSink{nullptr};
 std::atomic<ImeHostPadSink> g_padSink{nullptr};
+std::atomic<ImeHostClipboardSink> g_clipboardSink{nullptr};
 std::atomic<ImeKeyboardViewProvider> g_viewProvider{nullptr};
 std::uint64_t g_nextSessionId = 0;
 
@@ -125,10 +134,29 @@ bool ValidText(const char16_t* text, std::size_t length, bool multiline) {
     return true;
 }
 
-std::size_t TextLength(const char16_t* text, std::size_t limit) {
-    std::size_t length = 0;
-    while (length < limit && text[length] != u'\0') ++length;
-    return length;
+bool ReadGuestText(const char16_t* source, std::size_t limit, std::u16string* outText) {
+    outText->clear();
+    if (limit == 0) return true;
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    if (base == 0) return false;
+    const std::uintptr_t maxAddress = std::numeric_limits<std::uintptr_t>::max();
+    const int savedErrno = errno;
+    for (std::size_t i = 0; i < limit; ++i) {
+        if (i > (maxAddress - base) / sizeof(char16_t)) {
+            errno = savedErrno;
+            return false;
+        }
+        char16_t unit = u'\0';
+        const bool copied = GuestCopyIn_nid_no_patch(&unit, reinterpret_cast<const char16_t*>(base + i * sizeof(char16_t)), sizeof(unit));
+        if (!copied) {
+            errno = savedErrno;
+            return false;
+        }
+        if (unit == u'\0') break;
+        outText->push_back(unit);
+    }
+    errno = savedErrno;
+    return true;
 }
 
 std::u16string DecodeUtf8(const char* text, std::size_t size) {
@@ -317,6 +345,10 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
             if ((session.param.option & OptionMultiline) != 0) {
                 return Insert(session, u"\n");
             }
+            if (const ImeHostClipboardSink clipboardSink = g_clipboardSink.load(); clipboardSink && ImeClipboard::CopyEnabled(std::getenv("ANYPS5_IME_COPY"), kAppleBuild) && !session.text.empty()) {
+                const std::string utf8 = ImeClipboard::Utf8(session.text);
+                clipboardSink(utf8.c_str(), utf8.size());
+            }
             QueueText(session, EventPressEnter, session.caret, 0);
             return std::nullopt;
         case ImeHostInputKind::Escape:
@@ -367,15 +399,7 @@ int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outPa
         if (byte != 0) return ErrorInvalidReserved;
     }
     std::u16string localText;
-    for (std::uint32_t i = 0; i < localParam.max_text_length; ++i) {
-        char16_t unit = u'\0';
-        const int textErrno = errno;
-        const bool copiedUnit = GuestCopyIn_nid_no_patch(&unit, localParam.input_text_buffer + i, sizeof(unit));
-        errno = textErrno;
-        if (!copiedUnit) return ErrorInvalidAddress;
-        if (unit == u'\0') break;
-        localText.push_back(unit);
-    }
+    if (!ReadGuestText(localParam.input_text_buffer, localParam.max_text_length, &localText)) return ErrorInvalidAddress;
     if (!ValidText(localText.data(), localText.size(), (localParam.option & OptionMultiline) != 0)) return ErrorInvalidText;
     if (outParam) *outParam = localParam;
     if (outExt) *outExt = localExt;
@@ -533,6 +557,10 @@ void ImePublishPad_nid_postfix(const ImeHostPad& pad) {
 
 void ImeSetHostPadSink_nid_no_patch(ImeHostPadSink sink) {
     g_padSink = sink;
+}
+
+void ImeSetHostClipboardSink_nid_no_patch(ImeHostClipboardSink sink) {
+    g_clipboardSink = sink;
 }
 
 void ImeSetKeyboardViewProvider_nid_no_patch(ImeKeyboardViewProvider provider) {
@@ -703,9 +731,14 @@ int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length) {
     if (!g_session) return ErrorNotOpened;
     if (!text) return ErrorInvalidAddress;
     Session& session = *g_session;
-    const std::size_t count = TextLength(text, std::min(length, session.param.max_text_length));
-    if (!ValidText(text, count, (session.param.option & OptionMultiline) != 0)) return ErrorInvalidText;
-    session.text.assign(text, count);
+    std::u16string localText;
+    if (!ReadGuestText(text, std::min<std::size_t>(length, session.param.max_text_length), &localText)) {
+        return ErrorInvalidAddress;
+    }
+    if (!ValidText(localText.data(), localText.size(), (session.param.option & OptionMultiline) != 0)) {
+        return ErrorInvalidText;
+    }
+    session.text = std::move(localText);
     ++session.revision;
     NormalizeCaret(session);
     SyncBuffers(session);

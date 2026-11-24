@@ -27,10 +27,16 @@ public:
     }
 
     static ControllerAssignment FromEnvironment() {
+        const std::array values = {
+            std::getenv("ANYPS5_PAD_PLAYER_1_SERIAL"),
+            std::getenv("ANYPS5_PAD_PLAYER_2_SERIAL"),
+            std::getenv("ANYPS5_PAD_PLAYER_3_SERIAL"),
+            std::getenv("ANYPS5_PAD_PLAYER_4_SERIAL"),
+        };
+        static_assert(values.size() == ControllerAssignmentSlots);
         ControllerSerials serials;
         for (std::size_t slot = 0; slot < serials.size(); ++slot) {
-            const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";
-            if (const char* value = std::getenv(name.c_str()); value != nullptr) serials[slot] = value;
+            if (values[slot] != nullptr) serials[slot] = values[slot];
         }
         return ControllerAssignment(std::move(serials));
     }

@@ -306,6 +306,27 @@ void CheckUnobservedOptions(int context) {
     Require(sceHttpSetDelayBuildRequestEnabled(request, 1) == InvalidId, "a deleted request still accepted delay build request");
 }
 
+void CheckProxy(int context) {
+    const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
+    Require(sceHttpSetProxy(pattern, 1, 2, "proxy.example", 3128) == 0, "sceHttpSetProxy failed on a template");
+    const auto stored = FindHttpOptions(pattern);
+    Require(stored && stored->proxyHttpConf == 1 && stored->proxyWlanConf == 2 && stored->proxyPort == 3128 && stored->proxyHost == "proxy.example", "sceHttpSetProxy did not store the proxy settings");
+    const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
+    const auto inherited = FindHttpOptions(connection);
+    Require(inherited && inherited->proxyHttpConf == 1 && inherited->proxyWlanConf == 2 && inherited->proxyPort == 3128 && inherited->proxyHost == "proxy.example", "a connection did not inherit its template's proxy");
+    Require(sceHttpSetProxy(connection, 0, 0, "other.proxy", 8080) == 0, "sceHttpSetProxy failed on a connection");
+    const auto updated = FindHttpOptions(connection);
+    Require(updated && updated->proxyHttpConf == 0 && updated->proxyWlanConf == 0 && updated->proxyPort == 8080 && updated->proxyHost == "other.proxy", "sceHttpSetProxy did not update a connection's proxy");
+    Require(FindHttpOptions(pattern)->proxyHost == "proxy.example", "setting a connection changed its template's proxy");
+    const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    const auto requestProxy = FindHttpOptions(request);
+    Require(requestProxy && requestProxy->proxyHost == "other.proxy" && requestProxy->proxyPort == 8080, "a request did not inherit its connection's proxy");
+    Require(sceHttpSetProxy(request, 3, 0, "request.proxy", 9000) == 0, "sceHttpSetProxy failed on a request");
+    Require(FindHttpOptions(request)->proxyHttpConf == 3 && FindHttpOptions(connection)->proxyHttpConf == 0, "setting a request changed its connection's proxy");
+    Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+    Require(sceHttpSetProxy(request, 1, 0, "gone.proxy", 1) == InvalidId, "a deleted request still stored a proxy");
+}
+
 }
 
 int main() {
@@ -319,6 +340,7 @@ int main() {
     CheckAcceptEncodingGzip(context);
     CheckEpoll(context);
     CheckUnobservedOptions(context);
+    CheckProxy(context);
     CheckOfflineSetters(context);
     Require(sceHttpTerm_nid_postfix(context) == 0, "sceHttpTerm failed");
     Require(sceHttpSetDefaultAcceptEncodingGZIPEnabled(context, 1) == BeforeInit, "a gzip default was taken before sceHttpInit");
