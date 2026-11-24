@@ -19,6 +19,7 @@
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -34,6 +35,7 @@ namespace {
 struct PipelineSkips {
     std::mutex mutex;
     std::map<std::uint64_t, std::uint64_t> skipped;
+    std::atomic<bool> any{false};
 };
 
 PipelineSkips& pipelineSkips() {
@@ -44,16 +46,29 @@ PipelineSkips& pipelineSkips() {
 void NotePipelineSkip(std::uint64_t address, std::size_t words) {
     auto& skips = pipelineSkips();
     std::lock_guard lock(skips.mutex);
+    skips.any.store(true, std::memory_order_relaxed);
     if (skips.skipped[address]++ == 0) std::fprintf(stderr, "[dispatch] skipping the dispatches of compute shader 0x%llx while its pipeline builds (%zu SPIR-V words)\n", static_cast<unsigned long long>(address), words);
 }
 
 void NotePipelineReady(std::uint64_t address) {
     auto& skips = pipelineSkips();
+    if (!skips.any.load(std::memory_order_relaxed)) return;
     std::lock_guard lock(skips.mutex);
     const auto found = skips.skipped.find(address);
     if (found == skips.skipped.end()) return;
     std::fprintf(stderr, "[dispatch] compute shader 0x%llx: its pipeline is ready after %llu skipped dispatches\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(found->second));
     skips.skipped.erase(found);
+    skips.any.store(!skips.skipped.empty(), std::memory_order_relaxed);
+}
+
+bool AwaitPipelineAhead(VulkanDevice& device, const ShaderRecompiler::RecompileResult& shader) {
+    auto& budget = ComputePipelineWaitBudget();
+    const auto start = std::chrono::steady_clock::now();
+    const auto grant = budget.Take(start);
+    if (grant.allowed <= std::chrono::steady_clock::duration{}) return false;
+    const bool settled = device.AwaitComputePipelineAhead(shader, start + grant.allowed);
+    budget.Finish(grant, std::chrono::steady_clock::now());
+    return settled;
 }
 
 constexpr std::uint32_t computeStartX = 0x204;
@@ -681,6 +696,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
 
         static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
         try {
+            const BackgroundWaitScope backgroundWait;
             auto invocation = InvocationFor(snapshot, codeOffset, request, AsyncDrawCompile(), &linking);
             timing.Mark("prepared_invocation");
 
@@ -702,6 +718,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             timing.Mark("capture_resources");
             compiledResult = MaterializeInBackground(invocation, capture, request.context.memory, address);
             timing.Mark("materialize");
+            if (AsyncDrawCompile()) NoteDispatchRecorded(address);
             if (profile && compiledResult->cacheHit) cacheHits.fetch_add(1, std::memory_order_relaxed);
             const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
             static std::atomic<double> totalMs{0};
@@ -712,6 +729,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             if (const auto limit = MaxComputeSpirvWords(); limit != 0 && compiledResult->spirv.size() > limit)
                 throw std::runtime_error(std::to_string(compiledResult->spirv.size()) + " SPIR-V words, above APS5_MAX_COMPUTE_SPIRV_WORDS (" + std::to_string(limit) + ")");
         } catch (const DrawCompilePending&) {
+            NoteDispatchDropped(address);
             return;
         } catch (const std::exception& error) {
             std::string dump;
@@ -786,11 +804,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                 throw;
             }
         }
-        if (ahead == VulkanDevice::PipelineAhead::Start || ahead == VulkanDevice::PipelineAhead::Building) {
-            if (profile) NotePipelineSkip(address, compiledResult->spirv.size());
+        if ((ahead == VulkanDevice::PipelineAhead::Start || ahead == VulkanDevice::PipelineAhead::Building) && !AwaitPipelineAhead(*localDevice, *compiledResult)) {
+            NotePipelineSkip(address, compiledResult->spirv.size());
             return;
         }
-        if (profile) NotePipelineReady(address);
+        NotePipelineReady(address);
     }
 
     if (recordQueuedLabelsAfterCapture(submission.queue, captured)) {

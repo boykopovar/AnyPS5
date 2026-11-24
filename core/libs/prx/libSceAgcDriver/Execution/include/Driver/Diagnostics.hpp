@@ -2,12 +2,16 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DIAGNOSTICS_HPP
 
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace AgcDriver::DriverDetail {
 
@@ -29,6 +33,45 @@ public:
 bool SkipRefusedDraws();
 bool AsyncDrawCompile();
 std::size_t AsyncComputePipelineWords();
+std::chrono::milliseconds AsyncDispatchWait();
+std::chrono::milliseconds AsyncComputeWait();
+
+class SlidingWaitBudget {
+public:
+    using Clock = std::chrono::steady_clock;
+    struct Grant {
+        std::uint64_t id = 0;
+        Clock::duration allowed{};
+    };
+    SlidingWaitBudget(Clock::duration perWait, Clock::duration window, Clock::duration total);
+    Grant Take(Clock::time_point now);
+    void Finish(const Grant& grant, Clock::time_point end);
+
+private:
+    Clock::duration perWait;
+    Clock::duration window;
+    Clock::duration total;
+    std::mutex mutex;
+    std::uint64_t nextId = 1;
+    std::map<std::uint64_t, std::pair<Clock::time_point, Clock::time_point>> waits;
+};
+
+SlidingWaitBudget& ComputePipelineWaitBudget();
+
+class BackgroundWaitScope {
+public:
+    BackgroundWaitScope();
+    ~BackgroundWaitScope();
+    BackgroundWaitScope(const BackgroundWaitScope&) = delete;
+    BackgroundWaitScope& operator=(const BackgroundWaitScope&) = delete;
+
+private:
+    bool previous;
+};
+
+bool AwaitBackgroundJob(std::mutex& mutex, const bool& finished, bool& waited);
+void NoteDispatchDropped(std::uint64_t address);
+void NoteDispatchRecorded(std::uint64_t address);
 
 void ReportRefusedDraw(const RefusedDraw& refused);
 std::optional<std::size_t> RefusedShaderCount();

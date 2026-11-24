@@ -3091,6 +3091,27 @@ void VulkanDevice::AbandonComputePipelineAhead(const ShaderRecompiler::Recompile
     state->computePipelinesFailed.insert(key);
 }
 
+bool VulkanDevice::AwaitComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader, std::chrono::steady_clock::time_point deadline) {
+    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
+    const auto key = ComputePipelineKey::Of(shader, Graphics::PushConstantStages(shaders) != 0);
+    if (key.identity.Empty()) return true;
+    while (true) {
+        std::shared_future<std::shared_ptr<ComputePipelineObjects>> building;
+        {
+            std::lock_guard pipelines(state->computePipelinesMutex);
+            if (state->computePipelines.contains(key) || state->computePipelinesFailed.contains(key)) return true;
+            if (const auto found = state->computePipelinesBuilding.find(key); found != state->computePipelinesBuilding.end()) building = found->second;
+            else if (!state->computePipelinesQueued.contains(key)) return true;
+        }
+        if (building.valid()) {
+            if (building.wait_until(deadline) == std::future_status::timeout) return false;
+            continue;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
 VulkanDevice::PipelineAhead VulkanDevice::ComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader) {
     if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return PipelineAhead::Unavailable;
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
