@@ -26,8 +26,7 @@ int APS5_VABI sceCameraIsAttached(int32_t index) {
 }
 
 int APS5_VABI sceCameraGetDeviceIDWithoutOpen(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_CAMERA_ERROR_NOT_CONNECTED;
 }
 
 int APS5_VABI sceCameraInitializeRegistryCalibData(void) {
@@ -115,8 +114,7 @@ int APS5_VABI sceCameraAudioGetData(void* data) {
 }
 
 int APS5_VABI sceCameraGetCalibData(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_CAMERA_ERROR_NOT_CONNECTED;
 }
 
 int APS5_VABI sceCameraWaitForEveReady(void) {
@@ -132,8 +130,8 @@ int APS5_VABI sceCameraSetAppModuleFocus(std::int32_t, void*) {
 }
 
 int APS5_VABI sceCameraGetDeviceID(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (Camera::IsOpen()) NotImplemented_nid_no_patch(__func__);
+    return SCE_CAMERA_ERROR_NOT_INIT;
 }
 
 int APS5_VABI sceCameraSetForceActivate(std::int32_t handle) {
@@ -174,7 +172,6 @@ int APS5_VABI sceCameraSetDebugStop(void) {
 }
 
 int APS5_VABI sceCameraIsConfigChangeDone(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
