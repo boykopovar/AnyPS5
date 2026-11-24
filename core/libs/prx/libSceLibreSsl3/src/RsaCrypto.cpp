@@ -524,7 +524,6 @@
 
 #include <atomic>
 #include <bit>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
