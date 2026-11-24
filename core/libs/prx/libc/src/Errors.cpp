@@ -11,9 +11,8 @@
 #include <stdexcept>
 #include <string>
 
-namespace {
 // Guest FreeBSD errno numbering, not the host CRT's numbering.
-constexpr const char* messages[] = {
+extern "C" const char* const sys_errlist_nid_postfix[] = {
     "No error: 0", "Operation not permitted", "No such file or directory",
     "No such process", "Interrupted system call", "Input/output error",
     "Device not configured", "Argument list too long", "Exec format error",
@@ -48,7 +47,10 @@ constexpr const char* messages[] = {
     "Capabilities insufficient", "Not permitted in capability mode", "State not recoverable",
     "Previous owner died"
 };
-static_assert(sizeof(messages) / sizeof(messages[0]) == 97);
+static_assert(sizeof(sys_errlist_nid_postfix) / sizeof(sys_errlist_nid_postfix[0]) == 97);
+extern "C" const int sys_nerr_nid_postfix = 97;
+
+namespace {
 bool NamedByStrerror(int error) { return error > 0 && error < 95; }
 
 constexpr struct {
@@ -75,7 +77,7 @@ void Describe(int error, char (&text)[128]) {
 extern "C" {
 const char* APS5_VABI StrerrorText_nid_no_patch(int error) {
     if (error == 0) return "No error";
-    if (NamedByStrerror(error)) return messages[error];
+    if (NamedByStrerror(error)) return sys_errlist_nid_postfix[error];
     return ExtendedMessage(error);
 }
 
