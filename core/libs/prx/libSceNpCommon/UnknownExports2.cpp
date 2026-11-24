@@ -305,4 +305,304 @@ int APS5_VABI sceNpCommonUnknown49(void) {
     return 0;
 }
 
+APS5_EXPORT("iz2atGaNrss", sceNpCommonUnknown50);
+int APS5_VABI sceNpCommonUnknown50(void) {
+    NotImplemented_nid_no_patch("iz2atGaNrss");
+    return 0;
+}
+
+APS5_EXPORT("j2qK6u6SL-U", sceNpCommonUnknown51);
+int APS5_VABI sceNpCommonUnknown51(void) {
+    NotImplemented_nid_no_patch("j2qK6u6SL-U");
+    return 0;
+}
+
+APS5_EXPORT("j4IAvbKKTzw", sceNpCommonUnknown52);
+int APS5_VABI sceNpCommonUnknown52(void) {
+    NotImplemented_nid_no_patch("j4IAvbKKTzw");
+    return 0;
+}
+
+APS5_EXPORT("j4gLOIpHgNk", sceNpCommonUnknown53);
+int APS5_VABI sceNpCommonUnknown53(void) {
+    NotImplemented_nid_no_patch("j4gLOIpHgNk");
+    return 0;
+}
+
+APS5_EXPORT("j6CorpmdjRk", sceNpCommonUnknown54);
+int APS5_VABI sceNpCommonUnknown54(void) {
+    NotImplemented_nid_no_patch("j6CorpmdjRk");
+    return 0;
+}
+
+APS5_EXPORT("jCeUP0CpiNs", sceNpCommonUnknown55);
+int APS5_VABI sceNpCommonUnknown55(void) {
+    NotImplemented_nid_no_patch("jCeUP0CpiNs");
+    return 0;
+}
+
+APS5_EXPORT("jDDvll2aQpQ", sceNpCommonUnknown56);
+int APS5_VABI sceNpCommonUnknown56(void) {
+    NotImplemented_nid_no_patch("jDDvll2aQpQ");
+    return 0;
+}
+
+APS5_EXPORT("jFQJbHX18tA", sceNpCommonUnknown57);
+int APS5_VABI sceNpCommonUnknown57(void) {
+    NotImplemented_nid_no_patch("jFQJbHX18tA");
+    return 0;
+}
+
+APS5_EXPORT("jXZjoKUWiBQ", sceNpCommonUnknown58);
+int APS5_VABI sceNpCommonUnknown58(void) {
+    NotImplemented_nid_no_patch("jXZjoKUWiBQ");
+    return 0;
+}
+
+APS5_EXPORT("jcPO4bt5i3o", sceNpCommonUnknown59);
+int APS5_VABI sceNpCommonUnknown59(void) {
+    NotImplemented_nid_no_patch("jcPO4bt5i3o");
+    return 0;
+}
+
+APS5_EXPORT("jmGPUJmU+tc", sceNpCommonUnknown60);
+int APS5_VABI sceNpCommonUnknown60(void) {
+    NotImplemented_nid_no_patch("jmGPUJmU+tc");
+    return 0;
+}
+
+APS5_EXPORT("jr0OcEeQJ8o", sceNpCommonUnknown61);
+int APS5_VABI sceNpCommonUnknown61(void) {
+    NotImplemented_nid_no_patch("jr0OcEeQJ8o");
+    return 0;
+}
+
+APS5_EXPORT("jsHe99x6l0w", sceNpCommonUnknown62);
+int APS5_VABI sceNpCommonUnknown62(void) {
+    NotImplemented_nid_no_patch("jsHe99x6l0w");
+    return 0;
+}
+
+APS5_EXPORT("jxPY-0x8e-M", sceNpCommonUnknown63);
+int APS5_VABI sceNpCommonUnknown63(void) {
+    NotImplemented_nid_no_patch("jxPY-0x8e-M");
+    return 0;
+}
+
+APS5_EXPORT("k1VlSDg9azo", sceNpCommonUnknown64);
+int APS5_VABI sceNpCommonUnknown64(void) {
+    NotImplemented_nid_no_patch("k1VlSDg9azo");
+    return 0;
+}
+
+APS5_EXPORT("k9PAEdsZOIo", sceNpCommonUnknown65);
+int APS5_VABI sceNpCommonUnknown65(void) {
+    NotImplemented_nid_no_patch("k9PAEdsZOIo");
+    return 0;
+}
+
+APS5_EXPORT("kBDhrY67+8o", sceNpCommonUnknown66);
+int APS5_VABI sceNpCommonUnknown66(void) {
+    NotImplemented_nid_no_patch("kBDhrY67+8o");
+    return 0;
+}
+
+APS5_EXPORT("kKlVoOcAGuk", sceNpCommonUnknown67);
+int APS5_VABI sceNpCommonUnknown67(void) {
+    NotImplemented_nid_no_patch("kKlVoOcAGuk");
+    return 0;
+}
+
+APS5_EXPORT("kPnWBn-uzAU", sceNpCommonUnknown68);
+int APS5_VABI sceNpCommonUnknown68(void) {
+    NotImplemented_nid_no_patch("kPnWBn-uzAU");
+    return 0;
+}
+
+APS5_EXPORT("kTfkKhcdW5Y", sceNpCommonUnknown69);
+int APS5_VABI sceNpCommonUnknown69(void) {
+    NotImplemented_nid_no_patch("kTfkKhcdW5Y");
+    return 0;
+}
+
+APS5_EXPORT("kUitiIVR43g", sceNpCommonUnknown70);
+int APS5_VABI sceNpCommonUnknown70(void) {
+    NotImplemented_nid_no_patch("kUitiIVR43g");
+    return 0;
+}
+
+APS5_EXPORT("kXE1imLw7yo", sceNpCommonUnknown71);
+int APS5_VABI sceNpCommonUnknown71(void) {
+    NotImplemented_nid_no_patch("kXE1imLw7yo");
+    return 0;
+}
+
+APS5_EXPORT("kdOC-2AE06w", sceNpCommonUnknown72);
+int APS5_VABI sceNpCommonUnknown72(void) {
+    NotImplemented_nid_no_patch("kdOC-2AE06w");
+    return 0;
+}
+
+APS5_EXPORT("ktb6iOBLnd4", sceNpCommonUnknown73);
+int APS5_VABI sceNpCommonUnknown73(void) {
+    NotImplemented_nid_no_patch("ktb6iOBLnd4");
+    return 0;
+}
+
+APS5_EXPORT("l2uxeCNbVoE", sceNpCommonUnknown74);
+int APS5_VABI sceNpCommonUnknown74(void) {
+    NotImplemented_nid_no_patch("l2uxeCNbVoE");
+    return 0;
+}
+
+APS5_EXPORT("l4wLJeWIxNY", sceNpCommonUnknown75);
+int APS5_VABI sceNpCommonUnknown75(void) {
+    NotImplemented_nid_no_patch("l4wLJeWIxNY");
+    return 0;
+}
+
+APS5_EXPORT("l6s7aomzWGA", sceNpCommonUnknown76);
+int APS5_VABI sceNpCommonUnknown76(void) {
+    NotImplemented_nid_no_patch("l6s7aomzWGA");
+    return 0;
+}
+
+APS5_EXPORT("lGjyfcI++PY", sceNpCommonUnknown77);
+int APS5_VABI sceNpCommonUnknown77(void) {
+    NotImplemented_nid_no_patch("lGjyfcI++PY");
+    return 0;
+}
+
+APS5_EXPORT("lJ2Efd9PUKI", sceNpCommonUnknown78);
+int APS5_VABI sceNpCommonUnknown78(void) {
+    NotImplemented_nid_no_patch("lJ2Efd9PUKI");
+    return 0;
+}
+
+APS5_EXPORT("lNs-oTKpG9s", sceNpCommonUnknown79);
+int APS5_VABI sceNpCommonUnknown79(void) {
+    NotImplemented_nid_no_patch("lNs-oTKpG9s");
+    return 0;
+}
+
+APS5_EXPORT("lQXgvDXBGtA", sceNpCommonUnknown80);
+int APS5_VABI sceNpCommonUnknown80(void) {
+    NotImplemented_nid_no_patch("lQXgvDXBGtA");
+    return 0;
+}
+
+APS5_EXPORT("lW56T9n4kQM", sceNpCommonUnknown81);
+int APS5_VABI sceNpCommonUnknown81(void) {
+    NotImplemented_nid_no_patch("lW56T9n4kQM");
+    return 0;
+}
+
+APS5_EXPORT("lZWmdDoBDmI", sceNpCommonUnknown82);
+int APS5_VABI sceNpCommonUnknown82(void) {
+    NotImplemented_nid_no_patch("lZWmdDoBDmI");
+    return 0;
+}
+
+APS5_EXPORT("laqZEULcfgw", sceNpCommonUnknown83);
+int APS5_VABI sceNpCommonUnknown83(void) {
+    NotImplemented_nid_no_patch("laqZEULcfgw");
+    return 0;
+}
+
+APS5_EXPORT("lfaZ4ELD5A8", sceNpCommonUnknown84);
+int APS5_VABI sceNpCommonUnknown84(void) {
+    NotImplemented_nid_no_patch("lfaZ4ELD5A8");
+    return 0;
+}
+
+APS5_EXPORT("lod7OaoOhzU", sceNpCommonUnknown85);
+int APS5_VABI sceNpCommonUnknown85(void) {
+    NotImplemented_nid_no_patch("lod7OaoOhzU");
+    return 0;
+}
+
+APS5_EXPORT("ls4HxJ7SNOo", sceNpCommonUnknown86);
+int APS5_VABI sceNpCommonUnknown86(void) {
+    NotImplemented_nid_no_patch("ls4HxJ7SNOo");
+    return 0;
+}
+
+APS5_EXPORT("ls8yIODZmzc", sceNpCommonUnknown87);
+int APS5_VABI sceNpCommonUnknown87(void) {
+    NotImplemented_nid_no_patch("ls8yIODZmzc");
+    return 0;
+}
+
+APS5_EXPORT("mFZezLIogNI", sceNpCommonUnknown88);
+int APS5_VABI sceNpCommonUnknown88(void) {
+    NotImplemented_nid_no_patch("mFZezLIogNI");
+    return 0;
+}
+
+APS5_EXPORT("mLomEr7yONY", sceNpCommonUnknown89);
+int APS5_VABI sceNpCommonUnknown89(void) {
+    NotImplemented_nid_no_patch("mLomEr7yONY");
+    return 0;
+}
+
+APS5_EXPORT("mVvdSTGvkTc", sceNpCommonUnknown90);
+int APS5_VABI sceNpCommonUnknown90(void) {
+    NotImplemented_nid_no_patch("mVvdSTGvkTc");
+    return 0;
+}
+
+APS5_EXPORT("mWbjmpJrclA", sceNpCommonUnknown91);
+int APS5_VABI sceNpCommonUnknown91(void) {
+    NotImplemented_nid_no_patch("mWbjmpJrclA");
+    return 0;
+}
+
+APS5_EXPORT("mcIwbxiWNGQ", sceNpCommonUnknown92);
+int APS5_VABI sceNpCommonUnknown92(void) {
+    NotImplemented_nid_no_patch("mcIwbxiWNGQ");
+    return 0;
+}
+
+APS5_EXPORT("mcksYTt3a6c", sceNpCommonUnknown93);
+int APS5_VABI sceNpCommonUnknown93(void) {
+    NotImplemented_nid_no_patch("mcksYTt3a6c");
+    return 0;
+}
+
+APS5_EXPORT("mk5Lk4zIrTk", sceNpCommonUnknown94);
+int APS5_VABI sceNpCommonUnknown94(void) {
+    NotImplemented_nid_no_patch("mk5Lk4zIrTk");
+    return 0;
+}
+
+APS5_EXPORT("myP3tLf3IIE", sceNpCommonUnknown95);
+int APS5_VABI sceNpCommonUnknown95(void) {
+    NotImplemented_nid_no_patch("myP3tLf3IIE");
+    return 0;
+}
+
+APS5_EXPORT("nA6u6ucFqNs", sceNpCommonUnknown96);
+int APS5_VABI sceNpCommonUnknown96(void) {
+    NotImplemented_nid_no_patch("nA6u6ucFqNs");
+    return 0;
+}
+
+APS5_EXPORT("nHgo2VpnCB8", sceNpCommonUnknown97);
+int APS5_VABI sceNpCommonUnknown97(void) {
+    NotImplemented_nid_no_patch("nHgo2VpnCB8");
+    return 0;
+}
+
+APS5_EXPORT("nQm4o5iOye0", sceNpCommonUnknown98);
+int APS5_VABI sceNpCommonUnknown98(void) {
+    NotImplemented_nid_no_patch("nQm4o5iOye0");
+    return 0;
+}
+
+APS5_EXPORT("nUesWVRd6eg", sceNpCommonUnknown99);
+int APS5_VABI sceNpCommonUnknown99(void) {
+    NotImplemented_nid_no_patch("nUesWVRd6eg");
+    return 0;
+}
+
 }
