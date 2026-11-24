@@ -175,7 +175,7 @@ int main() {
             std::printf("skipped, subgroup size %u cannot hold a wave32\n", target.subgroupSize);
             return VulkanTestSkipped;
         }
-        for (const auto perms : {QuadPerms{0xb1u, 0x4eu}, QuadPerms{0x55u, 0xaau}}) {
+        for (const auto perms : {QuadPerms{0xb1u, 0x4eu}, QuadPerms{0x55u, 0xaau}, QuadPerms{0x00u, 0xffu}}) {
             for (const auto waveSize : {64u, 32u}) {
                 for (const bool fetchInactive : {false, true}) {
                     const auto code = PixelCode(waveSize, fetchInactive, perms);
