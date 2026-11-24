@@ -2182,8 +2182,7 @@ std::atomic<std::uint64_t> importMaxBytes{0};
 // The import of an access to a registered range larger than the range window: the cells the access touches, grown to
 // the union of the range's imports it overlaps, so accesses across neighbouring cell edges share one import instead of
 // replacing each other's.
-std::optional<std::pair<std::uint64_t, std::uint64_t>> importWindowBounds(const GuestAllocations::Range& range, std::uint64_t begin, std::uint64_t end, std::uint64_t alignment) {
-    const auto window = rangeImportWindow.load(std::memory_order_relaxed);
+std::optional<std::pair<std::uint64_t, std::uint64_t>> importWindowBounds(const GuestAllocations::Range& range, std::uint64_t begin, std::uint64_t end, std::uint64_t alignment, std::uint64_t window = rangeImportWindow.load(std::memory_order_relaxed)) {
     if (window == 0 || alignment == 0 || window % alignment != 0 || range.bytes <= window || begin < range.address || end > range.address + range.bytes || end <= begin) return std::nullopt;
     const auto lastCell = range.bytes / window - 1;
     const auto cell = [&](std::uint64_t address) { return std::min((address - range.address) / window, lastCell); };
@@ -2194,10 +2193,10 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> importWindowBounds(const 
     return std::pair{windowBegin, windowEnd};
 }
 
-ImportRun windowRun(const HostImports& state, ImportRun run, std::uint64_t begin, std::uint64_t end, std::uint64_t alignment) {
+ImportRun windowRun(const HostImports& state, ImportRun run, std::uint64_t begin, std::uint64_t end, std::uint64_t alignment, std::uint64_t window = rangeImportWindow.load(std::memory_order_relaxed)) {
     if (run.ranges.size() != 1) return run;
     const auto& range = *run.ranges.front();
-    const auto bounds = importWindowBounds(range, begin, end, alignment);
+    const auto bounds = importWindowBounds(range, begin, end, alignment, window);
     if (!bounds) return run;
     auto [windowBegin, windowEnd] = *bounds;
     for (bool grown = true; grown;) {
