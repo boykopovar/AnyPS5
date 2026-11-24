@@ -258,6 +258,7 @@ private:
             append(key, merge.depthStencilTests);
             if (!merge.blend.enabled) continue;
             const auto& blend = merge.blend;
+            append(key, merge.storageFormat);
             append(key, blend.snorm);
             append(key, blend.colorSource);
             append(key, blend.colorDestination);
