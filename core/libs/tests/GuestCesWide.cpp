@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -354,6 +355,31 @@ int main() {
     Require(sceCesMbcsUcsContextInit(context, cp1252) == 0);
     Require(sceCesMbcsStrToUtf16Str(context, Bytes("\x80\xE9"), 2, &length, utf16Out, 4, &outLength) == 0);
     Require(outLength == 2 && utf16Out[0] == 0x20AC && utf16Out[1] == 0x00E9);
+
+    for (const void* profile : {sceCesRefersUcsProfileCp1254(), sceCesRefersUcsProfileCp1258()}) {
+        Require(sceCesMbcsUcsContextInit(context, profile) == 0);
+        const auto checkDecode = [&](const std::uint8_t* source, std::uint32_t size, int status,
+                                     std::uint32_t count, std::uint16_t unit) {
+            length = outLength = 42;
+            Require(sceCesMbcsStrToUtf16Str(context, source, size, &length, utf16Out, 4, &outLength) == status);
+            Require(length == count && outLength == count);
+            if (count != 0) Require(utf16Out[0] == unit);
+            length = outLength = 42;
+            Require(sceCesMbcsStrGetUtf16Len(context, source, size, &length, &outLength) == status);
+            Require(length == count && outLength == count);
+        };
+        checkDecode(Bytes("\x80"), 1, 0, 1, 0x20AC);
+        checkDecode(Bytes("\x82"), 1, 0, 1, 0x201A);
+        checkDecode(Bytes("\x9F"), 1, 0, 1, 0x0178);
+        for (const std::uint8_t byte : {0x81, 0x8D, 0x8E, 0x8F, 0x90, 0x9D, 0x9E}) {
+            checkDecode(&byte, 1, unassignedCode, 0, 0);
+        }
+        if (profile == sceCesRefersUcsProfileCp1258()) {
+            checkDecode(Bytes("\x8A"), 1, unassignedCode, 0, 0);
+            checkDecode(Bytes("\x9A"), 1, unassignedCode, 0, 0);
+        }
+        checkDecode(Bytes("A\x81" "B"), 3, unassignedCode, 1, 'A');
+    }
 
     alignas(8) std::uint8_t eucJpSheet[64] = {};
     alignas(8) std::uint8_t eucCnSheet[64] = {};
