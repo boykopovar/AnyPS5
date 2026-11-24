@@ -167,7 +167,8 @@ int main(int argc, char** argv) {
     Require(dlerror_nid_postfix() != nullptr);
     Require(dlerror_nid_postfix() == nullptr);
     Require(dlsym_nid_postfix(module, reinterpret_cast<const char*>(0x10)) == nullptr);
-    Require(dlerror_nid_postfix() != nullptr);
+    const char* unreadable = dlerror_nid_postfix();
+    Require(unreadable != nullptr && std::strstr(unreadable, "unreadable") != nullptr);
     Require(dlsym_nid_postfix(module, "") == nullptr);
     Require(dlerror_nid_postfix() != nullptr);
     void* second = dlopen_nid_postfix(argv[1], 1);
