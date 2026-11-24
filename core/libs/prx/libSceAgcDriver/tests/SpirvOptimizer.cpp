@@ -139,6 +139,50 @@ std::vector<std::uint32_t> swapByteOrder(std::vector<std::uint32_t> words) {
     return words;
 }
 
+void testPushConstantInterface(bool optimizationEnabled) {
+    for (const auto version : {Spirv11, Spirv13, 0x00010400u, Spirv16}) {
+        const bool extendedInterface = version >= 0x00010400u;
+        spvtools::SpirvTools tools(extendedInterface ? SPV_ENV_VULKAN_1_3 : SPV_ENV_VULKAN_1_1);
+        const std::string source = std::string(R"(OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main")") + (extendedInterface ? " %push\n" : "\n") + R"(OpExecutionMode %main LocalSize 1 1 1
+OpDecorate %block Block
+OpMemberDecorate %block 0 Offset 0
+%void = OpTypeVoid
+%function = OpTypeFunction %void
+%uint = OpTypeInt 32 0
+%zero = OpConstant %uint 0
+%block = OpTypeStruct %uint
+%pointer = OpTypePointer PushConstant %block
+%push = OpVariable %pointer PushConstant
+%main = OpFunction %void None %function
+%entry = OpLabel
+%dead = OpIAdd %uint %zero %zero
+OpReturn
+OpFunctionEnd
+)";
+        std::vector<std::uint32_t> words;
+        check(tools.Assemble(source, &words), "push constant fixture did not assemble");
+        if (words.empty()) continue;
+        words[1] = version;
+        check(tools.Validate(words), "push constant fixture is invalid");
+        for (const bool specialize : {false, true}) {
+            try {
+                const auto output = ShaderRecompiler::ValidateAndOptimizeSpirv(
+                    words, extendedInterface ? Vulkan13 : Vulkan11, version, false, true, specialize);
+                check(tools.Validate(output), "push constant optimization produced invalid SPIR-V");
+                check(output[1] == version, "push constant optimization changed SPIR-V version");
+                check(opcodeCount(output, spv::OpVariable) == 1u, "optimizer removed the unused push constant interface");
+                check(opcodeCount(output, spv::OpTypeStruct) == 1u, "optimizer removed the push constant block type");
+                check(opcodeCount(output, spv::OpMemberDecorate) == 1u, "optimizer removed the push constant member offset");
+                check(opcodeCount(output, spv::OpIAdd) == (optimizationEnabled ? 0u : 1u), "push constant preservation changed dead arithmetic elimination");
+            } catch (const std::exception& error) {
+                check(false, std::string("push constant interface: ") + error.what());
+            }
+        }
+    }
+}
+
 void testNarrowConversions(bool optimizationEnabled) {
     spvtools::SpirvTools validator(SPV_ENV_VULKAN_1_1);
     for (const auto& type : Types) {
@@ -1037,6 +1081,7 @@ void testSpecializedPrivateCompositeTableLoad() {
 int main() {
     const char* mode = std::getenv("APS5_SPIRV_OPT");
     const bool optimizationEnabled = mode == nullptr || std::string(mode) != "none";
+    testPushConstantInterface(optimizationEnabled);
     testNarrowConversions(optimizationEnabled);
     testLargeFunctionArray();
     testSpecializedSelectionExitSpirv16();

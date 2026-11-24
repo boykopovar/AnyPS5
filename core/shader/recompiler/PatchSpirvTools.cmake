@@ -129,6 +129,48 @@ if(NOT spirvToolsReplacements EQUAL 1)
 endif()
 set_property(TARGET SPIRV-Tools-opt PROPERTY SOURCES "${spirvToolsPatchedSources}")
 
+set(spirvToolsDceSource "${spirvToolsSourceDir}/aggressive_dead_code_elim_pass.cpp")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${spirvToolsDceSource}")
+file(READ "${spirvToolsDceSource}" spirvToolsDce)
+set(spirvToolsOldLiveInitialization [=[
+Pass::Status AggressiveDCEPass::InitializeModuleScopeLiveInstructions() {
+]=])
+set(spirvToolsNewLiveInitialization [=[
+Pass::Status AggressiveDCEPass::InitializeModuleScopeLiveInstructions() {
+  if (preserve_interface_) {
+    for (auto& inst : get_module()->types_values()) {
+      if (inst.opcode() == spv::Op::OpVariable &&
+          inst.GetSingleWordInOperand(0u) ==
+              static_cast<uint32_t>(spv::StorageClass::PushConstant)) {
+        AddToWorklist(&inst);
+      }
+    }
+  }
+]=])
+string(FIND "${spirvToolsDce}" "${spirvToolsOldLiveInitialization}" spirvToolsLiveInitializationPosition)
+if(spirvToolsLiveInitializationPosition EQUAL -1)
+    message(FATAL_ERROR "SPIRV-Tools DCE initialization has changed; review push constant interface preservation")
+endif()
+string(REPLACE "${spirvToolsOldLiveInitialization}" "${spirvToolsNewLiveInitialization}" spirvToolsDce "${spirvToolsDce}")
+set(spirvToolsPatchedDce "${spirvToolsPatchedDir}/aggressive_dead_code_elim_pass.cpp")
+file(CONFIGURE OUTPUT "${spirvToolsPatchedDce}" CONTENT "${spirvToolsDce}" @ONLY)
+get_target_property(spirvToolsSources SPIRV-Tools-opt SOURCES)
+set(spirvToolsPatchedSources)
+set(spirvToolsReplacements 0)
+foreach(source IN LISTS spirvToolsSources)
+    get_filename_component(sourcePath "${source}" ABSOLUTE BASE_DIR "${spirvToolsSourceDir}")
+    if(sourcePath STREQUAL spirvToolsDceSource)
+        list(APPEND spirvToolsPatchedSources "${spirvToolsPatchedDce}")
+        math(EXPR spirvToolsReplacements "${spirvToolsReplacements} + 1")
+    else()
+        list(APPEND spirvToolsPatchedSources "${source}")
+    endif()
+endforeach()
+if(NOT spirvToolsReplacements EQUAL 1)
+    message(FATAL_ERROR "SPIRV-Tools optimizer sources have changed; review push constant interface preservation")
+endif()
+set_property(TARGET SPIRV-Tools-opt PROPERTY SOURCES "${spirvToolsPatchedSources}")
+
 get_target_property(spirvToolsValidatorSourceDir SPIRV-Tools-static SOURCE_DIR)
 set(spirvToolsValidatorSource "${spirvToolsValidatorSourceDir}/val/validate_id.cpp")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${spirvToolsValidatorSource}")
