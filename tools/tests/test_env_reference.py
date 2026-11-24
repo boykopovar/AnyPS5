@@ -265,7 +265,10 @@ class EnvReferenceTests(unittest.TestCase):
                  ('environmentCount("ANYPS5_G", 0x10, Maximum, "message")', "integer", "0x10"),
                  ('MebibytesFromEnvironment("ANYPS5_H_MIB", 1\'024)', "integer", "1'024"),
                  ('std::getenv("ANYPS5_I") ? 1 : 0x2A', "string", "0x2A"),
-                 ('std::getenv("ANYPS5_J") ? 1 : 4\'096', "string", "4'096"))
+                 ('std::getenv("ANYPS5_J") ? 1 : 4\'096', "string", "4'096"),
+                 ('std::getenv("ANYPS5_K") ? 1 : -1L', "string", "-1"),
+                 ('std::getenv("ANYPS5_L") ? 1 : - 0x20', "string", "-0x20"),
+                 ('std::getenv("ANYPS5_M") ? 1 : +64', "string", "+64"))
         source.write_text("".join(f"static auto value{index} = {line[0]};\n" for index, line in enumerate(lines)), encoding="utf-8")
         found = env_reference.reads([root / "core"])
         for index, (line, kind, default) in enumerate(lines):
