@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <limits>
+#include <vector>
 #include <stdexcept>
 #include <string>
 
@@ -15,7 +16,7 @@ constexpr int EnterAction = 1;
 struct HashTable {
     HsearchEntry* entries = nullptr;
     std::size_t capacity = 0;
-    std::size_t used = 0;
+    std::vector<std::size_t> hashes;
 };
 
 HashTable table;
@@ -54,7 +55,7 @@ int APS5_VABI hcreate_nid_postfix(std::size_t nel) {
         errno = 12;
         return 0;
     }
-    table = HashTable{entries, slots, 0};
+    table = HashTable{entries, slots, std::vector<std::size_t>(slots, 0)};
     return 1;
 }
 
@@ -69,16 +70,17 @@ HsearchEntry* APS5_VABI hsearch_nid_postfix(HsearchEntry item, int action) {
     }
     if (item.key == nullptr) throw std::invalid_argument("hsearch: null key");
     const std::string key = CopyKey(item.key);
-    std::size_t index = Hash(key) % table.capacity;
+    const std::size_t hash = Hash(key);
+    std::size_t index = hash % table.capacity;
     for (std::size_t probes = 0; probes < table.capacity; ++probes) {
         HsearchEntry& slot = table.entries[index];
         if (slot.key == nullptr) {
             if (action == FindAction) return nullptr;
             slot = item;
-            ++table.used;
+            table.hashes[index] = hash;
             return &slot;
         }
-        if (CopyKey(slot.key) == key) return &slot;
+        if (table.hashes[index] == hash && CopyKey(slot.key) == key) return &slot;
         index = (index + 1) % table.capacity;
     }
     if (action == EnterAction) errno = 12;
