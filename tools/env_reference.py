@@ -239,7 +239,7 @@ def _loop_bound(bound, text):
     if re.fullmatch(COMPUTED_INTEGER, bound):
         return _integer(bound)
     constant = re.search(r'\b(?:constexpr|const)\s+[A-Za-z_][\w:]*\s+' + re.escape(bound)
-                         + r'\s*=\s*(' + COMPUTED_INTEGER + r')\b', text)
+                         + r'\s*=\s*(' + COMPUTED_INTEGER + r')\s*;', text)
     if constant:
         return _integer(constant.group(1))
     sized = re.fullmatch(r'(?:std::)?size\s*\(\s*([A-Za-z_]\w*)\s*\)|([A-Za-z_]\w*)\.size\s*\(\s*\)', bound)
@@ -257,7 +257,7 @@ def _loop_bound(bound, text):
     if re.fullmatch(COMPUTED_INTEGER, size):
         return _integer(size)
     constant = re.search(r'\b(?:constexpr|const)\s+[A-Za-z_][\w:]*\s+' + re.escape(size)
-                         + r'\s*=\s*(' + COMPUTED_INTEGER + r')\b', text)
+                         + r'\s*=\s*(' + COMPUTED_INTEGER + r')\s*;', text)
     return _integer(constant.group(1)) if constant else None
 
 

@@ -101,6 +101,20 @@ class ComputedEnvironmentTests(unittest.TestCase):
                                       "ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"})
         self.assertEqual(found["ANYPS5_PAD_PLAYER_4_SERIAL"][0][1], 6)
 
+    def test_computed_names_do_not_treat_bound_expression_prefixes_as_literals(self):
+        for expression, bound, declarations in (
+            ("2 * 2", "Slots", ""),
+            ("1 << 2", "serials.size()", "using Serials = std::array<int, Slots>;\nSerials serials;\n"),
+        ):
+            with self.subTest(expression=expression, bound=bound):
+                root = self.fixture(f'constexpr std::size_t Slots = {expression};\n' + declarations
+                                    + f'for (std::size_t slot = 0; slot < {bound}; ++slot) {{\n'
+                                    '    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
+                                    '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                                    '}\n')
+                names = env_reference.reads([root / "core"], BOTH)
+                self.assertEqual(set(names), {"ANYPS5_PAD_PLAYER_*_SERIAL"})
+
     def test_a_computed_name_without_a_loop_is_an_undetermined_read(self):
         root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
                             'if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n')
