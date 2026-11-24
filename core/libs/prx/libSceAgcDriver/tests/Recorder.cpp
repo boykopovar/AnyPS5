@@ -4885,7 +4885,7 @@ bool bdaStagingTests(const Device& device, Recorder& recorder) {
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
         memory.RecordCopyBacks(recorder);
         recorder.Sync();
-        memory.MarkDirectWrites();
+        memory.MarkDirectWrites(recorder);
         std::size_t wrong = 0;
         for (std::size_t index = 0; index < bytes / 4u; ++index) {
             const auto at = index >= first ? index - first : bytes;
@@ -4945,7 +4945,7 @@ bool bdaStagingTests(const Device& device, Recorder& recorder) {
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
         memory.RecordCopyBacks(recorder);
         recorder.Sync();
-        memory.MarkDirectWrites();
+        memory.MarkDirectWrites(recorder);
         memory.WriteBack();
         const auto contents = downloaded->Bytes().first(64);
         Require(std::all_of(contents.begin(), contents.end(), [](auto value) { return value == std::byte{0xff}; }), "a plain read lost its GPU owner when a crossing write dissolved the staged address space");
@@ -5012,7 +5012,7 @@ bool carriedShadowTests(const Device& device, Recorder& recorder) {
         Require(memory.InPlaceReads().empty(), "a read and written 1 MiB element was bound in place");
         memory.RecordCopyBacks(target);
         target.NotePendingWrites(memory.Writes());
-        memory.MarkDirectWrites();
+        memory.MarkDirectWrites(target);
         memory.NoteCarriedShadows(target);
     };
     AgcDriver::GuestMemory::BumpCollectEpoch();
@@ -5050,6 +5050,55 @@ bool carriedShadowTests(const Device& device, Recorder& recorder) {
     Require(GuestBufferMemory::CarriedShadowCopies() == beforeRemap, "a range registered again was copied in from its released import's device shadow");
     recorder.Sync();
     kept.clear();
+    const auto grew = [](std::uint64_t before, std::uint64_t after) { return after >= before ? after - before : after; };
+    ClearResidentRanges(context.device);
+    const auto promotedBefore = ResidentCounts().promoted;
+    for (std::uint32_t staging = 0; staging < 16 && grew(promotedBefore, ResidentCounts().promoted) == 0; ++staging) {
+        use(recorder);
+    }
+    Require(grew(promotedBefore, ResidentCounts().promoted) == 1, "the carried shadow element never became a resident range");
+    const auto skippedBefore = ResidentCounts().skipped;
+    const auto carriedBeforeResident = GuestBufferMemory::CarriedShadowCopies();
+    for (std::uint32_t round = 0; round < 3; ++round) {
+        use(recorder);
+    }
+    Require(grew(skippedBefore, ResidentCounts().skipped) >= 3, "a resident range over unchanged memory was copied in again");
+    Require(GuestBufferMemory::CarriedShadowCopies() == carriedBeforeResident, "a resident range over unchanged memory was copied in from a carried device shadow");
+    std::memset(reinterpret_cast<void*>(element + 8192), 0x33, 4096);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto copiedBefore = ResidentCounts().copied;
+    const auto carriedBeforeStore = GuestBufferMemory::CarriedShadowCopies();
+    use(recorder);
+    recorder.Sync();
+    Require(grew(copiedBefore, ResidentCounts().copied) >= 1, "a resident range the CPU wrote was not copied in again");
+    Require(GuestBufferMemory::CarriedShadowCopies() == carriedBeforeStore, "a resident range the CPU wrote was copied in from a carried device shadow");
+    Require(std::all_of(reinterpret_cast<const std::byte*>(element + 8192), reinterpret_cast<const std::byte*>(element + 12288), [](std::byte value) { return value == std::byte{0x33}; }), "the copy-back after a CPU store into a resident range stored stale bytes");
+    {
+        const auto skippedBeforeMidUse = ResidentCounts().skipped;
+        auto& memory = *kept.emplace_back(std::make_unique<GuestBufferMemory>(context));
+        memory.AllowDeviceStaging();
+        memory.AddWritable(element, elementBytes, false, true);
+        memory.Upload(false);
+        Require(grew(skippedBeforeMidUse, ResidentCounts().skipped) == 1, "the use before the mid-use CPU store did not skip the resident copy-in");
+        std::memset(reinterpret_cast<void*>(element + 8192), 0x44, 4096);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        static_cast<void>(AgcDriver::GuestMemory::CollectWrites(element, elementBytes));
+        memory.RecordCopyBacks(recorder);
+        recorder.NotePendingWrites(memory.Writes());
+        const auto invalidatedBeforeMark = ResidentCounts().invalidated;
+        memory.MarkDirectWrites(recorder);
+        Require(grew(invalidatedBeforeMark, ResidentCounts().invalidated) == 1, "a CPU store collected before the direct-write mark did not invalidate the resident range");
+        memory.NoteCarriedShadows(recorder);
+    }
+    const auto copiedBeforeInvalidated = ResidentCounts().copied;
+    const auto carriedBeforeInvalidated = GuestBufferMemory::CarriedShadowCopies();
+    use(recorder);
+    Require(GuestBufferMemory::CarriedShadowCopies() == carriedBeforeInvalidated, "a resident range invalidated by a CPU store was copied in from a carried device shadow");
+    Require(grew(copiedBeforeInvalidated, ResidentCounts().copied) >= 1, "a resident range invalidated by a CPU store was not copied in again");
+    recorder.Sync();
+    Require(std::all_of(reinterpret_cast<const std::byte*>(element + 8192), reinterpret_cast<const std::byte*>(element + 12288), [](std::byte value) { return value == std::byte{0x44}; }), "the copy-back after an invalidating CPU store into a resident range stored stale bytes");
+    kept.clear();
+    ClearResidentRanges(context.device);
     struct Reactivate {
         Recorder& recorder;
         ~Reactivate() { recorder.Activate(); }
@@ -5075,6 +5124,104 @@ bool carriedShadowTests(const Device& device, Recorder& recorder) {
     Require(GuestBufferMemory::CarriedShadowCopies() == beforeRecorder, "a new recorder at a freed recorder's address was copied in from the old recorder's device shadow");
     other->Sync();
     kept.clear();
+    return true;
+}
+
+bool residentPendingWriterTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: resident pending writers not tested\n";
+        return false;
+    }
+    constexpr std::size_t bytes = 4u << 20u;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the test block");
+    struct Cleanup {
+        const Context& context;
+        void* block;
+        ~Cleanup() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+#ifdef _WIN32
+            VirtualFree(block, 0, MEM_RELEASE);
+#else
+            std::free(block);
+#endif
+        }
+    };
+    std::memset(block, 0x11, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    const Cleanup cleanup{context, block};
+    const auto* import = HostImportFor(context, address, bytes);
+    if (import == nullptr) {
+        std::cout << "host import of the test block refused: resident pending writers not tested\n";
+        return false;
+    }
+    if (AgcDriver::GuestMemory::Watched(address, bytes)) {
+        std::cout << "the test block is watched, not compared: resident pending writers not tested\n";
+        return false;
+    }
+    const auto element = address + 4096;
+    constexpr std::size_t elementBytes = 1u << 20u;
+    std::vector<std::unique_ptr<GuestBufferMemory>> kept;
+    const auto use = [&] {
+        auto& memory = *kept.emplace_back(std::make_unique<GuestBufferMemory>(context));
+        memory.AllowDeviceStaging();
+        memory.AddWritable(element, elementBytes, false, true);
+        memory.Upload(false);
+        Require(memory.InPlaceReads().empty(), "a read and written 1 MiB element was bound in place");
+        memory.RecordCopyBacks(recorder);
+        recorder.NotePendingWrites(memory.Writes());
+        memory.MarkDirectWrites(recorder);
+        memory.NoteCarriedShadows(recorder);
+    };
+    const auto grew = [](std::uint64_t before, std::uint64_t after) { return after >= before ? after - before : after; };
+    ClearResidentRanges(context.device);
+    const auto promotedBefore = ResidentCounts().promoted;
+    for (std::uint32_t staging = 0; staging < 16 && grew(promotedBefore, ResidentCounts().promoted) == 0; ++staging) {
+        use();
+    }
+    Require(grew(promotedBefore, ResidentCounts().promoted) == 1, "the element never became a resident range");
+    recorder.Sync();
+    kept.clear();
+    const auto skippedBeforeOwn = ResidentCounts().skipped;
+    use();
+    Require(recorder.PendingWriteOverlaps(element, elementBytes), "the use left no pending write of its own");
+    use();
+    Require(grew(skippedBeforeOwn, ResidentCounts().skipped) == 2, "a resident range behind only its own pending copy-back was copied in again");
+    recorder.Sync();
+    kept.clear();
+    Require(std::all_of(reinterpret_cast<const std::byte*>(element), reinterpret_cast<const std::byte*>(element + elementBytes), [](std::byte value) { return value == std::byte{0x11}; }), "the skipped copy-ins changed the guest bytes");
+    Require(!recorder.PendingWriteOverlaps(element, elementBytes), "the synced recorder still has a pending write over the element");
+    {
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, import->buffer, HostImportOffset(*import, element + 8192), 4096, 0x22222222u);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+        recorder.NotePendingWrite(element + 8192, 4096);
+    }
+    Require(recorder.PendingWriteOverlaps(element, elementBytes), "the foreign fill was not noted as a pending write");
+    Require(std::all_of(reinterpret_cast<const std::byte*>(element + 8192), reinterpret_cast<const std::byte*>(element + 12288), [](std::byte value) { return value == std::byte{0x11}; }), "the foreign fill reached the guest bytes before its submission");
+    const auto skippedBefore = ResidentCounts().skipped;
+    const auto copiedBefore = ResidentCounts().copied;
+    use();
+    Require(grew(skippedBefore, ResidentCounts().skipped) == 0 && grew(copiedBefore, ResidentCounts().copied) == 1, "a resident range with a pending foreign GPU writer was skipped");
+    recorder.Sync();
+    kept.clear();
+    Require(std::all_of(reinterpret_cast<const std::byte*>(element + 8192), reinterpret_cast<const std::byte*>(element + 12288), [](std::byte value) { return value == std::byte{0x22}; }), "the copy-back of a resident range skipped behind a foreign GPU writer stored stale bytes over its write");
+    Require(std::all_of(reinterpret_cast<const std::byte*>(element), reinterpret_cast<const std::byte*>(element + 8192), [](std::byte value) { return value == std::byte{0x11}; }), "the copy-back after a foreign GPU writer changed bytes outside its write");
+    ClearResidentRanges(context.device);
     return true;
 }
 
@@ -8951,7 +9098,7 @@ bool writtenBufferOrderTests(const Device& device, Recorder& recorder) {
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
         }
         memory.RecordCopyBacks(recorder);
-        memory.MarkDirectWrites();
+        memory.MarkDirectWrites(recorder);
         settle();
         StorageTexture::FlushAllPending("written buffer order test");
         settle();
@@ -18918,6 +19065,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--carried-shadow-only") {
             if (!carriedShadowTests(device, recorder)) return 77;
             std::cout << "carried shadow tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--resident-pending-writer-only") {
+            if (!residentPendingWriterTests(device, recorder)) return 77;
+            std::cout << "resident pending writer tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--read-written-staging-only") {

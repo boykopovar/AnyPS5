@@ -7598,7 +7598,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder, const DrawBindings* bind
         guestMemory.AddressStores(reachable);
         recorder.NotePendingReach(reachable);
     }
-    guestMemory.MarkDirectWrites();
+    guestMemory.MarkDirectWrites(recorder);
     guestMemory.NoteCarriedShadows(recorder);
     if (!BuildProfiled()) return;
     auto& counters = BufferWrites();
