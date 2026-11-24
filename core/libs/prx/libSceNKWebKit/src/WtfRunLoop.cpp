@@ -403,9 +403,9 @@ void RunImpl(RunLoop* runLoop, RunMode runMode) {
                 return;
             }
             while (!firedTimers.empty()) {
+                firedTimers.front()->Fired();
                 ScheduledTaskRef task = std::move(firedTimers.front());
                 firedTimers.pop_front();
-                task->Fired();
                 std::lock_guard<std::mutex> lock(loop.loopLock);
                 if (task->IsActive() && !task->isScheduled) {
                     ScheduleWithLock(loop, *task);
@@ -415,6 +415,15 @@ void RunImpl(RunLoop* runLoop, RunMode runMode) {
         }
     } catch (...) {
         std::lock_guard<std::mutex> lock(loop.loopLock);
+        for (ScheduledTaskRef& task : firedTimers) {
+            if (task->IsActive() && !task->isScheduled) {
+                ScheduleWithLock(loop, *task);
+            }
+        }
+        firedTimers.clear();
+        if (!loop.currentIteration.empty()) {
+            loop.pendingTasks = true;
+        }
         LeaveLoopWithLock(loop, &statusOfThisLoop);
         throw;
     }

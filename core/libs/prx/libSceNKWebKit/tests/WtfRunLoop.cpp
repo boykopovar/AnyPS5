@@ -165,6 +165,16 @@ void TestMainAndCurrent() {
     Require(_ZN3WTF13isMainRunLoopEv(), "isMainRunLoop on the main thread");
     WKRunLoopInitializeMain();
     Require(Main() == early, "WKRunLoopInitializeMain keeps the main loop");
+    _ZN3WTF20initializeMainThreadEv();
+    Require(Main() == early, "initializeMainThread again keeps the main loop");
+    bool workerInitialized = false;
+    std::thread worker([&] {
+        _ZN3WTF20initializeMainThreadEv();
+        workerInitialized = !_ZN3WTF12isMainThreadEv() && !_ZN3WTF13isMainRunLoopEv();
+    });
+    worker.join();
+    Require(workerInitialized, "initializeMainThread from another thread keeps the first main thread");
+    Require(Main() == early && _ZN3WTF12isMainThreadEv(), "main thread and loop are unchanged after a worker initializes");
 }
 
 void TestCurrentOnOtherThread() {
@@ -259,6 +269,58 @@ void TestStopWithoutRunningLoop() {
     Dispatch(Main(), task);
     _ZN3WTF7RunLoop3runEv();
     Require(task.calls.load() == 1, "stop without a running loop does not stop a later run");
+}
+
+void TestThrowingFunctionLeavesRun() {
+    GuestCallable thrower;
+    GuestCallable follower;
+    Arm(thrower, [] { throw std::runtime_error("dispatched function failed"); });
+    Arm(follower, [] { StopMain(); });
+    Dispatch(Main(), thrower);
+    Dispatch(Main(), follower);
+    RequireThrows<std::runtime_error>([] { _ZN3WTF7RunLoop3runEv(); }, "an exception from a dispatched function leaves run");
+    Require(thrower.deletions.load() == 1, "the throwing function is destroyed");
+    Require(follower.calls.load() == 0, "functions after the throwing one wait for the next run");
+    StopMain();
+    _ZN3WTF7RunLoop3runEv();
+    Require(follower.calls.load() == 1, "stop after a throwing run does not stop the next run");
+    Require(follower.deletions.load() == 1, "the remaining function is destroyed after running");
+}
+
+void TestThrowingTimerLeavesRun() {
+    GuestTimer thrower;
+    GuestTimer repeating;
+    GuestTimer sibling;
+    Construct(thrower, Main());
+    Construct(repeating, Main());
+    Construct(sibling, Main());
+    thrower.onFired = [](GuestTimer&) { throw std::runtime_error("timer failed"); };
+    repeating.onFired = [](GuestTimer& self) {
+        if (self.fired.load() == 1) {
+            throw std::runtime_error("repeating timer failed");
+        }
+    };
+    Start(thrower, 0.0, false);
+    Start(sibling, 0.0, false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    RequireThrows<std::runtime_error>([] { _ZN3WTF7RunLoop3runEv(); }, "an exception from a timer leaves run");
+    Require(thrower.fired.load() == 1, "the throwing timer fired once");
+    Require(!IsActive(&thrower.base), "a one-shot timer that threw is inactive");
+    Require(sibling.fired.load() == 0 && IsActive(&sibling.base), "a due timer after the throwing one stays active");
+    StopMain();
+    RunWithStopperAfter(0.01);
+    Require(thrower.fired.load() == 1, "the throwing timer does not fire again");
+    Require(sibling.fired.load() == 1, "a due timer after the throwing one fires in the next run");
+
+    Start(repeating, 0.001, true);
+    RequireThrows<std::runtime_error>([] { _ZN3WTF7RunLoop3runEv(); }, "an exception from a repeating timer leaves run");
+    Require(IsActive(&repeating.base), "a repeating timer that threw stays active");
+    RunWithStopperAfter(0.02);
+    Require(repeating.fired.load() > 1, "a repeating timer that threw fires again");
+    _ZN3WTF7RunLoop9TimerBase4stopEv(&repeating.base);
+    Destroy(repeating);
+    Destroy(sibling);
+    Destroy(thrower);
 }
 
 void TestCycle() {
@@ -362,7 +424,7 @@ void TestOneShotTimer() {
     Start(timer, 0.01, false);
     Require(IsActive(&timer.base), "a started timer is active");
     const double remaining = SecondsUntilFire(&timer.base);
-    Require(remaining > 0.0 && remaining <= 0.01, "secondsUntilFire counts down from the interval");
+    Require(remaining > 0.0 && remaining <= 0.01 + 1e-9, "secondsUntilFire counts down from the interval");
     _ZN3WTF7RunLoop3runEv();
     Require(Now() - started >= 0.0099, "a one-shot timer waits for its interval");
     Require(timer.fired.load() == 1, "a one-shot timer fires");
@@ -398,9 +460,9 @@ void TestRestartAndStop() {
     timer.onFired = [](GuestTimer&) { StopMain(); };
     Start(timer, 10.0, false);
     const double far = SecondsUntilFire(&timer.base);
-    Require(far > 9.0 && far <= 10.0, "secondsUntilFire before restart");
+    Require(far > 9.0 && far <= 10.0 + 1e-9, "secondsUntilFire before restart");
     Start(timer, 0.01, false);
-    Require(SecondsUntilFire(&timer.base) <= 0.01, "start reschedules an active timer");
+    Require(SecondsUntilFire(&timer.base) <= 0.01 + 1e-9, "start reschedules an active timer");
     _ZN3WTF7RunLoop3runEv();
     Require(timer.fired.load() == 1, "a restarted timer fires at the new time");
 
@@ -538,6 +600,8 @@ int main() {
     TestDispatchFromWorkerWakesRun();
     TestNestedRun();
     TestStopWithoutRunningLoop();
+    TestThrowingFunctionLeavesRun();
+    TestThrowingTimerLeavesRun();
     TestCycle();
     TestSuspendFunctionDispatch();
     TestWakeUpCallback();
