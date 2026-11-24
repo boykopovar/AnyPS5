@@ -60,14 +60,14 @@ ResourceError APS5_VABI _ZN7WebCore13internalErrorERKN3WTF3URLE(const NKWebKit::
     };
     URL guestUrl{};
     if (!GuestCopyIn_nid_no_patch(&guestUrl, url, sizeof(guestUrl))) fail("unreadable WTF::URL");
-    String domain = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(ErrorDomain), sizeof(ErrorDomain) - 1);
-    String description = _ZN7WebCore15localizedStringEPKc("WebKit encountered an internal error");
     StringImpl guestImpl{};
     if (guestUrl.impl) {
         if (!GuestCopyIn_nid_no_patch(&guestImpl, guestUrl.impl, sizeof(guestImpl))) fail("unreadable WTF::StringImpl");
         guestImpl.refCount += 2;
         if (!GuestCopyOut_nid_no_patch(guestUrl.impl, &guestImpl, sizeof(guestImpl))) fail("unwritable WTF::StringImpl");
     }
+    String domain = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(ErrorDomain), sizeof(ErrorDomain) - 1);
+    String description = _ZN7WebCore15localizedStringEPKc("WebKit encountered an internal error");
     ResourceError error{};
     error.failingURL = guestUrl;
     error.errorCode = InternalErrorCode;
