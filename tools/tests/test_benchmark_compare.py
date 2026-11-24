@@ -75,6 +75,37 @@ class BenchmarkCompareTests(unittest.TestCase):
                 self.series_run("B2", "candidate", "2", [2000] * 500),
                 self.series_run("A2", "baseline", "2", [2500] * 400)]
 
+    def test_capture_changed_while_reading_is_rejected(self):
+        path = self.write_capture(compressed=False)
+        before = path.stat()
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns - 2_000_000_000))
+        after = path.stat()
+        with patch.object(benchmark_compare.os, "fstat", side_effect=[before, after]):
+            with self.assertRaisesRegex(ValueError, "input changed while reading"):
+                benchmark_compare.read_benchmark_json(path)
+
+    def test_exponent_overflow_in_an_extension_is_rejected_as_nonfinite_json(self):
+        path = self.root / "capture.json"
+        path.write_text('{"extension":{"time":1e999}}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "non-finite JSON number"):
+            benchmark_compare.read_benchmark_json(path)
+
+    def test_series_rejects_a_capture_path_containing_nul_at_validation(self):
+        path = self.write_series([{"id": "A", "arm": "baseline", "pair": "1", "capture": "bad\0.json"}])
+        with self.assertRaisesRegex(ValueError, "capture contains a NUL character"):
+            benchmark_compare.load_benchmark_series(path)
+
+    def test_case_variants_of_full_git_hashes_do_not_indicate_build_drift(self):
+        for length in (40, 64):
+            with self.subTest(length=length):
+                sha = "a" * length
+                runs = [self.series_run("A1", "baseline", "1", [1000], sha),
+                        self.series_run("B1", "candidate", "1", [2000]),
+                        self.series_run("A2", "baseline", "2", [3000], sha.upper()),
+                        self.series_run("B2", "candidate", "2", [4000])]
+                report = benchmark_compare.compare_benchmark_runs(self.write_series(runs), require_matching_context=True)
+                self.assertEqual(report["runs"][2]["summary"]["metadata"]["commit"], sha.upper())
+
     def cli(self, *arguments):
         status = 0
         with patch.object(sys, "stdout", new_callable=io.StringIO) as output, \
