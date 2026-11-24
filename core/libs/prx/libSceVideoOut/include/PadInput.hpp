@@ -9,6 +9,7 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadIdentify.hpp"
+#include "prx/libScePad/include/ControllerAssignment.hpp"
 #include "prx/libSceVideoOut/include/PadOutputPacing.hpp"
 #include "prx/libSceVideoOut/include/Port0Presence.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PadStatus.hpp"
@@ -60,6 +61,8 @@ private:
     void reloadInputMapping();
     void dispatchPadChords(DisplayWindow& window);
     void applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window);
+    void startInputMappingWatch();
+    void watchInputMapping(std::string titleId, Pad::InputMappingWatch watch);
     void publish(std::uint64_t frame, int slot);
     void setMouseMode(bool enabled);
     void openAvailableControllers();
@@ -84,6 +87,7 @@ private:
     std::shared_ptr<const Pad::InputConfiguration> appliedMapping;
     Pad::KeyboardMouse keyboardMouse;
     Pad::IdentifyMode identifyMode = Pad::IdentifyMode::Off;
+    Pad::ControllerAssignment controllerAssignment = Pad::ControllerAssignment::FromEnvironment();
     std::array<ControllerSlot, PAD_MAX_CONTROLLERS> slots{};
     VideoOutTelemetry::PadChangeFilter telemetryFilter;
     AgcDriver::PadStatusProvider statusProvider;
@@ -96,6 +100,8 @@ private:
     std::thread hapticsThread;
     bool hapticsRumbled = false;
     std::atomic<std::chrono::steady_clock::rep> hapticsReconfigureAt{0};
+    std::thread mappingWatchThread;
+    std::atomic<bool> mappingWatchStop{false};
 };
 
 #endif

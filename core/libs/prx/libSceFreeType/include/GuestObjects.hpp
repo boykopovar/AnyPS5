@@ -8,6 +8,9 @@
 #include FT_FREETYPE_H
 #include FT_SYSTEM_H
 
+#include <algorithm>
+#include <bit>
+#include <cstdint>
 #include <list>
 #include <memory>
 #include <vector>
@@ -16,12 +19,19 @@ namespace FreeType {
 
 struct GuestFace;
 
+constexpr bool InGlyphFormatRange(std::uint32_t format) {
+    constexpr std::uint32_t largest = std::max({static_cast<std::uint32_t>(FT_GLYPH_FORMAT_NONE), static_cast<std::uint32_t>(FT_GLYPH_FORMAT_COMPOSITE),
+                                                static_cast<std::uint32_t>(FT_GLYPH_FORMAT_BITMAP), static_cast<std::uint32_t>(FT_GLYPH_FORMAT_OUTLINE),
+                                                static_cast<std::uint32_t>(FT_GLYPH_FORMAT_PLOTTER), static_cast<std::uint32_t>(FT_GLYPH_FORMAT_SVG)});
+    return std::bit_width(format) <= std::bit_width(largest);
+}
+
 struct GuestLibrary {
     FT_Library host = nullptr;
     std::list<std::unique_ptr<GuestFace>> faces;
 };
 
-void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap);
+extern "C" void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap);
 
 struct GuestSize {
     GuestSizeRec rec{};
@@ -63,6 +73,7 @@ struct GuestFace {
 };
 
 void RegisterBitmap_nid_no_patch(GuestFace& face);
+extern "C" int FreeTypeNewGlyph_nid_no_patch(GuestLibrary* library, std::uint32_t format, GuestGlyphRec** target);
 
 GuestFace* FaceOf(const GuestFaceRec* face);
 GuestFace* FaceOf(const GuestGlyphSlotRec* slot);
@@ -75,5 +86,6 @@ void SyncSlot(GuestFace& face);
 }
 
 extern "C" void FreeTypeSyncFace_nid_no_patch(FreeType::GuestFaceRec* face);
+extern "C" bool FreeTypeSyncBitmap_nid_no_patch(FreeType::GuestBitmap* guest, const FT_Bitmap& bitmap);
 
 #endif

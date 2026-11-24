@@ -1,14 +1,18 @@
 /* Derived from Microsoft STL stl/src/xxxprec.h and stl/src/xprec.cpp (219514876ea86491de191ceaa88632616bbc0f19) */
 /* Copyright (c) Microsoft Corporation.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception */
+#include "prx/libSceLibcInternal/include/GuestWords.hpp"
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -17,6 +21,8 @@ constexpr int MaxExponent = std::numeric_limits<double>::max_exponent;
 constexpr std::int64_t BigExponent = 2 * MaxExponent;
 constexpr short WordBits = Bits / 2;
 constexpr int DelayLine = 4;
+constexpr std::size_t ReadWords = 4;
+constexpr std::size_t SetWords = 4;
 constexpr short InfiniteCode = 1;
 constexpr short NotANumberCode = 2;
 constexpr int InvalidException = 0x01;
@@ -36,12 +42,34 @@ double NotANumber() {
     return std::numeric_limits<double>::quiet_NaN();
 }
 
+using GuestWords = ExtendedPrecisionWords::GuestWords<double>;
+using ExtendedPrecisionWords::ReadWord;
+
+std::size_t Words(int n) {
+    return n > 0 ? static_cast<std::size_t>(n) : 0;
 }
 
-extern "C" {
+std::size_t AddedWords(int n) {
+    return n < 0 ? 1 : Words(n);
+}
 
-double APS5_VABI _Xp_getw_nid_postfix(const double* p, int n) {
-    RequireCount(n, "_Xp_getw", "word");
+void RequireUnchanged(bool unchanged, const char* function) {
+    if (!unchanged) throw std::invalid_argument(std::string(function) + ": words changed while being read");
+}
+
+bool SingleFactor(const double* q, int m) {
+    return m == 1 || q[0] == 0.0 || q[1] == 0.0;
+}
+
+bool SpecialInverse(double leading) {
+    return 0 <= _Dtest_nid_postfix(&leading);
+}
+
+bool SpecialRoot(double leading) {
+    return 0 <= _Dtest_nid_postfix(&leading) || leading < 0.0;
+}
+
+double Getw(const double* p, int n) {
     if (n == 0) return 0.0;
     if (n == 1 || p[0] == 0.0 || p[1] == 0.0) return p[0];
     if (n == 2 || p[2] == 0.0) return p[0] + p[1];
@@ -52,7 +80,7 @@ double APS5_VABI _Xp_getw_nid_postfix(const double* p, int n) {
     return p[0] + (p[1] + p2);
 }
 
-double* APS5_VABI _Xp_setw_nid_postfix(double* p, int n, double x) {
+double* Setw(double* p, int n, double x) {
     double x0 = x;
     short errx = 0;
     short xexp = 0;
@@ -82,7 +110,7 @@ double* APS5_VABI _Xp_setw_nid_postfix(double* p, int n, double x) {
     return p;
 }
 
-double* APS5_VABI _Xp_addh_nid_postfix(double* p, int n, double x0) {
+double* Addh(double* p, int n, double x0) {
     double xscaled = x0;
     short errx = 0;
     short xexp = 0;
@@ -163,7 +191,7 @@ double* APS5_VABI _Xp_addh_nid_postfix(double* p, int n, double x0) {
     return p;
 }
 
-double* APS5_VABI _Xp_mulh_nid_postfix(double* p, int n, double x0) {
+double* Mulh(double* p, int n, double x0) {
     double buf[DelayLine];
     if (0 < n) {
         buf[0] = p[0] * x0;
@@ -195,8 +223,8 @@ double* APS5_VABI _Xp_mulh_nid_postfix(double* p, int n, double x0) {
         _Dunscale_nid_postfix(&xexp, &y0);
         _Dint_nid_postfix(&y0, WordBits);
         _Dscale_nid_postfix(&y0, xexp);
-        _Xp_addh_nid_postfix(p, n, y0);
-        _Xp_addh_nid_postfix(p, n, buf[0] - y0);
+        Addh(p, n, y0);
+        Addh(p, n, buf[0] - y0);
         while (++i < j) {
             if ((buf[i - 1] = buf[i]) == 0.0) break;
         }
@@ -204,27 +232,22 @@ double* APS5_VABI _Xp_mulh_nid_postfix(double* p, int n, double x0) {
     return p;
 }
 
-double* APS5_VABI _Xp_setn_nid_postfix(double* p, int n, std::int64_t x) {
-    return _Xp_setw_nid_postfix(p, n, static_cast<double>(x));
-}
-
-double* APS5_VABI _Xp_movx_nid_postfix(double* p, int n, const double* q) {
-    RequireCount(n, "_Xp_movx", "word");
+double* Movx(double* p, int n, const double* q) {
     if (n != 0) std::memcpy(p, q, static_cast<std::size_t>(n) * sizeof(double));
     return p;
 }
 
-double* APS5_VABI _Xp_addx_nid_postfix(double* p, int n, const double* q, int m) {
-    for (int k = 0; k < m && q[k] != 0.0; ++k) _Xp_addh_nid_postfix(p, n, q[k]);
+double* Addx(double* p, int n, const double* q, int m) {
+    for (int k = 0; k < m && q[k] != 0.0; ++k) Addh(p, n, q[k]);
     return p;
 }
 
-double* APS5_VABI _Xp_subx_nid_postfix(double* p, int n, const double* q, int m) {
-    for (int k = 0; k < m && q[k] != 0.0; ++k) _Xp_addh_nid_postfix(p, n, -q[k]);
+double* Subx(double* p, int n, const double* q, int m) {
+    for (int k = 0; k < m && q[k] != 0.0; ++k) Addh(p, n, -q[k]);
     return p;
 }
 
-double* APS5_VABI _Xp_ldexpx_nid_postfix(double* p, int n, int m) {
+double* Ldexpx(double* p, int n, int m) {
     for (int k = 0; k < n; ++k) {
         p[k] = ldexp_nid_postfix(p[k], m);
         if (p[k] == 0.0) break;
@@ -232,25 +255,22 @@ double* APS5_VABI _Xp_ldexpx_nid_postfix(double* p, int n, int m) {
     return p;
 }
 
-double* APS5_VABI _Xp_mulx_nid_postfix(double* p, int n, const double* q, int m, double* ptemp2) {
-    RequireCount(n, "_Xp_mulx", "word");
-    RequireCount(m, "_Xp_mulx", "multiplier word");
+double* Mulx(double* p, int n, const double* q, int m, double* ptemp2) {
     if (n == 0 || m == 0) return p;
-    if (m == 1 || q[0] == 0.0 || q[1] == 0.0) return _Xp_mulh_nid_postfix(p, n, q[0]);
+    if (m == 1 || q[0] == 0.0 || q[1] == 0.0) return Mulh(p, n, q[0]);
     double* px = ptemp2;
     double* pac = ptemp2 + n;
-    _Xp_movx_nid_postfix(px, n, p);
-    _Xp_mulh_nid_postfix(p, n, q[0]);
+    Movx(px, n, p);
+    Mulh(p, n, q[0]);
     for (int j = 1; j < m && q[j] != 0.0; ++j) {
-        _Xp_movx_nid_postfix(pac, n, px);
-        _Xp_mulh_nid_postfix(pac, n, q[j]);
-        _Xp_addx_nid_postfix(p, n, pac, n);
+        Movx(pac, n, px);
+        Mulh(pac, n, q[j]);
+        Addx(p, n, pac, n);
     }
     return p;
 }
 
-double* APS5_VABI _Xp_invx_nid_postfix(double* p, int n, double* ptemp4) {
-    RequireCount(n, "_Xp_invx", "word");
+double* Invx(double* p, int n, double* ptemp4) {
     if (n == 0) return p;
     const short errx = _Dtest_nid_postfix(&p[0]);
     if (0 <= errx) {
@@ -265,22 +285,21 @@ double* APS5_VABI _Xp_invx_nid_postfix(double* p, int n, double* ptemp4) {
     double* py = ptemp4 + n;
     double* ptemp2 = py + n;
     double x0 = p[0];
-    _Xp_movx_nid_postfix(py, n, p);
-    _Xp_mulh_nid_postfix(py, n, -1.0);
+    Movx(py, n, p);
+    Mulh(py, n, -1.0);
     if (1 < n) x0 += p[1];
-    _Xp_setw_nid_postfix(p, n, 1.0 / x0);
+    Setw(p, n, 1.0 / x0);
     for (int k = 1; k < n; k <<= 1) {
-        _Xp_movx_nid_postfix(pac, n, p);
-        _Xp_mulx_nid_postfix(pac, n, py, n, ptemp2);
-        _Xp_addh_nid_postfix(pac, n, 1.0);
-        _Xp_mulx_nid_postfix(pac, n, p, n, ptemp2);
-        _Xp_addx_nid_postfix(p, n, pac, n);
+        Movx(pac, n, p);
+        Mulx(pac, n, py, n, ptemp2);
+        Addh(pac, n, 1.0);
+        Mulx(pac, n, p, n, ptemp2);
+        Addx(p, n, pac, n);
     }
     return p;
 }
 
-double* APS5_VABI _Xp_sqrtx_nid_postfix(double* p, int n, double* ptemp4) {
-    RequireCount(n, "_Xp_sqrtx", "word");
+double* Sqrtx(double* p, int n, double* ptemp4) {
     if (n == 0) return p;
     if (0 <= _Dtest_nid_postfix(&p[0]) || p[0] < 0.0) {
         if (p[0] < 0.0) {
@@ -294,16 +313,144 @@ double* APS5_VABI _Xp_sqrtx_nid_postfix(double* p, int n, double* ptemp4) {
     double* ptemp2 = py + n;
     double x0 = p[0];
     if (1 < n) x0 += p[1];
-    _Xp_setw_nid_postfix(py, n, 1.0 / sqrt_nid_postfix(x0));
+    Setw(py, n, 1.0 / sqrt_nid_postfix(x0));
     for (int k = 2; k < n; k <<= 1) {
-        _Xp_movx_nid_postfix(pac, n, py);
-        _Xp_mulh_nid_postfix(pac, n, -0.5);
-        _Xp_mulx_nid_postfix(pac, n, p, n, ptemp2);
-        _Xp_mulx_nid_postfix(pac, n, py, n, ptemp2);
-        _Xp_addh_nid_postfix(pac, n, 1.5);
-        _Xp_mulx_nid_postfix(py, n, pac, n, ptemp2);
+        Movx(pac, n, py);
+        Mulh(pac, n, -0.5);
+        Mulx(pac, n, p, n, ptemp2);
+        Mulx(pac, n, py, n, ptemp2);
+        Addh(pac, n, 1.5);
+        Mulx(py, n, pac, n, ptemp2);
     }
-    _Xp_mulx_nid_postfix(p, n, py, n, ptemp2);
+    Mulx(p, n, py, n, ptemp2);
+    return p;
+}
+
+}
+
+extern "C" {
+
+double APS5_VABI _Xp_getw_nid_postfix(const double* p, int n) {
+    RequireCount(n, "_Xp_getw", "word");
+    GuestWords words("_Xp_getw");
+    const std::size_t value = words.Add(p, std::min(Words(n), ReadWords), false);
+    words.Load();
+    return Getw(words.Host(value), n);
+}
+
+double* APS5_VABI _Xp_setw_nid_postfix(double* p, int n, double x) {
+    GuestWords words("_Xp_setw");
+    const std::size_t value = words.Add(p, std::min(Words(n), SetWords), true);
+    words.Load();
+    Setw(words.Host(value), n, x);
+    words.Store();
+    return p;
+}
+
+double* APS5_VABI _Xp_setn_nid_postfix(double* p, int n, std::int64_t x) {
+    return _Xp_setw_nid_postfix(p, n, static_cast<double>(x));
+}
+
+double* APS5_VABI _Xp_addh_nid_postfix(double* p, int n, double x0) {
+    GuestWords words("_Xp_addh");
+    const std::size_t value = words.Add(p, AddedWords(n), true);
+    words.Load();
+    Addh(words.Host(value), n, x0);
+    words.Store();
+    return p;
+}
+
+double* APS5_VABI _Xp_mulh_nid_postfix(double* p, int n, double x0) {
+    GuestWords words("_Xp_mulh");
+    const std::size_t value = words.Add(p, Words(n), true);
+    words.Load();
+    Mulh(words.Host(value), n, x0);
+    words.Store();
+    return p;
+}
+
+double* APS5_VABI _Xp_movx_nid_postfix(double* p, int n, const double* q) {
+    RequireCount(n, "_Xp_movx", "word");
+    GuestWords words("_Xp_movx");
+    const std::size_t value = words.Add(p, Words(n), true);
+    const std::size_t source = words.Add(q, Words(n), false);
+    words.Load();
+    Movx(words.Host(value), n, words.Host(source));
+    words.Store();
+    return p;
+}
+
+double* APS5_VABI _Xp_addx_nid_postfix(double* p, int n, const double* q, int m) {
+    GuestWords words("_Xp_addx");
+    const std::size_t value = words.Add(p, AddedWords(n), true);
+    const std::size_t addend = words.Add(q, Words(m), false);
+    words.Load();
+    Addx(words.Host(value), n, words.Host(addend), m);
+    words.Store();
+    return p;
+}
+
+double* APS5_VABI _Xp_subx_nid_postfix(double* p, int n, const double* q, int m) {
+    GuestWords words("_Xp_subx");
+    const std::size_t value = words.Add(p, AddedWords(n), true);
+    const std::size_t subtrahend = words.Add(q, Words(m), false);
+    words.Load();
+    Subx(words.Host(value), n, words.Host(subtrahend), m);
+    words.Store();
+    return p;
+}
+
+double* APS5_VABI _Xp_ldexpx_nid_postfix(double* p, int n, int m) {
+    GuestWords words("_Xp_ldexpx");
+    const std::size_t value = words.Add(p, Words(n), true);
+    words.Load();
+    Ldexpx(words.Host(value), n, m);
+    words.Store();
+    return p;
+}
+
+double* APS5_VABI _Xp_mulx_nid_postfix(double* p, int n, const double* q, int m, double* ptemp2) {
+    RequireCount(n, "_Xp_mulx", "word");
+    RequireCount(m, "_Xp_mulx", "multiplier word");
+    if (n == 0 || m == 0) return p;
+    const double head[] = {ReadWord(q, 0, "_Xp_mulx"), m == 1 ? 0.0 : ReadWord(q, 1, "_Xp_mulx")};
+    const bool single = SingleFactor(head, m);
+    GuestWords words("_Xp_mulx");
+    const std::size_t value = words.Add(p, Words(n), true);
+    const std::size_t factor = words.Add(q, Words(m), false);
+    const std::size_t scratch = words.Add(ptemp2, single ? 0 : 2 * Words(n), true);
+    words.Load();
+    RequireUnchanged(!single || SingleFactor(words.Host(factor), m), "_Xp_mulx");
+    Mulx(words.Host(value), n, words.Host(factor), m, words.Host(scratch));
+    words.Store();
+    return p;
+}
+
+double* APS5_VABI _Xp_invx_nid_postfix(double* p, int n, double* ptemp4) {
+    RequireCount(n, "_Xp_invx", "word");
+    if (n == 0) return p;
+    const bool special = SpecialInverse(ReadWord(p, 0, "_Xp_invx"));
+    GuestWords words("_Xp_invx");
+    const std::size_t value = words.Add(p, Words(n), true);
+    const std::size_t scratch = words.Add(ptemp4, special ? 0 : 4 * Words(n), true);
+    words.Load();
+    RequireUnchanged(!special || SpecialInverse(words.Host(value)[0]), "_Xp_invx");
+    Invx(words.Host(value), n, words.Host(scratch));
+    words.Store();
+    return p;
+}
+
+double* APS5_VABI _Xp_sqrtx_nid_postfix(double* p, int n, double* ptemp4) {
+    RequireCount(n, "_Xp_sqrtx", "word");
+    if (n == 0) return p;
+    const bool special = SpecialRoot(ReadWord(p, 0, "_Xp_sqrtx"));
+    GuestWords words("_Xp_sqrtx");
+    const std::size_t value = words.Add(p, Words(n), true);
+    const std::size_t scratch = words.Add(ptemp4, special ? 0 : 4 * Words(n), true);
+    words.Load();
+    RequireUnchanged(!special || SpecialRoot(words.Host(value)[0]), "_Xp_sqrtx");
+    Sqrtx(words.Host(value), n, words.Host(scratch));
+    words.Store();
     return p;
 }
 

@@ -73,9 +73,14 @@ void APS5_VABI AbortingGamePresenceCallback(const void*, const void*, void*) {
     std::abort();
 }
 
-void APS5_VABI AbortingReachabilityCallback(int, std::uint32_t, void*) {
-    std::fprintf(stderr, "NpManager: the reachability callback was called\n");
-    std::abort();
+int reachabilityCalls = 0;
+int reachabilityUserId = 0;
+std::uint32_t reachabilityState = 99;
+
+void APS5_VABI CountingReachabilityCallback(int userId, std::uint32_t state, void*) {
+    ++reachabilityCalls;
+    reachabilityUserId = userId;
+    reachabilityState = state;
 }
 
 struct SelfUnregister {
@@ -123,13 +128,14 @@ void CheckStateCallbacksA() {
     Require(ids[0] >= 1 && ids[0] <= 8, "state callback id outside 1..8");
     Require(sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(callbacks[0]), &userdata[1]) == AlreadyRegistered, "duplicate state callback");
     Require(stateCallsA[0].calls == 0, "registering calls the state callback");
-    Require(sceNpRegisterNpReachabilityStateCallback(reinterpret_cast<void*>(&AbortingReachabilityCallback), nullptr) == 0,
+    Require(sceNpRegisterNpReachabilityStateCallback(reinterpret_cast<void*>(&CountingReachabilityCallback), nullptr) == 0,
         "registering the reachability callback");
     sceNpRegisterGamePresenceCallback(nullptr, nullptr);
     sceNpRegisterGamePresenceCallback(reinterpret_cast<void*>(&AbortingGamePresenceCallback), &userdata[0]);
 
     Require(sceNpCheckCallback() == 0, "sceNpCheckCallback failed");
     Require(SignedOutOnce(stateCallsA[0], &userdata[0]), "sceNpCheckCallback must deliver SIGNED_OUT once");
+    Require(reachabilityCalls == 1 && reachabilityUserId == InitialUserId && reachabilityState == 0, "sceNpCheckCallback must deliver UNAVAILABLE reachability once");
     Require(sceNpUnregisterNpReachabilityStateCallback() == 0, "unregistering the reachability callback");
     Require(sceNpCheckCallback() == 0, "second sceNpCheckCallback failed");
     Require(stateCallsA[0].calls == 1, "the second sceNpCheckCallback delivered the state again");
@@ -323,6 +329,8 @@ void CheckAsyncRequestLifecycle() {
     }
 
     int result = resultSentinel;
+    errno = 71;
+    Require(sceNpPollAsync(unusedAsyncResult, reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "poll with unwritable result");
     Require(sceNpPollAsync(unusedAsyncResult, &result) == 0, "poll on a live async request");
     Require(result == SignedOut, "poll must report the signed-out result on a live async request");
     Require(sceNpAbortRequest(unusedAsyncResult) == 0, "abort on a live request");
@@ -346,6 +354,8 @@ void CheckWaitAsync() {
         Require(sceNpWaitAsync(id, nullptr) == InvalidArgument, "wait must reject a null result before the id");
     }
     Require(sceNpWaitAsync(liveId, nullptr) == InvalidArgument, "wait must reject a null result for a live request");
+    errno = 71;
+    Require(sceNpWaitAsync(liveId, reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "wait with unwritable result");
 
     for (int round = 0; round < 2; ++round) {
         int result = resultSentinel;
@@ -497,6 +507,8 @@ void CheckPushLifecycle() {
     std::int32_t connectionState = 0x5a5a5a5a;
     Require(sceNpPushIntGetConnectionState(&connectionState) == 0 && connectionState == 0, "sceNpPushIntGetConnectionState must report the offline state");
     Require(sceNpPushIntGetConnectionState(nullptr) == PushInvalidArgument, "sceNpPushIntGetConnectionState must refuse a null output");
+    errno = 71;
+    Require(sceNpPushIntGetConnectionState(reinterpret_cast<void*>(0x10)) == PushInvalidArgument && errno == 71, "sceNpPushIntGetConnectionState must refuse an unwritable output and keep errno");
     Require(sceNpPushCheckCallback() == 0, "sceNpPushCheckCallback must answer an initialized library");
     Require(sceNpPushTerm() == 0, "sceNpPushTerm must terminate the library");
     Require(sceNpPushTerm() == PushNotInitialized, "sceNpPushTerm must refuse a second termination");
@@ -566,12 +578,16 @@ void CheckManagerIntProfileGetters() {
     std::int32_t accountType = 0x5a5a5a5a;
     Require(sceNpManagerIntGetAccountType(-1, &accountType) == InvalidArgument && accountType == 0x5a5a5a5a, "sceNpManagerIntGetAccountType must refuse user id -1");
     Require(sceNpManagerIntGetAccountType(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountType must refuse a null output");
+    errno = 71;
+    Require(sceNpManagerIntGetAccountType(InitialUserId, reinterpret_cast<std::int32_t*>(0x10)) == InvalidArgument && errno == 71, "sceNpManagerIntGetAccountType unwritable output");
     Require(sceNpManagerIntGetAccountType(InitialUserId, &accountType) == SignedOut && accountType == 0, "sceNpManagerIntGetAccountType must zero the account type");
     SentinelBuffer npEnv;
     Require(sceNpManagerIntGetNpEnv(nullptr) == InvalidArgument, "sceNpManagerIntGetNpEnv must refuse a null output");
     Require(sceNpManagerIntGetNpEnv(npEnv.bytes) == SignedOut, "sceNpManagerIntGetNpEnv must report NP as signed out");
     for (std::size_t i = 0; i < 0x18; ++i) Require(npEnv.bytes[i] == 0, "sceNpManagerIntGetNpEnv must zero the environment block");
     for (std::size_t i = 0x18; i < sizeof(npEnv.bytes); ++i) Require(npEnv.bytes[i] == 0x5a, "sceNpManagerIntGetNpEnv must leave the tail untouched");
+    errno = 71;
+    Require(sceNpManagerIntGetNpEnv(reinterpret_cast<void*>(0x10)) == InvalidArgument && errno == 71, "sceNpManagerIntGetNpEnv unwritable output");
     Require(sceNpManagerIntGetVshClientId(nullptr) == InvalidArgument, "sceNpManagerIntGetVshClientId must refuse a null output");
     Require(sceNpManagerIntGetVshClientId(out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetVshClientId must report NP as signed out and write nothing");
     std::uint64_t offlineAccountId = 0x5a5a5a5a5a5a5a5a;
@@ -716,6 +732,8 @@ void CheckOnlineIdQueries() {
     Require(sceNpGetAccountId(&onlineId, &accountId) == SignedOut, "sceNpGetAccountId must report NP as signed out");
     Require(sceNpGetAccountId(nullptr, &accountId) == InvalidArgument, "sceNpGetAccountId must reject a null online id");
     Require(sceNpGetAccountId(&onlineId, nullptr) == InvalidArgument, "sceNpGetAccountId must reject a null output");
+    errno = 71;
+    Require(sceNpGetAccountId(reinterpret_cast<const NpOnlineId*>(0x10), &accountId) == InvalidArgument && errno == 71, "sceNpGetAccountId must reject an unmapped online id and keep errno");
     const int presenceRequest = sceNpCreateRequest();
     Require(presenceRequest > 0, "sceNpCreateRequest must return a positive request id");
     Require(sceNpSetGamePresenceOnline(presenceRequest, &onlineId, 0) == SignedOut, "sceNpSetGamePresenceOnline must report NP as signed out");
@@ -768,6 +786,12 @@ void CheckUserIdQueries() {
     Require(sceNpCheckNpAvailabilityA(0, InitialUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must reject request id 0");
     Require(sceNpCheckNpAvailabilityA(NeverCreated, InitialUserId) == RequestNotFound, "sceNpCheckNpAvailabilityA must reject a request that was never created");
     Require(sceNpCheckNpAvailabilityA(NeverCreated, InvalidUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must check the user before the request");
+    NpOnlineId availabilityId{};
+    std::uint8_t available = 0xff;
+    Require(sceNpCheckNpAvailability(1, &availabilityId, &available) == UserNotFound && available == 0, "sceNpCheckNpAvailability must report the online id as unavailable");
+    Require(sceNpCheckNpAvailability(1, &availabilityId, nullptr) == UserNotFound, "sceNpCheckNpAvailability must allow a null availability output");
+    errno = 71;
+    Require(sceNpCheckNpAvailability(1, &availabilityId, reinterpret_cast<std::uint8_t*>(0x10)) == InvalidArgument && errno == 71, "sceNpCheckNpAvailability must refuse an unwritable availability output and keep errno");
     Require(sceNpGetAccountLanguageA(request, InitialUserId, nullptr) == InvalidArgument, "sceNpGetAccountLanguageA must reject a null output");
     Require(sceNpGetAccountLanguageA(request, InvalidUserId, output) == InvalidArgument, "sceNpGetAccountLanguageA must reject the invalid user id");
     Require(sceNpGetAccountLanguageA(0, InitialUserId, output) == InvalidArgument, "sceNpGetAccountLanguageA must reject request id 0");
@@ -880,6 +904,9 @@ static void CheckSandboxInfo() {
     for (std::size_t index = 0x2d; index < 0x50; ++index) Require(info[index] == 0, "sceNpGetSandboxInfo must clear the rest of the 0x50-byte block");
     for (std::size_t index = 0x50; index < sizeof(info); ++index) Require(info[index] == 0xa5, "sceNpGetSandboxInfo must not write past 0x50 bytes");
     Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
+    errno = 71;
+    Require(sceNpGetSandboxInfo(reinterpret_cast<void*>(0x10)) == InvalidArgument, "sceNpGetSandboxInfo must reject an unmapped buffer");
+    Require(errno == 71, "errno must be preserved");
 }
 
 void CheckValueClasses() {
@@ -899,6 +926,9 @@ void CheckValueClasses() {
     Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, "0123456789abcdefg") == OnlineIdTooLong, "a longer online id must be refused");
     Require(std::memcmp(onlineId.data, "0123456789abcdef", 16) == 0, "a refused online id must leave the text untouched");
     Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, nullptr) == InvalidArgument, "a null online id text must be refused");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, reinterpret_cast<const char*>(0x10)) == InvalidArgument
+            && std::memcmp(onlineId.data, "0123456789abcdef", 16) == 0,
+        "an unreadable online id text must be refused and leave the text untouched");
 
     NpOnlineIdObject onlineIdCopy;
     _ZN3sce2np10NpOnlineIdC1ERKS1_(&onlineIdCopy, &onlineId);
@@ -972,14 +1002,23 @@ void CheckValueClasses() {
     Require(_ZN3sce2np4User7GetUserEiPS1_(123, &fetchedUser) == UserInvalid, "GetUser must refuse a user that is not registered");
     Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, &fetchedUser) == 0 && fetchedUser.userId == USER_SERVICE_INITIAL_USER_ID, "GetUser must return the registered user");
     Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, nullptr) == InvalidArgument, "GetUser must refuse a null output");
+    errno = 71;
+    Require(_ZNK3sce2np4User12GetAccountIdEPm(&initialUser, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "an unwritable account id output must be refused");
+    Require(_ZNK3sce2np4User12HasAccountIdEPb(&initialUser, reinterpret_cast<bool*>(0x10)) == InvalidArgument && errno == 71, "an unwritable account id flag must be refused");
+    Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<UserObject*>(0x10)) == InvalidArgument && errno == 71, "GetUser must refuse an unwritable output");
 
     SceNpOnlineId onlineIdOut {};
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&user, &onlineIdOut) == UserNotFound, "GetNpOnlineId must refuse the invalid user");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, &onlineIdOut) == SignedOut, "GetNpOnlineId must report a signed-out user");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, nullptr) == InvalidArgument, "GetNpOnlineId must refuse a null SDK output");
+    errno = 71;
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(reinterpret_cast<const UserObject*>(0x10), &onlineIdOut) == InvalidArgument && errno == 71, "an unmapped user must be refused");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, reinterpret_cast<SceNpOnlineId*>(0x10)) == InvalidArgument && errno == 71, "an unwritable SDK output must be refused");
     NpOnlineIdObject onlineIdObjectOut;
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(&guestUser, &onlineIdObjectOut) == SignedOut, "GetNpOnlineId must report a signed-out object output");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(nullptr, &onlineIdObjectOut) == InvalidArgument, "GetNpOnlineId must refuse a null user");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(reinterpret_cast<const UserObject*>(0x10), &onlineIdObjectOut) == InvalidArgument && errno == 71, "an unmapped user must be refused");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(&guestUser, reinterpret_cast<NpOnlineIdObject*>(0x10)) == InvalidArgument && errno == 71, "an unwritable object output must be refused");
 
     NpTitleTokenObject titleToken;
     _ZN3sce2np12NpTitleTokenC1Ev(&titleToken);
@@ -1087,6 +1126,82 @@ void CheckAsmLifecycle() {
     Require(sceNpAsmClientTerminate(&client) == ClientNotInitialized, "sceNpAsmClientTerminate must reject a second termination");
 }
 
+void CheckAsmCallsBeforeInitialization() {
+    struct Entry {
+        decltype(&sceNpAsmGenerateNpTitleToken) function;
+        const char* name;
+    };
+    constexpr int AsmNotInitialized = static_cast<int>(0x8055A202u);
+    constexpr int ClientNotInitialized = static_cast<int>(0x8055A282u);
+    const Entry asmEntries[] = {
+        {sceNpAsmGenerateNpTitleToken, "sceNpAsmGenerateNpTitleToken"},
+        {sceNpAsmGenerateNpTitleToken2, "sceNpAsmGenerateNpTitleToken2"},
+        {sceNpAsmGetNpCommInfo, "sceNpAsmGetNpCommInfo"},
+        {sceNpAsmGetNpCommInfo2, "sceNpAsmGetNpCommInfo2"},
+        {sceNpAsmGetRelatedGameNpTitleIds, "sceNpAsmGetRelatedGameNpTitleIds"},
+        {sceNpAsmGetServiceBaseUrl, "sceNpAsmGetServiceBaseUrl"},
+        {sceNpAsmGetServiceIdInfo, "sceNpAsmGetServiceIdInfo"},
+    };
+    const Entry clientEntries[] = {
+        {sceNpAsmClientClearNpTitleToken, "sceNpAsmClientClearNpTitleToken"},
+        {sceNpAsmClientClearNpTitleTokenA, "sceNpAsmClientClearNpTitleTokenA"},
+        {sceNpAsmClientCreateRequest2, "sceNpAsmClientCreateRequest2"},
+        {sceNpAsmClientCreateResourceContext, "sceNpAsmClientCreateResourceContext"},
+        {sceNpAsmClientCreateResourceContext2, "sceNpAsmClientCreateResourceContext2"},
+        {sceNpAsmClientDeleteRequest, "sceNpAsmClientDeleteRequest"},
+        {sceNpAsmClientDeleteResourceContext, "sceNpAsmClientDeleteResourceContext"},
+        {sceNpAsmClientDeleteResourceContext2, "sceNpAsmClientDeleteResourceContext2"},
+        {sceNpAsmClientGetCacheControlMaxAge, "sceNpAsmClientGetCacheControlMaxAge"},
+        {sceNpAsmClientGetGameNpTitleInfo, "sceNpAsmClientGetGameNpTitleInfo"},
+        {sceNpAsmClientGetGameNpTitleToken, "sceNpAsmClientGetGameNpTitleToken"},
+        {sceNpAsmClientGetGameTitleBanInfo, "sceNpAsmClientGetGameTitleBanInfo"},
+        {sceNpAsmClientGetNpComInfo2, "sceNpAsmClientGetNpComInfo2"},
+        {sceNpAsmClientGetNpComInfo2A, "sceNpAsmClientGetNpComInfo2A"},
+        {sceNpAsmClientGetNpComInfo3, "sceNpAsmClientGetNpComInfo3"},
+        {sceNpAsmClientGetNpComInfo4, "sceNpAsmClientGetNpComInfo4"},
+        {sceNpAsmClientGetNpTitleId, "sceNpAsmClientGetNpTitleId"},
+        {sceNpAsmClientGetNpTitleToken, "sceNpAsmClientGetNpTitleToken"},
+        {sceNpAsmClientGetNpTitleToken2, "sceNpAsmClientGetNpTitleToken2"},
+        {sceNpAsmClientGetNpTitleTokenA, "sceNpAsmClientGetNpTitleTokenA"},
+        {sceNpAsmClientGetRelatedGameNpTitleIds, "sceNpAsmClientGetRelatedGameNpTitleIds"},
+        {sceNpAsmClientGetRelatedGameNpTitleIdsA, "sceNpAsmClientGetRelatedGameNpTitleIdsA"},
+        {sceNpAsmClientGetRelatedGameNpTitleIdsResult, "sceNpAsmClientGetRelatedGameNpTitleIdsResult"},
+        {sceNpAsmClientGetServiceBaseUrl, "sceNpAsmClientGetServiceBaseUrl"},
+        {sceNpAsmClientGetServiceBaseUrlA, "sceNpAsmClientGetServiceBaseUrlA"},
+        {sceNpAsmClientGetServiceBaseUrlWithNpTitleId, "sceNpAsmClientGetServiceBaseUrlWithNpTitleId"},
+        {sceNpAsmClientGetServiceBaseUrlWithNpTitleIdA, "sceNpAsmClientGetServiceBaseUrlWithNpTitleIdA"},
+        {sceNpAsmClientGetServiceIdInfo, "sceNpAsmClientGetServiceIdInfo"},
+        {sceNpAsmClientGetServiceIdInfoA, "sceNpAsmClientGetServiceIdInfoA"},
+    };
+    const auto requireAnswer = [](const Entry& entry, int expected) {
+        Require(entry.function() == expected, entry.name);
+    };
+    const auto requireThrow = [](const Entry& entry) {
+        try {
+            entry.function();
+            Require(false, entry.name);
+        } catch (const std::runtime_error& error) {
+            Require(std::string(error.what()) == std::string(entry.name) + " not implemented", entry.name);
+        }
+    };
+    for (const Entry& entry : asmEntries) requireAnswer(entry, AsmNotInitialized);
+    for (const Entry& entry : clientEntries) requireAnswer(entry, ClientNotInitialized);
+
+    Require(sceNpAsmInitialize() == 0, "sceNpAsmInitialize failed");
+    for (const Entry& entry : asmEntries) requireThrow(entry);
+    for (const Entry& entry : clientEntries) requireAnswer(entry, ClientNotInitialized);
+    Require(sceNpAsmTerminate() == 0, "sceNpAsmTerminate failed");
+    for (const Entry& entry : asmEntries) requireAnswer(entry, AsmNotInitialized);
+
+    int client = 0;
+    const char param[4] = {};
+    Require(sceNpAsmClientInitialize(&client, param) == 0, "sceNpAsmClientInitialize failed");
+    for (const Entry& entry : clientEntries) requireThrow(entry);
+    for (const Entry& entry : asmEntries) requireAnswer(entry, AsmNotInitialized);
+    Require(sceNpAsmClientTerminate(&client) == 0, "sceNpAsmClientTerminate failed");
+    for (const Entry& entry : clientEntries) requireAnswer(entry, ClientNotInitialized);
+}
+
 void CheckEmptyDestructors() {
     unsigned char object[0x40];
     unsigned char untouched[sizeof(object)];
@@ -1138,6 +1253,7 @@ void CheckUnknownFieldComparisons() {
 int main() {
     CheckNpOfflineGetters();
     CheckAsmLifecycle();
+    CheckAsmCallsBeforeInitialization();
     CheckEmptyDestructors();
     CheckSandboxInfo();
     CheckTicketTeardown();
@@ -1185,10 +1301,13 @@ int main() {
     std::memset(&onlineId, 0x5a, sizeof(onlineId));
     NpOnlineId untouchedOnlineId{};
     std::memset(&untouchedOnlineId, 0x5a, sizeof(untouchedOnlineId));
+    Require(sceNpGetOnlineId(-1, &onlineId) == InvalidArgument, "sceNpGetOnlineId must reject an invalid user id");
     Require(sceNpGetOnlineId(0x10000, &onlineId) == SignedOut, "sceNpGetOnlineId must report the user as signed out");
     Require(std::memcmp(&onlineId, &untouchedOnlineId, sizeof(onlineId)) == 0, "sceNpGetOnlineId must leave the online id untouched");
     Require(sceNpGetOnlineId(0x10000, nullptr) == InvalidArgument, "sceNpGetOnlineId must reject a null online id");
     std::uint64_t accountIdA = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceNpGetAccountIdA(-1, &accountIdA) == InvalidArgument, "sceNpGetAccountIdA must reject an invalid user id");
+    Require(sceNpGetAccountIdA(0x10000, nullptr) == InvalidArgument, "sceNpGetAccountIdA must reject a null output");
     Require(sceNpGetAccountIdA(0x10000, &accountIdA) == SignedOut, "sceNpGetAccountIdA must report the user as signed out");
     Require(accountIdA == 0x5a5a5a5a5a5a5a5aull, "sceNpGetAccountIdA must leave the account id untouched");
     int userId = 0x5a5a;

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -183,5 +184,105 @@ int main() {
         for (int index = 0; index < 8; index++) Require(out[index] == pad[index], "quad frames are the pad mix");
     }
 
+    {
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+        const float negInf = -inf;
+
+        auto out = Silence<1>();
+        const float nonFiniteInput[2] = {nan, inf};
+        const float zeroGain[2] = {0.0f, 0.0f};
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, nonFiniteInput, 2, unity, out.data());
+        Require(out[0] == 0.0f && out[1] == 0.0f, "non-finite inputs sanitized to zero in accumulation");
+
+        const float infInput[1] = {inf};
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, infInput, 1, zeroGain, out.data());
+        Require(out[0] == 0.0f && out[1] == 0.0f, "zero gain with infinity input produces zero");
+
+        const float negInfInput[2] = {negInf, nan};
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadVibration, negInfInput, 2, unity, out.data());
+        Require(out[2] == 0.0f && out[3] == 0.0f, "negative infinity and nan vibration sanitized");
+
+        float dirtyPad[AUDIO_OUT2_PAD_CHANNELS] = {nan, inf, negInf, nan};
+        const float validSpeaker[1] = {0.5f};
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, validSpeaker, 1, unity, dirtyPad);
+        Require(dirtyPad[0] == 0.5f && dirtyPad[1] == 0.5f, "non-finite accumulator sanitized and valid signal preserved");
+
+        float mixedPortPad[AUDIO_OUT2_PAD_CHANNELS] = {0.25f, 0.25f, 0.0f, 0.0f};
+        const float nanSpeaker[1] = {nan};
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, nanSpeaker, 1, unity, mixedPortPad);
+        Require(mixedPortPad[0] == 0.25f && mixedPortPad[1] == 0.25f, "valid signal preserved alongside non-finite port");
+
+        float dirtyOut[AUDIO_OUT2_PAD_CHANNELS] = {nan, inf, negInf, 2.5f};
+        AudioOut2FinishPadMix(dirtyOut, 1);
+        Require(dirtyOut[0] == 0.0f && dirtyOut[1] == 0.0f && dirtyOut[2] == 0.0f, "non-finite values sanitized in finish mix");
+        Require(dirtyOut[3] == 1.0f, "finite value clamped in finish mix");
+
+        const auto quad = AudioOut2PadLayoutForDriver("pipewire");
+        const float nonFinitePad[AUDIO_OUT2_PAD_CHANNELS] = {nan, inf, negInf, 0.75f};
+        float writeOut[AUDIO_OUT2_PAD_CHANNELS] = {nan, nan, nan, nan};
+        AudioOut2WritePadFrames(nonFinitePad, quad, writeOut, 1, 50);
+        Require(writeOut[0] == 0.0f && writeOut[1] == 0.0f && writeOut[2] == 0.0f, "write pad frames sanitizes non-finite pad");
+        Require(std::fabs(writeOut[3] - 0.375f) <= 1e-6f, "write pad frames preserves and scales valid vibration");
+    }
+
+    {
+        auto productOverflow = Silence<1>();
+        const float loudPair[2] = {3.0e38f, -3.0e38f};
+        const float doubleGain[2] = {2.0f, 2.0f};
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, loudPair, 2, doubleGain, productOverflow.data());
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadVibration, loudPair, 2, doubleGain, productOverflow.data());
+        Require(std::isfinite(productOverflow[0]) && productOverflow[0] > 0.0f, "positive product overflow saturates to finite positive max");
+        Require(std::isfinite(productOverflow[1]) && productOverflow[1] < 0.0f, "negative product overflow saturates to finite negative max");
+        Require(std::isfinite(productOverflow[2]) && productOverflow[2] > 0.0f, "positive vibration product overflow saturates");
+        Require(std::isfinite(productOverflow[3]) && productOverflow[3] < 0.0f, "negative vibration product overflow saturates");
+        AudioOut2FinishPadMix(productOverflow.data(), 1);
+        Require(productOverflow[0] == 1.0f && productOverflow[1] == -1.0f, "speaker product overflow clamps to full scale");
+        Require(productOverflow[2] == 1.0f && productOverflow[3] == -1.0f, "vibration product overflow clamps to full scale");
+
+        auto sumOverflow = Silence<1>();
+        const float loudSpeaker[2] = {3.0e38f, -3.0e38f};
+        const float loudVibration[2] = {-3.0e38f, 3.0e38f};
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, loudSpeaker, 2, unity, sumOverflow.data());
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, loudSpeaker, 2, unity, sumOverflow.data());
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadVibration, loudVibration, 2, unity, sumOverflow.data());
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadVibration, loudVibration, 2, unity, sumOverflow.data());
+        Require(std::isfinite(sumOverflow[0]) && sumOverflow[0] > 0.0f, "positive sum overflow saturates");
+        Require(std::isfinite(sumOverflow[1]) && sumOverflow[1] < 0.0f, "negative sum overflow saturates");
+        AudioOut2FinishPadMix(sumOverflow.data(), 1);
+        Require(sumOverflow[0] == 1.0f && sumOverflow[1] == -1.0f, "speaker sum overflow clamps to full scale");
+        Require(sumOverflow[2] == -1.0f && sumOverflow[3] == 1.0f, "vibration sum overflow clamps to full scale");
+    }
+
+    {
+        auto padOut = Silence<1>();
+        const float sample[2] = {0.5f, -0.5f};
+        Require(Throws<std::invalid_argument>([&] { AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, nullptr, 1, unity, padOut.data()); }), "accumulate rejects null input");
+        Require(Throws<std::invalid_argument>([&] { AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, sample, 2, nullptr, padOut.data()); }), "accumulate rejects null volume");
+        Require(Throws<std::invalid_argument>([&] { AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, sample, 2, unity, nullptr); }), "accumulate rejects null pad");
+
+        AudioOut2FinishPadMix(nullptr, 0);
+        Require(Throws<std::invalid_argument>([] { AudioOut2FinishPadMix(nullptr, 1); }), "finish mix rejects null output when frames > 0");
+
+        const auto quad = AudioOut2PadLayoutForDriver("pipewire");
+        const float validPad[AUDIO_OUT2_PAD_CHANNELS] = {0.1f, 0.2f, 0.3f, 0.4f};
+        float writeOut[AUDIO_OUT2_PAD_DEVICE_CHANNELS_MAX] = {};
+        AudioOut2WritePadFrames(nullptr, quad, nullptr, 0);
+        AudioOut2WritePadFrames(validPad, quad, nullptr, 0);
+        AudioOut2WritePadFrames(nullptr, quad, writeOut, 0);
+        Require(Throws<std::invalid_argument>([&] { AudioOut2WritePadFrames(nullptr, quad, writeOut, 1); }), "write pad frames rejects null pad when frames > 0");
+        Require(Throws<std::invalid_argument>([&] { AudioOut2WritePadFrames(validPad, quad, nullptr, 1); }), "write pad frames rejects null out when frames > 0");
+
+        auto tooFewChannels = quad;
+        tooFewChannels.channels = AUDIO_OUT2_PAD_CHANNELS - 1;
+        Require(Throws<std::invalid_argument>([&] { AudioOut2WritePadFrames(validPad, tooFewChannels, writeOut, 1); }), "write pad frames rejects fewer than 4 channels");
+        Require(Throws<std::invalid_argument>([&] { AudioOut2WritePadFrames(nullptr, tooFewChannels, nullptr, 0); }), "write pad frames rejects invalid channel count even when frames == 0");
+
+        for (std::uint32_t channel = 0; channel < AUDIO_OUT2_PAD_CHANNELS; channel++) {
+            auto badPosition = quad;
+            badPosition.position[channel] = badPosition.channels;
+            Require(Throws<std::invalid_argument>([&] { AudioOut2WritePadFrames(validPad, badPosition, writeOut, 1); }), "write pad frames rejects out-of-range channel position");
+        }
+    }
     return 0;
 }

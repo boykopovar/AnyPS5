@@ -2,6 +2,36 @@
 
 extern "C" {
 
+void APS5_VABI WKBundleRemoveAllWebNotificationPermissions() {
+}
+
+void APS5_VABI WKBundleSetServiceWorkerProxyCreationCallback() {
+}
+
+void APS5_VABI WKContextTerminateServiceWorkers() {
+}
+
+void APS5_VABI WKSendDisplayConfigurationChangedMessageForTesting() {
+}
+
+void APS5_VABI WKTextCheckerSetTestingMode() {
+}
+
+void APS5_VABI _ZN7WebCore14JSWebAnimation14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore21JSTextTrackCueGeneric14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore6JSFile14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore6JSNode14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore7JSRange14finishCreationERN3JSC2VME() {
+}
+
 void APS5_VABI JSRemoteInspectorSetParentProcessInformation() {
 }
 
@@ -32,6 +62,9 @@ void APS5_VABI WKBundlePageSetTopOverhangImage() {
 void APS5_VABI WKContextAddSupportedPlugin() {
 }
 
+void APS5_VABI WKContextAllowSpecificHTTPSCertificateForHost() {
+}
+
 void APS5_VABI WKContextClearSupportedPlugins() {
 }
 
@@ -42,6 +75,9 @@ void APS5_VABI WKContextGetStatisticsWithOptions() {
 }
 
 void APS5_VABI WKContextMenuItemSetUserData() {
+}
+
+void APS5_VABI WKContextPreconnectToServer() {
 }
 
 void APS5_VABI WKContextRefreshPlugIns() {
@@ -63,12 +99,6 @@ void APS5_VABI WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTi
 }
 
 void APS5_VABI WKContextSetPrimaryWebsiteDataStore() {
-}
-
-void APS5_VABI WKContextSetProcessModel() {
-}
-
-void APS5_VABI WKContextSetUsesNetworkProcess() {
 }
 
 void APS5_VABI WKCookieManagerDeleteAllCookies() {
@@ -102,9 +132,6 @@ void APS5_VABI WKIconDatabaseSetIconDatabaseClient() {
 }
 
 void APS5_VABI WKIconDatabaseSetIconURLForPageURL() {
-}
-
-void APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled() {
 }
 
 void APS5_VABI WKPreferencesSetQTKitEnabled() {
@@ -170,10 +197,31 @@ void APS5_VABI _ZN3WTF11Persistence7DecoderD1Ev() {
 void APS5_VABI _ZN3WTF11Persistence7DecoderD2Ev() {
 }
 
+void APS5_VABI _ZN3WTF11PrintStream3endEv() {
+}
+
 void APS5_VABI _ZN3WTF18FunctionDispatcherD1Ev() {
 }
 
 void APS5_VABI _ZN3WTF18FunctionDispatcherD2Ev() {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounter16suppressMessagesEPKc(const char*) {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounter24cancelMessageSuppressionEPKc(const char*) {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounterC1EPKc(void*, const char*) {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounterC2EPKc(void*, const char*) {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounter9incrementEv(void*) {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounter9decrementEv(void*) {
 }
 
 void APS5_VABI _ZN3WTF21RefCountedLeakCounterD1Ev() {
@@ -302,16 +350,13 @@ void APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationD1Ev() {
 void APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationD2Ev() {
 }
 
+void APS5_VABI _ZN7WebCore36registerMemoryReleaseNotifyCallbacksEv() {
+}
+
 void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD1Ev() {
 }
 
 void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD2Ev() {
-}
-
-void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev() {
-}
-
-void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD2Ev() {
 }
 
 void APS5_VABI _ZN7WebCore4IconD1Ev() {

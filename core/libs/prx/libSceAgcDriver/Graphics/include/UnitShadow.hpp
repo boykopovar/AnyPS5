@@ -103,6 +103,8 @@ std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope
 // hook-free readers and a build's stage A.
 bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes);
 bool AnyShadowedOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+bool LiveUnitsClear(std::uint64_t address, std::size_t bytes);
+bool AnyPublishInProgress();
 std::vector<std::pair<std::uint64_t, std::uint64_t>> LiveShadowedRanges(std::uint64_t address, std::size_t bytes, PublishScope scope);
 
 // The sources of a storage upload's surface-relative runs: [begin, end) pieces of them, each read
@@ -151,6 +153,7 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
 // belongs to the title again and is dropped (counted `dropped on retire`); `lost on retire` counts
 // the units nothing could record.
 void RetireShadow(VkDevice device, const HostImport& import, const std::function<bool(std::uint64_t, std::uint64_t)>& registered);
+bool RetireShadowReadsRegistered(const HostImport& import);
 // Teardown: every shadow of the context's device is published; DestroyShadows then drops them.
 void PublishAllShadows(const Context& context, PublishReason reason);
 void DestroyShadows(VkDevice device);

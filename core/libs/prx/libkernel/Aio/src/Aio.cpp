@@ -114,13 +114,14 @@ public:
     Reservation(const Reservation&) = delete;
     Reservation& operator=(const Reservation&) = delete;
 
-    void Publish(std::int32_t* output) {
-        std::lock_guard lock(g_mutex);
-        for (std::int32_t index = 0; index < count; ++index) {
-            output[index] = ids[index];
-            FindLocked(ids[index])->state = AioCompleted;
+    bool Publish(std::int32_t* output) {
+        {
+            std::lock_guard lock(g_mutex);
+            for (std::int32_t index = 0; index < count; ++index) FindLocked(ids[index])->state = AioCompleted;
         }
+        if (!GuestCopyOut_nid_no_patch(output, ids.data(), static_cast<std::size_t>(count) * sizeof(ids[0]))) return false;
         published = true;
+        return true;
     }
 
 private:
@@ -176,7 +177,9 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
     }
     return NativePositioned_nid_no_patch(fd, buf, nbyte, offset, false);
 #else
-    return static_cast<std::int64_t>(::pread(fd, buf, nbyte, static_cast<off_t>(offset)));
+    const iovec whole{buf, nbyte};
+    const auto parts = File::TransferInParts(fd, &whole, 1, &offset, false);
+    return parts == -2 ? static_cast<std::int64_t>(::pread(fd, buf, nbyte, static_cast<off_t>(offset))) : parts;
 #endif
 }
 
@@ -192,11 +195,12 @@ std::int64_t NativePwrite(std::int32_t fd, const void* buf, std::size_t nbyte, s
 #else
     const auto result = File::PwriteSharedMemory_nid_no_patch(fd, buf, nbyte, offset);
     if (result != -2) return result;
-#ifdef __APPLE__
     const iovec whole{const_cast<void*>(buf), nbyte};
+#ifdef __APPLE__
     if (const auto appended = File::WritevAtEnd(fd, &whole, 1); appended != -2) return appended;
 #endif
-    return static_cast<std::int64_t>(::pwrite(fd, buf, nbyte, static_cast<off_t>(offset)));
+    const auto parts = File::TransferInParts(fd, &whole, 1, &offset, true);
+    return parts == -2 ? static_cast<std::int64_t>(::pwrite(fd, buf, nbyte, static_cast<off_t>(offset))) : parts;
 #endif
 }
 
@@ -227,10 +231,18 @@ int SubmitCommands(const KernelAioRwRequest* req, std::int32_t size, std::int32_
     for (std::int32_t i = 0; i < size; ++i) {
         if (requests[i].result == nullptr) return SCE_KERNEL_ERROR_EFAULT;
     }
-    Reservation reservation(multiple ? size : 1);
+    const std::int32_t count = multiple ? size : 1;
+    const std::size_t idBytes = static_cast<std::size_t>(count) * sizeof(*id);
+    {
+        const int savedErrno = errno;
+        const GuestArena::HostWrite guard(id, idBytes);
+        const bool writable = guard.Open() && GuestWritable_nid_no_patch(id, idBytes);
+        errno = savedErrno;
+        if (!writable) return SCE_KERNEL_ERROR_EFAULT;
+    }
+    Reservation reservation(count);
     for (std::int32_t i = 0; i < size; ++i) RunRequest(requests[i], write);
-    reservation.Publish(id);
-    return 0;
+    return reservation.Publish(id) ? 0 : SCE_KERNEL_ERROR_EFAULT;
 }
 
 int ValidateIds(const std::int32_t* id, std::int32_t num, const void* out) {

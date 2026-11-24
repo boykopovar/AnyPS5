@@ -20,16 +20,19 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -40,6 +43,7 @@ constexpr std::size_t Block = 65536;
 #ifdef _WIN32
 constexpr wchar_t MetadataCommitMode[] = L"--metadata-commit";
 constexpr wchar_t HostHoleMode[] = L"--host-hole";
+constexpr wchar_t HostRegionIndexMode[] = L"--host-region-index";
 constexpr wchar_t ResidentRemapMode[] = L"--resident-direct-remap";
 constexpr wchar_t RewatchImportPagesMode[] = L"--rewatch-import-pages";
 constexpr wchar_t RewatchedSharedMode[] = L"--rewatched-direct-shared";
@@ -187,6 +191,28 @@ void CheckSharedBlock() {
     std::array<std::uint8_t, 64> unwatched{};
     const auto outside = reinterpret_cast<std::uint64_t>(unwatched.data());
     if (!Watched(outside, unwatched.size())) Require(StoredOver(outside, unwatched.size(), TrackerGeneration()), "an unwatched range reads as not stored over");
+}
+
+void CheckDriverStoredOver() {
+    void* memory = AllocateWatched(2 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, 2 * Block);
+    const auto synced = CollectWrites(base, 2 * Block);
+    Require(synced != 0, "the driver-store fixture is not collected");
+    Require(!DriverStoredOver(base + 0x100, 8, synced), "a range nothing stored over reads as stored over by the driver");
+    const auto stamped = MarkWritten(base + 0x100, 8);
+    Require(DriverStoredOver(base + 0x100, 8, synced), "a driver store over the range is not seen");
+    Require(!DriverStoredOver(base + 0x200, 8, synced), "a driver store beside the range counts for it");
+    Require(!DriverStoredOver(base + 0x100, 8, stamped), "a driver store older than the generation is seen");
+    const auto beforeCpu = CollectWrites(base, 2 * Block);
+    static_cast<volatile std::uint8_t*>(memory)[0x300] = 0x22;
+    CollectWritesUncached(base, 2 * Block);
+    Require(StoredOver(base + 0x300, 8, beforeCpu), "a collected CPU store is not seen as stored over");
+    Require(!DriverStoredOver(base + 0x300, 8, beforeCpu), "a collected CPU store counts as a driver store");
+    Require(DriverStoredOver(base + 0x100, 8, 0), "a zero generation reads as not stored over by the driver");
+    std::array<std::uint8_t, 64> unwatched{};
+    const auto outside = reinterpret_cast<std::uint64_t>(unwatched.data());
+    if (!Watched(outside, unwatched.size())) Require(DriverStoredOver(outside, unwatched.size(), TrackerGeneration()), "a range outside the write watch reads as not stored over by the driver");
 }
 
 void CheckStoredOverUsesPageEvidence() {
@@ -1446,7 +1472,63 @@ void CheckHostHoleInChild(const wchar_t* mode, std::uint64_t hole) {
     Require(reported && exitCode == 0, "the host-hole child failed");
 }
 
+bool ScanHostRegions(const std::vector<std::pair<std::uintptr_t, std::uintptr_t>>& regions, std::uintptr_t start, std::size_t bytes) {
+    for (const auto& [regionStart, regionEnd] : regions) {
+        if (regionStart < start + bytes && start < regionEnd) return true;
+    }
+    return false;
+}
+
+void CheckHostRegionIndex(bool needRegions) {
+    const bool expectIndex = std::getenv("APS5_NO_HOST_REGION_INDEX") == nullptr;
+    Require(GuestArena::GuestArenaHostRegionIndexActive_nid_no_patch() == expectIndex, "the host region index does not follow its switch");
+    const auto count = GuestArena::GuestArenaHostRegions_nid_no_patch(nullptr, 0);
+    std::vector<std::uintptr_t> flat(2 * count);
+    Require(GuestArena::GuestArenaHostRegions_nid_no_patch(flat.data(), count) == count, "the host region list changed while it was read");
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> regions;
+    for (std::size_t index = 0; index < count; ++index) regions.emplace_back(flat[2 * index], flat[2 * index + 1]);
+    Require(!needRegions || !regions.empty(), "the arena has no host region to check");
+    std::size_t touching = 0;
+    for (std::size_t first = 0; first < regions.size(); ++first) {
+        for (std::size_t second = 0; second < regions.size(); ++second) touching += regions[first].second == regions[second].first;
+    }
+    const auto compare = [&](std::uintptr_t start, std::size_t bytes) {
+        Require(GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(start, bytes) == ScanHostRegions(regions, start, bytes), "the host region test differs from a scan of the region list");
+    };
+    std::vector<std::uintptr_t> edges;
+    for (const auto& [regionStart, regionEnd] : regions) {
+        for (const std::uintptr_t offset : {std::uintptr_t{0}, std::uintptr_t{1}, std::uintptr_t{2}}) {
+            for (const auto edge : {regionStart, regionEnd}) {
+                edges.push_back(edge + offset);
+                edges.push_back(edge - offset);
+            }
+        }
+        edges.push_back(regionStart + (regionEnd - regionStart) / 2);
+    }
+    std::sort(edges.begin(), edges.end());
+    edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+    const auto stride = edges.size() / 500 + 1;
+    const std::array<std::size_t, 9> sizes{0, 1, 2, 4096, Block, std::size_t{1} << 20, std::size_t{1} << 32, std::size_t{1} << 40, std::numeric_limits<std::size_t>::max()};
+    for (std::size_t index = 0; index < edges.size(); index += stride) {
+        for (const auto bytes : sizes) {
+            compare(edges[index], bytes);
+            compare(edges[index] - bytes, bytes);
+            compare(edges[index] - bytes, bytes + 1);
+        }
+        for (std::size_t other = 0; other < edges.size(); other += stride) compare(edges[index], static_cast<std::size_t>(edges[other] - edges[index]));
+    }
+    std::mt19937_64 random(0x4e6f);
+    for (unsigned query = 0; query < 200000; ++query) {
+        std::uintptr_t start = random() % (std::uintptr_t{1} << 47);
+        if (!edges.empty() && random() % 2 == 0) start = edges[random() % edges.size()] + random() % 5 - 2;
+        const std::size_t bytes = random() % 8 == 0 ? random() : (std::size_t{1} << (random() % 41)) + random() % 3;
+        compare(start, bytes);
+    }
+    std::cout << "host region index: " << regions.size() << " regions, " << touching << " touching pairs, index " << (expectIndex ? "on" : "off") << "\n";
+}
+
 void CheckHostHole() {
+    CheckHostRegionIndex(true);
     constexpr std::size_t bytes = 64;
     const auto hole = ChildHostHole();
     Require(GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(hole, bytes), "the range reserved before the arena is not an arena host region");
@@ -2623,6 +2705,10 @@ int main(int argc, char** argv) {
             CheckHostHole();
             return 0;
         }
+        if (std::wstring_view(GetCommandLineW()).ends_with(HostRegionIndexMode)) {
+            CheckHostRegionIndex(false);
+            return 0;
+        }
         if (std::wstring_view(GetCommandLineW()).ends_with(ResidentRemapMode)) {
             CheckResidentDirectMappingReuse();
             return 0;
@@ -2659,6 +2745,7 @@ int main(int argc, char** argv) {
 #endif
         CheckSharedBlock();
         CheckStoredOverUsesPageEvidence();
+        CheckDriverStoredOver();
         CheckRepeatedNeighbourStores();
         CheckStoredAllSince();
         CheckSharedBlockProofs();

@@ -2,6 +2,9 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceJobManager/libSceJobManager.hpp"
 #include "SceTypes.hpp"
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+#include "prx/libc/include/GuestArena.hpp"
+#endif
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -69,10 +72,18 @@ static std::uint64_t SizeFor(std::uint32_t workers, std::uint32_t sequences, std
 }
 
 static void MemoryCase() {
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+    auto clobberErrno = [](std::uintptr_t, std::size_t) { errno = 99; };
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(clobberErrno);
+#endif
     const MemorySizeQueryParams query{0, 4, 2, 100, 8, 4, 2, 0, 0};
+    errno = 71;
     Require(RequiredSize(&query) == 0x17c8);
+    Require(errno == 71);
     const MemorySizeQueryParams unified{1, 4, 2, 100, 8, 4, 2, 0, 0};
+    errno = 71;
     Require(RequiredSize(&unified) == 0x17c8);
+    Require(errno == 71);
     const MemorySizeQueryParams single{0, 1, 1, 0, 0, 0, 0, 0, 0};
     Require(RequiredSize(&single) == 0x1090);
     Require(RequiredSize(nullptr) == 0);
@@ -86,8 +97,13 @@ static void MemoryCase() {
              MemorySizeQueryParams{0, 4, 2, 0, 2 * 0x3ff + 1, 0, 0, 0, 0}, MemorySizeQueryParams{0, 4, 2, 0, 0, 2 * 0xff + 1, 0, 0, 0},
              MemorySizeQueryParams{0, 4, 2, 0, 0, 0, 2 * 0x3f + 1, 0, 0}, MemorySizeQueryParams{1, 4, 0, 0, 0, 0, 0, 0, 0},
              MemorySizeQueryParams{1, 4, 2, 0, 0, 0, 0, 0, std::uint64_t{1} << 56}}) {
+        errno = 71;
         Require(RequiredSize(&bad) == 0);
+        Require(errno == 71);
     }
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+#endif
 }
 
 static void APS5_VABI Nothing(void*, std::uint32_t) {
@@ -150,6 +166,10 @@ static void ValidationCase() {
     Require(InitializeUnified(manager.storage, block.memory, block.bytes, 2, 2, 0, std::uint64_t{1} << 56, nullptr) == InvalidArgument);
     Require(Initialize(manager.storage, block.memory, 8, 2, 2, nullptr) == MemoryTooSmall);
     Require(Initialize(manager.storage, block.memory, 0x400, 2, 2, nullptr) == MemoryTooSmall);
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+    auto clobberErrno = [](std::uintptr_t, std::size_t) { errno = 99; };
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(clobberErrno);
+#endif
     errno = 71;
     Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, reinterpret_cast<const ConfigParams*>(0x10)) == InvalidArgument);
     Require(errno == 71);
@@ -166,9 +186,14 @@ static void ValidationCase() {
         if (field == 4) bad.priority = 0x300;
         if (field == 5) bad.spinMicroseconds = 0x33;
         if (field == 6) bad.reserved = 1;
+        errno = 71;
         Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, &bad) == InvalidArgument);
+        Require(errno == 71);
         Require(Factories(manager.storage, 0) == nullptr);
     }
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+#endif
     config.threadFlags = 0x00010003;
     config.threadName = "JobManagerTestWorker";
     Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, &config) == 0);
@@ -466,11 +491,25 @@ static void SequenceCreateCase() {
     Require(factory->Create(&starved, 1, 1, 1, 1, "starved") == NoNodes && starved == nullptr);
     Require(exhaust->Wait() == Invalid);
     Require(factory->Destroy(exhaust) == 0);
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+    auto clobberErrno = [](std::uintptr_t, std::size_t) { errno = 99; };
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(clobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(clobberErrno);
+#endif
+    errno = 71;
+    Require(factory->Create(reinterpret_cast<ISequence**>(0x10), 1, 1, 1, 1, "unmapped") == NullArgument);
+    Require(errno == 71);
     ISequence* second = nullptr;
     ISequence* third = nullptr;
+    errno = 71;
     Require(factory->Create(&second, 1, 1, 1, 1, "second") == 0 && second != nullptr);
+    Require(errno == 71);
     Require(factory->Create(&third, 1, 1, 1, 1, "third") == 0 && third != nullptr && third != second);
     Require(factory->Destroy(second) == 0 && factory->Destroy(third) == 0);
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+#endif
     Require(Shutdown(manager.storage) == 0);
 }
 
@@ -667,47 +706,102 @@ struct SpinSample {
     std::int64_t reference;
 };
 
-static SpinSample MeasureWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bool pending) {
-    Block block(SizeFor(2, 2, 4, 2, 2));
+struct WorkerProbe {
+    Block block;
     ManagerObject manager;
-    const ConfigParams config{0, 0x10003, 0x10000, 0x2bc, "WorkerSpin", spin, 0, 0, 0};
-    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, &config) == 0);
-    auto* factory = Factories(manager.storage, 0);
+    ISequenceFactory* factory = nullptr;
     ISequence* held = nullptr;
     ISequence* pulse = nullptr;
-    Require(factory->Create(&held, 4, 4, 2, 2, "held worker") == 0);
-    Require(factory->Create(&pulse, 4, 4, 2, 2, "idle worker") == 0);
     HeldWorker worker;
-    Require(held->Dispatch(HoldWorker, &worker, 1, nullptr) == 0);
-    worker.started.wait(false);
-    if (pending) {
-        Require(held->SyncPoint() == 0);
-        Require(held->Dispatch(Nothing, nullptr, 1, nullptr) == 0);
-    }
     SpinClock clock;
-    Require(pulse->Dispatch(CaptureSpinClock, &clock, 1, nullptr) == 0 && pulse->Wait() == 0);
-    RequireParked(clock.guest);
-    const auto before = SpinCpuUnits(clock);
-    for (std::uint32_t round = 0; round < rounds; ++round) {
+    std::int64_t before = 0;
+    std::int64_t consumed = 0;
+
+    WorkerProbe(std::uint32_t spin, bool pending, const char* name)
+        : block(SizeFor(2, 2, 4, 2, 2)) {
+        const ConfigParams config{0, 0x10003, 0x10000, 0x2bc, name, spin, 0, 0, 0};
+        Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, &config) == 0);
+        factory = Factories(manager.storage, 0);
+        Require(factory->Create(&held, 4, 4, 2, 2, "held worker") == 0);
+        Require(factory->Create(&pulse, 4, 4, 2, 2, "idle worker") == 0);
+        Require(held->Dispatch(HoldWorker, &worker, 1, nullptr) == 0);
+        worker.started.wait(false);
+        if (pending) {
+            Require(held->SyncPoint() == 0);
+            Require(held->Dispatch(Nothing, nullptr, 1, nullptr) == 0);
+        }
+        Require(pulse->Dispatch(CaptureSpinClock, &clock, 1, nullptr) == 0 && pulse->Wait() == 0);
+        RequireParked(clock.guest);
+    }
+
+    void Start() {
+        before = SpinCpuUnits(clock);
+    }
+
+    void Pulse() {
         Require(pulse->Dispatch(Nothing, nullptr, 1, nullptr) == 0 && pulse->Wait() == 0);
+    }
+
+    void Stop() {
+        consumed = SpinCpuUnits(clock) - before;
+        RequireParked(clock.guest);
+    }
+
+    void Release() {
+        Require(!worker.release);
+        worker.release = true;
+        worker.release.notify_one();
+        Require(held->Wait() == 0);
+        Require(factory->Destroy(held) == 0 && factory->Destroy(pulse) == 0);
+        Require(Shutdown(manager.storage) == 0);
+    }
+};
+
+struct InterleavedSpinSamples {
+    SpinSample parked;
+    SpinSample spinning;
+    SpinSample noPending;
+};
+
+static InterleavedSpinSamples MeasureInterleavedWorkerSpin(std::uint32_t rounds) {
+    WorkerProbe parked(0, true, "WorkerSpinParked");
+    WorkerProbe spinning(50, true, "WorkerSpinSpinning");
+    WorkerProbe noPending(50, false, "WorkerSpinNoPending");
+    std::array<WorkerProbe*, 3> probes{&parked, &spinning, &noPending};
+
+    parked.Start();
+    spinning.Start();
+    noPending.Start();
+
+    for (std::uint32_t round = 0; round < rounds; ++round) {
+        probes[round % 3]->Pulse();
+        probes[(round + 1) % 3]->Pulse();
+        probes[(round + 2) % 3]->Pulse();
         Require(sceKernelUsleep_nid_postfix(1000) == 0);
     }
-    const auto consumed = SpinCpuUnits(clock) - before;
-    RequireParked(clock.guest);
-    Require(!worker.release);
-    worker.release = true;
-    worker.release.notify_one();
-    Require(held->Wait() == 0);
-    Require(factory->Destroy(held) == 0 && factory->Destroy(pulse) == 0);
-    Require(Shutdown(manager.storage) == 0);
-    return {consumed, clock.reference};
+
+    parked.Stop();
+    spinning.Stop();
+    noPending.Stop();
+
+    InterleavedSpinSamples samples{
+        {parked.consumed, parked.clock.reference},
+        {spinning.consumed, spinning.clock.reference},
+        {noPending.consumed, noPending.clock.reference}
+    };
+
+    parked.Release();
+    spinning.Release();
+    noPending.Release();
+
+    return samples;
 }
 
-static SpinSample QuietestWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bool pending) {
-    auto best = MeasureWorkerSpin(spin, rounds, pending);
-    for (int attempt = 1; attempt < 7; ++attempt) {
-        const auto sample = MeasureWorkerSpin(spin, rounds, pending);
-        if (sample.consumed < best.consumed) {
+static InterleavedSpinSamples QuietestInterleavedWorkerSpin(std::uint32_t rounds) {
+    auto best = MeasureInterleavedWorkerSpin(rounds);
+    for (int attempt = 1; attempt < 3; ++attempt) {
+        const auto sample = MeasureInterleavedWorkerSpin(rounds);
+        if (sample.noPending.consumed < best.noPending.consumed) {
             best = sample;
         }
     }
@@ -716,9 +810,10 @@ static SpinSample QuietestWorkerSpin(std::uint32_t spin, std::uint32_t rounds, b
 
 static void WorkerSpinCase() {
     constexpr std::uint32_t rounds = 512;
-    const auto parked = QuietestWorkerSpin(0, rounds, true);
-    const auto spinning = QuietestWorkerSpin(50, rounds, true);
-    const auto noPending = QuietestWorkerSpin(50, rounds, false);
+    const auto samples = QuietestInterleavedWorkerSpin(rounds);
+    const auto& parked = samples.parked;
+    const auto& spinning = samples.spinning;
+    const auto& noPending = samples.noPending;
 #ifdef _WIN32
     constexpr const char* units = "cycles";
 #else
@@ -729,6 +824,7 @@ static void WorkerSpinCase() {
     const auto interval = spinning.reference * rounds / 100;
     Require(spinning.consumed > parked.consumed + interval / 3);
     Require(spinning.consumed < parked.consumed + interval * 5);
+    Require(spinning.consumed > noPending.consumed + interval / 3);
     Require(noPending.consumed < parked.consumed + interval);
 }
 

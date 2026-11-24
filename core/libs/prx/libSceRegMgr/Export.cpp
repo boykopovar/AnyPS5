@@ -1,9 +1,12 @@
 #include "prx/libSceRegMgr/include/Api.hpp"
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -20,6 +23,7 @@ constexpr int SCE_REG_MGR_ERROR_INVALID_TYPE = static_cast<int>(0x80820006);
 constexpr int SCE_REG_MGR_NONSYS_ERROR_INVALID_PARAM = static_cast<int>(0x800D0202);
 constexpr int SCE_REG_MGR_NONSYS_ERROR_BUFFER_TOO_BIG = static_cast<int>(0x800D0208);
 constexpr std::size_t SCE_REG_MGR_NONSYS_MAX_SIZE = 0x800;
+constexpr std::size_t SCE_REG_MGR_MAX_STRING_SIZE = 1024 * 1024;
 
 enum EntryType {
     TypeInt = 0,
@@ -33,6 +37,8 @@ struct RegEntry {
     std::string strVal;
     std::vector<uint8_t> binVal;
 };
+
+constexpr std::size_t SCE_REG_MGR_MAX_BINARY_SIZE = 1024 * 1024;
 
 class RegistryStore {
 public:
@@ -53,7 +59,6 @@ public:
     }
 
     int getStr(int64_t key, char* out, int len) {
-        if (len == 0) NotImplemented_nid_no_patch(__func__);
         if (out == nullptr || len < 0) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
@@ -68,7 +73,6 @@ public:
     }
 
     int getBin(int64_t key, void* out, int size) {
-        if (size == 0) NotImplemented_nid_no_patch(__func__);
         if (out == nullptr || size < 0) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
@@ -101,14 +105,50 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
         if (it != entries_.end() && it->second.type != TypeStr) return SCE_REG_MGR_ERROR_INVALID_TYPE;
-        size_t stringLength = 0;
-        while (stringLength < length && value[stringLength] != '\0') ++stringLength;
-        const bool changed = it == entries_.end() || it->second.strVal.size() != stringLength ||
-                             it->second.strVal.compare(0, stringLength, value, stringLength) != 0;
+        std::array<char, 256> bytes{};
+        std::string text;
+        const int savedErrno = errno;
+        const auto address = reinterpret_cast<std::uintptr_t>(value);
+        for (std::size_t offset = 0; offset < length;) {
+            if (text.size() > SCE_REG_MGR_MAX_STRING_SIZE || offset > UINTPTR_MAX - address) {
+                errno = savedErrno;
+                return SCE_REG_MGR_ERROR_INVALID_PARAM;
+            }
+            const std::size_t count = std::min({length - offset, bytes.size(),
+                SCE_REG_MGR_MAX_STRING_SIZE + 1 - text.size()});
+            const auto current = address + offset;
+            if (count - 1 <= UINTPTR_MAX - current && GuestCopyIn_nid_no_patch(bytes.data(),
+                    reinterpret_cast<const void*>(current), count)) {
+                const auto end = std::find(bytes.begin(), bytes.begin() + count, '\0');
+                text.append(bytes.data(), static_cast<std::size_t>(end - bytes.begin()));
+                if (end != bytes.begin() + count) break;
+                offset += count;
+            } else {
+                bool terminated = false;
+                for (std::size_t index = 0; index < count; ++index) {
+                    char character = 0;
+                    if (index > UINTPTR_MAX - current || !GuestCopyIn_nid_no_patch(&character,
+                            reinterpret_cast<const void*>(current + index), 1)) {
+                        errno = savedErrno;
+                        return SCE_REG_MGR_ERROR_INVALID_PARAM;
+                    }
+                    if (character == '\0') {
+                        terminated = true;
+                        break;
+                    }
+                    text.push_back(character);
+                }
+                if (terminated) break;
+                offset += count;
+            }
+        }
+        errno = savedErrno;
+        if (text.size() > SCE_REG_MGR_MAX_STRING_SIZE) return SCE_REG_MGR_ERROR_INVALID_PARAM;
+        const bool changed = it == entries_.end() || it->second.strVal != text;
         RegEntry& entry = entries_[key];
         entry.type = TypeStr;
         entry.intVal = 0;
-        entry.strVal.assign(value, stringLength);
+        entry.strVal = std::move(text);
         entry.binVal.clear();
         if (changed) changed_[key] = 0xff;
         return 0;
@@ -119,6 +159,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
         if (it != entries_.end() && it->second.type != TypeBin) return SCE_REG_MGR_ERROR_INVALID_TYPE;
+        if (size > SCE_REG_MGR_MAX_BINARY_SIZE) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         std::vector<std::uint8_t> bytes(size);
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(bytes.data(), value, size);
@@ -178,14 +219,14 @@ int APS5_VABI sceRegMgrGetStr(std::int64_t optionId, char* outString, int string
     return gStore.getStr(optionId, outString, stringLength);
 }
 int APS5_VABI sceRegMgrSetBin(std::uint32_t optionId, const void* data, std::size_t size) {
-    if (size == 0) NotImplemented_nid_no_patch(__func__);
+    if (size == 0) throw std::runtime_error("sceRegMgrSetBin: a zero-length write is unmeasured");
     return gStore.setBin(optionId, data, size);
 }
 int APS5_VABI sceRegMgrSetInt(int32_t optionId, int32_t inInt) {
     return gStore.setInt(static_cast<std::uint32_t>(optionId), inInt);
 }
 int APS5_VABI sceRegMgrSetStr(int32_t optionId, const char* inStirng, std::size_t stringLength) {
-    if (stringLength == 0) NotImplemented_nid_no_patch(__func__);
+    if (stringLength == 0) throw std::runtime_error("sceRegMgrSetStr: a zero-length write is unmeasured");
     return gStore.setStr(static_cast<std::uint32_t>(optionId), inStirng, stringLength);
 }
 std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t type, std::int32_t* data) {
@@ -416,14 +457,15 @@ int APS5_VABI sceRegMgrEvtGetRegIdForPS4(void) {
     return 0;
 }
 
-int APS5_VABI sceRegMgrStrncpy(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+char* APS5_VABI sceRegMgrStrncpy(char* destination, const char* source, std::size_t size) {
+    if (destination == nullptr || source == nullptr)
+        return reinterpret_cast<char*>(static_cast<std::uintptr_t>(1));
+    return std::strncpy(destination, source, size);
 }
 
-int APS5_VABI sceRegMgrMemset(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI sceRegMgrMemset(void* destination, int value, std::size_t size) {
+    if (destination == nullptr) return reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
+    return std::memset(destination, value, size);
 }
 
 int APS5_VABI sceRegMgrSetbin(void) {

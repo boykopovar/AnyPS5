@@ -154,6 +154,25 @@ std::uint32_t parsePadChord(std::string_view value) {
     return mask;
 }
 
+std::uint32_t parseToggleActions(std::string_view value) {
+    std::uint32_t mask = 0;
+    std::size_t start = 0;
+    while (true) {
+        const auto comma = value.find(',', start);
+        const auto part = trim(value.substr(start, comma == std::string_view::npos ? std::string_view::npos : comma - start));
+        if (part.empty()) throw std::runtime_error("ToggleActions has an empty action name");
+        const auto* action = findAction(part);
+        if (action == nullptr) throw std::runtime_error("unknown action '" + std::string(part) + "' in ToggleActions");
+        if (action->control != Pad::InputControl::Button) {
+            throw std::runtime_error("ToggleActions only lists pad buttons, not '" + std::string(part) + "'");
+        }
+        mask |= static_cast<std::uint32_t>(action->button);
+        if (comma == std::string_view::npos) break;
+        start = comma + 1;
+    }
+    return mask;
+}
+
 Pad::InputBinding parseBinding(const InputAction& action, std::string_view source) {
     const auto separator = source.find(':');
     if (separator == std::string_view::npos) throw std::runtime_error("source must use TYPE:VALUE format");
@@ -353,6 +372,8 @@ void applyInputStream(Pad::InputConfiguration& configuration, std::istream& file
     auto& bindings = configuration.bindings;
     std::unordered_set<std::string> overriddenActions;
     std::array<bool, settingNames.size()> configuredSettings{};
+    std::array<bool, SDL_CONTROLLER_BUTTON_MAX> configuredControllerButtons{};
+    bool configuredToggleActions = false;
     std::string line;
     std::size_t lineNumber = 0;
     while (std::getline(file, line)) {
@@ -362,10 +383,35 @@ void applyInputStream(Pad::InputConfiguration& configuration, std::istream& file
         const std::string_view content = trim(std::string_view(line).substr(0, comment));
         if (content.empty()) continue;
         const auto separator = content.find('=');
-        if (separator == std::string_view::npos) invalidLine(source, lineNumber, "expected Action = TYPE:VALUE");
+        if (separator == std::string_view::npos) invalidLine(source, lineNumber, "expected a name and value separated by '='");
 
         const auto actionName = trim(content.substr(0, separator));
         const auto value = trim(content.substr(separator + 1));
+        const auto colon = actionName.find(':');
+        if (colon != std::string_view::npos && upper(trim(actionName.substr(0, colon))) == "SDLBUTTON") {
+            const std::string name(trim(actionName.substr(colon + 1)));
+            const auto button = SDL_GameControllerGetButtonFromString(name.c_str());
+            if (button == SDL_CONTROLLER_BUTTON_INVALID) invalidLine(source, lineNumber, "unknown SDL controller button '" + name + "'");
+            const auto index = static_cast<std::size_t>(button);
+            if (configuredControllerButtons[index]) invalidLine(source, lineNumber, "SDL controller button '" + name + "' is set more than once");
+            try {
+                configuration.controllerButtons[index] = upper(value) == "NONE" ? Pad::PadButton::None : parsePadButton(value);
+            } catch (const std::runtime_error& error) {
+                invalidLine(source, lineNumber, error.what());
+            }
+            configuredControllerButtons[index] = true;
+            continue;
+        }
+        if (upper(actionName) == "TOGGLEACTIONS") {
+            if (configuredToggleActions) invalidLine(source, lineNumber, "ToggleActions is set more than once");
+            configuredToggleActions = true;
+            try {
+                configuration.toggleButtons = parseToggleActions(value);
+            } catch (const std::runtime_error& error) {
+                invalidLine(source, lineNumber, error.what());
+            }
+            continue;
+        }
         if (const auto* setting = findSetting(actionName)) {
             auto& configured = configuredSettings[static_cast<std::size_t>(setting->setting)];
             if (configured) invalidLine(source, lineNumber, std::string(setting->name) + " is set more than once");
@@ -411,6 +457,45 @@ void loadInputFile(Pad::InputConfiguration& configuration, const std::filesystem
 
 void Pad::ApplyInputMapping(InputConfiguration& configuration, std::istream& input, std::string_view source) {
     applyInputStream(configuration, input, source);
+}
+
+namespace {
+
+Pad::InputFileStamp fileStamp(const std::filesystem::path& path) {
+    Pad::InputFileStamp stamp;
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error)) return stamp;
+    stamp.present = true;
+    stamp.modified = std::filesystem::last_write_time(path, error);
+    stamp.size = std::filesystem::file_size(path, error);
+    return stamp;
+}
+
+}
+
+Pad::InputMappingStamp Pad::InputMappingFileStamp(std::string_view titleId) {
+    const auto configured = configuredPath();
+    const std::filesystem::path path = !configured.empty() ? configured : defaultConfigPath();
+    InputMappingStamp stamp;
+    stamp.shared = fileStamp(path);
+    const auto profile = InputProfileName(titleId);
+    if (!profile.empty()) stamp.profile = fileStamp(path.parent_path() / profile);
+    return stamp;
+}
+
+Pad::InputMappingWatch::InputMappingWatch(InputMappingStamp applied) : applied(applied), candidate(applied) {}
+
+bool Pad::InputMappingWatch::Poll(const InputMappingStamp& current) {
+    if (current == applied) {
+        candidate = current;
+        return false;
+    }
+    if (current != candidate) {
+        candidate = current;
+        return false;
+    }
+    applied = current;
+    return true;
 }
 
 Pad::InputMappingStore::InputMappingStore(InputConfiguration initial) : current(std::make_shared<const InputConfiguration>(std::move(initial))) {}

@@ -14,6 +14,9 @@ differ inside a container:
     mapping of the PT_LOAD that contains them, including a PT_PHDR at vaddr zero.
     A PT_TLS image that runs past the file bytes of its PT_LOAD gets the zeros
     the load maps there, the bytes a loader reads from p_vaddr.
+    A PT_DYNAMIC without a vaddr whose stale range lies inside a recorded
+    segment without a vaddr, as in a PS4 executable that keeps it in
+    PT_SCE_DYNLIBDATA, is read from that segment instead.
     Other segments without a vaddr that follow the last recorded one in the ELF
     are stored right after it, back to back in ELF order, except a PT_NOTE, which
     the container leaves out and which is emitted without file bytes. Some dumps
@@ -27,8 +30,10 @@ differ inside a container:
     present. A PT_PHDR mapping different bytes from the input table is refused.
 
 Only decrypted containers are handled. A container whose load segments all look
-encrypted is refused instead of copied: the entropy of each load segment is
-measured and a run of segments near eight bits per byte is reported.
+encrypted, or whose segments of 0x1000 bytes or more near eight bits per byte
+hold more than half of the load bytes, is refused instead of copied: the entropy
+of each load segment is measured at its start, middle and end, and the segments
+near eight bits per byte at all three are reported.
 
 usage: unwrap_self.py <input.self> <output.elf> [--verbose]
 """
@@ -61,6 +66,7 @@ PT_NOTE = 4
 PT_PHDR = 6
 ENTROPY_LIMIT = 7.5
 ENTROPY_SAMPLE = 0x10000
+ENTROPY_LARGE = 0x1000
 
 PHDR_NAMES = {
     PT_LOAD: "PT_LOAD",
@@ -152,12 +158,12 @@ def parse_elf(data):
                 raise Refused("segment %d TLS alignment exceeds 8192" % index)
             if memory_size > 0x7FFF0000:
                 raise Refused("segment %d TLS memory size exceeds 0x7fff0000" % index)
-        if kind == PT_LOAD and memory_size > (1 << 64) - vaddr:
+        if kind in (PT_LOAD, PT_TLS) and memory_size > (1 << 64) - vaddr:
             raise Refused("segment %d memory range exceeds ELF64" % index)
         headers.append({
             "index": index, "type": kind, "flags": flags, "offset": file_offset,
             "vaddr": vaddr, "size": file_size, "memory": memory_size,
-            "align": alignment, "source": file_offset, "host": None,
+            "align": alignment, "source": file_offset, "host": None, "container": None,
         })
     return inner, header, headers
 
@@ -184,6 +190,16 @@ def place_segments(data, headers, records):
         if containers:
             host = min(containers, key=lambda load: load["size"])
             header["host"] = host
+            placed.add(header["index"])
+    for header in headers:
+        if header["type"] != PT_DYNAMIC or header["vaddr"] != 0 or not header["size"] or header["index"] in placed:
+            continue
+        containers = [other for other in recorded if other["offset"] <= header["offset"]
+                      and header["offset"] + header["size"] <= other["offset"] + other["size"]]
+        if containers:
+            container = min(containers, key=lambda other: other["size"])
+            header["source"] = container["source"] + header["offset"] - container["offset"]
+            header["container"] = container
             placed.add(header["index"])
     if recorded:
         last = max(recorded, key=lambda header: header["offset"])
@@ -286,18 +302,33 @@ def place_segments(data, headers, records):
     return zero_filled
 
 
+def segment_entropy(data, header):
+    start, size = header["source"], header["size"]
+    if size <= ENTROPY_SAMPLE:
+        return entropy(data[start:start + size])
+    offsets = (0, (size - ENTROPY_SAMPLE) // 2, size - ENTROPY_SAMPLE)
+    return min(entropy(data[start + offset:start + offset + ENTROPY_SAMPLE]) for offset in offsets)
+
+
 def check_decrypted(data, headers):
     encrypted = []
+    encrypted_large = 0
+    total = 0
     for header in headers:
         if header["type"] != PT_LOAD or header["size"] == 0:
             continue
-        sample = data[header["source"]:header["source"] + min(header["size"], ENTROPY_SAMPLE)]
-        value = entropy(sample)
+        total += header["size"]
+        value = segment_entropy(data, header)
         if value >= ENTROPY_LIMIT:
             encrypted.append((header["index"], header["source"], value))
-    if encrypted and len(encrypted) == len([h for h in headers if h["type"] == PT_LOAD and h["size"]]):
+            if header["size"] >= ENTROPY_LARGE:
+                encrypted_large += header["size"]
+    every = len(encrypted) == len([h for h in headers if h["type"] == PT_LOAD and h["size"]])
+    if encrypted and (every or encrypted_large * 2 > total):
         listed = ", ".join("segment %d at %#x (%.2f bits per byte)" % item for item in encrypted)
-        raise Refused("every load segment looks encrypted: " + listed)
+        if every:
+            raise Refused("every load segment looks encrypted: " + listed)
+        raise Refused("most load bytes look encrypted: " + listed)
 
 
 def unwrap(path, output, verbose=False):
@@ -352,7 +383,7 @@ def unwrap(path, output, verbose=False):
         return None
 
     for header in headers:
-        if header["type"] == PT_LOAD or header["size"] == 0:
+        if header["type"] == PT_LOAD or header["size"] == 0 or header["container"] is not None:
             continue
         if region_for(header["source"], header["size"]) is None:
             regions.append({"old": header["source"], "size": header["size"],
@@ -405,9 +436,19 @@ def unwrap(path, output, verbose=False):
                       % (cursor, output_limit, len(data)))
 
     result = bytearray(cursor)
-    image = data + zero_filled
+    output_bytes = memoryview(result)
+    input_bytes = memoryview(data)
+    tail_bytes = memoryview(zero_filled)
     for region in regions:
-        result[region["new"]:region["new"] + region["size"]] = image[region["old"]:region["old"] + region["size"]]
+        start = region["old"]
+        end = start + region["size"]
+        target = region["new"]
+        destination_bytes = output_bytes[target:target + region["size"]]
+        file_part = input_bytes[start:end]
+        destination_bytes[:len(file_part)] = file_part
+        if len(file_part) < len(destination_bytes):
+            tail_start = max(0, start - len(data))
+            destination_bytes[len(file_part):] = tail_bytes[tail_start:end - len(data)]
 
     for header in headers:
         if header["size"] == 0 and (header["type"] == PT_LOAD or header["source"] == 0):

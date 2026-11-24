@@ -13,38 +13,67 @@ UNBLOCKS_LABEL = pr_labels.UNBLOCKS_LABEL
 QUEUE_SIZE = 30
 BLOCKING_LABELS = {"needs rebase", "perf numbers missing", "open PR limit"}
 CONVENTIONS_CHECK = "conventions"
-BOT_CHECKS = {"intake", "labels", "eligibility", "report"}
-BUILD_CHECKS = {"linux", "windows", "relinker", "relinker-asan", "register-context", "write-watch"}
+BOT_CHECKS = {"intake", "labels", "eligibility", "report", "pr"}
+BUILD_CHECKS = {"linux", "windows", "relinker", "relinker-asan", "register-context", "write-watch", "pipe-write", "edge-watch"}
 FAILED = {"failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale", "error"}
 PASSED = {"success", "neutral"}
 MARKER = "<!-- pr-review-queue -->"
 WRITE_PAUSE = 1.0
 PAGE_SIZE = 25
 
+PULL_FIELDS = """
+fragment Readiness on PullRequest {
+  number title isDraft mergeable headRefOid createdAt
+  author { login }
+  labels(first: 50) { nodes { name } }
+  reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } }
+  latestOpinionatedReviews(first: 50) { nodes { state author { login } } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) {
+    pageInfo { hasNextPage }
+    nodes {
+      __typename
+      ... on CheckRun {
+        databaseId name status conclusion
+        checkSuite { app { slug } workflowRun { workflow { databaseId } } }
+      }
+      ... on StatusContext { context state }
+    }
+  } } } } }
+}
+"""
+
 QUERY = """
 query($owner: String!, $name: String!, $after: String, $size: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequests(states: OPEN, baseRefName: "main", first: $size, after: $after) {
       pageInfo { hasNextPage endCursor }
-      nodes {
-        number title isDraft mergeable headRefOid createdAt
-        author { login }
-        labels(first: 50) { nodes { name } }
-        reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } }
-        latestOpinionatedReviews(first: 50) { nodes { state author { login } } }
-        commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) {
-          pageInfo { hasNextPage }
-          nodes {
-            __typename
-            ... on CheckRun { databaseId name status conclusion }
-            ... on StatusContext { context state }
-          }
-        } } } } }
-      }
+      nodes { ...Readiness }
     }
   }
 }
-"""
+""" + PULL_FIELDS
+
+EXPLAIN_QUERY = """
+query($url: URI!) {
+  resource(url: $url) {
+    ... on PullRequest {
+      state baseRefName
+      ...Readiness
+    }
+  }
+}
+""" + PULL_FIELDS
+
+AUTHOR_QUERY = """
+query($login: String!, $after: String, $size: Int!) {
+  user(login: $login) {
+    pullRequests(states: OPEN, baseRefName: "main", first: $size, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { repository { nameWithOwner } ...Readiness }
+    }
+  }
+}
+""" + PULL_FIELDS
 
 CLOSED_QUERY = """
 query($owner: String!, $name: String!, $label: String!, $after: String) {
@@ -70,9 +99,13 @@ def check_of(node):
     if node.get("__typename") == "StatusContext":
         state = str(node.get("state") or "").lower()
         done = state not in {"pending", "expected"}
-        return {"id": 0, "name": node.get("context"), "done": done,
+        return {"id": 0, "name": node.get("context"), "source": ("status",), "done": done,
                 "conclusion": {"success": "success"}.get(state, "failure") if done else None}
+    suite = node.get("checkSuite") or {}
+    app = (suite.get("app") or {}).get("slug")
+    workflow = (suite.get("workflowRun") or {}).get("workflow") or {}
     return {"id": node.get("databaseId") or 0, "name": node.get("name"),
+            "source": ("run", app, workflow.get("databaseId")),
             "done": str(node.get("status") or "").lower() == "completed",
             "conclusion": str(node.get("conclusion") or "").lower() or None}
 
@@ -106,10 +139,10 @@ def pull(node):
 def latest_checks(checks):
     latest = {}
     for check in checks:
-        name = check["name"]
-        if name not in latest or check["id"] > latest[name]["id"]:
-            latest[name] = check
-    return [check for name, check in latest.items() if name not in BOT_CHECKS]
+        key = check["name"], check["source"]
+        if key not in latest or check["id"] > latest[key]["id"]:
+            latest[key] = check
+    return [check for check in latest.values() if check["name"] not in BOT_CHECKS]
 
 
 def blockers(pr):
@@ -120,15 +153,15 @@ def blockers(pr):
         reasons.append("conflicts with main")
     reasons += [f"label: {label}" for label in sorted(BLOCKING_LABELS - {"needs rebase"} & pr["labels"])]
     checks = latest_checks(pr["checks"])
-    by_name = {check["name"]: check for check in checks}
+    conventions = [check for check in checks if check["name"] == CONVENTIONS_CHECK]
     if pr["checks_incomplete"]:
         reasons.append("too many checks to read")
-    if CONVENTIONS_CHECK not in by_name:
+    if not conventions:
         reasons.append("conventions has not run")
-    elif by_name[CONVENTIONS_CHECK]["done"] and by_name[CONVENTIONS_CHECK]["conclusion"] not in FAILED | {"success"}:
+    elif all(check["done"] and check["conclusion"] not in FAILED | {"success"} for check in conventions):
         reasons.append("conventions did not pass")
-    failing = sorted(check["name"] for check in checks if check["done"] and check["conclusion"] in FAILED)
-    running = sorted(check["name"] for check in checks if not check["done"])
+    failing = sorted({check["name"] for check in checks if check["done"] and check["conclusion"] in FAILED})
+    running = sorted({check["name"] for check in checks if not check["done"]})
     if failing:
         reasons.append("failing: " + ", ".join(failing))
     if running:
@@ -149,10 +182,10 @@ def ranked(prs):
 
 
 def clean(text):
-    text = "".join(ch for ch in text if ch.isprintable()).replace("@", "@​")
-    for char in "[]|`<>*_~":
+    text = "".join(ch for ch in text if ch.isprintable())[:100].replace("@", "@​")
+    for char in "\\[]|`<>*_~":
         text = text.replace(char, "\\" + char)
-    return text[:100]
+    return text
 
 
 def queue_body(queue, total, ready):
@@ -164,9 +197,20 @@ def queue_body(queue, total, ready):
     return "\n".join(lines) + "\n"
 
 
+def pagination_cursor(connection, seen, label):
+    cursor = connection["pageInfo"]["endCursor"]
+    if not isinstance(cursor, str) or not cursor:
+        raise ValueError(f"{label} page has no cursor")
+    if cursor in seen:
+        raise ValueError(f"{label} pagination did not advance")
+    seen.add(cursor)
+    return cursor
+
+
 def fetch(repo):
     owner, name = repo.split("/", 1)
     prs, after = [], None
+    seen = set()
     while True:
         args = ["api", "graphql", "-f", f"query={QUERY}", "-F", f"owner={owner}", "-F", f"name={name}", "-F", f"size={PAGE_SIZE}"]
         if after:
@@ -178,12 +222,58 @@ def fetch(repo):
         prs += [pull(node) for node in listed(connection)]
         if not connection["pageInfo"]["hasNextPage"]:
             return prs
-        after = connection["pageInfo"]["endCursor"]
+        after = pagination_cursor(connection, seen, "open pull request")
+
+
+def fetch_one(repo, number):
+    page = json.loads(pr_labels.gh("api", "graphql", "-f", f"query={EXPLAIN_QUERY}",
+                                   "-f", f"url=https://github.com/{repo}/pull/{number}"))
+    if page.get("errors"):
+        raise ValueError(str(page["errors"])[:300])
+    node = page["data"]["resource"]
+    if node and node["state"] == "OPEN" and node["baseRefName"] == "main":
+        return pull(node)
+    return None
+
+
+def missing_user(error):
+    try:
+        errors = json.loads(error.stdout or "{}").get("errors") or []
+    except (ValueError, AttributeError):
+        return False
+    return bool(errors) and all(isinstance(item, dict) and item.get("type") == "NOT_FOUND"
+                                and item.get("path") == ["user"] for item in errors)
+
+
+def fetch_author(repo, login):
+    if login.casefold() == "ghost":
+        return fetch(repo)
+    prs, after = [], None
+    seen = set()
+    while True:
+        args = ["api", "graphql", "-f", f"query={AUTHOR_QUERY}", "-f", f"login={login}", "-F", f"size={PAGE_SIZE}"]
+        if after:
+            args += ["-f", f"after={after}"]
+        try:
+            page = json.loads(pr_labels.gh(*args))
+        except subprocess.CalledProcessError as error:
+            if missing_user(error):
+                return fetch(repo)
+            raise
+        if page.get("errors"):
+            raise ValueError(str(page["errors"])[:300])
+        connection = page["data"]["user"]["pullRequests"]
+        prs += [pull(node) for node in listed(connection)
+                if node["repository"]["nameWithOwner"].casefold() == repo.casefold()]
+        if not connection["pageInfo"]["hasNextPage"]:
+            return prs
+        after = pagination_cursor(connection, seen, "author pull request")
 
 
 def closed_with_label(repo):
     owner, name = repo.split("/", 1)
     closed, after = [], None
+    seen = set()
     while True:
         args = ["api", "graphql", "-f", f"query={CLOSED_QUERY}", "-F", f"owner={owner}",
                 "-F", f"name={name}", "-f", f"label={QUEUE_LABEL}"]
@@ -196,9 +286,7 @@ def closed_with_label(repo):
         closed += [node["number"] for node in listed(connection)]
         if not connection["pageInfo"]["hasNextPage"]:
             return closed
-        after = connection["pageInfo"]["endCursor"]
-        if not after:
-            raise ValueError("closed pull request page has no cursor")
+        after = pagination_cursor(connection, seen, "closed pull request")
 
 
 def apply(repo, prs, queue, dry_run, closed=()):
@@ -225,21 +313,31 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Label the pull requests that are next in the review queue.")
     parser.add_argument("--dry-run", action="store_true", help="print the planned changes and write nothing")
     parser.add_argument("--explain", type=int, metavar="PR", help="print what blocks one pull request and write nothing")
+    parser.add_argument("--author", metavar="LOGIN", help="print what blocks each open pull request of one author and write nothing")
     parser.add_argument("--issue", type=int, help="issue whose body lists the queue")
     args = parser.parse_args(argv)
+    if args.explain is not None and args.author is not None:
+        parser.error("--explain and --author cannot be combined")
     try:
         repo = pr_labels.repository()
-        prs = fetch(repo)
-        closed = closed_with_label(repo) if args.explain is None else []
+        if args.explain is not None:
+            pr = fetch_one(repo, args.explain)
+            if pr is None:
+                parser.error(f"#{args.explain} is not an open pull request to main")
+            print("\n".join(blockers(pr)) or "nothing blocks it")
+            return 0
+        prs = fetch(repo) if args.author is None else fetch_author(repo, args.author)
+        closed = closed_with_label(repo) if args.author is None else []
     except subprocess.CalledProcessError as error:
         parser.error((error.stderr or str(error)).strip())
     except (ValueError, KeyError, TypeError, RecursionError) as error:
         parser.error(f"cannot read pull requests: {error}")
-    if args.explain is not None:
-        match = [pr for pr in prs if pr["number"] == args.explain]
-        if not match:
-            parser.error(f"#{args.explain} is not an open pull request to main")
-        print("\n".join(blockers(match[0])) or "nothing blocks it")
+    if args.author is not None:
+        mine = sorted((pr for pr in prs if pr["author"].casefold() == args.author.casefold()), key=lambda pr: pr["number"])
+        for pr in mine:
+            print(f"#{pr['number']}: {'; '.join(blockers(pr)) or 'nothing blocks it'}")
+        if not mine:
+            print(f"{args.author} has no open pull request to main")
         return 0
     ready = ranked(prs)
     queue = ready[:QUEUE_SIZE]

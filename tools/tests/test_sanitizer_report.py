@@ -50,7 +50,7 @@ class SanitizerReportTests(unittest.TestCase):
             case("switched_off", "disabled"),
         ))
         self.assertEqual(sanitizer_report.results(path), {
-            "passes": "passed", "fails": "failed", "skips": "skipped", "never_built": "failed", "switched_off": "skipped",
+            "passes": "passed", "fails": "failed", "skips": "skipped", "never_built": "notrun", "switched_off": "skipped",
         })
 
     def test_not_run_tests_are_skips_only_with_a_ctest_skip_status(self):
@@ -62,11 +62,37 @@ class SanitizerReportTests(unittest.TestCase):
             case("no_message", "notrun", "<skipped/>"),
         ))
         self.assertEqual(sanitizer_report.results(path), {
-            "skip_code": "skipped", "skip_regex": "skipped", "missing": "failed", "no_message": "failed",
+            "skip_code": "skipped", "skip_regex": "skipped", "missing": "notrun", "no_message": "notrun",
         })
         code, stdout, _ = self.run_main(path)
         self.assertEqual(code, 1)
         self.assertIn("4 tests: 0 passed, 2 skipped, 2 failed.", stdout)
+
+    def test_known_failure_cannot_hide_a_test_that_did_not_run(self):
+        path = self.write(suite(
+            case("fiber", "notrun", '<skipped message="Unable to find executable"/>'),
+            case("switch", "fail", "<failure/>"),
+            case("intentional", "notrun", '<skipped message="SKIP_RETURN_CODE=77"/>'),
+        ))
+        known = self.write_known("fiber address missing executable", "switch address stack switch")
+        code, stdout, _ = self.run_main(path, "--known", known, "--sanitizer", "address")
+        self.assertEqual(code, 1)
+        self.assertIn("| Failed test |\n| - |\n| `fiber` |", stdout)
+        self.assertIn("| `switch` | stack switch |", stdout)
+        code, stdout, _ = self.run_main(path, "--known", known, "--sanitizer", "address", "--json")
+        self.assertEqual(code, 1)
+        data = json.loads(stdout)
+        self.assertEqual([(test["name"], test["outcome"], test["unexpected"]) for test in data["tests"]],
+                         [("fiber", "failed", True), ("intentional", "skipped", False), ("switch", "failed", False)])
+
+    def test_unknown_ctest_status_is_not_counted_as_passed(self):
+        for status in ("garbage", "RUN", "", "skippedd"):
+            with self.subTest(status=status):
+                path = self.write(suite(case("untrusted", status)))
+                code, stdout, stderr = self.run_main(path)
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout, "")
+                self.assertIn("invalid testcase status", stderr)
 
     def test_a_test_listed_twice_is_rejected(self):
         summary = self.write("", "summary.md")
@@ -172,6 +198,11 @@ class SanitizerReportTests(unittest.TestCase):
                          {"fiber": "stack switch", "both": "shared   reason"})
         self.assertEqual(sanitizer_report.load_known(known, ["thread"]), {"racy": "interceptor gap"})
 
+    def test_a_test_known_under_two_selected_sanitizers_keeps_both_reasons(self):
+        known = self.write_known("fiber address stack switch", "fiber undefined misaligned load", "fiber thread interceptor gap")
+        self.assertEqual(sanitizer_report.load_known(known, ["address", "undefined"]), {"fiber": "stack switch; misaligned load"})
+        self.assertEqual(sanitizer_report.load_known(known, ["undefined"]), {"fiber": "misaligned load"})
+
     def test_utf8_bom_does_not_change_the_first_known_test_name(self):
         known = self.write("\ufefffiber address stack switch\n", "known.txt")
         self.assertEqual(sanitizer_report.load_known(known, ["address"]), {"fiber": "stack switch"})
@@ -249,6 +280,17 @@ class SanitizerReportTests(unittest.TestCase):
                          "/src/Copy.cpp:35:16: runtime error: null pointer passed as argument 2")
         self.assertEqual(sanitizer_report.first_report("FAIL: plain assertion\n"), "")
 
+    def test_fatal_thread_sanitizer_startup_report(self):
+        line = 'FATAL: ThreadSanitizer: unexpected memory mapping 0x1000-0x2000'
+        self.assertEqual(sanitizer_report.first_report(line + '\n'), line)
+
+    def test_a_bare_deadly_signal_is_reported_after_the_other_diagnostics(self):
+        self.assertEqual(sanitizer_report.first_report("AddressSanitizer:DEADLYSIGNAL\r\nAddressSanitizer:DEADLYSIGNAL\r\n"),
+                         "AddressSanitizer:DEADLYSIGNAL")
+        self.assertEqual(sanitizer_report.first_report("AddressSanitizer:DEADLYSIGNAL\n"
+                                                       "SUMMARY: AddressSanitizer: stack-overflow\n"),
+                         "SUMMARY: AddressSanitizer: stack-overflow")
+
     def test_first_report_keeps_source_paths_with_spaces(self):
         locations = (r"D:\build folder\src\value.cpp:12:3", "/build folder/src/value.cpp:12:3",
                      "/build \u03a9 folder/src/value.cpp:12:3")
@@ -296,6 +338,15 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("| Failed test |\n| - |\n| `plain` |\n", stdout)
 
+    def test_table_details_preserve_html_text_and_backslashes_before_pipes(self):
+        text, failing = sanitizer_report.summarize(
+            "ASan", {"unexpected": "failed", "known": "failed"},
+            {"known": r"guest<arg>\|host & fallback"},
+            {"unexpected": r"stack<Foo>\|Bar & Baz"},
+        )
+        self.assertTrue(failing)
+        self.assertIn(r"| `unexpected` | stack&lt;Foo&gt;&#92;\|Bar &amp; Baz |", text)
+        self.assertIn(r"| `known` | guest&lt;arg&gt;&#92;\|host &amp; fallback |", text)
 
     def test_names_remain_literal_in_every_summary_table(self):
         names = ("one|two", "`fence`", "line\nnext\rreturn", "carriage\rreturn", "\\|<script>&中文*_")
