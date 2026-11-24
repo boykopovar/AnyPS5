@@ -35,6 +35,31 @@ std::vector<std::uint16_t> ReadText(const std::uint16_t* text, std::int32_t leng
     }
 }
 
+class GuestUnits {
+public:
+    GuestUnits(const std::uint16_t* base, const char* caller) : base_(base), caller_(caller) {}
+
+    std::uint16_t At(std::size_t index) {
+        if (index < start_ || index - start_ >= count_) Load(index);
+        return chunk_[index - start_];
+    }
+
+private:
+    void Load(std::size_t index) {
+        const auto address = reinterpret_cast<std::uintptr_t>(base_ + index);
+        const std::size_t count = (std::max)(std::size_t{1}, (0x1000 - address % 0x1000) / sizeof(std::uint16_t));
+        CopyUnits(chunk_, base_ + index, count, caller_);
+        start_ = index;
+        count_ = count;
+    }
+
+    const std::uint16_t* base_;
+    const char* caller_;
+    std::uint16_t chunk_[0x800];
+    std::size_t start_ = 0;
+    std::size_t count_ = 0;
+};
+
 bool IsLead_nid_no_patch(std::uint16_t value) {
     return value >= 0xd800 && value <= 0xdbff;
 }
@@ -43,18 +68,22 @@ bool IsTrail_nid_no_patch(std::uint16_t value) {
     return value >= 0xdc00 && value <= 0xdfff;
 }
 
-std::uint16_t* FindScalar_nid_no_patch(const std::uint16_t* text, std::int32_t scalar, std::int32_t length, bool last) {
+std::uint16_t* FindScalar_nid_no_patch(const std::uint16_t* guestText, std::int32_t scalar, std::int32_t length, bool last, const char* caller) {
+    GuestUnits text(guestText, caller);
     std::uint16_t* result = nullptr;
     for (std::size_t offset = 0; length < 0 || offset < static_cast<std::size_t>(length);) {
-        const auto unit = text[offset];
+        const auto unit = text.At(offset);
         std::uint32_t value = unit;
         std::size_t width = 1;
-        if (IsLead_nid_no_patch(unit) && (length < 0 || offset + 1 < static_cast<std::size_t>(length)) && IsTrail_nid_no_patch(text[offset + 1])) {
-            value = 0x10000 + ((unit - 0xd800) << 10) + text[offset + 1] - 0xdc00;
-            width = 2;
+        if (IsLead_nid_no_patch(unit) && (length < 0 || offset + 1 < static_cast<std::size_t>(length))) {
+            const auto next = text.At(offset + 1);
+            if (IsTrail_nid_no_patch(next)) {
+                value = 0x10000 + ((unit - 0xd800) << 10) + next - 0xdc00;
+                width = 2;
+            }
         }
         if (value == static_cast<std::uint32_t>(scalar)) {
-            result = const_cast<std::uint16_t*>(text + offset);
+            result = const_cast<std::uint16_t*>(guestText + offset);
             if (!last) return result;
         }
         if (length < 0 && unit == 0) break;
@@ -104,23 +133,20 @@ std::int8_t APS5_VABI u_strHasMoreChar32Than_nid_postfix(const std::uint16_t* gu
 std::uint16_t* APS5_VABI u_strchr32_nid_postfix(const std::uint16_t* text, std::int32_t scalar) {
     if (static_cast<std::uint32_t>(scalar) > 0x10ffff) return nullptr;
     if (!text && scalar >= 0xd800 && scalar <= 0xdfff) return nullptr;
-    if (!text) NotImplemented_nid_no_patch(__func__);
-    return FindScalar_nid_no_patch(text, scalar, -1, false);
+    return FindScalar_nid_no_patch(text, scalar, -1, false, __func__);
 }
 
 std::uint16_t* APS5_VABI u_strrchr32_nid_postfix(const std::uint16_t* text, std::int32_t scalar) {
     if (static_cast<std::uint32_t>(scalar) > 0x10ffff) return nullptr;
     if (!text && scalar >= 0xd800 && scalar <= 0xdfff) return nullptr;
-    if (!text) NotImplemented_nid_no_patch(__func__);
-    return FindScalar_nid_no_patch(text, scalar, -1, true);
+    return FindScalar_nid_no_patch(text, scalar, -1, true, __func__);
 }
 
 std::uint16_t* APS5_VABI u_memchr32_nid_postfix(const std::uint16_t* text, std::int32_t scalar, std::int32_t count) {
     if (count <= 0 || static_cast<std::uint32_t>(scalar) > 0x10ffff) return nullptr;
     if (scalar >= 0x10000 && count < 2) return nullptr;
     if (!text && scalar >= 0xd800 && scalar <= 0xdfff) return nullptr;
-    if (!text) NotImplemented_nid_no_patch(__func__);
-    return FindScalar_nid_no_patch(text, scalar, count, false);
+    return FindScalar_nid_no_patch(text, scalar, count, false, __func__);
 }
 
 }
