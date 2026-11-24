@@ -1,8 +1,9 @@
 import argparse
+import stat
 import sys
 from pathlib import Path
 
-from configure_seed import checks, quote
+from configure_seed import checks, render
 
 
 def main(argv=None):
@@ -14,16 +15,20 @@ def main(argv=None):
     parser.add_argument("seed", type=Path)
     args = parser.parse_args(argv)
     try:
+        if not stat.S_ISREG(args.cache.stat().st_mode):
+            parser.error(f"{args.cache}: cache must be a regular file")
         found = checks(args.cache)
     except UnicodeError as error:
         parser.error(f"{args.cache}: {error}")
     except OSError as error:
         parser.error(str(error))
     try:
-        expected = "".join(f"set({quote(name)} {quote(value)} CACHE INTERNAL {quote(doc)})\n"
-                           for name, (value, doc) in sorted(found.items())).encode("utf-8")
+        expected = render(found).encode("utf-8")
         try:
-            actual = args.seed.read_bytes()
+            if not stat.S_ISREG(args.seed.stat().st_mode):
+                parser.error(f"{args.seed}: seed must be a regular file")
+            with args.seed.open("rb") as seed:
+                actual = seed.read(len(expected) + 1)
         except FileNotFoundError:
             print(f"missing seed: {args.seed}")
             return 1

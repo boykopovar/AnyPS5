@@ -72,6 +72,28 @@ class Tests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
 
+    def test_nonregular_cache_and_seed_have_a_clear_diagnostic(self):
+        cache, seed = self.root / "cache", self.root / "seed"
+        directory = self.root / "directory"
+        directory.mkdir()
+        cache.write_text("OPT:BOOL=ON\n", encoding="utf-8")
+        seed.write_bytes(b"")
+        for arguments, kind in (((directory, seed), "cache"), ((cache, directory), "seed")):
+            with self.subTest(kind=kind):
+                result = self.run_tool(*arguments)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(f"{kind} must be a regular file", result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires named pipes")
+    def test_seed_verification_does_not_wait_on_pipes(self):
+        cache, seed = self.root / "cache", self.root / "seed"
+        cache.write_text("OPT:BOOL=ON\n", encoding="utf-8")
+        os.mkfifo(seed)
+        result = self.run_tool(cache, seed)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("seed must be a regular file", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
