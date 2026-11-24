@@ -162,16 +162,8 @@ bool DocumentIsReadOnly(const XmlHandle* document) {
     return true;
 }
 
-XmlNodeId* DocumentNode(XmlNodeId* result, const XmlHandle* document, NodeQuery query, XmlNodeId node) {
-    if (document == nullptr || result == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
-    if (document->impl == nullptr) {
-        SetInvalid(result);
-        return result;
-    }
-    Generation& generation = *RefOf(document)->generation;
-    Live(document);
+XmlNodeId* GenerationNode(XmlNodeId* result, Generation& generation, NodeQuery query, std::uint64_t offset) {
     const Reader reader(generation.buffers);
-    const std::uint64_t offset = OffsetOf(node);
     std::uint64_t found = 0;
     switch (query) {
     case NodeQuery::Root:
@@ -207,16 +199,19 @@ XmlNodeId* DocumentNode(XmlNodeId* result, const XmlHandle* document, NodeQuery 
     return result;
 }
 
-XmlString* DocumentString(XmlString* result, const XmlHandle* document, StringQuery query, XmlNodeId node) {
+XmlNodeId* DocumentNode(XmlNodeId* result, const XmlHandle* document, NodeQuery query, XmlNodeId node) {
     if (document == nullptr || result == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
     if (document->impl == nullptr) {
-        SetString(result, nullptr);
+        SetInvalid(result);
         return result;
     }
-    Live(document);
     Generation& generation = *RefOf(document)->generation;
+    Live(document);
+    return GenerationNode(result, generation, query, OffsetOf(node));
+}
+
+XmlString* GenerationString(XmlString* result, Generation& generation, StringQuery query, std::uint64_t offset) {
     const Reader reader(generation.buffers);
-    const std::uint64_t offset = OffsetOf(node);
     const char* text = nullptr;
     switch (query) {
     case StringQuery::NodeName:
@@ -241,6 +236,16 @@ XmlString* DocumentString(XmlString* result, const XmlHandle* document, StringQu
     if (text != nullptr) generation.lent = true;
     SetString(result, text);
     return result;
+}
+
+XmlString* DocumentString(XmlString* result, const XmlHandle* document, StringQuery query, XmlNodeId node) {
+    if (document == nullptr || result == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
+    if (document->impl == nullptr) {
+        SetString(result, nullptr);
+        return result;
+    }
+    Live(document);
+    return GenerationString(result, *RefOf(document)->generation, query, OffsetOf(node));
 }
 
 XmlString* DocumentAttribute(XmlString* result, const XmlHandle* document, XmlNodeId node, const XmlString* name) {
@@ -291,15 +296,27 @@ std::uint32_t DocumentNumber(const XmlHandle* document, NumberQuery query, XmlNo
     return 0;
 }
 
+int GenerationChildren(Generation& generation, std::uint64_t offset, XmlHandle* list) {
+    const Reader reader(generation.buffers);
+    std::vector<XmlNodeId> items;
+    for (std::uint64_t child = reader.FirstChild(offset); child != 0; child = reader.Sibling(child)) {
+        items.push_back(MakeNode(&generation, child));
+    }
+    return NodeListReplace(list, items);
+}
+
 int DocumentChildNodes(const XmlHandle* document, XmlNodeId node, XmlHandle* list) {
     if (document == nullptr || list == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
     if (document->impl == nullptr || list->impl == nullptr) return ListNotInitialized;
     Live(document);
-    Generation& generation = *RefOf(document)->generation;
+    return GenerationChildren(*RefOf(document)->generation, OffsetOf(node), list);
+}
+
+int GenerationAttributes(Generation& generation, std::uint64_t offset, XmlHandle* list) {
     const Reader reader(generation.buffers);
     std::vector<XmlNodeId> items;
-    for (std::uint64_t child = reader.FirstChild(OffsetOf(node)); child != 0; child = reader.Sibling(child)) {
-        items.push_back(MakeNode(&generation, child));
+    for (std::uint64_t attribute = reader.FirstAttribute(offset); attribute != 0; attribute = reader.NextAttribute(attribute)) {
+        items.push_back(MakeNode(&generation, attribute));
     }
     return NodeListReplace(list, items);
 }
@@ -308,13 +325,7 @@ int DocumentAttributes(const XmlHandle* document, XmlNodeId node, XmlHandle* lis
     if (document == nullptr || list == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
     if (document->impl == nullptr || list->impl == nullptr) return ListNotInitialized;
     Live(document);
-    Generation& generation = *RefOf(document)->generation;
-    const Reader reader(generation.buffers);
-    std::vector<XmlNodeId> items;
-    for (std::uint64_t attribute = reader.FirstAttribute(OffsetOf(node)); attribute != 0; attribute = reader.NextAttribute(attribute)) {
-        items.push_back(MakeNode(&generation, attribute));
-    }
-    return NodeListReplace(list, items);
+    return GenerationAttributes(*RefOf(document)->generation, OffsetOf(node), list);
 }
 
 int DocumentElementsByTagName(const XmlHandle* document, XmlNodeId node, const XmlString* name, XmlHandle* list) {

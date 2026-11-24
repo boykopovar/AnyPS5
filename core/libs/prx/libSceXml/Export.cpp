@@ -864,8 +864,8 @@ int APS5_VABI _ZNK3sce3Xml13AttributeList9getLengthEv(const XmlHandle* self) {
     return XmlDom::ContainerGetLength(self);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom4Node11getNodeNameEv() {
-    NotImplemented_nid_no_patch(__func__);
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom4Node11getNodeNameEv(XmlString* result, const XmlNode* self) {
+    return XmlDom::NodeName(result, self);
 }
 
 std::uint32_t APS5_VABI _ZNK3sce3Xml3Dom4Node11getNodeTypeEv(const XmlNode* self) {
@@ -879,36 +879,36 @@ bool APS5_VABI _ZNK3sce3Xml3Dom4Node11isAvailableEv(const XmlNode* self) {
     return local.document != nullptr && local.node != nullptr;
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom4Node12getLastChildEv() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom4Node12getLastChildEv(XmlNodeId* result, const XmlNode* self) {
+    return XmlDom::NodeRelative(result, self, XmlDom::NodeQuery::LastChild);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom4Node12getNodeValueEv() {
-    NotImplemented_nid_no_patch(__func__);
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom4Node12getNodeValueEv(XmlString* result, const XmlNode* self) {
+    return XmlDom::NodeValue(result, self);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom4Node13getAttributesEPNS1_8NodeListE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK3sce3Xml3Dom4Node13getAttributesEPNS1_8NodeListE(const XmlNode* self, XmlHandle* list) {
+    return XmlDom::NodeAttributes(self, list);
 }
 
 int APS5_VABI _ZNK3sce3Xml3Dom4Node13getAttributesEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom4Node13getChildNodesEPNS1_8NodeListE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK3sce3Xml3Dom4Node13getChildNodesEPNS1_8NodeListE(const XmlNode* self, XmlHandle* list) {
+    return XmlDom::NodeChildNodes(self, list);
 }
 
 int APS5_VABI _ZNK3sce3Xml3Dom4Node13getChildNodesEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom4Node13getFirstChildEv() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom4Node13getFirstChildEv(XmlNodeId* result, const XmlNode* self) {
+    return XmlDom::NodeRelative(result, self, XmlDom::NodeQuery::FirstChild);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom4Node13getParentNodeEv() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom4Node13getParentNodeEv(XmlNodeId* result, const XmlNode* self) {
+    return XmlDom::NodeRelative(result, self, XmlDom::NodeQuery::Parent);
 }
 
 bool APS5_VABI _ZNK3sce3Xml3Dom4Node13hasAttributesEv(const XmlNode* self) {
@@ -919,8 +919,8 @@ bool APS5_VABI _ZNK3sce3Xml3Dom4Node13hasChildNodesEv(const XmlNode* self) {
     return XmlDom::NodeHasChildNodes(self);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom4Node14getNextSiblingEv() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom4Node14getNextSiblingEv(XmlNodeId* result, const XmlNode* self) {
+    return XmlDom::NodeRelative(result, self, XmlDom::NodeQuery::Sibling);
 }
 
 int APS5_VABI _ZNK3sce3Xml3Dom4Node16getOwnerDocumentEv() {

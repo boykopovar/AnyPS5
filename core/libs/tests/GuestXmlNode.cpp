@@ -1,4 +1,5 @@
 #include "prx/libSceXml/include/Api.hpp"
+#include "prx/libSceXml/include/InventoryExports.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -197,10 +198,205 @@ void TestUnavailable() {
     _ZN3sce3Xml3Dom8Document9terminateEv(&document);
 }
 
+using NodeGetter = XmlNodeId* (APS5_VABI*)(XmlNodeId*, const XmlNode*);
+using DocumentGetter = XmlNodeId* (APS5_VABI*)(XmlNodeId*, const XmlHandle*, XmlNodeId);
+
+struct Navigation {
+    NodeGetter node;
+    DocumentGetter document;
+    const char* name;
+};
+
+const Navigation Navigations[] = {
+    {&_ZNK3sce3Xml3Dom4Node13getFirstChildEv, &_ZNK3sce3Xml3Dom8Document13getFirstChildENS1_6NodeIdE, "getFirstChild"},
+    {&_ZNK3sce3Xml3Dom4Node12getLastChildEv, &_ZNK3sce3Xml3Dom8Document12getLastChildENS1_6NodeIdE, "getLastChild"},
+    {&_ZNK3sce3Xml3Dom4Node14getNextSiblingEv, &_ZNK3sce3Xml3Dom8Document10getSiblingENS1_6NodeIdE, "getNextSibling"},
+    {&_ZNK3sce3Xml3Dom4Node13getParentNodeEv, &_ZNK3sce3Xml3Dom8Document9getParentENS1_6NodeIdE, "getParentNode"},
+};
+
+bool SameId(XmlNodeId left, XmlNodeId right) {
+    return left.first == right.first && left.second == right.second && left.flag == right.flag;
+}
+
+std::string Text(XmlString string) {
+    return string.buffer == nullptr ? std::string("<null>") : std::string(string.buffer, string.size);
+}
+
+std::string NodeName(const XmlNode* node) {
+    XmlString result{reinterpret_cast<const char*>(1), 7};
+    Require(_ZNK3sce3Xml3Dom4Node11getNodeNameEv(&result, node) == &result, "getNodeName returns its result pointer");
+    return Text(result);
+}
+
+std::string NodeValue(const XmlNode* node) {
+    XmlString result{reinterpret_cast<const char*>(1), 7};
+    Require(_ZNK3sce3Xml3Dom4Node12getNodeValueEv(&result, node) == &result, "getNodeValue returns its result pointer");
+    return Text(result);
+}
+
+std::string DocumentRead(XmlString* (APS5_VABI* read)(XmlString*, const XmlHandle*, XmlNodeId), const XmlHandle* document, XmlNodeId id) {
+    XmlString result{};
+    read(&result, document, id);
+    return Text(result);
+}
+
+using NodeListRead = int (APS5_VABI*)(const XmlNode*, XmlHandle*);
+using DocumentListRead = int (APS5_VABI*)(const XmlHandle*, XmlNodeId, XmlHandle*);
+
+const XmlHandle* g_initializer = nullptr;
+
+std::vector<XmlNodeId> Items(const XmlHandle* list) {
+    std::vector<XmlNodeId> items;
+    const std::uint32_t length = _ZNK3sce3Xml3Dom8NodeList9getLengthEv(list);
+    for (std::uint32_t i = 0; i < length; ++i) items.push_back(_ZNK3sce3Xml3Dom8NodeList4itemEj(list, i));
+    return items;
+}
+
+void CompareLists(const XmlHandle* document, XmlNodeId id, const XmlNode* node, NodeListRead fromNode, DocumentListRead fromDocument, const char* what) {
+    XmlHandle nodeList{nullptr};
+    XmlHandle documentList{nullptr};
+    Require(_ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE(&nodeList, g_initializer) == 0, "a node list starts");
+    Require(_ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE(&documentList, g_initializer) == 0, "a document list starts");
+    _ZN3sce3Xml3Dom8NodeList10insertLastENS1_6NodeIdE(&nodeList, XmlNodeId{reinterpret_cast<void*>(9), reinterpret_cast<void*>(9), 0});
+    const int nodeResult = fromNode(node, &nodeList);
+    const int documentResult = fromDocument(document, id, &documentList);
+    Require(nodeResult == documentResult, what);
+    const std::vector<XmlNodeId> left = Items(&nodeList);
+    const std::vector<XmlNodeId> right = Items(&documentList);
+    Require(left.size() == right.size(), what);
+    for (std::size_t i = 0; i < left.size(); ++i) Require(SameId(left[i], right[i]), what);
+    _ZN3sce3Xml3Dom8NodeList9terminateEv(&nodeList);
+    _ZN3sce3Xml3Dom8NodeList9terminateEv(&documentList);
+}
+
+void Visit(const XmlHandle* document, XmlNodeId id, int& visited) {
+    if (IdIsNull(id)) return;
+    ++visited;
+    XmlNode node{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&node, id);
+    for (const Navigation& navigation : Navigations) {
+        XmlNodeId fromNode{reinterpret_cast<void*>(1), reinterpret_cast<void*>(2), 3};
+        XmlNodeId fromDocument{};
+        Require(navigation.node(&fromNode, &node) == &fromNode, "a node getter returns its result pointer");
+        navigation.document(&fromDocument, document, id);
+        Require(SameId(fromNode, fromDocument), navigation.name);
+    }
+    const int type = DocumentType(document, id);
+    std::string name = "<null>";
+    std::string value = DocumentRead(&_ZNK3sce3Xml3Dom8Document7getTextENS1_6NodeIdE, document, id);
+    if (type == 0) {
+        name = "xml";
+        value = "version=\"1.0\"";
+    } else if (type == 1) {
+        name = DocumentRead(&_ZNK3sce3Xml3Dom8Document11getAttrNameENS1_6NodeIdE, document, id);
+        value = DocumentRead(&_ZNK3sce3Xml3Dom8Document12getAttrValueENS1_6NodeIdE, document, id);
+    } else if (type == 4) {
+        name = DocumentRead(&_ZNK3sce3Xml3Dom8Document11getNodeNameENS1_6NodeIdE, document, id);
+    }
+    CompareLists(document, id, &node, &_ZNK3sce3Xml3Dom4Node13getChildNodesEPNS1_8NodeListE, &_ZNK3sce3Xml3Dom8Document13getChildNodesENS1_6NodeIdEPNS1_8NodeListE, "getChildNodes matches the document read");
+    CompareLists(document, id, &node, &_ZNK3sce3Xml3Dom4Node13getAttributesEPNS1_8NodeListE, &_ZNK3sce3Xml3Dom8Document13getAttributesENS1_6NodeIdEPNS1_8NodeListE, "getAttributes matches the document read");
+    Require(NodeName(&node) == name, "getNodeName follows the node type");
+    Require(NodeValue(&node) == value, "getNodeValue follows the node type");
+    XmlNodeId attribute{};
+    _ZNK3sce3Xml3Dom8Document12getFirstAttrENS1_6NodeIdE(&attribute, document, id);
+    Visit(document, attribute, visited);
+    XmlNodeId child{};
+    _ZNK3sce3Xml3Dom8Document13getFirstChildENS1_6NodeIdE(&child, document, id);
+    while (!IdIsNull(child)) {
+        Visit(document, child, visited);
+        XmlNodeId next{};
+        _ZNK3sce3Xml3Dom8Document10getSiblingENS1_6NodeIdE(&next, document, child);
+        child = next;
+    }
+    _ZN3sce3Xml3Dom4NodeD1Ev(&node);
+}
+
+void TestNavigation() {
+    Fixture f;
+    g_initializer = &f.initializer;
+    Require(f.Parse("<r a=\"1\" b=\"2\"><x>one<y z=\"3\"/>two</x><!-- c --><w/>tail</r>") == 0, "parse");
+    XmlHandle document{nullptr};
+    _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(&document, &f.builder);
+    int visited = 0;
+    XmlNodeId docRoot{};
+    _ZNK3sce3Xml3Dom8Document10getDocRootEv(&docRoot, &document);
+    Visit(&document, docRoot, visited);
+    Visit(&document, Root(&document), visited);
+    Require(visited >= 10, "the walk reaches every node");
+
+    XmlNode declaration{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&declaration, docRoot);
+    Require(NodeName(&declaration) == "xml" && NodeValue(&declaration) == "version=\"1.0\"", "the document node reads as the XML declaration");
+    const XmlNodeId root = Root(&document);
+    XmlNode element{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&element, root);
+    Require(NodeName(&element) == "r", "an element node name");
+    XmlNodeId attributeId{};
+    _ZNK3sce3Xml3Dom8Document12getFirstAttrENS1_6NodeIdE(&attributeId, &document, root);
+    XmlNode attribute{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&attribute, attributeId);
+    Require(NodeName(&attribute) == "a" && NodeValue(&attribute) == "1", "an attribute node name and value");
+    XmlNode text{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&text, FirstChild(&document, FirstChild(&document, root)));
+    Require(NodeValue(&text) == "one", "a text node value");
+
+    XmlNode empty{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&empty, XmlNodeId{nullptr, nullptr, 0});
+    for (const Navigation& navigation : Navigations) {
+        XmlNodeId result{reinterpret_cast<void*>(1), reinterpret_cast<void*>(2), 3};
+        navigation.node(&result, &empty);
+        Require(IdIsNull(result), "a node without a document has no relatives");
+        Require(NodeName(&empty) == "<null>" && NodeValue(&empty) == "<null>", "a node without a document has no name or value");
+        XmlHandle list{nullptr};
+        Require(_ZNK3sce3Xml3Dom4Node13getChildNodesEPNS1_8NodeListE(&empty, nullptr) == static_cast<int>(0x80850003), "a null list is refused first");
+        Require(_ZNK3sce3Xml3Dom4Node13getChildNodesEPNS1_8NodeListE(&empty, &list) == static_cast<int>(0x80850002), "a node without a document has no child list");
+        Require(_ZNK3sce3Xml3Dom4Node13getAttributesEPNS1_8NodeListE(&empty, nullptr) == static_cast<int>(0x80850003), "a null attribute list is refused first");
+        Require(_ZNK3sce3Xml3Dom4Node13getAttributesEPNS1_8NodeListE(&empty, &list) == static_cast<int>(0x80850002), "a node without a document has no attribute list");
+        bool threw = false;
+        try {
+            navigation.node(nullptr, &empty);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw, "a null result throws");
+        threw = false;
+        try {
+            navigation.node(&result, nullptr);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw, "a null node throws");
+    }
+
+    XmlNode stale{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&stale, Root(&document));
+    Require(f.Parse("<s/>") == 0, "parse again");
+    for (const Navigation& navigation : Navigations) {
+        XmlNodeId result{};
+        bool threw = false;
+        try {
+            navigation.node(&result, &stale);
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        Require(threw, "reading a relative after the builder parsed again throws");
+        XmlString string{};
+        threw = false;
+        try {
+            _ZNK3sce3Xml3Dom4Node11getNodeNameEv(&string, &stale);
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        Require(threw, "reading a name after the builder parsed again throws");
+    }
+    _ZN3sce3Xml3Dom8Document9terminateEv(&document);
+}
+
 }
 
 int main() {
     TestElement();
     TestUnavailable();
+    TestNavigation();
     return 0;
 }
