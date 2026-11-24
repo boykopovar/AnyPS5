@@ -1,4 +1,5 @@
 import argparse
+from contextlib import suppress
 import getpass
 import json
 import os
@@ -28,8 +29,10 @@ def redact(text, *, home, user, host):
     if user and len(user) >= 2:
         text = re.sub(r"(?<![\w-])" + re.escape(user) + r"(?![\w-])", "<user>", text,
                       flags=re.IGNORECASE if windows_home else 0)
-    if host and len(host) >= 2:
-        text = re.sub(r"(?<![\w-])" + re.escape(host) + r"(?![\w-])", "<host>", text, flags=re.IGNORECASE)
+    host = (host or "").rstrip(".")
+    for name in dict.fromkeys((host, host.split(".")[0])):
+        if len(name) >= 2:
+            text = re.sub(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", "<host>", text, flags=re.IGNORECASE)
     return IPV4.sub("<ip>", text)
 
 
@@ -107,11 +110,17 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None, e
         members["anyps5-input.ini"] = redact(Path(input_config).read_text(encoding="utf-8", errors="replace"), **identity)
     if environ is not None:
         members["anyps5-settings.txt"] = settings_text(environ, identity)
-    members["host.txt"] = host_text()
+    members["host.txt"] = redact(host_text(), **identity)
     members["README.txt"] = README
-    with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
-        for name, content in members.items():
-            bundle.writestr(name, content.encode("utf-8"))
+    destination = out.open("xb")
+    try:
+        with destination, zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+            for name, content in members.items():
+                bundle.writestr(name, content.encode("utf-8", errors="backslashreplace"))
+    except BaseException:
+        with suppress(OSError):
+            out.unlink()
+        raise
     return sorted(members)
 
 
@@ -120,7 +129,7 @@ def identities():
         user = getpass.getuser()
     except Exception:
         user = ""
-    return {"home": str(Path.home()), "user": user, "host": socket.gethostname().split(".")[0]}
+    return {"home": str(Path.home()), "user": user, "host": socket.gethostname()}
 
 
 def main(argv=None):

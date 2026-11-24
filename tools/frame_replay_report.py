@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import io
 import json
 import math
 import os
@@ -99,7 +100,7 @@ def parse_replay_host_report(stderr, expected_commit=None):
             raise ValueError("unsupported invocation host report format")
         end = markers[index + 1].start() if index + 1 < len(markers) else len(stderr)
         portion = stderr[marker.start():end]
-        source_lines = portion.splitlines(keepends=True)
+        source_lines = io.StringIO(portion, newline="\n").readlines()
         lines = [line.rstrip("\r\n") for line in source_lines[1:]]
         if not lines or not lines[0].startswith("commit: "):
             raise ValueError("host report commit is missing")
