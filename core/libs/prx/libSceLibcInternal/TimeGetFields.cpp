@@ -346,14 +346,23 @@ bool IsAtEnd(GuestLocale::InputIterator& first, const GuestLocale::InputIterator
 }
 
 template<typename TChar>
-int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIterator* last, std::size_t numFields, const TChar* ptr) {
+int GuestCharValue(TChar ch) {
+    if constexpr (sizeof(TChar) == 1) {
+        return static_cast<signed char>(ch);
+    } else {
+        return static_cast<std::uint16_t>(ch);
+    }
+}
+
+template<typename TTable, typename TInput = TTable>
+int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIterator* last, std::size_t numFields, const TTable* ptr) {
     if (IteratorBuffer(first) == nullptr || ptr == nullptr) {
         return -2;
     }
-    const TChar sep = ptr[0];
-    const bool nulMarked = sep == TChar{};
+    const TTable sep = ptr[0];
+    const bool nulMarked = sep == TTable{};
     std::vector<std::size_t> fieldStarts;
-    for (std::size_t off = 0; ptr[off] != TChar{}; ++off) {
+    for (std::size_t off = 0; ptr[off] != TTable{}; ++off) {
         if (ptr[off] == sep) {
             if (numFields == SIZE_MAX) {
                 throw std::length_error("string too long");
@@ -366,7 +375,7 @@ int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIte
         return -2;
     }
     std::size_t nulOff = 0;
-    while (ptr[nulOff] != TChar{}) {
+    while (ptr[nulOff] != TTable{}) {
         ++nulOff;
     }
     while (fieldStarts.size() < numFields) {
@@ -374,7 +383,7 @@ int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIte
         if (nulMarked) {
             do {
                 ++nulOff;
-            } while (ptr[nulOff] != TChar{});
+            } while (ptr[nulOff] != TTable{});
         }
     }
 
@@ -388,21 +397,21 @@ int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIte
                 continue;
             }
             const std::size_t charOff = fieldStarts[field] + col;
-            const TChar tableChar = (charOff >= nulOff) ? TChar{} : ptr[charOff];
-            if (tableChar == sep || tableChar == TChar{}) {
+            const TTable tableChar = (charOff >= nulOff) ? TTable{} : ptr[charOff];
+            if (tableChar == sep || tableChar == TTable{}) {
                 skip[field] = static_cast<char>(col);
                 ans = static_cast<int>(field);
-            } else if (IsAtEnd<TChar>(first, last) ||
-                       FoldAscii(tableChar) != FoldAscii(Peek<TChar>(first))) {
+            } else if (IsAtEnd<TInput>(first, last) ||
+                       GuestCharValue(FoldAscii(tableChar)) != GuestCharValue(FoldAscii(Peek<TInput>(first)))) {
                 skip[field] = static_cast<char>(col);
             } else {
                 prefix = true;
             }
         }
-        if (!prefix || IsAtEnd<TChar>(first, last)) {
+        if (!prefix || IsAtEnd<TInput>(first, last)) {
             break;
         }
-        Inc<TChar>(first);
+        Inc<TInput>(first);
         ans = -1;
     }
     return ans;
@@ -1057,6 +1066,20 @@ int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT
         return -2;
     }
     return GetLocaleText<char>(*first, last, numFields, ptr);
+}
+
+int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIwSt11char_traitsIwEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::size_t numFields, const char* ptr) {
+    if (first == nullptr || last == nullptr || ptr == nullptr) {
+        return -2;
+    }
+    return GetLocaleText<char, std::uint16_t>(*first, last, numFields, ptr);
+}
+
+int APS5_VABI _ZSt10_GetloctxtIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::size_t numFields, const std::uint16_t* ptr) {
+    if (first == nullptr || last == nullptr || ptr == nullptr) {
+        return -2;
+    }
+    return GetLocaleText<std::uint16_t>(*first, last, numFields, ptr);
 }
 
 }
