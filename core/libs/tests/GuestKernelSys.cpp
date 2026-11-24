@@ -2468,6 +2468,7 @@ int main() {
     Require(fstatat_nid_postfix(base, "", &stat, 0) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0x0200) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "missing.bin", nullptr, 0x0200) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0x0200) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", &stat, 0x4000) == -1 && Error() == 22);
