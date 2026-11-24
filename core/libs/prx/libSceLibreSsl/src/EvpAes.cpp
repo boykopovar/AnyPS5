@@ -1,6 +1,5 @@
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
