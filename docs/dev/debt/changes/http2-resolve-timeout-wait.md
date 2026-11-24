@@ -1,0 +1,5 @@
+# libSceHttp2
+
+## change [libSceHttp2 request deadlines]
+
+- [libSceHttp2 request deadlines](../../../core/libs/prx/libSceHttp2/Transport.cpp) - the resolve timeout is ignored: a host lookup runs until the overall deadline and `EAI_AGAIN` returns `0x804101E2`. On a PS5 (13.590.001) it sets when queries are resent: unanswered, a lookup failed with `0x804101E2` at 30 s (queries at 0, 2, 6, 14 s) with the default or 1 s, also with retry 0; with 5 s, queries at 0, 5, 15, 35, 75 s and nothing in 90 s. A server failure, also `EAI_AGAIN` here, is unmeasured. Overall expiry returns `0x817B1068`, receive `0x817B1222`, send `0x817B1223` (TLS too), cleartext connect `0x817B1221`. There the receive timeout bounds a TLS handshake (`0x817B1222` 1.2 s into a stall, 1 s set), connect and send timeouts do not (1 s ran past 40 s), and 1 s receive did not end a stalled HTTPS/1.1 upload in 20 s; here an HTTP/2 upload ends at the earlier of the two. The overall deadline is checked before buffered reads too; the console's order is unmeasured.
