@@ -124,6 +124,7 @@ The same file also accepts these settings, each at most once, in the form `Setti
 | `StickModifierScale` | Number from 0.05 to 1, the tilt of keyboard stick bindings while a `StickModifier` binding is held. | `0.5` |
 | `KeyboardRampMs` | Number from 0 to 2000, the milliseconds a keyboard stick binding takes to move the stick from the center to full tilt. 0 tilts at once. | `0` |
 | `TriggerRampMs` | Number from 0 to 2000, the milliseconds a key or mouse button bound to `L2` or `R2` takes to press the trigger from 0 to full. 0 presses it fully at once. | `0` |
+| `TurboRateHz` | Whole number from 1 to 30, the pulses per second of a `TURBO` binding. See [Turbo buttons](#turbo-buttons). | `10` |
 | `ToggleActions` | Comma-separated pad buttons (`Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`), each toggled by the keys and mouse buttons bound to it. Stick directions and emulator actions are refused. See [Toggled buttons](#toggled-buttons). | none |
 
 ```ini
@@ -206,6 +207,17 @@ R2 = KEY:Z
 ```
 
 Here Z presses R2 on the first press and off on the second, and Q (bound to L1 by default) does the same for L1. A listed action with no binding is ignored. A per-game profile that sets `ToggleActions` replaces the list from the shared file, and an empty value or an unknown action is an error.
+
+## Turbo buttons
+
+A source written as `TURBO KEY:F` or `TURBO MOUSE:Right` pulses the pad button while the key or mouse button is held: on for the first half of each period, off for the second half. Each press starts the pulse again from its on half. The rate is set by `TurboRateHz`, a whole number from 1 to 30 pulses per second, 10 by default.
+
+```ini
+TurboRateHz = 8
+Cross = TURBO KEY:F
+```
+
+`TURBO` works only with pad buttons such as `Cross` or `R2`. Other actions, the mouse wheel and `PAD:` sources are invalid lines. A turbo binding does not latch: it pulses only while its key is held, and it does not change the state of a button listed in `ToggleActions`. Losing focus stops every pulse.
 
 ## Shake
 
