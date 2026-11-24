@@ -80,6 +80,7 @@ async function inspect(worker, count) {
     } });
   }
   await worker.onmessage({ data: { type: "inspection-complete" } });
+  await setImmediate();
 }
 
 for (const stage of ["constructor", "postMessage"]) {
@@ -232,6 +233,31 @@ test("Memory downloads reflect the target budget before inspection", async t => 
   get("file").onchange();
   await inspect(workers[0], 1);
   assert.equal(memory.disabled, true);
+});
+
+test("selecting an input refreshes a previously loaded release and its memory budget", async t => {
+  const pending = deferred();
+  let calls = 0;
+  const { get, workers } = await setup(t, "refresh-loaded-release", { fetch: () => {
+    calls++;
+    return calls === 1 ? Promise.resolve({ ok: true, json: async () => ({ tag: "v1-previous", platforms: {
+      linux: { expandedBytes: 250 * 1024 * 1024 }, windows: { expandedBytes: 1024 }
+    } }) }) : pending.promise;
+  } });
+  const memory = get("save").querySelector('[value="memory"]');
+  assert.equal(memory.disabled, true);
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  assert.equal(calls, 2);
+  assert.equal(get("convert").disabled, true);
+  pending.resolve(validReleaseResponse());
+  await setImmediate();
+  assert.equal(memory.disabled, false);
+  assert.equal(get("convert").disabled, false);
+  assert.match(get("ready-note").textContent, /v1-test/);
 });
 
 test("selecting an input retries release information after a transient failure", async t => {

@@ -1151,6 +1151,49 @@ class PreparationTests(unittest.TestCase):
         self.assertTrue(alias.is_symlink())
         self.assertFalse(staged.is_symlink())
 
+    def make_directory_link(self, link, target):
+        if os.name == "nt":
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True)
+            if made.returncode != 0:
+                self.skipTest("cannot create a junction: " + made.stderr.strip())
+            self.addCleanup(link.rmdir)
+        else:
+            link.symlink_to(target, target_is_directory=True)
+            self.addCleanup(link.unlink)
+
+    def test_staged_linked_directories_get_independent_asset_copies(self):
+        source = self.root / "pkg"
+        shared = self.root / "shared"
+        source.mkdir()
+        (shared / "nested").mkdir(parents=True)
+        original = shared / "nested/data.bin"
+        original.write_bytes(b"source bytes")
+        for name in ("voices", "subtitles", "sce_module"):
+            self.make_directory_link(source / name, shared)
+        staged = self.root / "app0"
+
+        title_run.link_tree(source, staged, {"sce_module"})
+
+        voice = staged / "voices/nested/data.bin"
+        self.assertEqual(voice.read_bytes(), b"source bytes")
+        voice.write_bytes(b"changed")
+        self.assertEqual((staged / "subtitles/nested/data.bin").read_bytes(), b"source bytes")
+        self.assertEqual(original.read_bytes(), b"source bytes")
+        self.assertFalse(title_run.linked_path(staged / "voices"))
+        self.assertFalse((staged / "sce_module").exists())
+
+    def test_staging_rejects_an_asset_directory_cycle(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        (source / "assets").mkdir()
+        self.make_directory_link(source / "assets/back", source)
+
+        packages = []
+        found = title_run.discover([self.root], packages=packages)
+        self.assertEqual(found["PPSA00001"]["package"], source)
+        self.assertEqual(packages, [source])
+        with self.assertRaisesRegex(ValueError, "asset directory cycle"):
+            title_run.link_tree(source, self.root / "app0", set())
+
     def test_prepare_isolates_assets_and_keeps_module_inputs(self):
         source = package(self.root / "pkg", "PPSA00001")
         elf = b"\x7fELF" + bytes(60)
