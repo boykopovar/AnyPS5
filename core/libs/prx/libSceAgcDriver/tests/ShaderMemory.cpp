@@ -2932,7 +2932,7 @@ void verifyUnsetFormatImageMaterialization() {
     expectInvalidType(15u, "an unimplemented TYPE 15 T# with an unset format was accepted as a null image");
 }
 
-void CompileDescriptorWeb(const std::vector<std::uint32_t>& code, std::uint32_t address, const char* message, std::ptrdiff_t optionalImages = 2) {
+void CompileDescriptorWeb(const std::vector<std::uint32_t>& code, std::uint32_t address, const char* message, std::ptrdiff_t optionalImages = 2, const char* refusal = nullptr) {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Format8888UNorm = 56;
     constexpr std::uint32_t Type2D = 9;
@@ -2970,6 +2970,10 @@ void CompileDescriptorWeb(const std::vector<std::uint32_t>& code, std::uint32_t 
     request.target.bdaAbiVersion = BdaAbi::Version;
     request.target.fragmentShaderBarycentricEnabled = false;
     request.layout.pushConstantSizeBytes = 128;
+    if (refusal != nullptr) {
+        expectFailure([&] { static_cast<void>(GetResourcePlan(request)); }, refusal, message);
+        return;
+    }
     const auto plan = GetResourcePlan(request);
     require(plan->info.usesFaultBuffer && plan->info.images.size() >= 2u && std::ranges::count_if(plan->info.images, [](const ImageResource& image) { return image.optionalDescriptor; }) >= optionalImages, message);
     AgcDriver::ShaderMemory memory({});
@@ -3007,6 +3011,27 @@ void verifyDescriptorWebSelectOrder() {
         0x7e100502u, 0x7e120503u, 0x7e140504u, 0x7e160505u, 0x7e180506u, 0x7e1a0507u, 0x7e1c0508u, 0x7e1e0509u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u,
         0x80060000u, 0xbf810000u};
     CompileDescriptorWeb(code, 0x25000u, "descriptor web select order: per-lane T# selects in two blocks were not split into arms");
+}
+
+void verifyDescriptorWebStateCap() {
+    std::vector<std::uint32_t> code{
+        0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xf40c0700u, 0xfa000060u, 0xbf8cc07fu};
+    for (std::uint32_t dword = 0; dword < 8u; dword++) {
+        code.push_back(0x7e000000u | ((2u + dword) << 17u) | (1u << 9u) | (8u + dword));
+    }
+    for (std::uint32_t join = 0; join < 15u; join++) {
+        const std::uint32_t dword = join % 5u;
+        code.push_back(0xbf068000u | (16u + join % 12u));
+        code.push_back(0xbf850003u);
+        code.push_back(0x7d880000u | (128u + 1u + join));
+        code.push_back(0x7e000000u | (10u << 17u) | (1u << 9u) | (28u + dword));
+        code.push_back(0x02000000u | ((2u + dword) << 17u) | (10u << 9u) | (0x102u + dword));
+    }
+    for (std::uint32_t dword = 0; dword < 8u; dword++) {
+        code.push_back(0x7e000000u | ((8u + dword) << 17u) | (2u << 9u) | (0x102u + dword));
+    }
+    code.insert(code.end(), {0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u});
+    CompileDescriptorWeb(code, 0x27000u, "descriptor web state cap: a web of 1024 per-lane descriptor states over 32 descriptors was not refused", 2, "; descriptor web: more than 512 descriptor states");
 }
 
 void verifyOutOfRangeConstantReads() {
@@ -13644,6 +13669,7 @@ int main(int argc, char** argv) {
         verifyDescriptorWebLaneIndexFold();
         verifyDescriptorWebTexelFold();
         verifyDescriptorWebSelectOrder();
+        verifyDescriptorWebStateCap();
         verifySignedMinimum();
         verifyMayEvaluate();
         verifyMayDecideSharedConditions();
