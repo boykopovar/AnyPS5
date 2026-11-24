@@ -7,6 +7,7 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/System/include/FaultSignals.hpp"
 #include "prx/libkernel/System/include/TimerSignals.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -44,6 +45,8 @@ constexpr int GuestSigkill = 9;
 constexpr int GuestSigstop = 17;
 constexpr std::uint32_t UnblockableSignals = (1u << (GuestSigkill - 1)) | (1u << (GuestSigstop - 1));
 constexpr int GuestSigalrm = 14;
+constexpr int GuestSigbus = 10;
+constexpr int GuestSigsegv = 11;
 constexpr int GuestSigcont = 19;
 constexpr int SaRestart = 0x2;
 constexpr int SaResethand = 0x4;
@@ -54,6 +57,7 @@ std::atomic<GuestHandler> handlers[MaxSignal + 1]{};
 std::atomic<std::uint32_t> handlerMasks[MaxSignal + 1][4]{};
 std::atomic<int> handlerFlags[MaxSignal + 1]{};
 std::atomic<bool> handlerReset[MaxSignal + 1]{};
+std::atomic<std::uintptr_t> siginfoHandlers[MaxSignal + 1]{};
 static_assert(std::atomic<GuestHandler>::is_always_lock_free);
 struct ThreadSignals {
     std::atomic<std::uint32_t> blocked[4]{};
@@ -290,12 +294,14 @@ int NativeSignal(int guest) {
 void ResetToDefault(int guest) {
     handlerReset[guest].store(true);
     handlers[guest].store(nullptr);
+    siginfoHandlers[guest].store(0);
     if (const int native = NativeSignal(guest)) {
         std::signal(native, SIG_DFL);
         if (native == SIGSEGV) GuestFaultCopyReinstall_nid_no_patch();
     }
 }
-void RunHandler(int guest, GuestHandler handler) {
+template <typename Call>
+void RunHandlerWith(int guest, Call&& call) {
     auto& self = CurrentSignals();
     const int flags = handlerFlags[guest].load();
     std::uint32_t mask[4];
@@ -312,7 +318,7 @@ void RunHandler(int guest, GuestHandler handler) {
         releases[held] = holdReleases[held];
         epochs[held] = static_cast<std::uint32_t>(self.holds[held].fetch_add(1) >> 32);
     }
-    handler(guest);
+    call();
     std::uint32_t replaced[4]{};
     for (int held = 1; held <= MaxSignal; ++held) {
         if ((mask[SignalWord(held)] & SignalBit(held)) == 0) continue;
@@ -325,6 +331,9 @@ void RunHandler(int guest, GuestHandler handler) {
         target.fetch_and(~(replaced[word] & ~before[word]));
         target.fetch_or(replaced[word] & before[word]);
     }
+}
+void RunHandler(int guest, GuestHandler handler) {
+    RunHandlerWith(guest, [&] { handler(guest); });
 }
 void Dispatch(int native) {
     int guest = 0;
@@ -349,6 +358,9 @@ bool Install(int guest, const GuestSigaction& action) {
     handlerReset[guest].store(false);
     for (int word = 0; word < 4; ++word) handlerMasks[guest][word].store(action.mask.bits[word]);
     handlerFlags[guest].store(action.flags);
+    const bool siginfo = action.handler > 1 && (action.flags & SaSiginfo) != 0;
+    siginfoHandlers[guest].store(siginfo ? action.handler : 0);
+    if (siginfo && (guest == GuestSigbus || guest == GuestSigsegv)) InstallSiginfoFaultDelivery();
     const int native = NativeSignal(guest);
     if (!native) return true;
     const auto previous = handlers[guest].exchange(Delivered(action) ? reinterpret_cast<GuestHandler>(action.handler) : nullptr);
@@ -822,6 +834,22 @@ int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previo
     return 0;
 }
 
+}
+
+bool SiginfoFaultHandlerInstalled(int guest) {
+    return guest >= 1 && guest <= MaxSignal && siginfoHandlers[guest].load() > 1 && !SignalBlocked(guest);
+}
+
+void RunSiginfoFaultHandler(int guest, std::int32_t code, std::uintptr_t address, std::uint32_t trap, void* ucontext) {
+    using SiginfoHandler = void (APS5_VABI *)(int, GuestSiginfo*, void*);
+    const auto handler = reinterpret_cast<SiginfoHandler>(siginfoHandlers[guest].load());
+    if (reinterpret_cast<std::uintptr_t>(handler) <= 1) return;
+    GuestSiginfo info{};
+    info.signo = guest;
+    info.code = code;
+    info.address = address;
+    info.timerid = static_cast<std::int32_t>(trap);
+    RunHandlerWith(guest, [&] { handler(guest, &info, ucontext); });
 }
 
 extern "C" int APS5_VABI SetSignalMaskCatching_nid_no_patch(const GuestSignalSet* set, GuestSignalSet* previousSet) {
