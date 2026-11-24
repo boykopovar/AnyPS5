@@ -7077,14 +7077,13 @@ void verifyDescriptorPhis() {
     const std::array<std::uint32_t, 4> pointWrap{0u, 0u, 0u, 0u};
     const std::array<std::uint32_t, 4> linearMirror{0x49u, 0u, 0x00500000u, 0u};
     std::array<std::uint32_t, 4> output{};
-    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
     std::array<std::uint32_t, 32> srt{};
     const auto first = imageDescriptor(textures[0]);
     const auto second = imageDescriptor(textures[1]);
     std::copy(first.begin(), first.end(), srt.begin());
     std::copy(pointWrap.begin(), pointWrap.end(), srt.begin() + 8);
     std::copy(linearMirror.begin(), linearMirror.end(), srt.begin() + 12);
-    const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    const auto outputV = TableV(output.data(), 0u, sizeof(output));
     std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
     srt[20] = 1u;
     std::copy(second.begin(), second.end(), srt.begin() + 24);
