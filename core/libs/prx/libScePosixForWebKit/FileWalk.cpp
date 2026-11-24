@@ -17,6 +17,7 @@ constexpr int FtwD = 1;
 constexpr int FtwDnr = 2;
 constexpr int FtwNs = 4;
 constexpr int GuestEinval = 22;
+constexpr int GuestEloop = 62;
 constexpr std::uint16_t TypeMask = 0170000;
 constexpr std::uint16_t TypeDirectory = 0040000;
 
@@ -51,7 +52,10 @@ int Visit(Walk& walk, const std::string& path) {
     if (stat_nid_postfix(path.c_str(), &status) != 0) return Invoke(walk, path, FileStat{}, FtwNs);
     if (!IsDirectory(status)) return Invoke(walk, path, status, FtwF);
     for (const Identity& ancestor : walk.ancestors)
-        if (ancestor.device == status.st_dev && ancestor.inode == status.st_ino) return 0;
+        if (ancestor.device == status.st_dev && ancestor.inode == status.st_ino) {
+            *__error_nid_postfix() = GuestEloop;
+            return -1;
+        }
     void* handle = opendir_nid_postfix(path.c_str());
     if (handle == nullptr) return Invoke(walk, path, status, FtwDnr);
     std::vector<std::string> names;

@@ -75,10 +75,10 @@ int main() {
 
     g_types.clear();
     g_calls = 0;
-    g_stopAt = 1;
+    g_stopAt = 2;
     g_stopReturn = 9;
     Require(ftw_nid_postfix("/anyps5-ftw-test", Recorder, 4) == 9);
-    Require(g_calls == 1);
+    Require(g_calls == 2);
     g_stopAt = 0;
     g_stopReturn = 0;
 
@@ -97,6 +97,11 @@ int main() {
     Require(ftw_nid_postfix("/anyps5-ftw-test", Recorder, 4) == 0);
     Require(g_types.at("/anyps5-ftw-test/link") == FtwF);
     Require(g_types.at("/anyps5-ftw-test/dangling") == FtwNs);
+    std::filesystem::create_symlink(root, root / "d" / "loop");
+    g_types.clear();
+    *__error_nid_postfix() = 0;
+    Require(ftw_nid_postfix("/anyps5-ftw-test", Recorder, 4) == -1);
+    Require(*__error_nid_postfix() == 62);
 #endif
 
     RemovePathAlias_nid_no_patch("/anyps5-ftw-test");
