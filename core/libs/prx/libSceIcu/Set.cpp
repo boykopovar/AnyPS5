@@ -3,7 +3,6 @@
 #include "unicode/uchar.h"
 #include "unicode/uniset.h"
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
