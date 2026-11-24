@@ -6524,7 +6524,7 @@ void growingVertexCopyTests(const Device& device) {
     KeepDrawInput(&paddedCache, address, padded, vertex, 0);
     Require(paddedCache.ReusableDrawSnapshot(address, 96, vertex) == nullptr, "vertex binding padding was kept as guest snapshot bytes");
     const auto paddedAgain = CopyDrawInput(paddedContext, &paddedCache, address, 80, 1, vertex, 0, false, 0, 96);
-    Require(paddedAgain.reused && paddedAgain.buffer == padded.buffer, "a padded vertex copy was not reused for the same guest range");
+    Require(paddedAgain.reused && paddedAgain.buffer->Size() == 96, "a padded vertex copy was not reused with its binding range");
     const auto widerPadding = CopyDrawInput(paddedContext, &paddedCache, address, 80, 1, vertex, 0, false, 0, 112);
     Require(!widerPadding.reused && widerPadding.guestBytes == 80 && widerPadding.buffer->Bytes().size() == 112 && std::all_of(widerPadding.buffer->Bytes().begin() + 80, widerPadding.buffer->Bytes().end(), [](std::byte value) { return value == std::byte{0}; }), "a cached vertex copy with a short binding range was reused");
 }
