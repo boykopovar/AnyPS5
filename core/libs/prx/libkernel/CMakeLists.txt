@@ -1,5 +1,6 @@
 add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/SysExports.Mapper.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SysExports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Apr/src/Apr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/Equeue.cpp
@@ -193,6 +194,16 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         endif()
     endforeach()
+    add_test_executable(guest_apr_archive_tests ${LIBS_INCLUDE_DIR}/tests/GuestAprArchive.cpp)
+    target_include_directories(guest_apr_archive_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_apr_archive_tests PRIVATE libkernel libc zarchive)
+    configure_windows_unwind(guest_apr_archive_tests)
+    add_test(NAME guest_apr_archive COMMAND guest_apr_archive_tests)
+    set_tests_properties(guest_apr_archive PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_apr_archive PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_library(guest_exec_host SHARED ${LIBS_INCLUDE_DIR}/tests/GuestExecHost.cpp)
     target_include_directories(guest_exec_host PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_exec_host PRIVATE libkernel libkernel_sys libc libSceAgcDriver)
@@ -1084,13 +1095,18 @@ if(BUILD_TESTING)
         set_tests_properties(guest_pthread_stack PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR WIN32)
         add_test_executable(guest_thread_stack_guard_tests ${LIBS_INCLUDE_DIR}/tests/GuestThreadStackGuard.cpp)
         target_include_directories(guest_thread_stack_guard_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_thread_stack_guard_tests PRIVATE libkernel libc)
+        configure_windows_unwind(guest_thread_stack_guard_tests)
         add_test(NAME guest_thread_stack_guard COMMAND guest_thread_stack_guard_tests)
         set_tests_properties(guest_thread_stack_guard PROPERTIES TIMEOUT 20)
         add_asan_test_options(guest_thread_stack_guard detect_stack_use_after_return=0)
+        if(WIN32)
+            set_tests_properties(guest_thread_stack_guard PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
     endif()
     add_test_executable(guest_cond_timedwait_tests ${LIBS_INCLUDE_DIR}/tests/GuestCondTimedwait.cpp)
     target_include_directories(guest_cond_timedwait_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -2135,6 +2151,16 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
     set_tests_properties(guest_kernel_socket_creation_bounds PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_kernel_socket_creation_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_clock_timer_nanosleep_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestClockTimerNanosleepBounds.cpp)
+    target_include_directories(guest_clock_timer_nanosleep_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_clock_timer_nanosleep_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_clock_timer_nanosleep_bounds_tests)
+    add_test(NAME guest_clock_timer_nanosleep_bounds COMMAND guest_clock_timer_nanosleep_bounds_tests)
+    set_tests_properties(guest_clock_timer_nanosleep_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_clock_timer_nanosleep_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_getrlimit_tests ${LIBS_INCLUDE_DIR}/tests/GuestGetrlimit.cpp)
@@ -3515,3 +3541,14 @@ list(SORT libkernelTestFragments)
 foreach(libkernelTestFragment IN LISTS libkernelTestFragments)
     include(${libkernelTestFragment})
 endforeach()
+
+    add_test_executable(guest_kernel_sockname_truncation_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSocknameTruncationBounds.cpp)
+    target_include_directories(guest_kernel_sockname_truncation_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_sockname_truncation_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_sockname_truncation_bounds_tests)
+    add_test(NAME guest_kernel_sockname_truncation_bounds COMMAND guest_kernel_sockname_truncation_bounds_tests)
+    set_tests_properties(guest_kernel_sockname_truncation_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sockname_truncation_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()

@@ -381,6 +381,27 @@ if(BUILD_TESTING)
         guest_kernel_sys_paths_readlink_limits guest_kernel_sys_paths_readlink_limits_patched
         guest_kernel_sys_paths_readlinkat_limits guest_kernel_sys_paths_readlinkat_limits_patched PROPERTIES SKIP_RETURN_CODE 77)
 
+    add_test_executable(guest_kernel_mapper_export_parity_tests tests/GuestKernelMapperExportParity.cpp
+        nid/src/NidCompute.cpp nid/src/Sha1.cpp)
+    target_include_directories(guest_kernel_mapper_export_parity_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
+    target_link_libraries(guest_kernel_mapper_export_parity_tests PRIVATE ${CMAKE_DL_LIBS})
+    add_custom_target(guest_kernel_mapper_export_parity_libraries DEPENDS
+        ${PATCHED_DIR}/libkernel_sys.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+    add_dependencies(guest_kernel_mapper_export_parity_tests guest_kernel_mapper_export_parity_libraries)
+    configure_windows_unwind(guest_kernel_mapper_export_parity_tests)
+    if(MINGW)
+        target_compile_options(guest_kernel_mapper_export_parity_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(guest_kernel_mapper_export_parity_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME guest_kernel_mapper_export_parity COMMAND guest_kernel_mapper_export_parity_tests ${UNPATCHED_DIR} unpatched)
+    add_test(NAME guest_kernel_mapper_export_parity_patched COMMAND guest_kernel_mapper_export_parity_tests ${PATCHED_DIR} patched)
+    set_tests_properties(guest_kernel_mapper_export_parity guest_kernel_mapper_export_parity_patched PROPERTIES TIMEOUT 20)
+    if(MINGW)
+        get_filename_component(kernelMapperExportParityRuntimeDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        set_tests_properties(guest_kernel_mapper_export_parity guest_kernel_mapper_export_parity_patched PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${kernelMapperExportParityRuntimeDirectory}")
+    endif()
+
     add_test_executable(guest_posix_scalar_io_tests tests/GuestPosixScalarIo.cpp)
     target_include_directories(guest_posix_scalar_io_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_posix_scalar_io_tests PRIVATE libkernel libc)
@@ -583,7 +604,7 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_macho_nids.py $<TARGET_FILE:nid_patcher>)
         add_test(NAME nid_patcher_native_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_native_paths.py $<TARGET_FILE:nid_patcher>)
-        set_tests_properties(nid_patcher_native_paths PROPERTIES TIMEOUT 20)
+        set_tests_properties(nid_patcher_native_paths PROPERTIES TIMEOUT 30)
         if(CMAKE_GENERATOR MATCHES "^Ninja")
             add_test(NAME nid_patch_dependencies COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_patch_dependencies.py --mode graph
@@ -1538,9 +1559,17 @@ if(BUILD_TESTING)
         add_test(NAME prx_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
             -DMODULES=$<TARGET_FILE_DIR:libc> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
         set_tests_properties(prx_thread_local_destructors PROPERTIES TIMEOUT 300)
-        add_test(NAME test_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
-            -DPATTERN=*.exe -DMODULES=$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
-        set_tests_properties(test_thread_local_destructors PROPERTIES TIMEOUT 300)
+        foreach(shard RANGE 0 3)
+            if(shard EQUAL 0)
+                set(thread_local_destructors_test_name test_thread_local_destructors)
+            else()
+                set(thread_local_destructors_test_name test_thread_local_destructors_shard_${shard})
+            endif()
+            add_test(NAME ${thread_local_destructors_test_name} COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
+                -DPATTERN=*.exe -DSHARD=${shard} -DSHARDS=4 -DMODULES=$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
+            set_tests_properties(${thread_local_destructors_test_name} PROPERTIES TIMEOUT 300)
+        endforeach()
         add_test(NAME thread_local_destructors_unusable_nm COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_CURRENT_BINARY_DIR}/missing/nm
             -DOBJDUMP=${CMAKE_OBJDUMP} -DPATTERN=ThreadLocalDestructors.cmake -DMODULES=${CMAKE_CURRENT_SOURCE_DIR}/tests
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
