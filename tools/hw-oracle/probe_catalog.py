@@ -6,9 +6,11 @@ import os
 import platform
 import re
 import shutil
+import struct
 import sys
 import tempfile
 import subprocess
+import time
 from pathlib import Path
 
 import compare_results
@@ -21,7 +23,7 @@ MODE_LIMITS = {"ieee": 2, "denorm32": 4, "denorm16": 4, "dx10_clamp": 2,
                "round32": 4, "round16": 4, "fp16_overflow": 2}
 PROBE_KEYS = {"id", "instruction", "description", "body", "output_registers", "wave_size",
               "floating_point_modes", "lds_bytes", "memory", "rows"}
-OPTIONAL_PROBE_KEYS = {"default"}
+OPTIONAL_PROBE_KEYS = {"default", "extra_words"}
 CATALOG_KEYS = {"schema_version", "probes"}
 ROW_KEYS = {"name", "input"}
 PS5_CHIP_ID = 0x13fc
@@ -118,7 +120,16 @@ def validate_probe(probe, index):
             parse_word(value, f"{row_context} input word {word_index}")
             for word_index, value in enumerate(values, 1)
         ]})
-    return {**probe, "rows": normalized_rows}
+    normalized = {**probe, "rows": normalized_rows}
+    words = normalized.pop("extra_words", [])
+    if not isinstance(words, list):
+        raise ValueError(f"probe {probe_id} extra_words must be an array of unsigned 32-bit integers")
+    if words:
+        normalized["extra_words"] = [
+            parse_word(value, f"probe {probe_id} extra_words word {word_index}")
+            for word_index, value in enumerate(words, 1)
+        ]
+    return normalized
 
 
 def read_catalog(path=DEFAULT_CATALOG):
@@ -163,6 +174,20 @@ def select_probes(probes, identifiers):
     return selected
 
 
+RETRY_LOCKED_REPLACE = os.name == "nt"
+LOCKED_REPLACE_DELAYS = (0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0)
+
+
+def replace_retrying_lock(source, destination):
+    for delay in LOCKED_REPLACE_DELAYS if RETRY_LOCKED_REPLACE else ():
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            time.sleep(delay)
+    os.replace(source, destination)
+
+
 def write_atomic(path, content):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,7 +197,7 @@ def write_atomic(path, content):
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        replace_retrying_lock(temporary, path)
     except BaseException:
         try:
             os.unlink(temporary)
@@ -182,7 +207,7 @@ def write_atomic(path, content):
 
 
 def render_probe_metadata(probe, catalog_digest):
-    return {
+    metadata = {
         "schema_version": 1,
         "catalog_sha256": catalog_digest,
         "probe_sha256": probe_digest(probe),
@@ -197,11 +222,19 @@ def render_probe_metadata(probe, catalog_digest):
         "memory": probe["memory"],
         "rows": probe["rows"],
     }
+    if "extra_words" in probe:
+        metadata["extra_words"] = probe["extra_words"]
+    return metadata
 
 
 def probe_digest(probe):
     encoded = json.dumps(probe, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def extra_payload(probe):
+    words = probe.get("extra_words", [])
+    return struct.pack(f"<{len(words)}I", *words)
 
 
 def generate(probes, catalog_digest, output_dir):
@@ -222,10 +255,13 @@ def generate(probes, catalog_digest, output_dir):
             rows = "".join(" ".join(f"0x{word:08x}" for word in row["input"]) + "\n"
                            for row in probe["rows"])
             (case / "rows.txt").write_text(rows, encoding="utf-8")
+            payload = extra_payload(probe)
+            if payload:
+                (case / "extra.bin").write_bytes(payload)
         promoted = []
         try:
             for probe, destination in zip(probes, destinations):
-                os.replace(stage / probe["id"], destination)
+                replace_retrying_lock(stage / probe["id"], destination)
                 promoted.append(destination)
         except OSError as promotion_error:
             rollback_errors = []
@@ -256,6 +292,7 @@ def validate_device_label(value):
 
 def make_result(probe, digest, device_label, target, runtime, outputs, hardware_identity=None):
     modes = probe["floating_point_modes"]
+    payload = extra_payload(probe)
     result = {
         "schema_version": 1,
         "runtime": runtime,
@@ -265,8 +302,8 @@ def make_result(probe, digest, device_label, target, runtime, outputs, hardware_
         "lds_bytes": probe["lds_bytes"],
         "memory": probe["memory"],
         "body": probe["body"],
-        "extra_bytes": 0,
-        "extra_sha256": hashlib.sha256(b"").hexdigest(),
+        "extra_bytes": len(payload),
+        "extra_sha256": hashlib.sha256(payload).hexdigest(),
         "output_registers": [f"v{10 + index}" for index in range(probe["output_registers"])],
         "rows": [
             {"input": row["input"], "output": list(output[:probe["output_registers"]])}
@@ -300,7 +337,7 @@ def run_probes(probes, digest, output_dir, device_label, hardware_identity=None,
     for probe, destination in zip(probes, destinations):
         rows = [tuple(row["input"]) for row in probe["rows"]]
         outputs = hw_oracle.run(
-            probe["body"], rows, wave64=probe["wave_size"] == 64,
+            probe["body"], rows, extra=extra_payload(probe), wave64=probe["wave_size"] == 64,
             coarse=probe["memory"] == "coarse", **probe["floating_point_modes"],
             lds=probe["lds_bytes"],
         )
@@ -360,6 +397,7 @@ def read_measurement(path, probe, device_label):
         return "invalid", str(error)
     if report.get("probe_sha256") != probe_digest(probe):
         return "stale", "probe definition digest differs"
+    payload = extra_payload(probe)
     expected = {
         "probe_id": probe["id"],
         "probe_instruction": probe["instruction"],
@@ -370,8 +408,8 @@ def read_measurement(path, probe, device_label):
         "floating_point_modes": probe["floating_point_modes"],
         "lds_bytes": probe["lds_bytes"],
         "memory": probe["memory"],
-        "extra_bytes": 0,
-        "extra_sha256": hashlib.sha256(b"").hexdigest(),
+        "extra_bytes": len(payload),
+        "extra_sha256": hashlib.sha256(payload).hexdigest(),
         "output_registers": [f"v{10 + index}" for index in range(probe["output_registers"])],
     }
     for name, value in expected.items():

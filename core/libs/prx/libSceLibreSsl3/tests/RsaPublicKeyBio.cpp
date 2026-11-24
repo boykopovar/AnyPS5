@@ -4,6 +4,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -14,7 +15,14 @@
 #include <source_location>
 #include <type_traits>
 #include <unordered_set>
+#include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using FreeRsa = void (APS5_VABI*)(LibreSsl3Rsa*);
 using ReadRsaPublicKey = LibreSsl3Rsa* (APS5_VABI*)(LibreSsl::Bio*, LibreSsl3Rsa**);
@@ -352,6 +360,68 @@ void TestBerHeaders() {
     ExpectModulus("30081f80020105020103", {0x05}, false);
 }
 
+
+void TestRsaFreeGuestValidation() {
+    *__error_nid_postfix() = 61;
+    RSA_free_nid_disambig1_nid_postfix(nullptr);
+    Require(*__error_nid_postfix() == 61);
+
+    *__error_nid_postfix() = 62;
+    Throws([] { RSA_free_nid_disambig1_nid_postfix(reinterpret_cast<LibreSsl3Rsa*>(std::uintptr_t{1})); });
+    Require(*__error_nid_postfix() == 62);
+
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    auto* pages = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS));
+    Require(pages != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(pages, pageSize, PAGE_READWRITE, &previous) != 0);
+#else
+    const long pageResult = sysconf(_SC_PAGESIZE);
+    Require(pageResult > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(pageResult);
+    auto* pages = static_cast<unsigned char*>(mmap(nullptr, pageSize * 2, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages, pageSize, PROT_READ | PROT_WRITE) == 0);
+#endif
+
+    std::memset(pages, 0xA5, pageSize);
+    auto* readOnlyRsa = reinterpret_cast<LibreSsl3Rsa*>(pages);
+    readOnlyRsa->method = nullptr;
+    readOnlyRsa->references = 2;
+    std::array<unsigned char, sizeof(LibreSsl3Rsa)> snapshot{};
+    std::memcpy(snapshot.data(), readOnlyRsa, sizeof(LibreSsl3Rsa));
+
+#ifdef _WIN32
+    Require(VirtualProtect(pages, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(pages, pageSize, PROT_READ) == 0);
+#endif
+
+    *__error_nid_postfix() = 63;
+    Throws([readOnlyRsa] { RSA_free_nid_disambig1_nid_postfix(readOnlyRsa); });
+    Require(*__error_nid_postfix() == 63);
+    Require(std::memcmp(readOnlyRsa, snapshot.data(), sizeof(LibreSsl3Rsa)) == 0);
+
+    auto* straddlingRsa = reinterpret_cast<LibreSsl3Rsa*>(pages + pageSize - sizeof(LibreSsl3Rsa) / 2);
+    *__error_nid_postfix() = 64;
+    Throws([straddlingRsa] { RSA_free_nid_disambig1_nid_postfix(straddlingRsa); });
+    Require(*__error_nid_postfix() == 64);
+    *__error_nid_postfix() = 65;
+    Throws([straddlingRsa] { RSA_check_key_nid_postfix(straddlingRsa); });
+    Require(*__error_nid_postfix() == 65);
+    Throws([] { RSA_check_key_nid_postfix(reinterpret_cast<const LibreSsl3Rsa*>(std::uintptr_t{1})); });
+    Require(*__error_nid_postfix() == 65);
+
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, pageSize * 2) == 0);
+#endif
+}
+
 void TestStructureErrors() {
     ExpectRejected("3103020101", {Asn1RWrongTag, ErrRNestedAsn1Error});
     ExpectRejected("7003020101", {Asn1RWrongTag, ErrRNestedAsn1Error});
@@ -420,5 +490,6 @@ int main() {
     TestIntegerContents();
     TestBerHeaders();
     TestStructureErrors();
+    TestRsaFreeGuestValidation();
     return 0;
 }

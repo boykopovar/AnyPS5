@@ -51,6 +51,7 @@
  */
 
 #include "prx/libSceNKWebKit/include/PropertyDescriptorExports.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstdint>
 #include <stdexcept>
@@ -60,23 +61,33 @@ using NKWebKit::JscAbi::PropertyDescriptor;
 
 namespace {
 
-template <typename Descriptor>
-Descriptor* RequireDescriptor(Descriptor* self, const char* name) {
+PropertyDescriptor Load(const PropertyDescriptor* self, const char* name) {
     if (self == nullptr) throw std::invalid_argument(std::string(name) + ": null object");
-    return self;
+    PropertyDescriptor descriptor;
+    if (!GuestCopyIn_nid_no_patch(&descriptor, self, sizeof(descriptor))) throw std::invalid_argument(std::string(name) + ": unreadable object");
+    return descriptor;
 }
 
-void SetAttribute(PropertyDescriptor* self, std::uint32_t attribute, bool clear, std::uint32_t present) {
+void Store(PropertyDescriptor* self, const PropertyDescriptor& descriptor, const char* name) {
+    if (!GuestCopyOut_nid_no_patch(self, &descriptor, sizeof(descriptor))) throw std::invalid_argument(std::string(name) + ": unwritable object");
+}
+
+void SetAttribute(PropertyDescriptor* self, std::uint32_t attribute, bool clear, std::uint32_t present, const char* name) {
+    auto descriptor = Load(self, name);
     if (clear)
-        self->attributes &= ~attribute;
+        descriptor.attributes &= ~attribute;
     else
-        self->attributes |= attribute;
-    self->seenAttributes |= present;
+        descriptor.attributes |= attribute;
+    descriptor.seenAttributes |= present;
+    Store(self, descriptor, name);
 }
 
-void SetAccessor(PropertyDescriptor* self) {
-    self->attributes |= NKWebKit::JscAbi::Accessor;
-    self->attributes &= ~static_cast<std::uint32_t>(NKWebKit::JscAbi::ReadOnly);
+void SetAccessor(PropertyDescriptor* self, std::uint64_t PropertyDescriptor::*accessor, std::uint64_t value, const char* name) {
+    auto descriptor = Load(self, name);
+    descriptor.*accessor = value;
+    descriptor.attributes |= NKWebKit::JscAbi::Accessor;
+    descriptor.attributes &= ~static_cast<std::uint32_t>(NKWebKit::JscAbi::ReadOnly);
+    Store(self, descriptor, name);
 }
 
 }
@@ -84,49 +95,52 @@ void SetAccessor(PropertyDescriptor* self) {
 extern "C" {
 
 bool APS5_VABI _ZNK3JSC18PropertyDescriptor8writableEv(const PropertyDescriptor* self) {
-    return !(RequireDescriptor(self, __func__)->attributes & NKWebKit::JscAbi::ReadOnly);
+    return !(Load(self, __func__).attributes & NKWebKit::JscAbi::ReadOnly);
 }
 
 bool APS5_VABI _ZNK3JSC18PropertyDescriptor10enumerableEv(const PropertyDescriptor* self) {
-    return !(RequireDescriptor(self, __func__)->attributes & NKWebKit::JscAbi::DontEnum);
+    return !(Load(self, __func__).attributes & NKWebKit::JscAbi::DontEnum);
+}
+
+bool APS5_VABI _ZNK3JSC18PropertyDescriptor12configurableEv(const PropertyDescriptor* self) {
+    return !(Load(self, __func__).attributes & NKWebKit::JscAbi::DontDelete);
 }
 
 bool APS5_VABI _ZNK3JSC18PropertyDescriptor16isDataDescriptorEv(const PropertyDescriptor* self) {
-    RequireDescriptor(self, __func__);
-    return self->value != 0 || (self->seenAttributes & NKWebKit::JscAbi::WritablePresent);
+    const auto descriptor = Load(self, __func__);
+    return descriptor.value != 0 || (descriptor.seenAttributes & NKWebKit::JscAbi::WritablePresent);
 }
 
 bool APS5_VABI _ZNK3JSC18PropertyDescriptor20isAccessorDescriptorEv(const PropertyDescriptor* self) {
-    RequireDescriptor(self, __func__);
-    return self->getter != 0 || self->setter != 0;
+    const auto descriptor = Load(self, __func__);
+    return descriptor.getter != 0 || descriptor.setter != 0;
 }
 
 void APS5_VABI _ZN3JSC18PropertyDescriptor11setWritableEb(PropertyDescriptor* self, bool writable) {
-    SetAttribute(RequireDescriptor(self, __func__), NKWebKit::JscAbi::ReadOnly, writable, NKWebKit::JscAbi::WritablePresent);
+    SetAttribute(self, NKWebKit::JscAbi::ReadOnly, writable, NKWebKit::JscAbi::WritablePresent, __func__);
 }
 
 void APS5_VABI _ZN3JSC18PropertyDescriptor13setEnumerableEb(PropertyDescriptor* self, bool enumerable) {
-    SetAttribute(RequireDescriptor(self, __func__), NKWebKit::JscAbi::DontEnum, enumerable, NKWebKit::JscAbi::EnumerablePresent);
+    SetAttribute(self, NKWebKit::JscAbi::DontEnum, enumerable, NKWebKit::JscAbi::EnumerablePresent, __func__);
 }
 
 void APS5_VABI _ZN3JSC18PropertyDescriptor15setConfigurableEb(PropertyDescriptor* self, bool configurable) {
-    SetAttribute(RequireDescriptor(self, __func__), NKWebKit::JscAbi::DontDelete, configurable, NKWebKit::JscAbi::ConfigurablePresent);
+    SetAttribute(self, NKWebKit::JscAbi::DontDelete, configurable, NKWebKit::JscAbi::ConfigurablePresent, __func__);
 }
 
 void APS5_VABI _ZN3JSC18PropertyDescriptor12setUndefinedEv(PropertyDescriptor* self) {
-    RequireDescriptor(self, __func__);
-    self->value = NKWebKit::JscAbi::EncodedJSUndefined;
-    self->attributes = NKWebKit::JscAbi::ReadOnly | NKWebKit::JscAbi::DontDelete | NKWebKit::JscAbi::DontEnum;
+    auto descriptor = Load(self, __func__);
+    descriptor.value = NKWebKit::JscAbi::EncodedJSUndefined;
+    descriptor.attributes = NKWebKit::JscAbi::ReadOnly | NKWebKit::JscAbi::DontDelete | NKWebKit::JscAbi::DontEnum;
+    Store(self, descriptor, __func__);
 }
 
 void APS5_VABI _ZN3JSC18PropertyDescriptor9setGetterENS_7JSValueE(PropertyDescriptor* self, std::uint64_t getter) {
-    RequireDescriptor(self, __func__)->getter = getter;
-    SetAccessor(self);
+    SetAccessor(self, &PropertyDescriptor::getter, getter, __func__);
 }
 
 void APS5_VABI _ZN3JSC18PropertyDescriptor9setSetterENS_7JSValueE(PropertyDescriptor* self, std::uint64_t setter) {
-    RequireDescriptor(self, __func__)->setter = setter;
-    SetAccessor(self);
+    SetAccessor(self, &PropertyDescriptor::setter, setter, __func__);
 }
 
 }

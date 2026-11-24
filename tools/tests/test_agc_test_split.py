@@ -282,5 +282,32 @@ class ResolveTests(unittest.TestCase):
         self.assertIn("already includes", result.stderr)
 
 
+class ExecutionTargetTests(unittest.TestCase):
+    def test_camel_case_stems_become_snake_case_targets(self):
+        self.assertEqual(agc_test_split.execution_target("DrawIndex"), "agc_driver_draw_index_tests")
+        self.assertEqual(agc_test_split.execution_target("Dispatch2D"), "agc_driver_dispatch2_d_tests")
+
+    def test_lowercase_and_acronym_stems_are_not_split(self):
+        self.assertEqual(agc_test_split.execution_target("blit"), "agc_driver_blit_tests")
+        self.assertEqual(agc_test_split.execution_target("ABTest"), "agc_driver_abtest_tests")
+
+
+class ExecutionTargetsTests(unittest.TestCase):
+    def test_cpp_files_map_to_sorted_targets(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            directory = root / agc_test_split.EXECUTION
+            directory.mkdir(parents=True)
+            for file in ("ZetaOne.cpp", "AlphaTwo.cpp", "notes.txt"):
+                (directory / file).write_text("")
+            self.assertEqual(agc_test_split.execution_targets(root), ["agc_driver_alpha_two_tests", "agc_driver_zeta_one_tests"])
+
+    def test_empty_directory_has_no_targets(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            (root / agc_test_split.EXECUTION).mkdir(parents=True)
+            self.assertEqual(agc_test_split.execution_targets(root), [])
+
+
 if __name__ == "__main__":
     unittest.main()

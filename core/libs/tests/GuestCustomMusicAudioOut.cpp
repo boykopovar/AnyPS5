@@ -1,4 +1,5 @@
 #include "prx/libSceCustomMusicAudioOut/include/Api.hpp"
+#include <cerrno>
 #include <cmath>
 #include <cstdlib>
 
@@ -19,12 +20,43 @@ int main() {
     double vol = 0.0;
     bool muted = false;
 
+    errno = 71;
     Require(sceCustomMusicAudioOutGetVolume(nullptr) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetVolume(reinterpret_cast<double*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
     Require(sceCustomMusicAudioOutGetVolume(&vol) == kErrNotInit);
+    Require(errno == 71);
+
+    errno = 71;
     Require(sceCustomMusicAudioOutGetMuted(nullptr) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetMuted(reinterpret_cast<bool*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
     Require(sceCustomMusicAudioOutGetMuted(&muted) == kErrNotInit);
+    Require(errno == 71);
+
+    errno = 71;
     Require(sceCustomMusicAudioOutGetAllMusicVolume(nullptr) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetAllMusicVolume(reinterpret_cast<double*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
     Require(sceCustomMusicAudioOutGetAllMusicVolume(&vol) == kErrNotInit);
+    Require(errno == 71);
+
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetLastOutputTime(nullptr) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetLastOutputTime(reinterpret_cast<void*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
+
     Require(sceCustomMusicAudioOutSetVolume(0.5) == kErrNotInit);
     Require(sceCustomMusicAudioOutSetMuted(true) == kErrNotInit);
     Require(sceCustomMusicAudioOutSetAllMusicVolume(0.5) == kErrNotInit);
@@ -33,6 +65,31 @@ int main() {
     Require(sceCustomMusicAudioOutInitialize(0, 2, 1) == kErrInvalidArg);
     Require(sceCustomMusicAudioOutInitialize(0, 0, 2) == kErrInvalidArg);
     Require(sceCustomMusicAudioOutInitialize(0, 0, 1) == 0);
+
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetVolume(nullptr) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetVolume(reinterpret_cast<double*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetMuted(nullptr) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetMuted(reinterpret_cast<bool*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetAllMusicVolume(nullptr) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetAllMusicVolume(reinterpret_cast<double*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetLastOutputTime(nullptr) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCustomMusicAudioOutGetLastOutputTime(reinterpret_cast<void*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
 
     Require(sceCustomMusicAudioOutGetVolume(&vol) == 0);
     Require(std::abs(vol - 0.5) < 0.001);

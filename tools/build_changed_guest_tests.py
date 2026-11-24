@@ -9,6 +9,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_mingw_host_only_tests as host_only
+from check_test_registration import testfile_commands
 from select_tests import chunks
 
 BROAD_CHANGES = {
@@ -54,7 +55,7 @@ def script_test_patterns(changed):
 def script_test_indices(build_dir, patterns):
     result = subprocess.run(
         ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
-        capture_output=True, text=True, check=True)
+        capture_output=True, text=True, encoding="utf-8", check=True)
     names = [test["name"] for test in json.loads(result.stdout).get("tests", [])]
     indices = set()
     for pattern in patterns:
@@ -65,29 +66,19 @@ def script_test_indices(build_dir, patterns):
     return sorted(indices)
 
 
-TESTFILE_ADD_TEST = re.compile(r'^\s*add_test\(\s*(?:"((?:[^"\\]|\\.)*)"|\[=\[(.*?)\]=\])\s*(.*)\)\s*$')
-TESTFILE_ARGUMENT = re.compile(r'"((?:[^"\\]|\\.)*)"|\[=\[(.*?)\]=\]|(\S+)')
-
-
 def registered_test_commands(build_dir):
     commands = {}
-    for root, _, files in os.walk(build_dir):
-        if "CTestTestfile.cmake" not in files:
-            continue
-        for line in (Path(root) / "CTestTestfile.cmake").read_text(encoding="utf-8", errors="replace").splitlines():
-            match = TESTFILE_ADD_TEST.match(line)
-            if match:
-                name = match.group(1) if match.group(1) is not None else match.group(2)
-                commands[re.sub(r"\\(.)", r"\1", name)] = [
-                    re.sub(r"\\(.)", r"\1", next(part for part in argument.groups() if part is not None))
-                    for argument in TESTFILE_ARGUMENT.finditer(match.group(3))]
+    for entries in testfile_commands(build_dir):
+        for command, arguments in entries:
+            if command == "add_test" and arguments:
+                commands[arguments[0]] = arguments[1:]
     return commands
 
 
 def script_test_owners(build_dir, targets_by_name, patterns):
     listing = subprocess.run(
         ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
-        capture_output=True, text=True, check=True)
+        capture_output=True, text=True, encoding="utf-8", check=True)
     registered = registered_test_commands(build_dir)
     owners = set()
     for test in json.loads(listing.stdout).get("tests", []):
@@ -112,7 +103,7 @@ def guest_test_targets(source_root, targets, changed_paths=None):
         except ValueError:
             continue
         sources = [source_root / source["path"] for source in target.get("sources", []) if not source.get("isGenerated")]
-        if not any("tests" in source.parts and source.is_relative_to(source_root / "core" / "libs") for source in sources):
+        if not any(host_only.is_core_libs_test_source(source, source_root / "core" / "libs") for source in sources):
             continue
         if not host_only.links_guest_libc(target):
             continue
@@ -173,7 +164,7 @@ def test_owner(command, targets_by_name):
 def ctest_resolutions(build_dir, targets_by_name, selected=None):
     result = subprocess.run(
         ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
-        capture_output=True, text=True, check=True)
+        capture_output=True, text=True, encoding="utf-8", check=True)
     document = json.loads(result.stdout)
     resolutions = {}
     for index, test in enumerate(document.get("tests", []), 1):

@@ -16,11 +16,6 @@ int APS5_VABI _Restore_state_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Rint_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Save_state_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -32,11 +27,6 @@ int APS5_VABI _Scanf_nid_postfix() {
 }
 
 int APS5_VABI _Setgloballocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Sincos_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -64,11 +54,6 @@ char* APS5_VABI _Strerror_nid_postfix(int error, char* buffer) {
 }
 
 int APS5_VABI _Strxfrmx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Tan_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -215,21 +200,6 @@ int APS5_VABI sceLibcInternalUnknown_yc_vi84_2aE_nid_no_patch() {
     return 0;
 }
 APS5_EXPORT("yc-vi84-2aE", sceLibcInternalUnknown_yc_vi84_2aE_nid_no_patch);
-
-int APS5_VABI _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSbIwSt11char_traitsIwESaIwEE5_XranEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt13bad_exception8_DoraiseEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI _ZNKSt19istreambuf_iteratorIcSt11char_traitsIcEE5equalERKS2__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);

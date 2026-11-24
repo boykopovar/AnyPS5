@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
@@ -16,6 +17,7 @@
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include "prx/libkernel/Apr/include/AmmPool.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
+#include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
@@ -34,6 +36,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -52,6 +55,8 @@ constexpr int GUEST_ENAMETOOLONG = 63;
 struct AprFile {
     std::filesystem::path path;
     std::uint64_t size;
+    bool archived = false;
+    AppArchiveNode node{};
 };
 
 std::mutex& g_filesLock = *new std::mutex();
@@ -61,8 +66,14 @@ std::unordered_map<std::string, std::uint32_t>& g_idsByPath = *new std::unordere
 // File sizes by directory, listed on first use. Titles resolve thousands of package paths at startup,
 // and one size query per path took over 20 s; a listing costs one directory read. Names are compared
 // case-insensitively, like the host file system.
+struct ListedFile {
+    std::uint64_t size;
+    std::filesystem::path name;
+    bool ambiguous = false;
+};
+
 std::mutex& g_directoriesLock = *new std::mutex();
-std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>>& g_directories = *new std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>>();
+std::unordered_map<std::string, std::unordered_map<std::string, ListedFile>>& g_directories = *new std::unordered_map<std::string, std::unordered_map<std::string, ListedFile>>();
 
 std::string _foldCase(std::string text) {
     for (auto& character : text) {
@@ -77,13 +88,22 @@ std::filesystem::path _hostPath(const std::filesystem::path& path) {
     return error ? path : verbatim;
 }
 
-bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
+void _addListed(std::unordered_map<std::string, ListedFile>& files, std::filesystem::path name, std::uint64_t size) {
+    auto [file, added] = files.try_emplace(_foldCase(name.string()), ListedFile{size, name});
+    if (!added) file->second.ambiguous = true;
+}
+
+std::mutex& g_hostDirectoriesLock = *new std::mutex();
+std::unordered_map<std::string, std::filesystem::path>& g_hostDirectories = *new std::unordered_map<std::string, std::filesystem::path>();
+std::uint64_t g_hostDirectoriesGeneration = 0;
+
+bool _listedSize(const std::filesystem::path& path, std::uint64_t& bytes, std::filesystem::path* listedName = nullptr) {
     {
         std::lock_guard lock(g_directoriesLock);
         const auto directory = _foldCase(path.parent_path().string());
         auto listed = g_directories.find(directory);
         if (listed == g_directories.end()) {
-            std::unordered_map<std::string, std::uint64_t> sizes;
+            std::unordered_map<std::string, ListedFile> sizes;
 #ifdef _WIN32
             // The find data carries each size; std::filesystem would query every entry again.
             WIN32_FIND_DATAW entry{};
@@ -92,7 +112,10 @@ bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
                 do {
                     if ((entry.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0) continue;
                     const auto size = (static_cast<std::uint64_t>(entry.nFileSizeHigh) << 32u) | entry.nFileSizeLow;
-                    sizes.emplace(_foldCase(std::filesystem::path(entry.cFileName).string()), size);
+                    try {
+                        _addListed(sizes, std::filesystem::path(entry.cFileName), size);
+                    } catch (const std::exception&) {
+                    }
                 } while (FindNextFileW(find, &entry));
                 FindClose(find);
             }
@@ -102,16 +125,22 @@ bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
                 std::error_code entryError;
                 if (!it->is_regular_file(entryError)) continue;
                 const auto size = it->file_size(entryError);
-                if (!entryError) sizes.emplace(_foldCase(it->path().filename().string()), size);
+                if (!entryError) _addListed(sizes, it->path().filename(), size);
             }
 #endif
             listed = g_directories.emplace(directory, std::move(sizes)).first;
         }
-        if (const auto file = listed->second.find(_foldCase(path.filename().string())); file != listed->second.end()) {
-            bytes = file->second;
+        if (const auto file = listed->second.find(_foldCase(path.filename().string())); file != listed->second.end() && !file->second.ambiguous) {
+            bytes = file->second.size;
+            if (listedName) *listedName = file->second.name;
             return true;
         }
     }
+    return false;
+}
+
+bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
+    if (_listedSize(path, bytes)) return true;
     // Not in the listing (created since, or an unusual name): ask the file system directly.
     std::error_code error;
     if (!std::filesystem::is_regular_file(_hostPath(path), error)) return false;
@@ -126,18 +155,74 @@ int _fail(int guestErrno) {
     return -1;
 }
 
+constexpr std::size_t MAX_PATH_LENGTH = 1024;
+constexpr std::size_t MAX_NAME_LENGTH = 255;
+
+bool _listedPathIn(const std::string& directory, const std::string& name, std::filesystem::path& hostPath, std::uint64_t& bytes);
+
+bool _listedPath(const char* guestPath, std::filesystem::path& hostPath, std::uint64_t& bytes) {
+    const std::string_view text(guestPath);
+    const auto separator = text.find_last_of('/');
+    if (text.empty() || text.front() != '/' || separator == 0 || text.size() >= MAX_PATH_LENGTH) return false;
+    const std::string name(text.substr(separator + 1));
+    if (name.empty() || name == "." || name == ".." || name.size() > MAX_NAME_LENGTH || name.find_first_of("\\:") != std::string::npos) return false;
+    const std::string directory(text.substr(0, separator));
+    try {
+        return _listedPathIn(directory, name, hostPath, bytes);
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool _listedPathIn(const std::string& directory, const std::string& name, std::filesystem::path& hostPath, std::uint64_t& bytes) {
+    std::filesystem::path hostDirectory;
+    std::uint64_t generation = 0;
+    {
+        std::lock_guard lock(g_hostDirectoriesLock);
+        generation = PathAliasGeneration_nid_no_patch();
+        if (generation != g_hostDirectoriesGeneration) {
+            g_hostDirectories.clear();
+            g_hostDirectoriesGeneration = generation;
+        }
+        if (const auto found = g_hostDirectories.find(directory); found != g_hostDirectories.end()) hostDirectory = found->second;
+    }
+    if (hostDirectory.empty()) {
+        if (ResolvePathError_nid_no_patch(directory.c_str(), hostDirectory, false, true) != 0) return false;
+        if (AppArchiveOnly_nid_no_patch(hostDirectory)) return false;
+        std::error_code error;
+        if (!std::filesystem::is_directory(hostDirectory, error)) return false;
+        std::lock_guard lock(g_hostDirectoriesLock);
+        if (PathAliasGeneration_nid_no_patch() == generation && g_hostDirectoriesGeneration == generation) g_hostDirectories.emplace(directory, hostDirectory);
+    }
+    const std::filesystem::path guestName(name);
+    std::filesystem::path listedName;
+    hostPath = hostDirectory / guestName;
+    return _listedSize(hostPath, bytes, &listedName) && listedName == guestName;
+}
+
 bool _resolve(const char* guestPath, std::uint32_t* id, std::uint64_t* size) {
     if (!guestPath) return false;
     std::filesystem::path hostPath;
-    if (ResolvePathError_nid_no_patch(guestPath, hostPath) != 0) return false;
     std::uint64_t bytes = 0;
-    if (!_fileSize(hostPath, bytes)) return false;
+    bool archived = false;
+    AppArchiveNode node{};
+    if (!_listedPath(guestPath, hostPath, bytes)) {
+        if (ResolvePathError_nid_no_patch(guestPath, hostPath, false, true) != 0) return false;
+        if (AppArchiveOnly_nid_no_patch(hostPath)) {
+            if (!AppArchiveLookup_nid_no_patch(hostPath, &node)) throw std::logic_error("APR: " + hostPath.string() + " left app0.zar while resolving it");
+            if (node.Directory) return false;
+            archived = true;
+            bytes = node.Size;
+        } else if (!_fileSize(hostPath, bytes)) {
+            return false;
+        }
+    }
     std::lock_guard lock(g_filesLock);
     const auto key = hostPath.string();
     auto found = g_idsByPath.find(key);
     if (found == g_idsByPath.end()) {
         found = g_idsByPath.emplace(key, static_cast<std::uint32_t>(g_files.size())).first;
-        g_files.push_back({std::move(hostPath), bytes});
+        g_files.push_back({std::move(hostPath), bytes, archived, node});
     }
     if (id) *id = found->second;
     if (size) *size = bytes;
@@ -248,6 +333,24 @@ int _readFile(const Apr::ReadFileCommand& command) {
     if (!found) return failed(SCE_KERNEL_ERROR_ENOENT, "unknown file id");
     const auto& file = *found;
     if (trace) std::fprintf(stderr, "[apr] read %s offset=0x%llx size=0x%llx -> 0x%llx\n", file.path.string().c_str(), static_cast<unsigned long long>(command.offset), static_cast<unsigned long long>(command.size), static_cast<unsigned long long>(command.destination));
+    if (file.archived) {
+        const GuestArena::HostWrite destination(reinterpret_cast<void*>(command.destination), command.size);
+        if (!destination.Open()) return failed(SCE_KERNEL_ERROR_EFAULT, "the destination is not writable guest memory");
+        std::vector<char> staging(static_cast<std::size_t>(std::min<std::uint64_t>(command.size, 64u * 1024u)));
+        std::uint64_t read = 0;
+        while (read < command.size && command.offset + read < file.node.Size) {
+            const auto wanted = std::min<std::uint64_t>(command.size - read, staging.size());
+            const auto obtained = AppArchiveRead_nid_no_patch(file.node.Handle, command.offset + read, staging.data(), wanted);
+            if (obtained != 0) std::memcpy(reinterpret_cast<char*>(command.destination) + read, staging.data(), static_cast<std::size_t>(obtained));
+            read += obtained;
+            if (obtained != wanted) break;
+        }
+        if (read != command.size) {
+            if (command.offset + read < file.node.Size) return failed(SCE_KERNEL_ERROR_EIO, "the archive read came back short before the end of the entry");
+            std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
+        }
+        return 0;
+    }
     const auto hostPath = _hostPath(file.path);
     std::ifstream stream(hostPath, std::ios::binary);
     if (!stream) {
@@ -1004,7 +1107,8 @@ int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
     if (!_known(id)) return _fail(GUEST_ENOTSUP);
     if (!stat) return _fail(GUEST_EINVAL);
     FileStat result{};
-    File::FillFileStat(_file(id).path, &result);
+    const auto file = _file(id);
+    if (!file.archived || !File::FillArchivedStat(file.path, &result)) File::FillFileStat(file.path, &result);
     if (!GuestCopyOut_nid_no_patch(stat, &result, sizeof(result))) return _fail(GUEST_EFAULT);
     return 0;
 }

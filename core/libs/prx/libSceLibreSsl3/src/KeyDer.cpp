@@ -1590,17 +1590,8 @@ LibreSsl3EvpPkey* APS5_VABI EVP_PKCS82PKEY_nid_postfix(const LibreSsl3Pkcs8PrivK
         info->privateKey->data, static_cast<std::size_t>(info->privateKey->length));
 
     if (IsOid(oidSpan, RsaOid)) {
-        if (info->algorithm->parameter && info->algorithm->parameter->type != Asn1TypeNull) {
-            PutError(ErrLibRsa, ErrRRsaLib);
-            PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
-            return nullptr;
-        }
-        auto* key = DecodeRsaPkey(keyBytes, true, false);
-        if (!key) {
-            PutError(ErrLibRsa, ErrRRsaLib);
-            PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
-            return nullptr;
-        }
+        auto* key = DecodeRsaPkey(keyBytes, true, true);
+        if (!key) PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
         return key;
     }
     if (IsOid(oidSpan, EcPublicKeyOid)) {
@@ -1618,7 +1609,7 @@ LibreSsl3EvpPkey* APS5_VABI EVP_PKCS82PKEY_nid_postfix(const LibreSsl3Pkcs8PrivK
             PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
             return nullptr;
         }
-        auto* ec = DecodeEcPrivateKey(keyBytes, curve, false);
+        auto* ec = DecodeEcPrivateKey(keyBytes, curve, true);
         if (!ec) {
             PutError(ErrLibEc, EcRDecodeError);
             PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);

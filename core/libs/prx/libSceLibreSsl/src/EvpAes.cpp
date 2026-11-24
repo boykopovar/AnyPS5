@@ -77,18 +77,14 @@ int TimingSafeCompare(const void* first, const void* second, std::size_t size) {
 void CopyIn(void* destination, const void* source, std::size_t size, const char* function) {
     if (!size) return;
     if (!destination || !source) throw std::invalid_argument(std::string(function) + ": null buffer");
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
 void CopyOut(void* destination, const void* source, std::size_t size, const char* function) {
     if (!size) return;
     if (!destination || !source) throw std::invalid_argument(std::string(function) + ": null buffer");
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 

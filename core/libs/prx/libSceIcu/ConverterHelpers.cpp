@@ -1,25 +1,43 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "unicode/ucnv.h"
 #include "ustr_cnv.h"
 #include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_set>
 
 namespace {
 
+std::mutex DefaultConverterMutex;
+std::unordered_set<UConverter*> CheckedOutDefaultConverters;
+
 void CopyIn(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
 }
 
 void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
+}
+
+std::string CopyConverterName(const char* source, const char* caller) {
+    constexpr int GuestNameTooLong = 63;
+    std::string name;
+    for (std::size_t capacity = UCNV_MAX_CONVERTER_NAME_LENGTH; capacity <= name.max_size() / 2; capacity *= 2) {
+        const int savedErrno = errno;
+        const int error = CopyGuestString_nid_no_patch(source, capacity, name);
+        errno = savedErrno;
+        if (error == 0) return name;
+        if (error != GuestNameTooLong) break;
+    }
+    NotImplemented_nid_no_patch(caller);
 }
 
 bool IsDigit(unsigned char value, bool ebcdic) {
@@ -88,7 +106,52 @@ constexpr Signature Signatures[] = {
 extern "C" {
 
 void APS5_VABI u_flushDefaultConverter_nid_postfix() {
+    const std::lock_guard lock(DefaultConverterMutex);
     u_flushDefaultConverter();
+}
+
+UConverter* APS5_VABI u_getDefaultConverter_nid_postfix(std::int32_t* errorCode) {
+    if (!errorCode) APS5_INVALID_ARG_EX;
+    std::int32_t incoming = 0;
+    CopyIn(&incoming, errorCode, sizeof(incoming), __func__);
+    const std::int32_t entered = incoming < U_ERROR_WARNING_START ? 0 : incoming;
+    auto status = static_cast<UErrorCode>(entered);
+
+    const std::lock_guard lock(DefaultConverterMutex);
+    std::unique_ptr<UConverter, decltype(&u_releaseDefaultConverter)> converter(
+        u_getDefaultConverter(&status), u_releaseDefaultConverter);
+    const auto outgoing = static_cast<std::int32_t>(status);
+    if (outgoing != entered) CopyOut(errorCode, &outgoing, sizeof(outgoing), __func__);
+    if (converter) CheckedOutDefaultConverters.insert(converter.get());
+    return converter.release();
+}
+
+void APS5_VABI u_releaseDefaultConverter_nid_postfix(UConverter* converter) {
+    if (!converter) return;
+    const std::lock_guard lock(DefaultConverterMutex);
+    if (CheckedOutDefaultConverters.erase(converter) == 0) APS5_INVALID_ARG_EX;
+    if constexpr (!U_CHARSET_IS_UTF8) {
+        UErrorCode status = U_ZERO_ERROR;
+        const char* name = ucnv_getName(converter, &status);
+        if (U_FAILURE(status) || !name || std::strcmp(name, ucnv_getDefaultName()) != 0) {
+            ucnv_close(converter);
+            return;
+        }
+    }
+    u_releaseDefaultConverter(converter);
+}
+
+const char* APS5_VABI ucnv_getDefaultName_nid_postfix() {
+    const std::lock_guard lock(DefaultConverterMutex);
+    return ucnv_getDefaultName();
+}
+
+void APS5_VABI ucnv_setDefaultName_nid_postfix(const char* name) {
+    if constexpr (U_CHARSET_IS_UTF8) return;
+    const std::string copied = name ? CopyConverterName(name, __func__) : std::string{};
+    const std::lock_guard lock(DefaultConverterMutex);
+    ucnv_setDefaultName(name ? copied.c_str() : nullptr);
+    if (!name) u_flushDefaultConverter();
 }
 
 int APS5_VABI ucnv_compareNames_nid_postfix(const char* left, const char* right) {

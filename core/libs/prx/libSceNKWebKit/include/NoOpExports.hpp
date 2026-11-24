@@ -4,6 +4,17 @@
 
 extern "C" {
 
+void APS5_VABI WKBundleRemoveAllWebNotificationPermissions();
+void APS5_VABI WKBundleSetServiceWorkerProxyCreationCallback();
+void APS5_VABI WKContextTerminateServiceWorkers();
+void APS5_VABI WKSendDisplayConfigurationChangedMessageForTesting();
+void APS5_VABI WKTextCheckerSetTestingMode();
+void APS5_VABI _ZN7WebCore14JSWebAnimation14finishCreationERN3JSC2VME();
+void APS5_VABI _ZN7WebCore21JSTextTrackCueGeneric14finishCreationERN3JSC2VME();
+void APS5_VABI _ZN7WebCore6JSFile14finishCreationERN3JSC2VME();
+void APS5_VABI _ZN7WebCore6JSNode14finishCreationERN3JSC2VME();
+void APS5_VABI _ZN7WebCore7JSRange14finishCreationERN3JSC2VME();
+
 void APS5_VABI JSRemoteInspectorSetParentProcessInformation();
 void APS5_VABI WKAddMockMediaDevice();
 void APS5_VABI WKBundleExtendClassesForParameterCoder();
@@ -22,17 +33,11 @@ void APS5_VABI WKContextMenuItemSetUserData();
 void APS5_VABI WKContextPreconnectToServer();
 void APS5_VABI WKContextRefreshPlugIns();
 void APS5_VABI WKContextSetAdditionalPluginsDirectory();
-void APS5_VABI WKContextSetCanHandleHTTPSServerTrustEvaluation();
-void APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier();
-void APS5_VABI WKContextSetDiskCacheSpeculativeValidationEnabled();
 void APS5_VABI WKContextSetIconDatabasePath();
-void APS5_VABI WKContextSetMaximumNumberOfProcesses();
 void APS5_VABI WKContextSetPlugInAutoStartOriginHashes();
 void APS5_VABI WKContextSetPlugInAutoStartOrigins();
 void APS5_VABI WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTime();
 void APS5_VABI WKContextSetPrimaryWebsiteDataStore();
-void APS5_VABI WKContextSetProcessModel();
-void APS5_VABI WKContextSetUsesNetworkProcess();
 void APS5_VABI WKCookieManagerDeleteAllCookies();
 void APS5_VABI WKCookieManagerSetHTTPCookieAcceptPolicy();
 void APS5_VABI WKIconDatabaseCheckIntegrityBeforeOpening();
@@ -44,7 +49,6 @@ void APS5_VABI WKIconDatabaseRetainIconForURL();
 void APS5_VABI WKIconDatabaseSetIconDataForIconURL();
 void APS5_VABI WKIconDatabaseSetIconDatabaseClient();
 void APS5_VABI WKIconDatabaseSetIconURLForPageURL();
-void APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled();
 void APS5_VABI WKPreferencesSetQTKitEnabled();
 void APS5_VABI WKWebsiteDataStoreClearAllDeviceOrientationPermissions();
 void APS5_VABI WKWebsiteDataStoreReinitializeAppBoundDomains();
@@ -120,8 +124,6 @@ void APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationD2Ev();
 void APS5_VABI _ZN7WebCore36registerMemoryReleaseNotifyCallbacksEv();
 void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD1Ev();
 void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD2Ev();
-void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev();
-void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD2Ev();
 void APS5_VABI _ZN7WebCore4IconD1Ev();
 void APS5_VABI _ZN7WebCore4IconD2Ev();
 void APS5_VABI _ZN7bmalloc11IsoTLSEntryD1Ev();

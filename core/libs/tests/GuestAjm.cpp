@@ -1053,13 +1053,20 @@ void TestInstanceContextOwnership(std::uint32_t context) {
     constexpr int invalidContext = static_cast<int>(0x80930002);
     constexpr int invalidInstance = static_cast<int>(0x80930003);
     constexpr int invalidParameter = static_cast<int>(0x80930005);
+    constexpr int invalidFlags = static_cast<int>(0x8093000C);
     std::uint32_t untouched = 0xfeedu;
     Require(sceAjmInstanceCreate(0, 24, 0, &untouched) == invalidContext);
     Require(untouched == 0xfeedu);
     Require(sceAjmInstanceCreate(0xffffffffu, 24, 0, &untouched) == invalidContext);
     Require(untouched == 0xfeedu);
-    Require(sceAjmInstanceCreate(0, 24, 0, nullptr) == invalidContext);
+    Require(sceAjmInstanceCreate(0, 24, 0, nullptr) == invalidParameter);
     Require(sceAjmInstanceCreate(context, 24, 0, nullptr) == invalidParameter);
+    for (const std::uint64_t flags : {0x180ull, 0x2000ull, 0x4000ull, 1ull << 60}) {
+        Require(sceAjmInstanceCreate(context, 24, flags, &untouched) == invalidFlags);
+        Require(sceAjmInstanceCreate(0, 24, flags, &untouched) == invalidFlags);
+        Require(sceAjmInstanceCreate(context, 24, flags, nullptr) == invalidParameter);
+    }
+    Require(untouched == 0xfeedu);
     errno = 71;
     Require(sceAjmInstanceCreate(context, 24, 0, reinterpret_cast<uint32_t*>(0x10)) == invalidParameter);
     Require(errno == 71);

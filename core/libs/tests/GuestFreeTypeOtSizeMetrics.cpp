@@ -1,4 +1,8 @@
 #include "prx/libSceFreeTypeOt/include/SizeMetrics.hpp"
+#include <ft2build.h>
+#include FT_FREETYPE_H
+#include <freetype/internal/ftobjs.h>
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -7,6 +11,7 @@
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <vector>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -66,6 +71,16 @@ template <typename TCall> bool Throws(TCall call) {
     return false;
 }
 
+template <typename TCall> bool Invalid(TCall call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return errno == 71;
+    }
+    return false;
+}
+
 bool Equals(const GuestSizeMetrics& m, std::uint16_t xPpem, std::uint16_t yPpem, std::int64_t xScale, std::int64_t yScale, std::int64_t ascender, std::int64_t descender, std::int64_t height, std::int64_t maxAdvance) {
     return m.x_ppem == xPpem && m.y_ppem == yPpem && m.x_scale == xScale && m.y_scale == yScale && m.ascender == ascender && m.descender == descender &&
         m.height == height && m.max_advance == maxAdvance;
@@ -76,6 +91,36 @@ GuestSizeMetrics Request(std::uint32_t type, std::int64_t width, std::int64_t he
     const GuestSizeRequestRec request{type, width, height, hori, vert};
     Require(FT_Request_Metrics_nid_postfix(&fixture.face, &request) == 0, "a valid request succeeds");
     return fixture.size.metrics;
+}
+
+struct NativeMatchResult {
+    std::int32_t error;
+    std::uint64_t index;
+};
+
+NativeMatchResult NativeMatch(const Fixture& fixture, const GuestSizeRequestRec& request, unsigned char ignoreWidth, std::uint64_t initialIndex) {
+    std::vector<FT_Bitmap_Size> strikes;
+    for (std::int32_t index = 0; index < fixture.face.num_fixed_sizes; ++index) {
+        const GuestBitmapSize& strike = fixture.face.available_sizes[index];
+        strikes.push_back({strike.height, strike.width, static_cast<FT_Pos>(strike.size), static_cast<FT_Pos>(strike.x_ppem), static_cast<FT_Pos>(strike.y_ppem)});
+    }
+    FT_FaceRec face{};
+    face.face_flags = static_cast<FT_Long>(fixture.face.face_flags);
+    face.num_fixed_sizes = fixture.face.num_fixed_sizes;
+    face.available_sizes = strikes.data();
+    FT_Size_RequestRec hostRequest{static_cast<FT_Size_Request_Type>(request.type), static_cast<FT_Long>(request.width), static_cast<FT_Long>(request.height),
+        request.horiResolution, request.vertResolution};
+    FT_ULong index = static_cast<FT_ULong>(initialIndex);
+    const FT_Error error = FT_Match_Size(&face, &hostRequest, ignoreWidth, &index);
+    return {error, index};
+}
+
+void RequireNativeAgreement(Fixture& fixture, const GuestSizeRequestRec& request, unsigned char ignoreWidth, const char* message) {
+    constexpr std::uint64_t InitialIndex = 99;
+    const NativeMatchResult native = NativeMatch(fixture, request, ignoreWidth, InitialIndex);
+    std::uint64_t guestIndex = InitialIndex;
+    const std::int32_t guestError = FT_Match_Size_nid_postfix(&fixture.face, &request, ignoreWidth, &guestIndex);
+    Require(guestError == native.error && guestIndex == native.index, message);
 }
 
 void RequestMetrics() {
@@ -115,7 +160,12 @@ void SelectMetrics() {
     Fixture bitmap(2);
     FT_Select_Metrics_nid_postfix(&bitmap.face, 2);
     Require(Equals(bitmap.size.metrics, 18, 16, 65536, 65536, 1024, 0, 1024, 1152), "a bitmap face copies the strike metrics");
-    Require(Throws([&] { FT_Select_Metrics_nid_postfix(&bitmap.face, 3); }), "a strike index past the table throws");
+    Require(Invalid([&] { FT_Select_Metrics_nid_postfix(&bitmap.face, 3); }), "a strike index past the table throws");
+
+    Fixture missingTable(3);
+    missingTable.face.available_sizes = nullptr;
+    Require(Invalid([&] { FT_Select_Metrics_nid_postfix(&missingTable.face, 0); }), "a missing strike table throws");
+    Require(Invalid([] { FT_Select_Metrics_nid_postfix(nullptr, 0); }), "a null face throws");
 }
 
 void MatchSize() {
@@ -135,19 +185,53 @@ void MatchSize() {
     Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, nullptr) == 0, "the resolution scales the request and the index is optional");
     Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, reinterpret_cast<std::uint64_t*>(0x10)) == 0x06, "an unwritable size index is refused");
     request = {3, 16 * 64, 16 * 64, 0, 0};
+    index = 99;
     Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, &index) == 0x07, "only nominal requests are matched");
+    Require(index == 99, "a rejected request leaves the index untouched");
     Fixture outlineOnly(1);
     Require(FT_Match_Size_nid_postfix(&outlineOnly.face, nullptr, 0, &index) == 0x23, "a face without strikes is an invalid face handle");
+
+    request = {0, 20 * 64, 16 * 64, 0, 0};
+    Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, reinterpret_cast<std::uint64_t*>(0x10)) == 0x17,
+            "an unused invalid output does not replace a no-match error");
+
+    request = {0, std::numeric_limits<std::int64_t>::max(), 16 * 64, 0, 0};
+    index = 99;
+    Require(Throws([&] { FT_Match_Size_nid_postfix(&fixture.face, &request, 0, &index); }) && index == 99,
+            "request rounding overflow throws without writing the index");
+    request = {0, std::numeric_limits<std::int64_t>::max() / 2 + 1, 16 * 64, 2, 0};
+    Require(Throws([&] { FT_Match_Size_nid_postfix(&fixture.face, &request, 0, &index); }) && index == 99,
+            "resolution multiplication overflow throws without writing the index");
+    fixture.sizes[0].x_ppem = std::numeric_limits<std::int64_t>::max();
+    fixture.sizes[0].y_ppem = 16 * 64;
+    request = {0, 16 * 64, 16 * 64, 0, 0};
+    Require(Throws([&] { FT_Match_Size_nid_postfix(&fixture.face, &request, 1, &index); }) && index == 99,
+            "strike rounding overflow throws before ignored-width matching");
 }
 
-template <typename TCall> bool Invalid(TCall call) {
-    errno = 71;
-    try {
-        call();
-    } catch (const std::invalid_argument&) {
-        return errno == 71;
+void MatchNativeAgreement() {
+    Fixture fixture(3);
+    const std::array<GuestSizeRequestRec, 9> requests = {{{0, 16 * 64, 16 * 64, 0, 0}, {0, 18 * 64, 16 * 64, 0, 0},
+        {0, 0, 13 * 64 - 20, 0, 0}, {0, 12, 0, 96 * 64, 0}, {0, 0, 0, 0, 0}, {1, 16 * 64, 16 * 64, 0, 0},
+        {2, 16 * 64, 16 * 64, 0, 0}, {3, 16 * 64, 16 * 64, 0, 0}, {4, 16 * 64, 16 * 64, 0, 0}}};
+    for (const GuestSizeRequestRec& request : requests) {
+        RequireNativeAgreement(fixture, request, 0, "guest matching agrees with pinned FreeType for every request type");
     }
-    return false;
+    const GuestSizeRequestRec ignoredWidth{0, 20 * 64, 16 * 64, 0, 0};
+    RequireNativeAgreement(fixture, ignoredWidth, 1, "guest ignored-width matching agrees with pinned FreeType");
+
+    fixture.sizes[0].x_ppem = 16 * 64;
+    fixture.sizes[0].y_ppem = 16 * 64;
+    const GuestSizeRequestRec tied{0, 16 * 64, 16 * 64, 0, 0};
+    RequireNativeAgreement(fixture, tied, 0, "guest tie selection agrees with pinned FreeType");
+
+    Fixture empty(3);
+    empty.face.num_fixed_sizes = 0;
+    empty.face.available_sizes = nullptr;
+    RequireNativeAgreement(empty, tied, 0, "guest empty-strike matching agrees with pinned FreeType");
+
+    Fixture scalable(1);
+    RequireNativeAgreement(scalable, tied, 0, "guest scalable-face rejection agrees with pinned FreeType");
 }
 
 template <typename TCall> bool InvalidArgument(TCall call) {
@@ -243,6 +327,7 @@ int main() {
     RequestMetrics();
     SelectMetrics();
     MatchSize();
+    MatchNativeAgreement();
     GuestPointers();
     std::puts("Guest FreeType Ot size metrics tests passed");
     return 0;

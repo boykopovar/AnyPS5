@@ -10,6 +10,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <climits>
+
+extern "C" void libSceNpWebApiUnknown_V6DhvHJCGfM_nid_no_patch();
+extern "C" void libSceNpWebApiUnknown_eJ1gJsUhQW4_nid_no_patch();
 #include <cstring>
 #include <initializer_list>
 #include <limits>
@@ -868,6 +871,11 @@ void TestConnectionChecks() {
 
 }
 
+void TestEmptyExports() {
+    libSceNpWebApiUnknown_V6DhvHJCGfM_nid_no_patch();
+    libSceNpWebApiUnknown_eJ1gJsUhQW4_nid_no_patch();
+}
+
 int main() {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
@@ -881,6 +889,7 @@ int main() {
     TestResponses();
     TestPushEventCallbacks();
     TestConsoleMeasuredExports();
+    TestEmptyExports();
     TestOlderSdks();
     TestHandleOperations();
     TestRequestOptions();

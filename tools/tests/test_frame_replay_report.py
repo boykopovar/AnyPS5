@@ -62,6 +62,30 @@ ANYPS5_HOST_REPORT: 1
 
 
 class FrameReplayReportTests(unittest.TestCase):
+    def test_host_report_preserves_unicode_separators_inside_values(self):
+        for separator in ("\x85", "\u2028", "\u2029"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(separator=separator, newline=newline):
+                    driver = f"Test{separator}Driver"
+                    environment = f"capture{separator}folder"
+                    raw = HOST.replace("Test 1.0", driver)
+                    raw += f"APS5_TRACE_DIR: {environment}\nVK_LOADER_DEBUG: info\n"
+                    raw = raw.replace("\n", newline)
+                    parsed = report.parse_replay_host_report(raw + "warning: loading frames" + newline, COMMIT)
+                    self.assertEqual(parsed["gpu"]["driver_info"], driver)
+                    self.assertEqual(parsed["environment"]["APS5_TRACE_DIR"], environment)
+                    self.assertEqual(parsed["environment"]["VK_LOADER_DEBUG"], "info")
+                    self.assertEqual(parsed["raw"], raw)
+
+    def test_native_unavailable_reasons_belong_to_the_host_report(self):
+        reasons = ["cpu: cpuid", "memory: no source", "os: uname failed"]
+        raw = HOST + "[unavailable]\n" + "\n".join(reasons) + "\n"
+        parsed = report.parse_replay_host_report(raw + "warning: loading frames\n", COMMIT)
+        self.assertEqual(parsed["unavailable"], reasons)
+        self.assertEqual(parsed["raw"], raw)
+        with self.assertRaisesRegex(ValueError, "contradictory invocation host reports"):
+            report.parse_replay_host_report(raw + raw.replace("os: uname failed", "os: no source"), COMMIT)
+
     def test_validation_diagnostics_in_stdout_and_stderr(self):
         for stdout_bytes in (False, True):
             for stderr_bytes in (False, True):
@@ -74,7 +98,8 @@ class FrameReplayReportTests(unittest.TestCase):
                     self.assertIsNone(healthy["host"])
                 for stream in ("stdout", "stderr", "both"):
                     for diagnostic in ("Validation Error: shader interface exceeds the device limit",
-                                       "VUID-RuntimeSpirv-Location-06272"):
+                                       "VUID-RuntimeSpirv-Location-06272",
+                                       "SYNC-HAZARD-WRITE-AFTER-WRITE(ERROR / SPEC): msgNum: 1544472022"):
                         with self.subTest(stream=stream, diagnostic=diagnostic,
                                           stdout_bytes=stdout_bytes, stderr_bytes=stderr_bytes):
                             stdout = json.dumps(NATIVE)
@@ -136,6 +161,17 @@ class FrameReplayReportTests(unittest.TestCase):
                     report.parse_replay_host_report(text, COMMIT)
             mismatch = report.parse_replay_host_report(HOST, "b" * 40)
             self.assertTrue(any("requested arm" in issue for issue in mismatch["issues"]))
+
+        with self.subTest("empty environment values belong to the host report"):
+            raw = HOST.replace("[environment]\n", "[environment]\nANYPS5_GPU: \nAPS5_TRACE: \n")
+            parsed = report.parse_replay_host_report(raw, COMMIT)
+            self.assertEqual(parsed["environment"], {"ANYPS5_GPU": "", "APS5_TRACE": "", "ANYPS5_HOST_REPORT": "1"})
+            self.assertEqual(parsed["raw"], raw)
+
+        with self.subTest("a diagnostic after the environment ends the host report"):
+            parsed = report.parse_replay_host_report(HOST + "agc_frame_replay: the GPU lacks shaderInt64\n", COMMIT)
+            self.assertEqual(parsed["environment"], {"ANYPS5_HOST_REPORT": "1"})
+            self.assertEqual(parsed["raw"], HOST)
 
         for key in report.INTEGER_FIELDS:
             with self.subTest("required integer", field=key):

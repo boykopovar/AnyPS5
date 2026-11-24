@@ -39,8 +39,10 @@
 #include "prx/libSceJsc/include/WtfDataLogExports.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -181,6 +183,11 @@ void InitializeLogFileOnce() {
     SetDefaultDataFile();
 }
 
+void RequireGuestCopy(bool copied, int savedErrno, const char* message) {
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(message);
+}
+
 } // namespace
 
 extern "C" {
@@ -205,27 +212,36 @@ void WtfFilePrintStreamDelete_nid_no_patch(Jsc::WtfAbi::FilePrintStream* stream)
 
 void APS5_VABI _ZN3WTF11setDataFileEOSt10unique_ptrINS_11PrintStreamESt14default_deleteIS1_EE(Jsc::WtfAbi::PrintStreamPtr* file) {
     if (!file) throw std::invalid_argument("WTF::setDataFile: null unique_ptr reference");
+    const int savedErrno = errno;
+    PrintStream* stream = nullptr;
+    RequireGuestCopy(GuestCopyIn_nid_no_patch(&stream, &file->pointer, sizeof(stream)), savedErrno, "WTF::setDataFile: unreadable unique_ptr");
     PrintStream* current = dataFile.load(std::memory_order_acquire);
     if (current && current != LockedFileData()) throw std::logic_error("WTF::setDataFile: a data file stream was already installed");
-    dataFile.store(file->pointer, std::memory_order_release);
-    file->pointer = nullptr;
+    PrintStream* const released = nullptr;
+    RequireGuestCopy(GuestCopyOut_nid_no_patch(&file->pointer, &released, sizeof(released)), savedErrno, "WTF::setDataFile: unwritable unique_ptr");
+    dataFile.store(stream, std::memory_order_release);
 }
 
 Jsc::WtfAbi::FilePrintStreamPtr* APS5_VABI _ZN3WTF15FilePrintStream4openEPKcS2_(Jsc::WtfAbi::FilePrintStreamPtr* result, const char* filename, const char* mode) {
     if (!result) throw std::invalid_argument("WTF::FilePrintStream::open: null result");
-    FileStream* file = fopen_nid_postfix(filename, mode);
-    if (!file) {
-        result->pointer = nullptr;
-        return result;
+    const int savedErrno = errno;
+    RequireGuestCopy(GuestWritable_nid_no_patch(result, sizeof(*result)), savedErrno, "WTF::FilePrintStream::open: unwritable result");
+    FilePrintStream* stream = nullptr;
+    if (FileStream* file = fopen_nid_postfix(filename, mode)) {
+        void* memory = nullptr;
+        try {
+            memory = _Znwm_nid_postfix(sizeof(FilePrintStream));
+        } catch (...) {
+            fclose_nid_postfix(file);
+            throw;
+        }
+        stream = new (memory) FilePrintStream{FilePrintStreamVtable + 2, file, Jsc::WtfAbi::FilePrintStreamAdopt};
     }
-    void* memory = nullptr;
-    try {
-        memory = _Znwm_nid_postfix(sizeof(FilePrintStream));
-    } catch (...) {
-        fclose_nid_postfix(file);
-        throw;
-    }
-    result->pointer = new (memory) FilePrintStream{FilePrintStreamVtable + 2, file, Jsc::WtfAbi::FilePrintStreamAdopt};
+    const int openErrno = errno;
+    const Jsc::WtfAbi::FilePrintStreamPtr opened{stream};
+    const bool copied = GuestCopyOut_nid_no_patch(result, &opened, sizeof(opened));
+    if (!copied && stream) WtfFilePrintStreamDelete_nid_no_patch(stream);
+    RequireGuestCopy(copied, openErrno, "WTF::FilePrintStream::open: unwritable result");
     return result;
 }
 

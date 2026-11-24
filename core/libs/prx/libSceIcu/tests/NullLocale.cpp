@@ -36,6 +36,16 @@ std::string Component(LocaleFunction function) {
     return fromNull;
 }
 
+bool SameAsDefault(LocaleFunction function) {
+    std::array<char, 64> fromNull{};
+    std::array<char, 64> fromDefault{};
+    std::int32_t nullStatus = 0;
+    std::int32_t defaultStatus = 0;
+    const std::int32_t nullLength = function(nullptr, fromNull.data(), static_cast<std::int32_t>(fromNull.size()), &nullStatus);
+    const std::int32_t defaultLength = function(uloc_getDefault(), fromDefault.data(), static_cast<std::int32_t>(fromDefault.size()), &defaultStatus);
+    return nullStatus == defaultStatus && nullLength == defaultLength && fromNull == fromDefault;
+}
+
 std::u16string Mapped(CaseFunction function, const char16_t* text) {
     const std::u16string fromNull = Map(function, text, nullptr);
     Require(fromNull == Map(function, text, uloc_getDefault()));
@@ -64,7 +74,8 @@ void FailedStatusLeavesNullUnread() {
     std::array<char, 8> buffer{};
     buffer.fill('Q');
     for (const LocaleFunction function : {uloc_getLanguage, uloc_getCountry, uloc_getScript, uloc_getBaseName, uloc_canonicalize,
-                                          uloc_getParent, uloc_getVariant_nid_postfix}) {
+                                          uloc_getParent, uloc_getVariant_nid_postfix, uloc_getName_nid_postfix,
+                                          uloc_addLikelySubtags_nid_postfix, uloc_minimizeSubtags_nid_postfix}) {
         std::int32_t status = 1;
         Require(function(nullptr, buffer.data(), 8, &status) == 0 && status == 1 && buffer[0] == 'Q');
     }
@@ -89,6 +100,8 @@ int main(int argc, char** argv) {
         Require(Component(uloc_getBaseName) == "tr_TR_TRADITIONAL");
         Require(Component(uloc_canonicalize) == "tr_TR_TRADITIONAL");
         Require(Component(uloc_getParent) == "tr_TR");
+        Require(Component(uloc_getName_nid_postfix) == "tr_TR_TRADITIONAL");
+        Require(SameAsDefault(uloc_addLikelySubtags_nid_postfix) && SameAsDefault(uloc_minimizeSubtags_nid_postfix));
         Require(Iso3Language() == "tur" && Iso3Country() == "TUR");
         Require(RightToLeft() == 0);
         Require(Mapped(u_strToUpper_nid_postfix, u"di") == u"Dİ");
@@ -104,6 +117,8 @@ int main(int argc, char** argv) {
         Require(Component(uloc_getVariant_nid_postfix).empty());
         Require(Component(uloc_getBaseName) == "ar_Arab_EG");
         Require(Component(uloc_getParent) == "ar_Arab");
+        Require(Component(uloc_getName_nid_postfix) == "ar_Arab_EG");
+        Require(SameAsDefault(uloc_addLikelySubtags_nid_postfix) && SameAsDefault(uloc_minimizeSubtags_nid_postfix));
         Require(Iso3Language() == "ara" && Iso3Country() == "EGY");
         Require(RightToLeft() == 1);
         Require(Mapped(u_strToUpper_nid_postfix, u"di") == u"DI");

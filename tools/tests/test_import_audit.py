@@ -240,10 +240,10 @@ def build_macho(names, needed=(), trie_command=0x80000033):
         name = library.encode() + b"\0"
         size = (24 + len(name) + 7) // 8 * 8
         commands.append(struct.pack("<IIIIII", 0xc, size, 24, 2, 0, 0) + name.ljust(size - 24, b"\0"))
-    trie_size = 48 if trie_command == 0x80000022 else 16
+    trie_size = 16 if trie_command == 0x80000033 else 48
     size = sum(len(command) for command in commands) + trie_size
     data = 32 + size
-    if trie_command == 0x80000022:
+    if trie_size == 48:
         commands.append(struct.pack("<12I", trie_command, 48, 0, 0, 0, 0, 0, 0, 0, 0, data, len(trie)))
     else:
         commands.append(struct.pack("<IIII", trie_command, 16, data, len(trie)))
@@ -980,6 +980,38 @@ class ImportAuditTests(unittest.TestCase):
         self.assertIn("[library not named]", out)
         self.assertIn("EEEEEEEEEEE  (imported by main.prx)", out)
 
+    def test_a_passed_module_registry_replaces_the_module_file_imports(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        (work.modules / "main.prx").write_bytes(build_elf([
+            ("AAAAAAAAAAA", 0, GLOBAL_FUNCTION), ("EEEEEEEEEEE", 0, GLOBAL_FUNCTION), ("MMMMMMMMMMM", 1, GLOBAL_FUNCTION)],
+            ["libSceA.prx", "libSceMissing.prx"]))
+        files = {"linux.prx.guest.prx": "GGGGGGGGGGG", "lib.c.prx": "LLLLLLLLLLL", "c.prx": "CCCCCCCCCCC", "n.prx": "NNNNNNNNNNN",
+                 "d.prx": "DDDDDDDDDDD", "game.d.prx": "KKKKKKKKKKK", "f.prx": "FFFFFFFFFFF"}
+        for name, nid in files.items():
+            (work.modules / name).write_bytes(build_elf([(nid, 0, GLOBAL_FUNCTION)]))
+        executable = work.root / "my.game.registry.json"
+        write_registry(executable, [("MMMMMMMMMMM", "main.prx")])
+        covered = ("main.prx", "linux.prx", "lib.c.prx", "bin.prx", "d.prx", "x.f.prx")
+        registries = [work.root / f"my.game.{name}.guest.prx.registry.json" for name in covered]
+        write_registry(registries[0], [("AAAAAAAAAAA", "libSceA.prx"), ("AAAAAAAAAAA", "libSceA.prx")])
+        for registry in registries[1:]:
+            write_registry(registry, [])
+        result = work.root / "audit.json"
+        code, out, err = work.run(executable, "--json", str(result), registries=registries)
+        self.assertEqual((code, err), (1, ""))
+        data = json.loads(result.read_text())
+        records = {(record["nid"], record["library"], record.get("module")): record for record in data["imports"]}
+        self.assertEqual(sorted(records, key=str), sorted([
+            ("MMMMMMMMMMM", "main.prx", None), ("AAAAAAAAAAA", "libSceA.prx", None), ("CCCCCCCCCCC", None, "c.prx"),
+            ("NNNNNNNNNNN", None, "n.prx"), ("KKKKKKKKKKK", None, "game.d.prx"), ("FFFFFFFFFFF", None, "f.prx")], key=str))
+        self.assertEqual(data["references"], 7)
+        self.assertEqual(records[("AAAAAAAAAAA", "libSceA.prx", None)]["references"], 2)
+        self.assertEqual(records[("MMMMMMMMMMM", "main.prx", None)]["providers"], ["main.prx"])
+        self.assertEqual(data["missing_libraries"], {"libSceMissing.prx": 1})
+        code, out, err = work.run(registries[0], "--json", str(result), registries=registries[1:])
+        self.assertEqual(json.loads(result.read_text())["references"], 2 + 2 + len(files))
+
     def test_guest_provider_origin_survives_host_stub_collision(self):
         work = self.work
         name, nid = "sceSynthetic", nid_names.compute_nid("sceSynthetic")
@@ -1022,6 +1054,31 @@ class ImportAuditTests(unittest.TestCase):
         code, _, err = work.run(registry, "--strict-stubs", "--json", str(report))
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(json.loads(report.read_text())["references"], 4)
+
+    def test_named_windows_stub_is_not_hidden_by_other_providers(self):
+        work = self.work
+        name = "sceSynthetic"
+        nid = nid_names.compute_nid(name)
+        stub = "libSceStub.prx"
+        other = "libSceOther.prx"
+        write_source(work.source, "libSceStub", STUB_SOURCE.format(name=name))
+        registry = work.root / "game.registry.json"
+        report = work.root / "audit.json"
+        import_audit.needed_registry_path(registry).write_text(json.dumps([stub, other]), encoding="utf-8")
+        for format_name, image, named_class in (
+                ("Windows", build_pe([nid]), "stub"),
+                ("Linux", exporting(nid), "implemented")):
+            for provider in (stub, other):
+                (work.libs / provider).write_bytes(image)
+            for library, expected in ((stub, named_class), ("libSceStub.sprx", named_class), ("", "implemented")):
+                with self.subTest(format=format_name, library=library):
+                    write_registry(registry, [(nid, library)])
+                    code, _, err = work.run(registry, "--strict-stubs", "--json", str(report))
+                    self.assertEqual((code, err), (int(expected == "stub"), ""))
+                    record, = json.loads(report.read_text(encoding="utf-8"))["imports"]
+                    self.assertEqual(record["class"], expected)
+                    self.assertEqual(record["providers"], [other, stub])
+                    self.assertEqual(record["name"], name if expected == "stub" else None)
 
     def test_guest_collision_requires_export_and_dependency_or_self(self):
         nid, library = "AAAAAAAAAAA", "libSceSynthetic.prx"
@@ -1066,6 +1123,28 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(data["imports"][0]["providers"], [])
         self.assertEqual(data["stops"][0]["nid"], nid)
         self.assertEqual(data["references"], 1)
+
+    def test_bundled_libc_falls_back_to_the_host_libc_the_relinker_appends(self):
+        nid, other, library = "AAAAAAAAAAA", "BBBBBBBBBBB", "libc.prx"
+        internal = ["libkernel.prx", "libc.prx", "libSceLibcInternal.prx"]
+        cases = (({other: [library]}, {nid: [library]}, {}, internal, "implemented", [library]),
+                 ({other: [library]}, {nid: [library]}, {(library, nid): "stdio"}, internal, "stub", [library]),
+                 ({other: [library]}, {nid: [library]}, {}, ["libkernel.prx", "libc.prx"], "absent", []),
+                 ({other: [library]}, {nid: ["libSceOther.prx"]}, {}, internal, "absent", []),
+                 ({nid: [library]}, {nid: [library]}, {(library, nid): "stdio"}, internal, "module", [library]))
+        for guest_exports, host_exports, stubs, needed, expected, providers in cases:
+            for imported in (library, "libc.sprx"):
+                with self.subTest(guest=guest_exports, hosts=host_exports, stubs=stubs, needed=needed, library=imported):
+                    records, _ = import_audit.audit(
+                        [(nid, imported, False)], host_exports, stubs, {library, "libSceOther.prx", "libSceLibcInternal.prx"},
+                        import_audit.ModuleNames({library}), {}, guest_exports, needed_libraries=needed)
+                    self.assertEqual(records[0]["class"], expected)
+                    self.assertEqual(records[0]["providers"], providers)
+        records, _ = import_audit.audit(
+            [(nid, "libSceSynthetic.prx", False)], {nid: ["libSceSynthetic.prx"]}, {}, {"libSceSynthetic.prx"},
+            import_audit.ModuleNames({"libSceSynthetic.prx"}), {}, {other: ["libSceSynthetic.prx"]},
+            needed_libraries=["libSceLibcInternal.prx", "libSceSynthetic.prx"])
+        self.assertEqual(records[0]["class"], "absent")
 
     def test_exact_guest_dependency_precedes_suffix_export(self):
         work = self.work
@@ -1833,6 +1912,57 @@ class ImportAuditTests(unittest.TestCase):
                     if conflict in ("symbols", "strings"):
                         with self.assertRaisesRegex(import_audit.AuditError, "disagree with PT_DYNAMIC"):
                             import_audit.elf_exports(Path("module.prx"), image)
+
+    def test_partial_section_tables_preserve_runtime_inventory(self):
+        path = Path("partial.prx")
+        symbols = [("alpha", 0, GLOBAL_FUNCTION), ("weak", 0, 0x22), ("beta", 1, GLOBAL_FUNCTION)]
+        for gnu_hash in (False, True):
+            for omitted in ((1,), (3,), (1, 3)):
+                with self.subTest(gnu_hash=gnu_hash, omitted=omitted):
+                    image = build_dual_metadata_elf(symbols, ["libExample.prx"], gnu_hash)
+                    sections = struct.unpack_from("<Q", image, 40)[0]
+                    for index in omitted:
+                        struct.pack_into("<I", image, sections + index * 64 + 4, 1)
+                    self.assertEqual(import_audit.elf_imports(path, image), ({"alpha": False, "weak": True}, {"libExample.prx"}))
+                    self.assertEqual(import_audit.elf_exports(path, image), {"beta"})
+
+    def test_sce_tables_with_unrelated_sections_supply_imports_and_exports(self):
+        path = Path("console.prx")
+        image = bytearray(build_sce_module([("alpha#A#B", 0, GLOBAL_FUNCTION),
+                                            ("beta#A#A", 1, GLOBAL_FUNCTION)], ["libExample.prx"]))
+        sections = len(image)
+        image.extend(bytes(2 * 64))
+        struct.pack_into("<Q", image, 40, sections)
+        struct.pack_into("<HH", image, 58, 64, 2)
+        struct.pack_into("<I", image, sections + 64 + 4, 1)
+        self.assertEqual(import_audit.elf_imports(path, image), ({"alpha": False}, {"libExample.prx"}))
+        self.assertEqual(import_audit.elf_exports(path, image), {"beta"})
+
+    def test_remaining_sections_still_detect_inventory_conflicts(self):
+        path = Path("partial.prx")
+        symbols = [("alpha", 0, GLOBAL_FUNCTION), ("beta", 1, GLOBAL_FUNCTION)]
+        for conflict, omit in (("symbols", 3), ("needed", 1)):
+            with self.subTest(conflict=conflict):
+                image = build_dual_metadata_elf(symbols, ["libExample.prx"], conflict=conflict)
+                sections = struct.unpack_from("<Q", image, 40)[0]
+                struct.pack_into("<I", image, sections + omit * 64 + 4, 1)
+                with self.assertRaisesRegex(import_audit.AuditError, "disagree with PT_DYNAMIC"):
+                    import_audit.elf_imports(path, image)
+                if conflict == "symbols":
+                    with self.assertRaisesRegex(import_audit.AuditError, "disagree with PT_DYNAMIC"):
+                        import_audit.elf_exports(path, image)
+
+    def test_missing_symbol_section_cannot_bound_an_unhashed_runtime_table(self):
+        image = build_dual_metadata_elf([("beta", 1, GLOBAL_FUNCTION)])
+        sections = struct.unpack_from("<Q", image, 40)[0]
+        struct.pack_into("<I", image, sections + 64 + 4, 1)
+        dynamic = struct.unpack_from("<IIQQQQQQ", image, 120)
+        for position in range(dynamic[2], dynamic[2] + dynamic[5], 16):
+            if struct.unpack_from("<q", image, position)[0] == 4:
+                struct.pack_into("<q", image, position, 0x70000000)
+        for reader in (import_audit.elf_imports, import_audit.elf_exports):
+            with self.subTest(reader=reader.__name__), self.assertRaisesRegex(import_audit.AuditError, "no supported hash"):
+                reader(Path("unhashed.prx"), image)
 
     def test_matching_elf_views_and_section_only_inventory_remain_supported(self):
         symbols = [("alpha", 0, GLOBAL_FUNCTION), ("beta", 1, GLOBAL_FUNCTION)]
@@ -3562,12 +3692,22 @@ class ImportAuditTests(unittest.TestCase):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(build_macho(["AAAAAAAAAAA", "BBBBBBBBBBB#A#A"], ["@rpath/libkernel.prx", "/usr/lib/libSystem.B.dylib"]))
         (work.libs / "libSceB.prx").write_bytes(build_macho(["AAAAAAAAAAA"], trie_command=0x80000022))
+        (work.libs / "libSceC.prx").write_bytes(build_macho(["CCCCCCCCCCC#A#A"], trie_command=0x22))
         exports, libraries = import_audit.built_libraries([work.libs])
-        self.assertEqual(exports, {"AAAAAAAAAAA": ["libSceA.prx", "libSceB.prx"], "BBBBBBBBBBB": ["libSceA.prx"]})
-        self.assertEqual(libraries, {"libSceA.prx", "libSceB.prx"})
+        self.assertEqual(exports, {"AAAAAAAAAAA": ["libSceA.prx", "libSceB.prx"], "BBBBBBBBBBB": ["libSceA.prx"],
+                                   "CCCCCCCCCCC": ["libSceC.prx"]})
+        self.assertEqual(libraries, {"libSceA.prx", "libSceB.prx", "libSceC.prx"})
         direct, windows = import_audit.built_host_dependencies([work.libs])
-        self.assertEqual(direct, {"libSceA.prx": ["libkernel.prx"], "libSceB.prx": []})
+        self.assertEqual(direct, {"libSceA.prx": ["libkernel.prx"], "libSceB.prx": [], "libSceC.prx": []})
         self.assertEqual(windows, set())
+
+    def test_macho_export_range_must_be_in_its_load_command(self):
+        for command, length in ((0x22, 40), (0x80000022, 40), (0x80000033, 8)):
+            with self.subTest(command=command):
+                image = bytearray(build_macho(["AAAAAAAAAAA"], trie_command=command))
+                struct.pack_into("<I", image, 36, length)
+                with self.assertRaisesRegex(import_audit.AuditError, "Mach-O.*command"):
+                    import_audit.read_exports(self.work.libs / "short.prx", bytes(image))
 
     def test_malformed_macho_export_tries_are_audit_errors(self):
         path = self.work.libs / "libSceA.prx"
@@ -3957,6 +4097,203 @@ class LocateAndNamesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(import_audit.AuditError, 'names file not found'):
                 import_audit.load_names(Path(directory) / 'missing.csv')
+
+class ElfSectionsTests(unittest.TestCase):
+    @staticmethod
+    def section(size=0, kind=1):
+        return struct.pack("<IIQQQQIIQQ", 0, kind, 0, 0, 0, size, 0, 0, 0, 0)
+
+    @staticmethod
+    def image(sections, elf_class=2, endian=1, ident_version=1, version=1, offset=64, entry_size=64, count=None):
+        ident = b"\x7fELF" + bytes([elf_class, endian, ident_version]) + bytes(9)
+        header = struct.pack("<16sHHIQQQIHHHHHH", ident, 3, 62, version, 0, 0, offset, 0, 64, 0, 0, entry_size,
+                             len(sections) if count is None else count, 0)
+        return header + b"".join(sections)
+
+    def test_returns_every_section_header(self):
+        sections = import_audit.elf_sections("m.elf", self.image([self.section(kind=0), self.section(size=7, kind=3)]))
+        self.assertEqual([entry[1] for entry in sections], [0, 3])
+        self.assertEqual(sections[1][5], 7)
+
+    def test_unsupported_class_endianness_or_entry_size_is_refused(self):
+        for kwargs in ({"elf_class": 1}, {"endian": 2}, {"entry_size": 40}):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(import_audit.AuditError, "only little-endian ELF64"):
+                import_audit.elf_sections("m.elf", self.image([self.section()], **kwargs))
+
+    def test_unsupported_version_is_refused(self):
+        for kwargs in ({"ident_version": 2}, {"version": 2}):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(import_audit.AuditError, "unsupported ELF version"):
+                import_audit.elf_sections("m.elf", self.image([self.section()], **kwargs))
+
+    def test_missing_section_header_table_is_refused(self):
+        with self.assertRaisesRegex(import_audit.AuditError, "without a section header table"):
+            import_audit.elf_sections("m.elf", self.image([self.section()], offset=0))
+
+    def test_extended_section_count_is_read_from_the_first_section(self):
+        data = self.image([self.section(size=2), self.section()], count=0)
+        self.assertEqual(len(import_audit.elf_sections("m.elf", data)), 2)
+
+    def test_section_table_past_the_end_of_the_file_is_refused(self):
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.elf_sections("m.elf", self.image([self.section()], count=3))
+
+class DynamicSymbolEntriesTests(unittest.TestCase):
+    @staticmethod
+    def image(symbols, strings):
+        table = b"\0"
+        offsets = {}
+        for text in strings:
+            offsets[text] = len(table)
+            table += text.encode() + b"\0"
+        entries = b"".join(struct.pack("<IBBHQQ", offsets.get(name, 0), info, other, shndx, 0, 0)
+                           for name, info, other, shndx in symbols)
+        return entries + table, offsets, len(entries)
+
+    def test_imports_exports_and_needed_libraries_are_separated(self):
+        symbols = [
+            ("weak_import", 0x20, 0, 0),
+            ("strong_import", 0x10, 0, 0),
+            ("exported_func", 0x12, 0, 1),
+            ("exported_object", 0x11, 3, 1),
+            ("local_symbol", 0x02, 0, 1),
+            ("hidden_symbol", 0x12, 2, 1),
+            ("exported_func", 0x12, 0, 1),
+        ]
+        strings = ["weak_import", "strong_import", "exported_func", "exported_object", "local_symbol", "hidden_symbol", "libNeeded.prx"]
+        data, offsets, symbol_size = self.image(symbols, strings)
+        imports, exports, needed = import_audit.dynamic_symbol_entries(
+            "m.elf", data, symbol_size, len(data) - symbol_size, 0, len(symbols), [offsets["libNeeded.prx"]])
+        self.assertEqual(imports, {"weak_import": True, "strong_import": False})
+        self.assertEqual(exports, {"exported_func", "exported_object"})
+        self.assertEqual(needed, {"libNeeded.prx"})
+
+    def test_a_strong_reference_overrides_an_earlier_weak_one(self):
+        symbols = [("name", 0x20, 0, 0), ("name", 0x10, 0, 0)]
+        data, _, symbol_size = self.image(symbols, ["name"])
+        imports, _, _ = import_audit.dynamic_symbol_entries("m.elf", data, symbol_size, len(data) - symbol_size, 0, 2, [])
+        self.assertEqual(imports, {"name": False})
+
+    def test_nameless_symbols_and_module_suffixes(self):
+        symbols = [("", 0x10, 0, 0), ("sceFoo#libSceX", 0x10, 0, 0)]
+        data, _, symbol_size = self.image(symbols, ["sceFoo#libSceX"])
+        imports, exports, needed = import_audit.dynamic_symbol_entries("m.elf", data, symbol_size, len(data) - symbol_size, 0, 2, [])
+        self.assertEqual((imports, exports, needed), ({"sceFoo": False}, set(), set()))
+
+    def test_truncated_symbol_table_is_refused(self):
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.dynamic_symbol_entries("m.elf", bytes(10), 0, 0, 0, 1, [])
+
+
+class ElfHasDynamicSegmentTests(unittest.TestCase):
+    @staticmethod
+    def header(offset, size, count):
+        values = [0] * 14
+        values[5], values[9], values[10] = offset, size, count
+        return values
+
+    def test_no_program_headers_has_no_dynamic_segment(self):
+        self.assertFalse(import_audit.elf_has_dynamic_segment("m.elf", b"", self.header(0, 0, 0)))
+
+    def test_finds_pt_dynamic_among_program_headers(self):
+        data = bytes(64) + struct.pack("<I", 1) + bytes(52) + struct.pack("<I", 2) + bytes(52)
+        self.assertTrue(import_audit.elf_has_dynamic_segment("m.elf", data, self.header(64, 56, 2)))
+
+    def test_other_program_header_types_are_not_dynamic(self):
+        data = bytes(64) + struct.pack("<I", 1) + bytes(52)
+        self.assertFalse(import_audit.elf_has_dynamic_segment("m.elf", data, self.header(64, 56, 1)))
+
+    def test_wrong_program_header_size_or_zero_offset_is_refused(self):
+        with self.assertRaisesRegex(import_audit.AuditError, "56-byte program headers"):
+            import_audit.elf_has_dynamic_segment("m.elf", bytes(200), self.header(64, 32, 1))
+        with self.assertRaisesRegex(import_audit.AuditError, "56-byte program headers"):
+            import_audit.elf_has_dynamic_segment("m.elf", bytes(200), self.header(0, 56, 1))
+
+    def test_truncated_program_header_table_is_refused(self):
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.elf_has_dynamic_segment("m.elf", bytes(80), self.header(64, 56, 2))
+
+
+class MachoCommandsTests(unittest.TestCase):
+    @staticmethod
+    def image(commands, magic=0xfeedfacf):
+        body = b"".join(commands)
+        return struct.pack("<IiiIIIII", magic, 0, 0, 0, len(commands), len(body), 0, 0) + body
+
+    def test_yields_each_command_with_its_offset_and_length(self):
+        first = struct.pack("<II", 0x19, 16) + bytes(8)
+        second = struct.pack("<II", 0x2, 8)
+        self.assertEqual(list(import_audit.macho_commands("m", self.image([first, second]))), [(0x19, 32, 16), (0x2, 48, 8)])
+
+    def test_wrong_magic_is_refused(self):
+        with self.assertRaisesRegex(import_audit.AuditError, "little-endian 64-bit Mach-O"):
+            list(import_audit.macho_commands("m", self.image([], magic=0xfeedface)))
+
+    def test_command_shorter_than_its_header_or_past_the_end_is_refused(self):
+        short = struct.pack("<II", 0x19, 4) + bytes(8)
+        with self.assertRaisesRegex(import_audit.AuditError, "overruns"):
+            list(import_audit.macho_commands("m", self.image([short])))
+        long = struct.pack("<II", 0x19, 64)
+        with self.assertRaisesRegex(import_audit.AuditError, "overruns"):
+            list(import_audit.macho_commands("m", self.image([long])))
+
+    def test_missing_load_commands_are_refused(self):
+        data = struct.pack("<IiiIIIII", 0xfeedfacf, 0, 0, 0, 1, 64, 0, 0)
+        with self.assertRaises(import_audit.AuditError):
+            list(import_audit.macho_commands("m", data))
+
+
+class ModuleFilesTests(unittest.TestCase):
+    def write(self, directory, name, content):
+        path = Path(directory) / name
+        path.write_bytes(content)
+        return path
+
+    def test_elf_files_and_guest_prx_pe_files_are_yielded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            elf = self.write(directory, "a.bin", b"\x7fELF" + bytes(8))
+            guest = self.write(directory, "b.guest.prx", b"MZ" + bytes(8))
+            self.write(directory, "notes.txt", b"hello world")
+            self.assertEqual(sorted(import_audit.module_files(directory)), sorted([elf, guest]))
+
+    def test_module_extension_with_foreign_content_is_refused(self):
+        for name, content in (("a.prx", b"junk" + bytes(4)), ("b.elf", b"\0\0\0\0"), ("c.sprx", b"MZ" + bytes(4))):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                self.write(directory, name, content)
+                with self.assertRaisesRegex(import_audit.AuditError, "expected ELF module"):
+                    list(import_audit.module_files(directory))
+
+    def test_encrypted_module_magic_is_refused_whatever_the_name(self):
+        for magic in (b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee"):
+            with self.subTest(magic=magic), tempfile.TemporaryDirectory() as directory:
+                self.write(directory, "data.bin", magic + bytes(4))
+                with self.assertRaisesRegex(import_audit.AuditError, "expected ELF module"):
+                    list(import_audit.module_files(directory))
+
+
+class MachoImportsTests(unittest.TestCase):
+    @staticmethod
+    def dylib(path, kind=0xc, name_offset=24):
+        text = path.encode() + b"\0"
+        length = (24 + len(text) + 7) // 8 * 8
+        return struct.pack("<III", kind, length, name_offset) + bytes(12) + text.ljust(length - 24, b"\0")
+
+    @staticmethod
+    def image(commands):
+        body = b"".join(commands)
+        return struct.pack("<IiiIIIII", 0xfeedfacf, 0, 0, 0, len(commands), len(body), 0, 0) + body
+
+    def test_collects_dylib_basenames_and_ignores_other_commands(self):
+        other = struct.pack("<II", 0x19, 8)
+        data = self.image([self.dylib("/usr/lib/libfoo.dylib"), other, self.dylib("@rpath/libbar.dylib", kind=0x80000018)])
+        self.assertEqual(import_audit.macho_imports("m", data), {"libfoo.dylib", "libbar.dylib"})
+
+    def test_name_offset_outside_the_command_is_refused(self):
+        for offset in (8, 4096):
+            with self.assertRaisesRegex(import_audit.AuditError, "name offset"):
+                import_audit.macho_imports("m", self.image([self.dylib("/lib/x.dylib", name_offset=offset)]))
+
+    def test_image_without_dylib_commands_has_no_imports(self):
+        self.assertEqual(import_audit.macho_imports("m", self.image([])), set())
 
 
 if __name__ == "__main__":

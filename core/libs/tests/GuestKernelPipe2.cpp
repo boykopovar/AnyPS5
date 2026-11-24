@@ -36,7 +36,18 @@ int main() {
     Require(close_nid_postfix(fds[1]) == 0);
 
     RequireFailure(pipe2_nid_postfix(nullptr, 0), 14);
+    RequireFailure(pipe2_nid_postfix(nullptr, 4), 14);
+    RequireFailure(pipe2_nid_postfix(nullptr, 0x00100000), 14);
+    RequireFailure(pipe2_nid_postfix(nullptr, 4 | 0x00100000), 14);
+    RequireFailure(pipe2_nid_postfix(nullptr, 1), 22);
+    RequireFailure(pipe2_nid_postfix(nullptr, 0x80000000), 22);
+    RequireFailure(pipe2_nid_postfix(nullptr, -1), 22);
+    RequireFailure(pipe2_nid_postfix(fds, 1), 22);
+    RequireFailure(pipe2_nid_postfix(fds, 2), 22);
+    RequireFailure(pipe2_nid_postfix(fds, 8), 22);
+    RequireFailure(pipe2_nid_postfix(fds, 0x00200000), 22);
     RequireFailure(pipe2_nid_postfix(fds, 0x80000000), 22);
+    RequireFailure(pipe2_nid_postfix(fds, -1), 22);
     RequireFailure(pipe_nid_postfix(nullptr), 14);
 
     *__error_nid_postfix() = 61;

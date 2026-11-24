@@ -15,7 +15,7 @@ import annotate_module
 import nid_names
 from test_annotate_module import (DEFAULT_SYMBOLS, DEFAULT_TAGS, GNU_HASH, IMPORT_NAME, EXPORT_NAME, SECOND_IMPORT_NAME,
                                   TLS_NAME, CODE_ADDRESS, DATA_ADDRESS, CALL_ADDRESS, EXPORT_ADDRESS, build_module,
-                                  append_dynamic_tags, code_bytes, nid, symbol_name)
+                                  append_dynamic_tags, code_bytes, nid, symbol_name, unwind_image)
 
 
 def lifecycle_array_image(tag=25, values=(CODE_ADDRESS, EXPORT_ADDRESS), fixups=(), symbols=(), **options):
@@ -63,6 +63,47 @@ class GhidraSymbolsTests(unittest.TestCase):
         self.assertTrue(result.stdout.isascii())
         self.assertEqual(set(self.root.iterdir()), set(before))
         self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}, before)
+
+    def test_tlsdesc_plt_marks_only_file_backed_code_and_preserves_export_names(self):
+        source = self.root / "tlsdesc.prx"
+        database = self.root / "names.csv"
+        database.write_text(f"{nid(EXPORT_NAME)} {EXPORT_NAME}\n", encoding="utf-8")
+        for address, flags, expected in ((CODE_ADDRESS, 5, ["elf_tlsdesc_plt 0x1000 f"]),
+                                         (EXPORT_ADDRESS, 5, []), (DATA_ADDRESS, 5, []),
+                                         (CODE_ADDRESS + len(code_bytes()), 5, []), (CODE_ADDRESS, 4, [])):
+            with self.subTest(address=address, flags=flags):
+                source.write_bytes(append_dynamic_tags(build_module(code_flags=flags), [(0x6ffffef6, address),
+                                                                                         (0x6ffffef7, DATA_ADDRESS)]))
+                result = self.cli(source, "--db", database)
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                rows = result.stdout.splitlines()
+                self.assertEqual([row for row in rows if "tlsdesc" in row], expected)
+                if address == EXPORT_ADDRESS:
+                    self.assertIn(f"{EXPORT_NAME} {EXPORT_ADDRESS:#x} f", rows)
+
+    def test_unwind_index_labels_unnamed_code_ranges_offline(self):
+        source = self.root / "ranges.prx"
+        source.write_bytes(unwind_image([CODE_ADDRESS, CODE_ADDRESS, EXPORT_ADDRESS, DATA_ADDRESS, 0x9000], relocations=()))
+        result = self.cli(source, "--no-names")
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        rows = result.stdout.splitlines()
+        self.assertEqual([row for row in rows if row.startswith("unwind_")], ["unwind_1000 0x1000 l"])
+        self.assertTrue(any(row.endswith("0x100b f") for row in rows))
+
+    def test_unwind_index_skips_unsupported_encoding(self):
+        image = unwind_image([CODE_ADDRESS], encoding=b"\x01\x1b\x03\xff", relocations=())
+        rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({}))
+        self.assertFalse(any(row.startswith("unwind_") for row in rows))
+
+    def test_truncated_unwind_index_fails_before_printing_a_map(self):
+        image = unwind_image([CODE_ADDRESS], relocations=())
+        struct.pack_into("<I", image, 0x2508, 2)
+        source = self.root / "truncated.prx"
+        source.write_bytes(image)
+        result = self.cli(source, "--no-names")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unwind search table exceeds", result.stderr)
+        self.assertEqual(result.stdout, "")
 
     def test_header_entry_point_without_symbols(self):
         source = self.root / "stripped.elf"

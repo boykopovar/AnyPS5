@@ -16,17 +16,10 @@ using namespace FreeType;
 
 namespace {
 
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return ok;
-}
-
 FT_Library ReadGuestLibrary(GuestLibrary* library, const char* func) {
     if (!library) return nullptr;
     FT_Library host = nullptr;
-    if (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !CopyInPreservingErrno(&host, &library->host, sizeof(host))) NotImplemented_nid_no_patch(func);
+    if (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host))) NotImplemented_nid_no_patch(func);
     return host;
 }
 
@@ -40,7 +33,7 @@ std::string CopyGuestCString(const char* source, const char* func) {
         const std::size_t toPageEnd = 4096 - (current % 4096);
         const std::size_t chunk = toPageEnd < 256 ? toPageEnd : 256;
         char buffer[256];
-        if (!CopyInPreservingErrno(buffer, reinterpret_cast<const void*>(current), chunk)) {
+        if (!GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(current), chunk)) {
             NotImplemented_nid_no_patch(func);
         }
         if (const auto* end = static_cast<const char*>(std::memchr(buffer, '\0', chunk))) {
@@ -64,7 +57,9 @@ void* APS5_VABI FT_Get_Module_nid_postfix(GuestLibrary* library, const char* mod
 }
 
 void* APS5_VABI FT_Get_Renderer_nid_postfix(GuestLibrary* library, std::uint32_t format) {
-    return FT_Get_Renderer(ReadGuestLibrary(library, __func__), static_cast<FT_Glyph_Format>(format));
+    const FT_Library host = ReadGuestLibrary(library, __func__);
+    if (!InGlyphFormatRange(format)) return nullptr;
+    return FT_Get_Renderer(host, static_cast<FT_Glyph_Format>(format));
 }
 
 int APS5_VABI FT_Remove_Module_nid_postfix(GuestLibrary* library, void* module) {

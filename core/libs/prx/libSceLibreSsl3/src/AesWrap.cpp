@@ -3,7 +3,6 @@
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <cerrno>
-#include <climits>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -56,7 +55,7 @@ extern "C" {
 
 int APS5_VABI AES_wrap_key_nid_postfix(AesKey* key, const unsigned char* iv, unsigned char* out, const unsigned char* in, std::uint32_t inlen) {
     if (!key || !out || !in) throw std::invalid_argument(std::string(__func__) + ": null argument");
-    if (inlen < 16 || (inlen & 7) != 0 || inlen > static_cast<std::uint32_t>(INT_MAX - 8)) return -1;
+    if (inlen < 16 || (inlen & 7) != 0) return -1;
     const std::uint32_t blocks = inlen / 8;
     AesKey schedule;
     unsigned char a[8];

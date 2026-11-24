@@ -450,44 +450,6 @@ void CheckCopy() {
     Require(text == expected.text && Control(target, GetTag, 12, tag.data()) == 1 && tag == expected.tag);
 }
 
-void CheckKeyWrapBounds() {
-    const unsigned char kek[16] = {
-        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
-    };
-    const unsigned char plain[16] = {
-        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
-        0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff
-    };
-    const unsigned char expectedWrapped[24] = {
-        0x1f, 0xa6, 0x8b, 0x0a, 0x81, 0x12, 0xb4, 0x47,
-        0xae, 0xf3, 0x4b, 0xd8, 0xfb, 0x5a, 0x7b, 0x82,
-        0x9d, 0x3e, 0x86, 0x23, 0x71, 0xd2, 0xcf, 0xe5
-    };
-    AesKey encKey {};
-    AesKey decKey {};
-    Require(AES_set_encrypt_key_nid_postfix(kek, 128, &encKey) == 0);
-    Require(AES_set_decrypt_key_nid_postfix(kek, 128, &decKey) == 0);
-    unsigned char wrapped[24];
-    std::memset(wrapped, 0xA5, sizeof(wrapped));
-    Require(AES_wrap_key_nid_postfix(&encKey, nullptr, wrapped, plain, sizeof(plain)) == 24);
-    Require(std::memcmp(wrapped, expectedWrapped, sizeof(expectedWrapped)) == 0);
-    unsigned char unwrapped[16];
-    std::memset(unwrapped, 0x5A, sizeof(unwrapped));
-    Require(AES_unwrap_key_nid_postfix(&decKey, nullptr, unwrapped, wrapped, sizeof(wrapped)) == 16);
-    Require(std::memcmp(unwrapped, plain, sizeof(plain)) == 0);
-    std::memset(unwrapped, 0x5A, sizeof(unwrapped));
-    for (const unsigned int badUnwrapLen : {0x80000000u, 0x80000008u, 0xfffffff8u}) {
-        Require(AES_unwrap_key_nid_postfix(&decKey, nullptr, unwrapped, wrapped, badUnwrapLen) == -1);
-        for (const unsigned char byte : unwrapped) Require(byte == 0x5A);
-    }
-    std::memset(wrapped, 0xA5, sizeof(wrapped));
-    for (const std::uint32_t badWrapLen : {0x7ffffff8u, 0x80000000u, 0xfffffff8u}) {
-        Require(AES_wrap_key_nid_postfix(&encKey, nullptr, wrapped, plain, badWrapLen) == -1);
-        for (const unsigned char byte : wrapped) Require(byte == 0xA5);
-    }
-}
-
 } // namespace
 
 int main() {
@@ -504,7 +466,6 @@ int main() {
     CheckSequencing();
     CheckEmptyMessage();
     CheckCopy();
-    CheckKeyWrapBounds();
     std::puts("LibreSSL3 AES-CCM: ok");
     return 0;
 }

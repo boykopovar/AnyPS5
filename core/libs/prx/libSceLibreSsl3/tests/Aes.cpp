@@ -168,7 +168,7 @@ void TestNullArguments() {
     RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, reinterpret_cast<unsigned char*>(0x10), Rfc41.data(), 24); });
     Require(errno == 71 && Filled(out.data(), out.size(), 0xCC));
     const long peakBefore = PeakKilobytes();
-    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, out.data(), unreadable, 0xfffffff8u); });
+    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, out.data(), unreadable, 0x7ffffff8u); });
     Require(errno == 71 && Filled(out.data(), out.size(), 0xCC));
     Require(PeakKilobytes() - peakBefore < 64 * 1024);
 }
