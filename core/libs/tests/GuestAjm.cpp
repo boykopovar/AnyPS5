@@ -2963,6 +2963,80 @@ void TestInlineBufferNullAddress(const char* ajmiLibrary) {
 
 }
 
+struct At9ConsoleWord {
+    std::uint32_t word;
+    bool accepted;
+    std::uint32_t expected[5];
+};
+
+void TestAt9ParseConfigConsoleWords() {
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    const At9ConsoleWord words[] = {
+        {0xfe500ff0u, true, {1, 32000, 256, 1024, 512}},
+        {0xfe000ff0u, true, {1, 11025, 64, 256, 512}},
+        {0xfe100ff0u, true, {1, 12000, 64, 256, 512}},
+        {0xfe200ff0u, true, {1, 16000, 128, 512, 512}},
+        {0xfe300ff0u, true, {1, 22050, 128, 512, 512}},
+        {0xfe400ff0u, true, {1, 24000, 128, 512, 512}},
+        {0xfe600ff0u, true, {1, 44100, 256, 1024, 512}},
+        {0xfe700ff0u, true, {1, 48000, 256, 1024, 512}},
+        {0xfe800ff0u, false, {}},
+        {0xfe900ff0u, false, {}},
+        {0xfea00ff0u, false, {}},
+        {0xfeb00ff0u, false, {}},
+        {0xfec00ff0u, false, {}},
+        {0xfed00ff0u, false, {}},
+        {0xfee00ff0u, false, {}},
+        {0xfef00ff0u, false, {}},
+        {0xfe520ff0u, true, {2, 32000, 256, 1024, 512}},
+        {0xfe540ff0u, true, {2, 32000, 256, 1024, 512}},
+        {0xfe560ff0u, true, {6, 32000, 256, 1024, 512}},
+        {0xfe580ff0u, true, {8, 32000, 256, 1024, 512}},
+        {0xfe5a0ff0u, true, {4, 32000, 256, 1024, 512}},
+        {0xfe5c0ff0u, false, {}},
+        {0xfe5e0ff0u, false, {}},
+        {0xfe500010u, true, {1, 32000, 256, 1024, 4}},
+        {0xfe5007f0u, true, {1, 32000, 256, 1024, 256}},
+        {0xfe500fd0u, true, {1, 32000, 256, 1024, 508}},
+        {0xfe5017f0u, true, {1, 32000, 256, 1024, 768}},
+        {0xfe501ff0u, true, {1, 32000, 256, 1024, 1024}},
+        {0xfe503ff0u, true, {1, 32000, 256, 1024, 2048}},
+        {0xfe507ff0u, true, {1, 32000, 256, 1024, 4096}},
+        {0xfe50fff0u, true, {1, 32000, 256, 1024, 8192}},
+        {0xfe500fe0u, true, {1, 32000, 256, 256, 128}},
+        {0xfe500fe8u, false, {}},
+        {0xfe500ff8u, false, {}},
+        {0xfe510ff0u, false, {}},
+        {0xfe500ff7u, false, {}},
+        {0x00500ff0u, false, {}},
+        {0xff500ff0u, false, {}},
+        {0xfe521ff0u, true, {2, 32000, 256, 1024, 1024}},
+        {0xfe541ff0u, true, {2, 32000, 256, 1024, 1024}},
+        {0xfe563ff0u, true, {6, 32000, 256, 1024, 2048}},
+        {0xfe821fe0u, false, {}},
+        {0xfe821fe8u, false, {}},
+        {0xfe821ff8u, false, {}},
+        {0xfeb63fe8u, false, {}},
+        {0xfe8e1fe0u, false, {}},
+        {0xfef21fe0u, false, {}},
+        {0x00000000u, false, {}},
+        {0xffffffffu, false, {}},
+    };
+    for (const auto& entry : words) {
+        const std::uint8_t config[4] = {static_cast<std::uint8_t>(entry.word >> 24), static_cast<std::uint8_t>(entry.word >> 16), static_cast<std::uint8_t>(entry.word >> 8), static_cast<std::uint8_t>(entry.word)};
+        AjmDecAt9ConfigDataInfo info{};
+        std::memset(&info, 0xAA, sizeof(info));
+        const int result = sceAjmDecAt9ParseConfigData(config, &info);
+        if (!entry.accepted) {
+            Require(result == invalidParameter);
+            continue;
+        }
+        Require(result == 0);
+        Require(info.channels == entry.expected[0] && info.sample_rate == entry.expected[1] && info.frame_samples_per_channel == entry.expected[2]);
+        Require(info.superframe_samples_per_channel == entry.expected[3] && info.superframe_size == entry.expected[4]);
+    }
+}
+
 int main(int argc, char** argv) {
     Require(argc == 2);
     constexpr int invalidParameter = static_cast<int>(0x80930005);
@@ -3032,6 +3106,7 @@ int main(int argc, char** argv) {
     TestBatchContextOwnership(context);
     TestControlAt9(context);
     TestMultichannelAt9(context);
+    TestAt9ParseConfigConsoleWords();
     TestControlMp3(context);
     TestControlOpus(context);
     TestOpusGaplessReset(context, 960, 0);

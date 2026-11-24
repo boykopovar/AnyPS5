@@ -2071,7 +2071,10 @@ int APS5_VABI sceAjmDecAt9ParseConfigData(const void* config_data, AjmDecAt9Conf
         return SCE_AJM_ERROR_INVALID_PARAMETER;
     }
     Atrac9CodecInfo info{};
-    const bool valid = DescribeAt9Config(config, info);
+    const unsigned rateIndex = config[1] >> 4u;
+    const bool vibrationProfile = ((config[1] >> 1u) & 7u) >= 6u && (rateIndex == 1u || rateIndex == 4u || rateIndex == 7u);
+    const bool rejectedFields = config[0] == 0xFEu && !vibrationProfile && (rateIndex >= 8u || ((config[1] >> 1u) & 7u) >= 6u || (((config[3] >> 3u) & 3u) & 1u) != 0u || (config[3] & 7u) != 0u);
+    const bool valid = !rejectedFields && DescribeAt9Config(config, info);
     AJM_TRACE("[ajm] parse config %02x %02x %02x %02x -> %s, %d channels, %d Hz, superframe %d bytes (%d frames of %d samples)\n", config[0], config[1], config[2], config[3], valid ? "ok" : "invalid", info.channels, info.samplingRate, info.superframeSize, info.framesInSuperframe, info.frameSamples);
     if (!valid) {
         errno = savedErrno;
