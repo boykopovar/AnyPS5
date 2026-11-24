@@ -3,7 +3,6 @@
 
 #include FT_MODULE_H
 
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
