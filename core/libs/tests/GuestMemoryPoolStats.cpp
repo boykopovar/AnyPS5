@@ -105,6 +105,19 @@ static void CheckKernelMemoryPoolStats() {
     Require(sceKernelMemoryPoolGetBlockStats(&stats, sizeof(stats)) == 0);
     Require(stats.allocated_flushed_blocks == 0 && stats.available_flushed_blocks == 2);
 
+    Require(sceKernelMemoryPoolCommit(bytes, kFourMiB, 0, kProtRw, 0) == 0);
+    Require(sceKernelMemoryPoolGetBlockStats(&stats, sizeof(stats)) == 0);
+    Require(stats.allocated_flushed_blocks == 2 && stats.available_flushed_blocks == 0);
+    Require(sceKernelMemoryPoolDecommit(bytes + kPageSize, kPageSize, 0) == 0);
+    Require(sceKernelMemoryPoolGetBlockStats(&stats, sizeof(stats)) == 0);
+    Require(stats.allocated_flushed_blocks == 2 && stats.available_flushed_blocks == 0);
+    Require(sceKernelMemoryPoolDecommit(bytes, kTwoMiB, 0) == 0);
+    Require(sceKernelMemoryPoolGetBlockStats(&stats, sizeof(stats)) == 0);
+    Require(stats.allocated_flushed_blocks == 1 && stats.available_flushed_blocks == 1);
+    Require(sceKernelMemoryPoolDecommit(bytes + kTwoMiB, kTwoMiB, 0) == 0);
+    Require(sceKernelMemoryPoolGetBlockStats(&stats, sizeof(stats)) == 0);
+    Require(stats.allocated_flushed_blocks == 0 && stats.available_flushed_blocks == 2);
+
     Require(munmap_nid_postfix(base, kFourMiB) == 0);
     Require(sceKernelReleaseDirectMemory(phys, kFourMiB) == 0);
 }
