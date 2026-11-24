@@ -1,3 +1,8 @@
+# The private gate sizes its block between the old 1 MiB settle floor and the
+# current 64 KiB one, so it keeps the old floor like the agc_import_settle tests.
+if(BUILD_TESTING AND TEST agc_driver_linear_target_import_creation)
+    set_property(TEST agc_driver_linear_target_import_creation APPEND PROPERTY ENVIRONMENT "APS5_SETTLE_FLOOR_KIB=1024")
+endif()
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(agc_driver_linear_target_import_creation_tests PRIVATE libkernel)
     add_test(NAME agc_driver_linear_target_dma_buf_creation COMMAND agc_driver_linear_target_import_creation_tests --dma-buf-created)
