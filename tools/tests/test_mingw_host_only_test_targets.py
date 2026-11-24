@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -45,6 +46,26 @@ class HostOnlyTargets(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_selects_current_reply_even_if_an_old_index_has_a_later_mtime(self):
+        build = self.fixture([self.target("host_tests")])
+        reply = build / ".cmake/api/v1/reply"
+        stale = reply / "index-0000.json"
+        stale.write_text("{}", encoding="utf-8")
+        os.utime(reply / "index-0001.json", (10, 10))
+        os.utime(stale, (20, 20))
+        _, targets = build_mingw_host_only_tests.read_reply(build)
+        self.assertIn("host_tests", targets)
+
+    def test_newer_error_index_prevents_using_previous_configuration(self):
+        build = self.fixture([self.target("host_tests")])
+        reply = build / ".cmake/api/v1/reply"
+        (reply / "error-0000.json").write_text("{}", encoding="utf-8")
+        _, targets = build_mingw_host_only_tests.read_reply(build)
+        self.assertIn("host_tests", targets)
+        (reply / "error-0002.json").write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "error-0002.json"):
+            build_mingw_host_only_tests.read_reply(build)
+
     def test_selects_core_libs_test_executables_without_guest_libc(self):
         host = self.target("host_tests")
         guest = self.target("guest_tests", dependencies=("libc-id",),
@@ -62,6 +83,13 @@ class HostOnlyTargets(unittest.TestCase):
                             fragment="C:/build/core/libs/libs/implib/liblibc.dll.a")
         source_root = Path(self.temporary.name).resolve()
         self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, {guest["id"]: guest}), [])
+
+    def test_tests_folder_above_the_checkout_does_not_select_a_non_test_executable(self):
+        source_root = (Path(self.temporary.name) / "tests" / "repo").resolve()
+        utility = self.target("not_a_test", source="core/libs/nid/src/main.cpp")
+        host = self.target("host_tests")
+        targets = {item["id"]: item for item in (utility, host)}
+        self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, targets), ["host_tests"])
 
     def test_libc_link_does_not_accept_similarly_named_libraries(self):
         for fragment in ("/build/notliblibc.dll.a", "/build/liblibc.dll.a.extra", "/build/liblibc.prx"):

@@ -1345,7 +1345,10 @@ bool loadedDword(const RdnaProgram& program, std::uint32_t reg, std::uint32_t be
     return false;
 }
 
-bool reachingWriter(const RdnaProgram& program, std::uint32_t reader, std::initializer_list<std::uint32_t> indices, std::uint32_t& writer, std::uint32_t waveSize) {
+enum class Definition { None, Writes, Unknown };
+
+template <typename TDefines>
+bool reachingDefinition(const RdnaProgram& program, std::uint32_t reader, const TDefines& defines, std::uint32_t& writer) {
     std::multimap<std::uint32_t, std::uint32_t> branches;
     std::set<std::uint32_t> callTargets;
     for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
@@ -1376,7 +1379,9 @@ bool reachingWriter(const RdnaProgram& program, std::uint32_t reader, std::initi
         const auto& instruction = program.instructions[index];
         std::uint32_t target = 0;
         if (instruction.op == RdnaOpcode::SCallB64 || (instruction.op == RdnaOpcode::SSwappcB64 && resolveSetpcTarget(program, index, target))) return false;
-        if (std::ranges::any_of(indices, [&](std::uint32_t reg) { return writesScalar(instruction, reg, waveSize); })) {
+        const auto definition = defines(instruction);
+        if (definition == Definition::Unknown) return false;
+        if (definition == Definition::Writes) {
             if (found.has_value() && *found != index) return false;
             found = index;
             continue;
@@ -1385,6 +1390,79 @@ bool reachingWriter(const RdnaProgram& program, std::uint32_t reader, std::initi
     }
     if (!found.has_value()) return false;
     writer = *found;
+    return true;
+}
+
+bool reachingWriter(const RdnaProgram& program, std::uint32_t reader, std::initializer_list<std::uint32_t> indices, std::uint32_t& writer, std::uint32_t waveSize) {
+    return reachingDefinition(program, reader, [&](const RdnaInstruction& instruction) {
+        return std::ranges::any_of(indices, [&](std::uint32_t reg) { return writesScalar(instruction, reg, waveSize); }) ? Definition::Writes : Definition::None;
+    }, writer);
+}
+
+bool mayWriteVector(const RdnaInstruction& instruction, std::uint32_t reg) {
+    const auto near = [&](const RdnaOperand& operand, std::uint32_t width) { return operand.kind == RdnaOperandKind::VectorRegister && operand.reg <= reg && reg - operand.reg < width; };
+    switch (instruction.op) {
+        case RdnaOpcode::VMovreldB32:
+        case RdnaOpcode::VMovrelsdB32:
+        case RdnaOpcode::VMovrelsd2B32:
+        case RdnaOpcode::VSwaprelB32: return true;
+        default: break;
+    }
+    switch (instruction.family) {
+        case RdnaInstructionFamily::MUBUF:
+        case RdnaInstructionFamily::MTBUF:
+        case RdnaInstructionFamily::FLAT:
+        case RdnaInstructionFamily::DS:
+        case RdnaInstructionFamily::MIMG: {
+            const auto width = std::max(instruction.dataDwordCount, 1u) + 1u;
+            return near(instruction.destination, width) || near(instruction.destination2, width);
+        }
+        case RdnaInstructionFamily::VOP1:
+        case RdnaInstructionFamily::VOP2:
+        case RdnaInstructionFamily::VOP3:
+        case RdnaInstructionFamily::VOP3P:
+        case RdnaInstructionFamily::VOPC:
+        case RdnaInstructionFamily::VINTRP: {
+            const auto width = instruction.op == RdnaOpcode::VMqsadU32U8 ? 4u : readsVectorSources64(instruction.op) || instruction.op == RdnaOpcode::VQsadPkU16U8 || instruction.op == RdnaOpcode::VMqsadPkU16U8 ? 2u : 1u;
+            return near(instruction.destination, width) || near(instruction.destination2, width) || (instruction.op == RdnaOpcode::VSwapB32 && near(instruction.source0, 1u));
+        }
+        case RdnaInstructionFamily::Unknown: return true;
+        default: return false;
+    }
+}
+
+bool laneOf(const RdnaOperand& operand, std::uint32_t& lane) {
+    return operand.kind == RdnaOperandKind::IntegerInlineConstant && isImmediate(operand, lane) && lane < 32u;
+}
+
+bool restoreLaneSpill(const RdnaProgram& program, std::uint32_t reader, std::uint32_t first, std::uint32_t count, std::uint32_t waveSize, std::uint32_t& source, std::uint32_t& writer) {
+    std::optional<std::uint32_t> vector, firstLane, firstSource, load;
+    for (std::uint32_t offset = 0u; offset < count; ++offset) {
+        std::uint32_t read = 0u, lane = 0u, spill = 0u, written = 0u;
+        if (!reachingWriter(program, reader, {first + offset}, read, waveSize)) return false;
+        const auto& restore = program.instructions[read];
+        if (restore.op != RdnaOpcode::VReadlaneB32 || !isScalar(restore.destination, first + offset) || restore.source0.kind != RdnaOperandKind::VectorRegister || !laneOf(restore.source1, lane)) return false;
+        if (vector.has_value() && (restore.source0.reg != *vector || lane != *firstLane + offset)) return false;
+        vector = restore.source0.reg;
+        if (!firstLane.has_value()) firstLane = lane;
+        const auto spilled = [&](const RdnaInstruction& instruction) {
+            std::uint32_t target = 0u;
+            if (instruction.op == RdnaOpcode::VWritelaneB32 && instruction.destination.kind == RdnaOperandKind::VectorRegister && instruction.destination.reg == *vector) {
+                if (!laneOf(instruction.source1, target)) return Definition::Unknown;
+                return target == lane ? Definition::Writes : Definition::None;
+            }
+            return mayWriteVector(instruction, *vector) ? Definition::Unknown : Definition::None;
+        };
+        if (!reachingDefinition(program, read, spilled, spill)) return false;
+        const auto saved = scalarIndex(program.instructions[spill].source0);
+        if (saved == NoScalarRegister || (firstSource.has_value() && saved != *firstSource + offset)) return false;
+        if (!firstSource.has_value()) firstSource = saved;
+        if (!reachingWriter(program, spill, {saved}, written, waveSize) || (load.has_value() && written != *load)) return false;
+        load = written;
+    }
+    if (!firstSource.has_value() || !load.has_value()) return false;
+    source = *firstSource;
+    writer = *load;
     return true;
 }
 
@@ -1612,18 +1690,20 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
         std::uint32_t descriptorLoad = 0;
         const bool sameBlockWriter = findLastWriter(program, lowLoad, {descriptor, descriptor + 1u, descriptor + 2u, descriptor + 3u}, descriptorLoad, swappc.waveSize, reader) && sameBlock(descriptorLoad, index);
         if (!sameBlockWriter && !reachingWriter(program, lowLoad, {descriptor, descriptor + 1u, descriptor + 2u, descriptor + 3u}, descriptorLoad, swappc.waveSize)) continue;
+        auto spilledDescriptor = descriptor;
+        if (program.instructions[descriptorLoad].op == RdnaOpcode::VReadlaneB32 && !restoreLaneSpill(program, lowLoad, descriptor, 4u, swappc.waveSize, spilledDescriptor, descriptorLoad)) continue;
         std::optional<std::uint32_t> nestedDescriptorOffset;
-        auto tableDescriptor = descriptor;
+        auto tableDescriptor = spilledDescriptor;
         if (const auto& inner = program.instructions[descriptorLoad]; isScalarBufferLoad(inner.op)) {
             const auto innerLoaded = scalarIndex(inner.destination);
             const auto outer = scalarIndex(inner.source0);
-            if (inner.source0.kind != RdnaOperandKind::ScalarRegister || inner.source1.kind != RdnaOperandKind::Null || innerLoaded == NoScalarRegister || outer == NoScalarRegister || outer % 4u != 0u || descriptor < innerLoaded ||
-                descriptor - innerLoaded + 4u > inner.dataDwordCount || inner.memoryOffset >= 0x100000u || (inner.memoryOffset & 3u) != 0u) continue;
+            if (inner.source0.kind != RdnaOperandKind::ScalarRegister || inner.source1.kind != RdnaOperandKind::Null || innerLoaded == NoScalarRegister || outer == NoScalarRegister || outer % 4u != 0u || spilledDescriptor < innerLoaded ||
+                spilledDescriptor - innerLoaded + 4u > inner.dataDwordCount || inner.memoryOffset >= 0x100000u || (inner.memoryOffset & 3u) != 0u) continue;
             std::uint32_t outerLoad = 0;
             const auto innerIndex = descriptorLoad;
             const bool outerInBlock = findLastWriter(program, innerIndex, {outer, outer + 1u, outer + 2u, outer + 3u}, outerLoad, swappc.waveSize, reader) && sameBlock(outerLoad, innerIndex);
             if (!outerInBlock && !reachingWriter(program, innerIndex, {outer, outer + 1u, outer + 2u, outer + 3u}, outerLoad, swappc.waveSize)) continue;
-            nestedDescriptorOffset = inner.memoryOffset + (descriptor - innerLoaded) * 4u;
+            nestedDescriptorOffset = inner.memoryOffset + (spilledDescriptor - innerLoaded) * 4u;
             tableDescriptor = outer;
             descriptorLoad = outerLoad;
         }

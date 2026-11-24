@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import tomllib
 from types import SimpleNamespace
 import unittest
@@ -266,6 +267,24 @@ class PatchAdvisorTests(unittest.TestCase):
                 self.assertEqual(output.getvalue(), "")
                 self.assertIn("duplicate JSON key", errors.getvalue())
                 run.assert_not_called()
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_byte_order_mark_is_accepted_in_param_json(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        self.param.write_text('{"titleId": "TEST00001", "contentVersion": "01.000.000"}', encoding="utf-8-sig")
+        self.assertEqual(self.advise(), 0)
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_byte_order_mark_is_accepted_in_catalog_index(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        (self.catalog / "index.json").write_text(json.dumps({"format": 1, "entries": [self.entry]}), encoding="utf-8-sig")
+        self.assertEqual(self.advise(), 0)
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_byte_order_mark_is_accepted_in_patch_file(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        (self.catalog / "patch.toml").write_text('format = 1\n[[patch]]\ntarget = "Media/Modules/module.prx"\nva = 0x1000\nexpected = "00"\nvalue = "01"\n', encoding="utf-8-sig")
+        self.assertEqual(self.advise(), 0)
 
     @patch.object(suggest_patches.subprocess, "run")
     def test_matching_malformed_patch_is_rejected(self, run):
@@ -622,6 +641,11 @@ class PatchAdvisorTests(unittest.TestCase):
         self.assertEqual(self.advise("--timeout-seconds", "0"), 2)
         run.assert_not_called()
 
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_timeout_above_platform_limit_is_rejected_before_relinker(self, run):
+        self.assertEqual(self.advise("--timeout-seconds", str(int(threading.TIMEOUT_MAX) + 1024)), 2)
+        run.assert_not_called()
+
 
     def test_relative_path_rejects_unsafe_names(self):
         self.assertEqual(suggest_patches.relative_path("a/b.txt"), Path("a", "b.txt"))
@@ -798,7 +822,7 @@ class ValidateMetadataTests(unittest.TestCase):
 class ValidateEntryTests(unittest.TestCase):
     DIGEST = "A" * 64
 
-    def setup(self, directory, patch_text='[[patch]]\ntarget = "eboot.bin"\n'):
+    def setup(self, directory, patch_text='format = 1\n[[patch]]\ntarget = "eboot.bin"\n'):
         (Path(directory) / "p.toml").write_text(patch_text, encoding="utf-8")
         return {"titleId": "PPSA00001", "contentVersion": "01.00", "patch": "p.toml", "targets": {"eboot.bin": self.DIGEST}}
 
@@ -810,6 +834,13 @@ class ValidateEntryTests(unittest.TestCase):
             self.assertEqual(patch, (Path(directory) / "p.toml").resolve())
             self.assertEqual(targets, {"eboot.bin": "a" * 64})
             self.assertEqual(metadata, {"name": "Name"})
+
+    def test_patch_format_is_checked_before_relinker_verification(self):
+        for prefix in ("", "format = 2\n", "format = true\n"):
+            with self.subTest(prefix=prefix), tempfile.TemporaryDirectory() as directory:
+                entry = self.setup(directory, prefix + '[[patch]]\ntarget = "eboot.bin"\n')
+                with self.assertRaisesRegex(ValueError, "patch file must have format 1"):
+                    suggest_patches.validate_entry(Path(directory), entry)
 
     def test_missing_or_unknown_fields_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:

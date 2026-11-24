@@ -443,6 +443,27 @@ void CheckBackups() {
     Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "checkBackupData without a backup is NOT_FOUND");
     Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorNotFound, "restoreBackupData without a backup is NOT_FOUND");
 
+    const char* const invalidNames[] = {
+        ".",
+        "..",
+        "../traversal",
+        "..\\traversal",
+        "/absolute",
+        "\\absolute",
+        "dir/slash",
+        "dir\\backslash",
+        "c:colon",
+        ":colon"
+    };
+    for (const auto* invalidName : invalidNames) {
+        SceSaveDataDirName invalidDir{};
+        std::strncpy(invalidDir.data, invalidName, sizeof(invalidDir.data) - 1);
+        check.dir_name = &invalidDir;
+        restore.dir_name = &invalidDir;
+        Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorParameter, "checkBackupData invalid dir_name is PARAMETER");
+        Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorParameter, "restoreBackupData invalid dir_name is PARAMETER");
+    }
+
     SaveDataMountResult mounted{};
     Check(MountSave(&kept, MountReadWrite | MountCreate2, &mounted), "the backed-up save mounts");
     const auto data = std::filesystem::path("_sd") / "kept" / "data.bin";
@@ -477,6 +498,11 @@ void CheckBackups() {
     std::memcpy(running.data, "PPSA00000", sizeof("PPSA00000"));
     check.title_id = &running;
     Check(sceSaveDataCheckBackupData(&check) == 0, "checkBackupData with the running title's id finds the backup");
+    SceSaveDataTitleId badTitleId{};
+    std::strncpy(badTitleId.data, "CUSA99999", sizeof(badTitleId.data) - 1);
+    check.title_id = &badTitleId;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "checkBackupData bad title_id is NOT_FOUND");
+    check.title_id = nullptr;
 
     WriteText(data, "second");
     WriteText(std::filesystem::path("_sd") / "kept" / "added.bin", "added");
@@ -484,6 +510,9 @@ void CheckBackups() {
     const char changedTitle[] = "Changed";
     Check(sceSaveDataSetParam(&mounted.mount_point, 1, changedTitle, sizeof(changedTitle)) == 0, "the title changes after the backup");
     Check(sceSaveDataUmount2(0, &mounted.mount_point) == 0, "the changed save unmounts");
+    restore.title_id = &badTitleId;
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorNotFound, "restoreBackupData bad title_id is NOT_FOUND");
+    restore.title_id = nullptr;
     Check(sceSaveDataRestoreBackupData(&restore) == 0, "restoreBackupData succeeds");
     Check(ReadText(data) == "first", "restoreBackupData puts back a file changed after the backup");
     Check(!std::filesystem::exists(std::filesystem::path("_sd") / "kept" / "added.bin"), "restoreBackupData removes a file added after the backup");

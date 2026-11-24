@@ -100,6 +100,53 @@ static void CheckAddressLengths(int family) {
     Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
 }
 
+static void CheckConnectedSendTo(int family) {
+    constexpr int AlreadyConnected = 56;
+    const std::uint32_t addressSize = family == 2 ? 16 : 28;
+    const int receiver = socket_nid_postfix(family, 2 | 0x20000000, 0);
+    if (receiver < 0 && family == 28 && *__error_nid_postfix() == 47) return;
+    const int other = socket_nid_postfix(family, 2 | 0x20000000, 0);
+    const int sender = socket_nid_postfix(family, 2, 0);
+    Require(receiver >= 0 && other >= 0 && sender >= 0);
+    std::array<unsigned char, 28> destination{};
+    destination[0] = static_cast<unsigned char>(addressSize);
+    destination[1] = static_cast<unsigned char>(family);
+    if (family == 2) { destination[4] = 127; destination[7] = 1; }
+    else destination[23] = 1;
+    std::array<unsigned char, 28> elsewhere = destination;
+    const int bound = bind_nid_postfix(receiver, destination.data(), addressSize);
+    if (bound < 0 && family == 28 && *__error_nid_postfix() == 49) {
+        Require(close_nid_postfix(sender) == 0 && close_nid_postfix(other) == 0 && close_nid_postfix(receiver) == 0);
+        return;
+    }
+    Require(bound == 0 && bind_nid_postfix(other, elsewhere.data(), addressSize) == 0);
+    std::uint32_t size = destination.size();
+    Require(getsockname_nid_postfix(receiver, destination.data(), &size) == 0 && size == addressSize);
+    size = elsewhere.size();
+    Require(getsockname_nid_postfix(other, elsewhere.data(), &size) == 0 && size == addressSize);
+    Require(connect_nid_postfix(sender, destination.data(), addressSize) == 0);
+    const char payload[] = "connected";
+    char received[sizeof(payload)]{};
+    for (const auto* target : {&destination, &elsewhere}) {
+        Require(sendto_nid_postfix(sender, payload, sizeof(payload), 0, target->data(), addressSize) == -1 && *__error_nid_postfix() == AlreadyConnected);
+        KernelIovec vector{const_cast<char*>(payload), sizeof(payload)};
+        GuestMsghdr message{const_cast<unsigned char*>(target->data()), addressSize, &vector, 1, nullptr, 0, 0};
+        Require(sendmsg_nid_postfix(sender, &message, 0) == -1 && *__error_nid_postfix() == AlreadyConnected);
+    }
+    Require(sendto_nid_postfix(sender, reinterpret_cast<void*>(0x10), 1, 0, destination.data(), addressSize) == -1 && *__error_nid_postfix() == 14);
+    Require(sendto_nid_postfix(sender, payload, sizeof(payload), 0, nullptr, 0) == sizeof(payload));
+    std::int64_t got = -1;
+    for (int attempt = 0; attempt < 200 && got < 0; ++attempt) {
+        got = recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, nullptr);
+        if (got < 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    Require(got == sizeof(payload) && std::memcmp(received, payload, sizeof(payload)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
+    Require(recvfrom_nid_postfix(other, received, sizeof(received), 0, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
+    Require(close_nid_postfix(sender) == 0 && close_nid_postfix(other) == 0 && close_nid_postfix(receiver) == 0);
+}
+
 static void CheckDissolvedName(int family, int binding) {
     const std::uint32_t addressSize = family == 2 ? 16 : 28;
     const int peer = socket_nid_postfix(family, 2, 0);
@@ -606,10 +653,80 @@ static void CheckPointerFaults() {
     }
 }
 
+static void CheckSendReceiveFaults() {
+    constexpr int Fault = 14;
+    constexpr int WouldBlock = 35;
+    GuardedPage page;
+    const auto fails = [](std::int64_t result) { return result == -1 && *__error_nid_postfix() == Fault; };
+    for (const int type : {1, 2}) {
+        const int receiver = socket_nid_postfix(2, type | 0x20000000, 0);
+        const int sender = socket_nid_postfix(2, type, 0);
+        Require(receiver >= 0 && sender >= 0);
+        std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+        Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+        std::uint32_t size = address.size();
+        Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+        if (type == 1) Require(listen_nid_postfix(receiver, 1) == 0);
+        Require(connect_nid_postfix(sender, address.data(), address.size()) == 0);
+        int connected = receiver;
+        if (type == 1) {
+            connected = -1;
+            for (int attempt = 0; attempt < 200 && connected < 0; ++attempt) {
+                connected = accept_nid_postfix(receiver, nullptr, nullptr);
+                if (connected < 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            Require(connected >= 0);
+        }
+        char peeked[1];
+        const auto settle = [&] {
+            for (int attempt = 0; attempt < 400 && recvfrom_nid_postfix(connected, peeked, 1, 2, nullptr, nullptr) < 0; ++attempt)
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        };
+
+        Require(fails(send_nid_postfix(sender, nullptr, 1, 0)));
+        Require(fails(send_nid_postfix(sender, reinterpret_cast<void*>(0x10), 1, 0)));
+        Require(fails(send_nid_postfix(sender, page.Unreadable(), 1, 0)));
+        Require(fails(send_nid_postfix(sender, page.Crossing(), 8, 0)));
+        Require(send_nid_postfix(sender, page.Crossing(), 4, 0) == 4);
+        for (int i = 0; i < 7; ++i) Require(send_nid_postfix(sender, "ok", 2, 0) == 2);
+        settle();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        Require(fails(recv_nid_postfix(connected, reinterpret_cast<void*>(0x10), 2, 0)));
+        Require(fails(recv_nid_postfix(connected, page.Unreadable(), 2, 0)));
+        Require(fails(recv_nid_postfix(connected, page.ReadOnly(), 2, 0)));
+        char received[8]{};
+        Require(recv_nid_postfix(connected, received, sizeof(received), 0) >= 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        while (recv_nid_postfix(connected, received, sizeof(received), 0) >= 0) {
+        }
+        Require(*__error_nid_postfix() == WouldBlock);
+
+        Require(send_nid_postfix(sender, "z", 1, 0) == 1);
+        settle();
+        *page.LastWritable() = 0;
+        Require(recv_nid_postfix(connected, page.LastWritable(), 2, 0) == 1 && *page.LastWritable() == 'z');
+        Require(recv_nid_postfix(connected, received, 2, 0) == -1 && *__error_nid_postfix() == WouldBlock);
+        if (type == 2) {
+            Require(send_nid_postfix(sender, "ok", 2, 0) == 2);
+            settle();
+            Require(fails(recv_nid_postfix(connected, page.LastWritable(), 2, 0)));
+            Require(send_nid_postfix(sender, "y", 1, 0) == 1);
+            settle();
+            Require(recv_nid_postfix(connected, received, 2, 0) == 1 && received[0] == 'y');
+        }
+        if (type == 1) Require(close_nid_postfix(connected) == 0);
+        Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
+    }
+}
+
 int main() {
     CheckPointerFaults();
+    CheckSendReceiveFaults();
     CheckAddressLengths(2);
     CheckAddressLengths(28);
+    CheckConnectedSendTo(2);
+    CheckConnectedSendTo(28);
     for (const int family : {2, 28})
         for (int binding = 0; binding < 3; ++binding) CheckDissolvedName(family, binding);
     CheckArrivalTimestamps(2);

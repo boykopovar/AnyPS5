@@ -7,7 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#ifdef __APPLE__
+#ifndef _WIN32
 #include <sys/uio.h>
 #endif
 
@@ -60,6 +60,9 @@ void SharePositionedTransfer(int from, int to);
 std::int64_t WriteAtEnd(int descriptor, const void* buf, std::size_t nbytes);
 #elif defined(__APPLE__)
 std::int64_t WritevAtEnd(int descriptor, const iovec* iov, int iovcnt);
+#endif
+#ifndef _WIN32
+std::int64_t TransferInParts(int descriptor, const iovec* iov, int iovcnt, const std::int64_t* offset, bool write);
 #endif
 }
 

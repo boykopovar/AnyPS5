@@ -17,6 +17,7 @@ class FailClosedTests(unittest.TestCase):
             patch.object(pr_overlap, "base_commit", return_value="refs/pr/base"),
             patch.object(pr_overlap, "fetch_heads"),
             patch.object(pr_overlap, "own", return_value={7: {"ref": "refs/pr/7"}}),
+            patch.object(pr_overlap, "push_head", return_value=("topic", None)),
             patch.object(pr_overlap, "git", return_value="a" * 40),
             patch.object(pr_overlap, "scan_all"),
             patch.object(pr_overlap, "base_exports", return_value={}),

@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl3/include/Pkcs7.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -13,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -35,6 +37,13 @@ constexpr int WrongTag = 168;
 constexpr int InvalidDirectory = 113;
 constexpr int InvalidObjectEncoding = 216;
 constexpr int InvalidBitStringBitsLeft = 220;
+constexpr int IllegalCharacters = 124;
+constexpr int InvalidBmpStringLength = 129;
+constexpr int InvalidUniversalStringLength = 133;
+constexpr int InvalidUtf8String = 134;
+constexpr int BmpStringWrongLength = 214;
+constexpr int UniversalStringWrongLength = 215;
+constexpr std::uint32_t UnicodeMax = 0x10ffff;
 
 constexpr int FileTypePem = 1;
 constexpr int FileTypeDefault = 0;
@@ -123,9 +132,7 @@ template <typename T>
 T ReadGuest(const T* source, const char* function) {
     T value{};
     if (!source) throw std::invalid_argument(std::string(function) + ": null guest pointer");
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(value));
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return value;
 }
@@ -133,9 +140,7 @@ T ReadGuest(const T* source, const char* function) {
 void ReadGuestBytes(void* destination, const void* source, std::size_t size, const char* function) {
     if (size == 0) return;
     if (!source) throw std::invalid_argument(std::string(function) + ": null guest buffer");
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
@@ -191,6 +196,14 @@ bool Next(std::span<const unsigned char>& input, unsigned char tag, Tlv& value) 
 }
 
 Asn1String* NewString(int type, std::span<const unsigned char> content) {
+    if (type == BmpStringType && content.size() % 2 != 0) {
+        PutAsn1Error(BmpStringWrongLength);
+        return nullptr;
+    }
+    if (type == UniversalStringType && content.size() % 4 != 0) {
+        PutAsn1Error(UniversalStringWrongLength);
+        return nullptr;
+    }
     if (content.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
         PutAsn1Error(TooLong);
         return nullptr;
@@ -364,6 +377,7 @@ void FreePubkey(LibreSsl3X509Pubkey* pubkey) {
     if (!pubkey) return;
     FreeAlgor(pubkey->algor);
     FreeString(reinterpret_cast<Asn1String*>(pubkey->publicKey));
+    EVP_PKEY_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3EvpPkey*>(pubkey->pkey));
     free_nid_postfix(pubkey);
 }
 
@@ -729,15 +743,44 @@ bool IsAsciiSpace(unsigned char character) {
            character == '\f' || character == '\r';
 }
 
-bool NeedsUtf8Conversion(int type) {
-    return type == T61StringType || type == UniversalStringType || type == BmpStringType;
-}
-
 bool IsCanonicalizedType(int type) {
-    return type == Utf8StringType || type == PrintableStringType || type == Ia5StringType ||
-           type == VisibleStringType;
+    return type == Utf8StringType || type == PrintableStringType || type == T61StringType || type == Ia5StringType ||
+           type == VisibleStringType || type == UniversalStringType || type == BmpStringType;
 }
 
+bool IsSurrogate(std::uint32_t value) {
+    return value >= 0xd800 && value <= 0xdfff;
+}
+
+std::size_t Utf8SequenceLength(std::span<const unsigned char> bytes) {
+    const unsigned char lead = bytes.front();
+    if (lead < 0x80) return 1;
+    std::size_t length = 0;
+    std::uint32_t minimum = 0;
+    std::uint32_t value = 0;
+    if (lead >= 0xc2 && lead <= 0xdf) {
+        length = 2;
+        minimum = 0x80;
+        value = lead & 0x1f;
+    } else if ((lead & 0xf0) == 0xe0) {
+        length = 3;
+        minimum = 0x800;
+        value = lead & 0x0f;
+    } else if (lead >= 0xf0 && lead <= 0xf4) {
+        length = 4;
+        minimum = 0x10000;
+        value = lead & 0x07;
+    } else {
+        return 0;
+    }
+    if (bytes.size() < length) return 0;
+    for (std::size_t index = 1; index < length; ++index) {
+        if ((bytes[index] & 0xc0) != 0x80) return 0;
+        value = (value << 6) | (bytes[index] & 0x3f);
+    }
+    if (value < minimum || value > UnicodeMax || IsSurrogate(value)) return 0;
+    return length;
+}
 
 void AppendUtf8(std::vector<unsigned char>& output, std::uint32_t code) {
     if (code <= 0x7f) {
@@ -757,47 +800,49 @@ void AppendUtf8(std::vector<unsigned char>& output, std::uint32_t code) {
     }
 }
 
-std::vector<unsigned char> ToUtf8(const std::vector<unsigned char>& bytes, int type, const char* function) {
+std::optional<std::vector<unsigned char>> ToUtf8(const std::vector<unsigned char>& bytes, int type) {
+    if (type == Utf8StringType) {
+        for (std::size_t index = 0; index < bytes.size();) {
+            const std::size_t length = Utf8SequenceLength(std::span<const unsigned char>(bytes).subspan(index));
+            if (length == 0) {
+                PutAsn1Error(InvalidUtf8String);
+                return std::nullopt;
+            }
+            index += length;
+        }
+        return bytes;
+    }
     std::vector<unsigned char> converted;
     converted.reserve(bytes.size());
-    if (type == T61StringType) {
-        for (const unsigned char character : bytes) AppendUtf8(converted, character);
-        return converted;
-    }
-    if (type == BmpStringType) {
-        if (bytes.size() % 2 != 0) throw std::invalid_argument(std::string(function) + ": odd BMPString length");
-        for (std::size_t index = 0; index + 1 < bytes.size(); index += 2) {
-            std::uint32_t code = (static_cast<std::uint32_t>(bytes[index]) << 8) | bytes[index + 1];
-            if (code >= 0xd800 && code <= 0xdbff && index + 3 < bytes.size()) {
-                const std::uint32_t low = (static_cast<std::uint32_t>(bytes[index + 2]) << 8) | bytes[index + 3];
-                if (low >= 0xdc00 && low <= 0xdfff) {
-                    code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
-                    index += 2;
-                }
+    if (type == BmpStringType || type == UniversalStringType) {
+        const std::size_t width = type == BmpStringType ? 2 : 4;
+        if (bytes.size() % width != 0) {
+            PutAsn1Error(width == 2 ? InvalidBmpStringLength : InvalidUniversalStringLength);
+            return std::nullopt;
+        }
+        for (std::size_t index = 0; index < bytes.size(); index += width) {
+            std::uint32_t code = 0;
+            for (std::size_t byte = 0; byte < width; ++byte) code = (code << 8) | bytes[index + byte];
+            if (code > UnicodeMax || IsSurrogate(code)) {
+                PutAsn1Error(IllegalCharacters);
+                return std::nullopt;
             }
             AppendUtf8(converted, code);
         }
         return converted;
     }
-    if (type == UniversalStringType) {
-        if (bytes.size() % 4 != 0) throw std::invalid_argument(std::string(function) + ": odd UniversalString length");
-        for (std::size_t index = 0; index + 3 < bytes.size(); index += 4) {
-            const std::uint32_t code = (static_cast<std::uint32_t>(bytes[index]) << 24) |
-                                       (static_cast<std::uint32_t>(bytes[index + 1]) << 16) |
-                                       (static_cast<std::uint32_t>(bytes[index + 2]) << 8) | bytes[index + 3];
-            AppendUtf8(converted, code);
-        }
-        return converted;
-    }
-    return bytes;
+    for (const unsigned char character : bytes) AppendUtf8(converted, character);
+    return converted;
 }
 
-std::vector<unsigned char> CanonicalStringContent(const Asn1String& value, const char* function) {
+std::optional<std::vector<unsigned char>> CanonicalStringContent(const Asn1String& value, const char* function) {
     if (value.length < 0) throw std::invalid_argument(std::string(function) + ": negative name value length");
     std::vector<unsigned char> bytes(static_cast<std::size_t>(value.length));
     ReadGuestBytes(bytes.data(), value.data, bytes.size(), function);
-    if (NeedsUtf8Conversion(value.type)) bytes = ToUtf8(bytes, value.type, function);
-    else if (!IsCanonicalizedType(value.type)) return bytes;
+    if (!IsCanonicalizedType(value.type)) return bytes;
+    auto converted = ToUtf8(bytes, value.type);
+    if (!converted) return std::nullopt;
+    bytes = std::move(*converted);
     std::size_t begin = 0;
     std::size_t end = bytes.size();
     while (begin < end && !(bytes[begin] & 0x80) && IsAsciiSpace(bytes[begin])) ++begin;
@@ -839,23 +884,25 @@ void AppendElement(std::vector<unsigned char>& output, unsigned char tag, const 
     output.insert(output.end(), content.begin(), content.end());
 }
 
-std::vector<unsigned char> EncodeNameEntry(const LibreSslX509NameEntry& entry, const char* function) {
+std::optional<std::vector<unsigned char>> EncodeNameEntry(const LibreSslX509NameEntry& entry, const char* function) {
     const auto object = ReadGuest(static_cast<const LibreSslAsn1Object*>(entry.object), function);
     if (object.length < 0) throw std::invalid_argument(std::string(function) + ": negative name object length");
     std::vector<unsigned char> objectContent(static_cast<std::size_t>(object.length));
     ReadGuestBytes(objectContent.data(), object.data, objectContent.size(), function);
     const auto value = ReadGuest(static_cast<const Asn1String*>(entry.value), function);
-    const int type = IsCanonicalizedType(value.type) || NeedsUtf8Conversion(value.type) ? Utf8StringType : value.type;
+    const int type = IsCanonicalizedType(value.type) ? Utf8StringType : value.type;
     if (type < 0 || type > 0xff) throw std::invalid_argument(std::string(function) + ": name value type out of range");
+    const auto canonical = CanonicalStringContent(value, function);
+    if (!canonical) return std::nullopt;
     std::vector<unsigned char> content;
     AppendElement(content, ObjectTag, objectContent);
-    AppendElement(content, static_cast<unsigned char>(type), CanonicalStringContent(value, function));
+    AppendElement(content, static_cast<unsigned char>(type), *canonical);
     std::vector<unsigned char> encoded;
     AppendElement(encoded, SequenceTag, content);
     return encoded;
 }
 
-std::vector<unsigned char> CanonicalName(const LibreSslX509Name* name, const char* function) {
+std::optional<std::vector<unsigned char>> CanonicalName(const LibreSslX509Name* name, const char* function) {
     if (!name) throw std::invalid_argument(std::string(function) + ": null name");
     const LibreSslStack stack = ReadGuest(name->entries, function);
     if (stack.num < 0) throw std::invalid_argument(std::string(function) + ": negative name entry count");
@@ -870,7 +917,9 @@ std::vector<unsigned char> CanonicalName(const LibreSslX509Name* name, const cha
             sets.push_back(entry.set);
             groups.emplace_back();
         }
-        groups.back().push_back(EncodeNameEntry(entry, function));
+        auto encoded = EncodeNameEntry(entry, function);
+        if (!encoded) return std::nullopt;
+        groups.back().push_back(std::move(*encoded));
     }
     std::vector<unsigned char> content;
     for (auto& group : groups) {
@@ -879,7 +928,6 @@ std::vector<unsigned char> CanonicalName(const LibreSslX509Name* name, const cha
         for (const auto& entry : group) set.insert(set.end(), entry.begin(), entry.end());
         AppendElement(content, SetTag, set);
     }
-    if (content.empty()) return {};
     return content;
 }
 
@@ -889,7 +937,9 @@ std::vector<unsigned char> SubjectEncoding(const LibreSslX509Name* name, const c
     if (!name->canonEnc) {
         const LibreSslStack stack = ReadGuest(name->entries, function);
         if (stack.num <= 0) return {};
-        return CanonicalName(name, function);
+        auto canonical = CanonicalName(name, function);
+        if (!canonical) NotImplemented_nid_no_patch("X509_LOOKUP_hash_dir: a lookup name with no canonical encoding");
+        return std::move(*canonical);
     }
     std::vector<unsigned char> encoding(static_cast<std::size_t>(name->canonEnclen));
     ReadGuestBytes(encoding.data(), name->canonEnc, encoding.size(), function);
@@ -897,7 +947,9 @@ std::vector<unsigned char> SubjectEncoding(const LibreSslX509Name* name, const c
 }
 
 bool StoreCanonicalName(LibreSslX509Name* name, const char* function) {
-    const std::vector<unsigned char> encoding = CanonicalName(name, function);
+    const auto canonical = CanonicalName(name, function);
+    if (!canonical) return false;
+    const std::vector<unsigned char>& encoding = *canonical;
     if (encoding.empty()) return true;
     if (encoding.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
         PutAsn1Error(TooLong);
@@ -1109,7 +1161,7 @@ bool NextLine(const std::string& text, std::size_t& position, std::string& line)
     if (end == std::string::npos) end = text.size();
     line.assign(text, position, end - position);
     position = end < text.size() ? end + 1 : text.size();
-    if (!line.empty() && line.back() == '\r') line.pop_back();
+    while (!line.empty() && static_cast<signed char>(line.back()) <= ' ') line.pop_back();
     return true;
 }
 
@@ -1154,10 +1206,7 @@ std::vector<std::vector<unsigned char>> ReadPemCertificates(const std::string& t
     std::string line;
     while (NextLine(text, position, line)) {
         if (line.rfind("-----BEGIN ", 0) != 0) continue;
-        if (line.size() < 16 || line.compare(line.size() - 5, 5, "-----") != 0) {
-            malformed = true;
-            return certificates;
-        }
+        if (line.size() < 16 || line.compare(line.size() - 5, 5, "-----") != 0) continue;
         const std::string label = line.substr(11, line.size() - 16);
         std::string body;
         bool closed = false;
@@ -1206,7 +1255,6 @@ int LoadCertificates(LibreSslX509Store* store, const char* path) {
     if (!ReadFile(path, contents)) return 0;
     bool malformed = false;
     const std::vector<std::vector<unsigned char>> certificates = ReadPemCertificates(contents, malformed);
-    if (malformed) return 0;
     int count = 0;
     for (const auto& bytes : certificates) {
         std::span<const unsigned char> input(bytes);
@@ -1227,7 +1275,7 @@ int LoadCertificates(LibreSslX509Store* store, const char* path) {
         }
         ++count;
     }
-    return count;
+    return malformed ? 0 : count;
 }
 
 unsigned long NameHash(const LibreSslX509Name* name) {
@@ -1351,9 +1399,7 @@ int APS5_VABI DirectoryBySubject(LibreSslX509Lookup* lookup, int type, LibreSslX
         }
         LibreSslX509Object found{};
         if (FindStoredCertificate(lookup->storeContext, subject, found)) {
-            const int savedErrno = errno;
             const bool copied = GuestCopyOut_nid_no_patch(result, &found, sizeof(found));
-            errno = savedErrno;
             if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
             return 1;
         }
@@ -1365,6 +1411,35 @@ LibreSslX509LookupMethod directoryLookupMethod{"Load certs from files in a direc
     reinterpret_cast<void*>(NewDirectoryLookup), reinterpret_cast<void*>(FreeDirectoryLookup), nullptr, nullptr,
     reinterpret_cast<void*>(DirectoryControl), reinterpret_cast<void*>(DirectoryBySubject), nullptr, nullptr, nullptr};
 
+}
+
+LibreSsl3Certificate* DecodeCertificate_nid_no_patch(std::span<const unsigned char>& input) {
+    return reinterpret_cast<LibreSsl3Certificate*>(DecodeCertificate(input));
+}
+
+void FreeCertificate_nid_no_patch(LibreSsl3Certificate* certificate) {
+    FreeCertificate(reinterpret_cast<CertificateObject*>(certificate));
+}
+
+LibreSsl3X509Algor* DecodeAlgor_nid_no_patch(std::span<const unsigned char>& input) {
+    return DecodeAlgor(input);
+}
+
+void FreeAlgor_nid_no_patch(LibreSsl3X509Algor* algor) {
+    FreeAlgor(algor);
+}
+
+LibreSslX509Name* DecodeName_nid_no_patch(std::span<const unsigned char> content) {
+    LibreSslX509Name* name = DecodeName(content);
+    if (name && !StoreCanonicalName(name, __func__)) {
+        FreeName(name);
+        return nullptr;
+    }
+    return name;
+}
+
+void FreeName_nid_no_patch(LibreSslX509Name* name) {
+    FreeName(name);
 }
 
 extern "C" {

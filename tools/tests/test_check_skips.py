@@ -36,6 +36,8 @@ LIMITATIONS = [
     "skipped, the host cannot allocate a buffer of more than 2 GiB",
     "skipped, the host has no interface that can join 224.0.0.251",
     "skipped, the host mounts /dev/shm noexec, so named shared memory is not mapped executable",
+    "skipped, the host has no image that ends inside a 16 KiB page with free memory above it",
+    "skipped, the host has no image segment that starts inside a 16 KiB page holding no other loaded segment below it",
     "skipped, unproven on CPU Vulkan (llvmpipe): host write over a shadowed unit: the import made without the GPU lock was refused",
     "skipped, host imports unavailable: carried shadows not tested",
     "skipped, host import of the test block refused: carried shadows not tested",
@@ -166,7 +168,8 @@ class CheckSkipsTests(unittest.TestCase):
 
     def test_windows_symlink_creation_privilege_skip_is_narrow(self):
         reason = "SKIP: Windows symbolic-link privileges unavailable"
-        names = ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched")
+        names = ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched", "guest_kernel_sys_paths_readlink_limits",
+                 "guest_kernel_sys_paths_readlink_limits_patched", "guest_kernel_sys_paths_readlinkat_limits", "guest_kernel_sys_paths_readlinkat_limits_patched")
         with tempfile.TemporaryDirectory() as directory:
             junit = Path(directory) / "junit.xml"
             for name in names:
@@ -179,6 +182,10 @@ class CheckSkipsTests(unittest.TestCase):
             invalid = (
                 ("guest_kernel_sys_paths_symlinkat_errors", reason, "windows", ""),
                 ("guest_kernel_sys_paths_symlinkat_refused_unpatched", reason, "windows", ""),
+                ("guest_kernel_sys_paths_readlink", reason, "windows", ""),
+                ("guest_kernel_sys_paths_readlink_limits_unpatched", reason, "windows", ""),
+                (names[2], reason, "linux", ""),
+                (names[2], reason + "\nSKIP: flaky", "windows", ""),
                 ("guest_probe", reason, "windows", ""),
                 (names[0], reason, "linux", ""),
                 (names[0], "", "windows", ""),
@@ -234,6 +241,77 @@ class CtestSkipPolicyTests(unittest.TestCase):
                         self.assertIn("error: guest_probe skipped", result.stdout)
                         if "skipped, flaky" in report:
                             self.assertIn("error: guest_probe skipped: skipped, flaky", result.stdout)
+
+    def test_skip_without_a_stated_reason_names_the_output_it_saw(self):
+        reports = (
+            ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>[time] scheduler tick raised to 0.5 ms (was 0.50 ms, now 0.50 ms, timed waits fine, timers fire 37 us late)</system-out>',
+             "the test stated no reason; its output starts with: [time] scheduler tick raised to 0.5 ms"),
+            ('<skipped message="SKIP_REGULAR_EXPRESSION_MATCHED"/>', "the test stated no reason and wrote no output"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, expected in reports:
+                junit.write_text(f'<testsuite><testcase name="guest_video_out_colorimetry_metadata_bounds">{report}</testcase></testsuite>', encoding="utf-8")
+                for job in ("linux", "windows"):
+                    with self.subTest(job=job, report=report):
+                        result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                                                capture_output=True, encoding="utf-8")
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertIn(f"error: guest_video_out_colorimetry_metadata_bounds skipped: {expected}", result.stdout)
+
+    def test_summary_skips_emulator_log_lines_before_the_first_reason_line(self):
+        banner = "[src/HostCpu.cpp:220 operator()] host CPU AMD Ryzen 9 7950X3D 16-Core Processor: has SSE, SSE2, AVX2; lacks none"
+        reports = (
+            (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>{banner}\n[pipeline-journal] loaded 3 entries\nthe test wrote this</system-out>',
+             "the test stated no reason; its output starts with: the test wrote this"),
+            (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>{banner}</system-out>',
+             f"the test stated no reason; its output starts with: {banner}"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, expected in reports:
+                with self.subTest(report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"],
+                                            capture_output=True, encoding="utf-8")
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(f"error: guest_probe skipped: {expected}", result.stdout)
+
+    def test_worker_affinity_without_a_reserved_core_is_expected_on_linux(self):
+        banner = "[src/HostCpu.cpp:220 operator()] host CPU AMD Ryzen 9 7950X3D 16-Core Processor: has SSE, SSE2, AVX2; lacks none"
+        cases = (
+            ("agc_worker_affinity", f"{banner}\nthis host reserves no committer core", 0),
+            ("agc_worker_affinity_explicit", f"{banner}\n[time] scheduler tick raised to 0.5 ms\nthis host reserves no committer core", 0),
+            ("agc_worker_affinity", "this host reserves no committer core\nanother line", 1),
+            ("agc_worker_affinity", banner, 1),
+            ("guest_probe", f"{banner}\nthis host reserves no committer core", 1),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for name, output, code in cases:
+                with self.subTest(name=name, output=output):
+                    junit.write_text(f'<testsuite><testcase name="{name}"><skipped message="SKIP_RETURN_CODE=77"/><system-out>{output}</system-out></testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"],
+                                            capture_output=True, encoding="utf-8")
+                    self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+
+    def test_stated_reason_is_quoted_unchanged(self):
+        reports = (
+            ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>host CPU has SSE2\nskipped, flaky</system-out>', "skipped, flaky"),
+            ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>SKIP: Windows symbolic-link privileges unavailable</system-out>',
+             "SKIP: Windows symbolic-link privileges unavailable"),
+            ('<skipped message="SKIP_RETURN_CODE=77"/><system-err>pad_identify_wiring: skipped, host joysticks take the pad slots</system-err>',
+             "pad_identify_wiring: skipped, host joysticks take the pad slots"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, expected in reports:
+                with self.subTest(report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"],
+                                            capture_output=True, encoding="utf-8")
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(f"error: guest_probe skipped: {expected}", result.stdout)
 
     def test_ctest_status_preserves_high_refresh_policy(self):
         reason = "skipped, current display does not provide 120 Hz"
@@ -379,6 +457,12 @@ class DeviceSkipPolicyTests(unittest.TestCase):
             "[shader-disk-cache] cache (source version 5110620204023565, format 60)",
             "[videoout] HDR output available: peak 1000.0 nits, full frame 600.0 nits, black 0.0050 nits",
             "[videoout] HDR output unavailable (display in HDR: no, surface offers HDR10: yes)",
+            "[Vulkan Loader] LAYER:          Searching for implicit layer manifest files",
+            "[Vulkan Loader] INFO | LAYER:   Insert instance layer \"VK_LAYER_KHRONOS_validation\" (VkLayer_khronos_validation.dll)",
+            "[Vulkan Loader] INFO | LAYER:",
+            "[Vulkan Loader] WARNING | LAYER: env var 'VK_INSTANCE_LAYERS' defined and adding layers \"VK_LAYER_KHRONOS_validation\"",
+            "[Vulkan Loader] DEBUG | LAYER:  Unloading layer library VkLayer_khronos_validation.dll",
+            "[Vulkan Loader] DRIVER:              ||",
             f"skipped, {reason}",
         ))
         reports = (
@@ -409,6 +493,9 @@ class DeviceSkipPolicyTests(unittest.TestCase):
             f'<skipped message="{reason}"/><system-err>[probe] unexpected failure detail</system-err>',
             f'<skipped message="{reason}"/><system-err>[videoout] unexpected failure detail</system-err>',
             f'<skipped message="{reason}"/><system-err>[videoout] HDR output unavailable (display in HDR: no, surface offers HDR10: yes): unexpected error</system-err>',
+            f'<skipped message="{reason}"/><system-err>[Vulkan Loader] ERROR | DRIVER: loader_icd_scan: failed to read the ICD manifest</system-err>',
+            f'<skipped/><system-out>[Vulkan Loader] INFO | LAYER: skipped, flaky\nskipped, {reason}</system-out>',
+            f'<skipped/><system-out>[Vulkan Loader] unexpected failure detail\nskipped, {reason}</system-out>',
         )
         with tempfile.TemporaryDirectory() as directory:
             junit = Path(directory) / "junit.xml"
@@ -662,6 +749,11 @@ class SkipReportTests(unittest.TestCase):
     def test_running_test_without_skipped_marker_is_not_a_skip(self):
         self.assertEqual(self.skipped('<testsuite><testcase name="coverage" status="run"/></testsuite>'), [])
 
+    def test_unknown_ctest_status_is_rejected(self):
+        for status, children in (("typo", ""), ("", ""), ("pass", '<skipped message="no display"/>')):
+            with self.subTest(status=status), self.assertRaisesRegex(ValueError, "invalid testcase status.*coverage"):
+                self.skipped(f'<testsuite><testcase name="coverage" status="{status}">{children}</testcase></testsuite>')
+
     def test_skip_message_preserves_the_device_reason(self):
         found = self.skipped('<testsuite><testcase name="gpu"><skipped message="the device has no required extension"/></testcase></testsuite>')
         self.assertEqual(len(found), 1)
@@ -731,7 +823,8 @@ class DeviceLimitationsTests(unittest.TestCase):
 
 class SymlinkPrivilegeLimitationTests(unittest.TestCase):
     REASON = "SKIP: Windows symbolic-link privileges unavailable"
-    NAMES = ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched")
+    NAMES = ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched", "guest_kernel_sys_paths_readlink_limits",
+             "guest_kernel_sys_paths_readlink_limits_patched", "guest_kernel_sys_paths_readlinkat_limits", "guest_kernel_sys_paths_readlinkat_limits_patched")
 
     def test_exact_reason_for_the_symlink_tests_is_a_limitation(self):
         for name in self.NAMES:
@@ -739,7 +832,9 @@ class SymlinkPrivilegeLimitationTests(unittest.TestCase):
                 self.assertTrue(check_skips.symlink_privilege_limitation(name, "noise\n  " + self.REASON + "  \n"))
 
     def test_other_tests_are_never_a_limitation(self):
-        self.assertFalse(check_skips.symlink_privilege_limitation("guest_kernel_sys_paths_open", self.REASON))
+        for name in ("guest_kernel_sys_paths_open", "guest_kernel_sys_paths_readlink", "guest_kernel_sys_paths_readlinkat_limits_unpatched"):
+            with self.subTest(name=name):
+                self.assertFalse(check_skips.symlink_privilege_limitation(name, self.REASON))
 
     def test_any_other_reason_or_no_reason_is_not_a_limitation(self):
         name = self.NAMES[0]
