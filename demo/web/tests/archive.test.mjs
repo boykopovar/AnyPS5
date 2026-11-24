@@ -47,7 +47,21 @@ const folder = [
   { path: "title/shaders/example.frag", file: new Blob([executable]) },
   { path: "title/content/resource.bin", file: new Blob([resource]) }
 ];
-for (const [kind, selected] of [["ZIP", source], ["folder", folder]]) {
+const dosDirectoryOptions = { versionMadeBy: 20, externalFileAttributes: 0x10 };
+const dosEntries = await Promise.all(folder.map(async ({ path, file }) => [path, new Uint8Array(await file.arrayBuffer())]));
+const dosSource = await zip([["title", new Uint8Array(), dosDirectoryOptions], ...dosEntries]);
+const dosReader = new ZipReader(new BlobReader(dosSource));
+const [dosRoot] = await dosReader.getEntries();
+assert.equal(dosRoot.filename, "title");
+assert.equal(dosRoot.directory, true);
+await dosReader.close();
+const duplicateDosDirectory = new Archive(await zip([
+  ["title", new Uint8Array(), dosDirectoryOptions], ["title/", null, { directory: true }], ["title/program.dat", executable]
+]));
+try { await assert.rejects(duplicateDosDirectory.inspect(() => {}), /Duplicate ZIP path/u); }
+finally { await duplicateDosDirectory.close(); }
+
+for (const [kind, selected] of [["ZIP", source], ["DOS-directory ZIP", dosSource], ["folder", folder]]) {
 for (const target of ["windows", "linux"]) {
   const archive = new Archive(selected);
   const summary = await archive.inspect(() => {});

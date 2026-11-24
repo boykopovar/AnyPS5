@@ -86,19 +86,7 @@ void APS5_VABI WKContextRefreshPlugIns() {
 void APS5_VABI WKContextSetAdditionalPluginsDirectory() {
 }
 
-void APS5_VABI WKContextSetCanHandleHTTPSServerTrustEvaluation() {
-}
-
-void APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier() {
-}
-
-void APS5_VABI WKContextSetDiskCacheSpeculativeValidationEnabled() {
-}
-
 void APS5_VABI WKContextSetIconDatabasePath() {
-}
-
-void APS5_VABI WKContextSetMaximumNumberOfProcesses() {
 }
 
 void APS5_VABI WKContextSetPlugInAutoStartOriginHashes() {
@@ -111,12 +99,6 @@ void APS5_VABI WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTi
 }
 
 void APS5_VABI WKContextSetPrimaryWebsiteDataStore() {
-}
-
-void APS5_VABI WKContextSetProcessModel() {
-}
-
-void APS5_VABI WKContextSetUsesNetworkProcess() {
 }
 
 void APS5_VABI WKCookieManagerDeleteAllCookies() {
@@ -150,9 +132,6 @@ void APS5_VABI WKIconDatabaseSetIconDatabaseClient() {
 }
 
 void APS5_VABI WKIconDatabaseSetIconURLForPageURL() {
-}
-
-void APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled() {
 }
 
 void APS5_VABI WKPreferencesSetQTKitEnabled() {
