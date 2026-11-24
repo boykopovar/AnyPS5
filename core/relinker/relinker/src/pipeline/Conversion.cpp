@@ -73,7 +73,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     std::uint64_t executableHostCpuFeatures = 0;
     if (options.ToIntel) {
         const auto segments = Relinker::ElfReader(sourceBytes).ReadProgramHeaders();
-        auto converted = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); })->Convert(std::move(sourceBytes), segments);
+        auto converted = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); }, options.Target == TargetSystem::MacOs)->Convert(std::move(sourceBytes), segments);
         executableHostCpuFeatures = converted.RequiredHostCpuFeatures;
         sourceBytes = std::move(converted.Bytes);
         trampolines = std::move(converted.Trampolines);

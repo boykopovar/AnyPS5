@@ -32,7 +32,10 @@ fragment Readiness on PullRequest {
     pageInfo { hasNextPage }
     nodes {
       __typename
-      ... on CheckRun { databaseId name status conclusion }
+      ... on CheckRun {
+        databaseId name status conclusion
+        checkSuite { app { slug } workflowRun { workflow { databaseId } } }
+      }
       ... on StatusContext { context state }
     }
   } } } } }
@@ -56,6 +59,17 @@ query($url: URI!) {
     ... on PullRequest {
       state baseRefName
       ...Readiness
+    }
+  }
+}
+""" + PULL_FIELDS
+
+AUTHOR_QUERY = """
+query($login: String!, $after: String, $size: Int!) {
+  user(login: $login) {
+    pullRequests(states: OPEN, baseRefName: "main", first: $size, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { repository { nameWithOwner } ...Readiness }
     }
   }
 }
@@ -85,9 +99,13 @@ def check_of(node):
     if node.get("__typename") == "StatusContext":
         state = str(node.get("state") or "").lower()
         done = state not in {"pending", "expected"}
-        return {"id": 0, "name": node.get("context"), "done": done,
+        return {"id": 0, "name": node.get("context"), "source": ("status",), "done": done,
                 "conclusion": {"success": "success"}.get(state, "failure") if done else None}
+    suite = node.get("checkSuite") or {}
+    app = (suite.get("app") or {}).get("slug")
+    workflow = (suite.get("workflowRun") or {}).get("workflow") or {}
     return {"id": node.get("databaseId") or 0, "name": node.get("name"),
+            "source": ("run", app, workflow.get("databaseId")),
             "done": str(node.get("status") or "").lower() == "completed",
             "conclusion": str(node.get("conclusion") or "").lower() or None}
 
@@ -121,10 +139,10 @@ def pull(node):
 def latest_checks(checks):
     latest = {}
     for check in checks:
-        name = check["name"]
-        if name not in latest or check["id"] > latest[name]["id"]:
-            latest[name] = check
-    return [check for name, check in latest.items() if name not in BOT_CHECKS]
+        key = check["name"], check["source"]
+        if key not in latest or check["id"] > latest[key]["id"]:
+            latest[key] = check
+    return [check for check in latest.values() if check["name"] not in BOT_CHECKS]
 
 
 def blockers(pr):
@@ -135,15 +153,15 @@ def blockers(pr):
         reasons.append("conflicts with main")
     reasons += [f"label: {label}" for label in sorted(BLOCKING_LABELS - {"needs rebase"} & pr["labels"])]
     checks = latest_checks(pr["checks"])
-    by_name = {check["name"]: check for check in checks}
+    conventions = [check for check in checks if check["name"] == CONVENTIONS_CHECK]
     if pr["checks_incomplete"]:
         reasons.append("too many checks to read")
-    if CONVENTIONS_CHECK not in by_name:
+    if not conventions:
         reasons.append("conventions has not run")
-    elif by_name[CONVENTIONS_CHECK]["done"] and by_name[CONVENTIONS_CHECK]["conclusion"] not in FAILED | {"success"}:
+    elif all(check["done"] and check["conclusion"] not in FAILED | {"success"} for check in conventions):
         reasons.append("conventions did not pass")
-    failing = sorted(check["name"] for check in checks if check["done"] and check["conclusion"] in FAILED)
-    running = sorted(check["name"] for check in checks if not check["done"])
+    failing = sorted({check["name"] for check in checks if check["done"] and check["conclusion"] in FAILED})
+    running = sorted({check["name"] for check in checks if not check["done"]})
     if failing:
         reasons.append("failing: " + ", ".join(failing))
     if running:
@@ -218,6 +236,40 @@ def fetch_one(repo, number):
     return None
 
 
+def missing_user(error):
+    try:
+        errors = json.loads(error.stdout or "{}").get("errors") or []
+    except (ValueError, AttributeError):
+        return False
+    return bool(errors) and all(isinstance(item, dict) and item.get("type") == "NOT_FOUND"
+                                and item.get("path") == ["user"] for item in errors)
+
+
+def fetch_author(repo, login):
+    if login.casefold() == "ghost":
+        return fetch(repo)
+    prs, after = [], None
+    seen = set()
+    while True:
+        args = ["api", "graphql", "-f", f"query={AUTHOR_QUERY}", "-f", f"login={login}", "-F", f"size={PAGE_SIZE}"]
+        if after:
+            args += ["-f", f"after={after}"]
+        try:
+            page = json.loads(pr_labels.gh(*args))
+        except subprocess.CalledProcessError as error:
+            if missing_user(error):
+                return fetch(repo)
+            raise
+        if page.get("errors"):
+            raise ValueError(str(page["errors"])[:300])
+        connection = page["data"]["user"]["pullRequests"]
+        prs += [pull(node) for node in listed(connection)
+                if node["repository"]["nameWithOwner"].casefold() == repo.casefold()]
+        if not connection["pageInfo"]["hasNextPage"]:
+            return prs
+        after = pagination_cursor(connection, seen, "author pull request")
+
+
 def closed_with_label(repo):
     owner, name = repo.split("/", 1)
     closed, after = [], None
@@ -274,7 +326,7 @@ def main(argv=None):
                 parser.error(f"#{args.explain} is not an open pull request to main")
             print("\n".join(blockers(pr)) or "nothing blocks it")
             return 0
-        prs = fetch(repo)
+        prs = fetch(repo) if args.author is None else fetch_author(repo, args.author)
         closed = closed_with_label(repo) if args.author is None else []
     except subprocess.CalledProcessError as error:
         parser.error((error.stderr or str(error)).strip())

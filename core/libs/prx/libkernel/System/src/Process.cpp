@@ -32,6 +32,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include "prx/libc/include/HostExecutable.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
@@ -82,6 +83,7 @@ constexpr int errnoNoExec = 8;
 constexpr int errnoNoEnt = 2;
 constexpr int errnoAccess = 13;
 constexpr int errnoBadFile = 9;
+constexpr int errnoNotDir = 20;
 constexpr int freebsdGroupsMax = 1023;
 std::mutex supplementaryGroupsMutex;
 std::vector<std::uint32_t> supplementaryGroups{0};
@@ -281,6 +283,7 @@ constexpr std::int64_t guestRlimitInfinity = std::numeric_limits<std::int64_t>::
 constexpr std::int64_t guestStackLimit = 0x200000;
 constexpr std::int64_t guestProcessLimit = 1604;
 constexpr std::int64_t guestProcessLimitPerUser = 1443;
+constexpr std::int64_t guestOpenFileLimitPerProcess = 12555;
 
 #ifdef _WIN32
 std::int64_t hostMemoryLimit() {
@@ -323,11 +326,31 @@ bool ExecProgramFound(std::string_view name, bool search, int& error, std::strin
         std::filesystem::path native;
         std::error_code probe;
         const int resolved = ResolvePathError_nid_no_patch(candidate.c_str(), native);
-        if (resolved != 0 || !std::filesystem::exists(native, probe)) {
-            error = resolved == 0 ? NotFoundError_nid_no_patch(native) : resolved;
+        if (resolved != 0) {
+            error = resolved;
             return false;
         }
-        if (!std::filesystem::is_regular_file(native, probe) || !ExecutePermission_nid_no_patch(native)) {
+        const bool trailingSlash = !native.has_filename() && native.has_relative_path();
+        while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
+        const auto verbatim = NativeVerbatimPath_nid_no_patch(native, probe);
+        if (probe) {
+            error = FilesystemError(probe);
+            return false;
+        }
+        const auto status = std::filesystem::status(verbatim, probe);
+        if (status.type() == std::filesystem::file_type::not_found) {
+            error = NotFoundError_nid_no_patch(verbatim);
+            return false;
+        }
+        if (probe) {
+            error = FilesystemError(probe);
+            return false;
+        }
+        if (trailingSlash && !std::filesystem::is_directory(status)) {
+            error = errnoNotDir;
+            return false;
+        }
+        if (!std::filesystem::is_regular_file(status) || !ExecutePermission_nid_no_patch(verbatim)) {
             error = errnoAccess;
             return false;
         }
@@ -348,9 +371,13 @@ bool ExecProgramFound(std::string_view name, bool search, int& error, std::strin
         found = candidate;
         std::filesystem::path native;
         std::error_code probe;
-        if (ResolvePathError_nid_no_patch(candidate.c_str(), native) == 0 && std::filesystem::exists(native, probe)) {
-            if (std::filesystem::is_regular_file(native, probe) && ExecutePermission_nid_no_patch(native)) return true;
-            inaccessible = true;
+        if (ResolvePathError_nid_no_patch(candidate.c_str(), native) == 0) {
+            while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
+            const auto verbatim = NativeVerbatimPath_nid_no_patch(native, probe);
+            if (!probe && std::filesystem::exists(verbatim, probe)) {
+                if (std::filesystem::is_regular_file(verbatim, probe) && ExecutePermission_nid_no_patch(verbatim)) return true;
+                inaccessible = true;
+            }
         }
         if (separator == std::string_view::npos) {
             error = inaccessible ? errnoAccess : errnoNoEnt;
@@ -829,11 +856,11 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
     getrlimit_nid_postfix(resource, &current);
 
     if (resource == guestRlimitNofile) {
-        if (requested.rlim_max <= current.rlim_max && requested.rlim_cur <= requested.rlim_max) {
-            std::lock_guard lock(openFileLimitMutex);
-            guestOpenFileLimit = requested;
-            return 0;
-        }
+        requested.rlim_max = std::min(requested.rlim_max, guestOpenFileLimitPerProcess);
+        requested.rlim_cur = std::min(requested.rlim_cur, requested.rlim_max);
+        std::lock_guard lock(openFileLimitMutex);
+        guestOpenFileLimit = requested;
+        return 0;
     }
     if (resource == guestRlimitNproc) {
         requested.rlim_cur = std::clamp(requested.rlim_cur, std::int64_t{1}, guestProcessLimitPerUser);

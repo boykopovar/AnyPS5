@@ -485,7 +485,7 @@ GuestModuleBuild GuestModuleBuilder::Build(const std::filesystem::path& inputPat
         std::vector<Domain::ProgramHeader> codeHeaders;
         for (const auto& header : image.Headers) if (header.Type == 1 && (header.Flags & 1) != 0) codeHeaders.push_back(header);
         if (toIntel) {
-            auto converted = Codegen::MakeAmd64OnlyConverter(target, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); })->Convert(std::move(image.Bytes), image.Headers);
+            auto converted = Codegen::MakeAmd64OnlyConverter(target, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); }, macos)->Convert(std::move(image.Bytes), image.Headers);
             requiredHostCpuFeatures |= converted.RequiredHostCpuFeatures;
             image.Trampolines = std::move(converted.Trampolines);
             image.Bytes = std::move(converted.Bytes);

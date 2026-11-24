@@ -166,6 +166,19 @@ def binary_differences(root, old_base, old, new_base, new):
     return problems
 
 
+def unchanged_base_content_differences(root, old_base, old, new_base, new):
+    original = changed_blobs(root, old_base, old)
+    rebased = changed_blobs(root, new_base, new)
+    problems = []
+    for path in sorted(original.keys() & rebased.keys()):
+        before, expected = original[path]
+        after, actual = rebased[path]
+        if before == after and expected != actual:
+            name = path.decode("utf-8", "backslashreplace")
+            problems.append(f"{name}: rebased content differs although the base content is unchanged")
+    return problems
+
+
 def verify(root, old, new, onto):
     old_base = git(root, "merge-base", old, onto).strip()
     new_base = git(root, "merge-base", new, onto).strip()
@@ -186,6 +199,8 @@ def verify(root, old, new, onto):
     problems += differences(expected_deleted, new_deleted, deleted=True)
     problems += mode_differences(root, old_base, old, new_base, new)
     problems += binary_differences(root, old_base, old, new_base, new)
+    if not problems:
+        problems += unchanged_base_content_differences(root, old_base, old, new_base, new)
     return old_base, count_old, count_new, problems
 
 

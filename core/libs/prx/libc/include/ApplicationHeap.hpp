@@ -1,6 +1,8 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_APPLICATIONHEAP_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_APPLICATIONHEAP_HPP
 
+#include <cstdint>
+#include <cstring>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -27,6 +29,13 @@ int ApplicationHeapStats_nid_no_patch(void* stats);
 int ApplicationHeapStatsFast_nid_no_patch(void* stats);
 std::size_t ApplicationHeapUsableSize_nid_no_patch(void* pointer);
 
+}
+
+inline std::uint32_t ApplicationCompiledSdkVersion() {
+    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t version;
+    std::memcpy(&version, parameters + 0x10, sizeof(version));
+    return version;
 }
 
 #endif

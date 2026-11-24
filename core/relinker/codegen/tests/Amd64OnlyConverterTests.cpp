@@ -1139,6 +1139,45 @@ void converterWideStoreWindows() {
     requireFailure([&] { (void)convert(withStore(far, tail)); }, "A 256-bit store whose movable neighbours are all beyond a short jump was kept");
 }
 
+void converterWideStoreKeepsSegmentAccesses() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta, {}, true);
+    const auto fallback = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes store = {0xC5, 0xFC, 0x11, 0x07};
+    const Bytes fsRead = {0x66, 0x66, 0x66, 0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00};
+    const Bytes gsRead = {0x65, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00};
+    const Bytes add = {0x48, 0x83, 0xC1, 0x01};
+    const auto convert = [](const auto& lowering, const Bytes& text) {
+        Bytes file(0x300 + text.size(), 0xCC);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        return lowering->Convert(file, {segmentHeader(text.size())});
+    };
+    const auto covers = [](const Codegen::ConvertResult& result, const std::uint64_t begin, const std::uint64_t end) {
+        return std::ranges::any_of(result.Trampolines, [&](const Codegen::TrampolineSite& site) { return site.Offset < 0x200 + end && 0x200 + begin < site.Offset + site.Length; });
+    };
+    for (const auto& segmentRead : {fsRead, gsRead}) {
+        Bytes text = {0xE8, 0x00, 0x00, 0x00, 0x00};
+        text.insert(text.end(), store.begin(), store.end());
+        text.insert(text.end(), segmentRead.begin(), segmentRead.end());
+        for (int index = 0; index < 4; ++index)
+            text.insert(text.end(), add.begin(), add.end());
+        const auto access = 5 + store.size();
+        const auto kept = convert(converter, text);
+        require(kept.KeptCount == 0 && kept.Trampolines.size() == 2, "A 256-bit store before an FS or GS access was not lowered through an island when segment accesses must stay in place");
+        require(!covers(kept, access, access + segmentRead.size()), "A 256-bit store moved an FS or GS access that must stay in place for the macOS writer");
+        const auto moved = convert(fallback, text);
+        require(covers(moved, access, access + segmentRead.size()), "Without the option, a 256-bit store with no other movable neighbour no longer falls back to the following FS or GS access");
+        Bytes alone = store;
+        alone.insert(alone.end(), segmentRead.begin(), segmentRead.end());
+        bool refused = false;
+        try {
+            static_cast<void>(convert(converter, alone));
+        } catch (const Codegen::CodegenException&) {
+            refused = true;
+        }
+        require(refused, "A 256-bit store whose only room is an FS or GS access did not fail when segment accesses must stay in place");
+    }
+}
+
 void converterIslandIndirectEntries() {
     const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
     const Bytes prologue = {0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0xC3};
@@ -2646,6 +2685,7 @@ int main() {
         converterAddressSizeJumpTableTargets();
         wideStoreSplit();
         converterWideStoreWindows();
+        converterWideStoreKeepsSegmentAccesses();
         converterWideStoreIslandAcrossInt64Max();
         converterIslandIndirectEntries();
         converterIslandInTrapPadding();

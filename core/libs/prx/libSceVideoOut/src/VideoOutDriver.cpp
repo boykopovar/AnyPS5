@@ -21,6 +21,7 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameLimit.hpp"
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
+#include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceVideoOut/include/DialogInput.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -104,6 +105,13 @@ bool readHostClipboard(std::string& text) {
     text.assign(raw);
     SDL_free(raw);
     return true;
+}
+
+void copyHostClipboard(const char* text, std::size_t size) {
+    const std::string utf8(text, size);
+    OnMainThread([&] {
+        if (SDL_SetClipboardText(utf8.c_str()) < 0) std::fprintf(stderr, "[videoout] IME clipboard copy failed: %s\n", SDL_GetError());
+    });
 }
 
 std::vector<const char*> windowExtensions(SDL_Window* window) {
@@ -789,6 +797,9 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
     struct DialogPresenter {
         ~DialogPresenter() { ModalDialogSetPresenter_nid_postfix(false); }
     } dialogPresenter;
+    struct ClipboardSink {
+        ~ClipboardSink() { ImeSetHostClipboardSink_nid_no_patch(nullptr); }
+    } clipboardSink;
     std::shared_ptr<FlipRequest> current;
     std::optional<PadInput> padInput;
     std::optional<MouseInput> mouseInput;
@@ -809,6 +820,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             imeTextInput.emplace();
             dialogInput.emplace();
             imeTextInput->SetClipboardProvider(&readHostClipboard);
+            ImeSetHostClipboardSink_nid_no_patch(&copyHostClipboard);
         });
         bool windowCloseSeen = false;
         while (!token.stop_requested()) {
