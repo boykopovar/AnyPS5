@@ -208,6 +208,19 @@ class HistoryReportOutputTests(unittest.TestCase):
 
 
 class HistoryDateWindowTests(unittest.TestCase):
+    def test_git_timestamps_outside_the_calendar_report_a_controlled_error(self):
+        commit_id = "a" * 40
+        with patch.object(progress_history, "git", return_value=f"{commit_id} 18446744073709551615\n".encode()):
+            with self.assertRaisesRegex(ValueError, f"{commit_id}: invalid Git commit timestamp"):
+                progress_history.daily_commits("HEAD")
+
+    def test_git_timestamps_use_utc_across_epoch_and_calendar_boundaries(self):
+        log = b"future 253402300799\nnext 86400\nlast 86399\nfirst 0\nprior -1\n"
+        with patch.object(progress_history, "git", return_value=log):
+            self.assertEqual(progress_history.daily_commits("HEAD"),
+                             [("1969-12-31", "prior"), ("1970-01-01", "last"),
+                              ("1970-01-02", "next"), ("9999-12-31", "future")])
+
     def test_window_filters_days_before_measurement_and_reuses_cache(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

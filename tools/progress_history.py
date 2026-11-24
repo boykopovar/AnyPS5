@@ -9,7 +9,7 @@ import sys
 import subprocess
 import tarfile
 import tempfile
-from datetime import date, datetime, timezone
+from datetime import date
 from html import escape
 from pathlib import Path
 
@@ -52,9 +52,14 @@ def git(*args):
 def daily_commits(ref):
     log = git("log", "--first-parent", "--format=%H %ct", ref)
     seen = {}
+    epoch = date(1970, 1, 1).toordinal()
     for line in log.decode("utf-8").splitlines():
         sha, timestamp = line.split()
-        seen.setdefault(datetime.fromtimestamp(int(timestamp), timezone.utc).date().isoformat(), sha)
+        try:
+            day = date.fromordinal(epoch + int(timestamp) // 86400)
+        except (ValueError, OverflowError) as error:
+            raise ValueError(f"{sha}: invalid Git commit timestamp {timestamp!r}") from error
+        seen.setdefault(day.isoformat(), sha)
     return sorted(seen.items())
 
 
