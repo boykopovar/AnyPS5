@@ -10209,11 +10209,11 @@ void verifyComputedTexelOffsets() {
     static Texture texture;
     static std::array<std::uint32_t, 64> output{};
     const auto textureBase = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
-    const auto outputBase = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const auto outputV = TableV(output.data(), 0u, 64u);
     const std::array<std::uint32_t, 16> userData{
         static_cast<std::uint32_t>(textureBase >> 8u), static_cast<std::uint32_t>((textureBase >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u,
         0u, 0u, 0u, 0u,
-        static_cast<std::uint32_t>(outputBase), static_cast<std::uint32_t>((outputBase >> 32u) & 0xffffu), 64u, 0xfacu};
+        outputV[0], outputV[1], outputV[2], outputV[3]};
     const auto program = [](std::uint32_t offsetSource, std::uint32_t literal) {
         std::vector<std::uint32_t> code{0x7e020200u | offsetSource};
         if (offsetSource == 0xffu) code.push_back(literal);
