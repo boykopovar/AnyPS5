@@ -26,8 +26,9 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_WAITS` | Blocking waits aggregated by guest call site, including timeout counts and longest waits, every three seconds. |
 
 To inspect a guest address in a saved `APS5_TRACE_MEMORY` log, run
-`python3 tools/memory_trace_address.py <log> --address 0x... [--length <bytes>]`. It lists recorded mapping,
-remapping, protection, reservation and unmapping events whose ranges overlap the query, in log order. These are trace
+`python3 tools/memory_trace_address.py <log> --address 0x... [--length <bytes>] [--limit <events>]`. It lists recorded mapping,
+remapping, protection, reservation and unmapping events whose ranges overlap the query, in log order. By default it shows
+the last 40 matches. Raise `--limit` to inspect earlier events, such as the mapping that preceded a later unmap. These are trace
 records, not confirmation that each attempted operation succeeded; no matching event does not prove the address was
 unmapped.
 
@@ -96,5 +97,5 @@ A title's `files` in `tools/titles.json` adds files to its prepared folders befo
 ## CSV exports
 
 - `tools/performance_csv.py <baseline> <candidate>` exports a performance comparison as CSV. Empty metric cells mean the value was not reported; `--require-matching-context` fails when the two captures differ in machine or scene, and `--spreadsheet-safe` escapes cells that spreadsheets would evaluate.
-- `tools/trace_intervals_csv.py <summary>` exports the trace interval summaries as CSV. `--require-complete` requires at least one interval, a consistent capture identity, no dropped events, and each interval to start at the previous interval's end.
+- `tools/trace_intervals_csv.py <summary>` exports the trace interval summaries as CSV. `--require-complete` requires at least one interval, a consistent capture identity, no dropped events, and contiguous interval times and present numbers.
 - `tools/ab_split_csv.py <log> [--program P] [--class C]` exports the existing in-run A/B comparison of a log as CSV.

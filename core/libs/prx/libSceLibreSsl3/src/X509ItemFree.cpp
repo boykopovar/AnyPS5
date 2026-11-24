@@ -19,9 +19,7 @@ static_assert(sizeof(AuthorityKeyId) == 24 && offsetof(AuthorityKeyId, serial) =
 
 AuthorityKeyId ReadAuthorityKeyId(const void* source) {
     AuthorityKeyId value{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(value));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(__func__) + ": unreadable authority key identifier");
     return value;
 }
