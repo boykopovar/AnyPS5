@@ -637,10 +637,6 @@ std::optional<MixedKeyClear> MixedKeyClearSlices(const GuestTextureResource& res
     return MixedKeyClear{clearKeys, *pattern, hash, std::move(fillRuns)};
 }
 
-// Whether every slice of a pipe-aligned surface holds one key byte across its whole console DCC
-// extent (the arrays MixedKeyClearSlices reads, back to back). The whole-surface scan reads
-// guestBytes / 256 keys from the start, which a layered surface's per-slice extents outgrow: a
-// uniform prefix there says nothing about the later slices' keys.
 enum class SliceKeys { Unreadable, Uniform, Differ };
 SliceKeys uniformSliceKeys(const GuestTextureResource& resource, std::span<const DccSlice> slices, std::uint8_t& byte) {
     const auto elementBytes = BytesPerElement(resource.format);
@@ -675,10 +671,6 @@ DccKeyState textureClearKeyState(const GuestTextureResource& resource, std::uint
     } else {
         keys = currentDccKeys(resource.dccAddress, DccKeyBytes(guestBytes), memoized);
     }
-    // A uniform whole-surface scan of a surface with more than one slice under the console layout
-    // stands only when every slice's own extent holds that same key: a clear prefix followed by an
-    // uncompressed or differently cleared slice is a mixed surface (a uniform fill would paint
-    // over the later slice's stored texels or hide its own clear).
     if (keys != DccKeys::Mixed && keys != DccKeys::Unreadable && !memoized && !fromWriters && resource.dccPipeAligned && MixedKeyClearEnabled() && resource.width != 0 && resource.height != 0 && !IsBlockCompressed(resource.format)) {
         if (const auto slices = DccSlices(resource); slices.size() > 1) {
             std::uint8_t byte = 0;

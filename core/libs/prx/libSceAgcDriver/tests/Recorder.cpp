@@ -17172,9 +17172,6 @@ void mixedKeySliceLayoutTests() {
     std::fill_n(keys + layerKeys / 2, layerKeys / 2, std::uint8_t{0x00});
     Require(!MixedKeyClearRuns(layered, geometry.guestBytes).has_value(), "a layer with mixed keys was filled");
 
-    // A 0x00 prefix that the whole-surface scan (guestBytes / 256 keys from the start) reads as one
-    // clear, while layer 3's console extent is 0x00 only as far as that prefix reaches: every slice
-    // is classified, and layer 3 is not painted as cleared.
     const auto flatKeys = DccKeyBytes(geometry.guestBytes);
     Require(flatKeys > 3 * layerKeys && flatKeys < arrayKeys, "the whole-surface key scan of the layered test surface does not end inside layer 3's console extent");
     std::fill_n(keys, arrayKeys, std::uint8_t{0x00});
@@ -17182,7 +17179,6 @@ void mixedKeySliceLayoutTests() {
     Require(CurrentDccKeys(layered.dccAddress, geometry.guestBytes) == DccKeys::Clear0000, "the whole-surface scan of the 0x00 prefix is not one 0000 clear, so this case is no longer covered");
     const auto prefixState = TextureClearKeyState(layered, geometry.guestBytes);
     Require(prefixState.keys == DccKeys::Uncompressed && prefixState.mixedSignature != 0, "a clear prefix over a later slice's uncompressed keys was taken as a uniform clear of the whole surface");
-    // Every slice's extent 0x00: the uniform clear stands.
     std::fill_n(keys, arrayKeys, std::uint8_t{0x00});
     Require(TextureClearKeyState(layered, geometry.guestBytes).keys == DccKeys::Clear0000, "a surface whose every slice extent is 0x00 is not one 0000 clear");
 
