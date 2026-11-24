@@ -30,6 +30,12 @@ class Build:
             cache[name.partition(":")[0]] = value
         self.path = os.path.normpath(cache["CMAKE_CACHEFILE_DIR"])
         self.source = os.path.normpath(cache["CMAKE_HOME_DIRECTORY"])
+        try:
+            same_directory = os.path.samefile(path, self.path)
+        except FileNotFoundError:
+            same_directory = False
+        if not same_directory:
+            raise ValueError(f"CMake cache belongs to {self.path}; configure this directory first")
         self.program = cache.get("CMAKE_MAKE_PROGRAM") or "ninja"
         self.encoding = "utf-8"
         if sys.platform == "win32":
@@ -454,7 +460,7 @@ def main(argv=None):
         return 0
     try:
         build = Build(args.build)
-    except (OSError, KeyError) as error:
+    except (OSError, KeyError, ValueError) as error:
         parser.error(f"{args.build}: not a configured CMake build directory ({error})")
     if args.command == "targets":
         _, listed = build.tests("-R", args.regex)
