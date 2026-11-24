@@ -431,5 +431,36 @@ class FindTests(unittest.TestCase):
             debt_fold.find(debt_fold.spans(BASE_TEXT)[0], self.operation("sceMissing"))
 
 
+class ApplyTests(unittest.TestCase):
+    def op(self, kind, target, body):
+        return debt_fold.Operation("fragment.md", 9, "libSceExample", kind, target, body)
+
+    def test_add_appends_an_entry_to_an_existing_section(self):
+        line = f"- [sceExampleC]({LINK}) (libSceExample) - returns 0"
+        result = debt_fold.apply(BASE_TEXT, self.op("add", "Silent stubs", line))
+        self.assertIn(line, result.split("\n"))
+        self.assertLess(result.index("sceExampleB"), result.index("sceExampleC"))
+
+    def test_add_creates_a_missing_section(self):
+        line = f"- [sceExampleD]({LINK}) (libSceExample) - returns 0"
+        result = debt_fold.apply(BASE_TEXT, self.op("add", "Functional", line))
+        lines = result.split("\n")
+        self.assertIn("### Functional", lines)
+        self.assertIn(line, lines)
+        self.assertLess(lines.index("### Functional"), lines.index(line))
+
+    def test_change_replaces_the_matching_entry(self):
+        new = f"- [sceExampleA]({LINK}) (libSceExample) - returns 1"
+        result = debt_fold.apply(BASE_TEXT, self.op("change", "sceExampleA", new))
+        self.assertIn(new, result.split("\n"))
+        self.assertNotIn("- [sceExampleA]", result.replace(new, ""))
+        self.assertIn("sceExampleB", result)
+
+    def test_remove_deletes_the_matching_entry(self):
+        result = debt_fold.apply(BASE_TEXT, self.op("remove", "sceExampleB", ""))
+        self.assertNotIn("sceExampleB", result)
+        self.assertIn("sceExampleA", result)
+
+
 if __name__ == "__main__":
     unittest.main()
