@@ -437,7 +437,7 @@ int APS5_VABI clock_gettime_np(int clockId, KernelTimespec* tp) {
     return clock_gettime_nid_postfix(clockId, tp);
 }
 
-int APS5_VABI getenv_np(const char* name, char* buffer, std::size_t size) {
+int GetenvNp_nid_no_patch(const char* name, char* buffer, std::size_t size) {
     if (!name || !buffer)
         throw std::invalid_argument("getenv_np requires a name and a buffer");
     std::string nameCopy;
@@ -455,6 +455,10 @@ int APS5_VABI getenv_np(const char* name, char* buffer, std::size_t size) {
     errno = savedErrno;
     if (!copied) throw std::invalid_argument("getenv_np requires a writable buffer");
     return 0;
+}
+
+int APS5_VABI getenv_np(const char* name, char* buffer, std::size_t size) {
+    return GetenvNp_nid_no_patch(name, buffer, size);
 }
 
 APS5_EXPORT("dt8ermYp-Wc", scePosixForWebKit_gethostbyname_r);

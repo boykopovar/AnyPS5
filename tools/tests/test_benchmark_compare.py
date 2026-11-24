@@ -164,6 +164,11 @@ class BenchmarkCompareTests(unittest.TestCase):
             self.assertIsNone(metrics[key])
         self.assertTrue(all(value is None for value in metrics["frame_ms"].values()))
 
+    def test_zero_frame_interval_does_not_claim_a_serialization_mismatch(self):
+        result = self.summarize(benchmark_capture([benchmark_interval([])]))
+        self.assertTrue(any("no recorded frame intervals" in warning for warning in result["warnings"]))
+        self.assertFalse(any("serialization precision" in warning for warning in result["warnings"]))
+
     def test_zero_microsecond_frames_are_legal_without_infinite_throughput(self):
         metrics = self.summarize(benchmark_capture([benchmark_interval([0, 0], end=0.001)]))["metrics"]
         self.assertEqual(metrics["zero_frames"], 2)

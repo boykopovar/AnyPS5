@@ -266,7 +266,12 @@ int APS5_VABI _ZNK6icu_6815Normalizer2Impl30copyLowPrefixFromNulTerminatedEPKDsi
 int APS5_VABI sceIcuLegacyUnknown_5bcZomziXao_nid_no_patch();
 int APS5_VABI _ZN6icu_6813UnicodeString19getTerminatedBufferEv_nid_postfix();
 int APS5_VABI _ZN6icu_6813SimpleFactoryC1EPNS_7UObjectERKNS_13UnicodeStringEa_nid_postfix();
-int APS5_VABI uloc_getDisplayScript_nid_postfix();
+std::int32_t APS5_VABI uloc_getDisplayScript_nid_postfix(
+    const char* locale,
+    const char* displayLocale,
+    char16_t* script,
+    std::int32_t scriptCapacity,
+    std::int32_t* status);
 int APS5_VABI _ZN6icu_6817CanonicalIterator4nextEv_nid_postfix();
 int APS5_VABI _ZN6icu_6813ICUServiceKeyD0Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_5jXnzyO60HQ_nid_no_patch();
@@ -1421,7 +1426,12 @@ int APS5_VABI uprv_tzset_nid_postfix();
 int APS5_VABI _ZN6icu_6820CheckedArrayByteSink15GetAppendBufferEiiPciPi_nid_postfix();
 int APS5_VABI _ZN6icu_6813UnicodeString9setToUTF8ENS_11StringPieceE_nid_postfix();
 int APS5_VABI _ZN6icu_6816ReorderingBuffer19appendSupplementaryEihR10UErrorCode_nid_postfix();
-int APS5_VABI uloc_getDisplayVariant_nid_postfix();
+std::int32_t APS5_VABI uloc_getDisplayVariant_nid_postfix(
+    const char* locale,
+    const char* displayLocale,
+    char16_t* variant,
+    std::int32_t variantCapacity,
+    std::int32_t* status);
 int APS5_VABI _ZN6icu_6820CheckedArrayByteSinkC1EPci_nid_postfix();
 int APS5_VABI _ZN6icu_687UVectorC1EPFvPvEPFa8UElementS4_EiR10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6813UnicodeString8copyFromERKS0_a_nid_postfix();
@@ -2143,7 +2153,12 @@ int APS5_VABI sceIcuLegacyUnknown_xrnmEo_plus_rNiU_nid_no_patch();
 int APS5_VABI _ZN6icu_686Locale14forLanguageTagENS_11StringPieceER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6817StringEnumerationD1Ev_nid_postfix();
 int APS5_VABI uprv_getMaxCharNameLength_nid_postfix();
-int APS5_VABI uloc_getDisplayCountry_nid_postfix();
+std::int32_t APS5_VABI uloc_getDisplayCountry_nid_postfix(
+    const char* locale,
+    const char* displayLocale,
+    char16_t* country,
+    std::int32_t countryCapacity,
+    std::int32_t* status);
 int APS5_VABI sceIcuLegacyUnknown_xzLgzGOHQto_nid_no_patch();
 int APS5_VABI utrace_setLevel_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_y0dJq9TC59U_nid_no_patch();
