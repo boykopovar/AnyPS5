@@ -1,5 +1,13 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include <cstdio>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
@@ -26,5 +34,17 @@ int main() {
     Require(returned == buffer);
     Require(std::strcmp(buffer, "/dev/tty") == 0);
     Require(buffer[8] == '\0' && buffer[9] == 'x');
+
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READONLY);
+    Require(page != nullptr);
+#else
+    const auto size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, size, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    *__error_nid_postfix() = 0;
+    Require(ctermid_nid_postfix(static_cast<char*>(page)) == nullptr);
+    Require(*__error_nid_postfix() == 14);
     return 0;
 }
