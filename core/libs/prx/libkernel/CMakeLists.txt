@@ -2153,6 +2153,16 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         set_tests_properties(guest_kernel_socket_creation_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_clock_timer_nanosleep_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestClockTimerNanosleepBounds.cpp)
+    target_include_directories(guest_clock_timer_nanosleep_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_clock_timer_nanosleep_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_clock_timer_nanosleep_bounds_tests)
+    add_test(NAME guest_clock_timer_nanosleep_bounds COMMAND guest_clock_timer_nanosleep_bounds_tests)
+    set_tests_properties(guest_clock_timer_nanosleep_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_clock_timer_nanosleep_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_getrlimit_tests ${LIBS_INCLUDE_DIR}/tests/GuestGetrlimit.cpp)
     target_include_directories(guest_getrlimit_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_getrlimit_tests PRIVATE libkernel libc)
