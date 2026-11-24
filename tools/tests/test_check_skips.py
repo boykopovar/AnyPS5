@@ -804,6 +804,21 @@ class NotRunTests(unittest.TestCase):
 
 
 
+class HighRefreshLimitationTests(unittest.TestCase):
+    REASON = "current display does not provide 120 Hz"
+
+    def test_bare_and_prefixed_reasons_are_a_limitation(self):
+        self.assertTrue(check_skips.high_refresh_limitation(self.REASON))
+        self.assertTrue(check_skips.high_refresh_limitation("t: skipped, " + self.REASON + "\n\n" + self.REASON.upper()))
+
+    def test_any_other_line_is_not_a_limitation(self):
+        self.assertFalse(check_skips.high_refresh_limitation(self.REASON + "\nsomething else"))
+        self.assertFalse(check_skips.high_refresh_limitation("skipped, " + self.REASON + " today"))
+
+    def test_empty_output_is_not_a_limitation(self):
+        self.assertFalse(check_skips.high_refresh_limitation(""))
+        self.assertFalse(check_skips.high_refresh_limitation("  \n\n"))
+
 
 class DeviceLimitationsTests(unittest.TestCase):
     PATTERNS = [re.compile("no display"), re.compile("no gpu")]
