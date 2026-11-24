@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
 #include <fstream>
 #include <map>
 #include <random>
@@ -14,7 +15,10 @@
 #include <string>
 #include <vector>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#include <winioctl.h>
+#else
 #include <unistd.h>
 #endif
 
@@ -29,6 +33,7 @@ constexpr int FtwDp = 3;
 constexpr int FtwPhys = 0x01;
 constexpr int FtwDepth = 0x04;
 constexpr int FtwChdir = 0x08;
+constexpr int GuestEnoent = 2;
 constexpr int GuestEinval = 22;
 
 struct GuestFtw {
@@ -119,6 +124,12 @@ void TestMissingRootReportsNs() {
     Require(nftw_nid_postfix("/anyps5-nftw-test/missing", Recorder, 4, 0) == 0);
     Require(g_records.size() == 1);
     Require(g_records[0].type == FtwNs && g_records[0].level == 0);
+
+    g_records.clear();
+    *__error_nid_postfix() = 0;
+    Require(nftw_nid_postfix("", Recorder, 4, 0) == -1);
+    Require(*__error_nid_postfix() == GuestEnoent);
+    Require(g_records.empty());
 }
 
 void TestRejectsBadArguments() {
@@ -175,6 +186,76 @@ void TestTrailingSlashBase() {
     Require(g_records[0].base == static_cast<int>(g_records[0].path.size()));
 }
 
+void DirectoryLink(const std::filesystem::path& link, const std::filesystem::path& target) {
+#ifdef _WIN32
+    Require(std::filesystem::create_directory(link));
+    const auto printName = std::filesystem::absolute(target).make_preferred().wstring();
+    const auto substituteName = L"\\??\\" + printName;
+    struct MountPoint {
+        ULONG tag;
+        USHORT dataLength;
+        USHORT reserved;
+        USHORT substituteOffset;
+        USHORT substituteLength;
+        USHORT printOffset;
+        USHORT printLength;
+        wchar_t names[2048];
+    } data{};
+    Require(substituteName.size() + printName.size() + 2 <= std::size(data.names));
+    data.tag = IO_REPARSE_TAG_MOUNT_POINT;
+    data.substituteLength = static_cast<USHORT>(substituteName.size() * sizeof(wchar_t));
+    data.printOffset = static_cast<USHORT>((substituteName.size() + 1) * sizeof(wchar_t));
+    data.printLength = static_cast<USHORT>(printName.size() * sizeof(wchar_t));
+    data.dataLength = static_cast<USHORT>(8 + data.printOffset + data.printLength + sizeof(wchar_t));
+    std::memcpy(data.names, substituteName.c_str(), data.substituteLength + sizeof(wchar_t));
+    std::memcpy(reinterpret_cast<char*>(data.names) + data.printOffset, printName.c_str(), data.printLength + sizeof(wchar_t));
+    const auto handle = CreateFileW(link.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    Require(handle != INVALID_HANDLE_VALUE);
+    DWORD returned = 0;
+    const auto result = DeviceIoControl(handle, FSCTL_SET_REPARSE_POINT, &data, 8 + data.dataLength, nullptr, 0, &returned, nullptr);
+    Require(CloseHandle(handle) != 0);
+    Require(result != 0);
+#else
+    std::filesystem::create_directory_symlink(target, link);
+#endif
+}
+
+void RemoveDirectoryLink(const std::filesystem::path& link) {
+#ifdef _WIN32
+    Require(RemoveDirectoryW(link.c_str()) != 0);
+#else
+    Require(std::filesystem::remove(link));
+#endif
+}
+
+void TestPhysicalFollowsRootLink(const std::filesystem::path& root) {
+    const std::filesystem::path links = root.string() + "-links";
+    Require(std::filesystem::create_directory(links));
+    DirectoryLink(links / "d", root / "d");
+    DirectoryLink(links / "gone", root / "missing");
+    AddPathAlias_nid_no_patch("/anyps5-nftw-links", links.string().c_str());
+
+    g_records.clear();
+    Require(nftw_nid_postfix("/anyps5-nftw-links/d", Recorder, 4, FtwPhys) == 0);
+    Require(g_records.size() == 4);
+    Require(g_records[0].path == "/anyps5-nftw-links/d" && g_records[0].type == FtwD && g_records[0].level == 0);
+    const auto followed = ByPath(g_records);
+    Require(followed.at("/anyps5-nftw-links/d/b.txt") == std::make_pair(FtwF, 1));
+    Require(followed.at("/anyps5-nftw-links/d/e") == std::make_pair(FtwD, 1));
+    Require(followed.at("/anyps5-nftw-links/d/e/c.txt") == std::make_pair(FtwF, 2));
+
+    g_records.clear();
+    Require(nftw_nid_postfix("/anyps5-nftw-links/gone", Recorder, 4, FtwPhys) == 0);
+    Require(g_records.size() == 1);
+    Require(g_records[0].type == FtwSln && g_records[0].level == 0);
+
+    RemovePathAlias_nid_no_patch("/anyps5-nftw-links");
+    RemoveDirectoryLink(links / "d");
+    RemoveDirectoryLink(links / "gone");
+    Require(std::filesystem::remove(links));
+}
+
 int main() {
     std::random_device random;
     const auto root = std::filesystem::temp_directory_path() /
@@ -195,6 +276,7 @@ int main() {
     TestRejectsBadArguments();
     TestStopBelowRoot();
     TestTrailingSlashBase();
+    TestPhysicalFollowsRootLink(root);
 #ifndef _WIN32
     TestSymlinks(root);
 #endif

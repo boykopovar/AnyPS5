@@ -21,6 +21,7 @@ constexpr int FtwDp = 3;
 constexpr int FtwNs = 4;
 constexpr int FtwSl = 5;
 constexpr int FtwSln = 6;
+constexpr int GuestEnoent = 2;
 constexpr int GuestEinval = 22;
 constexpr std::uint16_t TypeMask = 0170000;
 constexpr std::uint16_t TypeDirectory = 0040000;
@@ -70,11 +71,12 @@ int BasenameOffset(const std::string& path) {
 }
 
 int Visit(Walk& walk, const std::string& path, int base, int level) {
+    const bool follow = !walk.physical || level == 0;
     FileStat status{};
-    const bool found = walk.physical ? lstat_nid_postfix(path.c_str(), &status) == 0 : stat_nid_postfix(path.c_str(), &status) == 0;
+    const bool found = follow ? stat_nid_postfix(path.c_str(), &status) == 0 : lstat_nid_postfix(path.c_str(), &status) == 0;
     if (!found) {
         FileStat link{};
-        if (!walk.physical && lstat_nid_postfix(path.c_str(), &link) == 0 && IsLink(link))
+        if (follow && lstat_nid_postfix(path.c_str(), &link) == 0 && IsLink(link))
             return Invoke(walk, path, link, FtwSln, base, level);
         return Invoke(walk, path, FileStat{}, FtwNs, base, level);
     }
@@ -116,6 +118,10 @@ extern "C" int APS5_VABI nftw_nid_postfix(const char* path, int (APS5_VABI *fn)(
     std::string copy;
     if (const int error = CopyGuestPath_nid_no_patch(path, copy)) {
         *__error_nid_postfix() = error;
+        return -1;
+    }
+    if (copy.empty()) {
+        *__error_nid_postfix() = GuestEnoent;
         return -1;
     }
     Walk walk{fn, (flags & FtwPhys) != 0, (flags & FtwDepth) != 0, {}};
