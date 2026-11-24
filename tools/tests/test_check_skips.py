@@ -64,6 +64,16 @@ OTHER = [
 ]
 
 
+class MalformedJUnitTests(unittest.TestCase):
+    def test_cli_names_the_malformed_junit_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "malformed-junit.xml"
+            path.write_text("<testsuite>", encoding="utf-8")
+            result = subprocess.run([sys.executable, check_skips.__file__, str(path)], capture_output=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(path.name.encode(), result.stderr)
+
+
 class SkipJsonTests(unittest.TestCase):
     def test_policy_decisions_match_text_mode(self):
         import json
