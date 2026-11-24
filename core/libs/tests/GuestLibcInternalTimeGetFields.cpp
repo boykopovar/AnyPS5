@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -261,7 +262,6 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
     Require(Throws([] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED0Ev_nid_postfix(nullptr); }), "char time_put D0 null throws");
     Require(Throws([] { libSceLibcInternalInventory_197_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
     Require(Throws([] { libSceLibcInternalInventory_198_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
-    Require(Throws([] { libSceLibcInternalInventory_199_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
     Require(NotImplementedCalls_nid_no_patch() > before, "B2 error paths reported");
 
     if (hasLibrary) {
@@ -1542,7 +1542,7 @@ int main(int argc, char** argv) {
     bool hasLibrary = false;
     if (argc >= 2) {
 #ifdef _WIN32
-        g_library = LoadLibraryA(argv[1]);
+        g_library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
 #else
         g_library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 #endif

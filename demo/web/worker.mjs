@@ -45,7 +45,8 @@ export async function downloadLibraries(target, locale = "en") {
       || !Number.isSafeInteger(asset.expandedBytes) || asset.expandedBytes < 0 || asset.expandedBytes > 512 * 1024 * 1024) throw new Error(translate(locale, "invalidReleaseManifest"));
   const latestResponse = await fetch("https://api.github.com/repos/boykopovar/AnyPS5/releases/latest", { headers: { Accept: "application/vnd.github+json" } });
   if (!latestResponse.ok) {
-    const rateLimited = latestResponse.status === 429 || (latestResponse.status === 403 && latestResponse.headers.get("x-ratelimit-remaining") === "0");
+    const rateLimited = latestResponse.status === 429 || (latestResponse.status === 403
+      && (latestResponse.headers.get("x-ratelimit-remaining") === "0" || latestResponse.headers.has("retry-after")));
     if (!rateLimited) throw new Error(translate(locale, "cannotVerifyRelease", { status: latestResponse.status }));
     report({ phase: translate(locale, "phaseDownloadingLibraries"), message: translate(locale, "rateLimited") });
   } else {
@@ -54,6 +55,7 @@ export async function downloadLibraries(target, locale = "en") {
   }
   const download = await fetch(asset.path);
   if (!download.ok) throw new Error(translate(locale, "cannotDownloadLibraries", { status: download.status }));
+  if (!download.body) throw new Error(translate(locale, "incompleteDownload"));
   const reader = download.body.getReader();
   const chunks = [];
   let size = 0;
