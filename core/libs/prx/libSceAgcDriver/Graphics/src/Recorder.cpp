@@ -1080,7 +1080,7 @@ private:
 // GuestMemory flush hook: a CPU access to memory that recorded GPU work will write waits for that
 // work first; then storage image results pending for the range are stored. The recorder is only
 // dereferenced under the GpuMutex (it is destroyed with its device under that lock).
-void FlushForAccess(std::uint64_t address, std::size_t bytes) {
+bool flushForAccess(std::uint64_t address, std::size_t bytes, const Recorder* drawRecorder, const std::function<bool()>& deviceCurrent) {
     if (DrawProfiled()) hookCalls.fetch_add(1, std::memory_order_relaxed);
     // A label this worker queued but has not recorded writes the range: in queue order the label
     // precedes this access, so the group is recorded first (it then notes the range as a pending
@@ -1099,18 +1099,27 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     }
     if (HookClearAccess() && HookSnapshotEnabled() && !HookFlushCpuBlocks() && ClearAccess(address, bytes) && !(GuestMemory::CurrentReadSite() == GuestMemory::ReadSite::HostWrite && AnyPublishInProgress())) {
         ClearAccesses::Set(ClearAccesses::Get() + 1);
-        return;
+        return true;
     }
     if (!HookSnapshotEnabled() || SnapshotOverlaps(address, bytes)) {
         hookLocks.fetch_add(1, std::memory_order_relaxed);
-        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Hook);
-        std::lock_guard gpu(GuestMemory::GpuMutex());
+        std::unique_lock gpu(GuestMemory::GpuMutex(), std::defer_lock);
+        if (drawRecorder == nullptr) {
+            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Hook);
+            gpu.lock();
+        }
         if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(address, bytes)) {
-            const HookSyncScope attribution(*recorder, address, bytes);
-            Recorder::CountSync(1);
-            // The wait runs without the mutex when this acquisition is the outermost one (a stage-A
-            // read, a game thread); the recorder is not dereferenced after the call.
-            recorder->SyncThrough(address, bytes, true);
+            if (drawRecorder != nullptr && recorder != drawRecorder) return false;
+            const auto recorderId = drawRecorder != nullptr ? recorder->Id() : 0;
+            {
+                const HookSyncScope attribution(*recorder, address, bytes);
+                Recorder::CountSync(1);
+                recorder->SyncThrough(address, bytes, true);
+            }
+            if (drawRecorder != nullptr) {
+                if (!Recorder::Alive(recorderId) || Recorder::Active() != drawRecorder || (deviceCurrent && !deviceCurrent())) return false;
+                return flushForAccess(address, bytes, nullptr, {});
+            }
         }
     }
     const auto site = GuestMemory::CurrentReadSite();
@@ -1153,8 +1162,20 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
             else recorder->SyncThrough(address, bytes, true);
         }
     }
+    return true;
 }
 
+void FlushForAccess(std::uint64_t address, std::size_t bytes) {
+    flushForAccess(address, bytes, nullptr, {});
+}
+
+}
+
+bool Recorder::FlushDrawIndices(Recorder* recorder, std::uint64_t address, std::size_t bytes, const std::function<bool()>& deviceCurrent) {
+    if (recorder == nullptr || bytes == 0 || GuestMemory::GpuMutex().DepthOnThisThread() != 1 || InCompletion() || Active() != recorder) return true;
+    if (recorder->timeline == VK_NULL_HANDLE || HookLockedWait() || GuestMemory::CurrentFlushHook() != &FlushForAccess || !recorder->PendingWriteOverlaps(address, bytes)) return true;
+    PerformanceTimer timing("Graphics.Draw.index_wait");
+    return flushForAccess(address, bytes, recorder, deviceCurrent);
 }
 
 static bool CheckpointMarkersEnabled() {

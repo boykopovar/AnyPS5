@@ -641,6 +641,7 @@ public:
     VkDevice Device() const { return context.device; }
     std::uint64_t Id() const { return id; }
     static bool Alive(std::uint64_t id);
+    static bool FlushDrawIndices(Recorder* recorder, std::uint64_t address, std::size_t bytes, const std::function<bool()>& deviceCurrent = {});
     // Whether the calling thread runs inside a batch's completion action (finish()): a store made
     // there must not have a publish recorded for it (UnitShadow), see SyncThrough.
     static bool InCompletion();
