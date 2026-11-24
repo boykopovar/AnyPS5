@@ -97,16 +97,25 @@ std::uint64_t Compile(AgcDriver::VulkanDevice& device, const Case& item, bool sp
     return Fnv(std::span<const std::uint32_t>(result.spirv.data(), result.spirv.size()));
 }
 
+bool SplitApplies(const AgcDriver::VulkanDevice& device) {
+    const auto target = device.ComputeTarget(64);
+    return target.spannedWaves && target.subgroupSize == 32u;
+}
+
 void Forms(AgcDriver::VulkanDevice& device) {
+    const bool applies = SplitApplies(device);
+    const auto target = device.ComputeTarget(64);
+    std::printf("wave64 target subgroup %u spannedWaves %d: the split %s\n", target.subgroupSize, target.spannedWaves ? 1 : 0, applies ? "applies" : "does not apply");
     for (const auto& item : Cases()) {
+        const auto expectedGroups = applies ? item.splitGroups : 1u;
         std::uint32_t groups = 0;
         const auto plain = Compile(device, item, false, &groups);
         Require(groups == 1u, std::string(item.name) + ": the plain request multiplied the workgroups");
         const auto split = Compile(device, item, true, &groups);
-        Require(groups == item.splitGroups, std::string(item.name) + ": the split request multiplies the workgroups by " + std::to_string(groups) + ", expected " + std::to_string(item.splitGroups));
-        Require(item.splitGroups != 1u || split == plain, std::string(item.name) + ": a program the split does not apply to compiled differently with the split requested");
-        Require(item.splitGroups == 1u || split != plain, std::string(item.name) + ": the split form compiled to the plain module");
-        std::printf("form %s split %u %016llx\n", item.name, item.splitGroups, static_cast<unsigned long long>(split));
+        Require(groups == expectedGroups, std::string(item.name) + ": the split request multiplies the workgroups by " + std::to_string(groups) + ", expected " + std::to_string(expectedGroups));
+        Require(expectedGroups != 1u || split == plain, std::string(item.name) + ": a program the split does not apply to compiled differently with the split requested");
+        Require(expectedGroups == 1u || split != plain, std::string(item.name) + ": the split form compiled to the plain module");
+        std::printf("form %s split %u %016llx\n", item.name, expectedGroups, static_cast<unsigned long long>(split));
     }
 }
 
@@ -219,11 +228,11 @@ void Staged(std::span<std::uint32_t> output, const Launch& launch, const std::ve
     Require(AgcDriver::VulkanDevice::SplitWaveDispatches() == before + (split ? 1u : 0u), name + ": the split form ran after the switch was unset");
 }
 
-void Dispatches() {
+void Dispatches(bool applies) {
     auto output = GuestOutput();
-    Staged(output, {PlaneCode, {16, 16, 1}, Rsrc2(2, 0), 4, 0x41u}, ExpectedWaves(256, 1024), true, "a 16x16 workgroup");
-    Staged(output, {LineCode, {256, 1, 1}, Rsrc2(1, 0), 4, 0x41u}, ExpectedWaves(256, 1024), true, "a 256x1 workgroup");
-    Staged(output, {LineCode, {192, 1, 1}, Rsrc2(1, 0), 4, 0x41u}, ExpectedWaves(192, 768), true, "a 192x1 workgroup");
+    Staged(output, {PlaneCode, {16, 16, 1}, Rsrc2(2, 0), 4, 0x41u}, ExpectedWaves(256, 1024), applies, "a 16x16 workgroup");
+    Staged(output, {LineCode, {256, 1, 1}, Rsrc2(1, 0), 4, 0x41u}, ExpectedWaves(256, 1024), applies, "a 256x1 workgroup");
+    Staged(output, {LineCode, {192, 1, 1}, Rsrc2(1, 0), 4, 0x41u}, ExpectedWaves(192, 768), applies, "a 192x1 workgroup");
     Staged(output, {LdsCode, {16, 16, 1}, Rsrc2(2, 256), 4, 0x41u}, ExpectedWaves(256, 1024), false, "a 16x16 workgroup using LDS");
     Staged(output, {BarrierCode, {16, 16, 1}, Rsrc2(2, 0), 4, 0x41u}, ExpectedWaves(256, 1024), false, "a 16x16 workgroup with a barrier");
     Staged(output, {LineCode, {96, 1, 1}, Rsrc2(1, 0), 4, 0x41u}, ExpectedWaves(96, 384), false, "a 96x1 workgroup");
@@ -236,7 +245,7 @@ void Dispatches() {
     Same(RunIndirect(output, indirect), ExpectedWaves(256, 1024), "an indirect 16x16 dispatch after the background builds");
     Require(AgcDriver::VulkanDevice::SplitWaveDispatches() == before, "an indirect dispatch ran the split form");
     Same(Run(output, indirect), ExpectedWaves(256, 1024), "a direct 16x16 dispatch after the indirect ones");
-    Require(AgcDriver::VulkanDevice::SplitWaveDispatches() == before + 1u, "the direct dispatch beside the indirect ones did not run the split form");
+    Require(AgcDriver::VulkanDevice::SplitWaveDispatches() == before + (applies ? 1u : 0u), "the direct dispatch beside the indirect ones did not run the split form");
     AgcDriver::Graphics::RuntimeSwitches::Assign(RuntimeSwitch::SplitWaveGroups, false);
 }
 
@@ -246,12 +255,14 @@ int main(int argc, char** argv) {
     try {
         const std::string mode = argc == 2 ? argv[1] : "";
         Require(argc == 1 || mode == "--forms" || mode == "--dispatch", "usage: agc_driver_split_wave_groups_tests [--forms|--dispatch]");
+        bool applies = false;
         {
             auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+            applies = SplitApplies(*device);
             if (argc == 1 || mode == "--forms") Forms(*device);
         }
-        if (argc == 1 || mode == "--dispatch") Dispatches();
+        if (argc == 1 || mode == "--dispatch") Dispatches(applies);
         AgcDriverShutdown_nid_postfix();
         std::puts("split wave group tests passed");
         return 0;

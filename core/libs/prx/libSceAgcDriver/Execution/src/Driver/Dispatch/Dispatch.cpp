@@ -85,7 +85,7 @@ bool DispatchMissItemsEnabled() {
 }
 
 bool SplitWaveCandidate(const ShaderRecompiler::RecompileRequest& request, std::uint64_t indirectArguments) {
-    if (indirectArguments != 0 || !request.target.spannedWaves || request.context.waveSize != 64u || !request.context.compute.has_value()) return false;
+    if (indirectArguments != 0 || !request.target.spannedWaves || request.target.subgroupSize != 32u || request.context.waveSize != 64u || !request.context.compute.has_value()) return false;
     const auto& compute = *request.context.compute;
     if (compute.PartialGroups() || compute.ldsSizeDwords != 0u || compute.scratchDwords != 0u) return false;
     const auto threads = static_cast<std::uint64_t>(std::max(compute.numThreads[0], 1u)) * std::max(compute.numThreads[1], 1u) * std::max(compute.numThreads[2], 1u);
