@@ -131,6 +131,32 @@ class CaptureEnvironment(unittest.TestCase):
 
 
 class CompletedCapture(CaptureFixture):
+    def test_scripted_pad_performance_phase_accepts_launcher_recording(self):
+        import title_run
+
+        child, _ = performance_capture.clean_environment({}, {}, self.directory, "frames", (3, 2))
+        session = mock.Mock()
+        session.process.pid = 42
+        session.images = {}
+        session.exit_code.return_value = 0
+        session.alive.side_effect = [True, False]
+        pad = {"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]}
+
+        def launch(command, work, env, *args, **kwargs):
+            recording = Path(env["APS5_PAD_RECORD"])
+            self.assertEqual(recording, self.directory / "pad-record.txt")
+            recording.write_text("APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0\n", encoding="utf-8")
+            self.summary["env"].update(env)
+            self.write_summary()
+            self.write_trace()
+            return session
+
+        capture = (self.directory, "frames", (3, 2), "PPSA00001", "01.000.000")
+        with mock.patch.object(title_run, "Session", side_effect=launch):
+            result = title_run.performance_phase(self.directory / "app", self.directory, child, mock.Mock(), 5, pad, capture)
+        self.assertEqual(result["state"], "complete", result)
+        self.assertIsNotNone(result["pad_queued_s"])
+
     def test_missing_and_partial_pending(self):
         self.assertEqual(self.capture_fixture()["state"], "pending")
         raw = self.write_summary()
@@ -198,7 +224,7 @@ class InvalidSummaries(CaptureFixture):
         self.write_trace()
         for name, value in (("APS5_PROFILE_GPU", "0"), ("APS5_TRACE_BENCH", "0"), ("APS5_TRACE_SUMMARY_EVERY", "0"),
                             ("APS5_DUMP_FRAMES", "0"), ("APS5_SAMPLE_WORKER", "0"), ("APS5_FRAME_CAPTURE", "0"),
-                            ("APS5_PIPELINE_STATS", "0"), ("ANYPS5_LOG_FILE", "0"), ("APS5_PAD_RECORD", "out.pad"),
+                            ("APS5_PIPELINE_STATS", "0"), ("ANYPS5_LOG_FILE", "0"),
                             ("APS5_LOG_SYNC", "0"), ("APS5_LOG_TIMESTAMPS", "1"), ("APS5_SAVEDATA_TRACE", "1"),
                             ("APS5_VIDEOOUT_TELEMETRY_DIR", "<path>"), ("APS5_VIDEOOUT_FLIP_TIMING", "601:600")):
             with self.subTest(name=name):
