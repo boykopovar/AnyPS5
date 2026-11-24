@@ -354,11 +354,35 @@ def fetch_heads(base_sha, prs):
     remote = f"https://github.com/{REPO}.git"
     commits = [base_sha] + [pr["sha"] for pr in prs.values()]
     for start in range(0, len(commits), FETCH_REFS):
-        git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *commits[start:start + FETCH_REFS])
+        batch = commits[start:start + FETCH_REFS]
+        try:
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *batch)
+        except subprocess.CalledProcessError:
+            fetch_each(remote, batch, base_sha, prs)
         progress(f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
     for pr in prs.values():
         pr["ref"] = pr["sha"]
     return base_sha
+
+
+def fetch_each(remote, batch, base_sha, prs):
+    owners = {}
+    for number, pr in prs.items():
+        owners.setdefault(pr["sha"], []).append(number)
+    for sha in batch:
+        try:
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, sha)
+            continue
+        except subprocess.CalledProcessError:
+            if sha == base_sha or sha not in owners:
+                raise
+        for number in owners[sha]:
+            moved = git("ls-remote", "--exit-code", remote, f"refs/pull/{number}/head").split()[0]
+            if moved == sha:
+                raise ValueError(f"cannot fetch the head {sha} of pull request #{number}")
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, moved)
+            progress(f"pull request #{number} moved from {sha[:10]} to {moved[:10]} during this run; comparing {moved[:10]}")
+            prs[number]["sha"] = moved
 
 
 def merge(*args):
@@ -457,8 +481,8 @@ def production_source(path):
     return path.suffix == ".cpp" and not any(part.lower() in {"test", "tests"} for part in path.parts[2:-1])
 
 
-def export_diff(old, new):
-    diff = git("diff", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
+def export_diffs(old, new):
+    diff = git("diff", "--find-renames", "-l1000", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
     source, in_hunk, relocated = None, False, set()
     for line in diff.split("\n"):
         line = line.removesuffix("\r")
@@ -472,10 +496,11 @@ def export_diff(old, new):
             destination = unquote_path(line[10:])
             if library_for_path(source) != library_for_path(destination):
                 relocated.update(path for path in (source, destination) if library_for_path(path) and production_source(path))
+    identity_diff = diff
     if relocated:
-        diff += "\n" + git("diff", "--no-renames", "-U0", "--no-color", old, new, "--",
-                           *(f":(literal){path}" for path in sorted(relocated)), *EXPORT_PATHS[1:])
-    return diff
+        identity_diff += "\n" + git("diff", "--no-renames", "-U0", "--no-color", old, new, "--",
+                                    *(f":(literal){path}" for path in sorted(relocated)), *EXPORT_PATHS[1:])
+    return diff, identity_diff
 
 
 def source_exports(text, library=""):
@@ -603,10 +628,10 @@ def scan(pr):
         pr["files"].add(path)
         if status == "A":
             pr["added"].add(path)
-    diff = export_diff(old, new)
+    diff, identity_diff = export_diffs(old, new)
     pr["exports"] = exports(diff)
-    pr["added_exports"] = source_changed_exports(diff, "+")
-    pr["removed_exports"] = source_changed_exports(diff, "-")
+    pr["added_exports"] = source_changed_exports(identity_diff, "+")
+    pr["removed_exports"] = source_changed_exports(identity_diff, "-")
 
 
 def probe(pr):
@@ -619,8 +644,8 @@ def probe(pr):
             existing.add(path)
     if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
         return files, (set(), {}), existing
-    diff = export_diff(base, pr["ref"])
-    return files, (exports(diff), source_changed_exports(diff, "+")), existing
+    diff, identity_diff = export_diffs(base, pr["ref"])
+    return files, (exports(diff), source_changed_exports(identity_diff, "+")), existing
 
 
 def related(prs, executor):

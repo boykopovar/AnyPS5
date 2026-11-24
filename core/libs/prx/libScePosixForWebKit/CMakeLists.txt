@@ -26,6 +26,12 @@ if(BUILD_TESTING)
         set_tests_properties(guest_posix_mkstemps PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
     endif()
+    add_test_executable(guest_posix_getpwent_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixGetpwent.cpp)
+    target_include_directories(guest_posix_getpwent_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_posix_getpwent_tests PRIVATE libScePosixForWebKit libc)
+    configure_windows_unwind(guest_posix_getpwent_tests)
+    add_test(NAME guest_posix_getpwent COMMAND guest_posix_getpwent_tests)
+    set_tests_properties(guest_posix_getpwent PROPERTIES TIMEOUT 20)
 endif()
 configure_windows_unwind(libScePosixForWebKit)
 

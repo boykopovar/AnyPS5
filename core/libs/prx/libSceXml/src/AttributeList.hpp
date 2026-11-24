@@ -40,5 +40,6 @@ int ContainerSetName(XmlHandle* self, const XmlString* name);
 int ContainerSetValue(XmlHandle* self, const XmlString* value);
 XmlString* ContainerGetName(XmlString* result, const XmlHandle* self);
 XmlString* ContainerGetValue(XmlString* result, const XmlHandle* self);
+const std::vector<Attribute>* ContainerAttributes(const XmlHandle* self);
 
 }

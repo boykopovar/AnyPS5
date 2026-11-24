@@ -28,6 +28,8 @@
 #include "strcodec.h"
 #include "JXRGlue.h"
 #include "WmpBridge.h"
+#include <stdbool.h>
+#include <stdlib.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -184,18 +186,54 @@ static int KnownFormat(const PKPixelFormatGUID* format) {
     return !Failed(PixelFormatLookup(&info, LOOKUP_FORWARD));
 }
 
-static int HasWideText(const DESCRIPTIVEMETADATA* metadata) {
+ERR CalcMetadataOffsetSize(PKImageEncode* encoder, U16* inactive, U32* bytes);
+void JxrMetadataRelease_nid_no_patch(DPKPROPVARIANT* value);
+
+extern bool GuestCopyIn_nid_no_patch(void* destination, const void* source, size_t bytes);
+
+static int HasUnsupportedWideText(const DESCRIPTIVEMETADATA* metadata) {
     const DPKPROPVARIANT* entries = (const DPKPROPVARIANT*)metadata;
     size_t i;
     for (i = 0; i < sizeof(*metadata) / sizeof(*entries); ++i)
-        if (entries[i].vt == DPKVT_LPWSTR) return 1;
+        if (entries[i].vt == DPKVT_LPWSTR &&
+            (&entries[i] != &metadata->pvarCaption || entries[i].VT.pwszVal == NULL)) return 1;
     return 0;
 }
 
-static int32_t EncoderRefusal(const PKImageEncode* pIE, int lookup, int header) {
+static ERR CopyCaption(const U16* source, U16** copy) {
+    const uintptr_t address = (uintptr_t)source;
+    size_t bytes = 0;
+    U16 unit;
+    do {
+        if (bytes > UINT32_MAX - sizeof(unit) || address > UINTPTR_MAX - bytes ||
+            !GuestCopyIn_nid_no_patch(&unit, (const void*)(address + bytes), sizeof(unit)))
+            return WMP_errInvalidParameter;
+        bytes += sizeof(unit);
+    } while (unit != 0);
+    *copy = (U16*)malloc(bytes);
+    if (*copy == NULL) return WMP_errOutOfMemory;
+    if (!GuestCopyIn_nid_no_patch(*copy, source, bytes)) {
+        free(*copy);
+        *copy = NULL;
+        return WMP_errInvalidParameter;
+    }
+    (*copy)[bytes / sizeof(unit) - 1] = 0;
+    return WMP_errSuccess;
+}
+
+static int UnsupportedStoredText(PKImageEncode* encoder) {
+    if (HasUnsupportedWideText(&encoder->sDescMetadata)) return 1;
+    if (encoder->sDescMetadata.pvarCaption.vt != DPKVT_LPWSTR) return 0;
+    U16 inactive = 0;
+    U32 bytes = 0;
+    CalcMetadataOffsetSize(encoder, &inactive, &bytes);
+    return bytes == 0;
+}
+
+static int32_t EncoderRefusal(PKImageEncode* pIE, int lookup, int header) {
     if (pIE->pStream == NULL || pIE->WMP.wmiSCP.pWStream == NULL) return JXR_WMP_REFUSE_STREAM;
     if (lookup && !KnownFormat(&pIE->guidPixFormat)) return JXR_WMP_REFUSE_FORMAT;
-    if (header && HasWideText(&pIE->sDescMetadata)) return JXR_WMP_REFUSE_WIDE_TEXT;
+    if (header && UnsupportedStoredText(pIE)) return JXR_WMP_REFUSE_WIDE_TEXT;
     return JXR_WMP_ACCEPTED;
 }
 
@@ -218,11 +256,30 @@ int64_t JxrWmpEncodeTerminate_nid_no_patch(void* encoder) {
 int64_t JxrWmpEncodeSetDescriptiveMetadata_nid_no_patch(void* encoder, const void* metadata, int32_t* refusal) {
     PKImageEncode* pIE = (PKImageEncode*)encoder;
     if (pIE->fHeaderDone) return WMP_errOutOfSequence;
-    if (HasWideText((const DESCRIPTIVEMETADATA*)metadata)) {
+    DESCRIPTIVEMETADATA local;
+    if (!GuestCopyIn_nid_no_patch(&local, metadata, sizeof(local))) return WMP_errInvalidParameter;
+    if (HasUnsupportedWideText(&local)) {
         *refusal = JXR_WMP_REFUSE_WIDE_TEXT;
         return WMP_errSuccess;
     }
-    return PKImageEncode_SetDescriptiveMetadata_WMP(pIE, (const DESCRIPTIVEMETADATA*)metadata);
+    U16* caption = NULL;
+    if (local.pvarCaption.vt == DPKVT_LPWSTR) {
+        ERR copied = CopyCaption(local.pvarCaption.VT.pwszVal, &caption);
+        if (copied < 0) return copied;
+        local.pvarCaption.VT.pwszVal = caption;
+    }
+    DESCRIPTIVEMETADATA previous = pIE->sDescMetadata;
+    memset(&pIE->sDescMetadata, 0, sizeof(pIE->sDescMetadata));
+    ERR result = PKImageEncode_SetDescriptiveMetadata_WMP(pIE, &local);
+    free(caption);
+    DESCRIPTIVEMETADATA* discard = result < 0 ? &pIE->sDescMetadata : &previous;
+    DPKPROPVARIANT* entries = (DPKPROPVARIANT*)discard;
+    for (size_t i = 0; i < sizeof(*discard) / sizeof(*entries); ++i) {
+        if (entries[i].vt == DPKVT_LPSTR || entries[i].vt == DPKVT_LPWSTR)
+            JxrMetadataRelease_nid_no_patch(&entries[i]);
+    }
+    if (result < 0) pIE->sDescMetadata = previous;
+    return result;
 }
 
 int64_t JxrWmpEncodeWritePixels_nid_no_patch(void* encoder, uint32_t lines, uint8_t* pixels, uint32_t stride,
@@ -347,7 +404,7 @@ int64_t JxrWmpEncodeTranscode_nid_no_patch(void* encoder, void* decoder, void* p
         *refusal = JXR_WMP_REFUSE_STREAM;
         goto Cleanup;
     }
-    if (HasWideText(&pIE->sDescMetadata)) {
+    if (UnsupportedStoredText(pIE)) {
         *refusal = JXR_WMP_REFUSE_WIDE_TEXT;
         goto Cleanup;
     }

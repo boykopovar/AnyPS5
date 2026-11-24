@@ -22,9 +22,7 @@ extern "C" {
 
 int APS5_VABI sceUsbStorageDialogInitialize(void) {
     if (g_status.load() != COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, process + 16, sizeof(sdkVersion));
+    const std::uint32_t sdkVersion = ApplicationCompiledSdkVersion();
     int expected = COMMON_DIALOG_STATUS_NONE;
     if (!g_status.compare_exchange_strong(expected, COMMON_DIALOG_STATUS_INITIALIZED)) return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
     g_sdkVersion = sdkVersion;
