@@ -48,7 +48,7 @@ extern "C" {
 const void* APS5_VABI WKSecurityOriginCopyDatabaseIdentifier(const void* origin) {
     const auto* value = NKWebKit::Cast<NKWebKit::SecurityOrigin>(origin, __func__);
     if (value->protocol == u"file") {
-        return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(u"file__0"));
+        return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(std::u16string(u"file__0")));
     }
     const auto protocol = value->protocolNull ? std::u16string() : value->protocol;
     const auto host = value->hostNull ? std::u16string() : value->host;
@@ -64,7 +64,7 @@ const void* APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier(const void* d
     const auto& text = str->characters;
     if (text == u"file__0") {
         return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::SecurityOrigin>(
-            NKWebKit::String(u"file"), NKWebKit::String(std::u16string()), std::nullopt));
+            NKWebKit::String(std::u16string(u"file")), NKWebKit::String(std::u16string()), std::nullopt));
     }
     const auto first = text.find(u'_');
     if (first == std::u16string::npos) return nullptr;
