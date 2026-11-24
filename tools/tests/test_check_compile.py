@@ -529,6 +529,7 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
         compiler = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
         if ninja is None or cmake is None or compiler is None:
             self.skipTest("CMake, Ninja and a C++ compiler are required")
+        ninja, compiler = Path(ninja).as_posix(), Path(compiler).as_posix()
         source = self.source("unit.cpp", "int main() { return 0; }\n")
         self.source("CMakeLists.txt", "cmake_minimum_required(VERSION 3.20)\nproject(Unit CXX)\n"
                     "add_executable(unit unit.cpp)\n")

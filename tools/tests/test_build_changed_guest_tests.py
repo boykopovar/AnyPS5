@@ -606,7 +606,7 @@ int main(int argc, char **argv) {
     return fclose(marker);
 }
 """, encoding="utf-8")
-        compiler = shutil.which("gcc") or shutil.which("cc")
+        compiler = Path(shutil.which("gcc") or shutil.which("cc")).as_posix()
         subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja",
                         f"-DCMAKE_C_COMPILER={compiler}"], check=True, capture_output=True)
         targets = {name: name for name in ("producer", "aux_producer", "validator", "verifier", "cleaner", "unrelated")}
