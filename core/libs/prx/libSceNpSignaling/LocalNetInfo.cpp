@@ -4,7 +4,6 @@
 
 #include "prx/libSceNpSignaling/include/Api.hpp"
 #include "prx/libSceNpSignaling/include/SignalingState.hpp"
-#include <cerrno>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
