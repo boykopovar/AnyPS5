@@ -373,6 +373,34 @@ void RequireBatchedAfterOrdinaryDraw(AgcDriver::VulkanDevice& device, const Shad
     RequireSameImage(reference, ReadBack(device, block, color.bytes), "a tessellation-geometry draw recorded after an ordinary draw into the same target in one batch");
 }
 
+void RequireConsecutiveGeometryDraws(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
+    const AgcDriver::Graphics::ColorTargetLayout layout(Width, Height, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+    const auto blockBytes = (layout.Bytes() + BlockBytes - 1) / BlockBytes * BlockBytes;
+    Block small(blockBytes);
+    Block large(blockBytes);
+    Block again(blockBytes);
+    const auto smallColor = TiledTarget(small);
+    const auto largeColor = TiledTarget(large);
+    const auto againColor = TiledTarget(again);
+    const auto levelFive = std::span<const std::uint16_t>(Indices).subspan(6u, 3u);
+    FillBackground(small);
+    DrawReference(device, target, VK_CULL_MODE_NONE, 64u, smallColor, levelFive, 5.0f);
+    const auto smallReference = ReadBack(device, small, smallColor.bytes);
+    FillBackground(large);
+    DrawReference(device, target, VK_CULL_MODE_NONE, 64u, largeColor);
+    const auto largeReference = ReadBack(device, large, largeColor.bytes);
+    FillBackground(small);
+    FillBackground(large);
+    FillBackground(again);
+    DrawThroughGeometry(device, target, VK_CULL_MODE_NONE, 64u, smallColor, levelFive, 5.0f, false);
+    DrawThroughGeometry(device, target, VK_CULL_MODE_NONE, 64u, largeColor, Indices, 64.0f, false);
+    DrawThroughGeometry(device, target, VK_CULL_MODE_NONE, 64u, againColor, levelFive, 5.0f, false);
+    device.WaitIdle();
+    RequireSameImage(smallReference, ReadBack(device, small, smallColor.bytes), "the first of three tessellation-geometry draws recorded in one batch");
+    RequireSameImage(largeReference, ReadBack(device, large, largeColor.bytes), "a tessellation-geometry draw that needs more capture items than the draw before it in one batch");
+    RequireSameImage(smallReference, ReadBack(device, again, againColor.bytes), "a tessellation-geometry draw that reuses the capture items the draw before it read in one batch");
+}
+
 struct RegisteredStage {
     Shader shader{};
     std::array<ShaderRegister, 6> registers{};
@@ -462,6 +490,7 @@ int main() {
         }
         RequireRecordedTarget(*device, target);
         RequireBatchedAfterOrdinaryDraw(*device, target);
+        RequireConsecutiveGeometryDraws(*device, target);
         device.reset();
         RequireRegisteredStages();
         std::puts("Tessellation geometry tests passed");
