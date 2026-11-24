@@ -79,10 +79,10 @@ std::uint64_t collectBlocks(std::uint64_t address, std::size_t bytes) {
 }
 
 std::uint32_t fmaskElementFormat(std::uint32_t samples) {
-    return static_cast<std::uint32_t>(samples == 2u ? ShaderRecompiler::IrBufferFormat::Format8UInt : ShaderRecompiler::IrBufferFormat::Format32UInt);
+    return static_cast<std::uint32_t>(samples == 8u ? ShaderRecompiler::IrBufferFormat::Format32UInt : ShaderRecompiler::IrBufferFormat::Format8UInt);
 }
 
-bool nativeFmaskSamples(std::uint32_t samples) { return samples == 2u || samples == 8u; }
+bool nativeFmaskSamples(std::uint32_t samples) { return samples == 2u || samples == 4u || samples == 8u; }
 
 GuestTextureResource fmaskSnapshotResource(const GuestTextureResource& resource) {
     Require((resource.format == fmaskElementFormat(2u) || resource.format == fmaskElementFormat(8u)) && resource.fmaskCmaskAddress != 0u, "FMASK image format read semantics are not implemented");
@@ -489,10 +489,10 @@ public:
         recorder.Keep(shared_from_this(), static_cast<std::size_t>(storable.bytes));
     }
 
-    std::shared_ptr<Texture> FmaskSampled(const GuestTextureResource& resource, VkComponentMapping components) {
+    std::shared_ptr<Texture> FmaskSampled(const GuestTextureResource& resource, VkComponentMapping components, std::uint32_t samples) {
         const auto snapshot = fmaskSnapshotResource(resource);
-        Require(nativeFmaskSamples(target.samples) && target.dccAddress != 0u && fmaskRange.has_value(), "native FMASK sampling requires a tracked two- or eight-fragment DCC target");
-        Require(resource.format == fmaskElementFormat(target.samples), "native FMASK format does not match its resident target's sample count");
+        Require(nativeFmaskSamples(target.samples) && target.dccAddress != 0u && fmaskRange.has_value(), "native FMASK sampling requires a tracked two-, four- or eight-fragment DCC target");
+        Require(samples == target.samples && resource.format == fmaskElementFormat(target.samples), "native FMASK format does not match its resident target's sample count");
         Require(target.tileMode == ColorTileMode::RenderTarget && target.depth == 1u && target.depthSlice == 0u && target.layers == 1u && target.arrayLastSlice == 0u && target.arraySlice == 0u && target.mip == 0u && target.mipCount == 1u, "native FMASK target layout is not implemented");
         Require(target.fmaskAddress == resource.baseAddress && target.fmaskPipeBankXor == resource.pipeBankXor && target.cmaskAddress == resource.fmaskCmaskAddress, "native FMASK descriptor does not match its resident target");
         Require(target.extent.width == resource.width && target.extent.height == resource.height && resource.baseArray == 0u && resource.depthOrLastArray == 0u, "native FMASK extent or subresource does not match its resident target");
@@ -505,7 +505,7 @@ public:
         if (texture == nullptr) {
             const auto geometry = DescribeSurface(snapshot);
             std::vector<std::byte> bytes(geometry.guestBytes);
-            const std::uint32_t stored = target.samples == 2u ? 0x02u : 0x76543210u;
+            const std::uint32_t stored = target.samples == 2u ? 0x02u : target.samples == 4u ? 0xe4u : 0x76543210u;
             for (std::size_t offset = 0; offset < bytes.size(); offset += sizeof(stored)) std::memcpy(bytes.data() + offset, &stored, sizeof(stored));
             texture = std::make_unique<Texture>(context, *context.detiler, snapshot, components, bytes);
         }
@@ -2156,7 +2156,7 @@ void NoteColorMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
     }
 }
 
-std::shared_ptr<Texture> MultisampleTargetFmaskTexture_nid_no_patch(const Context& context, const GuestTextureResource& resource, VkComponentMapping components) {
+std::shared_ptr<Texture> MultisampleTargetFmaskTexture_nid_no_patch(const Context& context, const GuestTextureResource& resource, VkComponentMapping components, std::uint32_t samples) {
     TargetsLock lock;
     discardRetiredTargets();
     std::shared_ptr<MultisampleTarget> owner;
@@ -2167,7 +2167,7 @@ std::shared_ptr<Texture> MultisampleTargetFmaskTexture_nid_no_patch(const Contex
         Require(owner == nullptr, "FMASK descriptor refers to more than one resident target");
         owner = candidate;
     }
-    return owner != nullptr ? owner->FmaskSampled(resource, components) : nullptr;
+    return owner != nullptr ? owner->FmaskSampled(resource, components, samples) : nullptr;
 }
 
 void ClearMultisampleTargets(VkDevice device) {

@@ -34,6 +34,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/FmaskTexture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libc/include/General.hpp"
@@ -1019,9 +1020,12 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         Require(!depthCompare, "FMASK depth comparison sampling is not implemented");
         Require(resource.baseArray == 0u && resource.depthOrLastArray == 0u, "native FMASK array sampling is not implemented");
         CompletePendingCpuWrites(context, resource.fmaskCmaskAddress, CmaskBytes(resource.width, resource.height));
-        auto native = MultisampleTargetFmaskTexture_nid_no_patch(context, resource, components);
-        Require(native != nullptr, "compressed FMASK sampling without a matching resident native target is not implemented");
-        return native;
+        const auto layout = ShaderRecompiler::FmaskLayoutOf(static_cast<ShaderRecompiler::IrBufferFormat>((words[1] >> 20u) & 0x1ffu));
+        Require(layout.has_value() && layout->samples == layout->fragments, "compressed FMASK sampling requires one fragment per sample");
+        auto native = MultisampleTargetFmaskTexture_nid_no_patch(context, resource, components, layout->samples);
+        if (native != nullptr) return native;
+        Require(layout->samples == 4u, "compressed FMASK sampling without a matching resident native target is not implemented");
+        return StandaloneFmaskTexture_nid_no_patch(context, resource, components);
     }
     CaptureTrace::Log("sampled-lookup address=%llx width=%u height=%u dcc=%llx", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, static_cast<unsigned long long>(resource.dccAddress));
     RequireNoMultisampleTarget(resource.baseAddress, guestBytes != 0 ? static_cast<std::size_t>(guestBytes) : 1u, "a texture read");
