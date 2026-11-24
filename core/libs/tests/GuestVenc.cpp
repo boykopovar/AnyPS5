@@ -26,13 +26,17 @@ void Require(bool condition, const char* message) {
 }
 
 struct PointerBlock {
-    std::uint64_t words[8]{};
+    std::uint64_t words[16]{};
 
     void Set(std::size_t offset, const void* pointer) {
         std::memcpy(reinterpret_cast<std::uint8_t*>(words) + offset, &pointer, sizeof(pointer));
     }
 
     void SetWord(std::size_t offset, std::uint64_t value) {
+        std::memcpy(reinterpret_cast<std::uint8_t*>(words) + offset, &value, sizeof(value));
+    }
+
+    void SetDword(std::size_t offset, std::uint32_t value) {
         std::memcpy(reinterpret_cast<std::uint8_t*>(words) + offset, &value, sizeof(value));
     }
 };
@@ -186,6 +190,123 @@ void CheckSocSupport() {
     }
 }
 
+void CheckNestedSizesAndQueryHeader() {
+    PointerBlock header;
+    header.SetWord(0, 0x8);
+    header.SetWord(8, 0xA5A5A5A5A5A5A5A5ull);
+
+    PointerBlock codec;
+    codec.SetWord(0, 0x30);
+    codec.SetDword(0x8, 3);
+
+    PointerBlock params;
+    params.Set(0x8, &codec);
+
+    for (const std::uint64_t badParamSize : {std::uint64_t{0}, std::uint64_t{0x5F}, std::uint64_t{0x69}}) {
+        params.SetWord(0, badParamSize);
+        Require(sceVencQueryHeader(&params, &header) == VencError(0x01), "QueryHeader: bad param size");
+    }
+    params.SetWord(0, 0x68);
+
+    for (const std::uint64_t badCodecSize : {std::uint64_t{0x2F}, std::uint64_t{0x39}}) {
+        codec.SetWord(0, badCodecSize);
+        Require(sceVencQueryHeader(&params, &header) == VencError(0x04), "QueryHeader: bad codec size");
+    }
+    codec.SetWord(0, 0x30);
+
+    PointerBlock sub;
+    struct SubCheck {
+        std::size_t offset;
+        std::uint64_t goodSize;
+        std::uint64_t badSize;
+        std::uint32_t code;
+    };
+    const SubCheck subChecks[] = {
+        {0x10, 0x10, 0x11, 0x05},
+        {0x18, 0x20, 0x1F, 0x06},
+        {0x20, 0x10, 0x0F, 0x08},
+        {0x28, 0x20, 0x29, 0x07},
+        {0x30, 0x18, 0x19, 0x12},
+        {0x38, 0x20, 0x21, 0x09},
+        {0x40, 0x30, 0x2F, 0x0A},
+        {0x48, 0x28, 0x27, 0x0A},
+        {0x50, 0x18, 0x17, 0x0D},
+        {0x58, 0x10, 0x11, 0x0E},
+        {0x60, 0x10, 0x0F, 0x14},
+    };
+    for (const auto& check : subChecks) {
+        sub = {};
+        sub.SetWord(0, check.badSize);
+        params.Set(check.offset, &sub);
+        Require(sceVencQueryHeader(&params, &header) == VencError(check.code), "QueryHeader: bad sub size");
+        sub.SetWord(0, check.goodSize);
+        Require(sceVencQueryHeader(&params, &header) == 0, "QueryHeader: good sub size");
+        params.Set(check.offset, nullptr);
+    }
+
+    PointerBlock nestedParent;
+    PointerBlock nestedChild;
+    for (const std::size_t parentOffset : {std::size_t{0x38}, std::size_t{0x40}, std::size_t{0x48}}) {
+        nestedParent = {};
+        nestedChild = {};
+        nestedParent.SetWord(0, parentOffset == 0x38 ? 0x20 : (parentOffset == 0x40 ? 0x30 : 0x28));
+        nestedChild.SetWord(0, 0x1F);
+        nestedParent.Set(0x8, &nestedChild);
+        params.Set(parentOffset, &nestedParent);
+        Require(sceVencQueryHeader(&params, &header) == VencError(0x10), "QueryHeader: nested sub size");
+        nestedChild.SetWord(0, 0x20);
+        Require(sceVencQueryHeader(&params, &header) == 0, "QueryHeader: good nested sub size");
+        params.Set(parentOffset, nullptr);
+    }
+
+    header.SetWord(0, 0x118);
+    Require(sceVencQueryHeader(&params, &header) == VencError(0x0F), "QueryHeader: codec 3 wrong header size");
+    header.SetWord(0, 0x8);
+    errno = 71;
+    Require(sceVencQueryHeader(&params, &header) == 0, "QueryHeader: codec 3 success");
+    Require(errno == 71 && header.words[1] == 0xA5A5A5A5A5A5A5A5ull, "QueryHeader: codec 3 clobbered header or errno");
+
+    codec.SetDword(0x8, 0);
+    header.SetWord(0, 0x1a0);
+    Require(sceVencQueryHeader(&params, &header) == VencError(0x04), "QueryHeader: unsupported codec 0");
+    codec.SetDword(0x8, 4);
+    Require(sceVencQueryHeader(&params, &header) == VencError(0x04), "QueryHeader: unsupported codec 4");
+    codec.SetDword(0x8, 1);
+    Require(sceVencQueryHeader(&params, &header) == VencError(0x0F), "QueryHeader: codec 1 rejects 0x1a0 header");
+
+    PointerBlock memSub;
+    PointerBlock mem;
+    mem.Set(0x8, &memSub);
+    mem.Set(0x10, &memSub);
+    mem.Set(0x18, &memSub);
+    PointerBlock qParams;
+    PointerBlock qSub10;
+    PointerBlock qSub18;
+    qParams.SetWord(0, 0x60);
+    codec.SetDword(0x8, 3);
+    qSub10.SetWord(0, 0x10);
+    qSub18.SetWord(0, 0x20);
+    qParams.Set(0x8, &codec);
+    qParams.Set(0x10, &qSub10);
+    qParams.Set(0x18, &qSub18);
+
+    mem.SetWord(0, 0x1F);
+    Require(sceVencQueryMemorySize(&qParams, &mem) == VencError(0x10), "QueryMemorySize: bad memory +0");
+    mem.SetWord(0, 0x20);
+    memSub.SetWord(0, 0x17);
+    mem.Set(0x8, &memSub);
+    mem.Set(0x10, nullptr);
+    mem.Set(0x18, nullptr);
+    Require(sceVencQueryMemorySize(&qParams, &mem) == VencError(0x10), "QueryMemorySize: bad memory +8");
+    mem.Set(0x8, nullptr);
+    mem.Set(0x10, &memSub);
+    memSub.SetWord(0, 0x1F);
+    Require(sceVencQueryMemorySize(&qParams, &mem) == VencError(0x10), "QueryMemorySize: bad memory +0x10");
+    mem.Set(0x10, nullptr);
+    mem.Set(0x18, &memSub);
+    Require(sceVencQueryMemorySize(&qParams, &mem) == VencError(0x10), "QueryMemorySize: bad memory +0x18");
+}
+
 }
 
 int main() {
@@ -194,6 +315,7 @@ int main() {
     CheckEncoderParameters();
     CheckEncoderCalls();
     CheckSocSupport();
+    CheckNestedSizesAndQueryHeader();
     std::puts("Venc tests passed");
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
