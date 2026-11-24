@@ -36,5 +36,14 @@ int main() {
     Require(_ZNK15AbstractStorage14YoutubeStorage10GetServiceEv(nullptr) == 2);
     Require(_ZNK15AbstractStorage14YoutubeStorage13GetCapabilityEv(nullptr) == 0x180000000000000ull);
     Require(_ZNK15AbstractStorage14YoutubeService14GetServiceTypeEv(nullptr) == 2);
+    Require(libSceAbstractYoutubeUnknown_26_plus_qh3cw_minus_Rk_nid_no_patch() == Error0005);
+    Require(libSceAbstractYoutubeUnknown_NBDWs6iIqNE_nid_no_patch() == Error0005);
+    Require(libSceAbstractYoutubeUnknown_Pk1mFgNtLEM_nid_no_patch() == Error0005);
+    Require(libSceAbstractYoutubeUnknown_RaO8sKI7L44_nid_no_patch() == Error0005);
+    Require(libSceAbstractYoutubeUnknown_UJyqV64_minus_qNQ_nid_no_patch() == Error0005);
+    Require(libSceAbstractYoutubeUnknown_aVE9tVODTHw_nid_no_patch() == Error0005);
+    Require(libSceAbstractYoutubeUnknown_zNGleAOPtNs_nid_no_patch() == Error0005);
+    Require(libSceAbstractYoutubeUnknown_zp94FyokDLI_nid_no_patch() == Error0005);
+    Require(libSceAbstractYoutubeUnknown_C8lFlQympVw_nid_no_patch() == 0);
     return 0;
 }
