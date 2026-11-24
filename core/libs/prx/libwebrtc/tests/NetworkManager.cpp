@@ -17,7 +17,7 @@ void Require(bool condition, std::source_location location = std::source_locatio
 const int ipVTable = 0;
 
 WebRtcIpAddress Ipv4(std::uint8_t a, std::uint8_t b, std::uint8_t c, std::uint8_t d) {
-    WebRtcIpAddress ip{&ipVTable, WebRtcAfInet, {}};
+    WebRtcIpAddress ip{&ipVTable, WebRtcAfInet, {.ip6 = {}}};
     ip.address.ip6.bytes[0] = a;
     ip.address.ip6.bytes[1] = b;
     ip.address.ip6.bytes[2] = c;
@@ -58,7 +58,7 @@ void TestDefaultLocalAddresses() {
     manager.enumerationPermission = 1;
     Require(_ZNK3rtc18NetworkManagerBase22enumeration_permissionEv_nid_postfix(&manager) == 1);
 
-    WebRtcIpAddress result{&ipVTable, WebRtcAfUnspec, {}};
+    WebRtcIpAddress result{&ipVTable, WebRtcAfUnspec, {.ip6 = {}}};
     Require(!_ZNK3rtc18NetworkManagerBase22GetDefaultLocalAddressEiPNS_9IPAddressE_nid_postfix(&manager, WebRtcAfInet, &result));
     Require(!_ZNK3rtc18NetworkManagerBase22GetDefaultLocalAddressEiPNS_9IPAddressE_nid_postfix(&manager, WebRtcAfInet6, &result));
 
@@ -72,7 +72,7 @@ void TestDefaultLocalAddresses() {
     Require(manager.defaultLocalIpv6Address.family == WebRtcAfInet6 && manager.defaultLocalIpv6Address.address.ip6.bytes[15] == 9);
 
     const auto unset = Ipv4(0, 0, 0, 0);
-    WebRtcIpAddress nil{&ipVTable, WebRtcAfUnspec, {}};
+    WebRtcIpAddress nil{&ipVTable, WebRtcAfUnspec, {.ip6 = {}}};
     _ZN3rtc18NetworkManagerBase27set_default_local_addressesERKNS_9IPAddressES3__nid_postfix(&manager, &nil, &unset);
     Require(manager.defaultLocalIpv4Address.address.ip6.bytes[3] == 7 && manager.defaultLocalIpv6Address.family == WebRtcAfInet6);
 
@@ -109,12 +109,15 @@ void TestNetworkFromAddress() {
     Require(_ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(&manager, &AsIp(lookup)) == &second);
     const auto missing = Ipv6(0x20, 0x01, 99);
     Require(_ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(&manager, &AsIp(missing)) == nullptr);
+    auto middleByteMissing = Ipv6(0xfc, 0x00, 4);
+    middleByteMissing.address.ip6.bytes[8] = 1;
+    Require(_ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(&manager, &AsIp(middleByteMissing)) == nullptr);
     const auto sameBytesIpv4 = Ipv4(0x20, 0x01, 0, 0);
     Require(_ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(&manager, &sameBytesIpv4) == nullptr);
     Require(Throws([&] { _ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(&manager, nullptr); }));
 
     const auto defaultIpv4 = Ipv4(10, 0, 0, 1);
-    WebRtcIpAddress result{&ipVTable, WebRtcAfUnspec, {}};
+    WebRtcIpAddress result{&ipVTable, WebRtcAfUnspec, {.ip6 = {}}};
     _ZN3rtc18NetworkManagerBase27set_default_local_addressesERKNS_9IPAddressES3__nid_postfix(&manager, &defaultIpv4, &AsIp(lookup));
     Require(_ZNK3rtc18NetworkManagerBase22GetDefaultLocalAddressEiPNS_9IPAddressE_nid_postfix(&manager, WebRtcAfInet6, &result));
     Require(result.family == WebRtcAfInet6 && result.address.ip6.bytes[15] == 6);
