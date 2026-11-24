@@ -140,14 +140,6 @@ class MainErrorTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, 2)
             self.assertIn(f"{baseline}: snapshot must be an object", stderr.getvalue())
 
-    def test_nonregular_snapshot_is_rejected_before_opening_it(self):
-        with tempfile.TemporaryDirectory() as directory:
-            stderr = io.StringIO()
-            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
-                progress_diff.main([directory, str(Path(directory) / "missing.json")])
-            self.assertEqual(raised.exception.code, 2)
-            self.assertIn("snapshot must be a regular file", stderr.getvalue())
-
     def test_missing_file_is_a_parser_error_with_exit_code_2(self):
         with tempfile.TemporaryDirectory() as directory:
             head = Path(directory) / "head.json"

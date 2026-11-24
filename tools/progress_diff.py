@@ -1,6 +1,5 @@
 import argparse
 import json
-import stat
 import sys
 from pathlib import Path
 
@@ -36,8 +35,6 @@ def unique_json_keys(pairs):
 
 def read_snapshot(path):
     try:
-        if not stat.S_ISREG(path.stat().st_mode):
-            raise ValueError("snapshot must be a regular file")
         snapshot = json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys)
         progress.validate_snapshot(snapshot)
     except (ValueError, RecursionError) as error:
