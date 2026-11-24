@@ -252,18 +252,12 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
 
 void StoreError(int* error, int value) {
     if (error == nullptr) return;
-    const int saved = errno;
-    const bool written = GuestCopyOut_nid_no_patch(error, &value, sizeof(value));
-    errno = saved;
-    if (!written) throw std::invalid_argument("integer conversion: unwritable error output");
+    if (!GuestCopyOut_nid_no_patch(error, &value, sizeof(value))) throw std::invalid_argument("integer conversion: unwritable error output");
 }
 
 void StoreEnd(char** end, const char* value) {
     if (end == nullptr) return;
-    const int saved = errno;
-    const bool written = GuestCopyOut_nid_no_patch(end, &value, sizeof(value));
-    errno = saved;
-    if (!written) throw std::invalid_argument("integer conversion: unwritable end output");
+    if (!GuestCopyOut_nid_no_patch(end, &value, sizeof(value))) throw std::invalid_argument("integer conversion: unwritable end output");
 }
 
 bool InvalidBase(const char* text, char** end, int base, int* error) {
