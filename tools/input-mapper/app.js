@@ -21,6 +21,7 @@ let languageControl;
 const bindingControls = new WeakMap();
 let activeView = ['controls', 'configuration', 'help'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'controls';
 let currentStatus;
+let saveRequest = 0;
 let importReport;
 const dialog = byId('capture-dialog');
 try {
@@ -448,6 +449,7 @@ byId('reset').addEventListener('click', async () => {
     controllerRemaps = [];
     savedConfiguration = snapshot();
     importReport = undefined;
+    saveRequest++;
     byId('import-report').hidden = true;
     byId('profile-title-id').value = '';
     renderControllerRemaps();
@@ -469,12 +471,14 @@ byId('file').addEventListener('change', async event => {
         const report = byId('import-report');
         if (result.errors.length) {
             importReport = result;
+            saveRequest++;
             renderImportReport();
             report.focus();
             return;
         }
         if (!await confirmReplacement() || request !== replacementRequest) return;
         importReport = result;
+        saveRequest++;
         renderImportReport();
         const titleId = inputTitleId(file.name);
         if (titleId !== undefined) byId('profile-title-id').value = titleId;
@@ -487,6 +491,7 @@ byId('file').addEventListener('change', async event => {
         setStatus('imported', {name: file.name});
     } catch (error) {
         if (request !== replacementRequest) return;
+        saveRequest++;
         setStatus('importFailed', {message: error instanceof TypeError ? t('invalidUtf8') : diagnostic(locale, error.message)});
     }
 });
@@ -506,16 +511,20 @@ byId('download').addEventListener('click', () => {
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     savedConfiguration = snapshot();
+    saveRequest++;
     setStatus('downloaded');
 });
 byId('copy').addEventListener('click', async () => {
+    const request = ++saveRequest;
     try {
         const content = configurationText();
         const copiedConfiguration = snapshot();
         await navigator.clipboard.writeText(content);
+        if (request !== saveRequest) return;
         savedConfiguration = copiedConfiguration;
         setStatus('copied');
     } catch {
+        if (request !== saveRequest) return;
         byId('preview').focus();
         byId('preview').select();
         setStatus('clipboardFailed');

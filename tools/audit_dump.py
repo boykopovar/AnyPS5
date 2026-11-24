@@ -94,6 +94,8 @@ def prepare(dump, source, log=print):
             continue
         modules = stage_modules(modules_of(directory), source / relative, log)
         if not modules:
+            if relative in STANDARD_DIRECTORIES:
+                (source / relative).mkdir(parents=True, exist_ok=True)
             continue
         count += len(modules)
         module_directories.append(source / relative)

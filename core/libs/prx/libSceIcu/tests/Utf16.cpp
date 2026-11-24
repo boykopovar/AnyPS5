@@ -117,7 +117,7 @@ void Domains() {
             if (operation == 0) u_strchr32_nid_postfix(nullptr, 0x61);
             if (operation == 1) u_strrchr32_nid_postfix(nullptr, 0x61);
             if (operation == 2) u_memchr32_nid_postfix(nullptr, 0x61, 1);
-        } catch (const std::runtime_error&) { rejected = true; }
+        } catch (const std::invalid_argument&) { rejected = true; }
         Require(rejected);
     }
 }
@@ -194,6 +194,26 @@ void GuestPointers() {
     Require(u_strHasMoreChar32Than_nid_postfix(tail + 1, 3, 2) == 0 && errno == 71);
     RequireUnreadable([&] { u_countChar32_nid_postfix(open, 3); });
     RequireUnreadable([&] { u_strHasMoreChar32Than_nid_postfix(open, 4, 2); });
+    RequireUnreadable([&] { u_strchr32_nid_postfix(unmapped, 0x61); });
+    RequireUnreadable([&] { u_strrchr32_nid_postfix(unmapped, 0x61); });
+    RequireUnreadable([&] { u_memchr32_nid_postfix(unmapped, 0x61, 4); });
+    errno = 71;
+    Require(u_strchr32_nid_postfix(tail, 0x10000) == tail + 1);
+    Require(u_strrchr32_nid_postfix(tail, 0) == tail + 4);
+    Require(u_memchr32_nid_postfix(tail, 0x62, 5) == tail + 3 && errno == 71);
+    Require(u_memchr32_nid_postfix(open, 0x62, 3) == open);
+    RequireUnreadable([&] { u_memchr32_nid_postfix(open, 0x63, 3); });
+
+    GuardedPage unterminated;
+    auto* run = unterminated.Tail(3);
+    run[0] = 0x61;
+    run[1] = 0xd800;
+    run[2] = 0xdc00;
+    unterminated.ReadOnly();
+    Require(u_strchr32_nid_postfix(run, 0x61) == run);
+    Require(u_strchr32_nid_postfix(run, 0x10000) == run + 1);
+    RequireUnreadable([&] { u_strchr32_nid_postfix(run, 0x62); });
+    RequireUnreadable([&] { u_strrchr32_nid_postfix(run, 0x61); });
 }
 
 } // namespace
