@@ -642,6 +642,7 @@ int APS5_VABI sceFontWritingInit(FontWriting* fontWriting, FontString fontString
     if (!fontWriting || !fontString || !fontCharacter) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* data = GetStringData(fontString);
     if (!data) return SCE_FONT_ERROR_INVALID_STRING;
+    if (!Font::OutputWritable(fontWriting)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     FontWritingData writing{};
     const auto publish = [&](int result) {
         FontWriting record{};

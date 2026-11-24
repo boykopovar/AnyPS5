@@ -18,6 +18,7 @@
 
 #include "prx/libSceFont/include/FontDriver.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace Font {
 
@@ -27,6 +28,18 @@ bool CopyOutGuest(T* destination, const T& value) {
     const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
     errno = savedErrno;
     return copied;
+}
+
+template <typename T>
+bool OutputWritable(T* destination) {
+    const int savedErrno = errno;
+    bool writable = false;
+    {
+        const GuestArena::HostWrite guard(destination, sizeof(T));
+        writable = guard.Open() && GuestWritable_nid_no_patch(destination, sizeof(T));
+    }
+    errno = savedErrno;
+    return writable;
 }
 
 template <typename T>
