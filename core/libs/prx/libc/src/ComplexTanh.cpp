@@ -49,16 +49,16 @@ __complex__ long double APS5_VABI ctanhl_nid_postfix(__complex__ long double z) 
     const long double x = __real__ z;
     const long double y = __imag__ z;
     if (std::isnan(x)) return Make((x + 0) * (y + 0), y == 0 ? y : (x + 0) * (y + 0));
-    if (std::isinf(x)) return Make(std::copysign(1.0L, x), std::copysign(0.0L, std::isinf(y) ? y : std::sin(y) * std::cos(y)));
+    if (std::isinf(x)) return Make(std::copysign(1.0L, x), std::copysign(0.0L, std::isinf(y) ? y : sinl_nid_postfix(y) * cosl_nid_postfix(y)));
     if (!std::isfinite(y)) return Make(y - y, y - y);
     if (std::fabs(x) >= LargeMagnitude) {
-        const long double exponential = std::exp(-std::fabs(x));
-        return Make(std::copysign(1.0L, x), 4 * std::sin(y) * std::cos(y) * exponential * exponential);
+        const long double exponential = expl_nid_postfix(-std::fabs(x));
+        return Make(std::copysign(1.0L, x), 4 * sinl_nid_postfix(y) * cosl_nid_postfix(y) * exponential * exponential);
     }
-    const long double t = std::tan(y);
+    const long double t = tanl_nid_postfix(y);
     const long double beta = 1 + t * t;
-    const long double s = std::sinh(x);
-    const long double rho = std::sqrt(1 + s * s);
+    const long double s = sinhl_nid_postfix(x);
+    const long double rho = sqrtl_nid_postfix(1 + s * s);
     const long double denominator = 1 + beta * s * s;
     return Make(beta * rho * s / denominator, t / denominator);
 }

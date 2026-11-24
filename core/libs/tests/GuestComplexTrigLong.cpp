@@ -94,6 +94,11 @@ int main() {
         const __complex__ long double tangent = ctanl_nid_postfix(Make(1.0L, x));
         Require(__real__ tangent == 0.0L && __imag__ tangent == 1.0L);
     }
+    const long double hugeImaginary = 1e30;
+    Require(Near(ctanhl_nid_postfix(Make(1.0L, hugeImaginary)), 0.7616220083332145L, -0.003918950207184144L));
+    Require(Near(ctanl_nid_postfix(Make(hugeImaginary, 1.0L)), -0.003918950207184144L, 0.7616220083332145L));
+    const __complex__ long double hugeBoth = ctanhl_nid_postfix(Make(30.0L, hugeImaginary));
+    Require(__real__ hugeBoth == 1.0L && std::fabs(__imag__ hugeBoth / -3.2683020199668726e-28L - 1) < 1e-12L);
     const long double infinity = HUGE_VALL;
     const long double nan = std::nanl("");
     const __complex__ long double atInfinity = ctanhl_nid_postfix(Make(-infinity, 2.0L));
