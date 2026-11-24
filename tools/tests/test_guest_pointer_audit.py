@@ -432,5 +432,37 @@ class SourceCodeBlankingTests(unittest.TestCase):
                          ("sceExampleSplit", "out", 3, ["dereference"]))
 
 
+class PatternAndLineTests(unittest.TestCase):
+    def test_parameter_patterns_lists_member_index_and_dereference(self):
+        kinds = tuple(kind for kind, _ in guest_pointer_audit.parameter_patterns("out")[1])
+        self.assertEqual(kinds, ("member", "index", "dereference"))
+
+    def test_parameter_patterns_leading_pattern_matches_the_name_only(self):
+        lead = guest_pointer_audit.parameter_patterns("out")[0]
+        self.assertTrue(lead.match("out"))
+        self.assertTrue(lead.match("(out"))
+        self.assertIsNone(lead.match("outer"))
+
+    def test_parameter_patterns_each_kind_finds_its_access(self):
+        patterns = dict(guest_pointer_audit.parameter_patterns("out")[1])
+        self.assertIsNotNone(patterns["member"].search("out->size = 4;"))
+        self.assertIsNotNone(patterns["index"].search("out[1] = 0;"))
+        self.assertIsNotNone(patterns["dereference"].search("*out = 7;"))
+        self.assertIsNone(patterns["member"].search("other->size = 4;"))
+
+    def test_parameter_patterns_are_cached_per_name(self):
+        self.assertIs(guest_pointer_audit.parameter_patterns("cached"), guest_pointer_audit.parameter_patterns("cached"))
+
+    def test_keep_lines_keeps_code_and_blanks_comments_and_literals(self):
+        import re
+        pattern = re.compile(r'(?P<code>int)|(?P<comment>//[^\n]*)|(?P<literal>"[^"]*")')
+        code = pattern.search("int")
+        comment = pattern.search("// note")
+        literal = pattern.search('"a\nb"')
+        self.assertEqual(guest_pointer_audit.keep_lines(code), "int")
+        self.assertEqual(guest_pointer_audit.keep_lines(comment), " " * len("// note"))
+        self.assertEqual(guest_pointer_audit.keep_lines(literal), "LITERAL\n")
+
+
 if __name__ == "__main__":
     unittest.main()
