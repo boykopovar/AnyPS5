@@ -80,6 +80,7 @@ async function inspect(worker, count) {
     } });
   }
   await worker.onmessage({ data: { type: "inspection-complete" } });
+  await setImmediate();
 }
 
 for (const stage of ["constructor", "postMessage"]) {
@@ -232,6 +233,31 @@ test("Memory downloads reflect the target budget before inspection", async t => 
   get("file").onchange();
   await inspect(workers[0], 1);
   assert.equal(memory.disabled, true);
+});
+
+test("selecting an input refreshes a previously loaded release and its memory budget", async t => {
+  const pending = deferred();
+  let calls = 0;
+  const { get, workers } = await setup(t, "refresh-loaded-release", { fetch: () => {
+    calls++;
+    return calls === 1 ? Promise.resolve({ ok: true, json: async () => ({ tag: "v1-previous", platforms: {
+      linux: { expandedBytes: 250 * 1024 * 1024 }, windows: { expandedBytes: 1024 }
+    } }) }) : pending.promise;
+  } });
+  const memory = get("save").querySelector('[value="memory"]');
+  assert.equal(memory.disabled, true);
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  assert.equal(calls, 2);
+  assert.equal(get("convert").disabled, true);
+  pending.resolve(validReleaseResponse());
+  await setImmediate();
+  assert.equal(memory.disabled, false);
+  assert.equal(get("convert").disabled, false);
+  assert.match(get("ready-note").textContent, /v1-test/);
 });
 
 test("selecting an input retries release information after a transient failure", async t => {
@@ -833,6 +859,58 @@ test("cancelling the ZIP picker does not report a failure", async t => {
   assert.equal(get("selection").hidden, false);
   assert.equal(get("convert").disabled, false);
 });
+
+for (const stage of ["waiting for the lock", "creating the folder"]) {
+  test(`Cancel works while folder output is ${stage}`, async t => {
+    const waiting = deferred();
+    const resume = deferred();
+    let lookups = 0;
+    let created = 0;
+    const removed = [];
+    const waitsForLock = stage === "waiting for the lock";
+    const parent = {
+      async getDirectoryHandle(name, options) {
+        lookups++;
+        if (!options?.create) throw new DOMException("Folder not found", "NotFoundError");
+        waiting.resolve();
+        await resume.promise;
+        created++;
+        return { name };
+      },
+      async removeEntry(name, options) { removed.push([name, options]); }
+    };
+    const { get, workers } = await setup(t, `cancel-folder-${stage}`, {
+      showDirectoryPicker: async () => parent,
+      navigator: { locks: { async request(_name, acquire) {
+        if (waitsForLock) {
+          waiting.resolve();
+          await resume.promise;
+        }
+        return acquire();
+      } } }
+    });
+    const original = await selected(get, workers, "first.zip");
+    get("save").value = "disk";
+    get("save").listeners.get("change")();
+    const converting = get("convert").onclick();
+    try {
+      await waiting.promise;
+      assert.equal(get("cancel").hidden, false);
+      await get("cancel").onclick();
+      assert.equal(original.terminated, true);
+      const replacement = await selected(get, workers, "replacement.zip");
+      assert.equal(replacement.terminated, false);
+    } finally {
+      resume.resolve();
+      await converting;
+    }
+    assert.equal(lookups, waitsForLock ? 0 : 2);
+    assert.equal(created, waitsForLock ? 0 : 1);
+    assert.deepEqual(removed, waitsForLock ? [] : [["first-linux", { recursive: true }]]);
+    assert.deepEqual(original.messages.map(message => message.type), ["inspect"]);
+    assert.equal(get("archive-name").textContent, "replacement.zip");
+  });
+}
 
 test("an existing output folder permits retrying with the same inspected input", async t => {
   let pickers = 0;

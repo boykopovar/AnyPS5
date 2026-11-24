@@ -10,6 +10,8 @@ python3 tools/run_report_summary.py path/to/anyps5-report.json
 
 The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. The tool writes UTF-8 to stdout. It reads the local report and does not upload it.
 
+The command exits with 0 when it prints a summary, even if the run recorded in the report failed. It exits with 2 when it cannot read or interpret the report. Use the summary's `Result` line or the JSON report's `run.exit` field to check how the game ended.
+
 Windows PowerShell 5.1 writes UTF-16LE by default when you redirect a command with `>`. To save the summary as UTF-8, let `cmd` redirect the output.
 
 ```powershell

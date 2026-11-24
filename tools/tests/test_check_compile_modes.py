@@ -265,6 +265,21 @@ class CheckCompileModeTests(unittest.TestCase):
     def test_explicit_cpp_language_is_preserved(self):
         self.check_modes((("-E", "-x", "c++"),))
 
+    def test_source_keeps_its_language_before_a_later_reset(self):
+        for compiler in self.compilers():
+            for field in ("arguments", "command"):
+                with self.subTest(compiler=compiler, field=field), tempfile.TemporaryDirectory() as name:
+                    root = Path(name).resolve()
+                    build = root / "build"
+                    build.mkdir()
+                    source = root / "unit.c"
+                    source.write_text("template <typename T> struct Wrapper { T value; };\n", encoding="utf-8")
+                    arguments = [compiler, "-x", "c++", "-c", "../unit.c", "-x", "none", "-o", "unit.o"]
+                    control = subprocess.run(arguments, cwd=build, capture_output=True, text=True, check=False)
+                    self.assertEqual(control.returncode, 0, control.stderr)
+                    result = self.run_tool(root, build, source, arguments, field)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_clang_end_of_options_preserves_mode_named_inputs(self):
         compiler = shutil.which("clang")
         if compiler is None:

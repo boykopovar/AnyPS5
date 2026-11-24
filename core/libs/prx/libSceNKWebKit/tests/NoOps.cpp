@@ -36,17 +36,11 @@ int main() {
     WKContextPreconnectToServer();
     WKContextRefreshPlugIns();
     WKContextSetAdditionalPluginsDirectory();
-    WKContextSetCanHandleHTTPSServerTrustEvaluation();
-    WKContextSetCustomWebContentServiceBundleIdentifier();
-    WKContextSetDiskCacheSpeculativeValidationEnabled();
     WKContextSetIconDatabasePath();
-    WKContextSetMaximumNumberOfProcesses();
     WKContextSetPlugInAutoStartOriginHashes();
     WKContextSetPlugInAutoStartOrigins();
     WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTime();
     WKContextSetPrimaryWebsiteDataStore();
-    WKContextSetProcessModel();
-    WKContextSetUsesNetworkProcess();
     WKCookieManagerDeleteAllCookies();
     WKCookieManagerSetHTTPCookieAcceptPolicy();
     WKIconDatabaseCheckIntegrityBeforeOpening();

@@ -469,10 +469,12 @@ $("convert").onclick = async () => {
       if (writable === null) return;
       sink = writable;
     } else if ($("save").value === "disk") {
+      $("cancel").hidden = false;
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
       const parent = await window.showDirectoryPicker({ mode: "readwrite" });
       if (currentWorker !== worker) return;
-      const transaction = await OutputDirectoryTransaction.create(parent, name, folderLocks, locale);
+      const transaction = await OutputDirectoryTransaction.create(parent, name, folderLocks, locale, () => currentWorker === worker);
+      if (!transaction) return;
       if (currentWorker !== worker) {
         await transaction.discard();
         return;
@@ -516,7 +518,8 @@ updateLocaleButton();
 update();
 lock(false);
 function loadReleaseInfo() {
-  if (release || releaseRequest) return;
+  if (releaseRequest) return;
+  release = undefined;
   const version = ++releaseVersion;
   releaseRequest = fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw localizedError(() => translate(locale, "cannotLoadReleaseInfo", { status: response.status, hint: response.status === 404 ? translate(locale, "cannotLoadReleaseInfoHint") : "" })); return response.json(); }).then(value => {
     if (version !== releaseVersion) return;

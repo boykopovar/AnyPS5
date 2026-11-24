@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -12,9 +13,11 @@ import pr_ready
 PASSING = [("conventions", "completed", "success"), ("relinker", "completed", "success")]
 
 
-def run(name, status="completed", conclusion="success", id=1):
+def run(name, status="completed", conclusion="success", id=1, app="github-actions", workflow=None):
     return {"__typename": "CheckRun", "databaseId": id, "name": name, "status": status.upper(),
-            "conclusion": conclusion.upper() if conclusion else None}
+            "conclusion": conclusion.upper() if conclusion else None,
+            "checkSuite": {"app": {"slug": app},
+                           "workflowRun": {"workflow": {"databaseId": workflow}} if workflow is not None else None}}
 
 
 def node(number=7, labels=(), draft=False, mergeable="MERGEABLE", checks=None, changes=(), requested=(),
@@ -36,6 +39,11 @@ def make(**kwargs):
 
 
 class BlockerTests(unittest.TestCase):
+    def with_contexts(self, *additional, checks=None):
+        data = node(checks=checks)
+        data["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"].extend(additional)
+        return pr_ready.blockers(pr_ready.pull(data))
+
     def test_a_pull_request_with_passing_checks_has_no_blocker(self):
         self.assertEqual(pr_ready.blockers(make()), [])
 
@@ -120,6 +128,29 @@ class BlockerTests(unittest.TestCase):
         self.assertEqual(pr_ready.blockers(pr_ready.pull(data)), [])
         data["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"][-1]["databaseId"] = 2
         self.assertEqual(pr_ready.blockers(pr_ready.pull(data)), ["failing: relinker"])
+
+    def test_same_job_name_keeps_a_failed_workflow_until_its_own_rerun(self):
+        failed = run("windows", "completed", "failure", id=4, workflow=11)
+        other = run("windows", id=5, workflow=22)
+        self.assertEqual(self.with_contexts(failed, other), ["failing: windows"])
+        self.assertEqual(self.with_contexts(failed, other, run("windows", id=6, workflow=11)), [])
+
+    def test_same_check_name_keeps_another_app_or_commit_status(self):
+        passing = run("windows", id=5, app="github-actions")
+        for failing in (run("windows", "completed", "failure", id=4, app="example-ci"),
+                        {"__typename": "StatusContext", "context": "windows", "state": "FAILURE"}):
+            with self.subTest(failing=failing):
+                self.assertEqual(self.with_contexts(failing, passing), ["failing: windows"])
+
+    def test_conventions_require_success_without_hiding_another_workflow_failure(self):
+        success = run("conventions", id=4, workflow=11)
+        for conclusion in ("skipped", "neutral"):
+            with self.subTest(conclusion=conclusion):
+                alternate = run("conventions", "completed", conclusion, id=5, workflow=22)
+                self.assertEqual(self.with_contexts(success, alternate, checks=[]), [])
+                self.assertEqual(self.with_contexts(alternate, checks=[]), ["conventions did not pass"])
+        failed = run("conventions", "completed", "failure", id=3, workflow=22)
+        self.assertEqual(self.with_contexts(failed, success, checks=[]), ["failing: conventions"])
 
     def test_commit_statuses_are_read(self):
         data = node()
@@ -229,6 +260,15 @@ class MainTests(unittest.TestCase):
                     return json.dumps({"data": {"repository": {"pullRequests": {
                         "pageInfo": {"hasNextPage": False, "endCursor": None},
                         "nodes": [{"number": n} for n in closed]}}}})
+                if "--author" in argv:
+                    author = argv[argv.index("--author") + 1]
+                    self.assertIn("user(login: $login)", args[3])
+                    self.assertIn('baseRefName: "main"', args[3])
+                    self.assertIn(f"login={author}", args)
+                    nodes = [{"repository": {"nameWithOwner": "O/R"}, **pr} for pr in prs]
+                    nodes.append({"repository": {"nameWithOwner": "elsewhere/elsewhere"}, **node(number=3, author=author)})
+                    return json.dumps({"data": {"user": {"pullRequests": {
+                        "pageInfo": {"hasNextPage": False}, "nodes": nodes}}}})
                 return json.dumps(pages.pop(0))
             if args[:2] == ("issue", "view"):
                 return current
@@ -426,6 +466,44 @@ class MainTests(unittest.TestCase):
             pr_ready.closed_with_label("o/r")
 
 
+class AuthorFetchTests(unittest.TestCase):
+    def test_author_lookup_follows_pages_and_keeps_only_the_requested_repository(self):
+        matching = {"repository": {"nameWithOwner": "Owner/Repo"}, **node(number=3)}
+        another = {"repository": {"nameWithOwner": "owner/other"}, **node(number=4)}
+        pages = [
+            {"pageInfo": {"hasNextPage": True, "endCursor": "next"}, "nodes": [another]},
+            {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [matching]},
+        ]
+        replies = [json.dumps({"data": {"user": {"pullRequests": page}}}) for page in pages]
+        with patch("pr_ready.pr_labels.gh", side_effect=replies) as gh, patch("pr_ready.fetch") as fetch:
+            self.assertEqual(pr_ready.fetch_author("owner/repo", "alice"), [make(number=3)])
+        self.assertEqual(gh.call_count, 2)
+        self.assertEqual(gh.call_args.args[-2:], ("-f", "after=next"))
+        fetch.assert_not_called()
+
+    def test_author_without_a_user_node_falls_back_to_the_repository(self):
+        missing = {"errors": [{"type": "NOT_FOUND", "path": ["user"]}]}
+        error = subprocess.CalledProcessError(1, ["gh"], output=json.dumps(missing))
+        with patch("pr_ready.pr_labels.gh", side_effect=error), patch("pr_ready.fetch", return_value=[]) as fetch:
+            self.assertEqual(pr_ready.fetch_author("owner/repo", "example[bot]"), [])
+        fetch.assert_called_once_with("owner/repo")
+
+    def test_deleted_authors_can_still_be_reported_as_ghost(self):
+        ghost = make(author=None)
+        with patch("pr_ready.pr_labels.gh") as gh, patch("pr_ready.fetch", return_value=[ghost]) as fetch:
+            self.assertEqual(pr_ready.fetch_author("owner/repo", "Ghost"), [ghost])
+        gh.assert_not_called()
+        fetch.assert_called_once_with("owner/repo")
+
+    def test_other_query_errors_do_not_start_a_repository_scan(self):
+        denied = {"errors": [{"type": "FORBIDDEN", "path": ["user"]}]}
+        error = subprocess.CalledProcessError(1, ["gh"], output=json.dumps(denied))
+        with patch("pr_ready.pr_labels.gh", side_effect=error), patch("pr_ready.fetch") as fetch:
+            with self.assertRaises(subprocess.CalledProcessError):
+                pr_ready.fetch_author("owner/repo", "alice")
+        fetch.assert_not_called()
+
+
 class PaginationTests(unittest.TestCase):
     def test_pagination_cursor_returns_each_new_cursor_once(self):
         seen = set()
@@ -442,19 +520,19 @@ class PaginationTests(unittest.TestCase):
 class CheckMappingTests(unittest.TestCase):
     def test_check_of_maps_commit_status_states(self):
         pending = pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'PENDING'})
-        self.assertEqual(pending, {'id': 0, 'name': 'ci', 'done': False, 'conclusion': None})
+        self.assertEqual(pending, {'id': 0, 'name': 'ci', 'source': ('status',), 'done': False, 'conclusion': None})
         self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'SUCCESS'})['conclusion'], 'success')
         self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'ERROR'})['conclusion'], 'failure')
 
     def test_check_of_maps_check_runs_and_refuses_non_objects(self):
         run = pr_ready.check_of({'databaseId': 7, 'name': 'build', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'})
-        self.assertEqual(run, {'id': 7, 'name': 'build', 'done': True, 'conclusion': 'success'})
+        self.assertEqual(run, {'id': 7, 'name': 'build', 'source': ('run', None, None), 'done': True, 'conclusion': 'success'})
         with self.assertRaisesRegex(ValueError, 'check is not an object'):
             pr_ready.check_of([])
 class LatestCheckTests(unittest.TestCase):
     def test_latest_checks_keeps_the_newest_run_and_drops_bot_checks(self):
-        checks = [{'name': 'a', 'id': 1}, {'name': 'a', 'id': 3}, {'name': 'b', 'id': 2}, {'name': 'labels', 'id': 9}]
-        self.assertEqual(pr_ready.latest_checks(checks), [{'name': 'a', 'id': 3}, {'name': 'b', 'id': 2}])
+        checks = [pr_ready.check_of(run(name, id=id)) for name, id in [('a', 1), ('a', 3), ('b', 2), ('labels', 9)]]
+        self.assertEqual(pr_ready.latest_checks(checks), checks[1:3])
 class LabelApplyTests(unittest.TestCase):
     def test_apply_dry_run_reports_queue_label_changes_without_writing(self):
         import contextlib, io
