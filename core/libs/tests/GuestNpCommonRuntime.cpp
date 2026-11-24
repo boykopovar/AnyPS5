@@ -208,6 +208,10 @@ void TestHeaps() {
     Require(allocatorEx.allocator.context == &memoryHeap && allocatorEx.outOfMemoryError == 0x1234,
         "the extended allocator carries the caller's error code");
     UseAllocator(allocatorEx.allocator);
+    NpAllocator memoryAllocator {};
+    sceNpMemoryHeapGetAllocator(&memoryHeap, &memoryAllocator);
+    Require(memoryAllocator.context == &memoryHeap && memoryAllocator.allocate == allocatorEx.allocator.allocate,
+        "the memory heap allocator getter writes the allocator");
     sceNpMemoryHeapDestroy(&memoryHeap);
 
     Require(memoryHeap.memory.address == nullptr && memoryHeap.heap.mspace == nullptr, "destroying clears the memory heap");
