@@ -45,6 +45,7 @@ constexpr int ErrLibAsn1 = 13;
 
 constexpr int ErrRNestedAsn1Error = 58;
 constexpr int Asn1RBadObjectHeader = 102;
+constexpr int Asn1RHeaderTooLong = 123;
 constexpr int Asn1RNotEnoughData = 142;
 constexpr int Asn1RSequenceLengthMismatch = 148;
 constexpr int Asn1RTooLong = 155;
@@ -1023,6 +1024,166 @@ void TestBioMalformedAndMultiChunkObjects() {
     PKCS8_PRIV_KEY_INFO_free_nid_postfix(refP8);
 }
 
+std::vector<unsigned char> WithLengthOctets(const std::vector<unsigned char>& der, std::size_t count) {
+    std::size_t headerSize = 2;
+    if (der[1] & 0x80) headerSize += der[1] & 0x7f;
+    const std::size_t contentSize = der.size() - headerSize;
+    std::vector<unsigned char> out{der[0], static_cast<unsigned char>(0x80 | count)};
+    for (std::size_t index = count; index > 0; --index) {
+        out.push_back(index > sizeof(std::size_t) ? 0 : static_cast<unsigned char>(contentSize >> (8 * (index - 1))));
+    }
+    out.insert(out.end(), der.begin() + static_cast<std::ptrdiff_t>(headerSize), der.end());
+    return out;
+}
+
+void TestNonMinimalLengths() {
+    const unsigned char* cursor = RsaPkcs8Der.data();
+    LibreSsl3Pkcs8PrivKeyInfo* refP8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(RsaPkcs8Der.size()));
+    Require(refP8 != nullptr);
+    LibreSsl3EvpPkey* refKey = EVP_PKCS82PKEY_nid_postfix(refP8);
+    Require(refKey != nullptr && refKey->type == RsaType);
+
+    for (const std::size_t count : {3u, 4u, 8u, 9u, 126u, 127u}) {
+        const std::vector<unsigned char> padded = WithLengthOctets(RsaPkcs8Der, count);
+        cursor = padded.data();
+        ERR_clear_error_nid_postfix();
+        LibreSsl3Pkcs8PrivKeyInfo* p8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+            nullptr, &cursor, static_cast<std::int64_t>(padded.size()));
+        Require(p8 != nullptr && cursor == padded.data() + padded.size());
+        Require(ERR_peek_error_nid_postfix() == 0);
+        std::vector<unsigned char> encoded(RsaPkcs8Der.size());
+        unsigned char* out = encoded.data();
+        Require(i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(p8, &out) == static_cast<int>(RsaPkcs8Der.size()));
+        Require(encoded == RsaPkcs8Der);
+        LibreSsl3EvpPkey* key = EVP_PKCS82PKEY_nid_postfix(p8);
+        Require(key != nullptr && key->type == RsaType);
+        CompareRsaKeys(
+            static_cast<const LibreSsl3Rsa*>(refKey->key), static_cast<const LibreSsl3Rsa*>(key->key), true);
+        EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+        PKCS8_PRIV_KEY_INFO_free_nid_postfix(p8);
+
+        LibreSsl::Bio* p8Bio = BIO_new_mem_buf_nid_postfix(padded.data(), static_cast<int>(padded.size()));
+        LibreSsl::Bio* keyBio = BIO_new_mem_buf_nid_postfix(padded.data(), static_cast<int>(padded.size()));
+        Require(p8Bio != nullptr && keyBio != nullptr);
+        ERR_clear_error_nid_postfix();
+        LibreSsl3Pkcs8PrivKeyInfo* bioP8 = d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix(p8Bio, nullptr);
+        if (count <= 6) {
+            Require(bioP8 != nullptr);
+            PKCS8_PRIV_KEY_INFO_free_nid_postfix(bioP8);
+        } else {
+            Require(bioP8 == nullptr);
+            ExpectError(ErrLibAsn1, Asn1RHeaderTooLong);
+        }
+        ERR_clear_error_nid_postfix();
+        LibreSsl3EvpPkey* bioKey = d2i_PrivateKey_bio_nid_postfix(keyBio, nullptr);
+        if (count <= 6) {
+            Require(bioKey != nullptr && bioKey->type == RsaType);
+            CompareRsaKeys(
+                static_cast<const LibreSsl3Rsa*>(refKey->key), static_cast<const LibreSsl3Rsa*>(bioKey->key), true);
+            EVP_PKEY_free_nid_disambig1_nid_postfix(bioKey);
+        } else {
+            Require(bioKey == nullptr);
+            ExpectError(ErrLibAsn1, Asn1RHeaderTooLong);
+        }
+        BIO_free_nid_postfix(keyBio);
+        BIO_free_nid_postfix(p8Bio);
+    }
+    EVP_PKEY_free_nid_disambig1_nid_postfix(refKey);
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(refP8);
+
+    cursor = P256SpkiDer.data();
+    LibreSsl3EvpPkey* refPub = d2i_PUBKEY_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(P256SpkiDer.size()));
+    Require(refPub != nullptr && refPub->type == EcType);
+    for (const std::size_t count : {1u, 2u, 127u}) {
+        const std::vector<unsigned char> padded = WithLengthOctets(P256SpkiDer, count);
+        cursor = padded.data();
+        LibreSsl3EvpPkey* pub = d2i_PUBKEY_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(padded.size()));
+        Require(pub != nullptr && pub->type == EcType && cursor == padded.data() + padded.size());
+        CompareEcKeys(static_cast<const EcKey*>(refPub->key), static_cast<const EcKey*>(pub->key), false);
+        EVP_PKEY_free_nid_disambig1_nid_postfix(pub);
+    }
+    EVP_PKEY_free_nid_disambig1_nid_postfix(refPub);
+
+    const std::vector<unsigned char> paddedRsaSpki = WithLengthOctets(RsaSpkiDer, 5);
+    cursor = paddedRsaSpki.data();
+    LibreSsl3Rsa* rsa = d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(paddedRsaSpki.size()));
+    Require(rsa != nullptr && cursor == paddedRsaSpki.data() + paddedRsaSpki.size());
+    RSA_free_nid_disambig1_nid_postfix(rsa);
+
+    const std::vector<unsigned char> innerKey = WithLengthOctets(
+        std::vector<unsigned char>(P256Pkcs8Der.begin() + 29, P256Pkcs8Der.end()), 2);
+    std::vector<unsigned char> innerOctets{0x04, 0x81, static_cast<unsigned char>(innerKey.size())};
+    innerOctets.insert(innerOctets.end(), innerKey.begin(), innerKey.end());
+    std::vector<unsigned char> nested{0x30, 0x00};
+    nested.insert(nested.end(), P256Pkcs8Der.begin() + 3, P256Pkcs8Der.begin() + 27);
+    nested.insert(nested.end(), innerOctets.begin(), innerOctets.end());
+    nested = WithLengthOctets(nested, 3);
+    cursor = P256Pkcs8Der.data();
+    LibreSsl3Pkcs8PrivKeyInfo* refEcP8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(P256Pkcs8Der.size()));
+    Require(refEcP8 != nullptr);
+    LibreSsl3EvpPkey* refEcKey = EVP_PKCS82PKEY_nid_postfix(refEcP8);
+    Require(refEcKey != nullptr && refEcKey->type == EcType);
+    cursor = nested.data();
+    LibreSsl3Pkcs8PrivKeyInfo* nestedP8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(nested.size()));
+    Require(nestedP8 != nullptr && cursor == nested.data() + nested.size());
+    LibreSsl3EvpPkey* nestedKey = EVP_PKCS82PKEY_nid_postfix(nestedP8);
+    Require(nestedKey != nullptr && nestedKey->type == EcType);
+    CompareEcKeys(static_cast<const EcKey*>(refEcKey->key), static_cast<const EcKey*>(nestedKey->key), true);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(nestedKey);
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(nestedP8);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(refEcKey);
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(refEcP8);
+
+    std::vector<unsigned char> longNull(RsaPkcs8Der);
+    Require(longNull[8] == 0x0d && longNull[20] == 0x05 && longNull[21] == 0x00);
+    longNull.insert(longNull.begin() + 21, 0x81);
+    longNull[8] = 0x0e;
+    longNull = WithLengthOctets(longNull, 2);
+    cursor = longNull.data();
+    LibreSsl3Pkcs8PrivKeyInfo* longNullP8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(longNull.size()));
+    Require(longNullP8 != nullptr && cursor == longNull.data() + longNull.size());
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(longNullP8);
+
+    std::vector<unsigned char> indefiniteNull(RsaPkcs8Der);
+    indefiniteNull[21] = 0x80;
+    cursor = indefiniteNull.data();
+    Require(d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(indefiniteNull.size())) == nullptr);
+    Require(cursor == indefiniteNull.data());
+
+    std::vector<unsigned char> hugeLength = WithLengthOctets(RsaPkcs8Der, 8);
+    hugeLength[5] = 0x01;
+    cursor = hugeLength.data();
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(hugeLength.size())) == nullptr);
+    ExpectError(ErrLibAsn1, Asn1RTooLong);
+
+    std::vector<unsigned char> nineOctets = WithLengthOctets(RsaPkcs8Der, 9);
+    nineOctets[2] = 0x01;
+    cursor = nineOctets.data();
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(nineOctets.size())) == nullptr);
+    Require(cursor == nineOctets.data());
+    ExpectError(ErrLibAsn1, Asn1RBadObjectHeader);
+
+    std::vector<unsigned char> negativeLength = WithLengthOctets(RsaPkcs8Der, 8);
+    negativeLength[2] = 0x80;
+    cursor = negativeLength.data();
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(negativeLength.size())) == nullptr);
+    Require(cursor == negativeLength.data());
+    ExpectError(ErrLibAsn1, Asn1RBadObjectHeader);
+}
+
 void TestGuestOutput() {
     const unsigned char* cursor = RsaPkcs8Der.data();
     LibreSsl3Pkcs8PrivKeyInfo* p8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
@@ -1130,6 +1291,7 @@ int main() {
     TestConsecutiveBioObjects();
     TestPkcs8AttributesRoundTrip();
     TestBioMalformedAndMultiChunkObjects();
+    TestNonMinimalLengths();
     TestGuestOutput();
     return 0;
 }
