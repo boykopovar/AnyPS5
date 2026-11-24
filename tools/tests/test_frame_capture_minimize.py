@@ -198,6 +198,17 @@ if command == 'inspect':
             self.assertIn("invalid inspection JSON", stderr.getvalue())
             self.assertFalse(output.exists())
 
+    def test_inspection_rejects_duplicate_metadata_fields(self):
+        for field, inspection in (
+            ("calls", '{"calls": [], "calls": [], "chunks": []}'),
+            ("kind", '{"calls": [{"index": 0, "kind": "end", "kind": "submit", "memory_group": null}], "chunks": []}'),
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                arguments, _, _, _ = self.empty_cli(Path(directory), filter_source=f"print({inspection!r})\n")
+                minimizer = frame_capture_minimize.Minimizer(frame_capture_minimize.parse_args(arguments), re.compile("failure"))
+                with self.assertRaisesRegex(RuntimeError, f"duplicate JSON field: '{field}'"):
+                    minimizer.inspect()
+
     def test_inspection_requires_json_object(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
