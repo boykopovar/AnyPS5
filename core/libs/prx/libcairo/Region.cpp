@@ -4,7 +4,6 @@
 #include <CairoBackend.h>
 
 #include <bit>
-#include <cerrno>
 #include <cstddef>
 
 static_assert(sizeof(CairoRectangleInt) == sizeof(cairo_rectangle_int_t));
