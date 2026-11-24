@@ -375,6 +375,14 @@ int main() {
     Require(setenv("ANYPS5_INPUT_CONFIG", configPath.string().c_str(), 1) == 0);
 #endif
 
+    const auto controllerSubsystemLive = [] { return (SDL_WasInit(SDL_INIT_GAMECONTROLLER) & SDL_INIT_GAMECONTROLLER) != 0; };
+    Require(!controllerSubsystemLive());
+    std::thread([&] {
+        PadInput owner;
+        Require(controllerSubsystemLive());
+    }).join();
+    Require(!controllerSubsystemLive());
+
     Require(SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) == 0);
 
     const int hostJoysticks = SDL_NumJoysticks();
@@ -414,6 +422,12 @@ int main() {
         Require(setenv(serialVariables[slot], value, 1) == 0);
 #endif
     }
+
+    {
+        PadInput shared;
+        Require(controllerSubsystemLive());
+    }
+    Require(controllerSubsystemLive());
 
     DisplayWindow window;
     PadInput padInput;

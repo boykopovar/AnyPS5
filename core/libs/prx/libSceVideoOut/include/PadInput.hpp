@@ -94,6 +94,7 @@ private:
     Port0Presence::Mode port0Mode;
     Port0Presence::Presence port0;
     bool padCaptured = false;
+    bool controllerSubsystem = false;
     bool hostFocusSynced = false;
     SDL_hid_device* haptics = nullptr;
     std::atomic<bool> hapticsRunning{false};
