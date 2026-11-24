@@ -11,6 +11,7 @@
 #include <exception>
 #include <initializer_list>
 #include <iostream>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -20,11 +21,14 @@ namespace {
 using AgcDriver::Graphics::Require;
 
 constexpr std::size_t Draws = 4352;
+constexpr std::size_t LargeDraws = 70000;
+constexpr std::size_t PreviousEntryCap = 65536;
 
 alignas(256) constexpr std::array<std::uint32_t, 8> VertexCode{0x7e000208u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0xf80008cfu, 0x03020100u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 8> PixelCode{0xf4000100u, 0xfa000000u, 0x7e000204u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u};
 alignas(256) std::array<std::byte, 1024> ColorMemory{};
 alignas(16) std::array<std::array<float, 4>, Draws> Sources{};
+alignas(16) std::array<std::array<float, 4>, LargeDraws> LargeSources{};
 
 struct Header {
     Shader shader{};
@@ -50,7 +54,7 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-std::vector<std::uint32_t> EveryDraw() {
+std::vector<std::uint32_t> EveryDraw(std::span<const std::array<float, 4>> sources) {
     const auto color = reinterpret_cast<std::uintptr_t>(ColorMemory.data());
     const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
     const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
@@ -83,7 +87,7 @@ std::vector<std::uint32_t> EveryDraw() {
     Append(commands, 0x79, {0x242, 4});
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
     for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});
-    for (const auto& source : Sources) {
+    for (const auto& source : sources) {
         const auto address = reinterpret_cast<std::uintptr_t>(source.data());
         Append(commands, 0x76, {0x00c, static_cast<std::uint32_t>(address)});
         Append(commands, 0x76, {0x00d, static_cast<std::uint32_t>(address >> 32u)});
@@ -103,7 +107,7 @@ void MoreDrawsThanTheOldEntryCapStayCached() {
     Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
     Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
     for (std::size_t i = 0; i < Sources.size(); ++i) Sources[i] = {static_cast<float>(i + 1) / static_cast<float>(Draws + 1), 0.0f, 0.0f, 1.0f};
-    auto commands = EveryDraw();
+    auto commands = EveryDraw(Sources);
     const auto start = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
     const auto seen = Pass(commands);
     const auto inserted = Pass(commands);
@@ -112,6 +116,17 @@ void MoreDrawsThanTheOldEntryCapStayCached() {
     Require(reused.hits - inserted.hits == Draws, "the third pass over " + std::to_string(Draws) + " distinct draws made " + std::to_string(reused.hits - inserted.hits) + " draw-cache hits and " + std::to_string(reused.evictions - inserted.evictions) + " evictions; the default entry cap does not hold them");
     Require(inserted.inserts - start.inserts >= Draws - 1, "the first two passes inserted " + std::to_string(inserted.inserts - start.inserts) + " entries for " + std::to_string(Draws) + " distinct draws (" + std::to_string(seen.inserts - start.inserts) + " in the first)");
     Require(AgcDriver::DriverDetail::Driver::Get().DrawCacheSize().entries >= Draws, "the draw cache holds " + std::to_string(AgcDriver::DriverDetail::Driver::Get().DrawCacheSize().entries) + " entries after " + std::to_string(Draws) + " distinct draws");
+}
+
+void MoreDrawsThanThePreviousEntryCapAreHeld() {
+    for (std::size_t i = 0; i < LargeSources.size(); ++i) LargeSources[i] = {static_cast<float>(i + 1) / static_cast<float>(LargeDraws + 1), 0.0f, 0.0f, 1.0f};
+    auto commands = EveryDraw(LargeSources);
+    const auto start = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    Pass(commands);
+    const auto inserted = Pass(commands);
+    const auto held = AgcDriver::DriverDetail::Driver::Get().DrawCacheSize().entries;
+    Require(inserted.evictions == start.evictions, "sighting and inserting " + std::to_string(LargeDraws) + " more distinct draws evicted " + std::to_string(inserted.evictions - start.evictions) + " entries; the default entry cap does not hold them");
+    Require(held > PreviousEntryCap, "the draw cache holds " + std::to_string(held) + " entries after " + std::to_string(Draws + LargeDraws) + " distinct draws, not more than the previous cap of " + std::to_string(PreviousEntryCap));
 }
 
 }
@@ -123,8 +138,9 @@ int main() {
             if (!device) return VulkanTestSkipped;
         }
         MoreDrawsThanTheOldEntryCapStayCached();
+        MoreDrawsThanThePreviousEntryCapAreHeld();
         AgcDriverShutdown_nid_postfix();
-        std::cout << Draws << " distinct draws stayed in the draw cache under the default entry cap\n";
+        std::cout << Draws << " distinct draws stayed in the draw cache and " << Draws + LargeDraws << " were held without eviction under the default entry cap\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
