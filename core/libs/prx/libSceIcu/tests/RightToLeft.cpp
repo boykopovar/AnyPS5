@@ -6,9 +6,18 @@
 
 namespace {
 
+using UErrorCode = std::int32_t;
+constexpr UErrorCode U_ZERO_ERROR = 0;
+constexpr UErrorCode U_ILLEGAL_ARGUMENT_ERROR = 1;
+
 struct Case {
     const char* locale;
     bool rightToLeft;
+};
+
+struct OrientationCase {
+    const char* locale;
+    ULayoutType expected;
 };
 
 void Expect(const Case& item) {
@@ -25,6 +34,15 @@ void ExpectThrows(const char* locale) {
         return;
     }
     std::fprintf(stderr, "uloc_isRightToLeft(\"%s\") did not throw\n", locale ? locale : "null");
+    std::abort();
+}
+
+void ExpectOrientation(const OrientationCase& item) {
+    UErrorCode status = U_ZERO_ERROR;
+    const auto result = uloc_getCharacterOrientation(item.locale, &status);
+    if (result == item.expected && status == U_ZERO_ERROR) return;
+    std::fprintf(stderr, "uloc_getCharacterOrientation(\"%s\") returned %d, status %d, expected %d\n",
+                 item.locale ? item.locale : "null", static_cast<int>(result), static_cast<int>(status), static_cast<int>(item.expected));
     std::abort();
 }
 
@@ -51,15 +69,16 @@ void CommonLanguages() {
              {"th", false}, {"tr", false}, {"en-u-nu-arab", false}, {"ru_Arabic", false},
              {"ara", true}, {"HEB", true}, {"fas_IR", true}, {"eng", false}, {"zho_CN", false}, {"deu", false},
              {"ar_Arabx", true}, {"ar_Ara", true}, {"ar__Arab", true}, {"ar_EG_Arab", true}, {"en_US_Arab", false},
-             {"root_US", false}, {"t", false}, {"ot", false}, {"n", false}, {"h", false}}) {
+             {"root_US", false}, {"t", false}, {"ot", false}, {"n", false}, {"h", false},
+             {"ur", true}, {"ur_Arabx", true}, {"iw", true}, {"root", false}, {"ROOT", false}, {"", false}}) {
         Expect(item);
     }
 }
 
 void LikelySubtags() {
-    for (const char* locale : {"", "ur", "ps_AF", "yi", "dv", "und", "und_", "und@x", "und.x", "root", "ROOT",
-                               "r", "e", "oo", "iw", "per", "x-foo", "i_klingon", "abcdefgh", "abcdefghijk_",
-                               "abcdefghijkl_Arab", "ur_Arabx", "@x", ".x", "_US"}) {
+    for (const char* locale : {"ps_AF", "yi", "dv", "und", "und_", "und@x", "und.x",
+                               "r", "e", "oo", "per", "x-foo", "i_klingon", "abcdefgh", "abcdefghijk_",
+                               "abcdefghijkl_Arab", "ps_Arabx", "@x", ".x", "_US"}) {
         ExpectThrows(locale);
     }
     try {
@@ -73,11 +92,63 @@ void LikelySubtags() {
     }
 }
 
+void CharacterOrientation() {
+    for (const OrientationCase& item : std::initializer_list<OrientationCase>{
+             {"en", ULOC_LAYOUT_LTR},
+             {"en_US", ULOC_LAYOUT_LTR},
+             {"fr", ULOC_LAYOUT_LTR},
+             {"ja", ULOC_LAYOUT_LTR},
+             {"zh_Hans", ULOC_LAYOUT_LTR},
+             {"hi", ULOC_LAYOUT_LTR},
+             {"sv", ULOC_LAYOUT_LTR},
+             {"und", ULOC_LAYOUT_LTR},
+             {"ar", ULOC_LAYOUT_RTL},
+             {"he", ULOC_LAYOUT_RTL},
+             {"fa", ULOC_LAYOUT_RTL},
+             {"ur", ULOC_LAYOUT_RTL},
+             {"ps_AF", ULOC_LAYOUT_RTL},
+             {"ar_EG", ULOC_LAYOUT_RTL},
+             {"iw", ULOC_LAYOUT_RTL},
+             {"sr_Latn", ULOC_LAYOUT_LTR},
+             {"sr_Arab", ULOC_LAYOUT_RTL},
+             {"az_Arab", ULOC_LAYOUT_RTL},
+             {"", ULOC_LAYOUT_LTR},
+             {nullptr, ULOC_LAYOUT_LTR}}) {
+        ExpectOrientation(item);
+    }
+    if (uloc_getCharacterOrientation("en", nullptr) != ULOC_LAYOUT_UNKNOWN) {
+        std::fprintf(stderr, "uloc_getCharacterOrientation with null status did not return ULOC_LAYOUT_UNKNOWN\n");
+        std::abort();
+    }
+    if (uloc_getCharacterOrientation("ar", nullptr) != ULOC_LAYOUT_UNKNOWN) {
+        std::fprintf(stderr, "uloc_getCharacterOrientation with null status and RTL locale did not return ULOC_LAYOUT_UNKNOWN\n");
+        std::abort();
+    }
+    UErrorCode status = U_ILLEGAL_ARGUMENT_ERROR;
+    const auto preset = uloc_getCharacterOrientation("en", &status);
+    if (preset != ULOC_LAYOUT_UNKNOWN || status != U_ILLEGAL_ARGUMENT_ERROR) {
+        std::fprintf(stderr, "uloc_getCharacterOrientation with preset failure status failed\n");
+        std::abort();
+    }
+    status = U_ILLEGAL_ARGUMENT_ERROR;
+    const auto presetRtl = uloc_getCharacterOrientation("ar", &status);
+    if (presetRtl != ULOC_LAYOUT_UNKNOWN || status != U_ILLEGAL_ARGUMENT_ERROR) {
+        std::fprintf(stderr, "uloc_getCharacterOrientation with preset failure status for RTL failed\n");
+        std::abort();
+    }
+    status = U_ZERO_ERROR;
+    if (uloc_getCharacterOrientation("abcdefghijkl_Arab", &status) != ULOC_LAYOUT_UNKNOWN) {
+        std::fprintf(stderr, "uloc_getCharacterOrientation with invalid locale did not return ULOC_LAYOUT_UNKNOWN\n");
+        std::abort();
+    }
+}
+
 }
 
 int main() {
     Scripts();
     CommonLanguages();
     LikelySubtags();
+    CharacterOrientation();
     return 0;
 }

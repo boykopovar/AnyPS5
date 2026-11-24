@@ -2,6 +2,16 @@
 
 #include "SceTypes.hpp"
 
+#ifndef ULOC_H
+enum ULayoutType : std::int32_t {
+    ULOC_LAYOUT_LTR = 0,
+    ULOC_LAYOUT_RTL = 1,
+    ULOC_LAYOUT_TTB = 2,
+    ULOC_LAYOUT_BTT = 3,
+    ULOC_LAYOUT_UNKNOWN = 4
+};
+#endif
+
 extern "C" {
 
 int APS5_VABI ubrk_close();
@@ -38,7 +48,7 @@ int APS5_VABI ucurr_openISOCurrencies();
 std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 std::int32_t APS5_VABI uloc_forLanguageTag(const char* langtag, char* localeID, std::int32_t capacity, std::int32_t* parsedLength, std::int32_t* status);
 std::int32_t APS5_VABI uloc_getBaseName(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
-int APS5_VABI uloc_getCharacterOrientation();
+ULayoutType APS5_VABI uloc_getCharacterOrientation(const char* localeId, std::int32_t* status);
 std::int32_t APS5_VABI uloc_getCountry(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 const char* APS5_VABI uloc_getDefault();
 const char* APS5_VABI uloc_getISO3Country(const char* locale);

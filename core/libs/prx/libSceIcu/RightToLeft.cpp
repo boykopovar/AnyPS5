@@ -15,11 +15,29 @@
 
 namespace {
 
-constexpr std::string_view LanguageDirections = "root-en-es-pt-zh-ja-ko-de-fr-it-ar+he+fa+ru-nl-pl-th-tr-";
-constexpr std::array<std::pair<std::string_view, std::string_view>, 17> DirectionAliases{{
+constexpr std::string_view LanguageDirections = "root-en-es-pt-zh-ja-ko-de-fr-it-ar+he+fa+ru-nl-pl-th-tr-ur+";
+constexpr std::array<std::pair<std::string_view, std::string_view>, 19> DirectionAliases{{
     {"ara", "ar"}, {"deu", "de"}, {"eng", "en"}, {"fas", "fa"}, {"fra", "fr"}, {"heb", "he"},
-    {"ita", "it"}, {"jpn", "ja"}, {"kor", "ko"}, {"nld", "nl"}, {"pol", "pl"}, {"por", "pt"},
-    {"rus", "ru"}, {"spa", "es"}, {"tha", "th"}, {"tur", "tr"}, {"zho", "zh"}
+    {"ita", "it"}, {"iw", "he"}, {"jpn", "ja"}, {"kor", "ko"}, {"nld", "nl"}, {"pol", "pl"},
+    {"por", "pt"}, {"rus", "ru"}, {"spa", "es"}, {"tha", "th"}, {"tur", "tr"}, {"urd", "ur"},
+    {"zho", "zh"}
+}};
+constexpr std::array<std::string_view, 28> RtlLanguages{{
+    "ar", "ara",
+    "fa", "fas", "per",
+    "he", "iw", "heb",
+    "ur", "urd",
+    "ps", "pus",
+    "sd", "snd",
+    "ug", "uig",
+    "ckb",
+    "ks", "kas",
+    "yi", "ji", "yid",
+    "dv", "div",
+    "syr",
+    "nqo",
+    "lrc",
+    "mzn"
 }};
 constexpr std::size_t LanguageLimit = 11;
 constexpr std::size_t ScriptLength = 4;
@@ -55,6 +73,13 @@ bool SameIgnoringCase(std::string_view left, std::string_view right) {
     return left.size() == right.size() && Lowered(left) == Lowered(right);
 }
 
+bool IsRightToLeftLanguage(std::string_view language) {
+    for (const auto& rtl : RtlLanguages) {
+        if (language == rtl) return true;
+    }
+    return false;
+}
+
 struct Subtags {
     std::string language;
     std::string script;
@@ -63,7 +88,10 @@ struct Subtags {
 
 Subtags LanguageAndScript(std::string_view locale) {
     Subtags subtags;
-    if (locale.size() == 4 && SameIgnoringCase(locale, "root")) locale.remove_prefix(4);
+    if (locale.empty() || (locale.size() == 4 && SameIgnoringCase(locale, "root"))) {
+        subtags.language = "root";
+        return subtags;
+    }
     std::size_t length = locale.size() >= 2 && (Lower(locale[0]) == 'x' || Lower(locale[0]) == 'i') &&
                          Separator(locale[1]) ? 2 : 0;
     while (length < locale.size() && !Terminator(locale[length]) && !Separator(locale[length])) {
@@ -95,6 +123,8 @@ Subtags LanguageAndScript(std::string_view locale) {
 
 }
 
+#undef uloc_getCharacterOrientation
+
 extern "C" {
 
 std::int8_t APS5_VABI uloc_isRightToLeft_nid_postfix(const char* locale) {
@@ -115,6 +145,18 @@ std::int8_t APS5_VABI uloc_isRightToLeft_nid_postfix(const char* locale) {
     }
     const auto script = static_cast<UScriptCode>(u_getPropertyValueEnum(UCHAR_SCRIPT, subtags.script.c_str()));
     return uscript_isRightToLeft(script) ? 1 : 0;
+}
+
+ULayoutType APS5_VABI uloc_getCharacterOrientation(const char* localeId, std::int32_t* status) {
+    if (!status || *status > 0) return ULOC_LAYOUT_UNKNOWN;
+    if (!localeId) localeId = Icu::DefaultLocaleName();
+    const Subtags subtags = LanguageAndScript(localeId);
+    if (subtags.failed) return ULOC_LAYOUT_UNKNOWN;
+    if (!subtags.script.empty()) {
+        const auto script = static_cast<UScriptCode>(u_getPropertyValueEnum(UCHAR_SCRIPT, subtags.script.c_str()));
+        return uscript_isRightToLeft(script) ? ULOC_LAYOUT_RTL : ULOC_LAYOUT_LTR;
+    }
+    return IsRightToLeftLanguage(subtags.language) ? ULOC_LAYOUT_RTL : ULOC_LAYOUT_LTR;
 }
 
 }
