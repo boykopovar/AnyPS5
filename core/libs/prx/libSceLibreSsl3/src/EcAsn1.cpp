@@ -1,5 +1,6 @@
 /* Derived from LibreSSL 4.0.0 (openbsd ce488b78e0bd994780569df718596b9776ff681a) src/lib/libcrypto/ec/ec_asn1.c (ec_asn1.c,v 1.53),
- * asn1/tasn_dec.c (tasn_dec.c,v 1.88), asn1/asn1_lib.c (asn1_lib.c,v 1.54) and asn1/a_object.c (a_object.c,v 1.55) */
+ * asn1/tasn_dec.c (tasn_dec.c,v 1.88), asn1/asn1_lib.c (asn1_lib.c,v 1.54) and asn1/a_object.c (a_object.c,v 1.55)
+ * https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a */
 /* $OpenBSD: ec_asn1.c,v 1.53 2024/04/17 23:24:18 tb Exp $ */
 /*
  * Written by Nils Larsch for the OpenSSL project.

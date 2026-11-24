@@ -81,10 +81,49 @@ void RejectsAnUnwritableOutputBeforeStoringAnything() {
 #endif
 }
 
+void RejectsAnUnwritableCursorBeforeStoringAnything() {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    void* base = VirtualAlloc(nullptr, page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Require(base != nullptr);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* base = mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(base != MAP_FAILED);
+#endif
+    const unsigned char bytes[]{4, 0};
+    auto** slot = static_cast<const unsigned char**>(base);
+    *slot = bytes;
+#ifdef _WIN32
+    DWORD previous;
+    Require(VirtualProtect(base, page, PAGE_READONLY, &previous));
+#else
+    Require(mprotect(base, page, PROT_READ) == 0);
+#endif
+    std::int64_t length = 123;
+    int tag = 456;
+    int tagClass = 789;
+    bool threw = false;
+    try {
+        ASN1_get_object_nid_postfix(slot, &length, &tag, &tagClass, 2);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && length == 123 && tag == 456 && tagClass == 789 && *slot == bytes);
+#ifdef _WIN32
+    VirtualFree(base, 0, MEM_RELEASE);
+#else
+    munmap(base, page);
+#endif
+}
+
 }
 
 int main() {
     RejectsAnUnwritableOutputBeforeStoringAnything();
+    RejectsAnUnwritableCursorBeforeStoringAnything();
     for (int identifier = 0; identifier < 256; ++identifier) {
         if ((identifier & 31) == 31) continue;
         for (int length = 0; length < 128; ++length) {

@@ -1,5 +1,6 @@
 /* Derived from LibreSSL (openbsd) src/lib/libcrypto/asn1/asn1_old_lib.c, asn1_lib.c and a_int.c; the licence text below is that of the
- * bundled 3rdparty/libressl-openbsd asn1_lib.c */
+ * bundled 3rdparty/libressl-openbsd asn1_lib.c
+ * https://github.com/libressl/openbsd/tree/078b3d1df8ca2011c1605cd40418c58fa0f5b143 */
 /* $OpenBSD: asn1_lib.c,v 1.45 2020/12/08 15:06:42 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
