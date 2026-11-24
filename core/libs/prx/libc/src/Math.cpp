@@ -2251,7 +2251,6 @@ double APS5_VABI erf_nid_postfix(double x) {
     const double erx = 8.45062911510467529297e-01;
     const double efx = 1.28379167095512586316e-01;
     const double efx8 = 1.02703333676410069053e+00;
-    static volatile double tiny = 1e-300;
     const std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
     const std::int32_t ix = hx & 0x7fffffff;
     if (ix >= 0x7ff00000) {
@@ -2271,7 +2270,7 @@ double APS5_VABI erf_nid_postfix(double x) {
         return hx >= 0 ? erx + ratio : -erx - ratio;
     }
     if (ix >= 0x40180000) {
-        return hx >= 0 ? 1.0 - tiny : tiny - 1.0;
+        return hx >= 0 ? 1.0 : -1.0;
     }
     const double magnitude = std::fabs(x);
     const double r = ErfTail(magnitude, ix < 0x4006db6e);
@@ -2280,7 +2279,6 @@ double APS5_VABI erf_nid_postfix(double x) {
 
 double APS5_VABI erfc_nid_postfix(double x) {
     const double erx = 8.45062911510467529297e-01;
-    static volatile double tiny = 1e-300;
     const std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
     const std::int32_t ix = hx & 0x7fffffff;
     if (ix >= 0x7ff00000) {
@@ -2306,10 +2304,13 @@ double APS5_VABI erfc_nid_postfix(double x) {
         return 1.0 + (erx + ratio);
     }
     if (ix >= 0x403c0000) {
-        return hx > 0 ? 0.0 : 2.0 - tiny;
+        if (hx > 0) return 0.0;
+        std::feraiseexcept(FE_INEXACT);
+        return 2.0;
     }
     if (hx < 0 && ix >= 0x40180000) {
-        return 2.0 - tiny;
+        std::feraiseexcept(FE_INEXACT);
+        return 2.0;
     }
     const double magnitude = std::fabs(x);
     const double r = ErfTail(magnitude, ix < 0x4006db6d);
