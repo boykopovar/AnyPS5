@@ -1,6 +1,7 @@
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libSceSaveData/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <condition_variable>
@@ -686,29 +687,6 @@ static void flush_tree(const std::string& root) {
     flush_path(root, true);
 }
 
-struct FileSwap {
-    std::vector<std::pair<std::string, std::string>> moved;
-
-    void move(const char* step, const std::string& from, const std::string& to) {
-        file_step(step, to);
-        std::filesystem::rename(from, to);
-        moved.emplace_back(from, to);
-        flush_path(std::filesystem::path(from).parent_path().string(), true);
-        flush_path(std::filesystem::path(to).parent_path().string(), true);
-    }
-
-    void undo(const char* step) {
-        while (!moved.empty()) {
-            const auto [from, to] = moved.back();
-            file_step(step, from);
-            std::filesystem::rename(to, from);
-            moved.pop_back();
-            flush_path(std::filesystem::path(from).parent_path().string(), true);
-            flush_path(std::filesystem::path(to).parent_path().string(), true);
-        }
-    }
-};
-
 static std::string backup_entry(const char* root, const std::string& dirName) {
     return std::string(root) + "/" + dirName;
 }
@@ -877,20 +855,120 @@ static void backupSave(const std::string& dirName) {
     }
 }
 
+struct RestoreFile {
+    std::string live;
+    std::string staged;
+    std::string old;
+    std::filesystem::file_type type;
+};
+
+static std::array<RestoreFile, 3> restore_files(const std::string& dirName) {
+    const std::string live = backup_entry(SAVE_DIR, dirName);
+    const std::string staged = entry_save(backup_entry(RESTORE_STAGING_DIR, dirName));
+    const std::string old = entry_save(backup_entry(RESTORE_OLD_DIR, dirName));
+    using enum std::filesystem::file_type;
+    return {{{live, staged, old, directory},
+             {param_path(live), param_path(staged), param_path(old), regular},
+             {blocks_path(live), blocks_path(staged), blocks_path(old), regular}}};
+}
+
+static bool restore_file_exists(const std::string& path, std::filesystem::file_type expected) {
+    const auto actual = plain_type(path);
+    if (actual == std::filesystem::file_type::not_found) return false;
+    if (actual != expected) {
+        throw std::filesystem::filesystem_error("SaveData: unexpected restore file type", path, std::make_error_code(std::errc::io_error));
+    }
+    return true;
+}
+
+static void move_restore_file(const char* step, const std::string& from, const std::string& to) {
+    file_step(step, to);
+    std::filesystem::rename(from, to);
+    flush_path(std::filesystem::path(from).parent_path().string(), true);
+    flush_path(std::filesystem::path(to).parent_path().string(), true);
+}
+
+static void clean_restore(const std::string& oldEntry, const std::string& stagedEntry) {
+    flush_path(stagedEntry, true);
+    remove_backup_copy("restore.cleanup", oldEntry);
+    remove_backup_copy("restore.cleanup", stagedEntry);
+}
+
+static constexpr unsigned RestoreHasNewBlocks = 8u;
+
+static unsigned read_restore_flags(const std::string& marker) {
+    std::ifstream stream(marker, std::ios::binary);
+    const int flags = stream.get();
+    if (flags < 1 || flags > 15 || (flags & 1) == 0 || stream.peek() != std::char_traits<char>::eof() || stream.bad()) {
+        throw std::filesystem::filesystem_error("SaveData: invalid restore state", marker, std::make_error_code(std::errc::io_error));
+    }
+    return static_cast<unsigned>(flags);
+}
+
+static void recover_restore(const std::string& dirName) {
+    const std::string stagedEntry = backup_entry(RESTORE_STAGING_DIR, dirName);
+    if (!restore_file_exists(stagedEntry, std::filesystem::file_type::directory)) return;
+    const std::string pending = stagedEntry + "/restore.pending";
+    const std::string committed = stagedEntry + "/restore.committed";
+    const bool hasPending = restore_file_exists(pending, std::filesystem::file_type::regular);
+    const bool hasCommitted = restore_file_exists(committed, std::filesystem::file_type::regular);
+    if (!hasPending && !hasCommitted) return;
+    if (hasPending && hasCommitted) {
+        throw std::filesystem::filesystem_error("SaveData: conflicting restore state", stagedEntry, std::make_error_code(std::errc::io_error));
+    }
+    require_plain_paths(dirName, {SAVE_DIR, RESTORE_STAGING_DIR, RESTORE_OLD_DIR});
+    const auto files = restore_files(dirName);
+    const unsigned flags = read_restore_flags(hasCommitted ? committed : pending);
+    std::array<bool, 3> restoreOld{};
+    std::array<bool, 3> unpublish{};
+    for (std::size_t i = 0; i < files.size(); ++i) {
+        const auto& file = files[i];
+        const bool live = restore_file_exists(file.live, file.type);
+        if (hasCommitted) {
+            if (live != (i < 2 || (flags & RestoreHasNewBlocks) != 0)) {
+                throw std::filesystem::filesystem_error("SaveData: incomplete committed restore", file.live, std::make_error_code(std::errc::io_error));
+            }
+        } else {
+            const bool original = (flags & (1u << i)) != 0;
+            restoreOld[i] = restore_file_exists(file.old, file.type);
+            unpublish[i] = live && (restoreOld[i] || !original);
+            if ((original && !live && !restoreOld[i]) || (!original && restoreOld[i]) ||
+                (unpublish[i] && restore_file_exists(file.staged, file.type))) {
+                throw std::filesystem::filesystem_error("SaveData: incomplete or conflicting restore files", file.live, std::make_error_code(std::errc::io_error));
+            }
+        }
+    }
+    for (std::size_t i = 0; i < files.size(); ++i) {
+        if (unpublish[i]) move_restore_file("restore.rollback", files[i].live, files[i].staged);
+        if (restoreOld[i]) move_restore_file("restore.rollback", files[i].old, files[i].live);
+    }
+    clean_restore(backup_entry(RESTORE_OLD_DIR, dirName), stagedEntry);
+}
+
+static void recover_restores() {
+    if (!restore_file_exists(RESTORE_STAGING_DIR, std::filesystem::file_type::directory)) return;
+    std::vector<std::string> names;
+    for (const auto& entry : std::filesystem::directory_iterator(RESTORE_STAGING_DIR)) {
+        names.push_back(entry.path().filename().string());
+    }
+    for (const auto& name : names) recover_restore(name);
+}
+
 static void restoreSave(const std::string& dirName) {
-    const std::string live = save_root() + "/" + dirName;
     const std::string backupEntry = backup_entry(BACKUP_DIR, dirName);
     const std::string backup = entry_save(backupEntry);
     const std::string stagedEntry = backup_entry(RESTORE_STAGING_DIR, dirName);
     const std::string oldEntry = backup_entry(RESTORE_OLD_DIR, dirName);
     const std::string staged = entry_save(stagedEntry);
-    const std::string old = entry_save(oldEntry);
     require_plain_paths(dirName, {SAVE_DIR, BACKUP_DIR, RESTORE_STAGING_DIR, RESTORE_OLD_DIR});
+    if (restore_file_exists(oldEntry, std::filesystem::file_type::directory) && !std::filesystem::is_empty(oldEntry)) {
+        throw std::filesystem::filesystem_error("SaveData: previous restore has no recovery state", oldEntry, std::make_error_code(std::errc::io_error));
+    }
     RemoveTree(stagedEntry);
-    RemoveTree(oldEntry);
     std::filesystem::create_directories(stagedEntry);
     std::filesystem::create_directories(oldEntry);
-    FileSwap swap;
+    const std::string pending = stagedEntry + "/restore.pending";
+    const std::string committed = stagedEntry + "/restore.committed";
     try {
         copy_tree("restore.copy", backup, staged);
         copy_file_step("restore.copy", param_path(backup), param_path(staged));
@@ -901,27 +979,41 @@ static void restoreSave(const std::string& dirName) {
             throw std::filesystem::filesystem_error("SaveData: the staged copy of the backup is incomplete", stagedEntry, std::make_error_code(std::errc::io_error));
         }
         flush_tree(stagedEntry);
-        swap.move("restore.aside", live, old);
-        for (const auto& [from, to] : {std::pair{param_path(live), param_path(old)}, std::pair{blocks_path(live), blocks_path(old)}}) {
-            if (std::filesystem::exists(from)) {
-                swap.move("restore.aside", from, to);
-            }
+        flush_path(RESTORE_STAGING_DIR, true);
+        flush_path(RESTORE_OLD_DIR, true);
+        flush_path(".", true);
+        const auto files = restore_files(dirName);
+        unsigned flags = restore_file_exists(files[2].staged, files[2].type) ? RestoreHasNewBlocks : 0;
+        for (std::size_t i = 0; i < files.size(); ++i) {
+            if (restore_file_exists(files[i].live, files[i].type)) flags |= 1u << i;
         }
-        swap.move("restore.place", staged, live);
-        swap.move("restore.place", param_path(staged), param_path(live));
-        if (std::filesystem::exists(blocks_path(staged))) {
-            swap.move("restore.place", blocks_path(staged), blocks_path(live));
+        const char state = static_cast<char>(flags);
+        if ((flags & 1u) == 0 || !savedata::replace_file_with(pending, &state, sizeof(state), [](const auto& temporary, const auto& destination) {
+            flush_path(temporary.string(), false);
+            return savedata::move_replacing(temporary, destination);
+        })) {
+            throw std::filesystem::filesystem_error("SaveData: cannot record restore state", pending, std::make_error_code(std::errc::io_error));
         }
+        flush_path(stagedEntry, true);
+        for (std::size_t i = 0; i < files.size(); ++i) {
+            if ((flags & (1u << i)) != 0) move_restore_file("restore.aside", files[i].live, files[i].old);
+        }
+        for (const auto& file : files) {
+            if (restore_file_exists(file.staged, file.type)) move_restore_file("restore.place", file.staged, file.live);
+        }
+        file_step("restore.commit", committed);
+        std::filesystem::rename(pending, committed);
     } catch (...) {
-        swap.undo("restore.rollback");
+        recover_restore(dirName);
         std::error_code ignored;
-        RemoveTree(stagedEntry, ignored);
         RemoveTree(oldEntry, ignored);
+        RemoveTree(stagedEntry, ignored);
         throw;
     }
-    std::error_code ignored;
-    RemoveTree(oldEntry, ignored);
-    RemoveTree(stagedEntry, ignored);
+    try {
+        clean_restore(oldEntry, stagedEntry);
+    } catch (const std::filesystem::filesystem_error&) {
+    }
 }
 
 static int deleteSave(const SaveDataDelete* del, std::string* traceDir) {
@@ -1360,6 +1452,13 @@ int APS5_VABI sceSaveDataGetSaveDataMemory2(SaveDataMemoryGet2* get_param) {
 int APS5_VABI sceSaveDataInitialize3(const void* init) {
     (void)init;
     std::lock_guard lock(g_slots_mutex);
+    if (g_initializations == 0) {
+        try {
+            recover_restores();
+        } catch (const std::filesystem::filesystem_error&) {
+            return SAVE_DATA_ERROR_INTERNAL;
+        }
+    }
     ++g_initializations;
     return SAVE_DATA_OK;
 }
@@ -2561,10 +2660,9 @@ static int restoreBackupData(const SaveDataRestoreBackupData* restore, std::stri
     if (backup != SAVE_DATA_OK) {
         return backup;
     }
-    if (!std::filesystem::is_directory(target)) {
-        return SAVE_DATA_ERROR_INTERNAL;
-    }
     try {
+        recover_restore(dirName);
+        if (!std::filesystem::is_directory(target)) return SAVE_DATA_ERROR_INTERNAL;
         restoreSave(dirName);
     } catch (const std::filesystem::filesystem_error&) {
         return SAVE_DATA_ERROR_INTERNAL;

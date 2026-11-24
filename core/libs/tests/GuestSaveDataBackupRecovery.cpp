@@ -134,10 +134,14 @@ void CheckBackup(const char* expected) {
 
 int Child(int argc, char** argv) {
     AddPathAlias_nid_no_patch("/app0", std::filesystem::current_path().string().c_str());
-    Require(sceSaveDataInitialize3(nullptr) == 0);
     const std::string operation = argv[2];
     if (argc > 7) rollbackCall = std::stoi(argv[7]);
     if (argc > 4) SetStep(argv[4], argc > 5 && std::strcmp(argv[5], "fail") == 0, argc > 6 ? std::stoi(argv[6]) : 1);
+    if (operation == "init-invalid") {
+        Require(sceSaveDataInitialize3(nullptr) == Internal);
+        return 0;
+    }
+    Require(sceSaveDataInitialize3(nullptr) == 0);
     if (operation == "backup") {
         BackUp(argv[3]);
     } else if (operation == "check") {
@@ -146,8 +150,19 @@ int Child(int argc, char** argv) {
         auto name = Name();
         SaveDataRestoreBackupData request{};
         request.dir_name = &name;
-        Require(sceSaveDataRestoreBackupData(&request) == 0);
+        Require(sceSaveDataRestoreBackupData(&request) == (failStep ? Internal : 0));
+        if (!failStep) Require(Read("_sd/kept/nested/data.bin") == std::string(argv[3]) + std::string("\0\xff\x01", 3));
+    } else if (operation == "mount") {
+        auto name = Name();
+        SaveDataMount3 request{};
+        request.user_id = 7;
+        request.dir_name = &name;
+        request.mount_mode = 2 | 32;
+        SaveDataMountResult result{};
+        Require(sceSaveDataMount3(&request, &result) == 0);
+        Require(result.mount_status == 0);
         Require(Read("_sd/kept/nested/data.bin") == std::string(argv[3]) + std::string("\0\xff\x01", 3));
+        Require(sceSaveDataUmount(&result.mount_point) == 0);
     } else if (operation == "delete") {
         auto name = Name();
         SaveDataDelete request{};
@@ -298,6 +313,66 @@ void Restore(const std::string& executable) {
     Require(Read("_sd/kept.param") == Read(Backup / "save.param"));
     Require(Read("_sd/kept.blocks") == Read(Backup / "save.blocks"));
     NoCopies();
+}
+
+void RestoreInterrupted(const std::string& executable) {
+    const auto stage = std::filesystem::path("_sd_restore_tmp/kept");
+    const auto previous = std::filesystem::path("_sd_restore_old/kept");
+    const auto prepare = [&] {
+        Start(executable);
+        Write("_sd/kept/nested/data.bin", std::string("new") + std::string("\0\xff\x01", 3));
+        auto param = Read("_sd/kept.param");
+        param.replace(0, 3, "new");
+        Write("_sd/kept.param", param);
+        Write("_sd/kept.blocks", "123\n");
+    };
+    const auto clean = [&] {
+        Require(!std::filesystem::exists(stage));
+        Require(!std::filesystem::exists(previous));
+    };
+
+    for (const char* step : {"restore.aside", "restore.place"}) {
+        for (const char* count : {"2", "3"}) {
+            prepare();
+            const auto live = Tree("_sd/kept");
+            const auto param = Read("_sd/kept.param");
+            const auto blocks = Read("_sd/kept.blocks");
+            Require(Run(executable, {"restore", "old", step, "stop", count}) == Interrupted);
+            Require(Run(executable, {"mount", "new"}) == 0);
+            Require(Tree("_sd/kept") == live);
+            Require(Read("_sd/kept.param") == param);
+            Require(Read("_sd/kept.blocks") == blocks);
+            clean();
+        }
+    }
+
+    prepare();
+    Require(std::filesystem::remove("_sd/kept.param"));
+    Require(std::filesystem::remove("_sd/kept.blocks"));
+    Require(Run(executable, {"restore", "old", "restore.commit"}) == Interrupted);
+    Require(Run(executable, {"mount", "new", "restore.rollback"}) == Interrupted);
+    Require(Run(executable, {"mount", "new"}) == 0);
+    Require(!std::filesystem::exists("_sd/kept.param"));
+    Require(!std::filesystem::exists("_sd/kept.blocks"));
+    clean();
+
+    prepare();
+    Require(Run(executable, {"restore", "old", "restore.place", "fail", "2"}) == 0);
+    Require(Run(executable, {"mount", "new"}) == 0);
+    clean();
+    Require(Run(executable, {"restore", "old", "restore.cleanup"}) == Interrupted);
+    const auto retained = Tree(previous);
+    Require(!retained.empty());
+    const auto restoredParam = Read("_sd/kept.param");
+    Require(std::filesystem::remove("_sd/kept.param"));
+    Require(Run(executable, {"init-invalid", "unused"}) == 0);
+    Require(Tree(previous) == retained);
+    Write("_sd/kept.param", restoredParam);
+    Require(Run(executable, {"mount", "old"}) == 0);
+    Require(Tree("_sd/kept") == Tree(Backup / "save"));
+    Require(Read("_sd/kept.param") == Read(Backup / "save.param"));
+    Require(Read("_sd/kept.blocks") == Read(Backup / "save.blocks"));
+    clean();
 }
 
 void Delete(const std::string& executable) {
@@ -508,6 +583,7 @@ int main(int argc, char** argv) {
         else if (operation == "failure") RecoveryFailure(executable);
         else if (operation == "retry") Retry(executable);
         else if (operation == "restore") Restore(executable);
+        else if (operation == "restore_interrupted") RestoreInterrupted(executable);
         else if (operation == "delete") Delete(executable);
 #ifndef _WIN32
         else if (operation == "delete_failure") {
