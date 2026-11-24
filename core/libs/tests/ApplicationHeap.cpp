@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <chrono>
@@ -424,6 +425,31 @@ int main(int argc, char** argv) {
         for (unsigned i = 0; i < 14000; ++i) require(shrunken[i] == 0x33);
         for (unsigned i = 14000; i < 20000; ++i) require(shrunken[i] == 0);
         ApplicationHeapFree_nid_no_patch(shrunken);
+        for (const auto bytes : std::array<std::size_t, 4>{0, 1, 63, 65537}) {
+            auto* allocation = static_cast<unsigned char*>(malloc_nid_postfix(bytes));
+            require(allocation != nullptr);
+            {
+                const auto readable = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+                const auto all = GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
+                const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+                require(malloc_usable_size_nid_postfix(allocation) == bytes);
+                require(malloc_usable_size_nid_postfix(nullptr) == 0);
+                reject([allocation] { malloc_usable_size_nid_postfix(allocation + 1); });
+                require(GuestAllocations::GuestAllocationsGeneration_nid_postfix() == generation);
+                require(GuestAllocations::GuestAllocationsAcquire_nid_postfix().Snapshot() == readable.Snapshot());
+                require(GuestAllocations::GuestAllocationsAcquireAll_nid_postfix().Snapshot() == all.Snapshot());
+            }
+            free_nid_postfix(allocation);
+            {
+                const auto readable = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+                const auto all = GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
+                const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+                reject([allocation] { malloc_usable_size_nid_postfix(allocation); });
+                require(GuestAllocations::GuestAllocationsGeneration_nid_postfix() == generation);
+                require(GuestAllocations::GuestAllocationsAcquire_nid_postfix().Snapshot() == readable.Snapshot());
+                require(GuestAllocations::GuestAllocationsAcquireAll_nid_postfix().Snapshot() == all.Snapshot());
+            }
+        }
         for (std::size_t alignment : {16, 64, 4096}) {
             auto* aligned = ApplicationHeapAlign_nid_no_patch(alignment, 37);
             require(reinterpret_cast<std::uintptr_t>(aligned) % alignment == 0);

@@ -406,8 +406,7 @@ void* GuestHeapRealign_nid_postfix(void* pointer, std::size_t bytes, std::size_t
 
 std::size_t GuestHeapUsableSize_nid_postfix(const void* pointer) {
     if (pointer == nullptr) return 0;
-    GuestAllocations::Mutation mutation;
-    return mutation.Find(pointer).bytes;
+    return GuestAllocations::GuestAllocationsUsableSize_nid_no_patch(pointer);
 }
 
 void* GuestHeapAlign_nid_postfix(std::size_t alignment, std::size_t bytes) {

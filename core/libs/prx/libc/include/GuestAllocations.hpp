@@ -73,6 +73,7 @@ void GuestAllocationsGuestPages_nid_postfix(std::uintptr_t address, std::size_t 
 bool GuestAllocationsOverlaps_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
 bool GuestAllocationsForRegistered_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t)>& visit);
 Range GuestAllocationsFind_nid_postfix(void* mutation, const void* pointer);
+std::size_t GuestAllocationsUsableSize_nid_no_patch(const void* pointer);
 void GuestAllocationsRemove_nid_postfix(void* mutation, const void* pointer);
 void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu, const std::function<void()>& apply);
 void GuestAllocationsProtectGpu_nid_no_patch(void* mutation, const void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu, bool gpuWritable, const std::function<void()>& apply);
