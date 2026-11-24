@@ -90,6 +90,29 @@ static void TestSigignoreRejectsKillAndStop() {
     Require(*__error_nid_postfix() == GuestEinval);
 }
 
+static void TestBitPositionsAndOtherSignals() {
+    Require(sighold_nid_postfix(128) == 0);
+    GuestSignalSet mask{};
+    Require(sigprocmask_nid_postfix(1, nullptr, &mask) == 0);
+    Require((mask.bits[3] & (1u << 31)) != 0);
+    Require(sigrelse_nid_postfix(128) == 0);
+
+    Require(sighold_nid_postfix(33) == 0);
+    Require(sigprocmask_nid_postfix(1, nullptr, &mask) == 0);
+    Require((mask.bits[1] & 1u) != 0 && (mask.bits[0] & 1u) == 0);
+    Require(sigrelse_nid_postfix(33) == 0);
+
+    GuestSignalSet other{};
+    other.bits[0] = 1u << 30;
+    Require(sigprocmask_nid_postfix(1, &other, nullptr) == 0);
+    Require(sighold_nid_postfix(GuestSigusr) == 0);
+    Require(sigprocmask_nid_postfix(1, nullptr, &mask) == 0);
+    Require((mask.bits[0] & (1u << 30)) != 0 && (mask.bits[0] & (1u << 29)) != 0);
+    Require(sigrelse_nid_postfix(GuestSigusr) == 0);
+    GuestSignalSet clear{};
+    Require(sigprocmask_nid_postfix(3, &clear, nullptr) == 0);
+}
+
 int main() {
     TestInvalidSignalsRejected();
     TestSigholdBlocksAndSigrelseUnblocks();
@@ -97,5 +120,6 @@ int main() {
     TestUnblockableSignalsStayUnblocked();
     TestSigignoreSetsIgnoreDisposition();
     TestSigignoreRejectsKillAndStop();
+    TestBitPositionsAndOtherSignals();
     return 0;
 }
