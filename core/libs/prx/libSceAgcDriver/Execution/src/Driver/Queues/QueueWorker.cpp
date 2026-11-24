@@ -19,7 +19,6 @@ namespace AgcDriver::DriverDetail {
 namespace {
 
 constexpr auto IdleResultsQuietPeriod = std::chrono::milliseconds(50);
-constexpr auto IdleStoreResumeWait = std::chrono::milliseconds(2);
 
 }
 
@@ -250,9 +249,10 @@ void Driver::run(std::uint32_t id) noexcept {
                         }
                         lock.lock();
                         if (storeYielded) {
-                            const auto clear = [&] { return ready() || GuestMemory::GpuMutex().Waiters() == 0; };
-                            const auto resumeAt = std::chrono::steady_clock::now() + IdleStoreResumeWait;
-                            while (!clear() && std::chrono::steady_clock::now() < resumeAt) poll(clear);
+                            const auto handedOff = [&] {
+                                return ready() || completionsPending() || idleEpoch.load(std::memory_order_acquire) != idleEpochAtCheck || GuestMemory::GpuMutex().Waiters() == 0;
+                            };
+                            while (!handedOff()) poll(handedOff);
                         }
                         if (ready()) break;
                         const bool epochMoved = idleEpoch.load(std::memory_order_acquire) != idleEpochAtCheck;

@@ -115,6 +115,58 @@ int main() {
         for (auto& store : stores) submit(store);
         check(within([&] { return pending() && dormant(); }, std::chrono::seconds(2)), "queue 0 did not wait over the pending storage results");
 
+        auto& gpuMutex = AgcDriver::GuestMemory::GpuMutex();
+        bool handedOff = false;
+        for (int round = 0; round < 40 && !handedOff; ++round) {
+            if (!pending()) {
+                for (auto& store : stores) submit(store);
+                check(within([&] { return pending() && dormant(); }, std::chrono::seconds(2)), "queue 0 did not wait over storage results submitted again");
+            }
+            gpuMutex.lock();
+            if (!pending() || !within([&] { return gpuMutex.Waiters() == 1; }, std::chrono::milliseconds(300))) {
+                gpuMutex.unlock();
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                continue;
+            }
+            std::atomic<int> first{-1};
+            std::atomic<std::uint32_t> waitersAtFirst{0};
+            std::atomic<bool> pendingAtFirst{false};
+            std::atomic<bool> release{false};
+            const auto blocked = [&](int index) {
+                std::lock_guard held(gpuMutex);
+                int none = -1;
+                if (!first.compare_exchange_strong(none, index)) return;
+                pendingAtFirst.store(pending(), std::memory_order_relaxed);
+                waitersAtFirst.store(gpuMutex.Waiters(), std::memory_order_release);
+                while (!release.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::microseconds(100));
+            };
+            std::thread one(blocked, 0);
+            std::thread two(blocked, 1);
+            const bool counted = within([&] { return gpuMutex.Waiters() == 3; }, std::chrono::seconds(2));
+            gpuMutex.unlock();
+            const bool held = within([&] { return waitersAtFirst.load(std::memory_order_acquire) != 0; }, std::chrono::seconds(2));
+            bool returned = false;
+            const bool yielded = counted && held && waitersAtFirst.load() == 1 && pendingAtFirst.load();
+            if (yielded) {
+                const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(25);
+                while (!returned && std::chrono::steady_clock::now() < until) {
+                    returned = gpuMutex.Waiters() > 1;
+                    std::this_thread::sleep_for(std::chrono::microseconds(200));
+                }
+            }
+            release.store(true, std::memory_order_release);
+            one.join();
+            two.join();
+            check(counted, "queue 0 and two threads were not all counted as blocked on the GPU mutex");
+            check(held, "neither blocked thread took the GPU mutex after it was released");
+            check(!returned, "queue 0 came back for the GPU mutex while a thread blocked on it since before the store yielded had not had it");
+            handedOff = yielded;
+        }
+        check(handedOff, "queue 0 never stored a piece ahead of two threads blocked on the GPU mutex");
+        check(within([&] { return !pending(); }, std::chrono::seconds(2)), "the idle store did not resume after the blocked threads had the GPU mutex");
+        for (auto& store : stores) submit(store);
+        check(within([&] { return pending() && dormant(); }, std::chrono::seconds(2)), "queue 0 did not wait over the storage results submitted for the contended store");
+
         std::atomic<bool> contend{true};
         std::atomic<std::uint64_t> holds{0};
         std::thread contender([&] {
