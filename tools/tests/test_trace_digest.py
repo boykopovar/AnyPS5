@@ -367,6 +367,15 @@ class TraceJsonNestingTests(unittest.TestCase):
 
 class TraceDigestTests(unittest.TestCase):
 
+    def test_mixed_case_gzip_suffix_preserves_trace_and_summary_loading(self):
+        trace = Path(self.directory.name) / "capture.json.Gz"
+        trace.write_bytes(gzip.compress(json.dumps({"traceEvents": EVENTS}).encode("utf-8")))
+        summary = trace.with_name("aps5-summary.jsonl")
+        record = {**SUMMARY, "trace": "capture.json"}
+        summary.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        self.assertEqual(trace_digest.load_trace(trace).presents, trace_digest.Trace(EVENTS).presents)
+        self.assertEqual(trace_digest.load_summary(None, trace), record)
+
     def test_summary_symlink_loop_is_reported_without_traceback(self):
         loop = Path(self.directory.name) / "loop.jsonl"
         try:
