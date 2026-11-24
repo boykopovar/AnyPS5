@@ -248,6 +248,26 @@ void UnwindBounds() {
         Require(!LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange accepted a 'z' augmentation size exceeding cieEnd");
     }
 
+    const LibcUnwind::Byte fdePastSection[36] = {
+        0x10, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 'z', 'R', 0x00,
+        0x01, 0x78, 0x10, 0x01,
+        0x03, 0x0c, 0x07, 0x08,
+        0x20, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00,
+        0x00, 0x10, 0x00, 0x00,
+        0x10, 0x00, 0x00, 0x00
+    };
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup query{0x1000, &fdePastSection[20], 0, 0, 0, fdePastSection + sizeof(fdePastSection)};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange accepted an FDE exceeding fdeEnd");
+    }
+
     {
         LibcUnwind::Frame frame{};
         frame.start = 0x1000;
@@ -287,7 +307,7 @@ void UnwindBounds() {
     };
     {
         LibcUnwind::Frame frame{};
-        LibcUnwind::Lookup query{0x1010, &validEhFrame[20]};
+        LibcUnwind::Lookup query{0x1010, &validEhFrame[20], 0, 0, 0, validEhFrame + sizeof(validEhFrame)};
         const LibcUnwind::Byte* p = nullptr;
         const char* augmentation = nullptr;
         LibcUnwind::Byte lsdaEncoding = 0;

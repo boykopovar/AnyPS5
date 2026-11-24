@@ -21,7 +21,7 @@ public:
     using Registers = std::array<Word, 17>;
     enum class Step { Stepped, NoRecord, Failed };
 
-    DwarfFrames(Word base, Word end, const Byte* frames, const Byte* framesEnd) : base(base), end(end) {
+    DwarfFrames(Word base, Word end, const Byte* frames, const Byte* framesEnd) : base(base), end(end), framesEnd(framesEnd) {
         for (const Byte* p = frames; p != nullptr && framesEnd - p >= 8;) {
             const Byte* record = p;
             const auto length = LibcUnwind::Read<std::uint32_t>(p);
@@ -33,7 +33,7 @@ public:
                 const Byte* cursor = nullptr;
                 const char* augmentation = nullptr;
                 Byte lsdaEncoding = 0;
-                if (LibcUnwind::DecodeRange(frame, LibcUnwind::Lookup{0, record}, cursor, augmentation, lsdaEncoding)) index.emplace_back(frame.start, record);
+                if (LibcUnwind::DecodeRange(frame, LibcUnwind::Lookup{0, record, 0, 0, 0, framesEnd}, cursor, augmentation, lsdaEncoding)) index.emplace_back(frame.start, record);
             }
             p = next;
         }
@@ -102,7 +102,7 @@ private:
         const Byte* p = nullptr;
         const char* augmentation = nullptr;
         Byte lsdaEncoding = 0;
-        if (!LibcUnwind::DecodeRange(frame, LibcUnwind::Lookup{pc, std::prev(found)->second}, p, augmentation, lsdaEncoding)) return Step::Failed;
+        if (!LibcUnwind::DecodeRange(frame, LibcUnwind::Lookup{pc, std::prev(found)->second, 0, 0, 0, framesEnd}, p, augmentation, lsdaEncoding)) return Step::Failed;
         if (pc < frame.start || pc - frame.start >= frame.length) return Step::NoRecord;
         if (*augmentation == 'z') {
             const auto size = LibcUnwind::Uleb(p);
@@ -114,6 +114,7 @@ private:
 
     Word base;
     Word end;
+    const Byte* framesEnd {};
     std::vector<std::pair<Word, const Byte*>> index;
 };
 

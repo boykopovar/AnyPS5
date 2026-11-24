@@ -300,7 +300,7 @@ const FrameIndex& IndexFrames(const ImageKey& key, const Byte* begin, const Byte
             const Byte* cursor;
             const char* augmentation;
             Byte lsdaEncoding;
-            if (DecodeRange(candidate, Lookup {0, record}, cursor, augmentation, lsdaEncoding))
+            if (DecodeRange(candidate, Lookup {0, record, 0, 0, 0, end}, cursor, augmentation, lsdaEncoding))
                 index.emplace_back(candidate.start, record);
         }
         p = next;
