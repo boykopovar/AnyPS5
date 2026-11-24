@@ -439,6 +439,16 @@ static void CheckExtControllerInformation(int handle) {
     for (const int invalid : {-9999, -100, -2, -1, 0, handle + 1, 9999}) {
         Require(scePadGetExtControllerInformation(invalid, extended.data()) == PAD_ERROR_INVALID_HANDLE);
     }
+    const int special = scePadOpen_nid_postfix(0x20000099, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
+    Require(special > 0);
+    extended.fill(0x5a);
+    Require(scePadGetExtControllerInformation(special, extended.data()) == PAD_OK);
+    for (std::size_t i = 0; i < 0x2c; ++i) Require(extended[i] == 0);
+    for (std::size_t i = 0x2c; i < extended.size(); ++i) Require(extended[i] == 0x5a);
+    errno = 71;
+    Require(scePadGetExtControllerInformation(special, reinterpret_cast<void*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    Require(scePadClose_nid_postfix(special) == PAD_OK);
 }
 
 static bool LightBarValid() {
