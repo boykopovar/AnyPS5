@@ -2115,9 +2115,13 @@ static void CheckEpollClosedStream() {
 
 #ifdef __linux__
 static std::atomic<std::int64_t> sendWhileConnectStarts{0};
+static std::atomic<int> connectWhileConnectStarts{0};
 
 static void SendWhileConnectStarts(int socket) {
+    GuestSceNetTest::SetConnectStartForTests_nid_no_patch(nullptr);
     sendWhileConnectStarts = sceNetSend(socket, "x", 1, 0);
+    const std::array<std::uint8_t, 16> multicast{16, 2, 0x1f, 0x90, 224, 0, 0, 1};
+    connectWhileConnectStarts = sceNetConnect(socket, multicast.data(), multicast.size());
 }
 
 static void CheckSendDuringConnect() {
@@ -2135,11 +2139,13 @@ static void CheckSendDuringConnect() {
         Require(client >= 0 && sceNetSetsockopt(client, 0xffff, 0x1200, &on, sizeof(on)) == 0);
         clients.push_back(client);
         sendWhileConnectStarts = 0;
+        connectWhileConnectStarts = 0;
         GuestSceNetTest::SetConnectStartForTests_nid_no_patch(SendWhileConnectStarts);
         const int connected = sceNetConnect(client, address.data(), address.size());
         const int connectError = *sceNetErrnoLoc();
         GuestSceNetTest::SetConnectStartForTests_nid_no_patch(nullptr);
         Require(sendWhileConnectStarts == static_cast<int>(0x80410100u | 57));
+        Require(connectWhileConnectStarts < 0);
         if (connected == 0) continue;
         Require(connectError == 36);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));

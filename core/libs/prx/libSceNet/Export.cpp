@@ -363,7 +363,7 @@ struct Sock {
     bool connectRefused = false;
 #endif
 #ifdef __linux__
-    bool connectStarting = false;
+    int connectsInHost = 0;
     std::uint64_t connectAttempt = 0;
 #endif
     bool aborted = false;
@@ -1657,26 +1657,36 @@ static void note_connect_pending(int s, const Sock& socket, bool pending) {
 #endif
 
 #ifdef __linux__
-static std::uint64_t begin_connect(int s, const Sock& socket) {
-    std::lock_guard lock(g_mutex);
-    const auto current = g_socks.find(s);
-    if (current == g_socks.end() || current->second.native != socket.native) return 0;
-    current->second.connectPending = true;
-    current->second.connectStarting = true;
-    return ++current->second.connectAttempt;
+static bool host_connecting(int native) {
+    tcp_info info{};
+    socklen_t size = sizeof(info);
+    return ::getsockopt(native, IPPROTO_TCP, TCP_INFO, &info, &size) == 0 && info.tcpi_state == TCP_SYN_SENT;
 }
 
-static void end_connect(int s, const Sock& socket, std::uint64_t attempt, bool pending) {
+static bool begin_connect(int s, const Sock& socket) {
     std::lock_guard lock(g_mutex);
     const auto current = g_socks.find(s);
-    if (current == g_socks.end() || current->second.native != socket.native || current->second.connectAttempt != attempt) return;
-    current->second.connectStarting = false;
-    current->second.connectPending = pending;
+    if (current == g_socks.end() || current->second.native != socket.native) return false;
+    current->second.connectPending = true;
+    ++current->second.connectsInHost;
+    ++current->second.connectAttempt;
+    return true;
+}
+
+static void end_connect(int s, const Sock& socket, bool pending) {
+    const int saved = errno;
+    std::lock_guard lock(g_mutex);
+    const auto current = g_socks.find(s);
+    if (current != g_socks.end() && current->second.native == socket.native) {
+        if (current->second.connectsInHost > 0) --current->second.connectsInHost;
+        current->second.connectPending = pending || current->second.connectsInHost > 0 || host_connecting(socket.native->value);
+    }
+    errno = saved;
 }
 
 static bool send_before_connect(int s, const Sock& socket) {
     if (!socket.connectPending) return false;
-    if (socket.connectStarting) return true;
+    if (socket.connectsInHost > 0) return true;
     pollfd entry{socket.native->value, POLLOUT, 0};
     int ready;
     do ready = ::poll(&entry, 1, 0); while (ready < 0 && errno == EINTR);
@@ -1685,7 +1695,7 @@ static bool send_before_connect(int s, const Sock& socket) {
     std::lock_guard lock(g_mutex);
     const auto current = g_socks.find(s);
     if (current != g_socks.end() && current->second.native == socket.native && current->second.connectAttempt == socket.connectAttempt &&
-        !current->second.connectStarting) current->second.connectPending = false;
+        current->second.connectsInHost == 0) current->second.connectPending = false;
     return false;
 }
 #endif
@@ -1746,8 +1756,8 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     }
 #endif
 #ifdef __linux__
-    const std::uint64_t attempt = socket.type == NET_SOCK_STREAM ? begin_connect(s, socket) : 0;
-    if (attempt != 0) {
+    const bool began = socket.type == NET_SOCK_STREAM && begin_connect(s, socket);
+    if (began) {
         if (const auto hook = g_connectStartForTests.load()) hook(s);
     }
 #endif
@@ -1755,7 +1765,7 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
 #ifdef _WIN32
         if (socket.type == NET_SOCK_STREAM) note_connect_pending(s, socket, false);
 #elif defined(__linux__)
-        if (attempt != 0) end_connect(s, socket, attempt, false);
+        if (began) end_connect(s, socket, false);
 #endif
 #if defined(_WIN32) || defined(__APPLE__)
         note_local_address(s, socket);
@@ -1790,11 +1800,7 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
 #elif defined(__APPLE__)
     if (socket.type == NET_SOCK_STREAM && errno == EISCONN && dropped_tcp_connection(socket.native->value)) return fail(NET_ECONNREFUSED);
 #elif defined(__linux__)
-    if (attempt != 0) {
-        const int saved = errno;
-        end_connect(s, socket, attempt, saved == EINPROGRESS || saved == EALREADY || saved == EINTR);
-        errno = saved;
-    }
+    if (began) end_connect(s, socket, errno == EINPROGRESS || errno == EALREADY || errno == EINTR);
 #endif
     return fail(native_error());
 }
