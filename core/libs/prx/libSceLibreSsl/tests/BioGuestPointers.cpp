@@ -96,9 +96,30 @@ std::int64_t APS5_VABI StubCallbackControl(Bio*, int, BioInfoCallback) {
     return 1;
 }
 
+int alternateMethodCalls = 0;
+const BioMethod* swappedMethod = nullptr;
+
+int APS5_VABI AlternateWrite(Bio*, const char*, int size) {
+    ++alternateMethodCalls;
+    return size;
+}
+
 std::int64_t APS5_VABI StubBioCallback(Bio*, int, const char*, int, std::int64_t, std::int64_t) {
     ++callbackCalls;
     return callbackResult;
+}
+
+std::int64_t APS5_VABI InitializingCallback(Bio* bio, int operation, const char*, int, std::int64_t, std::int64_t result) {
+    if (operation == 3) bio->initialized = 1;
+    return result;
+}
+
+std::int64_t APS5_VABI ReconfiguringCallback(Bio* bio, int operation, const char*, int, std::int64_t, std::int64_t result) {
+    if (operation == 3) {
+        bio->initialized = 1;
+        bio->method = swappedMethod;
+    }
+    return result;
 }
 
 void APS5_VABI DummyInfo(Bio*, int, const char*, int, std::int64_t, std::int64_t) {}
@@ -376,6 +397,36 @@ void CheckBioGuestPointers() {
 
     *attachedSsl = nullptr;
     Require(BIO_free_nid_postfix(forward) == 1 && BIO_free_nid_postfix(sslBio) == 1 && allocations == 0);
+
+    {
+        const BioMethod probeMethod{0x7f, "probe", StubWrite, nullptr, StubPuts, nullptr, StubControl, nullptr, StubDestroy, StubCallbackControl};
+        Bio probe{};
+        probe.method = &probeMethod;
+        probe.references = 1;
+        probe.callback = InitializingCallback;
+        methodCalls = 0;
+        Require(BIO_write_nid_postfix(&probe, "abc", 3) == 3 && methodCalls == 1 && probe.bytesWritten == 3);
+    }
+
+    {
+        const BioMethod replacementMethod{0x7f, "replacement", AlternateWrite, nullptr, StubPuts, nullptr, StubControl, nullptr, StubDestroy, StubCallbackControl};
+        Bio swapBio{};
+        swapBio.method = &customMethod;
+        swapBio.references = 1;
+        swapBio.callback = ReconfiguringCallback;
+        swappedMethod = &replacementMethod;
+        methodCalls = 0;
+        alternateMethodCalls = 0;
+        Require(BIO_write_nid_postfix(&swapBio, "abcd", 4) == 4 && methodCalls == 0 && alternateMethodCalls == 1 && swapBio.bytesWritten == 4);
+
+        swapBio.initialized = 0;
+        swapBio.method = &customMethod;
+        swappedMethod = reinterpret_cast<const BioMethod*>(noAccess);
+        alternateMethodCalls = 0;
+        ExpectRuntimeError([&] { BIO_write_nid_postfix(&swapBio, "efgh", 4); });
+        Require(alternateMethodCalls == 0 && swapBio.bytesWritten == 4);
+        swappedMethod = nullptr;
+    }
 }
 
 }
