@@ -2,6 +2,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "prx/Party/Party.hpp"
@@ -46,6 +47,13 @@ void RequireOutput(const void* output, const char* function) {
     if (!output) throw std::invalid_argument(std::string(function) + " requires its output pointers");
 }
 
+template<typename TValue>
+void WriteOutput(TValue* output, const std::type_identity_t<TValue>& value, const char* function) {
+    if (!GuestCopyOut_nid_no_patch(output, &value, sizeof(value))) {
+        throw std::invalid_argument(std::string(function) + " requires writable output pointers");
+    }
+}
+
 }
 
 extern "C" {
@@ -66,9 +74,10 @@ PartyError APS5_VABI PartyInitialize(PartyString titleId, const PartyManagerStat
     if (!titleId) throw std::invalid_argument("PartyInitialize requires a title ID");
     RequireOutput(handle, __func__);
     if (party) throw std::invalid_argument("PartyInitialize called again without PartyCleanup");
-    party = std::make_unique<PartyManagerState>();
-    party->titleId = titleId;
-    *handle = party.get();
+    auto state = std::make_unique<PartyManagerState>();
+    state->titleId = titleId;
+    WriteOutput(handle, state.get(), __func__);
+    party = std::move(state);
     return kSuccess;
 }
 
@@ -86,8 +95,8 @@ PartyError APS5_VABI PartyStartProcessingStateChanges(const PartyManagerState* h
     Live(handle, __func__);
     RequireOutput(stateChangeCount, __func__);
     RequireOutput(stateChanges, __func__);
-    *stateChangeCount = 0;
-    *stateChanges = noStateChanges;
+    WriteOutput(stateChangeCount, 0, __func__);
+    WriteOutput(stateChanges, noStateChanges, __func__);
     return kSuccess;
 }
 
@@ -112,8 +121,10 @@ PartyError APS5_VABI PartyCreateLocalUser(const PartyManagerState* handle, Party
         NotImplemented_nid_no_patch("PartyCreateLocalUser: the error code for more than 8 local users");
     }
     auto user = std::make_unique<PartyLocalUser>(PartyLocalUser{entityId, titlePlayerEntityToken});
+    state.localUsers.reserve(state.localUsers.size() + 1);
+    state.localUserHandles.reserve(state.localUserHandles.size() + 1);
+    WriteOutput(localUser, user.get(), __func__);
     state.localUserHandles.push_back(user.get());
-    *localUser = user.get();
     state.localUsers.push_back(std::move(user));
     return kSuccess;
 }
@@ -124,8 +135,8 @@ PartyError APS5_VABI PartyGetLocalUsers(const PartyManagerState* handle, std::ui
     auto& state = Live(handle, __func__);
     RequireOutput(userCount, __func__);
     RequireOutput(users, __func__);
-    *userCount = static_cast<std::uint32_t>(state.localUserHandles.size());
-    *users = state.localUserHandles.data();
+    WriteOutput(userCount, static_cast<std::uint32_t>(state.localUserHandles.size()), __func__);
+    WriteOutput(users, state.localUserHandles.data(), __func__);
     return kSuccess;
 }
 
@@ -136,8 +147,8 @@ PartyError APS5_VABI PartyGetNetworks(const PartyManagerState* handle, std::uint
     Live(handle, __func__);
     RequireOutput(networkCount, __func__);
     RequireOutput(networks, __func__);
-    *networkCount = 0;
-    *networks = noNetworks;
+    WriteOutput(networkCount, 0, __func__);
+    WriteOutput(networks, noNetworks, __func__);
     return kSuccess;
 }
 
@@ -145,7 +156,7 @@ PartyError APS5_VABI PartyLocalUserGetEntityId(const PartyLocalUser* localUser, 
     std::scoped_lock lock(mutex);
     auto& user = LiveUser(localUser, __func__);
     RequireOutput(entityId, __func__);
-    *entityId = user.entityId.c_str();
+    WriteOutput(entityId, user.entityId.c_str(), __func__);
     return kSuccess;
 }
 

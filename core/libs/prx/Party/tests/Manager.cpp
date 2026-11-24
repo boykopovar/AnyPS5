@@ -8,6 +8,12 @@
 #include <source_location>
 #include <string>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
 namespace {
 
 void Require(bool value, std::source_location location = std::source_location::current()) {
@@ -25,6 +31,38 @@ void RequireThrows(TAction action, std::source_location location = std::source_l
     }
     Require(false, location);
 }
+
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READONLY);
+        Require(page != nullptr);
+#else
+        page = mmap(nullptr, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, 4096);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    template<typename TValue>
+    TValue* As() const {
+        return static_cast<TValue*>(page);
+    }
+
+private:
+    void* page = nullptr;
+};
 
 void* APS5_VABI Allocate(std::size_t, PartyMemoryType) {
     return nullptr;
@@ -96,9 +134,32 @@ void CheckLocalUsers() {
 
 }
 
+void CheckUnwritableOutputsThrowAndChangeNothing() {
+    const ReadOnlyPage page;
+    RequireThrows([&] { PartyInitialize("ABCDE", page.As<const PartyManagerState*>()); });
+    const PartyManagerState* handle = nullptr;
+    Require(PartyInitialize("ABCDE", &handle) == 0 && handle);
+
+    const PartyStateChange* const* changes = nullptr;
+    std::uint32_t count = 7;
+    RequireThrows([&] { PartyStartProcessingStateChanges(handle, page.As<std::uint32_t>(), &changes); });
+    RequireThrows([&] { PartyGetNetworks(handle, &count, page.As<const PartyNetwork* const*>()); });
+
+    RequireThrows([&] { PartyCreateLocalUser(handle, "1234567890ABCDEF", "token", page.As<const PartyLocalUser*>()); });
+    const PartyLocalUser* const* users = nullptr;
+    Require(PartyGetLocalUsers(handle, &count, &users) == 0 && count == 0);
+    RequireThrows([&] { PartyGetLocalUsers(handle, page.As<std::uint32_t>(), &users); });
+
+    const PartyLocalUser* user = nullptr;
+    Require(PartyCreateLocalUser(handle, "1234567890ABCDEF", "token", &user) == 0 && user);
+    RequireThrows([&] { PartyLocalUserGetEntityId(user, page.As<PartyString>()); });
+    Require(PartyCleanup(handle) == 0);
+}
+
 int main() {
     CheckMemoryCallbacksComeFirstAndOnce();
     CheckLifecycle();
     CheckLocalUsers();
+    CheckUnwritableOutputsThrowAndChangeNothing();
     return 0;
 }
