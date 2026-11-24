@@ -5101,7 +5101,8 @@ void NoteDepthRenderControl(const DepthRenderControl& draw) {
 
 bool DepthRenderControlDrains(const DepthRenderControl& draw) {
     if (draw.samples == 1u) return false;
-    if ((draw.control & 0x60u) != 0u) return true;
+    if ((draw.control & 0x40u) != 0u) return true;
+    if ((draw.control & 3u) == 0u) return false;
     std::lock_guard lock(surfacesMutex());
     return std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface->active->load(std::memory_order_acquire) && surface->target.samples == draw.samples && surface->target.address == draw.address; });
 }
