@@ -802,7 +802,10 @@ class NotRunTests(unittest.TestCase):
                     self.assertNotIn("Traceback", checked.stderr)
 
 
-
+class HighRefreshLimitationTests(unittest.TestCase):
+    def test_high_refresh_limitation_matches_only_the_refresh_message(self):
+        self.assertTrue(check_skips.high_refresh_limitation('test: skipped, current display does not provide 120 Hz\n'))
+        self.assertFalse(check_skips.high_refresh_limitation('test: skipped, other reason\n'))
 
 
 class DeviceLimitationsTests(unittest.TestCase):

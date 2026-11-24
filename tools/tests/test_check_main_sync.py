@@ -426,6 +426,37 @@ class CheckMainSyncJsonTests(CheckMainSyncFixture):
         self.assertEqual(json.loads(strict.stdout)["conflicts"], [])
 
 
+class RenderTests(unittest.TestCase):
+    def data(self, conflicts):
+        return {'head': 'h' * 9, 'ahead': 1, 'behind': 2, 'base': 'main', 'mergebase': 'a' * 40, 'conflicts': conflicts, 'shared': []}
+
+    def test_render_reports_a_clean_merge(self):
+        self.assertIn('merge: clean', check_main_sync.render(self.data([])))
+
+    def test_render_lists_each_conflicting_file(self):
+        text = check_main_sync.render(self.data(['f.txt']))
+        self.assertIn('merge: CONFLICT in 1 file(s)', text)
+        self.assertIn('  f.txt', text)
+
+
+class GitListTests(unittest.TestCase):
+    def make_repo(self, directory):
+        import subprocess as sp
+        sp.run(['git', '-C', directory, 'init', '-q'], check=True)
+        (Path(directory) / 'a.txt').write_text('x', encoding='utf-8')
+        sp.run(['git', '-C', directory, 'add', 'a.txt'], check=True)
+        sp.run(['git', '-C', directory, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'base'], check=True)
+
+    def test_lines_returns_each_non_empty_output_line(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.make_repo(directory)
+            self.assertEqual(len(check_main_sync.lines(Path(directory), 'rev-list', 'HEAD')), 1)
+
+    def test_names_returns_the_tracked_file_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.make_repo(directory)
+            self.assertEqual(check_main_sync.names(Path(directory), 'ls-files', '-z'), ['a.txt'])
+
 
 class ResolveBaseTests(unittest.TestCase):
     @staticmethod

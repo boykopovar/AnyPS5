@@ -111,7 +111,7 @@ int APS5_VABI libSceLibcInternalInventory_129_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_130_nid_no_patch();
 void APS5_VABI libSceLibcInternalInventory_131_nid_no_patch(void* self);
 void APS5_VABI libSceLibcInternalInventory_132_nid_no_patch(void* self);
-int APS5_VABI libSceLibcInternalInventory_133_nid_no_patch();
+void APS5_VABI libSceLibcInternalInventory_133_nid_no_patch(void* self, const void* info, std::size_t refs);
 int APS5_VABI libSceLibcInternalInventory_134_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_135_nid_no_patch();
 void APS5_VABI libSceLibcInternalInventory_136_nid_no_patch(void* self);

@@ -230,7 +230,7 @@ def load_summary(path, trace_path):
 
 def load_stacks(path):
     stacks = []
-    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").splitlines(), 1):
+    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
         if line.startswith("#") or not line.strip():
             continue
         frames, _, count = line.rpartition(" ")
