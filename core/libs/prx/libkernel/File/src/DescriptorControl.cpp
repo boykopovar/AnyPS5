@@ -644,7 +644,9 @@ void RememberPipe(int fd, int openFlags) {
 void ShareDescriptor(int from, int to) {
     File::ShareArchivedFile(from, to);
     std::lock_guard lock(g_mutex);
-    auto copy = Materialize(from);
+    auto& source = Materialize(from);
+    if (source.pipe && !source.owner) source.owner = std::make_shared<int>(0);
+    auto copy = source;
     copy.closeOnExec = false;
     g_entries[to] = std::move(copy);
 #ifdef _WIN32
