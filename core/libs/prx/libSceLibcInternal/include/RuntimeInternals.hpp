@@ -24,7 +24,7 @@ int APS5_VABI _Daysto_nid_postfix(int year, int month);
 void APS5_VABI _Deletegloballocale_nid_postfix(void* pointer);
 void APS5_VABI _Do_call_nid_postfix(void* target);
 int APS5_VABI _Fac_tidy_nid_postfix();
-int APS5_VABI _Fail_s_nid_postfix();
+void APS5_VABI _Fail_s_nid_postfix(const char* message, void* pointer, int error);
 int APS5_VABI _Fgpos_nid_postfix();
 int APS5_VABI _Fofind_nid_postfix();
 int APS5_VABI _Fofree_nid_postfix();
