@@ -56,8 +56,9 @@ int TemporaryFile(char* pattern, int flags, int suffixLength = 0) {
     if (const int error = CopyGuestPath_nid_no_patch(pattern, copy)) return Failure(error);
     const auto length = copy.size();
     if (length == 0) return Failure(22);
-    if (suffixLength < 0 || static_cast<std::size_t>(suffixLength) > length) return Failure(22);
+    if (suffixLength < 0 || static_cast<std::size_t>(suffixLength) >= length) return Failure(22);
     const auto end = length - static_cast<std::size_t>(suffixLength);
+    if (copy.find('/', end) != std::string::npos) return Failure(22);
     auto start = end;
     while (start > 0 && copy[start - 1] == 'X') --start;
     const GuestArena::HostWrite destination(pattern + start, end - start);

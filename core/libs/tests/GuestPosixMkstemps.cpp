@@ -71,6 +71,20 @@ static void TestRejectsInvalidSuffixLength() {
     *__error_nid_postfix() = 0;
     Require(mkstemps_nid_postfix(pattern, static_cast<int>(std::strlen(pattern)) + 1) == -1);
     Require(*__error_nid_postfix() == 22);
+
+    *__error_nid_postfix() = 0;
+    Require(mkstemps_nid_postfix(pattern, static_cast<int>(std::strlen(pattern))) == -1);
+    Require(*__error_nid_postfix() == 22);
+
+    char bare[] = "badXXXXXX";
+    *__error_nid_postfix() = 0;
+    Require(mkstemps_nid_postfix(bare, static_cast<int>(std::strlen(bare))) == -1);
+    Require(*__error_nid_postfix() == 22);
+
+    char slashed[] = "/anyps5-mkstemps-test/XXXXXX/b";
+    *__error_nid_postfix() = 0;
+    Require(mkstemps_nid_postfix(slashed, 2) == -1);
+    Require(*__error_nid_postfix() == 22);
     Require(std::strcmp(pattern, "/anyps5-mkstemps-test/badXXXXXX.txt") == 0);
 }
 
