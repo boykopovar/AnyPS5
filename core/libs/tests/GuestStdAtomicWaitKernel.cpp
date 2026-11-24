@@ -160,6 +160,10 @@ int main() {
 
     Require(PreciseHundredNanosToQpcTicks(10000000000000000000ULL, 24000000ULL) == (std::numeric_limits<std::uint64_t>::max)(),
             "PreciseHundredNanosToQpcTicks saturates on wholeSeconds * freq overflow");
+    Require(PreciseHundredNanosToQpcTicks(7686143364049000000ULL, 24000000ULL) == (std::numeric_limits<std::uint64_t>::max)(),
+            "PreciseHundredNanosToQpcTicks saturates on wholeTicks + remTicks overflow");
+    Require(PreciseHundredNanosToQpcTicks(7686143364045000000ULL, 24000000ULL) == 18446744073708000000ULL,
+            "PreciseHundredNanosToQpcTicks preserves exact sum just below uint64 max");
     Require(PreciseHundredNanosToQpcTicks(9999999ULL, 2000000000000ULL) == 1999999800000ULL,
             "PreciseHundredNanosToQpcTicks avoids remHundredNanos * freq overflow");
     Require(PreciseHundredNanosToQpcTicks(0ULL, 24000000ULL) == 0ULL,
