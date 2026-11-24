@@ -442,6 +442,49 @@ void TestCanonIterData() {
         "ensureCanonIterData with null impl");
 }
 
+void TestLcccChars() {
+    const auto addLccc = _ZNK6icu_6815Normalizer2Impl12addLcccCharsERNS_10UnicodeSetE_nid_postfix;
+    const auto* nfcImpl = _ZN6icu_6818Normalizer2Factory7getImplEPKNS_11Normalizer2E_nid_postfix(Nfc());
+    auto* set = uset_openEmpty_nid_postfix();
+    Expect(set != nullptr, "uset_openEmpty");
+    uset_add_nid_postfix(set, 'A');
+    addLccc(nfcImpl, set);
+    std::int32_t members = 0;
+    for (std::int32_t c = 0; c <= MaxCodePoint; ++c) {
+        const bool expected = c == 'A' || u_getIntPropertyValue_nid_postfix(c, 0x1010) != 0;
+        ExpectAt((uset_contains_nid_postfix(set, c) != 0) == expected, "addLcccChars matches Lead_Canonical_Combining_Class", c);
+        members += expected;
+    }
+    Expect(members > 900, "addLcccChars added the code points with a lead combining class");
+    const auto count = uset_getItemCount_nid_postfix(set);
+    addLccc(nfcImpl, set);
+    ExpectInt(uset_getItemCount_nid_postfix(set), count, "addLcccChars twice adds nothing new");
+    uset_close_nid_postfix(set);
+
+    auto* compatibility = uset_openEmpty_nid_postfix();
+    addLccc(NfkcImpl(), compatibility);
+    Expect(uset_contains_nid_postfix(compatibility, 0x301) != 0 && uset_contains_nid_postfix(compatibility, 'a') == 0,
+           "addLcccChars with the NFKC data");
+    uset_close_nid_postfix(compatibility);
+
+    std::int32_t error = Success;
+    const auto* frozen = u_getBinaryPropertySet_nid_postfix(31, &error);
+    Expect(frozen != nullptr && error == Success, "White_Space set");
+    addLccc(nfcImpl, const_cast<USet*>(frozen));
+    Expect(uset_contains_nid_postfix(frozen, 0x301) == 0 && uset_contains_nid_postfix(frozen, ' ') != 0,
+           "addLcccChars leaves a frozen property set");
+    ExpectThrow<std::invalid_argument>([&] { addLccc(nfcImpl, nullptr); }, "addLcccChars with a null set");
+    ExpectThrow<std::invalid_argument>([] {
+        auto* empty = uset_openEmpty_nid_postfix();
+        try {
+            _ZNK6icu_6815Normalizer2Impl12addLcccCharsERNS_10UnicodeSetE_nid_postfix(nullptr, empty);
+        } catch (...) {
+            uset_close_nid_postfix(empty);
+            throw;
+        }
+    }, "addLcccChars with a null impl");
+}
+
 }
 
 int main() {
@@ -452,6 +495,7 @@ int main() {
     TestDecompositions();
     TestCompositionAndBoundaries();
     TestCanonIterData();
+    TestLcccChars();
     std::puts("normalizer2 accessor tests passed");
     return 0;
 }
