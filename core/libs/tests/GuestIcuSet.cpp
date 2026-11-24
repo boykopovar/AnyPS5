@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <vector>
 #ifdef _WIN32
@@ -266,6 +267,49 @@ void Union() {
     uset_close_nid_postfix(first);
 }
 
+void AdditionalOperations() {
+    static_assert(std::is_same_v<decltype(&uset_clear_nid_postfix), void (APS5_VABI*)(USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_compact_nid_postfix), void (APS5_VABI*)(USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_complement_nid_postfix), void (APS5_VABI*)(USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_complementRange_nid_postfix), void (APS5_VABI*)(USet*, std::int32_t, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_containsRange_nid_postfix), std::int8_t (APS5_VABI*)(const USet*, std::int32_t, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_equals_nid_postfix), std::int8_t (APS5_VABI*)(const USet*, const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_isEmpty_nid_postfix), std::int8_t (APS5_VABI*)(const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_remove_nid_postfix), void (APS5_VABI*)(USet*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_removeRange_nid_postfix), void (APS5_VABI*)(USet*, std::int32_t, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_retain_nid_postfix), void (APS5_VABI*)(USet*, std::int32_t, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_size_nid_postfix), std::int32_t (APS5_VABI*)(const USet*)>);
+
+    USet* set = uset_openEmpty_nid_postfix();
+    USet* equal = uset_openEmpty_nid_postfix();
+    Require(uset_isEmpty_nid_postfix(set) && uset_size_nid_postfix(set) == 0, "new set is empty");
+    uset_addRange_nid_postfix(set, 10, 20);
+    uset_addRange_nid_postfix(set, 30, 40);
+    uset_addAll_nid_postfix(equal, set);
+    Require(uset_size_nid_postfix(set) == 22, "set size counts code points");
+    Require(uset_containsRange_nid_postfix(set, 12, 19) && !uset_containsRange_nid_postfix(set, 15, 25), "range containment");
+    Require(uset_equals_nid_postfix(set, equal), "equal sets");
+    uset_compact_nid_postfix(set);
+    Require(uset_equals_nid_postfix(set, equal), "compaction preserves contents");
+    uset_remove_nid_postfix(set, 15);
+    Require(!uset_contains_nid_postfix(set, 15) && !uset_equals_nid_postfix(set, equal), "remove code point");
+    uset_removeRange_nid_postfix(set, 18, 35);
+    Require(Items(set) == Ranges{{10, 14}, {16, 17}, {36, 40}}, "remove range");
+    uset_retain_nid_postfix(set, 16, 37);
+    Require(Items(set) == Ranges{{16, 17}, {36, 37}}, "retain range");
+    uset_complementRange_nid_postfix(set, 17, 36);
+    Require(Items(set) == Ranges{{16, 16}, {18, 35}, {37, 37}}, "complement range");
+    uset_complement_nid_postfix(set);
+    Require(!uset_contains_nid_postfix(set, 16) && uset_contains_nid_postfix(set, 17) &&
+            !uset_contains_nid_postfix(set, 18) && !uset_contains_nid_postfix(set, 37) &&
+            uset_contains_nid_postfix(set, 38), "whole set complement");
+    Require(uset_size_nid_postfix(set) == CodePointLimit - 20, "complement size");
+    uset_clear_nid_postfix(set);
+    Require(uset_isEmpty_nid_postfix(set) && uset_size_nid_postfix(set) == 0, "clear set");
+    uset_close_nid_postfix(equal);
+    uset_close_nid_postfix(set);
+}
+
 void ItemAccess() {
     USet* set = uset_openEmpty_nid_postfix();
     uset_addRange_nid_postfix(set, 0x41, 0x5a);
@@ -296,6 +340,17 @@ void InvalidSets() {
     Require(Rejects([] { uset_getItemCount_nid_postfix(nullptr); }), "null set count");
     Require(Rejects([&] { uset_addAll_nid_postfix(set, nullptr); }), "null added set");
     Require(Rejects([&] { uset_addRange_nid_postfix(forged, 1, 2); }), "foreign memory");
+    Require(Rejects([] { uset_clear_nid_postfix(nullptr); }), "null set clear");
+    Require(Rejects([] { uset_compact_nid_postfix(nullptr); }), "null set compact");
+    Require(Rejects([] { uset_complement_nid_postfix(nullptr); }), "null set complement");
+    Require(Rejects([] { uset_complementRange_nid_postfix(nullptr, 1, 2); }), "null set complement range");
+    Require(Rejects([] { uset_containsRange_nid_postfix(nullptr, 1, 2); }), "null set contains range");
+    Require(Rejects([&] { uset_equals_nid_postfix(set, nullptr); }), "null set equals");
+    Require(Rejects([] { uset_isEmpty_nid_postfix(nullptr); }), "null set empty query");
+    Require(Rejects([] { uset_remove_nid_postfix(nullptr, 1); }), "null set remove");
+    Require(Rejects([] { uset_removeRange_nid_postfix(nullptr, 1, 2); }), "null set remove range");
+    Require(Rejects([] { uset_retain_nid_postfix(nullptr, 1, 2); }), "null set retain");
+    Require(Rejects([] { uset_size_nid_postfix(nullptr); }), "null set size");
     Require(Rejects([&] { uset_close_nid_postfix(forged); }), "closing foreign memory");
     uset_close_nid_postfix(nullptr);
     uset_close_nid_postfix(set);
@@ -346,6 +401,7 @@ int main() {
     SingleCodePoints();
     CodePointRanges();
     Union();
+    AdditionalOperations();
     ItemAccess();
     InvalidSets();
     Random();

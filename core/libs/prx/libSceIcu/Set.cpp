@@ -35,6 +35,11 @@ GuestSet& Check(USet* set) {
     return const_cast<GuestSet&>(Check(static_cast<const USet*>(set)));
 }
 
+USet* NativeSet(USet* set) {
+    auto& guest = Check(set);
+    return guest.borrowed ? const_cast<USet*>(guest.borrowed) : guest.owned.toUSet();
+}
+
 void WriteError(std::int32_t* error, std::int32_t value, const char* caller) {
     if (!GuestCopyOut_nid_no_patch(error, &value, sizeof(value))) NotImplemented_nid_no_patch(caller);
 }
@@ -101,9 +106,33 @@ void APS5_VABI uset_addAll_nid_postfix(USet* set, const USet* additionalSet) {
     if (!target.borrowed && set != additionalSet) target.owned.addAll(*icu::UnicodeSet::fromUSet(Icu::NativeSet(additionalSet)));
 }
 
+void APS5_VABI uset_clear_nid_postfix(USet* set) {
+    uset_clear(NativeSet(set));
+}
+
+void APS5_VABI uset_compact_nid_postfix(USet* set) {
+    uset_compact(NativeSet(set));
+}
+
+void APS5_VABI uset_complement_nid_postfix(USet* set) {
+    uset_complement(NativeSet(set));
+}
+
+void APS5_VABI uset_complementRange_nid_postfix(USet* set, std::int32_t start, std::int32_t end) {
+    uset_complementRange(NativeSet(set), start, end);
+}
+
 std::int8_t APS5_VABI uset_contains_nid_postfix(const USet* set, std::int32_t codePoint) {
     const auto* native = Icu::NativeSet(set);
     return codePoint >= 0 && codePoint <= MaximumCodePoint && uset_contains(native, codePoint);
+}
+
+std::int8_t APS5_VABI uset_containsRange_nid_postfix(const USet* set, std::int32_t start, std::int32_t end) {
+    return uset_containsRange(Icu::NativeSet(set), start, end);
+}
+
+std::int8_t APS5_VABI uset_equals_nid_postfix(const USet* first, const USet* second) {
+    return uset_equals(Icu::NativeSet(first), Icu::NativeSet(second));
 }
 
 std::int32_t APS5_VABI uset_getItemCount_nid_postfix(const USet* set) {
@@ -146,6 +175,26 @@ std::int32_t APS5_VABI uset_getItem_nid_postfix(const USet* set, std::int32_t it
     }
     if (status != incoming) WriteError(error, status, __func__);
     return length;
+}
+
+std::int8_t APS5_VABI uset_isEmpty_nid_postfix(const USet* set) {
+    return uset_isEmpty(Icu::NativeSet(set));
+}
+
+void APS5_VABI uset_remove_nid_postfix(USet* set, std::int32_t codePoint) {
+    uset_remove(NativeSet(set), codePoint);
+}
+
+void APS5_VABI uset_removeRange_nid_postfix(USet* set, std::int32_t start, std::int32_t end) {
+    uset_removeRange(NativeSet(set), start, end);
+}
+
+void APS5_VABI uset_retain_nid_postfix(USet* set, std::int32_t start, std::int32_t end) {
+    uset_retain(NativeSet(set), start, end);
+}
+
+std::int32_t APS5_VABI uset_size_nid_postfix(const USet* set) {
+    return uset_size(Icu::NativeSet(set));
 }
 
 }

@@ -15,7 +15,18 @@ void APS5_VABI uset_close_nid_postfix(USet*);
 void APS5_VABI uset_add_nid_postfix(USet*, std::int32_t);
 void APS5_VABI uset_addRange_nid_postfix(USet*, std::int32_t, std::int32_t);
 void APS5_VABI uset_addAll_nid_postfix(USet*, const USet*);
+void APS5_VABI uset_clear_nid_postfix(USet*);
+void APS5_VABI uset_compact_nid_postfix(USet*);
+void APS5_VABI uset_complement_nid_postfix(USet*);
+void APS5_VABI uset_complementRange_nid_postfix(USet*, std::int32_t, std::int32_t);
 std::int8_t APS5_VABI uset_contains_nid_postfix(const USet*, std::int32_t);
+std::int8_t APS5_VABI uset_containsRange_nid_postfix(const USet*, std::int32_t, std::int32_t);
+std::int8_t APS5_VABI uset_equals_nid_postfix(const USet*, const USet*);
 std::int32_t APS5_VABI uset_getItemCount_nid_postfix(const USet*);
 std::int32_t APS5_VABI uset_getItem_nid_postfix(const USet*, std::int32_t, std::int32_t*, std::int32_t*, char16_t*, std::int32_t, std::int32_t*);
+std::int8_t APS5_VABI uset_isEmpty_nid_postfix(const USet*);
+void APS5_VABI uset_remove_nid_postfix(USet*, std::int32_t);
+void APS5_VABI uset_removeRange_nid_postfix(USet*, std::int32_t, std::int32_t);
+void APS5_VABI uset_retain_nid_postfix(USet*, std::int32_t, std::int32_t);
+std::int32_t APS5_VABI uset_size_nid_postfix(const USet*);
 }
