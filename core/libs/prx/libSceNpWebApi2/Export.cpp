@@ -1,6 +1,5 @@
 #include "prx/libSceNpWebApi2/include/InventoryExports.hpp"
 #include "prx/libSceNpWebApi2/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -72,12 +71,6 @@ static void ForgetRequest(std::int64_t requestId) {
     g_multipartRequests.erase(requestId);
 }
 
-static int CopyGuestStringPreservingErrno(const char* source, std::size_t maximum, std::string& out) {
-    const int savedErrno = errno;
-    const int status = CopyGuestString_nid_no_patch(source, maximum, out);
-    errno = savedErrno;
-    return status;
-}
 
 extern "C" {
 
@@ -106,7 +99,7 @@ int APS5_VABI sceNpWebApi2AddWebTraceTag(std::int64_t requestId, const char* val
     (void)requestId;
     if (!value) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     std::string tagCopy;
-    if (CopyGuestStringPreservingErrno(value, 4096, tagCopy) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    if (CopyGuestString_nid_no_patch(value, 4096, tagCopy) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -389,8 +382,8 @@ int APS5_VABI sceNpWebApi2SetMultipartContentType(int64_t request_id, const char
     if (!type_name) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     std::string contentType;
     std::string boundaryCopy;
-    if (CopyGuestStringPreservingErrno(type_name, 64, contentType) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
-    if (boundary != nullptr && CopyGuestStringPreservingErrno(boundary, 64, boundaryCopy) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    if (CopyGuestString_nid_no_patch(type_name, 64, contentType) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    if (boundary != nullptr && CopyGuestString_nid_no_patch(boundary, 64, boundaryCopy) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_multipartMutex);
     const auto request = g_multipartRequests.find(request_id);
     if (request == g_multipartRequests.end()) return SCE_NP_WEBAPI2_ERROR_INVALID_HANDLE;
