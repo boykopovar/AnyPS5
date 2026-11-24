@@ -4,12 +4,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <string>
 
 #ifdef _WIN32
 #include <io.h>
+#include <windows.h>
 #else
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -50,6 +53,27 @@ std::string Dumped(const char* text, int length, int expected) {
     return output;
 }
 
+const char* ReadableEndBeforeGuard() {
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const std::size_t pageSize = system.dwPageSize;
+    auto* pages = static_cast<char*>(VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD oldProtection = 0;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &oldProtection) != 0);
+#else
+    const long hostPageSize = sysconf(_SC_PAGESIZE);
+    Require(hostPageSize > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(hostPageSize);
+    auto* pages = static_cast<char*>(mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    std::memset(pages, 'w', pageSize);
+    return pages + pageSize;
+}
+
 }
 
 int main() {
@@ -63,6 +87,10 @@ int main() {
     Require(Dumped(longText.c_str(), -1, 10000) == longText);
     Require(Dumped(nullptr, 4, 0).empty());
     Require(Dumped(reinterpret_cast<const char*>(std::uintptr_t{0x10}), 4, 0).empty());
+    const char* const guard = ReadableEndBeforeGuard();
+    Require(Dumped(guard - 7, 7, 7) == "wwwwwww");
+    Require(Dumped(guard - 7, 20, 7) == "wwwwwww");
+    Require(Dumped(guard - 7, -1, 7) == "wwwwwww");
     std::puts("sceNpDbgDumpText prints its text through checked copies");
     return 0;
 }
