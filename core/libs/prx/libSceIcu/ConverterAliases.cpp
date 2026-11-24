@@ -1,7 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
 #include "unicode/ucnv.h"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
