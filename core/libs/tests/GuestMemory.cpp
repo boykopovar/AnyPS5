@@ -44,6 +44,7 @@
 #include <time.h>
 #include <unistd.h>
 #elif defined(__APPLE__)
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 #ifdef _WIN32
@@ -3446,7 +3447,7 @@ static void CheckReadsIntoSharedWriteTracking() {
 #endif
 }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 using PageRuns = std::vector<std::pair<std::uintptr_t, std::uintptr_t>>;
 
 static bool CollectRuns(const void* base, std::size_t offset, std::size_t bytes, PageRuns& runs) {
@@ -3470,6 +3471,9 @@ static bool Written(const void* base, std::size_t bytes, PageRuns expected) {
     return false;
 }
 
+#endif
+
+#if defined(__linux__)
 static bool CollectArmedRuns(const void* base, std::size_t offset, std::size_t bytes, PageRuns& runs) {
     runs.clear();
     const auto address = reinterpret_cast<std::uintptr_t>(base);
@@ -3837,6 +3841,9 @@ static void CheckDirectMemorySharedBacking() {
     Require(sceKernelReleaseDirectMemory(right, page) == 0);
 }
 
+#endif
+
+#if defined(__linux__) || defined(__APPLE__)
 using WrittenPages = std::set<std::uintptr_t>;
 using WatchCollector = bool (*)(std::uintptr_t, std::size_t, void (*)(void*, std::uintptr_t, std::uintptr_t), void*);
 
@@ -4033,6 +4040,9 @@ static void CheckDirectMemoryWriteWatchDropsAliasOnRemap() {
     Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
 }
 
+#endif
+
+#if defined(__linux__)
 static double MapAcrossBackingsSeconds(std::int64_t phys, std::size_t backings) {
     constexpr std::size_t page = 0x4000;
     const auto threadSeconds = [] {
@@ -4989,10 +4999,14 @@ int main(int argc, char** argv) {
     CheckWriteWatch();
     CheckWriteWatchArmedCollect();
     CheckWriteWatchFreshCollect();
+#endif
+#if defined(__linux__) || defined(__APPLE__)
     CheckDirectMemoryWriteWatch();
     CheckDirectMemoryWriteWatchFollowsRemovedMappings();
     CheckDirectMemoryWriteWatchSeesWritesThroughAliases();
     CheckDirectMemoryWriteWatchDropsAliasOnRemap();
+#endif
+#if defined(__linux__)
     CheckMappingCostFollowsTheMappingCount();
     CheckDirectMemoryBackingNeedsNoFilesystem();
     CheckDirectMemorySharedBackingRuns();

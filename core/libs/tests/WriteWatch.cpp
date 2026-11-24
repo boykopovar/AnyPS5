@@ -395,6 +395,64 @@ std::uint8_t ReadOnThread(const std::uint8_t* address, std::thread::id* reader =
     return value;
 }
 
+std::set<std::uintptr_t> CollectAt(std::uintptr_t address, std::size_t bytes, std::size_t page, Region::Collector collector = &GuestWriteWatchCollect_nid_postfix) {
+    struct Sink {
+        std::size_t page;
+        std::set<std::uintptr_t> pages;
+    } sink{page, {}};
+    Require(collector(address, bytes, [](void* context, std::uintptr_t begin, std::uintptr_t end) {
+        auto& target = *static_cast<Sink*>(context);
+        for (auto at = begin; at < end; at += target.page) target.pages.insert(at);
+    }, &sink), "collection of a watched view is incomplete");
+    return sink.pages;
+}
+
+void CheckAlias() {
+    ::alarm(20);
+    Region region(4);
+    const auto page = region.page;
+    mach_vm_address_t mirror = 0;
+    vm_prot_t current = VM_PROT_NONE;
+    vm_prot_t maximum = VM_PROT_NONE;
+    Require(mach_vm_remap(mach_task_self(), &mirror, region.bytes, 0, VM_FLAGS_ANYWHERE, mach_task_self(), reinterpret_cast<mach_vm_address_t>(region.base), FALSE, &current, &maximum, VM_INHERIT_NONE) == KERN_SUCCESS, "cannot map a second view");
+    struct Unmap {
+        mach_vm_address_t address;
+        std::size_t bytes;
+        ~Unmap() {
+            GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(address), bytes);
+            mach_vm_deallocate(mach_task_self(), address, bytes);
+        }
+    } unmap{mirror, region.bytes};
+    auto* view = reinterpret_cast<volatile std::uint8_t*>(mirror);
+    const auto first = region.Address(0);
+    const auto second = static_cast<std::uintptr_t>(mirror);
+    GuestWriteWatchRegister_nid_postfix(region.base, region.bytes);
+    GuestWriteWatchRegister_nid_postfix(reinterpret_cast<const void*>(second), region.bytes);
+    static_cast<void>(CollectAt(first, region.bytes, page));
+    static_cast<void>(CollectAt(second, region.bytes, page));
+    Require(!GuestWriteWatchAlias_nid_postfix(region.base, reinterpret_cast<const void*>(second), region.bytes + page), "a view was linked past its watched range");
+    Require(GuestWriteWatchAlias_nid_postfix(region.base, reinterpret_cast<const void*>(second), region.bytes), "two watched views were not linked");
+    const auto both = [&](std::size_t index) { return std::set<std::uintptr_t>{first + index * page, second + index * page}; };
+    view[page + 3] = 1;
+    Require(region.base[page + 3] == 1, "the views do not share their pages");
+    Require(CollectAt(first, region.bytes, page) == both(1), "a store through one view is not reported at both views");
+    Require(CollectAt(second, region.bytes, page).empty(), "a store collected through one view is reported again through the other");
+    view[page + 5] = 2;
+    Require(CollectAt(first, region.bytes, page) == both(1), "a store through a view another view's collect armed again was missed");
+    region.base[2 * page] = 3;
+    Require(CollectAt(second, region.bytes, page) == both(2), "a store through the other view is not reported at both views");
+    region.base[3 * page] = 4;
+    Require(CollectAt(first, region.bytes, page, &GuestWriteWatchCollectFresh_nid_postfix).empty(), "a fresh collection reports an armed store");
+    Require(CollectAt(second, region.bytes, page, &GuestWriteWatchCollectArmed_nid_postfix) == both(3), "an armed collection misses an armed store through the other view");
+    Require(GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveTrap), "cannot set the read trap resolver");
+    Require(!GuestWriteWatchTrapReads_nid_postfix(first + page, page), "a read trap was set on a page another view reads untrapped");
+    GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(second), region.bytes);
+    region.base[3 * page + 1] = 5;
+    Require(CollectAt(first, region.bytes, page) == std::set<std::uintptr_t>{first + 3 * page}, "an unregistered view is still reported");
+    Require(GuestWriteWatchTrapReads_nid_postfix(first + page, page), "a read trap was refused after the other view left the watch");
+    ::alarm(0);
+}
+
 void CheckReadTrap() {
     ::alarm(20);
     Region region(10);
@@ -865,7 +923,7 @@ void CheckFaultAhead(bool enabled) {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected collect, fresh, armed, register, mapped, host, empty, protection, overlaps, threads, raised, fault-ahead, fault-ahead-off, read-trap, read-trap-threads, read-trap-fault, read-trap-late or read-trap-fault-bound");
+        Require(argc == 2, "expected collect, fresh, armed, register, mapped, host, empty, protection, overlaps, threads, raised, fault-ahead, fault-ahead-off, read-trap, read-trap-threads, read-trap-fault, read-trap-late, read-trap-fault-bound or alias");
         const std::string_view mode(argv[1]);
         if (mode == "collect") CheckCollect();
         else if (mode == "fresh") CheckFresh();
@@ -882,6 +940,7 @@ int main(int argc, char** argv) {
         else if (mode == "raised") CheckRaisedSignals();
         else if (mode == "fault-ahead") CheckFaultAhead(true);
         else if (mode == "fault-ahead-off") CheckFaultAhead(false);
+        else if (mode == "alias") CheckAlias();
         else if (mode == "read-trap") CheckReadTrap();
         else if (mode == "read-trap-threads") CheckReadTrapThreads();
         else if (mode == "read-trap-holder") CheckReadTrapHolder();

@@ -1048,6 +1048,12 @@ const bool g_trapsOpened = (ReadTraps::Get(), true);
 #elif defined(__APPLE__)
 class Watch {
 public:
+    struct Link {
+        std::uintptr_t begin;
+        std::uintptr_t end;
+        std::uintptr_t other;
+    };
+
     static Watch& Get() {
         static auto* watch = new Watch;
         return *watch;
@@ -1103,6 +1109,15 @@ public:
         return erase(begin, end);
     }
 
+    bool Alias(std::uintptr_t first, std::uintptr_t second, std::uintptr_t bytes) {
+        if (!_available || bytes == 0 || first == second || (first | second | bytes) % _page != 0) return false;
+        const Lock lock(_lock);
+        if (!covers(first, first + bytes) || !covers(second, second + bytes) || trapCovers(first, first + bytes) || trapCovers(second, second + bytes)) return false;
+        _links.push_back({first, first + bytes, second});
+        _links.push_back({second, second + bytes, first});
+        return true;
+    }
+
     bool Covers(std::uintptr_t begin, std::uintptr_t end) {
         if (!_available) return false;
         const Lock lock(_lock);
@@ -1128,24 +1143,52 @@ public:
         end = pageEnd(end);
         if (end <= begin) return true;
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
+        std::vector<std::uintptr_t> aliased;
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> aliasRuns;
         {
             const Lock lock(_lock);
             if (take != Take::Fresh && !covers(begin, end)) return false;
-            forEachPage(begin, end, [&](std::uintptr_t page, std::uint8_t& state) {
-                if ((state & Written) == 0) return;
+            std::vector<Link> links;
+            for (const auto& link : _links)
+                if (link.begin < end && begin < link.end) links.push_back(link);
+            const auto wanted = [&](std::uint8_t state) {
+                if ((state & Written) == 0) return false;
                 const bool fresh = (state & Fresh) != 0;
-                if ((take == Take::Armed && fresh) || (take == Take::Fresh && !fresh)) return;
+                return !((take == Take::Armed && fresh) || (take == Take::Fresh && !fresh));
+            };
+            const auto consume = [&](std::uintptr_t page, std::uint8_t& state) {
                 state &= static_cast<std::uint8_t>(~Fresh);
-                if (!runs.empty() && runs.back().second == page) runs.back().second = page + _page;
-                else runs.emplace_back(page, page + _page);
-                for (const auto& [first, last] : _hostWrites)
-                    if (page >= first && page < last) return;
+                if (inHostWrite(page)) return;
                 state &= static_cast<std::uint8_t>(~Written);
                 if ((state & PROT_WRITE) != 0) state |= Protected;
+            };
+            std::vector<std::pair<std::uintptr_t, std::uint8_t*>> views;
+            forEachPage(begin, end, [&](std::uintptr_t page, std::uint8_t& state) {
+                views.clear();
+                for (const auto& link : links)
+                    if (page >= link.begin && page < link.end)
+                        if (auto* other = pageState(link.other + (page - link.begin))) views.emplace_back(link.other + (page - link.begin), other);
+                const bool hit = wanted(state) || std::any_of(views.begin(), views.end(), [&](const auto& view) { return wanted(*view.second); });
+                if (!hit) return;
+                if (!runs.empty() && runs.back().second == page) runs.back().second = page + _page;
+                else runs.emplace_back(page, page + _page);
+                if (wanted(state)) consume(page, state);
+                for (auto& [other, otherState] : views) {
+                    aliased.push_back(other);
+                    if (wanted(*otherState)) consume(other, *otherState);
+                }
             });
+            std::sort(aliased.begin(), aliased.end());
+            aliased.erase(std::unique(aliased.begin(), aliased.end()), aliased.end());
+            for (const auto page : aliased) {
+                if (!aliasRuns.empty() && aliasRuns.back().second == page) aliasRuns.back().second = page + _page;
+                else aliasRuns.emplace_back(page, page + _page);
+            }
             for (const auto& [first, last] : runs) protect(first, last);
+            for (const auto& [first, last] : aliasRuns) protect(first, last);
         }
         for (const auto& [first, last] : runs) written(context, first, last);
+        for (const auto& [first, last] : aliasRuns) written(context, first, last);
         return true;
     }
 
@@ -1234,7 +1277,7 @@ public:
         const auto first = pageStart(begin);
         const auto last = pageEnd(end);
         const Lock lock(_lock);
-        if (!covers(first, last)) return false;
+        if (!covers(first, last) || linked(first, last)) return false;
         const auto [same, other] = _traps.equal_range(begin);
         if (std::any_of(same, other, [&](const auto& trap) { return trap.second == end; })) return true;
         for (const auto& [hostBegin, hostEnd] : _hostWrites)
@@ -1700,7 +1743,48 @@ private:
         return false;
     }
 
+    bool linked(std::uintptr_t begin, std::uintptr_t end) const {
+        return std::any_of(_links.begin(), _links.end(), [&](const Link& link) { return link.begin < end && begin < link.end; });
+    }
+
+    bool inHostWrite(std::uintptr_t page) const {
+        for (const auto& [first, last] : _hostWrites)
+            if (page >= first && page < last) return true;
+        return false;
+    }
+
+    void cutLinks(std::uintptr_t begin, std::uintptr_t end) {
+        std::vector<Link> kept;
+        std::vector<Link> cut;
+        for (const auto& link : _links) {
+            if (link.end <= begin || end <= link.begin) {
+                kept.push_back(link);
+                continue;
+            }
+            if (link.begin < begin) kept.push_back({link.begin, begin, link.other});
+            if (end < link.end) kept.push_back({end, link.end, link.other + (end - link.begin)});
+            const auto low = std::max(begin, link.begin);
+            cut.push_back({link.other + (low - link.begin), link.other + (std::min(end, link.end) - link.begin), low});
+        }
+        _links = std::move(kept);
+        for (const auto& removed : cut) {
+            std::vector<Link> next;
+            for (const auto& link : _links) {
+                const auto low = std::max(removed.begin, link.begin);
+                const auto high = std::min(removed.end, link.end);
+                if (high <= low || link.other + (low - link.begin) != removed.other + (low - removed.begin)) {
+                    next.push_back(link);
+                    continue;
+                }
+                if (link.begin < low) next.push_back({link.begin, low, link.other});
+                if (high < link.end) next.push_back({high, link.end, link.other + (high - link.begin)});
+            }
+            _links = std::move(next);
+        }
+    }
+
     bool erase(std::uintptr_t begin, std::uintptr_t end) {
+        if (!_links.empty()) cutLinks(begin, end);
         bool removed = false;
         auto it = _ranges.upper_bound(begin);
         if (it != _ranges.begin()) --it;
@@ -1731,6 +1815,7 @@ private:
     bool _available = false;
     Mutex _lock;
     std::map<std::uintptr_t, Range> _ranges;
+    std::vector<Link> _links;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _hostWrites;
     std::multimap<std::uintptr_t, std::uintptr_t> _traps;
     std::vector<Resolving> _resolving;
@@ -1803,7 +1888,7 @@ bool GuestWriteWatchUnregister_nid_postfix(const void* pointer, std::size_t byte
 }
 
 bool GuestWriteWatchAlias_nid_postfix(const void* first, const void* second, std::size_t bytes) {
-#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
+#if (defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)) || defined(__APPLE__)
     return Watch::Get().Alias(reinterpret_cast<std::uintptr_t>(first), reinterpret_cast<std::uintptr_t>(second), bytes);
 #else
     static_cast<void>(first);
