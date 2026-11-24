@@ -24,7 +24,6 @@ namespace {
 
 constexpr std::int32_t IllegalArgumentError = 1;
 constexpr std::int32_t MissingResourceError = 2;
-constexpr std::int32_t ResourceTypeMismatch = 17;
 constexpr std::int32_t UsingFallbackWarning = -128;
 constexpr std::int32_t UsingDefaultWarning = -127;
 constexpr std::uint32_t BogusResource = 0xffffffff;
@@ -343,7 +342,7 @@ extern "C" std::int32_t APS5_VABI ures_countArrayItems_nid_postfix(
     }
     const auto bundle = Read<GuestResourceBundle>(resourceBundle, __func__);
     if (!IsTable(Type(bundle.resource))) {
-        SetStatus(status, ResourceTypeMismatch, __func__);
+        SetStatus(status, MissingResourceError, __func__);
         return 0;
     }
     std::string keyStorage;

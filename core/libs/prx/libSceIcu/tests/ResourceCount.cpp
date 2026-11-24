@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <string>
 #include <type_traits>
 
 namespace {
@@ -124,7 +125,7 @@ void BasicContracts() {
     Require(ures_countArrayItems_nid_postfix(
         reinterpret_cast<const UResourceBundle*>(&scalar), reinterpret_cast<const char*>(1), &status) == 0,
         "non-table result");
-    Require(status == 17, "non-table status");
+    Require(status == 2, "non-table status");
 }
 
 void Table32AndCounts() {
@@ -306,6 +307,24 @@ void Fallback() {
         reinterpret_cast<const UResourceBundle*>(&bundle), "parent", &status) == 6,
         "non-default fallback parent count");
     Require(status == -128, "non-default fallback parent status");
+
+    std::string defaultName = uloc_getDefault();
+    parent.name = defaultName.data();
+    status = 0;
+    Require(ures_countArrayItems_nid_postfix(
+        reinterpret_cast<const UResourceBundle*>(&bundle), "parent", &status) == 6,
+        "default fallback parent count");
+    Require(status == -127, "default fallback parent status");
+
+    ResourceEntry bogus{};
+    bogus.bogus = 1;
+    bogus.parent = &parent;
+    bundle.data = &bogus;
+    status = 0;
+    Require(ures_countArrayItems_nid_postfix(
+        reinterpret_cast<const UResourceBundle*>(&bundle), "parent", &status) == 6,
+        "bogus fallback entry count");
+    Require(status == 0, "bogus fallback entry status");
 
     bundle.hasFallback = 0;
     bundle.data = reinterpret_cast<ResourceEntry*>(1);
