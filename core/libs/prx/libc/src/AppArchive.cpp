@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <limits>
 #include <map>
 #include <memory>
