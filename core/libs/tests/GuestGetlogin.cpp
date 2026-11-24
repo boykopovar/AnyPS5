@@ -3,7 +3,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
-#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
