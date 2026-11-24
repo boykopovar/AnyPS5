@@ -1,3 +1,4 @@
+import argparse
 import gzip
 import json
 import subprocess
@@ -102,6 +103,39 @@ class DiffTests(unittest.TestCase):
         missing = subprocess.run([sys.executable, str(tool), str(a), str(Path(self.tmp.name) / "none.json.gz")], capture_output=True, text=True)
         self.assertEqual(missing.returncode, 2)
         self.assertIn("FAIL", missing.stderr)
+
+
+class MarkdownAndIntegerTests(unittest.TestCase):
+    def result(self):
+        return {
+            "frames": {"a": 3, "b": 4},
+            "threads": [{"thread": "presenter", "a_busy_ms_per_frame": 1.5, "b_busy_ms_per_frame": 0.25,
+                         "busy_delta_ms_per_frame": -1.25, "a_wait_ms_per_frame": 0.0,
+                         "b_wait_ms_per_frame": 2.0, "wait_delta_ms_per_frame": 2.0}],
+            "slices": [{"name": "Driver.Present", "a_ms_per_frame": 0.5, "b_ms_per_frame": 0.75, "delta_ms_per_frame": 0.25}],
+        }
+
+    def test_markdown_renders_frames_threads_and_slices(self):
+        text = trace_diff.markdown(self.result())
+        self.assertEqual(text.splitlines()[0], "Frames: A 3, B 4")
+        self.assertIn("| presenter | 1.500 | 0.250 | -1.250 | 0.000 | 2.000 | +2.000 |", text.splitlines())
+        self.assertIn("| Driver.Present | 0.500 | 0.750 | +0.250 |", text.splitlines())
+        self.assertTrue(text.endswith("\n"))
+
+    def test_markdown_header_rows_match_the_column_count(self):
+        lines = trace_diff.markdown(self.result()).splitlines()
+        self.assertEqual(lines[2].count("|"), lines[3].count("|"))
+        self.assertEqual(lines[6].count("|"), lines[7].count("|"))
+
+    def test_nonnegative_integer_accepts_zero_and_positive_values(self):
+        self.assertEqual(trace_diff.nonnegative_integer("0"), 0)
+        self.assertEqual(trace_diff.nonnegative_integer("42"), 42)
+
+    def test_nonnegative_integer_rejects_negative_and_non_numbers(self):
+        for value in ("-1", "abc", "1.5", ""):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    trace_diff.nonnegative_integer(value)
 
 
 if __name__ == "__main__":
