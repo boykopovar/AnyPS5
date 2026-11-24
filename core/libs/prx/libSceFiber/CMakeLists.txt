@@ -78,4 +78,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_fiber_stack_rename_switch_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFiber>")
     endif()
+
+    add_test_executable(guest_fiber_opt_stack_guard_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestFiberOptStackGuardBounds.cpp)
+    target_include_directories(guest_fiber_opt_stack_guard_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_fiber_opt_stack_guard_bounds_tests PRIVATE libSceFiber libc)
+    configure_windows_unwind(guest_fiber_opt_stack_guard_bounds_tests)
+    add_test(NAME guest_fiber_opt_stack_guard_bounds COMMAND guest_fiber_opt_stack_guard_bounds_tests)
+    set_tests_properties(guest_fiber_opt_stack_guard_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_fiber_opt_stack_guard_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFiber>")
+    endif()
 endif()
