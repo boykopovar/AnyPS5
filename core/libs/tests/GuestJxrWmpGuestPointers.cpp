@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <vector>
@@ -330,6 +331,7 @@ int main() {
     JxrWmpReferenceRegion(regionDecoder, RegionLeft, 0, RegionWidth, Height);
     const Rect regionRect{0, 0, width, height};
     auto* regionPixels = reinterpret_cast<std::uint8_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - Height * RegionStride);
+    CHECK_THROWS_AS(std::runtime_error, regionDecoder->copy(regionDecoder, &regionRect, regionPixels + 1, RegionStride));
     CHECK(regionDecoder->copy(regionDecoder, &regionRect, regionPixels, RegionStride) == 0);
     for (std::uint32_t row = 0; row < Height; ++row)
         CHECK(std::memcmp(regionPixels + row * RegionStride, sourcePixels.data() + row * Stride + RegionLeft * 3, RegionStride) == 0);
@@ -339,6 +341,13 @@ int main() {
     JxrWmpReferenceConfigureDecoder(decoder);
     const Rect validRect{0, 0, width, height};
     std::vector<std::uint8_t> decodedPixels(Height * Stride);
+    for (const std::int32_t rectangleHeight : {-1, std::numeric_limits<std::int32_t>::min()}) {
+        const Rect negativeHeightRect{0, 0, width, rectangleHeight};
+        CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &negativeHeightRect, nullptr, Stride));
+        CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &negativeHeightRect, static_cast<std::uint8_t*>(pages.unmapped), Stride));
+        CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &negativeHeightRect, static_cast<std::uint8_t*>(pages.readOnly), Stride));
+        CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, &negativeHeightRect, decodedPixels.data(), Stride));
+    }
     auto* boundaryRect = static_cast<std::byte*>(pages.boundary) + pages.pageSize - 8;
     CHECK_THROWS_AS(std::invalid_argument, decoder->copy(decoder, nullptr, decodedPixels.data(), Stride));
     CHECK_THROWS_AS(std::runtime_error, decoder->copy(decoder, pages.unmapped, decodedPixels.data(), Stride));

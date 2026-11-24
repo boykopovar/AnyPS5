@@ -66,7 +66,8 @@ std::size_t EncodePixelBufferSpan(const Jxr::ImageEncode* encoder, std::uint32_t
 
 std::size_t DecodePixelBufferSpan(const void* decoder, const GuestRect& rect, std::uint32_t stride,
                                   const char* function) {
-    if (rect.height <= 0) return 0;
+    if (rect.height < 0) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (rect.height == 0) return 0;
     std::size_t span = 0;
     std::int32_t overflow = 0;
     if (JxrWmpDecodePixelSpan_nid_no_patch(decoder, rect.height, stride, &span, &overflow)) {
