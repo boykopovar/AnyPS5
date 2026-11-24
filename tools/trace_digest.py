@@ -595,16 +595,16 @@ def digest_intervals(lines):
         busiest = min(workers.items(), key=metric_rank, default=None)
         phases = line.get("top_phases_ms_per_frame", {})
         largest = min(phases.items(), key=metric_rank, default=None)
-        dropped = line.get("trace_dropped")
-        if dropped is None and any(thread.get("events_lost") or thread.get("totals_full")
-                                   for thread in line.get("trace_dropped_threads", {}).values()):
-            dropped = True
         rows.append({"start_s": line["interval_start_s"], "end_s": line["interval_end_s"], "presents": line["presents"],
                      "frame_ms": line["frame_ms"], "gpu_busy_ms_per_present": line["gpu_busy_ms_per_present"],
                      "busiest_worker": {"thread": busiest[0], "pct": busiest[1]} if busiest else None,
                      "top_phase": {"name": largest[0], "ms_per_frame": largest[1]} if largest else None,
-                     "trace_dropped": dropped, "owned_draw_counts": line.get("owned_draw_counts"),
+                     "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts"),
                      "graphics_track": line.get("graphics_track")})
+        if line.get("trace_dropped") is None:
+            threads = line.get("trace_dropped_threads", {})
+            inferred = any(thread.get("events_lost") or thread.get("totals_full") for thread in threads.values())
+            rows[-1]["trace_dropped"] = True if inferred else None
     first = lines[0] if lines else {}
     keys = INTERVAL_IDENTITY_KEYS
     changed = [index for index in range(1, len(lines)) if any(lines[index].get(key) != lines[index - 1].get(key) for key in keys)]
