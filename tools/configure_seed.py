@@ -7,8 +7,8 @@ import stat
 import sys
 from pathlib import Path
 
-CHECK = re.compile(r"^//(Have (include|includes|function|symbol|library) |Test |Result of (TRY_COMPILE|TRY_RUN|TEST_BIG_ENDIAN|check_)|CHECK_TYPE_SIZE: )")
-ENTRY = re.compile(r"^([^#/:][^:]*):([A-Z]+)=(.*)$")
+CHECK = re.compile(r"^//(Have (include|includes|function|symbol|library|variable) |Test |Result of (TRY_COMPILE|TRY_RUN|try_run\(\)|TEST_BIG_ENDIAN|check_)|CHECK_TYPE_SIZE: )")
+ENTRY = re.compile(r"^([^#:][^:]*):([A-Z]+)=(.*)$")
 QUOTED_ENTRY = re.compile(r'^"(.*)":([A-Z]+)=(.*)$')
 QUOTED_DELIMITER = re.compile(r'":[A-Z]+=')
 
@@ -25,7 +25,10 @@ def checks(cache):
             match = QUOTED_ENTRY.match(line) or ENTRY.match(line)
         if match and match.group(2) == "INTERNAL" and doc and CHECK.match(doc[0]):
             help_text = "".join("\n" + line[4:] if line.startswith("//\\n") else line[2:] for line in doc)
-            found[match.group(1)] = (match.group(3), help_text)
+            value = match.group(3)
+            if len(value) >= 2 and value[0] == value[-1] == "'":
+                value = value[1:-1]
+            found[match.group(1)] = (value, help_text)
         doc = []
     architecture_sizes = {name for name, (value, doc) in found.items()
                           if value == "0" and doc.startswith("CHECK_TYPE_SIZE: ")}
@@ -45,6 +48,8 @@ def write_seed(path, text):
         metadata = destination.stat()
     except FileNotFoundError:
         metadata = None
+    if metadata is not None and not stat.S_ISREG(metadata.st_mode):
+        raise OSError(f"Seed output must be a regular file: {path}")
     if metadata is not None and os.name == "nt" and metadata.st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
         raise PermissionError(f"Seed output is read-only: {path}")
     destination.parent.mkdir(parents=True, exist_ok=True)

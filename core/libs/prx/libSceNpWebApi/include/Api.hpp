@@ -85,7 +85,7 @@ int APS5_VABI sceNpWebApiAbortHandle(int libCtxId, int handleId);
 int APS5_VABI sceNpWebApiAddHttpRequestHeader(std::int64_t requestId, const char* fieldName, const char* value);
 int APS5_VABI sceNpWebApiAddMultipartPart(std::int64_t requestId, const NpWebApiMultipartPartParameter* parameter, int* partIndex);
 void APS5_VABI sceNpWebApiCheckTimeout();
-int APS5_VABI sceNpWebApiClearAllUnusedConnection();
+int APS5_VABI sceNpWebApiClearAllUnusedConnection(int titleUserCtxId, bool keep);
 int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* target, bool keep);
 int APS5_VABI sceNpWebApiCreateMultipartRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, std::int64_t* requestId);
 int APS5_VABI sceNpWebApiGetConnectionStats(int titleUserCtxId, const void* target, void* result);

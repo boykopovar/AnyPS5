@@ -144,14 +144,17 @@ def graphics_metrics(summary):
     if track is None:
         return {name: None for name in GRAPHICS_LABELS}
     presents = summary["presents"]
-    return {
-        "render_passes": track.get("Graphics.RenderPass", 0) / presents,
-        "continued_draws": track.get("Graphics.RenderPass.Continued", 0) / presents,
-        "barriers": sum(value for name, value in track.items() if name.startswith("Graphics.Barrier.")) / presents,
-        "merged_barriers": sum(value for name, value in track.items() if name.startswith("Graphics.BarrierMerged.")) / presents,
-        "copies": track.get("Graphics.Copy", 0) / presents,
-        "copy_mib": track.get("Graphics.Copy.bytes", 0) / presents / (1024 * 1024),
-    }
+    try:
+        return {
+            "render_passes": track.get("Graphics.RenderPass", 0) / presents,
+            "continued_draws": track.get("Graphics.RenderPass.Continued", 0) / presents,
+            "barriers": sum(value for name, value in track.items() if name.startswith("Graphics.Barrier.")) / presents,
+            "merged_barriers": sum(value for name, value in track.items() if name.startswith("Graphics.BarrierMerged.")) / presents,
+            "copies": track.get("Graphics.Copy", 0) / presents,
+            "copy_mib": track.get("Graphics.Copy.bytes", 0) / presents / (1024 * 1024),
+        }
+    except OverflowError:
+        raise ValueError("graphics track rate is outside the finite numeric range") from None
 
 
 def compare(baseline, candidate):
@@ -177,7 +180,8 @@ def compare(baseline, candidate):
         context["window.spec"] = summary["window"]["spec"]
         if re.fullmatch(r"seconds [0-9]+:[0-9]+", summary["window"]["spec"]) is None:
             context["window.first_present"] = summary["window"]["first_present"]
-        context.update({f"env.{key}": value for key, value in summary["env"].items()})
+        context.update({f"env.{key}": value for key, value in summary["env"].items()
+                        if key != "APS5_TRACE_DIR"})
         contexts.append(context)
     differences = {key: {"baseline": contexts[0].get(key), "candidate": contexts[1].get(key)}
                    for key in sorted(contexts[0].keys() | contexts[1].keys())

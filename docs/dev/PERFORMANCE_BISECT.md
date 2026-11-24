@@ -12,15 +12,16 @@ The tool needs an extracted game package, a working AnyPS5 build recipe, and a m
 
 ## Prepare a recipe
 
-Create a JSON recipe outside the checkout so it stays available while the bisector checks out older revisions. Build commands are argument arrays and run without a shell. They may use `{worktree}`, `{build_dir}`, `{result_dir}`, and `{commit}` placeholders. Use the same compiler, build type, and meaningful build options for every revision.
+Create a JSON recipe outside the checkout so it stays available while the bisector checks out older revisions. Build commands are argument arrays and run without a shell. They may use `{worktree}`, `{build_dir}`, `{result_dir}`, and `{commit}` placeholders. Use the same compiler, build type, and meaningful build options for every revision. The bisector leaves submodule setup to these commands. Build the patched runtime libraries with the relinker so the title runner can stage them.
 
 ```json
 {
   "title_id": "PPSA00000",
   "games": ["/data/ps5/extracted-games"],
   "build_commands": [
+    ["git", "submodule", "update", "--init", "--recursive"],
     ["cmake", "-S", "{worktree}", "-B", "{build_dir}", "-DCMAKE_BUILD_TYPE=Release"],
-    ["cmake", "--build", "{build_dir}", "--parallel", "4"]
+    ["cmake", "--build", "{build_dir}", "--target", "libs", "relinker", "--parallel", "4"]
   ],
   "seconds": 60,
   "repetitions": 5,

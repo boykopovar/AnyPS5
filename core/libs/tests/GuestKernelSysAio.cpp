@@ -242,6 +242,14 @@ void Validation(int file, int readOnly) {
     Require(aio_fsync_nid_postfix(OSync, &pipeSync) == -1 && Error() == Einval);
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
 
+    std::intptr_t semaphore = -1;
+    Require(ksem_init_nid_postfix(&semaphore, 0) == 0 && semaphore >= 0);
+    auto ksemRead = Request(static_cast<int>(semaphore), buffer, sizeof(buffer));
+    Require(aio_read_nid_postfix(&ksemRead) == -1 && Error() == Eopnotsupp && ksemRead.error == Eopnotsupp);
+    auto ksemSync = Request(static_cast<int>(semaphore), nullptr, 0);
+    Require(aio_fsync_nid_postfix(OSync, &ksemSync) == -1 && Error() == Einval);
+    Require(ksem_destroy_nid_postfix(semaphore) == 0);
+
     auto sync = Request(file, nullptr, 0);
     Require(aio_fsync_nid_postfix(0, &sync) == -1 && Error() == Einval);
     Require(aio_fsync_nid_postfix(ODsync, &sync) == -1 && Error() == Einval);
@@ -297,6 +305,10 @@ void ReadAndWrite(int file) {
     Require(aio_suspend_nid_postfix(nullptr, 1, nullptr) == -1 && Error() == Efault);
     const KernelTimespec badTime{0, 1000000000};
     Require(aio_suspend_nid_postfix(none, 1, &badTime) == -1 && Error() == Einval);
+    Require(aio_suspend_nid_postfix(none, 1, reinterpret_cast<const KernelTimespec*>(0x10)) == -1 && Error() == Efault);
+    const GuestAiocb* second[] = {nullptr, &request};
+    const KernelTimespec soon{0, 5000000};
+    Require(aio_suspend_nid_postfix(second, 2, &soon) == 0);
 }
 
 void Cancel(int file) {
@@ -309,6 +321,7 @@ void Cancel(int file) {
     const GuestAiocb* list[] = {&first};
     const KernelTimespec brief{0, 5000000};
     Require(aio_suspend_nid_postfix(list, 1, &brief) == -1 && Error() == Eagain);
+    Require(aio_suspend_nid_postfix(reinterpret_cast<const GuestAiocb* const*>(0x10), 1, &brief) == -1 && Error() == Efault);
 
     Require(aio_cancel_nid_postfix(file, &first) == AioCanceled);
     Require(aio_error_nid_postfix(&first) == Ecanceled && aio_error_nid_postfix(&second) == Einprogress);

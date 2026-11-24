@@ -7,7 +7,7 @@ const void* APS5_VABI WKUserScriptCreateWithSource(const void* source, std::uint
     if (source) {
         sourceString = NKWebKit::Cast<NKWebKit::String>(source, __func__)->characters;
     }
-    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::UserScript>(std::move(sourceString), injectionTime, forMainFrameOnly));
+    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::UserScript>(std::move(sourceString), injectionTime == 1 ? 1u : 0u, forMainFrameOnly));
 }
 
 const void* APS5_VABI WKUserScriptCopySource(const void* userScript) {

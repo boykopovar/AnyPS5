@@ -7,9 +7,9 @@ probe:
   s_load_dwordx4 s[4:7], s[0:1], 0x0
   v_lshlrev_b32 v1, 4, v0
   v_lshlrev_b32 v2, 6, v0
-  s_waitcnt lgkmcnt(0)
+  @WAIT_SCALAR@
   global_load_dwordx4 v[4:7], v1, s[4:5]
-  s_waitcnt vmcnt(0)
+  @WAIT_LOAD@
   v_mov_b32 v10, 0
   v_mov_b32 v11, 0
   v_mov_b32 v12, 0
@@ -46,8 +46,8 @@ probe:
   .amdhsa_wavefront_size32 @WAVE32@
   .amdhsa_float_denorm_mode_32 @DENORM@
   .amdhsa_float_denorm_mode_16_64 @DENORM16@
-  .amdhsa_ieee_mode @IEEE@
-  .amdhsa_dx10_clamp @DX10_CLAMP@
+@IEEE_MODE@
+@DX10_CLAMP_MODE@
   .amdhsa_float_round_mode_32 @ROUND32@
   .amdhsa_float_round_mode_16_64 @ROUND16@
   .amdhsa_fp16_overflow @FP16_OVERFLOW@

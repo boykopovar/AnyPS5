@@ -1,0 +1,10 @@
+# libSceNKWebKit
+
+## add Functional
+
+- [WebCore::topPrivatelyControlledDomain](../../../core/libs/prx/libSceNKWebKit/src/PublicSuffix.cpp) (libSceNKWebKit) - The console's libpsl revision and suffix snapshot are unknown: answers follow the bundled libpsl 0.21.5 and its pinned list, not compared with a console module. Behaviour follows the PS5 11.x [PublicSuffixCurl.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/curl/PublicSuffixCurl.cpp#L47-L82): a null or empty domain gives a null String, an IP address or a non-ASCII domain is returned unchanged, otherwise the ASCII-lowercased domain is returned for `localhost`, a public suffix gives a null String, leading dots are skipped (all dots give a null String) and the rest goes to `psl_registrable_domain`, whose result is read as Latin-1. Closes when: compared with a console module.
+- [WebCore::CustomHeaderFields::thirdPartyDomainsMatch](../../../core/libs/prx/libSceNKWebKit/src/CustomHeaderFields.cpp) (libSceNKWebKit) - Not compared with a console module; the registrable-domain length inherits the libpsl gap above, and the host comes from the unverified `WTF::URL` model via `URL::host()`. Follows the 11.x [CustomHeaderFields.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/CustomHeaderFields.cpp#L34-L50) and [RegistrableDomain.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/RegistrableDomain.h#L121-L133): an entry matches when it equals the host, or starts with `*.`, the host ends with the entry after the `*` and the entry is longer than the registrable domain (`nullOrigin` for an empty host, else the host when there is none). Comparisons are case-sensitive. Closes when: compared with a console module.
+
+## remove | `_ZN7WebCore28topPrivatelyControlledDomainERKN3WTF6StringE` | `GxVDSv5dIws` |
+
+## remove | `_ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE` | `-ivWQ60ptck` |

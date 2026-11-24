@@ -47,10 +47,51 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual(row["unit"], "ms")
         self.assertEqual([float(row[key]) for key in ("baseline", "candidate", "change", "change_pct")], [20, 10, -10, -50])
         report = performance_compare.compare(self.before, self.after)
-        for row in (row for row in rows if row["kind"] == "metric"):
+        metrics = [row for row in rows if row["kind"] == "metric"]
+        self.assertCountEqual([row["name"] for row in metrics], list(report["metrics_ms"]))
+        for row in metrics:
             for field in ("baseline", "candidate", "change", "change_pct"):
                 expected = report["metrics_ms"][row["name"]][field]
                 self.assertEqual(None if row[field] == "" else float(row[field]), expected)
+
+    def test_gpu_busy_metric_uses_milliseconds_per_present(self):
+        self.before["gpu_busy_ms_per_present"] = 5.0
+        self.after["gpu_busy_ms_per_present"] = 3.0
+        rows = self.rows(self.run_csv())
+        gpu = next(row for row in rows if row["kind"] == "metric" and row["name"] == "gpu_busy_ms_per_present")
+        self.assertEqual(gpu["unit"], "ms/present")
+        self.assertEqual([float(gpu[field]) for field in ("baseline", "candidate", "change", "change_pct")],
+                         [5.0, 3.0, -2.0, -40.0])
+
+    def test_graphics_track_rates_are_not_lost_by_csv_export(self):
+        self.before["graphics_track"] = {"Graphics.RenderPass": 8, "Graphics.RenderPass.Continued": 40,
+                                        "Graphics.Barrier.draw": 80, "Graphics.BarrierMerged.draw": 16,
+                                        "Graphics.Copy": 4, "Graphics.Copy.bytes": 4 * 1024 * 1024}
+        self.after["graphics_track"] = {"Graphics.RenderPass": 12, "Graphics.RenderPass.Continued": 20,
+                                       "Graphics.Barrier.draw": 120, "Graphics.BarrierMerged.draw": 0,
+                                       "Graphics.Copy": 6, "Graphics.Copy.bytes": 2 * 1024 * 1024}
+        rows = {row["name"]: row for row in self.rows(self.run_csv()) if row["kind"] == "graphics"}
+        expected = {"render_passes": [2, 3, 1, 50], "continued_draws": [10, 5, -5, -50],
+                    "barriers": [20, 30, 10, 50], "merged_barriers": [4, 0, -4, -100],
+                    "copies": [1, 1.5, 0.5, 50], "copy_mib": [1, 0.5, -0.5, -50]}
+        self.assertEqual(set(rows), set(expected))
+        for name, values in expected.items():
+            self.assertEqual(rows[name]["unit"], "MiB/present" if name == "copy_mib" else "count/present")
+            self.assertEqual([float(rows[name][key]) for key in ("baseline", "candidate", "change", "change_pct")], values)
+
+    def test_missing_graphics_track_is_empty_while_reported_zero_is_zero(self):
+        self.before.pop("graphics_track", None)
+        self.after["graphics_track"] = {}
+        rows = [row for row in self.rows(self.run_csv()) if row["kind"] == "graphics"]
+        self.assertEqual(len(rows), 6)
+        for row in rows:
+            self.assertEqual((row["baseline"], row["change"], row["change_pct"]), ("", "", ""))
+            self.assertEqual(float(row["candidate"]), 0)
+
+    def test_absent_graphics_tracks_add_no_csv_rows(self):
+        self.before.pop("graphics_track", None)
+        self.after.pop("graphics_track", None)
+        self.assertFalse([row for row in self.rows(self.run_csv()) if row["kind"] == "graphics"])
 
     def test_worker_rows_keep_percentage_points_and_missing_values(self):
         name = 'queue, "worker"\n\u6e2c\u8a66'
@@ -84,9 +125,9 @@ class PerformanceCsvTests(unittest.TestCase):
         self.before["top_phases_ms_per_frame"] = {"before": 1}
         self.after["top_phases_ms_per_frame"] = {"after": 2}
         rows = self.rows(self.run_csv())
-        for row in (row for row in rows if row["kind"] == "phase"):
-            self.assertEqual((row["change"], row["change_pct"]), ("", ""))
-            self.assertTrue(row["baseline"] == "" or row["candidate"] == "")
+        phases = [(row["name"], row["baseline"], row["candidate"], row["change"], row["change_pct"])
+                  for row in rows if row["kind"] == "phase"]
+        self.assertCountEqual(phases, [("before", "1", "", "", ""), ("after", "", "2", "", "")])
         gpu = next(row for row in rows if row["name"] == "gpu_busy_ms_per_present")
         self.assertEqual(gpu["change_pct"], "")
 
@@ -100,6 +141,13 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, b"")
         self.assertIn(b"recorded configuration differs", result.stderr)
+
+    def test_trace_output_directory_does_not_block_csv_export(self):
+        self.before["env"]["APS5_TRACE_DIR"] = "baseline"
+        self.after["env"]["APS5_TRACE_DIR"] = "candidate"
+        rows = self.rows(self.run_csv("--require-matching-context"))
+        self.assertTrue(any(row["kind"] == "metric" for row in rows))
+        self.assertFalse(any(row["kind"] == "configuration" for row in rows))
 
     def test_missing_and_empty_context_values_stay_distinct(self):
         self.before.pop("cpu", None)
@@ -291,6 +339,32 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual((cpu[3], cpu[4]), ("<missing>", r"\<missing>"))
         self.assertEqual((env[3], env[4]), (r"\\<missing>", "<missing>"))
         self.assertEqual((slash[3], slash[4]), ("<missing>", r"\\-dangerous"))
+
+
+class SafeCellTests(unittest.TestCase):
+    def test_formula_and_control_prefixes_get_a_leading_tab(self):
+        for value in ("=1+1", "+1", "-1", "@SUM(A1)", "  =x", "\tx", "\rx", "\nx", "\uff1dx", "\uff0bx", "\uff0dx", "\uff20x"):
+            with self.subTest(value=value):
+                self.assertEqual(performance_csv.safe_cell(value), "\t" + value)
+
+    def test_ordinary_values_are_unchanged(self):
+        for value in ("abc", "1-2", " x", "", 5, 2.5, None):
+            with self.subTest(value=value):
+                self.assertEqual(performance_csv.safe_cell(value), value)
+
+class CellEscapeTests(unittest.TestCase):
+    def test_safe_cell_prefixes_formula_triggers_with_a_tab(self):
+        for value in ('=1+1', '+x', '-y', '@z'):
+            with self.subTest(value=value):
+                self.assertEqual(performance_csv.safe_cell(value), '\t' + value)
+        self.assertEqual(performance_csv.safe_cell('plain'), 'plain')
+        self.assertEqual(performance_csv.safe_cell(3), 3)
+
+    def test_configuration_cell_names_missing_values_and_escapes_backslashes(self):
+        self.assertEqual(performance_csv.configuration_cell(None), '<missing>')
+        self.assertEqual(performance_csv.configuration_cell('<missing>'), '\\<missing>')
+        self.assertEqual(performance_csv.configuration_cell('\\lead'), '\\\\lead')
+        self.assertEqual(performance_csv.configuration_cell('value'), 'value')
 
 
 if __name__ == "__main__":

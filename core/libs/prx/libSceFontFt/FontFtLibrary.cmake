@@ -5,7 +5,7 @@ function(add_sce_font_ft_library target)
             ${fontDir}/src/Driver.cpp
     )
     target_include_directories(${target} PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(${target} PRIVATE freetype libc)
+    target_link_libraries(${target} PRIVATE freetype libc libSceFont)
     set_target_properties(${target} PROPERTIES
             CXX_EXTENSIONS OFF
             CXX_VISIBILITY_PRESET hidden

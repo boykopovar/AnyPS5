@@ -1,15 +1,20 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "Equeue.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/HostStreams.hpp"
+#include "prx/libkernel/File/include/RandomDevice.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cerrno>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
@@ -35,7 +40,7 @@ static UnreadFile UnreadFileBytes(int file) {
 }
 
 static bool RegularFile(int descriptor) {
-    if (File::IsHostStream(descriptor)) {
+    if (File::IsHostStream(descriptor) || IsKsemDescriptor_nid_no_patch(descriptor)) {
         return false;
     }
     FileStat status{};
@@ -494,6 +499,25 @@ int KernelEqueuePrivate::WaitForEventsUntil(KernelEvent* ev, int num, std::uint6
     }
 }
 
+void KernelEqueuePrivate::NoteDroppedPendingEvents(std::size_t dropped, const KernelEqueueEvent& ev) {
+    if (dropped == 0) {
+        return;
+    }
+    const auto before = m_droppedPendingEvents;
+    m_droppedPendingEvents += dropped;
+    static const bool trace = std::getenv("APS5_TRACE_EQUEUE") != nullptr;
+    if (!trace) {
+        return;
+    }
+    if (before != 0 && std::bit_width(m_droppedPendingEvents) == std::bit_width(before)) {
+        return;
+    }
+    std::fprintf(stderr,
+        "[equeue] %s: dropped %zu oldest pending event(s) for ident=0x%llx filter=%d past cap=%zu (total dropped %llu)\n",
+        m_name.c_str(), dropped, static_cast<unsigned long long>(ev.event.ident), static_cast<int>(ev.event.filter),
+        kMaxPendingEvents, static_cast<unsigned long long>(m_droppedPendingEvents));
+}
+
 int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
     std::unique_lock lock(m_mutex);
     if (m_closed) {
@@ -515,9 +539,11 @@ int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
             pending.udata = event.event.udata;
         }
         if (it->pendingEvents.size() > kMaxPendingEvents) {
+            NoteDroppedPendingEvents(it->pendingEvents.size() - kMaxPendingEvents, *it);
             it->pendingEvents.erase(it->pendingEvents.begin(), it->pendingEvents.begin() + static_cast<std::deque<KernelEvent>::difference_type>(it->pendingEvents.size() - kMaxPendingEvents));
         }
     } else if (event.pendingEvents.size() > kMaxPendingEvents) {
+        NoteDroppedPendingEvents(event.pendingEvents.size() - kMaxPendingEvents, event);
         KernelEqueueEvent truncated;
         truncated.triggered = event.triggered;
         truncated.enabled = event.enabled;
@@ -559,9 +585,13 @@ int KernelEqueuePrivate::TriggerEvent(uintptr_t ident, int16_t filter, void* tri
             it->triggered = true;
         }
         if (it->pendingEvents.size() > KernelEqueuePrivate::kMaxPendingEvents) {
+            NoteDroppedPendingEvents(it->pendingEvents.size() - KernelEqueuePrivate::kMaxPendingEvents, *it);
             it->pendingEvents.erase(it->pendingEvents.begin(), it->pendingEvents.begin() + static_cast<std::deque<KernelEvent>::difference_type>(it->pendingEvents.size() - KernelEqueuePrivate::kMaxPendingEvents));
         }
-        if (!was && it->triggered) ++m_activations;
+        if (!was && it->triggered) {
+            ++m_activations;
+            if (filter == EVFILT_USER) m_events.splice(m_events.end(), m_events, it);
+        }
     }
     m_cond.NotifyAll();
     WakePollers();
@@ -724,31 +754,77 @@ int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq) {
 }
 
 int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo) {
+    const auto fail = [out](int error) {
+        if (out != nullptr) {
+            const int zero = 0;
+            const int savedErrno = errno;
+            GuestCopyOut_nid_no_patch(out, &zero, sizeof(zero));
+            errno = savedErrno;
+        }
+        return error;
+    };
+    if (num < 1) {
+        return fail(SCE_KERNEL_ERROR_EINVAL);
+    }
     auto owner = EqueuePin_nid_postfix(eq);
     if (!owner) {
-        return SCE_KERNEL_ERROR_EBADF;
+        return fail(SCE_KERNEL_ERROR_EBADF);
     }
     if (ev == nullptr) {
-        return SCE_KERNEL_ERROR_EFAULT;
+        return fail(SCE_KERNEL_ERROR_EFAULT);
     }
-    if (num < 1 || out == nullptr) {
+    if (out == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
+    KernelUseconds localTimo{};
+    if (timo != nullptr) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localTimo, timo, sizeof(localTimo));
+        errno = savedErrno;
+        if (!copied) {
+            return fail(SCE_KERNEL_ERROR_EFAULT);
+        }
+    }
     const auto waitStart = std::chrono::steady_clock::now();
+    int result = 0;
+    constexpr int STACK_EVENTS = 64;
+    constexpr int MAX_WAIT_EVENTS = 1024;
+    KernelEvent stackEvents[STACK_EVENTS];
+    std::unique_ptr<KernelEvent[]> heapEvents;
+    const int capacity = std::min(num, MAX_WAIT_EVENTS);
+    KernelEvent* target = stackEvents;
+    if (capacity > STACK_EVENTS) {
+        heapEvents = std::make_unique<KernelEvent[]>(static_cast<std::size_t>(capacity));
+        target = heapEvents.get();
+    }
     if (timo == nullptr) {
-        *out = owner->WaitForEvents(ev, num, 0);
-    } else if (*timo == 0) {
-        *out = owner->GetTriggeredEvents(ev, num);
+        result = owner->WaitForEvents(target, capacity, 0);
+    } else if (localTimo == 0) {
+        result = owner->GetTriggeredEvents(target, capacity);
     } else {
-        *out = owner->WaitForEvents(ev, num, *timo);
+        result = owner->WaitForEvents(target, capacity, localTimo);
     }
-    if (timo == nullptr || *timo != 0) {
-        KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), *out == 0);
+    if (timo == nullptr || localTimo != 0) {
+        KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), result == 0);
     }
-    if (*out == SCE_KERNEL_ERROR_EBADF) {
-        return SCE_KERNEL_ERROR_EBADF;
+    if (result == SCE_KERNEL_ERROR_EBADF) {
+        return fail(SCE_KERNEL_ERROR_EBADF);
     }
-    if (*out == 0) {
+    if (result > 0) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(ev, target, static_cast<std::size_t>(result) * sizeof(KernelEvent));
+        errno = savedErrno;
+        if (!copied) {
+            return fail(SCE_KERNEL_ERROR_EFAULT);
+        }
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(out, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
+    if (result == 0) {
         return SCE_KERNEL_ERROR_ETIMEDOUT;
     }
     return EQUEUE_OK;
@@ -913,6 +989,7 @@ static int AddDescriptorEvent(KernelEqueue eq, int fd, std::size_t size, void* u
 }
 
 int APS5_VABI sceKernelAddReadEvent(KernelEqueue eq, int fd, std::size_t size, void* udata) {
+    if (File::IsRandomDevice(fd)) return EqueuePin_nid_postfix(eq) ? SCE_KERNEL_ERROR_ENODEV : SCE_KERNEL_ERROR_EBADF;
     return AddDescriptorEvent(eq, fd, size, udata, EVFILT_READ);
 }
 
@@ -921,6 +998,7 @@ int APS5_VABI sceKernelDeleteReadEvent(KernelEqueue eq, int fd) {
 }
 
 int APS5_VABI sceKernelAddWriteEvent(KernelEqueue eq, int fd, std::size_t size, void* udata) {
+    if (File::IsRandomDevice(fd)) return EqueuePin_nid_postfix(eq) ? SCE_KERNEL_ERROR_ENODEV : SCE_KERNEL_ERROR_EBADF;
     return AddDescriptorEvent(eq, fd, size, udata, EVFILT_WRITE);
 }
 

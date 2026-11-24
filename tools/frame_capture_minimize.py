@@ -56,9 +56,13 @@ class Minimizer:
             valid_kinds = Minimizer.CALL_KINDS if label == "calls" else Minimizer.CHUNK_KINDS
             if kind not in valid_kinds:
                 raise RuntimeError(f"capture inspection {label}[{position}] has an unknown kind {kind!r}")
-            if label == "calls" and kind == "memory":
+            if label == "calls":
                 group = entry.get("memory_group")
-                if isinstance(group, bool) or not isinstance(group, int) or group < 0:
+                if kind == "memory":
+                    valid_group = type(group) is int and group >= 0
+                else:
+                    valid_group = "memory_group" in entry and group is None
+                if not valid_group:
                     raise RuntimeError(f"capture inspection calls[{position}] has an invalid memory group")
             if label == "chunks":
                 group = entry.get("group")
@@ -66,12 +70,14 @@ class Minimizer:
                     raise RuntimeError(f"capture inspection chunks[{position}] has an invalid group")
 
     def inspect(self):
+        from performance_compare import unique_json_object
+
         result = subprocess.run([*self.command(self.filter), "inspect", str(self.capture)], capture_output=True, text=True, encoding="utf-8", errors="replace")
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "capture inspection failed")
         try:
-            description = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
+            description = json.loads(result.stdout, object_pairs_hook=unique_json_object)
+        except ValueError as error:
             raise RuntimeError(f"capture filter returned invalid inspection JSON: {error}") from error
         if not isinstance(description, dict):
             raise RuntimeError("capture inspection must be a JSON object")
@@ -171,10 +177,8 @@ class Minimizer:
                         break
                 if changed:
                     continue
-                for part in partitions:
+                for part in partitions if len(partitions) > 2 else ():
                     candidate = list(part)
-                    if len(candidate) == len(current):
-                        continue
                     discarded = set(current) - set(candidate)
                     calls = removed_calls | (discarded if is_call else set())
                     chunks = removed_chunks | (discarded if not is_call else set())
@@ -199,16 +203,25 @@ class Minimizer:
 
     def materialize(self, calls, chunks, output):
         output.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(prefix="aps5-frame-plan-", suffix=".txt", dir=output.parent, delete=False) as file:
-            plan = Path(file.name)
-        try:
+        with tempfile.TemporaryDirectory(prefix="aps5-frame-output-", dir=output.parent) as temporary:
+            root = Path(temporary)
+            plan = root / "candidate.plan"
+            candidate = root / "capture"
             self.write_plan(plan, calls, chunks)
-            result = subprocess.run([*self.command(self.filter), "apply", str(self.capture), str(plan), str(output)], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        finally:
-            plan.unlink(missing_ok=True)
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or "final capture filtering failed")
-        self.output_created = True
+            result = subprocess.run([*self.command(self.filter), "apply", str(self.capture), str(plan), str(candidate)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr.strip() or "final capture filtering failed")
+            if candidate.is_symlink() or not candidate.is_dir():
+                raise RuntimeError("final capture filter did not create a capture directory")
+            output.mkdir()
+            self.output_created = True
+            try:
+                for entry in candidate.iterdir():
+                    entry.replace(output / entry.name)
+            except BaseException:
+                shutil.rmtree(output)
+                self.output_created = False
+                raise
 
 
 def parse_args(argv=None):
@@ -237,6 +250,9 @@ def parse_args(argv=None):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     args = parse_args(argv)
     if args.output.exists() or args.output.is_symlink():
         print(f"output already exists: {args.output}", file=sys.stderr)
@@ -290,4 +306,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     raise SystemExit(main())

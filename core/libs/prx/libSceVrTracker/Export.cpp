@@ -8,6 +8,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 
 static_assert(sizeof(VrTrackerMemoryBlock) == 16);
 static_assert(sizeof(VrTrackerInitConfig) == 32);
@@ -97,8 +98,10 @@ int APS5_VABI sceVrTrackerGetResult(const VrTrackerGetResultParam* param, VrTrac
     return 0;
 }
 int APS5_VABI sceVrTrackerGetTime(std::uint64_t* time) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_initialized.load()) return NotInit;
+    if (!time) return ArgumentInvalid;
+    const std::uint64_t now = sceKernelGetProcessTime();
+    return CopyOutGuest(time, now) ? 0 : ArgumentInvalid;
 }
 int APS5_VABI sceVrTrackerGpuSubmit(const VrTrackerGpuSubmitParam* param) {
     NotImplemented_nid_no_patch(__func__);
@@ -110,15 +113,27 @@ int APS5_VABI sceVrTrackerGpuWait(const VrTrackerGpuWaitParam* param) {
 }
 int APS5_VABI sceVrTrackerInit(const VrTrackerInitParam* param) {
     if (g_initialized.load()) return AlreadyInitialized;
-    if (param && param->size == sizeof(VrTrackerInitParam)) NotImplemented_nid_no_patch(__func__);
-    const auto* init = reinterpret_cast<const InitParam*>(param);
-    if (!init || init->size != sizeof(InitParam) || !init->direct_memory_garlic ||
-        init->direct_memory_garlic_alignment != MemoryAlignment || init->direct_memory_garlic_size != GarlicSize ||
-        !init->direct_memory_onion || init->direct_memory_onion_alignment != MemoryAlignment ||
-        init->direct_memory_onion_size != OnionSize(init->calibration_settings) || !init->work_memory ||
-        init->work_memory_alignment != MemoryAlignment || init->work_memory_size != WorkSize ||
-        init->gpu_pipe_id >= ComputePipes || init->gpu_queue_id >= QueuesPerPipe ||
-        !ValidCalibration(init->calibration_settings)) {
+    if (!param) return ArgumentInvalid;
+    std::uint32_t size = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&size, &param->size, sizeof(size))) {
+        errno = savedErrno;
+        return ArgumentInvalid;
+    }
+    if (size == sizeof(VrTrackerInitParam)) NotImplemented_nid_no_patch(__func__);
+    InitParam init{};
+    if (!GuestCopyIn_nid_no_patch(&init, param, sizeof(init))) {
+        errno = savedErrno;
+        return ArgumentInvalid;
+    }
+    errno = savedErrno;
+    if (init.size != sizeof(InitParam) || !init.direct_memory_garlic ||
+        init.direct_memory_garlic_alignment != MemoryAlignment || init.direct_memory_garlic_size != GarlicSize ||
+        !init.direct_memory_onion || init.direct_memory_onion_alignment != MemoryAlignment ||
+        init.direct_memory_onion_size != OnionSize(init.calibration_settings) || !init.work_memory ||
+        init.work_memory_alignment != MemoryAlignment || init.work_memory_size != WorkSize ||
+        init.gpu_pipe_id >= ComputePipes || init.gpu_queue_id >= QueuesPerPipe ||
+        !ValidCalibration(init.calibration_settings)) {
         return ArgumentInvalid;
     }
     bool expected = false;
@@ -168,11 +183,13 @@ int APS5_VABI sceVrTrackerQueryMemory(const void* param, void* result) {
 }
 int APS5_VABI sceVrTrackerRecalibrate(const void* param) {
     if (!g_initialized.load()) return NotInit;
-    const auto* recalibrate = static_cast<const RecalibrateParam*>(param);
-    if (!recalibrate || recalibrate->size != sizeof(RecalibrateParam) || recalibrate->device_type > DeviceGun) return ArgumentInvalid;
-    if (recalibrate->device_type == DeviceHmd) return DeviceNotRegistered;
+    if (!param) return ArgumentInvalid;
+    RecalibrateParam recalibrate{};
+    if (!CopyInGuest(recalibrate, static_cast<const RecalibrateParam*>(param))) return ArgumentInvalid;
+    if (recalibrate.size != sizeof(RecalibrateParam) || recalibrate.device_type > DeviceGun) return ArgumentInvalid;
+    if (recalibrate.device_type == DeviceHmd) return DeviceNotRegistered;
     std::lock_guard lock(g_devicesMutex);
-    return g_deviceHandles[recalibrate->device_type] == -1 ? DeviceNotRegistered : 0;
+    return g_deviceHandles[recalibrate.device_type] == -1 ? DeviceNotRegistered : 0;
 }
 int APS5_VABI sceVrTrackerRegisterDevice(int device_type, int handle) {
     return sceVrTrackerRegisterDeviceInternal(device_type, handle, -1, 0);

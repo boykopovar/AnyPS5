@@ -167,6 +167,26 @@ int main() {
         Require(Fails((guest + "/loop-a").c_str(), 62));
         Require(Fails((guest + "/file-link/x").c_str(), 20));
         Require(Fails((guest + "/file-link/").c_str(), 20));
+        const std::string seg(200, 'a');
+        const std::string p1 = "rp-" + std::string(197, 'a');
+        const std::string p2 = p1 + "/" + seg;
+        const std::string p3 = p2 + "/" + seg;
+        const std::string p4 = p3 + "/" + seg;
+        const std::string p5 = p4 + "/" + std::string(214, 'a');
+        const std::string deepParent = "/" + p5;
+        const std::string deepGuest = deepParent + "/sub";
+        for (const auto* a : {&p5, &p4, &p3, &p2, &p1}) AddPathAlias_nid_no_patch(a->c_str(), directory.string().c_str());
+        directories.push_back(directory / "hop1");
+        directories.push_back(directory / "hop2");
+        Require(createLink(directory / "hop1", "../" + p2 + "/hop2", true));
+        Require(createLink(directory / "hop2", seg + "/" + seg + "/" + std::string(214, 'a') + "/sub", true));
+        Require(deepParent.size() == 1019 && deepGuest.size() == 1023);
+        Require(Resolves(guest + "/hop1", deepGuest));
+        Require(Resolves(guest + "/hop1/", deepGuest));
+        for (const char* rest : {"//", "/.", "/./", "/..", "/../sub", "/x"}) {
+            Require(Fails((guest + "/hop1" + rest).c_str(), 63, deepGuest));
+        }
+        for (const auto* a : {&p5, &p4, &p3, &p2, &p1}) RemovePathAlias_nid_no_patch(a->c_str());
         for (int index = 0; index < 34; ++index) {
             Require(fileLink(directory / ("long-" + std::to_string(index)), index == 33 ? "file.txt" : "long-" + std::to_string(index + 1)));
         }

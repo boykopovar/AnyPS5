@@ -134,12 +134,17 @@ endforeach()
 
 set(agcMultisampleUploadSpv ${agcTextureDetileGeneratedDir}/MultisampleUpload.spv)
 set(agcMultisampleUploadHeader ${agcTextureDetileGeneratedDir}/MultisampleUpload_spv.h)
+set(agcMultisampleUploadFragSpv ${agcTextureDetileGeneratedDir}/MultisampleUploadFrag.spv)
+set(agcMultisampleUploadFragHeader ${agcTextureDetileGeneratedDir}/MultisampleUploadFrag_spv.h)
 add_custom_command(
-        OUTPUT "${agcMultisampleUploadHeader}"
+        OUTPUT "${agcMultisampleUploadHeader}" "${agcMultisampleUploadFragHeader}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
         COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcMultisampleUploadSpv}" "${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/MultisampleUpload.comp"
         COMMAND ${CMAKE_COMMAND} -DINPUT=${agcMultisampleUploadSpv} -DOUTPUT=${agcMultisampleUploadHeader}
         -DSYMBOL=MULTISAMPLE_UPLOAD_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -S frag -DCOLOR_ATTACHMENT_UPLOAD=1 -o "${agcMultisampleUploadFragSpv}" "${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/MultisampleUpload.comp"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcMultisampleUploadFragSpv} -DOUTPUT=${agcMultisampleUploadFragHeader}
+        -DSYMBOL=MULTISAMPLE_UPLOAD_FRAG_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/MultisampleUpload.comp" glslang-standalone
         VERBATIM
 )
@@ -263,6 +268,8 @@ function(agc_embedded_shader SOURCE STEM SYMBOL OUT_LIST)
 endfunction()
 set(agcDepthTransferShaderHeaders)
 agc_embedded_shader(DepthToStorage.comp DepthToStorage DEPTH_TO_STORAGE_SPV agcDepthTransferShaderHeaders)
+set(agcStagingCopyBackBoundShaderHeaders)
+agc_embedded_shader(StagingCopyBackBound.comp StagingCopyBackBound STAGING_COPY_BACK_BOUND_SPV agcStagingCopyBackBoundShaderHeaders)
 foreach(agcPresentationStage IN ITEMS Vert Frag)
     string(TOLOWER "${agcPresentationStage}" agcPresentationExtension)
     string(TOUPPER "${agcPresentationStage}" agcPresentationSymbol)
@@ -299,7 +306,7 @@ foreach(agcSampleOrderVariant IN ITEMS "R8;comp;-DTEXEL_FORMAT=r8ui" "R16;comp;-
     )
     list(APPEND agcSampleOrderShaderHeaders ${agcSampleOrderShaderHeader})
 endforeach()
-foreach(agcFirstSampleClass IN ITEMS Float Uint Sint)
+foreach(agcFirstSampleClass IN ITEMS Float Uint Sint Packed)
     string(TOUPPER "${agcFirstSampleClass}" agcFirstSampleSymbol)
     set(agcFirstSampleShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/FirstSample.frag)
     set(agcFirstSampleShaderSpv ${agcTextureDetileGeneratedDir}/FirstSample${agcFirstSampleClass}.spv)
@@ -429,6 +436,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameRecorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Float16NanProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatFlushProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatProbeTolerance.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Float16ConversionProbe.cpp
@@ -467,6 +475,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DescriptorValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/State.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestTextureResource.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestSamplerResource.cpp
@@ -488,6 +497,7 @@ set(agcDriverSources
         ${agcTextureDetileShaderHeader}
         ${agcReadbackHeaders}
         ${agcMultisampleUploadHeader}
+        ${agcMultisampleUploadFragHeader}
         ${agcCmaskClearShaderHeader}
         ${agcPackedMergeShaderHeader}
         ${agcMeshArgumentsShaderHeader}
@@ -501,6 +511,7 @@ set(agcDriverSources
         ${agcSampleDumpsShaderHeader}
         ${agcPresentationShaderHeaders}
         ${agcDepthTransferShaderHeaders}
+        ${agcStagingCopyBackBoundShaderHeaders}
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Event.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Query.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Resource/src/Lifecycle.cpp
@@ -559,12 +570,25 @@ target_link_libraries(libSceAgcDriver PRIVATE
         SDL2-static
         libc
         libkernel
+        anyps5_thermal_reader
         jpeg_turbo
         libzstd_static
         ${CMAKE_DL_LIBS}
 )
 if(WIN32)
     target_link_libraries(libSceAgcDriver PRIVATE pdh)
+endif()
+set(APS5_AGC_PROFILE "" CACHE STRING "Profile-guided build of the AGC driver: generate or use")
+if(APS5_AGC_PROFILE STREQUAL "generate")
+    foreach(agcProfileTarget libSceAgcDriver shader_recompiler_agc_driver)
+        target_compile_options(${agcProfileTarget} PRIVATE -fprofile-generate -fprofile-update=atomic)
+    endforeach()
+    target_compile_definitions(libSceAgcDriver PRIVATE APS5_PROFILE_GENERATE)
+    target_link_options(libSceAgcDriver PRIVATE -fprofile-generate)
+elseif(APS5_AGC_PROFILE STREQUAL "use")
+    foreach(agcProfileTarget libSceAgcDriver shader_recompiler_agc_driver)
+        target_compile_options(${agcProfileTarget} PRIVATE -fprofile-use -fprofile-correction -Wno-missing-profile -Wno-coverage-mismatch)
+    endforeach()
 endif()
 target_include_directories(libSceAgcDriver SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/zstd/lib)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -712,6 +736,10 @@ foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
     set_target_properties(${agcExecutionTest} PROPERTIES CXX_EXTENSIONS OFF)
     configure_windows_unwind(${agcExecutionTest})
     target_compile_definitions(${agcExecutionTest} PRIVATE VK_ENABLE_BETA_EXTENSIONS)
+    if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(${agcExecutionTest} PRIVATE
+                -include ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/TestEnvironment.hpp)
+    endif()
     if(agcExecutionTests)
         list(GET agcExecutionTests 0 agcExecutionPchTarget)
         target_precompile_headers(${agcExecutionTest} REUSE_FROM ${agcExecutionPchTarget})
@@ -726,6 +754,20 @@ foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
     endif()
     list(APPEND agcExecutionTests ${agcExecutionTest})
 endforeach()
+
+add_test_executable(agc_read_lane_elimination_tests EXCLUDE_FROM_ALL tests/ReadLaneElimination.cpp)
+target_include_directories(agc_read_lane_elimination_tests PRIVATE ${CMAKE_SOURCE_DIR}/core/shader/recompiler)
+target_link_libraries(agc_read_lane_elimination_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_read_lane_elimination_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_read_lane_elimination_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_read_lane_elimination_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_read_lane_elimination COMMAND agc_read_lane_elimination_tests)
+    if(WIN32)
+        set_tests_properties(agc_read_lane_elimination PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
 
 function(agc_add_default_test agcTest)
     string(REGEX REPLACE "_tests$" "" agcTestName "${agcTest}")
@@ -874,8 +916,14 @@ if(BUILD_TESTING)
                 OUTPUT_NAME GuestMemoryFixture SUFFIX ".prx" CXX_EXTENSIONS OFF
                 BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
     endif()
+    add_test(NAME agc_driver_depth_expand_out_of_place_inline COMMAND agc_driver_depth_expand_out_of_place_tests)
+    set_tests_properties(agc_driver_depth_expand_out_of_place_inline PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=0" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_expand_out_of_place_inline PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
-    foreach(partialStoreTest agc_driver_depth_plane_partial_store_unimported agc_driver_depth_plane_partial_store_image_copy agc_driver_depth_plane_partial_store_buffer_copy)
+    foreach(partialStoreTest agc_driver_depth_plane_partial_store_unimported agc_driver_depth_plane_partial_store_image_copy agc_driver_depth_plane_partial_store_buffer_copy agc_driver_depth_plane_partial_store_upload_image)
         set_tests_properties(${partialStoreTest} PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_HOST_IMPORT=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         if(WIN32)
