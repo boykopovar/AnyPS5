@@ -43,7 +43,6 @@ void testDirect() {
         check(storage.buffer.cursor_up == packet + 3 && sizes[i]() == 12, "direct size/cursor mismatch");
         check(packet[3] == 0xabcdef01u, "direct command overwrote following word");
         const auto before = storage.words;
-        expectFailure([&] { writers[i](&storage.buffer, {0x10000u, 1}); });
         expectFailure([&] { writers[i](nullptr, {0, 1}); });
         storage.buffer.cursor_down = storage.buffer.cursor_up + 2;
         expectFailure([&] { writers[i](&storage.buffer, {0, 1}); });
@@ -65,11 +64,41 @@ void testConfig() {
     check(reserved == range + 5 && reserved[0] == 0xc0026800u && reserved[1] == 0x200u && reserved[2] == 0xabcdef01u && reserved[3] == 0xabcdef01u, "null config values wrote the payload");
     check(storage.buffer.cursor_up == reserved + 4 && reserved[4] == 0xabcdef01u, "config register cursor mismatch");
     const auto before = storage.words;
-    expectFailure([&] { sceAgcDcbSetCfRegisterDirect(&storage.buffer, {0x10000u, 1}); });
     expectFailure([&] { sceAgcDcbSetCfRegisterDirect(nullptr, {0, 1}); });
     expectFailure([&] { sceAgcDcbSetCfRegisterRangeDirect(&storage.buffer, 0x100u, values.data(), 0); });
     expectFailure([&] { sceAgcDcbSetCfRegisterRangeDirect(&storage.buffer, 0xffffu, values.data(), 2); });
     check(storage.words == before && storage.buffer.cursor_up == reserved + 4, "invalid config register write modified buffer");
+}
+
+void testDirectConsoleArguments() {
+    using DirectWriter = std::uint32_t* (APS5_VABI *)(CommandBuffer*, ShaderRegister);
+    struct Writer {
+        DirectWriter write;
+        std::uint32_t header;
+    };
+    struct Case {
+        ShaderRegister reg;
+        std::uint32_t offset;
+    };
+    const std::array<Writer, 4> writers{{{sceAgcDcbSetCfRegisterDirect, 0xc0016800u}, {sceAgcDcbSetCxRegisterDirect, 0xc0016900u}, {sceAgcDcbSetShRegisterDirect, 0xc0017600u}, {sceAgcDcbSetUcRegisterDirect, 0xc0017900u}}};
+    const std::array<Case, 3> cases{{{{0x11111111u, 0u}, 0x1111u}, {{0x22222222u, 0x11111111u}, 0x2222u}, {{0x10000u, 1u}, 0u}}};
+    for (const auto& writer : writers) {
+        for (const auto& item : cases) {
+            Storage storage;
+            const auto* packet = writer.write(&storage.buffer, item.reg);
+            const std::array expected{writer.header, item.offset, item.reg.value};
+            check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet) && storage.buffer.cursor_up == packet + 3, "direct register packet does not match the console's");
+        }
+    }
+    using RangeWriter = std::uint32_t* (APS5_VABI *)(CommandBuffer*, std::uint32_t, const std::uint32_t*, std::uint32_t);
+    const std::array<std::uint32_t, 2> rangeHeaders{0xc0007600u, 0xc0007900u};
+    const std::array<RangeWriter, 2> rangeWriters{sceAgcCbSetShRegisterRangeDirect, sceAgcCbSetUcRegisterRangeDirect};
+    for (std::size_t i = 0; i < rangeWriters.size(); ++i) {
+        Storage storage;
+        storage.words.fill(0xabcdef01u);
+        const auto* packet = rangeWriters[i](&storage.buffer, 0x22222222u, reinterpret_cast<const std::uint32_t*>(0x3333333344444444ull), 0);
+        check(packet == storage.words.data() && packet[0] == rangeHeaders[i] && packet[1] == 0x2222u && packet[2] == 0xabcdef01u && storage.buffer.cursor_up == packet + 2, "empty register range does not match the console's packet");
+    }
 }
 
 void testRangeFromAnyByte() {
@@ -176,6 +205,29 @@ void testIndirectPlaceholder() {
     }
 }
 
+void testIndirectConsoleArguments() {
+    const std::array writers{sceAgcDcbSetCxRegistersIndirect, sceAgcDcbSetShRegistersIndirect, sceAgcDcbSetUcRegistersIndirect};
+    const std::array headers{0xc0039f00u, 0xc0036300u, 0xc0036400u};
+    struct Case {
+        std::uintptr_t address;
+        std::uint32_t count;
+        std::array<std::uint32_t, 4> words;
+    };
+    const std::array<Case, 3> cases{{
+        {0x11111111u, 0x22222222u, {0x11111110u, 0u, 0x80000000u, 0x2222u}},
+        {1u, 2u, {0u, 0u, 0x80000000u, 2u}},
+        {0x1111111122222222ull, 0x44444444u, {0x22222220u, 0x11111111u, 0x80000000u, 0x444u}},
+    }};
+    for (std::size_t i = 0; i < writers.size(); ++i) {
+        for (const auto& item : cases) {
+            Storage storage;
+            const auto* packet = writers[i](&storage.buffer, reinterpret_cast<const volatile ShaderRegister*>(item.address), item.count);
+            check(packet == storage.words.data() && packet[0] == headers[i] && std::equal(item.words.begin(), item.words.end(), packet + 1), "indirect register packet does not match the console's");
+            check(storage.buffer.cursor_up == storage.words.data() + 5, "indirect register cursor mismatch");
+        }
+    }
+}
+
 void testDirectList() {
     constexpr std::uint32_t sentinel = 0xabcdef01u;
     constexpr std::uint32_t wordSize = sizeof(std::uint32_t);
@@ -233,10 +285,12 @@ int main() {
     try {
         testDirect();
         testConfig();
+        testDirectConsoleArguments();
         testRangeFromAnyByte();
         testListFromAnyByte();
         testIndirect();
         testIndirectPlaceholder();
+        testIndirectConsoleArguments();
         testDirectList();
         std::puts("AGC register command tests passed");
         return 0;

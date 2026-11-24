@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <limits>
 #include <cstdarg>
@@ -547,6 +548,43 @@ long ChunkEnd(void* opaque) {
     return HostLong(reinterpret_cast<Function>(slot.function)(slot.data));
 }
 
+bool NamesFile(CURLoption option) {
+    switch (option) {
+    case CURLOPT_CAINFO:
+    case CURLOPT_CAPATH:
+    case CURLOPT_CRLFILE:
+    case CURLOPT_ISSUERCERT:
+    case CURLOPT_SSLCERT:
+    case CURLOPT_SSLKEY:
+    case CURLOPT_PINNEDPUBLICKEY:
+    case CURLOPT_PROXY_CAINFO:
+    case CURLOPT_PROXY_CAPATH:
+    case CURLOPT_PROXY_CRLFILE:
+    case CURLOPT_PROXY_ISSUERCERT:
+    case CURLOPT_PROXY_SSLCERT:
+    case CURLOPT_PROXY_SSLKEY:
+    case CURLOPT_PROXY_PINNEDPUBLICKEY:
+    case CURLOPT_COOKIEFILE:
+    case CURLOPT_COOKIEJAR:
+    case CURLOPT_NETRC_FILE:
+    case CURLOPT_HSTS:
+    case CURLOPT_ALTSVC:
+    case CURLOPT_UNIX_SOCKET_PATH:
+        return true;
+    default:
+        return false;
+    }
+}
+
+std::string HostFileName(CURLoption option, const char* name) {
+    const std::string_view text(name);
+    if (text.empty()) return {};
+    if (text == "-" && (option == CURLOPT_COOKIEFILE || option == CURLOPT_COOKIEJAR)) return std::string(text);
+    if ((option == CURLOPT_PINNEDPUBLICKEY || option == CURLOPT_PROXY_PINNEDPUBLICKEY) && text.starts_with("sha256//")) return std::string(text);
+    std::filesystem::path host;
+    return ResolvePathError_nid_no_patch(name, host) == 0 ? host.string() : std::string{};
+}
+
 CURLcode SetEasyPointer(CURL* easy, CURLoption option, void* value, EasyContext* context) {
     switch (option) {
     case CURLOPT_OPENSOCKETFUNCTION:
@@ -875,6 +913,7 @@ CURLcode SetEasyPointer(CURL* easy, CURLoption option, void* value, EasyContext*
         return result;
     }
     default:
+        if (value && NamesFile(option)) return ::curl_easy_setopt(easy, option, HostFileName(option, static_cast<const char*>(value)).c_str());
         return ::curl_easy_setopt(easy, option, value);
     }
 }

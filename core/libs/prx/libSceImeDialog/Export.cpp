@@ -10,6 +10,7 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceIme/include/ImeComposition.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
@@ -323,6 +324,14 @@ int APS5_VABI sceImeDialogGetPanelSize(const Param* param, uint32_t* width, uint
     const bool readHeight = readWidth && GuestCopyIn_nid_no_patch(&heightProbe, height, sizeof(heightProbe));
     (void)heightProbe;
     if (!readHeight) {
+        errno = savedErrno;
+        return ErrorInvalidAddress;
+    }
+    const GuestArena::HostWrite widthGuard(width, sizeof(defaultWidth));
+    const GuestArena::HostWrite heightGuard(height, sizeof(defaultHeight));
+    if (!widthGuard.Open() || !heightGuard.Open() ||
+        !GuestWritable_nid_no_patch(width, sizeof(defaultWidth)) ||
+        !GuestWritable_nid_no_patch(height, sizeof(defaultHeight))) {
         errno = savedErrno;
         return ErrorInvalidAddress;
     }
