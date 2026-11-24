@@ -1,6 +1,7 @@
 #include "prx/libSceJpegDec/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -448,8 +449,10 @@ int32_t APS5_VABI sceJpegDecCreate(const JpegDecCreateParam* param, void* memory
     if (address > UINTPTR_MAX - (HANDLE_ALIGNMENT - 1)) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     const std::uintptr_t aligned = (address + HANDLE_ALIGNMENT - 1) & ~(HANDLE_ALIGNMENT - 1);
     {
+        const int savedErrno = errno;
         const GuestArena::HostWrite handleGuard(handle, sizeof(void*));
         const bool handleWritable = handleGuard.Open() && GuestWritable_nid_no_patch(handle, sizeof(void*));
+        errno = savedErrno;
         if (!handleWritable) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     }
     auto* context = reinterpret_cast<Context*>(aligned);
