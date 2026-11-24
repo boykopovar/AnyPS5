@@ -118,6 +118,12 @@ struct RectValue {
     SizeValue size;
 };
 
+struct PrintInfo {
+    float pageSetupScaleFactor = 1.0f;
+    float availablePaperWidth = 0.0f;
+    float availablePaperHeight = 0.0f;
+};
+
 using Point = Number<ObjectType::Point, PointValue>;
 using Size = Number<ObjectType::Size, SizeValue>;
 using Rect = Number<ObjectType::Rect, RectValue>;
@@ -311,6 +317,7 @@ public:
     Retained<Object> bottomOverhangImage;
     std::uint64_t paintedObjectsCounterThreshold = 0;
     bool hasLocalDataForURL = false;
+    std::u16string renderTreeExternalRepresentationForPrinting;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {

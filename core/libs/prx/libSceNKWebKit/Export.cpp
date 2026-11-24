@@ -8203,10 +8203,6 @@ int APS5_VABI WKBundlePageCopyOriginsWithApplicationCache() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageCopyRenderTreeExternalRepresentationForPrinting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageCopyRenderTreeExternalRepresentation() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8662,10 +8658,6 @@ int APS5_VABI WKNotificationManagerSetProvider() {
 
 
 
-int APS5_VABI WKPageBeginPrinting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageBlurFocusedNode() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8682,9 +8674,6 @@ int APS5_VABI WKPageClearSelection() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageComputePagesForPrinting() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
 
@@ -8701,10 +8690,6 @@ int APS5_VABI WKPageCopyUserAgent() {
 }
 
 int APS5_VABI WKPageCountStringMatches() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageEndPrinting() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -98,6 +98,8 @@ public:
     bool allowsRemoteInspection = false;
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
+    bool isInPrintingMode = false;
+    PrintInfo printInfo{};
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {
 public:
