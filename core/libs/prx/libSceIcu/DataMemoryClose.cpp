@@ -15,14 +15,67 @@
 #include <cmemory.h>
 #include <cerrno>
 #include <cstring>
+#include <deque>
+#include <mutex>
 #include <stdexcept>
 #include <udatamem.h>
+#include <unordered_map>
+#include <unordered_set>
 
 #if defined(_WIN32)
 #include <windows.h>
 #else
 #include <sys/mman.h>
 #endif
+
+namespace IcuDataMemoryOwnership {
+
+namespace {
+
+constexpr std::size_t MaxFreedEntries = 4096;
+std::mutex registryMutex;
+std::unordered_map<void*, TrustedRecord> registry;
+std::unordered_set<void*> freed;
+std::deque<void*> freedOrder;
+
+}
+
+void MarkFreed(void* pointer) {
+    if (!pointer) return;
+    std::lock_guard<std::mutex> lock(registryMutex);
+    if (freed.insert(pointer).second) {
+        freedOrder.push_back(pointer);
+        if (freedOrder.size() > MaxFreedEntries) {
+            freed.erase(freedOrder.front());
+            freedOrder.pop_front();
+        }
+    }
+}
+
+bool IsFreed(void* pointer) {
+    if (!pointer) return false;
+    std::lock_guard<std::mutex> lock(registryMutex);
+    return freed.find(pointer) != freed.end();
+}
+
+void Register(void* pointer, const void* pHeader, void* mapAddr, void* map) {
+    if (!pointer) return;
+    std::lock_guard<std::mutex> lock(registryMutex);
+    freed.erase(pointer);
+    registry[pointer] = TrustedRecord{pHeader, mapAddr, map};
+}
+
+bool TryTake(void* pointer, TrustedRecord& out) {
+    if (!pointer) return false;
+    std::lock_guard<std::mutex> lock(registryMutex);
+    auto it = registry.find(pointer);
+    if (it == registry.end()) return false;
+    out = it->second;
+    registry.erase(it);
+    return true;
+}
+
+}
 
 extern "C" {
 
