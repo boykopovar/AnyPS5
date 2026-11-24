@@ -653,7 +653,10 @@ bool SampledFromStorageEligible(const Context& context, std::uint32_t format, st
 }
 
 bool SampledFromStorageEligible(const Context& context, const GuestTextureResource& resource, std::uint64_t guestBytes) {
-    return SampledFromStorageEligible(context, resource.format, resource.baseAddress, guestBytes);
+    if (SampledFromStorageEligible(context, resource.format, resource.baseAddress, guestBytes)) return true;
+    static const bool disabled = std::getenv("APS5_NO_SAMPLED_FROM_STORAGE") != nullptr;
+    if (disabled || !sampledFromStorageForTest.load(std::memory_order_relaxed) || IsBlockCompressed(resource.format) || !StorageFormatAvailable(context, resource.format)) return false;
+    return StorageSegmentsServe(context, resource, guestBytes);
 }
 
 bool ImportGpuWrittenSampledSurface(const Context& context, const GuestTextureResource& resource, std::uint64_t guestBytes) {
@@ -6950,6 +6953,13 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
         const bool gpuDirect = sampled ? SampledFromStorageEligible(context, format, address, guestBytes) : HostImportCovers(context, address, static_cast<std::size_t>(guestBytes));
         if (!gpuDirect) surfaces.push_back({address, guestBytes, false});
     };
+    const auto considerResource = [&](const GuestTextureResource& resource, std::uint64_t guestBytes, bool sampled) {
+        const bool gpuDirect = sampled ? SampledFromStorageEligible(context, resource, guestBytes) : HostImportCovers(context, resource.baseAddress, static_cast<std::size_t>(guestBytes)) || StorageSegmentsServe(context, resource, guestBytes);
+        if (!gpuDirect) surfaces.push_back({resource.baseAddress, guestBytes, false});
+    };
+    const auto considerImage = [&](const StorageTexture& image, std::uint64_t address, std::uint64_t guestBytes) {
+        if (!HostImportCovers(context, address, static_cast<std::size_t>(guestBytes)) && !StorageSegmentsServe(context, image)) surfaces.push_back({address, guestBytes, false});
+    };
     static const bool keyRanges = std::getenv("APS5_NO_DCC_PRESYNC") == nullptr;
     const auto considerKeys = [&](std::uint64_t dccAddress, std::uint64_t guestBytes) {
         const auto keyBytes = DccKeyBytes(guestBytes);
@@ -6967,7 +6977,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
         for (const auto& range : describedRanges) {
             if (std::strcmp(range.kind, "texture") == 0 && textureIndex < textures.size()) {
                 const auto& texture = textures[textureIndex++];
-                if (texture->ViewsStorageImage()) consider(range.format, range.address, range.bytes, false);
+                if (texture->ViewsStorageImage()) considerImage(*texture->SharedStorageSource(), range.address, range.bytes);
                 else consider(range.format, range.address, range.bytes, true);
                 considerKeys(range.dccAddress, range.bytes);
             }
@@ -6975,7 +6985,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
         for (std::size_t index = 0; index < storageTextures.size(); ++index) {
             if (storageTextures[index] == nullptr || (index != 0 && storageTextures[index] == storageTextures[index - 1])) continue;
             const auto& image = *storageTextures[index];
-            consider(image.Descriptor().format, image.Descriptor().baseAddress, image.GuestBytes(), false);
+            considerImage(image, image.Descriptor().baseAddress, image.GuestBytes());
             considerKeys(image.Descriptor().dccAddress, image.GuestBytes());
         }
         return surfaces;
@@ -6983,7 +6993,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
     if (!imageRecords.empty()) {
         for (const auto& record : imageRecords) {
             if (!record.decoded) continue;
-            consider(record.resource.format, record.resource.baseAddress, record.guestBytes, record.sampled);
+            considerResource(record.resource, record.guestBytes, record.sampled);
             considerKeys(record.resource.dccAddress, record.guestBytes);
         }
         return surfaces;
@@ -6994,7 +7004,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
         if (IsNullTextureResource(words)) return;
         const auto resource = DecodeTextureResource(words);
         const auto guestBytes = SurfaceGuestBytes(resource);
-        consider(resource.format, resource.baseAddress, guestBytes, binding.kind == ShaderRecompiler::DescriptorKind::SampledImage);
+        considerResource(resource, guestBytes, binding.kind == ShaderRecompiler::DescriptorKind::SampledImage);
         considerKeys(resource.dccAddress, guestBytes);
     });
     for (const auto& binding : deferredCompute.program->bindings) {
@@ -7003,7 +7013,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
             try {
                 const auto resource = DecodeTextureResource(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(element * 8u, 8u));
                 const auto guestBytes = SurfaceGuestBytes(resource);
-                consider(resource.format, resource.baseAddress, guestBytes, true);
+                considerResource(resource, guestBytes, true);
                 considerKeys(resource.dccAddress, guestBytes);
             } catch (const std::runtime_error&) {
             }
