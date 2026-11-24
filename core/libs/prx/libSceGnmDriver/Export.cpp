@@ -872,9 +872,9 @@ int APS5_VABI sceGnmDestroyWorkloadStream_nid_disambig1(void) {
     return 0;
 }
 
-int APS5_VABI sceGnmDingDongForWorkload_nid_disambig1(std::uint32_t, std::uint32_t, std::uint64_t) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmDingDongForWorkload_nid_disambig1(std::uint32_t vqueueId, std::uint32_t nextOffsetDw, std::uint64_t) {
+    if (vqueueId == 0) return 0;
+    return sceGnmDingDong(vqueueId, nextOffsetDw);
 }
 
 int APS5_VABI sceGnmDrawIndexMultiInstanced_nid_disambig1(void) {
@@ -942,14 +942,13 @@ int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(void) {
     return 0;
 }
 
-int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(std::uint64_t, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes,
+    std::uint32_t handle, std::uint32_t index, std::uint32_t flipMode, std::int64_t flipArg) {
+    return sceGnmSubmitAndFlipCommandBuffers(count, dcbs, dcbBytes, ccbs, ccbBytes, handle, index, flipMode, flipArg);
 }
 
-int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(std::uint64_t, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes) {
+    return sceGnmSubmitCommandBuffers(count, dcbs, dcbBytes, ccbs, ccbBytes);
 }
 
 }

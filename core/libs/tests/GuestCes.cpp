@@ -203,6 +203,20 @@ static void RequireMeasuredStrings(void* latin, void* eucJp) {
     }
 
     const auto* letters = reinterpret_cast<const std::uint8_t*>("ABC");
+    {
+        std::uint8_t zeroContext[512]{};
+        const std::uint8_t input[] = {'A', 'B', 'C', 0, 'D'};
+        std::uint8_t output[16];
+        std::memset(output, 0xBB, sizeof(output));
+        std::uint32_t read = 7;
+        std::uint32_t written = 7;
+
+        const int result = sceCesMbcsStrToUtf8Str(zeroContext, input, 3, &read, output, sizeof(output), &written);
+        Require(result == 0);
+        Require(read == 0 && written == 0);
+        Require(output[0] == 0 && output[1] == 0xBB);
+    }
+
     std::uint8_t output[4] = {0xBB, 0xBB, 0xBB, 0xBB};
     std::uint32_t read = 7;
     std::uint32_t written = 7;
@@ -408,7 +422,7 @@ static void CheckSingleByteProfiles() {
             std::uint8_t back = 0;
             if (MeasuredHole(profile, sbc)) {
                 std::uint32_t code = 0x5A5A5A5A;
-                Require(sceCesSbcToUtf32(profile, static_cast<std::uint8_t>(sbc), &code) == unassignedCode && code == 0x5A5A5A5A);
+                Require(sceCesSbcToUtf32(profile, static_cast<std::uint8_t>(sbc), &code) == unassignedCode && code == 0);
                 Require(sceCesUtf32ToSbc(static_cast<std::uint32_t>(sbc), profile, &back) == unassignedCode);
                 continue;
             }
@@ -557,6 +571,34 @@ static void CheckCp864Profile() {
     Require(arabic != nullptr && arabic == sceCesRefersUcsProfileCp864());
     Require(arabic != sceCesRefersUcsProfileCp850() && arabic != sceCesRefersUcsProfileCp1256());
     RequireSbcRoundTrip(arabic, {0x9B, 0x9C, 0x9F, 0xA6, 0xA7, 0xFF});
+    constexpr std::uint16_t highCodePoints[128] = {
+        0x00B0, 0x00B7, 0x2219, 0x221A, 0x2592, 0x2500, 0x2502, 0x253C,
+        0x2524, 0x252C, 0x251C, 0x2534, 0x2510, 0x250C, 0x2514, 0x2518,
+        0x03B2, 0x221E, 0x03C6, 0x00B1, 0x00BD, 0x00BC, 0x2248, 0x00AB,
+        0x00BB, 0xFEF7, 0xFEF8, 0x0000, 0x0000, 0xFEFB, 0xFEFC, 0x0000,
+        0x00A0, 0x00AD, 0xFE82, 0x00A3, 0x00A4, 0xFE84, 0x0000, 0x0000,
+        0xFE8E, 0xFE8F, 0xFE95, 0xFE99, 0x060C, 0xFE9D, 0xFEA1, 0xFEA5,
+        0x0660, 0x0661, 0x0662, 0x0663, 0x0664, 0x0665, 0x0666, 0x0667,
+        0x0668, 0x0669, 0xFED1, 0x061B, 0xFEB1, 0xFEB5, 0xFEB9, 0x061F,
+        0x00A2, 0xFE80, 0xFE81, 0xFE83, 0xFE85, 0xFECA, 0xFE8B, 0xFE8D,
+        0xFE91, 0xFE93, 0xFE97, 0xFE9B, 0xFE9F, 0xFEA3, 0xFEA7, 0xFEA9,
+        0xFEAB, 0xFEAD, 0xFEAF, 0xFEB3, 0xFEB7, 0xFEBB, 0xFEBF, 0xFEC1,
+        0xFEC5, 0xFECB, 0xFECF, 0x00A6, 0x00AC, 0x00F7, 0x00D7, 0xFEC9,
+        0x0640, 0xFED3, 0xFED7, 0xFEDB, 0xFEDF, 0xFEE3, 0xFEE7, 0xFEEB,
+        0xFEED, 0xFEEF, 0xFEF3, 0xFEBD, 0xFECC, 0xFECE, 0xFECD, 0xFEE1,
+        0xFE7D, 0x0651, 0xFEE5, 0xFEE9, 0xFEEC, 0xFEF0, 0xFEF2, 0xFED0,
+        0xFED5, 0xFEF5, 0xFEF6, 0xFEDD, 0xFED9, 0xFEF1, 0x25A0, 0x0000,
+    };
+    for (std::uint32_t byte = 0; byte < 256; ++byte) {
+        const auto sbc = static_cast<std::uint8_t>(byte);
+        const std::uint32_t expected = byte < 0x80 ? (byte == 0x25 ? 0x066A : byte) : highCodePoints[byte - 0x80];
+        const int expectedStatus = byte >= 0x80 && expected == 0 ? unassignedCode : 0;
+        std::uint32_t code = 0xA5A5A5A5;
+        Require(sceCesSbcToUtf32(arabic, sbc, &code) == expectedStatus && code == expected);
+    }
+    std::uint8_t encodedByte = 0xA5;
+    Require(sceCesUtf32ToSbc(0x0025, arabic, &encodedByte) == unassignedCode && encodedByte == 0);
+    Require(sceCesUtf32ToSbc(0x066A, arabic, &encodedByte) == 0 && encodedByte == 0x25);
     for (int sbc = 1; sbc < 0x80; ++sbc) {
         if (sbc != 0x25) RequireSbcCode(arabic, static_cast<std::uint8_t>(sbc), static_cast<std::uint32_t>(sbc));
     }
@@ -580,6 +622,65 @@ static void CheckCp864Profile() {
     std::uint8_t encoded[4] = {};
     Require(sceCesUtf8StrToMbcsStr(context, reinterpret_cast<const std::uint8_t*>("\xD9\xAA\xD9\xA1"), 4, &used, encoded, sizeof(encoded), &produced) == 0);
     Require(used == 4 && produced == 2 && std::memcmp(encoded, "\x25\xB1", 2) == 0);
+}
+
+static void CheckScalarErrorOutputs() {
+    constexpr int invalidProfile = static_cast<int>(0x805C0004);
+    constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
+    constexpr int invalidEncode = static_cast<int>(0x805C0014);
+    constexpr int illegalCode = static_cast<int>(0x805C0015);
+    constexpr int unassignedCode = static_cast<int>(0x805C0020);
+    constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
+    const std::uint8_t* cp1252 = sceCesRefersUcsProfileCp1252();
+    const std::uint8_t* ascii = sceCesRefersUcsProfileAscii();
+
+    std::uint16_t ucs2 = 0xA5A5;
+    Require(sceCesSbcToUcs2(nullptr, 'A', &ucs2) == invalidProfile && ucs2 == 0);
+    ucs2 = 0xA5A5;
+    Require(sceCesSbcToUcs2(cp1252, 0x81, &ucs2) == unassignedCode && ucs2 == 0);
+    ucs2 = 0xA5A5;
+    Require(sceCesSbcToUcs2(ascii, 0x80, &ucs2) == invalidEncode && ucs2 == 0);
+
+    std::uint16_t utf16 = 0xA5A5;
+    std::uint32_t utf16Len = 7;
+    Require(sceCesSbcToUtf16le(nullptr, 'A', &utf16, 1, &utf16Len) == invalidProfile && utf16 == 0 && utf16Len == 0);
+    utf16 = 0xA5A5; utf16Len = 7;
+    Require(sceCesSbcToUtf16le(cp1252, 0x81, &utf16, 1, &utf16Len) == unassignedCode && utf16 == 0 && utf16Len == 0);
+    utf16 = 0xA5A5; utf16Len = 7;
+    Require(sceCesSbcToUtf16le(cp1252, 'A', &utf16, 0, &utf16Len) == dstBufferEnd && utf16 == 0xA5A5 && utf16Len == 1);
+
+    std::uint32_t utf32 = 0xA5A5A5A5u;
+    Require(sceCesSbcToUtf32le(nullptr, 'A', &utf32) == invalidProfile && utf32 == 0);
+    utf32 = 0xA5A5A5A5u;
+    Require(sceCesSbcToUtf32le(cp1252, 0x81, &utf32) == unassignedCode && utf32 == 0);
+
+    std::uint8_t sbc = 0xA5;
+    Require(sceCesUcs2ToSbc(0xD800, cp1252, &sbc) == illegalCode && sbc == 0);
+    sbc = 0xA5;
+    Require(sceCesUcs2ToSbc(0x0100, cp1252, &sbc) == unassignedCode && sbc == 0);
+    sbc = 0xA5;
+    Require(sceCesUcs2ToSbc('A', nullptr, &sbc) == invalidProfile && sbc == 0);
+
+    const std::uint16_t lowSurrogate[] = {0xDC00};
+    const std::uint16_t highSurrogate[] = {0xD800};
+    const std::uint16_t surrogatePair[] = {0xD83D, 0xDE00};
+    const std::uint16_t letter[] = {'A'};
+    std::uint32_t used = 9;
+    sbc = 0xA5;
+    Require(sceCesUtf16leToSbc(lowSurrogate, 1, &used, cp1252, &sbc) == illegalCode && sbc == 0 && used == 1);
+    used = 9; sbc = 0xA5;
+    Require(sceCesUtf16leToSbc(highSurrogate, 1, &used, cp1252, &sbc) == srcBufferEnd && sbc == 0 && used == 2);
+    used = 9; sbc = 0xA5;
+    Require(sceCesUtf16leToSbc(surrogatePair, 2, &used, cp1252, &sbc) == unassignedCode && sbc == 0 && used == 2);
+    used = 9; sbc = 0xA5;
+    Require(sceCesUtf16leToSbc(letter, 1, &used, nullptr, &sbc) == invalidProfile && sbc == 0 && used == 1);
+
+    sbc = 0xA5;
+    Require(sceCesUtf32ToSbc(0xD800, cp1252, &sbc) == illegalCode && sbc == 0);
+    sbc = 0xA5;
+    Require(sceCesUtf32ToSbc(0x1F600, cp1252, &sbc) == unassignedCode && sbc == 0);
+    sbc = 0xA5;
+    Require(sceCesUtf32ToSbc('A', nullptr, &sbc) == invalidProfile && sbc == 0);
 }
 
 int main() {
@@ -609,6 +710,7 @@ int main() {
     RequireUtf8ToSbc(profile, "\xC3\xA9", 0xE9);
     RequireSbcRoundTrip(profile, {0x81, 0x8D, 0x8F, 0x90, 0x9D});
     RequireMeasuredUtf8ToSbc(profile);
+    CheckScalarErrorOutputs();
 
     std::uint8_t utf8[4] = {};
     std::uint32_t length = 0;

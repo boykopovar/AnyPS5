@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## add Functional
+
+- [X509V3 extension method table](../../../core/libs/prx/libSceLibreSsl3/src/X509V3ExtD2i.cpp) (libSceLibreSsl3) - not checked on a console. `X509V3_EXT_d2i`, `X509V3_get_d2i` and `X509V3_EXT_conf_nid` know the 42 extensions of LibreSSL 4.0.0 [`X509V3_EXT_get_nid`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_lib.c#L68-L166), not the 3.4.1 `ext_dat.h` list the `X509V3_EXT_d2i` entry names: 143, 369 and 663, which that entry lists as throwing, have no method (null from the decoder, `X509V3_R_UNKNOWN_EXTENSION` from the builder) and the precertificate poison (1019) decodes `NULL` to the value 1 and is built as `05 00` from any string. The SCT lists (1018 and 1021) are not modelled: the decoder throws through `NotImplemented_nid_no_patch` where LibreSSL calls `d2i_SCT_LIST`; the builder queues `X509V3_R_EXTENSION_SETTING_NOT_SUPPORTED`, as LibreSSL does. Closes when: SCT lists are decoded.

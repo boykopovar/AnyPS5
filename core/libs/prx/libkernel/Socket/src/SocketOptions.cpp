@@ -72,6 +72,7 @@ constexpr int GuestIpReceiveDestination = 7;
 constexpr int GuestIpReceiveInterface = 20;
 constexpr int GuestIpReceiveTimeToLive = 65;
 constexpr std::uint32_t MulticastRequestWithIndex = 12;
+constexpr int GuestLocalPeerCredentials = 1;
 constexpr int ErrorNotSupported = 45;
 constexpr int ErrorAddressInUse = 48;
 constexpr int ErrorAddressNotAvailable = 49;
@@ -82,6 +83,7 @@ constexpr int ErrorInvalid = 22;
 constexpr int ErrorDomain = 33;
 constexpr int ErrorNoProtocolOption = 42;
 constexpr int ErrorNoBuffers = 55;
+constexpr int ErrorNotConnected = 57;
 constexpr int MaximumReservation = 5592405;
 constexpr int MaximumBuffer = 524288;
 constexpr int MaximumLinger = 65535;
@@ -478,9 +480,8 @@ int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4,
             if (const int fault = ReadValue(request, value, sizeof(request))) return fault;
             std::int32_t index;
             std::memcpy(&index, request + 8, sizeof(index));
+            if (index < 0) return ErrorInvalid;
             if (index != 0) throw std::runtime_error("IP_MULTICAST_IF: an interface index is not supported");
-            if (std::any_of(request, request + 8, [](unsigned char byte) { return byte != 0; }))
-                throw std::runtime_error("IP_MULTICAST_IF: an ip_mreqn with a non-zero address is not supported");
         } else {
             if (const int fault = ReadValue(&address, value, sizeof(address))) return fault;
         }
@@ -533,7 +534,11 @@ int GetIpLevelOption(SocketOptionState& state, bool ipv4, bool datagram, int opt
     if (!ipv4) return ErrorInvalid;
     if (MulticastOption(option) && option != GuestIpAddMembership && option != GuestIpDropMembership && !datagram) return ErrorNotSupported;
     if (option == GuestIpMulticastInterface) {
-        if (*length == MulticastRequestWithIndex) throw std::runtime_error("IP_MULTICAST_IF: reading an ip_mreqn is not supported");
+        if (*length == MulticastRequestWithIndex) {
+            if (state.multicastInterface != 0) throw std::runtime_error("IP_MULTICAST_IF: reading the interface index of a selected interface is not supported");
+            const unsigned char request[MulticastRequestWithIndex]{};
+            return Copy(value, length, request, sizeof(request));
+        }
         return Copy(value, length, &state.multicastInterface, sizeof(state.multicastInterface));
     }
     int number;
@@ -559,6 +564,15 @@ int SetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, const void*
     const int enabled = number != 0 ? 1 : 0;
     if (::setsockopt(static_cast<NativeHandle>(native), IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<NativeOptionValue>(&enabled), sizeof(enabled))) return HostError();
     return 0;
+}
+
+int GetLocalLevelOption(const LocalCredentials* credentials, bool stream, int option, void* value, std::uint32_t* length) {
+    if (option == GuestLocalPeerCredentials) {
+        if (credentials == nullptr) return stream ? ErrorNotConnected : ErrorInvalid;
+        return Copy(value, length, credentials, sizeof(*credentials));
+    }
+    const int disabled = 0;
+    return Copy(value, length, &disabled, sizeof(disabled));
 }
 
 int GetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length) {

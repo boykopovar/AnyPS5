@@ -112,6 +112,8 @@ struct HostImportCounts {
     std::uint64_t growing = 0;
     std::uint64_t budgetChecks = 0;
     std::uint64_t retiredPinnedBytes = 0;
+    std::uint64_t credited = 0;
+    std::uint64_t creditedBytes = 0;
 };
 
 const char* ImportRequesterName(ImportRequester requester);
@@ -125,6 +127,7 @@ void ReportHostImports();
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester = ImportRequester::Access);
 bool HostImportUsesDmaBuf(const Context& context, std::uint64_t address, std::size_t bytes);
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+const HostImport* HostImportJoinedFor(const Context& context, std::uint64_t address, std::size_t bytes);
 struct HostImportCopy {
     VkBuffer buffer;
     VkDeviceSize offset;
@@ -145,6 +148,8 @@ VkPhysicalDeviceMemoryBudgetPropertiesEXT UsageWithoutHostImports(const VkPhysic
 std::uint64_t HostImportBudgetWith(std::uint64_t configured, bool set, std::uint64_t reported, bool allocationFailed, std::uint64_t ceiling);
 void SetAddressCopyLimit(std::uint64_t bytes);
 void SetHostImportDeferredSettles(bool enabled);
+void SetHeapMirrorRetry(bool enabled);
+void SetImportRetireCredit(bool enabled);
 // The larger of 6 GiB and half the physical memory, at most the largest host heap less the larger of 2 GiB and half
 // that heap: the other half stays for the buffers, mirrors and textures that share it.
 std::uint64_t HostImportBudget(const VkPhysicalDeviceMemoryProperties& memory, std::uint64_t physicalBytes);
@@ -173,6 +178,7 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
 // re-checks with HostImportFor when it binds the import.
 bool HostImportOverlaps(const Context& context, std::uint64_t address, std::size_t bytes);
 bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes);
+bool ReadTrappableHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes, std::uint64_t page);
 bool ComparedHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes);
 std::uint64_t HostImportSetGeneration();
 struct RegisteredPiece {
@@ -278,6 +284,8 @@ struct LeaseStats {
     std::uint64_t contentionDrains = 0;
     std::uint64_t cacheDrops = 0;
     double contentionMs = 0;
+    std::uint64_t retireSnapshots = 0;
+    std::uint64_t retireSnapshotsSkipped = 0;
 };
 LeaseStats LeaseCounters();
 
@@ -301,6 +309,10 @@ struct AddressSpaceStats {
     std::uint64_t waiterDrops = 0;
     std::uint64_t patchedEpoch = 0;
     std::uint64_t rebuiltGrowth = 0;
+    std::uint64_t heapRetries = 0;
+    std::uint64_t heapRetryImports = 0;
+    std::uint64_t heapRetryOwed = 0;
+    std::uint64_t heapRetryRetakes = 0;
 };
 AddressSpaceStats AddressSpaceCounters();
 
@@ -606,6 +618,7 @@ private:
     // instead of the CPU (see Region::gpuCopy): live guest bytes, not sparse, at most the size
     // APS5_GPU_COPY_MAX_KIB allows, and APS5_CPU_COPIES unset.
     bool gpuCopyEligible(const Region& region) const;
+    bool copyBehindGpuWork(const Region& region, bool locked) const;
     // Whether a region inside a host import is staged in device memory instead of bound in place
     // (see GuestBufferMemory.cpp): staging allowed, not address-based unless an overlay region, a
     // written element inside, and an atomic element or a size within the written-shadow window.

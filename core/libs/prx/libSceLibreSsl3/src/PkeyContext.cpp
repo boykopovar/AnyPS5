@@ -601,6 +601,12 @@ constexpr int Sha224Type = 675;
 constexpr int Sha256Type = 672;
 constexpr int Sha384Type = 673;
 constexpr int Sha512Type = 674;
+constexpr int Sha512_224Type = 1029;
+constexpr int Sha512_256Type = 1030;
+constexpr int Sha3_224Type = 1031;
+constexpr int Sha3_256Type = 1032;
+constexpr int Sha3_384Type = 1033;
+constexpr int Sha3_512Type = 1034;
 
 constexpr int MaxDigestSize = 64;
 
@@ -651,6 +657,12 @@ bool CheckPaddingDigest(const DigestMethod* digest, int padding) {
     case Sha256Type:
     case Sha384Type:
     case Sha512Type:
+    case Sha512_224Type:
+    case Sha512_256Type:
+    case Sha3_224Type:
+    case Sha3_256Type:
+    case Sha3_384Type:
+    case Sha3_512Type:
         return true;
     default:
         QueueRsaError(ReasonInvalidDigest);
@@ -1067,6 +1079,15 @@ int APS5_VABI RsaKeyBits(const LibreSsl3EvpPkey* key) {
     return LibreSsl3::RsaBitCount_nid_no_patch(static_cast<const LibreSsl3Rsa*>(key->key));
 }
 
+int APS5_VABI RsaKeySecurityBits(const LibreSsl3EvpPkey* key) {
+    return LibreSsl3::RsaSecurityBits_nid_no_patch(static_cast<const LibreSsl3Rsa*>(key->key));
+}
+
+int APS5_VABI RsaPublicKeyCompare(const LibreSsl3EvpPkey* first, const LibreSsl3EvpPkey* second) {
+    return LibreSsl3::RsaPublicCompare_nid_no_patch(static_cast<const LibreSsl3Rsa*>(first->key),
+        static_cast<const LibreSsl3Rsa*>(second->key));
+}
+
 void APS5_VABI RsaKeyFree(LibreSsl3EvpPkey* key) {
     LibreSsl3::FreeRsa_nid_no_patch(static_cast<LibreSsl3Rsa*>(key->key));
 }
@@ -1219,14 +1240,14 @@ const LibreSsl3PkeyAsn1Method RsaAsn1Method {
     "OpenSSL RSA method",
     nullptr,
     nullptr,
-    nullptr,
+    &RsaPublicKeyCompare,
     nullptr,
     nullptr,
     nullptr,
     nullptr,
     &RsaKeySize,
     &RsaKeyBits,
-    nullptr,
+    &RsaKeySecurityBits,
     nullptr,
     nullptr,
     nullptr,
@@ -1255,14 +1276,14 @@ const LibreSsl3PkeyAsn1Method RsaPssAsn1Method {
     "OpenSSL RSA-PSS method",
     nullptr,
     nullptr,
-    nullptr,
+    &RsaPublicKeyCompare,
     nullptr,
     nullptr,
     nullptr,
     nullptr,
     &RsaKeySize,
     &RsaKeyBits,
-    nullptr,
+    &RsaKeySecurityBits,
     nullptr,
     nullptr,
     nullptr,

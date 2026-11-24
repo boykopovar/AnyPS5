@@ -20,5 +20,9 @@ int APS5_VABI libSceGvMp4ParserUnknown_hKxhdSPJr84_nid_no_patch();
 int APS5_VABI libSceGvMp4ParserUnknown_mgcqnroon8s_nid_no_patch();
 int APS5_VABI libSceGvMp4ParserUnknown_uUeEONFSa30_nid_no_patch();
 int APS5_VABI libSceGvMp4ParserUnknown_ybFfESYz8VA_nid_no_patch();
+int APS5_VABI libSceGvMp4ParserUnknown_sSswLa3vxMA_nid_no_patch(const void* config);
+int APS5_VABI libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(const void* path, void* request, void* output);
+int APS5_VABI libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch(const void* path, void* thumbnail);
+int APS5_VABI libSceGvMp4ParserUnknown_iPAZM6la8Gk_nid_no_patch(const void* path, uint32_t first, uint32_t second, void* output);
 
 }
