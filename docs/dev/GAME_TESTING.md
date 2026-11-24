@@ -139,6 +139,10 @@ Each `runN/capture.json` records the capture state, original native summary, rep
 
 Dropped events make slice-based evidence incomplete; lost phase totals are reported separately. A complete artifact pair can therefore carry warnings and incomplete metrics. The tool does not increase trace buffers or choose a faster retry automatically. Review these states before comparing captures, and run the base and change on the same machine and scene.
 
+If a performance summary file holds several captures, pass `--baseline-trace` and `--candidate-trace` to
+`tools/performance_compare.py` where needed. Use the exact `trace` value from each selected JSONL row.
+Each selector must match exactly one row.
+
 ## External PresentMon comparisons
 
 Use this offline comparison when builds use different renderers or cannot both emit AnyPS5 performance traces. On Windows, record the same gameplay scene for each attempt with the same PresentMon console version. With a console release that supports `--v1_metrics`, use a command such as the following, replacing `1234` with the title process ID and changing the output file for each attempt.
