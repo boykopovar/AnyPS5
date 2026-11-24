@@ -152,7 +152,7 @@ static void CheckResources() {
     Require(!Slot<IsEqual>(unaligned, 4)(unaligned, empty), "unaligned is not null");
     Require(!Slot<IsEqual>(empty, 4)(empty, aligned), "null is not aligned");
 
-    for (const std::size_t alignment : {std::size_t{1}, std::size_t{16}, std::size_t{32}, std::size_t{64}, std::size_t{4096}}) {
+    for (const std::size_t alignment : {std::size_t{1}, std::size_t{2}, std::size_t{4}, std::size_t{8}, std::size_t{16}, std::size_t{32}, std::size_t{64}, std::size_t{4096}}) {
         auto* block = static_cast<unsigned char*>(Slot<Allocate>(aligned, 2)(aligned, 200, alignment));
         Require(block != nullptr && reinterpret_cast<std::uintptr_t>(block) % alignment == 0, "aligned allocate honours the alignment");
         std::memset(block, 0x5a, 200);
