@@ -58,4 +58,27 @@ assert.equal(cancelled, true);
 assert.equal(pending.locked, false);
 assert.equal(rejected.locked, false);
 scenarios++;
+for (const cleanupFails of [false, true]) {
+  const failure = new Error("open failed");
+  let reason;
+  const upstream = new ReadableStream({ cancel(error) {
+    reason = error;
+    if (cleanupFails) throw new Error("cancel failed");
+  } });
+  const writer = new DirectoryWriter({ async file() { throw failure; } });
+  await assert.rejects(writer.add("file", upstream), error => error === failure);
+  assert.equal(reason, failure);
+  assert.equal(upstream.locked, false);
+  scenarios++;
+}
+{
+  let destinationOpened = false;
+  const input = new ReadableStream();
+  const reader = input.getReader();
+  const writer = new DirectoryWriter({ async file() { destinationOpened = true; return new WritableStream(); } });
+  await assert.rejects(writer.add("file", input), { name: "TypeError" });
+  assert.equal(destinationOpened, false);
+  reader.releaseLock();
+  scenarios++;
+}
 console.log(JSON.stringify({ scenarios }));
