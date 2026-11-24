@@ -102,8 +102,11 @@ void require(bool condition, const char* message) {
     std::abort();
 }
 
-void reset(std::byte* first) {
+const std::byte* expectedSource = nullptr;
+
+void reset(std::byte* first, const std::byte* expected = source.data()) {
     destination = first;
+    expectedSource = expected;
     constructed = copied = destroyed = allocated = freed = 0;
     failAllocation = false;
     failConstruct = failCopy = failDestroy = false;
@@ -117,7 +120,7 @@ void APS5_VABI construct(void* pointer) {
 
 void APS5_VABI copy(void* target, void* original) {
     require(copied < Count && target == destination + copied * ElementBytes, "copy constructor received the wrong destination");
-    require(original == source.data() + copied * ElementBytes, "copy constructor received the wrong source");
+    require(original == expectedSource + copied * ElementBytes, "copy constructor received the wrong source");
     if (failCopy && copied == 2) throw 73;
     std::memcpy(target, original, ElementBytes);
     ++copied;
@@ -347,6 +350,31 @@ void checkGuestPointers() {
     requireInvalidArgument([&] { __cxa_vec_cctor_nid_postfix(roDestination, source.data(), Count, ElementBytes, copy, destroy); }, "read-only destination");
     require(errno == 45, "read-only destination preserves errno");
     require(copied == 0 && destroyed == 0, "read-only destination invoked callbacks");
+
+    reset(storage.data(), reinterpret_cast<const std::byte*>(roPage));
+    __cxa_vec_cctor_nid_postfix(storage.data(), roPage, Count, ElementBytes, copy, destroy);
+    require(copied == Count && destroyed == 0, "read-only source copies");
+    for (std::size_t i = 0; i < Count * ElementBytes; ++i) {
+        require(storage[i] == std::byte{0x5A}, "read-only source bytes");
+    }
+
+#ifdef _WIN32
+    require(VirtualProtect(roPage + page, page, PAGE_NOACCESS, &previous) != 0, "noaccess protection");
+#else
+    require(mprotect(roPage + page, page, PROT_NONE) == 0, "noaccess protection");
+#endif
+
+    reset(storage.data());
+    errno = 49;
+    requireInvalidArgument([&] { __cxa_vec_cctor_nid_postfix(storage.data(), roPage + page, Count, ElementBytes, copy, destroy); }, "no-access source");
+    require(errno == 49, "no-access source preserves errno");
+    require(copied == 0 && destroyed == 0, "no-access source invoked callbacks");
+
+    reset(storage.data());
+    errno = 50;
+    requireInvalidArgument([&] { __cxa_vec_cctor_nid_postfix(storage.data(), roPage + page - 16, Count, ElementBytes, copy, destroy); }, "cross-page no-access source");
+    require(errno == 50, "cross-page no-access source preserves errno");
+    require(copied == 0 && destroyed == 0, "cross-page no-access source invoked callbacks");
 
     reset(storage.data());
     errno = 46;

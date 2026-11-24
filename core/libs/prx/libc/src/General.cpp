@@ -866,7 +866,7 @@ extern "C" bool GuestReadable_nid_no_patch(const void* source, std::size_t bytes
         vm_region_basic_info_data_64_t info{};
         mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
         mach_port_t object = MACH_PORT_NULL;
-        const auto result = mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_COUNT_64,
+        const auto result = mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64,
             reinterpret_cast<vm_region_info_t>(&info), &count, &object);
         if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
         if (result != KERN_SUCCESS || region > address || (info.protection & VM_PROT_READ) == 0) return false;
