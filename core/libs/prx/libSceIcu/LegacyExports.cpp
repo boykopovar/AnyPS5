@@ -7380,10 +7380,6 @@ int APS5_VABI _ZN6icu_6810UnicodeSet11getSingleCPERKNS_13UnicodeStringE_nid_post
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ulocimp_getRegionForSupplementalData_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6816ICULocaleService3getERKNS_6LocaleEiR10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
