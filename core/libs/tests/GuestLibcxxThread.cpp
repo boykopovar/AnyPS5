@@ -2,7 +2,6 @@
 #include "prx/libkernel/include/Api.hpp"
 
 #include <atomic>
-#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
