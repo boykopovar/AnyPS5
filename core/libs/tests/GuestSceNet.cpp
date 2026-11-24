@@ -2959,6 +2959,7 @@ static void CheckSockInfo6() {
 
 static void CheckConnectPortZero() {
     for (const int family : {2, 28}) {
+        if (family == 28 && ipv6Unavailable) continue;
         const std::uint32_t addressSize = family == 2 ? 16 : 28;
         std::array<std::uint8_t, 28> loopback{};
         loopback[0] = static_cast<std::uint8_t>(addressSize);
