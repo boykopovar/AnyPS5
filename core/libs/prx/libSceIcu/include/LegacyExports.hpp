@@ -9,6 +9,7 @@ struct Converter;
 
 struct UEnumeration;
 struct UResourceBundle;
+typedef void (UVoidFunction)(void);
 
 extern "C" {
 
@@ -1655,7 +1656,7 @@ int APS5_VABI _ZN6icu_6810UnicodeSet20applyPropertyPatternERNS_21RuleCharacterIt
 int APS5_VABI _ZN6icu_6810UnicodeSetC1Ev_nid_postfix();
 int APS5_VABI ures_openAvailableLocales_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_jCEAhlQoJXY_nid_no_patch();
-int APS5_VABI uprv_dl_open_nid_postfix();
+void* APS5_VABI uprv_dl_open_nid_postfix(const char* libName, std::int32_t* status);
 int APS5_VABI sceIcuLegacyUnknown_jERsFgmcFp8_nid_no_patch();
 int APS5_VABI ubrk_openRules_nid_postfix();
 int APS5_VABI uhash_compareIChars_nid_postfix();
@@ -1977,7 +1978,7 @@ int APS5_VABI _ZN6icu_6810UnicodeSetC1ERKNS_13UnicodeStringER10UErrorCode_nid_po
 int APS5_VABI _ZN6icu_6818Normalizer2Factory15getNoopInstanceER10UErrorCode_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_svSitLIoR0M_nid_no_patch();
 int APS5_VABI _ZN6icu_6812ByteSinkUtil12appendChangeEiPKDsiRNS_8ByteSinkEPNS_5EditsER10UErrorCode_nid_postfix();
-int APS5_VABI uprv_dl_close_nid_postfix();
+void APS5_VABI uprv_dl_close_nid_postfix(void* libHandle, std::int32_t* status);
 int APS5_VABI _ZN6icu_6818Normalizer2Factory11getNFKCImplER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6810UnicodeSet10complementERKNS_13UnicodeStringE_nid_postfix();
 int APS5_VABI _ZNK6icu_6810UnicodeSet17matchesIndexValueEh_nid_postfix();
@@ -2092,7 +2093,7 @@ int APS5_VABI _ZN6icu_6816ICULocaleService16registerInstanceEPNS_7UObjectERKNS_6
 int APS5_VABI sceIcuLegacyUnknown_w5koSZnpf68_nid_no_patch();
 int APS5_VABI _ZN6icu_6810UnicodeSet6removeERKNS_13UnicodeStringE_nid_postfix();
 int APS5_VABI _ZN6icu_687UVector9removeAllERKS0__nid_postfix();
-int APS5_VABI uprv_dlsym_func_nid_postfix();
+APS5_VABI UVoidFunction* uprv_dlsym_func_nid_postfix(void* libHandle, const char* symbolName, std::int32_t* status);
 int APS5_VABI _ZN6icu_6815MaybeStackArrayIcLi40EED2Ev_nid_postfix();
 int APS5_VABI _ZN6icu_6813LocaleBuilder18copyExtensionsFromERKNS_6LocaleER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_689ErrorCodeD1Ev_nid_postfix();
