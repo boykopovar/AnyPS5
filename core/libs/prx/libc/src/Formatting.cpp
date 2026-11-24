@@ -645,7 +645,11 @@ extern "C" {
 
 int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaList* args) {
     if (!destination) { errno = 22; return -1; }
-    *destination = nullptr;
+    char* nullOutput = nullptr;
+    const int savedErrno = errno;
+    const bool probed = GuestCopyOut_nid_no_patch(destination, &nullOutput, sizeof(nullOutput));
+    errno = savedErrno;
+    if (!probed) { errno = 22; return -1; }
     if (!format || !args) { errno = 22; return -1; }
     try {
 #ifdef _WIN32
@@ -670,7 +674,11 @@ int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaLi
             return -1;
         }
         std::memcpy(output, source, static_cast<size_t>(count) + 1);
-        *destination = output;
+        if (!GuestCopyOut_nid_no_patch(destination, &output, sizeof(output))) {
+            ApplicationHeapFree_nid_no_patch(output);
+            errno = 22;
+            return -1;
+        }
         return count;
     } catch (const std::bad_alloc&) {
         errno = 12;
