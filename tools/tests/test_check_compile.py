@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1520,6 +1521,24 @@ class CheckCompileCommandArgumentsTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "the POSIX command splitter is used off Windows")
     def test_command_arguments_splits_quoted_words(self):
         self.assertEqual(check_compile.command_arguments("cc -c 'a b.cpp' -o x.o"), ["cc", "-c", "a b.cpp", "-o", "x.o"])
+
+
+class CheckCompileNinjaCacheTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "Windows checkout names cannot end with a space")
+    def test_repository_preserves_a_trailing_space_in_the_checkout_path(self):
+        reply = subprocess.CompletedProcess([], 0, "/checkout with space \n", "")
+        with unittest.mock.patch.object(check_compile, "capture", return_value=reply):
+            self.assertEqual(check_compile.repository(), Path("/checkout with space "))
+
+    def test_ninja_cache_preserves_unicode_separators_in_executable_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            ninja = str(build / "tools\u2028ninja")
+            (build / "CMakeCache.txt").write_text(f"CMAKE_MAKE_PROGRAM:FILEPATH={ninja}\r\n"
+                                                 "CMAKE_GENERATOR:INTERNAL=Ninja\r\n",
+                                                 encoding="utf-8", newline="")
+            with unittest.mock.patch.object(check_compile.shutil, "which", side_effect=lambda path: path):
+                self.assertEqual(check_compile.ninja_for_build(build), ninja)
 
 
 class CheckCompileEntriesTests(unittest.TestCase):

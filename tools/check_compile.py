@@ -65,7 +65,7 @@ def repository():
     result = capture(["git", "rev-parse", "--show-toplevel"])
     if result.returncode != 0:
         raise ValueError(result.stderr.strip() or "not a git checkout")
-    root = Path(result.stdout.strip())
+    root = Path(result.stdout.removesuffix("\n"))
     if os.name == "nt" and not root.is_dir():
         relative = capture(["git", "rev-parse", "--show-cdup"]).stdout.strip()
         root = (Path.cwd() / relative).resolve()
@@ -127,7 +127,7 @@ def compilation_database(text, source, skip_empty_commands=False):
 
 def ninja_for_build(build):
     try:
-        lines = (build / "CMakeCache.txt").read_text(encoding="utf-8-sig", errors="replace").splitlines()
+        lines = (build / "CMakeCache.txt").read_text(encoding="utf-8-sig", errors="replace").split("\n")
     except OSError:
         lines = ()
     values = {}
