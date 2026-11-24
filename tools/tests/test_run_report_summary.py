@@ -426,6 +426,33 @@ class RunReportSummaryTests(unittest.TestCase):
                     self.assertEqual(result.stdout, "")
                     self.assertIn("run_report_summary:", result.stderr)
 
+    def test_negative_observations_and_fractional_counters_are_unknown(self):
+        fields = (
+            (("run", "seconds"), "after unknown seconds", False),
+            (("run", "framesPresented"), "unknown frame count", True),
+            (("run", "averageFps"), "average FPS unavailable", False),
+            (("system", "ramGiB"), "unknown GiB RAM", False),
+            (("shaders", "compiled"), "unknown compiled", True),
+            (("shaders", "failed"), "unknown failures", True),
+            (("truncated", "functions"), "unknown additional functions omitted", True),
+            (("truncated", "unsupported"), "unknown additional instructions omitted", True),
+            (("missing", "functions", 0, "calls"), "unknown calls across 1 function", True),
+            (("shaders", "unsupported", 0, "count"), "unknown occurrences across 1 instruction", True),
+        )
+        for path, expected, integer in fields:
+            for value in (-1, -0.5, *([0.5, 2.5] if integer else [])):
+                if path == ("run", "framesPresented") and value > 0:
+                    continue
+                with self.subTest(path=path, value=value):
+                    report = self.report("stop-none.json")
+                    report["missing"]["functions"] = [{"calls": 3}]
+                    report["shaders"]["unsupported"] = [{"count": 3}]
+                    parent = report
+                    for key in path[:-1]:
+                        parent = parent[key]
+                    parent[path[-1]] = value
+                    self.assertIn(expected, render(report))
+
 
 class TextHelperTests(unittest.TestCase):
     def test_text_replaces_control_characters_and_names_missing_values(self):
