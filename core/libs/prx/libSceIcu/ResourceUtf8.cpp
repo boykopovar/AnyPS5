@@ -71,6 +71,10 @@ const std::uint8_t* ReadRoot(const UResourceBundle* resB, int savedErrno, const 
 bool ReadString(const std::uint8_t* root, std::uint32_t resource, std::vector<char16_t>& units, int savedErrno,
     const char* caller) {
     if ((resource >> TypeShift) != StringType) return false;
+    if (resource == 0) {
+        units.clear();
+        return true;
+    }
     const auto* address = root + static_cast<std::size_t>(resource & ValueMask) * sizeof(std::int32_t);
     std::int32_t length = -1;
     CopyIn(&length, address, sizeof(length), savedErrno, caller);
