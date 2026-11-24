@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -20,14 +21,14 @@
 
 namespace {
 
-constexpr long MmHard = 0x001;
-constexpr long MmPrint = 0x100;
-constexpr long MmConsole = 0x200;
+constexpr std::int64_t MmHard = 0x001;
+constexpr std::int64_t MmPrint = 0x100;
+constexpr std::int64_t MmConsole = 0x200;
 constexpr int MmError = 2;
 constexpr int MmWarning = 3;
 constexpr int MmNosev = 0;
 constexpr int MmOk = 0;
-constexpr int MmNocon = 4;
+constexpr int MmNocon = 2;
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
@@ -111,7 +112,7 @@ int main() {
     SetVerbosity("label:tag");
     BeginCapture();
     Require(fmtmsg_nid_postfix(MmPrint, "XSI:cat", MmError, "illegal option", "refer", "XSI:cat:001") == MmOk);
-    Require(EndCapture() == "XSI:cat\nXSI:cat:001\n");
+    Require(EndCapture() == "XSI:cat XSI:cat:001\n");
 
     SetVerbosity(nullptr);
     BeginCapture();
@@ -136,6 +137,40 @@ int main() {
 
     BeginCapture();
     Require(fmtmsg_nid_postfix(0, "XSI:cat", MmError, "illegal option", nullptr, nullptr) == MmOk);
+    Require(EndCapture().empty());
+
+    SetVerbosity("text:label");
+    BeginCapture();
+    Require(fmtmsg_nid_postfix(MmPrint, "XSI:cat", MmError, "illegal option", nullptr, nullptr) == MmOk);
+    Require(EndCapture() == "illegal option: XSI:cat\n");
+
+    SetVerbosity("label::text");
+    BeginCapture();
+    Require(fmtmsg_nid_postfix(MmPrint, "XSI:cat", MmError, "illegal option", "refer", nullptr) == MmOk);
+    Require(EndCapture() == "XSI:cat: illegal option\n");
+
+    SetVerbosity("label:");
+    BeginCapture();
+    Require(fmtmsg_nid_postfix(MmPrint, "XSI:cat", MmError, "illegal option", "refer", "XSI:cat:001") == MmOk);
+    Require(EndCapture() == "XSI:cat\n");
+
+    SetVerbosity("label:severity:text:action:tag:tag");
+    BeginCapture();
+    Require(fmtmsg_nid_postfix(MmPrint | MmHard, "XSI:cat", MmError, "illegal option", "refer to cat in user's reference manual", "XSI:cat:001") == MmOk);
+    Require(EndCapture() == "XSI:cat: ERROR: illegal option\nTO FIX: refer to cat in user's reference manual XSI:cat:001\n");
+
+    SetVerbosity("::");
+    BeginCapture();
+    Require(fmtmsg_nid_postfix(MmPrint, "XSI:cat", MmError, "illegal option", "refer", "XSI:cat:001") == MmOk);
+    Require(EndCapture().empty());
+
+    SetVerbosity(nullptr);
+    BeginCapture();
+    Require(fmtmsg_nid_postfix(MmPrint, "XSI:cat", MmError, "illegal option", nullptr, "XSI:cat:001") == MmOk);
+    Require(EndCapture() == "XSI:cat: ERROR: illegal option XSI:cat:001\n");
+
+    BeginCapture();
+    Require(fmtmsg_nid_postfix(MmConsole, nullptr, 0, nullptr, nullptr, nullptr) == MmOk);
     Require(EndCapture().empty());
 
     std::filesystem::remove(g_capture);
