@@ -34,6 +34,9 @@ static_assert(offsetof(PosixForWebKitPasswd, pw_fields) == 72);
 extern "C" {
 
 PosixForWebKitPasswd* APS5_VABI getpwuid_nid_postfix(std::uint32_t uid);
+PosixForWebKitPasswd* APS5_VABI getpwent_nid_postfix();
+void APS5_VABI setpwent_nid_postfix();
+void APS5_VABI endpwent_nid_postfix();
 
 void* APS5_VABI opendir_nid_disambig1_nid_postfix(const char* path);
 int APS5_VABI closedir_nid_disambig1_nid_postfix(void* handle);
@@ -59,6 +62,7 @@ int APS5_VABI __wrap_statvfs(const char* path, LibcStatvfs* status);
 int APS5_VABI __wrap_symlink(const char* target, const char* created);
 int APS5_VABI clock_gettime_np(int clockId, KernelTimespec* tp);
 int APS5_VABI getenv_np(const char* name, char* buffer, std::size_t size);
+int GetenvNp_nid_no_patch(const char* name, char* buffer, std::size_t size);
 int APS5_VABI pthread_setname_np_nid_postfix(Pthread thread, const char* name);
 void* APS5_VABI mmap_np(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset, const char* name);
 int APS5_VABI msetname(void* address, std::size_t length, const char* name);

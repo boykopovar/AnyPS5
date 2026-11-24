@@ -80,6 +80,10 @@ See [Build](BUILD.md#performance-trace) for the trace format, summary fields and
 | `APS5_AB=<seconds>:<switch>[+<switch>...]` | Alternates phase A (the environment's settings) and phase B (the listed switches toggled) at flip packets within one run, each phase at least `<seconds>` long. Every phase change prints `[ab] phase A\|B <k> begins at present <n> (t <s> s)` and, `APS5_AB_SETTLE` seconds (default 2) later, `[ab] phase A\|B <k> settled at present <n> (t <s> s)`; `t` counts from the first flip. `APS5_AB_START=<n>` starts at flip `<n>`, `APS5_AB_START=<n>s` `<n>` seconds after the first flip. Only runtime switches (`RuntimeSwitch` in `core/libs/prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp`; their rows in `docs/dev/ENVIRONMENT.md` say that `APS5_AB` can toggle them) can be listed; any other name fails the first flip. `python tools/ab_split.py <log>` prints the mean of each periodic report (`[present]`, `[gputime]`, `[draw] pipelined`, `[syncwait]`) per phase, counting only reports that lie wholly inside a settled phase, and each B phase against its neighbouring A phases. |
 | `APS5_VIDEOOUT_TELEMETRY_DIR=<path>` | Writes the presents and the pad changes of a run to `<path>/videoout.jsonl`; see [Usage](../user/USAGE.md#video-out-and-pad-telemetry). |
 
+For an event trace, repeat `--thread <name>` with exact track names to focus the digest on selected threads.
+Quote a name that contains spaces. This option applies to `aps5-trace-*.json.gz` and uncompressed event traces.
+Use the interval digest without a thread filter for `aps5-summary.jsonl`.
+
 ## Shader registers
 
 `APS5_TRACE_SHADER_REGS=all` prints register snapshots for every shader. Set it to a shader code address in hexadecimal to print one shader's registers.
