@@ -234,6 +234,16 @@ class BundleTests(unittest.TestCase):
             self.bundle()
         self.assertFalse((self.root / "bundle.zip").exists())
 
+    def test_failed_bundle_write_can_be_retried(self):
+        out = self.root / "bundle.zip"
+        with patch.object(zipfile.ZipFile, "writestr", side_effect=OSError("injected write failure")):
+            with self.assertRaisesRegex(OSError, "injected write failure"):
+                self.bundle()
+        self.assertFalse(out.exists())
+        _, names = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(sorted(bundle.namelist()), names)
+
     def test_existing_bundle_is_not_overwritten(self):
         (self.root / "bundle.zip").write_bytes(b"keep")
         with self.assertRaises(FileExistsError):
