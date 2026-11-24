@@ -13,7 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import rebase_verify
 
-REBASE_VERIFY_TEST_SHARDS = 3
+REBASE_VERIFY_TEST_SHARDS = 5
 
 
 def iter_test_cases(suite):
