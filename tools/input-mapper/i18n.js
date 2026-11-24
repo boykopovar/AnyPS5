@@ -1570,6 +1570,9 @@ export function translate(locale, key, values = {}) {
 
 const diagnostics = {
     'ar-EG': [
+        ['Turbo can only be used on a pad button.', 'Turbo ينفع يتستخدم على زرار pad بس.'],
+        ['Turbo cannot use the mouse wheel.', 'Turbo مينفعش يستخدم عجلة الماوس.'],
+        [/(\w+) must be a whole number from ([\d.]+) to ([\d.]+)\./gu, '$1 لازم يكون رقم صحيح من $2 لـ $3.'],
         [/Unknown SDL controller button '(.*)'\./u, "زرار وحدة تحكم SDL '$1' مش معروف."],
         ['expected a PlayStation button or None.', 'القيمة لازم تكون زرار PlayStation أو None.'],
         [/(\w+) is set more than once\./gu, '$1 متكرر ومش لازم يتحدد أكتر من مرة.'],
@@ -1593,6 +1596,9 @@ const diagnostics = {
         ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'الزرار ده مينفعش يتسجل بالصيغة الحالية لملف INI. اختار زرار SDL من القائمة.'],
     ],
     'sv': [
+        ['Turbo can only be used on a pad button.', 'Turbo kan bara användas på en pad-knapp.'],
+        ['Turbo cannot use the mouse wheel.', 'Turbo kan inte använda mushjulet.'],
+        [/(\w+) must be a whole number from ([\d.]+) to ([\d.]+)\./gu, '$1 måste vara ett heltal från $2 till $3.'],
         [/Unknown SDL controller button '(.*)'\./u, "Okänd SDL-handkontrollknapp '$1'."],
         [/SDLButton:(\w+) is set more than once\./u, 'SDLButton:$1 anges mer än en gång.'],
         ['expected a PlayStation button or None.', 'Förväntade en PlayStation-knapp eller None.'],
@@ -1612,6 +1618,9 @@ const diagnostics = {
         ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Den här fysiska tangenten kan inte fångas i det aktuella INI-formatet. Välj en SDL-tangent i listan.'],
     ],
     'pt-BR': [
+        ['Turbo can only be used on a pad button.', 'Turbo só pode ser usado em um botão do controle.'],
+        ['Turbo cannot use the mouse wheel.', 'Turbo não pode usar a roda do mouse.'],
+        [/(\w+) must be a whole number from ([\d.]+) to ([\d.]+)\./gu, '$1 deve ser um número inteiro de $2 a $3.'],
         [/Unknown SDL controller button '(.*)'\./u, "Botão de controle SDL desconhecido: '$1'."],
         ['expected a PlayStation button or None.', 'O valor deve ser um botão do PlayStation ou None.'],
         [/(\w+) is set more than once\./gu, '$1 está definido mais de uma vez.'],
@@ -1640,6 +1649,9 @@ const diagnostics = {
         ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Esta tecla física não pode ser capturada no formato INI atual. Escolha uma tecla SDL na lista.'],
     ],
     'es': [
+        ['Turbo can only be used on a pad button.', 'Turbo solo puede usarse en un botón del mando.'],
+        ['Turbo cannot use the mouse wheel.', 'Turbo no puede usar la rueda del ratón.'],
+        [/(\w+) must be a whole number from ([\d.]+) to ([\d.]+)\./gu, '$1 debe ser un número entero de $2 a $3.'],
         [/Unknown SDL controller button '(.*)'\./u, "Botón de mando SDL desconocido: '$1'."],
         ['expected a PlayStation button or None.', 'el valor debe ser un botón de PlayStation o None.'],
         [/(\w+) is set more than once\./gu, '$1 está definido más de una vez.'],
@@ -1671,6 +1683,9 @@ const diagnostics = {
         ['Binding: ', 'Entrada: '],
     ],
     'fr': [
+        ['Turbo can only be used on a pad button.', 'Turbo ne peut être utilisé que sur un bouton de manette.'],
+        ['Turbo cannot use the mouse wheel.', 'Turbo ne peut pas utiliser la molette de la souris.'],
+        [/(\w+) must be a whole number from ([\d.]+) to ([\d.]+)\./gu, '$1 doit être un nombre entier de $2 à $3.'],
         [/Unknown SDL controller button '(.*)'\./u, "Bouton de manette SDL inconnu : '$1'."],
         ['expected a PlayStation button or None.', 'la valeur doit être un bouton PlayStation ou None.'],
         [/(\w+) is set more than once\./gu, '$1 est défini plus d’une fois.'],
