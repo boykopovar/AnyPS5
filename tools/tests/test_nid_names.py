@@ -5,6 +5,7 @@ import io
 import json
 import os
 import socket
+import socketserver
 import subprocess
 import tempfile
 import sys
@@ -16,6 +17,12 @@ from urllib.error import URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import nid_names
+
+
+class LocalHTTPServer(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 def download_response(payload, error=None):
@@ -46,7 +53,7 @@ class DatabaseCacheTests(unittest.TestCase):
             def log_message(self, *args):
                 pass
 
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server = LocalHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
         thread.start()
         try:
@@ -319,7 +326,7 @@ class DatabaseCacheTests(unittest.TestCase):
                 release.wait(3)
             def log_message(self, *args):
                 pass
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server = LocalHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01))
         thread.start()
         try:
