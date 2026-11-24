@@ -36,9 +36,12 @@ int APS5_VABI Update(EvpMdContext* context, const void* data, std::size_t length
 }
 
 int APS5_VABI Final(EvpMdContext* context, unsigned char* digest) {
+    if (!digest) throw std::invalid_argument("EVP_sha512_256: null digest buffer");
     std::array<unsigned char, 64> full{};
     const int result = SHA512_Final_nid_postfix(full.data(), &State(context));
     if (result == 1) std::memcpy(digest, full.data(), DigestLength);
+    volatile unsigned char* cleared = full.data();
+    for (std::size_t index = 0; index < full.size(); ++index) cleared[index] = 0;
     return result;
 }
 

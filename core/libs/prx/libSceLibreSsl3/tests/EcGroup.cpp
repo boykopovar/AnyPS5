@@ -51,6 +51,23 @@ int main() {
     Require(RejectsNull([&] { EC_GROUP_cmp_nid_postfix(nullptr, groups[0], nullptr); }));
     Require(RejectsNull([&] { EC_GROUP_cmp_nid_postfix(groups[0], nullptr, nullptr); }));
     Require(RejectsNull([] { EC_GROUP_cmp_nid_postfix(nullptr, nullptr, nullptr); }));
+    const EvpMd* md = EVP_sha512_256_nid_postfix();
+    Require(md != nullptr && md->init != nullptr && md->finalize != nullptr);
+    Sha512Context shaState{};
+    EvpMdContext shaContext{};
+    shaContext.digest = md;
+    shaContext.mdData = &shaState;
+    Require(md->init(&shaContext) == 1);
+    Require(RejectsNull([&] { md->finalize(&shaContext, nullptr); }));
+    std::array<unsigned char, 32> digest{};
+    Require(md->finalize(&shaContext, digest.data()) == 1);
+    constexpr std::array<unsigned char, 32> expectedDigest{
+        0xc6, 0x72, 0xb8, 0xd1, 0xef, 0x56, 0xed, 0x28,
+        0xab, 0x87, 0xc3, 0x62, 0x2c, 0x51, 0x14, 0x06,
+        0x9b, 0xdd, 0x3a, 0xd7, 0xb8, 0xf9, 0x73, 0x74,
+        0x98, 0xd0, 0xc0, 0x1e, 0xce, 0xf0, 0x96, 0x7a,
+    };
+    Require(digest == expectedDigest);
     for (std::size_t i = 0; i < nids.size(); ++i) {
         EC_GROUP_free_nid_postfix(groups[i]);
         EC_GROUP_free_nid_postfix(copies[i]);
