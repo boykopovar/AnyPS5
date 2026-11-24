@@ -1,9 +1,11 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
+#include "prx/libSceSystemService/HostUrlBackends.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
 #include <cerrno>
+#include <string>
 
 namespace {
 
@@ -78,6 +80,32 @@ void TestCodec(const Codec& codec, std::uintptr_t expectedHandle) {
     Require(codec.getStatus(untouchedHandle, &status, &result) == 0 && status == 2 && result == 0);
 }
 
+void TestHostConfirmationText() {
+    const std::string prefix = "A game asks to open this address in your default web browser:\n\n";
+    const std::string suffix = "\n\nOpen it only if you trust it.";
+
+    const std::string malicious = std::string("https://example.com/a\nb\rc") + '\x1b' + "d" + '\x7f' + "e";
+    const std::string text = HostConfirmationText(malicious);
+    Require(text.rfind(prefix, 0) == 0);
+    Require(text.size() >= prefix.size() + suffix.size());
+    Require(text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0);
+    const std::string body = text.substr(prefix.size(), text.size() - prefix.size() - suffix.size());
+    Require(body.find("%0A") != std::string::npos);
+    Require(body.find("%0D") != std::string::npos);
+    Require(body.find("%1B") != std::string::npos);
+    Require(body.find("%7F") != std::string::npos);
+    for (const char ch : body) {
+        const unsigned char byte = static_cast<unsigned char>(ch);
+        Require(byte >= 0x20 && byte != 0x7F);
+    }
+
+    const std::string normal = "https://example.com/path?q=1&r=2#frag";
+    Require(HostConfirmationText(normal) == prefix + normal + suffix);
+
+    const std::string longUrl = "https://example.com/" + std::string(100, 'a');
+    Require(HostConfirmationText(longUrl) == prefix + longUrl.substr(0, 96) + '\n' + longUrl.substr(96) + suffix);
+}
+
 }
 
 int main() {
@@ -90,5 +118,6 @@ int main() {
     TestShellCalls(0x100C);
     Require(sceSystemServiceActivateHevc() == 0);
     Require(sceSystemServiceActivateHevcSoft() == 0);
+    TestHostConfirmationText();
     return 0;
 }
