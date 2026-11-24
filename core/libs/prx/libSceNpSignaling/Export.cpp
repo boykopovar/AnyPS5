@@ -1,6 +1,9 @@
 #include "prx/libSceNpSignaling/include/InventoryExports.hpp"
 #include "prx/libSceNpSignaling/include/Api.hpp"
 #include "prx/libSceNpSignaling/include/SignalingState.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/MallocManagedSize.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -19,6 +22,10 @@ static constexpr int SCE_NP_SIGNALING_ERROR_CONN_NOT_FOUND = static_cast<int>(0x
 static constexpr int SCE_NP_SIGNALING_ERROR_RESULT_NOT_FOUND = static_cast<int>(0x80552713);
 static constexpr int SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80552715);
 static constexpr int SCE_NP_SIGNALING_ERROR_OWN_NP_ID = static_cast<int>(0x80552716);
+static constexpr int SCE_NP_SIGNALING_ERROR_HEAP_CREATE = static_cast<int>(0x80552703);
+static constexpr std::uint64_t SIGNALING_MEMORY_ALIGNMENT = 0x4000;
+static constexpr std::uint64_t SIGNALING_DEFAULT_MEMORY_SIZE = 0x20000;
+static constexpr char SIGNALING_HEAP_NAME[] = "SceNpSignaling";
 static constexpr int CONTEXT_OPTION_FLAG = 1;
 static constexpr int MAX_CONTEXT_ID = 8;
 static constexpr std::uint32_t CONTEXT_FLAG_BIT = 0x2;
@@ -42,6 +49,9 @@ std::mutex signalingMutex;
 bool initialized = false;
 std::unordered_map<int, Context> contexts;
 int lastContextId = 0;
+void* heapAddress = nullptr;
+std::uint64_t heapSize = 0;
+void* heapMspace = nullptr;
 
 bool IsAsciiAlphanumeric(char value) {
     return (value >= '0' && value <= '9') || (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z');
@@ -162,12 +172,26 @@ int APS5_VABI sceNpSignalingGetPeerNetInfo(int ctxId, const void* peerNpId, std:
 }
 
 int APS5_VABI sceNpSignalingInitialize(std::int64_t memorySize, int threadPriority, int cpuAffinityMask, std::int64_t threadStackSize) {
-    (void)memorySize;
     (void)threadPriority;
     (void)cpuAffinityMask;
     (void)threadStackSize;
     std::lock_guard lock(signalingMutex);
     if (initialized) return SCE_NP_SIGNALING_ERROR_ALREADY_INITIALIZED;
+    if (memorySize < 0) return SCE_NP_SIGNALING_ERROR_HEAP_CREATE;
+    const std::uint64_t requested = memorySize != 0 ? static_cast<std::uint64_t>(memorySize) : SIGNALING_DEFAULT_MEMORY_SIZE;
+    const std::uint64_t remainder = requested & (SIGNALING_MEMORY_ALIGNMENT - 1);
+    const std::uint64_t size = remainder == 0 ? requested : requested + SIGNALING_MEMORY_ALIGNMENT - remainder;
+    void* address = nullptr;
+    const int mapped = sceKernelMapNamedFlexibleMemory(&address, size, 3, 0, SIGNALING_HEAP_NAME);
+    if (mapped != 0) return mapped;
+    void* mspace = sceLibcMspaceCreate_nid_postfix(SIGNALING_HEAP_NAME, address, size, 0);
+    if (mspace == nullptr) {
+        sceKernelMunmap(reinterpret_cast<std::uint64_t>(address), size);
+        return SCE_NP_SIGNALING_ERROR_HEAP_CREATE;
+    }
+    heapAddress = address;
+    heapSize = size;
+    heapMspace = mspace;
     initialized = true;
     return 0;
 }
@@ -191,6 +215,11 @@ int APS5_VABI sceNpSignalingSetContextOption(int ctxId, int optionId, int option
 int APS5_VABI sceNpSignalingTerminate() {
     std::lock_guard lock(signalingMutex);
     if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
+    if (heapMspace != nullptr) sceLibcMspaceDestroy_nid_postfix(heapMspace);
+    if (heapAddress != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(heapAddress), heapSize);
+    heapAddress = nullptr;
+    heapSize = 0;
+    heapMspace = nullptr;
     initialized = false;
     contexts.clear();
     lastContextId = 0;
@@ -344,7 +373,16 @@ int APS5_VABI sceNpSignalingGetMemoryInfo(NpSignalingMemoryInfo* info) {
     std::lock_guard lock(signalingMutex);
     if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!info) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
-    NotImplemented_nid_no_patch(__func__);
+    MallocManagedSize stats{};
+    stats.size = sizeof(stats);
+    stats.version = 1;
+    const int result = sceLibcMspaceMallocStats_nid_postfix(heapMspace, &stats);
+    if (result != 0) return result;
+    const NpSignalingMemoryInfo value{stats.maxSystemSize, stats.currentInuseSize, stats.maxInuseSize};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &value, sizeof(value));
+    errno = savedErrno;
+    return copied ? 0 : SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
 }
 
 }

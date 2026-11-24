@@ -1,11 +1,12 @@
 add_library(libSceNpSignaling SHARED EXCLUDE_FROM_ALL Export.cpp LocalNetInfo.cpp)
 target_include_directories(libSceNpSignaling PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceNpSignaling PRIVATE libc libkernel)
 configure_windows_unwind(libSceNpSignaling)
 
 if(BUILD_TESTING)
     add_test_executable(guest_np_signaling_offline_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpSignalingOffline.cpp)
     target_include_directories(guest_np_signaling_offline_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_np_signaling_offline_tests PRIVATE libSceNpSignaling)
+    target_link_libraries(guest_np_signaling_offline_tests PRIVATE libSceNpSignaling libkernel libc)
     configure_windows_unwind(guest_np_signaling_offline_tests)
     add_test(NAME guest_np_signaling_offline COMMAND guest_np_signaling_offline_tests)
     set_tests_properties(guest_np_signaling_offline PROPERTIES TIMEOUT 20)

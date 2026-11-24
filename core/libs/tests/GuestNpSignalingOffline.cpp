@@ -92,7 +92,7 @@ int main() {
     Require(sceNpSignalingGetPeerNetInfoA(1, nullptr, nullptr) == NotInitialized, "sceNpSignalingGetPeerNetInfoA", "a call before initialization did not return NOT_INITIALIZED first");
     NpSignalingNetInfo netInfo{};
     netInfo.size = sizeof(netInfo);
-    NpSignalingMemoryInfo memoryInfo{0x1234, 0x5678, 0x9ABC};
+    NpSignalingMemoryInfo memoryInfo{0x9ABC, 0x1234, 0x5678};
     int option = -7;
     Require(sceNpSignalingCreateContextA(-1, nullptr, nullptr, nullptr) == NotInitialized, "sceNpSignalingCreateContextA", "a call before initialization did not return NOT_INITIALIZED first");
     Require(sceNpSignalingActivateConnectionA(1, nullptr, nullptr) == NotInitialized, "sceNpSignalingActivateConnectionA", "a call before initialization did not return NOT_INITIALIZED first");
@@ -103,12 +103,13 @@ int main() {
     Require(sceNpSignalingCancelPeerNetInfo(1, 1) == NotInitialized, "sceNpSignalingCancelPeerNetInfo", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpSignalingGetPeerNetInfoResult(1, 1, nullptr) == NotInitialized, "sceNpSignalingGetPeerNetInfoResult", "a call before initialization did not return NOT_INITIALIZED first");
     Require(sceNpSignalingGetMemoryInfo(nullptr) == NotInitialized, "sceNpSignalingGetMemoryInfo", "initialization was not checked before the output");
-    Require(sceNpSignalingGetMemoryInfo(&memoryInfo) == NotInitialized && memoryInfo.currentInUse == 0x1234 && memoryInfo.peakInUse == 0x5678 && memoryInfo.maxSystemSize == 0x9ABC, "sceNpSignalingGetMemoryInfo", "a call before initialization did not return NOT_INITIALIZED");
+    Require(sceNpSignalingGetMemoryInfo(&memoryInfo) == NotInitialized && memoryInfo.maxSystemSize == 0x9ABC && memoryInfo.currentInUse == 0x1234 && memoryInfo.peakInUse == 0x5678, "sceNpSignalingGetMemoryInfo", "a call before initialization did not return NOT_INITIALIZED");
     std::uint32_t reqId = 0;
     Require(sceNpSignalingGetPeerNetInfo(1, nullptr, &reqId) == NotInitialized, "sceNpSignalingGetPeerNetInfo", "a call before initialization did not return NOT_INITIALIZED");
 
     Require(sceNpSignalingInitialize(0, 0, 0, 0) == 0, "sceNpSignalingInitialize", "initialization failed");
     Require(sceNpSignalingInitialize(0, 0, 0, 0) == AlreadyInitialized, "sceNpSignalingInitialize", "a second initialization did not return ALREADY_INITIALIZED");
+    Require(sceNpSignalingGetMemoryInfo(&memoryInfo) == 0 && memoryInfo.maxSystemSize == 0x20000 && memoryInfo.currentInUse == 0 && memoryInfo.peakInUse == 0, "sceNpSignalingGetMemoryInfo", "a fresh initialization did not report the default heap size and an empty use");
 
     Require(sceNpSignalingCreateContext(nullptr, nullptr, nullptr, &context) == InvalidArgument, "sceNpSignalingCreateContext", "a null SignalingNpId was taken");
     Require(sceNpSignalingCreateContext(&owner, nullptr, nullptr, nullptr) == InvalidArgument, "sceNpSignalingCreateContext", "a null output was taken");
@@ -312,6 +313,13 @@ int main() {
             "sceNpSignalingGetLocalNetInfo", "output was modified post-termination");
     Require(sceNpSignalingGetMemoryInfo(&memoryInfo) == NotInitialized, "sceNpSignalingGetMemoryInfo", "getting memory info post-termination did not return NOT_INITIALIZED");
     Require(sceNpSignalingGetPeerNetInfo(1, nullptr, &reqId) == NotInitialized, "sceNpSignalingGetPeerNetInfo", "a call after termination did not return NOT_INITIALIZED");
+
+    Require(sceNpSignalingInitialize(0x1234, 0, 0, 0) == 0, "sceNpSignalingInitialize", "initializing with a size failed");
+    Require(sceNpSignalingGetMemoryInfo(&memoryInfo) == 0 && memoryInfo.maxSystemSize == 0x4000 && memoryInfo.currentInUse == 0 && memoryInfo.peakInUse == 0, "sceNpSignalingGetMemoryInfo", "the heap size was not rounded up to the 0x4000 granule");
+    Require(sceNpSignalingTerminate() == 0, "sceNpSignalingTerminate", "terminating after a sized initialization failed");
+    Require(sceNpSignalingInitialize(0x8000, 0, 0, 0) == 0, "sceNpSignalingInitialize", "initializing with an aligned size failed");
+    Require(sceNpSignalingGetMemoryInfo(&memoryInfo) == 0 && memoryInfo.maxSystemSize == 0x8000, "sceNpSignalingGetMemoryInfo", "an aligned heap size was rounded");
+    Require(sceNpSignalingTerminate() == 0, "sceNpSignalingTerminate", "the final termination failed");
 
     if (failures != 0) return 1;
     std::puts("NpSignaling offline tests passed");
