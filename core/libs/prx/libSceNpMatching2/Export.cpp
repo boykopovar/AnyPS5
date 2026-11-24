@@ -1,5 +1,4 @@
 #include "prx/libSceNpMatching2/include/Api.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
