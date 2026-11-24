@@ -2,8 +2,11 @@
 #include "prx/libc/include/General.hpp"
 #include <cstddef>
 #include <string>
+#include <atomic>
 
 namespace {
+
+std::atomic<bool> rootEnumerated{false};
 
 struct RootAccount {
     char name[5] = "root";
@@ -65,9 +68,25 @@ int APS5_VABI getpwuid_r_nid_postfix(std::uint32_t uid, PosixForWebKitPasswd* pw
 int APS5_VABI getpwnam_r_nid_postfix(const char* name, PosixForWebKitPasswd* pwd, char* buffer, std::size_t bufsize, PosixForWebKitPasswd** result) {
     if (name == nullptr || result == nullptr) return PosixEinval;
     std::string copy;
-    if (CopyGuestString_nid_no_patch(name, MaximumName, copy) != 0) return PosixEfault;
+    const int copyError = CopyGuestString_nid_no_patch(name, MaximumName, copy);
+    if (copyError == 63) return StoreResult(result, nullptr);
+    if (copyError == 12) return copyError;
+    if (copyError != 0) return PosixEfault;
     if (copy != "root") return StoreResult(result, nullptr);
     const int error = CopyRootAccount(pwd, buffer, bufsize);
     if (error != 0) return error;
     return StoreResult(result, pwd);
+}
+
+PosixForWebKitPasswd* APS5_VABI getpwent_nid_postfix() {
+    if (rootEnumerated.exchange(true)) return nullptr;
+    return getpwuid_nid_postfix(0);
+}
+
+void APS5_VABI setpwent_nid_postfix() {
+    rootEnumerated.store(false);
+}
+
+void APS5_VABI endpwent_nid_postfix() {
+    rootEnumerated.store(false);
 }

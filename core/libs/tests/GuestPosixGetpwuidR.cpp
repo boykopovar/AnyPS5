@@ -38,6 +38,10 @@ int main() {
     result = &pwd;
     Require(getpwnam_r_nid_postfix(overlong.c_str(), &pwd, buffer, sizeof(buffer), &result) == 0);
     Require(result == nullptr);
+    const std::string beyondBound(5000, 'x');
+    result = &pwd;
+    Require(getpwnam_r_nid_postfix(beyondBound.c_str(), &pwd, buffer, sizeof(buffer), &result) == 0);
+    Require(result == nullptr);
 
     Require(getpwnam_r_nid_postfix("root", &pwd, buffer, 11, &result) == 34);
     return 0;

@@ -8,6 +8,7 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +17,7 @@
 #include <unistd.h>
 #else
 #include <io.h>
+#include <process.h>
 #endif
 #include <fcntl.h>
 #include <fstream>
@@ -42,6 +44,27 @@ void Require(bool condition) {
     if (!condition) {
         std::abort();
     }
+}
+
+static unsigned long CurrentProcessId() {
+#ifdef _WIN32
+    return static_cast<unsigned long>(_getpid());
+#else
+    return static_cast<unsigned long>(getpid());
+#endif
+}
+
+static std::atomic<unsigned> g_testPathCounter{0};
+
+static std::filesystem::path UniqueTestDirectory(const char* prefix) {
+    const auto name = std::string(prefix) + "-" + std::to_string(CurrentProcessId()) + "-" +
+                      std::to_string(g_testPathCounter++) + "-" +
+                      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto root = std::filesystem::current_path() / name;
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    Require(std::filesystem::create_directory(root, error) && !error);
+    return root;
 }
 
 template <typename Function, typename... Args>
@@ -741,8 +764,7 @@ static void TestMappedFiles() {
     readOnly(&mapped, -1, 0, success);
     Require(!success && !mapped.data && !mapped.size);
     destroy(&mapped);
-    const auto root = std::filesystem::current_path() / ("nkwebkit-mapped-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+    const auto root = UniqueTestDirectory("nkwebkit-mapped");
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/nkwebkit-mapped", reinterpret_cast<const char*>(hostPath.c_str()));
     auto path = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-mapped/file.bin"));
@@ -799,7 +821,8 @@ static void TestMappedFiles() {
     close(handle);
 #endif
     RemovePathAlias_nid_no_patch("/nkwebkit-mapped");
-    std::filesystem::remove_all(root);
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
 }
 
 static void TestFileHandles() {
@@ -809,8 +832,7 @@ static void TestFileHandles() {
     const auto truncate = &_ZN3WTF14FileSystemImpl12truncateFileEix;
     const auto openAndLock = &_ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE;
     const auto unlockAndClose = &_ZN3WTF14FileSystemImpl18unlockAndCloseFileEi;
-    const auto root = std::filesystem::current_path() / ("nkwebkit-handles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+    const auto root = UniqueTestDirectory("nkwebkit-handles");
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/nkwebkit-handles", reinterpret_cast<const char*>(hostPath.c_str()));
     const char* guestPath = "/nkwebkit-handles/\xC3\xA9.bin";
@@ -891,7 +913,8 @@ static void TestFileHandles() {
     Require(handle >= 0 && sceKernelRead(handle, bytes, sizeof(bytes)) == 0);
     close(handle);
     RemovePathAlias_nid_no_patch("/nkwebkit-handles");
-    std::filesystem::remove_all(root);
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
 }
 
 static NKWebKit::WtfAbi::String GuestPath(const char* path) {
@@ -910,8 +933,7 @@ static void TestFileSystemHelpers() {
     const auto moveFile = &_ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_;
     const auto realPath = &_ZN3WTF14FileSystemImpl8realPathERKNS_6StringE;
     const auto sameVolume = &_ZN3WTF14FileSystemImpl19filesHaveSameVolumeERKNS_6StringES3_;
-    const auto root = std::filesystem::current_path() / ("nkwebkit-fs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+    const auto root = UniqueTestDirectory("nkwebkit-fs");
     Require(std::filesystem::create_directory(root / "sub"));
     Require(std::filesystem::create_directory(root / "full"));
     Require(std::filesystem::create_directory(root / "full" / "child"));
@@ -966,7 +988,8 @@ static void TestFileSystemHelpers() {
     Require(!exists(directory));
     Require(deleteFile(other));
     RemovePathAlias_nid_no_patch("/nkwebkit-fs");
-    std::filesystem::remove_all(root);
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
 }
 
 static void RequireCurrentStackBounds() {
@@ -998,7 +1021,12 @@ static void TestStackBounds() {
 }
 
 static std::string CaptureLog(void (*body)()) {
-    const auto path = (std::filesystem::temp_directory_path() / ("nkwebkit_timing_scope_" + std::to_string(_ZN3WTF13MonotonicTime3nowEv().m_value) + ".log")).string();
+    const auto name = "nkwebkit_timing_scope_" + std::to_string(CurrentProcessId()) + "_" +
+                      std::to_string(g_testPathCounter++) + "_" +
+                      std::to_string(_ZN3WTF13MonotonicTime3nowEv().m_value) + ".log";
+    const auto path = (std::filesystem::temp_directory_path() / name).string();
+    std::error_code error;
+    std::filesystem::remove(path, error);
     std::fflush(stdout);
     std::fflush(stderr);
 #ifdef _WIN32
@@ -1029,7 +1057,7 @@ static std::string CaptureLog(void (*body)()) {
     std::ifstream input(path, std::ios::binary);
     std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     input.close();
-    std::filesystem::remove(path);
+    std::filesystem::remove(path, error);
     return text;
 }
 
@@ -1078,8 +1106,7 @@ static void TestTimingScope() {
 }
 
 static void TestUniStdExtras() {
-    const auto root = std::filesystem::current_path() / ("nkwebkit-unistd-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+    const auto root = UniqueTestDirectory("nkwebkit-unistd");
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/nkwebkit-unistd", reinterpret_cast<const char*>(hostPath.c_str()));
     const int handle = sceKernelOpen("/nkwebkit-unistd/file.bin", SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0666);
@@ -1105,7 +1132,8 @@ static void TestUniStdExtras() {
     Require(_ZN3WTF14dupCloseOnExecEi(-1) == -1);
     Require(*__error_nid_postfix() == 9);
     RemovePathAlias_nid_no_patch("/nkwebkit-unistd");
-    std::filesystem::remove_all(root);
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
 }
 
 static void TestSleepSeconds() {
@@ -1136,8 +1164,7 @@ static void TestSleepSeconds() {
 
 static void TestMakeAllDirectories() {
     const auto make = &_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE;
-    const auto root = std::filesystem::current_path() / ("nkwebkit-dirs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+    const auto root = UniqueTestDirectory("nkwebkit-dirs");
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/nkwebkit-dirs", reinterpret_cast<const char*>(hostPath.c_str()));
     const auto guest = [](const char* text) {
@@ -1174,7 +1201,8 @@ static void TestMakeAllDirectories() {
     Require(!make(nullPath));
     Require(!make(guest("")));
     RemovePathAlias_nid_no_patch("/nkwebkit-dirs");
-    std::filesystem::remove_all(root);
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
 }
 
 int main() {
