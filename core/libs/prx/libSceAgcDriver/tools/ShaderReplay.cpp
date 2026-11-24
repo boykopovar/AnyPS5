@@ -18,15 +18,29 @@
 #include <cstdio>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 namespace {
 
-std::string ReadText(const char* path) {
+std::string Display(const std::filesystem::path& path) {
+    try {
+        return path.string();
+    } catch (const std::exception&) {
+        return "(unprintable path)";
+    }
+}
+
+std::string ReadText(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     std::ostringstream stream;
     stream << file.rdbuf();
@@ -64,15 +78,15 @@ bool g_code = false;
 bool g_float16WidenNans = false;
 bool g_float16NarrowNans = false;
 
-bool OutputSpirv(const char* path, std::span<const std::uint32_t> spirv) {
+bool OutputSpirv(const std::filesystem::path& path, std::span<const std::uint32_t> spirv) {
     if (g_spirv) {
-        std::string name(path);
-        name = name.substr(name.find_last_of("/\\") + 1) + ".spv";
+        auto name = path.filename();
+        name += ".spv";
         std::ofstream file(name, std::ios::binary);
         file.write(reinterpret_cast<const char*>(spirv.data()), static_cast<std::streamsize>(spirv.size_bytes()));
         file.close();
         if (!file) {
-            std::printf("  could not write %s\n", name.c_str());
+            std::printf("  could not write %s\n", Display(name).c_str());
             return false;
         }
     }
@@ -92,7 +106,7 @@ bool OutputSpirv(const char* path, std::span<const std::uint32_t> spirv) {
     return true;
 }
 
-bool Replay(const char* path) {
+bool Replay(const std::filesystem::path& path) {
     auto request = ShaderRecompiler::RequestSerializer{}.Deserialize(ReadText(path));
     if (g_maintenance8) request.request.target.nonConstantImageOffsets = true;
     if (g_robust2) request.request.target.robustBufferAccess2 = true;
@@ -114,7 +128,7 @@ bool Replay(const char* path) {
     }
     if (g_float16WidenNans) request.request.target.float16WidenNans = true;
     if (g_float16NarrowNans) request.request.target.float16NarrowNans = true;
-    std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
+    std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", Display(path).c_str(), request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
     if (request.request.context.compute.has_value()) {
         const auto& compute = *request.request.context.compute;
         std::printf("  compute: threads %ux%ux%u, lds %u dwords, group ids %d%d%d, tg size %d, thread id components %u\n", compute.numThreads[0], compute.numThreads[1], compute.numThreads[2], compute.ldsSizeDwords, compute.groupIdEnable[0], compute.groupIdEnable[1], compute.groupIdEnable[2], compute.tgSizeEnable, compute.threadIdComponentCount);
@@ -151,28 +165,29 @@ bool Replay(const char* path) {
         }
     }
     if (g_code) {
-        std::string name(path);
-        name = name.substr(name.find_last_of("/\\") + 1) + ".code";
+        auto name = path.filename();
+        name += ".code";
         const auto& code = request.request.shader.code;
         std::ofstream file(name, std::ios::binary);
         file.write(reinterpret_cast<const char*>(code.data()), static_cast<std::streamsize>(code.size() * sizeof(code[0])));
         if (!file) {
-            std::printf("  could not write %s\n", name.c_str());
+            std::printf("  could not write %s\n", Display(name).c_str());
             return false;
         }
-        std::printf("  code -> %s\n", name.c_str());
+        std::printf("  code -> %s\n", Display(name).c_str());
         if (request.request.graphics.has_value()) {
             const auto& linked = request.request.graphics->linkedPrograms;
             for (std::size_t index = 0; index < linked.size(); ++index) {
-                const auto linkedName = name + ".linked" + std::to_string(index);
+                auto linkedName = name;
+                linkedName += ".linked" + std::to_string(index);
                 const auto& linkedCode = linked[index].binary.code;
                 std::ofstream linkedFile(linkedName, std::ios::binary);
                 linkedFile.write(reinterpret_cast<const char*>(linkedCode.data()), static_cast<std::streamsize>(linkedCode.size() * sizeof(linkedCode[0])));
                 if (!linkedFile) {
-                    std::printf("  could not write %s\n", linkedName.c_str());
+                    std::printf("  could not write %s\n", Display(linkedName).c_str());
                     return false;
                 }
-                std::printf("  linked program %zu (stage %u, 0x%llx) -> %s\n", index, static_cast<unsigned>(linked[index].binary.stage), static_cast<unsigned long long>(linked[index].binary.codeAddress), linkedName.c_str());
+                std::printf("  linked program %zu (stage %u, 0x%llx) -> %s\n", index, static_cast<unsigned>(linked[index].binary.stage), static_cast<unsigned long long>(linked[index].binary.codeAddress), Display(linkedName).c_str());
             }
         }
     }
@@ -254,96 +269,111 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--device-atomic-workgroup-memory-barriers] [--shader-fma] [--shader-int16] [--f16-widen-nans] [--f16-narrow-nans] [--f16-host-nans] [--spanned-shuffle-memory] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
         return 2;
     }
+#ifdef _WIN32
+    int wideCount = 0;
+    wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &wideCount);
+    if (wide == nullptr) return 2;
+    const std::vector<std::filesystem::path> paths(wide, wide + wideCount);
+    LocalFree(wide);
+#else
+    const std::vector<std::filesystem::path> paths(argv, argv + argc);
+#endif
+    std::vector<std::string> arguments;
+    for (const auto& path : paths) {
+        std::string argument;
+        for (const auto unit : path.native()) argument.push_back(static_cast<unsigned>(unit) < 0x80 ? static_cast<char>(unit) : '\x7f');
+        arguments.push_back(std::move(argument));
+    }
     int failures = 0;
-    for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--gcn") {
+    for (std::size_t i = 1; i < arguments.size(); ++i) {
+        if (arguments[i] == "--gcn") {
             ShaderRecompiler::SetGcnGuestShaders(true);
             continue;
         }
-        if (std::string(argv[i]) == "--dis") {
+        if (arguments[i] == "--dis") {
             g_disassemble = true;
             continue;
         }
-        if (std::string(argv[i]) == "--asm") {
+        if (arguments[i] == "--asm") {
             g_assembly = true;
             continue;
         }
-        if (std::string(argv[i]) == "--cfg") {
+        if (arguments[i] == "--cfg") {
             g_graph = true;
             continue;
         }
-        if (std::string(argv[i]) == "--maintenance8") {
+        if (arguments[i] == "--maintenance8") {
             g_maintenance8 = true;
             continue;
         }
-        if (std::string(argv[i]) == "--robust2") {
+        if (arguments[i] == "--robust2") {
             g_robust2 = true;
             continue;
         }
-        if (std::string(argv[i]) == "--wave-lds-memory-barriers") {
+        if (arguments[i] == "--wave-lds-memory-barriers") {
             g_waveLdsMemoryBarriers = true;
             continue;
         }
-        if (std::string(argv[i]) == "--device-scope-lds-memory-barriers") {
+        if (arguments[i] == "--device-scope-lds-memory-barriers") {
             g_deviceScopeLdsMemoryBarriers = true;
             continue;
         }
-        if (std::string(argv[i]) == "--lds-lock-fences") {
+        if (arguments[i] == "--lds-lock-fences") {
             g_ldsLockFences = true;
             continue;
         }
-        if (std::string(argv[i]) == "--device-atomic-workgroup-memory-barriers") {
+        if (arguments[i] == "--device-atomic-workgroup-memory-barriers") {
             g_deviceAtomicWorkgroupMemoryBarriers = true;
             continue;
         }
-        if (std::string(argv[i]) == "--shader-fma") {
+        if (arguments[i] == "--shader-fma") {
             g_shaderFma = true;
             continue;
         }
-        if (std::string(argv[i]) == "--shader-int16") {
+        if (arguments[i] == "--shader-int16") {
             g_shaderInt16 = true;
             continue;
         }
-        if (std::string(argv[i]) == "--f16-widen-nans") {
+        if (arguments[i] == "--f16-widen-nans") {
             g_float16WidenNans = true;
             continue;
         }
-        if (std::string(argv[i]) == "--f16-narrow-nans") {
+        if (arguments[i] == "--f16-narrow-nans") {
             g_float16NarrowNans = true;
             continue;
         }
-        if (std::string(argv[i]) == "--f16-host-nans") {
+        if (arguments[i] == "--f16-host-nans") {
             g_f16HostNans = true;
             continue;
         }
-        if (std::string(argv[i]) == "--spanned-shuffle-memory") {
+        if (arguments[i] == "--spanned-shuffle-memory") {
             g_spannedShuffleThroughMemory = true;
             continue;
         }
-        if (std::string(argv[i]) == "--mem") {
+        if (arguments[i] == "--mem") {
             g_memory = true;
             continue;
         }
-        if (std::string(argv[i]) == "--code") {
+        if (arguments[i] == "--code") {
             g_code = true;
             continue;
         }
-        if (std::string(argv[i]) == "--prepare") {
+        if (arguments[i] == "--prepare") {
             g_prepare = true;
             continue;
         }
-        if (std::string(argv[i]) == "--materialize") {
+        if (arguments[i] == "--materialize") {
             g_materialize = true;
             continue;
         }
-        if (std::string(argv[i]) == "--spv") {
+        if (arguments[i] == "--spv") {
             g_spirv = true;
             continue;
         }
         try {
-            if (!Replay(argv[i])) ++failures;
+            if (!Replay(paths[i])) ++failures;
         } catch (const std::exception& error) {
-            std::printf("%s: could not load request: %s\n", argv[i], FirstLine(error.what()).c_str());
+            std::printf("%s: could not load request: %s\n", Display(paths[i]).c_str(), FirstLine(error.what()).c_str());
             ++failures;
         }
     }

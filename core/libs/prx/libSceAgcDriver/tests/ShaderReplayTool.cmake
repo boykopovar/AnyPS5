@@ -47,6 +47,18 @@ foreach(mode IN ITEMS prepare materialize recompile)
     endif()
 endforeach()
 
+set(directory "${CAPTURE}/José 測試")
+set(request "－inactive.req")
+file(REMOVE_RECURSE "${directory}")
+file(MAKE_DIRECTORY "${directory}")
+file(COPY_FILE "${CAPTURE}/inactive.req" "${directory}/${request}")
+execute_process(COMMAND "${TOOL}" --spv "${request}"
+    WORKING_DIRECTORY "${directory}" RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+if(NOT code STREQUAL "0" OR NOT EXISTS "${directory}/${request}.spv")
+    message(FATAL_ERROR "a request under a Unicode path was not replayed: ${code}\n${output}${errors}")
+endif()
+file(REMOVE_RECURSE "${directory}")
+
 execute_process(COMMAND "${TOOL}" --prepare "${CAPTURE}/invalid.req" RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE errors)
 if(NOT code STREQUAL "0" OR NOT output MATCHES "prepared: [0-9]+ SPIR-V words")
     message(FATAL_ERROR "preparation of the synthetic request failed: ${code}\n${output}${errors}")
