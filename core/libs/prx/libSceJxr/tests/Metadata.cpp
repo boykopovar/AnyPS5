@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -108,6 +109,19 @@ void Scalars(Cleanup cleanup) {
     }
 }
 
+void Invalid(Cleanup cleanup) {
+    try {
+        cleanup(nullptr);
+        Require(false, "null metadata record accepted");
+    } catch (const std::invalid_argument&) {}
+    Jxr::MetadataVariant value{};
+    value.type = 1;
+    try {
+        cleanup(&value);
+        Require(false, "unsupported metadata tag accepted");
+    } catch (const std::invalid_argument&) {}
+}
+
 void Retagged(Cleanup cleanup) {
     Jxr::MetadataVariant value{};
     value.type = 30;
@@ -136,6 +150,7 @@ int main(int argc, char** argv) {
     try {
         Strings(cleanup);
         Scalars(cleanup);
+        Invalid(cleanup);
         Retagged(cleanup);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

@@ -973,6 +973,11 @@ if(BUILD_TESTING)
         set_property(TEST linux_guest_qualified_imports APPEND PROPERTY LABELS relinker)
         set_tests_properties(linux_guest_qualified_imports PROPERTIES TIMEOUT 30)
         add_asan_test_options(linux_guest_qualified_imports verify_asan_link_order=0)
+        add_test(NAME linux_guest_relro COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_relro.py $<TARGET_FILE:relinker>)
+        set_property(TEST linux_guest_relro APPEND PROPERTY LABELS relinker)
+        set_tests_properties(linux_guest_relro PROPERTIES TIMEOUT 30)
+        add_asan_test_options(linux_guest_relro verify_asan_link_order=0)
         add_test(NAME linux_guest_zero_address_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_zero_address_exports.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
@@ -1154,6 +1159,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_empty_loads COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_empty_loads.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_empty_loads PROPERTIES TIMEOUT 30)
+        add_test(NAME linux_guest_congruent_loads COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_congruent_loads.py $<TARGET_FILE:relinker>)
+        set_tests_properties(linux_guest_congruent_loads PROPERTIES TIMEOUT 30)
         add_test(NAME mulx_conversion COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_mulx_conversion.py $<TARGET_FILE:relinker>)
         set_tests_properties(mulx_conversion PROPERTIES TIMEOUT 20)

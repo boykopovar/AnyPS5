@@ -1,4 +1,5 @@
 import copy
+import errno
 import gzip
 import hashlib
 import json
@@ -73,6 +74,22 @@ class WindowParsing(unittest.TestCase):
 
 
 class CaptureEnvironment(unittest.TestCase):
+    def test_logging_overrides_are_removed_from_inherited_and_recipe_settings(self):
+        base = {"APS5_LOG_SYNC": "0", "APS5_SAVEDATA_TRACE": "1"}
+        recipe = {"aps5_log_timestamps": "1", "aps5_log_sync": "1"}
+        environment, removed = performance_capture.clean_environment(base, recipe, ".", "seconds", (30, 10))
+        self.assertEqual(set(removed), set(base) | set(recipe))
+        self.assertTrue(environment.keys().isdisjoint(removed))
+        self.assertEqual(environment["APS5_TRACE_SECONDS"], "30:10")
+
+    def test_videoout_telemetry_is_removed_from_inherited_and_recipe_settings(self):
+        base = {"APS5_VIDEOOUT_TELEMETRY_DIR": "diagnostics"}
+        recipe = {"aps5_videoout_flip_timing": "601:600"}
+        environment, removed = performance_capture.clean_environment(base, recipe, ".", "seconds", (30, 10))
+        self.assertEqual(set(removed), set(base) | set(recipe))
+        self.assertTrue(environment.keys().isdisjoint(removed))
+        self.assertEqual(environment["APS5_TRACE_SECONDS"], "30:10")
+
     def test_environment_isolated(self):
         base = {"PATH": "runtime", "APS5_PROFILE_GPU": "0", "APS5_TRACE_SECONDS": "1:2",
                 "APS5_DUMP_FRAMES": "0", "APS5_SAMPLE_WORKER": "1", "aps5_trace_events": "100",
@@ -80,7 +97,7 @@ class CaptureEnvironment(unittest.TestCase):
         extra = {"APS5_CAPTURE_INPUTS": "1", "APS5_PIPELINE_STATS": "1", "APS5_TRACE_FRAMES": "0:1"}
         before = (base.copy(), extra.copy())
         environment, removed = performance_capture.clean_environment(base, extra, ".", "frames", (3, 2))
-        self.assertEqual(environment, {"PATH": "runtime", "APS5_TRACE_FRAMES": "3:2", "APS5_TRACE_DIR": str(Path.cwd())})
+        self.assertEqual(environment, {"PATH": "runtime", "APS5_TRACE_FRAMES": "3:2", "APS5_TRACE_DIR": str(Path.cwd().resolve())})
         self.assertEqual(set(removed), (set(base) | set(extra)) - {"PATH"})
         self.assertEqual((base, extra), before)
 
@@ -170,13 +187,18 @@ class CompletedCapture(CaptureFixture):
 class InvalidSummaries(CaptureFixture):
     def test_instrumentation_rejected(self):
         self.write_trace()
-        for name in ("APS5_PROFILE_GPU", "APS5_TRACE_BENCH", "APS5_TRACE_SUMMARY_EVERY", "APS5_DUMP_FRAMES",
-                     "APS5_SAMPLE_WORKER", "APS5_FRAME_CAPTURE", "APS5_PIPELINE_STATS", "ANYPS5_LOG_FILE"):
+        for name, value in (("APS5_PROFILE_GPU", "0"), ("APS5_TRACE_BENCH", "0"), ("APS5_TRACE_SUMMARY_EVERY", "0"),
+                            ("APS5_DUMP_FRAMES", "0"), ("APS5_SAMPLE_WORKER", "0"), ("APS5_FRAME_CAPTURE", "0"),
+                            ("APS5_PIPELINE_STATS", "0"), ("ANYPS5_LOG_FILE", "0"),
+                            ("APS5_LOG_SYNC", "0"), ("APS5_LOG_TIMESTAMPS", "1"), ("APS5_SAVEDATA_TRACE", "1"),
+                            ("APS5_VIDEOOUT_TELEMETRY_DIR", "<path>"), ("APS5_VIDEOOUT_FLIP_TIMING", "601:600")):
             with self.subTest(name=name):
                 summary = copy.deepcopy(self.summary)
-                summary["env"][name] = "0"
+                summary["env"][name] = value
                 self.write_summary(summary)
-                self.assertEqual(self.capture_fixture()["state"], "invalid")
+                result = self.capture_fixture()
+                self.assertEqual(result["state"], "invalid")
+                self.assertIn(name, result["reason"])
 
     def test_invalid_summary(self):
         self.write_trace()
@@ -257,6 +279,10 @@ class BoundsAndLinks(CaptureFixture):
         self.write_trace()
         original = self.directory / "original"
         original.write_bytes(self.trace_path.read_bytes())
+        unsupported = {
+            getattr(errno, name, None)
+            for name in ("EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EMLINK")
+        } - {None}
         for symbolic in (False, True):
             with self.subTest(symbolic=symbolic):
                 self.trace_path.unlink(missing_ok=True)
@@ -265,8 +291,8 @@ class BoundsAndLinks(CaptureFixture):
                         self.trace_path.symlink_to(original)
                     else:
                         os.link(original, self.trace_path)
-                except (NotImplementedError, OSError):
-                    if symbolic:
+                except (NotImplementedError, OSError) as error:
+                    if symbolic or isinstance(error, NotImplementedError) or error.errno in unsupported or getattr(error, "winerror", None) in (1, 5):
                         continue
                     raise
                 self.assertEqual(self.capture_fixture()["state"], "invalid")

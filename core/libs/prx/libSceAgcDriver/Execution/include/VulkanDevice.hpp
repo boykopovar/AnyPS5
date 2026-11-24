@@ -74,6 +74,9 @@ public:
     bool ReplayComputePipeline(const ShaderRecompiler::RecompileResult& shader, bool pushConstants);
     bool HasComputePipeline(const ShaderRecompiler::RecompileResult& shader) const;
     void PrebuildComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress = 0);
+    enum class PipelineAhead { Built, Building, Start, Unavailable };
+    PipelineAhead ComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader);
+    void AbandonComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader);
     // Starts the journal replay if the device has not (a headless device starts it at its first
     // draw or dispatch) and joins it (tests; the teardown joins it anyway).
     void WaitForPipelineJournalReplay();
@@ -95,6 +98,8 @@ public:
     std::optional<ShaderRecompiler::GeometryStageLimits> GeometryLimits() const;
     std::uint32_t MaxFragmentInputComponents() const;
     const std::uint32_t* WorkGroupCountLimit() const;
+    std::uint64_t StorageBufferRangeLimit() const;
+    std::uint64_t DeviceLocalBytes() const;
     std::uint32_t VendorId() const;
     ShaderRecompiler::SpirvTarget ComputeTarget(std::uint32_t waveSize) const;
     bool ComputeFullSubgroups() const;
@@ -154,7 +159,7 @@ public:
     // CPU (a copied buffer's write-back, a deferred label). Debug aid: APS5_FILL_SYNC=1 waits for
     // every recorded store over the range.
     bool FillBuffer(std::uint64_t address, std::size_t bytes, std::span<const std::uint32_t, 4> pattern);
-    bool DumpSamplesOnGpu(std::uint64_t address);
+    bool DumpSamplesOnGpu(std::uint64_t address, std::uint32_t blocks);
     void NoteHtileMask(const Graphics::HtileMaskClear& clear) const;
     // Copies `bytes` of guest memory from `source` to `destination` (disjoint ranges) in place of the
     // engine's memcpy kernel (Driver.cpp copyBuffer). `path` 0: copied on the CPU at once, when
@@ -227,11 +232,11 @@ public:
     };
     static CopyAliasing CopyAliasCounts();
     struct ComputePipelineCreation {
-        std::uint64_t created, underGpuMutex;
+        std::uint64_t created, underGpuMutex, ahead;
     };
     static ComputePipelineCreation ComputePipelineCounts();
     struct DispatchMoveCount {
-        std::uint64_t checked, exact, moved, refused, filtered, rebuilt, kept, served;
+        std::uint64_t checked, exact, moved, refused, filtered, rebuilt, kept, served, inPlace;
     };
     static DispatchMoveCount DispatchMoveCounts();
     void ResolveMemory(std::uint64_t address, std::size_t bytes, bool writable);
@@ -386,6 +391,7 @@ public:
     IndirectDrawSupport DrawIndirectSupport() const;
     void EnqueueDraw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {});
     bool PrebuildGraphicsLibraries(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders);
+    bool PrebuildGraphicsLibrariesOnFirstVisit(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders);
 
 public:
     // The device's Graphics::Context: a copy of the one built at setup (its instance functions
@@ -397,8 +403,20 @@ public:
     std::shared_ptr<ComputePipelineObjects> createComputePipeline(const Graphics::Context& context, const ShaderRecompiler::RecompileResult& shader, VkDescriptorSetLayout setLayout, std::span<const std::uint32_t> layoutKey, VkShaderStageFlags pushStages, std::uint64_t programAddress);
     bool completionStoresOver(std::uint64_t address, std::size_t bytes) const;
     bool copyWaitsOnCompletions(std::uint64_t address, std::size_t bytes) const;
+    struct SplitSlice {
+        std::uint32_t capacity = 0;
+        std::uint32_t groupBase = 0;
+        std::uint32_t groups = 0;
+        std::uint32_t slots = 0;
+        bool readTargets = false;
+        std::uint32_t targetSlot = 0;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> runs;
+    };
+    void SetSplitSlice(const std::optional<SplitSlice>& slice);
+    std::span<const std::uint32_t> SplitTargets();
 
 private:
+    std::optional<SplitSlice> splitSlice;
     VulkanDevice(const PresentationWindow* window, bool compileOnly);
     friend struct VulkanDeviceTestAccess;
     std::pair<VkBuffer, std::uint64_t> scratchPoolHeader(const ShaderRecompiler::RecompileResult& shader) const;

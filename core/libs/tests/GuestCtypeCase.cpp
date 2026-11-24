@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Ctype.hpp"
+#include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <array>
@@ -135,6 +136,22 @@ void CheckEveryByte() {
 }
 
 void CheckClassicTables() {
+    const short* ctypeTable = _Getctyptab_nid_postfix();
+    Require(ctypeTable != nullptr);
+    Require(ctypeTable == _Getpctype_nid_postfix());
+    Require(ctypeTable[-1] == 0);
+    Require((ctypeTable[static_cast<unsigned char>('A')] & 0x02) != 0);
+    Require((ctypeTable[static_cast<unsigned char>('a')] & 0x10) != 0);
+    Require((ctypeTable[static_cast<unsigned char>('0')] & 0x20) != 0);
+    Require((ctypeTable[static_cast<unsigned char>('f')] & 0x01) != 0);
+    Require((ctypeTable[static_cast<unsigned char>(' ')] & 0x04) != 0);
+    Require((ctypeTable[static_cast<unsigned char>('\t')] & 0x440) == 0x440);
+    Require((ctypeTable[static_cast<unsigned char>('!')] & 0x08) != 0);
+    Require((ctypeTable[0] & 0x80) != 0);
+    for (unsigned value = 128; value < 256; ++value) {
+        Require(ctypeTable[value] == 0);
+    }
+
     Facet facet{};
     facet.lower = _Getptolower_nid_postfix();
     facet.upper = _Getptoupper_nid_postfix();

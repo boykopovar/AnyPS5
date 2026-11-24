@@ -588,7 +588,7 @@ class UnwrapTest(unittest.TestCase):
         try:
             os.chown(directory, -1, group)
             directory.chmod(0o2700)
-        except PermissionError as error:
+        except OSError as error:
             self.skipTest(str(error))
         if not directory.stat().st_mode & 0o2000:
             self.skipTest("filesystem does not retain the setgid bit")
@@ -1330,6 +1330,98 @@ class UnwrapTest(unittest.TestCase):
         self.assertIn("looks encrypted", result.stderr)
         self.assertFalse(output.exists())
 
+    def test_a_container_whose_large_loads_look_encrypted_beside_a_small_plain_one_is_refused(self):
+        random_like = bytes(range(256)) * 0x100
+        segments = [(PT_LOAD, 1, 0x1234, 0x0, 0x10000, PAGE), (PT_LOAD, 4, 0x1500, 0x10000, 0x40, PAGE)]
+        records = [(0x2804, 0x800, 0x10000), (0x102804, 0x10800, 0x40)]
+        payloads = {0x800: random_like, 0x10800: pattern(9, 0x40)}
+        container = build_container(segments, records, payloads)
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("most load bytes look encrypted: segment 0", result.stderr)
+        self.assertNotIn("every", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_a_load_just_under_the_sample_size_beside_a_small_plain_one_is_refused(self):
+        random_like = bytes(range(256)) * 0x100
+        segments = [(PT_LOAD, 1, 0x1234, 0x0, 0xFFFF, PAGE), (PT_LOAD, 4, 0x1500, 0x10000, 0x40, PAGE)]
+        records = [(0x2804, 0x800, 0xFFFF), (0x102804, 0x10800, 0x40)]
+        payloads = {0x800: random_like[:0xFFFF], 0x10800: pattern(9, 0x40)}
+        container = build_container(segments, records, payloads)
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("most load bytes look encrypted", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_a_large_load_high_entropy_only_in_its_first_sample_is_accepted(self):
+        segments = [(PT_LOAD, 1, 0x1234, 0x0, 0x10000, PAGE), (PT_LOAD, 4, 0x1500, 0x10000, 0x30000, PAGE)]
+        records = [(0x2804, 0x800, 0x10000), (0x102804, 0x10800, 0x30000)]
+        payloads = {0x800: bytes([1, 2, 3, 4]) * 0x4000,
+                    0x10800: bytes(range(256)) * 0x100 + bytes([1, 2, 3, 4]) * 0x8000}
+        container = build_container(segments, records, payloads)
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.exists())
+
+    def convert_pair(self, first, plain_size=0x40):
+        offset = 0x800 + len(first)
+        segments = [(PT_LOAD, 1, 0x1234, 0x0, len(first), PAGE), (PT_LOAD, 4, 0x1500, 0x40000, plain_size, PAGE)]
+        records = [(0x2804, 0x800, len(first)), (0x402804, offset, plain_size)]
+        payloads = {0x800: first, offset: pattern(9, plain_size)}
+        return self.convert(build_container(segments, records, payloads))
+
+    def test_a_load_of_exactly_the_large_size_that_looks_encrypted_is_refused(self):
+        result, output = self.convert_pair(bytes(range(256)) * 0x10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("most load bytes look encrypted", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_a_high_entropy_load_one_byte_under_the_large_size_holding_most_bytes_is_accepted(self):
+        result, output = self.convert_pair((bytes(range(256)) * 0x10)[:0xFFF])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.exists())
+
+    def test_a_large_load_whose_middle_sample_is_plain_is_accepted(self):
+        high, low = bytes(range(256)) * 0x100, bytes([1, 2, 3, 4]) * 0x4000
+        result, output = self.convert_pair(high + low + high, 0x10000)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.exists())
+
+    def test_a_large_load_whose_last_sample_is_plain_is_accepted(self):
+        high, low = bytes(range(256)) * 0x100, bytes([1, 2, 3, 4]) * 0x4000
+        result, output = self.convert_pair(high + high + low, 0x10000)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.exists())
+
+    def test_a_large_load_whose_first_sample_is_plain_is_accepted(self):
+        high, low = bytes(range(256)) * 0x100, bytes([1, 2, 3, 4]) * 0x4000
+        result, output = self.convert_pair(low + high + high, 0x10000)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.exists())
+
+    def test_a_large_load_high_entropy_in_all_three_samples_beside_a_small_plain_one_is_refused(self):
+        result, output = self.convert_pair(bytes(range(256)) * 0x300)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(output.exists())
+
+    def test_a_small_high_entropy_load_beside_a_large_plain_one_is_accepted(self):
+        segments = [(PT_LOAD, 1, 0x1234, 0x0, 0x10000, PAGE), (PT_LOAD, 4, 0x1500, 0x10000, 0x100, PAGE)]
+        records = [(0x2804, 0x800, 0x10000), (0x102804, 0x10800, 0x100)]
+        payloads = {0x800: bytes([1, 2, 3, 4]) * 0x4000, 0x10800: bytes(range(256))}
+        container = build_container(segments, records, payloads)
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.exists())
+
+    def test_a_large_high_entropy_load_beside_a_larger_plain_one_is_accepted(self):
+        segments = [(PT_LOAD, 1, 0x1234, 0x0, 0x10000, PAGE), (PT_LOAD, 4, 0x1500, 0x10000, 0x30000, PAGE)]
+        records = [(0x2804, 0x800, 0x10000), (0x102804, 0x10800, 0x30000)]
+        payloads = {0x800: bytes(range(256)) * 0x100, 0x10800: bytes([1, 2, 3, 4]) * 0xC000}
+        container = build_container(segments, records, payloads)
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.exists())
+
     def test_the_kernel_magic_is_accepted(self):
         container = build_container(default_segments(), default_records(), default_payloads(),
                                     magic=unwrap_self.SELF_MAGIC_KERNEL)
@@ -1539,6 +1631,28 @@ class UnwrapTest(unittest.TestCase):
                 self.assertIn(message, result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(output.read_bytes(), b"previous output")
+
+    def test_tls_memory_range_cannot_exceed_elf64(self):
+        output = Path(self.directory) / "output.elf"
+        for size, memory, address, accepted in ((0, 0x40, (1 << 64) - 0x3f, False),
+                                                (0x10, 0x40, (1 << 64) - 0x3f, False),
+                                                (0, 0x40, (1 << 64) - 0x40, True),
+                                                (0, 0, (1 << 64) - 1, True)):
+            with self.subTest(size=size, memory=memory, address=address):
+                segments = default_segments() + [(PT_TLS, 4, 0xA00, address, size, 8)]
+                container = bytearray(build_container(segments, default_records(), default_payloads()))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 3 * 56 + 40, memory)
+                output.write_bytes(b"previous output")
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0 if accepted else 2, result.stderr)
+                if accepted:
+                    _, headers = read_program_headers(output)
+                    self.assertEqual(headers[3][3], address)
+                    self.assertEqual(headers[3][6], memory)
+                else:
+                    self.assertIn("segment 3 memory range exceeds ELF64", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(output.read_bytes(), b"previous output")
 
     def test_invalid_non_null_segment_alignment_is_refused_before_replacing_output(self):
         output = Path(self.directory) / "output.elf"
@@ -1868,6 +1982,37 @@ class JobManagerModuleRefusalTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(stderr, "Build the job_manager_reference target first\n")
         process.assert_not_called()
+
+
+class EntropyTests(unittest.TestCase):
+    def test_entropy_matches_known_byte_distributions(self):
+        self.assertEqual(unwrap_self.entropy(b''), 0.0)
+        self.assertEqual(unwrap_self.entropy(b'ab'), 1.0)
+        self.assertEqual(unwrap_self.entropy(b'aaaa'), 0.0)
+class DecryptedCheckTests(unittest.TestCase):
+    def test_check_decrypted_refuses_when_every_load_segment_is_encrypted(self):
+        uniform = bytes(range(256)) * 256
+        headers = [{'type': 1, 'size': len(uniform), 'source': 0, 'index': 0}]
+        with self.assertRaisesRegex(unwrap_self.Refused, 'every load segment looks encrypted'):
+            unwrap_self.check_decrypted(uniform, headers)
+
+    def test_check_decrypted_passes_when_one_load_segment_is_plain(self):
+        uniform = bytes(range(256)) * 256
+        plain = bytes(len(uniform))
+        data = uniform + plain
+        headers = [{'type': 1, 'size': len(uniform), 'source': 0, 'index': 0}, {'type': 1, 'size': len(plain), 'source': len(uniform), 'index': 1}]
+        unwrap_self.check_decrypted(data, headers)
+class RecordReadTests(unittest.TestCase):
+    def test_read_records_returns_nothing_for_an_empty_table(self):
+        self.assertEqual(unwrap_self.read_records(bytes(unwrap_self.FIRST_REGION)), [])
+
+    def test_place_segments_maps_each_segment_to_its_record_payload(self):
+        container = build_container(default_segments(), default_records(), default_payloads())
+        _, _, headers = unwrap_self.parse_elf(container)
+        zero_filled = unwrap_self.place_segments(container, headers, unwrap_self.read_records(container))
+        self.assertEqual(zero_filled, b"")
+        self.assertEqual([(header["source"], header["size"]) for header in headers],
+                         [(0x800, 0x100), (0xA00, 0x80), (0xA40, 0x10)])
 
 
 if __name__ == "__main__":

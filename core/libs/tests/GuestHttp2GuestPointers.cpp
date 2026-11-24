@@ -54,6 +54,28 @@ int main() {
     Http2CookieStats stats{};
     Require(sceHttp2GetCookieStats(box, &stats) == 0);
 
+    const int request = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://example.invalid/wait-async", 0);
+    Require(request > 0);
+#ifdef _WIN32
+    _putenv("APS5_NET_DISCONNECTED=1");
+#else
+    setenv("APS5_NET_DISCONNECTED", "1", 1);
+#endif
+    Require(sceHttp2SendRequestAsync(request, nullptr, 0, nullptr, nullptr) == 0);
+    RequireErrno(sceHttp2WaitAsync(request, static_cast<Http2AsyncResult*>(unmapped), nullptr, nullptr), nullPointer);
+    static const Http2AsyncResult readOnlyResult{99, 99, 99};
+    RequireErrno(sceHttp2WaitAsync(request, const_cast<Http2AsyncResult*>(&readOnlyResult), nullptr, nullptr), nullPointer);
+    Require(readOnlyResult.req_id == 99 && readOnlyResult.event_type == 99 && readOnlyResult.result == 99);
+    Http2AsyncResult completed{};
+    Require(sceHttp2WaitAsync(request, &completed, nullptr, nullptr) == 0);
+    Require(completed.req_id == request);
+#ifdef _WIN32
+    _putenv("APS5_NET_DISCONNECTED=");
+#else
+    unsetenv("APS5_NET_DISCONNECTED");
+#endif
+    Require(sceHttp2DeleteRequest(request) == 0);
+
     std::puts("guest_http2_guest_pointers ok");
     return 0;
 }

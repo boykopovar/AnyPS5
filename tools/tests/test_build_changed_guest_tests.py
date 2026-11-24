@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import re
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -80,9 +81,25 @@ class GuestTestTargets(unittest.TestCase):
         guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest_a, guest_b]), ["core/libs/tests/GuestB.cpp"]), ["guest_b_tests"])
 
+    def test_tests_in_checkout_path_do_not_make_a_production_tool_a_guest_test(self):
+        root = Path(self.temporary.name).resolve() / "tests" / "AnyPS5"
+        guest = self.target("guest_clock_tests", fragment="libc.prx")
+        helper = self.target("helper", source="core/libs/prx/libc/Helper.cpp", fragment="libc.prx")
+        targets = {target["id"]: target for target in (guest, helper)}
+        self.assertEqual(build_changed_guest_tests.guest_test_targets(root, targets), ["guest_clock_tests"])
+
     def test_a_production_source_change_selects_no_test_but_reaches_the_run(self):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/libs/prx/libc/src/FloatBuiltins.cpp"]), [])
+
+    def test_changed_static_fixture_selects_its_guest_consumer(self):
+        guest = self.target("guest_jxr_tests", source="core/libs/tests/GuestJxr.cpp", fragment="libc.prx")
+        unrelated = self.target("guest_pad_tests", fragment="libc.prx")
+        fixture_source = "core/libs/tests/JxrTileInfoFixture.c"
+        fixture = self.target("jxr_tile_info_fixture", target_type="STATIC_LIBRARY", source=fixture_source)
+        guest["dependencies"] = [{"id": fixture["id"]}]
+        build = self.fixture([guest, unrelated, fixture])
+        self.assertEqual(self.selections(build, [fixture_source]), ["guest_jxr_tests"])
 
     def test_a_header_change_selects_every_guest_test(self):
         guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
@@ -347,6 +364,7 @@ class Main(unittest.TestCase):
         ]})
         testfile = build / "core" / "libs" / "CTestTestfile.cmake"
         testfile.parent.mkdir(parents=True)
+        (build / "CTestTestfile.cmake").write_text('subdirs("core/libs")\n', encoding="utf-8")
         testfile.write_text('add_test("guest_pad" "C:/b/tests/guest_pad_tests.exe")\n'
                             'add_test("nid_buffer_validation" "C:/b/tests/nid_buffer_validation_tests.exe")\n'
                             'set_tests_properties("nid_buffer_validation" PROPERTIES TIMEOUT "10")\n'
@@ -363,12 +381,16 @@ class Main(unittest.TestCase):
         builds = [index for index, cmd in enumerate(commands) if "--target" in cmd and "nid_buffer_validation_tests" in cmd]
         self.assertTrue(ran and builds and max(builds) < min(ran))
 
-    def test_registered_commands_come_from_every_testfile_without_a_built_executable(self):
+    def test_registered_commands_ignore_stale_testfiles(self):
         build = Path(self.temporary.name) / "tree"
         (build / "sub").mkdir(parents=True)
-        (build / "CTestTestfile.cmake").write_text('add_test("a b" "/x/a_tests" "arg \\"q\\"")\n', encoding="utf-8")
+        (build / "stale").mkdir()
+        (build / "CTestTestfile.cmake").write_text(
+            'add_test("a b" "/x/a_tests" "arg \\"q\\"")\nsubdirs("sub")\n', encoding="utf-8")
         (build / "sub" / "CTestTestfile.cmake").write_text(
             '  add_test([=[nid_one]=] "/x/nid_one_tests")\nset_tests_properties("nid_one" PROPERTIES TIMEOUT "5")\n', encoding="utf-8")
+        (build / "stale" / "CTestTestfile.cmake").write_text(
+            'add_test("nid_one" "/old/nid_one_tests")\nadd_test("removed" "/old/removed_tests")\n', encoding="utf-8")
         self.assertEqual(build_changed_guest_tests.registered_test_commands(build), {
             "a b": ["/x/a_tests", 'arg "q"'], "nid_one": ["/x/nid_one_tests"]})
 
@@ -406,6 +428,15 @@ class Main(unittest.TestCase):
         for path in ("core/libs/prx/libSceXml/src/Xml.cpp", "core/libs/tests/Guest.cpp", "core/relinker/R.cpp", "README.md"):
             with self.subTest(path=path):
                 self.assertFalse(build_changed_guest_tests.checks_nid([path]))
+
+    def test_script_test_indices_are_one_based_sorted_and_unmatched_pattern_raises(self):
+        listing = json.dumps({"tests": [{"name": "nid_b"}, {"name": "guest"}, {"name": "public_headers"}, {"name": "nid_a"}]})
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", return_value=run_result(listing)) as run:
+            self.assertEqual(build_changed_guest_tests.script_test_indices(
+                "build", [build_changed_guest_tests.NID_TESTS, build_changed_guest_tests.PUBLIC_HEADER_TESTS]), [1, 3, 4])
+            with self.assertRaises(ValueError):
+                build_changed_guest_tests.script_test_indices("build", [build_changed_guest_tests.re.compile("^absent$")])
+        self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
 
     def test_public_header_inputs(self):
         for path in ("core/libs/prx/libSceXml/include/Xml.hpp", "core/libs/include/X.h", "core/libs/tests/test_public_headers.py",
@@ -601,6 +632,98 @@ class ArtifactOwnerNames(unittest.TestCase):
         aliases = build_changed_guest_tests.target_artifact_names(target)
         self.assertEqual(build_changed_guest_tests.test_owner(["C:/build/tests/guest.check.EXE"], aliases), "guest_target")
         self.assertEqual(build_changed_guest_tests.test_owner(["python", "C:/build/tests/guest.check.EXE"], aliases), "guest_target")
+
+
+class ChangeClassification(unittest.TestCase):
+    def test_reaches_libs_only_for_library_and_build_inputs(self):
+        for path in ("CMakeLists.txt", "core/libs/a.cpp", ".github/workflows/build.yml", "tools/x.py"):
+            self.assertTrue(build_changed_guest_tests.reaches_libs([path]), path)
+        self.assertFalse(build_changed_guest_tests.reaches_libs(["docs/readme.md", "core/other/a.cpp"]))
+        self.assertFalse(build_changed_guest_tests.reaches_libs([]))
+
+    def test_script_test_patterns_follow_the_changed_inputs(self):
+        patterns = build_changed_guest_tests.script_test_patterns
+        self.assertEqual(patterns(["docs/readme.md"]), [])
+        self.assertEqual(patterns(["core/libs/nid/a.cpp"]), [build_changed_guest_tests.NID_TESTS])
+        self.assertEqual(
+            patterns(["CMakeLists.txt"]),
+            [build_changed_guest_tests.PUBLIC_HEADER_TESTS, build_changed_guest_tests.NID_TESTS])
+
+    def test_test_owner_of_an_empty_command_is_none(self):
+        self.assertIsNone(build_changed_guest_tests.test_owner([], {"guest": "guest"}))
+
+class CoreLibTestTargetsTests(unittest.TestCase):
+    def test_guest_and_host_only_targets_are_merged_sorted_and_deduplicated(self):
+        root, targets, changed = Path("root"), {"t": {}}, ["core/libs/x.cpp"]
+        with mock.patch.object(build_changed_guest_tests, "guest_test_targets", return_value=["beta", "Alpha", "shared"]) as guest, \
+                mock.patch.object(build_changed_guest_tests.host_only, "host_only_test_targets", return_value=["shared", "alpha2"]) as host:
+            result = build_changed_guest_tests.core_lib_test_targets(root, targets, changed)
+        self.assertEqual(result, ["Alpha", "alpha2", "beta", "shared"])
+        guest.assert_called_once_with(root, targets, changed)
+        host.assert_called_once_with(root, targets, changed)
+
+    def test_changed_paths_default_to_none(self):
+        with mock.patch.object(build_changed_guest_tests, "guest_test_targets", return_value=[]) as guest, \
+                mock.patch.object(build_changed_guest_tests.host_only, "host_only_test_targets", return_value=[]) as host:
+            self.assertEqual(build_changed_guest_tests.core_lib_test_targets(Path("root"), {}), [])
+        guest.assert_called_once_with(Path("root"), {}, None)
+        host.assert_called_once_with(Path("root"), {}, None)
+
+
+class ScriptTestOwnersTests(unittest.TestCase):
+    TARGETS = {"alpha": "Alpha", "beta": "beta", "gamma": "gamma"}
+
+    def owners(self, tests, registered, patterns):
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run") as run, \
+                mock.patch.object(build_changed_guest_tests, "registered_test_commands", return_value=registered):
+            run.return_value.stdout = json.dumps({"tests": tests})
+            return build_changed_guest_tests.script_test_owners(Path("build"), self.TARGETS, patterns)
+
+    def test_only_tests_matching_a_pattern_contribute_owners_sorted_case_insensitively(self):
+        tests = [
+            {"name": "py_beta", "command": ["python", "bin/beta.exe"]},
+            {"name": "py_alpha", "command": ["python", "bin/alpha.exe"]},
+            {"name": "other_gamma", "command": ["python", "bin/gamma.exe"]},
+        ]
+        self.assertEqual(self.owners(tests, {}, [re.compile("py_")]), ["Alpha", "beta"])
+
+    def test_registered_commands_are_used_when_the_listed_command_has_no_owner(self):
+        tests = [{"name": "py_beta", "command": ["python", "script.py"]}]
+        self.assertEqual(self.owners(tests, {"py_beta": ["python", "bin/beta.exe"]}, [re.compile("py_")]), ["beta"])
+        self.assertEqual(self.owners(tests, {}, [re.compile("py_")]), [])
+
+    def test_owner_is_reported_once(self):
+        tests = [{"name": "py_a", "command": ["bin/alpha.exe"]}, {"name": "py_b", "command": ["bin/alpha.exe", "--x"]}]
+        self.assertEqual(self.owners(tests, {}, [re.compile("py_")]), ["Alpha"])
+
+
+class CtestResolutionsTests(unittest.TestCase):
+    TARGETS = {"alpha": "alpha", "beta": "beta"}
+
+    def resolve(self, tests, **kwargs):
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run") as run:
+            run.return_value.stdout = json.dumps({"tests": tests})
+            result = build_changed_guest_tests.ctest_resolutions(Path("build"), self.TARGETS, **kwargs)
+        self.assertEqual(run.call_args.args[0], ["ctest", "--test-dir", "build", "--show-only=json-v1"])
+        return result
+
+    def ctest_entries(self):
+        return [
+            {"name": "a1", "command": ["bin/alpha.exe"]},
+            {"name": "b1", "command": ["cmake", "-P", "x.cmake", "--", "bin/beta.exe"]},
+            {"name": "unknown", "command": ["bin/other.exe"]},
+            {"name": "c1", "command": ["bin/alpha.exe", "bin/beta.exe"]},
+        ]
+
+    def test_every_test_with_a_known_owner_is_resolved_with_its_position(self):
+        self.assertEqual(self.resolve(self.ctest_entries()), {"a1": ("alpha", 1), "b1": ("beta", 2), "c1": ("alpha", 4)})
+
+    def test_selection_matches_the_owner_or_a_referenced_target(self):
+        self.assertEqual(self.resolve(self.ctest_entries(), selected={"beta"}), {"b1": ("beta", 2), "c1": ("alpha", 4)})
+        self.assertEqual(self.resolve(self.ctest_entries(), selected=set()), {})
+
+    def test_document_without_tests_resolves_nothing(self):
+        self.assertEqual(self.resolve([]), {})
 
 
 if __name__ == "__main__":

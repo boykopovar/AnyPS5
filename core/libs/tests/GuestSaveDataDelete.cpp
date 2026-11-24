@@ -5,6 +5,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -175,9 +176,28 @@ int main() {
         Check(sceSaveDataUmount2(0, &mountResult.mount_point) == 0, "the mounted save unmounts");
     }
 
+    SaveDataMount3 badMount3{};
+    badMount3.dir_name = &dirName;
+    badMount3.mount_mode = 2;
+    Check(sceSaveDataMount3(&badMount3, reinterpret_cast<SaveDataMountResult*>(0x10)) == SaveDataErrorParameter, "unwritable mount3 result returns PARAMETER");
+
     Check(Delete("kept", 5) == 0, "a valid name is deleted");
     Check(!std::filesystem::exists(kept.parent_path()), "the valid save directory is gone");
     Check(std::filesystem::exists(victim), "the directory beside the save root is untouched");
+
+    errno = 71;
+    Check(sceSaveDataDelete(reinterpret_cast<const SaveDataDelete*>(0x10)) == SaveDataErrorParameter, "unreadable del returns PARAMETER");
+    SaveDataDelete badDirDel{};
+    badDirDel.dir_name = reinterpret_cast<const SceSaveDataDirName*>(0x10);
+    Check(sceSaveDataDelete(&badDirDel) == SaveDataErrorParameter, "unreadable dir_name returns PARAMETER");
+    Check(sceSaveDataMount3(reinterpret_cast<const SaveDataMount3*>(0x10), &mountResult) == SaveDataErrorParameter, "unreadable mount3 returns PARAMETER");
+    Check(sceSaveDataMount2(reinterpret_cast<const SaveDataMount2*>(0x10), &mountResult) == SaveDataErrorParameter, "unreadable mount2 returns PARAMETER");
+    Check(sceSaveDataTransferringMount(nullptr, reinterpret_cast<SaveDataMountResult*>(0x10)) == SaveDataErrorParameter, "unwritable transferringMount result returns PARAMETER");
+    Check(sceSaveDataDirNameSearchPs4(reinterpret_cast<const SaveDataDirNameSearchCond*>(0x10), reinterpret_cast<SaveDataDirNameSearchResult*>(0x10)) == SaveDataErrorParameter, "unreadable searchPs4 returns PARAMETER");
+    Check(sceSaveDataCheckBackupData(reinterpret_cast<const SaveDataCheckBackupData*>(0x10)) == SaveDataErrorParameter, "unreadable checkBackupData returns PARAMETER");
+    Check(sceSaveDataRestoreBackupData(reinterpret_cast<const SaveDataRestoreBackupData*>(0x10)) == SaveDataErrorParameter, "unreadable restoreBackupData returns PARAMETER");
+    Check(errno == 71, "guest-copy failures preserve errno");
+
     Check(sceSaveDataTerminate() == 0, "SaveData terminates");
     Check(sceSaveDataDeleteTransactionResource(0) == SaveDataErrorNotInitialized, "delete transaction resource fails after termination");
 
