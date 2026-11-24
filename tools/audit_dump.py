@@ -14,7 +14,9 @@ DESCRIPTION = """Audit the imports of an extracted title before it is launched. 
 it ships (sce_module/, sce_modules/ and prx/, Unity's Media/Modules/ and Media/Plugins/, and module files beside
 eboot.bin) into a work directory, converts them with relinker --registry, and runs tools/import_audit.py on the
 registries with the unwrapped modules as --modules. A file found by its header rather than a module suffix that is
-not a shared module after unwrapping, such as a dumper's eboot.bin.esbak backup, is skipped with a message. The dump
+not a shared module after unwrapping, such as a dumper's eboot.bin.esbak backup, is skipped with a message. So is
+one the relinker refuses for a ps5-payload-dev SDK syscall stub, such as a payload for the console's ELF loader: the
+conversion then runs again without it. The dump
 is only read; the source/ and output/ directories of a reused --work directory are emptied first. Exit code: that of import_audit.py, or 2
 when unwrapping or conversion fails."""
 
@@ -25,6 +27,8 @@ ELF_MAGIC = b"\x7fELF"
 MODULE_MAGICS = (ELF_MAGIC, unwrap_self.SELF_MAGIC.to_bytes(4, "little"),
                  unwrap_self.SELF_MAGIC_KERNEL.to_bytes(4, "little"))
 SHARED_MODULE_TYPES = (3, 0xFE18)
+PAYLOAD_REFUSAL = "it is a ps5-payload-dev SDK syscall stub"
+INPUT_PREFIX = "Input: "
 
 
 def stage(source, destination):
@@ -119,6 +123,31 @@ def audit_directories(directories, source):
     return audited
 
 
+def refused_payload(diagnostic, source):
+    lines = diagnostic.splitlines()
+    for index, line in enumerate(lines):
+        if index == 0 or not line.startswith(INPUT_PREFIX) or PAYLOAD_REFUSAL not in lines[index - 1]:
+            continue
+        refused = Path(line[len(INPUT_PREFIX):].strip())
+        if refused.suffix.lower() in MODULE_SUFFIXES:
+            return None
+        try:
+            wanted = comparison_path(refused)
+            for staged in source.rglob("*"):
+                if staged.is_file() and staged != source / "eboot.elf" and comparison_path(staged) == wanted:
+                    return staged, lines[index - 1].removeprefix("FAIL: ").strip()
+        except (OSError, RuntimeError):
+            return None
+    return None
+
+
+def remaining(module_directories, extra, source):
+    kept = [directory for directory in module_directories
+            if any(path.is_file() and path != source / "eboot.elf" for path in directory.iterdir())]
+    names = {"." if directory == source else directory.relative_to(source).as_posix() for directory in kept}
+    return kept, [relative for relative in extra if relative in names]
+
+
 def convert(relinker, source, output, extra, windows):
     command = [str(relinker), "--registry"]
     if windows:
@@ -189,11 +218,14 @@ def main(argv=None):
                 dump_inputs.extend((directory, *modules_of(directory)))
     except (OSError, RuntimeError) as error:
         parser.error(f"{dump}: cannot enumerate dump inputs before cleanup: {error}")
+    report_locations = ()
     if args.json:
         report = Path(args.json)
         try:
             overlaps = report_overlaps_dump(report, dump)
-            relinker_alias = comparison_path(report) == comparison_path(relinker) or (report.exists() and report.samefile(relinker))
+            report_path = comparison_path(report)
+            report_locations = (Path(os.path.abspath(report)), report_path, comparison_path(report.parent) / report.name)
+            relinker_alias = report_path == comparison_path(relinker) or (report.exists() and report.samefile(relinker))
         except (OSError, RuntimeError) as error:
             parser.error(f"{report}: cannot check JSON output against the input dump: {error}")
         if relinker_alias:
@@ -212,6 +244,10 @@ def main(argv=None):
                 generated_path = comparison_path(generated)
             except (OSError, RuntimeError) as error:
                 parser.error(f"{generated}: cannot check work directory against the input dump: {error}")
+            generated_spelling = Path(os.path.abspath(generated))
+            if any(location.is_relative_to(generated_spelling) or location.is_relative_to(generated_path)
+                   for location in report_locations):
+                parser.error(f"{report}: JSON output overlaps a work directory that will be cleared: {generated}")
             if dump_path.is_relative_to(generated_path) or generated_path.is_relative_to(dump_path):
                 parser.error(f"{generated}: work directory overlaps the input dump")
             for input_path in (Path(args.relinker), *(Path(library) for library in args.libs), *dump_inputs):
@@ -220,7 +256,6 @@ def main(argv=None):
                 except (OSError, RuntimeError) as error:
                     parser.error(f"{input_path}: cannot check work directory against input: {error}")
                 supplied = Path(os.path.abspath(input_path))
-                generated_spelling = Path(os.path.abspath(generated))
                 if (supplied.is_relative_to(generated_spelling) or resolved.is_relative_to(generated_path)
                         or input_path in dump_directories and generated_path.is_relative_to(resolved)):
                     parser.error(f"{generated}: work directory contains input {input_path}")
@@ -246,15 +281,30 @@ def main(argv=None):
         except (unwrap_self.Refused, OSError) as error:
             print(f"FAIL: unwrapping {dump}: {error}", file=sys.stderr)
             return 2
-        try:
-            result = convert(relinker, source, output / ("app.exe" if args.windows else "app.elf"), extra, args.windows)
-        except OSError as error:
-            print(f"FAIL: cannot run relinker {relinker}: {error}", file=sys.stderr)
-            return 2
-        if result.returncode != 0:
-            print(f"FAIL: relinker exited with {result.returncode}", file=sys.stderr)
-            print((result.stderr or result.stdout).strip(), file=sys.stderr)
-            return 2
+        while True:
+            try:
+                result = convert(relinker, source, output / ("app.exe" if args.windows else "app.elf"), extra, args.windows)
+            except OSError as error:
+                print(f"FAIL: cannot run relinker {relinker}: {error}", file=sys.stderr)
+                return 2
+            if result.returncode == 0:
+                break
+            diagnostic = (result.stderr or result.stdout).strip()
+            refused = refused_payload(diagnostic, source)
+            if refused is None:
+                print(f"FAIL: relinker exited with {result.returncode}", file=sys.stderr)
+                print(diagnostic, file=sys.stderr)
+                return 2
+            payload, reason = refused
+            try:
+                payload.unlink()
+                shutil.rmtree(output)
+                output.mkdir(parents=True)
+            except OSError as error:
+                print(f"FAIL: cannot repeat the conversion without {payload.name}: {error}", file=sys.stderr)
+                return 2
+            print(f"skipped {payload.name}: {reason}")
+            module_directories, extra = remaining(module_directories, extra, source)
         registries = sorted(str(path) for path in output.rglob("*.registry.json"))
         audit = registries + [option for library in args.libs for option in ("--libs", library)]
         try:

@@ -83,7 +83,8 @@ class FrameReplayReportTests(unittest.TestCase):
                     self.assertIsNone(healthy["host"])
                 for stream in ("stdout", "stderr", "both"):
                     for diagnostic in ("Validation Error: shader interface exceeds the device limit",
-                                       "VUID-RuntimeSpirv-Location-06272"):
+                                       "VUID-RuntimeSpirv-Location-06272",
+                                       "SYNC-HAZARD-WRITE-AFTER-WRITE(ERROR / SPEC): msgNum: 1544472022"):
                         with self.subTest(stream=stream, diagnostic=diagnostic,
                                           stdout_bytes=stdout_bytes, stderr_bytes=stderr_bytes):
                             stdout = json.dumps(NATIVE)

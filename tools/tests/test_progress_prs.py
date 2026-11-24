@@ -104,6 +104,20 @@ class OpenPrProgressTests(unittest.TestCase):
         self.assertEqual(excluded, {2: "conflict", 3: "dependency_excluded"})
         self.assertEqual(progress_prs.measure(self.root, combined)["done"], 2)
 
+    def test_a_pr_already_in_the_base_does_not_block_its_dependents(self):
+        first = self.branch(1, {"first": "1"})
+        first["depends"] = {99}
+        self.git("update-ref", "refs/open-pr-progress/2", self.base)
+        second = {"sha": self.base, "ref": "refs/open-pr-progress/2", "depends": {1}}
+        third = self.branch(3, {"second": "3"})
+        third["depends"] = {2}
+        with patch.object(progress_prs, "closed_dependency_status", return_value=None):
+            combined, included, excluded = progress_prs.integrate_pull_requests(
+                self.root, {1: first, 2: second, 3: third}, self.base, "boykopovar/AnyPS5")
+        self.assertEqual(included, {2, 3})
+        self.assertEqual(excluded, {1: "unresolved_dependency"})
+        self.assertEqual(progress_prs.measure(self.root, combined)["done"], 1)
+
     def test_unresolved_and_cyclic_dependencies_are_excluded(self):
         first = self.branch(1, {"first": "1"})
         second = self.branch(2, {"second": "2"})

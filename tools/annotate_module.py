@@ -400,7 +400,8 @@ def gnu_objdump():
             result = subprocess.run([path, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace")
             if result.returncode != 0 or not result.stdout.startswith("GNU objdump"):
                 continue
-            if run_objdump(path, b"\xc3", 0).returncode == 0:
+            probe = run_objdump(path, b"\xc3", 0)
+            if probe.returncode == 0 and re.search(r"^[ \t]*0:[ \t]+retq?[ \t]*$", probe.stdout, re.M):
                 return path
         except OSError:
             continue

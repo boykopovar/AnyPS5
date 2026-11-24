@@ -54,6 +54,7 @@
 #include "prx/libSceNKWebKit/include/VPCodecExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreValueHelpersExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitConfigExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfStringDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/include/PropertyDescriptorExports.hpp"
 #include "prx/libSceNKWebKit/include/ScriptExecutableExports.hpp"
@@ -85,6 +86,7 @@
 #include "prx/libSceNKWebKit/include/ContentSearchUtilitiesExports.hpp"
 #include "prx/libSceNKWebKit/include/SpeculatedTypeExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
+#include "prx/libSceNKWebKit/include/ColorTextStreamExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
 #include "prx/libSceNKWebKit/include/URLDecompositionExports.hpp"
 
@@ -102,6 +104,7 @@
 #include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
+#include "prx/libSceNKWebKit/include/InspectorBindingTraitsExports.hpp"
 #include "prx/libSceNKWebKit/include/BmallocIsoHeapExports.hpp"
 #include "prx/libSceNKWebKit/include/GraphemeClusterExports.hpp"
 #include "prx/libSceNKWebKit/include/YarrRegularExpressionExports.hpp"
