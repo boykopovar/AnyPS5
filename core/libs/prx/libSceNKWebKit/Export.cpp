@@ -8692,9 +8692,6 @@ int APS5_VABI WKContextSetConnectionClient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextSetFontAllowList() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
 int APS5_VABI WKContextSetHistoryClient() {

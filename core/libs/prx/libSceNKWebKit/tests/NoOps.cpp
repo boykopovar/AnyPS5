@@ -29,7 +29,6 @@ int main() {
     WKContextClearSupportedPlugins();
     WKContextGetStatistics();
     WKContextGetStatisticsWithOptions();
-    WKContextMenuItemSetUserData();
     WKContextPreconnectToServer();
     WKContextRefreshPlugIns();
     WKContextSetAdditionalPluginsDirectory();

@@ -65,9 +65,6 @@ void APS5_VABI WKContextGetStatistics() {
 void APS5_VABI WKContextGetStatisticsWithOptions() {
 }
 
-void APS5_VABI WKContextMenuItemSetUserData() {
-}
-
 void APS5_VABI WKContextPreconnectToServer() {
 }
 

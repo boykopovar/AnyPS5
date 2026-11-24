@@ -57,7 +57,7 @@ static void TestTypeIDs() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKApplicationCacheManagerGetTypeID() == 0);
     Require(WKBundleBackForwardListGetTypeID() == 0);
-    Require(WKContextMenuItemGetTypeID() == 0);
+    Require(WKContextMenuItemGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::ContextMenuItem));
     Require(WKUserContentExtensionStoreGetTypeID() == 0);
     Require(WKAXObjectGetTypeID() == 132);
     Require(WKRenderLayerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::RenderLayer));
@@ -2157,6 +2157,93 @@ static void TestPopupMenuItem() {
     Require(threw);
 }
 
+static void TestContextMenuItem() {
+    Require(WKContextMenuItemGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::ContextMenuItem));
+
+    auto* titleString = WKStringCreateWithUTF8CString("Item 1");
+    auto* actionItem = WKContextMenuItemCreateAsAction(42, titleString, true);
+    Require(actionItem != nullptr);
+    Require(WKGetTypeID(actionItem) == WKContextMenuItemGetTypeID());
+    Require(WKContextMenuItemGetType(actionItem) == 0);
+    Require(WKContextMenuItemGetTag(actionItem) == 42);
+    Require(WKContextMenuItemGetEnabled(actionItem));
+    Require(!WKContextMenuItemGetChecked(actionItem));
+    auto* copyTitle = WKContextMenuItemCopyTitle(actionItem);
+    Require(copyTitle != nullptr);
+    Require(WKStringIsEqualToUTF8CString(copyTitle, "Item 1"));
+    WKRelease(copyTitle);
+    Require(WKContextMenuItemGetUserData(actionItem) == nullptr);
+
+    auto* userDataString = WKStringCreateWithUTF8CString("customData");
+    WKContextMenuItemSetUserData(actionItem, userDataString);
+    auto* getUserData = WKContextMenuItemGetUserData(actionItem);
+    Require(getUserData == userDataString);
+    WKRelease(userDataString);
+    WKContextMenuItemSetUserData(actionItem, nullptr);
+    Require(WKContextMenuItemGetUserData(actionItem) == nullptr);
+
+    auto* checkableItem = WKContextMenuItemCreateAsCheckableAction(100, titleString, false, true);
+    Require(checkableItem != nullptr);
+    Require(WKContextMenuItemGetType(checkableItem) == 1);
+    Require(WKContextMenuItemGetTag(checkableItem) == 100);
+    Require(!WKContextMenuItemGetEnabled(checkableItem));
+    Require(WKContextMenuItemGetChecked(checkableItem));
+
+    auto* separator = WKContextMenuItemSeparatorItem();
+    Require(separator != nullptr);
+    Require(WKContextMenuItemGetType(separator) == 2);
+
+    auto* submenuArray = WKMutableArrayCreate();
+    WKArrayAppendItem(submenuArray, actionItem);
+    WKArrayAppendItem(submenuArray, separator);
+    auto* submenu = WKContextMenuItemCreateAsSubmenu(titleString, true, submenuArray);
+    Require(submenu != nullptr);
+    Require(WKContextMenuItemGetType(submenu) == 3);
+    auto* returnedSubmenu = WKContextMenuCopySubmenuItems(submenu);
+    Require(returnedSubmenu != nullptr);
+    Require(WKArrayGetSize(returnedSubmenu) == 2);
+    WKRelease(returnedSubmenu);
+    WKRelease(submenuArray);
+
+    bool threw = false;
+    try {
+        WKContextMenuItemGetType(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKContextMenuItemGetTag(titleString);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKContextMenuItemSetUserData(nullptr, titleString);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKContextMenuCopySubmenuItems(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(submenu);
+    WKRelease(separator);
+    WKRelease(checkableItem);
+    WKRelease(actionItem);
+    WKRelease(titleString);
+}
+
 static void TestMediaSessionMetadata() {
     Require(WKMediaSessionMetadataGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::MediaSessionMetadata));
     auto meta = NKWebKit::Make<NKWebKit::MediaSessionMetadata>();
@@ -4100,6 +4187,7 @@ int main() {
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();
+    TestContextMenuItem();
     TestMediaSessionMetadata();
     TestOpenPanelResultListener();
     TestProtectionSpace();

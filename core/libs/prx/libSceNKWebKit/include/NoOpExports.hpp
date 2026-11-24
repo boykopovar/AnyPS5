@@ -26,7 +26,6 @@ void APS5_VABI WKContextAllowSpecificHTTPSCertificateForHost();
 void APS5_VABI WKContextClearSupportedPlugins();
 void APS5_VABI WKContextGetStatistics();
 void APS5_VABI WKContextGetStatisticsWithOptions();
-void APS5_VABI WKContextMenuItemSetUserData();
 void APS5_VABI WKContextPreconnectToServer();
 void APS5_VABI WKContextRefreshPlugIns();
 void APS5_VABI WKContextSetAdditionalPluginsDirectory();

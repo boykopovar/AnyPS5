@@ -150,50 +150,6 @@ int APS5_VABI WKContextDownloadURLRequest() {
     return 0;
 }
 
-int APS5_VABI WKContextMenuCopySubmenuItems() {
-    return 0;
-}
-
-int APS5_VABI WKContextMenuItemCopyTitle() {
-    return 0;
-}
-
-int APS5_VABI WKContextMenuItemCreateAsAction() {
-    return 0;
-}
-
-int APS5_VABI WKContextMenuItemCreateAsCheckableAction() {
-    return 0;
-}
-
-int APS5_VABI WKContextMenuItemCreateAsSubmenu() {
-    return 0;
-}
-
-int APS5_VABI WKContextMenuItemGetChecked() {
-    return 0;
-}
-
-int APS5_VABI WKContextMenuItemGetEnabled() {
-    return 0;
-}
-
-int APS5_VABI WKContextMenuItemGetTag() {
-    return 0;
-}
-
-int APS5_VABI WKContextMenuItemGetType() {
-    return 0;
-}
-
-int APS5_VABI WKContextMenuItemGetUserData() {
-    return 0;
-}
-
-int APS5_VABI WKContextMenuItemSeparatorItem() {
-    return 0;
-}
-
 int APS5_VABI WKContextResumeDownload() {
     return 0;
 }
