@@ -592,6 +592,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     }
     const bool meshCompute = MeshDrawRunsAsCompute(context, state);
     if (meshCompute) {
+        Require(std::ranges::none_of(shaders, [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Mesh; }), "a mesh program compiled for the compute fallback reached a graphics pipeline as a mesh stage");
         const auto& mesh = *state.stages.mesh;
         const auto invocations = state.stages.vertexWaveSize == 64u && context.subgroup.subgroupSize == 32u ? mesh.threadsPerGroup / 2u : mesh.threadsPerGroup;
         Require(invocations <= context.limits.maxComputeWorkGroupInvocations && invocations <= context.limits.maxComputeWorkGroupSize[0] && static_cast<std::uint64_t>(mesh.ldsSizeDwords) * 4 <= context.limits.maxComputeSharedMemorySize, "mesh workgroup run as compute exceeds device limits");
@@ -916,6 +917,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
 }
 
 bool Pipeline::Prebuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders) {
+    if (MeshDrawRunsAsCompute(context, state)) return false;
     if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return !shader.program->stencilReferences.empty(); })) return false;
     struct Scope {
         Scope() { prebuilding = true; prebuilt = false; }
