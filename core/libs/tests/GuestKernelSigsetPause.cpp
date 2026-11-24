@@ -90,7 +90,7 @@ static void TestSigpauseReturnsOnPendingSignal() {
     Require(raise_nid_postfix(GuestSigusr) == 0);
     Require(g_hits == 0);
     *__error_nid_postfix() = 0;
-    Require(sigpause_nid_postfix(GuestSigusr) == -1);
+    Require(sigpause_nid_postfix(0) == -1);
     Require(*__error_nid_postfix() == GuestEintr);
     Require(g_hits == 1);
     Require(Blocked(GuestSigusr));
