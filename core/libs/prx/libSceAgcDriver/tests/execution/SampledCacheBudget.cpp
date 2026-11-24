@@ -1718,11 +1718,83 @@ bool surfaceImportTests(Context context) {
     return true;
 }
 
+std::uint64_t FullSampledLookups() {
+    const auto& counts = ThreadLookupOutcomes().counts;
+    std::uint64_t total = 0;
+    for (const auto kind : {LookupOutcomes::SampledFast, LookupOutcomes::SampledFastMiss, LookupOutcomes::SampledHitView, LookupOutcomes::SampledHitClearedView, LookupOutcomes::SampledHitSnapshot, LookupOutcomes::SampledMadeView, LookupOutcomes::SampledMadeSnapshot}) total += counts[kind];
+    return total;
+}
+
+void lookupMemoProofTests(const Context& context, const std::string& mode) {
+    Require(LookupOutcomes::Profiled(), "the lookup memo proof tests count full lookups through APS5_PROFILE_DRAW, which is not set");
+    const bool memoOn = !RuntimeSwitches::Set(RuntimeSwitch::NoSampledLookupMemo);
+    std::vector<std::unique_ptr<WatchedSurface>> surfaces;
+    for (std::size_t surface = 0; surface < 6u; ++surface) surfaces.push_back(std::make_unique<WatchedSurface>(context));
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    const auto served = [&](std::uint64_t address, std::uint32_t side = Side) {
+        const auto before = FullSampledLookups();
+        auto texture = Sampled(context, address, side);
+        Require(texture != nullptr, "a sampled lookup of a write-watched surface returned no texture");
+        return std::pair{texture, FullSampledLookups() == before};
+    };
+    const auto remembered = [&](std::uint64_t address, const std::string& label) {
+        ClearCachedTextures(context.device);
+        Recorder::CountPresent();
+        const auto [first, firstMemo] = served(address);
+        Require(!firstMemo, label + ": the first lookup of the surface was not a full lookup");
+        const auto [second, secondMemo] = served(address);
+        Require(second == first, label + ": the second lookup of an unchanged descriptor returned another texture");
+        Require(secondMemo == memoOn, label + (memoOn ? ": the second lookup of an unchanged descriptor was not served from the memo" : ": a lookup was served from the memo with APS5_NO_SAMPLED_LOOKUP_MEMO set"));
+    };
+    const auto dropped = [&](std::uint64_t address, const std::string& change) {
+        Require(!served(address).second, "a lookup was served from the memo after " + change);
+    };
+    if (mode == "lookup-memo-proofs") {
+        remembered(surfaces[0]->Address(), "unchanged");
+        Require(served(surfaces[0]->Address()).second == memoOn, "a third lookup of an unchanged descriptor did not take the same path as the second");
+        Require(!served(surfaces[0]->Address(), Side / 2u).second, "a descriptor of another size over the same bytes was served from the memo of the first");
+        remembered(surfaces[1]->Address(), "guest write");
+        std::memset(reinterpret_cast<void*>(surfaces[1]->Address() + 4096u), 0x21, 64);
+        dropped(surfaces[1]->Address(), "a guest write to the texture's bytes");
+        remembered(surfaces[2]->Address(), "unwatch");
+        const auto unwatched = AgcDriver::GuestMemory::UnwatchSerial();
+        AgcDriver::GuestMemory::Unwatch(surfaces[2]->Address(), 65536);
+        if (AgcDriver::GuestMemory::UnwatchSerial() != unwatched) dropped(surfaces[2]->Address(), "an unwatch of the texture's first 64 KiB");
+        else std::puts("unwatch case skipped: unwatching the surface did not move the unwatch serial on this host");
+        remembered(surfaces[3]->Address(), "guest allocation");
+        const auto allocations = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+        const auto added = std::make_unique<WatchedSurface>(context);
+        Require(GuestAllocations::GuestAllocationsGeneration_nid_postfix() != allocations, "adding a guest allocation did not move the allocation generation");
+        dropped(surfaces[3]->Address(), "a guest allocation was added");
+    }
+    if (mode == "lookup-memo-proofs-import") {
+        if (context.hostImportAlignment != 0) {
+            remembered(surfaces[4]->Address(), "host import");
+            const auto imports = HostImportSetGeneration();
+            if (HostImportFor(context, surfaces[5]->Address(), SurfaceBytes) != nullptr && HostImportSetGeneration() != imports) dropped(surfaces[4]->Address(), "a host import of other memory was added");
+            else std::puts("host import case skipped: the host import of the second surface was refused");
+        } else {
+            std::puts("host import case skipped: host imports are unavailable");
+        }
+    }
+    if (mode == "lookup-memo-proofs-pending") {
+        remembered(surfaces[0]->Address(), "pending storage");
+        auto storage = CachedStorageSurface(context, Resource(surfaces[0]->Address()));
+        Require(storage != nullptr, "no storage image over the sampled surface");
+        storage->MarkDirty();
+        dropped(surfaces[0]->Address(), "a storage image over the texture's bytes took a pending write");
+        storage->Flush();
+        storage.reset();
+    }
+    ClearCachedTextures(context.device);
+}
+
 int main(int argc, char** argv) {
     try {
         const bool memory = argc > 1 && std::string(argv[1]) == "memory";
         const std::string mode = argc > 1 ? argv[1] : "";
-        if (mode == "collect-refusals" || mode == "pending-fail-count") {
+        if (mode == "collect-refusals" || mode == "pending-fail-count" || mode.starts_with("lookup-memo-proofs")) {
 #ifdef _WIN32
             _putenv_s("APS5_PROFILE_DRAW", "1");
 #else
@@ -1813,6 +1885,12 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             if (!pendingFailCountTests(context)) return VulkanTestSkipped;
             std::puts("resource cache pending fast-fail count tests passed");
+            return 0;
+        }
+        if (mode.starts_with("lookup-memo-proofs")) {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            lookupMemoProofTests(context, mode);
+            std::puts("sampled lookup memo proof tests passed");
             return 0;
         }
         if (mode == "surface-import") {
