@@ -100,6 +100,27 @@ void TestEntries() {
     Require(_ZNSt10filesystem10_Copy_fileEPKcS1__nid_postfix("f", "d") == IsDirectory, "_Copy_file onto a directory");
 }
 
+void TestEquivalent() {
+    Prepare();
+    Write("g", 7, 1);
+    const auto equivalent = _ZNSt10filesystem11_EquivalentEPKcS1__nid_postfix;
+    Require(equivalent("f", "f") == 1, "_Equivalent of the same file");
+    Require(equivalent("f", "g") == 0, "_Equivalent of distinct files with identical content");
+    Require(equivalent("d", "d/") == 1, "_Equivalent of the same directory");
+    Require(equivalent("f", "missing") == 0, "_Equivalent with a missing second path");
+    Require(equivalent("missing", "f") == 0, "_Equivalent with a missing first path");
+    Require(equivalent("missing", "missing") == -1, "_Equivalent with two missing paths");
+    Require(equivalent(nullptr, "missing") == -1, "_Equivalent with a null path and a missing path");
+    std::error_code error;
+    std::filesystem::create_hard_link("f", "link", error);
+    if (!error) {
+        Require(equivalent("f", "link") == 1, "_Equivalent across a hard link");
+        std::filesystem::remove("link");
+    }
+    std::filesystem::create_symlink("f", "link", error);
+    if (!error) Require(equivalent("f", "link") == 1, "_Equivalent follows symbolic links");
+}
+
 void TestUnsupported() {
     std::uint64_t space[4] = {1, 2, 3, 4};
     Require(_ZNSt10filesystem8_StatvfsEPKcRNS_10space_infoE_nid_postfix("f", space) == NoSystemCall, "_Statvfs is not supported");
@@ -118,6 +139,7 @@ int main() {
     TestStatus();
     TestSizeAndTime();
     TestEntries();
+    TestEquivalent();
     TestUnsupported();
     std::filesystem::current_path(std::filesystem::temp_directory_path(), ignored);
     std::filesystem::remove_all(directory, ignored);

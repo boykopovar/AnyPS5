@@ -1,0 +1,9 @@
+# libSceLibcInternal
+
+## change [_Stat and _Lstat without an error output, _File_size(const char*), _Last_write_time(const char*), _Set_last_write_time, _Rename, _Resize, _Copy_file, _Statvfs and _Current_set2]
+
+- [_Stat and _Lstat without an error output, _File_size(const char*), _Last_write_time(const char*), _Set_last_write_time, _Rename, _Resize, _Copy_file, _Statvfs and _Current_set2](../../../core/libs/prx/libSceLibcInternal/UnversionedFilesystemCalls.cpp) (libSceLibcInternal) - names and NIDs come from the PS5 3.20 export inventory; no module was read and no console measured. The overloads without an error output call this library's overloads with one, passing no output, and `_Last_write_time(const char*)` returns -1 when that call fails and the seconds otherwise. The other six call the matching `std::__sce_v2::filesystem` helpers of libc, which follow the `libc.prx` bundled with PPSA03671 (see [libc](libc.md)), on the assumption that both namespaces build the same Dinkumware sources; so `_Statvfs` returns `ENOSYS` with unknown space and `_Current_set2` accepts only "/". `_Current_set` and the three-argument `_Xfilesystem_error` still throw
+
+## change [_ZNSt10filesystem11_EquivalentEPKcS1_]
+
+- [_ZNSt10filesystem11_EquivalentEPKcS1_](../../../core/libs/prx/libSceLibcInternal/Filesystem.cpp) (libSceLibcInternal, NID `XD9FmX1mavU`) - the mangled PS5 name gives two narrow paths. The integer return convention follows [Dinkumware](https://github.com/microsoft/STL/blob/219514876ea86491de191ceaa88632616bbc0f19/stl/src/filesys.cpp#L327-L382): -1 if neither path can be inspected, 0 if only one can be inspected or the identities differ, and 1 if the identities match. The guest implementation follows links with `sceKernelStat` and compares its 32-bit device and inode fields. Host identities that collide in those fields cannot be distinguished. The return type and behavior are unverified on PS5.

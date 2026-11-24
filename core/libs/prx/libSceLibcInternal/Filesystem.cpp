@@ -1,7 +1,18 @@
 #include "prx/libc/include/GuestFilesystemPrimitives.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 
 extern "C" {
+
+int APS5_VABI _ZNSt10filesystem11_EquivalentEPKcS1__nid_postfix(const char* first, const char* second) {
+    FileStat firstStatus{};
+    FileStat secondStatus{};
+    const bool firstFound = sceKernelStat(first, &firstStatus) == 0;
+    const bool secondFound = sceKernelStat(second, &secondStatus) == 0;
+    if (!firstFound && !secondFound) return -1;
+    if (!firstFound || !secondFound) return 0;
+    return firstStatus.st_dev == secondStatus.st_dev && firstStatus.st_ino == secondStatus.st_ino;
+}
 
 int APS5_VABI _ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(const char* path, int* perms, int* error) {
     return GuestFilesystem::StatType(path, perms, error);
