@@ -191,8 +191,12 @@ def resolve_summary_path(path):
 
 def load_summary_lines(path, numbered=False, label=None):
     display = label if label is not None else path
+    try:
+        text = Path(path).read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{display}: {error}") from error
     records = []
-    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
+    for number, line in enumerate(text.split("\n"), 1):
         if not line.strip():
             continue
         try:
