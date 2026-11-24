@@ -55,5 +55,8 @@ int APS5_VABI sceLibcInternalUnknown46(void);
 int APS5_VABI sceLibcInternalUnknown47(void);
 int APS5_VABI sceLibcInternalUnknown48(void);
 int APS5_VABI sceLibcInternalUnknown49(void);
+int APS5_VABI sceLibcInternalUnknown50(void);
+int APS5_VABI sceLibcInternalUnknown51(void);
+int APS5_VABI sceLibcInternalUnknown52(void);
 
 }
