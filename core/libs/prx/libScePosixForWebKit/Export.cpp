@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -67,24 +66,19 @@ bool ReadGuestCString(const char* source, std::string& out) {
     out.clear();
     if (source == nullptr) return false;
     const auto base = reinterpret_cast<std::uintptr_t>(source);
-    const int savedErrno = errno;
     for (std::size_t index = 0; index < MaxEnvStringLength; ++index) {
         if (base > std::numeric_limits<std::uintptr_t>::max() - index) {
-            errno = savedErrno;
             return false;
         }
         char ch = 0;
         if (!GuestCopyIn_nid_no_patch(&ch, reinterpret_cast<const void*>(base + index), sizeof(ch))) {
-            errno = savedErrno;
             return false;
         }
         if (ch == '\0') {
-            errno = savedErrno;
             return true;
         }
         out.push_back(ch);
     }
-    errno = savedErrno;
     return false;
 }
 
@@ -272,13 +266,6 @@ std::size_t HostPageSize() {
     return size;
 }
 
-bool CopyGuestBytesPreservingErrno(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return ok;
-}
-
 bool CopyGuestStringUnbounded(const char* source, std::vector<char>& scratch, std::string& out) {
     out.clear();
     if (source == nullptr) return false;
@@ -290,7 +277,7 @@ bool CopyGuestStringUnbounded(const char* source, std::vector<char>& scratch, st
         const std::uintptr_t current = base + offset;
         const std::size_t toPageEnd = pageSize - static_cast<std::size_t>(current % pageSize);
         if (toPageEnd > std::numeric_limits<std::uintptr_t>::max() - current) return false;
-        if (!CopyGuestBytesPreservingErrno(scratch.data(), reinterpret_cast<const void*>(current), toPageEnd)) {
+        if (!GuestCopyIn_nid_no_patch(scratch.data(), reinterpret_cast<const void*>(current), toPageEnd)) {
             return false;
         }
         const auto* nul = static_cast<const char*>(std::memchr(scratch.data(), '\0', toPageEnd));
@@ -320,7 +307,7 @@ char* APS5_VABI strcasestr_nid_postfix(const char* text, const char* needle) {
         if (!CopyGuestStringUnbounded(needle, scratch, foldedNeedle)) return nullptr;
         if (foldedNeedle.empty()) {
             char first = 0;
-            return CopyGuestBytesPreservingErrno(&first, text, 1) ? const_cast<char*>(text) : nullptr;
+            return GuestCopyIn_nid_no_patch(&first, text, 1) ? const_cast<char*>(text) : nullptr;
         }
         for (char& ch : foldedNeedle) {
             ch = static_cast<char>(FoldCase(static_cast<unsigned char>(ch), FnmCasefold));
@@ -338,7 +325,7 @@ char* APS5_VABI strcasestr_nid_postfix(const char* text, const char* needle) {
             const std::uintptr_t current = textBase + readOffset;
             const std::size_t toPageEnd = pageSize - static_cast<std::size_t>(current % pageSize);
             if (toPageEnd > std::numeric_limits<std::uintptr_t>::max() - current) return nullptr;
-            if (!CopyGuestBytesPreservingErrno(scratch.data(), reinterpret_cast<const void*>(current), toPageEnd)) {
+            if (!GuestCopyIn_nid_no_patch(scratch.data(), reinterpret_cast<const void*>(current), toPageEnd)) {
                 return nullptr;
             }
             const auto* nul = static_cast<const char*>(std::memchr(scratch.data(), '\0', toPageEnd));
@@ -374,17 +361,14 @@ void APS5_VABI arc4random_buf_nid_postfix(void* buffer, std::size_t size) {
     if (!buffer || size == 0) return;
     std::array<std::uint8_t, 256> chunk;
     std::size_t offset = 0;
-    const int savedErrno = errno;
     while (offset < size) {
         const std::size_t current = std::min(size - offset, chunk.size());
         HostEntropy_nid_no_patch(chunk.data(), current);
         if (!GuestCopyOut_nid_no_patch(static_cast<char*>(buffer) + offset, chunk.data(), current)) {
-            errno = savedErrno;
             return;
         }
         offset += current;
     }
-    errno = savedErrno;
 }
 
 std::uint32_t APS5_VABI arc4random_nid_postfix() {
@@ -450,10 +434,7 @@ int APS5_VABI getenv_np(const char* name, char* buffer, std::size_t size) {
     const std::size_t length = std::strlen(value);
     if (length >= size)
         throw std::runtime_error("getenv_np: the console's handling of a value longer than the buffer is unknown");
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(buffer, value, length + 1);
-    errno = savedErrno;
-    if (!copied) throw std::invalid_argument("getenv_np requires a writable buffer");
+    if (!GuestCopyOut_nid_no_patch(buffer, value, length + 1)) throw std::invalid_argument("getenv_np requires a writable buffer");
     return 0;
 }
 
@@ -555,10 +536,8 @@ int APS5_VABI scePosixForWebKit_sysinfo(PosixForWebKitSysinfo* info) {
     }
     const std::uint64_t total = TotalMemorySizeAssumption();
     const std::uint32_t one = 1;
-    const int savedErrno = errno;
     const bool wroteTotal = GuestCopyOut_nid_no_patch(info, &total, sizeof(total));
     const bool wroteOne = wroteTotal && GuestCopyOut_nid_no_patch(reinterpret_cast<char*>(info) + offsetof(PosixForWebKitSysinfo, one), &one, sizeof(one));
-    errno = savedErrno;
     if (!wroteTotal || !wroteOne) {
         throw std::invalid_argument("scePosixForWebKit_sysinfo: unwritable output");
     }
