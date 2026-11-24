@@ -511,7 +511,7 @@ bool TinyAsF32(std::uint64_t bits) {
     return magnitude != 0u && magnitude < 0x3810000000000000ull;
 }
 
-void Run(AgcDriver::VulkanDevice& device, const Mode& mode, bool hardwareFlush) {
+void Run(AgcDriver::VulkanDevice& device, const Mode& mode, bool hardwareFlush, bool integerFloat64) {
     Input.fill(0u);
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         Input[tid * Inputs] = static_cast<std::uint32_t>(Sources[tid]);
@@ -535,12 +535,17 @@ void Run(AgcDriver::VulkanDevice& device, const Mode& mode, bool hardwareFlush) 
     request.useCache = false;
     request.context.floatMode = ShaderRecompiler::ShaderFloatMode{mode.floatMode, true, mode.ieee, false};
     request.target.float32FlushToZero = hardwareFlush;
+    std::vector<std::uint32_t> capabilities(request.target.supportedCapabilities.begin(), request.target.supportedCapabilities.end());
+    if (integerFloat64) {
+        std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityFloat64));
+        request.target.supportedCapabilities = capabilities;
+    }
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 
-std::uint32_t Check(std::uint32_t mode, bool hardwareFlush, bool skipDenormals, bool skipTinySources) {
+std::uint32_t Check(std::uint32_t mode, bool hardwareFlush, bool integerFloat64, bool skipDenormals, bool skipTinySources) {
     std::uint32_t skipped = 0u;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         for (std::uint32_t index = 0; index < Results; ++index) {
@@ -551,7 +556,7 @@ std::uint32_t Check(std::uint32_t mode, bool hardwareFlush, bool skipDenormals, 
                 continue;
             }
             const std::uint32_t actual = Output[tid * Results + index];
-            Require(actual == expected, std::string("v_cvt_f32_f64 denormal result: ") + (hardwareFlush ? "hardware flush " : "emulated flush ") + "FLOAT_MODE " + Hex(Modes[mode].floatMode) +
+            Require(actual == expected, std::string("v_cvt_f32_f64 denormal result: ") + (integerFloat64 ? "integer f64 " : "native f64 ") + (hardwareFlush ? "hardware flush " : "emulated flush ") + "FLOAT_MODE " + Hex(Modes[mode].floatMode) +
                                             (Modes[mode].ieee ? " IEEE=1" : " IEEE=0") + " lane " + std::to_string(tid) + " " + Names[index] + " of " + Hex(static_cast<std::uint32_t>(Sources[tid] >> 32u)) +
                                             Hex(static_cast<std::uint32_t>(Sources[tid])).substr(2) + " is " + Hex(actual) + ", expected " + Hex(expected));
         }
@@ -567,17 +572,21 @@ int main() {
         if (!device) return VulkanTestSkipped;
         const bool keepsDenormals = device->Target().float32DenormPreserve;
         const bool nativeFloat64 = TargetHasCapability(device->Target(), spv::CapabilityFloat64);
+        const bool integerFloat64Available = TargetHasCapability(device->Target(), spv::CapabilityInt64);
         std::uint32_t passes = 0u;
         std::uint32_t skipped = 0u;
-        for (const bool hardwareFlush : {false, true}) {
-            if (hardwareFlush && !device->Target().float32FlushToZero) continue;
-            ++passes;
-            for (std::uint32_t mode = 0; mode < ModeCount; ++mode) {
-                Run(*device, Modes[mode], hardwareFlush);
-                skipped += Check(mode, hardwareFlush, !keepsDenormals, !keepsDenormals && nativeFloat64);
+        for (const bool integerFloat64 : {false, true}) {
+            if (integerFloat64 ? !integerFloat64Available : !nativeFloat64) continue;
+            for (const bool hardwareFlush : {false, true}) {
+                if (hardwareFlush && !device->Target().float32FlushToZero) continue;
+                ++passes;
+                for (std::uint32_t mode = 0; mode < ModeCount; ++mode) {
+                    Run(*device, Modes[mode], hardwareFlush, integerFloat64);
+                    skipped += Check(mode, hardwareFlush, integerFloat64, !keepsDenormals, !keepsDenormals && !integerFloat64);
+                }
             }
         }
-        std::printf("v_cvt_f32_f64 denormal result tests passed (%u of 2 flush passes run; %u values with an f32 denormal result or an f64 source below 2^-126 not checked; they need DenormPreserve 32)\n", passes, skipped);
+        std::printf("v_cvt_f32_f64 denormal result tests passed (%u of 4 passes run; %u values with an f32 denormal result or an f64 source below 2^-126 not checked; they need DenormPreserve 32)\n", passes, skipped);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
