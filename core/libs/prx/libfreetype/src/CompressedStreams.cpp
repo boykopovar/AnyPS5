@@ -8,7 +8,6 @@
 #include FT_LZW_H
 #include FT_SYSTEM_H
 
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -137,7 +136,6 @@ void APS5_VABI OutputClose(GuestStreamRec* stream) {
     if (state->output.close) state->output.close(&state->output);
     if (state->fault) NotImplemented_nid_no_patch(__func__);
     GuestStreamRec cleared{};
-    const int savedErrno = errno;
     if (GuestCopyIn_nid_no_patch(&cleared, stream, sizeof(cleared))) {
         cleared.read = nullptr;
         cleared.close = nullptr;
@@ -145,7 +143,6 @@ void APS5_VABI OutputClose(GuestStreamRec* stream) {
         cleared.descriptor.pointer = nullptr;
         GuestCopyOut_nid_no_patch(stream, &cleared, sizeof(cleared));
     }
-    errno = savedErrno;
 }
 
 bool Overlaps(const GuestStreamRec* stream, const GuestStreamRec* source) {
@@ -169,17 +166,13 @@ void Publish(GuestStreamRec* stream, const State& state) {
 template <typename TOpen>
 int Open(GuestStreamRec* stream, GuestStreamRec* source, TOpen open, const char* function) {
     if (!stream || !source) return FT_Err_Invalid_Stream_Handle;
-    const int savedErrno = errno;
     const bool streamOk = GuestWritable_nid_no_patch(stream, sizeof(*stream));
     const bool sourceOk = GuestWritable_nid_no_patch(source, sizeof(*source));
-    errno = savedErrno;
     if (!streamOk || !sourceOk) return FT_Err_Invalid_Stream_Handle;
     GuestStreamRec sourceRec{};
     if (!GuestCopyIn_nid_no_patch(&sourceRec, source, sizeof(sourceRec))) {
-        errno = savedErrno;
         return FT_Err_Invalid_Stream_Handle;
     }
-    errno = savedErrno;
     if (sourceRec.size > std::numeric_limits<unsigned long>::max() || sourceRec.pos > std::numeric_limits<unsigned long>::max())
         NotImplemented_nid_no_patch(function);
     auto state = std::make_shared<State>();
