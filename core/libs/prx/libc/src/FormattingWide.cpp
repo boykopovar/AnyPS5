@@ -20,9 +20,11 @@
 #include "prx/libc/include/SonyCrt.hpp"
 
 #ifdef _WIN32
+#include <windows.h>
 #define APS5_VA_BEGIN(last) __builtin_sysv_va_list args; __builtin_sysv_va_start(args, last)
 #define APS5_VA_END() __builtin_sysv_va_end(args)
 #else
+#include <unistd.h>
 #define APS5_VA_BEGIN(last) std::va_list args; va_start(args, last)
 #define APS5_VA_END() va_end(args)
 #endif
@@ -130,16 +132,31 @@ bool CopyInPreservingErrno(void* destination, const void* source, std::size_t by
     return ok;
 }
 
+std::size_t GuestPageSize() {
+    static const std::size_t size = [] {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        return info.dwPageSize > 0 ? static_cast<std::size_t>(info.dwPageSize) : std::size_t{4096};
+#else
+        const long value = sysconf(_SC_PAGESIZE);
+        return value > 0 ? static_cast<std::size_t>(value) : std::size_t{4096};
+#endif
+    }();
+    return size;
+}
+
 bool CopyGuestWideString(const char16_t* source, std::u16string& out, std::size_t limit = SIZE_MAX) {
     if (source == nullptr) return false;
     out.clear();
     if (limit == 0) return true;
+    const std::size_t pageSize = GuestPageSize();
     const auto base = reinterpret_cast<std::uintptr_t>(source);
     std::size_t offset = 0;
     while (out.size() < limit) {
         if (offset > UINTPTR_MAX - base) return false;
         const auto current = base + offset;
-        const std::size_t toPageEnd = 4096 - (current % 4096);
+        const std::size_t toPageEnd = pageSize - (current % pageSize);
         const std::size_t maxUnits = std::min<std::size_t>(limit - out.size(), 128);
         const std::size_t units = toPageEnd >= sizeof(char16_t) ? std::min<std::size_t>(toPageEnd / sizeof(char16_t), maxUnits) : 1;
         char16_t buffer[128];
@@ -161,12 +178,13 @@ bool CopyGuestWideString(const char16_t* source, std::u16string& out, std::size_
 bool CopyGuestNarrowString(const char* source, std::string& out) {
     if (source == nullptr) return false;
     out.clear();
+    const std::size_t pageSize = GuestPageSize();
     const auto base = reinterpret_cast<std::uintptr_t>(source);
     std::size_t offset = 0;
     for (;;) {
         if (offset > UINTPTR_MAX - base) return false;
         const auto current = base + offset;
-        const std::size_t toPageEnd = 4096 - (current % 4096);
+        const std::size_t toPageEnd = pageSize - (current % pageSize);
         const std::size_t chunk = toPageEnd < 256 ? toPageEnd : 256;
         char buffer[256];
         if (!CopyInPreservingErrno(buffer, reinterpret_cast<const void*>(current), chunk)) {
