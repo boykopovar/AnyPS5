@@ -149,8 +149,12 @@ def target_artifact_names(target):
 def test_owner(command, targets_by_name):
     candidates = [command[0]] if command else []
     if "--" in command:
-        owner_index = command.index("--") + 1
-        candidates += command[owner_index:owner_index + 1]
+        separator = command.index("--")
+        if command[1:3] == ["-E", "env"] and Path(command[0]).stem.casefold() == "cmake":
+            program = next((part for part in command[3:separator] if not part.startswith("-") and "=" not in part), None)
+            if program:
+                candidates.append(program)
+        candidates += command[separator + 1:separator + 2]
     else:
         candidates += [part for part in command[1:] if not part.startswith("-")
                        and (Path(part).suffix.casefold() == ".exe" or "/" in part or "\\" in part)]
