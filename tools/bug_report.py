@@ -1,4 +1,5 @@
 import argparse
+from contextlib import suppress
 import getpass
 import json
 import os
@@ -111,9 +112,15 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None, e
         members["anyps5-settings.txt"] = settings_text(environ, identity)
     members["host.txt"] = redact(host_text(), **identity)
     members["README.txt"] = README
-    with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
-        for name, content in members.items():
-            bundle.writestr(name, content.encode("utf-8", errors="backslashreplace"))
+    destination = out.open("xb")
+    try:
+        with destination, zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+            for name, content in members.items():
+                bundle.writestr(name, content.encode("utf-8", errors="backslashreplace"))
+    except BaseException:
+        with suppress(OSError):
+            out.unlink()
+        raise
     return sorted(members)
 
 

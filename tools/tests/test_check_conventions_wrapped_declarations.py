@@ -155,5 +155,18 @@ class AbiAliasTests(WrappedDeclarationFixture):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
+class CppPieceTests(unittest.TestCase):
+    def test_cpp_pieces_masks_comments_and_keeps_the_source_width(self):
+        text = "a // x\nb"
+        masked = "".join(check_conventions.cpp_pieces(text))
+        self.assertEqual(masked, "a     \nb")
+        self.assertEqual(len(masked), len(text))
+
+    def test_cpp_pieces_empties_string_literals_but_keeps_code(self):
+        masked = "".join(check_conventions.cpp_pieces('x = "ab"; y'))
+        self.assertEqual(masked, 'x = ""  ; y')
+        self.assertNotIn("ab", masked)
+
+
 if __name__ == "__main__":
     unittest.main()

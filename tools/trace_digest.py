@@ -2,6 +2,7 @@ import argparse
 import bisect
 import collections
 import gzip
+import heapq
 import html
 import json
 import math
@@ -36,6 +37,11 @@ INTERVAL_IDENTITY_KEYS = (*INTERVAL_IDENTITY_STRINGS, *OPTIONAL_INTEGERS, "dirty
 
 def is_wait(name):
     return "wait" in name.lower()
+
+
+def metric_rank(entry):
+    name, value = entry
+    return -value, name
 
 
 def _event_value(value, label, index):
@@ -78,6 +84,8 @@ class Trace:
         self.losses = []
         if not isinstance(document, (list, dict)):
             raise ValueError("trace must be an event array or object")
+        if isinstance(document, dict) and document and "traceEvents" not in document:
+            raise ValueError("trace object must contain a traceEvents array")
         events = document if isinstance(document, list) else document.get("traceEvents", [])
         if not isinstance(events, list):
             raise ValueError("traceEvents must be an array")
@@ -222,7 +230,7 @@ def load_summary(path, trace_path):
 
 def load_stacks(path):
     stacks = []
-    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").splitlines(), 1):
+    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
         if line.startswith("#") or not line.strip():
             continue
         frames, _, count = line.rpartition(" ")
@@ -411,8 +419,8 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
             del inclusive[frame]
         share = lambda value: 100.0 * value / samples if samples else 0.0
         result["stacks"] = {"samples": samples, "truncated_pct": share(truncated), "common_frames": len(common),
-                            "self": [{"frame": frame, "pct": share(value)} for frame, value in own.most_common(top)],
-                            "total": [{"frame": frame, "pct": share(value)} for frame, value in inclusive.most_common(top)]}
+                            "self": [{"frame": frame, "pct": share(value)} for frame, value in heapq.nsmallest(top, own.items(), key=metric_rank)],
+                            "total": [{"frame": frame, "pct": share(value)} for frame, value in heapq.nsmallest(top, inclusive.items(), key=metric_rank)]}
     return result
 
 
@@ -584,9 +592,9 @@ def digest_intervals(lines):
     rows = []
     for line in lines:
         workers = line.get("worker_busy_pct", {})
-        busiest = max(workers.items(), key=lambda entry: entry[1]) if workers else None
+        busiest = min(workers.items(), key=metric_rank, default=None)
         phases = line.get("top_phases_ms_per_frame", {})
-        largest = max(phases.items(), key=lambda entry: entry[1]) if phases else None
+        largest = min(phases.items(), key=metric_rank, default=None)
         rows.append({"start_s": line["interval_start_s"], "end_s": line["interval_end_s"], "presents": line["presents"],
                      "frame_ms": line["frame_ms"], "gpu_busy_ms_per_present": line["gpu_busy_ms_per_present"],
                      "busiest_worker": {"thread": busiest[0], "pct": busiest[1]} if busiest else None,
@@ -630,7 +638,7 @@ def markdown_intervals(result):
                 lines.append(f"| {index} | " + " | ".join(["-"] * 8) + " |")
                 continue
             closes = {name[len("Graphics.RenderPass.Close."):]: value for name, value in counts.items() if name.startswith("Graphics.RenderPass.Close.")}
-            top_close = max(closes, key=closes.get) if closes else "-"
+            top_close, _ = min(closes.items(), key=metric_rank, default=("-", 0))
             barriers = sum(value for name, value in counts.items() if name.startswith("Graphics.Barrier."))
             merged = sum(value for name, value in counts.items() if name.startswith("Graphics.BarrierMerged."))
             lines.append(f"| {index} | {counts.get('Graphics.RenderPass', 0)} | {counts.get('Graphics.RenderPass.Continued', 0)} "
@@ -696,11 +704,12 @@ def main(arguments=None):
     summary = load_summary(options.summary, options.trace)
     try:
         result = digest(trace, summary, stacks, options.frames, options.top)
+        if options.thread:
+            result["thread_filter"] = sorted(set(options.thread))
+        output = json.dumps(result, indent=1) + "\n" if options.json else markdown(result)
     except KeyError as error:
         parser.exit(2, f"FAIL: the summary line has no {error} field\n")
-    if options.thread:
-        result["thread_filter"] = sorted(set(options.thread))
-    sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown(result))
+    sys.stdout.write(output)
     return 0
 
 
