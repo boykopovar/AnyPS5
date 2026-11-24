@@ -48,6 +48,7 @@ constexpr int InvalidNullName = 108;
 constexpr int InvalidNullValue = 109;
 constexpr int ExtensionNameError = 115;
 constexpr int ExtensionValueError = 116;
+constexpr int ExtensionSettingNotSupported = 103;
 constexpr int IllegalHexDigit = 113;
 constexpr int InvalidBooleanString = 104;
 constexpr int InvalidExtensionString = 105;
@@ -929,8 +930,8 @@ LibreSsl3X509Extension* BuildExtension(int nid, bool critical, const std::vector
 bool IsStandardExtension(int nid) {
     constexpr std::array<int, 42> Nids = {
         71, 72, 73, 74, 75, 76, 77, 78, 82, 83, 84, 85, 86, 87, 88, 89, 90, 103, 126, 140, 141,
-        142, 143, 177, 290, 291, 366, 367, 368, 369, 370, 371, 398, 401, 430, 663, 666, 747, 748,
-        770, 771, 857,
+        142, 177, 290, 291, 366, 367, 368, 370, 371, 398, 401, 430, 666, 747, 748, 770, 771, 857,
+        1018, 1019, 1021,
     };
     for (const int candidate : Nids) {
         if (candidate == nid) return true;
@@ -957,6 +958,13 @@ LibreSsl3X509Extension* PlainExtension(void* conf, int nid, bool critical, std::
         break;
     case 126:
         if (!EncodeExtendedKeyUsage(conf, text, der)) return nullptr;
+        break;
+    case 1018:
+    case 1021:
+        PutError(ExtensionSettingNotSupported);
+        return nullptr;
+    case 1019:
+        der = {NullTag, 0x00};
         break;
     default:
         NotImplemented_nid_no_patch(__func__);

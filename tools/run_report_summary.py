@@ -4,6 +4,10 @@ import math
 import sys
 from pathlib import Path
 
+from performance_compare import unique_json_object
+
+
+DIAGNOSTIC_PREVIEW_LIMIT = 5
 
 def text(value):
     if not isinstance(value, str) or not value:
@@ -21,6 +25,13 @@ def number_text(value):
 
 def count_text(value, noun):
     return f"{number_text(value)} {noun}{'' if value == 1 else 's'}"
+
+
+def diagnostic_entries(report, section, key):
+    entries = report[section].get(key, [])
+    if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+        raise ValueError(f"report field '{section}.{key}' must be an array of objects")
+    return entries
 
 
 def total_count(items, key):
@@ -44,12 +55,14 @@ def render(report):
     for key in ("milestones", "missing", "shaders", "unsupported"):
         if type(report["coverage"].get(key)) is not bool:
             raise ValueError(f"report field 'coverage.{key}' must be a boolean")
+    for key in ("recovered", "incomplete"):
+        if type(report["run"].get(key)) is not bool:
+            raise ValueError(f"report field 'run.{key}' must be a boolean")
 
     game = report["game"]
     system = report["system"]
     run = report["run"]
     coverage = report["coverage"]
-    missing = report["missing"]
     shaders = report["shaders"]
     truncated = report["truncated"]
     stop = report["stop"]
@@ -67,12 +80,13 @@ def render(report):
 
     frames = run.get("framesPresented")
     if coverage.get("milestones"):
-        frame_summary = count_text(frames, "frame") if isinstance(frames, int) and not isinstance(frames, bool) else "unknown frame count"
+        frames_valid = type(frames) is int and frames >= 0
+        frame_summary = count_text(frames, "frame") if frames_valid else "unknown frame count"
         fps = run.get("averageFps")
-        if is_finite_number(fps):
+        if frames_valid and frames > 1 and is_finite_number(fps) and fps >= 0:
             fps_text = f"{fps}.00" if type(fps) is int else f"{fps:.2f}"
             frame_summary += f", {fps_text} average FPS"
-        elif isinstance(frames, int) and not isinstance(frames, bool) and frames > 1:
+        elif frames_valid and frames > 1:
             frame_summary += ", average FPS unavailable"
         lines.append(f"Rendering: {frame_summary}")
     else:
@@ -98,13 +112,15 @@ def render(report):
     lines.append(f"Stop: {stop_summary}")
 
     if coverage.get("missing"):
-        functions = missing.get("functions", [])
+        functions = diagnostic_entries(report, "missing", "functions")
         calls = total_count(functions, "calls")
         lines.append(f"Missing functions: {count_text(calls, 'call')} across {count_text(len(functions), 'function')}")
-        for item in functions[:5]:
-            if isinstance(item, dict):
-                library = text(item.get("library"))
-                lines.append(f"  - {library}::{text(item.get('name'))} ({count_text(item.get('calls', 0), 'call')})")
+        for item in functions[:DIAGNOSTIC_PREVIEW_LIMIT]:
+            library = text(item.get("library"))
+            lines.append(f"  - {library}::{text(item.get('name'))} ({count_text(item.get('calls', 0), 'call')})")
+        if len(functions) > DIAGNOSTIC_PREVIEW_LIMIT:
+            remaining = len(functions) - DIAGNOSTIC_PREVIEW_LIMIT
+            lines.append(f"  - {remaining} more function{'' if remaining == 1 else 's'} in the full report")
         if truncated.get("functions", 0):
             lines.append(f"  - {count_text(truncated['functions'], 'additional function')} omitted")
     else:
@@ -115,14 +131,16 @@ def render(report):
     else:
         lines.append("Shaders: compilation data was not collected")
     if coverage.get("unsupported"):
-        unsupported = shaders.get("unsupported", [])
+        unsupported = diagnostic_entries(report, "shaders", "unsupported")
         total = total_count(unsupported, "count")
         lines.append(f"Unsupported shader instructions: {count_text(total, 'occurrence')} across {count_text(len(unsupported), 'instruction')}")
-        for item in unsupported[:5]:
-            if isinstance(item, dict):
-                opcode_value = item.get("opcodeValue")
-                instruction = item.get("opcode") or (opcode_value if opcode_value is not None else "unknown instruction")
-                lines.append(f"  - {text(item.get('encoding'))}: {text(str(instruction))} ({count_text(item.get('count', 0), 'occurrence')})")
+        for item in unsupported[:DIAGNOSTIC_PREVIEW_LIMIT]:
+            opcode_value = item.get("opcodeValue")
+            instruction = item.get("opcode") or (opcode_value if opcode_value is not None else "unknown instruction")
+            lines.append(f"  - {text(item.get('encoding'))}: {text(str(instruction))} ({count_text(item.get('count', 0), 'occurrence')})")
+        if len(unsupported) > DIAGNOSTIC_PREVIEW_LIMIT:
+            remaining = len(unsupported) - DIAGNOSTIC_PREVIEW_LIMIT
+            lines.append(f"  - {remaining} more instruction{'' if remaining == 1 else 's'} in the full report")
         if truncated.get("unsupported", 0):
             lines.append(f"  - {count_text(truncated['unsupported'], 'additional instruction')} omitted")
     else:
@@ -146,11 +164,11 @@ def main():
     parser.add_argument("report", type=Path, help="path to anyps5-report.json")
     args = parser.parse_args()
     try:
-        report = json.loads(args.report.read_text(encoding="utf-8-sig"))
+        report = json.loads(args.report.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_object)
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8")
         print(render(report))
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError, KeyError) as error:
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError, KeyError, RecursionError) as error:
         print(f"run_report_summary: {error}", file=sys.stderr)
         return 2
     return 0
