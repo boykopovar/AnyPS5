@@ -342,7 +342,8 @@ def render_presentmon_comparison(report):
                   "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |"])
     for run in report["runs"]:
         metrics = run["metrics"] or {}
-        values = [benchmark_display(metrics.get(name)) for name in ("presents", "dropped", *METRICS)]
+        values = [str(metrics.get(name, "n/a")) for name in ("presents", "dropped")]
+        values.extend(benchmark_display(metrics.get(name)) for name in METRICS)
         lines.append(f"| {cell(run['id'])} | {run['arm']} | {run['status']} | {' | '.join(values)} | "
                      f"{cell(run.get('reason', ''))} |")
     lines.extend(["", "## Capture selections", ""])
