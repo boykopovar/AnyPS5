@@ -367,23 +367,25 @@ void TestMp3ParseFrame() {
     Require(sceAjmDecMp3ParseFrame(forbiddenBitrate, 4, 0, &frame) == invalidParameter);
     const std::uint8_t reservedSampleRate[4] = {0xFF, 0xFB, 0x1C, 0xC4};
     Require(sceAjmDecMp3ParseFrame(reservedSampleRate, 4, 0, &frame) == invalidParameter);
-    const std::uint8_t mpeg25Above64Kbps[4] = {0xFF, 0xE3, 0x98, 0xC0};
-    Require(sceAjmDecMp3ParseFrame(mpeg25Above64Kbps, 4, 0, &frame) == invalidParameter);
+    const std::uint8_t mpeg25Above64Kbps[4] = {0xFF, 0xE3, 0x90, 0x00};
+    Require(ParsesTo(mpeg25Above64Kbps, 4, 0x20a, 2, 576, 80000, 11025));
+    const std::uint8_t mpeg25At64Kbps[4] = {0xFF, 0xE3, 0x80, 0x00};
+    Require(ParsesTo(mpeg25At64Kbps, 4, 0x1a1, 2, 576, 64000, 11025));
+    for (const std::uint8_t index : {10u, 14u}) {
+        const std::uint8_t header[4] = {0xFF, 0xE3, static_cast<std::uint8_t>(index << 4u), 0x00};
+        Require(sceAjmDecMp3ParseFrame(header, sizeof(header), 0, &frame) == invalidParameter);
+    }
     for (const std::uint8_t layer : {0u, 2u, 3u}) {
         const std::uint8_t header[4] = {0xFF, static_cast<std::uint8_t>(0xF9u | (layer << 1u)), 0x90, 0x04};
-        if (layer == 0) {
+        for (const int parseOfl : {0, 1}) {
             std::memset(&frame, 0xA5, sizeof(frame));
             const auto previous = frame;
-            Require(sceAjmDecMp3ParseFrame(header, sizeof(header), 0, &frame) == invalidParameter);
+            Require(sceAjmDecMp3ParseFrame(header, sizeof(header), parseOfl, &frame) == invalidParameter);
             Require(std::memcmp(&frame, &previous, sizeof(frame)) == 0);
-        } else {
-            Require(ParsesTo(header, sizeof(header), 417, 2, 1152, 128000, 44100));
         }
-        std::memset(&frame, 0xA5, sizeof(frame));
-        const auto previous = frame;
-        Require(sceAjmDecMp3ParseFrame(header, sizeof(header), 1, &frame) == invalidParameter);
-        Require(std::memcmp(&frame, &previous, sizeof(frame)) == 0);
     }
+    const std::uint8_t layer3Header[4] = {0xFF, 0xFB, 0x90, 0x04};
+    Require(ParsesTo(layer3Header, sizeof(layer3Header), 417, 2, 1152, 128000, 44100));
 }
 
 const std::uint8_t LAME_MPEG1_STEREO_VBR[] = {
@@ -463,6 +465,27 @@ std::vector<std::uint8_t> ProtectedMp3Frame(std::vector<std::uint8_t> frame, boo
     return frame;
 }
 
+void TestMp3ParseFrameConsoleTags() {
+    for (const char* tag : {"Xing", "Info"}) {
+        std::vector<std::uint8_t> stream(417, 0);
+        const std::uint8_t header[4] = {0xFF, 0xFB, 0x90, 0x04};
+        std::memcpy(stream.data(), header, sizeof(header));
+        std::memcpy(stream.data() + 36, tag, 4);
+        stream[43] = 0x0F;
+        stream[47] = 100;
+        stream[50] = 0xC3;
+        stream[51] = 0x50;
+        Require(OflParsesTo(stream, 417, 100, 0, 0, 0));
+        Require(ParsesTo(stream.data(), 417, 417, 2, 1152, 128000, 44100));
+    }
+    std::vector<std::uint8_t> vbri(417, 0);
+    const std::uint8_t header[4] = {0xFF, 0xFB, 0x90, 0x04};
+    std::memcpy(vbri.data(), header, sizeof(header));
+    std::memcpy(vbri.data() + 36, "VBRI", 4);
+    vbri[48] = 0xC3;
+    vbri[49] = 0x50;
+    Require(OflParsesTo(vbri, 417, 0, 0, 0, 2));
+}
 void TestMp3ParseOfl() {
     const auto stereo = Mp3Frame(LAME_MPEG1_STEREO_VBR, sizeof(LAME_MPEG1_STEREO_VBR), 417);
     Require(OflParsesTo(stereo, 417, 10, 1152 + 576 + 529, 10000, 1));
@@ -2971,6 +2994,7 @@ int main(int argc, char** argv) {
     std::int64_t runResult = -1;
     Require(sceAjmBatchJobRunSplit(&batchInfo, 0, 0, nullptr, 1, nullptr, 0, &runResult, sizeof(runResult)) == invalidParameter && batchInfo.offset == 0);
     TestMp3ParseFrame();
+    TestMp3ParseFrameConsoleTags();
     TestMp3ParseOfl();
     TestMp3MetadataBounds();
     TestMp3(context);
