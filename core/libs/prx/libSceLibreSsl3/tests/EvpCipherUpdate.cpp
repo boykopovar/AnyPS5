@@ -157,45 +157,41 @@ void CheckInvalidState() {
     std::array<unsigned char, 32> out{};
     int written = 0x5a5a5a5a;
     Reset();
-    bool threw = false;
-    try {
-        EVP_EncryptUpdate_nid_disambig1_nid_postfix(&oddContext, out.data(), &written, plain.data(), 12);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw && written == 0x5a5a5a5a && record.calls == 0);
+    Require(EVP_EncryptUpdate_nid_disambig1_nid_postfix(&oddContext, out.data(), &written, plain.data(), 12) == 0 && written == 0 && record.calls == 0);
+    written = 0x5a5a5a5a;
+    Require(EVP_EncryptUpdate_nid_disambig1_nid_postfix(&oddContext, nullptr, &written, nullptr, 12) == 0 && written == 0 && record.calls == 0);
 
     const auto zero = Cipher(0, CipherModeCbc, BlockCipher);
     auto zeroContext = Context(zero, 1);
+    ERR_clear_error_nid_postfix();
     written = 0x5a5a5a5a;
-    threw = false;
-    try {
-        EVP_CipherUpdate_nid_disambig1_nid_postfix(&zeroContext, out.data(), &written, plain.data(), 16);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw && written == 0x5a5a5a5a && record.calls == 0);
+    Require(EVP_CipherUpdate_nid_disambig1_nid_postfix(&zeroContext, out.data(), &written, plain.data(), 16) == 0 && written == 0 && record.calls == 0);
+    Require(ERR_get_error_nid_postfix() == BadBlockLengthError && ERR_get_error_nid_postfix() == 0);
 
     const auto huge = Cipher(64, CipherModeCbc, BlockCipher);
-    auto hugeContext = Context(huge, 1);
+    auto hugeDecrypt = Context(huge, 0);
+    ERR_clear_error_nid_postfix();
     written = 0x5a5a5a5a;
-    threw = false;
-    try {
-        EVP_DecryptUpdate_nid_disambig1_nid_postfix(&hugeContext, out.data(), &written, plain.data(), 16);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw && written == 0x5a5a5a5a && record.calls == 0);
+    Require(EVP_DecryptUpdate_nid_disambig1_nid_postfix(&hugeDecrypt, out.data(), &written, plain.data(), 16) == 0 && written == 0 && record.calls == 0);
+    Require(ERR_get_error_nid_postfix() == BadBlockLengthError && ERR_get_error_nid_postfix() == 0);
+
+    auto hugeEncrypt = Context(huge, 1);
+    const auto plain64 = Plain(64);
+    std::array<unsigned char, 64> out64{};
+    written = 0x5a5a5a5a;
+    Reset();
+    Require(EVP_EncryptUpdate_nid_disambig1_nid_postfix(&hugeEncrypt, out64.data(), &written, plain64.data(), 64) == 1 && written == 64 && record.calls == 1);
 
     const auto block = Cipher(16, CipherModeCbc, BlockCipher);
     auto corrupt = Context(block, 1);
     corrupt.bufLen = 16;
+    Reset();
     ERR_clear_error_nid_postfix();
     written = 77;
     Require(EVP_EncryptUpdate_nid_disambig1_nid_postfix(&corrupt, out.data(), &written, plain.data(), 3) == 0 && written == 0 && record.calls == 0);
     Require(ERR_get_error_nid_postfix() == BadBlockLengthError && ERR_get_error_nid_postfix() == 0);
 
-    threw = false;
+    bool threw = false;
     try {
         EVP_EncryptUpdate_nid_disambig1_nid_postfix(nullptr, out.data(), &written, plain.data(), 1);
     } catch (const std::invalid_argument&) {

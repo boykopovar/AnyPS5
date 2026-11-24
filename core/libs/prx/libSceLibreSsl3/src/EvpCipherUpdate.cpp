@@ -254,10 +254,6 @@ bool Validate(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, c
     if (!GuestCopyIn_nid_no_patch(&cipher, guestContext.cipher, sizeof(cipher))) {
         throw std::invalid_argument(std::string(function) + ": unreadable cipher");
     }
-    if (cipher.blockSize <= 0 || (cipher.blockSize & (cipher.blockSize - 1)) != 0 ||
-        static_cast<std::size_t>(cipher.blockSize) > sizeof(guestContext.buf)) {
-        throw std::invalid_argument(std::string(function) + ": invalid block size");
-    }
     if (!written) throw std::invalid_argument(std::string(function) + ": null output length");
     const bool effectiveDecrypt = useContextMode ? !guestContext.encrypt : decrypt;
     const auto extents = ComputeExtents(guestContext, cipher, length, effectiveDecrypt);
