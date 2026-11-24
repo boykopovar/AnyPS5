@@ -5314,7 +5314,12 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
         {
             std::lock_guard lock(surfacesMutex());
             const auto owner = depthOwners().find({context.device, source.address});
+            bool ownerOfOtherExtent = false;
             if (owner != depthOwners().end()) {
+                const auto& other = owner->second.surface->target;
+                if (sixteenBitDepth(other.format) == d16 && owner->second.surface->hostFormat == other.format && other.samples == 1 && (other.extent.width != source.extent.width || other.extent.height != source.extent.height)) ownerOfOtherExtent = true;
+            }
+            if (owner != depthOwners().end() && !ownerOfOtherExtent) {
                 auto* surface = owner->second.surface;
                 const auto& target = surface->target;
                 if (sixteenBitDepth(target.format) != d16 || surface->hostFormat != target.format || target.samples != 1 || target.extent.width != source.extent.width || target.extent.height != source.extent.height) throw failure(address, "from a depth surface of another extent, format or sample count");
