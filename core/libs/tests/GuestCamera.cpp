@@ -201,7 +201,7 @@ int main() {
     CheckStart();
     CheckFrames();
     CheckClose();
-    RequireNotImplemented([] { sceCameraSetVideoSync(); }, "sceCameraSetVideoSync");
+    Require(sceCameraSetVideoSync() == ErrorParam, "set video sync before open must report PARAM");
     RequireNotImplemented([] { sceCameraGetCalibData(); }, "sceCameraGetCalibData");
     return 0;
 }
