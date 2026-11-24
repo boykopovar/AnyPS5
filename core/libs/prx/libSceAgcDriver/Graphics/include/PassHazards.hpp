@@ -65,6 +65,7 @@ public:
     void Add(const PassAccess& access);
     void BeginPass() { ++pass; }
     void SealWriteOnly();
+    bool HasWriteOnly() const { return !writeOnly.Empty(); }
     void Clear();
     bool Empty() const;
 

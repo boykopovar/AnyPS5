@@ -194,6 +194,7 @@ public:
     DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
     void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {});
     void SealPassWriteOnly();
+    static bool HasWriteOnlyHazards();
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
     // batch and recorded as one run (one barrier pair for every queued fill) at Submit, before a
     // label store (RecordStore), or before a command that writes or reads a queued range (the
@@ -1165,6 +1166,8 @@ private:
     std::shared_ptr<Buffer> containingDrawSnapshot(std::uint64_t address, std::size_t bytes, VkDeviceSize* offset);
     mutable std::weak_ptr<const WriteRanges> publishedWriteRanges;
     mutable bool publishedWriteRangesValid = false;
+    void setWriteOnlyHazards(bool present);
+    bool hasWriteOnlyHazards = false;
 };
 
 inline void EmitNvCheckpointToken(VkCommandBuffer commands, AgcDriver::FaultToken token, PFN_vkCmdSetCheckpointNV setCheckpoint) noexcept {

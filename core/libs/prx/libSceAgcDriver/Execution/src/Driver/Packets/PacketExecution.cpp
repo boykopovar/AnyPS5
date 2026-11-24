@@ -586,6 +586,7 @@ void Driver::execute(Submission& submission) {
         } else if (submission.queue == 0 && sealsWriteOnly(packet, opcode)) {
             if (std::exchange(drawnSinceSeal(), false)) {
                 const auto seal = [this] {
+                    if (!Graphics::Recorder::HasWriteOnlyHazards()) return;
                     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
                     std::lock_guard gpuLock(GuestMemory::GpuMutex());
                     if (const auto localDevice = device.Load()) localDevice->SealPassWriteOnly();

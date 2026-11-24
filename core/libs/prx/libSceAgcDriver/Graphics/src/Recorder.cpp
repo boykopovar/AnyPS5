@@ -64,6 +64,7 @@ namespace AgcDriver::Graphics {
 namespace {
 
 Recorder* activeRecorder = nullptr;
+std::atomic<unsigned> writeOnlyHazardRecorders{0};
 
 bool DrawProfiled() {
     static const bool profiled = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -1436,6 +1437,7 @@ Recorder::~Recorder() {
     } catch (const std::exception& error) {
         std::fprintf(stderr, "[gpu] recorder teardown: %s\n", error.what());
     }
+    setWriteOnlyHazards(false);
     ForgetHtileMasks_nid_no_patch(id);
     progressWatcher.reset();
     holdKept.clear();
@@ -2096,6 +2098,7 @@ Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, 
         const auto reason = !pass.open ? pass.closedBy : forced ? PassBreak::Forced : PassBreak::Segment;
         const auto commands = Commands();
         open->passHazards.Clear();
+        setWriteOnlyHazards(false);
         open->passHazards.BeginPass();
         return {commands, false, true, reason};
     }
@@ -2109,7 +2112,10 @@ Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, 
     const bool elide = merge && hazard == PassHazard::None;
     endOpenRenderPass(reason, !merge);
     const auto commands = Commands();
-    if (!elide) open->passHazards.Clear();
+    if (!elide) {
+        open->passHazards.Clear();
+        setWriteOnlyHazards(false);
+    }
     open->passHazards.BeginPass();
     return {commands, false, !elide, reason};
 }
@@ -2125,10 +2131,23 @@ void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool
     pass.key = key;
     pass.fenced = pass.fenced || fenced;
     open->passHazards.Add(access);
+    if (open->passHazards.HasWriteOnly()) setWriteOnlyHazards(true);
 }
 
 void Recorder::SealPassWriteOnly() {
     if (open != nullptr) open->passHazards.SealWriteOnly();
+    setWriteOnlyHazards(false);
+}
+
+bool Recorder::HasWriteOnlyHazards() {
+    return writeOnlyHazardRecorders.load(std::memory_order_relaxed) != 0;
+}
+
+void Recorder::setWriteOnlyHazards(bool present) {
+    if (hasWriteOnlyHazards == present) return;
+    hasWriteOnlyHazards = present;
+    if (present) writeOnlyHazardRecorders.fetch_add(1, std::memory_order_relaxed);
+    else writeOnlyHazardRecorders.fetch_sub(1, std::memory_order_relaxed);
 }
 
 bool Recorder::RenderPassOpen() const {
@@ -4798,6 +4817,7 @@ void Recorder::Submit() {
         for (const auto& [begin, end] : notedReads(*open)) open->readGeneration = std::max(open->readGeneration, GuestMemory::CollectWrites(begin, end - begin));
     }
     auto batch = std::move(open);
+    setWriteOnlyHazards(false);
     struct DiscardUnsubmitted {
         Recorder& recorder;
         std::unique_ptr<Batch>& batch;
