@@ -401,6 +401,8 @@ struct SpirvTarget {
     bool float16HostNans = false;
     bool meshInlineFunctions = false;
     bool spannedShuffleThroughMemory = false;
+    bool spannedUnreachableStays = false;
+    bool spannedUnreachableVerify = false;
 };
 
 struct BindingLayout {

@@ -4932,6 +4932,8 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.meshWindowBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_MESH_WINDOW_BUFFER") == nullptr;
     target.meshInlineFunctions = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_MESH_INLINE_FUNCTIONS") == nullptr;
     target.spannedShuffleThroughMemory = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_SPANNED_SHUFFLE_EXCHANGE") == nullptr;
+    target.spannedUnreachableStays = std::getenv("APS5_SPANNED_UNREACHABLE_STAYS") != nullptr;
+    target.spannedUnreachableVerify = std::getenv("APS5_VERIFY_SPANNED_UNREACHABLE_STAYS") != nullptr;
     target.srgbDecodeFormats = state->srgbDecodeFormats & ~state->srgbCopyFormats;
     target.maxImageArrayLayers = limits.maxImageArrayLayers;
     target.vertexSubgroups = (state->subgroup.supportedStages & VK_SHADER_STAGE_VERTEX_BIT) != 0;

@@ -32,6 +32,7 @@ struct Module {
     std::unordered_map<std::uint32_t, std::uint32_t> pointerClasses;
     std::unordered_map<std::uint32_t, std::uint32_t> constants;
     std::unordered_set<std::uint32_t> nonWritable;
+    std::unordered_set<std::uint32_t> specConstants;
     std::vector<Function> functions;
 };
 
@@ -55,6 +56,9 @@ Module Parse(std::span<const std::uint32_t> words) {
             break;
         case spv::OpConstant:
             if (instruction.size() >= 4u) module.constants[instruction[2]] = instruction[3];
+            break;
+        case spv::OpSpecConstant:
+            if (instruction.size() >= 3u) module.specConstants.insert(instruction[2]);
             break;
         case spv::OpVariable:
             if (instruction.size() >= 4u) module.storageClasses[instruction[2]] = instruction[3];
@@ -167,7 +171,7 @@ bool ImageRead(spv::Op op) {
 
 class Analysis {
 public:
-    Analysis(const Module& module, std::span<const std::uint32_t> snapshotVariables) : module(module) {
+    Analysis(const Module& module, std::span<const std::uint32_t> snapshotVariables, bool unreachableExits) : module(module), unreachableExits(unreachableExits) {
         for (const auto variable : snapshotVariables) {
             if (module.nonWritable.contains(variable)) snapshots.insert(variable);
         }
@@ -377,8 +381,8 @@ private:
         return flow;
     }
 
-    static bool Exits(spv::Op op) {
-        return op == spv::OpReturn || op == spv::OpReturnValue || op == spv::OpKill || op == spv::OpTerminateInvocation || op == spv::OpUnreachable;
+    bool Exits(spv::Op op) const {
+        return op == spv::OpReturn || op == spv::OpReturnValue || op == spv::OpKill || op == spv::OpTerminateInvocation || (unreachableExits && op == spv::OpUnreachable);
     }
 
     static std::vector<std::uint32_t> Reachable(const Flow& flow, std::uint32_t from) {
@@ -599,6 +603,7 @@ private:
     static constexpr std::uint32_t UnknownClass = 0xffffffffu;
 
     const Module& module;
+    bool unreachableExits = true;
     std::unordered_map<std::uint32_t, std::uint32_t> types;
     std::unordered_set<std::uint32_t> written;
     std::unordered_set<std::uint32_t> barriers;
@@ -618,12 +623,36 @@ bool SpannedSnapshotLoadsEnabled(const char* optOut) {
     return optOut == nullptr;
 }
 
-std::optional<std::string> SpannedBarrierInDivergentFlow(std::span<const std::uint32_t> words, std::span<const std::uint32_t> snapshotVariables) {
+std::optional<std::string> SpannedBarrierInDivergentFlow(std::span<const std::uint32_t> words, std::span<const std::uint32_t> snapshotVariables, bool unreachableExits) {
     bool barrier = false;
     for (std::size_t cursor = 5u; !barrier && cursor < words.size(); cursor += std::max(words[cursor] >> 16u, 1u)) barrier = (words[cursor] & 0xffffu) == spv::OpControlBarrier;
     if (!barrier) return std::nullopt;
     const auto module = Parse(words);
-    return Analysis(module, snapshotVariables).Run();
+    return Analysis(module, snapshotVariables, unreachableExits).Run();
+}
+
+std::optional<std::string> SpannedUnreachableOutsideSpecializedSwitch(std::span<const std::uint32_t> words) {
+    const auto module = Parse(words);
+    for (const auto& function : module.functions) {
+        std::unordered_set<std::uint32_t> defaults;
+        std::unordered_set<std::uint32_t> others;
+        for (const auto& block : function.blocks) {
+            if (block.body.empty()) continue;
+            const auto& terminator = block.body.back();
+            const auto op = Opcode(terminator);
+            if (op == spv::OpBranch && terminator.size() >= 2u) others.insert(terminator[1]);
+            if (op == spv::OpBranchConditional && terminator.size() >= 4u) others.insert({terminator[2], terminator[3]});
+            if (op != spv::OpSwitch || terminator.size() < 3u) continue;
+            (module.specConstants.contains(terminator[1]) ? defaults : others).insert(terminator[2]);
+            for (std::size_t operand = 4u; operand < terminator.size(); operand += 2u) others.insert(terminator[operand]);
+        }
+        for (const auto& block : function.blocks) {
+            if (block.body.empty() || Opcode(block.body.back()) != spv::OpUnreachable) continue;
+            if (defaults.contains(block.label) && !others.contains(block.label)) continue;
+            return "the OpUnreachable in block %" + std::to_string(block.label) + " of function %" + std::to_string(function.id) + " is not the default of a switch on a specialization constant";
+        }
+    }
+    return std::nullopt;
 }
 
 }
