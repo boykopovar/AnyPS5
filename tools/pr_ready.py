@@ -32,7 +32,10 @@ fragment Readiness on PullRequest {
     pageInfo { hasNextPage }
     nodes {
       __typename
-      ... on CheckRun { databaseId name status conclusion }
+      ... on CheckRun {
+        databaseId name status conclusion
+        checkSuite { app { slug } workflowRun { workflow { databaseId } } }
+      }
       ... on StatusContext { context state }
     }
   } } } } }
@@ -96,9 +99,13 @@ def check_of(node):
     if node.get("__typename") == "StatusContext":
         state = str(node.get("state") or "").lower()
         done = state not in {"pending", "expected"}
-        return {"id": 0, "name": node.get("context"), "done": done,
+        return {"id": 0, "name": node.get("context"), "source": ("status",), "done": done,
                 "conclusion": {"success": "success"}.get(state, "failure") if done else None}
+    suite = node.get("checkSuite") or {}
+    app = (suite.get("app") or {}).get("slug")
+    workflow = (suite.get("workflowRun") or {}).get("workflow") or {}
     return {"id": node.get("databaseId") or 0, "name": node.get("name"),
+            "source": ("run", app, workflow.get("databaseId")),
             "done": str(node.get("status") or "").lower() == "completed",
             "conclusion": str(node.get("conclusion") or "").lower() or None}
 
@@ -132,10 +139,10 @@ def pull(node):
 def latest_checks(checks):
     latest = {}
     for check in checks:
-        name = check["name"]
-        if name not in latest or check["id"] > latest[name]["id"]:
-            latest[name] = check
-    return [check for name, check in latest.items() if name not in BOT_CHECKS]
+        key = check["name"], check["source"]
+        if key not in latest or check["id"] > latest[key]["id"]:
+            latest[key] = check
+    return [check for check in latest.values() if check["name"] not in BOT_CHECKS]
 
 
 def blockers(pr):
@@ -146,15 +153,15 @@ def blockers(pr):
         reasons.append("conflicts with main")
     reasons += [f"label: {label}" for label in sorted(BLOCKING_LABELS - {"needs rebase"} & pr["labels"])]
     checks = latest_checks(pr["checks"])
-    by_name = {check["name"]: check for check in checks}
+    conventions = [check for check in checks if check["name"] == CONVENTIONS_CHECK]
     if pr["checks_incomplete"]:
         reasons.append("too many checks to read")
-    if CONVENTIONS_CHECK not in by_name:
+    if not conventions:
         reasons.append("conventions has not run")
-    elif by_name[CONVENTIONS_CHECK]["done"] and by_name[CONVENTIONS_CHECK]["conclusion"] not in FAILED | {"success"}:
+    elif all(check["done"] and check["conclusion"] not in FAILED | {"success"} for check in conventions):
         reasons.append("conventions did not pass")
-    failing = sorted(check["name"] for check in checks if check["done"] and check["conclusion"] in FAILED)
-    running = sorted(check["name"] for check in checks if not check["done"])
+    failing = sorted({check["name"] for check in checks if check["done"] and check["conclusion"] in FAILED})
+    running = sorted({check["name"] for check in checks if not check["done"]})
     if failing:
         reasons.append("failing: " + ", ".join(failing))
     if running:
