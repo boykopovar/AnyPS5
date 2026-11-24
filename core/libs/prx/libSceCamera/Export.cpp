@@ -138,6 +138,7 @@ int APS5_VABI sceCameraGetDeviceID(void) {
 
 int APS5_VABI sceCameraSetForceActivate(std::int32_t handle) {
     if (handle == 0 || handle < 0) return SCE_CAMERA_ERROR_PARAM;
+    if (Camera::IsOpen(handle)) throw std::runtime_error("sceCameraSetForceActivate open handle");
     return SCE_CAMERA_ERROR_NOT_OPEN;
 }
 
