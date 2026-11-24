@@ -200,6 +200,25 @@ void FilterTextPointerGuards() {
             "filter huge capacity short src");
     Require(out_len == 2 && std::u16string_view(dst.data()) == u"ab" && dst[3] == u'#',
             "filter huge capacity short src output");
+
+    std::array<char16_t, 516> long_filtered_src;
+    long_filtered_src.fill(char16_t{0x3042});
+    long_filtered_src[512] = u'a';
+    long_filtered_src[513] = u'b';
+    long_filtered_src[514] = u'c';
+    long_filtered_src[515] = 0;
+    dst.fill(u'#');
+    out_len = -12345;
+    Require(ime_filter::FilterText(dst.data(), &out_len, 4, &ascii_param, long_filtered_src.data(), 515) == 0,
+            "filter long filtered prefix reaches kept suffix");
+    Require(out_len == 3 && std::u16string_view(dst.data()) == u"abc" && dst[4] == u'#',
+            "filter long filtered prefix output");
+
+    char16_t* const guard_prefix_src = reinterpret_cast<char16_t*>(pages.End()) - 64;
+    for (int idx = 0; idx < 64; ++idx) guard_prefix_src[idx] = char16_t{0x3042};
+    check_fault([&] {
+        return ime_filter::FilterText(dst.data(), &out_len, 8, &ascii_param, guard_prefix_src, 1000);
+    }, "filter long filtered prefix hitting guard page");
 }
 
 void Valid() {

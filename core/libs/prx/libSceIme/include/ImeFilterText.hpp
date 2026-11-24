@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -163,30 +164,50 @@ inline std::uint32_t FilterText(char16_t* dst, std::int32_t* out_length, std::ui
     std::uint32_t room = capacity - 1;
     std::vector<char16_t> buffered;
     buffered.reserve(std::min<std::uint32_t>(capacity, 64u));
-    for (std::uint64_t i = 0; i < src_length && room != 0; ++i) {
-        char16_t unit = 0;
-        if (!GuestCopyIn_nid_no_patch(&unit, src + i, sizeof(unit))) return kErrorInvalidAddress;
-        const std::uint32_t c = unit;
-        if (c == 0) break;
-        bool keep;
-        if (type == 4) {
-            keep = static_cast<std::uint16_t>(c - 0x30) <= 9 || In(kNumberSeparators, c);
-        } else if (type == 1 || type == 3 || type == 0x102) {
-            keep = c <= 0x7e;
-        } else if (type == 0x100) {
-            keep = c < 0x17f;
-            if (!keep && (mask & kClassVietnamese) != 0) {
-                const bool listed = static_cast<std::uint16_t>(c - 0x300) >= 0x24 && (c & 0xff00) != 0x1e00;
-                keep = !listed || In(kVietnameseLetters, c);
+    constexpr std::size_t kChunkUnits = 256;
+    std::array<char16_t, kChunkUnits> chunk{};
+    std::uint64_t index = 0;
+    while (index < src_length && room != 0) {
+        const auto address = reinterpret_cast<std::uintptr_t>(src + index);
+        const std::size_t page_units = (4096u - (address & 4095u)) / sizeof(char16_t);
+        const std::size_t units = static_cast<std::size_t>(std::min<std::uint64_t>({
+            src_length - index,
+            static_cast<std::uint64_t>(kChunkUnits),
+            static_cast<std::uint64_t>(page_units != 0 ? page_units : 1u),
+        }));
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), src + index, units * sizeof(char16_t))) {
+            return kErrorInvalidAddress;
+        }
+        bool stopped = false;
+        for (std::size_t offset = 0; offset < units && room != 0; ++offset) {
+            const char16_t unit = chunk[offset];
+            const std::uint32_t c = unit;
+            if (c == 0) {
+                stopped = true;
+                break;
             }
-            if (!keep && HighBitSet(mask)) keep = (c & 0xfffc) == 0x218;
-        } else {
-            keep = KeepClassified(c, mask, limit, absent);
+            bool keep;
+            if (type == 4) {
+                keep = static_cast<std::uint16_t>(c - 0x30) <= 9 || In(kNumberSeparators, c);
+            } else if (type == 1 || type == 3 || type == 0x102) {
+                keep = c <= 0x7e;
+            } else if (type == 0x100) {
+                keep = c < 0x17f;
+                if (!keep && (mask & kClassVietnamese) != 0) {
+                    const bool listed = static_cast<std::uint16_t>(c - 0x300) >= 0x24 && (c & 0xff00) != 0x1e00;
+                    keep = !listed || In(kVietnameseLetters, c);
+                }
+                if (!keep && HighBitSet(mask)) keep = (c & 0xfffc) == 0x218;
+            } else {
+                keep = KeepClassified(c, mask, limit, absent);
+            }
+            if (keep) {
+                buffered.push_back(unit);
+                --room;
+            }
         }
-        if (keep) {
-            buffered.push_back(unit);
-            --room;
-        }
+        if (stopped) break;
+        index += units;
     }
     buffered.push_back(0);
 
