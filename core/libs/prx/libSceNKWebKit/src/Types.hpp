@@ -281,6 +281,8 @@ public:
     std::uint64_t renderTreeSize = 0;
     bool isFullScreen = false;
     bool hasComposition = false;
+    Retained<Object> topOverhangImage;
+    Retained<Object> bottomOverhangImage;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {

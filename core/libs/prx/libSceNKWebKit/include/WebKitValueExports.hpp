@@ -147,6 +147,8 @@ void APS5_VABI WKBundlePageDidEnterFullScreen(const void* pageRef);
 void APS5_VABI WKBundlePageDidExitFullScreen(const void* pageRef);
 void APS5_VABI WKBundlePageWillEnterFullScreen(const void* pageRef);
 void APS5_VABI WKBundlePageWillExitFullScreen(const void* pageRef);
+void APS5_VABI WKBundlePageSetBottomOverhangImage(const void* pageRef, const void* imageRef);
+void APS5_VABI WKBundlePageSetTopOverhangImage(const void* pageRef, const void* imageRef);
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID();
 std::uint32_t APS5_VABI WKBundleRangeHandleGetTypeID();
 std::uint32_t APS5_VABI WKBundleScriptWorldGetTypeID();

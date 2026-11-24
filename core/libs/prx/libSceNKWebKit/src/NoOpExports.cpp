@@ -47,16 +47,10 @@ void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled() {
 void APS5_VABI WKBundlePageClickMenuItem() {
 }
 
-void APS5_VABI WKBundlePageSetBottomOverhangImage() {
-}
-
 void APS5_VABI WKBundlePageSetContextMenuClient() {
 }
 
 void APS5_VABI WKBundlePageSetPaintedObjectsCounterThreshold() {
-}
-
-void APS5_VABI WKBundlePageSetTopOverhangImage() {
 }
 
 void APS5_VABI WKContextAddSupportedPlugin() {
