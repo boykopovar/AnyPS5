@@ -671,6 +671,14 @@ void APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier(const void* c
 void APS5_VABI WKContextTerminateNetworkProcess(const void* contextRef);
 const void* APS5_VABI WKContextGetIconDatabase(const void* contextRef);
 void APS5_VABI WKContextSetIconDatabasePath(const void* contextRef, const void* iconDatabasePathRef);
+void APS5_VABI WKContextSetAdditionalPluginsDirectory(const void* contextRef, const void* pluginsDirectoryRef);
+void APS5_VABI WKContextRefreshPlugIns(const void* contextRef);
+void APS5_VABI WKContextClearSupportedPlugins(const void* contextRef);
+void APS5_VABI WKContextAddSupportedPlugin(const void* contextRef, const void* domainRef, const void* nameRef, const void* mimeTypesRef, const void* extensionsRef);
+void APS5_VABI WKContextSetPlugInAutoStartOriginHashes(const void* contextRef, const void* dictionaryRef);
+void APS5_VABI WKContextSetPlugInAutoStartOrigins(const void* contextRef, const void* arrayRef);
+void APS5_VABI WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTime(const void* contextRef, const void* arrayRef, double time);
+const void* APS5_VABI WKContextCopyPlugInAutoStartOriginHashes(const void* contextRef);
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, WKResultErrorFunction callback);

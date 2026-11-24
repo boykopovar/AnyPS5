@@ -181,7 +181,6 @@ int APS5_VABI WKBundleSetClient();
 int APS5_VABI WKBundleSetDatabaseQuota();
 int APS5_VABI WKBundleSetTabKeyCyclesThroughElements();
 int APS5_VABI WKBundleSetWebNotificationPermission();
-int APS5_VABI WKContextCopyPlugInAutoStartOriginHashes();
 int APS5_VABI WKContextDownloadURLRequest();
 int APS5_VABI WKContextGetApplicationCacheManager();
 int APS5_VABI WKContextGetGeolocationManager();

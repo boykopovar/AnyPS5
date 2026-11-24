@@ -49,7 +49,6 @@ int main() {
     Require(WKBundlePageCopyContextMenuItems() == 0);
     Require(WKBundlePageGetBackForwardList() == 0);
     Require(WKBundlePageIsUsingDarkAppearance() == 0);
-    Require(WKContextCopyPlugInAutoStartOriginHashes() == 0);
     Require(WKContextDownloadURLRequest() == 0);
     Require(WKContextMenuCopySubmenuItems() == 0);
     Require(WKContextMenuItemCopyTitle() == 0);

@@ -50,13 +50,7 @@ void APS5_VABI WKBundlePageClickMenuItem() {
 void APS5_VABI WKBundlePageSetContextMenuClient() {
 }
 
-void APS5_VABI WKContextAddSupportedPlugin() {
-}
-
 void APS5_VABI WKContextAllowSpecificHTTPSCertificateForHost() {
-}
-
-void APS5_VABI WKContextClearSupportedPlugins() {
 }
 
 void APS5_VABI WKContextGetStatistics() {
@@ -69,21 +63,6 @@ void APS5_VABI WKContextMenuItemSetUserData() {
 }
 
 void APS5_VABI WKContextPreconnectToServer() {
-}
-
-void APS5_VABI WKContextRefreshPlugIns() {
-}
-
-void APS5_VABI WKContextSetAdditionalPluginsDirectory() {
-}
-
-void APS5_VABI WKContextSetPlugInAutoStartOriginHashes() {
-}
-
-void APS5_VABI WKContextSetPlugInAutoStartOrigins() {
-}
-
-void APS5_VABI WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTime() {
 }
 
 void APS5_VABI WKContextSetPrimaryWebsiteDataStore() {

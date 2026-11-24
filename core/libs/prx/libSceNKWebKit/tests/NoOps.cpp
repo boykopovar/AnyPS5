@@ -24,18 +24,11 @@ int main() {
     WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled();
     WKBundlePageClickMenuItem();
     WKBundlePageSetContextMenuClient();
-    WKContextAddSupportedPlugin();
     WKContextAllowSpecificHTTPSCertificateForHost();
-    WKContextClearSupportedPlugins();
     WKContextGetStatistics();
     WKContextGetStatisticsWithOptions();
     WKContextMenuItemSetUserData();
     WKContextPreconnectToServer();
-    WKContextRefreshPlugIns();
-    WKContextSetAdditionalPluginsDirectory();
-    WKContextSetPlugInAutoStartOriginHashes();
-    WKContextSetPlugInAutoStartOrigins();
-    WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTime();
     WKContextSetPrimaryWebsiteDataStore();
     WKCookieManagerDeleteAllCookies();
     WKCookieManagerSetHTTPCookieAcceptPolicy();

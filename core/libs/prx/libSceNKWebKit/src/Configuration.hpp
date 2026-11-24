@@ -118,6 +118,13 @@ public:
     }
 };
 
+struct SupportedPlugin {
+    Retained<String> domain;
+    Retained<String> name;
+    Retained<Array> mimeTypes;
+    Retained<Array> extensions;
+};
+
 class ProcessPool final : public ObjectOf<ObjectType::ProcessPool> {
 public:
     ProcessPool() : configuration(Make<ProcessPoolConfiguration>()) {}
@@ -154,6 +161,12 @@ std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
     std::uint32_t terminatedNetworkProcessesCount = 0;
 mutable Retained<IconDatabase> iconDatabase;
     std::optional<std::u16string> iconDatabasePath;
+    Retained<String> additionalPluginsDirectory;
+    std::uint32_t refreshPlugInsCount = 0;
+    std::vector<SupportedPlugin> supportedPlugins;
+    Retained<Array> plugInAutoStartOrigins;
+    double plugInAutoStartOriginsFilterTime = 0.0;
+    Retained<Dictionary> plugInAutoStartOriginHashes;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
