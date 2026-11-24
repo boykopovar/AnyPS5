@@ -110,6 +110,24 @@ class IntervalCsvTests(unittest.TestCase):
             self.assertEqual(empty.returncode, 0, empty.stderr)
             self.assertEqual(len(list(csv.reader(io.StringIO(empty.stdout.decode())))), 1)
 
+    def test_require_complete_rejects_intervals_with_no_elapsed_time(self):
+        first = interval_line(0, 30, 20, 5)
+        empty = interval_line(30, 30, 0, 0)
+        empty["window"]["first_present"] = first["presents"]
+        empty["presents"] = 0
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            command = [sys.executable, trace_intervals_csv.__file__, str(path)]
+            for intervals in ([empty], [first, empty]):
+                with self.subTest(number=len(intervals)):
+                    path.write_text("\n".join(map(json.dumps, intervals)), encoding="utf-8")
+                    regular = subprocess.run(command, capture_output=True, timeout=5)
+                    self.assertEqual(regular.returncode, 0, regular.stderr)
+                    strict = subprocess.run([*command, "--require-complete"], capture_output=True, timeout=5)
+                    self.assertEqual(strict.returncode, 2, strict.stderr)
+                    self.assertEqual(strict.stdout, b"")
+                    self.assertIn(f"interval {len(intervals)} has zero duration".encode(), strict.stderr)
+
     def test_require_complete_needs_a_recorded_drop_status_for_every_interval(self):
         first = interval_line(0, 30, 20, 5)
         second = interval_line(30, 60, 20, 5)

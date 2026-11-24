@@ -38,7 +38,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Export trace interval summaries as CSV")
     parser.add_argument("summary", type=Path)
     parser.add_argument("--require-complete", action="store_true",
-                        help="require a nonempty capture with contiguous times and present ranges, unique intervals, "
+                        help="require a nonempty capture with contiguous times and present ranges, positive interval durations, "
                              "trace_dropped set to false in every interval and unchanged identity")
     parser.add_argument("--spreadsheet-safe", action="store_true",
                         help="opt-in tab prefix changes text cells; spreadsheet behavior varies and save/reopen not guaranteed")
@@ -50,14 +50,14 @@ def main(argv=None):
             intervals = result["intervals"]
             if not intervals or result["identity_changed_at"] or any(row["trace_dropped"] for row in intervals):
                 raise ValueError("capture is empty, has dropped events or changing identity")
-            previous_start, previous_end = intervals[0]["start_s"], intervals[0]["end_s"]
-            for index, row in enumerate(intervals[1:], start=2):
+            previous_end = None
+            for index, row in enumerate(intervals, start=1):
                 start, end = row["start_s"], row["end_s"]
-                if start != previous_end:
+                if previous_end is not None and start != previous_end:
                     raise ValueError(f"interval {index} starts at {start} s; previous interval ends at {previous_end} s")
-                if (start, end) == (previous_start, previous_end):
-                    raise ValueError(f"interval {index} duplicates the previous interval at {start} s")
-                previous_start, previous_end = start, end
+                if start == end:
+                    raise ValueError(f"interval {index} has zero duration at {start} s")
+                previous_end = end
             expected_present = None
             for index, record in enumerate(records, start=1):
                 if "trace_dropped" not in record:
