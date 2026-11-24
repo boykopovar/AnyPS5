@@ -559,7 +559,7 @@ int APS5_VABI sceFontDeleteGlyph(const FontMemory* memory, FontGlyph* pGlyph) {
     (void)memory;
     if (!pGlyph) return SCE_FONT_ERROR_INVALID_PARAMETER;
     FontGlyph glyph = nullptr;
-    if (!Font::CopyInGuest(glyph, pGlyph) || !GuestWritable_nid_no_patch(pGlyph, sizeof(*pGlyph))) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!Font::CopyInGuest(glyph, pGlyph) || !Font::OutputWritable(pGlyph)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!glyph || glyph->magic != GLYPH_MAGIC || !ForgetGeneratedGlyph(glyph)) return SCE_FONT_ERROR_INVALID_GLYPH;
     delete reinterpret_cast<GeneratedGlyph*>(glyph);
     Font::CopyOutGuest(pGlyph, FontGlyph{});

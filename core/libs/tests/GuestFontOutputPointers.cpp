@@ -1,14 +1,23 @@
 #include "FontFixture.hpp"
 #include "prx/libSceFontFt/include/Api.hpp"
 #include "prx/libSceFont/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <new>
+#include <string_view>
 #include <vector>
 #ifdef __linux__
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
+#ifdef _WIN32
+#include <windows.h>
 #endif
 
 static void Check(bool value, int line) {
@@ -48,7 +57,84 @@ static std::vector<unsigned char> BuildCharacterFont() {
     });
 }
 
-int main() {
+static int CheckWatched() {
+    using namespace GuestArena;
+    constexpr std::size_t bytes = 65536;
+#ifndef _WIN32
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+#ifdef __APPLE__
+        std::abort();
+#else
+        std::puts("Page write watch is unavailable");
+        return 77;
+#endif
+    }
+#else
+    Require(GuestArenaWriteWatched_nid_postfix());
+#endif
+    auto* pages = static_cast<std::byte*>(GuestArenaAllocate_nid_postfix(bytes, bytes));
+    Require(pages != nullptr);
+#ifdef _WIN32
+    const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+    Require(section != nullptr);
+    GuestArenaMap_nid_postfix(pages, bytes, section, 0, PAGE_READWRITE);
+    CloseHandle(section);
+#else
+    GuestArenaCommit_nid_postfix(pages, bytes, 0x04, bytes);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pages, bytes);
+#endif
+    const auto arm = [&] {
+#ifdef _WIN32
+        std::array<void*, 32> written{};
+        auto count = written.size();
+        Require(GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(pages), bytes, written.data(), &count, true));
+        for (const std::size_t offset : {0u, 16384u, 32768u, 49152u}) {
+            MEMORY_BASIC_INFORMATION info{};
+            Require(VirtualQuery(pages + offset, &info, sizeof(info)) == sizeof(info) && info.Protect == PAGE_READONLY);
+        }
+#else
+        bool written = false;
+        Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(pages), bytes,
+            [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &written));
+#endif
+    };
+    auto* const memory = new (pages) FontMemory{};
+    auto* const library = new (pages + 16384) FontLibrary{};
+    auto* const renderer = new (pages + 16384 + 64) FontRenderer{};
+    auto* const font = new (pages + 32768) FontHandle{};
+    auto* const glyph = new (pages + 49152) FontGlyph{};
+    const FontMemoryInterface iface{Allocate, Release, nullptr, nullptr, nullptr, nullptr};
+    Require(sceFontMemoryInit(memory, nullptr, 0, &iface, nullptr, nullptr, nullptr) == SCE_FONT_OK);
+    Require(sceFontCreateLibrary(memory, sceFontSelectLibraryFt(0), library) == SCE_FONT_OK && *library != nullptr);
+    Require(sceFontCreateRenderer(memory, sceFontSelectRendererFt(0), renderer) == SCE_FONT_OK && *renderer != nullptr);
+    Require(sceFontSupportExternalFonts(*library, 1, 0x52) == SCE_FONT_OK);
+    const std::vector<unsigned char> fontData = BuildCharacterFont();
+    arm();
+    Require(sceFontOpenFontMemory(*library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, font) == SCE_FONT_OK && *font != nullptr);
+    Require(sceFontSetScalePixel(*font, 100.0f, 100.0f) == SCE_FONT_OK);
+    arm();
+    Require(sceFontGenerateCharGlyph(*font, 'A', nullptr, glyph) == SCE_FONT_OK && *glyph != nullptr);
+    arm();
+    Require(sceFontDeleteGlyph(memory, glyph) == SCE_FONT_OK && *glyph == nullptr);
+    Require(sceFontCloseFont(*font) == SCE_FONT_OK);
+    arm();
+    Require(sceFontDestroyRenderer(renderer) == SCE_FONT_OK && *renderer == nullptr);
+    arm();
+    Require(sceFontDestroyLibrary(library) == SCE_FONT_OK && *library == nullptr);
+    arm();
+    Require(sceFontMemoryTerm(memory) == SCE_FONT_OK);
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pages, bytes);
+#endif
+    GuestArenaReset_nid_postfix(pages, bytes);
+    GuestArenaRelease_nid_postfix(pages, bytes);
+    std::puts("font outputs on watched guest pages passed");
+    return 0;
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--watched") return CheckWatched();
+    if (argc != 1) return 1;
     const FontMemoryInterface iface{Allocate, Release, nullptr, nullptr, nullptr, nullptr};
     FontMemory memory{};
     Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, nullptr, nullptr, nullptr) == SCE_FONT_OK);

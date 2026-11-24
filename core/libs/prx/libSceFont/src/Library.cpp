@@ -122,7 +122,7 @@ int APS5_VABI sceFontMemoryInit(FontMemory* memory, void* regionAddress, std::ui
 int APS5_VABI sceFontMemoryTerm(FontMemory* memory) {
     if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
     FontMemory record;
-    if (!CopyInGuest(record, memory) || !GuestWritable_nid_no_patch(memory, sizeof(*memory))) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!CopyInGuest(record, memory) || !OutputWritable(memory)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (record.mem_kind != MEMORY_MAGIC) return SCE_FONT_ERROR_INVALID_MEMORY;
     if (static_cast<std::int8_t>(record.attr_bits & 0xFF) < 0) {
         if (record.iface && record.iface->mspace_destroy) record.iface->mspace_destroy(record.some_ctx2, record.mspace_handle);
@@ -201,7 +201,7 @@ int APS5_VABI sceFontCreateLibrary(const FontMemory* memory, const void* createP
 int APS5_VABI sceFontDestroyLibrary(FontLibrary* pLibrary) {
     if (!pLibrary) return SCE_FONT_ERROR_INVALID_PARAMETER;
     FontLibrary handle = nullptr;
-    if (!CopyInGuest(handle, pLibrary) || !GuestWritable_nid_no_patch(pLibrary, sizeof(*pLibrary))) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!CopyInGuest(handle, pLibrary) || !OutputWritable(pLibrary)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* lib = static_cast<FontLibNative*>(handle);
     if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
     if (lib->sys_driver && lib->sys_driver->term) lib->sys_driver->term(lib);
@@ -274,7 +274,7 @@ int APS5_VABI sceFontCreateRenderer(const FontMemory* memory, const void* create
 int APS5_VABI sceFontDestroyRenderer(FontRenderer* pRenderer) {
     if (!pRenderer) return SCE_FONT_ERROR_INVALID_PARAMETER;
     FontRenderer handle = nullptr;
-    if (!CopyInGuest(handle, pRenderer) || !GuestWritable_nid_no_patch(pRenderer, sizeof(*pRenderer))) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!CopyInGuest(handle, pRenderer) || !OutputWritable(pRenderer)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* renderer = static_cast<RendererNative*>(handle);
     if (!renderer || renderer->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
     const auto* selection = static_cast<const RendererSelection*>(AcquireRendererSelection(renderer));

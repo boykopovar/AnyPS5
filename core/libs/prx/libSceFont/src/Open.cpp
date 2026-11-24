@@ -265,7 +265,7 @@ template <typename TOpen>
 int WithGuestHandle(FontHandle* guestHandle, TOpen open) {
     if (!guestHandle) return open(nullptr);
     FontHandle handle = nullptr;
-    if (!CopyInGuest(handle, guestHandle) || !GuestWritable_nid_no_patch(guestHandle, sizeof(*guestHandle))) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!CopyInGuest(handle, guestHandle) || !OutputWritable(guestHandle)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     const int rc = open(&handle);
     if (CopyOutGuest(guestHandle, handle)) return rc;
     if (rc == SCE_FONT_OK && handle) sceFontCloseFont(handle);
