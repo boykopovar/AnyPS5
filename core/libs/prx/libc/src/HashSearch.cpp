@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -41,16 +42,19 @@ int APS5_VABI hcreate_nid_postfix(std::size_t nel) {
         errno = 17;
         return 0;
     }
-    if (nel == 0) {
-        errno = 22;
+    constexpr std::size_t MinimumSlots = 16;
+    if (nel > std::numeric_limits<std::size_t>::max() / 4) {
+        errno = 12;
         return 0;
     }
-    auto* entries = static_cast<HsearchEntry*>(calloc_nid_postfix(nel, sizeof(HsearchEntry)));
+    std::size_t slots = MinimumSlots;
+    while (slots < nel * 2) slots <<= 1;
+    auto* entries = static_cast<HsearchEntry*>(calloc_nid_postfix(slots, sizeof(HsearchEntry)));
     if (entries == nullptr) {
         errno = 12;
         return 0;
     }
-    table = HashTable{entries, nel, 0};
+    table = HashTable{entries, slots, 0};
     return 1;
 }
 

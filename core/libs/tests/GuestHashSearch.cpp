@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 
 namespace {
@@ -46,9 +47,10 @@ int main() {
     RegisterAllocator();
     Require(hsearch_nid_postfix(HsearchEntry{const_cast<char*>("alpha"), nullptr}, Find) == nullptr && errno == 3);
 
-    Require(hcreate_nid_postfix(0) == 0 && errno == 22);
-    Require(hcreate_nid_postfix(10) == 1);
+    Require(hcreate_nid_postfix(0) == 1);
     Require(hcreate_nid_postfix(10) == 0 && errno == 17);
+    hdestroy_nid_postfix();
+    Require(hcreate_nid_postfix(10) == 1);
 
     std::array<char[8], 8> keys{"k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7"};
     int payloads[8] = {0, 1, 2, 3, 4, 5, 6, 7};
@@ -69,10 +71,10 @@ int main() {
     errno = 0;
     Require(hsearch_nid_postfix(HsearchEntry{const_cast<char*>("absent"), nullptr}, Find) == nullptr && errno == 0);
 
-    std::array<char[8], 2> extra{"x0", "x1"};
+    std::array<char[8], 24> extra{};
+    for (int index = 0; index < 24; ++index) std::snprintf(extra[index], sizeof(extra[index]), "x%02d", index);
     errno = 0;
-    Require(hsearch_nid_postfix(HsearchEntry{extra[0], &replacement}, Enter) != nullptr);
-    Require(hsearch_nid_postfix(HsearchEntry{extra[1], &replacement}, Enter) != nullptr);
+    for (int index = 0; index < 24; ++index) Require(hsearch_nid_postfix(HsearchEntry{extra[index], &replacement}, Enter) != nullptr);
     Require(hsearch_nid_postfix(HsearchEntry{const_cast<char*>("overflow"), &replacement}, Enter) == nullptr && errno == 12);
 
     hdestroy_nid_postfix();
