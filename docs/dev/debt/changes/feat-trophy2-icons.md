@@ -1,5 +1,7 @@
 # libSceNpTrophy2
 
+## remove [sceNpTrophy2GetGameIcon]
+
 ## remove [sceNpTrophy2GetRewardIcon]
 
 ## change [Trophy queries]
