@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/Api.hpp"
+#include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 
 extern "C" {
 
@@ -85,6 +86,10 @@ void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchUnableToImplementPol
 }
 
 void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE() {
+}
+
+bool APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient26shouldUseCredentialStorageEPNS_14DocumentLoaderEm(void*, WebCore::DocumentLoader*, std::uint64_t) {
+    return false;
 }
 
 }
