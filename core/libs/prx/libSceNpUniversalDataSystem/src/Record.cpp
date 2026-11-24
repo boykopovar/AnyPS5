@@ -3,7 +3,6 @@
 #include "NpUniversalDataSystem.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
