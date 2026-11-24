@@ -22,6 +22,17 @@ struct MaskedStoreOperands {
 [[nodiscard]] std::optional<MaskedStoreOperands> DecodeMaskedStore(const std::uint8_t* data, std::size_t length);
 void EmitMaskedStore(StubBodyBuilder& body, const MaskedStoreOperands& operands);
 
+struct ProbedStoreOperands {
+    const char* Name;
+    std::uint8_t Bytes;
+    MemoryOperand Memory;
+    std::vector<std::uint8_t> Instruction;
+    std::size_t DisplacementOffset;
+};
+
+[[nodiscard]] std::optional<ProbedStoreOperands> DecodeHalfFloatStore(const std::uint8_t* data, std::size_t length);
+void EmitProbedStore(StubBodyBuilder& body, const ProbedStoreOperands& operands);
+
 }
 
 #endif
