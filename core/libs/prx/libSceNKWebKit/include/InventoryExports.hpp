@@ -205,7 +205,7 @@ int APS5_VABI WKContextPostMessageToInjectedBundle();
 int APS5_VABI WKContextResumeDownload();
 int APS5_VABI WKContextSetClient();
 int APS5_VABI WKContextSetConnectionClient();
-int APS5_VABI WKContextSetDomainRelaxationForbiddenForURLScheme();
+int APS5_VABI WKContextSetFontAllowList();
 int APS5_VABI WKContextSetHistoryClient();
 int APS5_VABI WKContextSetInitializationUserDataForInjectedBundle();
 int APS5_VABI WKContextSetInjectedBundleClient();
