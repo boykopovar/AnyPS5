@@ -584,6 +584,7 @@ void APS5_VABI WKUserContentExtensionStoreCompile(const void* storeRef, const vo
 const void* APS5_VABI WKUserContentExtensionStoreCreate(const void* pathRef);
 std::uint32_t APS5_VABI WKUserContentExtensionStoreGetTypeID();
 void APS5_VABI WKUserContentExtensionStoreLookup(const void* storeRef, const void* identifierRef, void* context, WKUserContentExtensionStoreFunction callback);
+void APS5_VABI WKUserContentExtensionStoreRemove(const void* storeRef, const void* identifierRef, void* context, WKUserContentExtensionStoreFunction callback);
 const void* APS5_VABI WKUserContentURLPatternCopyHost(const void* urlPatternRef);
 const void* APS5_VABI WKUserContentURLPatternCopyScheme(const void* urlPatternRef);
 const void* APS5_VABI WKUserContentURLPatternCreate(const void* patternRef);

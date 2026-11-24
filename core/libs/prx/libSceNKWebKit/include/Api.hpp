@@ -91,7 +91,6 @@ int APS5_VABI _ZN9Inspector22RemoteInspectionTargetD2Ev();
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent20setPauseOnAssertionsERN3WTF6StringEb();
 int APS5_VABI _ZN7WebCore14ResourceLoader5startEv();
 int APS5_VABI WKPageCanDelete();
-int APS5_VABI WKUserContentExtensionStoreRemove();
 int APS5_VABI _ZN9Inspector21InspectorRuntimeAgent6enableERN3WTF6StringE();
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager30stopAllMediaPlaybackForProcessEv();
 int APS5_VABI _ZN7WebCore23ApplicationCacheStorage16originsWithCacheEv();
