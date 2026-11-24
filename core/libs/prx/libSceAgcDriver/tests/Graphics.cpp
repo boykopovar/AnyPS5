@@ -13414,6 +13414,8 @@ void validationTests() {
         }
         {
             using AgcDriver::Graphics::GrownVertexCopyBytes;
+            using AgcDriver::Graphics::VertexBindingBytes;
+            Require(VertexBindingBytes(80, 32) == 96 && VertexBindingBytes(96, 32) == 96 && VertexBindingBytes(17, 0) == 17, "a strided vertex binding did not cover its whole final record");
             constexpr std::size_t mib = std::size_t{1} << 20u;
             Require(GrownVertexCopyBytes(1000, 0) == 1000 && GrownVertexCopyBytes(1000, 1000) == 1000, "a vertex copy grew without room past its read");
             Require(GrownVertexCopyBytes(1000, 2000) == 1250 && GrownVertexCopyBytes(3, 2000) == 3, "a vertex copy did not grow by a quarter of its read");

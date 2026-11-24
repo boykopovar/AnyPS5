@@ -1498,6 +1498,13 @@ std::size_t GrownVertexCopyBytes(std::size_t bytes, std::size_t growLimit) {
     return grown <= Recorder::DrawInputBudget ? grown : bytes;
 }
 
+std::size_t VertexBindingBytes(std::size_t bytes, std::uint32_t stride) {
+    if (stride == 0 || bytes % stride == 0) return bytes;
+    const auto extra = static_cast<std::size_t>(stride) - bytes % stride;
+    Require(bytes <= std::numeric_limits<std::size_t>::max() - extra, "vertex binding size overflow");
+    return bytes + extra;
+}
+
 std::uint64_t VertexCopyGrowEnd(const State& state, std::uint64_t end, std::uint64_t limit) {
     limit = std::max(limit, end);
     const auto cut = [&](std::uint64_t target) {
@@ -1517,9 +1524,10 @@ bool BindsIndexCopy(const State& state) {
     return !state.stages.mesh;
 }
 
-DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from, bool hostOnly, std::size_t growLimit) {
+DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from, bool hostOnly, std::size_t growLimit, std::size_t bindingBytes) {
     Require(use != Recorder::SnapshotUse::Storage, "a draw input is a vertex or index buffer");
     Require(from == 0 || (use == Recorder::SnapshotUse::Vertex && from < bytes), "only a vertex input starts past its address");
+    bindingBytes = std::max(bindingBytes, bytes);
     DrawInputCopy copy;
     copy.from = from;
     std::size_t copied = bytes;
@@ -1531,6 +1539,7 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
         constexpr bool owned = false;
 #endif
         if (owned && recorder->OwnedDrawInputEntries() != 0) copy.buffer = recorder->ReusableOwnedDrawInput(address, bytes, use, &copy.derived, from, &copy.lowest);
+        if (copy.buffer != nullptr && copy.buffer->Bytes().size() < bindingBytes) copy.buffer.reset();
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;
@@ -1539,6 +1548,7 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
         copy.generation = GuestMemory::CollectWrites(address, bytes);
         if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived, 0, nullptr, from, &copy.lowest, !hostOnly);
         else if (owned) copy.owned = recorder->ArmOwnedDrawInput(address, bytes);
+        if (copy.buffer != nullptr && copy.buffer->Bytes().size() < bindingBytes) copy.buffer.reset();
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;
@@ -1550,12 +1560,14 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
             }
         }
     }
-    copy.buffer = std::make_shared<Buffer>(context, copied, (use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT) | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    copy.guestBytes = copied;
+    copy.buffer = std::make_shared<Buffer>(context, std::max(copied, bindingBytes), (use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT) | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     static const bool poisonPrefix = std::getenv("APS5_POISON_VERTEX_PREFIX") != nullptr;
     const auto held = copy.buffer->Bytes();
     if (poisonPrefix) std::fill(held.begin(), held.begin() + static_cast<std::ptrdiff_t>(from), std::byte{0x7f});
     GuestMemory::Read(address + from, held.subspan(from, bytes - from), alignment);
     if (copied > bytes) GuestMemory::CopyGuestBytes(held.data() + bytes, reinterpret_cast<const void*>(address + bytes), copied - bytes);
+    if (held.size() > copied) std::fill(held.begin() + static_cast<std::ptrdiff_t>(copied), held.end(), std::byte{0});
     return copy;
 }
 
@@ -1592,14 +1604,15 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
 
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived, std::uint32_t lowest) {
     if (recorder == nullptr || copy.reused || copy.buffer == nullptr) return;
+    const auto guestBytes = copy.guestBytes != 0 ? copy.guestBytes : copy.buffer->Bytes().size();
     if (copy.generation == 0) {
-        if (!copy.owned.words.empty() && !RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawInputs)) recorder->KeepOwnedDrawInput(address, copy.buffer->Bytes().size(), copy.owned, copy.buffer, use, derived, copy.from, lowest);
+        if (!copy.owned.words.empty() && !RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawInputs)) recorder->KeepOwnedDrawInput(address, guestBytes, copy.owned, copy.buffer, use, derived, copy.from, lowest);
         return;
     }
-    recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived, copy.from, lowest);
+    recorder->KeepDrawSnapshot(address, guestBytes, copy.generation, copy.registryGeneration, copy.buffer, use, derived, copy.from, lowest);
 }
 
-const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite, std::size_t fetched, std::uint64_t reads) {
+const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite, std::size_t fetched, std::uint64_t reads, std::size_t bindingBytes) {
     auto* recorder = context.recorder;
     static const bool copyBehindGpuWrite = std::getenv("APS5_NO_BEHIND_INPUTS_IN_PLACE") != nullptr || std::getenv("APS5_NO_DRAW_INPUTS_IN_PLACE") != nullptr;
     const bool small = std::min(fetched, bytes) <= context.drawInputsInPlaceBelow && reads <= InPlaceDrawInputMaxReads;
@@ -1624,7 +1637,12 @@ const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address
     const auto drawWriters = DrawCopiedWriters();
     if (std::any_of(drawWriters->begin(), drawWriters->end(), overlaps)) return nullptr;
     const auto* import = HostImportFor(context, address, bytes);
-    if (import == nullptr || HostImportOffset(*import, address) % alignment != 0) return nullptr;
+    if (import == nullptr) return nullptr;
+    const auto offset = HostImportOffset(*import, address);
+    bindingBytes = std::max(bindingBytes, bytes);
+    Require(import->lead <= std::numeric_limits<std::uint64_t>::max() - import->bytes, "host import buffer size overflow");
+    const auto importBytes = import->bytes + import->lead;
+    if (offset % alignment != 0 || offset > importBytes || bindingBytes > importBytes - offset) return nullptr;
     recorder->NotePendingRead(address, bytes, Recorder::ReadKind::DrawInput);
     if (behindGpuWrite != nullptr && behind) *behindGpuWrite = true;
     return import;
@@ -2140,9 +2158,11 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     auto& fetchOf = planLease->fetchOf;
     auto& zeroed = planLease->zeroed;
     auto& fetchLimit = planLease->fetchLimit;
+    auto& fetchBindingEnd = planLease->fetchBindingEnd;
     fetches.reserve(attributes.size());
     fetchValid.reserve(attributes.size());
     fetchLimit.reserve(attributes.size());
+    fetchBindingEnd.reserve(attributes.size());
     fetchOf.assign(attributes.size(), 0);
     zeroed.resize(attributes.size());
     const auto& layout = inputs.VertexLayout();
@@ -2167,11 +2187,14 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto firstByte = args == nullptr ? VertexBufferReadOffset(attribute, draw.firstVertex, draw.firstInstance) : 0;
         Require(!state.hasColorTarget || address + bytes <= state.color.MemoryAddress() || state.color.MemoryAddress() + state.color.bytes <= address + firstByte, "vertex buffer aliases the render target");
         const auto stride = (fields[1] >> 16u) & 0x3fffu;
+        const auto bindingBytes = VertexBindingBytes(bytes, stride);
+        Require(bindingBytes <= std::numeric_limits<std::uint64_t>::max() - address, "vertex binding range overflow");
         fetchOf[i] = fetches.size();
         fetches.push_back({address, address + bytes, stride, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
         const auto recordBytes = static_cast<std::uint64_t>(fields[2]) * stride;
         fetchValid.push_back(args == nullptr && stride != 0 ? static_cast<std::size_t>(std::min(recordBytes, static_cast<std::uint64_t>(bytes))) : bytes);
         fetchLimit.push_back(args == nullptr ? std::max<std::uint64_t>(VertexDescriptorEnd(attribute, widened), address + bytes) : address + bytes);
+        fetchBindingEnd.push_back(address + bindingBytes);
     }
     const auto soloFetches = SoloZeroPaddedFetchIndices(fetches, fetchValid);
     auto& isSolo = planLease->isSolo;
@@ -2189,9 +2212,14 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     const auto plan = PlanVertexCopies(plannedFetches);
     const auto rangeFrom = args == nullptr && !state.stages.mesh ? VertexCopyStarts(plan, plannedFetches, inputs.minIndex, draw.firstInstance) : std::vector<std::size_t>(plan.copies.size(), 0);
     auto& rangeLimit = planLease->rangeLimit;
+    auto& rangeBindingEnd = planLease->rangeBindingEnd;
     rangeLimit.assign(plan.copies.size(), std::numeric_limits<std::uint64_t>::max());
+    rangeBindingEnd.assign(plan.copies.size(), 0);
     for (std::size_t f = 0; f < fetches.size(); ++f) {
-        if (!isSolo[f]) rangeLimit[plan.copyOf[plannedOf[f]]] = std::min(rangeLimit[plan.copyOf[plannedOf[f]]], fetchLimit[f]);
+        if (isSolo[f]) continue;
+        const auto range = plan.copyOf[plannedOf[f]];
+        rangeLimit[range] = std::min(rangeLimit[range], fetchLimit[f]);
+        rangeBindingEnd[range] = std::max(rangeBindingEnd[range], fetchBindingEnd[f]);
     }
     auto& rangeHandles = planLease->rangeHandles;
     auto& rangeOffsets = planLease->rangeOffsets;
@@ -2200,16 +2228,21 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     for (std::size_t range = 0; range < plan.copies.size(); ++range) {
         const auto [begin, end] = plan.copies[range];
         const auto bytes = static_cast<std::size_t>(end - begin);
+        const auto bindingBytes = static_cast<std::size_t>(rangeBindingEnd[range] - begin);
         GuestMemory::CheckRange(reinterpret_cast<const void*>(begin), bytes, 1);
         RequireNoMultisampleTarget(begin, bytes, "a vertex buffer read", DepthReadCause::Reuse);
-        if (const auto* import = InPlaceDrawInput(context, begin, bytes, plan.alignments[range], &inputs.vertexInputBehindGpuWrite, bytes - std::min(rangeFrom[range], bytes), reads)) {
-            rangeHandles.push_back(import->buffer);
-            rangeOffsets.push_back(HostImportOffset(*import, begin));
-            inputs.inPlaceReads.emplace_back(begin, end);
-            continue;
+        const auto bindingLimit = VertexCopyGrowEnd(state, end, rangeBindingEnd[range]);
+        const bool safeBindingTail = bindingLimit == rangeBindingEnd[range] && (bindingBytes == bytes || (context.recorder != nullptr && vertexCopyTailReadable(*context.recorder, begin, bytes, bindingBytes)));
+        if (safeBindingTail) {
+            if (const auto* import = InPlaceDrawInput(context, begin, bytes, plan.alignments[range], &inputs.vertexInputBehindGpuWrite, bytes - std::min(rangeFrom[range], bytes), reads, bindingBytes)) {
+                rangeHandles.push_back(import->buffer);
+                rangeOffsets.push_back(HostImportOffset(*import, begin));
+                inputs.inPlaceReads.emplace_back(begin, end);
+                continue;
+            }
         }
         const auto limit = VertexCopyGrowEnd(state, end, rangeLimit[range]);
-        auto copy = CopyDrawInput(context, context.recorder, begin, bytes, 1, Recorder::SnapshotUse::Vertex, rangeFrom[range], false, static_cast<std::size_t>(limit - begin));
+        auto copy = CopyDrawInput(context, context.recorder, begin, bytes, 1, Recorder::SnapshotUse::Vertex, rangeFrom[range], false, static_cast<std::size_t>(limit - begin), bindingBytes);
         KeepDrawInput(context.recorder, begin, copy, Recorder::SnapshotUse::Vertex, 0);
         rangeHandles.push_back(copy.buffer->Handle());
         rangeOffsets.push_back(0);
@@ -2218,7 +2251,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     std::vector<VkBuffer> soloHandles(fetches.size(), VK_NULL_HANDLE);
     for (const auto f : soloFetches) {
         const auto begin = fetches[f].begin;
-        const auto bytes = static_cast<std::size_t>(fetches[f].end - begin);
+        const auto bytes = static_cast<std::size_t>(std::max(fetches[f].end, fetchBindingEnd[f]) - begin);
         auto copy = CopyZeroPaddedDrawInput(context, begin, bytes, fetchValid[f], fetches[f].stride);
         soloHandles[f] = copy.buffer->Handle();
         inputs.vertexBuffers.push_back(std::move(copy.buffer));

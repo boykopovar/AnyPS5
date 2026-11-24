@@ -15,12 +15,14 @@ struct VertexPlanScratch {
     std::vector<VertexFetch> fetches;
     std::vector<std::size_t> fetchValid;
     std::vector<std::uint64_t> fetchLimit;
+    std::vector<std::uint64_t> fetchBindingEnd;
     std::vector<std::size_t> fetchOf;
     std::vector<std::shared_ptr<Buffer>> zeroed;
     std::vector<bool> isSolo;
     std::vector<VertexFetch> plannedFetches;
     std::vector<std::size_t> plannedOf;
     std::vector<std::uint64_t> rangeLimit;
+    std::vector<std::uint64_t> rangeBindingEnd;
     std::vector<VkBuffer> rangeHandles;
     std::vector<VkDeviceSize> rangeOffsets;
 
@@ -28,12 +30,14 @@ struct VertexPlanScratch {
         fetches.clear();
         fetchValid.clear();
         fetchLimit.clear();
+        fetchBindingEnd.clear();
         fetchOf.clear();
         zeroed.clear();
         isSolo.clear();
         plannedFetches.clear();
         plannedOf.clear();
         rangeLimit.clear();
+        rangeBindingEnd.clear();
         rangeHandles.clear();
         rangeOffsets.clear();
     }
