@@ -1,5 +1,6 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <stdexcept>
@@ -77,7 +78,8 @@ std::int64_t APS5_VABI attachISRead_nid_postfix(Jxr::BitIo* io, Jxr::Stream* str
     static_cast<void>(codec);
     Require(io != nullptr, __func__, "null bit state");
     Require(stream != nullptr, __func__, "null stream");
-    Require(GuestWritable_nid_no_patch(io, sizeof(Jxr::BitIo)), __func__, "unwritable bit state");
+    GuestArena::HostWrite ioWrite(io, sizeof(Jxr::BitIo));
+    Require(ioWrite.Open() && GuestWritable_nid_no_patch(io, sizeof(Jxr::BitIo)), __func__, "unwritable bit state");
     Require(stream->getPosition != nullptr, __func__, "null get-position callback");
     stream->getPosition(stream, &io->referenceOffset);
     const auto ioAddress = reinterpret_cast<std::uintptr_t>(io);
