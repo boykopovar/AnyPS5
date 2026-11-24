@@ -32,6 +32,7 @@ void APS5_VABI AllocateZeroAligned(const void* resource);
 void APS5_VABI AllocateNonPowerOfTwoAligned(const void* resource);
 void APS5_VABI AllocateMaxSizeDefault(const void* resource);
 void APS5_VABI AllocateMaxSizeOverAligned(const void* resource);
+void APS5_VABI AllocateMaxSizeAlignOne(const void* resource);
 
 const void* SceV2CatchType = nullptr;
 const void* SceV2OtherType = nullptr;
@@ -77,6 +78,14 @@ asm(".text\n"
     "    movq (%rdi), %rax\n"
     "    jmp *16(%rax)\n"
     APS5_ASM_FUNCTION_END("AllocateMaxSizeOverAligned"));
+
+asm(".text\n"
+    APS5_ASM_FUNCTION("AllocateMaxSizeAlignOne")
+    "    movl $1, %edx\n"
+    "    movq $-1, %rsi\n"
+    "    movq (%rdi), %rax\n"
+    "    jmp *16(%rax)\n"
+    APS5_ASM_FUNCTION_END("AllocateMaxSizeAlignOne"));
 
 static unsigned failures = 0;
 
@@ -159,10 +168,15 @@ static void CheckResources() {
         Slot<Deallocate>(aligned, 3)(aligned, block, 200, alignment);
     }
     for (const std::size_t size : {std::size_t{1}, std::size_t{8}, std::size_t{16}}) {
-        auto* block = static_cast<unsigned char*>(Slot<Allocate>(aligned, 2)(aligned, size, 32));
-        Require(block != nullptr && reinterpret_cast<std::uintptr_t>(block) % 32 == 0, "aligned allocate small size honours 32-byte alignment");
-        std::memset(block, 0x3c, size);
-        Slot<Deallocate>(aligned, 3)(aligned, block, size, 32);
+        std::array<unsigned char*, 32> liveBlocks{};
+        for (auto*& block : liveBlocks) {
+            block = static_cast<unsigned char*>(Slot<Allocate>(aligned, 2)(aligned, size, 32));
+            Require(block != nullptr && reinterpret_cast<std::uintptr_t>(block) % 32 == 0, "aligned allocate small size honours 32-byte alignment");
+            std::memset(block, 0x3c, size);
+        }
+        for (auto* block : liveBlocks) {
+            Slot<Deallocate>(aligned, 3)(aligned, block, size, 32);
+        }
     }
     for (const std::size_t alignment : {std::size_t{1}, std::size_t{8}, std::size_t{32}}) {
         auto* block = static_cast<unsigned char*>(Slot<Allocate>(unaligned, 2)(unaligned, 48, alignment));
@@ -181,6 +195,7 @@ static void CheckResources() {
     CheckThrows(AllocateNonPowerOfTwoAligned, unaligned, "unaligned allocate with non-power-of-two alignment throws bad_alloc");
     CheckThrows(AllocateMaxSizeDefault, aligned, "aligned allocate with SIZE_MAX throws bad_alloc");
     CheckThrows(AllocateMaxSizeOverAligned, aligned, "aligned over-aligned allocate with SIZE_MAX throws bad_alloc");
+    CheckThrows(AllocateMaxSizeAlignOne, aligned, "aligned align-1 allocate with SIZE_MAX throws bad_alloc");
     CheckThrows(AllocateMaxSizeDefault, unaligned, "unaligned allocate with SIZE_MAX throws bad_alloc");
 }
 
