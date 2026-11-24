@@ -10,6 +10,13 @@ using UErrorCode = std::int32_t;
 constexpr UErrorCode U_ZERO_ERROR = 0;
 constexpr UErrorCode U_ILLEGAL_ARGUMENT_ERROR = 1;
 
+using ULayoutType = std::int32_t;
+constexpr ULayoutType ULOC_LAYOUT_LTR = 0;
+constexpr ULayoutType ULOC_LAYOUT_RTL = 1;
+constexpr ULayoutType ULOC_LAYOUT_TTB = 2;
+constexpr ULayoutType ULOC_LAYOUT_BTT = 3;
+constexpr ULayoutType ULOC_LAYOUT_UNKNOWN = 4;
+
 struct Case {
     const char* locale;
     bool rightToLeft;

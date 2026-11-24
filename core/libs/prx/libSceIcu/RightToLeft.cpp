@@ -143,7 +143,7 @@ std::int8_t APS5_VABI uloc_isRightToLeft_nid_postfix(const char* locale) {
     return uscript_isRightToLeft(script) ? 1 : 0;
 }
 
-ULayoutType APS5_VABI uloc_getCharacterOrientation(const char* localeId, std::int32_t* status) {
+std::int32_t APS5_VABI uloc_getCharacterOrientation(const char* localeId, std::int32_t* status) {
     if (!status || *status > 0) return ULOC_LAYOUT_UNKNOWN;
     if (!localeId) localeId = Icu::DefaultLocaleName();
     const Subtags subtags = LanguageAndScript(localeId);
@@ -151,6 +151,10 @@ ULayoutType APS5_VABI uloc_getCharacterOrientation(const char* localeId, std::in
     if (!subtags.script.empty()) {
         const auto script = static_cast<UScriptCode>(u_getPropertyValueEnum(UCHAR_SCRIPT, subtags.script.c_str()));
         return uscript_isRightToLeft(script) ? ULOC_LAYOUT_RTL : ULOC_LAYOUT_LTR;
+    }
+    UErrorCode likelyStatus = U_ZERO_ERROR;
+    if (icu::LikelySubtags::getSingleton(likelyStatus)) {
+        return uloc_isRightToLeft(localeId) ? ULOC_LAYOUT_RTL : ULOC_LAYOUT_LTR;
     }
     return IsRightToLeftLanguage(subtags.language) ? ULOC_LAYOUT_RTL : ULOC_LAYOUT_LTR;
 }
