@@ -40,6 +40,13 @@ USet* NativeSet(USet* set) {
     return guest.borrowed ? const_cast<USet*>(guest.borrowed) : guest.owned.toUSet();
 }
 
+const char16_t* Text(const char16_t* text, std::int32_t length) {
+    if (text) return text;
+    if (length != 0) APS5_INVALID_ARG_EX;
+    static constexpr char16_t empty{};
+    return &empty;
+}
+
 void WriteError(std::int32_t* error, std::int32_t value, const char* caller) {
     if (!GuestCopyOut_nid_no_patch(error, &value, sizeof(value))) NotImplemented_nid_no_patch(caller);
 }
@@ -83,12 +90,39 @@ USet* APS5_VABI uset_openEmpty_nid_postfix() {
     return reinterpret_cast<USet*>(new (std::nothrow) GuestSet());
 }
 
+USet* APS5_VABI uset_clone_nid_postfix(const USet* set) {
+    const auto* source = Icu::NativeSet(set);
+    auto* clone = new (std::nothrow) GuestSet();
+    if (!clone) return nullptr;
+    clone->owned = *icu::UnicodeSet::fromUSet(source);
+    if (uset_isFrozen(source)) clone->owned.freeze();
+    return reinterpret_cast<USet*>(clone);
+}
+
+USet* APS5_VABI uset_cloneAsThawed_nid_postfix(const USet* set) {
+    auto* thawed = icu::UnicodeSet::fromUSet(Icu::NativeSet(set))->cloneAsThawed();
+    if (!thawed) return nullptr;
+    auto* clone = new (std::nothrow) GuestSet();
+    if (!clone) {
+        delete thawed;
+        return nullptr;
+    }
+    clone->owned = *thawed;
+    delete thawed;
+    return reinterpret_cast<USet*>(clone);
+}
+
 void APS5_VABI uset_close_nid_postfix(USet* set) {
     if (!set) return;
     auto& target = Check(set);
     if (target.borrowed) NotImplemented_nid_no_patch(__func__);
     target.magic = 0;
     delete &target;
+}
+
+void APS5_VABI uset_freeze_nid_postfix(USet* set) {
+    auto& target = Check(set);
+    if (!target.borrowed) target.owned.freeze();
 }
 
 void APS5_VABI uset_add_nid_postfix(USet* set, std::int32_t codePoint) {
@@ -104,6 +138,14 @@ void APS5_VABI uset_addRange_nid_postfix(USet* set, std::int32_t start, std::int
 void APS5_VABI uset_addAll_nid_postfix(USet* set, const USet* additionalSet) {
     auto& target = Check(set);
     if (!target.borrowed && set != additionalSet) target.owned.addAll(*icu::UnicodeSet::fromUSet(Icu::NativeSet(additionalSet)));
+}
+
+void APS5_VABI uset_addString_nid_postfix(USet* set, const char16_t* string, std::int32_t length) {
+    uset_addString(NativeSet(set), Text(string, length), length);
+}
+
+void APS5_VABI uset_addAllCodePoints_nid_postfix(USet* set, const char16_t* string, std::int32_t length) {
+    uset_addAllCodePoints(NativeSet(set), Text(string, length), length);
 }
 
 void APS5_VABI uset_clear_nid_postfix(USet* set) {
@@ -157,6 +199,10 @@ std::int8_t APS5_VABI uset_containsNone_nid_postfix(const USet* set, const USet*
 
 std::int8_t APS5_VABI uset_containsSome_nid_postfix(const USet* set, const USet* other) {
     return uset_containsSome(Icu::NativeSet(set), Icu::NativeSet(other));
+}
+
+std::int8_t APS5_VABI uset_containsString_nid_postfix(const USet* set, const char16_t* string, std::int32_t length) {
+    return uset_containsString(Icu::NativeSet(set), Text(string, length), length);
 }
 
 std::int8_t APS5_VABI uset_hasStrings_nid_postfix(const USet* set) {
@@ -248,8 +294,28 @@ void APS5_VABI uset_removeRange_nid_postfix(USet* set, std::int32_t start, std::
     uset_removeRange(NativeSet(set), start, end);
 }
 
+void APS5_VABI uset_removeString_nid_postfix(USet* set, const char16_t* string, std::int32_t length) {
+    uset_removeString(NativeSet(set), Text(string, length), length);
+}
+
+void APS5_VABI uset_removeAll_nid_postfix(USet* set, const USet* remove) {
+    uset_removeAll(NativeSet(set), Icu::NativeSet(remove));
+}
+
+void APS5_VABI uset_removeAllStrings_nid_postfix(USet* set) {
+    uset_removeAllStrings(NativeSet(set));
+}
+
 void APS5_VABI uset_retain_nid_postfix(USet* set, std::int32_t start, std::int32_t end) {
     uset_retain(NativeSet(set), start, end);
+}
+
+void APS5_VABI uset_retainAll_nid_postfix(USet* set, const USet* retain) {
+    uset_retainAll(NativeSet(set), Icu::NativeSet(retain));
+}
+
+void APS5_VABI uset_complementAll_nid_postfix(USet* set, const USet* complement) {
+    uset_complementAll(NativeSet(set), Icu::NativeSet(complement));
 }
 
 std::int32_t APS5_VABI uset_size_nid_postfix(const USet* set) {

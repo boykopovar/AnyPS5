@@ -358,6 +358,56 @@ void AdditionalQueries() {
     uset_close_nid_postfix(set);
 }
 
+void AdditionalMutations() {
+    static_assert(std::is_same_v<decltype(&uset_clone_nid_postfix), USet* (APS5_VABI*)(const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_cloneAsThawed_nid_postfix), USet* (APS5_VABI*)(const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_freeze_nid_postfix), void (APS5_VABI*)(USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_removeAll_nid_postfix), void (APS5_VABI*)(USet*, const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_retainAll_nid_postfix), void (APS5_VABI*)(USet*, const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_complementAll_nid_postfix), void (APS5_VABI*)(USet*, const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_removeAllStrings_nid_postfix), void (APS5_VABI*)(USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_addString_nid_postfix), void (APS5_VABI*)(USet*, const char16_t*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_removeString_nid_postfix), void (APS5_VABI*)(USet*, const char16_t*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_containsString_nid_postfix), std::int8_t (APS5_VABI*)(const USet*, const char16_t*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_addAllCodePoints_nid_postfix), void (APS5_VABI*)(USet*, const char16_t*, std::int32_t)>);
+
+    USet* set = uset_openEmpty_nid_postfix();
+    uset_addRange_nid_postfix(set, 10, 20);
+    USet* clone = uset_clone_nid_postfix(set);
+    Require(clone && uset_equals_nid_postfix(set, clone), "clone contents");
+    uset_remove_nid_postfix(clone, 15);
+    Require(uset_contains_nid_postfix(set, 15) && !uset_contains_nid_postfix(clone, 15), "clone independence");
+    uset_freeze_nid_postfix(set);
+    Require(uset_isFrozen_nid_postfix(set), "freeze set");
+    USet* frozenClone = uset_clone_nid_postfix(set);
+    USet* thawedClone = uset_cloneAsThawed_nid_postfix(set);
+    Require(frozenClone && thawedClone && uset_isFrozen_nid_postfix(frozenClone) && !uset_isFrozen_nid_postfix(thawedClone), "clone frozen state");
+    USet* mask = uset_openEmpty_nid_postfix();
+    uset_addRange_nid_postfix(mask, 15, 25);
+    uset_removeAll_nid_postfix(thawedClone, mask);
+    Require(Items(thawedClone) == Ranges{{10, 14}}, "remove all");
+    uset_addRange_nid_postfix(thawedClone, 15, 20);
+    uset_retainAll_nid_postfix(thawedClone, mask);
+    Require(Items(thawedClone) == Ranges{{15, 20}}, "retain all");
+    uset_complementAll_nid_postfix(thawedClone, mask);
+    Require(Items(thawedClone) == Ranges{{21, 25}}, "complement all");
+    uset_addString_nid_postfix(thawedClone, u"ab", 2);
+    Require(uset_containsString_nid_postfix(thawedClone, u"ab", -1) && uset_getStringCount_nid_postfix(thawedClone) == 1, "add string");
+    uset_addAllCodePoints_nid_postfix(thawedClone, u"az", -1);
+    Require(uset_contains_nid_postfix(thawedClone, 'a') && uset_contains_nid_postfix(thawedClone, 'z') &&
+            uset_getStringCount_nid_postfix(thawedClone) == 1, "add string code points");
+    uset_removeString_nid_postfix(thawedClone, u"ab", 2);
+    Require(!uset_containsString_nid_postfix(thawedClone, u"ab", 2) && uset_getStringCount_nid_postfix(thawedClone) == 0, "remove string");
+    uset_addString_nid_postfix(thawedClone, u"xy", 2);
+    uset_removeAllStrings_nid_postfix(thawedClone);
+    Require(uset_getStringCount_nid_postfix(thawedClone) == 0 && uset_contains_nid_postfix(thawedClone, 'a'), "remove all strings");
+    uset_close_nid_postfix(mask);
+    uset_close_nid_postfix(thawedClone);
+    uset_close_nid_postfix(frozenClone);
+    uset_close_nid_postfix(clone);
+    uset_close_nid_postfix(set);
+}
+
 void ItemAccess() {
     USet* set = uset_openEmpty_nid_postfix();
     uset_addRange_nid_postfix(set, 0x41, 0x5a);
@@ -410,6 +460,17 @@ void InvalidSets() {
     Require(Rejects([&] { uset_span_nid_postfix(set, nullptr, 1, 1); }), "null span text");
     Require(Rejects([&] { uset_spanBack_nid_postfix(set, nullptr, 1, 1); }), "null backward span text");
     Require(Rejects([&] { uset_spanUTF8_nid_postfix(set, nullptr, 1, 1); }), "null UTF-8 span text");
+    Require(Rejects([] { uset_clone_nid_postfix(nullptr); }), "null set clone");
+    Require(Rejects([] { uset_cloneAsThawed_nid_postfix(nullptr); }), "null set thawed clone");
+    Require(Rejects([] { uset_freeze_nid_postfix(nullptr); }), "null set freeze");
+    Require(Rejects([&] { uset_removeAll_nid_postfix(set, nullptr); }), "null remove set");
+    Require(Rejects([&] { uset_retainAll_nid_postfix(set, nullptr); }), "null retain set");
+    Require(Rejects([&] { uset_complementAll_nid_postfix(set, nullptr); }), "null complement set");
+    Require(Rejects([] { uset_removeAllStrings_nid_postfix(nullptr); }), "null set remove strings");
+    Require(Rejects([&] { uset_addString_nid_postfix(set, nullptr, 1); }), "null added string");
+    Require(Rejects([&] { uset_removeString_nid_postfix(set, nullptr, 1); }), "null removed string");
+    Require(Rejects([&] { uset_containsString_nid_postfix(set, nullptr, 1); }), "null contained string");
+    Require(Rejects([&] { uset_addAllCodePoints_nid_postfix(set, nullptr, 1); }), "null code point string");
     Require(Rejects([&] { uset_close_nid_postfix(forged); }), "closing foreign memory");
     uset_close_nid_postfix(nullptr);
     uset_close_nid_postfix(set);
@@ -462,6 +523,7 @@ int main() {
     Union();
     AdditionalOperations();
     AdditionalQueries();
+    AdditionalMutations();
     ItemAccess();
     InvalidSets();
     Random();
