@@ -116,6 +116,33 @@ struct FutureErrorObject { const void* vtable; GuestLocale::String message; Erro
 
 }
 
+namespace GuestCLocale {
+
+struct Ctypevec {
+    const short* table;
+    std::int32_t deleteFlag;
+};
+static_assert(sizeof(Ctypevec) == 16);
+static_assert(offsetof(Ctypevec, deleteFlag) == 8);
+
+struct Collvec {
+    std::uint64_t handle;
+    std::uint64_t page;
+};
+static_assert(sizeof(Collvec) == 16);
+
+struct Cvtvec {
+    std::uint32_t page;
+    std::uint32_t maxBytes;
+    std::uint8_t reserved[32];
+};
+static_assert(sizeof(Cvtvec) == 40);
+static_assert(offsetof(Cvtvec, reserved) == 8);
+
+constexpr int DateOrderNone = 2;
+
+}
+
 extern "C" {
 
 
@@ -245,6 +272,8 @@ void* APS5_VABI opendir_nid_postfix(const char* path);
 GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void* handle);
 int APS5_VABI readdir_r_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result);
 int APS5_VABI closedir_nid_postfix(void* handle);
+int APS5_VABI scandir_nid_postfix(const char* path, GuestDirectoryEntry*** namelist, int (APS5_VABI *select)(const GuestDirectoryEntry*), int (APS5_VABI *compar)(const GuestDirectoryEntry* const*, const GuestDirectoryEntry* const*));
+int APS5_VABI alphasort_nid_postfix(const GuestDirectoryEntry* const* left, const GuestDirectoryEntry* const* right);
 void APS5_VABI rewinddir_nid_postfix(void* handle);
 std::int64_t APS5_VABI telldir_nid_postfix(void* handle);
 void APS5_VABI seekdir_nid_postfix(void* handle, std::int64_t location);
@@ -418,6 +447,22 @@ long double APS5_VABI cargl_nid_postfix(__complex__ long double z);
 double APS5_VABI cabs_nid_postfix(__complex__ double z);
 float APS5_VABI cabsf_nid_postfix(__complex__ float z);
 long double APS5_VABI cabsl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI cacosl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI cacoshl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI casinl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI casinhl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI catanl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI catanhl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI ccosl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI ccoshl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI cexpl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI clogl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI csinl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI csinhl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI csqrtl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI ctanl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI ctanhl_nid_postfix(__complex__ long double z);
+__complex__ long double APS5_VABI cpowl_nid_postfix(__complex__ long double x, __complex__ long double y);
 int APS5_VABI fegetround_nid_postfix();
 int APS5_VABI fesetround_nid_postfix(int rounding);
 int APS5_VABI fetestexcept_nid_postfix(int exceptions);
@@ -486,6 +531,7 @@ char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* s
 int APS5_VABI fwide_nid_postfix(FileStream* stream, int mode);
 int APS5_VABI chdir_nid_postfix(const char* path);
 char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size);
+char* APS5_VABI getwd_nid_postfix(char* buffer);
 void APS5_VABI sceLibcInternalBacktraceForGame_nid_postfix(const char* heapName);
 void APS5_VABI sceLibcInternalHeapErrorReportForGame_nid_postfix(void* heap, void* block, std::uint32_t error);
 int APS5_VABI gethostname_nid_postfix(char* name, std::size_t length);
@@ -677,6 +723,12 @@ void APS5_VABI _ZNSt8_LocinfoD1Ev_nid_postfix(GuestLocale::LocinfoStorage* self)
 int APS5_VABI _Mbtowcx_nid_postfix(std::uint16_t* dst, const char* src, std::size_t count, mbstate_t* st);
 int APS5_VABI _Wctombx_nid_postfix(char* dst, std::uint16_t src, mbstate_t* st);
 const short* APS5_VABI _Getpctype_nid_postfix();
+GuestCLocale::Ctypevec APS5_VABI _Getctype_nid_postfix();
+GuestCLocale::Collvec APS5_VABI _Getcoll_nid_postfix();
+GuestCLocale::Cvtvec APS5_VABI _Getcvt_nid_postfix();
+int APS5_VABI _Getdateorder_nid_postfix();
+int APS5_VABI _Strcoll_nid_postfix(const char* first1, const char* last1, const char* first2, const char* last2, const void* collation);
+std::size_t APS5_VABI _Strxfrm_nid_postfix(char* dest, char* destEnd, const char* src, const char* srcEnd, const void* collation);
 const short* APS5_VABI _Getptolower_nid_postfix();
 const short* APS5_VABI _Getptoupper_nid_postfix();
 mbstate_t* APS5_VABI _Getpmbstate_nid_postfix();

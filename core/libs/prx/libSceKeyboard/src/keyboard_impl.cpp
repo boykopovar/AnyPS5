@@ -186,9 +186,7 @@ int Read(std::int32_t handle, KeyboardData* data, std::int32_t num) {
     for (int i = 0; i < available; ++i) {
         output[i] = history[(head + i) % KEYBOARD_MAX_DATA_NUM];
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(data, output.data(), static_cast<std::size_t>(available) * sizeof(KeyboardData));
-    errno = savedErrno;
     if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
     head = (head + available) % KEYBOARD_MAX_DATA_NUM;
     count -= available;
@@ -224,9 +222,7 @@ int GetConnection(std::int32_t handle, bool* isConnected) {
     if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
     if (isConnected == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
     const bool state = handle == KEYBOARD_HANDLE && connected;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(isConnected, &state, sizeof(state));
-    errno = savedErrno;
     if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
     return KEYBOARD_OK;
 }
@@ -244,9 +240,7 @@ int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
         return KEYBOARD_ERROR_INVALID_HANDLE;
     }
     id = KEYBOARD_DEVICE_ID;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(deviceId, &id, sizeof(id));
-    errno = savedErrno;
     if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
     return KEYBOARD_OK;
 }
@@ -273,9 +267,7 @@ int GetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint32_t ledStat
     localData.char_code = converted != 0 ? converted : keyCode;
     localData.processed = converted != 0;
     localData.length = localData.processed ? 1 : 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(charData, &localData, sizeof(localData));
-    errno = savedErrno;
     if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
     return KEYBOARD_OK;
 }

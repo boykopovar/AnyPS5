@@ -27,13 +27,30 @@
 
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceNKWebKit/include/CrossOriginAccessControlExports.hpp"
+#include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
+#include "prx/libSceNKWebKit/include/SecurityOriginExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
+#include <cstddef>
+#include <cstdint>
+#include <initializer_list>
+#include <limits>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 
 namespace {
 
 using NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler;
 using NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisablerVtableStorage;
+using NKWebKit::HttpAbi::HTTPHeaderName;
+using NKWebKit::WebCoreAbi::ResourceResponseBase;
+using NKWebKit::WebCoreAbi::ResourceResponseStatusLayout;
+using NKWebKit::WebCoreAbi::SecurityOrigin;
+using NKWebKit::WebCoreAbi::StoredCredentialsPolicy;
+using NKWebKit::WtfAbi::ExpectedVoidString;
+using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::StringView;
 
 CrossOriginAccessControlCheckDisabler& Checked(CrossOriginAccessControlCheckDisabler* self) {
     if (!self) throw std::invalid_argument("null WebCore::CrossOriginAccessControlCheckDisabler");
@@ -54,6 +71,60 @@ const CrossOriginAccessControlCheckDisablerVtableStorage Vtable = {
         &_ZNK7WebCore37CrossOriginAccessControlCheckDisabler36crossOriginAccessControlCheckEnabledEv,
     },
 };
+
+StringView Literal(std::string_view text) {
+    return {text.data(), static_cast<unsigned>(text.size()), true};
+}
+
+bool EqualsLiteral(const String& string, std::string_view literal) {
+    if (!string.impl) return false;
+    const StringView view = NKWebKit::WtfAbi::ViewOf(string.impl);
+    if (view.length != literal.size()) return false;
+    for (unsigned index = 0; index < view.length; ++index) {
+        if (NKWebKit::WtfAbi::CodeUnitAt(view, index) != static_cast<unsigned char>(literal[index])) return false;
+    }
+    return true;
+}
+
+bool Contains(const String& string, char16_t unit) {
+    const StringView view = NKWebKit::WtfAbi::ViewOf(string.impl);
+    for (unsigned index = 0; index < view.length; ++index) {
+        if (NKWebKit::WtfAbi::CodeUnitAt(view, index) == unit) return true;
+    }
+    return false;
+}
+
+String Concatenate(std::initializer_list<StringView> parts) {
+    std::uint64_t total = 0;
+    bool is8Bit = true;
+    for (const auto& part : parts) {
+        total += part.length;
+        is8Bit = is8Bit && part.is8Bit;
+    }
+    if (total > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()))
+        throw std::length_error("WebCore::passesAccessControlCheck message exceeds the maximum string length");
+    void* characters = nullptr;
+    String result(NKWebKit::WtfAbi::CreateUninitialized(static_cast<unsigned>(total), is8Bit, characters));
+    std::size_t offset = 0;
+    for (const auto& part : parts) {
+        for (unsigned index = 0; index < part.length; ++index, ++offset) {
+            const char16_t unit = NKWebKit::WtfAbi::CodeUnitAt(part, index);
+            if (is8Bit) static_cast<unsigned char*>(characters)[offset] = static_cast<unsigned char>(unit);
+            else static_cast<char16_t*>(characters)[offset] = unit;
+        }
+    }
+    return result;
+}
+
+bool CheckEnabled(const CrossOriginAccessControlCheckDisabler& disabler) {
+    if (!disabler.vptr || !disabler.vptr->crossOriginAccessControlCheckEnabled)
+        throw std::invalid_argument("WebCore::CrossOriginAccessControlCheckDisabler without a virtual table");
+    return disabler.vptr->crossOriginAccessControlCheckEnabled(&disabler);
+}
+
+int StatusCode(const ResourceResponseBase& response) {
+    return reinterpret_cast<const ResourceResponseStatusLayout&>(response).httpStatusCode;
+}
 
 }
 
@@ -109,6 +180,37 @@ void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev(CrossOrigi
 void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD0Ev(CrossOriginAccessControlCheckDisabler* self) {
     _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev(self);
     _ZdlPv_nid_postfix(self);
+}
+
+ExpectedVoidString APS5_VABI _ZN7WebCore24passesAccessControlCheckERKNS_16ResourceResponseENS_23StoredCredentialsPolicyERKNS_14SecurityOriginEPKNS_37CrossOriginAccessControlCheckDisablerE(
+    const ResourceResponseBase* response, StoredCredentialsPolicy storedCredentialsPolicy, const SecurityOrigin* securityOrigin,
+    const CrossOriginAccessControlCheckDisabler* checkDisabler) {
+    if (!response) throw std::invalid_argument("null WebCore::ResourceResponse");
+    if (!securityOrigin) throw std::invalid_argument("null WebCore::SecurityOrigin");
+    const String allowedOrigin = _ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE(response, HTTPHeaderName::AccessControlAllowOrigin);
+    bool starAllowed = storedCredentialsPolicy == StoredCredentialsPolicy::DoNotUse;
+    if (!starAllowed) starAllowed = checkDisabler && !CheckEnabled(*checkDisabler);
+    const bool isStar = EqualsLiteral(allowedOrigin, "*");
+    if (isStar && starAllowed) return ExpectedVoidString();
+
+    const String origin = _ZNK7WebCore14SecurityOrigin8toStringEv(securityOrigin);
+    if (!_ZN3WTF5equalEPKNS_10StringImplES2_(allowedOrigin.impl, origin.impl)) {
+        if (isStar)
+            return ExpectedVoidString(Concatenate({Literal("Cannot use wildcard in Access-Control-Allow-Origin when credentials flag is true.")}));
+        if (Contains(allowedOrigin, u','))
+            return ExpectedVoidString(Concatenate({Literal("Access-Control-Allow-Origin cannot contain more than one origin.")}));
+        const std::string statusCode = std::to_string(StatusCode(*response));
+        return ExpectedVoidString(Concatenate({Literal("Origin "), NKWebKit::WtfAbi::ViewOf(origin.impl),
+                                               Literal(" is not allowed by Access-Control-Allow-Origin."), Literal(" Status code: "), Literal(statusCode)}));
+    }
+
+    if (storedCredentialsPolicy == StoredCredentialsPolicy::Use) {
+        const String allowCredentials =
+            _ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE(response, HTTPHeaderName::AccessControlAllowCredentials);
+        if (!EqualsLiteral(allowCredentials, "true"))
+            return ExpectedVoidString(Concatenate({Literal("Credentials flag is true, but Access-Control-Allow-Credentials is not \"true\".")}));
+    }
+    return ExpectedVoidString();
 }
 
 }
