@@ -14,7 +14,7 @@ BASES = base_ref.CANDIDATES
 
 def git(repo, *args, check=True):
     result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
-    result.stdout = result.stdout.decode("utf-8", errors="replace")
+    result.stdout = result.stdout.decode("utf-8", errors="surrogateescape")
     result.stderr = result.stderr.decode("utf-8", errors="replace")
     if check and result.returncode:
         raise RuntimeError(f"git {' '.join(args[:2])} failed: {result.stderr.strip()}")
@@ -66,7 +66,7 @@ def merged_pull_requests(repo, mergebase, base, paths):
 
 
 def report(repo, base, head):
-    repo = git(repo, "rev-parse", "--show-toplevel").stdout.strip()
+    repo = git(repo, "rev-parse", "--show-toplevel").stdout.removesuffix("\n")
     found = git(repo, "merge-base", base, head, check=False)
     if found.returncode == 1:
         raise RuntimeError(f"{head} and {base} have no common ancestor")

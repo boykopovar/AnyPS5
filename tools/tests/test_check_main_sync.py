@@ -132,6 +132,55 @@ class CheckMainSyncTests(CheckMainSyncFixture):
         self.assertEqual(run_tool(self.repo.path, "--head", "feature", "--strict").returncode, 0)
 
 
+    @unittest.skipIf(os.name == "nt", "Windows checkout names cannot end with a space")
+    def test_checkout_path_preserves_trailing_space(self):
+        path = Path(self.directory.name) / "checkout "
+        path.mkdir()
+        repo = Repo(path)
+        data = check_main_sync.report(repo.path, "main", "HEAD")
+        self.assertEqual((data["ahead"], data["behind"], data["conflicts"]), (0, 0, []))
+
+
+    @unittest.skipIf(os.name == "nt", "requires non-UTF-8 checkout paths")
+    def test_distinct_non_utf8_paths_are_not_reported_as_shared(self):
+        feature_path = os.fsdecode(b"raw-\xfe.txt")
+        main_path = os.fsdecode(b"raw-\xff.txt")
+        try:
+            self.repo.write(feature_path, "first")
+        except OSError as error:
+            self.skipTest(f"filesystem rejects non-UTF-8 paths: {error}")
+        self.branch("feature")
+        self.repo.commit("add first path")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.write(main_path, "second")
+        self.repo.commit("add second path")
+        data = check_main_sync.report(self.repo.path, "main", "feature")
+        self.assertEqual(data["shared"], [])
+        self.assertEqual(data["conflicts"], [])
+
+    @unittest.skipIf(os.name == "nt", "requires non-UTF-8 checkout paths")
+    def test_shared_non_utf8_path_preserves_conflict_and_pr_attribution(self):
+        name = os.fsdecode(b"raw-\xfe.txt")
+        try:
+            self.repo.write(name, "base")
+        except OSError as error:
+            self.skipTest(f"filesystem rejects non-UTF-8 paths: {error}")
+        self.repo.commit("add path")
+        self.branch("feature")
+        self.repo.write(name, "feature")
+        self.repo.commit("feature edit")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.write(name, "main")
+        self.repo.commit("fix(test): main edit (#4242)")
+        data = check_main_sync.report(self.repo.path, "main", "feature")
+        self.assertEqual(data["shared"], [name])
+        self.assertEqual(data["conflicts"], [name])
+        self.assertEqual(set(data["pulls"]), {4242})
+        result = run_tool(self.repo.path, "--head", "feature", "--json")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["conflicts"], [name])
+
+
     def test_paths_named_like_revisions_do_not_confuse_the_report(self):
         self.branch("feature")
         self.repo.write("other.txt", "y\n")
