@@ -33,6 +33,7 @@ std::array<unsigned char, 64> Counting() {
 } // namespace
 
 int main() {
+    libSceVnaWebsocketUnknown_Bw0_minus_YBkPNm4_nid_no_patch();
     int object = 0;
     for (void* value : {static_cast<void*>(nullptr), static_cast<void*>(&object), reinterpret_cast<void*>(~std::uintptr_t{0})}) {
         Require(libSceVnaWebsocketUnknown_hSnmIgcBCMk_nid_no_patch(value) == value);

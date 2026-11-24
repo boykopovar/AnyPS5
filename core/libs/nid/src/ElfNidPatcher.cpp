@@ -381,13 +381,16 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
 
     std::size_t dynSymOffset = 0u, dynSymSize = 0u;
     std::size_t gnuHashOffset = 0u, gnuHashSize = 0u;
+    std::uint32_t gnuHashLink = 0u;
     std::size_t sysvHashOffset = 0u, sysvHashSize = 0u;
     std::uint32_t sysvHashLink = 0u;
     std::size_t versymOffset = 0u, versymSize = 0u;
+    std::uint32_t versymLink = 0u;
     bool hasDynamic = false;
     std::uint32_t dynSymSectionIndex = 0u;
     std::uint32_t dynSymSectionLink = 0u;
     bool hasDynSym = false;
+    std::vector<std::uint32_t> verneedLinks;
     std::uint32_t gnuHashSymOffset = 0u;
     for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
         const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
@@ -407,6 +410,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (shdr.sh_type == kShtGnuHash) {
             gnuHashOffset = static_cast<std::size_t>(shdr.sh_offset);
             gnuHashSize = static_cast<std::size_t>(shdr.sh_size);
+            gnuHashLink = shdr.sh_link;
         }
         if (shdr.sh_type == kShtHash) {
             sysvHashOffset = static_cast<std::size_t>(shdr.sh_offset);
@@ -416,7 +420,9 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (shdr.sh_type == kShtGnuVersym) {
             versymOffset = static_cast<std::size_t>(shdr.sh_offset);
             versymSize = static_cast<std::size_t>(shdr.sh_size);
+            versymLink = shdr.sh_link;
         }
+        if (shdr.sh_type == kShtGnuVerneed && shdr.sh_size != 0u) verneedLinks.push_back(shdr.sh_link);
         if (shdr.sh_type == kShtGnuVerdef)
             throw std::runtime_error("unsupported .gnu.version_d section: symbol version definitions cannot be preserved");
     }
@@ -435,10 +441,14 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         return;
     }
     if (dynSymOffset == 0u) throw std::runtime_error("no .dynsym section");
+    if (std::any_of(verneedLinks.begin(), verneedLinks.end(), [&](std::uint32_t link) { return link != dynSymSectionLink; }))
+        throw std::runtime_error("invalid .gnu.version_r string table link");
 
     const std::size_t symCount = dynSymSize / sizeof(Elf64_Sym);
     if (symCount == 0u) throw std::runtime_error(".dynsym is empty");
     if (versymOffset != 0u) {
+        if (versymLink != dynSymSectionIndex)
+            throw std::runtime_error("invalid ELF version symbol table link");
         RequireElfRange(elf, versymOffset, versymSize, "versym");
         if (versymSize < symCount * sizeof(std::uint16_t))
             throw std::runtime_error("invalid ELF version symbol table size");
@@ -448,6 +458,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         ValidateSysvHash(elf, sysvHashOffset, sysvHashSize, symCount);
     }
     if (gnuHashOffset != 0u) {
+        if (gnuHashLink != dynSymSectionIndex) throw std::runtime_error("invalid gnu.hash symbol table link");
         ValidateGnuHash(elf, gnuHashOffset, gnuHashSize, symCount);
         gnuHashSymOffset = Read<std::uint32_t>(elf, gnuHashOffset + 4u);
     }

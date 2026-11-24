@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 
-BUILD_WIDE_PREFIXES = ("3rdparty/", "cmake/", "core/CMakeLists.txt", ".gitmodules")
+BUILD_WIDE_PREFIXES = ("3rdparty/", "cmake/", ".gitmodules")
 
 
 def object_document(value, path, name):
@@ -34,10 +34,12 @@ def target_document(value, path):
 
 def read_reply(build_dir):
     reply_dir = build_dir / ".cmake" / "api" / "v1" / "reply"
-    indexes = list(reply_dir.glob("index-*.json"))
+    indexes = [*reply_dir.glob("index-*.json"), *reply_dir.glob("error-*.json")]
     if not indexes:
         raise ValueError(f"{reply_dir}: no CMake File API index; configure with the codemodel-v2 query first")
-    index = max(indexes, key=lambda path: path.stat().st_mtime_ns)
+    index = max(indexes, key=lambda path: path.name.split("-", 1)[1])
+    if index.name.startswith("error-"):
+        raise ValueError(f"{index}: latest CMake generation failed; configure successfully before selecting targets")
     document = object_document(json.loads(index.read_text(encoding="utf-8")), index, "CMake File API index")
     reply = object_document(document.get("reply", {}), index, "CMake File API reply")
     codemodel = reply.get("codemodel-v2")
@@ -205,7 +207,7 @@ def host_only_test_targets(source_root, targets, changed_paths=None):
         except ValueError:
             continue
         sources = [source_root / source["path"] for source in target.get("sources", []) if not source.get("isGenerated")]
-        if not any("tests" in source.parts and source.is_relative_to(source_root / "core" / "libs") for source in sources):
+        if not any(is_core_libs_test_source(source, source_root / "core" / "libs") for source in sources):
             continue
         if links_guest_libc(target) or links_product_library(target, targets, source_root):
             continue
@@ -248,7 +250,9 @@ def main(argv=None):
         print("Host-only core/libs test executables:")
         print("\n".join(selected))
         if not args.list_only:
-            subprocess.run(["cmake", "--build", str(args.build_dir), "--parallel", "3", "--target", *selected], check=True)
+            from select_tests import chunks
+            for batch in chunks(selected):
+                subprocess.run(["cmake", "--build", str(args.build_dir), "--parallel", "3", "--target", *batch], check=True)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)
         return 1

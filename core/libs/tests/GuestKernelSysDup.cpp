@@ -19,6 +19,17 @@ void Require(bool condition, const char* message) {
     }
 }
 
+template<typename TAction>
+void RequireThrows(TAction action, const char* message) {
+    bool threw = false;
+    try {
+        action();
+    } catch (...) {
+        threw = true;
+    }
+    Require(threw, message);
+}
+
 } // namespace
 
 int main() {
@@ -59,6 +70,27 @@ int main() {
     Require(close_nid_postfix(pipeFds2[1]) == 0, "close replaced target failed");
     Require(close_nid_postfix(pipeFds2[0]) == 0, "close pipe 2 read-end failed");
     Require(close_nid_postfix(pipeFds1[0]) == 0, "close pipe 1 read-end failed");
+
+    constexpr int SceKernelErrorEbadf = static_cast<int>(0x80020009);
+
+    Require(sceKernelRdup(0, -1) == SceKernelErrorEbadf, "sceKernelRdup(0, -1) did not fail with EBADF");
+    Require(sceKernelRdup(getpid_nid_postfix(), -1) == SceKernelErrorEbadf, "sceKernelRdup(own_pid, -1) did not fail with EBADF");
+    Require(sceKernelRdup(0, 1000000) == SceKernelErrorEbadf, "sceKernelRdup on unopened descriptor did not fail with EBADF");
+
+    int rdupPipe[2]{-1, -1};
+    Require(pipe_nid_postfix(rdupPipe) == 0, "rdup pipe creation failed");
+    const int rdupCopy = sceKernelRdup(0, rdupPipe[0]);
+    Require(rdupCopy >= 0 && rdupCopy != rdupPipe[0], "sceKernelRdup(0, fd) failed to duplicate");
+    Require(close_nid_postfix(rdupCopy) == 0, "close rdup copy failed");
+
+    const int rdupOwnCopy = sceKernelRdup(getpid_nid_postfix(), rdupPipe[1]);
+    Require(rdupOwnCopy >= 0 && rdupOwnCopy != rdupPipe[1], "sceKernelRdup(own_pid, fd) failed to duplicate");
+    Require(close_nid_postfix(rdupOwnCopy) == 0, "close rdup own copy failed");
+
+    Require(close_nid_postfix(rdupPipe[0]) == 0, "close rdup pipe 0 failed");
+    Require(close_nid_postfix(rdupPipe[1]) == 0, "close rdup pipe 1 failed");
+
+    RequireThrows([] { sceKernelRdup(1234567, 0); }, "sceKernelRdup for another process did not throw");
 
     std::puts("KERNEL SYS DUP tests passed");
     return 0;

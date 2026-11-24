@@ -19,6 +19,7 @@ INCLUDE = [
 
 OPEN = {"if": "endif", "foreach": "endforeach", "while": "endwhile", "function": "endfunction", "macro": "endmacro", "block": "endblock"}
 BRANCH = {"elseif", "else"}
+BRACKET = re.compile(r"\[(=*)\[")
 CALL = re.compile(r"[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(")
 UNIT = re.compile(r"[a-z][a-z0-9_]*_tests")
 MENTION = re.compile(r"(?<![A-Za-z0-9_{])[a-z][a-z0-9_]*_tests(?![A-Za-z0-9_])")
@@ -90,7 +91,7 @@ def arguments_of(text, position, line):
             token = (token or "") + text[position + 1:end]
             position = end + 1
             continue
-        bracket = re.match(r"\[(=*)\[", text[position:position + 32])
+        bracket = BRACKET.match(text, position)
         if bracket and token is None:
             close = text.find("]" + bracket[1] + "]", position + len(bracket[0]))
             if close < 0:
@@ -101,9 +102,9 @@ def arguments_of(text, position, line):
             position = close + len(bracket[0])
             continue
         if character == "#":
-            comment = re.match(r"#\[(=*)\[", text[position:position + 32])
+            comment = BRACKET.match(text, position + 1)
             if comment:
-                close = text.find("]" + comment[1] + "]", position + len(comment[0]))
+                close = text.find("]" + comment[1] + "]", comment.end())
                 if close < 0:
                     raise SplitError(f"line {line + 1}: unterminated bracket comment")
                 close += len(comment[1]) + 2

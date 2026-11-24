@@ -1,0 +1,5 @@
+# libc
+
+## change [The wide printf family]
+
+- [The wide printf family](../../../core/libs/prx/libc/src/FormattingWide.cpp) (libc) follows the measured `libSceLibcInternal.sprx` wide `printf` behavior: `%qd`, `%D`, `%O`, `%U`, `%y`, `%m` and `%lqd` print as literal text, the width pads the whole text, `h` and `hh` are dropped and `%5%` pads a single `%`. The other forms the tests pin (`%qu`, `%qx`, `%qo`, `%hD`, `%jD`, `%qc`, `%l5d`, `%lhd`, `%l*d`, `%-3y`, `%05y`) follow the same rule by extension and were not measured. So does a conversion unit from 0x80 up, a lone or paired surrogate included. The probe ran in a payload process on firmware 12.70; it did not measure a title's bundled `libc.prx`, which uses Dinkumware `_Printf`, so title behavior is unverified. A trailing `%` in the probe read beyond the format instead of stopping safely; this implementation continues to reject incomplete conversions. `snwprintf_s` also continues to reject these extensions because its console behavior is unverified.

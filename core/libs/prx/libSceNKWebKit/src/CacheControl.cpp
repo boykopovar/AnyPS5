@@ -26,7 +26,10 @@
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
+#include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <string_view>
@@ -160,4 +163,13 @@ extern "C" NKWebKit::HttpAbi::CacheControlDirectives APS5_VABI _ZN7WebCore27pars
             result.noCache = pragma.impl->hashAndFlags & 4 ? PragmaNoCache<unsigned char>(pragma) : PragmaNoCache<char16_t>(pragma);
     }
     return result;
+}
+
+extern "C" WTF::Seconds APS5_VABI _ZN7WebCore17computeCurrentAgeERKNS_16ResourceResponseEN3WTF8WallTimeE(const NKWebKit::WebCoreAbi::ResourceResponseBase& response, WTF::WallTime responseTime) {
+    const auto dateValue = _ZNK7WebCore20ResourceResponseBase4dateEv(&response);
+    const double apparentAge = dateValue.hasValue ? std::max(0.0, responseTime.m_value - dateValue.seconds) : 0.0;
+    const auto ageValue = _ZNK7WebCore20ResourceResponseBase3ageEv(&response);
+    const double correctedInitialAge = std::max(apparentAge, ageValue.hasValue ? ageValue.seconds : 0.0);
+    const double residentTime = _ZN3WTF8WallTime3nowEv().m_value - responseTime.m_value;
+    return WTF::Seconds{correctedInitialAge + residentTime};
 }

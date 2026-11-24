@@ -52,6 +52,12 @@ int main() {
     Require(sceVideoOutAddFlipEvent(0, handle + 1, nullptr) == InvalidHandle, "the handle was not checked before the queue");
 
     Require(sceVideoOutClose(handle) == 0, "sceVideoOutClose failed");
+    Require(sceVideoOutDeleteFlipEvent(queue, handle) == InvalidHandle, "deleting a flip event on a closed port did not return INVALID_HANDLE");
+    Require(sceVideoOutDeleteVblankEvent(queue, handle) == InvalidHandle, "deleting a vblank event on a closed port did not return INVALID_HANDLE");
+    Require(sceVideoOutDeletePreVblankStartEvent(queue, handle) == InvalidHandle, "deleting a pre-vblank-start event on a closed port did not return INVALID_HANDLE");
+    Require(sceVideoOutDeleteOutputModeEvent(queue, handle) == InvalidHandle, "deleting a output mode event on a closed port did not return INVALID_HANDLE");
+    Require(sceVideoOutDeleteVrrActiveStatusEvent(queue, handle) == InvalidHandle, "deleting a VRR active status event on a closed port did not return INVALID_HANDLE");
+    Require(sceVideoOutDeleteFlipEvent(0, handle) == InvalidHandle, "the closed handle was not checked before the queue");
     Require(sceKernelDeleteEqueue(queue) == 0, "event queue deletion failed");
     std::printf("guest VideoOut flip event code tests passed\n");
     LibcRunShutdown_nid_postfix();

@@ -253,10 +253,17 @@ int main() {
         address[1] = 0x1e;
         Require(sceRudpActivate(server, address, 0xffffffffu) == 0);
         Require(sceRudpActivate(server, address, 2) == inProgress);
+        Require(sceRudpListen(server, 1) == notAcceptable && sceRudpListen(p2p, 1) == notAcceptable);
+        std::memset(status, 0x5a, sizeof(status));
+        Require(sceRudpGetContextStatus(server, status, sizeof(status)) == 0 && status[0] == 1);
         Require(sceRudpTerminate(p2p) == 0);
         Require(sceRudpActivate(p2p, address, 0x10) == invalidContextId);
         Require(sceRudpGetContextStatus(p2p, status, sizeof(status)) == invalidContextId);
         Require(sceRudpTerminate(server) == 0 && sceRudpTerminate(listening) == 0 && sceRudpTerminate(created) == 0);
+        int rebound = -1;
+        Require(sceRudpCreateContext(Handler, nullptr, &rebound) == 0);
+        Require(sceRudpBind(rebound, 9, 0x2711, 2) == 0);
+        Require(sceRudpTerminate(rebound) == 0);
         Require(sceRudpProcessEvents(0) == 0);
     }
 

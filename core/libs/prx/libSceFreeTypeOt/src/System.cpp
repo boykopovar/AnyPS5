@@ -10,12 +10,17 @@
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <ios>
 #include <limits>
 #include <memory>
+#include <string>
 #include <system_error>
 
 using namespace FreeType;
@@ -30,30 +35,69 @@ constexpr int CannotOpenStream = 0x51;
 constexpr std::uint32_t OpenMemory = 0x1;
 constexpr std::uint32_t OpenStream = 0x2;
 constexpr std::uint32_t OpenPathname = 0x4;
+constexpr std::size_t Chunk = 4096;
 
-std::ifstream& File(GuestStreamRec* stream) {
-    return *static_cast<std::ifstream*>(stream->descriptor);
+void CopyIn(void* destination, const void* source, std::size_t bytes, const char* caller) {
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    if (!copied) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller) {
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    if (!copied) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+GuestStreamRec ReadStream(const GuestStreamRec* stream, const char* caller) {
+    GuestStreamRec record{};
+    CopyIn(&record, stream, sizeof(record), caller);
+    return record;
+}
+
+std::string ReadText(const char* source, const char* caller) {
+    std::string text;
+    std::array<char, Chunk> buffer;
+    auto address = reinterpret_cast<std::uintptr_t>(source);
+    for (;;) {
+        const std::size_t count = Chunk - address % Chunk;
+        CopyIn(buffer.data(), reinterpret_cast<const void*>(address), count, caller);
+        const auto* end = static_cast<const char*>(std::memchr(buffer.data(), 0, count));
+        text.append(buffer.data(), end ? static_cast<std::size_t>(end - buffer.data()) : count);
+        if (end) return text;
+        address += count;
+    }
 }
 
 void APS5_VABI StreamClose(GuestStreamRec* stream) {
-    delete &File(stream);
-    stream->descriptor = nullptr;
-    stream->size = 0;
-    stream->base = nullptr;
+    GuestStreamRec record = ReadStream(stream, __func__);
+    delete static_cast<std::ifstream*>(record.descriptor);
+    record.descriptor = nullptr;
+    record.size = 0;
+    record.base = nullptr;
+    CopyOut(stream, &record, sizeof(record), __func__);
 }
 
 std::uint64_t APS5_VABI StreamIo(GuestStreamRec* stream, std::uint64_t offset, std::uint8_t* buffer, std::uint64_t count) {
-    if (!count && offset > stream->size) return 1;
-    auto& file = File(stream);
+    const GuestStreamRec record = ReadStream(stream, __func__);
+    if (!count && offset > record.size) return 1;
+    auto& file = *static_cast<std::ifstream*>(record.descriptor);
     file.clear();
-    if (stream->pos != offset) {
+    if (record.pos != offset) {
         if (offset > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) NotImplemented_nid_no_patch("FT_Stream_Open");
         file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
     }
     if (!count || !file) return 0;
-    const auto request = static_cast<std::streamsize>(std::min<std::uint64_t>(count, std::numeric_limits<std::streamsize>::max()));
-    file.read(reinterpret_cast<char*>(buffer), request);
-    return static_cast<std::uint64_t>(file.gcount());
+    const std::uint64_t request = std::min<std::uint64_t>(count, std::numeric_limits<std::streamsize>::max());
+    std::array<char, Chunk> chunk;
+    std::uint64_t total = 0;
+    while (total < request) {
+        const auto wanted = static_cast<std::streamsize>(std::min<std::uint64_t>(Chunk, request - total));
+        file.read(chunk.data(), wanted);
+        const auto got = static_cast<std::size_t>(file.gcount());
+        CopyOut(buffer + total, chunk.data(), got, __func__);
+        total += got;
+        if (got < static_cast<std::size_t>(wanted)) break;
+    }
+    return total;
 }
 
 }
@@ -63,14 +107,17 @@ extern "C" {
 int APS5_VABI FT_Stream_Open_nid_postfix(GuestStreamRec* stream, const char* filepathname) {
     if (!stream) return InvalidStreamHandle;
     if (!filepathname) NotImplemented_nid_no_patch(__func__);
-    stream->descriptor = nullptr;
-    stream->pathname = const_cast<char*>(filepathname);
-    stream->base = nullptr;
-    stream->pos = 0;
-    stream->read = nullptr;
-    stream->close = nullptr;
+    GuestStreamRec record = ReadStream(stream, __func__);
+    record.descriptor = nullptr;
+    record.pathname = const_cast<char*>(filepathname);
+    record.base = nullptr;
+    record.pos = 0;
+    record.read = nullptr;
+    record.close = nullptr;
+    CopyOut(stream, &record, sizeof(record), __func__);
+    const std::string path = ReadText(filepathname, __func__);
     std::filesystem::path hostPath;
-    if (ResolvePathError_nid_no_patch(filepathname, hostPath) != 0) return CannotOpenResource;
+    if (ResolvePathError_nid_no_patch(path.c_str(), hostPath) != 0) return CannotOpenResource;
     std::error_code error;
     const auto status = std::filesystem::status(hostPath, error);
     if (error || !std::filesystem::exists(status)) return CannotOpenResource;
@@ -80,49 +127,59 @@ int APS5_VABI FT_Stream_Open_nid_postfix(GuestStreamRec* stream, const char* fil
     file->seekg(0, std::ios::end);
     const std::streamoff size = file->tellg();
     if (size < 0) NotImplemented_nid_no_patch(__func__);
-    stream->size = static_cast<std::uint64_t>(size);
-    if (!stream->size) return CannotOpenStream;
+    record.size = static_cast<std::uint64_t>(size);
+    if (!record.size) {
+        CopyOut(stream, &record, sizeof(record), __func__);
+        return CannotOpenStream;
+    }
     file->seekg(0, std::ios::beg);
-    stream->descriptor = file.release();
-    stream->read = StreamIo;
-    stream->close = StreamClose;
+    record.descriptor = file.get();
+    record.read = StreamIo;
+    record.close = StreamClose;
+    CopyOut(stream, &record, sizeof(record), __func__);
+    file.release();
     return 0;
 }
 
 int APS5_VABI FT_Stream_New_nid_postfix(GuestRaccessLibrary* library, const GuestStreamOpenArgs* args, GuestStreamRec** astream) {
     if (!astream) NotImplemented_nid_no_patch(__func__);
-    *astream = nullptr;
+    GuestStreamRec* stream = nullptr;
+    CopyOut(astream, &stream, sizeof(stream), __func__);
     if (!library) return InvalidLibraryHandle;
     if (!args) return InvalidArgument;
-    GuestMemoryRec* memory = library->memory;
+    GuestRaccessLibrary owner{};
+    CopyIn(&owner, library, sizeof(owner), __func__);
+    GuestMemoryRec* memory = owner.memory;
     if (!memory) NotImplemented_nid_no_patch(__func__);
+    GuestStreamOpenArgs open{};
+    CopyIn(&open, args, sizeof(open), __func__);
     int error = 0;
-    auto* stream = static_cast<GuestStreamRec*>(ft_mem_alloc_nid_postfix(memory, sizeof(GuestStreamRec), &error));
+    stream = static_cast<GuestStreamRec*>(OtMemAlloc(memory, sizeof(GuestStreamRec), &error));
     if (error) return error;
-    stream->memory = memory;
-    if (args->flags & OpenMemory) {
-        FT_Stream_OpenMemory_nid_postfix(stream, args->memoryBase, static_cast<std::uint64_t>(args->memorySize));
-    } else if (args->flags & OpenPathname) {
+    CopyOut(&stream->memory, &memory, sizeof(memory), __func__);
+    if (open.flags & OpenMemory) {
+        FT_Stream_OpenMemory_nid_postfix(stream, open.memoryBase, static_cast<std::uint64_t>(open.memorySize));
+    } else if (open.flags & OpenPathname) {
         try {
-            error = FT_Stream_Open_nid_postfix(stream, args->pathname);
+            error = FT_Stream_Open_nid_postfix(stream, open.pathname);
         } catch (...) {
-            ft_mem_free_nid_postfix(memory, stream);
+            OtMemFree(memory, stream);
             throw;
         }
-        stream->pathname = args->pathname;
-    } else if ((args->flags & OpenStream) && args->stream) {
-        ft_mem_free_nid_postfix(memory, stream);
-        stream = args->stream;
+        CopyOut(&stream->pathname, &open.pathname, sizeof(open.pathname), __func__);
+    } else if ((open.flags & OpenStream) && open.stream) {
+        OtMemFree(memory, stream);
+        stream = open.stream;
     } else {
         error = InvalidArgument;
     }
     if (error) {
-        ft_mem_free_nid_postfix(memory, stream);
+        OtMemFree(memory, stream);
         stream = nullptr;
     } else {
-        stream->memory = memory;
+        CopyOut(&stream->memory, &memory, sizeof(memory), __func__);
     }
-    *astream = stream;
+    CopyOut(astream, &stream, sizeof(stream), __func__);
     return error;
 }
 

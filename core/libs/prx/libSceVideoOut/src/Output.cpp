@@ -19,6 +19,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 
 namespace {
@@ -204,7 +205,7 @@ int APS5_VABI sceVideoOutGetFlipStatus(int handle, VideoOutFlipStatus* status) t
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
-    if (cfg->ps4) {
+    if (cfg->ps4 || sceKernelIsPs4Process()) {
         const auto& current = cfg->flipStatus;
         VideoOutFlipStatusPs4 legacy{current.count, current.processTime, 0, current.flipArg, 0, 0, current.gcQueueNum, current.flipPendingNum, current.currentBuffer, 0};
         *reinterpret_cast<VideoOutFlipStatusPs4*>(status) = legacy;
@@ -226,7 +227,7 @@ int APS5_VABI sceVideoOutGetVblankStatus(int handle, VideoOutVblankStatus* statu
     }
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
-    if (cfg->ps4) {
+    if (cfg->ps4 || sceKernelIsPs4Process()) {
         const auto& current = cfg->vblankStatus;
         VideoOutVblankStatusPs4 legacy{current.count, current.processTime, 0, current.flags};
         *reinterpret_cast<VideoOutVblankStatusPs4*>(status) = legacy;
@@ -356,6 +357,13 @@ int APS5_VABI sceVideoOutCursorSetImageAddress(int32_t handle, int32_t index, co
 }
 
 int APS5_VABI sceVideoOutCursorSetPosition(int32_t handle, int32_t index, uint32_t, uint32_t) try {
+    if (const int error = cursorHandleError(__func__, handle, index)) return error;
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutCursorSetHotSpot(int32_t handle, int32_t index, uint32_t, uint32_t) try {
     if (const int error = cursorHandleError(__func__, handle, index)) return error;
     return 0;
 } catch (const ProcessShutdown&) {
