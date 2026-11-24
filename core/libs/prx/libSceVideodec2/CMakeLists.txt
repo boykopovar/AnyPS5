@@ -53,4 +53,26 @@ if(BUILD_TESTING)
         set_tests_properties(guest_videodec2_unimplemented PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideodec2>")
     endif()
+
+    add_test_executable(guest_videodec2_create_decoder_bid_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideodec2CreateDecoderBid.cpp)
+    target_include_directories(guest_videodec2_create_decoder_bid_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_videodec2_create_decoder_bid_tests PRIVATE libSceVideodec2 libc)
+    configure_windows_unwind(guest_videodec2_create_decoder_bid_tests)
+    add_test(NAME guest_videodec2_create_decoder_bid COMMAND guest_videodec2_create_decoder_bid_tests)
+    set_tests_properties(guest_videodec2_create_decoder_bid PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_videodec2_create_decoder_bid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideodec2>")
+    endif()
+
+    add_test_executable(guest_videodec2_map_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideodec2MapMemory.cpp)
+    target_include_directories(guest_videodec2_map_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_videodec2_map_memory_tests PRIVATE libSceVideodec2 libc)
+    configure_windows_unwind(guest_videodec2_map_memory_tests)
+    add_test(NAME guest_videodec2_map_memory COMMAND guest_videodec2_map_memory_tests)
+    set_tests_properties(guest_videodec2_map_memory PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_videodec2_map_memory PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideodec2>")
+    endif()
 endif()

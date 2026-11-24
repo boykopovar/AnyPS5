@@ -106,6 +106,9 @@ constexpr int Videodec2ErrorFrameBufferSize = static_cast<int>(0x811D0106u);
 constexpr int Videodec2ErrorFrameBufferPointer = static_cast<int>(0x811D0107u);
 constexpr int Videodec2ErrorFrameBufferAlignment = static_cast<int>(0x811D0108u);
 constexpr int Videodec2ErrorPictureCount = static_cast<int>(0x811D010Fu);
+constexpr int Videodec2ErrorDecoderInstance = static_cast<int>(0x811D0103u);
+constexpr int Videodec2ErrorMemorySize = static_cast<int>(0x811D0104u);
+constexpr int Videodec2ErrorResourceType = static_cast<int>(0x811D0203u);
 constexpr int Videodec2ErrorRefusedComputeQueue = static_cast<int>(0x811D0110u);
 
 static_assert(sizeof(Vp9PictureInfo) == 88);
@@ -635,12 +638,8 @@ int APS5_VABI sceVideodec2QueryDecoderMemoryInfo_nid_postfix(const DecoderConfig
     return 0;
 }
 
-int APS5_VABI sceVideodec2CreateDecoder_nid_postfix(const DecoderConfigInfo* config, const DecoderMemoryInfo* memory, std::uint64_t* handle) {
-    DecoderConfigInfo localConfig{};
-    DecoderMemoryInfo localMemory{};
-    if (!config || !memory || !handle || !CopyInGuest(localConfig, config) || !CopyInGuest(localMemory, memory)) {
-        throw std::runtime_error("Videodec2: invalid argument pointer");
-    }
+static int CreateDecoderInternal(const DecoderConfigInfo& localConfig, const DecoderMemoryInfo& localMemory, std::uint64_t* handle) {
+    static_cast<void>(localMemory);
     CodecId(localConfig.codecType);
     auto decoder = std::make_shared<Decoder>();
     decoder->codec = localConfig.codecType;
@@ -651,6 +650,36 @@ int APS5_VABI sceVideodec2CreateDecoder_nid_postfix(const DecoderConfigInfo* con
     ++nextDecoder;
     decoders.emplace(allocated, decoder);
     std::fprintf(stderr, "[videodec2] decoder %llu: codec=%u max %dx%d (%s)\n", static_cast<unsigned long long>(allocated), localConfig.codecType, localConfig.maxFrameWidth, localConfig.maxFrameHeight, decoder->context->codec->long_name);
+    return 0;
+}
+
+int APS5_VABI sceVideodec2CreateDecoder_nid_postfix(const DecoderConfigInfo* config, const DecoderMemoryInfo* memory, std::uint64_t* handle) {
+    DecoderConfigInfo localConfig{};
+    DecoderMemoryInfo localMemory{};
+    if (!config || !memory || !handle || !CopyInGuest(localConfig, config) || !CopyInGuest(localMemory, memory)) {
+        throw std::runtime_error("Videodec2: invalid argument pointer");
+    }
+    return CreateDecoderInternal(localConfig, localMemory, handle);
+}
+
+int APS5_VABI sceVideodec2CreateDecoderBid(std::uint32_t bid, const DecoderConfigInfo* config, const DecoderMemoryInfo* memory, std::uint64_t* handle) {
+    if (!config) throw std::runtime_error("Videodec2: invalid argument pointer");
+    DecoderConfigInfo localConfig{};
+    if (!CopyInGuest(localConfig, config)) throw std::runtime_error("Videodec2: invalid argument pointer");
+    if (localConfig.resourceType == 1) return Videodec2ErrorResourceType;
+    if (!memory || !handle) throw std::runtime_error("Videodec2: invalid argument pointer");
+    DecoderMemoryInfo localMemory{};
+    if (!CopyInGuest(localMemory, memory)) throw std::runtime_error("Videodec2: invalid argument pointer");
+    if (bid != 1) NotImplemented_nid_no_patch(__func__);
+    return CreateDecoderInternal(localConfig, localMemory, handle);
+}
+
+int APS5_VABI sceVideodec2MapMemory(std::uint64_t handle, void* memory, std::uint64_t size) {
+    if (handle == 0) return Videodec2ErrorDecoderInstance;
+    std::lock_guard guard(lock);
+    if (!decoders.contains(handle)) return Videodec2ErrorDecoderInstance;
+    if (!memory) return Videodec2ErrorArgumentPointer;
+    if (size == 0) return Videodec2ErrorMemorySize;
     return 0;
 }
 

@@ -16,10 +16,6 @@ int APS5_VABI sceVideodec2QueryDecoderInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideodec2MapMemory() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceVideodec2MapDirectMemory(void*, const void*) {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -37,10 +33,6 @@ int APS5_VABI sceVideodec2PresetDecoderConfigInfoHevc() {
 }
 
 int APS5_VABI sceVideodec2PresetDecoderConfigInfoVp9() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceVideodec2CreateDecoderBid() {
     NotImplemented_nid_no_patch(__func__);
 }
 

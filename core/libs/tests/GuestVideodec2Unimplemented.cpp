@@ -22,12 +22,10 @@ int main() {
     bool passed = ReportsNotImplemented("sceVideodec2TermLibrary", [] { return sceVideodec2TermLibrary(); });
     passed = ReportsNotImplemented("sceVideodec2QueryLibraryInfo", [] { return sceVideodec2QueryLibraryInfo(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2QueryDecoderInfo", [] { return sceVideodec2QueryDecoderInfo(); }) && passed;
-    passed = ReportsNotImplemented("sceVideodec2MapMemory", [] { return sceVideodec2MapMemory(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2MapDirectMemory", [] { return sceVideodec2MapDirectMemory(nullptr, nullptr); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2PresetDecoderConfigInfo", [] { return sceVideodec2PresetDecoderConfigInfo(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2PresetDecoderConfigInfoAvc", [] { return sceVideodec2PresetDecoderConfigInfoAvc(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2PresetDecoderConfigInfoHevc", [] { return sceVideodec2PresetDecoderConfigInfoHevc(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2PresetDecoderConfigInfoVp9", [] { return sceVideodec2PresetDecoderConfigInfoVp9(); }) && passed;
-    passed = ReportsNotImplemented("sceVideodec2CreateDecoderBid", [] { return sceVideodec2CreateDecoderBid(); }) && passed;
     return passed ? 0 : 1;
 }
