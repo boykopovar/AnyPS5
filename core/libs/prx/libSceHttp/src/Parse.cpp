@@ -20,19 +20,14 @@ struct GuestLine {
     char At(size_t index) {
         char value = 0;
         if (failed) return value;
-        const int savedErrno = errno;
         failed = !GuestCopyIn_nid_no_patch(&value, line + index, sizeof(value));
-        errno = savedErrno;
         return value;
     }
 };
 
 template<class T>
 bool writeGuest(T* destination, const T& value) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
 }
 
 int parseVersionNumber(GuestLine& line, size_t& index, int32_t* value) {
@@ -60,9 +55,7 @@ int APS5_VABI sceHttpParseStatusLine(const char* statusLine, size_t lineLen, int
     if (lineLen < 8) return ERROR_PARSE_HTTP_INVALID_RESPONSE;
     char prefix[5] = {};
     {
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(prefix, statusLine, sizeof(prefix));
-        errno = savedErrno;
         if (!copied || std::memcmp(prefix, "HTTP/", 5) != 0) return ERROR_PARSE_HTTP_INVALID_RESPONSE;
     }
 

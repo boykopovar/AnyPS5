@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## add Functional
+
+- [d2i_PKCS7 length forms](../../../core/libs/prx/libSceLibreSsl3/src/Pkcs7.cpp) (libSceLibreSsl3) - not checked on the console. The headers `d2i_PKCS7` reads itself take a definite length in any long form, as LibreSSL 4.0.0 [`asn1_get_length_cbs`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/asn1_lib.c#L79-L138) does without DER mode: up to 126 length bytes, leading zeros, a value that fits `size_t`. The algorithm identifiers, issuer names and certificates inside go through the `X509_STORE_load_locations` decoder, which still refuses a long form that is not minimal. A refused header queues its own reason without the `ERR_R_NESTED_ASN1_ERROR` entries of `tasn_dec.c`, and the length is read before the tag is compared, so a wrong tag with a bad length queues `ASN1_R_BAD_OBJECT_HEADER` where 4.0.0 queues `ASN1_R_WRONG_TAG`. Closes when: the shared decoder reads lengths the same way and the queue is compared with 4.0.0.

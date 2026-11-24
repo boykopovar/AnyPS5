@@ -1,4 +1,12 @@
+#include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"
+#include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 #include <cmath>
 #include <cstddef>
@@ -206,6 +214,46 @@ static void RequireInvalidArgument(TCall call, int line) {
     Check(false, line);
 }
 
+static void FloatSizeFromIntSize() {
+    WebCore::IntSize source{3, 4};
+    WebCore::FloatSize out;
+    unsigned char sentinel[sizeof(WebCore::FloatSize)];
+    std::memset(sentinel, 0x5A, sizeof(sentinel));
+    std::memset(&out, 0x5A, sizeof(out));
+    RequireInvalidArgument([&] { _ZN7WebCore9FloatSizeC1ERKNS_7IntSizeE(nullptr, source); }, __LINE__);
+    Require(std::memcmp(&out, sentinel, sizeof(out)) == 0);
+    auto* danglingSelf = reinterpret_cast<WebCore::FloatSize*>(0x1);
+    RequireInvalidArgument([&] { _ZN7WebCore9FloatSizeC1ERKNS_7IntSizeE(danglingSelf, source); }, __LINE__);
+    Require(std::memcmp(&out, sentinel, sizeof(out)) == 0);
+#ifdef _WIN32
+    auto* readOnly = static_cast<WebCore::FloatSize*>(VirtualAlloc(nullptr, sizeof(WebCore::FloatSize), MEM_RESERVE | MEM_COMMIT, PAGE_READONLY));
+    Require(readOnly != nullptr);
+#else
+    auto* readOnly = static_cast<WebCore::FloatSize*>(mmap(nullptr, sizeof(WebCore::FloatSize), PROT_READ, MAP_ANON | MAP_PRIVATE, -1, 0));
+    Require(readOnly != MAP_FAILED);
+#endif
+    RequireInvalidArgument([&] { _ZN7WebCore9FloatSizeC1ERKNS_7IntSizeE(readOnly, source); }, __LINE__);
+#ifdef _WIN32
+    Require(VirtualFree(readOnly, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(readOnly, sizeof(WebCore::FloatSize)) == 0);
+#endif
+    Require(std::memcmp(&out, sentinel, sizeof(out)) == 0);
+    WebCore::IntSize zero{0, 0};
+    std::memset(&out, 0x5A, sizeof(out));
+    _ZN7WebCore9FloatSizeC1ERKNS_7IntSizeE(&out, zero);
+    Require(Same(out.m_width, 0.0f));
+    Require(Same(out.m_height, 0.0f));
+    _ZN7WebCore9FloatSizeC1ERKNS_7IntSizeE(&out, source);
+    Require(Same(out.m_width, 3.0f));
+    Require(Same(out.m_height, 4.0f));
+    WebCore::IntSize negative{-2, -5};
+    std::memset(&out, 0x5A, sizeof(out));
+    _ZN7WebCore9FloatSizeC2ERKNS_7IntSizeE(&out, negative);
+    Require(Same(out.m_width, -2.0f));
+    Require(Same(out.m_height, -5.0f));
+}
+
 static void NullPointers() {
     bool ok = true;
     Require(Same(_ZN3WTF18charactersToDoubleEPKhmPb(nullptr, 0, &ok), 0.0));
@@ -240,6 +288,7 @@ static void NullPointers() {
 }
 
 int main() {
+    FloatSizeFromIntSize();
     NullPointers();
     Grammar();
     Range();

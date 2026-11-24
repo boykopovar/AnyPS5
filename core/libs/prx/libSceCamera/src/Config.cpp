@@ -55,11 +55,9 @@ int APS5_VABI sceCameraSetConfigInternal(std::int32_t handle, const CameraConfig
 
 int APS5_VABI sceCameraGetDeviceConfig(std::int32_t handle, CameraConfig* config) {
     if (const int error = CheckConfig(handle, config)) return error;
-    const int savedErrno = errno;
     CameraConfig outConfig{};
     outConfig.sizeThis = sizeof(CameraConfig);
     const bool copied = GuestCopyOut_nid_no_patch(config, &outConfig, sizeof(outConfig));
-    errno = savedErrno;
     if (!copied) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
