@@ -845,6 +845,9 @@ class AssemblyTests(unittest.TestCase):
         targets = subprocess.run([hw_oracle.tool("clang"), "--print-targets"], capture_output=True, text=True).stdout
         if "amdgcn" not in targets:
             self.skipTest("clang has no AMDGPU target")
+        probe = subprocess.run([hw_oracle.tool("ld.lld"), "-m", "elf64_amdgpu"], capture_output=True, text=True)
+        if "unknown emulation" in probe.stderr:
+            self.skipTest("ld.lld has no elf64_amdgpu emulation")
         for wave64, vcc, sgpr in ((False, "vcc_lo", "s8"), (True, "vcc", "s[8:9]")):
             body = (f"  v_cmp_lt_f32 {vcc}, v4, v5\n"
                     f"  v_cndmask_b32 v10, v6, v7, {vcc}\n"

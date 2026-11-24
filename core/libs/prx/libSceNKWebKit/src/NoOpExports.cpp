@@ -47,16 +47,10 @@ void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled() {
 void APS5_VABI WKBundlePageClickMenuItem() {
 }
 
-void APS5_VABI WKBundlePageSetBottomOverhangImage() {
-}
-
 void APS5_VABI WKBundlePageSetContextMenuClient() {
 }
 
 void APS5_VABI WKBundlePageSetPaintedObjectsCounterThreshold() {
-}
-
-void APS5_VABI WKBundlePageSetTopOverhangImage() {
 }
 
 void APS5_VABI WKContextAddSupportedPlugin() {
@@ -86,19 +80,7 @@ void APS5_VABI WKContextRefreshPlugIns() {
 void APS5_VABI WKContextSetAdditionalPluginsDirectory() {
 }
 
-void APS5_VABI WKContextSetCanHandleHTTPSServerTrustEvaluation() {
-}
-
-void APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier() {
-}
-
-void APS5_VABI WKContextSetDiskCacheSpeculativeValidationEnabled() {
-}
-
 void APS5_VABI WKContextSetIconDatabasePath() {
-}
-
-void APS5_VABI WKContextSetMaximumNumberOfProcesses() {
 }
 
 void APS5_VABI WKContextSetPlugInAutoStartOriginHashes() {
@@ -111,12 +93,6 @@ void APS5_VABI WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTi
 }
 
 void APS5_VABI WKContextSetPrimaryWebsiteDataStore() {
-}
-
-void APS5_VABI WKContextSetProcessModel() {
-}
-
-void APS5_VABI WKContextSetUsesNetworkProcess() {
 }
 
 void APS5_VABI WKCookieManagerDeleteAllCookies() {
@@ -529,5 +505,391 @@ void APS5_VABI _ZN9Inspector40ApplicationCacheBackendDispatcherHandlerD1Ev() {
 
 void APS5_VABI _ZN9Inspector40ApplicationCacheBackendDispatcherHandlerD2Ev() {
 }
+
+void APS5_VABI WKBundleBackForwardListClear() {
+}
+
+void APS5_VABI WKBundlePageCopyRenderLayerTree() {
+}
+
+void APS5_VABI WKBundlePageCopyRenderTree() {
+}
+
+void APS5_VABI WKBundlePageSetDefersLoading() {
+}
+
+void APS5_VABI WKCookieManagerDeleteAllCookiesModifiedAfterDate() {
+}
+
+void APS5_VABI WKCookieManagerDeleteCookiesForHostname() {
+}
+
+void APS5_VABI WKCookieManagerGetHTTPCookieAcceptPolicy() {
+}
+
+void APS5_VABI WKCookieManagerGetHostnamesWithCookies() {
+}
+
+void APS5_VABI WKCookieManagerSetClient() {
+}
+
+void APS5_VABI WKCookieManagerStartObservingCookieChanges() {
+}
+
+void APS5_VABI WKCookieManagerStopObservingCookieChanges() {
+}
+
+void APS5_VABI WKPageHandleMediaEvent() {
+}
+
+void APS5_VABI WKPageSetUserContentExtensionsEnabled() {
+}
+
+void APS5_VABI _ZN3JSC15WeakHandleOwner8finalizeENS_6HandleINS_7UnknownEEEPv() {
+}
+
+void APS5_VABI _ZN3JSC16slowValidateCellEPNS_6JSCellE() {
+}
+
+void APS5_VABI _ZN3JSC23AbstractSamplingCounter4dumpEv() {
+}
+
+void APS5_VABI _ZN3JSC9Integrity22auditCellMinimallySlowERNS_2VMEPNS_6JSCellE() {
+}
+
+void APS5_VABI _ZN3PAL22registerNotifyCallbackERKN3WTF6StringEONS0_8FunctionIFvvEEE() {
+}
+
+void APS5_VABI _ZN3PAL8KillRing16setToYankedStateEv() {
+}
+
+void APS5_VABI _ZN3PAL8KillRing16startNewSequenceEv() {
+}
+
+void APS5_VABI _ZN3PAL8KillRing6appendERKN3WTF6StringE() {
+}
+
+void APS5_VABI _ZN3PAL8KillRing7prependERKN3WTF6StringE() {
+}
+
+void APS5_VABI _ZN3WTF15AutomaticThread14threadDidStartEv() {
+}
+
+void APS5_VABI _ZN3WTF15AutomaticThread16threadIsStoppingERKNS_14AbstractLockerE() {
+}
+
+void APS5_VABI _ZN3WTF25activateSignalHandlersForENS_6SignalE() {
+}
+
+void APS5_VABI _ZN7WebCore10Pasteboard11writeMarkupERKN3WTF6StringE() {
+}
+
+void APS5_VABI _ZN7WebCore10Pasteboard15writeCustomDataERKN3WTF6VectorINS_20PasteboardCustomDataELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE() {
+}
+
+void APS5_VABI _ZN7WebCore10Pasteboard33writeTrustworthyWebURLsPboardTypeERKNS_13PasteboardURLE() {
+}
+
+void APS5_VABI _ZN7WebCore10Pasteboard5clearERKN3WTF6StringE() {
+}
+
+void APS5_VABI _ZN7WebCore10Pasteboard5clearEv() {
+}
+
+void APS5_VABI _ZN7WebCore10Pasteboard5writeERKNS_15PasteboardImageE() {
+}
+
+void APS5_VABI _ZN7WebCore10Pasteboard5writeERKNS_5ColorE() {
+}
+
+void APS5_VABI _ZN7WebCore11JSDOMMatrix14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore11JSImageData14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore12JSAudioTrack14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore12JSTimeRanges14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore13GraphicsLayer16resumeAnimationsEv() {
+}
+
+void APS5_VABI _ZN7WebCore13GraphicsLayer17suspendAnimationsEN3WTF13MonotonicTimeE() {
+}
+
+void APS5_VABI _ZN7WebCore13JSDOMRectList14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore14DocumentLoader13attachToFrameEv() {
+}
+
+void APS5_VABI _ZN7WebCore14DocumentLoader23applyPoliciesToSettingsEv() {
+}
+
+void APS5_VABI _ZN7WebCore15ActiveDOMObject4stopEv() {
+}
+
+void APS5_VABI _ZN7WebCore15ActiveDOMObject6resumeEv() {
+}
+
+void APS5_VABI _ZN7WebCore15ActiveDOMObject7suspendENS_19ReasonForSuspensionE() {
+}
+
+void APS5_VABI _ZN7WebCore15JSFetchResponse14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore15WindowEventLoop27breakToAllowRenderingUpdateEv() {
+}
+
+void APS5_VABI _ZN7WebCore16HTMLMediaElement32prepareForVideoFullscreenStandbyEv() {
+}
+
+void APS5_VABI _ZN7WebCore17CredentialStorage23clearSessionCredentialsEv() {
+}
+
+void APS5_VABI _ZN7WebCore17CredentialStorage35removeSessionCredentialsWithOriginsERKN3WTF6VectorINS_18SecurityOriginDataELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient15didCreateWindowERNS_9DOMWindowE() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient15didDisownOpenerEv() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient17dispatchDidLayoutEv() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient20willInjectUserScriptERNS_15DOMWrapperWorldE() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient21didChangeScrollOffsetEv() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient22dispatchDidReceiveIconEv() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient23dispatchDidExplicitOpenERKN3WTF3URLERKNS1_6StringE() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient23getLoadDecisionForIconsERKN3WTF6VectorISt4pairIRNS_8LinkIconEmELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient24didRestoreScrollPositionEv() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient26dispatchWillChangeDocumentERKN3WTF3URLES4_() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient27registerForIconNotificationEv() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient28didLoadFromRegistrableDomainEONS_17RegistrableDomainE() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient29dispatchDidChangeMainDocumentEv() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient29dispatchDidNavigateWithinPageEv() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient29dispatchGlobalObjectAvailableERNS_15DOMWrapperWorldE() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient30completePageTransitionIfNeededEv() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient31dispatchDidChangeProvisionalURLEv() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient31dispatchDidReachLayoutMilestoneEN3WTF9OptionSetINS_15LayoutMilestoneEEE() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient37dispatchDidReachVisuallyNonEmptyStateEv() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient52dispatchDidReconnectDOMWindowExtensionToGlobalObjectEPNS_18DOMWindowExtensionE() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient52dispatchWillDestroyGlobalObjectForDOMWindowExtensionEPNS_18DOMWindowExtensionE() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClient56dispatchWillDisconnectDOMWindowExtensionFromGlobalObjectEPNS_18DOMWindowExtensionE() {
+}
+
+void APS5_VABI _ZN7WebCore17FrameLoaderClientD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore17JSDOMRectReadOnly14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore17LibWebRTCProvider9setActiveEb() {
+}
+
+void APS5_VABI _ZN7WebCore17LibWebRTCProviderD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore17LibWebRTCProviderD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore19JSAnimationTimeline14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore19JSDOMMatrixReadOnly14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore20LowPowerModeNotifierC1EON3WTF8FunctionIFvbEEE() {
+}
+
+void APS5_VABI _ZN7WebCore20LowPowerModeNotifierC2EON3WTF8FunctionIFvbEEE() {
+}
+
+void APS5_VABI _ZN7WebCore21JSCSSStyleDeclaration14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore21NetworkStorageSession16flushCookieStoreEv() {
+}
+
+void APS5_VABI _ZN7WebCore21NetworkStorageSession29deleteAllCookiesModifiedSinceEN3WTF8WallTimeE() {
+}
+
+void APS5_VABI _ZN7WebCore21PlatformKeyboardEvent23getCurrentModifierStateERbS1_S1_S1_() {
+}
+
+void APS5_VABI _ZN7WebCore21WheelEventTestMonitor18receivedWheelEventERKNS_18PlatformWheelEventE() {
+}
+
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient12didDetectXSSERKN3WTF3URLEb() {
+}
+
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient29savePlatformDataToCachedFrameEPNS_11CachedFrameE() {
+}
+
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient30dispatchDidFailProvisionalLoadERKNS_13ResourceErrorENS_19WillContinueLoadingE() {
+}
+
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchDecidePolicyForResponseERKNS_16ResourceResponseERKNS_15ResourceRequestENS_21PolicyCheckIdentifierERKN3WTF6StringEONS8_8FunctionIFvNS_12PolicyActionES7_EEE() {
+}
+
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchDidReachLayoutMilestoneEN3WTF9OptionSetINS_15LayoutMilestoneEEE() {
+}
+
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient33dispatchWillPerformClientRedirectERKN3WTF3URLEdNS1_8WallTimeENS_19LockBackForwardListE() {
+}
+
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient38dispatchDecidePolicyForNewWindowActionERKNS_16NavigationActionERKNS_15ResourceRequestEPNS_9FormStateERKN3WTF6StringENS_21PolicyCheckIdentifierEONS9_8FunctionIFvNS_12PolicyActionESD_EEE() {
+}
+
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient39dispatchDecidePolicyForNavigationActionERKNS_16NavigationActionERKNS_15ResourceRequestERKNS_16ResourceResponseEPNS_9FormStateENS_18PolicyDecisionModeENS_21PolicyCheckIdentifierEON3WTF8FunctionIFvNS_12PolicyActionESD_EEE() {
+}
+
+void APS5_VABI _ZN7WebCore24FrameDestructionObserver14willDetachPageEv() {
+}
+
+void APS5_VABI _ZN7WebCore27ContentSecurityPolicyClient26willSendCSPViolationReportERNS_7CSPInfoE() {
+}
+
+void APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings11setPropertyERKN3WTF6StringES5_() {
+}
+
+void APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings14deletePropertyERKN3WTF6StringE() {
+}
+
+void APS5_VABI _ZN7WebCore4Node17stopIgnoringLeaksEv() {
+}
+
+void APS5_VABI _ZN7WebCore4Node18startIgnoringLeaksEv() {
+}
+
+void APS5_VABI _ZN7WebCore6Editor22writeImageToPasteboardERNS_10PasteboardERNS_7ElementERKN3WTF3URLERKNS5_6StringE() {
+}
+
+void APS5_VABI _ZN7WebCore6Editor26writeSelectionToPasteboardERNS_10PasteboardE() {
+}
+
+void APS5_VABI _ZN7WebCore6Editor29handleAlternativeTextUIResultERKN3WTF6StringE() {
+}
+
+void APS5_VABI _ZN7WebCore6Widget4hideEv() {
+}
+
+void APS5_VABI _ZN7WebCore6Widget4showEv() {
+}
+
+void APS5_VABI _ZN7WebCore6Widget5paintERNS_15GraphicsContextERKNS_7IntRectENS0_25SecurityOriginPaintPolicyEPNS_18EventRegionContextE() {
+}
+
+void APS5_VABI _ZN7WebCore6Widget8setFocusEb() {
+}
+
+void APS5_VABI _ZN7WebCore8JSDOMURL14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore8JSPath2D14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore9CookieJar10clearCacheEv() {
+}
+
+void APS5_VABI _ZN7WebCore9CookieJar17clearCacheForHostERKN3WTF6StringE() {
+}
+
+void APS5_VABI _ZN7WebCore9JSDOMRect14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN9Inspector14InspectorAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE() {
+}
+
+void APS5_VABI _ZN9Inspector18InspectorHeapAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE() {
+}
+
+void APS5_VABI _ZN9Inspector19InspectorAuditAgent11muteConsoleEv() {
+}
+
+void APS5_VABI _ZN9Inspector19InspectorAuditAgent13unmuteConsoleEv() {
+}
+
+void APS5_VABI _ZN9Inspector19InspectorAuditAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE() {
+}
+
+void APS5_VABI _ZN9Inspector19InspectorAuditAgent29willDestroyFrontendAndBackendENS_16DisconnectReasonE() {
+}
+
+void APS5_VABI _ZN9Inspector21InjectedScriptManager23didCreateInjectedScriptERKNS_14InjectedScriptE() {
+}
+
+void APS5_VABI _ZN9Inspector21InjectedScriptManager7connectEv() {
+}
+
+void APS5_VABI _ZN9Inspector21InspectorConsoleAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE() {
+}
+
+void APS5_VABI _ZN9Inspector21InspectorRuntimeAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE() {
+}
+
+void APS5_VABI _ZN9Inspector22InspectorDebuggerAgent27didClearAsyncStackTraceDataEv() {
+}
+
+void APS5_VABI _ZN9Inspector22RemoteInspectionTarget13setIndicatingEb() {
+}
+
+void APS5_VABI _ZN9Inspector28InspectorScriptProfilerAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE() {
+}
+
+void APS5_VABI _ZNK7WebCore15ActiveDOMObject30assertSuspendIfNeededWasCalledEv() {
+}
+
+void APS5_VABI _ZNK7WebCore17ResourceErrorBase8lazyInitEv() {
+}
+
+void APS5_VABI _ZNK7WebCore20ResourceResponseBase8lazyInitENS0_9InitLevelE() {
+}
+
+void APS5_VABI _ZNK7WebCore6Cursor19setAsPlatformCursorEv() {
+}
+
+
 
 }

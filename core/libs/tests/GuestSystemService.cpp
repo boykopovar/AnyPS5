@@ -24,6 +24,9 @@
 namespace {
 
 constexpr int browserUnavailable = static_cast<int>(0x8002002Du);
+constexpr int appMessagingNullPointer = static_cast<int>(0x80C50004u);
+constexpr int appMessagingNoMessage = static_cast<int>(0x80C50005u);
+constexpr std::size_t appMessageSize = 8216;
 
 void Require(bool value) { if (!value) std::abort(); }
 
@@ -180,6 +183,21 @@ void TestShellCoreUtilLeafCalls() {
     }
 }
 
+void TestLncUtilInitialize() {
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
+}
+
+void TestAppMessagingTryReceiveMsg() {
+    Require(sceAppMessagingTryReceiveMsg(nullptr) == appMessagingNullPointer);
+    alignas(8) unsigned char message[appMessageSize];
+    std::memset(message, 0x5a, sizeof(message));
+    Require(sceAppMessagingTryReceiveMsg(reinterpret_cast<AppMessagingMessage*>(message)) == appMessagingNoMessage);
+    Require(sceAppMessagingTryReceiveMsg(reinterpret_cast<AppMessagingMessage*>(message)) == appMessagingNoMessage);
+    for (unsigned char byte : message) Require(byte == 0x5a);
+}
+
 void TestRunningAppState() {
     TestRunningAppAnswer<bool>(sceLncUtilIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<bool>(sceSystemServiceIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
@@ -320,6 +338,8 @@ void TestGpuLoadEmulationMode() {
 
 int main() {
     TestShellCoreUtilLeafCalls();
+    TestLncUtilInitialize();
+    TestAppMessagingTryReceiveMsg();
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceReportAbnormalTermination(nullptr) == SYSTEM_SERVICE_OK);
