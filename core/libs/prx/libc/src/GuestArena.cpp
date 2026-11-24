@@ -1057,10 +1057,12 @@ void GuestArenaPrepareHostRead_nid_no_patch(const void* pointer, std::size_t byt
 
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
     if (const auto hook = hostWriteHook.load(std::memory_order_acquire); hook != nullptr && bytes != 0) hook(reinterpret_cast<std::uintptr_t>(pointer), bytes);
-#ifdef _WIN32
-    return WindowsMappings::Get().BeginHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes);
-#else
     GuestWriteWatch::GuestWriteWatchBeginHostWrite_nid_postfix(pointer, bytes);
+#ifdef _WIN32
+    if (WindowsMappings::Get().BeginHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes)) return true;
+    GuestWriteWatch::GuestWriteWatchEndHostWrite_nid_postfix(pointer, bytes);
+    return false;
+#else
     return true;
 #endif
 }
@@ -1078,9 +1080,8 @@ void GuestArenaEndHostImport_nid_no_patch(void* pointer, std::size_t bytes) {
 void GuestArenaEndHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
 #ifdef _WIN32
     WindowsMappings::Get().EndHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes);
-#else
-    GuestWriteWatch::GuestWriteWatchEndHostWrite_nid_postfix(pointer, bytes);
 #endif
+    GuestWriteWatch::GuestWriteWatchEndHostWrite_nid_postfix(pointer, bytes);
 }
 
 #ifndef _WIN32
