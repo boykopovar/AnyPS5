@@ -1,5 +1,6 @@
 import argparse
 import json
+import stat
 import sys
 from pathlib import Path
 
@@ -15,9 +16,13 @@ def main(argv=None):
     parser.add_argument("database", type=Path)
     args = parser.parse_args(argv)
     try:
-        database = parse_db(args.database)
+        if not stat.S_ISREG(args.database.stat().st_mode):
+            raise ValueError(f"{args.database}: NID database must be a regular file")
+        database = parse_db(args.database, errors="strict")
         entries = [{"nid": nid, "name": name, "computed_nid": compute_nid(name), "matches": nid == compute_nid(name)}
                    for nid, name in sorted(database.items())]
+    except UnicodeError as error:
+        parser.error(f"{args.database}: {error}")
     except (OSError, ValueError) as error:
         parser.error(str(error))
     mismatches = sum(not item["matches"] for item in entries)

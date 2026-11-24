@@ -45,9 +45,9 @@ def parse_nids(path):
     return nids
 
 
-def parse_db(path):
+def parse_db(path, *, errors="replace"):
     mapping = {}
-    with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+    with open(path, "r", encoding="utf-8-sig", errors=errors) as f:
         for number, line in enumerate(f, 1):
             s = line.lstrip("\ufeff").strip()
             if not s or s.startswith("#"):

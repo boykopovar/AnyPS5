@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPT = 'audit_nid_names.py'
 TOOLS = Path(__file__).resolve().parents[1]
@@ -59,6 +60,21 @@ class Tests(unittest.TestCase):
         r=self.run_main(path)
         self.assertEqual(r.returncode,2)
         self.assertEqual(r.stdout,"")
+
+    def test_nonregular_database_is_rejected_before_parsing(self):
+        with patch.object(audit_nid_names, "parse_db", side_effect=AssertionError("unexpected parse")):
+            result = self.run_main(self.root)
+        self.assertEqual((result.returncode, result.stdout), (2, ""))
+        self.assertIn("NID database must be a regular file", result.stderr)
+
+    def test_invalid_utf8_is_reported_instead_of_hashing_replacement_characters(self):
+        path = self.root / "database.csv"
+        path.write_bytes(b"AAAAAAAAAAA name-\xff\n")
+        result = self.run_tool(path)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn(str(path), result.stderr)
+        self.assertIn("invalid start byte", result.stderr)
 
     def test_missing_database_reports_usage_error(self):
         r=self.run_main(self.root/"absent.csv")
