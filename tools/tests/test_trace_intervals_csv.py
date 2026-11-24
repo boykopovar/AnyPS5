@@ -15,6 +15,22 @@ from test_trace_digest import interval_line
 
 
 class IntervalCsvTests(unittest.TestCase):
+    def test_dropped_column_distinguishes_unknown_clean_and_loss_inferred_from_details(self):
+        first = interval_line(0.0, 30.0, 20.0, 5.0)
+        first.pop("trace_dropped")
+        lines = [first, {**first, "trace_dropped": False},
+                 {**first, "trace_dropped_threads": {"worker": {"events_lost": 3}}},
+                 {**first, "trace_dropped_threads": {"worker": {"totals_full": True}}}]
+        result = trace_digest.digest_intervals(lines)
+        self.assertEqual([row["trace_dropped"] for row in result["intervals"]], [None, False, True, True])
+        markdown = trace_digest.markdown_intervals(result)
+        self.assertEqual(markdown.count("(drop status unknown)"), 1)
+        self.assertEqual(markdown.count("(dropped)"), 2)
+        for spreadsheet_safe in (False, True):
+            with self.subTest(spreadsheet_safe=spreadsheet_safe):
+                rows = list(csv.DictReader(io.StringIO(trace_intervals_csv.render(result, spreadsheet_safe), newline="")))
+                self.assertEqual([row["trace_dropped"] for row in rows], ["", "False", "True", "True"])
+
     def test_real_intervals_preserve_values_and_warning_markers(self):
         first = interval_line(0.0, 30.0, 20.0, 5.0, commit="a" * 40)
         second = interval_line(30.0, 60.0, 40.0, 10.0, commit="b" * 40, trace_dropped=True)

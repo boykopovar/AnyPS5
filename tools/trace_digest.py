@@ -595,11 +595,15 @@ def digest_intervals(lines):
         busiest = min(workers.items(), key=metric_rank, default=None)
         phases = line.get("top_phases_ms_per_frame", {})
         largest = min(phases.items(), key=metric_rank, default=None)
+        dropped = line.get("trace_dropped")
+        if dropped is None and any(thread.get("events_lost") or thread.get("totals_full")
+                                   for thread in line.get("trace_dropped_threads", {}).values()):
+            dropped = True
         rows.append({"start_s": line["interval_start_s"], "end_s": line["interval_end_s"], "presents": line["presents"],
                      "frame_ms": line["frame_ms"], "gpu_busy_ms_per_present": line["gpu_busy_ms_per_present"],
                      "busiest_worker": {"thread": busiest[0], "pct": busiest[1]} if busiest else None,
                      "top_phase": {"name": largest[0], "ms_per_frame": largest[1]} if largest else None,
-                     "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts"),
+                     "trace_dropped": dropped, "owned_draw_counts": line.get("owned_draw_counts"),
                      "graphics_track": line.get("graphics_track")})
     first = lines[0] if lines else {}
     keys = INTERVAL_IDENTITY_KEYS
@@ -622,7 +626,8 @@ def markdown_intervals(result):
         frame = row["frame_ms"]
         worker = f"{row['busiest_worker']['pct']:.0f} %" if row["busiest_worker"] else "-"
         phase = f"{row['top_phase']['name']} {row['top_phase']['ms_per_frame']:.1f}" if row["top_phase"] else "-"
-        lines.append(f"| {index} | {row['start_s']:.3f}-{row['end_s']:.3f}{' (dropped)' if row['trace_dropped'] else ''} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
+        loss_note = {True: " (dropped)", False: "", None: " (drop status unknown)"}[row["trace_dropped"]]
+        lines.append(f"| {index} | {row['start_s']:.3f}-{row['end_s']:.3f}{loss_note} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
                      f"| {frame['p99']:.1f} | {frame['max']:.1f} | {row['gpu_busy_ms_per_present']:.1f} | {worker} | {table_cell(phase)} |")
     count_names = sorted({name for row in rows for name in (row["owned_draw_counts"] or {})})
     if count_names:
