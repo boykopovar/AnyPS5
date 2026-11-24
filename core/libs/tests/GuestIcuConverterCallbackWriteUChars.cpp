@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <type_traits>
 
 namespace {
@@ -16,6 +17,16 @@ void Require(bool condition, const char* message) {
     if (condition) return;
     std::fprintf(stderr, "ICU from-U UChar writer: %s\n", message);
     std::abort();
+}
+
+template <typename TAction>
+void RequireThrows(TAction action, const char* message) {
+    try {
+        action();
+    } catch (const std::exception&) {
+        return;
+    }
+    Require(false, message);
 }
 
 struct Converter {
@@ -140,6 +151,16 @@ void FailedStatusNoAccess() {
     Require(errno == 91, "failed status preserves errno");
 }
 
+void NullPointers() {
+    std::int32_t status = U_ZERO_ERROR;
+    RequireThrows([&] {
+        ucnv_cbFromUWriteUChars_nid_postfix(nullptr, nullptr, nullptr, 0, &status);
+    }, "null arguments did not throw");
+    RequireThrows([] {
+        ucnv_cbFromUWriteUChars_nid_postfix(nullptr, nullptr, nullptr, 0, nullptr);
+    }, "null status did not throw");
+}
+
 }
 
 int main() {
@@ -148,4 +169,5 @@ int main() {
     EmptyWrite(converter);
     OverflowWrite(converter);
     FailedStatusNoAccess();
+    NullPointers();
 }

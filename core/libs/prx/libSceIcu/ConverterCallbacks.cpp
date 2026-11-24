@@ -89,6 +89,7 @@ void APS5_VABI ucnv_cbFromUWriteSub_nid_postfix(Icu::ConverterFromUnicodeArgs* a
 }
 
 void APS5_VABI ucnv_cbFromUWriteUChars_nid_postfix(Icu::ConverterFromUnicodeArgs* arguments, const char16_t** source, const char16_t* sourceLimit, std::int32_t offsetIndex, std::int32_t* error) {
+    if (!error || (*error <= 0 && !arguments)) APS5_INVALID_ARG_EX;
     ucnv_cbFromUWriteUChars(reinterpret_cast<UConverterFromUnicodeArgs*>(arguments), reinterpret_cast<const UChar**>(source), reinterpret_cast<const UChar*>(sourceLimit), offsetIndex, reinterpret_cast<UErrorCode*>(error));
 }
 
