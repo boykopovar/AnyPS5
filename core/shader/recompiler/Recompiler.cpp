@@ -899,6 +899,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.float16WidenNans = request.target.float16WidenNans;
     targetOptions.float16NarrowNans = request.target.float16NarrowNans;
     targetOptions.meshInlineFunctions = request.target.meshInlineFunctions;
+    targetOptions.meshSoftwareControlBarriers = request.target.meshSoftwareControlBarriers;
     targetOptions.spannedShuffleThroughMemory = request.target.spannedShuffleThroughMemory;
 
     constexpr SpirvEmitter spirvEmitter;
