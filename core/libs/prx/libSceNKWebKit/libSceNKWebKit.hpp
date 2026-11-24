@@ -1,6 +1,7 @@
 #pragma once
 #include "prx/libSceNKWebKit/include/BidiContextExports.hpp"
 #include "prx/libSceNKWebKit/include/CrossThreadTaskHandlerExports.hpp"
+#include "prx/libSceNKWebKit/include/DeviceMotionDataExports.hpp"
 #include "prx/libSceNKWebKit/include/DOMCacheEngineExports.hpp"
 #include "prx/libSceNKWebKit/include/DoViCodecParameters.hpp"
 #include "prx/libSceNKWebKit/include/HitTestLocationExports.hpp"
