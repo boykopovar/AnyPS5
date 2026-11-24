@@ -386,11 +386,6 @@ void* APS5_VABI _ZN3rtc6Thread12socketserverEv_nid_postfix(void* thread) {
     return ReadRtcThreadSocketServer(thread);
 }
 
-int APS5_VABI _ZN3rtc6Thread4QuitEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 bool APS5_VABI _ZN3rtc6Thread10IsQuittingEv_nid_postfix(const void* thread) {
     return ReadRtcThreadState(thread) != 0;
 }

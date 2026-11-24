@@ -280,7 +280,7 @@ int APS5_VABI _ZN3rtc6Thread6DoInitEv_nid_postfix(void);
 int APS5_VABI _ZN3rtc6ThreadD2Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc6Thread9DoDestroyEv_nid_postfix(void);
 void* APS5_VABI _ZN3rtc6Thread12socketserverEv_nid_postfix(void* thread);
-int APS5_VABI _ZN3rtc6Thread4QuitEv_nid_postfix(void);
+void APS5_VABI _ZN3rtc6Thread4QuitEv_nid_postfix(void* thread);
 bool APS5_VABI _ZN3rtc6Thread10IsQuittingEv_nid_postfix(const void* thread);
 void APS5_VABI _ZN3rtc6Thread7RestartEv_nid_postfix(void* thread);
 int APS5_VABI _ZN3rtc6Thread12PostTaskImplEN4absl12AnyInvocableIFvvOEEERKN6webrtc13TaskQueueBase14PostTaskTraitsERKNS5_8LocationE_nid_postfix(void);
