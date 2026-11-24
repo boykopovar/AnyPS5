@@ -2,7 +2,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
