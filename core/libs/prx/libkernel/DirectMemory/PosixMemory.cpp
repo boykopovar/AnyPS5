@@ -44,6 +44,10 @@ constexpr int GuestMapFixed = 0x10;
 constexpr int GuestMapExclusive = 0x4000;
 constexpr int GuestMapNoOverwrite = 0x80;
 constexpr int GuestMapNoCoalesce = 0x400000;
+constexpr int GuestMapHints = 0x200 | 0x800 | 0x20000 | 0x40000;
+constexpr int GuestAlignmentShift = 24;
+constexpr unsigned GuestAlignmentMask = 0xFFu << GuestAlignmentShift;
+constexpr unsigned GuestAlignedSuper = 1u << GuestAlignmentShift;
 constexpr int GuestSyncAsync = 0x1;
 constexpr int GuestSyncInvalidate = 0x2;
 constexpr int GuestAdviceCore = 9;
@@ -51,7 +55,6 @@ constexpr int GuestAdviceProtect = 10;
 constexpr int GuestDefinedProtection = 0x3F7;
 constexpr std::uintptr_t GuestUserAddressStart = PS5_PAGE_SIZE;
 constexpr std::uintptr_t GuestUserAddressEnd = 0x800000000000;
-constexpr int GuestAlignedSuper = 0x1000000;
 constexpr std::size_t SuperpageSize = std::size_t{1} << 21;
 
 class ArchiveMappingDescriptor {
@@ -175,11 +178,28 @@ void* Map(void* address, std::size_t length, int protection,
         return failed(GuestInvalid);
     if ((flags & (GuestMapExclusive | GuestMapFixed)) == GuestMapExclusive) return failed(GuestInvalid);
     if ((flags & (GuestShared | GuestPrivate)) == (GuestShared | GuestPrivate)) return failed(GuestInvalid);
-    int mappingFlags = flags & ~GuestAlignedSuper;
+    const unsigned alignmentFlags = static_cast<unsigned>(flags) & GuestAlignmentMask;
+    const unsigned alignmentShift = alignmentFlags >> GuestAlignmentShift;
+    if (alignmentFlags != 0 && alignmentFlags != GuestAlignedSuper &&
+        (alignmentShift >= 64 || (std::uint64_t{1} << alignmentShift) < PS5_PAGE_SIZE))
+        return failed(GuestInvalid);
+    std::size_t alignment = PS5_PAGE_SIZE;
+    bool alignmentFits = true;
+    if ((flags & GuestMapFixed) == 0) {
+        if (alignmentFlags == GuestAlignedSuper)
+            alignment = rounded >= SuperpageSize ? SuperpageSize : PS5_PAGE_SIZE;
+        else if (alignmentFlags != 0 && (std::uint64_t{1} << alignmentShift) >= GuestUserAddressEnd)
+            alignmentFits = false;
+        else if (alignmentFlags != 0)
+            alignment = std::size_t{1} << alignmentShift;
+    }
+    int mappingFlags = static_cast<int>(static_cast<unsigned>(flags) & ~GuestAlignmentMask) & ~GuestMapHints;
     if ((mappingFlags & (GuestShared | GuestPrivate | GuestAnonymous)) == GuestAnonymous) mappingFlags |= GuestPrivate;
-    const bool fixedAnonymous = (mappingFlags & ~(GuestMapFixed | GuestMapExclusive)) == (GuestPrivate | GuestAnonymous)
-                                && (mappingFlags & GuestMapFixed) != 0;
-    if (mappingFlags == (GuestPrivate | GuestAnonymous) || fixedAnonymous) {
+    const int kind = mappingFlags & (GuestShared | GuestPrivate);
+    const int anonymousFlags = mappingFlags & ~kind;
+    const bool fixedAnonymous = (anonymousFlags & ~(GuestMapFixed | GuestMapExclusive)) == GuestAnonymous
+                                && (anonymousFlags & GuestMapFixed) != 0;
+    if (anonymousFlags == GuestAnonymous || fixedAnonymous) {
         if (descriptor != -1 || offset != 0) return failed(GuestInvalid);
         const auto start = reinterpret_cast<std::uintptr_t>(address);
         if (fixedAnonymous && ((start & (PS5_PAGE_SIZE - 1)) != 0 ||
@@ -187,9 +207,9 @@ void* Map(void* address, std::size_t length, int protection,
 #ifndef _WIN32
         if (fixedAnonymous && !GuestArena::GuestArenaContains_nid_postfix(address, rounded)) return failed(GuestInvalid);
 #endif
+        if (!alignmentFits) return failed(GuestNoMemory);
         const int placement = fixedAnonymous ? GuestMapFixed : 0;
         void* mapped = address;
-        const auto alignment = !fixedAnonymous && (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
         try {
             const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, false, fixedAnonymous);
             if (result != 0) return failed(result == SCE_KERNEL_ERROR_EINVAL ? GuestInvalid : GuestNoMemory);
@@ -203,7 +223,6 @@ void* Map(void* address, std::size_t length, int protection,
             return failed(GuestNoMemory);
         }
     }
-    const int kind = mappingFlags & (GuestShared | GuestPrivate);
     int placement = mappingFlags & (GuestMapFixed | GuestMapNoOverwrite | GuestMapNoCoalesce);
     if ((mappingFlags & GuestAnonymous) != 0 ||
         (kind != GuestShared && kind != GuestPrivate) ||
@@ -267,15 +286,15 @@ void* Map(void* address, std::size_t length, int protection,
         if ((protection & 1) != 0 && accessMode == 1) return failed(GuestAccess);
         if (kind == GuestShared && (protection & 2) != 0 && accessMode == 0) return failed(GuestAccess);
         if (kind == GuestPrivate) {
-            const std::size_t privateAlignment = (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
-            return MapPrivateFileCopy(address, rounded, protection, placement, privateAlignment, handle, mappingDescriptor, mappingOffset, accessMode, failed);
+            if (!alignmentFits) return failed(GuestNoMemory);
+            return MapPrivateFileCopy(address, rounded, protection, placement, alignment, handle, mappingDescriptor, mappingOffset, accessMode, failed);
         }
     }
 #else
     const int mappingDescriptor = sourceDescriptor;
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor)) return failed(GuestNotSupported);
 #endif
-    const std::size_t alignment = (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
+    if (!alignmentFits) return failed(GuestNoMemory);
     void* mapped = nullptr;
     try {
         mapped = address;

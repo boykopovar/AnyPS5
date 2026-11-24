@@ -1342,8 +1342,15 @@ bool FixedNoOverwriteConflict(const GuestAllocations::Mutation& mutation, void* 
     return mutation.Overlaps(addr, len) && !Reserved(addr, len);
 }
 
-int PlaceHintInReservation(void* addr, size_t len, int flags) {
-    if (addr == nullptr || (flags & GuestMapFixedFlag) != 0 || !Reserved(addr, len)) return flags;
+int PlaceHintInReservation(void** addr, size_t len, int flags, size_t alignment) {
+    if (*addr == nullptr || (flags & GuestMapFixedFlag) != 0) return flags;
+    alignment = ValidateAlignment(alignment);
+    constexpr auto top = std::numeric_limits<std::uintptr_t>::max();
+    const auto hint = reinterpret_cast<std::uintptr_t>(*addr);
+    if (hint > top - (alignment - 1)) return flags;
+    const auto placed = (hint + alignment - 1) & ~(alignment - 1);
+    if (len > top - placed || !Reserved(reinterpret_cast<void*>(placed), len)) return flags;
+    *addr = reinterpret_cast<void*>(placed);
     return flags | GuestMapFixedFlag;
 }
 
@@ -1358,17 +1365,19 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     const DirectMapHold hold(static_cast<std::uint64_t>(physStart), static_cast<std::uint64_t>(physStart) + len);
     if (!hold) return SCE_KERNEL_ERROR_ENOMEM;
     GuestAllocations::Mutation mutation;
-    flags = PlaceHintInReservation(*addr, len, flags);
-    if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
-    if (RemapFixedIntoRegistered(mutation, *addr, len, prot, flags, physStart)) {
-        EraseReservations(*addr, len);
-        RecordProtection(*addr, len, prot);
+    void* placed = *addr;
+    flags = PlaceHintInReservation(&placed, len, flags, alignment);
+    if (FixedNoOverwriteConflict(mutation, placed, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
+    if (RemapFixedIntoRegistered(mutation, placed, len, prot, flags, physStart)) {
+        EraseReservations(placed, len);
+        RecordProtection(placed, len, prot);
+        *addr = placed;
         return 0;
     }
-    ReplaceFixedOverlap(mutation, *addr, len, flags);
+    ReplaceFixedOverlap(mutation, placed, len, flags);
     RequireAliasesUnpinned(mutation, static_cast<std::uint64_t>(physStart), len);
     std::lock_guard lock(g_directLock);
-    void* mapped = MapAligned(*addr, len, PROT_NONE, flags, alignment);
+    void* mapped = MapAligned(placed, len, PROT_NONE, flags, alignment);
     try {
         AddMapping(reinterpret_cast<std::uintptr_t>(mapped), len, static_cast<std::uint64_t>(physStart), LinuxProtFromSce(prot));
         mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, (prot & GuestProtGpuWrite) != 0);
@@ -1388,18 +1397,20 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
 static int MapAnonymous(void** addr, size_t len, int prot, int flags, size_t alignment, bool exclusive, bool zero) {
     GuestAllocations::Mutation mutation;
     if (exclusive && mutation.Overlaps(*addr, len)) return SCE_KERNEL_ERROR_ENOMEM;
-    flags = PlaceHintInReservation(*addr, len, flags);
-    if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
-    if (RemapFixedIntoRegistered(mutation, *addr, len, prot, flags, -1, zero)) {
-        EraseReservations(*addr, len);
-        RecordProtection(*addr, len, prot);
+    void* placed = *addr;
+    flags = PlaceHintInReservation(&placed, len, flags, alignment);
+    if (FixedNoOverwriteConflict(mutation, placed, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
+    if (RemapFixedIntoRegistered(mutation, placed, len, prot, flags, -1, zero)) {
+        EraseReservations(placed, len);
+        RecordProtection(placed, len, prot);
+        *addr = placed;
         return 0;
     }
-    ReplaceFixedOverlap(mutation, *addr, len, flags);
+    ReplaceFixedOverlap(mutation, placed, len, flags);
 #ifdef _WIN32
-    void* mapped = MapAligned(*addr, len, zero ? PROT_NONE : LinuxProtFromSce(prot), flags, alignment);
+    void* mapped = MapAligned(placed, len, zero ? PROT_NONE : LinuxProtFromSce(prot), flags, alignment);
 #else
-    void* mapped = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, alignment);
+    void* mapped = MapAligned(placed, len, LinuxProtFromSce(prot), flags, alignment);
 #endif
     try {
 #ifdef _WIN32
@@ -1507,10 +1518,11 @@ int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, i
     const bool shared = (flags & 3) == 1;
     GuestAllocations::Mutation mutation;
     const int placementFlags = flags & (GuestMapFixedFlag | 0x80 | 0x400000);
-    flags = PlaceHintInReservation(*addr, len, placementFlags);
-    if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
-    ReplaceFixedOverlap(mutation, *addr, len, flags);
-    void* mapped = MapPlaced(*addr, len, PROT_NONE, flags, alignment);
+    void* placed = *addr;
+    flags = PlaceHintInReservation(&placed, len, placementFlags, alignment);
+    if (FixedNoOverwriteConflict(mutation, placed, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
+    ReplaceFixedOverlap(mutation, placed, len, flags);
+    void* mapped = MapPlaced(placed, len, PROT_NONE, flags, alignment);
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapped, len);
     const int nativeProtection = LinuxProtFromSce(prot);
     const int nativeFlags = (shared ? MAP_SHARED : MAP_PRIVATE) | MAP_FIXED;
@@ -1570,15 +1582,16 @@ int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, i
     if (section == nullptr) throw std::system_error(sectionError == ERROR_ACCESS_DENIED ? EACCES : EIO, std::generic_category(), "map file: create the file section");
     GuestAllocations::Mutation mutation;
     const int placementFlags = flags & (GuestMapFixedFlag | 0x80 | 0x400000);
-    flags = PlaceHintInReservation(*addr, len, placementFlags);
+    void* placed = *addr;
     void* mapped = nullptr;
     try {
-        if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) {
+        flags = PlaceHintInReservation(&placed, len, placementFlags, alignment);
+        if (FixedNoOverwriteConflict(mutation, placed, len, flags)) {
             CloseHandle(section);
             return SCE_KERNEL_ERROR_ENOMEM;
         }
-        ReplaceFixedOverlap(mutation, *addr, len, flags);
-        mapped = MapPlaced(*addr, len, PROT_NONE, flags, alignment);
+        ReplaceFixedOverlap(mutation, placed, len, flags);
+        mapped = MapPlaced(placed, len, PROT_NONE, flags, alignment);
         GuestArena::GuestArenaMapFile_nid_postfix(mapped, len, section, offset, WinProtFromPosix(LinuxProtFromSce(prot)), viewProtection, static_cast<std::size_t>(std::min<std::uint64_t>(len, fileEnd - offset)));
         mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, false);
     } catch (...) {
