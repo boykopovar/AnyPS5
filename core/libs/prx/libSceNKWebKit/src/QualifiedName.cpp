@@ -52,6 +52,7 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <functional>
@@ -138,9 +139,25 @@ Cache& QualifiedNameCache() {
     return *cache;
 }
 
-StringImpl* Retain(StringImpl* impl) {
-    if (impl) impl->refCount += 2;
-    return impl;
+bool TryAdjustRefCount(StringImpl* impl, int delta) {
+    if (!impl) return true;
+    unsigned count = 0;
+    const int savedErrno = errno;
+    bool ok = GuestCopyIn_nid_no_patch(&count, &impl->refCount, sizeof(count));
+    if (ok) {
+        count = static_cast<unsigned>(static_cast<int>(count) + delta);
+        ok = GuestCopyOut_nid_no_patch(&impl->refCount, &count, sizeof(count));
+    }
+    errno = savedErrno;
+    return ok;
+}
+
+void RetainAll(std::array<StringImpl*, 3> impls, const char* function) {
+    for (std::size_t index = 0; index < impls.size(); ++index) {
+        if (TryAdjustRefCount(impls[index], 2)) continue;
+        for (std::size_t undone = 0; undone < index; ++undone) static_cast<void>(TryAdjustRefCount(impls[undone], -2));
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
 }
 
 StringImpl* NamespaceImpl(const AtomString* namespaceURI, const char* function) {
@@ -184,13 +201,14 @@ void APS5_VABI _ZN7WebCore13QualifiedNameC1ERKN3WTF10AtomStringES4_S4_(Qualified
     RequireWritableStringImpl(key.localName, __func__);
     RequireWritableStringImpl(key.namespaceURI, __func__);
 
+    RetainAll({key.prefix, key.localName, key.namespaceURI}, __func__);
     auto* impl = static_cast<QualifiedNameImpl*>(_ZN3WTF10fastMallocEm(sizeof(QualifiedNameImpl)));
-    *impl = QualifiedNameImpl { 1, 0, Retain(key.prefix), Retain(key.localName), Retain(key.namespaceURI), nullptr };
+    *impl = QualifiedNameImpl { 1, 0, key.prefix, key.localName, key.namespaceURI, nullptr };
     const QualifiedName published { impl };
     if (!TryPublishGuestValue(self, published, previous)) {
-        NKWebKit::WtfAbi::Release(impl->m_namespace);
-        NKWebKit::WtfAbi::Release(impl->m_localName);
-        NKWebKit::WtfAbi::Release(impl->m_prefix);
+        static_cast<void>(TryAdjustRefCount(key.namespaceURI, -2));
+        static_cast<void>(TryAdjustRefCount(key.localName, -2));
+        static_cast<void>(TryAdjustRefCount(key.prefix, -2));
         _ZN3WTF8fastFreeEPv(impl);
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
