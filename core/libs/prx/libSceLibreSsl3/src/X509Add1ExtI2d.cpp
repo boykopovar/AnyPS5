@@ -22,6 +22,7 @@ constexpr int UnsupportedOptionReason = 117;
 constexpr int UnknownExtensionReason = 129;
 constexpr int ErrorCreatingExtensionReason = 144;
 constexpr int ExtensionExistsReason = 145;
+constexpr int UnknownObjectPosition = -2;
 
 constexpr int ObjectDynamic = 0x01;
 constexpr int ObjectDynamicStrings = 0x04;
@@ -395,8 +396,13 @@ int APS5_VABI X509_add1_ext_i2d_nid_postfix(LibreSsl3ExtensionsX509* certificate
     LibreSslStack* stack = StackOf(certificate);
     const std::uint64_t operation = flags & OperationMask;
     int position = -1;
-    if (operation != AppendOperation)
+    if (operation != AppendOperation) {
         position = X509_get_ext_by_NID_nid_postfix(reinterpret_cast<const LibreSsl3Certificate*>(certificate), nid, -1);
+        if (position == UnknownObjectPosition) {
+            if ((flags & SilentFlag) == 0) PutError(UnknownExtensionReason);
+            return 0;
+        }
+    }
 
     switch (operation) {
     case DefaultOperation:

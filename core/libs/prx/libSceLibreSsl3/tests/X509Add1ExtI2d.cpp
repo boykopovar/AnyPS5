@@ -108,6 +108,7 @@ constexpr std::uint64_t ReplaceFlag = 2;
 constexpr std::uint64_t ReplaceExistingFlag = 3;
 constexpr std::uint64_t KeepExistingFlag = 4;
 constexpr std::uint64_t DeleteFlag = 5;
+constexpr int UnregisteredNid = 100000;
 constexpr std::uint64_t SilentFlag = 0x10;
 
 constexpr std::uint64_t ErrorCode(int reason) {
@@ -325,6 +326,17 @@ void CheckFlags() {
     Require(X509_add1_ext_i2d_nid_postfix(&certificate.x509, KeyUsageNid, &second, 0, DeleteFlag) == 0);
     Require(ERR_get_error_nid_postfix() == ErrorCode(102));
     Require(ERR_get_error_nid_postfix() == 0);
+
+    for (const std::uint64_t operation : {ReplaceExistingFlag, DeleteFlag}) {
+        ClearErrors();
+        Require(X509_add1_ext_i2d_nid_postfix(&certificate.x509, UnregisteredNid, &second, 0, operation) == 0);
+        Require(ERR_get_error_nid_postfix() == ErrorCode(129));
+        Require(ERR_get_error_nid_postfix() == 0);
+        Require(X509_add1_ext_i2d_nid_postfix(&certificate.x509, UnregisteredNid, &second, 0,
+                                              operation | SilentFlag) == 0);
+        Require(ERR_get_error_nid_postfix() == 0);
+    }
+    Require(certificate.Count() == 0);
 
     Require(X509_add1_ext_i2d_nid_postfix(&certificate.x509, KeyUsageNid, &second, 0, DeleteFlag | SilentFlag) == 0);
     Require(ERR_get_error_nid_postfix() == 0);
