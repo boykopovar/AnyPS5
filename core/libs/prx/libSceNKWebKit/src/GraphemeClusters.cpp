@@ -23,7 +23,10 @@
 #include "prx/libSceNKWebKit/include/GraphemeClusterExports.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <memory>
 #include <stdexcept>
+#include <unicode/brkiter.h>
+#include <unicode/unistr.h>
 
 namespace {
 
@@ -33,13 +36,19 @@ char16_t Latin1Unit(const StringView& string, unsigned index) {
     return string.is8Bit ? static_cast<const unsigned char*>(string.data)[index] : static_cast<const char16_t*>(string.data)[index];
 }
 
-void RequireLatin1(const StringView& string, const char* function) {
-    if (!string.data) throw std::invalid_argument("null WTF character buffer");
-    if (string.is8Bit) return;
-    const auto* characters = static_cast<const char16_t*>(string.data);
-    for (unsigned i = 0; i < string.length; ++i) {
-        if (characters[i] > 0xff) NotImplemented_nid_no_patch(function);
-    }
+std::unique_ptr<icu::BreakIterator> CharacterBreakIterator(const StringView& string) {
+    UErrorCode status = U_ZERO_ERROR;
+    std::unique_ptr<icu::BreakIterator> iterator(
+        icu::BreakIterator::createCharacterInstance(icu::Locale::getRoot(), status));
+    if (U_FAILURE(status) || !iterator)
+        throw std::runtime_error("failed to create grapheme break iterator");
+    if (string.is8Bit)
+        throw std::invalid_argument("unexpected 8-bit grapheme input");
+    if (!string.data)
+        throw std::invalid_argument("null WTF character buffer");
+    icu::UnicodeString text(static_cast<const char16_t*>(string.data), string.length);
+    iterator->setText(text);
+    return iterator;
 }
 
 }
@@ -49,19 +58,36 @@ extern "C" {
 unsigned APS5_VABI _ZN3WTF19numGraphemeClustersENS_10StringViewE(StringView string) {
     unsigned stringLength = string.length;
     if (!stringLength) return 0;
-    RequireLatin1(string, __func__);
-    unsigned numCRLF = 0;
-    for (unsigned i = 1; i < stringLength; ++i) numCRLF += Latin1Unit(string, i - 1) == '\r' && Latin1Unit(string, i) == '\n';
-    return stringLength - numCRLF;
+    if (!string.data) throw std::invalid_argument("null WTF character buffer");
+    if (string.is8Bit) {
+        unsigned numCRLF = 0;
+        for (unsigned i = 1; i < stringLength; ++i)
+            numCRLF += Latin1Unit(string, i - 1) == '\r' && Latin1Unit(string, i) == '\n';
+        return stringLength - numCRLF;
+    }
+    std::unique_ptr<icu::BreakIterator> iterator(CharacterBreakIterator(string));
+    unsigned clusters = 0;
+    for (int32_t boundary = iterator->first(); boundary != icu::BreakIterator::DONE; boundary = iterator->next())
+        ++clusters;
+    return clusters ? clusters - 1 : 0;
 }
 
 unsigned APS5_VABI _ZN3WTF30numCodeUnitsInGraphemeClustersENS_10StringViewEj(StringView string, unsigned numGraphemeClusters) {
     unsigned stringLength = string.length;
     if (stringLength <= numGraphemeClusters) return stringLength;
-    RequireLatin1(string, __func__);
-    unsigned i, j;
-    for (i = 0, j = 0; i < numGraphemeClusters && j + 1 < stringLength; ++i, ++j) j += Latin1Unit(string, j) == '\r' && Latin1Unit(string, j + 1) == '\n';
-    return j + (i < numGraphemeClusters);
+    if (!string.data) throw std::invalid_argument("null WTF character buffer");
+    if (string.is8Bit) {
+        unsigned i, j;
+        for (i = 0, j = 0; i < numGraphemeClusters && j + 1 < stringLength; ++i, ++j)
+            j += Latin1Unit(string, j) == '\r' && Latin1Unit(string, j + 1) == '\n';
+        return j + (i < numGraphemeClusters);
+    }
+    std::unique_ptr<icu::BreakIterator> iterator(CharacterBreakIterator(string));
+    int32_t boundary = iterator->first();
+    for (unsigned i = 0; i < numGraphemeClusters && boundary != icu::BreakIterator::DONE; ++i)
+        boundary = iterator->next();
+    if (boundary == icu::BreakIterator::DONE) return stringLength;
+    return static_cast<unsigned>(boundary);
 }
 
 }

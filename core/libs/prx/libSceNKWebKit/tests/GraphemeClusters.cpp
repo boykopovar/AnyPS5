@@ -94,13 +94,14 @@ void Run() {
 
     const std::u16string combining = u"é";
     const StringView combiningView {combining.data(), static_cast<unsigned>(combining.size()), false};
-    Require(Throws([&] { Clusters(combiningView); }, "not implemented"));
-    Require(Throws([&] { CodeUnits(combiningView, 1); }, "not implemented"));
+    Require(Clusters(combiningView) == 1);
+    Require(CodeUnits(combiningView, 1) == 2);
     Require(CodeUnits(combiningView, 2) == 2);
 
     const std::u16string surrogate = u"a\U0001F600";
     const StringView surrogateView {surrogate.data(), static_cast<unsigned>(surrogate.size()), false};
-    Require(Throws([&] { Clusters(surrogateView); }, "not implemented"));
+    Require(Clusters(surrogateView) == 2);
+    Require(CodeUnits(surrogateView, 1) == 1);
 }
 
 }
