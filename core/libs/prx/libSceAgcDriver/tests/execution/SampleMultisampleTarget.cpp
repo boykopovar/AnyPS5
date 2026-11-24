@@ -216,8 +216,16 @@ private:
     int saved = -1;
 };
 
+bool BlocksWriteWatched() {
+#ifdef _WIN32
+    return GuestArena::GuestArenaAvailable_nid_postfix() && GuestArena::GuestArenaWriteWatched_nid_postfix();
+#else
+    return GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
+#endif
+}
+
 struct Block {
-    explicit Block(std::size_t bytes, bool watched = false) : bytes(bytes), watched(watched) {
+    explicit Block(std::size_t bytes, bool watched = false, bool initialise = true) : bytes(bytes), watched(watched) {
 #ifdef _WIN32
         if (watched) {
             data = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, BlockBytes));
@@ -240,7 +248,7 @@ struct Block {
         }
 #endif
         Require(data != nullptr, "cannot allocate the color target");
-        std::memset(data, 0, bytes);
+        if (initialise) std::memset(data, 0, bytes);
         Require(!watched || AgcDriver::GuestMemory::Watched(Address(), bytes), "the color target is not write-watched");
         GuestAllocations::Mutation mutation;
         mutation.Add(data, bytes, true, true, true);
@@ -1812,11 +1820,12 @@ void UniformInitialRefusals(AgcDriver::VulkanDevice& device) {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         const auto view = DepthSurfaceView(context, depth);
         Require(ResidentDepthGuardOverlaps_nid_no_patch(depth.address, static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(depth.extent, 4u, Samples))), "initial color refusal fixture has no resident depth guard");
+        NoteDepthSurfaceWrite(context, depth);
         std::string refusal;
         try { PrepareMultisampleTargetForDraw_nid_no_patch(context, DecodeTarget(depthMemory)); }
         catch (const std::runtime_error& error) { refusal = error.what(); }
-        Require(DepthSurfaceAt(depth.address), "refused initial color capture retired an unwritten native depth owner");
-        Require(refusal.find("overlap resident native depth") != std::string::npos, "initial color capture did not refuse a resident depth owner");
+        Require(DepthSurfaceAt(depth.address), "refused initial color capture retired a written native depth owner");
+        Require(refusal.find("publication of native multisample depth is not implemented for this owner") != std::string::npos, "initial color capture did not refuse a resident depth owner it cannot publish");
         Require(DepthSurfaceView(context, depth) == view, "refused color capture replaced the native depth image");
     }
     device.SubmitRecorded(true);
@@ -2234,6 +2243,49 @@ void NativeFmask(std::unique_ptr<AgcDriver::VulkanDevice>& device, std::uint32_t
     }
 }
 
+int ColdNativeFmask(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto shift = static_cast<std::uint32_t>(std::countr_zero(samples));
+    for (const std::uint8_t stored : {0u, 1u}) {
+        Block colorMemory(4u * BlockBytes, true), dcc(BlockBytes, true), cmask(BlockBytes, true), fmask(BlockBytes, true, false);
+        std::memset(cmask.data, 0xcc, cmask.bytes);
+        AgcDriver::Registers cx{{0x318, static_cast<std::uint32_t>(colorMemory.Address() >> 8u)}, {0x31b, 0u}, {0x31c, Float16x4Info | 0x10006000u}, {0x31d, (shift << 12u) | (shift << 15u)}, {0x31e, 0u}, {0x31f, static_cast<std::uint32_t>(cmask.Address() >> 8u)}, {0x321, static_cast<std::uint32_t>(fmask.Address() >> 8u)}, {0x325, static_cast<std::uint32_t>(dcc.Address() >> 8u)}, {0x390, static_cast<std::uint32_t>(colorMemory.Address() >> 40u)}, {0x398, static_cast<std::uint32_t>(cmask.Address() >> 40u)}, {0x3a0, static_cast<std::uint32_t>(fmask.Address() >> 40u)}, {0x3a8, static_cast<std::uint32_t>(dcc.Address() >> 40u)}, {0x3b0, ((Side - 1u) << 14u) | (Side - 1u)}, {0x3b8, TiledAttrib3}};
+        const auto color = DecodeColorBuffer(cx, 0u);
+        Require(color.samples == samples && color.cmaskAddress == cmask.Address() && color.fmaskAddress == fmask.Address() && color.dccAddress == dcc.Address(), "the cold native FMASK fixture lost its decoded target association");
+        const auto materialize = [&] {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            MaterializeMultisampleTargetClear(context, color);
+        };
+        materialize();
+        Require(AgcDriver::GuestMemory::ImportWatched(fmask.Address(), fmask.bytes, [] { return true; }), "the overlapping watched import failed");
+        if (!AgcDriver::GuestMemory::Watched(fmask.Address(), fmask.bytes)) {
+            std::printf("cold native FMASK skipped, host imports are compared, not watched: a zero store over zero pages cannot be told apart\n");
+            device.SubmitRecorded(true);
+            device.WaitIdle();
+            ClearCachedTextures(context.device);
+            ClearMultisampleTargets(context.device);
+            return VulkanTestSkipped;
+        }
+        materialize();
+        materialize();
+        *static_cast<volatile std::uint8_t*>(fmask.data) = stored;
+        std::string error;
+        try {
+            materialize();
+        } catch (const std::runtime_error& refusal) {
+            error = refusal.what();
+        }
+        Require(error.find("writes to a resident native FMASK") != std::string::npos, std::string(stored == 0u ? "a real zero store over cold native FMASK was not refused: " : "a real nonzero store over cold native FMASK was not refused: ") + error);
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+        ClearCachedTextures(context.device);
+        ClearMultisampleTargets(context.device);
+    }
+    std::printf("Cold native FMASK: %u samples keep a resident target across an overlapping import of untouched FMASK pages, and refuse real zero and nonzero stores\n", samples);
+    return 0;
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -2251,6 +2303,20 @@ int main(int argc, char** argv) {
             }
             NativeFmask(device, samples);
             return 0;
+        }
+        if (argc == 3 && std::string_view(argv[1]) == "--cold-native-fmask") {
+            const auto samples = static_cast<std::uint32_t>(std::stoul(argv[2]));
+            Require(samples == 2u || samples == 8u, "the cold native FMASK probe requires two or eight samples");
+            const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+            if (!context.storageImageMultisample || (context.limits.framebufferColorSampleCounts & samples) == 0u) {
+                std::printf("cold native FMASK skipped, the device does not render or store %u-sample color\n", samples);
+                return VulkanTestSkipped;
+            }
+            if (!BlocksWriteWatched()) {
+                std::printf("cold native FMASK skipped, host imports are compared, not watched: a zero store over zero pages cannot be told apart\n");
+                return VulkanTestSkipped;
+            }
+            return ColdNativeFmask(*device, samples);
         }
         if (argc == 2 && std::string_view(argv[1]) == "--native-vertex-input") return NativeVertexInput(device);
         if (argc == 2 && std::string_view(argv[1]) == "--readback") { Readback(*device); return 0; }
