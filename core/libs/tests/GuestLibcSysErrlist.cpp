@@ -21,6 +21,8 @@ int main() {
     Require(std::strcmp(sys_errlist_nid_postfix[0], "No error: 0") == 0);
     Require(std::strcmp(sys_errlist_nid_postfix[2], "No such file or directory") == 0);
     Require(std::strcmp(sys_errlist_nid_postfix[96], "Previous owner died") == 0);
+    Require(std::strcmp(sys_errlist_nid_postfix[95], "State not recoverable") == 0);
+    Require(std::strcmp(sys_errlist_nid_postfix[30], "Read-only filesystem") == 0);
     Require(std::strcmp(strerror_nid_postfix(2), sys_errlist_nid_postfix[2]) == 0);
     Require(std::strcmp(strerror_nid_postfix(94), sys_errlist_nid_postfix[94]) == 0);
     return 0;
