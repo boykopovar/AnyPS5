@@ -2751,7 +2751,7 @@ std::shared_ptr<std::shared_ptr<const void>> reserveSpaceKeep(Recorder& recorder
     return slot;
 }
 
-void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources, const std::shared_ptr<Pipeline>& pipeline, const std::shared_ptr<Framebuffer>& framebuffer, DrawInputs& inputs, std::span<const std::shared_ptr<StorageTexture>> residents, std::span<const std::pair<std::uint32_t, std::uint32_t>> slices, VkRect2D scissor, std::unique_ptr<DeviceBuffer> scratch, std::function<void()> checkRecords, bool listed, bool completion, const DrawOutcome& outcome, std::shared_ptr<ShaderResources::DrawUse> use, std::shared_ptr<const void>* spaceKeep) {
+void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources, const std::shared_ptr<Pipeline>& pipeline, const std::shared_ptr<Framebuffer>& framebuffer, DrawInputs& inputs, std::span<const std::shared_ptr<StorageTexture>> residents, std::span<const std::pair<std::uint32_t, std::uint32_t>> slices, VkRect2D scissor, std::unique_ptr<DeviceBuffer> scratch, std::function<void()> checkRecords, bool listed, bool completion, const DrawOutcome& outcome, std::shared_ptr<ShaderResources::DrawUse> use, std::shared_ptr<const void>* spaceKeep, const ShaderResources::DrawBindings* bindings) {
     std::shared_ptr<DeviceBuffer> scratchOwner(std::move(scratch));
     recorder.ReserveRetention(4 + inputs.vertexBuffers.size() + residents.size() + (scratchOwner != nullptr ? 1u : 0u));
     resources->KeepStorageImageBytes(recorder);
@@ -2772,7 +2772,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     // next serial), or waited for by the caller (any wait releases it at once).
     if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? 0 : recorder.Submissions() + 1, !resources->BdaReadOnly());
     // Every use of a (possibly shared) resources object registers its GPU writes anew.
-    resources->MarkGpuWrites(recorder);
+    resources->MarkGpuWrites(recorder, bindings);
     if (spaceKeep != nullptr) *spaceKeep = resources->ReleaseSpace();
     // The write-back (fault check, copied buffers) runs when the batch completed; a fault is
     // reported by the recorder ("deferred write-back failed") instead of thrown out of the draw.
@@ -3328,7 +3328,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     recorder->LeaveRenderPassOpen(passKey, drawTiming, fenced, passAccess, std::move(storeProxies));
     timer.phase(PhaseRecord);
-    keepRecordedDraw(*recorder, record.resources, record.pipeline, record.framebuffer, inputs, record.targets, record.targetSlices, state.scissor, std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome, drawUse, record.spaceKeep != nullptr && *record.spaceKeep != nullptr ? record.spaceKeep->get() : nullptr);
+    keepRecordedDraw(*recorder, record.resources, record.pipeline, record.framebuffer, inputs, record.targets, record.targetSlices, state.scissor, std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome, drawUse, record.spaceKeep != nullptr && *record.spaceKeep != nullptr ? record.spaceKeep->get() : nullptr, drawBindings.get());
     timer.phase(PhaseKeep);
     if (!record.staged.empty()) {
         const auto merged = recorder->Commands();
@@ -4938,7 +4938,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     APS5_LOG_CHARS_OUT_DEBUG("SubmitAndWait");
     timer.phase(PhaseRecord);
     if (recorded) {
-        keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, slices.Span(), state.scissor, std::move(scratch), std::move(checkRecords), listed, completion, outcome, drawUse, prepared.spaceKeep != nullptr ? prepared.spaceKeep.get() : nullptr);
+        keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, slices.Span(), state.scissor, std::move(scratch), std::move(checkRecords), listed, completion, outcome, drawUse, prepared.spaceKeep != nullptr ? prepared.spaceKeep.get() : nullptr, nullptr);
         timer.phase(PhaseKeep);
         if (outcome.waited) {
             // The wait the dispatch path makes for such work (source 3, "address-based"): the

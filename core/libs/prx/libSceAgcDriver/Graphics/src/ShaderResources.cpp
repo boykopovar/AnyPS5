@@ -7271,9 +7271,6 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     const auto uploadLimit = DrawUploadLimit();
     std::size_t totalSnapshotBytes = 0;
     std::shared_ptr<DrawBindings> result;
-    thread_local std::vector<std::size_t>* selectedSlot = nullptr;
-    auto& selected = ShaderRecompiler::ThreadOwned(selectedSlot);
-    selected.clear();
     std::array<std::uint64_t, 3> stamp{};
     bool stamped = false;
     const auto keep = [&](DrawBindings::Snapshot snapshot) {
@@ -7307,16 +7304,14 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
                     if (toldInData(entry, index) && allocations[entry.allocation].dataByte < size) slice.bytes[allocations[entry.allocation].dataByte] = static_cast<std::byte>(entry.adjustment);
                 }
             }
-            selected.push_back(index);
-            keep({0, std::move(slice.buffer), slice.offset, size});
+            keep({index, 0, std::move(slice.buffer), slice.offset, size});
             continue;
         }
         if (override != moved.end() && override->inPlace != VK_NULL_HANDLE) {
             const auto begin = override->address - override->adjustment;
             const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(override->size, override->adjustment));
             recorder.NotePendingRead(begin, bytes, Recorder::ReadKind::DispatchElement);
-            selected.push_back(index);
-            keep({begin, nullptr, override->inPlaceOffset, bytes, override->inPlace});
+            keep({index, begin, nullptr, override->inPlaceOffset, bytes, override->inPlace});
             continue;
         }
         if (override != moved.end() && override->dispatchInPlace) {
@@ -7385,14 +7380,13 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
             if (GuestMemory::TrackerGeneration() != stamp[0]) stamped = false;
             else if (!uploaded || stamp[1] != 0) recorder.NoteUnwrittenDrawSnapshot(begin, bytes, stamp, buffer, offset);
         }
-        selected.push_back(index);
-        keep({begin, std::move(buffer), offset, bytes});
+        keep({index, begin, std::move(buffer), offset, bytes});
         totalSnapshotBytes += bytes;
         CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
     }
-    if (selected.empty() && (result == nullptr || result->inPlace.empty()) && !rebound) return {};
+    if (!rebound && (result == nullptr || (result->snapshots.empty() && result->inPlace.empty()))) return {};
     if (result == nullptr) result = std::make_shared<DrawBindings>();
-    writeDrawSets(*result, selected, faultRecord);
+    writeDrawSets(*result, faultRecord);
     recorder.Keep(result);
     for (const auto& snapshot : result->snapshots) {
         if (snapshot.buffer != nullptr) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());
@@ -7400,7 +7394,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     return result;
 }
 
-void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord) const {
+void ShaderResources::writeDrawSets(DrawBindings& result, const BdaResources* faultRecord) const {
     Require(context.descriptorCache != nullptr, "draw snapshots require a descriptor cache");
     std::array<bool, 2> described{};
     thread_local std::array<std::vector<VkDescriptorPoolSize>, 2>* countsSlot = nullptr;
@@ -7441,8 +7435,8 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
     writes = descriptorWrites;
     thread_local std::vector<std::size_t>* indicesSlot = nullptr;
     auto& snapshotIndices = ShaderRecompiler::ThreadOwned(indicesSlot);
-    snapshotIndices.assign(allocations.size(), selected.size());
-    for (std::size_t index = 0; index < selected.size(); ++index) snapshotIndices[selected[index]] = index;
+    snapshotIndices.assign(allocations.size(), result.snapshots.size());
+    for (std::size_t index = 0; index < result.snapshots.size(); ++index) snapshotIndices[result.snapshots[index].allocation] = index;
     thread_local std::vector<std::size_t>* inPlaceSlot = nullptr;
     auto& inPlaceIndices = ShaderRecompiler::ThreadOwned(inPlaceSlot);
     inPlaceIndices.assign(allocations.size(), result.inPlace.size());
@@ -7464,7 +7458,7 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
                     continue;
                 }
                 const auto snapshotIndex = snapshotIndices[binding.allocations[element]];
-                if (snapshotIndex == selected.size()) continue;
+                if (snapshotIndex == result.snapshots.size()) continue;
                 const auto& snapshot = result.snapshots[snapshotIndex];
                 buffers[offset + element] = wholeDwordRange({snapshot.buffer != nullptr ? snapshot.buffer->Handle() : snapshot.handle, snapshot.offset, snapshot.bytes});
             }
@@ -7488,7 +7482,7 @@ std::shared_ptr<ShaderResources::DrawUse> ShaderResources::BeginDrawUse(Recorder
     use->record = std::make_shared<BdaResources>(context, faultReportOnly);
     use->record->NoteUse(recorder.Device() == context.device ? recorder.OpenSerial() : std::numeric_limits<std::uint64_t>::max());
     use->bindings = std::make_shared<DrawBindings>();
-    writeDrawSets(*use->bindings, {}, use->record.get());
+    writeDrawSets(*use->bindings, use->record.get());
     recorder.Keep(use->bindings);
     return use;
 }
@@ -7572,6 +7566,24 @@ void ShaderResources::WriteBack() {
     if (unaligned) std::rethrow_exception(unaligned);
 }
 
+std::vector<std::pair<std::uint64_t, std::uint64_t>> ShaderResources::readsLeftInPlace(const DrawBindings& bindings) const {
+    auto reads = guestMemory.InPlaceReads();
+    std::erase_if(reads, [&](const std::pair<std::uint64_t, std::uint64_t>& read) {
+        bool snapshotted = false;
+        for (std::size_t index = 0; index < allocations.size(); ++index) {
+            const auto& item = allocations[index];
+            if (!item.guest || item.size == 0 || item.address == 0) continue;
+            const auto begin = item.address - item.adjustment;
+            const auto end = begin + GuestBufferMemory::ViewBytes(item.size, item.adjustment);
+            if (end <= read.first || read.second <= begin) continue;
+            if (std::ranges::find(bindings.snapshots, index, &DrawBindings::Snapshot::allocation) == bindings.snapshots.end()) return false;
+            snapshotted = true;
+        }
+        return snapshotted;
+    });
+    return reads;
+}
+
 void ShaderResources::MarkGpuWrites(Recorder& recorder, const DrawBindings* bindings) {
     if (bda != nullptr && recorder.Device() == context.device) bda->NoteUse(recorder.OpenSerial());
     // The ranges this use reads in place through their host imports (read-only and written elements
@@ -7586,6 +7598,8 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder, const DrawBindings* bind
     } else if (auto split = guestMemory.SplitInPlaceReads()) {
         recorder.NotePendingReadList(std::move(split->space), kind);
         recorder.NotePendingReads(split->own, kind);
+    } else if (bindings != nullptr && !bindings->snapshots.empty() && !guestMemory.HoldsLease()) {
+        recorder.NotePendingReads(readsLeftInPlace(*bindings), kind);
     } else {
         recorder.NotePendingReads(guestMemory.InPlaceReads(), kind);
     }

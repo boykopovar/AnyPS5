@@ -4458,6 +4458,27 @@ bool Recorder::PendingReadOverlaps(std::uint64_t address, std::size_t bytes, boo
     return false;
 }
 
+Recorder::GuestTouch Recorder::UnfinishedGuestTouch() const {
+    const auto touch = [](const Batch& batch) {
+        if (!batch.completions.empty()) return GuestTouch::Completions;
+        if (!batch.writes.empty() || !batch.labelDwords.empty()) return GuestTouch::Writes;
+        if (batch.run.open || !batch.run.queued.empty() || !batch.keyStores.empty() || batch.queuedDumps != 0) return GuestTouch::Stores;
+        if (!batch.reads.empty() || !batch.readLists.empty()) return GuestTouch::Reads;
+        return GuestTouch::None;
+    };
+    if (!finishing.empty()) return GuestTouch::Completions;
+    if (open != nullptr) {
+        if (const auto found = touch(*open); found != GuestTouch::None) return found;
+    }
+    for (const auto& batch : inFlight) {
+        const auto found = touch(*batch);
+        if (found == GuestTouch::None || (found != GuestTouch::Completions && signaled(*batch))) continue;
+        return found;
+    }
+    if (!ReadTrackingEnabled() && !Idle()) return GuestTouch::Reads;
+    return GuestTouch::None;
+}
+
 std::optional<Recorder::PendingReadInfo> Recorder::DescribePendingRead(std::uint64_t address, std::size_t bytes) const {
     if (bytes == 0) return std::nullopt;
     const auto end = address + bytes;

@@ -746,6 +746,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                     tiled = recorder->UploadScratchBuffer(Recorder::UploadScratch::Tiled, snapshotSize);
                     linear = recorder->UploadScratchBuffer(Recorder::UploadScratch::Linear, static_cast<std::size_t>(linearBytes));
                     if (staging != nullptr) recorder->Keep(staging, snapshotSize);
+                    if (!sources.empty()) recorder->NotePendingRead(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), Recorder::ReadKind::StorageUpload);
                 }
                 if (zeros != nullptr) recorder->Keep(zeros, static_cast<std::size_t>(sliceLinearBytes));
                 recorder->Keep(owned);

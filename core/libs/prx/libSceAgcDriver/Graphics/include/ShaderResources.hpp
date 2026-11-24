@@ -239,6 +239,7 @@ public:
         DrawBindings(const DrawBindings&) = delete;
         DrawBindings& operator=(const DrawBindings&) = delete;
         struct Snapshot {
+            std::size_t allocation;
             std::uint64_t address;
             std::shared_ptr<Buffer> buffer;
             VkDeviceSize offset = 0;
@@ -511,6 +512,7 @@ private:
         std::uint32_t adjustment;
     };
     void writeDataWords(VkCommandBuffer commands, std::size_t allocation, std::span<const std::uint32_t> words) const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> readsLeftInPlace(const DrawBindings& bindings) const;
 
     struct Binding {
         VkDescriptorSetLayoutBinding layout;
@@ -774,7 +776,7 @@ private:
     };
     std::vector<FaultDescriptor> faultDescriptors;
     void prepareFaultSlot() const;
-    void writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord) const;
+    void writeDrawSets(DrawBindings& result, const BdaResources* faultRecord) const;
     std::shared_ptr<std::atomic<bool>> ownRecordBusy = std::make_shared<std::atomic<bool>>(false);
     mutable std::vector<VkDescriptorPoolSize> drawPoolSizes;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write

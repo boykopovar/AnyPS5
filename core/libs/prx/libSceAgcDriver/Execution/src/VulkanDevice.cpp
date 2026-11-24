@@ -674,6 +674,8 @@ struct VulkanDevice::State {
     bool drawInputsInPlace = true;
     bool hostPointerImport = false;
     std::size_t drawInputsInPlaceBelow = 0;
+    bool earlyLabelSubmitOwed = false;
+    bool earlyLabelReapOwed = false;
     bool dmaBufImport = false;
     bool readTrapsOverHostPointerImports = false;
     bool sparseBinding = false;
@@ -3161,6 +3163,19 @@ bool OpportunisticReap() {
     return enabled;
 }
 
+void countEarlyLabel(Graphics::Recorder::GuestTouch touch) {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!profile) return;
+    constexpr std::size_t kinds = static_cast<std::size_t>(Graphics::Recorder::GuestTouch::Count) + 1;
+    static std::array<std::uint64_t, kinds> counts{};
+    static auto lastReport = std::chrono::steady_clock::now();
+    ++counts[static_cast<std::size_t>(touch)];
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastReport < std::chrono::seconds(10)) return;
+    lastReport = now;
+    AgcDriver::ProfilePrint_nid_no_patch("[early-labels] unimported queue-0 labels (cumulative): %llu stored at once; waited because unfinished work still %llu read guest memory in place, %llu wrote it, %llu had stores to record, %llu had completion actions; %llu waited with early labels off\n", static_cast<unsigned long long>(counts[0]), static_cast<unsigned long long>(counts[1]), static_cast<unsigned long long>(counts[2]), static_cast<unsigned long long>(counts[3]), static_cast<unsigned long long>(counts[4]), static_cast<unsigned long long>(counts[5]));
+}
+
 }
 
 void VulkanDevice::StoreIdleResults(bool reapFirst, const std::function<bool()>& stop) {
@@ -3257,8 +3272,7 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // against queue 0; its label goes behind a completion instead (reason 5, still no wait).
     // Debug aid: APS5_LABEL_REAP_ALL_QUEUES=1 reaps on every queue as before.
     static const bool reapAllQueues = std::getenv("APS5_LABEL_REAP_ALL_QUEUES") != nullptr;
-    if (reapFirst && (queue == 0 || reapAllQueues) && OpportunisticReap()) recorder.Reap();
-    if (recorder.Idle()) return 1;
+    const bool reap = reapFirst && (queue == 0 || reapAllQueues) && OpportunisticReap();
     static const bool drain = std::getenv("APS5_DRAIN_COMPLETION_LABELS") != nullptr;
     const auto context = graphicsContext();
     const bool syncUnimported = queue == 0 && !recorder.SubmitHeld();
@@ -3270,9 +3284,24 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
         recorder.AfterCompletions(address, bytes, stamp, queue, false);
         return 5;
     };
+    static const bool earlyLabels = std::getenv("APS5_NO_EARLY_LABELS") == nullptr;
+    if (earlyLabels && syncUnimported && !recorder.Idle() && !Graphics::HostImportCovers(context, address, bytes.size())) {
+        const auto touch = recorder.UnfinishedGuestTouch();
+        if (touch == Graphics::Recorder::GuestTouch::None) {
+            countEarlyLabel(touch);
+            state->earlyLabelSubmitOwed = true;
+            state->earlyLabelReapOwed = reap;
+            return 7;
+        }
+    }
+    if (reap) recorder.Reap();
+    if (recorder.Idle()) return 1;
     const auto unimported = [&] {
         if (const int reason = behindCompletions()) return reason;
-        recorder.Sync();
+        const auto touch = earlyLabels ? recorder.UnfinishedGuestTouch() : Graphics::Recorder::GuestTouch::Count;
+        countEarlyLabel(touch);
+        if (touch != Graphics::Recorder::GuestTouch::None) recorder.Sync();
+        else state->earlyLabelSubmitOwed = true;
         return 7;
     };
     const bool syncGuest = syncUnimported && [&] {
@@ -3354,6 +3383,15 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     static const bool submitNow = std::getenv("APS5_LABEL_SUBMIT_NOW") != nullptr;
     if (submitNow) recorder.Submit();
     return 0;
+}
+
+bool VulkanDevice::SubmitAfterEarlyLabel() {
+    const bool reap = std::exchange(state->earlyLabelReapOwed, false);
+    if (!std::exchange(state->earlyLabelSubmitOwed, false) || !state->recorder) return false;
+    const bool submit = state->recorder->Recording();
+    if (submit) state->recorder->Submit();
+    if (reap) state->recorder->Reap();
+    return submit;
 }
 
 bool VulkanDevice::AfterRecordedWork(std::function<void()> action, bool reapFirst) {
