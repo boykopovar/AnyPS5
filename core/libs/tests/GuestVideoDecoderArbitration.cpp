@@ -27,10 +27,16 @@ int main() {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr int invalidArgument = static_cast<int>(0x81570001u);
+    constexpr int alreadyInitialized = static_cast<int>(0x81570002u);
+    constexpr int notInitialized = static_cast<int>(0x81570003u);
     constexpr int outOfRange = static_cast<int>(0x81570004u);
     int callbackTarget = 0;
+    int otherCallbackTarget = 0;
     for (int call = 0; call < 2; ++call) {
         Require(sceVideoDecoderArbitrationEnableSuspendMode() == 0);
+        Require(sceVideoDecoderArbitrationEnable(0, &callbackTarget) == notInitialized);
+        Require(sceVideoDecoderArbitrationAcceptEvent(0) == notInitialized);
+        Require(sceVideoDecoderArbitrationAcceptEvent(1) == notInitialized);
         Require(sceVideoDecoderArbitrationAcceptEvent(2) == invalidArgument);
         Require(sceVideoDecoderArbitrationAcceptEvent(0xFFFFFFFFu) == invalidArgument);
         Require(sceVideoDecoderArbitrationEnable(1, &callbackTarget) == invalidArgument);
@@ -58,6 +64,21 @@ int main() {
             Require(sceVideoDecoderArbitrationInitialize(&param) == invalidArgument);
         }
     }
+    ArbitrationParam validParam{0x18, 0x200, 1};
+    errno = 71;
+    Require(sceVideoDecoderArbitrationInitialize(&validParam) == 0);
+    Require(errno == 71);
+    Require(sceVideoDecoderArbitrationInitialize(&validParam) == alreadyInitialized);
+    Require(sceVideoDecoderArbitrationInitialize(nullptr) == invalidArgument);
+    ArbitrationParam badSizeParam{0x10, 0x200, 1};
+    Require(sceVideoDecoderArbitrationInitialize(&badSizeParam) == invalidArgument);
+    Require(sceVideoDecoderArbitrationEnable(1, &callbackTarget) == invalidArgument);
+    Require(sceVideoDecoderArbitrationEnable(0, nullptr) == invalidArgument);
+    Require(sceVideoDecoderArbitrationEnable(0, &callbackTarget) == 0);
+    Require(sceVideoDecoderArbitrationEnable(0, &otherCallbackTarget) == alreadyInitialized);
+    Require(sceVideoDecoderArbitrationAcceptEvent(0) == notInitialized);
+    Require(sceVideoDecoderArbitrationAcceptEvent(1) == notInitialized);
+    Require(sceVideoDecoderArbitrationAcceptEvent(2) == invalidArgument);
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
