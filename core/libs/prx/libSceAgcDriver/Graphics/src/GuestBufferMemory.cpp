@@ -5068,7 +5068,7 @@ const char* ImportRequesterName(ImportRequester requester) {
 HostImportCounts HostImportCounters() {
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
-    return {state.imports.size(), state.liveBytes, state.counts, state.growth.size(), state.budgetChecks, retiredPinnedBytes.load(std::memory_order_acquire), state.credited, state.creditedBytes};
+    return {state.imports.size(), state.liveBytes, state.counts, state.growth.size(), state.budgetChecks, retiredPinnedBytes.load(std::memory_order_acquire), state.credited, state.creditedBytes, state.labelBytes};
 }
 
 std::string FormatHostImportCounts(const HostImportCounts& counts) {
@@ -5097,6 +5097,11 @@ std::string FormatHostImportCounts(const HostImportCounts& counts) {
         char credited[96];
         std::snprintf(credited, sizeof(credited), "; %llu (%.1f MiB) admitted on retire credit", static_cast<unsigned long long>(counts.credited), counts.creditedBytes / 1048576.0);
         requesters += credited;
+    }
+    if (counts.labelBytes != 0) {
+        char label[64];
+        std::snprintf(label, sizeof(label), "; %.1f MiB of label windows", counts.labelBytes / 1048576.0);
+        requesters += label;
     }
     return text + requesters;
 }

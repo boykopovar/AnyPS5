@@ -115,6 +115,7 @@ struct HostImportCounts {
     std::uint64_t retiredPinnedBytes = 0;
     std::uint64_t credited = 0;
     std::uint64_t creditedBytes = 0;
+    std::uint64_t labelBytes = 0;
 };
 
 const char* ImportRequesterName(ImportRequester requester);
