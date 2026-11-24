@@ -161,7 +161,7 @@ def package(platform, build, output, version):
         manifest = build / "core/libs/release-implibs.txt"
         imports = {}
         directory = (build / "core/libs/libs/implib").resolve()
-        for line in manifest.read_text(encoding="utf-8").splitlines():
+        for line in manifest.read_text(encoding="utf-8").removesuffix("\n").split("\n"):
             name, separator, value = line.partition("=")
             if not separator or not value or name in imports:
                 raise RuntimeError(f"Invalid import library manifest: {manifest}")

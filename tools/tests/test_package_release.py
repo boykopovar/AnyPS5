@@ -703,6 +703,22 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), content)
             self.assertEqual(path.stat().st_mtime_ns, timestamp)
 
+    def test_windows_import_manifest_preserves_unicode_path_separators(self):
+        runtime = self.root / "runtime"
+        runtime.mkdir()
+        for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
+            (runtime / name).write_bytes(b"runtime")
+        for name in ("mimalloc.dll", "mimalloc-redirect.dll"):
+            (self.library.parent / name).write_bytes(b"allocator")
+        (self.build / "core/relinker/relinker.exe").write_bytes(b"executable")
+        renamed = self.implib.with_name("libc\u2028import.a")
+        self.implib.rename(renamed)
+        self.manifest.write_text(f"libc={renamed.as_posix()}\n", encoding="utf-8")
+        with patch.object(package_release, "windows_runtime", return_value=runtime):
+            package_release.package("windows", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-windows-unpatched-v1.zip") as archive:
+            self.assertEqual(archive.read(f"libs/implib/{renamed.name}"), b"import archive")
+
     def test_invalid_windows_import_inputs_preserve_existing_output(self):
         runtime = self.root / "runtime"
         runtime.mkdir()
