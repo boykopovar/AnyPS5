@@ -452,6 +452,23 @@ class TraceDigestTests(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(result.stdout, "")
 
+    def test_cli_reports_a_summary_line_without_a_field_of_the_markdown_header(self):
+        summary = self.trace.with_name("aps5-summary.jsonl")
+        records = [({key: value for key, value in SUMMARY.items() if key != name}, name)
+                   for name in ("frame_ms", "presents", "gpu_busy_ms_per_present", "gpu", "driver", "os", "resolution", "commit", "trace_dropped")]
+        records += [(dict(SUMMARY, window={"first_present": 600, "ms": 40.0}), "spec"),
+                    (dict(SUMMARY, window={"spec": "frames 600:3", "ms": 40.0}), "first_present"),
+                    (dict(SUMMARY, frame_ms={"p50": 10.0, "p90": 20.0, "max": 20.0}), "p99")]
+        for record, name in records:
+            with self.subTest(name=name):
+                summary.write_text(json.dumps(record) + "\n", encoding="utf-8")
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace)],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertTrue(result.stderr.startswith(f"FAIL: the summary line has no '{name}' field"), result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def test_cli_rejects_invalid_summary_windows(self):
         summary = self.trace.with_name("aps5-summary.jsonl")
         invalid = [(None, "window must be an object"), ([], "window must be an object")]
@@ -767,6 +784,23 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(empty_list.presents, [])
         empty_events = trace_digest.Trace({"traceEvents": []})
         self.assertEqual(empty_events.presents, [])
+
+    def test_trace_tools_reject_a_run_report_as_an_event_trace(self):
+        fixture = Path(__file__).resolve().parents[2] / "docs/run-report-fixtures/stop-none.json"
+        data = fixture.read_bytes()
+        timeline = Path(trace_digest.__file__).with_name("trace_timeline.py")
+        output = Path(self.directory.name) / "timeline.html"
+        for compressed in (False, True):
+            path = output.with_name("anyps5-report.json.gz" if compressed else "anyps5-report.json")
+            path.write_bytes(gzip.compress(data) if compressed else data)
+            for tool, options in ((trace_digest.__file__, ["--json"]), (timeline, ["--output", str(output)])):
+                with self.subTest(tool=tool, compressed=compressed):
+                    result = subprocess.run([sys.executable, str(tool), str(path), *options],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn("trace object must contain a traceEvents array", result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertFalse(output.exists())
 
     def result(self):
         return trace_digest.digest(trace_digest.load_trace(self.trace), trace_digest.load_summary(None, self.trace),

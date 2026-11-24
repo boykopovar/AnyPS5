@@ -101,6 +101,14 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    `--no-names` prints the NIDs instead. Disassembly requires GNU binutils `objdump` with x86-64 support. On ARM Linux,
    put `x86_64-linux-gnu-objdump` on `PATH` if the host `objdump` cannot disassemble x86-64.
 
+   In the assembly listing, `LEA` instructions that compute the exact address of an exported function or data
+   object relative to the instruction pointer show `; address of <name>`. This also covers zero-initialized
+   objects in the module's memory image.
+
+   On stripped modules, look for `unwind_<address>` in the assembly listing. These labels mark unnamed code ranges
+   from the ELF unwind index when the listing has an instruction at that address. Direct calls and jumps to a
+   labeled range start carry the same label. One function can have several ranges.
+
    To name symbols in Ghidra without disassembling or downloading a database:
 
    ```sh

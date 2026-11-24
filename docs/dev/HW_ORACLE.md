@@ -113,6 +113,12 @@ python3 tools/hw-oracle/probe_catalog.py generate --output-dir /tmp/anyps5-probe
 Each generated case directory contains `body.s`, `rows.txt` and `probe.json`. These files can also be passed to
 `hw_oracle.py` directly, with the required floating-point options from `probe.json`.
 
+A probe can store additional input words in the optional `extra_words` array. Each word is an unsigned 32-bit integer
+or a decimal or hexadecimal string, as in the input rows. The generated bundle packs a nonempty array into
+`extra.bin` in little-endian order. Pass that file as `--extra extra.bin` when running the bundle directly. Every dispatch receives
+the same payload at the [input buffer offset described above](#kernel). Use the lane ID in the body to select words
+for individual lanes.
+
 To run the catalog, provide a user-chosen label for the machine and GPU, then ask for the report summary:
 
 ```sh
@@ -121,10 +127,11 @@ python3 tools/hw-oracle/probe_catalog.py coverage --results-dir measurements --d
 ```
 
 `run` measures every default catalog entry; repeat `--probe ID` to select explicit entries. It does not overwrite an existing
-measurement file. Reports include the hardware-oracle runtime and assembly target, the exact catalog digest, all input
-and output words, and the user-supplied device label. The ordinary `run` command does not check the label against the
-physical GPU. The assembly target alone does not identify a GPU model or driver. `coverage` checks each probe
-definition digest, inputs and settings. Adding another probe leaves existing measurements valid; editing a probe marks only that
+measurement file. Reports include the hardware-oracle runtime and assembly target, the exact catalog digest, the
+input rows and output words, the payload size and SHA-256, and the user-supplied device label. The ordinary `run`
+command does not check the label against the physical GPU. The assembly target alone does not identify a GPU model or
+driver. `coverage` checks each probe definition digest, inputs and settings. Adding another probe leaves existing
+measurements valid; editing a probe marks only that
 probe's old report stale. It reports missing, stale or invalid files separately and exits 1 when the selected probe set
 is incomplete. Use `--json` for machine-readable coverage data.
 

@@ -160,6 +160,30 @@ class RebaseVerifyTests(unittest.TestCase):
                 self.assertEqual(status, 1)
                 self.assertIn("error: f.txt: " + message, output.getvalue())
 
+    def test_rebase_rejects_moving_an_added_line_with_the_same_base_file(self):
+        self.assertEqual(self.verify(), [])
+        self.write("f.txt", "a\nb\nNEW\nc\ntail\n")
+        self.git("commit", "-qa", "--amend", "--no-edit")
+        self.assertEqual(self.verify(), [
+            "f.txt: rebased content differs although the base content is unchanged",
+        ])
+
+    def test_rebase_rejects_reordered_lines_in_a_new_file(self):
+        path = "new file.txt"
+        self.git("checkout", "-q", "old")
+        self.write(path, "first\nsecond\n")
+        self.git("add", "--", path)
+        self.git("commit", "-qm", "feat(tools): add an ordered file")
+        self.git("checkout", "-q", "new")
+        self.git("cherry-pick", "old")
+        self.assertEqual(self.verify(), [])
+
+        self.write(path, "second\nfirst\n")
+        self.git("commit", "-qa", "--amend", "--no-edit")
+        self.assertEqual(self.verify(), [
+            f"{path}: rebased content differs although the base content is unchanged",
+        ])
+
     def test_changed_lines_keep_repository_paths_from_a_subdirectory(self):
         nested = self.root / "nested"
         nested.mkdir()
