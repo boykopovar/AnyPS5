@@ -65,10 +65,7 @@ std::string Join(const std::string& path, const std::string& name) {
 }
 
 int BasenameOffset(const std::string& path) {
-    std::string trimmed = path;
-    while (trimmed.size() > 1 && trimmed.back() == '/') trimmed.pop_back();
-    if (trimmed == "/") return 0;
-    const auto slash = trimmed.rfind('/');
+    const auto slash = path.rfind('/');
     return slash == std::string::npos ? 0 : static_cast<int>(slash + 1);
 }
 
@@ -85,15 +82,15 @@ int Visit(Walk& walk, const std::string& path, int base, int level) {
     if (!IsDirectory(status)) return Invoke(walk, path, status, FtwF, base, level);
     for (const Identity& ancestor : walk.ancestors)
         if (ancestor.device == status.st_dev && ancestor.inode == status.st_ino) return 0;
+    if (!walk.depth) {
+        const int before = Invoke(walk, path, status, FtwD, base, level);
+        if (before != 0) return before;
+    }
     void* handle = opendir_nid_postfix(path.c_str());
     if (handle == nullptr) return Invoke(walk, path, status, FtwDnr, base, level);
     std::vector<std::string> names;
     while (GuestDirectoryEntry* entry = readdir_nid_postfix(handle)) names.emplace_back(entry->name, entry->nameLength);
     closedir_nid_postfix(handle);
-    if (!walk.depth) {
-        const int before = Invoke(walk, path, status, FtwD, base, level);
-        if (before != 0) return before;
-    }
     walk.ancestors.push_back(Identity{status.st_dev, status.st_ino});
     int result = 0;
     for (const std::string& name : names) {

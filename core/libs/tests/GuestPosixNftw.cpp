@@ -158,6 +158,23 @@ void TestSymlinks(const std::filesystem::path& root) {
 
 }
 
+void TestStopBelowRoot() {
+    g_records.clear();
+    g_stopAt = 3;
+    g_stopReturn = 7;
+    Require(nftw_nid_postfix("/anyps5-nftw-test", Recorder, 4, 0) == 7);
+    Require(g_records.size() == 3);
+    g_stopAt = 0;
+    g_stopReturn = 0;
+}
+
+void TestTrailingSlashBase() {
+    g_records.clear();
+    Require(nftw_nid_postfix("/anyps5-nftw-test/", Recorder, 4, 0) == 0);
+    Require(!g_records.empty());
+    Require(g_records[0].base == static_cast<int>(g_records[0].path.size()));
+}
+
 int main() {
     std::random_device random;
     const auto root = std::filesystem::temp_directory_path() /
@@ -176,8 +193,16 @@ int main() {
     TestCallbackStopsWalk();
     TestMissingRootReportsNs();
     TestRejectsBadArguments();
+    TestStopBelowRoot();
+    TestTrailingSlashBase();
 #ifndef _WIN32
     TestSymlinks(root);
+#endif
+#ifndef _WIN32
+    std::filesystem::create_symlink(root, root / "d" / "loop");
+    g_records.clear();
+    Require(nftw_nid_postfix("/anyps5-nftw-test", Recorder, 4, 0) == 0);
+    for (const Record& record : g_records) Require(record.path.find("/loop") == std::string::npos);
 #endif
 
     RemovePathAlias_nid_no_patch("/anyps5-nftw-test");
