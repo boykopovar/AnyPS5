@@ -221,6 +221,10 @@ void TestHeaps() {
     Require(allocatorEx.allocator.context == &memoryHeap && allocatorEx.outOfMemoryError == 0x1234,
         "the extended allocator carries the caller's error code");
     UseAllocator(allocatorEx.allocator);
+    NpAllocator memoryAllocator {};
+    sceNpMemoryHeapGetAllocator(&memoryHeap, &memoryAllocator);
+    Require(memoryAllocator.context == &memoryHeap && memoryAllocator.allocate == allocatorEx.allocator.allocate,
+        "the memory heap allocator getter writes the allocator");
     sceNpMemoryHeapDestroy(&memoryHeap);
 
     Require(memoryHeap.memory.address == nullptr && memoryHeap.heap.mspace == nullptr, "destroying clears the memory heap");
@@ -239,6 +243,13 @@ void TestHeaps() {
 
     Require(allocator.context == &heap, "the heap allocator uses the heap as its context");
     UseAllocator(allocator);
+    errno = 71;
+    sceNpHeapGetAllocator(&heap, reinterpret_cast<NpAllocator*>(0x10));
+    sceNpMemoryHeapGetAllocator(&memoryHeap, reinterpret_cast<NpAllocator*>(0x10));
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1234, reinterpret_cast<NpAllocatorEx*>(0x10));
+    sceNpGlobalHeapGetAllocator(reinterpret_cast<NpAllocator*>(0x10));
+    sceNpGlobalHeapGetAllocatorEx(reinterpret_cast<NpAllocatorEx*>(0x10));
+    Require(errno == 71, "unwritable allocator outputs are skipped and errno is kept");
     NpHeapStat stat {};
     Require(sceNpHeapGetStat(&heap, &stat) == 0 && stat.maxInuseSize >= stat.currentInuseSize, "heap statistics are reported");
     errno = 71;
@@ -264,6 +275,13 @@ void TestHeaps() {
     Require(sceNpArchInit() == 0 && sceNpArchInit() == 0, "the library initialises more than once");
     NpAllocatorEx* global = sceNpGlobalHeapGetAllocatorExPtr();
     Require(global->outOfMemoryError == NpOutOfMemory, "the global allocator reports the library's out-of-memory error");
+    NpAllocator globalAllocator {};
+    sceNpGlobalHeapGetAllocator(&globalAllocator);
+    NpAllocatorEx globalAllocatorEx {};
+    sceNpGlobalHeapGetAllocatorEx(&globalAllocatorEx);
+    Require(globalAllocator.context == global->allocator.context && globalAllocator.allocate == global->allocator.allocate
+            && globalAllocatorEx.allocator.context == global->allocator.context && globalAllocatorEx.outOfMemoryError == NpOutOfMemory,
+        "the global allocator getters write the global heap allocator");
     UseAllocator(global->allocator);
     sceNpArchTerm();
 
