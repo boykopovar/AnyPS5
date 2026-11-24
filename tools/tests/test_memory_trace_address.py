@@ -82,6 +82,11 @@ class ParseTests(FeatureRequired):
             (3, "map anon", 0x4000, 0x1000),
         ])
 
+    def test_mapping_operation_without_operands_is_a_truncated_record(self):
+        for operation in ("protect", "unmap released view", "map direct"):
+            with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, "line 2: .*no address range"):
+                trace.parse_events(["unrelated log\n", f"[memory] {operation}\n"])
+
     def test_rejects_a_truncated_mapping_event(self):
         with self.assertRaisesRegex(ValueError, "line 1: protect event has no address range"):
             trace.parse_events(["[memory] protect with a truncated record\n"])

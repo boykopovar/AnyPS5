@@ -44,7 +44,7 @@ def iter_events(lines):
         if match is None:
             continue
         detail = line[match.end():].rstrip("\r\n")
-        operation = next((item for item in OPERATIONS if detail.startswith(item + " ")), None)
+        operation = next((item for item in OPERATIONS if detail == item or detail.startswith(item + " ")), None)
         if operation is None:
             continue
         address = RANGE.match(detail, len(operation) + 1)
