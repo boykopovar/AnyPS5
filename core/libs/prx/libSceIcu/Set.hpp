@@ -22,6 +22,18 @@ void APS5_VABI uset_complementRange_nid_postfix(USet*, std::int32_t, std::int32_
 std::int8_t APS5_VABI uset_contains_nid_postfix(const USet*, std::int32_t);
 std::int8_t APS5_VABI uset_containsRange_nid_postfix(const USet*, std::int32_t, std::int32_t);
 std::int8_t APS5_VABI uset_equals_nid_postfix(const USet*, const USet*);
+std::int32_t APS5_VABI uset_indexOf_nid_postfix(const USet*, std::int32_t);
+std::int32_t APS5_VABI uset_charAt_nid_postfix(const USet*, std::int32_t);
+std::int32_t APS5_VABI uset_getStringCount_nid_postfix(const USet*);
+std::int8_t APS5_VABI uset_contains_nid_postfix(const USet*, std::int32_t);
+std::int8_t APS5_VABI uset_containsAll_nid_postfix(const USet*, const USet*);
+std::int8_t APS5_VABI uset_containsNone_nid_postfix(const USet*, const USet*);
+std::int8_t APS5_VABI uset_containsSome_nid_postfix(const USet*, const USet*);
+std::int8_t APS5_VABI uset_hasStrings_nid_postfix(const USet*);
+std::int8_t APS5_VABI uset_isFrozen_nid_postfix(const USet*);
+std::int32_t APS5_VABI uset_span_nid_postfix(const USet*, const char16_t*, std::int32_t, std::int32_t);
+std::int32_t APS5_VABI uset_spanBack_nid_postfix(const USet*, const char16_t*, std::int32_t, std::int32_t);
+std::int32_t APS5_VABI uset_spanUTF8_nid_postfix(const USet*, const char*, std::int32_t, std::int32_t);
 std::int32_t APS5_VABI uset_getItemCount_nid_postfix(const USet*);
 std::int32_t APS5_VABI uset_getItem_nid_postfix(const USet*, std::int32_t, std::int32_t*, std::int32_t*, char16_t*, std::int32_t, std::int32_t*);
 std::int8_t APS5_VABI uset_isEmpty_nid_postfix(const USet*);

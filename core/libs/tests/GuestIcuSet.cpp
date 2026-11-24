@@ -310,6 +310,54 @@ void AdditionalOperations() {
     uset_close_nid_postfix(set);
 }
 
+void AdditionalQueries() {
+    static_assert(std::is_same_v<decltype(&uset_indexOf_nid_postfix), std::int32_t (APS5_VABI*)(const USet*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_charAt_nid_postfix), std::int32_t (APS5_VABI*)(const USet*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_getStringCount_nid_postfix), std::int32_t (APS5_VABI*)(const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_containsAll_nid_postfix), std::int8_t (APS5_VABI*)(const USet*, const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_containsNone_nid_postfix), std::int8_t (APS5_VABI*)(const USet*, const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_containsSome_nid_postfix), std::int8_t (APS5_VABI*)(const USet*, const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_hasStrings_nid_postfix), std::int8_t (APS5_VABI*)(const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_isFrozen_nid_postfix), std::int8_t (APS5_VABI*)(const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_span_nid_postfix), std::int32_t (APS5_VABI*)(const USet*, const char16_t*, std::int32_t, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_spanBack_nid_postfix), std::int32_t (APS5_VABI*)(const USet*, const char16_t*, std::int32_t, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_spanUTF8_nid_postfix), std::int32_t (APS5_VABI*)(const USet*, const char*, std::int32_t, std::int32_t)>);
+
+    USet* set = uset_openEmpty_nid_postfix();
+    USet* subset = uset_openEmpty_nid_postfix();
+    USet* other = uset_openEmpty_nid_postfix();
+    uset_addRange_nid_postfix(set, 10, 20);
+    uset_addRange_nid_postfix(set, 30, 40);
+    uset_addRange_nid_postfix(subset, 12, 18);
+    uset_addRange_nid_postfix(other, 50, 60);
+    Require(uset_indexOf_nid_postfix(set, 10) == 0 && uset_indexOf_nid_postfix(set, 20) == 10 &&
+            uset_indexOf_nid_postfix(set, 30) == 11 && uset_indexOf_nid_postfix(set, 25) == -1, "set indexes");
+    Require(uset_charAt_nid_postfix(set, 0) == 10 && uset_charAt_nid_postfix(set, 10) == 20 &&
+            uset_charAt_nid_postfix(set, 11) == 30 && uset_charAt_nid_postfix(set, 22) == -1, "characters at indexes");
+    Require(uset_containsAll_nid_postfix(set, subset) && !uset_containsAll_nid_postfix(subset, set), "contains all");
+    Require(uset_containsNone_nid_postfix(set, other) && !uset_containsSome_nid_postfix(set, other), "disjoint sets");
+    uset_add_nid_postfix(other, 35);
+    Require(!uset_containsNone_nid_postfix(set, other) && uset_containsSome_nid_postfix(set, other), "intersecting sets");
+    Require(uset_getStringCount_nid_postfix(set) == 0 && !uset_hasStrings_nid_postfix(set) && !uset_isFrozen_nid_postfix(set),
+            "mutable code point set queries");
+    std::int32_t error = Success;
+    const auto* strings = u_getBinaryPropertySet_nid_postfix(66, &error);
+    Require(strings && error == Success && uset_getStringCount_nid_postfix(strings) == 12 &&
+            uset_hasStrings_nid_postfix(strings) && uset_isFrozen_nid_postfix(strings), "frozen string set queries");
+    USet* letters = uset_openEmpty_nid_postfix();
+    uset_addRange_nid_postfix(letters, 'a', 'z');
+    Require(uset_span_nid_postfix(letters, u"abc1xyz", -1, 1) == 3 &&
+            uset_span_nid_postfix(letters, u"123a", 4, 0) == 3, "forward spans");
+    Require(uset_spanBack_nid_postfix(letters, u"abc123", 6, 0) == 3 &&
+            uset_spanBack_nid_postfix(letters, u"123abc", 6, 1) == 3, "backward spans");
+    Require(uset_spanUTF8_nid_postfix(letters, "abc1xyz", -1, 1) == 3 &&
+            uset_spanUTF8_nid_postfix(letters, "123a", 4, 0) == 3, "UTF-8 spans");
+    uset_close_nid_postfix(letters);
+    uset_close_nid_postfix(other);
+    uset_close_nid_postfix(subset);
+    uset_close_nid_postfix(set);
+}
+
 void ItemAccess() {
     USet* set = uset_openEmpty_nid_postfix();
     uset_addRange_nid_postfix(set, 0x41, 0x5a);
@@ -351,6 +399,17 @@ void InvalidSets() {
     Require(Rejects([] { uset_removeRange_nid_postfix(nullptr, 1, 2); }), "null set remove range");
     Require(Rejects([] { uset_retain_nid_postfix(nullptr, 1, 2); }), "null set retain");
     Require(Rejects([] { uset_size_nid_postfix(nullptr); }), "null set size");
+    Require(Rejects([] { uset_indexOf_nid_postfix(nullptr, 1); }), "null set index");
+    Require(Rejects([] { uset_charAt_nid_postfix(nullptr, 0); }), "null set character");
+    Require(Rejects([] { uset_getStringCount_nid_postfix(nullptr); }), "null set string count");
+    Require(Rejects([&] { uset_containsAll_nid_postfix(set, nullptr); }), "null set contains all");
+    Require(Rejects([&] { uset_containsNone_nid_postfix(set, nullptr); }), "null set contains none");
+    Require(Rejects([&] { uset_containsSome_nid_postfix(set, nullptr); }), "null set contains some");
+    Require(Rejects([] { uset_hasStrings_nid_postfix(nullptr); }), "null set strings query");
+    Require(Rejects([] { uset_isFrozen_nid_postfix(nullptr); }), "null set frozen query");
+    Require(Rejects([&] { uset_span_nid_postfix(set, nullptr, 1, 1); }), "null span text");
+    Require(Rejects([&] { uset_spanBack_nid_postfix(set, nullptr, 1, 1); }), "null backward span text");
+    Require(Rejects([&] { uset_spanUTF8_nid_postfix(set, nullptr, 1, 1); }), "null UTF-8 span text");
     Require(Rejects([&] { uset_close_nid_postfix(forged); }), "closing foreign memory");
     uset_close_nid_postfix(nullptr);
     uset_close_nid_postfix(set);
@@ -402,6 +461,7 @@ int main() {
     CodePointRanges();
     Union();
     AdditionalOperations();
+    AdditionalQueries();
     ItemAccess();
     InvalidSets();
     Random();

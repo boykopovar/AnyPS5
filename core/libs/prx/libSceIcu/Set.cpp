@@ -122,6 +122,18 @@ void APS5_VABI uset_complementRange_nid_postfix(USet* set, std::int32_t start, s
     uset_complementRange(NativeSet(set), start, end);
 }
 
+std::int32_t APS5_VABI uset_indexOf_nid_postfix(const USet* set, std::int32_t codePoint) {
+    return uset_indexOf(Icu::NativeSet(set), codePoint);
+}
+
+std::int32_t APS5_VABI uset_charAt_nid_postfix(const USet* set, std::int32_t index) {
+    return uset_charAt(Icu::NativeSet(set), index);
+}
+
+std::int32_t APS5_VABI uset_getStringCount_nid_postfix(const USet* set) {
+    return uset_getStringCount(Icu::NativeSet(set));
+}
+
 std::int8_t APS5_VABI uset_contains_nid_postfix(const USet* set, std::int32_t codePoint) {
     const auto* native = Icu::NativeSet(set);
     return codePoint >= 0 && codePoint <= MaximumCodePoint && uset_contains(native, codePoint);
@@ -133,6 +145,53 @@ std::int8_t APS5_VABI uset_containsRange_nid_postfix(const USet* set, std::int32
 
 std::int8_t APS5_VABI uset_equals_nid_postfix(const USet* first, const USet* second) {
     return uset_equals(Icu::NativeSet(first), Icu::NativeSet(second));
+}
+
+std::int8_t APS5_VABI uset_containsAll_nid_postfix(const USet* set, const USet* other) {
+    return uset_containsAll(Icu::NativeSet(set), Icu::NativeSet(other));
+}
+
+std::int8_t APS5_VABI uset_containsNone_nid_postfix(const USet* set, const USet* other) {
+    return uset_containsNone(Icu::NativeSet(set), Icu::NativeSet(other));
+}
+
+std::int8_t APS5_VABI uset_containsSome_nid_postfix(const USet* set, const USet* other) {
+    return uset_containsSome(Icu::NativeSet(set), Icu::NativeSet(other));
+}
+
+std::int8_t APS5_VABI uset_hasStrings_nid_postfix(const USet* set) {
+    return uset_hasStrings(Icu::NativeSet(set));
+}
+
+std::int8_t APS5_VABI uset_isFrozen_nid_postfix(const USet* set) {
+    return uset_isFrozen(Icu::NativeSet(set));
+}
+
+std::int32_t APS5_VABI uset_span_nid_postfix(const USet* set, const char16_t* text, std::int32_t length, std::int32_t condition) {
+    const auto* native = Icu::NativeSet(set);
+    if (!text) {
+        if (length != 0) APS5_INVALID_ARG_EX;
+        return 0;
+    }
+    return uset_span(native, text, length, static_cast<USetSpanCondition>(condition));
+}
+
+std::int32_t APS5_VABI uset_spanBack_nid_postfix(const USet* set, const char16_t* text, std::int32_t length, std::int32_t condition) {
+    const auto* native = Icu::NativeSet(set);
+    if (!text) {
+        if (length != 0) APS5_INVALID_ARG_EX;
+        return 0;
+    }
+    return uset_spanBack(native, text, length, static_cast<USetSpanCondition>(condition));
+}
+
+std::int32_t APS5_VABI uset_spanUTF8_nid_postfix(const USet* set, const char* text, std::int32_t length, std::int32_t condition) {
+    const auto* native = Icu::NativeSet(set);
+    if (!text) {
+        if (length != 0) APS5_INVALID_ARG_EX;
+        return 0;
+    }
+    return uset_spanUTF8(native, text, length, static_cast<USetSpanCondition>(condition));
 }
 
 std::int32_t APS5_VABI uset_getItemCount_nid_postfix(const USet* set) {
