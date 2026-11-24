@@ -2,7 +2,6 @@
 #include "prx/libc/include/General.hpp"
 #include "unicode/urename.h"
 #include "unicode/uvernum.h"
-#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
