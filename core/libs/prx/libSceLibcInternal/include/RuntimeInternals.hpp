@@ -36,7 +36,7 @@ int APS5_VABI _Fwprep_nid_postfix();
 int APS5_VABI _Genld_nid_postfix();
 const char* APS5_VABI _Gentime_nid_postfix(const void* time, const void* info, char qualifier, char code, int* length, char* buffer);
 int APS5_VABI _Getcloc_nid_postfix();
-int APS5_VABI _Getctyptab_nid_postfix();
+const short* APS5_VABI _Getctyptab_nid_postfix();
 const char* APS5_VABI _Getdst_nid_postfix(const char* s);
 int APS5_VABI _Getfld_nid_postfix();
 int APS5_VABI _Getfloat_nid_postfix();
