@@ -1013,6 +1013,29 @@ void frameTests(const Context& context) {
     Require(TextureCacheUsage().sampledEntries == capacity, "a second frame over other textures left " + std::to_string(TextureCacheUsage().sampledEntries) + " entries cached");
 }
 
+void memoUseOrderTests(const Context& context) {
+    std::vector<std::unique_ptr<WatchedSurface>> surfaces;
+    surfaces.push_back(std::make_unique<WatchedSurface>(context));
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    const auto bytes = Sampled(context, surfaces[0]->Address())->AllocationBytes();
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require(capacity >= 2u, "a snapshot of the 256 KiB surface holds " + std::to_string(bytes) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    for (std::size_t surface = 1; surface <= capacity; ++surface) surfaces.push_back(std::make_unique<WatchedSurface>(context));
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    std::vector<std::weak_ptr<Texture>> made(capacity);
+    for (std::size_t surface = 0; surface < capacity; ++surface) made[surface] = Sampled(context, surfaces[surface]->Address());
+    Require(TextureCacheUsage().sampledEntries == capacity, "a frame of " + std::to_string(capacity) + " write-watched textures did not fill the cache");
+    Recorder::CountPresent();
+    for (std::size_t use = 0; use < 3u; ++use) Require(Sampled(context, surfaces[0]->Address()) == made[0].lock(), "a write-watched texture unchanged since the last frame was not found cached");
+    Recorder::CountPresent();
+    const std::weak_ptr<Texture> incoming = Sampled(context, surfaces[capacity]->Address());
+    Require(!made[0].expired(), "a texture used in the last frame through the sampled lookup memo was evicted before the textures not used since the frame before");
+    Require(made[1].expired(), "the least recently used texture was kept while a texture the last frame used was evicted");
+    Require(!incoming.expired() && TextureCacheUsage().sampledBytes <= Budget, "the texture first used two frames after the cached ones were was not admitted in place of the least recently used one");
+}
+
 void scanTests(const Context& context) {
     Block block(context);
     ClearCachedTextures(context.device);
@@ -1826,6 +1849,7 @@ int main(int argc, char** argv) {
             viewEvictionTests(context);
             viewTests(context);
             scanTests(context);
+            memoUseOrderTests(context);
             frameTests(context);
             shrinkTests(context);
             secondUseTests(context);

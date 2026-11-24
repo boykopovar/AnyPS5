@@ -1432,6 +1432,7 @@ struct SampledLookupKeyHash {
 
 struct SampledLookupProof {
     std::weak_ptr<Texture> texture;
+    TextureKey cacheKey;
     LookupRecord record;
     std::uint64_t pendingSerial = 0;
     std::uint64_t imports = 0;
@@ -1492,8 +1493,13 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     key.flags = (depthCompare ? 1u : 0u) | (layerRows ? 2u : 0u) | (static_cast<std::uint32_t>(multisampleViewType) << 2u);
     if (const auto found = memo.proofs.find(key); found != memo.proofs.end()) {
         if (auto texture = provedSampledLookup(context, found->second)) {
-            logLookup(found->second.record);
-            return texture;
+            auto& cache = Textures();
+            std::lock_guard lock(cache.mutex);
+            if (const auto it = findTexture(cache, found->second.cacheKey); it != cache.entries.end() && it->texture == texture) {
+                touchTexture(cache, it);
+                logLookup(found->second.record);
+                return texture;
+            }
         }
         memo.proofs.erase(found);
     }
@@ -1507,7 +1513,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     const auto& record = lookupLog().back();
     if (!MemoizableSampledLookup(record, *texture) || StorageTexture::PendingSerial() != pendingSerial || HostImportSetGeneration() != imports || GuestAllocations::GuestAllocationsGeneration_nid_postfix() != allocations || GuestMemory::UnwatchSerial() != unwatched || DepthSurfaceOverlaps(context.device, record.resource.baseAddress, record.bytes)) return texture;
     if (memo.proofs.size() >= SampledLookupMemoEntries) memo.proofs.clear();
-    memo.proofs.insert_or_assign(key, SampledLookupProof{texture, record, pendingSerial, imports, allocations, unwatched});
+    memo.proofs.insert_or_assign(key, SampledLookupProof{texture, MakeTextureKey(context.device, words, components, depthCompare), record, pendingSerial, imports, allocations, unwatched});
     return texture;
 }
 
