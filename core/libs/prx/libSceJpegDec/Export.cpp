@@ -475,6 +475,10 @@ int32_t APS5_VABI sceJpegDecDelete(void* handle) {
 }
 
 int32_t APS5_VABI sceJpegDecParseHeader(const JpegDecParseParam* param, JpegDecImageInfo* imageInfo) {
+    return JpegDecParseHeader_nid_no_patch(param, imageInfo);
+}
+
+int32_t APS5_VABI JpegDecParseHeader_nid_no_patch(const JpegDecParseParam* param, JpegDecImageInfo* imageInfo) {
     if (!param) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     JpegDecParseParam localParam{};
     if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
@@ -482,7 +486,7 @@ int32_t APS5_VABI sceJpegDecParseHeader(const JpegDecParseParam* param, JpegDecI
     if (localParam.jpeg_mem_size == 0) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
     if (!validDecodeOptions(localParam.decode_mode, localParam.down_scale)) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
     if (!imageInfo) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    requireDecodeMode(__func__, localParam.decode_mode);
+    requireDecodeMode("sceJpegDecParseHeader", localParam.decode_mode);
     const std::uint32_t downScale = localParam.down_scale;
     std::vector<std::uint8_t> jpegBytes(localParam.jpeg_mem_size);
     if (!GuestCopyIn_nid_no_patch(jpegBytes.data(), localParam.jpeg_mem_addr, jpegBytes.size())) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
