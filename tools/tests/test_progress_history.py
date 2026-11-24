@@ -236,6 +236,38 @@ class HistoryDateWindowTests(unittest.TestCase):
 
 
 class ProgressHistoryTests(unittest.TestCase):
+    def test_history_cache_reuses_commits_in_a_sha256_git_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q", "--object-format=sha256"], check=True)
+            commit(root, "2026-01-01", "first", "int APS5_VABI A() { return 0; }\n")
+            cache = root / "history.json"
+            point = {"libraries": {"done": 1, "total": 1, "percent": 100},
+                     "shaders": {"done": 0, "total": 0, "percent": 0},
+                     "shader_metric": "decoded"}
+            with patch.object(progress, "ROOT", root), patch.object(progress_history, "cache_signature", return_value="rules"), \
+                 patch.object(progress_history, "measure", return_value=point) as measure:
+                first = progress_history.collect("HEAD", cache)
+                self.assertEqual(len(first[0]["commit"]), 64)
+                self.assertEqual(progress_history.collect("HEAD", cache), first)
+                measure.assert_called_once()
+
+    def test_load_rejects_nonregular_history_cache_before_reading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            with patch.object(Path, "read_text", side_effect=AssertionError("attempted to read a directory")):
+                with self.assertRaisesRegex(ValueError, "history cache must be a regular file"):
+                    progress_history.load_cache(cache, "rules")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX named pipes")
+    def test_save_preserves_a_named_pipe_history_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "history.json"
+            os.mkfifo(cache)
+            with self.assertRaisesRegex(ValueError, "history cache must be a regular file"):
+                progress_history.save_cache(cache, "rules", {})
+            self.assertTrue(cache.is_fifo())
+
     def test_cache_symlink_updates_target_without_replacing_link(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -144,8 +144,12 @@ def cache_signature():
 
 
 def load_cache(path, signature):
-    if not path.exists():
+    try:
+        info = path.stat()
+    except FileNotFoundError:
         return {}
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError(f"{path}: history cache must be a regular file")
     try:
         data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=progress.unique_json_keys)
     except RecursionError as error:
@@ -157,7 +161,7 @@ def load_cache(path, signature):
     if data["rules"] != signature:
         return {}
     for sha, counts in data["commits"].items():
-        if len(sha) != 40 or any(character not in "0123456789abcdef" for character in sha):
+        if len(sha) not in (40, 64) or any(character not in "0123456789abcdef" for character in sha):
             raise ValueError(f"{path}: invalid cached commit")
         if counts is None:
             continue
@@ -182,6 +186,12 @@ def save_cache(path, signature, commits):
     target = Path(os.path.realpath(path))
     if target.is_symlink():
         raise ValueError(f"{path}: history cache is a symbolic link loop")
+    try:
+        info = target.stat()
+    except FileNotFoundError:
+        info = None
+    if info is not None and not stat.S_ISREG(info.st_mode):
+        raise ValueError(f"{path}: history cache must be a regular file")
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
@@ -190,8 +200,8 @@ def save_cache(path, signature, commits):
             temporary = Path(output.name)
             json.dump({"schema_version": 2, "rules": signature, "commits": commits}, output, sort_keys=True)
             output.write("\n")
-        if os.name != "nt" and target.exists():
-            temporary.chmod(stat.S_IMODE(target.stat().st_mode))
+        if os.name != "nt" and info is not None:
+            temporary.chmod(stat.S_IMODE(info.st_mode))
         os.replace(temporary, target)
     finally:
         if temporary is not None:
