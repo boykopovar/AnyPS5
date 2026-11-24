@@ -56,6 +56,33 @@
       ]
     },
     {
+      "id": "v-mul-legacy-f32-zero-rule",
+      "instruction": "v_mul_legacy_f32",
+      "description": "Zero times infinity and NaN, signed zero and a normal product.",
+      "body": "v_mul_legacy_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "zero-inf", "input": ["0x00000000", "0x7f800000", 0, 0]},
+        {"name": "inf-zero", "input": ["0x7f800000", "0x00000000", 0, 0]},
+        {"name": "negzero-inf", "input": ["0x80000000", "0x7f800000", 0, 0]},
+        {"name": "zero-nan", "input": ["0x00000000", "0x7fc12345", 0, 0]},
+        {"name": "nan-zero", "input": ["0x7fc12345", "0x00000000", 0, 0]},
+        {"name": "normal", "input": ["0x40000000", "0xc0400000", 0, 0]}
+      ]
+    },
+    {
       "id": "v-min-f32-nan-and-zero",
       "instruction": "v_min_f32",
       "description": "Operand order for quiet NaNs and signed zeros, plus finite and infinite values.",
@@ -943,6 +970,33 @@
             0
           ]
         }
+      ]
+    },
+    {
+      "id": "v-ldexp-f32-edges",
+      "instruction": "v_ldexp_f32",
+      "description": "Overflow, underflow, NaN and infinity sources and large exponents.",
+      "body": "v_ldexp_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "overflow", "input": ["0x3f800000", "0x00000080", 0, 0]},
+        {"name": "underflow", "input": ["0x3f800000", "0xffffff6a", 0, 0]},
+        {"name": "nan", "input": ["0x7fc12345", "0x00000001", 0, 0]},
+        {"name": "inf-down", "input": ["0x7f800000", "0xfffffffb", 0, 0]},
+        {"name": "huge-exponent", "input": ["0x3f800000", "0x7fffffff", 0, 0]},
+        {"name": "min-exponent", "input": ["0x3f800000", "0x80000000", 0, 0]}
       ]
     },
     {
