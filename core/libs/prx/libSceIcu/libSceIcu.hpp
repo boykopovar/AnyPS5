@@ -34,6 +34,7 @@
 #include "Bidi.hpp"
 #include "CharsetDetection.hpp"
 #include "Normalization.hpp"
+#include "ClassIds.hpp"
 #include "CodePoints.hpp"
 #include "Identified.hpp"
 
