@@ -674,6 +674,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
 | `ANYPS5_AUDIO_IN_DEVICE` | string | `core/libs/prx/libSceAudioIn/Export.cpp` | default | exact SDL capture-device name; unset, empty or `default` selects SDL's default; missing, duplicate or unopenable selected devices make AudioIn open return `0x8026010F`; read each time a port opens |
+| `ANYPS5_AUDIO_IN_OPEN_TIMEOUT_MS` | integer | `core/libs/prx/libSceAudioIn/Export.cpp` | 1000 | milliseconds that AudioIn waits for a capture device to open; decimal values from 0 through 60000 are accepted, and an unset, empty or invalid value uses 1000 |
 
 ### libSceAudioOut
 
