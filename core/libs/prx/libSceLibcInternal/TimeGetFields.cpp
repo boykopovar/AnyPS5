@@ -933,6 +933,11 @@ void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC1Em
     *self = {&g_timePutWideVtable.facet, static_cast<std::uint32_t>(refs), 0};
 }
 
+void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs) {
+    RequireArgument(self != nullptr, __func__);
+    *self = {&g_timePutWideVtable.facet, static_cast<std::uint32_t>(refs), 0};
+}
+
 void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(GuestLocale::Facet*, const GuestLocale::LocinfoStorage*) {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -547,7 +547,9 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
             if (slots[slot].controller != nullptr && slots[slot].instanceId == which) {
                 slots[slot].state = sampleController(slot);
-                if (slot == 0 && (event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERBUTTONUP)) dispatchPadChords(window);
+                const bool trigger = event.type == SDL_CONTROLLERAXISMOTION &&
+                    (event.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT || event.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+                if (slot == 0 && (event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERBUTTONUP || trigger)) dispatchPadChords(window);
                 publish(window.FrameNumber(), slot);
                 return;
             }

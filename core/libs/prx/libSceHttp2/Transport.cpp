@@ -17,6 +17,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <nghttp2/nghttp2.h>
 #include <algorithm>
 #include <array>
@@ -85,11 +86,6 @@ Limit Earlier(Limit first, Limit second) {
 std::string Lower(std::string text) {
     for (auto& c : text) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
     return text;
-}
-
-std::uint32_t CompiledSdkVersion() {
-    std::int32_t version = 0;
-    return sceKernelGetCompiledSdkVersion(&version) < 0 ? 0x99900000u : static_cast<std::uint32_t>(version);
 }
 
 bool NamesField(std::string_view line, std::string_view name) {
@@ -1324,7 +1320,7 @@ int Request::ContentLength(int* kind, std::uint64_t* length) {
     if (state->networkResult) return ResponseUnavailable;
     Require(kind && length, "sceHttp2GetResponseContentLength: null output");
     if (!state->ready) return ResponseUnavailable;
-    const bool known = state->hasLength && (!state->GzipResponse() || (!state->settings.inflateGzip && CompiledSdkVersion() >= 0x12500000));
+    const bool known = state->hasLength && (!state->GzipResponse() || (!state->settings.inflateGzip && ApplicationCompiledSdkVersion() >= 0x12500000));
     *kind = known ? 0 : state->chunked ? 2 : 1;
     *length = known ? state->contentLength : 0;
     return 0;

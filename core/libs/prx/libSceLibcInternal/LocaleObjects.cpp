@@ -1,10 +1,18 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports2.hpp"
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
+#include <atomic>
 #include <stdexcept>
+
+namespace {
+
+std::atomic<GuestLocale::Implementation*> g_globalLocale{nullptr};
+
+} // namespace
 
 extern "C" {
 
@@ -46,6 +54,14 @@ void APS5_VABI _ZNSt8_LocinfoC1EiPKc_nid_postfix(GuestLocale::LocinfoStorage* se
         throw std::invalid_argument("_Locinfo: invalid locale category");
     }
     _ZNSt8_LocinfoC1EPKc_nid_postfix(self, localeName);
+}
+
+void* APS5_VABI _Getgloballocale_nid_postfix() {
+    return g_globalLocale.load(std::memory_order_acquire);
+}
+
+void APS5_VABI _Setgloballocale_nid_postfix(void* pointer) {
+    g_globalLocale.store(static_cast<GuestLocale::Implementation*>(pointer), std::memory_order_release);
 }
 
 void APS5_VABI _Deletegloballocale_nid_postfix(void* pointer) {
