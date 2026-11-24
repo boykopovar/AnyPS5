@@ -2306,7 +2306,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 3 && std::string_view(argv[1]) == "--cold-native-fmask") {
             const auto samples = static_cast<std::uint32_t>(std::stoul(argv[2]));
-            Require(samples == 2u || samples == 8u, "the cold native FMASK probe requires two or eight samples");
+            Require(samples == 2u || samples == 4u || samples == 8u, "the cold native FMASK probe requires two, four or eight samples");
             const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
             if (!context.storageImageMultisample || (context.limits.framebufferColorSampleCounts & samples) == 0u) {
                 std::printf("cold native FMASK skipped, the device does not render or store %u-sample color\n", samples);
