@@ -59,7 +59,6 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
