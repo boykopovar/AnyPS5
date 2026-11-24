@@ -1,5 +1,4 @@
 #include "prx/libkernel/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
