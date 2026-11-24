@@ -1,4 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/SubgroupBarrier.hpp"
+#include "IntermediateRepresentation/IrProgram.hpp"
+#include "Optimization/ResourceProgram.hpp"
 #include "Recompiler.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
@@ -36,6 +38,7 @@ constexpr std::array<std::uint32_t, 19> BranchedLdsStep{
     0xbf880006u, 0xd8d80200u, 0x03000002u, 0xbf8cc07fu, 0x4a020701u, 0xd8340000u, 0x00000102u, 0xbefe03c1u,
     0xbf8cc07fu, 0xbf8a0000u, 0xbf810000u,
 };
+constexpr std::array<std::uint32_t, 5> EarlyReturnBarrier{0x7d880090u, 0xbf860001u, 0xbf810000u, 0xbf8a0000u, 0xbf810000u};
 
 constexpr std::array<std::uint32_t, 5> LdsHalfStore{0x34040082u, 0xd87c0400u, 0x00000102u, 0xbf8cc07fu, 0xbf810000u};
 constexpr std::array<std::uint32_t, 5> LdsAtomicAdd{0x34040082u, 0xd8000400u, 0x00000102u, 0xbf8cc07fu, 0xbf810000u};
@@ -145,9 +148,10 @@ struct MeshBarrierOps {
     std::uint32_t atomicIAdd = 0;
     std::uint32_t atomicStore = 0;
     std::uint32_t loopMerge = 0;
+    bool softwareSafe = false;
 };
 
-MeshBarrierOps recompileMeshBarrier(bool software) {
+MeshBarrierOps recompileMeshBarrier(std::span<const std::uint32_t> code, std::uint64_t codeAddress, bool software) {
     using namespace ShaderRecompiler;
     const std::array<std::uint32_t, 8> hidden{};
     static constexpr std::array<std::uint32_t, 8> capabilities{
@@ -159,7 +163,7 @@ MeshBarrierOps recompileMeshBarrier(bool software) {
         "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_EXT_mesh_shader"
     };
     RecompileRequest request{};
-    request.shader = {ShaderStage::Mesh, 0x26267000u, BranchedLdsStep, 0, {}};
+    request.shader = {ShaderStage::Mesh, codeAddress, code, 0, {}};
     request.context.waveSize = 64u;
     request.context.userData = hidden;
     request.context.vertex = ShaderVertexStageInfo{};
@@ -178,8 +182,10 @@ MeshBarrierOps recompileMeshBarrier(bool software) {
     request.target.meshSoftwareControlBarriers = software;
     request.layout = {0u, 0u, 0u, 128u};
     request.useCache = true;
+    const auto program = PrepareResourceProgram(request);
     const auto result = Recompile(request);
     MeshBarrierOps ops;
+    ops.softwareSafe = program.Metadata().meshSoftwareControlBarriersSafe;
     const auto& words = result.spirv.Words();
     for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
         switch (static_cast<spv::Op>(words[at] & 0xffffu)) {
@@ -195,12 +201,16 @@ MeshBarrierOps recompileMeshBarrier(bool software) {
 }
 
 void verifyMeshSoftwareBarrierEmission() {
-    const auto normal = recompileMeshBarrier(false);
+    const auto normal = recompileMeshBarrier(BranchedLdsStep, 0x26267000u, false);
+    require(normal.softwareSafe, "the ordinary mesh barrier fixture was not marked safe for software rendezvous");
     require(normal.control >= 2u, "the mesh barrier fixture did not emit both its guest and wrapper control barriers");
     require(normal.atomicIAdd == 0u && normal.atomicLoad == 0u && normal.atomicStore == 0u, "the normal mesh barrier fixture unexpectedly used software barrier atomics");
-    const auto software = recompileMeshBarrier(true);
+    const auto software = recompileMeshBarrier(BranchedLdsStep, 0x26267000u, true);
     require(software.control == 2u, "the software mesh barrier path did not retain only the two unconditional wrapper control barriers");
     require(software.atomicLoad >= 2u && software.atomicIAdd >= 2u && software.atomicStore >= 1u && software.loopMerge >= 1u, "the software mesh barrier path did not emit the cyclic atomic rendezvous");
+    const auto earlyReturn = recompileMeshBarrier(EarlyReturnBarrier, 0x26267100u, true);
+    require(!earlyReturn.softwareSafe, "a mesh barrier bypassed by an early return was marked safe for software rendezvous");
+    require(earlyReturn.atomicLoad == 0u && earlyReturn.atomicIAdd == 0u && earlyReturn.atomicStore == 0u, "a mesh barrier bypassed by an early return used a software rendezvous that can wait forever");
 }
 
 void verifyLdsMemoryBarrierScope() {

@@ -191,11 +191,26 @@ SharedVectorRegisters GuestSharedVectorRegisters(const GuestContext& context) {
     return registers;
 }
 
+bool MeshSoftwareControlBarriersSafe(const RdnaProgram& decoded, const ControlFlowGraph& cfg) {
+    std::vector<std::uint32_t> returns;
+    for (const auto& block : cfg.blocks) {
+        if (block.terminator.kind == TerminatorKind::Return) returns.push_back(block.id);
+    }
+    for (const auto& block : cfg.blocks) {
+        if (block.instructionBegin > block.instructionEnd || block.instructionEnd > decoded.instructions.size()) return false;
+        const bool barrier = std::ranges::any_of(decoded.instructions.begin() + block.instructionBegin, decoded.instructions.begin() + block.instructionEnd, [](const RdnaInstruction& instruction) { return instruction.op == RdnaOpcode::SBarrier; });
+        if (!barrier) continue;
+        if (std::ranges::any_of(returns, [&](std::uint32_t returnBlock) { return !cfg.Dominates(block.id, returnBlock); })) return false;
+    }
+    return true;
+}
+
 struct PreparedControlFlow {
     PreparedControlFlow(const RecompileRequest& request, const SwappcInfo& swappcInfo)
         : stage(request.shader.stage), mergedHull(MergedHullStage(request)), fallbacks(swappcInfo.linkedCallFallbacks.begin(), swappcInfo.linkedCallFallbacks.end()), swappc(WithFallbacks(swappcInfo, fallbacks)), code(request.shader.code.begin(), request.shader.code.end()),
           vertexHalf(CapturesGeometryInput(request)), decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code, mergedHull, vertexHalf)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
         Structurizer{}.Structurize(cfg);
+        meshSoftwareControlBarriersSafe = MeshSoftwareControlBarriersSafe(decoded, cfg);
     }
 
     PreparedControlFlow(const PreparedControlFlow&) = delete;
@@ -220,6 +235,7 @@ struct PreparedControlFlow {
     bool vertexHalf;
     RdnaProgram decoded;
     ControlFlowGraph cfg;
+    bool meshSoftwareControlBarriersSafe = false;
 };
 
 std::shared_ptr<const PreparedControlFlow> ShaderPreparationContext::AcquireFrontend(const RecompileRequest& request) {
@@ -307,6 +323,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         translateOptions.splitState = &splitState.plan;
     }
     auto program = translator.Translate(decoded, cfg, translateOptions);
+    program.Metadata().meshSoftwareControlBarriersSafe = frontend->meshSoftwareControlBarriersSafe;
     if (emulatedBarycentrics) program.Metadata().barycentricEmulation = true;
     // Debug aid: APS5_DUMP_IR=<hex code address> (or "all") prints the program after each front-end pass.
     const auto dumpIr = [&](const char* pass) {
@@ -899,7 +916,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.float16WidenNans = request.target.float16WidenNans;
     targetOptions.float16NarrowNans = request.target.float16NarrowNans;
     targetOptions.meshInlineFunctions = request.target.meshInlineFunctions;
-    targetOptions.meshSoftwareControlBarriers = request.target.meshSoftwareControlBarriers;
+    targetOptions.meshSoftwareControlBarriers = request.target.meshSoftwareControlBarriers && program.Metadata().meshSoftwareControlBarriersSafe;
     targetOptions.spannedShuffleThroughMemory = request.target.spannedShuffleThroughMemory;
 
     constexpr SpirvEmitter spirvEmitter;
