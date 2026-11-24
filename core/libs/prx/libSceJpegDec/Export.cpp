@@ -42,6 +42,7 @@ constexpr std::uint32_t MEMORY_OVERHEAD = 29536;
 constexpr std::uintptr_t HANDLE_ALIGNMENT = 32;
 
 constexpr std::uint16_t DECODE_MODE_NORMAL = 0;
+constexpr std::uint16_t DECODE_MODE_MJPEG = 1;
 constexpr std::uint16_t DOWN_SCALE_NONE = 1;
 constexpr std::uint16_t DOWN_SCALE_HALF = 2;
 constexpr std::uint16_t DOWN_SCALE_QUARTER = 4;
@@ -92,7 +93,7 @@ bool validDecodeOptions(std::uint16_t decodeMode, std::uint16_t downScale) {
 }
 
 void requireDecodeMode(const char* function, std::uint16_t decodeMode) {
-    if (decodeMode != DECODE_MODE_NORMAL) throw std::runtime_error(std::string(function) + ": decode mode " + std::to_string(decodeMode) + " is not implemented");
+    if (decodeMode > DECODE_MODE_MJPEG) throw std::runtime_error(std::string(function) + ": decode mode " + std::to_string(decodeMode) + " is not implemented");
 }
 
 Context* toContext(void* handle, Context* copied = nullptr) {

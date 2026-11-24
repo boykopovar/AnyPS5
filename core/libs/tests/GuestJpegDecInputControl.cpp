@@ -91,14 +91,14 @@ std::vector<std::uint8_t> Reference(const std::vector<std::uint8_t>& jpeg, std::
     return image;
 }
 
-void RequireStreamMatches(const std::vector<std::uint8_t>& jpeg, std::uint32_t width, std::uint32_t height, std::uint16_t downScale, std::size_t chunkSize) {
+void RequireStreamMatches(const std::vector<std::uint8_t>& jpeg, std::uint32_t width, std::uint32_t height, std::uint16_t downScale, std::size_t chunkSize, std::uint16_t modeBit = 0) {
     std::int32_t expected = 0;
     const std::vector<std::uint8_t> reference = Reference(jpeg, width, height, downScale, &expected);
     Require(expected > 0);
 
     JpegHandle decoder(width);
     Source header{jpeg, chunkSize};
-    JpegDecInputControlParam parse = StreamParam(0x10, header);
+    JpegDecInputControlParam parse = StreamParam(0x10 | modeBit, header);
     parse.down_scale = downScale;
     JpegDecImageInfo info{}, expectedInfo{};
     Require(sceJpegDecDecodeWithInputControl(decoder.handle, &parse, &info) == 0);
@@ -108,7 +108,7 @@ void RequireStreamMatches(const std::vector<std::uint8_t>& jpeg, std::uint32_t w
 
     Source rest{std::vector<std::uint8_t>(jpeg.begin() + static_cast<std::ptrdiff_t>(header.offset), jpeg.end()), chunkSize};
     std::vector<std::uint8_t> image(reference.size(), 0xCD);
-    JpegDecInputControlParam decode = StreamParam(0x20, rest);
+    JpegDecInputControlParam decode = StreamParam(0x20 | modeBit, rest);
     decode.down_scale = downScale;
     decode.image_mem_addr = image.data();
     decode.image_mem_size = static_cast<std::uint32_t>(image.size());
@@ -220,6 +220,10 @@ int main() {
     for (const std::size_t chunkSize : {std::size_t{1}, std::size_t{7}, std::size_t{0x10000}}) {
         RequireImageBoundary(smallJpeg, 8, 8, chunkSize);
         RequireImageBoundary(jpeg, 96, 64, chunkSize);
+    }
+    for (const std::size_t chunkSize : {std::size_t{1}, std::size_t{0x10000}}) {
+        RequireStreamMatches(smallJpeg, 8, 8, 1, chunkSize, 1);
+        RequireStreamMatches(jpeg, 96, 64, 1, chunkSize, 1);
     }
     RequireImageBoundary(smallJpeg, 8, 8, smallJpeg.size() + 29, true);
     const std::vector<std::uint8_t> restarted = TestJpeg(96, 64, 3, 1);

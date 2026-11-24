@@ -103,8 +103,10 @@ int main() {
         const JpegDecParseParam unknownScaleParse{jpeg.data(), static_cast<std::uint32_t>(jpeg.size()), 0, downScale};
         Require(sceJpegDecParseHeader(&unknownScaleParse, &info) == invalidParam);
     }
+    JpegDecImageInfo otherModeInfo{};
     const JpegDecParseParam otherModeParse{jpeg.data(), static_cast<std::uint32_t>(jpeg.size()), 1, 1};
-    Require(ThrowsRuntimeError([&] { sceJpegDecParseHeader(&otherModeParse, &info); }));
+    Require(sceJpegDecParseHeader(&otherModeParse, &otherModeInfo) == 0);
+    Require(otherModeInfo.image_width == 7 && otherModeInfo.image_height == 5 && otherModeInfo.component_number == 3);
     for (const auto [downScale, outputWidth, outputHeight] : {std::array<std::uint32_t, 3>{2, 4, 3}, std::array<std::uint32_t, 3>{4, 2, 2}, std::array<std::uint32_t, 3>{8, 1, 1}}) {
         const JpegDecParseParam downScaledParse{jpeg.data(), static_cast<std::uint32_t>(jpeg.size()), 0, static_cast<std::uint16_t>(downScale)};
         info = {};
@@ -258,9 +260,18 @@ int main() {
     misaligned.image_mem_size = static_cast<std::uint32_t>(misalignedImage.size() - 1);
     Require(sceJpegDecDecode(handle, &misaligned, &info) == invalidAddr);
     Require(std::all_of(misalignedImage.begin(), misalignedImage.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+    std::vector<std::uint8_t> normalModeImage(image.size(), 0xCC);
+    JpegDecDecodeParam normalMode = decodeParam;
+    normalMode.image_mem_addr = normalModeImage.data();
+    Require(sceJpegDecDecode(handle, &normalMode, nullptr) == static_cast<std::int32_t>(7 << 16 | 5));
+    std::vector<std::uint8_t> otherModeImage(image.size(), 0xCC);
     JpegDecDecodeParam otherMode = decodeParam;
     otherMode.decode_mode = 1;
-    Require(ThrowsRuntimeError([&] { sceJpegDecDecode(handle, &otherMode, &info); }));
+    otherMode.image_mem_addr = otherModeImage.data();
+    JpegDecImageInfo mjpegInfo{};
+    Require(sceJpegDecDecode(handle, &otherMode, &mjpegInfo) == static_cast<std::int32_t>(7 << 16 | 5));
+    Require(otherModeImage == normalModeImage);
+    Require(mjpegInfo.image_width == 7 && mjpegInfo.image_height == 5);
     info = {};
     errno = 71;
     Require(sceJpegDecDecode(handle, &decodeParam, &info) == static_cast<std::int32_t>(7 << 16 | 5));
