@@ -19,7 +19,7 @@ A requested program's phase metric is omitted if a report lists 12 programs
 without it: the list may be truncated, so the program's time is unknown.
 A counted present report with missing batch completion records also refuses the comparison."""
 
-PHASE = re.compile(r"^\[ab\] phase ([AB]) (\d+) (begins|settled) at present (\d+) \(t ([\d.]+) s\)")
+PHASE = re.compile(r"\[ab\] phase ([AB]) ([0-9]+) (begins|settled) at present ([0-9]+) \(t ([0-9]+(?:\.[0-9]+)?) s\)(:.*)?")
 KINDS = (("present", re.compile(r"\[present\] \d+ presents")), ("gputime", re.compile(r"\[gputime\] [\d.]+ ms of GPU time")),
          ("draw", re.compile(r"\[draw\] pipelined \(")), ("syncwait", re.compile(r"\[syncwait\] unlocked hook waits")))
 
@@ -90,16 +90,19 @@ def read_log(lines):
     config, phases, current = None, [], None
     previous = {kind: None for kind, _ in KINDS}
     unmatched_settlement = None
-    for line in lines:
+    for line_number, line in enumerate(lines, 1):
         text = line.rstrip("\r\n")
         if text.startswith("[ab] in-run A/B:"):
             if config is not None or phases:
                 raise ValueError("multiple A/B runs in one log; split the captures before comparing phases")
             config = text
             continue
-        match = PHASE.match(text)
-        if match:
-            kind, index, event, present, seconds = match.group(1), int(match.group(2)), match.group(3), int(match.group(4)), finite(float(match.group(5)))
+        if text.startswith("[ab] phase "):
+            marker = PHASE.fullmatch(text.rstrip())
+            if marker is None or (marker[3] == "settled" and marker[6] is not None):
+                raise ValueError(f"line {line_number}: invalid A/B phase marker")
+            kind, raw_index, event, raw_present, raw_seconds, _ = marker.groups()
+            index, present, seconds = int(raw_index), int(raw_present), finite(float(raw_seconds))
             point = (present, seconds)
 
             if event == "begins":
@@ -195,6 +198,11 @@ def noise(values, phases):
 
 
 def split_report(lines, programs, classes):
+    programs, classes = tuple(programs), tuple(classes)
+    reserved = {"gputime", *programs}
+    for name in classes:
+        if name in reserved:
+            raise ValueError(f"--class {name} would overwrite the {name} ms/present metric")
     config, phases = read_log(lines)
     if not phases:
         raise ValueError("no [ab] phase lines (was APS5_AB set?)")

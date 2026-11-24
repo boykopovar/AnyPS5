@@ -28,19 +28,30 @@ def timestamp():
 def collect_open_prs(repo, root):
     pr_overlap.REPO = repo
     remote = f"{REMOTE}/{repo}.git"
-    for _ in range(2):
-        pull_requests = pr_overlap.open_prs("main")
-        refspecs = [f"+refs/heads/main:{REFS}/base"]
-        for number, pr in sorted(pull_requests.items()):
-            pr["ref"] = f"{REFS}/{number}"
-            refspecs.append(f"+refs/pull/{number}/head:{pr['ref']}")
-        for start in range(0, len(refspecs), pr_overlap.FETCH_REFS):
-            git(root, "fetch", "--no-tags", "-q", remote, *refspecs[start:start + pr_overlap.FETCH_REFS])
-        changed = [number for number, pr in pull_requests.items()
-                   if git(root, "rev-parse", pr["ref"]).stdout.strip() != pr["sha"]]
-        if not changed:
-            return pull_requests, git(root, "rev-parse", f"{REFS}/base").stdout.strip()
-    raise RuntimeError(f"pull request heads changed during fetch: {', '.join(map(str, changed[:20]))}")
+    pull_requests = pr_overlap.open_prs("main")
+    git(root, "fetch", "--no-tags", "-q", remote, f"+refs/heads/main:{REFS}/base")
+    numbers = sorted(pull_requests)
+    for number in numbers:
+        pull_requests[number]["ref"] = f"{REFS}/{number}"
+    for start in range(0, len(numbers), pr_overlap.FETCH_REFS):
+        batch = numbers[start:start + pr_overlap.FETCH_REFS]
+        refspecs = [head_refspec(pull_requests[number]) for number in batch]
+        if git(root, "fetch", "--no-tags", "-q", remote, *refspecs, check=False).returncode:
+            for number in batch:
+                fetch_head(root, remote, number, pull_requests[number])
+    return pull_requests, git(root, "rev-parse", f"{REFS}/base").stdout.strip()
+
+
+def head_refspec(pr):
+    return f"+{pr['sha']}:{pr['ref']}"
+
+
+def fetch_head(root, remote, number, pr):
+    result = git(root, "fetch", "--no-tags", "-q", remote, head_refspec(pr), check=False)
+    if result.returncode and "not our ref" not in result.stderr:
+        raise RuntimeError(result.stderr.strip() or f"could not fetch the head of pull request #{number}")
+    if result.returncode:
+        pr["unavailable"] = True
 
 
 def closed_dependency_status(repo, number):
@@ -78,7 +89,9 @@ def dependency_order(pull_requests, root, base_sha, repo):
                 break
             dependencies[number].discard(dependency)
     for number, pr in pull_requests.items():
-        if is_ancestor(root, pr["sha"], base_sha):
+        if pr.get("unavailable"):
+            excluded[number] = "head_unavailable"
+        elif is_ancestor(root, pr["sha"], base_sha):
             excluded.pop(number, None)
             dependencies[number] = set()
     pending = set(pull_requests) - excluded.keys()
@@ -86,9 +99,23 @@ def dependency_order(pull_requests, root, base_sha, repo):
     while pending:
         ready = sorted(number for number in pending if dependencies[number] <= (set(order) | excluded.keys()))
         if not ready:
-            for number in pending:
+            cycles = set()
+            for start in pending:
+                reachable = list(dependencies[start] & pending)
+                visited = set()
+                while reachable:
+                    number = reachable.pop()
+                    if number == start:
+                        cycles.add(start)
+                        break
+                    if number in visited:
+                        continue
+                    visited.add(number)
+                    reachable.extend(dependencies[number] & pending)
+            for number in cycles:
                 excluded[number] = "dependency_cycle"
-            break
+            pending -= cycles
+            continue
         number = ready[0]
         pending.remove(number)
         order.append(number)

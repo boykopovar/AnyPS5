@@ -1103,7 +1103,10 @@ bool SendBeforeConnect(Socket& socket) {
 #ifdef __linux__
     if (socket.connectPending) {
         pollfd entry{socket.value, POLLOUT, 0};
-        if (::poll(&entry, 1, 0) == 0) return true;
+        int ready;
+        do ready = ::poll(&entry, 1, 0); while (ready < 0 && errno == EINTR);
+        if (ready < 0) throw std::runtime_error("send: polling a pending connect failed, errno " + std::to_string(errno));
+        if (ready == 0) return true;
         socket.connectPending = false;
     }
 #endif

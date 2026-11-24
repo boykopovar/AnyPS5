@@ -64,6 +64,11 @@ class RedactTests(unittest.TestCase):
         text = "a b /x"
         self.assertEqual(bug_report.redact(text, home="/x", user="a", host="b"), "a b /x")
 
+    def test_a_fully_qualified_host_name_is_replaced_whole(self):
+        text = "resolved box.corp.example. and BOX.corp.example, then box and boxer"
+        out = bug_report.redact(text, home="/home/ana", user="ana", host="box.corp.example")
+        self.assertEqual(out, "resolved <host>. and <host>, then <host> and boxer")
+
     def test_text_without_matches_is_unchanged(self):
         text = "frames=120 averageFps=59.9 version 1.2.3"
         self.assertEqual(bug_report.redact(text, home="/home/ana", user="ana", host="box"), "frames=120 averageFps=59.9 version 1.2.3")
@@ -87,6 +92,12 @@ class SettingsTests(unittest.TestCase):
 
 
 class BundleTests(unittest.TestCase):
+    def test_host_section_is_redacted_like_the_other_bundle_sections(self):
+        with patch.object(bug_report, "host_text", return_value="os: serverfestivo build for ana\n"):
+            out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(bundle.read("host.txt"), b"os: <host> build for <user>\n")
+
     identity = {"home": "/home/ana", "user": "ana", "host": "serverfestivo"}
 
     def setUp(self):
@@ -134,6 +145,15 @@ class BundleTests(unittest.TestCase):
         for name, text in contents.items():
             for secret in ("/home/ana", "serverfestivo", "192.168.1.20", "10.0.0.7"):
                 self.assertNotIn(secret, text, f"{secret} leaked into {name}")
+
+    def test_bundle_keeps_an_unpaired_character_in_runtime_settings(self):
+        out = self.root / "runtime-settings.zip"
+        names = bug_report.make_bundle(self.report, out, environ={"APS5_TRACE_DIR": "capture\udcff"},
+                                       **self.identity)
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(sorted(bundle.namelist()), names)
+            self.assertEqual(bundle.read("anyps5-settings.txt").decode("utf-8"),
+                             "APS5_TRACE_DIR=capture\\udcff\n")
 
     def test_escaped_home_paths_are_redacted_in_nested_json(self):
         cases = (
@@ -213,6 +233,16 @@ class BundleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.bundle()
         self.assertFalse((self.root / "bundle.zip").exists())
+
+    def test_failed_bundle_write_can_be_retried(self):
+        out = self.root / "bundle.zip"
+        with patch.object(zipfile.ZipFile, "writestr", side_effect=OSError("injected write failure")):
+            with self.assertRaisesRegex(OSError, "injected write failure"):
+                self.bundle()
+        self.assertFalse(out.exists())
+        _, names = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(sorted(bundle.namelist()), names)
 
     def test_existing_bundle_is_not_overwritten(self):
         (self.root / "bundle.zip").write_bytes(b"keep")
@@ -386,12 +416,13 @@ class MainTests(unittest.TestCase):
 
 
 class IdentityTests(unittest.TestCase):
-    def test_host_is_cut_at_the_first_dot(self):
+    def test_host_keeps_its_domain_so_both_forms_are_redacted(self):
         with patch.object(bug_report.getpass, "getuser", return_value="ana"), patch.object(bug_report.socket, "gethostname", return_value="box.example.org"):
             identity = bug_report.identities()
         self.assertEqual(identity["user"], "ana")
-        self.assertEqual(identity["host"], "box")
+        self.assertEqual(identity["host"], "box.example.org")
         self.assertEqual(identity["home"], str(Path.home()))
+        self.assertEqual(bug_report.redact("box.example.org box", **identity), "<host> <host>")
 
     def test_user_is_empty_when_it_cannot_be_determined(self):
         with patch.object(bug_report.getpass, "getuser", side_effect=OSError("no user")), patch.object(bug_report.socket, "gethostname", return_value="box"):
