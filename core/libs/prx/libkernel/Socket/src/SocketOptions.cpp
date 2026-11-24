@@ -72,6 +72,7 @@ constexpr int GuestIpReceiveDestination = 7;
 constexpr int GuestIpReceiveInterface = 20;
 constexpr int GuestIpReceiveTimeToLive = 65;
 constexpr std::uint32_t MulticastRequestWithIndex = 12;
+constexpr int GuestLocalPeerCredentials = 1;
 constexpr int ErrorNotSupported = 45;
 constexpr int ErrorAddressInUse = 48;
 constexpr int ErrorAddressNotAvailable = 49;
@@ -82,6 +83,7 @@ constexpr int ErrorInvalid = 22;
 constexpr int ErrorDomain = 33;
 constexpr int ErrorNoProtocolOption = 42;
 constexpr int ErrorNoBuffers = 55;
+constexpr int ErrorNotConnected = 57;
 constexpr int MaximumReservation = 5592405;
 constexpr int MaximumBuffer = 524288;
 constexpr int MaximumLinger = 65535;
@@ -562,6 +564,15 @@ int SetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, const void*
     const int enabled = number != 0 ? 1 : 0;
     if (::setsockopt(static_cast<NativeHandle>(native), IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<NativeOptionValue>(&enabled), sizeof(enabled))) return HostError();
     return 0;
+}
+
+int GetLocalLevelOption(const LocalCredentials* credentials, bool stream, int option, void* value, std::uint32_t* length) {
+    if (option == GuestLocalPeerCredentials) {
+        if (credentials == nullptr) return stream ? ErrorNotConnected : ErrorInvalid;
+        return Copy(value, length, credentials, sizeof(*credentials));
+    }
+    const int disabled = 0;
+    return Copy(value, length, &disabled, sizeof(disabled));
 }
 
 int GetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length) {

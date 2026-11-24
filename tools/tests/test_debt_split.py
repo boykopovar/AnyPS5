@@ -518,6 +518,14 @@ class DebtSplitTests(unittest.TestCase):
                         self.assertEqual(cm.exception.code, 2)
                         self.assertIn("not a git repository", stderr.getvalue())
 
+    def test_main_reports_missing_git_executable(self):
+        with patch.object(debt_split.subprocess, "run", side_effect=FileNotFoundError(2, "No such file or directory", "git")):
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                with self.assertRaises(SystemExit) as cm:
+                    debt_split.main(["split"])
+                self.assertEqual(cm.exception.code, 2)
+                self.assertIn("cannot run git", stderr.getvalue())
+
 
     def test_split_keeps_the_note_and_sub_headings_of_an_existing_debt_file(self):
         self.write("docs/dev/debt/libSceA.md", "# libSceA technical debt\n\nA hand-written note that must stay.\n\n"
@@ -581,6 +589,13 @@ class DebtSplitTests(unittest.TestCase):
 
     def test_separated_puts_a_blank_between_entries_and_text(self):
         self.assertEqual(debt_split.separated(["- a", "- b", "text"]), ["- a", "- b", "", "text"])
+class RelinkUnfencedTests(unittest.TestCase):
+    def test_relink_unfenced_rewrites_relative_links_and_keeps_urls(self):
+        text = "see [x](../img/x.png) and [y](https://example.com/a) and [z](#anchor)"
+        moved = debt_split.relink_unfenced(text, "docs/dev/a.md", "docs/dev/debt/b.md")
+        self.assertIn("[x](../../img/x.png)", moved)
+        self.assertIn("[y](https://example.com/a)", moved)
+        self.assertIn("[z](../a.md#anchor)", moved)
 
 
     def test_render_index_separates_headings_and_text_and_ends_with_one_newline(self):
@@ -620,6 +635,12 @@ class ReadPreambleTests(unittest.TestCase):
     def test_missing_file_has_no_preamble(self):
         with tempfile.TemporaryDirectory() as name:
             self.assertEqual(debt_split.read_preamble(Path(name), "lib"), [])
+
+
+class RenderTests(unittest.TestCase):
+    def test_render_orders_sections_and_separates_entries(self):
+        out = debt_split.render("# T", {"B": ["- b"], "A": ["- a"]}, ["A", "B"])
+        self.assertEqual(out, "# T\n\n### A\n\n- a\n\n### B\n\n- b\n")
 
 
 if __name__ == "__main__":

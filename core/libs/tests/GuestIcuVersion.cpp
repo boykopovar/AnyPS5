@@ -156,10 +156,18 @@ void AuStrncpy() {
 
     chars.fill('X');
     Require(u_austrncpy_nid_postfix(chars.data(), u"Abc", 0) == chars.data(), "zero count returns destination");
-    Require(u_austrncpy_nid_postfix(chars.data(), u"Abc", -2) == chars.data(), "negative count returns destination");
-    Require(chars[0] == 'X', "nonpositive counts write nothing");
+    Require(chars[0] == 'X', "zero count writes nothing");
+    for (const std::int32_t count : {-1, -2, INT32_MIN}) {
+        chars.fill('X');
+        Require(u_austrncpy_nid_postfix(chars.data(), u"Abc", count) == chars.data(), "negative count returns destination");
+        Require(std::memcmp(chars.data(), "\0XXXXXXX", chars.size()) == 0, "negative count empties the destination and writes nothing else");
+        chars.fill('X');
+        Require(u_austrncpy_nid_postfix(chars.data(), nullptr, count) == chars.data(), "negative count allows null source");
+        Require(std::memcmp(chars.data(), "\0XXXXXXX", chars.size()) == 0, "negative count with a null source empties the destination");
+        Require(Rejects([&] { u_austrncpy_nid_postfix(nullptr, u"Abc", count); }), "null destination with negative count rejected");
+    }
+    chars.fill('X');
     Require(u_austrncpy_nid_postfix(nullptr, nullptr, 0) == nullptr, "zero count allows null pointers");
-    Require(u_austrncpy_nid_postfix(chars.data(), nullptr, -1) == chars.data(), "negative count allows null source");
     Require(Rejects([&] { u_austrncpy_nid_postfix(nullptr, u"a", 1); }), "null destination with positive count rejected");
     Require(Rejects([&] { u_austrncpy_nid_postfix(chars.data(), nullptr, 1); }), "null source with positive count rejected");
 }
@@ -209,8 +217,17 @@ void UaStrncpy() {
 
     units.fill(u'X');
     Require(u_uastrncpy_nid_postfix(units.data(), "Abc", 0) == units.data(), "zero count returns destination");
-    Require(u_uastrncpy_nid_postfix(units.data(), "Abc", -2) == units.data(), "negative count returns destination");
-    Require(units[0] == u'X', "nonpositive counts write nothing");
+    Require(units[0] == u'X', "zero count writes nothing");
+    for (const std::int32_t count : {-1, -2, INT32_MIN}) {
+        units.fill(u'X');
+        Require(u_uastrncpy_nid_postfix(units.data(), "Abc", count) == units.data(), "negative count returns destination");
+        Require(units[0] == 0 && std::u16string_view(units.data() + 1, 7) == u"XXXXXXX", "negative count empties the destination and writes nothing else");
+        units.fill(u'X');
+        Require(u_uastrncpy_nid_postfix(units.data(), nullptr, count) == units.data(), "negative count allows null source");
+        Require(units[0] == 0 && units[1] == u'X', "negative count with a null source empties the destination");
+        Require(Rejects([&] { u_uastrncpy_nid_postfix(nullptr, "Abc", count); }), "null destination with negative count rejected");
+    }
+    units.fill(u'X');
     Require(u_uastrncpy_nid_postfix(nullptr, nullptr, 0) == nullptr, "zero count allows null pointers");
     Require(Rejects([&] { u_uastrncpy_nid_postfix(nullptr, "a", 1); }), "null destination with positive count rejected");
     Require(Rejects([&] { u_uastrncpy_nid_postfix(units.data(), nullptr, 1); }), "null source with positive count rejected");

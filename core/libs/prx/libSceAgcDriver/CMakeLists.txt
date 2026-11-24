@@ -226,6 +226,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcSplitSelectShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/SplitSelect.comp)
+set(agcSplitSelectShaderSpv ${agcTextureDetileGeneratedDir}/SplitSelect.spv)
+set(agcSplitSelectShaderHeader ${agcTextureDetileGeneratedDir}/SplitSelect_spv.h)
+add_custom_command(
+        OUTPUT "${agcSplitSelectShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcSplitSelectShaderSpv}" "${agcSplitSelectShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcSplitSelectShaderSpv} -DOUTPUT=${agcSplitSelectShaderHeader}
+        -DSYMBOL=SPLIT_SELECT_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcSplitSelectShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcSampleCounterShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/SampleCounter.comp)
 set(agcSampleCounterShaderSpv ${agcTextureDetileGeneratedDir}/SampleCounter.spv)
 set(agcSampleCounterShaderHeader ${agcTextureDetileGeneratedDir}/SampleCounter_spv.h)
@@ -475,6 +488,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DescriptorValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/State.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestTextureResource.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestSamplerResource.cpp
@@ -504,6 +518,7 @@ set(agcDriverSources
         ${agcTextureDetileImageShaderHeader}
         ${agcTextureRepackShaderHeader}
         ${agcDispatchArgumentsShaderHeader}
+        ${agcSplitSelectShaderHeader}
         ${agcTextureDetileWordsShaderHeader}
         ${agcTextureDetileImageWordsShaderHeader}
         ${agcSampleCounterShaderHeader}
@@ -569,6 +584,7 @@ target_link_libraries(libSceAgcDriver PRIVATE
         SDL2-static
         libc
         libkernel
+        anyps5_thermal_reader
         jpeg_turbo
         libzstd_static
         ${CMAKE_DL_LIBS}
@@ -920,6 +936,15 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_driver_depth_expand_out_of_place_inline PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    add_test(NAME agc_driver_split_table_call_driver_gpu_rounds COMMAND agc_driver_split_table_call_driver_tests)
+    add_test(NAME agc_driver_split_table_call_driver_cpu_rounds COMMAND agc_driver_split_table_call_driver_tests --cpu-rounds)
+    set_tests_properties(agc_driver_split_table_call_driver_gpu_rounds agc_driver_split_table_call_driver_cpu_rounds PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 60 SKIP_RETURN_CODE 77)
+    set_tests_properties(agc_driver_split_table_call_driver_gpu_rounds PROPERTIES PASS_REGULAR_EXPRESSION "a batch of [0-9]+ rounds ran [1-9][0-9]*.*split table call driver test passed")
+    set_tests_properties(agc_driver_split_table_call_driver_cpu_rounds PROPERTIES FAIL_REGULAR_EXPRESSION "rounds selected on the GPU")
+    if(WIN32)
+        set_tests_properties(agc_driver_split_table_call_driver_gpu_rounds agc_driver_split_table_call_driver_cpu_rounds PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
     foreach(partialStoreTest agc_driver_depth_plane_partial_store_unimported agc_driver_depth_plane_partial_store_image_copy agc_driver_depth_plane_partial_store_buffer_copy agc_driver_depth_plane_partial_store_upload_image)

@@ -421,6 +421,10 @@ unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix() {
     return count;
 }
 
+unsigned APS5_VABI _ZNSt3__16thread20hardware_concurrencyEv_nid_postfix() {
+    return _ZNSt6thread20hardware_concurrencyEv_nid_postfix();
+}
+
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
     if (!target)
         APS5_INVALID_ARG_EX;
@@ -660,6 +664,39 @@ int APS5_VABI _Thrd_detach_nid_postfix(void* thread) {
     const auto detach = registeredPthreadDetach.load(std::memory_order_acquire);
     if (!detach) throw std::runtime_error("_Thrd_detach: pthread_detach is not registered");
     return detach(thread) == 0 ? threadSuccess : threadError;
+}
+
+static Pthread CheckedLibcxxThread(Pthread* thread, const char* function) {
+    Pthread value = nullptr;
+    if (reinterpret_cast<std::uintptr_t>(thread) % alignof(Pthread) != 0 ||
+        !GuestWritable_nid_no_patch(thread, sizeof(Pthread)) ||
+        !GuestCopyIn_nid_no_patch(&value, thread, sizeof(value)))
+        throw std::invalid_argument(std::string(function) + ": invalid thread address");
+    return value;
+}
+
+void APS5_VABI _ZNSt3__16thread4joinEv_nid_postfix(Pthread* thread) {
+    const auto value = CheckedLibcxxThread(thread, __func__);
+    if (!value) throw std::system_error(EINVAL, std::generic_category(), "thread::join failed");
+    const auto join = registeredPthreadJoin.load(std::memory_order_acquire);
+    if (!join) throw std::runtime_error("thread::join: pthread_join is not registered");
+    const int error = join(value, nullptr);
+    if (error != 0) throw std::system_error(error, std::generic_category(), "thread::join failed");
+    *thread = nullptr;
+}
+
+void APS5_VABI _ZNSt3__16thread6detachEv_nid_postfix(Pthread* thread) {
+    const auto value = CheckedLibcxxThread(thread, __func__);
+    if (!value) throw std::system_error(EINVAL, std::generic_category(), "thread::detach failed");
+    const auto detach = registeredPthreadDetach.load(std::memory_order_acquire);
+    if (!detach) throw std::runtime_error("thread::detach: pthread_detach is not registered");
+    const int error = detach(value);
+    if (error != 0) throw std::system_error(error, std::generic_category(), "thread::detach failed");
+    *thread = nullptr;
+}
+
+void APS5_VABI _ZNSt3__16threadD1Ev_nid_postfix(Pthread* thread) {
+    if (CheckedLibcxxThread(thread, __func__)) std::terminate();
 }
 
 [[noreturn]] void APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(int code) {

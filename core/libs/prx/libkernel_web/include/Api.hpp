@@ -21,7 +21,7 @@ int APS5_VABI __sys_get_proc_type_info_nid_disambig1_nid_postfix();
 std::uint64_t APS5_VABI __sys_is_development_mode_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_kqueueex_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_namedobj_create_nid_disambig1_nid_postfix(const char* name, void* object, std::uint32_t type);
-int APS5_VABI __sys_namedobj_delete_nid_disambig1_nid_postfix();
+int APS5_VABI __sys_namedobj_delete_nid_disambig1_nid_postfix(std::uint32_t id, std::uint32_t type);
 int APS5_VABI __sys_netabort_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_netcontrol_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_netgetiflist_nid_disambig1_nid_postfix();
