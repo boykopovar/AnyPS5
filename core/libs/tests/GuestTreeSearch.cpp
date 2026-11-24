@@ -137,9 +137,21 @@ int main() {
     Require(tdelete_nid_postfix(&lone, &single, CompareInts) == &single && single == nullptr);
 
     Require(Throws([&] { tsearch_nid_postfix(nullptr, &root, CompareInts); }));
-    Require(Throws([&] { tsearch_nid_postfix(&missing, nullptr, CompareInts); }));
+    Require(tsearch_nid_postfix(&missing, nullptr, CompareInts) == nullptr);
+    Require(tfind_nid_postfix(&missing, nullptr, CompareInts) == nullptr);
+    Require(tdelete_nid_postfix(&missing, nullptr, CompareInts) == nullptr);
     Require(Throws([&] { tfind_nid_postfix(&missing, &root, nullptr); }));
     Require(Throws([&] { tdelete_nid_postfix(nullptr, &root, CompareInts); }));
-    Require(Throws([&] { twalk_nid_postfix(root, nullptr); }));
+    twalk_nid_postfix(root, nullptr);
+    Require(root != nullptr);
+    {
+        int first = 1, second = 2, third = 3;
+        void* tree = nullptr;
+        Require(tsearch_nid_postfix(&second, &tree, CompareInts) != nullptr);
+        Require(tsearch_nid_postfix(&first, &tree, CompareInts) != nullptr);
+        Require(tsearch_nid_postfix(&third, &tree, CompareInts) != nullptr);
+        void* parent = tdelete_nid_postfix(&first, &tree, CompareInts);
+        Require(parent != nullptr && *static_cast<const int* const*>(parent) == &second);
+    }
     return 0;
 }

@@ -139,7 +139,8 @@ Node* ReadRoot(void* const* rootp) {
 }
 
 void* APS5_VABI tsearch_nid_postfix(const void* key, void** rootp, int (APS5_VABI *compare)(const void*, const void*)) {
-    if (!key || !rootp || !compare) throw std::invalid_argument("tsearch: invalid arguments");
+    if (!rootp) return nullptr;
+    if (!key || !compare) throw std::invalid_argument("tsearch: invalid arguments");
     if (!GuestWritable_nid_no_patch(rootp, sizeof(void*))) throw std::invalid_argument("tsearch: unwritable root");
     Node* root = ReadRoot(rootp);
     Node* found = nullptr;
@@ -154,7 +155,8 @@ void* APS5_VABI tsearch_nid_postfix(const void* key, void** rootp, int (APS5_VAB
 }
 
 void* APS5_VABI tfind_nid_postfix(const void* key, void* const* rootp, int (APS5_VABI *compare)(const void*, const void*)) {
-    if (!key || !rootp || !compare) throw std::invalid_argument("tfind: invalid arguments");
+    if (!rootp) return nullptr;
+    if (!key || !compare) throw std::invalid_argument("tfind: invalid arguments");
     Node* node = ReadRoot(rootp);
     while (node != nullptr) {
         const int order = compare(key, node->key);
@@ -165,7 +167,8 @@ void* APS5_VABI tfind_nid_postfix(const void* key, void* const* rootp, int (APS5
 }
 
 void* APS5_VABI tdelete_nid_postfix(const void* key, void** rootp, int (APS5_VABI *compare)(const void*, const void*)) {
-    if (!key || !rootp || !compare) throw std::invalid_argument("tdelete: invalid arguments");
+    if (!rootp) return nullptr;
+    if (!key || !compare) throw std::invalid_argument("tdelete: invalid arguments");
     if (!GuestWritable_nid_no_patch(rootp, sizeof(void*))) throw std::invalid_argument("tdelete: unwritable root");
     Node* root = ReadRoot(rootp);
     Node* parent = nullptr;
@@ -177,7 +180,7 @@ void* APS5_VABI tdelete_nid_postfix(const void* key, void** rootp, int (APS5_VAB
 }
 
 void APS5_VABI twalk_nid_postfix(const void* root, void (APS5_VABI *action)(const void*, int, int)) {
-    if (!action) throw std::invalid_argument("twalk: null action");
+    if (!action) return;
     if (root == nullptr) return;
     Walk(static_cast<const Node*>(root), 0, action);
 }
