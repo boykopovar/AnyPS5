@@ -269,7 +269,7 @@ int APS5_VABI X509_set_issuer_name_nid_postfix(LibreSsl3Certificate* certificate
     LibreSslX509Name* copy = nullptr;
     try {
         copy = DuplicateName(name);
-    } catch (const std::exception&) {
+    } catch (...) {
         return 0;
     }
     if (!copy) return 0;
