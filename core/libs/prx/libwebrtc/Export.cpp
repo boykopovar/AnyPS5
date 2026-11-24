@@ -606,11 +606,6 @@ int APS5_VABI libwebrtcUnknown48(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK3rtc18NetworkManagerBase22enumeration_permissionEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("CwWvzQchcdk", libwebrtcUnknown49);
 int APS5_VABI libwebrtcUnknown49(void) {
     NotImplemented_nid_no_patch("CwWvzQchcdk");
@@ -626,21 +621,6 @@ int APS5_VABI libwebrtcUnknown50(void) {
 APS5_EXPORT("57abazv-Yts", libwebrtcUnknown51);
 int APS5_VABI libwebrtcUnknown51(void) {
     NotImplemented_nid_no_patch("57abazv-Yts");
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc18NetworkManagerBase27set_default_local_addressesERKNS_9IPAddressES3__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK3rtc18NetworkManagerBase22GetDefaultLocalAddressEiPNS_9IPAddressE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
