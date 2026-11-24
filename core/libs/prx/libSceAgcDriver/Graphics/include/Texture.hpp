@@ -45,6 +45,9 @@ private:
 class StorageTexture;
 struct HostImportCopy;
 
+bool LabelTrapBypassed();
+bool LabelTrapResolveWaits(std::uint64_t address, std::size_t bytes);
+
 // The Vulkan format storage images of a guest format use (sRGB formats store as their UNORM form).
 // Throws when the format has no storage form; the query is cached per format (a lookup cost a
 // vkGetPhysicalDeviceFormatProperties call before).
@@ -989,6 +992,7 @@ private:
     bool dirty = false;
     bool drawnListed = false;
     mutable std::atomic<bool> readTrapped{false};
+    mutable std::uint64_t readTrapGeneration = 0;
     bool drawnWhole = false;
     bool drawingTarget = false;
     bool pendingFromOthers = false;
