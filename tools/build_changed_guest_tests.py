@@ -1,11 +1,13 @@
 import argparse
 from collections import defaultdict
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+from time import perf_counter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_mingw_host_only_tests as host_only
@@ -91,7 +93,7 @@ def scheduled_test_owners(build_dir, selection, targets_by_name):
             if owner is not None:
                 owners.add(owner)
                 break
-    return owners
+    return owners, len(tests)
 
 
 def guest_test_targets(source_root, targets, changed_paths=None):
@@ -204,13 +206,30 @@ def ctest_resolutions(build_dir, targets_by_name, selected=None):
     return resolutions
 
 
+@contextmanager
+def timed_phase(label):
+    print(f"Starting {label}", flush=True)
+    started = perf_counter()
+    try:
+        yield
+    finally:
+        print(f"Elapsed {perf_counter() - started:.2f}s for {label}", flush=True)
+
+
+def build_targets(build_dir, targets, label):
+    if not targets:
+        return
+    with timed_phase(f"{label} [requested_targets={len(targets)}]"):
+        for batch in chunks(targets):
+            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
+
+
 def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None):
-    subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
+    build_targets(build_dir, ["libs"], "library build")
     indices = set(script_test_indices(build_dir, script_tests)) if script_tests else set()
     selected_names = set(selected)
     if selected:
-        for batch in chunks(selected):
-            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
+        build_targets(build_dir, selected, "selected test executable build")
         resolutions = ctest_resolutions(build_dir, targets_by_name, selected_names)
         missing = sorted(selected_names - {owner for owner, _ in resolutions.values()})
         if missing:
@@ -220,12 +239,13 @@ def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None
         print("No core/libs test sources changed; the libs build still ran")
         return
     with ctest_index_file("0,0,0," + ",".join(map(str, sorted(indices)))) as selection:
-        additional = scheduled_test_owners(build_dir, selection, targets_by_name) - selected_names
-        for batch in chunks(sorted(additional, key=str.casefold)):
-            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
-        subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
-                        "--parallel", "4", "--no-tests=error", "-I", selection,
-                        *(["--output-log", str(output_log)] if output_log else [])], check=True)
+        scheduled_owners, scheduled_count = scheduled_test_owners(build_dir, selection, targets_by_name)
+        additional = scheduled_owners - selected_names
+        build_targets(build_dir, sorted(additional, key=str.casefold), "additional fixture executable build")
+        with timed_phase(f"CTest run [scheduled_tests={scheduled_count}, selected_indices={len(indices)}]"):
+            subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
+                            "--parallel", "4", "--no-tests=error", "-I", selection,
+                            *(["--output-log", str(output_log)] if output_log else [])], check=True)
 
 
 def main(argv=None):
