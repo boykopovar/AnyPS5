@@ -1,0 +1,9 @@
+# libc
+
+## add Functional
+
+- [Host catch of guest exceptions on macOS](../../../core/libs/prx/libc/src/exception/Runtime.cpp) (libc) - catching a guest exception in host code while another guest exception is caught terminates, because libc++abi's `__cxa_begin_catch`, which host code calls, holds one foreign exception at a time (the nested `system_error` catch of `guest_libc_internal_exception_virtuals`). A host `catch` names a libc++ type, so a guest type matches it by name without libc++'s inline namespace (`NSt3__112system_errorE` and `St12system_error`); template types are not matched, and a handler reads the object through the guest layout. libc exports `_Unwind_Resume`, so cleanups in libc and in images linked against it resume through the guest unwinder; an image that binds it to libSystem aborts when a guest exception crosses one of its cleanups.
+
+## change [Exception runtime on macOS]
+
+- [Exception runtime on macOS](../../../core/libs/prx/libc/src/exception/Exports.cpp) (libc) - on macOS a library's plain `throw`, `NotImplemented_nid_no_patch` included, goes through the host's libc++abi, not libc's runtime as on Linux and Windows. libc installs a host terminate handler that runs the guest's `std::set_terminate` handler and the run report; a host program that calls `std::set_terminate` after libc loads bypasses both. The guest's `__cxa_current_exception_type`, `__cxa_current_primary_exception` and `std::current_exception` read libc++abi's caught exception only while no guest exception is caught, so with one of each the guest one is reported whichever is innermost. The `SIGALRM` expiry of `alarm` and `setitimer` throws through the guest runtime. A libc++abi exception in a guest `exception_ptr` is recognised by its exception class, and its type is read by rethrowing it
