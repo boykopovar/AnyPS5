@@ -901,6 +901,14 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(result["frames"], 3)
         self.assertAlmostEqual(result["window_ms"], 40.0)
 
+    def test_frames_clip_at_a_window_end_before_the_last_present(self):
+        trace = trace_digest.Trace([])
+        trace.presents = [(0, 10), (5000, 11), (10000, 12), (15000, 13)]
+        result = trace_digest.digest(trace, {"window": {"ms": 7.5}})
+        self.assertEqual(result["frames"], 2)
+        self.assertEqual(result["window_ms"], 7.5)
+        self.assertEqual(trace.frames(5000), [(0, 0, 5000, 10)])
+
     def test_command_line_prints_non_ascii_names_on_a_legacy_console(self):
         events = [dict(event, args={"name": "メイン"}) if event["name"] == "thread_name" and event["tid"] == 1 else event for event in EVENTS]
         with gzip.open(self.trace, "wt", encoding="utf-8") as handle:
