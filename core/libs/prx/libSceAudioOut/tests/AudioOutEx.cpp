@@ -63,7 +63,8 @@ int main() {
     Require(sceAudioOutExClose(eac3) == 0, "close the mode 4 port");
 
     {
-        const AudioOutCall mainCall;
+        const AudioOutCall outerMainCall;
+        const AudioOutCall innerMainCall;
         std::atomic<bool> workerEntered{false};
         std::atomic<bool> workerDone{false};
         std::thread worker([&] {
