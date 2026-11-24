@@ -20,6 +20,10 @@ bool Close(long double value, long double expected) {
     return std::fabs(value - expected) <= 1e-17L * std::fabs(expected);
 }
 
+bool CloseTo(long double value, long double expected, long double tolerance) {
+    return std::fabs(value - expected) <= tolerance * std::fabs(expected);
+}
+
 bool Near(__complex__ long double value, long double real, long double imaginary) {
     constexpr long double tolerance = 1e-12L;
     return std::fabs(__real__ value - real) < tolerance && std::fabs(__imag__ value - imaginary) < tolerance;
@@ -136,5 +140,40 @@ int main() {
     Require(__real__ infiniteImaginaryArc == 0.0L && Close(__imag__ infiniteImaginaryArc, -pi / 2));
     const __complex__ long double infiniteNan = catanhl_nid_postfix(Make(infinity, nan));
     Require(__real__ infiniteNan == 0.0L && std::isnan(__imag__ infiniteNan));
+
+    Require(Near(cacosl_nid_postfix(Make(-0.5L, 3.0L)), 1.7278009215838388L, -1.8301947623375088L));
+    Require(Near(casinhl_nid_postfix(Make(2.0L, -0.75L)), 1.4925210319880218L, -0.3267704027823274L));
+    Require(Near(cacoshl_nid_postfix(Make(-3.0L, 0.5L)), 1.7789904938267687L, 2.9669461885043438L));
+    struct Small {
+        __complex__ long double (APS5_VABI* function)(__complex__ long double);
+        long double x;
+        long double y;
+        long double real;
+        long double imaginary;
+    };
+    for (const Small& small : {Small{cacosl_nid_postfix, 1.0L, 9.4595955858256635e-168L, 3.0756455559484843e-84L, -3.0756455559484852e-84L},
+                               Small{cacoshl_nid_postfix, 1.0L, 1.6876135465855033e-40L, 1.299081809042642e-20L, 1.2990818090426418e-20L},
+                               Small{casinhl_nid_postfix, 4.6089293270250819e-19L, -1.0L, 6.788909578883107e-10L, -1.5707963261160056L},
+                               Small{casinl_nid_postfix, 0.25L, 1e-10L, 0.25268025514207865L, 1.0327955589886446e-10L}}) {
+        const __complex__ long double value = small.function(Make(small.x, small.y));
+        Require(CloseTo(__real__ value, small.real, 1e-14L) && CloseTo(__imag__ value, small.imaginary, 1e-14L));
+    }
+    const __complex__ long double tinyArcsine = casinl_nid_postfix(Make(-0.0L, 1.6822750314810844e-09L));
+    Require(__real__ tinyArcsine == 0.0L && std::signbit(__real__ tinyArcsine) && CloseTo(__imag__ tinyArcsine, 1.6822750314810844e-09L, 1e-15L));
+    const long double big = 1e3000L;
+    const __complex__ long double largeHyperbolic = casinhl_nid_postfix(Make(big, -big));
+    Require(Close(__real__ largeHyperbolic, std::log(2.0L) + std::log(std::hypot(big, big))) && Close(__imag__ largeHyperbolic, -pi / 4));
+    const __complex__ long double largeCosine = cacosl_nid_postfix(Make(0.0L, 1e4000L));
+    Require(Close(__real__ largeCosine, pi / 2) && Close(__imag__ largeCosine, -(std::log(2.0L) + std::log(1e4000L))));
+    const __complex__ long double largeSine = casinl_nid_postfix(Make(-1e4900L, 1.0L));
+    Require(Close(__real__ largeSine, -pi / 2) && Close(__imag__ largeSine, std::log(2.0L) + std::log(1e4900L)));
+    const __complex__ long double largeHyperbolicCosine = cacoshl_nid_postfix(Make(-1e4900L, -1e4900L));
+    Require(Close(__real__ largeHyperbolicCosine, std::log(2.0L) + std::log(std::hypot(1e4900L, 1e4900L))) && Close(__imag__ largeHyperbolicCosine, -3 * pi / 4));
+    const __complex__ long double cosineAtOne = cacosl_nid_postfix(Make(1.0L, -0.0L));
+    Require(__real__ cosineAtOne == 0.0L && __imag__ cosineAtOne == 0.0L && !std::signbit(__imag__ cosineAtOne));
+    const __complex__ long double cosineNan = cacosl_nid_postfix(Make(infinity, nan));
+    Require(std::isnan(__real__ cosineNan) && std::isinf(__imag__ cosineNan));
+    const __complex__ long double sineNan = casinhl_nid_postfix(Make(nan, -infinity));
+    Require(std::isinf(__real__ sineNan) && std::isnan(__imag__ sineNan));
     return 0;
 }

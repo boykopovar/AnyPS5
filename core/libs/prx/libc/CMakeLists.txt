@@ -189,7 +189,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedMultiprecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ComplexTanh.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ComplexArctangent.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ComplexInverseTrig.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPrefix.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostEntropy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
