@@ -179,6 +179,62 @@ void CheckGuestPointerSafety() {
     delete reinterpret_cast<PatternState*>(pattern);
 }
 
+void CheckGrowthCommitFailure() {
+    const int duplicatesBefore = destroyed;
+    const int duplicatesSumBefore = destroyedSum;
+    auto* pattern = reinterpret_cast<FcPattern*>(new PatternState{7777, false});
+
+    auto** array = static_cast<FcPattern**>(std::malloc(8));
+    assert(array);
+    auto* existing = reinterpret_cast<FcPattern*>(new PatternState{7, true});
+    array[0] = existing;
+    void* neighbour = std::malloc(4096);
+    assert(neighbour);
+
+    std::size_t pageSize = 0;
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    assert(page);
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    assert(size > 0);
+    pageSize = static_cast<std::size_t>(size);
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    assert(page != MAP_FAILED);
+#endif
+    auto* set = reinterpret_cast<FcFontSet*>(page);
+    set->nfont = 1;
+    set->sfont = 8;
+    set->fonts = array;
+#ifdef _WIN32
+    DWORD previous = 0;
+    assert(VirtualProtect(page, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+    assert(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+
+    EXPECT_REJECTED(FcFontSetAdd(set, pattern));
+    assert(destroyed == duplicatesBefore + 1);
+    assert(destroyedSum == duplicatesSumBefore + 7777);
+    assert(set->nfont == 1);
+    assert(set->fonts == array);
+    assert(array[0] == existing);
+    assert(Inspect(array[0])->value == 7);
+
+    delete existing;
+    delete reinterpret_cast<PatternState*>(pattern);
+    std::free(array);
+    std::free(neighbour);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 }
 
 extern "C" void APS5_VABI FcPatternDestroy_nid_postfix(FcPattern* pattern) {
@@ -203,4 +259,5 @@ int main() {
     CheckFonts();
     CheckObjects();
     CheckGuestPointerSafety();
+    CheckGrowthCommitFailure();
 }

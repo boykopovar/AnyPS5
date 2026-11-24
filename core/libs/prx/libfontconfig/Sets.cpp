@@ -46,27 +46,37 @@ int APS5_VABI FcFontSetAdd(FcFontSet* set, FcPattern* pattern) {
     if (!ReadGuestBytes(&record, set, sizeof(record))) NotImplemented_nid_no_patch(__func__);
     if (record.nfont < 0 || record.sfont < 0 || record.nfont >= 1024)
         return 0;
-    if (record.nfont >= record.sfont / static_cast<int>(sizeof(FcPattern*))) {
+    const bool grows = record.nfont >= record.sfont / static_cast<int>(sizeof(FcPattern*));
+    FcFontSet updated = record;
+    void* grown = nullptr;
+    if (grows) {
         if (record.sfont >= 8192) return 0;
         constexpr int increment = 16 * sizeof(FcPattern*);
         if (record.sfont > std::numeric_limits<int>::max() - increment) return 0;
         const auto next = static_cast<std::size_t>(record.sfont + increment);
-        void* storage = std::realloc(record.fonts, next);
-        if (!storage) return 0;
-        record.fonts = static_cast<FcPattern**>(storage);
-        record.sfont = static_cast<int>(next);
+        grown = std::malloc(next);
+        if (!grown) return 0;
+        std::memcpy(grown, record.fonts, static_cast<std::size_t>(record.nfont) * sizeof(FcPattern*));
+        updated.fonts = static_cast<FcPattern**>(grown);
+        updated.sfont = static_cast<int>(next);
     }
     FcPattern* duplicate = FcPatternDuplicate_nid_postfix(pattern);
-    if (!duplicate) return 0;
-    if (!WriteGuestBytes(&record.fonts[record.nfont], &duplicate, sizeof(duplicate))) {
+    if (!duplicate) {
+        if (grown) std::free(grown);
+        return 0;
+    }
+    if (!WriteGuestBytes(&updated.fonts[updated.nfont], &duplicate, sizeof(duplicate))) {
+        if (grown) std::free(grown);
         FcPatternDestroy_nid_postfix(duplicate);
         NotImplemented_nid_no_patch(__func__);
     }
-    ++record.nfont;
-    if (!WriteGuestBytes(set, &record, sizeof(record))) {
+    ++updated.nfont;
+    if (!WriteGuestBytes(set, &updated, sizeof(updated))) {
+        if (grown) std::free(grown);
         FcPatternDestroy_nid_postfix(duplicate);
         NotImplemented_nid_no_patch(__func__);
     }
+    if (grown) std::free(record.fonts);
     return 1;
 }
 
