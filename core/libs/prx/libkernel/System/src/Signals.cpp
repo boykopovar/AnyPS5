@@ -360,7 +360,11 @@ bool Install(int guest, const GuestSigaction& action) {
     handlerFlags[guest].store(action.flags);
     const bool siginfo = action.handler > 1 && (action.flags & SaSiginfo) != 0;
     siginfoHandlers[guest].store(siginfo ? action.handler : 0);
-    if (siginfo && (guest == GuestSigbus || guest == GuestSigsegv)) InstallSiginfoFaultDelivery();
+    if (siginfo && (guest == GuestSigbus || guest == GuestSigsegv)) {
+        handlers[guest].store(nullptr);
+        InstallSiginfoFaultDelivery();
+        return true;
+    }
     const int native = NativeSignal(guest);
     if (!native) return true;
     const auto previous = handlers[guest].exchange(Delivered(action) ? reinterpret_cast<GuestHandler>(action.handler) : nullptr);
