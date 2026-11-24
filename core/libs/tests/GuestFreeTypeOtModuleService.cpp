@@ -144,6 +144,8 @@ void FullLibrary() {
 
 void InvalidRecords() {
     static_assert(alignof(GuestServiceModuleRec) == 8);
+    static_assert(alignof(GuestModuleClass) == 8);
+    static_assert(alignof(GuestServiceLibraryRec) == 8);
     Module own;
     GuestServiceLibraryRec library{};
     own.record.library = &library;
@@ -151,12 +153,21 @@ void InvalidRecords() {
     RequireThrows([&] { Lookup(reinterpret_cast<GuestServiceModuleRec*>(1), nullptr); });
     own.record.clazz = nullptr;
     RequireThrows([&] { Lookup(&own.record, nullptr); });
+    alignas(8) unsigned char shiftedClass[sizeof(GuestModuleClass) + 4];
+    std::memcpy(shiftedClass + 4, &own.clazz, sizeof(own.clazz));
+    own.record.clazz = reinterpret_cast<GuestModuleClass*>(shiftedClass + 4);
+    RequireThrows([&] { Lookup(&own.record, nullptr); });
     own.record.clazz = reinterpret_cast<GuestModuleClass*>(1);
     RequireThrows([&] { Lookup(&own.record, nullptr); });
     own.record.clazz = &own.clazz;
     own.record.library = nullptr;
     RequireThrows([&] { Lookup(&own.record, nullptr); });
     own.record.library = reinterpret_cast<GuestServiceLibraryRec*>(1);
+    RequireThrows([&] { Lookup(&own.record, nullptr); });
+    own.record.library = &library;
+    alignas(8) unsigned char shiftedLibrary[sizeof(GuestServiceLibraryRec) + 4];
+    std::memcpy(shiftedLibrary + 4, &library, sizeof(library));
+    own.record.library = reinterpret_cast<GuestServiceLibraryRec*>(shiftedLibrary + 4);
     RequireThrows([&] { Lookup(&own.record, nullptr); });
     own.record.library = &library;
     alignas(8) unsigned char shiftedModule[sizeof(GuestServiceModuleRec) + 4];
