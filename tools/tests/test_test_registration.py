@@ -14,9 +14,12 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_test_registration
 
+CXX_BUILD_TOOLS = shutil.which("cmake") and shutil.which("ninja") and (
+    os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++") or shutil.which("clang++") or shutil.which("cl"))
+
 
 class RegistrationJsonTests(unittest.TestCase):
-    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required")
+    @unittest.skipUnless(CXX_BUILD_TOOLS, "CMake, Ninja and a C++ compiler are required")
     def test_multi_config_report_checks_release_executables_and_sources(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -53,7 +56,7 @@ class RegistrationJsonTests(unittest.TestCase):
                     self.assertEqual(report["unbuilt_exports"], [])
                     self.assertEqual(status, int(bool(expected)))
 
-    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required")
+    @unittest.skipUnless(CXX_BUILD_TOOLS, "CMake, Ninja and a C++ compiler are required")
     def test_real_cmake_executable_report(self):
         import json
         import shutil
@@ -91,7 +94,7 @@ class RegistrationJsonTests(unittest.TestCase):
             self.assertEqual(data, {"mode": "scripts", "tests": ["tools/test_a.py", "tools/test_b.py"],
                                     "registered": ["tools/test_a.py"], "unregistered": ["tools/test_b.py"], "unselected": {}})
 
-    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required")
+    @unittest.skipUnless(CXX_BUILD_TOOLS, "CMake, Ninja and a C++ compiler are required")
     def test_real_cmake_report_matches_every_text_mode_decision(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
