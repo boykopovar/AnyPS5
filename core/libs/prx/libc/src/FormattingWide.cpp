@@ -43,7 +43,8 @@ public:
     bool invalidSequence;
 };
 
-bool AppendUtf16(std::u16string& out, const char* text, std::size_t limit) {
+template <typename Text>
+bool AppendUtf16(std::u16string& out, const Text& text, std::size_t limit) {
     std::size_t index = 0;
     for (std::size_t count = 0; count == 0 || count < limit; ++count) {
         const unsigned char lead = static_cast<unsigned char>(text[index]);
@@ -175,29 +176,27 @@ bool CopyGuestWideString(const char16_t* source, std::u16string& out, std::size_
     return true;
 }
 
-bool CopyGuestNarrowString(const char* source, std::string& out) {
-    if (source == nullptr) return false;
-    out.clear();
-    const std::size_t pageSize = GuestPageSize();
-    const auto base = reinterpret_cast<std::uintptr_t>(source);
-    std::size_t offset = 0;
-    for (;;) {
-        if (offset > UINTPTR_MAX - base) return false;
-        const auto current = base + offset;
-        const std::size_t toPageEnd = pageSize - (current % pageSize);
-        const std::size_t chunk = toPageEnd < 256 ? toPageEnd : 256;
-        char buffer[256];
-        if (!CopyInPreservingErrno(buffer, reinterpret_cast<const void*>(current), chunk)) {
-            return false;
+struct GuestNarrowReader {
+    const char* source;
+    mutable std::string loaded;
+
+    char operator[](std::size_t index) const {
+        const std::size_t pageSize = GuestPageSize();
+        const auto base = reinterpret_cast<std::uintptr_t>(source);
+        while (loaded.size() <= index) {
+            if (loaded.size() > UINTPTR_MAX - base) throw std::invalid_argument("Unreadable string argument");
+            const auto current = base + loaded.size();
+            const std::size_t toPageEnd = pageSize - (current % pageSize);
+            const std::size_t chunk = toPageEnd < 256 ? toPageEnd : 256;
+            char buffer[256];
+            if (!CopyInPreservingErrno(buffer, reinterpret_cast<const void*>(current), chunk)) {
+                throw std::invalid_argument("Unreadable string argument");
+            }
+            loaded.append(buffer, chunk);
         }
-        if (const auto* end = static_cast<const char*>(std::memchr(buffer, '\0', chunk))) {
-            out.append(buffer, static_cast<std::size_t>(end - buffer));
-            return true;
-        }
-        out.append(buffer, chunk);
-        offset += chunk;
+        return loaded[index];
     }
-}
+};
 
 void FormatWideHostInto(std::u16string& out, const char16_t* format, VaList* source, bool secure) {
     if (format == nullptr || source == nullptr) throw std::invalid_argument("Null formatting argument");
@@ -337,13 +336,12 @@ void FormatWideHostInto(std::u16string& out, const char16_t* format, VaList* sou
             } else {
                 const char* value = args.Next<const char*>();
                 if (value == nullptr && secure) throw WideFormatViolation("wprintf_s: bad %s argument");
-                std::string narrow;
-                const char* sourceText = "(null)";
-                if (value != nullptr) {
-                    if (!CopyGuestNarrowString(value, narrow)) throw std::invalid_argument("Unreadable string argument");
-                    sourceText = narrow.c_str();
+                if (value == nullptr) {
+                    if (!AppendUtf16(text, "(null)", limit)) throw WideEncodingError(out);
+                } else {
+                    const GuestNarrowReader reader{value, {}};
+                    if (!AppendUtf16(text, reader, limit)) throw WideEncodingError(out);
                 }
-                if (!AppendUtf16(text, sourceText, limit)) throw WideEncodingError(out);
                 if (text.empty()) width = 0;
             }
             AppendPadded(out, text, left, width);

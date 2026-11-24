@@ -410,6 +410,33 @@ int main(int argc, char** argv) {
         Require(guarded.Data()[i] == 0xA5, "vswprintf error touched bytes past terminator");
     }
 
+    guarded.SetReadOnly(false);
+    auto* pageEnd = guarded.Data() + guarded.PageSize();
+    std::memcpy(pageEnd - 3, "abc", 3);
+    stream = open(argv[2], "w+b");
+    Require(stream != nullptr, "could not open stream for N1");
+    Require(WideThrough(printWide, stream, u"%.3s", reinterpret_cast<const char*>(pageEnd - 3)) == 3, "N1 %.3s at page end");
+    Require(close(stream) == 0, "close N1");
+
+    std::memcpy(pageEnd - 4, "abcd", 4);
+    stream = open(argv[2], "w+b");
+    Require(stream != nullptr, "could not open stream for N2");
+    Require(WideThrough(printWide, stream, u"%.3s", reinterpret_cast<const char*>(pageEnd - 4)) == 3, "N2 %.3s at page end");
+    Require(close(stream) == 0, "close N2");
+
+    std::memcpy(pageEnd - 3, "ab\0", 3);
+    stream = open(argv[2], "w+b");
+    Require(stream != nullptr, "could not open stream for N3");
+    Require(WideThrough(printWide, stream, u"%s", reinterpret_cast<const char*>(pageEnd - 3)) == 2, "N3 %s at page end");
+    Require(close(stream) == 0, "close N3");
+
+    const char16_t wideEdge[2] = {u'x', u'y'};
+    std::memcpy(pageEnd - sizeof(wideEdge), wideEdge, sizeof(wideEdge));
+    stream = open(argv[2], "w+b");
+    Require(stream != nullptr, "could not open stream for W1");
+    Require(WideThrough(printWide, stream, u"%.2ls", reinterpret_cast<const char16_t*>(pageEnd - sizeof(wideEdge))) == 2, "W1 %.2ls at page end");
+    Require(close(stream) == 0, "close W1");
+
     std::remove(argv[2]);
 #ifdef _WIN32
     FreeLibrary(library);
