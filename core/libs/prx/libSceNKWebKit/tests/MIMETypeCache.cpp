@@ -434,6 +434,20 @@ static void TestCanDecodeType() {
     Require(GuardIntact(cache));
 }
 
+static void TestCodecEntries() {
+    Cache cache;
+    Arm(cache);
+    cache.initialTypes = {"audio/mpeg"};
+    Require(Decode(cache, "audio/mpeg; codecs=\"mp3, ,\"") == 0 && cache.counters.extended == 1);
+    Require(Decode(cache, "audio/mpeg; codecs=\", ,mp3\"") == 0 && cache.counters.extended == 2);
+    Require(Decode(cache, "audio/mpeg; codecs=\",\t\r\n,\"") == 0 && cache.counters.extended == 3);
+    Require(Decode(cache, "audio/mpeg; codecs=\",\fmp3\f,\"") == 1 && cache.counters.extended == 3);
+    Require(Decode(cache, "audio/mpeg; codecs=\",\tmp3\r\n,\"") == 1 && cache.counters.extended == 3);
+    Require(Decode(cache, "audio/mpeg; codecs=\",\vmp3,\"") == 0 && cache.counters.extended == 4);
+    destroy(&cache.object);
+    Require(GuardIntact(cache));
+}
+
 static void TestCopies() {
     Cache source;
     Arm(source);
@@ -601,6 +615,7 @@ int main() {
     TestALargeSet();
     TestSupportsContainerType();
     TestCanDecodeType();
+    TestCodecEntries();
     TestCopies();
     TestADeletedBucket();
     TestNullArguments();
