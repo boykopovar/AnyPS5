@@ -127,6 +127,12 @@ class PresentMonCompareTests(unittest.TestCase):
         self.assertEqual(pair["metrics"]["present_ms_p50"]["change_pct"], -50)
         self.assertAlmostEqual(pair["metrics"]["present_ms_p99"]["change_pct"], -200 / 3)
 
+    def test_markdown_preserves_exact_present_counts(self):
+        report = self.compare(self.series(self.captured_pair()))
+        report["runs"][0]["metrics"].update(presents=1000002, dropped=1000001)
+        output = presentmon_compare.render_presentmon_comparison(report)
+        self.assertIn("| A1 | baseline | captured | 1000002 | 1000001 |", output)
+
     def test_aggregates_complete_pairs_with_equal_weight(self):
         runs = self.captured_pair()
         runs += [self.captured("A2", "baseline", 102, CANDIDATE_TICKS),
