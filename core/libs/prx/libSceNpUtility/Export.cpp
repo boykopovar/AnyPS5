@@ -1,7 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpUtility/include/InventoryExports.hpp"
 #include "prx/libSceNpUtility/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <condition_variable>
@@ -118,30 +117,13 @@ struct FamilyState {
     std::int32_t currentRequest = 0;
 };
 
-bool CopyInPreservingErrno(void* dst, const void* src, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(dst, src, size);
-    errno = savedErrno;
-    return copied;
-}
-
-bool CopyOutPreservingErrno(void* dst, const void* src, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(dst, src, size);
-    errno = savedErrno;
-    return copied;
-}
-
 int AppLaunchLinkCreateRequest(FamilyState& state, std::int32_t userId, const void* param, std::int32_t* requestId, int notInitialized, int invalidArgument) {
     if (userId == -1 || !param || !requestId) return invalidArgument;
     std::lock_guard lock(state.mutex);
     if (!state.initialized) return notInitialized;
     const std::int32_t id = state.nextRequest++;
     state.requests.insert(id);
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
-    errno = savedErrno;
-    if (!copied) {
+    if (!GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id))) {
         state.requests.erase(id);
         --state.nextRequest;
         return invalidArgument;
@@ -169,7 +151,7 @@ int AppLaunchLinkGetCompatibleTitleIdNum(FamilyState& state, std::int32_t reques
     if (!state.initialized) return notInitialized;
     if (!state.requests.contains(requestId)) return requestNotFound;
     const std::int32_t zero = 0;
-    if (!CopyOutPreservingErrno(titleIdNum, &zero, sizeof(zero))) return invalidArgument;
+    if (!GuestCopyOut_nid_no_patch(titleIdNum, &zero, sizeof(zero))) return invalidArgument;
     return 0;
 }
 
@@ -180,7 +162,7 @@ int AppLaunchLinkGetCompatibleTitleIdList(FamilyState& state, std::int32_t reque
     if (!state.requests.contains(requestId)) return requestNotFound;
     if (titleIdNum) {
         const std::int32_t zero = 0;
-        if (!CopyOutPreservingErrno(titleIdNum, &zero, sizeof(zero))) return invalidArgument;
+        if (!GuestCopyOut_nid_no_patch(titleIdNum, &zero, sizeof(zero))) return invalidArgument;
     }
     return 0;
 }
@@ -267,10 +249,7 @@ int AbortRequest(Service& service, int reqId) {
 }
 
 bool CopyOutInt(int* dst, int value) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(dst, &value, sizeof(value));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyOut_nid_no_patch(dst, &value, sizeof(value));
 }
 
 int PollAsync(Service& service, int reqId, int* result, int synchronousError) {
@@ -314,9 +293,7 @@ int SetTimeout(Service& service, int id, int resolveRetry, std::uint32_t resolve
 
 int CheckComment(const char* comment) {
     std::string copy;
-    const int savedErrno = errno;
     const int status = CopyGuestString_nid_no_patch(comment, WORD_FILTER_COMMENT_MAX_LENGTH + 1, copy);
-    errno = savedErrno;
     return status == 0 ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
 }
 }
@@ -423,10 +400,7 @@ int APS5_VABI sceNpAppInfoIntCreateRequest(std::int32_t* requestId) {
     const std::int32_t id = appInfo.nextRequest++;
     const std::int32_t previousRequest = appInfo.currentRequest;
     appInfo.currentRequest = id;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
-    errno = savedErrno;
-    if (!copied) {
+    if (!GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id))) {
         appInfo.currentRequest = previousRequest;
         --appInfo.nextRequest;
         return SCE_NP_APP_INFO_ERROR_INVALID_ARGUMENT;
@@ -579,7 +553,7 @@ int APS5_VABI sceNpLookupNetInitWithMemoryPool(const void* param, const void* po
 }
 int APS5_VABI sceNpLookupNetIsInit(std::int32_t* out) {
     const std::int32_t value = LookupNetIsInitialized() ? 1 : 0;
-    if (out && !CopyOutPreservingErrno(out, &value, sizeof(value))) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (out && !GuestCopyOut_nid_no_patch(out, &value, sizeof(value))) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 int APS5_VABI sceNpLookupNetNpId(std::int32_t requestId, const void* onlineId, void* npId, const void* option) {
@@ -627,7 +601,7 @@ int APS5_VABI sceNpServiceChecker2IntCreateRequest(int* requestId) {
     std::uint32_t id = serviceChecker2.nextRequest;
     while (serviceChecker2.requests.contains(static_cast<int>(id))) id = id >= MAX_SERVICE_CHECKER2_REQUEST_ID ? 1 : id + 1;
     const int value = static_cast<int>(id);
-    if (!CopyOutPreservingErrno(requestId, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT;
+    if (!GuestCopyOut_nid_no_patch(requestId, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT;
     serviceChecker2.nextRequest = id >= MAX_SERVICE_CHECKER2_REQUEST_ID ? 1 : id + 1;
     serviceChecker2.requests.insert(value);
     return 0;
@@ -669,10 +643,7 @@ int APS5_VABI sceNpServiceChecker2IntInitialize() {
 int APS5_VABI sceNpServiceChecker2IntIsSetServiceType(const std::uint32_t* serviceTypes, std::uint32_t serviceType) {
     if (!serviceTypes || serviceType > 9) return 0;
     std::uint32_t word = 0;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&word, &serviceTypes[serviceType >> 5], sizeof(word));
-    errno = savedErrno;
-    if (!copied) return 0;
+    if (!GuestCopyIn_nid_no_patch(&word, &serviceTypes[serviceType >> 5], sizeof(word))) return 0;
     return static_cast<int>((word >> serviceType) & 1);
 }
 int APS5_VABI sceNpServiceCheckerIntAbortRequest(std::int32_t requestId) {
@@ -687,10 +658,7 @@ int APS5_VABI sceNpServiceCheckerIntCreateRequest(const void* npId, std::int32_t
     if (!serviceChecker1.initialized) return SCE_NP_SERVICE_CHECKER_ERROR_NOT_INITIALIZED;
     const std::int32_t id = serviceChecker1.nextRequest++;
     serviceChecker1.requests.insert(id);
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
-    errno = savedErrno;
-    if (!copied) {
+    if (!GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id))) {
         serviceChecker1.requests.erase(id);
         --serviceChecker1.nextRequest;
         return SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT;
@@ -737,7 +705,7 @@ int APS5_VABI sceNpServiceCheckerIntIsCached(std::int32_t requestId, std::uint8_
     if (!serviceChecker1.initialized) return SCE_NP_SERVICE_CHECKER_ERROR_NOT_INITIALIZED;
     if (!serviceChecker1.requests.contains(requestId)) return SCE_NP_SERVICE_CHECKER_ERROR_REQUEST_NOT_FOUND;
     const std::uint8_t value = 0;
-    if (!CopyOutPreservingErrno(cached, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT;
+    if (!GuestCopyOut_nid_no_patch(cached, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 int APS5_VABI sceNpTitleMetadataIntAbortRequest(std::int32_t requestId) {
@@ -777,10 +745,10 @@ int APS5_VABI sceNpTitleMetadataIntGetNpTitleId(const char* titleId, std::size_t
     if (!titleId || !npTitleId) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
     if (titleIdLength > 9) return SCE_NP_TITLE_METADATA_ERROR_TOO_LONG;
     char buffer[16] = {};
-    if (!CopyInPreservingErrno(buffer, titleId, titleIdLength)) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
+    if (!GuestCopyIn_nid_no_patch(buffer, titleId, titleIdLength)) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
     const std::size_t length = strnlen(buffer, sizeof(buffer));
     std::memcpy(buffer + length, "_00", 4);
-    if (!CopyOutPreservingErrno(npTitleId, buffer, sizeof(buffer))) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
+    if (!GuestCopyOut_nid_no_patch(npTitleId, buffer, sizeof(buffer))) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 int APS5_VABI sceNpUtilityInit() {
@@ -808,10 +776,7 @@ int APS5_VABI sceNpLookupAbortRequest(int reqId) {
 int APS5_VABI sceNpLookupCreateAsyncRequest(int titleCtxId, const std::uint64_t* param) {
     if (!param) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     std::uint64_t value = 0;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&value, param, sizeof(value));
-    errno = savedErrno;
-    if (!copied || value != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!GuestCopyIn_nid_no_patch(&value, param, sizeof(value)) || value != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return CreateRequest(lookup, titleCtxId, true);
 }
 
@@ -863,10 +828,7 @@ int APS5_VABI sceNpWordFilterCensorComment(int reqId, const char* comment, void*
 int APS5_VABI sceNpWordFilterCreateAsyncRequest(int titleCtxId, const std::uint64_t* param) {
     if (!param) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     std::uint64_t value = 0;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&value, param, sizeof(value));
-    errno = savedErrno;
-    if (!copied || value != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!GuestCopyIn_nid_no_patch(&value, param, sizeof(value)) || value != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return CreateRequest(wordFilter, titleCtxId, true);
 }
 
