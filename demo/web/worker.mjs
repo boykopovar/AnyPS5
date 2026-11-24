@@ -55,6 +55,7 @@ export async function downloadLibraries(target, locale = "en") {
   }
   const download = await fetch(asset.path);
   if (!download.ok) throw new Error(translate(locale, "cannotDownloadLibraries", { status: download.status }));
+  if (!download.body) throw new Error(translate(locale, "incompleteDownload"));
   const reader = download.body.getReader();
   const chunks = [];
   let size = 0;
