@@ -1112,6 +1112,7 @@ private:
             fmaskCopy.compared = !WatchedAfterSettle(context, range.address, range.bytes) && ComparedHostImportCovers(context, range.address, range.bytes);
             Require(fmaskCopy.compared || GuestMemory::Watched(range.address, range.bytes), "native FMASK contents require watched guest memory");
             if (!fmaskCopy.compared) {
+                GuestMemory::MaterializeKnownZero(range.address, range.bytes);
                 range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
                 Require(range.generation != 0, "native FMASK contents have no write generation");
             }
@@ -1535,6 +1536,12 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
     return created;
 }
 
+void flushDepthPlanesUnder(const GuestTextureResource& resource) {
+    if (!DepthPlanesStale()) return;
+    const auto bytes = SurfaceGuestBytes(resource);
+    if (bytes != 0u) static_cast<void>(FlushDepthPlanes(resource.baseAddress, static_cast<std::size_t>(bytes)));
+}
+
 MultisampleTarget& createFilled(const Context& context, const GuestTextureResource& resource, VkFormat format, const char* access, bool written) {
     const auto refuse = [&](const std::string& reason) {
         char text[192];
@@ -1876,13 +1883,18 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
     Require(target.elementBytes != 0u && target.elementBytes <= 16u && 16u % target.elementBytes == 0u, "initial multisample color texel size is not implemented");
     const auto bytes = MultisampledColorBytes(target);
     Require(bytes != 0u && bytes <= std::numeric_limits<std::size_t>::max() && target.address <= std::numeric_limits<std::uint64_t>::max() - bytes, "initial multisample color footprint is not implemented");
-    const auto requireUnowned = [&] {
-        Require(!ResidentDepthGuardOverlaps_nid_no_patch(target.address, static_cast<std::size_t>(bytes)), "initial multisample color contents overlap resident native depth");
+    const auto requireNoColorOwner = [&] {
         std::shared_lock guardLock(guardedMutex());
         Require(std::ranges::none_of(guarded(), [&](const GuardedRange& range) { return range.active->load(std::memory_order_acquire) && target.address < range.address + range.bytes && range.address < target.address + bytes; }), "initial multisample color contents overlap another native owner");
     };
-    requireUnowned();
+    const auto requireUnowned = [&] {
+        Require(!ResidentDepthGuardOverlaps_nid_no_patch(target.address, static_cast<std::size_t>(bytes)), "initial multisample color contents overlap resident native depth");
+        requireNoColorOwner();
+    };
+    requireNoColorOwner();
     Require(GuestMemory::Accessible(reinterpret_cast<const void*>(target.address), static_cast<std::size_t>(bytes)), "initial multisample color contents are not fully mapped");
+    RequireNoResidentDepthRead_nid_no_patch(target.address, static_cast<std::size_t>(bytes), std::nullopt, true, DepthReadCause::Attachment);
+    requireUnowned();
     std::vector<std::byte> snapshot(static_cast<std::size_t>(bytes));
     GuestMemory::Read(target.address, snapshot);
     requireUnowned();
@@ -1975,6 +1987,7 @@ VkFormat sampledFormat(const Context& context, std::uint32_t guestFormat) {
 }
 
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType viewType) {
+    flushDepthPlanesUnder(resource);
     TargetsLock lock;
     discardRetiredTargets();
     const auto format = sampledFormat(context, resource.format);
@@ -2000,6 +2013,7 @@ std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const 
 }
 
 std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, const GuestTextureResource& resource, VkComponentMapping components) {
+    flushDepthPlanesUnder(resource);
     TargetsLock lock;
     discardRetiredTargets();
     const auto format = sampledFormat(context, resource.format);
@@ -2040,6 +2054,7 @@ MultisampleColorSnapshot ReadMultisampleTargetColorSnapshot_nid_no_patch(const C
 }
 
 VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage) {
+    flushDepthPlanesUnder(resource);
     TargetsLock lock;
     discardRetiredTargets();
     const auto format = ResolveTextureFormat(resource.format);
@@ -2206,8 +2221,20 @@ void SetMultisampleDccCopyHookForTest(void (*hook)()) {
 
 void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes) {
     if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire) || !mayOverlapGuarded(address, bytes)) return;
-    std::shared_lock lock(guardedMutex());
-    claimOverlapping(address, bytes, nullptr);
+    const auto memoryBacked = [&](const auto& range) { return !range.fmask && address < range.address + range.bytes && range.address < address + bytes && !range.use->hostOnly.load(std::memory_order_acquire); };
+    {
+        std::shared_lock lock(guardedMutex());
+        claimOverlapping(address, bytes, nullptr);
+        if (std::none_of(guarded().begin(), guarded().end(), memoryBacked)) return;
+    }
+    std::unique_lock lock(guardedMutex());
+    std::vector<std::shared_ptr<std::atomic<bool>>> retired;
+    for (const auto& range : guarded()) {
+        if (memoryBacked(range) && std::find(retired.begin(), retired.end(), range.active) == retired.end()) retired.push_back(range.active);
+    }
+    for (const auto& active : retired) active->store(false, std::memory_order_release);
+    if (std::erase_if(guarded(), [&](const auto& range) { return std::find(retired.begin(), retired.end(), range.active) != retired.end(); }) != 0u) guardedGeneration().fetch_add(1, std::memory_order_release);
+    anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
 bool MultisampleColorTargetOverlaps(std::uint64_t address, std::uint64_t bytes) {
@@ -2498,6 +2525,7 @@ std::vector<MultisampleColorAlias> MultisampleColorTargetsOver(std::uint64_t add
     std::shared_lock guardLock(guardedMutex());
     for (const auto& range : guarded()) {
         if (address >= range.address + range.bytes || range.address >= address + bytes) continue;
+        if (!range.use->hostOnly.load(std::memory_order_acquire)) continue;
         if (std::any_of(aliases.begin(), aliases.end(), [&](const MultisampleColorAlias& alias) { return alias.active == range.active; })) continue;
         const auto target = std::find_if(targets().begin(), targets().end(), [&](const auto& candidate) { return candidate->active == range.active; });
         if (target != targets().end()) {

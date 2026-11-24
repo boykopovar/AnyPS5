@@ -28,11 +28,13 @@
 #include "Properties.hpp"
 #include "CodePointTrie.hpp"
 #include "Script.hpp"
+#include "SupplementalRegion.hpp"
 #include "ScriptCode.hpp"
 #include "CaseMapping.hpp"
 #include "Bidi.hpp"
 #include "CharsetDetection.hpp"
 #include "Normalization.hpp"
+#include "Normalizer2Accessors.hpp"
 #include "CodePoints.hpp"
 #include "Identified.hpp"
 

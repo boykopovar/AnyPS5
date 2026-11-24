@@ -14,16 +14,9 @@ using FreeType::GuestLibrary;
 
 namespace {
 
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return ok;
-}
-
 bool ReadGuestLibrary(GuestLibrary* library, FT_Library& host) {
     host = nullptr;
-    return !library || (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) == 0 && CopyInPreservingErrno(&host, &library->host, sizeof(host)));
+    return !library || (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) == 0 && GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host)));
 }
 
 FT_Library ReadGuestLibraryVersion(GuestLibrary* library) {

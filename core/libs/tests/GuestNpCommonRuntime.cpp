@@ -1730,12 +1730,28 @@ void TestNumbers() {
         "the length is reported before the 32-bit range check");
     std::int64_t value64 = 0;
     Require(sceNpStrToInt64("-9223372036854775808", &value64, 10, nullptr) == 0 && value64 == INT64_MIN, "the 64-bit minimum parses");
+    errno = ERANGE;
+    value64 = 71;
+    Require(sceNpStrToInt64("-9223372036854775808", &value64, 10, nullptr) == NpOutOfRange && value64 == 71,
+        "a stale range error rejects the saturated 64-bit minimum");
+    Require(sceNpStrToInt64("9223372036854775807", &value64, 10, nullptr) == NpOutOfRange && value64 == 71,
+        "a stale range error rejects the saturated 64-bit maximum");
+    errno = 71;
+    Require(sceNpStrToInt64("9223372036854775807", &value64, 10, nullptr) == 0 && value64 == INT64_MAX,
+        "a non-range errno does not reject the saturated 64-bit maximum");
+    errno = ERANGE;
+    Require(sceNpStrToInt64("12", &value64, 10, nullptr) == 0 && value64 == 12, "a stale range error does not reject an unsaturated value");
     Require(sceNpStrToInt64("99999999999999999999", &value64, 10, nullptr) == NpOutOfRange, "64-bit overflow is an error");
     std::uint32_t unsigned32 = 0;
     Require(sceNpStrToUInt32("4294967295", &unsigned32, 10, nullptr) == 0 && unsigned32 == UINT32_MAX, "the 32-bit maximum parses");
     Require(sceNpStrToUInt32("4294967296", &unsigned32, 10, nullptr) == NpOutOfRange, "32-bit unsigned overflow is an error");
     std::uint64_t unsigned64 = 0;
+    errno = 71;
     Require(sceNpStrToUInt64("0xFFFFFFFFFFFFFFFF", &unsigned64, 0, nullptr) == 0 && unsigned64 == UINT64_MAX, "the 64-bit maximum parses");
+    errno = ERANGE;
+    unsigned64 = 71;
+    Require(sceNpStrToUInt64("0xFFFFFFFFFFFFFFFF", &unsigned64, 0, nullptr) == NpOutOfRange && unsigned64 == 71,
+        "a stale range error rejects the saturated unsigned 64-bit maximum");
     Require(sceNpStrToUInt64("18446744073709551616", &unsigned64, 10, nullptr) == NpOutOfRange, "64-bit unsigned overflow is an error");
     Require(sceNpStrToInt32("12", reinterpret_cast<std::int32_t*>(0x10), 10, &parsed) == NpInvalidArgument, "an unwritable 32-bit value is refused");
     Require(sceNpStrToInt32("12", &value32, 10, reinterpret_cast<std::size_t*>(0x10)) == NpInvalidArgument, "an unwritable parsed length is refused");
@@ -2267,6 +2283,73 @@ void TestCommIdGuestPointers() {
         "a counted communication id that ends at the last mapped byte is parsed");
 }
 
+void TestGetNthCharGuestPointers() {
+    const auto* unmapped = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    const char* const sentinel = "sentinel";
+    const char* character = sentinel;
+    errno = 71;
+    Require(sceNpUtilGetNthChar(1, unmapped, &character) == NpUtilInvalid && character == sentinel && errno == 71,
+        "an unmapped source text with non-zero index is refused without touching output or errno");
+    errno = 71;
+    Require(sceNpUtilGetNthChar(0, "a", reinterpret_cast<const char**>(std::uintptr_t{0x10})) == NpUtilInvalid && errno == 71,
+        "an unmapped character destination is refused and keeps errno");
+
+    GuardedPage page;
+    page.End()[-1] = 'a';
+    character = sentinel;
+    errno = 71;
+    Require(sceNpUtilGetNthChar(1, page.End() - 1, &character) == 0 && character == page.End() && errno == 71,
+        "advancing past the last mapped byte stops before touching the guard page");
+
+    character = sentinel;
+    errno = 71;
+    Require(sceNpUtilGetNthChar(2, page.End() - 1, &character) == NpUtilInvalid && character == sentinel && errno == 71,
+        "an unterminated string reaching into the guard page is refused");
+
+    std::memcpy(page.End() - 2, "\xE6\x97", 2);
+    character = sentinel;
+    errno = 71;
+    Require(sceNpUtilGetNthChar(1, page.End() - 2, &character) == NpUtilInvalid && character == sentinel && errno == 71,
+        "a multi-byte UTF-8 character split by a guard page reports invalid argument");
+
+    std::memcpy(page.End() - 2, "\xE6\x41", 2);
+    character = sentinel;
+    errno = 71;
+    Require(sceNpUtilGetNthChar(1, page.End() - 2, &character) == NpUtilInvalidCharacter && character == sentinel,
+        "an invalid UTF-8 continuation before a guard page reports invalid character");
+
+    page.End()[-1] = '\x01';
+    character = sentinel;
+    Require(sceNpUtilGetNthChar(1, page.End() - 1, &character) == NpUtilInvalidCharacter && character == sentinel,
+        "a control character at the last mapped byte reports invalid character");
+
+    const std::array<std::uint8_t, 4> partial {0x11, 0x22, 0x33, 0x44};
+    std::memcpy(page.End() - 4, partial.data(), partial.size());
+    errno = 71;
+    Require(sceNpUtilGetNthChar(0, "a", reinterpret_cast<const char**>(page.End() - 4)) == NpUtilInvalid && errno == 71
+            && std::memcmp(page.End() - 4, partial.data(), partial.size()) == 0,
+        "a destination crossing into a guard page is refused without partial write");
+
+    GuardedPage readOnly;
+    std::memset(readOnly.End() - sizeof(const char*), 0x5A, sizeof(const char*));
+    std::array<std::uint8_t, sizeof(const char*)> expectedReadOnly {};
+    expectedReadOnly.fill(0x5A);
+    readOnly.ReadOnly();
+    errno = 71;
+    Require(sceNpUtilGetNthChar(0, "a", reinterpret_cast<const char**>(readOnly.End() - sizeof(const char*))) == NpUtilInvalid
+            && errno == 71 && std::memcmp(readOnly.End() - sizeof(const char*), expectedReadOnly.data(), sizeof(const char*)) == 0,
+        "a read-only destination is refused and keeps errno");
+
+    alignas(4096) std::array<char, 8192> crossed {};
+    std::memcpy(crossed.data() + 4094, "\xE6\x97\xA5" "a", 5);
+    Require(sceNpUtilGetNthChar(1, crossed.data() + 4094, &character) == 0 && character == crossed.data() + 4097,
+        "a valid UTF-8 sequence crossing a chunk boundary is counted cleanly");
+
+    const std::string longText = std::string(4200, 'a') + "Z";
+    Require(sceNpUtilGetNthChar(4200, longText.c_str(), &character) == 0 && character == longText.c_str() + 4200 && *character == 'Z',
+        "long text spanning multiple chunks locates the target character");
+}
+
 int main() {
     TestAtomics();
     TestSemaphoresAndFlags();
@@ -2290,6 +2373,7 @@ int main() {
     TestRefObjects();
     TestCommIdObjects();
     TestCommIdGuestPointers();
+    TestGetNthCharGuestPointers();
     TestBase64();
     TestNumbers();
     TestHexAndCopies();
