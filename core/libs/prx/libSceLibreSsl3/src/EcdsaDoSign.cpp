@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include "mbedtls/ecdsa.h"
@@ -9,6 +10,12 @@
 #include <vector>
 
 namespace {
+
+constexpr int BnLibrary = 3;
+constexpr int EcLibrary = 16;
+constexpr int AnyFunction = 0xfff;
+constexpr int ErrRBnLib = 3;
+constexpr int ErrRPassedNullParameter = 67;
 
 int HostRandom(void*, unsigned char* buffer, std::size_t size) {
     try {
@@ -48,8 +55,15 @@ extern "C" {
 
 LibreSsl3EcdsaSig* APS5_VABI ECDSA_do_sign_nid_postfix(const unsigned char* digest, int digestLength, EcKey* key) {
     if (key == nullptr) throw std::invalid_argument("ECDSA_do_sign requires a key");
-    if (key->group == nullptr || key->privateKey == nullptr) return nullptr;
-    if (digestLength < 0) return nullptr;
+    if (key->group == nullptr) return nullptr;
+    if (key->privateKey == nullptr) {
+        LibreSslPutError_nid_no_patch(EcLibrary, AnyFunction, ErrRPassedNullParameter);
+        return nullptr;
+    }
+    if (digestLength < 0) {
+        LibreSslPutError_nid_no_patch(BnLibrary, AnyFunction, ErrRBnLib);
+        return nullptr;
+    }
     if (digest == nullptr && digestLength > 0) throw std::invalid_argument("ECDSA_do_sign requires a digest");
 
     Mpi r;

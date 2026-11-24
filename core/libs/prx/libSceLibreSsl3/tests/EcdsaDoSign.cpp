@@ -19,6 +19,19 @@ void Require(bool condition, std::source_location location = std::source_locatio
     std::abort();
 }
 
+void ExpectError(int expectedLibrary, int expectedReason,
+    std::source_location location = std::source_location::current()) {
+    const std::uint64_t code = ERR_get_error_nid_postfix();
+    const int library = static_cast<int>((code >> 24) & 0xff);
+    const int reason = static_cast<int>(code & 0xfff);
+    Require(library == expectedLibrary && reason == expectedReason, location);
+}
+
+void ClearErrors() {
+    while (ERR_get_error_nid_postfix() != 0) {
+    }
+}
+
 template<typename TCall> void ThrowsInvalidArgument(TCall call) {
     bool threw = false;
     try { call(); } catch (const std::invalid_argument&) { threw = true; }
@@ -144,16 +157,24 @@ void Run() {
 
     ThrowsInvalidArgument([&] { ECDSA_do_sign_nid_postfix(digest.data(), static_cast<int>(digest.size()), nullptr); });
     ThrowsInvalidArgument([&] { ECDSA_do_sign_nid_postfix(nullptr, 1, key); });
+    ClearErrors();
     Require(ECDSA_do_sign_nid_postfix(digest.data(), -1, key) == nullptr);
+    ExpectError(3, 3);
+    Require(ERR_get_error_nid_postfix() == 0);
 
     EcKey* noGroup = EC_KEY_new_nid_postfix();
     Require(noGroup != nullptr);
+    ClearErrors();
     Require(ECDSA_do_sign_nid_postfix(digest.data(), static_cast<int>(digest.size()), noGroup) == nullptr);
+    Require(ERR_get_error_nid_postfix() == 0);
     EC_KEY_free_nid_postfix(noGroup);
 
     EcKey* noPrivateKey = EC_KEY_new_by_curve_name_nid_postfix(P256);
     Require(noPrivateKey != nullptr);
+    ClearErrors();
     Require(ECDSA_do_sign_nid_postfix(digest.data(), static_cast<int>(digest.size()), noPrivateKey) == nullptr);
+    ExpectError(16, 67);
+    Require(ERR_get_error_nid_postfix() == 0);
     EC_KEY_free_nid_postfix(noPrivateKey);
 
     EC_KEY_set_group_nid_postfix(key, nullptr);
