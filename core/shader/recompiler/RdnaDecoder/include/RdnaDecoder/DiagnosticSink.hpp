@@ -2,6 +2,10 @@
 #define CORE_SHADER_RECOMPILIER_RDNADECODER_INCLUDE_RDNADECODER_DIAGNOSTICSINK_HPP
 
 #include <atomic>
+#include <cstddef>
+#include <cstdio>
+#include <stdexcept>
+#include <string>
 
 namespace ShaderRecompiler {
 
@@ -26,6 +30,19 @@ inline void SetDiagnosticSink(const DiagnosticSink* sink) {
 
 inline const DiagnosticSink* Diagnostics() {
     return DiagnosticSinkSlot().load(std::memory_order_acquire);
+}
+
+template<typename... TArgs>
+void ProfileLine(const char* format, TArgs... args) {
+    const auto size = std::snprintf(nullptr, 0, format, args...);
+    if (size < 0) throw std::runtime_error("profile line formatting failed");
+    std::string text(static_cast<std::size_t>(size), '\0');
+    std::snprintf(text.data(), text.size() + 1, format, args...);
+    if (const auto* sink = Diagnostics(); sink != nullptr && sink->profileLine != nullptr) {
+        sink->profileLine(text.c_str());
+        return;
+    }
+    std::fputs(text.c_str(), stderr);
 }
 
 }

@@ -221,7 +221,7 @@ void noteHeld(HeldReason reason) {
         std::snprintf(item, sizeof(item), "%s %s %llu", i == 0 ? "" : ",", names[i], static_cast<unsigned long long>(count >= 262144u ? heldReasons[i].exchange(0) : heldReasons[i].load()));
         text += item;
     }
-    std::fprintf(stderr, "[finisher-held] held draws' writes:%s\n", text.c_str());
+    AgcDriver::ProfilePrint_nid_no_patch("[finisher-held] held draws' writes:%s\n", text.c_str());
 }
 
 std::optional<HeldReason> writesBeyondTargets(const ShaderRecompiler::RecompileResult& compiled) {
