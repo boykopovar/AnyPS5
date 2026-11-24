@@ -1,6 +1,8 @@
 import io
 import json
 import os
+import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -145,6 +147,35 @@ class ProgressSnapshotTests(unittest.TestCase):
             snapshot = self.snapshot()
             del snapshot[section]["percent"]
             self.assert_rejected(snapshot, section + ".percent")
+
+    def test_snapshot_rejects_inconsistent_counts_and_symbol_sets(self):
+        counts = (
+            ({"done": True}, ".done must be a non-negative integer"),
+            ({"done": "1"}, ".done must be a non-negative integer"),
+            ({"total": -1}, ".total must be a non-negative integer"),
+            ({"total": 1.5}, ".total must be a non-negative integer"),
+            ({"done": 2, "total": 1}, ".done must not exceed total"),
+        )
+        symbols = (
+            ({"done_names": ["Ready", "Ready"]}, ".done_names contains duplicate symbols"),
+            ({"todo_names": ["Pending", "Pending"]}, ".todo_names contains duplicate symbols"),
+            ({"inert_names": ["Stub", "Stub"]}, ".inert_names contains duplicate symbols"),
+            ({"done_names": ["Flip"], "todo_names": ["Flip"]}, "lists symbols as both done and todo"),
+            ({"done_names": ["Ready"], "inert_names": ["Stub"]}, ".inert_names must be a subset of done_names"),
+        )
+        for section in ("libraries", "shaders"):
+            for fields, diagnostic in counts:
+                with self.subTest(section=section, counts=fields):
+                    snapshot = self.snapshot()
+                    snapshot[section].update(fields)
+                    with self.assertRaisesRegex(ValueError, re.escape(section + diagnostic)):
+                        progress.validate_snapshot(snapshot)
+            for fields, diagnostic in symbols:
+                with self.subTest(section=section, symbols=fields):
+                    snapshot = self.snapshot()
+                    snapshot[section]["groups"] = [{"name": "Group", **fields}]
+                    with self.assertRaisesRegex(ValueError, re.escape(diagnostic)):
+                        progress.validate_snapshot(snapshot)
 
     def test_valid_snapshots_keep_reports_and_optional_fields_compatible(self):
         base, head = self.snapshot(), self.snapshot()
@@ -413,6 +444,49 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(group["done_names"], ["Forward_nid_no_patch", "capture_nid_postfix", "restore_nid_postfix", "signal_nid_postfix"])
         self.assertEqual(group["todo_names"], [])
         self.assertEqual(group["inert_names"], [])
+
+    def test_internal_linkage_callbacks_are_not_counted(self):
+        source = (
+            "int APS5_VABI Exported() { return 1; }\n"
+            "static int APS5_VABI StaticCallback() { return 2; }\n"
+            "namespace {\n"
+            "int APS5_VABI AnonCallback() { return 3; }\n"
+            "}\n"
+            "namespace detail {\n"
+            "int APS5_VABI NamedNamespaceExport() { return 4; }\n"
+            "}\n")
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(source, encoding="utf-8")
+            group = progress.scan_library(library)
+        self.assertEqual(group["done_names"], ["Exported", "NamedNamespaceExport"])
+        self.assertEqual(group["todo_names"], [])
+
+    def test_internal_linkage_follows_declarations_and_scope(self):
+        source = (
+            "static int APS5_VABI Forwarded(int);\n"
+            "int APS5_VABI Forwarded(int value) { return value + 1; }\n"
+            "int APS5_VABI Visible(int value) { return Forwarded(value); }\n"
+            "namespace {\n"
+            "namespace inner {\n"
+            "int APS5_VABI NestedCallback() { return 2; }\n"
+            "}\n"
+            "}\n"
+            "struct Holder {\n"
+            "    static int APS5_VABI Member();\n"
+            "    static int APS5_VABI Inline() { return 3; }\n"
+            "};\n"
+            "int APS5_VABI Member() { return 4; }\n"
+            "static int APS5_VABI Exported() { return 5; }\n"
+            "APS5_EXPORT(\"AAAAAAAAAAA\", Exported);\n")
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(source, encoding="utf-8")
+            group = progress.scan_library(library)
+        self.assertEqual(group["done_names"], ["Exported", "Inline", "Member", "Visible"])
+        self.assertEqual(group["todo_names"], [])
 
     def test_stub_marker_inside_raw_literals_does_not_mark_implementation_as_stub(self):
         for prefix in ("", "u8", "u", "U", "L"):
@@ -851,6 +925,25 @@ class ProgressTests(unittest.TestCase):
             self.assertIn(str(blocked), stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
 
+    def test_non_file_site_destination_preserves_existing_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "source"
+            (root / "core/libs/prx").mkdir(parents=True)
+            opcodes = root / progress.OPCODES.relative_to(progress.ROOT)
+            opcodes.parent.mkdir(parents=True)
+            opcodes.write_text("enum class RdnaOpcode {\n    SEndpgm,\n};\n", encoding="utf-8")
+            output = Path(directory) / "site"
+            blocked = output / "progress.html"
+            blocked.mkdir(parents=True)
+            previous = output / "progress.json"
+            previous.write_bytes(b"previous JSON report")
+            completed = subprocess.run([sys.executable, str(Path(progress.__file__)), "--root", str(root), str(output)],
+                                       capture_output=True, text=True, timeout=10)
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertEqual(previous.read_bytes(), b"previous JSON report")
+            self.assertIn(f"{blocked}: report destination must be a regular file", completed.stderr)
+            self.assertEqual(set(output.iterdir()), {blocked, previous})
+
     def test_aliased_reports_are_refused_and_left_unchanged(self):
         libraries, shaders = self.library_snapshot()
         with tempfile.TemporaryDirectory() as directory:
@@ -1178,6 +1271,20 @@ class BodyEndTests(unittest.TestCase):
         self.assertEqual(progress.body_end(text, 1), 7)
         self.assertEqual(text[progress.body_end(text, 1)], "}")
         self.assertEqual(progress.body_end("x{a", 1), len("x{a"))
+
+
+class CodeTests(unittest.TestCase):
+    def test_code_masks_token_runs_like_single_tokens(self):
+        samples = ["1'000'000 x", r"""u8"a" uR"x(y)x" xu8"q" R"(" 'a' '\'' "open""", "/* open", "a/b//c\n/*x*/d",
+                   """L'x'LR"d(z)d"Ruby u8x""", 'R"abc(no close', ".5e3'x' 'y", "'", '"', "x  \t\n\n  \n y",
+                   "#define A \\\n B \\\r\n C", """a u8"x" b L'y' c R"(z)" d U"w" e u'v' f a/b"""]
+        for text in samples:
+            with self.subTest(text=text):
+                joined = text.replace("\\\n", "").replace("\\\r\n", "")
+                single = re.sub(r"\n(?:[ \t]*\n)+", "\n", progress.CPP_TOKEN.sub(progress.blank, joined))
+                self.assertEqual(progress.code(text), single)
+
+
 class HelperValueTests(unittest.TestCase):
     def test_camel_capitalises_each_underscore_part(self):
         self.assertEqual(progress.camel("a_b_c"), "ABC")

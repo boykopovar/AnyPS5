@@ -164,6 +164,82 @@ static bool Equals(const String& string, std::string_view expected) {
     return true;
 }
 
+static void TestAssignSharedFields() {
+    {
+        auto sharedName = Make("X-Shared");
+        auto oldValue = Make("old-text");
+        auto newValue = Make("new-text");
+        alignas(HTTPHeaderField) unsigned char storage[sizeof(HTTPHeaderField)];
+        auto* left = reinterpret_cast<HTTPHeaderField*>(storage);
+        left->name.impl = &sharedName;
+        left->value.impl = &oldValue;
+        alignas(HTTPHeaderField) unsigned char otherStorage[sizeof(HTTPHeaderField)];
+        auto* right = reinterpret_cast<HTTPHeaderField*>(otherStorage);
+        right->name.impl = &sharedName;
+        right->value.impl = &newValue;
+        sharedName.refCount = 8;
+        oldValue.refCount = 6;
+        newValue.refCount = 6;
+
+        auto& result = _ZN7WebCore15HTTPHeaderFieldaSERKS0_(left, right);
+        Require(&result == left);
+        Require(left->name.impl == &sharedName && left->value.impl == &newValue);
+        Require(right->name.impl == &sharedName && right->value.impl == &newValue);
+        Require(sharedName.refCount == 8);
+        Require(oldValue.refCount == 4);
+        Require(newValue.refCount == 8);
+        Require(Equals(_ZNK7WebCore15HTTPHeaderField4nameEv(left), "X-Shared"));
+        Require(Equals(_ZNK7WebCore15HTTPHeaderField5valueEv(left), "new-text"));
+
+        _ZN7WebCore15HTTPHeaderFieldD1Ev(right);
+        Require(right->name.impl == nullptr && right->value.impl == nullptr);
+        Require(sharedName.refCount == 6 && newValue.refCount == 6);
+        Require(oldValue.refCount == 4);
+        Require(Equals(_ZNK7WebCore15HTTPHeaderField4nameEv(left), "X-Shared"));
+        Require(Equals(_ZNK7WebCore15HTTPHeaderField5valueEv(left), "new-text"));
+
+        _ZN7WebCore15HTTPHeaderFieldD2Ev(left);
+        Require(left->name.impl == nullptr && left->value.impl == nullptr);
+        Require(sharedName.refCount == 4 && oldValue.refCount == 4 && newValue.refCount == 4);
+    }
+    {
+        auto oldName = Make("Old-Name");
+        auto newName = Make("New-Name");
+        auto sharedValue = Make("shared-text");
+        alignas(HTTPHeaderField) unsigned char storage[sizeof(HTTPHeaderField)];
+        auto* left = reinterpret_cast<HTTPHeaderField*>(storage);
+        left->name.impl = &oldName;
+        left->value.impl = &sharedValue;
+        alignas(HTTPHeaderField) unsigned char otherStorage[sizeof(HTTPHeaderField)];
+        auto* right = reinterpret_cast<HTTPHeaderField*>(otherStorage);
+        right->name.impl = &newName;
+        right->value.impl = &sharedValue;
+        oldName.refCount = 6;
+        newName.refCount = 6;
+        sharedValue.refCount = 8;
+
+        _ZN7WebCore15HTTPHeaderFieldaSERKS0_(left, right);
+        Require(left->name.impl == &newName && left->value.impl == &sharedValue);
+        Require(right->name.impl == &newName && right->value.impl == &sharedValue);
+        Require(oldName.refCount == 4);
+        Require(newName.refCount == 8);
+        Require(sharedValue.refCount == 8);
+        Require(Equals(_ZNK7WebCore15HTTPHeaderField4nameEv(left), "New-Name"));
+        Require(Equals(_ZNK7WebCore15HTTPHeaderField5valueEv(left), "shared-text"));
+
+        _ZN7WebCore15HTTPHeaderFieldD1Ev(right);
+        Require(right->name.impl == nullptr && right->value.impl == nullptr);
+        Require(newName.refCount == 6 && sharedValue.refCount == 6);
+        Require(oldName.refCount == 4);
+        Require(Equals(_ZNK7WebCore15HTTPHeaderField4nameEv(left), "New-Name"));
+        Require(Equals(_ZNK7WebCore15HTTPHeaderField5valueEv(left), "shared-text"));
+
+        _ZN7WebCore15HTTPHeaderFieldD2Ev(left);
+        Require(left->name.impl == nullptr && left->value.impl == nullptr);
+        Require(oldName.refCount == 4 && newName.refCount == 4 && sharedValue.refCount == 4);
+    }
+}
+
 static OptionalHTTPHeaderField Create(StringImpl& name, StringImpl& value) {
     String nameString(&name);
     String valueString(&value);
@@ -308,6 +384,7 @@ int main() {
     TestNullStrings();
     TestCopyAndDestroy();
     TestAssign();
+    TestAssignSharedFields();
     TestNull();
     TestCreateMovesUntrimmedStrings();
     TestCreateTrimsWhitespace();

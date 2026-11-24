@@ -40,6 +40,11 @@ char* APS5_VABI u_austrcpy_nid_postfix(char* chars, const char16_t* units) {
 }
 
 char* APS5_VABI u_austrncpy_nid_postfix(char* chars, const char16_t* units, std::int32_t length) {
+    if (length < 0) {
+        if (!chars) APS5_INVALID_ARG_EX;
+        chars[0] = 0;
+        return chars;
+    }
     if (length > 0 && (!chars || !units)) APS5_INVALID_ARG_EX;
     if (length <= 0) return chars;
     std::int32_t copied = 0;
@@ -64,6 +69,11 @@ char16_t* APS5_VABI u_uastrcpy_nid_postfix(char16_t* units, const char* chars) {
 }
 
 char16_t* APS5_VABI u_uastrncpy_nid_postfix(char16_t* units, const char* chars, std::int32_t length) {
+    if (length < 0) {
+        if (!units) APS5_INVALID_ARG_EX;
+        units[0] = 0;
+        return units;
+    }
     if (length > 0 && (!units || !chars)) APS5_INVALID_ARG_EX;
     if (length <= 0) return units;
     std::int32_t copied = 0;

@@ -169,11 +169,16 @@ static std::int64_t NativeLseek(int fd, std::int64_t offset, int whence) {
     return result == -2 ? ::lseek(fd, static_cast<off_t>(offset), whence) : result;
 }
 static std::int64_t NativeRead(int fd, void* buf, std::size_t n) {
-    return ::read(fd, buf, n);
+    const iovec whole{buf, n};
+    const auto parts = File::TransferInParts(fd, &whole, 1, nullptr, false);
+    return parts == -2 ? ::read(fd, buf, n) : parts;
 }
 static std::int64_t NativeWrite(int fd, const void* buf, std::size_t n) {
     const auto result = File::WriteSharedMemory_nid_no_patch(fd, buf, n);
-    return result == -2 ? ::write(fd, buf, n) : result;
+    if (result != -2) return result;
+    const iovec whole{const_cast<void*>(buf), n};
+    const auto parts = File::TransferInParts(fd, &whole, 1, nullptr, true);
+    return parts == -2 ? ::write(fd, buf, n) : parts;
 }
 static int NativeClose(int fd) { return ::close(fd); }
 static int NativeUnlink(const std::filesystem::path& p) {
@@ -460,7 +465,7 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     const GuestArena::HostWrite destination(buf, nbytes);
     if (!destination.Open()) errno = EFAULT;
     else if (File::ReadRandomDevice(d, buf, nbytes)) return static_cast<std::int64_t>(nbytes);
-    else if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, nullptr)) return *archived;
+    else if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, nullptr)) return *archived < 0 ? SceIoErrorFromErrno(static_cast<int>(-*archived)) : *archived;
     auto n = destination.Open() ? NativeRead(d, buf, nbytes) : -1;
     if (n < 0) return SceIoErrorFromErrno(errno);
     return static_cast<std::int64_t>(n);
@@ -565,7 +570,6 @@ int StatInDirectory_nid_no_patch(int directory, const char* path, FileStat* sb, 
     if (base == nullptr) return SceErrorFromErrno(error);
     const auto native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path));
     if (follow) return StatNative(native, std::string_view(path).back() == '/', sb);
-    if (sb == nullptr) return SceErrorFromErrno(GuestEfault);
     FileStat result{};
     if (!File::FillLinkStat(native, &result)) return SceErrorFromErrno(errno);
     if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GuestEfault);

@@ -1,6 +1,51 @@
 add_library(libSceNpCppWebApi SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceNpCppWebApi PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNpCppWebApi)
+target_sources(libSceNpCppWebApi PRIVATE StringSubstrings.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_cpp_web_api_native_accessors_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiNativeAccessors.cpp)
+    target_include_directories(guest_np_cpp_web_api_native_accessors_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_cpp_web_api_native_accessors_tests PRIVATE libSceNpCppWebApi libc)
+    configure_windows_unwind(guest_np_cpp_web_api_native_accessors_tests)
+    add_test(NAME guest_np_cpp_web_api_native_accessors COMMAND guest_np_cpp_web_api_native_accessors_tests)
+    set_tests_properties(guest_np_cpp_web_api_native_accessors PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_np_cpp_web_api_native_accessors PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_cpp_web_api_session_fields_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiSessionFields.cpp)
+    target_include_directories(guest_np_cpp_web_api_session_fields_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_cpp_web_api_session_fields_tests PRIVATE ${CMAKE_DL_LIBS})
+    configure_windows_unwind(guest_np_cpp_web_api_session_fields_tests)
+    add_custom_target(guest_np_cpp_web_api_session_field_modules DEPENDS
+        ${PATCHED_DIR}/libSceNpCppWebApi.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+    add_dependencies(guest_np_cpp_web_api_session_fields_tests guest_np_cpp_web_api_session_field_modules)
+    add_test(NAME guest_np_cpp_web_api_session_fields COMMAND guest_np_cpp_web_api_session_fields_tests
+        ${PATCHED_DIR}/libSceNpCppWebApi.prx)
+    set_tests_properties(guest_np_cpp_web_api_session_fields PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_np_cpp_web_api_session_fields PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${PATCHED_DIR}")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_cpp_web_api_native_iterators_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiNativeIterators.cpp)
+    target_include_directories(guest_np_cpp_web_api_native_iterators_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_cpp_web_api_native_iterators_tests PRIVATE libSceNpCppWebApi libc)
+    configure_windows_unwind(guest_np_cpp_web_api_native_iterators_tests)
+    add_test(NAME guest_np_cpp_web_api_native_iterators COMMAND guest_np_cpp_web_api_native_iterators_tests)
+    set_tests_properties(guest_np_cpp_web_api_native_iterators PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_np_cpp_web_api_native_iterators PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_np_cpp_web_api_product_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiProduct.cpp)

@@ -300,6 +300,12 @@ void CheckNarrowConstructors() {
     _ZNSt8messagesIcEC1EPKcm_nid_postfix(storage.bytes, "C", 0);
     Require(Constructed(storage, vtable, 0), "messages<char>(name, refs) builds the facet for the C locale");
     storage = Filled();
+    _ZNSt8messagesIcEC2EPKcm_nid_postfix(storage.bytes, "C", 6);
+    Require(Constructed(storage, vtable, 6), "the base messages<char>(name, refs) builds the facet for the C locale");
+    storage = Filled();
+    _ZNSt8messagesIcEC1Em_nid_postfix(storage.bytes, references);
+    Require(Constructed(storage, vtable, references), "the complete messages<char>(refs) installs the exported vtable and the reference count only");
+    storage = Filled();
     _ZNSt8messagesIcEC1ERKSt8_Locinfom_nid_postfix(storage.bytes, &locinfo, 1);
     Require(Constructed(storage, vtable, 1), "the complete _Locinfo constructor builds the facet");
     storage = Filled();
@@ -328,6 +334,15 @@ void CheckWideConstructors() {
     storage = Filled();
     _ZNSt8messagesIwEC1ERKSt8_Locinfom_nid_postfix(storage.bytes, &locinfo, 5);
     Require(Constructed(storage, vtable, 5), "the _Locinfo constructor builds the facet");
+    storage = Filled();
+    _ZNSt8messagesIwEC2ERKSt8_Locinfom_nid_postfix(storage.bytes, &locinfo, 7);
+    Require(Constructed(storage, vtable, 7), "the base _Locinfo constructor builds the wide facet");
+    storage = Filled();
+    _ZNSt8messagesIwEC2EPKcm_nid_postfix(storage.bytes, "C", 8);
+    Require(Constructed(storage, vtable, 8), "the base messages<wchar_t>(name, refs) builds the facet for the C locale");
+    storage = Filled();
+    _ZNSt8messagesIwEC1Em_nid_postfix(storage.bytes, references);
+    Require(Constructed(storage, vtable, references), "the complete messages<wchar_t>(refs) installs the vtable and the reference count only");
     _ZNSt8_LocinfoD1Ev_nid_postfix(&locinfo);
 
     const auto* facet = reinterpret_cast<const Facet*>(storage.bytes);
