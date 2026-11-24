@@ -839,6 +839,7 @@ private:
         std::uint32_t queue = 0xffffffffu;
         std::chrono::steady_clock::time_point submittedAt{};
         VkQueryPool queries = VK_NULL_HANDLE;
+        std::vector<VkQueryPool> morePools;
         VkQueryPool samples = VK_NULL_HANDLE;
         std::shared_ptr<void> samplePool;
         std::vector<VkQueryPool> endedSamples;
@@ -962,6 +963,8 @@ private:
         bool behindCompletion = false;
     };
     void readGpuTiming(Batch& batch);
+    VkQueryPool timingPool();
+    static VkQueryPool timingQueries(const Batch& batch, std::size_t index);
     void beginSamples(Batch& batch);
     void readSamples(Batch& batch);
     bool gpuSampleCounter();

@@ -2073,6 +2073,7 @@ int gpuTimingSampledTests(const Device& device) {
     int completed = 0;
     Recorder recorder(context);
     recorder.Activate();
+    constexpr std::uint32_t Ranges = 1200;
     std::uint64_t sampledPresents = 0;
     std::uint64_t poolsAfterFirst = 0;
     for (int round = 0; round < 6; ++round) {
@@ -2081,6 +2082,11 @@ int gpuTimingSampledTests(const Device& device) {
         const auto range = recorder.BeginGpuTiming(Recorder::CommandClass::Copy);
         Require((range != Recorder::NoTiming) == sampled, sampled ? "a batch opened in a sampled present got no class range" : "a batch opened in an unsampled present got a class range");
         recorder.EndGpuTiming(range);
+        for (std::uint32_t more = 1; sampled && more < Ranges; ++more) {
+            const auto next = recorder.BeginGpuTiming(Recorder::CommandClass::Copy);
+            Require(next == range + more, "a sampled batch dropped a class range past one query pool");
+            recorder.EndGpuTiming(next);
+        }
         recorder.OnComplete([&] { ++completed; });
         const auto serial = recorder.Submissions() + 1;
         recorder.Submit();
@@ -2090,12 +2096,11 @@ int gpuTimingSampledTests(const Device& device) {
         const auto batches = recorder.CompletedBatches(serial - 1, serial, missing);
         Require(missing == 0 && batches.size() == 1 && batches.front().serial == serial, "sampled GPU timing batch completion record is missing");
         Require(batches.front().gpuStartNs > 0 && batches.front().gpuEndNs >= batches.front().gpuStartNs, "a batch lost its whole-batch stamps");
-        if (round == 0) poolsAfterFirst = recorder.TimingPoolsCreated();
-        if (sampled) ++sampledPresents;
+        if (sampled && ++sampledPresents == 1) poolsAfterFirst = recorder.TimingPoolsCreated();
         Recorder::CountPresent();
     }
     Require(sampledPresents == 6 / period, "the presents with class ranges are not one in the period");
-    Require(poolsAfterFirst == 1 && recorder.TimingPoolsCreated() == poolsAfterFirst, "a finished batch's query pool was not reused by the next batch");
+    Require(poolsAfterFirst == 3 && recorder.TimingPoolsCreated() == poolsAfterFirst, "a finished batch's query pools were not reused by the next batches");
     std::cout << "sampled GPU timing checked, period=" << period << '\n';
     return 0;
 }
