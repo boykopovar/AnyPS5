@@ -74,6 +74,15 @@ class WindowParsing(unittest.TestCase):
 
 
 class CaptureEnvironment(unittest.TestCase):
+    def test_pad_recording_is_removed_while_replay_is_retained(self):
+        for inherited, recipe in (({"APS5_PAD_RECORD": "out.pad"}, {}), ({}, {"aps5_pad_record": "out.pad"})):
+            with self.subTest(inherited=inherited, recipe=recipe):
+                child, removed = performance_capture.clean_environment(
+                    inherited, {**recipe, "APS5_PAD_REPLAY": "scene.pad"}, ".", "seconds", (0, 3))
+                self.assertEqual(set(removed), set(inherited) | set(recipe))
+                self.assertTrue(child.keys().isdisjoint(removed))
+                self.assertEqual(child["APS5_PAD_REPLAY"], "scene.pad")
+
     def test_logging_overrides_are_removed_from_inherited_and_recipe_settings(self):
         base = {"APS5_LOG_SYNC": "0", "APS5_SAVEDATA_TRACE": "1"}
         recipe = {"aps5_log_timestamps": "1", "aps5_log_sync": "1"}
@@ -189,7 +198,7 @@ class InvalidSummaries(CaptureFixture):
         self.write_trace()
         for name, value in (("APS5_PROFILE_GPU", "0"), ("APS5_TRACE_BENCH", "0"), ("APS5_TRACE_SUMMARY_EVERY", "0"),
                             ("APS5_DUMP_FRAMES", "0"), ("APS5_SAMPLE_WORKER", "0"), ("APS5_FRAME_CAPTURE", "0"),
-                            ("APS5_PIPELINE_STATS", "0"), ("ANYPS5_LOG_FILE", "0"),
+                            ("APS5_PIPELINE_STATS", "0"), ("ANYPS5_LOG_FILE", "0"), ("APS5_PAD_RECORD", "out.pad"),
                             ("APS5_LOG_SYNC", "0"), ("APS5_LOG_TIMESTAMPS", "1"), ("APS5_SAVEDATA_TRACE", "1"),
                             ("APS5_VIDEOOUT_TELEMETRY_DIR", "<path>"), ("APS5_VIDEOOUT_FLIP_TIMING", "601:600")):
             with self.subTest(name=name):
