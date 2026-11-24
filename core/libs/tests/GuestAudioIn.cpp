@@ -365,6 +365,15 @@ void TestNoDevice() {
     constexpr int invalidState = static_cast<int>(0x80260109);
     constexpr int portFull = static_cast<int>(0x80260107);
     SetEnvironment("SDL_AUDIODRIVER", "none");
+    SetEnvironment("ANYPS5_AUDIO_IN_OPEN_TIMEOUT_MS", "0");
+    const auto timeoutStart = std::chrono::steady_clock::now();
+    const int timedOut = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+    const auto timeoutElapsed = std::chrono::steady_clock::now() - timeoutStart;
+    Require(timedOut > 0);
+    Require(sceAudioInGetSilentState(timedOut) == 1);
+    Require(timeoutElapsed < std::chrono::milliseconds(250));
+    Require(sceAudioInClose(timedOut) == 0);
+    SetEnvironment("ANYPS5_AUDIO_IN_OPEN_TIMEOUT_MS", "");
     TestConfiguredDeviceUnavailable();
     TestCaptureDeviceSelection();
     TestValidation();

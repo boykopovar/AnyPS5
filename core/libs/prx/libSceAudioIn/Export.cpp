@@ -13,11 +13,14 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <stdexcept>
+#include <thread>
 #include "prx/libScePad/include/HostAudioInControl.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -63,6 +66,7 @@ struct Port {
 };
 
 std::mutex g_mutex;
+std::mutex g_sdlMutex;
 std::array<Port, 8> g_ports{};
 bool g_sdlAudio = false;
 std::int32_t g_mode = 0;
@@ -79,9 +83,12 @@ bool formatOf(std::uint32_t param, Format& format) {
 }
 
 SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Format& format, std::string_view requestedName) {
-    if (!g_sdlAudio) {
-        if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) return 0;
-        g_sdlAudio = true;
+    {
+        std::lock_guard lock(g_sdlMutex);
+        if (!g_sdlAudio) {
+            if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) return 0;
+            g_sdlAudio = true;
+        }
     }
     SDL_AudioSpec desired{};
     desired.freq = static_cast<int>(freq);
@@ -154,6 +161,48 @@ void applyMode(int mode, int value) {
     }
 }
 
+struct OpenDeviceState {
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool ready = false;
+    bool timedOut = false;
+    SDL_AudioDeviceID device = 0;
+};
+
+std::chrono::milliseconds openDeviceTimeout() {
+    constexpr long defaultTimeout = 1000;
+    const char* const configured = std::getenv("ANYPS5_AUDIO_IN_OPEN_TIMEOUT_MS");
+    if (!configured || !*configured) return std::chrono::milliseconds(defaultTimeout);
+    char* end = nullptr;
+    const unsigned long milliseconds = std::strtoul(configured, &end, 10);
+    if (!end || *end || milliseconds > 60000) return std::chrono::milliseconds(defaultTimeout);
+    return std::chrono::milliseconds(milliseconds);
+}
+
+SDL_AudioDeviceID openDeviceBounded(std::uint32_t freq, std::uint32_t samples, const Format& format, std::string_view requestedName) {
+    const auto state = std::make_shared<OpenDeviceState>();
+    const std::string name(requestedName);
+    std::thread([state, freq, samples, format, name] {
+        const SDL_AudioDeviceID device = openDevice(freq, samples, format, name);
+        std::unique_lock lock(state->mutex);
+        if (state->timedOut) {
+            lock.unlock();
+            if (device != 0) SDL_CloseAudioDevice(device);
+            return;
+        }
+        state->device = device;
+        state->ready = true;
+        state->changed.notify_all();
+    }).detach();
+
+    std::unique_lock lock(state->mutex);
+    if (!state->changed.wait_for(lock, openDeviceTimeout(), [&] { return state->ready; })) {
+        state->timedOut = true;
+        return 0;
+    }
+    return state->device;
+}
+
 int openPort(std::uint32_t len, std::uint32_t freq, std::uint32_t param) {
     Format format{};
     if (!formatOf(param, format)) return AUDIO_IN_ERROR_INVALID_PARAM;
@@ -173,17 +222,35 @@ int openPort(std::uint32_t len, std::uint32_t freq, std::uint32_t param) {
     const std::string_view requestedName = configuredName ? std::string_view(configuredName) : std::string_view{};
 #endif
     const bool explicitDevice = !requestedName.empty() && requestedName != "default";
-    std::lock_guard lock(g_mutex);
-    for (std::size_t i = g_ports.size(); i-- > 0;) {
-        if (g_ports[i].used) continue;
-        const auto frameBytes = static_cast<std::uint32_t>(SDL_AUDIO_BITSIZE(format.format) / 8 * format.channels);
-        const auto grain = std::chrono::duration_cast<Clock::duration>(std::chrono::microseconds(1000000ull * len / freq));
-        const SDL_AudioDeviceID device = openDevice(freq, len, format, requestedName);
-        if (explicitDevice && device == 0) return AUDIO_IN_ERROR_INVALID_DEVICE;
-        g_ports[i] = {true, false, len, frameBytes, device, grain, {}, g_mode};
-        return static_cast<int>(HANDLE_BASE + i);
+    std::size_t portIndex = g_ports.size();
+    std::uint32_t frameBytes = 0;
+    Clock::duration grain{};
+    int mode = 0;
+    {
+        std::lock_guard lock(g_mutex);
+        for (std::size_t i = g_ports.size(); i-- > 0;) {
+            if (g_ports[i].used) continue;
+            portIndex = i;
+            frameBytes = static_cast<std::uint32_t>(SDL_AUDIO_BITSIZE(format.format) / 8 * format.channels);
+            grain = std::chrono::duration_cast<Clock::duration>(std::chrono::microseconds(1000000ull * len / freq));
+            mode = g_mode;
+            g_ports[i] = {true, false, len, frameBytes, 0, grain, {}, mode};
+            break;
+        }
     }
-    return AUDIO_IN_ERROR_PORT_FULL;
+    if (portIndex == g_ports.size()) return AUDIO_IN_ERROR_PORT_FULL;
+
+    const SDL_AudioDeviceID device = openDeviceBounded(freq, len, format, requestedName);
+    if (explicitDevice && device == 0) {
+        std::lock_guard lock(g_mutex);
+        g_ports[portIndex] = {};
+        return AUDIO_IN_ERROR_INVALID_DEVICE;
+    }
+    {
+        std::lock_guard lock(g_mutex);
+        g_ports[portIndex].device = device;
+    }
+    return static_cast<int>(HANDLE_BASE + portIndex);
 }
 
 std::size_t capture(SDL_AudioDeviceID device, std::uint8_t* dest, std::size_t bytes, Clock::time_point deadline) {
