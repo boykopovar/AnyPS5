@@ -104,6 +104,8 @@ std::unique_ptr<ISource> OpenSource(const SourceSettings& settings, const std::s
 
 std::uint32_t DetectSourceType(std::string_view path);
 
+void SetBufferWaitObserverForTest(void (*observer)(std::uint64_t, std::uint64_t));
+
 extern "C" {
 
 void SetAvPlayerBufferWaitObserverForTest_nid_no_patch(void (*observer)(std::uint64_t, std::uint64_t));

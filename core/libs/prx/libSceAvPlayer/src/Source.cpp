@@ -1218,7 +1218,7 @@ private:
 
 }
 
-void SetAvPlayerBufferWaitObserverForTest_nid_no_patch(void (*observer)(std::uint64_t, std::uint64_t)) {
+void SetBufferWaitObserverForTest(void (*observer)(std::uint64_t, std::uint64_t)) {
     bufferWaitObserver.store(observer, std::memory_order_release);
 }
 
