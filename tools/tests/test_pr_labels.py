@@ -177,6 +177,28 @@ class TitleIdTests(unittest.TestCase):
         body = "### Tested\nUnblocks: none in this change.\n### Checklist\n- [x] Unblocks: PPSA01325 #3232\n"
         self.assertEqual(pr_labels.title_ids(body), {"PPSA01325"})
 
+    def test_examples_in_fenced_blocks_cannot_add_or_hide_unblocks(self):
+        cases = [
+            ("```markdown\n- [x] Unblocks: PPSA01325 #3232\n```\n- [x] Unblocks: none\n", set()),
+            ("~~~text\n- [x] Unblocks: none\n~~~\n- [x] Unblocks: PPSA01325 #3232\n", {"PPSA01325"}),
+            ("  ````text\r\n```\r\nUnblocks: PPSA00001\r\n~~~~\r\n  `````\r\nUnblocks: PPSA01325",
+             {"PPSA01325"}),
+            ("~~~text\n~~~ not a closer\nUnblocks: PPSA00001\n~~~  \t\nUnblocks: PPSA01325", {"PPSA01325"}),
+            ("~~~text\nUnblocks: PPSA01325 #3232", set()),
+            ("- [x] Unblocks: none\n```text\nUnblocks: PPSA01325\n```\n", set()),
+        ]
+        for body, expected in cases:
+            with self.subTest(body=body):
+                self.assertEqual(pr_labels.title_ids(body), expected)
+
+    def test_fenced_example_does_not_join_checklist_bullets_across_it(self):
+        body = "- [x] Unblocks: PPSA01325\n```\n- PPSA00001\n```\n- PPSA00002\n"
+        self.assertEqual(pr_labels.title_ids(body), {"PPSA01325"})
+
+    def test_commented_and_escaped_fences_do_not_hide_prose(self):
+        body = "<!--\n```markdown\n-->\n\\```markdown\nUnblocks: PPSA01325"
+        self.assertEqual(pr_labels.title_ids(body), {"PPSA01325"})
+
     def test_checklist_continuation_bullets_are_read(self):
         cases = [
             ("- [x] Unblocks: titles below\n  - PPSA01325 #3232\n- [x] Depends on: none\n", {"PPSA01325"}),
