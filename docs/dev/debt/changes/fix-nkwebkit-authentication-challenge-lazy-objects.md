@@ -1,0 +1,5 @@
+# libSceNKWebKit
+
+## change [AuthenticationChallenge and AuthenticationDecisionListener]
+
+- [AuthenticationChallenge and AuthenticationDecisionListener](../../../core/libs/prx/libSceNKWebKit/src/AuthenticationChallenge.cpp) (libSceNKWebKit) - not compared with a console module. The challenge and its listener are host objects; no network producer creates one. As in [AuthenticationChallengeProxy.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/Authentication/AuthenticationChallengeProxy.cpp#L45-L74) it always has a listener and creates its proposed credential and protection space on first read; as in [WKAuthenticationChallengePlayStation.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/neko/WKAuthenticationChallengePlayStation.cpp#L34-L50) the request URL copy is NULL for a null URL. The listener only records the decision; sending it on, and the cancel of a listener destroyed undecided, are not modelled.

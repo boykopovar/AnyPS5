@@ -7,9 +7,10 @@ configure_windows_unwind(agc_host_import_sparse_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_host_import_sparse_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
     add_test(NAME agc_host_import_sparse COMMAND agc_host_import_sparse_tests)
-    set_tests_properties(agc_host_import_sparse PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_host_import_retire_snapshot COMMAND agc_host_import_sparse_tests --retire-snapshot)
+    set_tests_properties(agc_host_import_sparse agc_host_import_retire_snapshot PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(agc_host_import_sparse PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_host_import_sparse agc_host_import_retire_snapshot PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

@@ -177,6 +177,28 @@ class TitleIdTests(unittest.TestCase):
         body = "### Tested\nUnblocks: none in this change.\n### Checklist\n- [x] Unblocks: PPSA01325 #3232\n"
         self.assertEqual(pr_labels.title_ids(body), {"PPSA01325"})
 
+    def test_examples_in_fenced_blocks_cannot_add_or_hide_unblocks(self):
+        cases = [
+            ("```markdown\n- [x] Unblocks: PPSA01325 #3232\n```\n- [x] Unblocks: none\n", set()),
+            ("~~~text\n- [x] Unblocks: none\n~~~\n- [x] Unblocks: PPSA01325 #3232\n", {"PPSA01325"}),
+            ("  ````text\r\n```\r\nUnblocks: PPSA00001\r\n~~~~\r\n  `````\r\nUnblocks: PPSA01325",
+             {"PPSA01325"}),
+            ("~~~text\n~~~ not a closer\nUnblocks: PPSA00001\n~~~  \t\nUnblocks: PPSA01325", {"PPSA01325"}),
+            ("~~~text\nUnblocks: PPSA01325 #3232", set()),
+            ("- [x] Unblocks: none\n```text\nUnblocks: PPSA01325\n```\n", set()),
+        ]
+        for body, expected in cases:
+            with self.subTest(body=body):
+                self.assertEqual(pr_labels.title_ids(body), expected)
+
+    def test_fenced_example_does_not_join_checklist_bullets_across_it(self):
+        body = "- [x] Unblocks: PPSA01325\n```\n- PPSA00001\n```\n- PPSA00002\n"
+        self.assertEqual(pr_labels.title_ids(body), {"PPSA01325"})
+
+    def test_commented_and_escaped_fences_do_not_hide_prose(self):
+        body = "<!--\n```markdown\n-->\n\\```markdown\nUnblocks: PPSA01325"
+        self.assertEqual(pr_labels.title_ids(body), {"PPSA01325"})
+
     def test_checklist_continuation_bullets_are_read(self):
         cases = [
             ("- [x] Unblocks: titles below\n  - PPSA01325 #3232\n- [x] Depends on: none\n", {"PPSA01325"}),
@@ -271,12 +293,14 @@ class NumbersTests(unittest.TestCase):
 
 class LabelTests(unittest.TestCase):
     def test_tooling_perf_is_labeled_without_asking_for_a_capture(self):
-        for title in ("perf(tools): x", "perf(ci): x", "perf(build): x", "perf(Tools): x", "perf( tools ): x"):
+        for title in ("perf(tools): x", "perf(ci): x", "perf(build): x", "perf(Tools): x", "perf( tools ): x",
+                      "perf(tools, ci): x", "perf(build,ci): x", "perf(build, ci, tools)!: x"):
             with self.subTest(title=title):
                 self.assertEqual(pr_labels.labels_for(pr(title, TEMPLATE)), ({"perf"}, set()))
 
     def test_runtime_perf_still_needs_a_capture(self):
-        for title in ("perf: x", "perf!: x", "perf(agc): x", "perf(libc): x", "perf(toolsy): x"):
+        for title in ("perf: x", "perf!: x", "perf(agc): x", "perf(libc): x", "perf(toolsy): x",
+                      "perf(tools, agc): x", "perf(tools, ): x", "perf(, ci): x"):
             with self.subTest(title=title):
                 self.assertEqual(pr_labels.labels_for(pr(title, TEMPLATE)), ({"perf", "perf numbers missing"}, set()))
 
@@ -465,6 +489,20 @@ class MainTests(unittest.TestCase):
         self.assertEqual(result, "success\n")
         self.assertEqual(len(calls), 2)
         sleep_mock.assert_called_once_with(0.01)
+
+    def test_gh_retries_broken_responses_and_connection_timeouts(self):
+        for message in ("stream error: stream ID 1; CANCEL; received from peer", "unexpected EOF",
+                        "connectex: A connection attempt failed because the connected party "
+                        "did not properly respond after a period of time",
+                        'Post "https://api.github.com/graphql": dial tcp 192.0.2.1:443: i/o timeout'):
+            with self.subTest(message=message):
+                failed = subprocess.CompletedProcess([], 1, stdout="", stderr=message)
+                success = subprocess.CompletedProcess([], 0, stdout="success\n", stderr="")
+                with patch.object(pr_labels.subprocess, "run", side_effect=[failed, success]) as run, \
+                        patch.object(pr_labels.time, "sleep") as sleep_mock:
+                    self.assertEqual(pr_labels.gh("api", "repos/owner/repo/pulls", delay=0.01), "success\n")
+                self.assertEqual(run.call_count, 2)
+                sleep_mock.assert_called_once_with(0.01)
 
     def test_gh_fails_immediately_on_non_transient_error(self):
         calls = []

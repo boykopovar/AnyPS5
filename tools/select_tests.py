@@ -289,13 +289,17 @@ def select(graph, changed, reasons=None):
     known = set().union(*closures.values(), *(t["arguments"] for t in tests.values()))
     files = set(changed)
     dirs = tuple(f.rpartition("/")[0] + "/" for f in changed if "/" in f and (LOCAL.search(f) or f not in known))
+    affected = {target for target, scope in closures.items()
+                if not files.isdisjoint(scope) or (dirs and any(path.startswith(dirs) for path in scope))}
     picked = set()
     for name, test in tests.items():
-        scope = closures.get(test["target"], set()) | set(test["arguments"])
-        if (test["target"] is None or files & set(test["registered"]) or files & scope
-                or any(f.startswith(dirs) for f in scope | set(test["registered"]))):
+        arguments, registered = set(test["arguments"]), set(test["registered"])
+        if (test["target"] is None or test["target"] in affected
+                or not files.isdisjoint(registered) or not files.isdisjoint(arguments)
+                or (dirs and any(path.startswith(dirs) for path in arguments | registered))):
             picked.add(name)
             if reasons is not None:
+                scope = closures.get(test["target"], set()) | arguments
                 reasons[name] = (["no build executable"] if test["target"] is None else [])
                 reasons[name] += ["input: " + path for path in sorted(files & scope)]
                 reasons[name] += ["registration: " + path for path in sorted(files & set(test["registered"]))]

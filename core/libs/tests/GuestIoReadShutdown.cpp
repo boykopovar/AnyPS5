@@ -52,7 +52,7 @@ struct State {
 static State* current = nullptr;
 
 static void BeforeWait(std::size_t progress) noexcept {
-    if (progress < static_cast<std::size_t>(current->expected)) return;
+    if (current->waitAll && progress < static_cast<std::size_t>(current->expected)) return;
     current->admitted.fetch_add(1);
     Require(Observe([] { return current->enter.load(); }), "release the admitted receive");
 }
@@ -142,8 +142,13 @@ int main(int argc, char** argv) {
     const bool cancel = scenario == "cancel" || scenario == "prefix_cancel";
     const bool parallel = scenario == "parallel";
     const bool datagram = std::string(argv[1]) == "datagram";
+    const bool sequenced = std::string(argv[1]) == "sequenced";
+    const bool peerClose = scenario == "peer_close";
+    const bool peerRecord = scenario == "peer_record" || scenario == "peer_empty_record";
     int endpoints[2]{};
-    Connect(datagram, endpoints);
+    if (sequenced) Require(socketpair_nid_postfix(1, 5, 0, endpoints) == 0, "create sequenced socketpair");
+    else Connect(datagram, endpoints);
+    if (scenario == "peer_record") state.expected = 1;
     state.input = endpoints[0];
     int alias = -1;
     if (scenario == "alias") {
@@ -189,7 +194,13 @@ int main(int argc, char** argv) {
     Require(Observe([&] { return state.admitted.load() >= (parallel ? 2 : 1); }), "receive did not reach the wait boundary");
     std::thread requester;
     if (cancel) requester = std::thread([&] { Require(pthread_cancel_nid_postfix(reader) == 0, "cancel blocked receiver"); });
-    else {
+    else if (sequenced) {
+        if (peerRecord) Require(send_nid_postfix(endpoints[1], "x", state.expected, 0) == state.expected, "send a record to the pending receive");
+        if (peerClose) {
+            Require(close_nid_postfix(endpoints[1]) == 0, "close sequenced peer");
+            endpoints[1] = -1;
+        } else Require(shutdown_nid_postfix(endpoints[1], 1) == 0, "shut sequenced peer writing");
+    } else {
         if (state.disabled) Require(pthread_cancel_nid_postfix(reader) == 0, "queue disabled cancellation");
         Require(shutdown_nid_postfix(endpoints[0], 0) == 0, "shut reading through the original descriptor");
     }
@@ -203,15 +214,17 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
         CancelIoEx(reinterpret_cast<HANDLE>(GuestSockets::NativeDescriptor(state.input)), nullptr);
 #endif
-        if (!datagram) shutdown_nid_postfix(endpoints[1], 1);
+        if (!datagram && endpoints[1] >= 0) shutdown_nid_postfix(endpoints[1], 1);
         if (reader && !state.disabled) pthread_cancel_nid_postfix(reader);
         if (second) pthread_cancel_nid_postfix(second);
         Require(Observe(completed), "failure cleanup did not retire the receive");
     }
     if (!cancel) Require(state.result == state.expected, "shutdown lost EOF or known positive progress");
     if (state.expected != 0) Require(state.bytes[0] == 'x', "shutdown changed transferred data");
-    if (!cancel && state.result == 0 && state.api.starts_with("recvfrom")) Require(state.addressLength == 0, "shutdown recvfrom must report an empty address");
-    if (!cancel && state.result == 0 && state.api.starts_with("recvmsg")) Require(state.addressLength == 0, "shutdown recvmsg must report an empty address");
+    if (!cancel && (state.api.starts_with("recvfrom") || state.api.starts_with("recvmsg"))) {
+        if (peerRecord) Require(state.addressLength == 16, "a received sequenced record must report its source address");
+        else if (state.result == 0) Require(state.addressLength == 0, "shutdown must report an empty address");
+    }
     state.release.store(true);
     if (requester.joinable()) requester.join();
     if (native) host.join();
@@ -235,5 +248,5 @@ int main(int argc, char** argv) {
 #endif
     Require(scePthreadKeyDelete(state.key) == 0, "delete TSD key");
     if (alias >= 0) Require(close_nid_postfix(alias) == 0, "close receiver alias");
-    Require(close_nid_postfix(endpoints[0]) == 0 && close_nid_postfix(endpoints[1]) == 0, "close endpoints");
+    Require(close_nid_postfix(endpoints[0]) == 0 && (endpoints[1] < 0 || close_nid_postfix(endpoints[1]) == 0), "close endpoints");
 }

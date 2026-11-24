@@ -515,6 +515,8 @@ bool GuestReadable(const void* pointer, std::uint64_t length) {
         if (!GuestCopyIn_nid_no_patch(&value, bytes + done, 1)) return false;
     return GuestCopyIn_nid_no_patch(&value, bytes + (length - 1), 1);
 }
+int ReceiveNative(Socket& socket, void* buffer, int length, int flags, sockaddr* address, socklen_t* addressLength, bool* eof = nullptr);
+
 #ifdef _WIN32
 constexpr DWORD ReadableProtection = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
 constexpr DWORD WritableProtection = PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
@@ -535,8 +537,6 @@ bool SourceFaults(const void* pointer, std::uint64_t length) {
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, static_cast<std::size_t>(length));
     return GuestPrefix(pointer, length, ReadableProtection) != length;
 }
-int ReceiveNative(Socket& socket, void* buffer, int length, int flags, sockaddr* address, socklen_t* addressLength);
-
 bool PendingFits(Socket& socket, void* buffer, std::uint64_t usable, int flags, int& error) {
     error = 0;
     const int peekFlags = (flags & ~GuestWaitAll) | GuestPeek;
@@ -610,6 +610,12 @@ void GuestAddress(const sockaddr_storage& native, void* output, std::uint32_t* l
 }
 }
 
+#ifdef _WIN32
+namespace {
+void ReleaseSequencedEnd(std::shared_ptr<Socket> released);
+}
+#endif
+
 int GuestSockets::Close(int descriptor) {
     const GuestDescriptorAccess descriptorLock(descriptor, GuestDescriptorAccess::Mode::Close);
     std::shared_ptr<Socket> released;
@@ -623,6 +629,9 @@ int GuestSockets::Close(int descriptor) {
     }
     EqueueDescriptorClosed(descriptor);
     ReleaseNumber(descriptor);
+#ifdef _WIN32
+    ReleaseSequencedEnd(std::move(released));
+#endif
     return 0;
 }
 
@@ -637,6 +646,9 @@ void GuestSockets::Forget(int descriptor) {
         closeOnExecDescriptors.erase(descriptor);
     }
     EqueueDescriptorClosed(descriptor);
+#ifdef _WIN32
+    ReleaseSequencedEnd(std::move(released));
+#endif
 }
 
 std::uintptr_t GuestSockets::CurrentWaker() {
@@ -1032,9 +1044,77 @@ void WakeReadWatchers(int descriptor) {
     const auto [first, last] = readWatchers.equal_range(descriptor);
     for (auto entry = first; entry != last; ++entry) GuestSockets::Wake(entry->second);
 }
+#ifdef _WIN32
+constexpr int SequencedHostReceiveBuffer = 1 << 20;
+constexpr int GuestReceiveBuffer = 0x1002;
+constexpr std::uint64_t LongestLoopbackRecord = 65507;
+bool DatagramQueued(const Socket& socket);
+bool SequencedPair(const Socket& socket) {
+    return socket.family == GuestUnix && socket.type == 5 && !socket.externalPeer;
+}
+bool SequencedPeerGone(const Socket& socket) {
+    return SequencedPair(socket) && socket.peer.expired();
+}
+bool SequencedPeerSendEnded(const Socket& socket) {
+    if (!SequencedPair(socket)) return false;
+    const auto peer = socket.peer.lock();
+    if (!peer) return true;
+    std::lock_guard lock(peer->modeMutex);
+    return peer->sendShut;
+}
+void WakeSequencedReaders(const std::shared_ptr<Socket>& socket) {
+    for (const int alias : DescriptorsOf(socket)) {
+        EqueueDescriptorReadShut(alias);
+        WakeReadWatchers(alias);
+    }
+}
+void ReleaseSequencedEnd(std::shared_ptr<Socket> released) {
+    if (!released || !SequencedPair(*released)) return;
+    const auto peer = released->peer.lock();
+    const std::weak_ptr<Socket> end = released;
+    released.reset();
+    if (peer && end.expired()) WakeSequencedReaders(peer);
+}
+int SequencedRoom(Socket& socket, std::uint64_t length, int flags) {
+    if (!SequencedPair(socket)) return 0;
+    std::int64_t timeout;
+    bool nonblocking;
+    {
+        std::lock_guard lock(socket.modeMutex);
+        timeout = socket.options.sendTimeout;
+        nonblocking = socket.options.nonblocking || (flags & GuestDontWait) != 0;
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout >> 32) +
+        std::chrono::nanoseconds((static_cast<std::int64_t>(static_cast<std::uint32_t>(timeout)) * 1000000000) >> 32);
+    for (;;) {
+        const auto peer = socket.peer.lock();
+        std::uint64_t capacity;
+        {
+            std::lock_guard lock(socket.modeMutex);
+            if (socket.sendShut) return 32;
+            capacity = static_cast<std::uint64_t>(GuestSockets::SendBufferSize(socket.options, socket.family, socket.type));
+        }
+        if (!peer) return 32;
+        if (length > LongestLoopbackRecord) throw std::runtime_error("send: a SOCK_SEQPACKET socketpair record over 65507 bytes is not supported on Windows");
+        unsigned long queued = 0;
+        if (ioctlsocket(peer->value, FIONREAD, &queued)) return NativeError();
+        if (queued < capacity) return 0;
+        if (nonblocking || (timeout != 0 && std::chrono::steady_clock::now() >= deadline)) return 35;
+        Sleep(1);
+    }
+}
+#endif
+bool ReceiveEnded(Socket& socket) {
+    if (ReceiveShut(socket)) return true;
+#ifdef _WIN32
+    return SequencedPeerSendEnded(socket) && !DatagramQueued(socket);
+#else
+    return false;
+#endif
+}
 
 int ReceiveAnsweredHere(Socket& socket, std::uint64_t length) {
-    if (ReceiveShut(socket)) return 0;
+    if (ReceiveEnded(socket)) return 0;
     if (length != 0) return -1;
     if (socket.type != 1) return ReadableNow(socket) ? -1 : 0;
     sockaddr_storage peer{};
@@ -1070,7 +1150,10 @@ bool SendBeforeConnect(Socket& socket) {
 #ifdef __linux__
     if (socket.connectPending) {
         pollfd entry{socket.value, POLLOUT, 0};
-        if (::poll(&entry, 1, 0) == 0) return true;
+        int ready;
+        do ready = ::poll(&entry, 1, 0); while (ready < 0 && errno == EINTR);
+        if (ready < 0) throw std::runtime_error("send: polling a pending connect failed, errno " + std::to_string(errno));
+        if (ready == 0) return true;
         socket.connectPending = false;
     }
 #endif
@@ -1097,7 +1180,21 @@ int SocketSendFlags(Socket& socket, int flags) {
     return LocalDatagram(socket) ? native | MSG_DONTWAIT : native;
 #endif
 }
-int ReceiveNative(Socket& socket, void* buffer, int length, int flags, sockaddr* address, socklen_t* addressLength) {
+#ifdef _WIN32
+DWORD WaitForReceive(Socket& socket, const HANDLE (&events)[2], DWORD milliseconds) {
+    if (!SequencedPair(socket)) return WaitForMultipleObjects(2, events, FALSE, milliseconds);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
+    for (;;) {
+        if (ReceiveEnded(socket)) return WAIT_OBJECT_0 + 1;
+        const auto left = std::chrono::ceil<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+        const auto remaining = milliseconds == INFINITE ? INFINITE : static_cast<DWORD>(std::max<std::int64_t>(left, 0));
+        const auto slice = std::min(remaining, static_cast<DWORD>(SocketCloseCheckMilliseconds));
+        const DWORD waited = WaitForMultipleObjects(2, events, FALSE, slice);
+        if (waited != WAIT_TIMEOUT || slice == remaining) return waited;
+    }
+}
+#endif
+int ReceiveNative(Socket& socket, void* buffer, int length, int flags, sockaddr* address, socklen_t* addressLength, bool* eof) {
 #ifdef _WIN32
     const bool cancellable = ThreadCancel::IoActive();
     bool nonblocking = (flags & GuestDontWait) != 0;
@@ -1130,7 +1227,10 @@ int ReceiveNative(Socket& socket, void* buffer, int length, int flags, sockaddr*
         }
         const SocketReadWait shutdownWait(socket, [](void* event) noexcept { SetEvent(static_cast<HANDLE>(event)); }, shut.handle);
         for (;;) {
-            if (ReceiveShut(socket)) return transferred;
+            if (ReceiveEnded(socket)) {
+                if (eof && transferred == 0) *eof = true;
+                return transferred;
+            }
             OVERLAPPED operation{};
             operation.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
             if (!operation.hEvent) {
@@ -1159,21 +1259,24 @@ int ReceiveNative(Socket& socket, void* buffer, int length, int flags, sockaddr*
                         ? WSARecvFrom(socket.value, &destination, 1, &done, &nativeFlags, address, addressLength, &operation, nullptr)
                         : WSARecv(socket.value, &destination, 1, &done, &nativeFlags, &operation, nullptr);
                     error = started == 0 ? 0 : WSAGetLastError();
+                    DWORD waited = WAIT_OBJECT_0;
                     if (error == WSA_IO_PENDING) {
                         ObserveReadWait(static_cast<std::size_t>(transferred));
                         const auto milliseconds = nonblocking ? 0 : timeout == 0 ? INFINITE : static_cast<DWORD>(std::min<std::int64_t>(
                             ((timeout >> 32) * 1000) + ((static_cast<std::uint64_t>(static_cast<std::uint32_t>(timeout)) * 1000 + 0xffffffffu) >> 32), INFINITE - 1));
                         const HANDLE events[]{operation.hEvent, shut.handle};
-                        const DWORD waited = WaitForMultipleObjects(2, events, FALSE, milliseconds);
+                        waited = WaitForReceive(socket, events, milliseconds);
                         if (waited != WAIT_OBJECT_0) Pending::Interrupt(&pending);
                         const BOOL completed = WSAGetOverlappedResult(socket.value, &operation, &done, TRUE, &nativeFlags);
                         error = completed ? 0 : WSAGetLastError();
-                        if (waited == WAIT_TIMEOUT && error == WSA_OPERATION_ABORTED && !ReceiveShut(socket)) error = WSAEWOULDBLOCK;
                     }
-                    if (error == WSA_OPERATION_ABORTED && ThreadCancel::IoInterrupted()) error = WSAEINTR;
-                    else if ((error == WSA_OPERATION_ABORTED || error == WSAESHUTDOWN) && !ThreadCancel::IoInterrupted() && ReceiveShut(socket)) {
-                        error = 0;
-                        done = 0;
+                    if (error == WSA_OPERATION_ABORTED || error == WSAESHUTDOWN) {
+                        if (ThreadCancel::IoInterrupted()) error = WSAEINTR;
+                        else if (ReceiveEnded(socket)) {
+                            if (eof && transferred == 0) *eof = true;
+                            error = 0;
+                            done = 0;
+                        } else if (waited == WAIT_TIMEOUT && error == WSA_OPERATION_ABORTED) error = WSAEWOULDBLOCK;
                     }
                     if (error == 0) result = static_cast<int>(done);
                 }
@@ -1188,6 +1291,7 @@ int ReceiveNative(Socket& socket, void* buffer, int length, int flags, sockaddr*
         ? ::recvfrom(socket.value, static_cast<char*>(buffer), length, NativeReceiveFlags(flags, socket.type), address, addressLength)
         : ::recv(socket.value, static_cast<char*>(buffer), length, NativeReceiveFlags(flags, socket.type));
 #else
+    static_cast<void>(eof);
     return ThreadCancel::Native([&] { ObserveReadWait(); return address
         ? static_cast<int>(::recvfrom(socket.value, buffer, length, NativeReceiveFlags(flags, socket.type), address, addressLength))
         : static_cast<int>(::recv(socket.value, buffer, length, NativeReceiveFlags(flags, socket.type))); });
@@ -1235,7 +1339,7 @@ int WaitForTransfer(Socket& socket, bool send, int flags, int receiver = -1) {
         std::chrono::nanoseconds((static_cast<std::int64_t>(static_cast<std::uint32_t>(timeout)) * 1000000000) >> 32);
     for (;;) {
         if (ThreadCancel::IoInterrupted()) return 4;
-        if (watched && ReceiveShut(socket)) return 0;
+        if (watched && ReceiveEnded(socket)) return 0;
         int milliseconds = -1;
         if (timeout != 0) {
             const auto left = deadline - std::chrono::steady_clock::now();
@@ -1250,6 +1354,7 @@ int WaitForTransfer(Socket& socket, bool send, int flags, int receiver = -1) {
             entries[1].fd = ThreadWaker().value;
             entries[1].events = POLLRDNORM;
         }
+        if (watched && SequencedPair(socket) && (milliseconds < 0 || milliseconds > SocketCloseCheckMilliseconds)) milliseconds = SocketCloseCheckMilliseconds;
         if (watched) ObserveReadWait();
         const int ready = WSAPoll(entries, watched ? 2 : 1, milliseconds);
         if (ready < 0 || entries[0].revents != 0) return 0;
@@ -1269,7 +1374,6 @@ bool LoopbackName(NativeSocket socket, sockaddr_in& name) {
 int NativePair(int type, NativeSocket (&pair)[2]) {
     static const int startup = [] { WSADATA data{}; return WSAStartup(MAKEWORD(2, 2), &data); }();
     if (startup) return 5;
-    if (type == 5) throw std::runtime_error("socketpair: SOCK_SEQPACKET is not supported on Windows");
     sockaddr_in loopback{};
     loopback.sin_family = AF_INET;
     loopback.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -1303,6 +1407,15 @@ int NativePair(int type, NativeSocket (&pair)[2]) {
         return 0;
     }
     if (bind(second.value, reinterpret_cast<sockaddr*>(&loopback), sizeof(loopback))) return NativeError();
+    if (type == 5) {
+        for (const NativeSocket end : {first.value, second.value}) {
+            BOOL reportUnreachable = FALSE;
+            DWORD returned = 0;
+            if (setsockopt(end, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&SequencedHostReceiveBuffer), sizeof(SequencedHostReceiveBuffer)) ||
+                WSAIoctl(end, SIO_UDP_CONNRESET, &reportUnreachable, sizeof(reportUnreachable), nullptr, 0, &returned, nullptr, nullptr))
+                return NativeError();
+        }
+    }
     sockaddr_in secondName{};
     if (!LoopbackName(second.value, secondName)) return NativeError();
     if (connect(first.value, reinterpret_cast<sockaddr*>(&secondName), sizeof(secondName))) return NativeError();
@@ -1426,7 +1539,7 @@ bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* e
         }
         socket = found->second;
     }
-    if (!write && ReceiveShut(*socket) && !Listening(*socket)) {
+    if (!write && ReceiveEnded(*socket) && !Listening(*socket)) {
         *data = 0;
         *eof = true;
         return true;
@@ -1572,7 +1685,7 @@ int GuestSockets::Poll(KernelSocketPoll::Entry* entries, int count, int timeoutM
     }
     if (native.empty()) return 0;
     const auto shutReader = [&](int index) {
-        return (entries[index].events & KernelSocketPoll::Readable) != 0 && ReceiveShut(*held[static_cast<std::size_t>(index)]);
+        return (entries[index].events & KernelSocketPoll::Readable) != 0 && ReceiveEnded(*held[static_cast<std::size_t>(index)]);
     };
     const ReadWatch watch(readers);
     if (!readers.empty()) {
@@ -1627,6 +1740,9 @@ int GuestSockets::Poll(KernelSocketPoll::Entry* entries, int count, int timeoutM
         if (events & NativeWritable) revents = static_cast<short>(revents | KernelSocketPoll::Writable);
         if (events & (POLLERR | POLLNVAL)) revents = static_cast<short>(revents | KernelSocketPoll::Error);
         if (events & POLLHUP) revents = static_cast<short>(revents | KernelSocketPoll::HangUp);
+#ifdef _WIN32
+        if (SequencedPeerGone(*held[static_cast<std::size_t>(index)])) revents = static_cast<short>(revents | KernelSocketPoll::HangUp);
+#endif
         entries[index].revents = revents;
         if (revents != 0) ++ready;
     }
@@ -1818,6 +1934,11 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
                       : level == 6  ? GuestSockets::SetTcpLevelOption(native, socket->options, socket->family != GuestUnix && socket->type == 1, option, value, length)
                       : level == 41 ? GuestSockets::SetIpv6LevelOption(native, socket->family == 28, option, value, length)
                                     : GuestSockets::SetSocketLevelOption(native, socket->options, socket->family, socket->type, option, value, length);
+#ifdef _WIN32
+    if (error == 0 && level == 0xffff && option == GuestReceiveBuffer && SequencedPair(*socket) &&
+        setsockopt(socket->value, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&SequencedHostReceiveBuffer), sizeof(SequencedHostReceiveBuffer)))
+        return Fail(NativeError());
+#endif
     return error == 0 ? 0 : Fail(error);
 }
 int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
@@ -2149,6 +2270,7 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     if (!buffer && length) return Fail(14);
 #ifdef _WIN32
     if (socket->type == 1 && PairPeerGone(*socket)) return Fail(32);
+    if (const int refused = SequencedRoom(*socket, length, flags)) return Fail(refused);
 #endif
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
 #ifdef _WIN32
@@ -2178,7 +2300,7 @@ static std::int64_t Receive(int descriptor, void* buffer, std::uint64_t length, 
     if (socket->type == 2 && PairPeerGone(*socket) && !DatagramQueued(*socket)) return Fail(54);
 #endif
     if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
-    if (ReceiveShut(*socket)) return 0;
+    if (ReceiveEnded(*socket)) return 0;
     std::uint64_t limit = length;
 #ifdef _WIN32
     if (length != 0 && (limit = GuestPrefix(buffer, length, WritableProtection)) < length) {
@@ -2192,7 +2314,7 @@ static std::int64_t Receive(int descriptor, void* buffer, std::uint64_t length, 
 #endif
     const auto result = ReceiveNative(*socket, buffer, static_cast<int>(limit), flags, nullptr, nullptr);
 #ifdef _WIN32
-    if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) return static_cast<std::int64_t>(limit);
+    if (result < 0 && (socket->type == 2 || socket->type == 5) && WSAGetLastError() == WSAEMSGSIZE) return static_cast<std::int64_t>(limit);
 #endif
     return result < 0 ? Fail(NativeError()) : result;
 }
@@ -2273,6 +2395,11 @@ int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
             WakeReadWatchers(alias);
         }
     }
+#ifdef _WIN32
+    if (how != 0 && SequencedPair(*socket)) {
+        if (const auto peer = socket->peer.lock()) WakeSequencedReaders(peer);
+    }
+#endif
     return unconnected ? Fail(57) : 0;
 }
 namespace {
@@ -2422,6 +2549,9 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     }
     const bool paired = address && socket->family == GuestUnix && (socket->type != 2 || sendShut || !socket->peer.expired());
     if (paired && socket->type == 2 && !sendShut) return Fail(56);
+#ifdef _WIN32
+    if (const int refused = SequencedRoom(*socket, length, flags)) return Fail(refused);
+#endif
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
     int result;
     if (!address || paired || (socket->type == 1 && PeerConnected(*socket))) {
@@ -2480,7 +2610,7 @@ static std::int64_t ReceiveFrom(int descriptor, void* buffer, std::uint64_t leng
     sockaddr_storage native{};
     socklen_t size = sizeof(native);
     if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
-    if (ReceiveShut(*socket)) {
+    if (ReceiveEnded(*socket)) {
         if (addressLength && !ReportAddress(address, addressLength, nullptr, address ? 0 : capacity)) return Fail(14);
         return 0;
     }
@@ -2495,13 +2625,14 @@ static std::int64_t ReceiveFrom(int descriptor, void* buffer, std::uint64_t leng
         if (error) return Fail(error);
     }
 #endif
-    auto result = ReceiveNative(*socket, buffer, static_cast<int>(limit), flags, reinterpret_cast<sockaddr*>(&native), &size);
-    if (result == 0 && ReceiveShut(*socket)) {
+    bool eof = false;
+    auto result = ReceiveNative(*socket, buffer, static_cast<int>(limit), flags, reinterpret_cast<sockaddr*>(&native), &size, &eof);
+    if (result == 0 && (eof || ReceiveShut(*socket))) {
         if (addressLength && !ReportAddress(address, addressLength, nullptr, address ? 0 : capacity)) return Fail(14);
         return 0;
     }
 #ifdef _WIN32
-    if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(limit);
+    if (result < 0 && (socket->type == 2 || socket->type == 5) && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(limit);
 #endif
     if (result < 0) {
         const int error = NativeError();
@@ -2846,12 +2977,12 @@ static std::int64_t ReceiveMessage(int descriptor, GuestMsghdr* message, int fla
     ReceivedRights rights;
     bool controlTruncated = false;
 #endif
-    bool shut = ReceiveShut(*socket);
+    bool shut = ReceiveEnded(*socket);
     std::vector<unsigned char> stamps;
     if (!shut && (total != 0 || socket->type == 1 || ReadableNow(*socket))) {
         size = sizeof(native);
         if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
-        shut = ReceiveShut(*socket);
+        shut = ReceiveEnded(*socket);
 #ifndef _WIN32
         if (passing) {
             std::vector<char> control(CMSG_SPACE(MostPassedDescriptors * sizeof(int)));
@@ -2887,8 +3018,8 @@ static std::int64_t ReceiveMessage(int descriptor, GuestMsghdr* message, int fla
             if (const int error = rights.Install((flags & GuestControlCloseOnExec) != 0)) return Fail(error);
         } else
 #endif
-        if (!shut) received = ReceiveNative(*socket, buffer.data(), static_cast<int>(buffer.size()), flags, reinterpret_cast<sockaddr*>(&native), &size);
-        if (received == 0 && ReceiveShut(*socket)) {
+        if (!shut) received = ReceiveNative(*socket, buffer.data(), static_cast<int>(buffer.size()), flags, reinterpret_cast<sockaddr*>(&native), &size, &shut);
+        if (received == 0 && (shut || ReceiveShut(*socket))) {
             shut = true;
             size = 0;
         }
@@ -2900,7 +3031,7 @@ static std::int64_t ReceiveMessage(int descriptor, GuestMsghdr* message, int fla
             return Fail(NativeError());
 #endif
         }
-        if (header.control && !(received == 0 && ReceiveShut(*socket))) {
+        if (header.control && !shut) {
             int keptFlags = 0;
             {
                 std::lock_guard lock(socket->modeMutex);
@@ -3208,8 +3339,19 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
             if (shutAt[index]) ++shut;
         };
         for (const auto& [index, socket] : guestSockets) {
-            std::lock_guard lock(socket->modeMutex);
-            refresh(index, socket->receiveShut, socket->sendShut);
+            bool receiveShut;
+            bool sendShut;
+            {
+                std::lock_guard lock(socket->modeMutex);
+                receiveShut = socket->receiveShut;
+                sendShut = socket->sendShut;
+            }
+#ifdef _WIN32
+            const bool peerGone = SequencedPeerGone(*socket);
+            receiveShut = receiveShut || peerGone || ReceiveEnded(*socket);
+            sendShut = sendShut || peerGone;
+#endif
+            refresh(index, receiveShut, sendShut);
         }
         for (const auto index : forwardedSockets) {
             const auto* socket = static_cast<const KernelSocketPoll::NativeOwner*>(held[index].get());

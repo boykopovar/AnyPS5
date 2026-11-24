@@ -19,7 +19,7 @@ one settles, and how to cite it.
 
 When sources disagree, say so in the pull request and in the debt entry.
 
-[prosper](https://github.com/mattias800/prosper)'s console oracle has published such measurements for libSceRtc, libc, libSceHttp, libSceNet, libSceUserService, libkernel and libSceAgc's packet builders. `python3 tools/library-oracle/library_oracle.py` replays them against the built modules, after `cmake --build build --target library_oracle_replay`: it downloads the measurements from a pinned commit, checks their digest and fails on a result that is not in [known.tsv](../../tools/library-oracle/known.tsv). A pull request that fixes a listed case removes its line, and one that adds a difference explains it there.
+[prosper](https://github.com/mattias800/prosper)'s console oracle has published such measurements for libSceRtc, libc, libSceHttp, libSceNet, libSceUserService, libkernel and libSceAgc's packet builders. `python3 tools/library-oracle/library_oracle.py` replays them against the built modules, after `cmake --build build --target library_oracle_replay libs`, which builds the replay executable and the unpatched modules it loads from `build/core/libs/libs/unpatched`: it downloads the measurements from a pinned commit, checks their digest and fails on a result that is not in [known.tsv](../../tools/library-oracle/known.tsv). A pull request that fixes a listed case removes its line, and one that adds a difference explains it there.
 
 ## Public source baselines
 
@@ -101,6 +101,14 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    `--no-names` prints the NIDs instead. Disassembly requires GNU binutils `objdump` with x86-64 support. On ARM Linux,
    put `x86_64-linux-gnu-objdump` on `PATH` if the host `objdump` cannot disassemble x86-64.
 
+   In the assembly listing, `LEA` instructions that compute the exact address of an exported function or data
+   object relative to the instruction pointer show `; address of <name>`. This also covers zero-initialized
+   objects in the module's memory image.
+
+   On stripped modules, look for `unwind_<address>` in the assembly listing. These labels mark unnamed code ranges
+   from the ELF unwind index when the listing has an instruction at that address. Direct calls and jumps to a
+   labeled range start carry the same label. One function can have several ranges.
+
    To name symbols in Ghidra without disassembling or downloading a database:
 
    ```sh
@@ -160,8 +168,9 @@ debt entry, never in code or test names.
 
 ## Export and NID tools
 
-- `tools/export_gap.py --module <name> --export-table <file> --nids <file> --db <nid-db>` lists the console exports an AnyPS5 library does not provide.
-- `tools/stubgen.py --module <name> --nids <file> --db <nid-db> --out <dir>` writes an `Export.cpp` skeleton and the matching technical-debt lines for the exports it is given.
+- `tools/export_gap.py --module <name> --nids <file> --db <nid-db>` lists the console exports an AnyPS5 library does not provide. To read a genstub export table, replace `--nids <file>` with `--export-table <dir>`, where `<dir>` contains `<name>.c`.
+- With the console module in ELF format, use `--elf <module.prx>` in place of `--nids <file>`. This compares one module at a time. It reads NID-shaped names from the dynamic exports, including sectionless SCE symbol tables, and ignores imports and other names. An ELF without any matching exports produces an error.
+- `tools/stubgen.py --module <name> --nids <file> --db <nid-db> --out <file>` writes an `Export.cpp` skeleton to the named file and prints the matching technical-debt lines. Pass `--td-out <file>` to save those lines separately.
 - `tools/audit_nid_names.py <database>` audits the hash consistency of a local NID/name database with the stub generator's first-record policy.
 - `tools/pe_symbol_inventory.py <module>` inventories the code symbols and identity metadata of a PE module without reading samples.
 - `tools/inspect_self.py <input>` prints the SELF record and inner ELF header metadata as JSON. It does not validate a conversion or decrypt segments.

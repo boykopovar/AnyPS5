@@ -38,8 +38,6 @@ agcbuild_CbCondWrite_c	diff	more than six arguments; the console's stack argumen
 agcbuild_CbReleaseMem_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbReleaseMem_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbReleaseMem_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_CbSetShRegisterRangeDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_CbSetUcRegisterRangeDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbAtomicGds_a	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicGds_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicGds_c	diff	more than six arguments; the console's stack arguments are not known
@@ -73,17 +71,9 @@ agcbuild_DcbPrimeUtcl2_a	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where
 agcbuild_DcbPrimeUtcl2_b	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_DcbPrimeUtcl2_c	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_DcbResetQueue_b	diff	the packet differs from the console's; not yet analysed
-agcbuild_DcbSetCfRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCfRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCxRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCxRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetFlip_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbSetFlip_b	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbSetFlip_c	diff	the console returns null and writes nothing for these arguments
-agcbuild_DcbSetShRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetShRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetUcRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetUcRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbWaitRegMem_b	skip	the ninth argument, pollCycles, comes from the caller's stack, which neither the replay nor the measurement sets
 agcbuild_DcbWaitUntilSafeForRendering_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbWaitUntilSafeForRendering_b	diff	the console returns null and writes nothing for these arguments
