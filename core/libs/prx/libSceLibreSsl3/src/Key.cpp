@@ -285,7 +285,7 @@ int APS5_VABI RSA_up_ref_nid_postfix(LibreSsl3Rsa* rsa) {
     return RetainGuest(rsa, __func__);
 }
 
-int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSsl3SslCtx* ctx) {
+int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSslCtx* ctx) {
     if (!ctx)
         throw std::invalid_argument("SSL_CTX_up_ref requires a context");
     return RetainGuest(ctx, __func__);
