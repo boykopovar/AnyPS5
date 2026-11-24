@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include "SceTypes.hpp"
 
 extern "C" {
@@ -42,8 +43,8 @@ int APS5_VABI sceVideoStreamingEngineMediaKeysDestroySession();
 int APS5_VABI sceVideoStreamingEngineMediaKeysSetServerCertificate();
 int APS5_VABI sceVideoStreamingEnginePause();
 int APS5_VABI sceVideoStreamingEnginePlay();
-int APS5_VABI sceVideoStreamingEngineQueryInitEsvmMemory();
-int APS5_VABI sceVideoStreamingEngineQueryVideoMemory();
+int APS5_VABI sceVideoStreamingEngineQueryInitEsvmMemory(std::uint32_t mode, void* memoryInfo);
+int APS5_VABI sceVideoStreamingEngineQueryVideoMemory(const void* param, void* memoryInfo);
 int APS5_VABI sceVideoStreamingEngineReleaseThumbnailData();
 int APS5_VABI sceVideoStreamingEngineRemoveSourceBuffer();
 int APS5_VABI sceVideoStreamingEngineRequestMediaKeySystemAccess();

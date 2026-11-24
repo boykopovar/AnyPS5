@@ -1,4 +1,6 @@
 #include "prx/libSceVideoStreamingEngine/include/Api.hpp"
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -6,7 +8,34 @@
 
 namespace {
 
-constexpr int SCE_VIDEO_STREAMING_ENGINE_ERROR_NOT_INITIALIZED = static_cast<int>(0x8178000A);
+constexpr int SCE_VIDEO_STREAMING_ENGINE_ERROR_INVALID_ARGUMENT = static_cast<int>(0x81780001u);
+constexpr int SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED = static_cast<int>(0x81780002u);
+constexpr int SCE_VIDEO_STREAMING_ENGINE_ERROR_NOT_INITIALIZED = static_cast<int>(0x8178000Au);
+
+template <typename T>
+bool TryRead(const void* base, std::size_t offset, T& out) {
+    if (base == nullptr) {
+        return false;
+    }
+    const auto addr = reinterpret_cast<std::uintptr_t>(base);
+    if (offset > UINTPTR_MAX - addr) {
+        return false;
+    }
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&out, reinterpret_cast<const void*>(addr + offset), sizeof(out));
+    errno = savedErrno;
+    return ok;
+}
+
+bool TryWrite(void* dst, const void* src, std::size_t size) {
+    if (dst == nullptr) {
+        return false;
+    }
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = savedErrno;
+    return ok;
+}
 
 }
 
@@ -125,7 +154,7 @@ int APS5_VABI sceVideoStreamingEngineIsLiveStreaming() {
 }
 
 int APS5_VABI sceVideoStreamingEngineIsTransparentVideoMode() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineLoad() {
@@ -133,27 +162,27 @@ int APS5_VABI sceVideoStreamingEngineLoad() {
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySessionClose() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySessionRemove() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySessionUpdate() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySystemAccessGetConfiguration() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeysDestroySession() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeysSetServerCertificate() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEnginePause() {
@@ -164,12 +193,55 @@ int APS5_VABI sceVideoStreamingEnginePlay() {
     return SCE_VIDEO_STREAMING_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI sceVideoStreamingEngineQueryInitEsvmMemory() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoStreamingEngineQueryInitEsvmMemory(std::uint32_t mode, void* memoryInfo) {
+    if (memoryInfo == nullptr) {
+        return SCE_VIDEO_STREAMING_ENGINE_ERROR_INVALID_ARGUMENT;
+    }
+    std::array<std::uint64_t, 2> result{};
+    if (mode == 1u) {
+        result = {0x800000ull, 0x200000ull};
+    } else if (mode == 4u) {
+        result = {0x1000000ull, 0x200000ull};
+    }
+    return TryWrite(memoryInfo, result.data(), sizeof(result))
+        ? 0
+        : SCE_VIDEO_STREAMING_ENGINE_ERROR_INVALID_ARGUMENT;
 }
 
-int APS5_VABI sceVideoStreamingEngineQueryVideoMemory() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoStreamingEngineQueryVideoMemory(const void* param, void* memoryInfo) {
+    if (param == nullptr || memoryInfo == nullptr) {
+        return SCE_VIDEO_STREAMING_ENGINE_ERROR_INVALID_ARGUMENT;
+    }
+    std::uint32_t mode = 0;
+    std::uint8_t flagA = 0;
+    std::uint8_t flagB = 0;
+    if (!TryRead(param, 0x8, mode) || !TryRead(param, 0xc, flagA) || !TryRead(param, 0xd, flagB)) {
+        return SCE_VIDEO_STREAMING_ENGINE_ERROR_INVALID_ARGUMENT;
+    }
+    if (mode > 1u) {
+        return SCE_VIDEO_STREAMING_ENGINE_ERROR_INVALID_ARGUMENT;
+    }
+    std::array<std::uint64_t, 6> result{0, 0x4000ull, 0, 0, 0, 0};
+    if (flagA != 0) {
+        if (mode == 1u) {
+            result = {0x1b00000ull, 0x4000ull, 0, 0, 0x17400000ull, 0x200000ull};
+        } else {
+            result = {0x1600000ull, 0x4000ull, 0, 0, 0x8400000ull, 0x200000ull};
+        }
+    } else if (mode == 1u) {
+        if (flagB != 0) {
+            result = {0x15000000ull, 0x4000ull, 0x4c84000ull, 0x4000ull, 0, 0};
+        } else {
+            result = {0x9c00000ull, 0x4000ull, 0x10100000ull, 0x4000ull, 0, 0};
+        }
+    } else if (flagB != 0) {
+        result = {0x7a00000ull, 0x4000ull, 0x1324000ull, 0x4000ull, 0, 0};
+    } else {
+        result = {0x3f00000ull, 0x4000ull, 0x4f00000ull, 0x4000ull, 0, 0};
+    }
+    return TryWrite(memoryInfo, result.data(), sizeof(result))
+        ? 0
+        : SCE_VIDEO_STREAMING_ENGINE_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceVideoStreamingEngineReleaseThumbnailData() {
@@ -181,7 +253,7 @@ int APS5_VABI sceVideoStreamingEngineRemoveSourceBuffer() {
 }
 
 int APS5_VABI sceVideoStreamingEngineRequestMediaKeySystemAccess() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineSeek() {
@@ -245,63 +317,51 @@ int APS5_VABI sceVideoStreamingEngineUpdateByteStreamFormatSpecification() {
 }
 
 int APS5_VABI sceVideoStreamingEngineDestroyMediaKeySystemAccess() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySessionGenerateRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySessionGetExpiration() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySessionGetKeyStatuses() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySessionGetSessionId() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySessionLoad() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySessionSetEventHandler() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySystemAccessCreateMediaKeys() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySystemAccessDestroyMediaKeys() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySystemAccessGetKeySystem() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeySystemAccessSetCdmStorageConfig() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineMediaKeysCreateSession() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_MEDIA_KEY_NOT_INITIALIZED;
 }
 
 }
