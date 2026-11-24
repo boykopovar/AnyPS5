@@ -260,7 +260,10 @@ bool OpenForRead(FileStream& stream, const String& path, long long offset, long 
     if (stream.handle != kInvalidHandle) return true;
     stream.handle = _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(path, kFileOpenModeRead, true, false);
     if (stream.handle == kInvalidHandle) return false;
-    if (offset > 0 && _ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE(stream.handle, offset, kFileSeekOriginBeginning) < 0) return false;
+    if (offset > 0 && _ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE(stream.handle, offset, kFileSeekOriginBeginning) < 0) {
+        Close(stream);
+        return false;
+    }
     stream.totalBytesToRead = length;
     stream.bytesProcessed = 0;
     return true;

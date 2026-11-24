@@ -303,6 +303,27 @@ static void TestOpenAndRead() {
     Require(stream.client.alwaysOnMainThread);
 }
 
+static void TestAFailedSeek() {
+    constexpr long long farthest = std::numeric_limits<long long>::max();
+    const int probe = open_nid_postfix(kDataPath, 0, 0);
+    Require(probe >= 0);
+    const bool hostRefuses = lseek_nid_postfix(probe, farthest, 0) < 0;
+    Require(close_nid_postfix(probe) == 0);
+    Stream stream;
+    if (!hostRefuses) {
+        Require(OpenStream(stream, kDataPath, farthest, 4) == "open:1");
+        std::puts("the host seeks to the largest offset, so the failed seek is not exercised");
+        return;
+    }
+    Require(OpenStream(stream, kDataPath, farthest, 4) == "open:0");
+    Require(Inspect(stream.stream).stream.handle == -1);
+    Require(OpenStream(stream, kDataPath, 2, 4) == "open:1");
+    const Snapshot reopened = Inspect(stream.stream);
+    Require(reopened.stream.handle != -1 && reopened.stream.totalBytesToRead == 4 && reopened.stream.bytesProcessed == 0);
+    char buffer[8] = {};
+    Require(ReadStream(stream, buffer, 4) == "read:4" && std::memcmp(buffer, "2345", 4) == 0);
+}
+
 static void TestGetSize() {
     Stream stream;
     const String path = Guest(kDataPath);
@@ -532,6 +553,7 @@ int main() {
     construct(&barrier, &barrierClient.base);
     TestConstruction();
     TestOpenAndRead();
+    TestAFailedSeek();
     TestGetSize();
     TestTheCallerKeepsItsPath();
     TestPerform();
