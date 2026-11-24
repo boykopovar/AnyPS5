@@ -38,16 +38,12 @@ constexpr std::uint32_t OpenPathname = 0x4;
 constexpr std::size_t Chunk = 4096;
 
 void CopyIn(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 
 void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 

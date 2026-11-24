@@ -1,0 +1,5 @@
+# libSceIcu
+
+## add Functional
+
+- [Resource UTF-8 accessors](../../../core/libs/prx/libSceIcu/ResourceUtf8.cpp) (libSceIcu) - `ures_getUTF8String`, `ures_getUTF8StringByIndex` and `ures_getUTF8StringByKey` convert the ICU 68.2 resource string at `pRoot + offset*4` to UTF-8, following `ures_toUTF8String`: capacity and `pLength` are read and written through guest copies, `forceCopy` keeps the string at `dest` while a false flag may place it at the tail, and empty strings return the empty pointer. By-index handles arrays, tables and a top-level string; by-key searches table keys. Pool bundles and fallback chains are unsupported, so a missing root reports `U_UNSUPPORTED_ERROR` and a missing key or index reports `U_MISSING_RESOURCE_ERROR`; the base `ures_getString` family remains stubbed, so these read the bundle layout directly. Only plain string resources are handled; string-v2, aliases and non-string values are not resolved.

@@ -118,11 +118,6 @@ char* APS5_VABI _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(int 
     return buffer + length;
 }
 
-int APS5_VABI _ZN3rtc13SocketAddressaSERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc34CreateModularPeerConnectionFactoryENS_33PeerConnectionFactoryDependenciesE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -165,21 +160,6 @@ int APS5_VABI libwebrtcUnknown05(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 std::int64_t APS5_VABI _ZN3rtc10TimeMillisEv_nid_postfix() {
     return TimeNanos() / 1000000;
 }
@@ -190,36 +170,6 @@ int APS5_VABI libwebrtcUnknown06(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK6webrtc14RTCStatsReport5beginEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK6webrtc14RTCStatsReport3endEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK6webrtc14RTCStatsReport13ConstIteratorneERKS1__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIteratorppEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK6webrtc14RTCStatsReport13ConstIteratordeEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIteratorD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 std::int64_t APS5_VABI _ZN3rtc10TimeMicrosEv_nid_postfix() {
     return TimeNanos() / 1000;
 }
@@ -227,11 +177,6 @@ std::int64_t APS5_VABI _ZN3rtc10TimeMicrosEv_nid_postfix() {
 APS5_EXPORT("AEjxDisAkPE", libwebrtcUnknown07);
 int APS5_VABI libwebrtcUnknown07(void) {
     NotImplemented_nid_no_patch("AEjxDisAkPE");
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc13SocketAddressC1ERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -356,21 +301,6 @@ int APS5_VABI libwebrtcUnknown22(void) {
 APS5_EXPORT("EhpYIe91V44", libwebrtcUnknown23);
 int APS5_VABI libwebrtcUnknown23(void) {
     NotImplemented_nid_no_patch("EhpYIe91V44");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc14SdpVideoFormatC1ERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc14SdpVideoFormatC1EOS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc14SdpVideoFormatD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -532,11 +462,6 @@ int APS5_VABI _ZN3rtc6Thread30IsProcessingMessagesForTestingEv_nid_postfix(void)
 }
 
 int APS5_VABI _ZN3rtc6ThreadC1EPNS_12SocketServerE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK6webrtc4rtcp10RtcpPacket5BuildEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -829,16 +754,6 @@ int APS5_VABI _ZN6webrtc32CreateBuiltinAudioEncoderFactoryEv_nid_postfix(void) {
 APS5_EXPORT("e9ZbbX3j1iM", libwebrtcUnknown59);
 int APS5_VABI libwebrtcUnknown59(void) {
     NotImplemented_nid_no_patch("e9ZbbX3j1iM");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIteratorppEi_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK6webrtc14RTCStatsReport13ConstIteratorptEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
