@@ -1,0 +1,5 @@
+# libkernel
+
+## change [Unknown sysctl names and MIBs]
+
+- [Unknown sysctl names and MIBs](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - a numeric MIB under a known top-level node, or under one of 256 or more (where FreeBSD numbers dynamic nodes), that is not implemented throws, where a payload process on PS5 firmware 13.60 gets `ENOENT` for {1, 9999}, {6, 9999}, {0, 9999}, {1, 14, 9999, pid} and 24 levels starting {1, 9999}, since an unimplemented MIB here may exist there. A top-level node below 0 or from 10 to 255 gets `ENOENT` with the buffer and length untouched, as {99, 1} did there. Unrecognized names get `ENOENT` through `sysctlbyname`, `sysctlnametomib` and {0, 3}, as `kern.anyps5.x` did; {0, 3} knows the same names and was not called directly. The ten FreeBSD top-level names (`sysctl` to `p1003_1b`), with or without a trailing dot, map to one level, and `sysctlbyname` fails them with `EINVAL`; a name of 1024 bytes or more gets `ENAMETOOLONG`, as measured for `kern` and `kern.`

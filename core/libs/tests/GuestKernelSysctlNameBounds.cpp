@@ -1,10 +1,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -31,6 +33,19 @@ int Error() {
 
 void SetError(int error) {
     *__error_nid_postfix() = error;
+}
+
+int NameToOid(std::string_view name, int* oid, std::size_t* length) {
+    const int mib[] = {0, 3};
+    return sysctl_nid_postfix(mib, 2, oid, length, name.data(), name.size());
+}
+
+void RequireSameOid(const char* name, const int* mib, std::size_t size) {
+    int oid[4] = {-1, -1, -1, -1};
+    std::size_t length = sizeof(oid);
+    Require(NameToOid(name, oid, &length) == 0);
+    Require(length == size * sizeof(int));
+    Require(std::memcmp(oid, mib, sizeof(oid)) == 0);
 }
 
 void TestSysctlByNameNullAndFaultBounds() {
@@ -350,6 +365,11 @@ void TestSysctlNameToMibLengthAndMalformedBounds() {
         size = 4;
         Require(sysctlnametomib_nid_postfix(name, mib, &size) == -1);
         Require(Error() == PosixEnoent);
+
+        std::size_t length = sizeof(mib);
+        SetError(0);
+        Require(NameToOid(name, mib, &length) == -1);
+        Require(Error() == PosixEnoent);
     }
 }
 
@@ -371,6 +391,7 @@ void TestSysctlNameToMibTopLevelAndKnownNodes() {
         Require(size == 1);
         Require(mib[0] == item.expectedNode);
         Require(mib[1] == -1);
+        RequireSameOid(item.name, mib, size);
     }
 
     struct KnownExpected {
@@ -422,7 +443,88 @@ void TestSysctlNameToMibTopLevelAndKnownNodes() {
             Require(mib[i] == item.mib[i]);
         }
         Require(mib[item.length] == -1);
+        RequireSameOid(item.name, mib, size);
     }
+}
+
+void TestSysctlNameToOid() {
+    int oid[4] = {-1, -1, -1, -1};
+    std::size_t length = sizeof(oid);
+    Require(NameToOid("kern.ostype", oid, &length) == 0);
+    Require(length == 2 * sizeof(int));
+    Require(oid[0] == 1 && oid[1] == 1 && oid[2] == -1);
+
+    const char embedded[] = "kern.ostype\0hw.ncpu";
+    std::fill(std::begin(oid), std::end(oid), -1);
+    length = sizeof(oid);
+    Require(NameToOid(std::string_view(embedded, sizeof(embedded) - 1), oid, &length) == 0);
+    Require(length == 2 * sizeof(int));
+    Require(oid[0] == 1 && oid[1] == 1 && oid[2] == -1);
+
+    length = 0;
+    Require(NameToOid("kern.proc.pathname", nullptr, &length) == 0);
+    Require(length == 3 * sizeof(int));
+
+    Require(NameToOid("kern.proc.pathname", nullptr, nullptr) == 0);
+
+    std::fill(std::begin(oid), std::end(oid), 0x5a);
+    length = 2 * sizeof(int);
+    SetError(0);
+    Require(NameToOid("kern.proc.pathname", oid, &length) == -1);
+    Require(Error() == PosixEnomem);
+    Require(length == 2 * sizeof(int));
+    Require(oid[0] == 1 && oid[1] == 14 && oid[2] == 0x5a);
+
+    length = 0;
+    SetError(0);
+    Require(NameToOid("hw.ncpu", oid, &length) == -1);
+    Require(Error() == PosixEnomem);
+    Require(length == 0);
+
+    SetError(0);
+    Require(NameToOid("hw.ncpu", oid, nullptr) == -1);
+    Require(Error() == PosixEnomem);
+
+    const int mib[] = {0, 3};
+    length = sizeof(oid);
+    SetError(0);
+    Require(sysctl_nid_postfix(mib, 2, oid, &length, nullptr, 11) == -1);
+    Require(Error() == PosixEnoent);
+
+    SetError(0);
+    Require(sysctl_nid_postfix(mib, 2, oid, &length, "kern.ostype", 0) == -1);
+    Require(Error() == PosixEnoent);
+
+    std::fill(std::begin(oid), std::end(oid), -1);
+    length = sizeof(oid);
+    Require(NameToOid("kern.ostype.", oid, &length) == 0);
+    Require(length == 2 * sizeof(int));
+    Require(oid[0] == 1 && oid[1] == 1 && oid[2] == -1);
+
+    const char* unknown[] = {"kern.anyps5.x", "kern.ostype..", "kern.ostype.x", "hw.cacheline_size"};
+    for (const auto* name : unknown) {
+        length = sizeof(oid);
+        SetError(0);
+        Require(NameToOid(name, oid, &length) == -1);
+        Require(Error() == PosixEnoent);
+    }
+
+    const std::string tooLong(1024, 'x');
+    length = sizeof(oid);
+    SetError(0);
+    Require(NameToOid(tooLong, oid, &length) == -1);
+    Require(Error() == PosixEnametoolong);
+
+    const std::string longest(1023, 'x');
+    length = sizeof(oid);
+    SetError(0);
+    Require(NameToOid(longest, oid, &length) == -1);
+    Require(Error() == PosixEnoent);
+
+    length = sizeof(oid);
+    SetError(0);
+    Require(sysctl_nid_postfix(mib, 2, oid, &length, reinterpret_cast<const void*>(0x10), 11) == -1);
+    Require(Error() == PosixEfault);
 }
 
 void TestSysctlNameToMibCapacityBounds() {
@@ -496,6 +598,7 @@ int main() {
     TestSysctlNameToMibLengthAndMalformedBounds();
     TestSysctlNameToMibTopLevelAndKnownNodes();
     TestSysctlNameToMibCapacityBounds();
+    TestSysctlNameToOid();
     TestSysctlNameAndMibRoundtrip();
     return 0;
 }
