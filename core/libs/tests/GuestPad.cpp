@@ -13,6 +13,7 @@
 #include <climits>
 #include <cmath>
 #include <cstdlib>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -21,7 +22,19 @@
 #include <thread>
 #include <utility>
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, const char* message = nullptr) {
+    if (!value) {
+        if (message) {
+            std::fprintf(stderr, "%s\n", message);
+        }
+        std::abort();
+    }
+}
+
+static_assert(sizeof(PadDeviceClassExtendedInformation) == 20);
+static_assert(offsetof(PadDeviceClassExtendedInformation, deviceClass) == 0);
+static_assert(offsetof(PadDeviceClassExtendedInformation, reserved) == 4);
+static_assert(offsetof(PadDeviceClassExtendedInformation, classData) == 8);
 
 static void CheckTrackerLightBar(int handle) {
     std::uint32_t sequence = 0;
@@ -431,14 +444,32 @@ static void CheckTouchPadInformation(int handle) {
     }
 }
 
-static void CheckExtControllerInformation(int handle) {
+static void CheckExtControllerInformation(int user, int handle) {
     constexpr int notPermitted = static_cast<int>(0x80920101);
     std::array<std::uint8_t, 256> extended{};
-    Require(scePadGetExtControllerInformation(handle, extended.data()) == notPermitted);
-    Require(scePadGetExtControllerInformation(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetExtControllerInformation(handle, extended.data()) == notPermitted, "ext info standard handle not permitted");
+    Require(scePadGetExtControllerInformation(handle, nullptr) == PAD_ERROR_INVALID_ARG, "ext info standard null arg");
     for (const int invalid : {-9999, -100, -2, -1, 0, handle + 1, 9999}) {
-        Require(scePadGetExtControllerInformation(invalid, extended.data()) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadGetExtControllerInformation(invalid, extended.data()) == PAD_ERROR_INVALID_HANDLE, "ext info invalid handle");
     }
+
+    const int special = scePadOpen_nid_postfix(user, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
+    Require(special > 0, "open special port for ext info");
+    Require(scePadGetExtControllerInformation(special, nullptr) == PAD_ERROR_INVALID_ARG, "ext info special null arg");
+
+    std::memset(extended.data(), 0x5a, extended.size());
+    Require(scePadGetExtControllerInformation(special, extended.data()) == PAD_OK, "ext info special port ok");
+    for (int i = 0; i < 0x2c; ++i) {
+        Require(extended[i] == 0, "ext info special port 0x2c zero fill");
+    }
+    for (std::size_t i = 0x2c; i < extended.size(); ++i) {
+        Require(extended[i] == 0x5a, "ext info special port canary preserved");
+    }
+
+    Require(scePadClose_nid_postfix(special) == PAD_OK, "close special port for ext info");
+    std::memset(extended.data(), 0x5a, extended.size());
+    Require(scePadGetExtControllerInformation(special, extended.data()) == PAD_ERROR_INVALID_HANDLE, "ext info closed special handle");
+    Require(extended[0] == 0x5a, "ext info closed special canary preserved");
 }
 
 static bool LightBarValid() {
@@ -1814,8 +1845,17 @@ int main() {
     Require(scePadReadState(0x999, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadReadState(earlyPad, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadClose_nid_postfix(earlyPad) == PAD_OK);
+    std::array<std::uint8_t, 256> earlyExtended{};
+    for (const int earlyHandle : {-100, -1, 0, 1, 99, 12345}) {
+        std::memset(earlyExtended.data(), 0x5a, earlyExtended.size());
+        Require(scePadGetExtControllerInformation(earlyHandle, earlyExtended.data()) == PAD_ERROR_INVALID_HANDLE, "ext info pre-init handle");
+        Require(earlyExtended[0] == 0x5a, "ext info pre-init canary");
+        Require(scePadGetExtControllerInformation(earlyHandle, nullptr) == PAD_ERROR_INVALID_HANDLE, "ext info pre-init null");
+    }
+    Require(scePadGetExtensionUnitInfo(1, nullptr) == PAD_ERROR_NOT_INITIALIZED, "ext unit pre-init");
     PadSetPortConnected_nid_postfix(1, true);
     Require(scePadInit_nid_postfix() == 0);
+    Require(scePadGetExtensionUnitInfo(1, nullptr) == PAD_ERROR_INVALID_ARG, "ext unit post-init null");
     CheckGetInfoGuestOutput();
     PadInfo initInfo{};
     Require(scePadGetInfo_nid_postfix(&initInfo) == PAD_OK);
@@ -1839,7 +1879,7 @@ int main() {
     CheckTouchPadInformation(handle);
     CheckSetParameterGuestMemory(handle);
     CheckStickDeadZones(handle);
-    CheckExtControllerInformation(handle);
+    CheckExtControllerInformation(user, handle);
     CheckPartialTrigger();
     CheckReadQueue(handle);
     CheckQueuedMotionSampleTimes(handle);
