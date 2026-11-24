@@ -1422,7 +1422,7 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
     } else if (path == ShaderPath::Tessellation || path == ShaderPath::TessellationGeometry) {
         if (path == ShaderPath::Tessellation) validate((value & ~0x0267ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
-        else validate((value & ~0x0067ed2du) == 0 && (value & 0x02002000u) == 0x2000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation and geometry routing");
+        else validate((value & ~0x0067ed3du) == 0 && (value & 0x02002000u) == 0x2000u && (value & 3u) == 1u && (((value >> 3u) & 3u) == 1u || ((value >> 3u) & 3u) == 2u), "unsupported tessellation and geometry routing");
         const auto config = read(queue.context, 0x2d6);
         const auto parameters = read(queue.context, 0x2db);
         const auto primitiveGroup = find(queue.userConfig, 0x25b, RegisterBank::UserConfig);

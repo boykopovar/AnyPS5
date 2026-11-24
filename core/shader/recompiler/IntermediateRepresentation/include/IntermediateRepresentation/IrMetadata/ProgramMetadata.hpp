@@ -36,6 +36,7 @@ struct IrProgramMetadata {
     bool splitState = false;
     std::uint32_t tessellationControlStride = 0;
     std::uint32_t tessellationPatchStride = 0;
+    std::uint32_t tessellationGeometryItemDwords = 0;
     std::uint32_t tessellationSharedStride = 0;
 };
 

@@ -5026,7 +5026,7 @@ void drawTessellationGeometry(const Context& context, const State& state, const 
     header[2] = 1u;
     header[ShaderRecompiler::MeshCapturedCapacityDword] = capacity;
     std::memcpy(capture->header->Bytes().data(), header.data(), sizeof(header));
-    capture->items = std::make_shared<Buffer>(context, static_cast<std::size_t>(capacity) * 3u * geometry.esgsItemSize * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    capture->items = std::make_shared<Buffer>(context, static_cast<std::size_t>(capacity) * 3u * CapturedItemDwords(geometry, shaders) * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     auto tessellated = state;
     tessellated.stages.path = ShaderPath::Tessellation;
     tessellated.stages.tessellationGeometry.reset();

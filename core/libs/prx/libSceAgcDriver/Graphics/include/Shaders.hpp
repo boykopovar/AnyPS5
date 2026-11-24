@@ -54,6 +54,11 @@ struct CompiledShader {
     const std::vector<ShaderRecompiler::RegisteredImageView>* registeredImageViews = nullptr;
 };
 
+inline std::uint32_t CapturedItemDwords(const ShaderRecompiler::MeshConfiguration& geometry, std::span<const CompiledShader> shaders) {
+    const auto evaluation = std::ranges::find_if(shaders, [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::TessellationEvaluation; });
+    return evaluation != shaders.end() && evaluation->program != nullptr && evaluation->program->geometryItemDwords != 0u ? evaluation->program->geometryItemDwords : geometry.esgsItemSize;
+}
+
 inline std::uint32_t KeyedPushOffset(const CompiledShader& shader) {
     return shader.program->pushConstants.empty() ? 0u : shader.pushConstantOffset;
 }

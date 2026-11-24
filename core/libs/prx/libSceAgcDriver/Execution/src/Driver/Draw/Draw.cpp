@@ -1003,7 +1003,19 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                         break;
                     }
                 }
-                compiledStages.push_back(materializeDrawStage(i, pushCursorBytes, queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics));
+                std::optional<Graphics::State> measuredItems;
+                if (program.binary.stage == ShaderRecompiler::ShaderStage::Mesh && graphics.stages.tessellationGeometry) {
+                    for (auto previous = i; previous-- > 0;) {
+                        if (programs[previous].binary.stage != ShaderRecompiler::ShaderStage::TessellationEvaluation || programResults[previous] == nullptr) continue;
+                        const auto items = programResults[previous]->geometryItemDwords;
+                        if (items != 0u && items != graphics.stages.tessellationGeometry->esgsItemSize) {
+                            measuredItems = graphics;
+                            measuredItems->stages.tessellationGeometry->esgsItemSize = items;
+                        }
+                        break;
+                    }
+                }
+                compiledStages.push_back(materializeDrawStage(i, pushCursorBytes, queue, submission, packetOffset, trace.token, programs, measuredItems ? *measuredItems : graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics));
                 if (!rejected.empty()) return DrawVerdict::Rejected;
                 programResults[i] = compiledStages.back().get();
                 if (candidate != dataCandidates[i].end()) verifyDataStage(i, *candidate->first);
@@ -1102,16 +1114,17 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     if (graphics.stages.tessellationGeometry) {
         static std::mutex captureMutex;
         static std::map<std::pair<std::uint32_t, std::uint32_t>, ShaderRecompiler::RecompileResult> captureShaders;
-        const auto& geometry = *graphics.stages.tessellationGeometry;
+        auto geometry = *graphics.stages.tessellationGeometry;
         results.reserve(programs.size() + 2u);
+        const auto evaluation = std::ranges::find_if(stages, [](const Graphics::CompiledShader& stage) { return stage.stage == Stage::TessellationEvaluation; });
+        require(evaluation != stages.end(), "tessellation followed by a geometry stage has no domain program");
+        geometry.esgsItemSize = Graphics::CapturedItemDwords(geometry, stages);
         {
             std::lock_guard captureLock(captureMutex);
             auto found = captureShaders.find({geometry.esgsItemSize, geometry.primitivesPerGroup});
             if (found == captureShaders.end()) found = captureShaders.emplace(std::pair{geometry.esgsItemSize, geometry.primitivesPerGroup}, ShaderRecompiler::BuildTessellationCaptureGeometryShader(geometry, localDevice->Target(), localDevice->GeometryLimits())).first;
             results.push_back(found->second);
         }
-        const auto evaluation = std::ranges::find_if(stages, [](const Graphics::CompiledShader& stage) { return stage.stage == Stage::TessellationEvaluation; });
-        require(evaluation != stages.end(), "tessellation followed by a geometry stage has no domain program");
         stages.insert(std::next(evaluation), Graphics::CompiledShader{Stage::Geometry, &results.back(), 0});
     }
     const bool lastVertexPatches = programs.size() == 2u && programResults[0] != nullptr && programResults[1] != nullptr && Graphics::LastVertexPatches(graphics, stages, localDevice->ProvokingVertexLast(), localDevice->Target().tessellation.has_value(), localDevice->PrimitiveListRestart(), drawParameters.indexed);

@@ -945,6 +945,7 @@ struct CompiledShaderArtifact {
     bool dispatchThreadLimit = false;
     std::uint32_t splitStateLanes = 0;
     std::uint32_t scratchPoolSlotDwords = 0;
+    std::uint32_t geometryItemDwords = 0;
     std::vector<std::uint32_t> parameterExports;
     std::vector<FragmentParameter> fragmentParameters;
     BarycentricEmulation barycentricEmulation;

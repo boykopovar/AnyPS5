@@ -1423,6 +1423,13 @@ void ShaderStageTests() {
         const auto& subgroup = geometry.tessellationGeometry;
         Require(subgroup && subgroup->inputPrimitive == 4 && subgroup->primitivesPerGroup == 10 && subgroup->verticesPerGroup == 30 && subgroup->maxVertices == 192 && subgroup->maxPrimitives == 128 && subgroup->threadsPerGroup == 192 && subgroup->ldsSizeDwords == 1536 && subgroup->esgsItemSize == 4, "the geometry subgroup after tessellation decoded differently");
     }
+    queue.context[0x2d5] = 0x602135;
+    {
+        const auto real = AgcDriver::Graphics::DecodeState(queue).stages;
+        Require(real.path == AgcDriver::Graphics::ShaderPath::TessellationGeometry && real.tessellation && real.tessellationGeometry && real.tessellationGeometry->esgsItemSize == 4u, "tessellation routed through a real ES stage (ES_EN 2) was not decoded as tessellation followed by a geometry stage");
+    }
+    queue.context[0x2d5] = 0x60213d;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "reserved LS_EN, ES_EN or VS_EN encoding");
     queue.context[0x2d5] = 0x0260212d;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported tessellation and geometry routing");
     queue.context[0x2d5] = 0x60012d;

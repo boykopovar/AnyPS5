@@ -908,6 +908,7 @@ public:
         program.Metadata().tessellationControlStride = controlStride;
         program.Metadata().tessellationPatchStride = patchStride;
         program.Metadata().tessellationSharedStride = sharedStride;
+        program.Metadata().tessellationGeometryItemDwords = geometryStride / 4u;
         if (merged) requireMergedLimits();
     }
 
@@ -1205,7 +1206,9 @@ private:
             case TessellationAttribute::PatchOutput:
                 break;
             case TessellationAttribute::GeometryOutput:
-                if (address.vertex != 4 * static_cast<std::int64_t>(tessellation.geometryItemDwords) || address.relative != 0 || address.constant < 0 || end > address.vertex) Fail("the domain program writes LDS outside its vertex's ESGS item", access.pc);
+                if (address.vertex <= 0 || address.vertex % 4 != 0 || address.relative != 0 || address.constant < 0 || end > address.vertex) Fail("the domain program writes LDS outside its vertex's ESGS item", access.pc);
+                if (geometryStride != 0u && address.vertex != static_cast<std::int64_t>(geometryStride)) Fail("the domain program writes its ESGS items at more than one vertex stride", access.pc);
+                geometryStride = static_cast<std::uint32_t>(address.vertex);
                 break;
             default:
                 break;
@@ -1713,6 +1716,7 @@ private:
     std::uint32_t controlStride = 0;
     std::uint32_t patchStride = 0;
     std::uint32_t sharedStride = 0;
+    std::uint32_t geometryStride = 0;
     std::map<std::pair<const IrValue*, const IrValue*>, Dependence> dependence;
 };
 

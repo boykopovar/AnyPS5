@@ -944,6 +944,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.dispatchThreadLimit = bindings.layout.dispatchThreadLimit;
     result.splitStateLanes = emitted.splitStateLanes;
     result.scratchPoolSlotDwords = emitted.scratchPoolSlotDwords;
+    result.geometryItemDwords = program.Metadata().tessellationGeometryItemDwords;
     result.vertexOffsetSgpr = program.Info().vertexOffsetSgpr;
     result.instanceOffsetSgpr = program.Info().instanceOffsetSgpr;
     result.vertexOffsetShared = program.Info().vertexOffsetShared;
@@ -1414,6 +1415,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .dispatchThreadLimit = artifact.dispatchThreadLimit,
         .splitStateLanes = artifact.splitStateLanes,
         .scratchPoolSlotDwords = artifact.scratchPoolSlotDwords,
+        .geometryItemDwords = artifact.geometryItemDwords,
         .parameterExports = artifact.parameterExports,
         .fragmentParameters = artifact.fragmentParameters,
         .barycentricEmulation = artifact.barycentricEmulation,
