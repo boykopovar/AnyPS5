@@ -253,6 +253,7 @@ public:
     static constexpr std::size_t DrawInputMirrorBudget = std::size_t{512} << 20u;
     static bool DrawInputMirrors();
     std::pair<std::size_t, std::size_t> DrawInputBytes() const;
+    std::shared_ptr<Buffer> TessellationCaptureItems(const Context& context, std::size_t bytes);
     std::shared_ptr<Buffer> UnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, VkDeviceSize* offset = nullptr);
     void NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, std::shared_ptr<Buffer> buffer, VkDeviceSize offset = 0);
     std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0, VkDeviceSize* offset = nullptr, std::size_t from = 0, std::uint32_t* lowest = nullptr, bool mirrored = false);
@@ -1112,6 +1113,8 @@ private:
     std::size_t inFlightKeptBytes = 0;
     std::uint64_t writeNoteCount = 0;
     std::shared_ptr<Buffer> drawUpload;
+    std::shared_ptr<Buffer> captureItems;
+    std::size_t captureItemBytes = 0;
     VkDeviceSize drawUploadUsed = 0;
     std::vector<VkFence> spare;
     std::vector<VkQueryPool> sparePools;

@@ -2642,6 +2642,10 @@ void recordCaptureBarrier(const Context& context, VkCommandBuffer commands) {
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
 }
 
+void recordCaptureReuseBarrier(const Context& context, VkCommandBuffer commands) {
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT);
+}
+
 std::shared_ptr<Buffer> meshArgumentBuffer(const Context& context, std::span<const std::uint32_t> restartTable) {
     const auto tableBytes = restartTable.empty() ? 0u : sizeof(std::uint32_t) * (restartTable.size() + 1u);
     auto arguments = std::make_shared<Buffer>(context, ShaderRecompiler::MeshArgumentBytes + tableBytes, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
@@ -3140,7 +3144,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
     resources.RequireGuestBuffers();
     if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
-    const auto start = recorder->StartDrawPass(passKey, inputs.indexInputBehindGpuWrite || capture || readsTarget || gpuIndirect || meshIndirect || captured || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
+    const auto start = recorder->StartDrawPass(passKey, inputs.indexInputBehindGpuWrite || capture || readsTarget || gpuIndirect || meshIndirect || captured || state.tessellationCapture != nullptr || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
     if (record.spaceKeep != nullptr) *record.spaceKeep = reserveSpaceKeep(*recorder, resources);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
     const bool continued = start.continued;
@@ -3196,6 +3200,10 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
         const auto pixelLdsSubgroup = PixelFunctionLdsSubgroup(shaders);
         if (pixelLdsSubgroup != 0u) PreparePixelFunctionLds(context, commands, pixelLdsSubgroup);
+        if (state.tessellationCapture != nullptr && !state.stages.mesh) {
+            recordCaptureReuseBarrier(context, commands);
+            countBarrier(1);
+        }
         if (captured) {
             recordCaptureBarrier(context, commands);
             countBarrier(1);
@@ -4757,6 +4765,10 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     const auto pixelLdsSubgroup = PixelFunctionLdsSubgroup(shaders);
     if (pixelLdsSubgroup != 0u) PreparePixelFunctionLds(context, commands, pixelLdsSubgroup);
     std::shared_ptr<Buffer> meshArguments;
+    if (state.tessellationCapture != nullptr && !state.stages.mesh) {
+        recordCaptureReuseBarrier(context, commands);
+        countBarrier();
+    }
     if (state.stages.mesh && state.tessellationCapture != nullptr) {
         recordCaptureBarrier(context, commands);
         countBarrier();
@@ -5026,7 +5038,8 @@ void drawTessellationGeometry(const Context& context, const State& state, const 
     header[2] = 1u;
     header[ShaderRecompiler::MeshCapturedCapacityDword] = capacity;
     std::memcpy(capture->header->Bytes().data(), header.data(), sizeof(header));
-    capture->items = std::make_shared<Buffer>(context, static_cast<std::size_t>(capacity) * 3u * CapturedItemDwords(geometry, shaders) * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    const auto itemBytes = static_cast<std::size_t>(capacity) * 3u * CapturedItemDwords(geometry, shaders) * sizeof(std::uint32_t);
+    capture->items = context.recorder != nullptr ? context.recorder->TessellationCaptureItems(context, itemBytes) : std::make_shared<Buffer>(context, itemBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     auto tessellated = state;
     tessellated.stages.path = ShaderPath::Tessellation;
     tessellated.stages.tessellationGeometry.reset();
