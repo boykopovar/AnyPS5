@@ -2153,6 +2153,16 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         set_tests_properties(guest_kernel_socket_creation_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_kernel_sysctl_net_nodes_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSysctlNetNodes.cpp)
+    target_include_directories(guest_kernel_sysctl_net_nodes_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_sysctl_net_nodes_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_sysctl_net_nodes_tests)
+    add_test(NAME guest_kernel_sysctl_net_nodes COMMAND guest_kernel_sysctl_net_nodes_tests)
+    set_tests_properties(guest_kernel_sysctl_net_nodes PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sysctl_net_nodes PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_getrlimit_tests ${LIBS_INCLUDE_DIR}/tests/GuestGetrlimit.cpp)
     target_include_directories(guest_getrlimit_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_getrlimit_tests PRIVATE libkernel libc)
