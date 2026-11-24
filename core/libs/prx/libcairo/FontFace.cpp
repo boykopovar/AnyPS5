@@ -3,7 +3,6 @@
 #include "prx/libfontconfig/libfontconfig.hpp"
 
 #include <atomic>
-#include <cerrno>
 #include <cstdint>
 #include <map>
 #include <mutex>
