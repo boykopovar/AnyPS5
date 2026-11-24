@@ -518,7 +518,8 @@ updateLocaleButton();
 update();
 lock(false);
 function loadReleaseInfo() {
-  if (release || releaseRequest) return;
+  if (releaseRequest) return;
+  release = undefined;
   const version = ++releaseVersion;
   releaseRequest = fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw localizedError(() => translate(locale, "cannotLoadReleaseInfo", { status: response.status, hint: response.status === 404 ? translate(locale, "cannotLoadReleaseInfoHint") : "" })); return response.json(); }).then(value => {
     if (version !== releaseVersion) return;
