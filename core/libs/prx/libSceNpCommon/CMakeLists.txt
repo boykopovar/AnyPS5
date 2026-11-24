@@ -1,4 +1,4 @@
-add_library(libSceNpCommon SHARED EXCLUDE_FROM_ALL PendingExports.cpp PendingExportsRound7.cpp)
+add_library(libSceNpCommon SHARED EXCLUDE_FROM_ALL PendingExports.cpp PendingExportsRound7.cpp UnknownExports1.cpp)
 if(BUILD_TESTING)
     add_test_executable(guest_np_hex_capacity_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpHexCapacity.cpp)
     target_include_directories(guest_np_hex_capacity_tests PRIVATE ${LIBS_INCLUDE_DIR})

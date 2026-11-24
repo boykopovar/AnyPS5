@@ -1,0 +1,54 @@
+# libSceNpCommon
+
+## add Unknown function info
+
+- [+3ySpB1buMs](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [+EQNga+wsPc](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [+FccbMW2tZ0](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [+Xh8+oc4Nvs](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [+ZC8QYB-BA8](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [+dGO+GS2ZXQ](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [+hKyaJJCE+0](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [+nifbTTTg-g](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [+qB+WcQlMio](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [+rpXQIOsHmw](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [+xvhXA8Ci4E](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [--Sj4nn7RKc](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [-2TYwZ4ERbM](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [-3UvpBs-26g](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [-91vFSqiuKw](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [-9cU3y6rXVM](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [-AT9u642j7c](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [-S2vvy5A7uc](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [-VXubTX5UK0](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [-WgnISXjJ7A](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [-c9QK+CpQLg](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [-lXuMgmNDVg](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [-nmEECLh2hw](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [-zbpF68OGDs](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [0O4ZuOkfYPU](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [0SuSlL0OD1Y](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [0cyGJtj6Mos](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [0f3ylOQJwqE](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [0fwoTW7gqfM](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [0qrLVqNUn2Y](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [0vorueuLY6w](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [0xL7AwgxphE](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [0yGXiAz5POs](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [0yb1wmzIG44](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [1At86OClqtY](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [1ONFW86TETY](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [1PoGuVoyG3o](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [1QFKnDJxk3A](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [1So3qQHgSyE](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [1VBN-DmatAA](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [1WEFyyf49dw](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [1WirGSNeyxk](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [1atFu71dFAU](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [1iHBAKrdE90](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [1t979mOf5hE](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [20UR1EhRDsQ](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [247x--xmJpw](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [27UI+hudqPc](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [2GCKkDEZ10Y](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
+- [2HkOOhiWK3M](../../../core/libs/prx/libSceNpCommon/UnknownExports1.cpp) (libSceNpCommon) - unknown name, signature
