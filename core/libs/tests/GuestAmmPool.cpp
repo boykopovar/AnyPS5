@@ -267,6 +267,17 @@ void TestTryTakeRunNoAllocation() {
     Require(taken && offset == 0 && remainingAllocation == 0);
     Require(records.pool.size() == 1 && records.pool.at(page) == 2 * page);
     RequireConsistent(records);
+
+    AmmPool::Records exact;
+    exact.pool.emplace(0, page);
+    std::uint64_t exactOffset = page;
+    failingAllocation.store(0);
+    const bool exactTaken = AmmPool::TryTakeRun(exact, page, exactOffset);
+    const long exactRemaining = failingAllocation.load();
+    failingAllocation.store(-1);
+    Require(exactTaken && exactOffset == 0 && exactRemaining == 0);
+    Require(exact.pool.empty());
+    RequireConsistent(exact);
 }
 
 void TestReturnPagesCoalesceAndZeroBytes() {
@@ -292,6 +303,12 @@ void TestReturnPagesCoalesceAndZeroBytes() {
     AmmPool::ReturnPages(records, 7 * page, 0);
     Require(records.pool.size() == 1 && records.pool.at(page) == 5 * page);
     RequireConsistent(records);
+
+    AmmPool::Records gapped;
+    gapped.pool.emplace(4 * page, page);
+    AmmPool::ReturnPages(gapped, 2 * page, page);
+    Require(gapped.pool.size() == 2 && gapped.pool.at(2 * page) == page && gapped.pool.at(4 * page) == page);
+    RequireConsistent(gapped);
 }
 
 }
