@@ -425,15 +425,17 @@ int APS5_VABI sceNpAppInfoIntCreateRequest(std::int32_t* requestId) {
     if (!requestId) return SCE_NP_APP_INFO_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(appInfo.mutex);
     if (!appInfo.initialized) return SCE_NP_APP_INFO_ERROR_NOT_INITIALIZED;
-    const std::int32_t id = static_cast<std::int32_t>(appInfo.nextRequest++);
+    const std::uint32_t previousNext = appInfo.nextRequest;
+    const std::int32_t id = static_cast<std::int32_t>(previousNext);
     const std::int32_t previousRequest = appInfo.currentRequest;
     appInfo.currentRequest = id;
+    appInfo.nextRequest = previousNext >= MAX_APP_LAUNCH_LINK_REQUEST_ID ? 1 : previousNext + 1;
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
     errno = savedErrno;
     if (!copied) {
         appInfo.currentRequest = previousRequest;
-        --appInfo.nextRequest;
+        appInfo.nextRequest = previousNext;
         return SCE_NP_APP_INFO_ERROR_INVALID_ARGUMENT;
     }
     return 0;

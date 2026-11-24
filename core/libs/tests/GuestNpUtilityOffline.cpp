@@ -391,6 +391,7 @@ void CheckAppLaunchLinkRequestCap(const char* name, Init init, Finalize finalize
     std::int32_t num = -1;
     Require(getNum(lastId, &num) == 0 && num == 0, name, "an existing request was lost at the host limit");
     Require(destroy(lastId) == 0, name, "destroying a request at the host limit failed");
+    Require(create(1, param, reinterpret_cast<std::int32_t*>(0x10)) != 0, name, "unwritable request output was accepted");
     Require(create(1, param, &boundaryId) == 0 && boundaryId != lastId, name, "creating a request after destroy failed");
     Require(destroy(boundaryId) == 0, name, "destroying the replacement request failed");
     finalize();
@@ -414,6 +415,7 @@ void CheckRequestTableCaps() {
     std::uint32_t availability = 0xA5A5A5A5;
     Require(sceNpServiceCheckerIntGetAvailability(lastId, selfNpId, &availability) == SignedOut, "sceNpServiceCheckerIntGetAvailability", "an existing request was lost at the host limit");
     Require(sceNpServiceCheckerIntDestroyRequest(lastId) == 0, "sceNpServiceCheckerIntDestroyRequest", "destroying a request at the host limit failed");
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, reinterpret_cast<std::int32_t*>(0x10)) != 0, "sceNpServiceCheckerIntCreateRequest", "unwritable request output was accepted");
     Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &boundaryId) == 0 && boundaryId != lastId, "sceNpServiceCheckerIntCreateRequest", "creating a request after destroy failed");
     Require(sceNpServiceCheckerIntDestroyRequest(boundaryId) == 0, "sceNpServiceCheckerIntDestroyRequest", "destroying the replacement request failed");
     sceNpServiceCheckerIntFinalize();
