@@ -251,9 +251,30 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
             initialExec = &entryIr.ULessThan(builtin(StageInputKind::LocalInvocationIndex), entryIr.Constant(totalThreads));
         }
     }
+    std::array<IrValue*, 3> workgroupIds{};
+    if (options.stage == ShaderStageKind::Compute) {
+        const auto* cs = options.inputInfo.compute;
+        const bool readsGroups = cs->partialGroups || cs->groupId[0] || cs->groupId[1] || cs->groupId[2];
+        if (readsGroups) {
+            for (std::uint32_t axis = 0; axis < 3u; axis++) workgroupIds[axis] = &builtin(StageInputKind::WorkgroupId, axis);
+        }
+        if (readsGroups && cs->groupFold) {
+            IrValue& countX = builtin(StageInputKind::DispatchGroupCount, 0u);
+            IrValue& countY = builtin(StageInputKind::DispatchGroupCount, 1u);
+            IrValue& unfolded = entryIr.IEqual(countX, entryIr.Constant(0u));
+            IrValue& divisorX = entryIr.Select(unfolded, entryIr.Constant(1u), countX);
+            IrValue& divisorY = entryIr.Select(entryIr.IEqual(countY, entryIr.Constant(0u)), entryIr.Constant(1u), countY);
+            IrValue& linear = *workgroupIds[0];
+            IrValue& row = entryIr.Emit(IrOpcode::UDiv32, IrOpcodeType(IrOpcode::UDiv32), {&linear, &divisorX});
+            IrValue& slice = entryIr.Emit(IrOpcode::UDiv32, IrOpcodeType(IrOpcode::UDiv32), {&row, &divisorY});
+            const std::array<IrValue*, 3> folded{&entryIr.ISub(linear, entryIr.IMul(row, divisorX)), &entryIr.ISub(row, entryIr.IMul(slice, divisorY)), &slice};
+            for (std::uint32_t axis = 0; axis < 3u; axis++) workgroupIds[axis] = &entryIr.Select(unfolded, *workgroupIds[axis], *folded[axis]);
+        }
+    }
     if (options.stage == ShaderStageKind::Compute && options.inputInfo.compute->partialGroups) {
         for (std::uint32_t axis = 0; axis < 3u; axis++) {
-            initialExec = &entryIr.LogicalAnd(*initialExec, entryIr.ULessThan(builtin(StageInputKind::GlobalInvocationId, axis), builtin(StageInputKind::DispatchThreadLimit, axis)));
+            IrValue& global = options.inputInfo.compute->groupFold ? entryIr.IAdd(entryIr.IMul(*workgroupIds[axis], entryIr.Constant(std::max(workgroup->threadsNum[axis], 1u))), builtin(StageInputKind::LocalInvocationId, axis)) : builtin(StageInputKind::GlobalInvocationId, axis);
+            initialExec = &entryIr.LogicalAnd(*initialExec, entryIr.ULessThan(global, builtin(StageInputKind::DispatchThreadLimit, axis)));
         }
     }
     entryIr.SetExec(*initialExec);
@@ -270,7 +291,7 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         std::uint32_t regOffset = 0;
         for (std::uint32_t index = 0; index < 3u; index++) {
             if (cs->groupId[index]) {
-                entryIr.SetScalarReg(static_cast<ScalarReg>(cs->workgroupRegister + regOffset++), builtin(StageInputKind::WorkgroupId, index));
+                entryIr.SetScalarReg(static_cast<ScalarReg>(cs->workgroupRegister + regOffset++), *workgroupIds[index]);
             }
         }
         if (cs->tgSizeEn) {

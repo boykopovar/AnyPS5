@@ -377,7 +377,7 @@ public:
     std::uint64_t SubmitAndEpoch();
     std::uint64_t OpenBatchSerial();
     bool HasTimeline() const { return timeline != VK_NULL_HANDLE; }
-    bool RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress source, VkDeviceAddress arguments, const std::array<std::uint32_t, 3>* threadGroup = nullptr);
+    bool RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress source, VkDeviceAddress arguments, const std::array<std::uint32_t, 3>* threadGroup = nullptr, std::uint32_t foldThreads = 0, bool transferReads = false);
     // Waits until every batch up to `serial` completed on the GPU. Called WITHOUT GuestMemory::GpuMutex:
     // it touches only the immutable timeline semaphore (the caller keeps the device alive). Requires
     // HasTimeline(); the debug switch APS5_NO_TIMELINE makes the device create the recorder without one.

@@ -6231,23 +6231,40 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         }
         recordStep(PhaseRecordDataRefresh);
     }
-    std::shared_ptr<Graphics::Buffer> threadArguments;
-    if (record.threadGroup != std::array<std::uint32_t, 3>{}) {
-        const bool readsLimit = record.shader->program->dispatchThreadLimit;
-        const auto data = readsLimit ? resources.shaderDataBuffer(*record.shader) : VK_NULL_HANDLE;
+    std::shared_ptr<Graphics::Buffer> copiedArguments;
+    const std::uint32_t foldThreads = split ? 0u : record.shader->program->groupFoldThreads;
+    const bool threadDimensions = record.threadGroup != std::array<std::uint32_t, 3>{};
+    const bool readsCounts = record.shader->program->dispatchGroupCount;
+    if (threadDimensions || readsCounts) {
+        const bool readsLimit = threadDimensions && record.shader->program->dispatchThreadLimit;
+        const auto data = readsLimit || readsCounts ? resources.shaderDataBuffer(*record.shader) : VK_NULL_HANDLE;
         const auto limitDword = record.shader->program->imageMetadataDword;
         Graphics::Require(!readsLimit || (data != VK_NULL_HANDLE && limitDword >= 3), "Vulkan dispatch: a thread-dimension dispatch has no ShaderData thread limit");
+        Graphics::Require(!readsCounts || data != VK_NULL_HANDLE, "Vulkan dispatch: an indirect dispatch has no ShaderData group counts");
         const VkDeviceSize limitByte = readsLimit ? static_cast<VkDeviceSize>(limitDword - 3) * sizeof(std::uint32_t) : 0;
+        const VkDeviceSize countsByte = static_cast<VkDeviceSize>(record.shader->program->dispatchGroupCountDword) * sizeof(std::uint32_t);
         Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
-        if (argumentImport != nullptr) {
-            threadArguments = std::make_shared<Graphics::Buffer>(context, 24, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-            Graphics::Require(recorder.RecordDispatchArguments(commands, argumentImport->address + (arguments - argumentImport->base), threadArguments->DeviceAddress(), &record.threadGroup), "Vulkan dispatch: thread-dimension indirect arguments need the argument kernel");
-            const VkBufferCopy limit{12, limitByte, 12};
-            if (readsLimit) context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, threadArguments->Handle(), data, 1, &limit);
+        bool countsCopied = false;
+        if (argumentImport != nullptr && argumentImport->address != 0) {
+            auto copied = std::make_shared<Graphics::Buffer>(context, 32, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            const bool recorded = recorder.RecordDispatchArguments(commands, argumentImport->address + (arguments - argumentImport->base), copied->DeviceAddress(), threadDimensions ? &record.threadGroup : nullptr, foldThreads, readsLimit || readsCounts);
+            Graphics::Require(recorded || !threadDimensions, "Vulkan dispatch: thread-dimension indirect arguments need the argument kernel");
+            if (recorded) {
+                const VkBufferCopy limit{12, limitByte, 12};
+                if (readsLimit) context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, copied->Handle(), data, 1, &limit);
+                const VkBufferCopy counts{24, countsByte, 8};
+                if (readsCounts) context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, copied->Handle(), data, 1, &counts);
+                countsCopied = readsCounts;
+                copiedArguments = std::move(copied);
+            }
         } else if (readsLimit) {
             context.Resolved(&Graphics::DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer")(commands, data, limitByte, sizeof(record.threadLimit), record.threadLimit.data());
         }
-        if (readsLimit) resources.forgetShaderDataWords(*record.shader);
+        if (readsCounts && !countsCopied) {
+            constexpr std::array<std::uint32_t, 2> unfolded{};
+            context.Resolved(&Graphics::DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer")(commands, data, countsByte, sizeof(unfolded), unfolded.data());
+        }
+        if (readsLimit || readsCounts) resources.forgetShaderDataWords(*record.shader);
         covered = 0;
     }
     using CommandClass = Graphics::Recorder::CommandClass;
@@ -6291,13 +6308,13 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     }
     VkBuffer indirectBuffer = argumentImport != nullptr ? argumentImport->buffer : VK_NULL_HANDLE;
     VkDeviceSize indirectOffset = argumentImport != nullptr ? Graphics::HostImportOffset(*argumentImport, arguments) : 0;
-    if (threadArguments != nullptr) {
-        indirectBuffer = threadArguments->Handle();
+    if (copiedArguments != nullptr) {
+        indirectBuffer = copiedArguments->Handle();
         indirectOffset = 0;
-        recorder.Keep(std::move(threadArguments));
+        recorder.Keep(std::move(copiedArguments));
     } else if (argumentImport != nullptr && argumentImport->address != 0) {
-        auto checked = std::make_shared<Graphics::Buffer>(context, 12, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-        if (recorder.RecordDispatchArguments(commands, argumentImport->address + (arguments - argumentImport->base), checked->DeviceAddress())) {
+        auto checked = std::make_shared<Graphics::Buffer>(context, 32, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+        if (recorder.RecordDispatchArguments(commands, argumentImport->address + (arguments - argumentImport->base), checked->DeviceAddress(), nullptr, foldThreads)) {
             indirectBuffer = checked->Handle();
             indirectOffset = 0;
             recorder.Keep(std::move(checked));

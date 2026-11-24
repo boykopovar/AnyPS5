@@ -13,7 +13,7 @@ layout(push_constant) uniform Parameters {
     uint groupX;
     uint groupY;
     uint groupZ;
-    uint unused;
+    uint foldThreads;
 } parameters;
 
 uint groups(uint threads, uint group) {
@@ -33,7 +33,35 @@ void main() {
         z = groups(z, parameters.groupZ);
     }
     bool valid = x <= parameters.maxX && y <= parameters.maxY && z <= parameters.maxZ;
-    parameters.arguments.words[0] = valid ? x : 0u;
-    parameters.arguments.words[1] = valid ? y : 0u;
-    parameters.arguments.words[2] = valid ? z : 0u;
+    uint launchX = x;
+    uint launchY = y;
+    uint launchZ = z;
+    uint countX = 0u;
+    uint countY = 0u;
+    if (!valid && parameters.foldThreads != 0u) {
+        uint rowHigh;
+        uint row;
+        umulExtended(x, y, rowHigh, row);
+        uint totalHigh;
+        uint total;
+        umulExtended(row, z, totalHigh, total);
+        uint invocationsHigh;
+        uint invocations;
+        umulExtended(total, parameters.foldThreads, invocationsHigh, invocations);
+        if (rowHigh == 0u && totalHigh == 0u && invocationsHigh == 0u && total <= parameters.maxX && total <= 0x7fffffffu) {
+            valid = true;
+            launchX = total;
+            launchY = 1u;
+            launchZ = 1u;
+            countX = x;
+            countY = y;
+        }
+    }
+    parameters.arguments.words[0] = valid ? launchX : 0u;
+    parameters.arguments.words[1] = valid ? launchY : 0u;
+    parameters.arguments.words[2] = valid ? launchZ : 0u;
+    if (parameters.foldThreads != 0u) {
+        parameters.arguments.words[6] = countX;
+        parameters.arguments.words[7] = countY;
+    }
 }

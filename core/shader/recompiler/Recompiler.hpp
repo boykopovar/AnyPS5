@@ -70,6 +70,7 @@ struct ShaderComputeStageInfo {
     std::uint32_t scratchDwords = 0;
     std::uint32_t granulatedVgprCount = 0;
     std::uint32_t sharedVgprBlocks = 0;
+    bool groupFold = false;
 
     [[nodiscard]] bool PartialGroups() const {
         return partialThreads != std::array<std::uint32_t, 3>{};
@@ -943,6 +944,9 @@ struct CompiledShaderArtifact {
     bool functionLdsBuffer = false;
     bool meshWindowBuffer = false;
     bool dispatchThreadLimit = false;
+    std::uint32_t groupFoldThreads = 0;
+    bool dispatchGroupCount = false;
+    std::uint32_t dispatchGroupCountDword = 0;
     std::uint32_t splitStateLanes = 0;
     std::uint32_t scratchPoolSlotDwords = 0;
     std::vector<std::uint32_t> parameterExports;

@@ -467,6 +467,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         for (std::uint32_t axis = 0; axis < 3; ++axis) threadGroup[axis] = std::max(readRegister(queue.shader, 0x207 + axis) & 0xffffu, 1u);
         compute.partialThreads = {~0u, ~0u, ~0u};
     }
+    compute.groupFold = indirectArguments != 0 && (compute.PartialGroups() || std::ranges::any_of(compute.groupIdEnable, [](bool enabled) { return enabled; }));
     ShaderRecompiler::RecompileRequest request{
         {ShaderRecompiler::ShaderStage::Compute, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
         {(packet[4] & 0x8000u) != 0 ? 32u : 64u, 0, userData, compute, std::nullopt, std::nullopt, memory, DispatchFloatMode(snapshot, queue.shader)},
@@ -524,6 +525,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     mix(address);
     mix(packet[4] & 0x8000u);
     for (const auto threads : compute.partialThreads) mix(threads);
+    mix(compute.groupFold ? 1u : 0u);
     for (const auto word : userData) mix(word);
 
     static const bool keyHygiene = std::getenv("APS5_NO_DISPATCH_KEY_HYGIENE") == nullptr;

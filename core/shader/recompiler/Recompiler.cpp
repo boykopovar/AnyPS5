@@ -942,6 +942,12 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.functionLdsBuffer = emitted.functionLdsBuffer;
     result.meshWindowBuffer = emitted.meshWindowBuffer;
     result.dispatchThreadLimit = bindings.layout.dispatchThreadLimit;
+    if (request.context.compute.has_value() && (request.context.compute->groupFold || (!request.context.compute->PartialGroups() && std::ranges::none_of(request.context.compute->groupIdEnable, [](bool enabled) { return enabled; })))) {
+        const auto& threads = request.context.compute->numThreads;
+        result.groupFoldThreads = std::max(threads[0], 1u) * std::max(threads[1], 1u) * std::max(threads[2], 1u);
+    }
+    result.dispatchGroupCount = bindings.layout.dispatchGroupCount;
+    result.dispatchGroupCountDword = bindings.layout.DispatchGroupCountDword();
     result.splitStateLanes = emitted.splitStateLanes;
     result.scratchPoolSlotDwords = emitted.scratchPoolSlotDwords;
     result.vertexOffsetSgpr = program.Info().vertexOffsetSgpr;
@@ -1368,7 +1374,7 @@ void recordMemoPatch(MemoPatch& patch, const DescriptorBindingPlan& plan, const 
     if (patch.pushData || plan.storageData) {
         for (const auto reg : layout.userDataRegisters) patch.userWords.push_back(reg - variant.info.userDataBase);
     }
-    patch.valid = layout.userDataRegisters.size() <= layout.DispatchThreadLimitDword() && (patch.userWords.empty() || patch.pushData || patch.shaderData != MemoPatch::NoBinding);
+    patch.valid = layout.userDataRegisters.size() <= layout.DispatchGroupCountDword() && (patch.userWords.empty() || patch.pushData || patch.shaderData != MemoPatch::NoBinding);
 }
 
 bool declaresAtomicLockTable(std::span<const std::uint32_t> words) {
@@ -1412,6 +1418,9 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .functionLdsBuffer = artifact.functionLdsBuffer,
         .meshWindowBuffer = artifact.meshWindowBuffer,
         .dispatchThreadLimit = artifact.dispatchThreadLimit,
+        .groupFoldThreads = artifact.groupFoldThreads,
+        .dispatchGroupCount = artifact.dispatchGroupCount,
+        .dispatchGroupCountDword = artifact.dispatchGroupCountDword,
         .splitStateLanes = artifact.splitStateLanes,
         .scratchPoolSlotDwords = artifact.scratchPoolSlotDwords,
         .parameterExports = artifact.parameterExports,
@@ -2466,7 +2475,7 @@ bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& 
     const auto words = prepared.ShaderDataDwords();
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
     const auto dataSize = !handle.artifact->artifact.stencilReferences.empty() && pushSize != 0u ? pushSize - 1u : pushSize;
-    const bool usesPush = prepared.runtimeImageCount == 0u && words != 0u && words <= dataSize;
+    const bool usesPush = prepared.runtimeImageCount == 0u && !prepared.dispatchGroupCount && words != 0u && words <= dataSize;
     if (prepared.UsesPushData() != usesPush) return false;
     if (!handle.artifact->artifact.stencilReferences.empty() && (prepared.stencilReferenceDword >= layout.pushConstantSizeBytes / 4u || prepared.stencilReferenceDword != (usesPush ? words : 0u))) return false;
     if (!std::ranges::equal(key, handle.staticKey) || handle.source->code.size() != request.shader.code.size()) return false;

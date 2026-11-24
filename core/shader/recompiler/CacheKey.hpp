@@ -198,6 +198,7 @@ private:
         append(key, value.tgSizeEnable);
         append(key, value.threadIdComponentCount);
         append(key, value.PartialGroups());
+        append(key, value.groupFold);
         append(key, value.scratchDwords);
         append(key, value.granulatedVgprCount);
         append(key, value.sharedVgprBlocks);

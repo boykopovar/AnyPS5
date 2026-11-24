@@ -87,10 +87,10 @@ std::filesystem::path ShaderCacheDirectory() {
 namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(CompiledShaderArtifact) == 296, "CompiledShaderArtifact changed: update the artifact encoder");
+static_assert(sizeof(CompiledShaderArtifact) == 304, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update the invocation encoder");
 #if defined(__cpp_lib_atomic_shared_ptr)
-static_assert(sizeof(RecompileResult) == 560, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 568, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
 static_assert(sizeof(DescriptorBinding) == 944, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
@@ -143,7 +143,7 @@ constexpr std::size_t fieldCount() {
     }
 }
 
-static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
+static_assert(fieldCount<ShaderInfo>() == 25, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 52, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
@@ -592,6 +592,9 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.functionLdsBuffer);
     writer.Value(result.meshWindowBuffer);
     writer.Value(result.dispatchThreadLimit);
+    writer.Value(result.groupFoldThreads);
+    writer.Value(result.dispatchGroupCount);
+    writer.Value(result.dispatchGroupCountDword);
     writer.Value(result.splitStateLanes);
     writer.Value(result.scratchPoolSlotDwords);
     writer.Values(std::span<const std::uint32_t>(result.parameterExports));
@@ -661,6 +664,9 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.functionLdsBuffer);
     reader.Value(result.meshWindowBuffer);
     reader.Value(result.dispatchThreadLimit);
+    reader.Value(result.groupFoldThreads);
+    reader.Value(result.dispatchGroupCount);
+    reader.Value(result.dispatchGroupCountDword);
     reader.Value(result.splitStateLanes);
     reader.Value(result.scratchPoolSlotDwords);
     reader.Values(result.parameterExports);
@@ -786,6 +792,7 @@ void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
     writer.Value(layout.memoryOffsetDword);
     writer.Value(layout.memoryOffsetCount);
     writer.Value(layout.dispatchThreadLimit);
+    writer.Value(layout.dispatchGroupCount);
     writer.Value(layout.runtimeImageCount);
     writer.Value(layout.runtimeStateDwords);
     writer.Values(std::span<const std::uint32_t>(layout.userDataRegisters));
@@ -801,6 +808,7 @@ void decodeLayout(Reader& reader, IrBindingLayout& layout) {
     reader.Value(layout.memoryOffsetDword);
     reader.Value(layout.memoryOffsetCount);
     reader.Value(layout.dispatchThreadLimit);
+    reader.Value(layout.dispatchGroupCount);
     reader.Value(layout.runtimeImageCount);
     reader.Value(layout.runtimeStateDwords);
     reader.Values(layout.userDataRegisters);
@@ -923,6 +931,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
     writer.Value(info.bdaWrites);
     writer.Value(info.usesFaultBuffer);
     writer.Value(info.dispatchThreadLimit);
+    writer.Value(info.dispatchGroupCount);
     writer.Value(info.rasterPrimitive);
     writer.Value(info.layerExported);
     writer.Value(info.smoothOffsetBarycentrics);
@@ -1043,6 +1052,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     reader.Value(info.bdaWrites);
     reader.Value(info.usesFaultBuffer);
     reader.Value(info.dispatchThreadLimit);
+    reader.Value(info.dispatchGroupCount);
     reader.Value(info.rasterPrimitive);
     reader.Value(info.layerExported);
     reader.Value(info.smoothOffsetBarycentrics);

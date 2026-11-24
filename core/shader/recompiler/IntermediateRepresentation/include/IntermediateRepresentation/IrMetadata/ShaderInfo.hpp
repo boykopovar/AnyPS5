@@ -35,6 +35,7 @@ struct ShaderInfo {
     bool bdaWrites = false;
     bool usesFaultBuffer = false;
     bool dispatchThreadLimit = false;
+    bool dispatchGroupCount = false;
     bool rasterPrimitive = false;
     bool layerExported = false;
     bool smoothOffsetBarycentrics = false;
