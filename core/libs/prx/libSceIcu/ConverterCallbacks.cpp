@@ -193,7 +193,7 @@ GuestFromU TranslateFromU(UConverterFromUCallback action, const void* context) {
     }
     for (std::size_t index = 0; index < hostDefaults.size(); ++index)
         if (action == hostDefaults[index]) return {guestDefaults[index], context};
-    return {};
+    return {nullptr, context};
 }
 
 GuestToU TranslateToU(UConverterToUCallback action, const void* context) {
@@ -210,7 +210,7 @@ GuestToU TranslateToU(UConverterToUCallback action, const void* context) {
     }
     for (std::size_t index = 0; index < hostDefaults.size(); ++index)
         if (action == hostDefaults[index]) return {guestDefaults[index], context};
-    return {};
+    return {nullptr, context};
 }
 
 }
