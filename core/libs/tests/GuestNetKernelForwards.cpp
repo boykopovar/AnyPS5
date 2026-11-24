@@ -244,6 +244,37 @@ static void CheckShutdownPoll(bool net, int how) {
     Require(Close(net, stream.accepted) == 0 && Close(net, stream.client) == 0 && Close(net, stream.listener) == 0);
 }
 
+static void CheckPollIgnoringEof(bool net) {
+    constexpr short In = 0x0001, Out = 0x0004, HangUp = 0x0010, ReadNormal = 0x0040, IgnoreEof = 0x2000;
+    auto stream = OpenStream(net);
+    Require(send_nid_postfix(stream.client, "a", 1, 0) == 1);
+    Require(shutdown_nid_postfix(stream.client, 1) == 0);
+    GuestPollDescriptor entry{stream.accepted, static_cast<short>(In | ReadNormal | IgnoreEof), -1};
+    Require(poll_nid_postfix(&entry, 1, 2000) == 1 && entry.revents == (In | ReadNormal));
+    char byte = 0;
+    Require(recv_nid_postfix(stream.accepted, &byte, 1, 0) == 1 && byte == 'a');
+    entry = {stream.accepted, In, -1};
+    Require(poll_nid_postfix(&entry, 1, 2000) == 1 && (entry.revents & (In | HangUp)) != 0);
+    entry = {stream.accepted, static_cast<short>(In | IgnoreEof), -1};
+    Require(poll_nid_postfix(&entry, 1, 0) == 0 && entry.revents == 0);
+    Require(poll_nid_postfix(&entry, 1, 50) == 0 && entry.revents == 0);
+    entry.events = static_cast<short>(In | Out | IgnoreEof);
+    Require(poll_nid_postfix(&entry, 1, 0) == 1 && entry.revents == Out);
+    Require(Close(net, stream.accepted) == 0 && Close(net, stream.client) == 0 && Close(net, stream.listener) == 0);
+    stream = OpenStream(net);
+    Require(shutdown_nid_postfix(stream.accepted, 0) == 0);
+    entry = {stream.accepted, static_cast<short>(In | IgnoreEof), -1};
+    Require(poll_nid_postfix(&entry, 1, 0) == 0 && entry.revents == 0);
+    entry.events = In;
+    Require(poll_nid_postfix(&entry, 1, 0) == 1 && (entry.revents & In) != 0);
+    Require(shutdown_nid_postfix(stream.accepted, 2) == 0);
+    entry.events = static_cast<short>(In | Out | IgnoreEof);
+    Require(poll_nid_postfix(&entry, 1, 0) == 1 && entry.revents == Out);
+    entry.events = static_cast<short>(In | Out);
+    Require(poll_nid_postfix(&entry, 1, 0) == 1 && entry.revents == (In | HangUp));
+    Require(Close(net, stream.accepted) == 0 && Close(net, stream.client) == 0 && Close(net, stream.listener) == 0);
+}
+
 static void CheckUnknownDescriptor() {
     constexpr int unknown = 0x7ffffff0;
     std::array<unsigned char, 16> local{16, 2, 0, 0, 127, 0, 0, 1};
@@ -290,6 +321,7 @@ int main() {
         CheckStreamWaitAll(net);
         CheckShutdownPoll(net, 1);
         CheckShutdownPoll(net, 0);
+        CheckPollIgnoringEof(net);
         CheckConnectedDatagramTransfer(net);
         CheckStreamTransfer(net);
     }
