@@ -3,7 +3,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include <cctype>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
