@@ -2,6 +2,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -11,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 extern "C" {
 
@@ -121,15 +124,39 @@ std::size_t APS5_VABI strnlen_s_nid_postfix(const char* text, std::size_t limit)
 }
 
 char* APS5_VABI strsep_nid_postfix(char** text, const char* delimiters) {
-    char* token = *text;
+    char* token = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&token, text, sizeof(token))) throw std::runtime_error("strsep: unreadable cursor");
     if (token == nullptr) return nullptr;
-    char* end = token + std::strcspn(token, delimiters);
-    if (*end == '\0') {
-        *text = nullptr;
-    } else {
-        *end = '\0';
-        *text = end + 1;
+    const auto scan = [](const char* source, auto found) {
+        auto address = reinterpret_cast<std::uintptr_t>(source);
+        for (;;) {
+            unsigned char bytes[256];
+            const auto count = (std::min)(sizeof(bytes), static_cast<std::size_t>(4096 - address % 4096));
+            if (!GuestCopyIn_nid_no_patch(bytes, reinterpret_cast<const void*>(address), count))
+                throw std::runtime_error("strsep: unreadable guest string");
+            for (std::size_t i = 0; i < count; ++i) {
+                if (found(bytes[i])) return std::pair{address + i, bytes[i]};
+            }
+            address += count;
+        }
+    };
+    std::array<bool, 256> separators{};
+    scan(delimiters, [&separators](unsigned char value) {
+        separators[value] = true;
+        return value == 0;
+    });
+    const auto [end, value] = scan(token, [&separators](unsigned char character) { return separators[character]; });
+    GuestArena::HostWrite stateAccess(text, sizeof(*text));
+    if (!stateAccess.Open() || !GuestWritable_nid_no_patch(text, sizeof(*text)))
+        throw std::runtime_error("strsep: unwritable cursor");
+    char* next = nullptr;
+    if (value != 0) {
+        const char nul = 0;
+        if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(end), &nul, sizeof(nul)))
+            throw std::runtime_error("strsep: unwritable delimiter");
+        next = reinterpret_cast<char*>(end + 1);
     }
+    if (!GuestCopyOut_nid_no_patch(text, &next, sizeof(next))) throw std::runtime_error("strsep: unwritable cursor");
     return token;
 }
 
