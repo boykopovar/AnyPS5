@@ -6,4 +6,4 @@
 
 ## add Functional
 
-- [Export.cpp](../../../core/libs/prx/libSceVcodec/Export.cpp) (libSceVcodec) - reverting it alone still passes the [GuestVcodec tests](../../../core/libs/tests/GuestVcodec.cpp), because the success path of the status conversion needs `/dev/uvd_bgt`, which AnyPS5 does not model; the tests reach only the `EBADF` path. Modelling the device is a separate change.
+- [Export.cpp](../../../core/libs/prx/libSceVcodec/Export.cpp) (libSceVcodec) - reverting it alone still passes its tests in core/libs/tests/GuestVcodec.cpp, because the success path of the status conversion needs `/dev/uvd_bgt`, which AnyPS5 does not model; the tests reach only the `EBADF` path. Modelling the device is a separate change.
