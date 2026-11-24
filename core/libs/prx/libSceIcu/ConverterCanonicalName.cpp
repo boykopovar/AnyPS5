@@ -1,7 +1,6 @@
 #include "prx/libc/include/General.hpp"
 #include "unicode/ucnv.h"
 
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
