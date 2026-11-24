@@ -84,6 +84,8 @@ class Trace:
         self.losses = []
         if not isinstance(document, (list, dict)):
             raise ValueError("trace must be an event array or object")
+        if isinstance(document, dict) and document and "traceEvents" not in document:
+            raise ValueError("trace object must contain a traceEvents array")
         events = document if isinstance(document, list) else document.get("traceEvents", [])
         if not isinstance(events, list):
             raise ValueError("traceEvents must be an array")
