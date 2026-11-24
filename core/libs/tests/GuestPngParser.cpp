@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libSceSysmodule/include/Api.hpp"
 
 #include <array>
 #include <cerrno>
@@ -259,6 +260,7 @@ void TestPlain() {
 
     ReadOk(Write(kDir + "/rgba.png", Png(9, 4, 6, {}, false)));
     Require(NumberOf("width") == 9 && NumberOf("height") == 4);
+    Require(sceSysmoduleIsLoadedInternal(0x80000020u) != 0);
 }
 
 void TestInternationalText() {
@@ -302,6 +304,9 @@ void TestPlainText() {
 
     ReadOk(Write(kDir + "/skip_other.png", Png(1, 1, 2, {Text("Comment", "a long comment"), Text("Title ID", "PPSA01234")})));
     Require(TextOf("appli_title_id") == "PPSA01234");
+
+    ReadOk(Write(kDir + "/after_end.png", Png(1, 1, 2, {}) + Text("Title ID", "PPSA01234")));
+    Require(Find("appli_title_id") == nullptr);
 }
 
 void TestDisplayType() {
@@ -378,6 +383,22 @@ void TestArguments() {
         threwUnmapped = true;
     }
     Require(threwUnmapped);
+
+    GuestString overlong = MakePath("a.png");
+    overlong.size = 16;
+    bool threwOverlong = false;
+    try {
+        static_cast<void>(libScePngParserUnknown_MBQfjtzRyh0_nid_no_patch(&overlong, output.bytes.data(), output.bytes.data()));
+    } catch (const std::invalid_argument&) {
+        threwOverlong = true;
+    }
+    Require(threwOverlong);
+
+    const int probe = sceKernelOpen(path.c_str(), 0, 0);
+    Require(probe >= 0 && sceKernelClose(probe) == 0);
+    ReadOk(path);
+    const int reopened = sceKernelOpen(path.c_str(), 0, 0);
+    Require(reopened == probe && sceKernelClose(reopened) == 0);
 
     g_fieldCount = 1;
     const std::uint64_t before = NotImplementedCalls_nid_no_patch();
