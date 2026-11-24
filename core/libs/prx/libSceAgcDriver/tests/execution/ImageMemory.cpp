@@ -563,6 +563,7 @@ bool CachePressure(Context context, Hooks& native) {
         Require(count + 2 < MaxImages, "image memory: the partial-return fixtures exceed the bounded guest allocation");
         Require(native.CheckBindings(heldImages, true), "image memory: cache-pressure fixture did not exercise sharing");
         const auto heldFrees = native.Frees(heldMemory);
+        const auto reclaimFrees = native.Frees(reclaimMemory);
         native.BeginPressure(blockBytes);
         resource.baseAddress = guest.Address(0) + count * stride;
         auto made = sample(resource);
@@ -570,7 +571,15 @@ bool CachePressure(Context context, Hooks& native) {
         Require(smallPressure.failures != 0 && smallPressure.requests != 0, "image memory: small cache pressure did not reach driver failure and reentrant reclamation");
         Require(smallPressure.released == blockBytes, "image memory: cache reclamation reported image bytes instead of one whole reclaimable block");
         Require(std::all_of(evicted.begin(), evicted.end(), [](const auto& image) { return image.expired(); }), "image memory: releasing a shared block left one of its cache-only textures alive");
-        Require(native.BindingOf(native.ImageOf(made->View())).memory == reclaimMemory, "image memory: a recovered small image did not reuse the cache's returned block");
+        const auto recoveredMemory = native.BindingOf(native.ImageOf(made->View())).memory;
+        const auto deviceBudget = BufferPool::DeviceBudget(context.memory, nullptr, context.integratedGpu);
+        const auto imageBudget = BufferPool::ImageBudget(deviceBudget);
+        if (blockBytes <= std::min(deviceBudget, imageBudget)) {
+            Require(recoveredMemory == reclaimMemory, "image memory: a recovered small image did not reuse the cache's returned block");
+            Require(native.Frees(reclaimMemory) == reclaimFrees, "image memory: the pool freed a returned block before reusing it");
+        } else {
+            Require(native.Frees(reclaimMemory) > reclaimFrees, "image memory: a returned block beyond the pool budget was not freed");
+        }
         Require(native.Frees(heldMemory) == heldFrees, "image memory: recovering a small allocation freed a live sibling block");
         for (std::size_t i = 0; i < held.size(); ++i) {
             Require(!native.Destroyed(heldImages[i]), "image memory: cache pressure destroyed an externally held image");
@@ -595,13 +604,13 @@ bool CachePressure(Context context, Hooks& native) {
         const auto largeBytes = native.Requirements(probe).size;
         context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, probe, nullptr);
         Require(largeBytes > 1024 * 1024, "image memory: the standalone pressure fixture is not larger than the shared-image limit");
-        const auto beforeFree = native.Frees(reclaimMemory);
-        native.BeginPressure(largeBytes, reclaimMemory);
+        const auto beforeFree = native.Frees(recoveredMemory);
+        native.BeginPressure(largeBytes, recoveredMemory);
         auto standalone = sample(large);
         const auto largePressure = native.EndPressure();
         Require(largePressure.failures != 0 && largePressure.requests != 0, "image memory: standalone cache pressure did not exercise driver failure and reclamation");
         Require(largePressure.released == blockBytes, "image memory: standalone recovery did not report the returned whole image block");
-        Require(native.Frees(reclaimMemory) > beforeFree, "image memory: standalone recovery retried before freeing the returned empty block");
+        Require(native.Frees(recoveredMemory) > beforeFree, "image memory: standalone recovery retried before freeing the returned empty block");
         Require(native.Frees(heldMemory) == heldFrees, "image memory: standalone recovery freed a block with live sibling images");
         for (std::size_t i = 0; i < held.size(); ++i) Require(!native.Destroyed(heldImages[i]) && sample(heldResources[i]) == held[i], "image memory: standalone recovery changed a held cached image");
 
