@@ -642,6 +642,24 @@ class BisectCleanupTests(GitHistoryCase):
 
 
 class AtomicReportRaceTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "rename refuses an existing destination on Windows")
+    def test_windows_fallback_preserves_report_created_before_rename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            rename, replace = os.rename, os.replace
+
+            def create_racing_report(publish, source, destination):
+                Path(destination).write_text('{"result": "other run"}', encoding="utf-8")
+                return publish(source, destination)
+
+            with patch.object(os, "link", side_effect=OSError(errno.ENOTSUP, "unsupported")), \
+                    patch.object(os, "rename", side_effect=lambda *args: create_racing_report(rename, *args)), \
+                    patch.object(os, "replace", side_effect=lambda *args: create_racing_report(replace, *args)), \
+                    self.assertRaises(FileExistsError):
+                performance_bisect.write_report(path, {"result": "bisect report"})
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "other run"})
+            self.assertEqual(list(Path(directory).iterdir()), [path])
+
     def test_does_not_overwrite_a_report_created_during_write(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "report.json"
@@ -764,9 +782,9 @@ class FocusedInputEdgeTests(unittest.TestCase):
 
     def test_recipe_requires_regression_threshold_inside_open_interval(self):
         with tempfile.TemporaryDirectory() as directory:
-            for value in (0, 100):
+            for index, value in enumerate((0, 100, 10**309)):
                 with self.subTest(value=value):
-                    case = Path(directory) / str(value)
+                    case = Path(directory) / str(index)
                     case.mkdir()
                     path = self.recipe_path(case, regression_pct=value)
                     with self.assertRaisesRegex(ValueError, "between 0 and 100"):
@@ -775,9 +793,9 @@ class FocusedInputEdgeTests(unittest.TestCase):
 
     def test_recipe_requires_spread_limit_inside_open_interval(self):
         with tempfile.TemporaryDirectory() as directory:
-            for value in (0, 100):
+            for index, value in enumerate((0, 100, 10**309)):
                 with self.subTest(value=value):
-                    case = Path(directory) / str(value)
+                    case = Path(directory) / str(index)
                     case.mkdir()
                     path = self.recipe_path(case, max_spread_pct=value)
                     with self.assertRaisesRegex(ValueError, "between 0 and 100"):
@@ -816,6 +834,35 @@ class FocusedInputEdgeTests(unittest.TestCase):
             path = self.write_summary(Path(directory), summary)
             with self.assertRaisesRegex(ValueError, "missing machine"):
                 performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
+    def test_sample_requires_cpu_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for value in (None, "", " \t"):
+                with self.subTest(value=value):
+                    summary = self.sample_fixture()
+                    if value is None:
+                        del summary["machine"]["cpu"]
+                    else:
+                        summary["machine"]["cpu"] = value
+                    path = self.write_summary(root, summary)
+                    with self.assertRaisesRegex(ValueError, "identity.*cpu"):
+                        performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
+    def test_sample_requires_text_for_machine_and_title_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for field in ("os", "gpu", "driver", "cpu", "title"):
+                for value in (True, 1, ["Example"], " \t"):
+                    with self.subTest(field=field, value=value):
+                        summary = self.sample_fixture()
+                        if field == "title":
+                            summary["titles"]["PPSA00000"]["name"] = value
+                        else:
+                            summary["machine"][field] = value
+                        path = self.write_summary(root, summary)
+                        with self.assertRaisesRegex(ValueError, f"identity.*{field}"):
+                            performance_bisect.sample_summary(path, "PPSA00000", GOOD)
 
     def test_sample_requires_content_version(self):
         with tempfile.TemporaryDirectory() as directory:
