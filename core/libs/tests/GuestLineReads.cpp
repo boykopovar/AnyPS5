@@ -10,7 +10,9 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -47,6 +49,34 @@ void RegisterAllocator() {
 
 }
 
+#ifdef _WIN32
+namespace {
+std::size_t PageSize() {
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    return info.dwPageSize;
+}
+void* PageAlloc(std::size_t size) { return VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE); }
+bool PageProtect(void* address, std::size_t size, bool writable) {
+    DWORD previous = 0;
+    return VirtualProtect(address, size, writable ? PAGE_READWRITE : PAGE_READONLY, &previous) != 0;
+}
+void PageFree(void* address) { VirtualFree(address, 0, MEM_RELEASE); }
+}
+#else
+namespace {
+std::size_t PageSize() { return static_cast<std::size_t>(sysconf(_SC_PAGESIZE)); }
+void* PageAlloc(std::size_t size) {
+    void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return mapped == MAP_FAILED ? nullptr : mapped;
+}
+bool PageProtect(void* address, std::size_t size, bool writable) {
+    return mprotect(address, size, writable ? (PROT_READ | PROT_WRITE) : PROT_READ) == 0;
+}
+void PageFree(void* address) { munmap(address, PageSize()); }
+}
+#endif
+
 int main(int argc, char** argv) {
     Require(argc == 2);
     RegisterAllocator();
@@ -73,6 +103,8 @@ int main(int argc, char** argv) {
     char* const remaining = line;
     Require(getline_nid_postfix(&line, &capacity, stream) == -1);
     Require(line == remaining && feof_nid_postfix(stream) != 0 && ferror_nid_postfix(stream) == 0);
+    std::strcpy(line, "xyz");
+    Require(getline_nid_postfix(&line, &capacity, stream) == -1 && line == remaining && line[0] == '\0');
     errno = 0;
     Require(getline_nid_postfix(nullptr, &capacity, stream) == -1 && errno == EINVAL);
     Require(getline_nid_postfix(&line, nullptr, stream) == -1 && errno == EINVAL);
@@ -133,11 +165,10 @@ int main(int argc, char** argv) {
     free_nid_postfix(highLine);
     Require(std::filesystem::remove(highPath));
 
-#ifndef _WIN32
-    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-    auto* lineStorage = static_cast<std::byte*>(mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    auto* capacityStorage = static_cast<std::byte*>(mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    Require(lineStorage != MAP_FAILED && capacityStorage != MAP_FAILED);
+    const auto page = PageSize();
+    auto* lineStorage = static_cast<std::byte*>(PageAlloc(page));
+    auto* capacityStorage = static_cast<std::byte*>(PageAlloc(page));
+    Require(lineStorage != nullptr && capacityStorage != nullptr);
     auto** linePointer = reinterpret_cast<char**>(lineStorage);
     auto* capacityPointer = reinterpret_cast<std::size_t*>(capacityStorage);
     char* kept = static_cast<char*>(realloc_nid_postfix(nullptr, 4));
@@ -150,24 +181,25 @@ int main(int argc, char** argv) {
     Require(stream != nullptr && fwrite_nid_postfix("longer line\n", 1, 12, stream) == 12);
     Require(fseek_nid_postfix(stream, 0, SEEK_SET) == 0);
 
-    Require(mprotect(lineStorage, page, PROT_READ) == 0);
+    Require(PageProtect(lineStorage, page, false));
     errno = 0;
     Require(getline_nid_postfix(linePointer, capacityPointer, stream) == -1 && errno == EFAULT);
     Require(*linePointer == kept && *capacityPointer == 4 && std::memcmp(kept, "old", 4) == 0);
 
-    Require(mprotect(lineStorage, page, PROT_READ | PROT_WRITE) == 0);
-    Require(mprotect(capacityStorage, page, PROT_READ) == 0);
+    Require(PageProtect(lineStorage, page, true));
+    Require(PageProtect(capacityStorage, page, false));
     Require(fseek_nid_postfix(stream, 0, SEEK_SET) == 0);
     errno = 0;
     Require(getline_nid_postfix(linePointer, capacityPointer, stream) == -1 && errno == EFAULT);
     Require(*linePointer == kept && *capacityPointer == 4 && std::memcmp(kept, "old", 4) == 0);
 
-    Require(mprotect(capacityStorage, page, PROT_READ | PROT_WRITE) == 0);
+    Require(PageProtect(capacityStorage, page, true));
     Require(fclose_nid_postfix(stream) == 0);
     Require(std::filesystem::remove(growPath));
-    Require(munmap(lineStorage, page) == 0 && munmap(capacityStorage, page) == 0);
+    PageFree(lineStorage);
+    PageFree(capacityStorage);
     free_nid_postfix(kept);
-#endif
+
 
     free_nid_postfix(line);
     Require(std::filesystem::remove(path));
