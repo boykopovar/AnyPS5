@@ -407,6 +407,20 @@ void TestScaledHexadecimal() {
     CheckScaledHexadecimal(_Stodx_nid_postfix, "-0x1p0", std::numeric_limits<std::int64_t>::min(), -0.0, 6, true);
     CheckScaledHexadecimal(_Stofx_nid_postfix, "0x1p999999999999999999999", std::numeric_limits<std::int64_t>::min(), 0.0f, 25, true);
     CheckScaledHexadecimal(_Stofx_nid_postfix, "0x1p-999999999999999999999", std::numeric_limits<std::int64_t>::max(), HUGE_VALF, 26, true);
+    CheckScaledHexadecimal(_Stofx_nid_postfix, "0x1p999999999999999999999", 1, HUGE_VALF, 25, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "0x1p9223372036854775807", 1, HUGE_VAL, 23, false);
+    CheckScaledHexadecimal(_Stoldx_nid_postfix, "0x1p9223372036854775807", 1, HUGE_VALL, 23, false);
+    CheckScaledHexadecimal(_Stofx_nid_postfix, "-0x1p-999999999999999999999", 1, -0.0f, 27, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "-0x1p-9223372036854775808", 1, -0.0, 25, false);
+    CheckScaledHexadecimal(_Stoldx_nid_postfix, "-0x1p-9223372036854775808", 1, -0.0L, 25, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "0x1p-9223372036854775808", -320, 0.0, 24, false);
+    CheckScaledHexadecimal(_Stofx_nid_postfix, "0x1p-9223372036854775808", -40, 0.0f, 24, false);
+    {
+        const std::string fraction = "0x1." + std::string(4096, '0') + "1p9223372036854775807";
+        CheckScaledHexadecimal(_Stodx_nid_postfix, fraction.c_str(), -1, HUGE_VAL, static_cast<long>(fraction.size()), false);
+        const std::string integer = "0x1" + std::string(4096, '0') + "p-9223372036854775808";
+        CheckScaledHexadecimal(_Stodx_nid_postfix, integer.c_str(), 1, 0.0, static_cast<long>(integer.size()), false);
+    }
     CheckScaledHexadecimal(_Stofx_nid_postfix, "0xC000.p-455g", 36, 0.0f, 12, false);
     CheckScaledHexadecimal(_Stofx_nid_postfix, "0x1p455", -45, HUGE_VALF, 7, false);
     CheckScaledHexadecimal(_Stofx_nid_postfix, "0x1p4", -40, 0x116c2p-145f, 5, false);
