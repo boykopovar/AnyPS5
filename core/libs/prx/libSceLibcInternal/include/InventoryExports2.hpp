@@ -25,7 +25,7 @@ int APS5_VABI _WGetfld_nid_postfix();
 void APS5_VABI _Unlock_spin_lock_nid_postfix(volatile char* lock, int mode = 0);
 int APS5_VABI _ZNKSt7_MpunctIcE11do_groupingEv_nid_postfix();
 void APS5_VABI _Setgloballocale_nid_postfix(void* pointer);
-int APS5_VABI _Wctomb_nid_postfix();
+int APS5_VABI _Wctomb_nid_postfix(char* destination, std::uint16_t value, void* state);
 int APS5_VABI _WGetint_nid_postfix();
 int APS5_VABI _WScanf_nid_postfix();
 int APS5_VABI _WFwprep_nid_postfix();

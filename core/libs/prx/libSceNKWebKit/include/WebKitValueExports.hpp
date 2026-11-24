@@ -119,6 +119,9 @@ bool APS5_VABI WKBundleHitTestResultMediaIsInFullscreen(const void* hitTestResul
 const void* APS5_VABI WKBundleHitTestResultCopyNodeHandle(const void* hitTestResultRef);
 const void* APS5_VABI WKBundleHitTestResultCopyURLElementHandle(const void* hitTestResultRef);
 NKWebKit::RectValue APS5_VABI WKBundleHitTestResultGetImageRect(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultCopyImage(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultGetFrame(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultGetTargetFrame(const void* hitTestResultRef);
 std::uint32_t APS5_VABI WKBundleInspectorGetTypeID();
 void APS5_VABI WKBundleInspectorClose(const void* inspectorRef);
 void APS5_VABI WKBundleInspectorEvaluateScriptForTest(const void* inspectorRef, const void* scriptRef);

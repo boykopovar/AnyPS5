@@ -68,6 +68,26 @@ int main(int argc, char** argv) {
     try {
         Require(argc == 2, "invalid test arguments");
         const std::string_view mode = argv[1];
+        if (mode == "startup_retry") {
+            driver = "wasapi";
+            outputDevices = 0;
+            endpointAbsent = true;
+            const int port = sceAudioOutOpen(0x10000000, 0, 0, 256, 48000, 1);
+            Require(port >= 1 && probes == 1 && opened == 0, "the port did not start without an output endpoint");
+
+            outputDevices = 2;
+            endpointAbsent = false;
+            std::array<std::int16_t, 256 * 2> samples{};
+            nowUs += 1999999;
+            Require(sceAudioOutOutput(port, samples.data()) == 256, "virtual output failed before retry");
+            Require(opened == 0 && queuedLive == 0 && queuedDead == 0, "the initial output retried before the interval elapsed");
+            ++nowUs;
+            Require(sceAudioOutOutput(port, samples.data()) == 256, "output failed when the initial endpoint appeared");
+            Require(opened == 1 && queuedLive == 1 && queuedDead == 0, "audio did not start when the initial endpoint appeared");
+            Require(sceAudioOutClose(port) == 0, "the recovered guest port did not close");
+            return 0;
+        }
+
         bool expectOpen = true;
         if (mode == "zero_default") {
             driver = "alsa";

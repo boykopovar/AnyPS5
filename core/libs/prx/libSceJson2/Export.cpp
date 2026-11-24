@@ -385,8 +385,7 @@ std::uint32_t CompiledSdk() {
     std::uint32_t sdk = std::numeric_limits<std::uint32_t>::max();
     if (lookupFailed.load(std::memory_order_relaxed)) return sdk;
     try {
-        const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-        if (process) std::memcpy(&sdk, process + 0x10, sizeof(sdk));
+        sdk = ApplicationCompiledSdkVersion();
     } catch (const std::runtime_error&) {
         lookupFailed.store(true, std::memory_order_relaxed);
     }
