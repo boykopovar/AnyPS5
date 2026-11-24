@@ -603,13 +603,28 @@ std::uint32_t VideoOutDriver::GetDisplayResolution() {
     return displayResolution.load();
 }
 
+HostDisplayMode KeepHostDisplayMode(const std::optional<HostDisplayMode>& known, const std::optional<HostDisplayMode>& measured, const std::string& failure) {
+    if (measured) return *measured;
+    if (known) return *known;
+    throw std::runtime_error(failure);
+}
+
 void VideoOutDriver::updateDisplayRefreshRate() {
+    std::optional<HostDisplayMode> measured;
+    std::string failure;
     const int display = SDL_GetWindowDisplayIndex(window.Handle());
-    if (display < 0) throw std::runtime_error(std::string("SDL_GetWindowDisplayIndex failed: ") + SDL_GetError());
     SDL_DisplayMode mode{};
-    if (SDL_GetCurrentDisplayMode(display, &mode) != 0) throw std::runtime_error(std::string("SDL_GetCurrentDisplayMode failed: ") + SDL_GetError());
-    displayRefreshRate.store(mode.refresh_rate);
-    displayResolution.store(resolutionIndex(mode.w, mode.h));
+    if (display < 0) {
+        failure = std::string("SDL_GetWindowDisplayIndex failed: ") + SDL_GetError();
+    } else if (SDL_GetCurrentDisplayMode(display, &mode) != 0) {
+        failure = std::string("SDL_GetCurrentDisplayMode failed: ") + SDL_GetError();
+    } else {
+        measured = HostDisplayMode{mode.refresh_rate, resolutionIndex(mode.w, mode.h)};
+    }
+    const auto kept = KeepHostDisplayMode(knownDisplayMode, measured, failure);
+    knownDisplayMode = kept;
+    displayRefreshRate.store(kept.refreshRate);
+    displayResolution.store(kept.resolution);
 }
 
 void VideoOutDriver::pollHostHdr() {
