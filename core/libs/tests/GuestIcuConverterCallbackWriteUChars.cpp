@@ -148,6 +148,8 @@ void FailedStatusNoAccess() {
         reinterpret_cast<const char16_t**>(std::uintptr_t{1}),
         reinterpret_cast<const char16_t*>(std::uintptr_t{1}), INT32_MIN, &status[1]);
     Require(status == std::array<std::int32_t, 3>{0x12345678, U_ILLEGAL_ARGUMENT_ERROR, 0x76543210}, "failed status and guards unchanged");
+    ucnv_cbFromUWriteUChars_nid_postfix(nullptr, nullptr, nullptr, INT32_MIN, &status[1]);
+    Require(status == std::array<std::int32_t, 3>{0x12345678, U_ILLEGAL_ARGUMENT_ERROR, 0x76543210}, "failed status ignores null arguments");
     Require(errno == 91, "failed status preserves errno");
 }
 
