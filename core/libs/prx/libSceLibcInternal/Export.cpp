@@ -1022,11 +1022,6 @@ int APS5_VABI _Getfloat_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Getgloballocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Getint_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1151,11 +1146,6 @@ int APS5_VABI _Makestab_nid_postfix() {
 }
 
 int APS5_VABI _Makewct_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Mbtowc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
