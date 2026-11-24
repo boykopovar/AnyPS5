@@ -102,8 +102,10 @@ struct MeshArgumentRules {
     std::uint32_t maxGroups;
     std::uint32_t maxInstances;
     std::uint32_t maxTotal;
+    std::uint32_t firstIgnored;
 };
 MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount);
+MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, const Pm4::DrawParameters& draw);
 struct MeshGrid {
     std::uint32_t groups;
     std::uint32_t instances;

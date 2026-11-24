@@ -117,8 +117,10 @@ target_sources(icu_common PRIVATE
     ${ICU_SOURCE_DIR}/common/fixedstring.cpp
     ${ICU_SOURCE_DIR}/common/localebuilder.cpp
     ${ICU_SOURCE_DIR}/common/locid.cpp
+    ${ICU_SOURCE_DIR}/common/locdispnames.cpp
     ${ICU_SOURCE_DIR}/common/loclikely.cpp
     ${ICU_SOURCE_DIR}/common/loclikelysubtags.cpp
+    ${ICU_SOURCE_DIR}/common/locresdata.cpp
     ${ICU_SOURCE_DIR}/common/lsr.cpp
     ${ICU_SOURCE_DIR}/common/resource.cpp
     ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
@@ -135,6 +137,7 @@ endif()
 target_include_directories(icu_common SYSTEM PUBLIC ${ICU_SOURCE_DIR}/common)
 target_compile_definitions(icu_common PUBLIC U_STATIC_IMPLEMENTATION PRIVATE U_COMMON_IMPLEMENTATION UCONFIG_NO_FILE_IO=1 UCONFIG_USE_WINDOWS_LCID_MAPPING_API=0)
 target_compile_features(icu_common PUBLIC cxx_std_17)
+target_sources(icu_common PRIVATE ${ICU_SOURCE_DIR}/common/uset.cpp)
 set_target_properties(icu_common PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(icu_common INTERFACE LINKER:--exclude-libs,libicu_common.a)

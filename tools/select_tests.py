@@ -74,9 +74,10 @@ class Build:
         return found
 
     def walk(self, roots):
+        built = {line.rpartition(": ")[0] for line in self.run("-t", "targets", "all").splitlines()}
         nodes, todo = {}, list(roots)
         while todo:
-            batch = sorted({t for t in todo if t not in nodes})
+            batch = sorted({t for t in todo if t not in nodes and t in built})
             if not batch:
                 break
             nodes.update(self.query(batch))
@@ -99,7 +100,7 @@ class Build:
 
     def tests(self, *arguments):
         listing = json.loads(subprocess.run(["ctest", "--test-dir", self.path, "--show-only=json-v1", *arguments],
-                                            capture_output=True, text=True, check=True).stdout)
+                                            capture_output=True, text=True, encoding="utf-8", check=True).stdout)
         missing = {test["name"] for test in listing["tests"] if not test.get("command")}
         if missing:
             commands = self.test_commands(missing)
@@ -288,13 +289,17 @@ def select(graph, changed, reasons=None):
     known = set().union(*closures.values(), *(t["arguments"] for t in tests.values()))
     files = set(changed)
     dirs = tuple(f.rpartition("/")[0] + "/" for f in changed if "/" in f and (LOCAL.search(f) or f not in known))
+    affected = {target for target, scope in closures.items()
+                if not files.isdisjoint(scope) or (dirs and any(path.startswith(dirs) for path in scope))}
     picked = set()
     for name, test in tests.items():
-        scope = closures.get(test["target"], set()) | set(test["arguments"])
-        if (test["target"] is None or files & set(test["registered"]) or files & scope
-                or any(f.startswith(dirs) for f in scope | set(test["registered"]))):
+        arguments, registered = set(test["arguments"]), set(test["registered"])
+        if (test["target"] is None or test["target"] in affected
+                or not files.isdisjoint(registered) or not files.isdisjoint(arguments)
+                or (dirs and any(path.startswith(dirs) for path in arguments | registered))):
             picked.add(name)
             if reasons is not None:
+                scope = closures.get(test["target"], set()) | arguments
                 reasons[name] = (["no build executable"] if test["target"] is None else [])
                 reasons[name] += ["input: " + path for path in sorted(files & scope)]
                 reasons[name] += ["registration: " + path for path in sorted(files & set(test["registered"]))]
@@ -374,21 +379,24 @@ def main(argv=None):
     e = sub.add_parser("explain", help="explain saved-graph selections without a configured build; CTest may add fixtures")
     e.add_argument("graph", type=Path)
     e.add_argument("changed", type=Path, help="file with newline-separated or Git -z NUL-separated changed paths")
+    t = sub.add_parser("targets", help="print the build outputs that the tests matching a ctest regular expression, and the fixtures ctest adds to them, run")
+    t.add_argument("build")
+    t.add_argument("regex", help="ctest -R regular expression")
     c = sub.add_parser("ctest", help="run ctest on a tree, limited to the selected tests if select wrote any")
     c.add_argument("build")
     c.add_argument("arguments", nargs=argparse.REMAINDER, help="ctest arguments")
     args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
-        command = ["ctest", "--test-dir", args.build, *args.arguments]
+        command = ["ctest", "--test-dir", args.build]
         try:
             indices = selected.read_text(encoding="utf-8-sig").strip()
         except FileNotFoundError:
-            return subprocess.run(command).returncode
+            return subprocess.run([*command, "--no-tests=error", *args.arguments]).returncode
         except (OSError, UnicodeDecodeError) as error:
             parser.error(f"{selected}: {error}")
         with ctest_index_file(indices) as index_file:
-            return subprocess.run([*command, "-I", index_file]).returncode
+            return subprocess.run([*command, *args.arguments, "-I", index_file]).returncode
     if args.command == "explain":
         try:
             graph = load_graph(args.graph)
@@ -405,6 +413,14 @@ def main(argv=None):
         build = Build(args.build)
     except (OSError, KeyError) as error:
         parser.error(f"{args.build}: not a configured CMake build directory ({error})")
+    if args.command == "targets":
+        _, listed = build.tests("-R", args.regex)
+        if not listed:
+            parser.error(f"no test matches {args.regex}")
+        wanted = {build.output(path) for test in listed for path in paths(test.get("command") or [])} - {None}
+        for target in build.outputs(sorted(wanted)):
+            print(target)
+        return 0
     if args.command == "dump":
         dump(build, args.graph)
         return 0

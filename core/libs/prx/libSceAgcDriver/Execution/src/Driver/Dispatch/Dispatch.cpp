@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -28,6 +29,31 @@
 namespace AgcDriver::DriverDetail {
 
 namespace {
+
+struct PipelineSkips {
+    std::mutex mutex;
+    std::map<std::uint64_t, std::uint64_t> skipped;
+};
+
+PipelineSkips& pipelineSkips() {
+    static PipelineSkips skips;
+    return skips;
+}
+
+void NotePipelineSkip(std::uint64_t address, std::size_t words) {
+    auto& skips = pipelineSkips();
+    std::lock_guard lock(skips.mutex);
+    if (skips.skipped[address]++ == 0) std::fprintf(stderr, "[dispatch] skipping the dispatches of compute shader 0x%llx while its pipeline builds (%zu SPIR-V words)\n", static_cast<unsigned long long>(address), words);
+}
+
+void NotePipelineReady(std::uint64_t address) {
+    auto& skips = pipelineSkips();
+    std::lock_guard lock(skips.mutex);
+    const auto found = skips.skipped.find(address);
+    if (found == skips.skipped.end()) return;
+    std::fprintf(stderr, "[dispatch] compute shader 0x%llx: its pipeline is ready after %llu skipped dispatches\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(found->second));
+    skips.skipped.erase(found);
+}
 
 bool DispatchItemsEnabled() {
     static const bool enabled = [] {
@@ -286,13 +312,14 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     require(snapshot.type == 0, "compute program refers to a non-compute shader");
     const auto userCount = (readRegister(queue.shader, 0x213) >> 1u) & 0x1fu;
     std::vector<std::uint32_t> userData;
+    userData.reserve(userCount);
     for (std::uint32_t i = 0; i < userCount; ++i) {
         userData.push_back(readUserData(queue.shader, 0x240 + i));
     }
     auto compute = Graphics::DecodeComputeStageInfo(queue.shader, snapshot.header);
     const bool resolving = resolvingAhead();
-    std::vector<ShaderRecompiler::MemoryRegion> memory{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}};
-    if (!snapshot.header.empty()) memory.push_back({snapshot.headerAddress, snapshot.header});
+    const std::array<ShaderRecompiler::MemoryRegion, 2> memoryRegions{{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}, {snapshot.headerAddress, snapshot.header}}};
+    const auto memory = std::span(memoryRegions).first(snapshot.header.empty() ? 1u : 2u);
 
     static const bool unlockedDevice = std::getenv("APS5_NO_UNLOCKED_DEVICE") == nullptr;
     std::shared_ptr<VulkanDevice> localDevice = unlockedDevice ? device.Load() : nullptr;
@@ -332,7 +359,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     if (indirectArguments == 0 && (packet[4] & 0x2u) != 0) {
         partialGroups = Pm4::PartialGroupThreads({packet[1], packet[2], packet[3]}, {readRegister(queue.shader, 0x207), readRegister(queue.shader, 0x208), readRegister(queue.shader, 0x209)});
     }
-    const bool pipelineCandidate = !resolving && !fromAhead && DispatchItemsEnabled() && DrawPipeline::Active() && indirectArguments == 0 && deferredLabels().labels.empty() && !matchesCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesStreamCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesTableCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesIndexedCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute);
+    const bool pipelineCandidate = !resolving && !fromAhead && DispatchItemsEnabled() && DrawPipeline::Active() && indirectArguments == 0 && deferredLabels().labels.empty() && !matchesCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesStreamCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesTableCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesWideTableCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) &&!MatchesIndexedCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute);
     const bool partialLastGroup = partialGroups != std::array<std::uint32_t, 3>{};
     std::optional<std::pair<std::uint64_t, std::size_t>> htileClearCompletion;
     Graphics::HtileMaskClear htileMask;
@@ -340,22 +367,38 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         if (indirectArguments == 0 && Graphics::MatchMultisampledSingleClear(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads)) return;
         if (!partialLastGroup && matchesFillKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute)) return;
         if (!partialLastGroup && indirectArguments == 0 && (MatchDwordPatternFill(packet, std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchConstantDwordFill(packet, std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchClampedGlobalFill(packet, std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchMemoryValueBufferFill(packet, std::span(snapshot.code).subspan(codeOffset), userData, compute))) return;
-        if (!partialLastGroup && indirectArguments == 0 && (matchesCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchesStreamCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchesIndexedCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchesTableCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute))) return;
+        if (!partialLastGroup && indirectArguments == 0 && (matchesCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchesStreamCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchesIndexedCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchesTableCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchesWideTableCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute))) return;
     } else {
-        if (indirectArguments == 0 && Graphics::TakeMultisampledSingleClear(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads)) {
-            pendingDispatchPhases().outcome = DispatchOutcome::FillHle;
-            if (resolvedAhead().empty()) gateOpened() = true;
-            return;
-        }
-        if (indirectArguments == 0 && (packet[4] & 0x20u) == 0) {
-            if (const auto fill = Graphics::MatchMemoryValueFill(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads, {packet[1], packet[2], packet[3]})) Graphics::NoteMemoryValueFill(*fill);
+        if (indirectArguments == 0 && Graphics::MatchMultisampledSingleClear(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads)) {
+            if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
+            if (Graphics::TakeMultisampledSingleClear(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads)) {
+                pendingDispatchPhases().outcome = DispatchOutcome::FillHle;
+                if (resolvedAhead().empty()) gateOpened() = true;
+                return;
+            }
         }
         if (!partialLastGroup && fillBuffer(queue, submission.queue, packet, std::span(snapshot.code).subspan(codeOffset), userData, compute, localDevice)) {
             pendingDispatchPhases().outcome = DispatchOutcome::FillHle;
             if (resolvedAhead().empty()) gateOpened() = true;
             return;
         }
+        if (!partialLastGroup) {
+            if (const auto patch = Graphics::MatchHtileClearedHiZPatch(std::span(snapshot.code).subspan(codeOffset), userData, compute, packet, indirectArguments)) {
+                if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
+                if (Graphics::SkipNoOpHtileHiZPatch(*patch)) {
+                    pendingDispatchPhases().outcome = DispatchOutcome::FillHle;
+                    if (resolvedAhead().empty()) gateOpened() = true;
+                    return;
+                }
+            }
+        }
         if (DrawPipeline::Active() && !pipelineCandidate) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
+        if (indirectArguments == 0 && (packet[4] & 0x20u) == 0) {
+            if (const auto fill = Graphics::MatchMemoryValueFill(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads, {packet[1], packet[2], packet[3]})) {
+                if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
+                Graphics::NoteMemoryValueFill(*fill);
+            }
+        }
         if (const auto htile = Graphics::HtileDepthClearAddress(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads); htile != 0) {
             const auto threads = (packet[4] & 0x20u) != 0 ? static_cast<std::uint64_t>(packet[1]) : static_cast<std::uint64_t>(packet[1]) * compute.numThreads[0];
             const auto nativeBytes = Graphics::HtileDepthClearBytes_nid_no_patch(std::span(snapshot.code).subspan(codeOffset), userData, compute, packet, indirectArguments);
@@ -402,7 +445,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     static std::atomic<double> captureMs{0}, keyMs{0}, recompileMs{0}, deviceMs{0};
     static std::atomic<std::uint64_t> cacheHits{0};
     static std::atomic<std::uint64_t> dispatches{0};
-    auto lap = std::chrono::steady_clock::now();
+    auto lap = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 
     std::array<double, DriverPhaseCount> phaseMs{};
     auto phaseLap = lap;
@@ -691,6 +734,24 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         return;
     }
     if (verifyDataHits() && dataHit) verifyDataHit(snapshot, codeOffset, request, memory, address, *keepVariant, liveWords, *compiledResult);
+    if (AsyncDrawCompile() && compiledResult != nullptr && localDevice != nullptr && compiledResult->spirv.size() >= AsyncComputePipelineWords()) {
+        const auto ahead = localDevice->ComputePipelineAhead(*compiledResult);
+        if (ahead == VulkanDevice::PipelineAhead::Start) {
+            try {
+                SubmitComputePrebuild([localDevice, compiledResult, address] {
+                    try { localDevice->PrebuildComputePipeline(*compiledResult, address); } catch (...) {}
+                });
+            } catch (...) {
+                localDevice->AbandonComputePipelineAhead(*compiledResult);
+                throw;
+            }
+        }
+        if (ahead == VulkanDevice::PipelineAhead::Start || ahead == VulkanDevice::PipelineAhead::Building) {
+            if (profile) NotePipelineSkip(address, compiledResult->spirv.size());
+            return;
+        }
+        if (profile) NotePipelineReady(address);
+    }
 
     if (recordQueuedLabelsAfterCapture(submission.queue, captured)) {
         dispatch(queue, packet, submission, indirectArguments);
@@ -699,6 +760,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     phaseTiming.Phase(PhaseQueuedLabels);
     const auto& compiled = *compiledResult;
     std::vector<Graphics::GuestMemorySnapshot> snapshots;
+    snapshots.reserve(captured.size());
     for (const auto& region : captured) snapshots.push_back({region.guestAddress, region.bytes});
     std::array<std::uint32_t, 3> groups{packet[1], packet[2], packet[3]};
     if (indirectArguments == 0 && (packet[4] & 0x20u) != 0) {

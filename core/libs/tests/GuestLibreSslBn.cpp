@@ -497,6 +497,20 @@ int main(int argc, char** argv) {
             BN_free_nid_postfix(operand);
             BN_free_nid_postfix(modulus);
         }
+        constexpr std::uint64_t divisionByZero = ((3u & 0xffu) << 24) | ((0xfffu & 0xfffu) << 12) | (103u & 0xfffu);
+        Bn* zero = FromHex("0");
+        for (const char* text : {"3", "0", "-3"}) {
+            Bn* operand = FromHex(text);
+            for (bool supplied : {false, true}) {
+                Require(BN_set_word_nid_postfix(r, 0x1234) == 1);
+                Require(BN_mod_inverse_nid_postfix(supplied ? r : nullptr, operand, zero, ctx) == nullptr);
+                Require(Hex(r) == "1234");
+                Require(ERR_get_error_nid_postfix() == divisionByZero);
+                Require(ERR_get_error_nid_postfix() == 0);
+            }
+            BN_free_nid_postfix(operand);
+        }
+        BN_free_nid_postfix(zero);
         Bn* allocated = BN_mod_inverse_nid_postfix(nullptr, three, eleven, ctx);
         Require(allocated && Hex(allocated) == "4");
         Bn* minusThree = FromHex("-3");

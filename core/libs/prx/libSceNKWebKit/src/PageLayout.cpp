@@ -78,6 +78,11 @@ void APS5_VABI WKPageSetPaginationBehavesLikeColumns(const void* pageRef, bool b
     page->paginationBehavesLikeColumns = behavesLikeColumns;
 }
 
+bool APS5_VABI WKPageGetPaginationLineGridEnabled(const void* pageRef) {
+    const auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    return page->paginationLineGridEnabled;
+}
+
 void APS5_VABI WKPageSetPaginationLineGridEnabled(const void* pageRef, bool lineGridEnabled) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
     page->paginationLineGridEnabled = lineGridEnabled;

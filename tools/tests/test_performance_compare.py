@@ -93,6 +93,14 @@ class WorkerComparisonTests(unittest.TestCase):
 
 
 class PerformanceCompareTests(unittest.TestCase):
+    def test_markdown_distinguishes_missing_context_from_literal_null(self):
+        with_title = dict(SUMMARY, title="null")
+        for before, after, row in (
+                (SUMMARY, with_title, "| title | <em>not recorded</em> | null |"),
+                (with_title, SUMMARY, "| title | null | <em>not recorded</em> |")):
+            with self.subTest(row=row):
+                self.assertIn(row, performance_compare.markdown(performance_compare.compare(before, after)).splitlines())
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -536,6 +544,17 @@ class PerformanceCompareTests(unittest.TestCase):
                 candidate[key] = value
                 self.write(self.after, candidate)
                 self.assertEqual(self.run_cli("--require-matching-context").returncode, 2)
+
+    def test_trace_output_directory_does_not_change_the_comparison_context(self):
+        self.write(self.before, self.baseline)
+        self.candidate["env"]["APS5_TRACE_DIR"] = "<path>"
+        self.write(self.after, self.candidate)
+
+        result = self.run_cli("--require-matching-context", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["configuration_differences"], {})
+        self.assertEqual(report["candidate"]["env"]["APS5_TRACE_DIR"], "<path>")
 
     def test_timed_windows_allow_different_first_present_counters(self):
         for summary in (self.baseline, self.candidate):

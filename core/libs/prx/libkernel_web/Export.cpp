@@ -88,9 +88,8 @@ int APS5_VABI __sys_namedobj_create_nid_disambig1_nid_postfix(const char* name, 
     return GuestNamedObjectCreate_nid_no_patch(name, object, type);
 }
 
-int APS5_VABI __sys_namedobj_delete_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __sys_namedobj_delete_nid_disambig1_nid_postfix(std::uint32_t id, std::uint32_t type) {
+    return GuestNamedObjectDelete_nid_no_patch(id, type);
 }
 
 int APS5_VABI __sys_netabort_nid_disambig1_nid_postfix() {

@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "unicode/utypes.h"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -11,6 +12,9 @@
 #include <limits>
 #include <source_location>
 #include <string>
+
+U_CAPI int32_t U_EXPORT2 u_strcmpCodePointOrder(const UChar* s1, const UChar* s2);
+U_CAPI int32_t U_EXPORT2 u_strncmpCodePointOrder(const UChar* s1, const UChar* s2, int32_t n);
 
 
 namespace {
@@ -197,6 +201,46 @@ void Comparisons() {
     Require(u_strcmpCodePointOrder_nid_postfix(nullptr, nullptr) == 0);
     Throws([&] { u_strcmpCodePointOrder_nid_postfix(nullptr, u"a"); });
     Throws([&] { u_strncmpCodePointOrder_nid_postfix(u"a", nullptr, -1); });
+
+    const char16_t unpairedLead[]{0xd800, u'x', 0};
+    const char16_t unpairedTrail[]{0xdc00, 0};
+    const char16_t trailAfterLetter[]{u'a', 0xdc00, 0};
+    const char16_t letterThenBmp[]{u'a', 0xe000, 0};
+    const char16_t leadThenBmp[]{0xd800, 0xe000, 0};
+    const char16_t highPair[]{0xdbff, 0xdfff, 0};
+    const char16_t lastBmp[]{0xffff, 0};
+    const char16_t reversedPair[]{0xdc00, 0xd800, 0};
+    const char16_t letterPair[]{u'a', 0xd800, 0xdc00, 0};
+    const char16_t letterLastBmp[]{u'a', 0xffff, 0};
+    Require(u_strcmpCodePointOrder_nid_postfix(unpairedLead, bmp) == -0x800);
+    Require(u_strcmpCodePointOrder_nid_postfix(unpairedTrail, bmp) == -0x400);
+    Require(u_strcmpCodePointOrder_nid_postfix(trailAfterLetter, letterThenBmp) == -0x400);
+    Require(u_strcmpCodePointOrder_nid_postfix(supplementary, leadThenBmp) == 0x2400);
+    Require(u_strcmpCodePointOrder_nid_postfix(highPair, lastBmp) == 0x400);
+    Require(u_strcmpCodePointOrder_nid_postfix(u"a", bmp) == 0x61 - 0xe000);
+    Require(u_strcmpCodePointOrder_nid_postfix(u"\xd7ff", supplementary) == -1);
+    Require(u_strcmpCodePointOrder_nid_postfix(reversedPair, bmp) == -0x400);
+    Require(u_strcmpCodePointOrder_nid_postfix(supplementary + 1, bmp) == -0x400);
+    Require(u_strncmpCodePointOrder_nid_postfix(supplementary + 1, bmp, 1) == -0x400);
+    Require(u_strncmpCodePointOrder_nid_postfix(lastBmp, supplementary, 1) == 0x27ff);
+    Require(u_strncmpCodePointOrder_nid_postfix(lastBmp, supplementary, 2) == -1);
+    Require(u_strncmpCodePointOrder_nid_postfix(letterPair, letterLastBmp, 2) == -0x27ff);
+    Require(u_strncmpCodePointOrder_nid_postfix(letterPair, letterLastBmp, 3) == 1);
+
+    constexpr std::array<char16_t, 9> units{0, u'a', 0xd7ff, 0xd800, 0xdbff, 0xdc00, 0xdfff, 0xe000, 0xffff};
+    constexpr std::array<char16_t, 2> before{u'a', 0xd800};
+    std::array<std::array<char16_t, 5>, 729 * 2> texts{};
+    for (std::size_t index = 0; index < texts.size(); ++index)
+        texts[index] = {before[index / 729], units[index % 9], units[index / 9 % 9], units[index / 81 % 9], 0};
+    for (const auto& left : texts) {
+        for (const auto& right : texts) {
+            const char16_t* first = left.data() + 1;
+            const char16_t* second = right.data() + 1;
+            Require(u_strcmpCodePointOrder_nid_postfix(first, second) == u_strcmpCodePointOrder(first, second));
+            for (std::int32_t count = -1; count <= 4; ++count)
+                Require(u_strncmpCodePointOrder_nid_postfix(first, second, count) == u_strncmpCodePointOrder(first, second, count));
+        }
+    }
 }
 
 } // namespace

@@ -11,6 +11,15 @@
 #include <exception>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -285,6 +294,78 @@ void CheckValidation() {
     Require(sceImeClose_nid_postfix() == 0, "close the external keyboard filter session");
 }
 
+struct GuardedTextPages {
+    std::uint8_t* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedTextPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr, "guarded VirtualAlloc failed");
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "guarded VirtualProtect failed");
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0, "sysconf page size failed");
+        pageSize = static_cast<std::size_t>(page);
+        void* mapping = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED, "guarded mmap failed");
+        base = static_cast<std::uint8_t*>(mapping);
+        Require(mprotect(base + pageSize, pageSize, PROT_NONE) == 0, "guarded mprotect failed");
+#endif
+    }
+
+    ~GuardedTextPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 2);
+#endif
+    }
+
+    char16_t* AtEnd(std::size_t unitsBeforeBoundary) const {
+        return reinterpret_cast<char16_t*>(base + pageSize - unitsBeforeBoundary * sizeof(char16_t));
+    }
+};
+
+void CheckGuardedSetText(Buffers& buffers) {
+    errno = 71;
+    Require(sceImeSetText(reinterpret_cast<const char16_t*>(0x10), 1) == InvalidAddress, "unmapped set text");
+    Require(errno == 71, "preserve errno on unmapped set text");
+    Require(std::u16string(buffers.text) == u"hello", "unmapped set text left input buffer");
+    Require(std::u16string(reinterpret_cast<const char16_t*>(buffers.work)) == u"hello", "unmapped set text left work buffer");
+
+    GuardedTextPages guarded;
+    char16_t* exactEnd = guarded.AtEnd(3);
+    exactEnd[0] = u'a';
+    exactEnd[1] = u'b';
+    exactEnd[2] = u'c';
+    Require(sceImeSetText(exactEnd, 3) == 0, "exact-length set text at page end");
+    Require(std::u16string(buffers.text) == u"abc", "exact-length set text value");
+
+    char16_t* terminatedEnd = guarded.AtEnd(3);
+    terminatedEnd[0] = u'o';
+    terminatedEnd[1] = u'k';
+    terminatedEnd[2] = u'\0';
+    Require(sceImeSetText(terminatedEnd, 16) == 0, "nul-terminated set text at page end");
+    Require(std::u16string(buffers.text) == u"ok", "nul-terminated set text value");
+
+    char16_t* crossing = guarded.AtEnd(2);
+    crossing[0] = u'x';
+    crossing[1] = u'y';
+    errno = EDOM;
+    Require(sceImeSetText(crossing, 4) == InvalidAddress, "crossing set text");
+    Require(errno == EDOM, "preserve errno on crossing set text");
+    Require(std::u16string(buffers.text) == u"ok", "crossing set text left input buffer");
+    Require(std::u16string(reinterpret_cast<const char16_t*>(buffers.work)) == u"ok", "crossing set text left work buffer");
+
+    Require(sceImeSetText(u"hello", 5) == 0, "restore text after guarded set text checks");
+}
+
 void CheckEditing() {
     Buffers buffers;
     std::memcpy(buffers.text, u"ab", sizeof(u"ab"));
@@ -359,6 +440,7 @@ void CheckEditing() {
     Require(sceImeSetText(u"hello", 5) == 0, "set text");
     Require(std::u16string(buffers.text) == u"hello", "set text buffer");
     Require(Drain().empty(), "set text queued an event");
+    CheckGuardedSetText(buffers);
     Caret caret{};
     caret.index = 6;
     Require(sceImeSetCaret(nullptr) == InvalidAddress, "null caret");
@@ -388,6 +470,7 @@ void CheckEditing() {
     Publish(ImeHostInputKind::Text, "ignored");
     Require(std::u16string(buffers.text) == u"hXello", "input after close");
     Require(sceImeSetText(u"a", 1) == NotOpened, "set text after close");
+    Require(sceImeSetText(reinterpret_cast<const char16_t*>(0x10), 1) == NotOpened, "unmapped set text checks open panel first");
 }
 
 void CheckMultiline() {

@@ -36,17 +36,11 @@ int main() {
     WKContextPreconnectToServer();
     WKContextRefreshPlugIns();
     WKContextSetAdditionalPluginsDirectory();
-    WKContextSetCanHandleHTTPSServerTrustEvaluation();
-    WKContextSetCustomWebContentServiceBundleIdentifier();
-    WKContextSetDiskCacheSpeculativeValidationEnabled();
     WKContextSetIconDatabasePath();
-    WKContextSetMaximumNumberOfProcesses();
     WKContextSetPlugInAutoStartOriginHashes();
     WKContextSetPlugInAutoStartOrigins();
     WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTime();
     WKContextSetPrimaryWebsiteDataStore();
-    WKContextSetProcessModel();
-    WKContextSetUsesNetworkProcess();
     WKCookieManagerDeleteAllCookies();
     WKCookieManagerSetHTTPCookieAcceptPolicy();
     WKIconDatabaseCheckIntegrityBeforeOpening();
@@ -58,7 +52,6 @@ int main() {
     WKIconDatabaseSetIconDataForIconURL();
     WKIconDatabaseSetIconDatabaseClient();
     WKIconDatabaseSetIconURLForPageURL();
-    WKPreferencesSetAccelerated2DCanvasEnabled();
     WKPreferencesSetQTKitEnabled();
     WKWebsiteDataStoreClearAllDeviceOrientationPermissions();
     WKWebsiteDataStoreReinitializeAppBoundDomains();

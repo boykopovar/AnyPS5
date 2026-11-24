@@ -349,7 +349,8 @@ int main() {
             const int frameSize = rate / 50;
             for (int frame = 0; frame < 4; ++frame) {
                 FillSine(samples.data(), frameSize, channels, rate, frame * frameSize);
-                const int bytes = sceOpusCeltEncEncode(ToState(matrixState), samples.data(), frameSize, packet, sizeof(packet));
+                const int bytes = frame % 2 == 0 ? sceOpusCeltEncEncode(ToState(matrixState), samples.data(), frameSize, packet, sizeof(packet))
+                                                 : sceOpusCeltEncEncodeWithPriority(ToState(matrixState), samples.data(), frameSize, packet, sizeof(packet), frame == 1 ? 20u : 100u);
                 Require(bytes > 2 && static_cast<int>(packet[0]) >> 3 >= 16);
                 std::array<std::uint8_t, 1024> expected{};
                 const int expectedBytes = opus_encode(reference, samples.data(), frameSize, expected.data(), sizeof(expected));

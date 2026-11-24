@@ -12,6 +12,9 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 struct GuestStatfs {
     std::uint32_t f_version;
@@ -39,9 +42,22 @@ struct GuestStatfs {
 };
 static_assert(sizeof(GuestStatfs) == 472);
 
+#ifdef _WIN32
+static std::wstring g_substitutedDrive;
+
+static void RemoveSubstitutedDrive() {
+    if (!g_substitutedDrive.empty())
+        ::DefineDosDeviceW(DDD_NO_BROADCAST_SYSTEM | DDD_REMOVE_DEFINITION, g_substitutedDrive.c_str(), nullptr);
+    g_substitutedDrive.clear();
+}
+#endif
+
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "fstatfs check failed at line %d\n", line);
+#ifdef _WIN32
+        RemoveSubstitutedDrive();
+#endif
         std::abort();
     }
 }
@@ -89,6 +105,58 @@ static void RequireDeviceFilesystem(int descriptor) {
     expected.f_namemax = 255;
     Require(std::memcmp(&fs, &expected, sizeof(fs)) == 0);
 }
+
+#ifdef _WIN32
+static std::wstring FreeDrive() {
+    const DWORD used = ::GetLogicalDrives();
+    for (wchar_t letter = L'Z'; letter >= L'D'; --letter) {
+        if ((used & (1u << (letter - L'A'))) == 0) return std::wstring{letter, L':'};
+    }
+    return {};
+}
+
+static void RequireSubstitutedVolume(const std::wstring& drive, const std::filesystem::path& directory) {
+    AddPathAlias_nid_no_patch("/anyps5-fstatfs-substituted", (std::filesystem::path(drive + L"\\") / "dir").string().c_str());
+    const int file = sceKernelOpen("/anyps5-fstatfs-substituted/file.txt", SCE_KERNEL_O_RDONLY, 0);
+    Require(file >= 0);
+    RequireVolume(file, directory / "file.txt");
+    Require(close_nid_postfix(file) == 0);
+    const int opened = sceKernelOpen("/anyps5-fstatfs-substituted", SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(opened >= 0);
+    RequireVolume(opened, directory);
+    Require(close_nid_postfix(opened) == 0);
+    GuestStatfs fs;
+    std::memset(&fs, 0x5a, sizeof(fs));
+    Require(PosixStatfs_nid_no_patch("/anyps5-fstatfs-substituted/file.txt", reinterpret_cast<KernelStatfs*>(&fs)) == 0);
+    const auto space = std::filesystem::space(directory);
+    Require(fs.f_version == StatfsVersion && fs.f_bsize > 0);
+    Require(fs.f_blocks * fs.f_bsize <= space.capacity && space.capacity - fs.f_blocks * fs.f_bsize < fs.f_bsize);
+    Require(fs.f_namemax >= 255);
+}
+
+static void RequireSubstitutedDrive(const std::filesystem::path& root) {
+    const auto directory = root / "substituted" / "dir";
+    std::filesystem::create_directories(directory);
+    {
+        std::ofstream file(directory / "file.txt", std::ios::binary);
+        file << "fstatfs";
+        Require(static_cast<bool>(file));
+    }
+    const auto drive = FreeDrive();
+    if (drive.empty() || !::DefineDosDeviceW(DDD_NO_BROADCAST_SYSTEM, drive.c_str(), (root / "substituted").c_str())) {
+        std::fputs("skipped the substituted drive checks: no drive letter could be substituted\n", stderr);
+        return;
+    }
+    g_substitutedDrive = drive;
+    try {
+        RequireSubstitutedVolume(drive, directory);
+    } catch (...) {
+        RemoveSubstitutedDrive();
+        throw;
+    }
+    RemoveSubstitutedDrive();
+}
+#endif
 
 int main() {
     const auto root = std::filesystem::temp_directory_path() /
@@ -143,5 +211,8 @@ int main() {
     Require(close_nid_postfix(file) == 0);
     RequireFailure(file, GuestEbadf);
 
+#ifdef _WIN32
+    RequireSubstitutedDrive(root);
+#endif
     std::filesystem::remove_all(root);
 }

@@ -81,6 +81,13 @@ class GuestTestTargets(unittest.TestCase):
         guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest_a, guest_b]), ["core/libs/tests/GuestB.cpp"]), ["guest_b_tests"])
 
+    def test_tests_in_checkout_path_do_not_make_a_production_tool_a_guest_test(self):
+        root = Path(self.temporary.name).resolve() / "tests" / "AnyPS5"
+        guest = self.target("guest_clock_tests", fragment="libc.prx")
+        helper = self.target("helper", source="core/libs/prx/libc/Helper.cpp", fragment="libc.prx")
+        targets = {target["id"]: target for target in (guest, helper)}
+        self.assertEqual(build_changed_guest_tests.guest_test_targets(root, targets), ["guest_clock_tests"])
+
     def test_a_production_source_change_selects_no_test_but_reaches_the_run(self):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/libs/prx/libc/src/FloatBuiltins.cpp"]), [])
@@ -424,11 +431,12 @@ class Main(unittest.TestCase):
 
     def test_script_test_indices_are_one_based_sorted_and_unmatched_pattern_raises(self):
         listing = json.dumps({"tests": [{"name": "nid_b"}, {"name": "guest"}, {"name": "public_headers"}, {"name": "nid_a"}]})
-        with mock.patch.object(build_changed_guest_tests.subprocess, "run", return_value=run_result(listing)):
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", return_value=run_result(listing)) as run:
             self.assertEqual(build_changed_guest_tests.script_test_indices(
                 "build", [build_changed_guest_tests.NID_TESTS, build_changed_guest_tests.PUBLIC_HEADER_TESTS]), [1, 3, 4])
             with self.assertRaises(ValueError):
                 build_changed_guest_tests.script_test_indices("build", [build_changed_guest_tests.re.compile("^absent$")])
+        self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
 
     def test_public_header_inputs(self):
         for path in ("core/libs/prx/libSceXml/include/Xml.hpp", "core/libs/include/X.h", "core/libs/tests/test_public_headers.py",
@@ -643,6 +651,24 @@ class ChangeClassification(unittest.TestCase):
 
     def test_test_owner_of_an_empty_command_is_none(self):
         self.assertIsNone(build_changed_guest_tests.test_owner([], {"guest": "guest"}))
+
+class CoreLibTestTargetsTests(unittest.TestCase):
+    def test_guest_and_host_only_targets_are_merged_sorted_and_deduplicated(self):
+        root, targets, changed = Path("root"), {"t": {}}, ["core/libs/x.cpp"]
+        with mock.patch.object(build_changed_guest_tests, "guest_test_targets", return_value=["beta", "Alpha", "shared"]) as guest, \
+                mock.patch.object(build_changed_guest_tests.host_only, "host_only_test_targets", return_value=["shared", "alpha2"]) as host:
+            result = build_changed_guest_tests.core_lib_test_targets(root, targets, changed)
+        self.assertEqual(result, ["Alpha", "alpha2", "beta", "shared"])
+        guest.assert_called_once_with(root, targets, changed)
+        host.assert_called_once_with(root, targets, changed)
+
+    def test_changed_paths_default_to_none(self):
+        with mock.patch.object(build_changed_guest_tests, "guest_test_targets", return_value=[]) as guest, \
+                mock.patch.object(build_changed_guest_tests.host_only, "host_only_test_targets", return_value=[]) as host:
+            self.assertEqual(build_changed_guest_tests.core_lib_test_targets(Path("root"), {}), [])
+        guest.assert_called_once_with(Path("root"), {}, None)
+        host.assert_called_once_with(Path("root"), {}, None)
+
 
 class ScriptTestOwnersTests(unittest.TestCase):
     TARGETS = {"alpha": "Alpha", "beta": "beta", "gamma": "gamma"}

@@ -147,6 +147,11 @@ void TestRunningAppUser() {
     TestRunningAppAnswer<std::int32_t>(sceLncUtilGetAppLaunchedUser, USER_SERVICE_INITIAL_USER_ID, Sentinel, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<std::int32_t>(sceSystemServiceGetAppLaunchedUser, USER_SERVICE_INITIAL_USER_ID, Sentinel, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<std::int32_t>(sceShellCoreUtilGetUserFocus, USER_SERVICE_INITIAL_USER_ID, Sentinel, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+    const std::int32_t runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
+    errno = 71;
+    Require(sceLncUtilGetAppLaunchedUser(runningAppId, reinterpret_cast<std::int32_t*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceSystemServiceGetAppLaunchedUser(runningAppId, reinterpret_cast<std::int32_t*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
 }
 
 void TestShellCoreUtilLeafCalls() {
@@ -179,6 +184,11 @@ void TestRunningAppState() {
     TestRunningAppAnswer<bool>(sceLncUtilIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<bool>(sceSystemServiceIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<bool>(sceLncUtilIsSpeculativeLaunch, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    const std::int32_t runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
+    errno = 71;
+    Require(sceLncUtilIsAppSuspended(runningAppId, reinterpret_cast<bool*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceSystemServiceIsAppSuspended(runningAppId, reinterpret_cast<bool*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     errno = 71;
     Require(sceLncUtilIsSpeculativeLaunch(sceSystemServiceGetAppIdOfRunningBigApp(), reinterpret_cast<bool*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
     Require(errno == 71);

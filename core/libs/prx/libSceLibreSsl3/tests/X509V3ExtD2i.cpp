@@ -380,8 +380,8 @@ void TestUnsupported() {
     RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&basicConstraints.extension); });
     Fixture subjectAltName(85, {0x30, 0x00});
     RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&subjectAltName.extension); });
-    Fixture ocspNoCheck(369, {0x05, 0x00});
-    RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&ocspNoCheck.extension); });
+    Fixture serviceLocator(371, {0x30, 0x00});
+    RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&serviceLocator.extension); });
 }
 
 void TestUnknownExtensions() {
@@ -391,6 +391,70 @@ void TestUnknownExtensions() {
     Fixture nullObject(0, {0x03, 0x02, 0x05, 0xa0});
     nullObject.extension.object = nullptr;
     Require(X509V3_EXT_d2i_nid_postfix(&nullObject.extension) == nullptr);
+    RequireQueue({});
+}
+
+void TestMethodTable() {
+    for (const int nid : {143, 369, 663}) {
+        Fixture removed(nid, {0x05, 0x00});
+        Require(X509V3_EXT_d2i_nid_postfix(&removed.extension) == nullptr);
+        RequireQueue({});
+        Fixture malformed(nid, {0xff});
+        Require(X509V3_EXT_d2i_nid_postfix(&malformed.extension) == nullptr);
+        RequireQueue({});
+    }
+    for (const int nid : {1018, 1021}) {
+        Fixture list(nid, {0x04, 0x02, 0x00, 0x00});
+        RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&list.extension); });
+        Fixture empty(nid, {});
+        RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&empty.extension); });
+    }
+    RequireQueue({});
+    void* const present = reinterpret_cast<void*>(std::uintptr_t{1});
+    Fixture poison(1019, {0x05, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&poison.extension) == present);
+    Fixture trailing(1019, {0x05, 0x00, 0x5a});
+    Require(X509V3_EXT_d2i_nid_postfix(&trailing.extension) == present);
+    Fixture longForm(1019, {0x05, 0x81, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&longForm.extension) == present);
+    RequireQueue({});
+    Fixture content(1019, {0x05, 0x01, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&content.extension) == nullptr);
+    RequireQueue({144});
+    Fixture empty(1019, {});
+    Require(X509V3_EXT_d2i_nid_postfix(&empty.extension) == nullptr);
+    RequireQueue({102, 58});
+    Fixture wrongTag(1019, {0x04, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&wrongTag.extension) == nullptr);
+    RequireQueue({168, 58});
+    Fixture contextTag(1019, {0x85, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&contextTag.extension) == nullptr);
+    RequireQueue({168, 58});
+    Fixture truncated(1019, {0x05, 0x02, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&truncated.extension) == nullptr);
+    RequireQueue({155, 58});
+    Fixture constructed(1019, {0x25, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&constructed.extension) == nullptr);
+    RequireQueue({231});
+    Fixture constructedIndefinite(1019, {0x25, 0x80, 0x00, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&constructedIndefinite.extension) == nullptr);
+    RequireQueue({231});
+    Fixture indefinite(1019, {0x05, 0x80});
+    Require(X509V3_EXT_d2i_nid_postfix(&indefinite.extension) == nullptr);
+    RequireQueue({102, 58});
+    Fixture badLength(1019, {0x05, 0xff});
+    Require(X509V3_EXT_d2i_nid_postfix(&badLength.extension) == nullptr);
+    RequireQueue({102, 58});
+    Fixture negativeLength(1019, {0x05, 0x00});
+    negativeLength.encoded.length = -1;
+    Require(X509V3_EXT_d2i_nid_postfix(&negativeLength.extension) == nullptr);
+    RequireQueue({});
+    Fixture keyUsage(83, {0x03, 0x02, 0x05, 0xa0});
+    CheckKeyUsage(keyUsage, 1, 0x0d, 0xa0);
+    Fixture crlNumber(88, {0x02, 0x01, 0x05});
+    auto* number = static_cast<Asn1String*>(X509V3_EXT_d2i_nid_postfix(&crlNumber.extension));
+    Require(number != nullptr && number->length == 1 && number->data[0] == 0x05);
+    FreeInteger(number);
     RequireQueue({});
 }
 
@@ -506,6 +570,7 @@ int main() {
     TestNidResolution();
     TestUnsupported();
     TestUnknownExtensions();
+    TestMethodTable();
     TestFaultingArguments();
     TestMalformed();
     TestAllocationFailures();
