@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
@@ -301,7 +302,10 @@ void TestEnvironmentOverridesCandidates() {
     Require(unsetenv_nid_postfix(CertificateDirectoryVariable) == 0);
     LibreSslX509Store* store = NewStore();
     LibreSslCtx context = ContextFor(store);
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(20, 0xfff, 67);
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 1);
+    Require(ERR_get_error_nid_postfix() == 0);
     Require(HoldsCertificates(store, 1));
     Require(LookupCount(store) == 1);
     int length = 0;
@@ -318,7 +322,10 @@ void TestUnreadableEnvironmentFile() {
     Require(unsetenv_nid_postfix(CertificateDirectoryVariable) == 0);
     LibreSslX509Store* store = NewStore();
     LibreSslCtx context = ContextFor(store);
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(20, 0xfff, 67);
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 0);
+    Require(ERR_get_error_nid_postfix() == 0);
     Require(ObjectCount(store) == 0);
     X509_STORE_free_nid_postfix(store);
     ClearEnvironment();
