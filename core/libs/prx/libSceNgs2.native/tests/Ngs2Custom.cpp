@@ -1232,7 +1232,7 @@ static bool ModuleInfoThrows(uintptr_t rack, std::uint32_t moduleIndex, std::siz
 static Ngs2CustomSubmixerRackOption ModuleInfoRackOption(const Ngs2CustomUserFx2ModuleOption* modules) {
     auto option = RackOption(modules, 2);
     auto& first = option.custom_rack_option.module[0];
-    first.state_offset = 0x40;
+    first.state_offset = 0x12340;
     first.reserved = 0x11;
     first.reserved2 = 0x22;
     auto& filter = option.custom_rack_option.module[1];
@@ -1252,7 +1252,7 @@ static void TestCustomModuleInfo() {
     std::memset(&info, 0xa5, sizeof(info));
     Require(sceNgs2CustomRackGetModuleInfo(rack, 0, &info, sizeof(info)) == SCE_NGS2_OK);
     Require(info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_USER_FX2 && info.source_buffer_id == 0 && info.extra_buffer_id == 0 && info.dest_buffer_id == 0);
-    Require(info.state_offset == 0x40 && info.state_size == 16 && info.reserved == 0 && info.reserved2 == 0);
+    Require(info.state_offset == 0x2340 && info.state_size == 16 && info.reserved == 0 && info.reserved2 == 0);
     std::memset(&info, 0xa5, sizeof(info));
     Require(sceNgs2CustomRackGetModuleInfo(rack, 1, &info, sizeof(info)) == SCE_NGS2_OK);
     Require(info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_FILTER && info.state_offset == 0 && info.state_size == 0 && info.reserved == 0 && info.reserved2 == 0);
@@ -1289,7 +1289,7 @@ static void TestCustomModuleQuery() {
     std::memset(queried, 0xa5, sizeof(queried));
     Require(sceNgs2RackQueryInfo(rack, ModuleQuery, &queried[0], sizeof(queried)) == SCE_NGS2_OK);
     Require(queried[0].module_id == SCE_NGS2_CUSTOM_MODULE_ID_USER_FX2 && queried[0].source_buffer_id == 0 && queried[0].extra_buffer_id == 0 && queried[0].dest_buffer_id == 0);
-    Require(queried[0].state_offset == 0x40 && queried[0].state_size == 16 && queried[0].reserved == 0 && queried[0].reserved2 == 0);
+    Require(queried[0].state_offset == 0x2340 && queried[0].state_size == 16 && queried[0].reserved == 0 && queried[0].reserved2 == 0);
     const auto* untouched = reinterpret_cast<const unsigned char*>(&queried[1]);
     for (std::size_t i = 0; i < sizeof(queried[1]); i++) Require(untouched[i] == 0xa5);
     std::memset(queried, 0xa5, sizeof(queried));

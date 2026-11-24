@@ -326,8 +326,7 @@ int APS5_VABI sceNgs2RackQueryInfo(uintptr_t rack_handle, std::uint32_t info_id,
         if (info == nullptr) return NGS2_ERROR_INVALID_OUT_ADDRESS;
         const std::uint32_t moduleIdx = info_id >> 24;
         if (moduleIdx >= rack->customModules.size()) return NGS2_ERROR_INVALID_RACK_MODULE_INDEX;
-        Ngs2CustomModuleInfo record = rack->customModules[moduleIdx];
-        record.state_offset = static_cast<std::uint16_t>(record.state_offset);
+        const Ngs2CustomModuleInfo record = rack->customModules[moduleIdx];
         if (!WriteGuest(static_cast<Ngs2CustomModuleInfo*>(info), record)) return NGS2_ERROR_INVALID_OUT_ADDRESS;
         return 0;
     }
