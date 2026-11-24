@@ -115,6 +115,15 @@ constexpr std::uint64_t ErrorCode(int reason) {
     return (34ULL << 24) | (0xfffULL << 12) | static_cast<std::uint64_t>(reason);
 }
 
+constexpr int UnknownNid = 101;
+
+std::vector<int> Reasons() {
+    std::vector<int> reasons;
+    for (std::uint64_t error = ERR_get_error_nid_postfix(); error != 0; error = ERR_get_error_nid_postfix())
+        reasons.push_back(static_cast<int>(error & 0xfff));
+    return reasons;
+}
+
 Asn1String StringValue(int type, const unsigned char* data, int length, std::int64_t flags = 0) {
     return Asn1String{length, type, const_cast<unsigned char*>(data), flags};
 }
@@ -330,11 +339,11 @@ void CheckFlags() {
     for (const std::uint64_t operation : {ReplaceExistingFlag, DeleteFlag}) {
         ClearErrors();
         Require(X509_add1_ext_i2d_nid_postfix(&certificate.x509, UnregisteredNid, &second, 0, operation) == 0);
-        Require(ERR_get_error_nid_postfix() == ErrorCode(129));
-        Require(ERR_get_error_nid_postfix() == 0);
+        Require(Reasons() == std::vector<int>{UnknownNid, 129});
+        ClearErrors();
         Require(X509_add1_ext_i2d_nid_postfix(&certificate.x509, UnregisteredNid, &second, 0,
                                               operation | SilentFlag) == 0);
-        Require(ERR_get_error_nid_postfix() == 0);
+        Require(Reasons() == std::vector<int>{UnknownNid});
     }
     Require(certificate.Count() == 0);
 
