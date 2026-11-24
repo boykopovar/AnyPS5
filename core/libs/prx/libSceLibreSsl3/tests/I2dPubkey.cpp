@@ -17,6 +17,7 @@ namespace {
 
 constexpr int RsaType = 6;
 constexpr int EcType = 408;
+constexpr int HmacType = 855;
 constexpr int Secp256r1 = 415;
 constexpr int Secp384r1 = 715;
 constexpr int PointConversionCompressed = 2;
@@ -30,6 +31,7 @@ constexpr int ErrRPassedNullParameter = 67;
 constexpr int EcRMissingParameters = 124;
 constexpr int X509RUnsupportedAlgorithm = 111;
 constexpr int X509RPublicKeyEncodeError = 126;
+constexpr int X509RMethodNotSupported = 124;
 
 constexpr int DsaType = 116;
 constexpr int RsaPssType = 912;
@@ -228,7 +230,7 @@ void TestMissingKeyData() {
     void* savedKey = rsa->key;
     rsa->key = nullptr;
     ERR_clear_error_nid_postfix();
-    Require(i2d_PUBKEY_nid_postfix(rsa, nullptr) == 0);
+    Require(i2d_PUBKEY_nid_postfix(rsa, nullptr) == -1);
     ExpectError(ErrLibX509, X509RPublicKeyEncodeError);
     rsa->key = savedKey;
     EVP_PKEY_free_nid_disambig1_nid_postfix(rsa);
@@ -237,7 +239,7 @@ void TestMissingKeyData() {
     savedKey = ec->key;
     ec->key = nullptr;
     ERR_clear_error_nid_postfix();
-    Require(i2d_PUBKEY_nid_postfix(ec, nullptr) == 0);
+    Require(i2d_PUBKEY_nid_postfix(ec, nullptr) == -1);
     ExpectError(ErrLibEc, EcRMissingParameters);
     ExpectError(ErrLibEc, ErrREcLib);
     ExpectError(ErrLibX509, X509RPublicKeyEncodeError);
@@ -250,7 +252,7 @@ void TestMissingMethod() {
     const void* savedMethod = key->method;
     key->method = nullptr;
     ERR_clear_error_nid_postfix();
-    Require(i2d_PUBKEY_nid_postfix(key, nullptr) == 0);
+    Require(i2d_PUBKEY_nid_postfix(key, nullptr) == -1);
     ExpectError(ErrLibX509, X509RUnsupportedAlgorithm);
     key->method = savedMethod;
     Require(i2d_PUBKEY_nid_postfix(key, nullptr) == static_cast<int>(RsaSpkiDer.size()));
@@ -291,6 +293,18 @@ void TestGuestOutputPointers() {
     EVP_PKEY_free_nid_disambig1_nid_postfix(key);
 }
 
+void TestHmacKeyWithoutPublicKeyEncoder() {
+    LibreSsl3EvpPkey* key = DecodeSpki(RsaSpkiDer);
+    const std::int32_t savedType = key->type;
+    key->type = HmacType;
+    ERR_clear_error_nid_postfix();
+    Require(i2d_PUBKEY_nid_postfix(key, nullptr) == -1);
+    ExpectError(ErrLibX509, X509RMethodNotSupported);
+    ExpectError(ErrLibX509, X509RPublicKeyEncodeError);
+    key->type = savedType;
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+}
+
 void TestUnsupportedKeyTypes() {
     LibreSsl3EvpPkey* key = DecodeSpki(RsaSpkiDer);
     const std::int32_t savedType = key->type;
@@ -317,7 +331,7 @@ void TestEcWithoutPublicKey() {
     Require(ec != nullptr && ec->publicKey == nullptr);
     Require(EVP_PKEY_assign_nid_postfix(key, EcType, ec) == 1);
     ERR_clear_error_nid_postfix();
-    Require(i2d_PUBKEY_nid_postfix(key, nullptr) == 0);
+    Require(i2d_PUBKEY_nid_postfix(key, nullptr) == -1);
     ExpectError(ErrLibEc, ErrRPassedNullParameter);
     ExpectError(ErrLibX509, X509RPublicKeyEncodeError);
     EVP_PKEY_free_nid_disambig1_nid_postfix(key);
@@ -355,6 +369,7 @@ int main() {
     TestMissingKeyData();
     TestMissingMethod();
     TestGuestOutputPointers();
+    TestHmacKeyWithoutPublicKeyEncoder();
     TestUnsupportedKeyTypes();
     TestEcWithoutPublicKey();
     return 0;

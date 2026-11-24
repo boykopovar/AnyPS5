@@ -26,8 +26,10 @@ constexpr int EcRInvalidForm = 104;
 constexpr int EcRMissingParameters = 124;
 constexpr int X509RUnsupportedAlgorithm = 111;
 constexpr int X509RPublicKeyEncodeError = 126;
+constexpr int X509RMethodNotSupported = 124;
 
 constexpr int RsaType = 6;
+constexpr int HmacType = 855;
 constexpr int EcType = 408;
 constexpr int Secp256r1 = 415;
 constexpr int Secp384r1 = 715;
@@ -157,6 +159,10 @@ bool EncodeEc(const EcKey* ec, std::vector<unsigned char>& output) {
 bool EncodeSpki(const LibreSsl3EvpPkey* key, std::vector<unsigned char>& output) {
     if (key->type == RsaType) return EncodeRsa(static_cast<const LibreSsl3Rsa*>(key->key), output);
     if (key->type == EcType) return EncodeEc(static_cast<const EcKey*>(key->key), output);
+    if (key->type == HmacType) {
+        PutError(ErrLibX509, X509RMethodNotSupported);
+        return false;
+    }
     NotImplemented_nid_no_patch("i2d_PUBKEY of a key that is neither RSA nor EC");
 }
 
@@ -168,12 +174,12 @@ int APS5_VABI i2d_PUBKEY_nid_postfix(LibreSsl3EvpPkey* key, unsigned char** outp
     if (!key) return 0;
     if (!key->method && key->type != EcType) {
         PutError(ErrLibX509, X509RUnsupportedAlgorithm);
-        return 0;
+        return -1;
     }
     std::vector<unsigned char> encoded;
     if (!EncodeSpki(key, encoded)) {
         PutError(ErrLibX509, X509RPublicKeyEncodeError);
-        return 0;
+        return -1;
     }
     if (encoded.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
         PutError(ErrLibAsn1, Asn1RTooLong);
