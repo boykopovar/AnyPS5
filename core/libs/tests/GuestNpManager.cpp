@@ -1213,8 +1213,8 @@ void CheckUnknownFieldComparisons() {
 }
 
 int main() {
-    CheckRequestIds();
     CheckNpOfflineGetters();
+    CheckRequestIds();
     CheckAsmLifecycle();
     CheckEmptyDestructors();
     CheckSandboxInfo();
