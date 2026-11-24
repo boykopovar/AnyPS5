@@ -47,13 +47,15 @@ int APS5_VABI CompareInts(const void* left, const void* right) {
 }
 
 std::vector<int> visited;
+std::vector<std::array<int, 3>> events;
 int leaves = 0;
 int preorders = 0;
 int postorders = 0;
 int endorders = 0;
 
-void APS5_VABI Record(const void* node, int which, int) {
+void APS5_VABI Record(const void* node, int which, int level) {
     const int value = *static_cast<const int*>(*static_cast<const void* const*>(node));
+    events.push_back({value, which, level});
     if (which == 3) ++leaves;
     if (which == 0) ++preorders;
     if (which == 1) ++postorders;
@@ -63,6 +65,7 @@ void APS5_VABI Record(const void* node, int which, int) {
 
 void ResetWalk() {
     visited.clear();
+    events.clear();
     leaves = preorders = postorders = endorders = 0;
 }
 
@@ -150,6 +153,10 @@ int main() {
         Require(tsearch_nid_postfix(&second, &tree, CompareInts) != nullptr);
         Require(tsearch_nid_postfix(&first, &tree, CompareInts) != nullptr);
         Require(tsearch_nid_postfix(&third, &tree, CompareInts) != nullptr);
+        ResetWalk();
+        twalk_nid_postfix(tree, Record);
+        const std::vector<std::array<int, 3>> expectedEvents = {{2, 0, 0}, {1, 3, 1}, {2, 1, 0}, {3, 3, 1}, {2, 2, 0}};
+        Require(events == expectedEvents);
         void* parent = tdelete_nid_postfix(&first, &tree, CompareInts);
         Require(parent != nullptr && *static_cast<const int* const*>(parent) == &second);
     }
