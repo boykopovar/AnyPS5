@@ -64,6 +64,7 @@ struct Port {
 };
 
 std::mutex g_mutex;
+std::mutex g_openMutex;
 std::array<Port, 8> g_ports{};
 bool g_sdlAudio = false;
 bool g_openStalled = false;
@@ -181,17 +182,33 @@ int openPort(std::uint32_t len, std::uint32_t freq, std::uint32_t param) {
     const std::string_view requestedName = configuredName ? std::string_view(configuredName) : std::string_view{};
 #endif
     const bool explicitDevice = !requestedName.empty() && requestedName != "default";
-    std::lock_guard lock(g_mutex);
+    std::unique_lock lock(g_mutex);
+    std::size_t slot = g_ports.size();
     for (std::size_t i = g_ports.size(); i-- > 0;) {
-        if (g_ports[i].used) continue;
-        const auto frameBytes = static_cast<std::uint32_t>(SDL_AUDIO_BITSIZE(format.format) / 8 * format.channels);
-        const auto grain = std::chrono::duration_cast<Clock::duration>(std::chrono::microseconds(1000000ull * len / freq));
-        const SDL_AudioDeviceID device = openDevice(freq, len, format, requestedName);
-        if (explicitDevice && device == 0) return AUDIO_IN_ERROR_INVALID_DEVICE;
-        g_ports[i] = {true, false, len, frameBytes, device, grain, {}, g_mode};
-        return static_cast<int>(HANDLE_BASE + i);
+        if (!g_ports[i].used) {
+            slot = i;
+            break;
+        }
     }
-    return AUDIO_IN_ERROR_PORT_FULL;
+    if (slot == g_ports.size()) return AUDIO_IN_ERROR_PORT_FULL;
+    g_ports[slot] = {};
+    g_ports[slot].used = true;
+    g_ports[slot].busy = true;
+    lock.unlock();
+    SDL_AudioDeviceID device = 0;
+    {
+        std::lock_guard openLock(g_openMutex);
+        device = openDevice(freq, len, format, requestedName);
+    }
+    lock.lock();
+    if (explicitDevice && device == 0) {
+        g_ports[slot] = {};
+        return AUDIO_IN_ERROR_INVALID_DEVICE;
+    }
+    const auto frameBytes = static_cast<std::uint32_t>(SDL_AUDIO_BITSIZE(format.format) / 8 * format.channels);
+    const auto grain = std::chrono::duration_cast<Clock::duration>(std::chrono::microseconds(1000000ull * len / freq));
+    g_ports[slot] = {true, false, len, frameBytes, device, grain, {}, g_mode};
+    return static_cast<int>(HANDLE_BASE + slot);
 }
 
 std::size_t capture(SDL_AudioDeviceID device, std::uint8_t* dest, std::size_t bytes, Clock::time_point deadline) {
