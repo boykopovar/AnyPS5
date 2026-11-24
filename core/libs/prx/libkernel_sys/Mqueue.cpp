@@ -77,6 +77,17 @@ int Fail(int error) {
     return -1;
 }
 
+bool CopyIn(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool ReadDeadline(const GuestTimespec* abstime, GuestTimespec& deadline) {
+    return abstime == nullptr || CopyIn(&deadline, abstime, sizeof(deadline));
+}
+
 std::shared_ptr<Open> Find(int descriptor) {
     std::lock_guard lock(g_mqueueLock);
     const auto found = g_opens.find(descriptor);
@@ -210,14 +221,16 @@ int APS5_VABI kmq_setattr_nid_postfix(int descriptor, const GuestMqAttr* attr, G
 int APS5_VABI kmq_timedsend_nid_postfix(int descriptor, const char* message, std::size_t length, unsigned int priority, const GuestTimespec* abstime) {
     const auto open = Find(descriptor);
     if (!open || (open->access != GuestOWronly && open->access != GuestORdwr)) return Fail(GuestEbadf);
+    GuestTimespec deadline{};
+    if (!ReadDeadline(abstime, deadline)) return Fail(GuestEfault);
     auto& queue = *open->queue;
     if (priority >= PriorityMax) return Fail(GuestEinval);
     if (length > static_cast<std::size_t>(queue.msgsize)) return Fail(GuestEmsgsize);
-    if (message == nullptr && length != 0) return Fail(GuestEfault);
-    Message entry{priority, std::vector<char>(message, message + length)};
+    Message entry{priority, std::vector<char>(length)};
+    if (!CopyIn(entry.bytes.data(), message, length)) return Fail(GuestEfault);
     std::unique_lock lock(queue.lock);
     const auto space = [&] { return static_cast<std::int64_t>(queue.messages.size()) < queue.maxmsg; };
-    if (const int error = WaitFor(*open, lock, queue.writable, abstime, space)) return Fail(error);
+    if (const int error = WaitFor(*open, lock, queue.writable, abstime != nullptr ? &deadline : nullptr, space)) return Fail(error);
     auto position = queue.messages.begin();
     while (position != queue.messages.end() && position->priority >= priority) ++position;
     queue.messages.insert(position, std::move(entry));
@@ -228,12 +241,14 @@ int APS5_VABI kmq_timedsend_nid_postfix(int descriptor, const char* message, std
 std::int64_t APS5_VABI kmq_timedreceive_nid_postfix(int descriptor, char* buffer, std::size_t length, unsigned int* priority, const GuestTimespec* abstime) {
     const auto open = Find(descriptor);
     if (!open || open->access == GuestOWronly) return Fail(GuestEbadf);
+    GuestTimespec deadline{};
+    if (!ReadDeadline(abstime, deadline)) return Fail(GuestEfault);
     auto& queue = *open->queue;
     if (length < static_cast<std::size_t>(queue.msgsize)) return Fail(GuestEmsgsize);
     if (buffer == nullptr) return Fail(GuestEfault);
     std::unique_lock lock(queue.lock);
     const auto available = [&] { return !queue.messages.empty(); };
-    if (const int error = WaitFor(*open, lock, queue.readable, abstime, available)) return Fail(error);
+    if (const int error = WaitFor(*open, lock, queue.readable, abstime != nullptr ? &deadline : nullptr, available)) return Fail(error);
     Message entry = std::move(queue.messages.front());
     queue.messages.erase(queue.messages.begin());
     queue.writable.notify_one();

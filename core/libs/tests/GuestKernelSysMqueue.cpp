@@ -291,6 +291,16 @@ void BadPointers() {
         Require(kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), const_cast<unsigned*>(static_cast<const unsigned*>(pointer)), nullptr) == -1 && Error() == Efault);
     }
     for (const void* pointer : bad) {
+        const auto badTime = static_cast<const GuestTimespec*>(pointer);
+        Require(kmq_timedsend_nid_postfix(queue, static_cast<const char*>(pointer), 3, 1, nullptr) == -1 && Error() == Efault);
+        Require(kmq_timedsend_nid_postfix(queue, "bad", 3, 1, badTime) == -1 && Error() == Efault);
+        Require(kmq_timedsend_nid_postfix(queue, "ok", 2, 1, nullptr) == 0);
+        Require(kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), nullptr, badTime) == -1 && Error() == Efault);
+        Require(Receive(queue) == "ok");
+    }
+    Require(kmq_timedsend_nid_postfix(queue, nullptr, 0, 1, nullptr) == 0);
+    Require(Receive(queue).empty());
+    for (const void* pointer : bad) {
         const auto badAttr = static_cast<const GuestMqAttr*>(pointer);
         auto badOut = const_cast<GuestMqAttr*>(badAttr);
         const auto createBad = Name("badcreate");
