@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/include/SessionCookieExports.hpp"
+#include "prx/libSceNKWebKit/include/SessionCookieMaintenanceExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <array>
@@ -64,6 +65,15 @@ int main() {
     Set(&secondSession, url, second);
     Require(Text(Get(&firstSession, url)[0].value) == "first");
     Require(Text(Get(&secondSession, url)[0].value) == "second");
+    Require(Text(_ZN7WebCore21NetworkStorageSession13getAllCookiesEv(&firstSession)[0].value) == "first");
+    Require(Text(_ZN7WebCore21NetworkStorageSession13getAllCookiesEv(&secondSession)[0].value) == "second");
+    _ZN7WebCore21NetworkStorageSession16flushCookieStoreEv(&firstSession);
+    Require(Get(&firstSession, url).size == 1);
+    Require(Get(&secondSession, url).size == 1);
+    _ZN7WebCore21NetworkStorageSession16deleteAllCookiesEv(&firstSession);
+    Require(Get(&firstSession, url).size == 0);
+    Require(Text(Get(&secondSession, url)[0].value) == "second");
+    Set(&firstSession, url, first);
     static std::array<unsigned, 256> otherSessions{};
     for (const auto& session : otherSessions) Require(Get(&session, url).size == 0);
     Require(Text(Get(&firstSession, url)[0].value) == "first");

@@ -2752,7 +2752,6 @@ int APS5_VABI _ZN7WebCore21MediaRecorderProviderdaEPv();
 int APS5_VABI _ZN7WebCore21MediaRecorderProviderdlEPv();
 int APS5_VABI _ZN7WebCore21MediaRecorderProvidernaEm();
 int APS5_VABI _ZN7WebCore21MediaRecorderProvidernwEm();
-int APS5_VABI _ZN7WebCore21NetworkStorageSession13getAllCookiesEv();
 int APS5_VABI _ZN7WebCore21NetworkStorageSession17domCookiesForHostERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore21NetworkStorageSession22removeAllStorageAccessEv();
 int APS5_VABI _ZN7WebCore21NetworkStorageSession29setAllCookiesToSameSiteStrictERKNS_17RegistrableDomainEON3WTF17CompletionHandlerIFvvEEE();
