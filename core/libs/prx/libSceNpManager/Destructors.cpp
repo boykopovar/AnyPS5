@@ -2,7 +2,6 @@
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
