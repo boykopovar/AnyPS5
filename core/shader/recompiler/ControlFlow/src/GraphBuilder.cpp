@@ -2519,6 +2519,7 @@ std::optional<TableCallContinuation> ContinueTableCall(const RdnaProgram& progra
 namespace {
 
 void leaveBeforeCallees(std::vector<std::uint32_t>& code, std::uint32_t linkedWord, std::uint32_t exitWord) {
+    if (exitWord >= code.size() || code[exitWord] != EndProgramWord) return;
     const auto linked = RdnaInstructionDecoder{}.Decode(code);
     const auto ends = [&](std::uint32_t index) {
         for (std::uint32_t steps = 0; steps < 16u && index < linked.instructions.size(); ++steps) {
