@@ -2412,13 +2412,6 @@ bool Ps4Client() {
     }
 }
 
-std::uint32_t CompiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, process + 16, sizeof(sdkVersion));
-    return sdkVersion;
-}
-
 bool Ps4ClientOnce() {
     static const bool ps4Client = Ps4Client();
     return ps4Client;
@@ -2439,7 +2432,7 @@ int APS5_VABI sceConvertKeycodeGetImeKeyboardType(int32_t userId, uint32_t* type
     const int savedErrno = errno;
     uint32_t localType = 0;
     const bool ps4Client = Ps4Client();
-    const int ret = ImeKeyboardType::Resolve(userId, &localType, CompiledSdkVersion(), ps4Client, sceUserServiceGetKeyboardType, sceUserServiceGetJapaneseInputType, sceUserServiceGetTraditionalChineseInputType);
+    const int ret = ImeKeyboardType::Resolve(userId, &localType, ApplicationCompiledSdkVersion(), ps4Client, sceUserServiceGetKeyboardType, sceUserServiceGetJapaneseInputType, sceUserServiceGetTraditionalChineseInputType);
     if (ret != 0) {
         errno = savedErrno;
         return ret;
@@ -2453,7 +2446,7 @@ int APS5_VABI sceConvertKeycodeGetVirtualKeycode(std::uint16_t keycode, std::uin
     const int savedErrno = errno;
     if (virtualKeycode == nullptr) return kErrInvalidAddress;
     if (keyboardType == 0 || keyboardType > VirtualKeys.size()) return kErrInvalidKeyboardType;
-    const std::uint32_t sdkVersion = CompiledSdkVersion();
+    const std::uint32_t sdkVersion = ApplicationCompiledSdkVersion();
     const bool ps4Client = Ps4ClientOnce();
     if (!KeyboardTypeAvailable(keyboardType, sdkVersion, ps4Client)) {
         errno = savedErrno;
@@ -2488,7 +2481,7 @@ int APS5_VABI sceConvertKeycodeGetCharacter(std::uint16_t keycode, std::uint32_t
     const int savedErrno = errno;
     if (character == nullptr) return kErrInvalidAddress;
     if (type == 0 || type > 39) return kErrInvalidKeyboardType;
-    if (!KeyboardTypeAvailable(type, CompiledSdkVersion(), Ps4ClientOnce())) {
+    if (!KeyboardTypeAvailable(type, ApplicationCompiledSdkVersion(), Ps4ClientOnce())) {
         errno = savedErrno;
         return kErrInvalidKeyboardType;
     }

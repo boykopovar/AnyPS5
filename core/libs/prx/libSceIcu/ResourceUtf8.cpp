@@ -26,6 +26,8 @@ constexpr std::uint32_t TypeShift = 28;
 constexpr std::uint32_t ValueMask = 0x0fffffff;
 constexpr std::uint32_t StringType = 0;
 constexpr std::uint32_t TableType = 2;
+constexpr std::uint32_t AliasType = 3;
+constexpr std::uint32_t StringV2Type = 6;
 constexpr std::uint32_t ArrayType = 8;
 constexpr std::int32_t IllegalArgument = 1;
 constexpr std::int32_t MissingResource = 2;
@@ -246,6 +248,10 @@ const char* APS5_VABI ures_getUTF8StringByIndex_nid_postfix(const UResourceBundl
         return Fail(status, MissingResource, savedErrno, __func__);
     }
     std::vector<char16_t> units;
+    const std::uint32_t itemType = item >> TypeShift;
+    if (itemType != StringType && itemType != StringV2Type && itemType != AliasType) {
+        return ToUtf8(units, dest, length, forceCopy, status, savedErrno, __func__);
+    }
     if (!ReadString(root, item, units, savedErrno, __func__)) {
         return Fail(status, ResourceTypeMismatch, savedErrno, __func__);
     }

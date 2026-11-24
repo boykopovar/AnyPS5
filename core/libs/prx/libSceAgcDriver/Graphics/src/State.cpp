@@ -326,7 +326,14 @@ bool vertexControlSupported(std::uint32_t word) {
 }
 // Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space;
 // bit 16 disables clipping.
+constexpr std::uint32_t UcpCullOnlyEnable = 0x20000u;
 constexpr std::uint32_t ClipControlMask = ~(0x10000u | 0x80000u | 0x01000000u | 0x0c000000u);
+
+std::uint32_t clipControlMask(const Registers& cx) {
+    const auto exports = find(cx, 0x207);
+    const bool hasClipDistances = exports != cx.end() && (exports->second & 0xffu) != 0u;
+    return hasClipDistances ? ClipControlMask : (ClipControlMask & ~UcpCullOnlyEnable);
+}
 
 bool zFormatSupported(std::uint32_t format) {
     return format == 0u || format == 1u || format == 2u || format == 3u || format == 9u;
@@ -1861,7 +1868,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (auto reason = sampleMaskRejection(queue, read(cx, 0x2f8), read(cx, 0x30e), read(cx, 0x30f)); !reason.empty()) throw std::runtime_error(reason);
     const auto viewportControl = read(cx, 0x206);
     if (viewportControl != 0x43fu && viewportControl != 0u) throw std::runtime_error(vteMessage(viewportControl));
-    zero(cx, 0x204, ClipControlMask, "a PA_CL_CLIP_CNTL flag");
+    zero(cx, 0x204, clipControlMask(cx), "a PA_CL_CLIP_CNTL flag");
     result.depthClamp = (read(cx, 0x204) & 0x0c000000u) != 0;
     result.negativeOneToOne = (read(cx, 0x204) & 0x80000u) == 0;
     const auto raster = read(cx, 0x205);
@@ -2998,7 +3005,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
         if (auto reason = sampleMaskRejection(queue, config, word, other); !reason.empty()) return reason;
     }
     if (value(cx, 0x206, word) && word != 0x43fu && word != 0u) return vteMessage(word);
-    if (auto reason = nonzero(cx, 0x204, ClipControlMask, "a PA_CL_CLIP_CNTL flag"); !reason.empty()) return reason;
+    if (auto reason = nonzero(cx, 0x204, clipControlMask(cx), "a PA_CL_CLIP_CNTL flag"); !reason.empty()) return reason;
     std::uint32_t targetMask = 0, shaderMask = 0;
     if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word)) {
         const auto slots = ColorExportSlots(shaderMask);

@@ -47,6 +47,8 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
 std::vector<std::uint8_t> EncodePlanarYuv(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,
                                           int quality, Sampling sampling, std::uint32_t restartBlocks, std::uint32_t restartRows);
 
+bool HasScanHeader(std::span<const std::uint8_t> jpeg);
+
 std::optional<Header> ParseHeader(std::span<const std::uint8_t> jpeg);
 
 std::optional<Image> Decode(std::span<const std::uint8_t> jpeg);

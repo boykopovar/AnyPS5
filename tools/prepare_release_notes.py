@@ -28,13 +28,25 @@ def resolve_output_path(path):
 def release_body(notes, limit=BODY_LIMIT):
     if len(notes) <= limit:
         return notes
-    return re.sub(
-        r"^## What's Changed[^\S\r\n]*\r?\n.*?(?=^#{1,2} |^\*\*Full Changelog\*\*:|\Z)",
-        "",
-        notes,
-        count=1,
-        flags=re.MULTILINE | re.DOTALL,
-    )
+    section = None
+    fence = ""
+    for line in re.finditer(r"[^\r\n]*(?:\r\n|\r|\n|$)", notes):
+        content = line.group().rstrip("\r\n")
+        marker = re.match(r" {0,3}(`{3,}|~{3,})(.*)", content)
+        if marker:
+            run, info = marker.groups()
+            if fence:
+                if run.startswith(fence) and not info.strip(" \t"):
+                    fence = ""
+            elif run[0] == "~" or "`" not in info:
+                fence = run
+        elif not fence:
+            if section is None:
+                if content.rstrip() == "## What's Changed":
+                    section = line.start()
+            elif content.startswith(("# ", "## ", "**Full Changelog**:")):
+                return notes[:section] + notes[line.start():]
+    return notes[:section]
 
 
 def unique_release_object(pairs):
