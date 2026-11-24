@@ -2,8 +2,10 @@
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 
@@ -27,6 +29,11 @@ void RequireInvalidArgument(Function function) {
     Require(threw);
 }
 
+bool SizeIs(const void* pageRef, double width, double height) {
+    const auto size = WKPageFixedLayoutSize(pageRef);
+    return size.width == width && size.height == height;
+}
+
 }
 
 int main() {
@@ -45,7 +52,7 @@ int main() {
     Require(!WKPageGetPaginationBehavesLikeColumns(pageRef));
     Require(WKPageGetGapBetweenPages(pageRef) == 0.0);
     Require(WKPageGetPageLength(pageRef) == 0.0);
-    Require(!page->paginationLineGridEnabled);
+    Require(!WKPageGetPaginationLineGridEnabled(pageRef));
 
     WKPageSetSuppressScrollbarAnimations(pageRef, true);
     Require(WKPageAreScrollbarAnimationsSuppressed(pageRef));
@@ -71,23 +78,54 @@ int main() {
     Require(WKPageGetScrollPinningBehavior(pageRef) == 1);
     WKPageSetScrollPinningBehavior(pageRef, 2);
     Require(WKPageGetScrollPinningBehavior(pageRef) == 2);
+    WKPageSetScrollPinningBehavior(pageRef, 3);
+    Require(WKPageGetScrollPinningBehavior(pageRef) == 0);
+    WKPageSetScrollPinningBehavior(pageRef, 1);
+    WKPageSetScrollPinningBehavior(pageRef, 0xFFFFFFFFu);
+    Require(WKPageGetScrollPinningBehavior(pageRef) == 0);
 
     WKPageSetUseFixedLayout(pageRef, true);
     Require(WKPageUseFixedLayout(pageRef));
+    WKPageSetFixedLayoutSize(pageRef, { 1920.0, 1080.0 });
+    Require(SizeIs(pageRef, 1920.0, 1080.0));
+    WKPageSetUseFixedLayout(pageRef, true);
+    Require(SizeIs(pageRef, 1920.0, 1080.0));
     WKPageSetUseFixedLayout(pageRef, false);
     Require(!WKPageUseFixedLayout(pageRef));
-
-    WKPageSetFixedLayoutSize(pageRef, { 1920.0, 1080.0 });
-    Require(WKPageFixedLayoutSize(pageRef).width == 1920.0);
-    Require(WKPageFixedLayoutSize(pageRef).height == 1080.0);
+    Require(SizeIs(pageRef, 0.0, 0.0));
     WKPageSetFixedLayoutSize(pageRef, { -100.0, -50.0 });
-    Require(WKPageFixedLayoutSize(pageRef).width == -100.0);
-    Require(WKPageFixedLayoutSize(pageRef).height == -50.0);
+    Require(SizeIs(pageRef, -100.0, -50.0));
+    WKPageSetUseFixedLayout(pageRef, false);
+    Require(SizeIs(pageRef, -100.0, -50.0));
+
+    WKPageSetFixedLayoutSize(pageRef, { 1.7, 2.9 });
+    Require(SizeIs(pageRef, 1.0, 2.0));
+    WKPageSetFixedLayoutSize(pageRef, { -1.7, -2.9 });
+    Require(SizeIs(pageRef, -1.0, -2.0));
+    WKPageSetFixedLayoutSize(pageRef, { -0.5, 0.5 });
+    Require(SizeIs(pageRef, 0.0, 0.0));
+    Require(!std::signbit(WKPageFixedLayoutSize(pageRef).width));
+    WKPageSetFixedLayoutSize(pageRef, { 2147483647.9, -2147483648.9 });
+    Require(SizeIs(pageRef, 2147483647.0, -2147483648.0));
+    WKPageSetFixedLayoutSize(pageRef, { 2147483648.0, -2147483649.0 });
+    Require(SizeIs(pageRef, -2147483648.0, -2147483648.0));
+    WKPageSetFixedLayoutSize(pageRef, { 1e300, -1e300 });
+    Require(SizeIs(pageRef, -2147483648.0, -2147483648.0));
+    WKPageSetFixedLayoutSize(pageRef, { std::nan(""), std::numeric_limits<double>::infinity() });
+    Require(SizeIs(pageRef, -2147483648.0, -2147483648.0));
 
     WKPageSetPaginationMode(pageRef, 1);
     Require(WKPageGetPaginationMode(pageRef) == 1);
     WKPageSetPaginationMode(pageRef, 4);
     Require(WKPageGetPaginationMode(pageRef) == 4);
+    WKPageSetPaginationMode(pageRef, 5);
+    Require(WKPageGetPaginationMode(pageRef) == 4);
+    WKPageSetPaginationMode(pageRef, 0xFFFFFFFFu);
+    Require(WKPageGetPaginationMode(pageRef) == 4);
+    WKPageSetPaginationMode(pageRef, 2);
+    Require(WKPageGetPaginationMode(pageRef) == 2);
+    WKPageSetPaginationMode(pageRef, 0);
+    Require(WKPageGetPaginationMode(pageRef) == 0);
 
     WKPageSetPaginationBehavesLikeColumns(pageRef, true);
     Require(WKPageGetPaginationBehavesLikeColumns(pageRef));
@@ -95,9 +133,11 @@ int main() {
     Require(!WKPageGetPaginationBehavesLikeColumns(pageRef));
 
     WKPageSetPaginationLineGridEnabled(pageRef, true);
-    Require(page->paginationLineGridEnabled);
+    Require(!WKPageGetPaginationLineGridEnabled(pageRef));
     WKPageSetPaginationLineGridEnabled(pageRef, false);
-    Require(!page->paginationLineGridEnabled);
+    Require(!WKPageGetPaginationLineGridEnabled(pageRef));
+    WKPageSetPaginationLineGridEnabled(nullptr, true);
+    Require(!WKPageGetPaginationLineGridEnabled(nullptr));
 
     WKPageSetGapBetweenPages(pageRef, 32.0);
     Require(WKPageGetGapBetweenPages(pageRef) == 32.0);
@@ -124,7 +164,6 @@ int main() {
     RequireInvalidArgument([] { WKPageSetPaginationMode(nullptr, 0); });
     RequireInvalidArgument([] { WKPageGetPaginationBehavesLikeColumns(nullptr); });
     RequireInvalidArgument([] { WKPageSetPaginationBehavesLikeColumns(nullptr, true); });
-    RequireInvalidArgument([] { WKPageSetPaginationLineGridEnabled(nullptr, true); });
     RequireInvalidArgument([] { WKPageGetGapBetweenPages(nullptr); });
     RequireInvalidArgument([] { WKPageSetGapBetweenPages(nullptr, 10.0); });
     RequireInvalidArgument([] { WKPageGetPageLength(nullptr); });

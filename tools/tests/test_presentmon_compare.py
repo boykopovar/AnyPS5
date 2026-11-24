@@ -1,6 +1,8 @@
 import csv
 import hashlib
 import json
+import os
+from unittest.mock import patch
 import subprocess
 import sys
 import tempfile
@@ -77,6 +79,31 @@ class PresentMonCompareTests(unittest.TestCase):
     def compare(self, data):
         return presentmon_compare.compare_presentmon_series(*self.write_series(data))
 
+    def test_pinned_capture_rejects_changes_during_a_read(self):
+        path = self.root / "capture.csv"
+        path.write_bytes(b"snapshot")
+        digest = sha256(path)
+        initial = path.stat()
+        os.utime(path, ns=(initial.st_atime_ns, initial.st_mtime_ns - 2_000_000_000))
+        updated = path.stat()
+        with patch.object(presentmon_compare.os, "fstat", side_effect=[initial, updated]):
+            with self.assertRaisesRegex(ValueError, "changed while reading"):
+                presentmon_compare.read_pinned(path, digest, 100)
+
+    def test_plan_rejects_a_capture_path_with_an_embedded_nul(self):
+        plan = self.series(self.captured_pair())
+        plan["runs"][0]["capture"] = "A\0.csv"
+        with self.assertRaisesRegex(ValueError, r"runs\[0\]\.capture contains a NUL"):
+            presentmon_compare.read_presentmon_plan(json.dumps(plan).encode("utf-8"))
+
+    def test_csv_accepts_blank_lines_before_the_header(self):
+        run = self.captured_pair()[0]
+        raw = (self.root / run["capture"]).read_bytes()
+        bom, csv_data = raw[:3], raw[3:]
+        baseline = list(presentmon_compare.presentmon_stream(raw, run))
+        self.assertTrue(baseline)
+        self.assertEqual(list(presentmon_compare.presentmon_stream(bom + b"\r\n" + csv_data, run)), baseline)
+
     def test_exact_window_and_intervals_from_selected_process_and_swapchain(self):
         runs = self.captured_pair()
         data = self.series(runs)
@@ -99,6 +126,12 @@ class PresentMonCompareTests(unittest.TestCase):
                                                           "change_pct": 150})
         self.assertEqual(pair["metrics"]["present_ms_p50"]["change_pct"], -50)
         self.assertAlmostEqual(pair["metrics"]["present_ms_p99"]["change_pct"], -200 / 3)
+
+    def test_markdown_preserves_exact_present_counts(self):
+        report = self.compare(self.series(self.captured_pair()))
+        report["runs"][0]["metrics"].update(presents=1000002, dropped=1000001)
+        output = presentmon_compare.render_presentmon_comparison(report)
+        self.assertIn("| A1 | baseline | captured | 1000002 | 1000001 |", output)
 
     def test_aggregates_complete_pairs_with_equal_weight(self):
         runs = self.captured_pair()
@@ -253,6 +286,92 @@ class PresentMonCompareTests(unittest.TestCase):
         missing = subprocess.run([*command, "--json"], capture_output=True, check=False)
         self.assertEqual(missing.returncode, 2)
         self.assertIn(b"--sha256", missing.stderr)
+
+
+class PresentMonHelperTests(unittest.TestCase):
+    def test_require_fields_needs_a_dict_with_exactly_the_fields(self):
+        presentmon_compare.require_fields({"a": 1, "b": 2}, ("a", "b"), "pair")
+        for data in ({"a": 1}, {"a": 1, "b": 2, "c": 3}, [("a", 1), ("b", 2)], None):
+            with self.assertRaisesRegex(ValueError, "pair must contain exactly a, b"):
+                presentmon_compare.require_fields(data, ("a", "b"), "pair")
+
+    def test_digest_value_lowercases_sha256_and_rejects_other_values(self):
+        self.assertEqual(presentmon_compare.digest_value("AB" * 32, "digest"), "ab" * 32)
+        for value in ("a" * 63, "a" * 65, "g" * 64, " " + "a" * 63, 1, None):
+            with self.assertRaisesRegex(ValueError, "digest must be a SHA-256 digest"):
+                presentmon_compare.digest_value(value, "digest")
+
+    def test_parse_swapchain_accepts_zero_and_hexadecimal_addresses(self):
+        self.assertEqual(presentmon_compare.parse_swapchain("0"), 0)
+        self.assertEqual(presentmon_compare.parse_swapchain("0x0"), 0)
+        self.assertEqual(presentmon_compare.parse_swapchain("0XfF"), 255)
+        self.assertEqual(presentmon_compare.parse_swapchain("0x" + "f" * 16), 2**64 - 1)
+        for value in ("00", "1", "0x", "0x" + "1" * 17, "0xg", " 0x1", 1, None):
+            with self.assertRaisesRegex(ValueError, "swapchain must be a hexadecimal address or 0"):
+                presentmon_compare.parse_swapchain(value)
+
+    def test_csv_decimal_accepts_bounded_non_negative_decimals(self):
+        self.assertEqual(presentmon_compare.csv_decimal("0", "t"), presentmon_compare.Decimal("0"))
+        self.assertEqual(presentmon_compare.csv_decimal("12.50", "t"), presentmon_compare.Decimal("12.50"))
+        self.assertEqual(presentmon_compare.csv_decimal("5", "t", 5), 5)
+        with self.assertRaisesRegex(ValueError, "t exceeds 5"):
+            presentmon_compare.csv_decimal("5.01", "t", 5)
+        for value in ("", "-1", "+1", "1.", ".5", "1e3", "nan", "inf", "1 ", "1" * 65):
+            with self.assertRaisesRegex(ValueError, "t must be a finite non-negative decimal"):
+                presentmon_compare.csv_decimal(value, "t")
+
+    def test_read_pinned_returns_bytes_and_identity_or_rejects(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "capture.csv"
+            path.write_bytes(b"abc")
+            digest = hashlib.sha256(b"abc").hexdigest()
+            raw, info, identity = presentmon_compare.read_pinned(path, digest.upper(), 3)
+            self.assertEqual(raw, b"abc")
+            self.assertEqual(info, {"path": str(path), "sha256": digest, "bytes": 3})
+            self.assertEqual(len(identity), 2)
+            with self.assertRaisesRegex(ValueError, "input exceeds 2 bytes"):
+                presentmon_compare.read_pinned(path, digest, 2)
+            with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                presentmon_compare.read_pinned(path, "0" * 64, 3)
+            with self.assertRaisesRegex(ValueError, "SHA-256 must be a SHA-256 digest"):
+                presentmon_compare.read_pinned(path, "abc", 3)
+            with self.assertRaisesRegex(ValueError, "input must be a regular file"):
+                presentmon_compare.read_pinned(root, digest, 3)
+            with self.assertRaisesRegex(ValueError, "input must be a regular file"):
+                presentmon_compare.read_pinned(root / "missing.csv", digest, 3)
+
+    def stream(self, rows, header=HEADER, **run):
+        selected = {"pid": 100, "swapchain": "0x0", "application": "game.exe"}
+        selected.update(run)
+        text = ",".join(header) + "\r\n" + "".join(",".join(str(cell) for cell in row) + "\r\n" for row in rows)
+        return list(presentmon_compare.presentmon_stream(text.encode("utf-8"), selected))
+
+    def test_presentmon_stream_yields_the_selected_process_and_swapchain(self):
+        rows = present_rows([100, 101], 100, "0x0", "Game.exe", (101,))
+        rows += present_rows([102], 101, "0x0", "Other.exe") + present_rows([103], 100, "0x1", "Other.exe")
+        self.assertEqual(self.stream(rows), [
+            ("Other", False, presentmon_compare.Decimal("1.00"), presentmon_compare.Decimal("10")),
+            ("Other", True, presentmon_compare.Decimal("1.01"), presentmon_compare.Decimal("10")),
+        ])
+
+    def test_presentmon_stream_rejects_malformed_rows(self):
+        row = present_rows([100], 100, "0x0", "Game.exe")[0]
+        cases = [
+            ([row], HEADER[:-2], "expected distinct PresentMon v1 CSV columns"),
+            ([row], HEADER + ["Runtime"], "expected distinct PresentMon v1 CSV columns"),
+            ([row[:-1]], HEADER, "CSV line 2 has the wrong column count"),
+            ([row[:1] + ["4294967296"] + row[2:]], HEADER, "CSV line 2 ProcessID must be an unsigned 32-bit integer"),
+            ([row[:2] + ["0xg"] + row[3:]], HEADER, "swapchain must be a hexadecimal address or 0"),
+            ([["Else.exe"] + row[1:]], HEADER, "CSV line 2 has a different application for the PID and swapchain"),
+            ([row[:4] + ["2"] + row[5:]], HEADER, "CSV line 2 Dropped must be 0 or 1"),
+            ([row[:5] + ["-1"] + row[6:]], HEADER, "CSV line 2 TimeInSeconds must be a finite non-negative decimal"),
+            ([row + ["1"]], HEADER + ["EtwEventsLost"], "CSV line 2 EtwEventsLost reports collector loss"),
+            ([row + ["x"]], HEADER + ["OverflowedPresents"], "CSV line 2 OverflowedPresents must be an unsigned 32-bit integer"),
+        ]
+        for rows, header, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                self.stream(rows, header)
 
 
 if __name__ == "__main__":

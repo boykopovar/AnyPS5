@@ -44,6 +44,7 @@ public:
 
     static DrawPipeline& Queue0();
     static std::size_t Depth();
+    static std::size_t ResumeDepth();
     static std::size_t QueuedItems();
     static bool& Active();
     static std::atomic<std::uint64_t>& EpochToken();
@@ -69,10 +70,13 @@ public:
     Watch WatchWrites();
     bool WrittenSince(Watch& watch, const std::vector<Range>& reads);
     std::uint64_t Retired() const { return retiredItems.load(std::memory_order_acquire); }
+    std::uint64_t ProducerWaits() const { return producerWaits.load(std::memory_order_acquire); }
+    std::uint64_t DrainWaits() const { return drainWaits.load(std::memory_order_acquire); }
     void NoteDecodeDrain() { decodeDrains.fetch_add(1, std::memory_order_relaxed); }
     std::uint64_t DecodeDrains() const { return decodeDrains.load(std::memory_order_relaxed); }
     std::optional<std::uint64_t> PendingLabel(std::uint64_t address, std::size_t bytes);
     static bool HeldReads(std::uint64_t address, std::size_t bytes);
+    std::uint64_t CommitterThread() const { return committerThread.load(std::memory_order_acquire); }
     static std::uint64_t HeldReadQueries();
     void ReleaseRunningReads();
     QueuedWrite StoredBytes(std::uint64_t address, std::size_t bytes, std::span<std::byte> out);
@@ -80,6 +84,7 @@ public:
     static bool MetadataPassesPipelined();
     static void CountPipelinedMetadataPass();
     static std::uint64_t PipelinedMetadataPasses();
+    static std::uint64_t CommitClockReads();
 private:
     struct Item {
         Commit commit;
@@ -111,11 +116,14 @@ private:
     std::atomic<std::uint64_t> countedLookups{0};
     std::exception_ptr failure;
     std::atomic<std::size_t> outstanding{0};
+    std::atomic<std::uint64_t> committerThread{0};
     std::atomic<std::uint64_t> retiredItems{0};
+    std::atomic<std::uint64_t> producerWaits{0};
+    std::atomic<std::uint64_t> drainWaits{0};
     std::atomic<std::uint64_t> decodeDrains{0};
     std::uint64_t reportedDecodeDrains = 0;
-    std::uint32_t idleWaiters = 0;
-    std::size_t resumeAt = 0;
+    std::uint32_t producersWaiting = 0;
+    std::uint32_t drainersWaiting = 0;
     bool committerWaiting = false;
     bool stopped = false;
     bool closing = false;

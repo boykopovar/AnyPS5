@@ -35,6 +35,7 @@ int main() {
     Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseOpen(1, 0, 0, nullptr) == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseOpen(1, 0, 0, reinterpret_cast<const void*>(0x10)) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseConnectPort() == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseDeviceOpen() == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseDisconnectDevice() == MOUSE_ERROR_NOT_INITIALIZED);
@@ -51,6 +52,7 @@ int main() {
     MouseOpenParam unsupported{};
     unsupported.behaviorFlag = 2;
     Require(sceMouseOpen(1, 0, 0, &unsupported) == MOUSE_ERROR_INVALID_ARG);
+    Require(sceMouseOpen(1, 0, 0, reinterpret_cast<const void*>(0x10)) == MOUSE_ERROR_INVALID_ARG);
     Require(sceMouseOpen(1, 0, 0, nullptr) == MOUSE_HANDLE);
     Require(MouseIsOpen_nid_no_patch());
     Require(sceMouseOpen(1, 0, 0, nullptr) == MOUSE_ERROR_ALREADY_OPENED);

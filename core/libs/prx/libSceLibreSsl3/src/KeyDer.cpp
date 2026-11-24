@@ -753,6 +753,24 @@ int CurveFromOid(std::span<const unsigned char> oid) {
     return 0;
 }
 
+constexpr int Asn1RInvalidObjectEncoding = 216;
+
+bool ValidObjectEncoding(std::span<const unsigned char> content) {
+    if (content.empty()) return false;
+    std::size_t position = 0;
+    while (position < content.size()) {
+        std::uint64_t arc = 0;
+        unsigned char value = 0;
+        do {
+            if (position == content.size()) return false;
+            value = content[position++];
+            if (arc == 0 && value == 0x80) return false;
+            arc = (arc << 7) | (value & 0x7f);
+        } while (value & 0x80);
+    }
+    return true;
+}
+
 bool ParseAlgorithm(std::span<const unsigned char> body, int& type, int& curve) {
     Tlv oid{};
     if (!Next(body, 0x06, oid)) {
@@ -763,8 +781,24 @@ bool ParseAlgorithm(std::span<const unsigned char> body, int& type, int& curve) 
         type = RsaType;
         curve = 0;
         if (!body.empty()) {
-            Tlv nullParameter{};
-            if (!Next(body, 0x05, nullParameter) || !nullParameter.content.empty()) {
+            Tlv parameter{};
+            if (!ReadTlv(body, parameter)) {
+                PutError(ErrLibAsn1, ErrRNestedAsn1Error);
+                return false;
+            }
+            if (parameter.tag == 0x06) {
+                if (!ValidObjectEncoding(parameter.content)) {
+                    PutError(ErrLibAsn1, Asn1RInvalidObjectEncoding);
+                    PutError(ErrLibAsn1, ErrRNestedAsn1Error);
+                    return false;
+                }
+            } else if (parameter.tag == 0x05) {
+                if (!parameter.content.empty()) {
+                    PutError(ErrLibAsn1, ErrRNestedAsn1Error);
+                    return false;
+                }
+            } else if (parameter.tag != 0x30) {
+                PutError(ErrLibAsn1, Asn1RWrongTag);
                 PutError(ErrLibAsn1, ErrRNestedAsn1Error);
                 return false;
             }
@@ -831,7 +865,7 @@ LibreSsl3EvpPkey* DecodeSpki(std::span<const unsigned char>& input) {
     }
     auto keyBits = bits.content.subspan(1);
     if (type == RsaType) {
-        auto* key = DecodeRsaPkey(keyBits, false, false);
+        auto* key = DecodeRsaPkey(keyBits, false, true);
         if (!key) {
             PutError(ErrLibRsa, ErrRRsaLib);
             PutError(ErrLibX509, X509RPublicKeyDecodeError);
@@ -1376,6 +1410,10 @@ void FreePreservingErrno(void* pointer) {
 
 }
 
+bool ReadDerObjectFromBio_nid_no_patch(LibreSsl::Bio* bio, std::vector<unsigned char>& result) {
+    return ReadSingleDerObjectFromBio(bio, result);
+}
+
 LibreSsl3EvpPkey* DecodeTraditionalPrivateKey_nid_no_patch(int type, LibreSsl3EvpPkey** output,
     const unsigned char** input, std::int64_t length) {
     if (!input || !*input || length < 0) {
@@ -1428,6 +1466,21 @@ LibreSsl3EvpPkey* APS5_VABI d2i_PUBKEY_nid_postfix(
     ReplaceOutput(output, key, EVP_PKEY_free_nid_disambig1_nid_postfix);
     *input += static_cast<std::size_t>(length) - remaining.size();
     return key;
+}
+
+LibreSsl3Rsa* APS5_VABI d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(
+    LibreSsl3Rsa** output, const unsigned char** input, std::int64_t length) {
+    if (!input) APS5_INVALID_ARG_EX;
+    if (length < 0) return nullptr;
+    const unsigned char* cursor = *input;
+    auto* key = d2i_PUBKEY_nid_postfix(nullptr, &cursor, length);
+    if (!key) return nullptr;
+    auto* rsa = EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(key);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+    if (!rsa) return nullptr;
+    ReplaceOutput(output, rsa, RSA_free_nid_disambig1_nid_postfix);
+    *input = cursor;
+    return rsa;
 }
 
 LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
@@ -1571,17 +1624,8 @@ LibreSsl3EvpPkey* APS5_VABI EVP_PKCS82PKEY_nid_postfix(const LibreSsl3Pkcs8PrivK
         info->privateKey->data, static_cast<std::size_t>(info->privateKey->length));
 
     if (IsOid(oidSpan, RsaOid)) {
-        if (info->algorithm->parameter && info->algorithm->parameter->type != Asn1TypeNull) {
-            PutError(ErrLibRsa, ErrRRsaLib);
-            PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
-            return nullptr;
-        }
-        auto* key = DecodeRsaPkey(keyBytes, true, false);
-        if (!key) {
-            PutError(ErrLibRsa, ErrRRsaLib);
-            PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
-            return nullptr;
-        }
+        auto* key = DecodeRsaPkey(keyBytes, true, true);
+        if (!key) PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
         return key;
     }
     if (IsOid(oidSpan, EcPublicKeyOid)) {
@@ -1599,7 +1643,7 @@ LibreSsl3EvpPkey* APS5_VABI EVP_PKCS82PKEY_nid_postfix(const LibreSsl3Pkcs8PrivK
             PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
             return nullptr;
         }
-        auto* ec = DecodeEcPrivateKey(keyBytes, curve, false);
+        auto* ec = DecodeEcPrivateKey(keyBytes, curve, true);
         if (!ec) {
             PutError(ErrLibEc, EcRDecodeError);
             PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);

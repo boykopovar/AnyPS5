@@ -11,7 +11,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
+#include <string>
+#include <utility>
 #include <emmintrin.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -27,6 +35,35 @@ static bool AlmostEqual(float a, float b, float eps = 1e-4f) {
 
 static bool AlmostEqual(double a, double b, double eps = 1e-6) {
     return std::abs(a - b) <= eps;
+}
+
+template <typename Function>
+static bool FaultsAsNotImplemented(Function function, const char* name) {
+    try {
+        static_cast<void>(function());
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(name) + " not implemented";
+    }
+    return false;
+}
+
+static void* MapReadOnlyPage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY);
+    Require(page != nullptr);
+#else
+    void* page = mmap(nullptr, 4096, PROT_READ, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    return page;
+}
+
+static void UnmapPage(void* page) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, 4096) == 0);
+#endif
 }
 
 static void TestFloatPoint() {
@@ -319,6 +356,60 @@ static void TestLayoutRect() {
     Require(_ZNK7WebCore10LayoutRect8containsERKS0_(&lrA, insideLr));
 }
 
+static WebCore::Color RawColor(std::uint64_t bits) {
+    WebCore::Color color;
+    color.m_colorAndFlags = bits;
+    return color;
+}
+
+static void TestColorMoveAssignEqual() {
+    constexpr std::uint64_t first = 0x11040000FF0000FFull;
+    constexpr std::uint64_t second = 0x110400000000FFFFull;
+
+    WebCore::Color same = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&same, std::move(same));
+    Require(same.m_colorAndFlags == first);
+
+    WebCore::Color target = RawColor(first);
+    WebCore::Color equal = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&target, std::move(equal));
+    Require(target.m_colorAndFlags == first);
+    Require(equal.m_colorAndFlags == first);
+
+    WebCore::Color invalid = RawColor(0);
+    WebCore::Color alsoInvalid = RawColor(0);
+    _ZN7WebCore5ColoraSEOS0_(&invalid, std::move(alsoInvalid));
+    Require(invalid.m_colorAndFlags == 0 && alsoInvalid.m_colorAndFlags == 0);
+
+    WebCore::Color different = RawColor(second);
+    _ZN7WebCore5ColoraSEOS0_(&target, std::move(different));
+    Require(target.m_colorAndFlags == second);
+    Require(different.m_colorAndFlags == 0);
+
+    WebCore::Color fromInvalid = RawColor(0);
+    _ZN7WebCore5ColoraSEOS0_(&target, std::move(fromInvalid));
+    Require(target.m_colorAndFlags == 0 && fromInvalid.m_colorAndFlags == 0);
+
+    WebCore::Color nearlyEqual = RawColor(first ^ 1ull);
+    WebCore::Color original = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&original, std::move(nearlyEqual));
+    Require(original.m_colorAndFlags == (first ^ 1ull));
+    Require(nearlyEqual.m_colorAndFlags == 0);
+
+    WebCore::Color flagged = RawColor(first | (1ull << 48));
+    WebCore::Color plain = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&plain, std::move(flagged));
+    Require(plain.m_colorAndFlags == (first | (1ull << 48)));
+    Require(flagged.m_colorAndFlags == 0);
+
+    WebCore::Color copied = RawColor(first);
+    WebCore::Color source = RawColor(first);
+    _ZN7WebCore5ColoraSERKS0_(&copied, source);
+    Require(copied.m_colorAndFlags == first && source.m_colorAndFlags == first);
+    _ZN7WebCore5ColoraSERKS0_(&copied, copied);
+    Require(copied.m_colorAndFlags == first);
+}
+
 static void TestRoundedRect() {
     WebCore::LayoutRect lr{WebCore::LayoutPoint{0, 0}, WebCore::LayoutSize{6400, 6400}};
     WebCore::LayoutSize sz{640, 640};
@@ -370,8 +461,11 @@ static void TestColor() {
     _ZN7WebCore5ColoraSEOS0_(&cMoveAssign, std::move(cAssign));
     Require(cMoveAssign.m_colorAndFlags == c1.m_colorAndFlags);
 
-    WebCore::Color cAlpha = _ZNK7WebCore5Color14colorWithAlphaEf(&c1, 0.5f);
+    WebCore::Color cAlpha;
+    cAlpha.m_colorAndFlags = 0xFFFFFFFFull;
+    Require(_ZNK7WebCore5Color14colorWithAlphaEf(&cAlpha, &c1, 0.5f) == &cAlpha);
     Require((cAlpha.m_colorAndFlags & 0xFF) == 128);
+    Require(((cAlpha.m_colorAndFlags ^ c1.m_colorAndFlags) & 0xFFFFFF00ull) == 0);
 
     WebCore::Color cWhite;
     cWhite.m_colorAndFlags = 0xFFFFFFFFull;
@@ -383,11 +477,64 @@ static void TestColor() {
     Require(AlmostEqual(_ZNK7WebCore5Color9lightnessEv(&cBlack), 0.0));
     Require(AlmostEqual(_ZNK7WebCore5Color9luminanceEv(&cBlack), 0.0));
 
-    WebCore::Color cDarkened = _ZNK7WebCore5Color8darkenedEv(&cWhite);
-    Require(((cDarkened.m_colorAndFlags >> 24) & 0xFF) < 255);
+    WebCore::Color cDarkened;
+    Require(_ZNK7WebCore5Color8darkenedEv(&cDarkened, &cWhite) == &cDarkened);
+    Require((cDarkened.m_colorAndFlags & 0xFFFFFFFFull) == 0xABABABFFull);
 
-    WebCore::Color cLightened = _ZNK7WebCore5Color9lightenedEv(&cBlack);
-    Require(((cLightened.m_colorAndFlags >> 24) & 0xFF) > 0);
+    WebCore::Color cLightened;
+    cLightened.m_colorAndFlags = 0xFFFFFFFFull;
+    Require(_ZNK7WebCore5Color9lightenedEv(&cLightened, &cBlack) == &cLightened);
+    Require((cLightened.m_colorAndFlags & 0xFFFFFFFFull) == 0x545454FFull);
+}
+
+static void TestColorGuestPointers() {
+    auto* unreadable = reinterpret_cast<WebCore::Color*>(0x10);
+    auto* readOnly = static_cast<WebCore::Color*>(MapReadOnlyPage());
+    WebCore::Color source;
+    source.m_colorAndFlags = 0x11223344ull;
+    WebCore::Color target;
+    target.m_colorAndFlags = 0x55667788ull;
+
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1ERKS0_(&target, *unreadable); return 0; }, "_ZN7WebCore5ColorC1ERKS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2ERKS0_(&target, *unreadable); return 0; }, "_ZN7WebCore5ColorC2ERKS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull);
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1ERKS0_(readOnly, source); return 0; }, "_ZN7WebCore5ColorC1ERKS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2ERKS0_(readOnly, source); return 0; }, "_ZN7WebCore5ColorC2ERKS0_"));
+
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1EOS0_(&target, std::move(*unreadable)); return 0; }, "_ZN7WebCore5ColorC1EOS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2EOS0_(&target, std::move(*unreadable)); return 0; }, "_ZN7WebCore5ColorC2EOS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull);
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1EOS0_(readOnly, std::move(source)); return 0; }, "_ZN7WebCore5ColorC1EOS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2EOS0_(readOnly, std::move(source)); return 0; }, "_ZN7WebCore5ColorC2EOS0_"));
+    Require(source.m_colorAndFlags == 0x11223344ull);
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1EOS0_(&target, std::move(*readOnly)); return 0; }, "_ZN7WebCore5ColorC1EOS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2EOS0_(&target, std::move(*readOnly)); return 0; }, "_ZN7WebCore5ColorC2EOS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(&target, std::move(*readOnly)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull);
+
+    target.m_colorAndFlags = 0x55667788ull;
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSERKS0_(unreadable, source); }, "_ZN7WebCore5ColoraSERKS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSERKS0_(&target, *unreadable); }, "_ZN7WebCore5ColoraSERKS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSERKS0_(readOnly, source); }, "_ZN7WebCore5ColoraSERKS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(unreadable, std::move(source)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(&target, std::move(*unreadable)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(readOnly, std::move(source)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull && source.m_colorAndFlags == 0x11223344ull);
+    Require(_ZN7WebCore5ColoraSERKS0_(&target, source) == &target && target.m_colorAndFlags == 0x11223344ull);
+
+    WebCore::Color derived;
+    derived.m_colorAndFlags = 0x55667788ull;
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color14colorWithAlphaEf(&derived, unreadable, 0.5f); }, "_ZNK7WebCore5Color14colorWithAlphaEf"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color8darkenedEv(&derived, unreadable); }, "_ZNK7WebCore5Color8darkenedEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color9lightenedEv(&derived, unreadable); }, "_ZNK7WebCore5Color9lightenedEv"));
+    Require(derived.m_colorAndFlags == 0x55667788ull);
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color14colorWithAlphaEf(readOnly, &source, 0.5f); }, "_ZNK7WebCore5Color14colorWithAlphaEf"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color8darkenedEv(readOnly, &source); }, "_ZNK7WebCore5Color8darkenedEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color9lightenedEv(readOnly, &source); }, "_ZNK7WebCore5Color9lightenedEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color9lightnessEv(unreadable); }, "_ZNK7WebCore5Color9lightnessEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color9luminanceEv(unreadable); }, "_ZNK7WebCore5Color9luminanceEv"));
+    Require(AlmostEqual(_ZNK7WebCore5Color9lightnessEv(readOnly), 0.0));
+    UnmapPage(readOnly);
 }
 
 static void TestAffineTransform() {
@@ -517,6 +664,28 @@ static void TestTransformationMatrix() {
     WebCore::TransformationMatrix rotMat;
     _ZN7WebCore20TransformationMatrix6rotateEd(&rotMat, 90.0);
     Require(AlmostEqual(rotMat.m_matrix[0][1], 1.0));
+
+    for (const double turns : {360.0, -360.0, 720.0, 3600.0, 0.0, -0.0}) {
+        WebCore::TransformationMatrix turned;
+        Require(&_ZN7WebCore20TransformationMatrix6rotateEd(&turned, turns) == &turned);
+        Require(turned.m_matrix[0][0] == 1.0 && turned.m_matrix[0][1] == 0.0);
+        Require(turned.m_matrix[1][0] == 0.0 && turned.m_matrix[1][1] == 1.0);
+        const WebCore::IntRect whole{WebCore::IntPoint{0, 0}, WebCore::IntSize{100, 100}};
+        const WebCore::IntRect mapped = _ZNK7WebCore20TransformationMatrix7mapRectERKNS_7IntRectE(&turned, whole);
+        Require(mapped.m_location.m_x == 0 && mapped.m_location.m_y == 0);
+        Require(mapped.m_size.m_width == 100 && mapped.m_size.m_height == 100);
+    }
+    WebCore::TransformationMatrix sheared;
+    _ZN7WebCore20TransformationMatrix4skewEdd(&sheared, 30.0, 45.0);
+    const WebCore::TransformationMatrix shearedBefore = sheared;
+    _ZN7WebCore20TransformationMatrix6rotateEd(&sheared, 360.0);
+    for (int row = 0; row < 4; ++row)
+        for (int column = 0; column < 4; ++column)
+            Require(sheared.m_matrix[row][column] == shearedBefore.m_matrix[row][column]);
+    WebCore::TransformationMatrix half;
+    _ZN7WebCore20TransformationMatrix6rotateEd(&half, 180.0);
+    Require(half.m_matrix[0][0] == -1.0 && half.m_matrix[1][1] == -1.0);
+    Require(half.m_matrix[0][1] != 0.0 && AlmostEqual(half.m_matrix[0][1], 0.0));
 
     WebCore::TransformationMatrix rot3dMat;
     _ZN7WebCore20TransformationMatrix8rotate3dEddd(&rot3dMat, 0.0, 90.0, 0.0);
@@ -735,9 +904,11 @@ int main() {
     TestFloatQuad();
     TestFloatRoundedRect();
     TestIntPointIntSizeIntRect();
+    TestColorMoveAssignEqual();
     TestLayoutRect();
     TestRoundedRect();
     TestColor();
+    TestColorGuestPointers();
     TestAffineTransform();
     TestTransformationMatrix();
     TestApplyPerspective();

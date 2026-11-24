@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -38,9 +37,7 @@ static bool IsGlyphToScriptMap(const char* moduleName, const char* propertyName)
 static FT_Library ReadGuestLibrary(GuestLibrary* library, const char* function) {
     if (!library) return nullptr;
     FT_Library host = nullptr;
-    const int saved = errno;
-    const bool read = GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host));
-    errno = saved;
+    const bool read = reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) == 0 && GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host));
     if (!read) throw std::invalid_argument(std::string(function) + ": unreadable library handle");
     return host;
 }

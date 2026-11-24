@@ -305,6 +305,18 @@ RttiAllocator rttiAllocator;
 
 char emptyCharacters[1]{};
 
+template <typename Value>
+Value LoadGuest(const void* source, const char* function) {
+    Value value {};
+    if (!GuestCopyIn_nid_no_patch(&value, source, sizeof(value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+template <typename Value>
+void StoreGuest(void* destination, const Value& value, const char* function) {
+    if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
 AllocationContext ActiveAllocation() {
     auto& state = State();
     std::lock_guard lock(state.mutex);
@@ -373,8 +385,7 @@ std::uint32_t CompiledSdk() {
     std::uint32_t sdk = std::numeric_limits<std::uint32_t>::max();
     if (lookupFailed.load(std::memory_order_relaxed)) return sdk;
     try {
-        const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-        if (process) std::memcpy(&sdk, process + 0x10, sizeof(sdk));
+        sdk = ApplicationCompiledSdkVersion();
     } catch (const std::runtime_error&) {
         lookupFailed.store(true, std::memory_order_relaxed);
     }
@@ -2755,8 +2766,10 @@ String* APS5_VABI _ZN3sce4Json6StringpLEh(String* self, unsigned char ch) {
     return self;
 }
 String* APS5_VABI _ZNK3sce4Json6String6substrEmm(String* result, const String* self, std::size_t position, std::size_t length) {
-    if (position > View(*self).size()) throw std::out_of_range("sce::Json::String::substr: position past the end");
-    Construct(*result, View(*self).substr(position, length));
+    const auto source = View(*self);
+    if (position > source.size()) throw std::out_of_range("sce::Json::String::substr: position past the end");
+    Construct(*result, std::string_view{});
+    AssignText(*result, source.substr(position, length), true);
     return result;
 }
 char APS5_VABI _ZNK3sce4Json6String2atEm(const String* self, std::size_t index) {
@@ -3228,24 +3241,23 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* 
 }
 
 void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(InitParameterRtti* self, void* allocParam, void* userData, std::size_t fileBufferSize) {
-    *self = {};
+    StoreGuest(self, InitParameterRtti{}, __func__);
     if (!allocParam) return;
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (state.allocation) return;
-    const auto& callbacks = *static_cast<const AllocParamRtti*>(allocParam);
+    const auto callbacks = LoadGuest<AllocParamRtti>(allocParam, __func__);
     if (!callbacks.allocate || !callbacks.free) return;
     state.rtti = callbacks;
-    self->allocParam = &rttiAllocator;
-    self->userData = userData;
-    self->fileBufferSize = fileBufferSize;
+    StoreGuest(self, InitParameterRtti{&rttiAllocator, userData, fileBufferSize}, __func__);
 }
 
 static_assert(sizeof(InitParameter2) == 0x28 && offsetof(InitParameter2, specialFloatFormatType) == 0x18);
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) {
-    *self = {};
-    self->specialFloatFormatType = 2;
+    InitParameter2 parameter {};
+    parameter.specialFloatFormatType = 2;
+    StoreGuest(self, parameter, __func__);
 }
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C2Ev(InitParameter2* self) {
@@ -3254,8 +3266,10 @@ void APS5_VABI _ZN3sce4Json14InitParameter2C2Ev(InitParameter2* self) {
 }
 
 void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(InitParameter2* self, void* allocator, void* userData) {
-    self->allocator = allocator;
-    self->userData = userData;
+    auto parameter = LoadGuest<InitParameter2>(self, __func__);
+    parameter.allocator = allocator;
+    parameter.userData = userData;
+    StoreGuest(self, parameter, __func__);
 }
 
 void APS5_VABI _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(InitParameter2* self, void* allocParam, void* userData) {
@@ -3263,19 +3277,25 @@ void APS5_VABI _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocPa
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (state.allocation) return;
-    const auto& callbacks = *static_cast<const AllocParamRtti*>(allocParam);
+    const auto callbacks = LoadGuest<AllocParamRtti>(allocParam, __func__);
     if (!callbacks.allocate || !callbacks.free) return;
+    auto parameter = LoadGuest<InitParameter2>(self, __func__);
     state.rtti = callbacks;
-    self->allocator = &rttiAllocator;
-    self->userData = userData;
+    parameter.allocator = &rttiAllocator;
+    parameter.userData = userData;
+    StoreGuest(self, parameter, __func__);
 }
 
 void APS5_VABI _ZN3sce4Json14InitParameter217setFileBufferSizeEm(InitParameter2* self, std::size_t size) {
-    self->fileBufferSize = size;
+    auto parameter = LoadGuest<InitParameter2>(self, __func__);
+    parameter.fileBufferSize = size;
+    StoreGuest(self, parameter, __func__);
 }
 
 void APS5_VABI _ZN3sce4Json14InitParameter225setSpecialFloatFormatTypeENS0_22SpecialFloatFormatTypeE(InitParameter2* self, std::int32_t type) {
-    self->specialFloatFormatType = type;
+    auto parameter = LoadGuest<InitParameter2>(self, __func__);
+    parameter.specialFloatFormatType = type;
+    StoreGuest(self, parameter, __func__);
 }
 
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void* self, const InitParameter2* parameter) {
@@ -3485,8 +3505,8 @@ bool* APS5_VABI _ZN3sce4Json5Value12referBooleanEv(Value* self) { return self->t
 std::int64_t* APS5_VABI _ZN3sce4Json5Value12referIntegerEv(Value* self) { return self->type == TypeInteger || self->type == TypeUInteger ? &self->integer : nullptr; }
 std::uint64_t* APS5_VABI _ZN3sce4Json5Value13referUIntegerEv(Value* self) { return self->type == TypeInteger || self->type == TypeUInteger ? &self->uinteger : nullptr; }
 double* APS5_VABI _ZN3sce4Json5Value9referRealEv(Value* self) { return self->type == TypeReal ? &self->real : nullptr; }
-void* APS5_VABI _ZNK3sce4Json14InitParameter211getUserDataEv(const InitParameter2* self) { return self->userData; }
-void* APS5_VABI _ZNK3sce4Json14InitParameter212getAllocatorEv(const InitParameter2* self) { return self->allocator; }
-std::size_t APS5_VABI _ZNK3sce4Json14InitParameter217getFileBufferSizeEv(const InitParameter2* self) { return self->fileBufferSize; }
-std::int32_t APS5_VABI _ZNK3sce4Json14InitParameter225getSpecialFloatFormatTypeEv(const InitParameter2* self) { return self->specialFloatFormatType; }
+void* APS5_VABI _ZNK3sce4Json14InitParameter211getUserDataEv(const InitParameter2* self) { return LoadGuest<InitParameter2>(self, __func__).userData; }
+void* APS5_VABI _ZNK3sce4Json14InitParameter212getAllocatorEv(const InitParameter2* self) { return LoadGuest<InitParameter2>(self, __func__).allocator; }
+std::size_t APS5_VABI _ZNK3sce4Json14InitParameter217getFileBufferSizeEv(const InitParameter2* self) { return LoadGuest<InitParameter2>(self, __func__).fileBufferSize; }
+std::int32_t APS5_VABI _ZNK3sce4Json14InitParameter225getSpecialFloatFormatTypeEv(const InitParameter2* self) { return LoadGuest<InitParameter2>(self, __func__).specialFloatFormatType; }
 }
