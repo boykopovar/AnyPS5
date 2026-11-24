@@ -82,6 +82,8 @@ struct Api {
     decltype(&sceAjmiModuleUnregister) moduleUnregister;
     decltype(&sceAjmiMemoryRegister) memoryRegister;
     decltype(&sceAjmiMemoryUnregister) memoryUnregister;
+    decltype(&sceAjmiInstanceSwitch) instanceSwitch;
+    decltype(&sceAjmiInstanceExtend) instanceExtend;
 };
 
 struct BatchApi {
@@ -205,6 +207,19 @@ void CheckInstances(const Api& alias, const Api& native, decltype(&sceAjmiInstan
     }
     std::uint32_t refused = 0xA5A5A5A5u;
     Require(alias.create(context, 2, std::uint64_t{1} << 63, &refused) == InvalidFlags && refused == 0xA5A5A5A5u);
+    const auto checkThrow = [](auto&& call) {
+        bool caught = false;
+        try {
+            call();
+        } catch (const std::exception&) {
+            caught = true;
+        }
+        Require(caught);
+    };
+    checkThrow([&] { alias.instanceSwitch(context, 0, 0, 0); });
+    checkThrow([&] { native.instanceSwitch(context, 0, 0, 0); });
+    checkThrow([&] { alias.instanceExtend(context, 0, 0, 0); });
+    checkThrow([&] { native.instanceExtend(context, 0, 0, 0); });
     first.Check();
     second.Check();
 }
@@ -293,7 +308,9 @@ int main(int argc, char** argv) {
         aliasModule.Import<decltype(Api::moduleRegister)>(patched ? "dmwcwCeItmE" : "sceAjmiModuleRegister"),
         aliasModule.Import<decltype(Api::moduleUnregister)>(patched ? "6fY-ci3au2U" : "sceAjmiModuleUnregister"),
         aliasModule.Import<decltype(Api::memoryRegister)>(patched ? "dTsNpEt1AqQ" : "sceAjmiMemoryRegister"),
-        aliasModule.Import<decltype(Api::memoryUnregister)>(patched ? "X8sT-xi-dVE" : "sceAjmiMemoryUnregister")
+        aliasModule.Import<decltype(Api::memoryUnregister)>(patched ? "X8sT-xi-dVE" : "sceAjmiMemoryUnregister"),
+        aliasModule.Import<decltype(Api::instanceSwitch)>(patched ? "LESEGgm133w" : "sceAjmiInstanceSwitch"),
+        aliasModule.Import<decltype(Api::instanceExtend)>(patched ? "pfPwiigOE3A" : "sceAjmiInstanceExtend")
     };
     const Api native{
         nativeModule.Import<decltype(Api::initialize)>(patched ? "dl+4eHSzUu4" : "sceAjmInitialize"),
@@ -305,7 +322,9 @@ int main(int argc, char** argv) {
         nativeModule.Import<decltype(Api::moduleRegister)>(patched ? "Q3dyFuwGn64" : "sceAjmModuleRegister"),
         nativeModule.Import<decltype(Api::moduleUnregister)>(patched ? "Wi7DtlLV+KI" : "sceAjmModuleUnregister"),
         nativeModule.Import<decltype(Api::memoryRegister)>(patched ? "bkRHEYG6lEM" : "sceAjmMemoryRegister"),
-        nativeModule.Import<decltype(Api::memoryUnregister)>(patched ? "pIpGiaYkHkM" : "sceAjmMemoryUnregister")
+        nativeModule.Import<decltype(Api::memoryUnregister)>(patched ? "pIpGiaYkHkM" : "sceAjmMemoryUnregister"),
+        nativeModule.Import<decltype(Api::instanceSwitch)>(patched ? "rgLjmfdXocI" : "sceAjmInstanceSwitch"),
+        nativeModule.Import<decltype(Api::instanceExtend)>(patched ? "YDFR0dDVGAg" : "sceAjmInstanceExtend")
     };
     const std::string_view operation = argv[2];
     if (operation == "contexts") {

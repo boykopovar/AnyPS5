@@ -10,7 +10,7 @@ int APS5_VABI sceAjmiModuleUnregister(std::uint32_t context, std::uint32_t codec
 int APS5_VABI sceAjmiBatchStartBuffer(std::uint32_t context, const std::uint8_t* batch, std::uint32_t batchSize, int priority, AjmBatchError* error, std::uint32_t* batchId);
 int APS5_VABI sceAjmiFinalize(std::uint32_t context);
 const char* APS5_VABI sceAjmiStrError(int error);
-int APS5_VABI sceAjmiInstanceSwitch();
+int APS5_VABI sceAjmiInstanceSwitch(std::uint32_t context, std::uint32_t codec, std::uint64_t flags, std::uint32_t instance);
 int APS5_VABI sceAjmiDecAt9ParseConfigData(const void* configData, AjmDecAt9ConfigDataInfo* configInfo);
 int APS5_VABI sceAjmiInitialize(std::int64_t reserved, std::uint32_t* context);
 int APS5_VABI sceAjmiBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* error);
@@ -21,6 +21,6 @@ int APS5_VABI sceAjmiDecMp3ParseFrame(const std::uint8_t* stream, std::uint32_t 
 int APS5_VABI sceAjmiMemoryRegister(std::uint32_t context, void* ptr, std::size_t pages);
 int APS5_VABI sceAjmiModuleRegister(std::uint32_t context, std::uint32_t codec, std::int64_t reserved);
 int APS5_VABI sceAjmiInstanceCreate(std::uint32_t context, std::uint32_t codec, std::uint64_t flags, std::uint32_t* instance);
-int APS5_VABI sceAjmiInstanceExtend();
+int APS5_VABI sceAjmiInstanceExtend(std::uint32_t context, std::uint32_t codec, std::uint64_t flags, std::uint32_t instance);
 
 }

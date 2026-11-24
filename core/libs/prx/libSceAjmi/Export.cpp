@@ -216,8 +216,8 @@ void* APS5_VABI sceAjmiBatchJobControlBufferRa_nid_no_patch(void* position, std:
 }
 APS5_EXPORT("J3UwQ5e6sNU", sceAjmiBatchJobControlBufferRa_nid_no_patch);
 
-int APS5_VABI sceAjmiInstanceSwitch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiInstanceSwitch(std::uint32_t context, std::uint32_t codec, std::uint64_t flags, std::uint32_t instance) {
+    return sceAjmInstanceSwitch(context, codec, flags, instance);
 }
 
 int APS5_VABI sceAjmiDecAt9ParseConfigData(const void* configData, AjmDecAt9ConfigDataInfo* configInfo) {
@@ -265,8 +265,8 @@ int APS5_VABI sceAjmiInstanceCreate(std::uint32_t context, std::uint32_t codec, 
     return sceAjmInstanceCreate(context, codec, flags, instance);
 }
 
-int APS5_VABI sceAjmiInstanceExtend() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiInstanceExtend(std::uint32_t context, std::uint32_t codec, std::uint64_t flags, std::uint32_t instance) {
+    return sceAjmInstanceExtend(context, codec, flags, instance);
 }
 
 void* APS5_VABI sceAjmiBatchJobRunSplitBufferRa_nid_no_patch(void* position, std::uint32_t instance, std::uint64_t flags, const AjmBuffer* inputBuffers, std::size_t inputBuffersNum, const AjmBuffer* outputBuffers, std::size_t outputBuffersNum, void* sidebandOutput, std::size_t sidebandOutputSize, void* returnAddress) {
