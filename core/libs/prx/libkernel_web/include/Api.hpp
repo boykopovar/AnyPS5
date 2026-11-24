@@ -6,7 +6,7 @@
 extern "C" {
 
 int APS5_VABI __freeze_nid_disambig1_nid_postfix();
-int APS5_VABI __sceKernelGetGPI_nid_disambig1_nid_postfix();
+std::uint64_t APS5_VABI __sceKernelGetGPI_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_debug_init_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_dl_get_info_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_dl_get_info_2_nid_disambig1_nid_postfix();

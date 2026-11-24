@@ -73,6 +73,20 @@ void TestDevelopmentMode() {
             "__sys_is_development_mode differs from libkernel_sys");
 }
 
+void TestGetGPI() {
+    sceKernelSetGPO(0);
+    Require(__sceKernelGetGPI_nid_postfix() == 0, "__sceKernelGetGPI in libkernel_sys did not return 0");
+    Require(__sceKernelGetGPI_nid_disambig1_nid_postfix() == 0, "__sceKernelGetGPI in libkernel_web did not return 0");
+
+    constexpr std::uint32_t Pattern = 0xA5A5A5A5;
+    sceKernelSetGPO(Pattern);
+    Require(sceKernelGetGPI() == Pattern, "sceKernelGetGPI did not reflect sceKernelSetGPO");
+    Require(__sceKernelGetGPI_nid_postfix() == Pattern, "__sceKernelGetGPI in libkernel_sys did not reflect sceKernelSetGPO");
+    Require(__sceKernelGetGPI_nid_disambig1_nid_postfix() == Pattern, "__sceKernelGetGPI in libkernel_web did not reflect sceKernelSetGPO");
+
+    sceKernelSetGPO(0);
+}
+
 void TestNamedObject() {
     int object = 0;
     RequireFailure(__sys_namedobj_create_nid_disambig1_nid_postfix(nullptr, &object, MutexType), GuestEinval,
@@ -113,6 +127,7 @@ int main() {
     TestDup2();
     TestExec();
     TestDevelopmentMode();
+    TestGetGPI();
     TestNamedObject();
     TestWait4();
     return 0;
