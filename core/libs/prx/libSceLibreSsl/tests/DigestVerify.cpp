@@ -4,6 +4,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -12,6 +13,15 @@
 #include <initializer_list>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -35,6 +45,16 @@ static_assert(offsetof(PkeyHeader, references) == 8);
 static_assert(offsetof(PkeyHeader, key) == 32);
 static_assert(sizeof(EvpMdContext) == 48);
 static_assert(offsetof(EvpMdContext, pkeyContext) == 32);
+static_assert(sizeof(LibreSslOcspSingleResponse) == 40);
+static_assert(offsetof(LibreSslOcspSingleResponse, certStatus) == 8);
+static_assert(offsetof(LibreSslOcspSingleResponse, thisUpdate) == 16);
+static_assert(offsetof(LibreSslOcspSingleResponse, nextUpdate) == 24);
+static_assert(sizeof(LibreSslOcspCertStatus) == 16);
+static_assert(offsetof(LibreSslOcspCertStatus, type) == 0);
+static_assert(offsetof(LibreSslOcspCertStatus, value) == 8);
+static_assert(sizeof(LibreSslOcspRevokedInfo) == 16);
+static_assert(offsetof(LibreSslOcspRevokedInfo, revocationTime) == 0);
+static_assert(offsetof(LibreSslOcspRevokedInfo, revocationReason) == 8);
 
 constexpr int NidSha1 = 64;
 constexpr std::size_t KeyBytes = 128;
@@ -313,6 +333,94 @@ void CopyAndCleanup(const Key& key) {
     Require(References(key) == 1, "the copies and cleanups leave one key reference");
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info {};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = static_cast<unsigned char*>(VirtualAlloc(nullptr, bytes * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr, "guarded page allocation");
+        DWORD previous {};
+        Require(VirtualProtect(data + bytes, bytes, PAGE_NOACCESS, &previous) != 0, "guard page protection");
+#else
+        bytes = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, bytes * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "guarded page mapping");
+        data = static_cast<unsigned char*>(mapped);
+        Require(mprotect(data + bytes, bytes, PROT_NONE) == 0, "guard page protection");
+#endif
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes * 2);
+#endif
+    }
+
+    template<typename T>
+    T* AtPageEnd(std::size_t readableBytes, const T& value) {
+        std::memcpy(data + bytes - readableBytes, &value, readableBytes);
+        return reinterpret_cast<T*>(data + bytes - readableBytes);
+    }
+
+private:
+    unsigned char* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+void OcspSingleStatusFieldReads() {
+    {
+        GuardedPage singlePage;
+        LibreSslOcspCertStatus status {};
+        status.type = 0;
+        status.value = nullptr;
+        Asn1String expectedThisUpdate {};
+        LibreSslOcspSingleResponse singleTemplate {};
+        singleTemplate.certStatus = &status;
+        singleTemplate.thisUpdate = &expectedThisUpdate;
+        const auto* single = singlePage.AtPageEnd(offsetof(LibreSslOcspSingleResponse, nextUpdate), singleTemplate);
+        Asn1String* actualThisUpdate = nullptr;
+        const int result = OCSP_single_get0_status_nid_postfix(single, nullptr, nullptr, &actualThisUpdate, nullptr);
+        Require(result == 0, "OCSP_single_get0_status returns status without reading nextUpdate or singleExtensions");
+        Require(actualThisUpdate == &expectedThisUpdate,
+            "OCSP_single_get0_status outputs thisUpdate when nextUpdate is null");
+        Asn1String* actualNextUpdate = nullptr;
+        RequireThrows([&] { OCSP_single_get0_status_nid_postfix(single, nullptr, nullptr, nullptr, &actualNextUpdate); },
+            "OCSP_single_get0_status throws when requested nextUpdate lies in an inaccessible page");
+    }
+    {
+        GuardedPage revokedPage;
+        Asn1String expectedRevocationTime {};
+        LibreSslOcspRevokedInfo revokedTemplate {};
+        revokedTemplate.revocationTime = &expectedRevocationTime;
+        auto* revoked = revokedPage.AtPageEnd(offsetof(LibreSslOcspRevokedInfo, revocationReason), revokedTemplate);
+        LibreSslOcspCertStatus status {};
+        status.type = 1;
+        status.value = revoked;
+        LibreSslOcspSingleResponse single {};
+        single.certStatus = &status;
+        Asn1String* actualRevocationTime = nullptr;
+        const int result = OCSP_single_get0_status_nid_postfix(&single, nullptr, &actualRevocationTime, nullptr, nullptr);
+        Require(result == 1, "OCSP_single_get0_status returns revoked status without reading revocationReason");
+        Require(actualRevocationTime == &expectedRevocationTime,
+            "OCSP_single_get0_status outputs revocationTime when reason is null");
+    }
+    {
+        GuardedPage statusPage;
+        LibreSslOcspCertStatus statusTemplate {};
+        statusTemplate.type = 1;
+        auto* guardedStatus = statusPage.AtPageEnd(offsetof(LibreSslOcspCertStatus, value), statusTemplate);
+        LibreSslOcspSingleResponse single {};
+        single.certStatus = guardedStatus;
+        Require(OCSP_single_get0_status_nid_postfix(&single, nullptr, nullptr, nullptr, nullptr) == 1,
+            "OCSP_single_get0_status skips certStatus value when neither reason nor revocationTime is requested");
+    }
+}
+
 void ReleaseKey(const Key& key) {
     EVP_PKEY_free_nid_postfix(key.pkey);
 }
@@ -420,6 +528,7 @@ int main(int argc, char** argv) {
     UninitializedDigest(key);
     MissingOrForeignState(key);
     CopyAndCleanup(key);
+    OcspSingleStatusFieldReads();
     ReleaseKey(key);
     return 0;
 }
