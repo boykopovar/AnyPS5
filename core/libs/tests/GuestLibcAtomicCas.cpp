@@ -84,7 +84,7 @@ static void TestWidth2SuccessAndFailure() {
     CheckSentinels(buf.after, sizeof(buf.after), 0xaa);
 }
 
-static void TestWidth4Neighbors() {
+static void TestWidth4SuccessAndFailure() {
     AlignedBuffer4 buf;
     std::memset(&buf, 0xaa, sizeof(buf));
     buf.target = 0x11223344;
@@ -95,9 +95,15 @@ static void TestWidth4Neighbors() {
     Require(expected == 0x11223344);
     CheckSentinels(buf.before, sizeof(buf.before), 0xaa);
     CheckSentinels(buf.after, sizeof(buf.after), 0xaa);
+
+    Require(__atomic_compare_exchange_4_nid_postfix(&buf.target, &expected, 0x99aabbcc, SeqCst, SeqCst) == 1);
+    Require(buf.target == 0x99aabbcc);
+    Require(expected == 0x11223344);
+    CheckSentinels(buf.before, sizeof(buf.before), 0xaa);
+    CheckSentinels(buf.after, sizeof(buf.after), 0xaa);
 }
 
-static void TestWidth8Failure() {
+static void TestWidth8SuccessAndFailure() {
     AlignedBuffer8 buf;
     std::memset(&buf, 0xaa, sizeof(buf));
     buf.target = 0x1122334455667788ull;
@@ -108,12 +114,18 @@ static void TestWidth8Failure() {
     Require(expected == 0x1122334455667788ull);
     CheckSentinels(buf.before, sizeof(buf.before), 0xaa);
     CheckSentinels(buf.after, sizeof(buf.after), 0xaa);
+
+    Require(__atomic_compare_exchange_8_nid_postfix(&buf.target, &expected, 0x0102030405060708ull, SeqCst, SeqCst) == 1);
+    Require(buf.target == 0x0102030405060708ull);
+    Require(expected == 0x1122334455667788ull);
+    CheckSentinels(buf.before, sizeof(buf.before), 0xaa);
+    CheckSentinels(buf.after, sizeof(buf.after), 0xaa);
 }
 
 int main() {
     TestWidth1NeighborsAndFailure();
     TestWidth2SuccessAndFailure();
-    TestWidth4Neighbors();
-    TestWidth8Failure();
+    TestWidth4SuccessAndFailure();
+    TestWidth8SuccessAndFailure();
     return 0;
 }
