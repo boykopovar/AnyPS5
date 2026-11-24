@@ -23,10 +23,8 @@
 #include "prx/libSceNKWebKit/include/GraphemeClusterExports.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include <memory>
 #include <stdexcept>
-#include <unicode/brkiter.h>
-#include <unicode/unistr.h>
+#include <unicode/uchar.h>
 
 namespace {
 
@@ -36,14 +34,140 @@ char16_t Latin1Unit(const StringView& string, unsigned index) {
     return string.is8Bit ? static_cast<const unsigned char*>(string.data)[index] : static_cast<const char16_t*>(string.data)[index];
 }
 
-std::unique_ptr<icu::BreakIterator> CharacterBreakIterator(const icu::UnicodeString& text) {
-    UErrorCode status = U_ZERO_ERROR;
-    std::unique_ptr<icu::BreakIterator> iterator(
-        icu::BreakIterator::createCharacterInstance(icu::Locale::getRoot(), status));
-    if (U_FAILURE(status) || !iterator)
-        throw std::runtime_error("failed to create grapheme break iterator");
-    iterator->setText(text);
-    return iterator;
+UChar32 CodePointAt(const StringView& string, unsigned offset, unsigned& length) {
+    const auto* characters = static_cast<const char16_t*>(string.data);
+    const char16_t first = characters[offset];
+    if (first >= 0xd800 && first <= 0xdbff && offset + 1 < string.length) {
+        const char16_t second = characters[offset + 1];
+        if (second >= 0xdc00 && second <= 0xdfff) {
+            length = 2;
+            return 0x10000 + ((first - 0xd800) << 10) + (second - 0xdc00);
+        }
+    }
+    length = 1;
+    return first;
+}
+
+UGraphemeClusterBreak GraphemeBreak(UChar32 character) {
+    return static_cast<UGraphemeClusterBreak>(u_getIntPropertyValue(character, UCHAR_GRAPHEME_CLUSTER_BREAK));
+}
+
+UIndicConjunctBreak IndicConjunctBreak(UChar32 character) {
+    return static_cast<UIndicConjunctBreak>(u_getIntPropertyValue(character, UCHAR_INDIC_CONJUNCT_BREAK));
+}
+
+struct GraphemeProperties {
+    UGraphemeClusterBreak graphemeBreak;
+    UIndicConjunctBreak indicConjunctBreak;
+    bool extendedPictographic;
+};
+
+GraphemeProperties Properties(UChar32 character) {
+    return {
+        GraphemeBreak(character),
+        IndicConjunctBreak(character),
+        static_cast<bool>(u_hasBinaryProperty(character, UCHAR_EXTENDED_PICTOGRAPHIC))
+    };
+}
+
+bool IsGraphemeControl(UGraphemeClusterBreak value) {
+    return value == U_GCB_CONTROL || value == U_GCB_CR || value == U_GCB_LF;
+}
+
+struct GraphemeState {
+    unsigned regionalIndicatorCount = 0;
+    bool extendedPictographicExtendSuffix = false;
+    bool previousZwjFollowsPictographic = false;
+    bool indicConsonantSuffix = false;
+    bool indicLinkerSuffix = false;
+
+    void Add(const GraphemeProperties& character) {
+        previousZwjFollowsPictographic =
+            character.graphemeBreak == U_GCB_ZWJ && extendedPictographicExtendSuffix;
+        if (character.extendedPictographic)
+            extendedPictographicExtendSuffix = true;
+        else if (character.graphemeBreak != U_GCB_EXTEND)
+            extendedPictographicExtendSuffix = false;
+
+        if (character.indicConjunctBreak == U_INCB_CONSONANT) {
+            indicConsonantSuffix = true;
+            indicLinkerSuffix = false;
+        } else if (character.indicConjunctBreak == U_INCB_EXTEND ||
+                   character.indicConjunctBreak == U_INCB_LINKER) {
+            indicLinkerSuffix = indicLinkerSuffix || character.indicConjunctBreak == U_INCB_LINKER;
+        } else {
+            indicConsonantSuffix = false;
+            indicLinkerSuffix = false;
+        }
+
+        if (character.graphemeBreak == U_GCB_REGIONAL_INDICATOR)
+            ++regionalIndicatorCount;
+        else
+            regionalIndicatorCount = 0;
+    }
+};
+
+bool ShouldBreak(const GraphemeProperties& previous, const GraphemeProperties& current, const GraphemeState& state) {
+    const UGraphemeClusterBreak previousValue = previous.graphemeBreak;
+    const UGraphemeClusterBreak currentValue = current.graphemeBreak;
+    if (previousValue == U_GCB_CR && currentValue == U_GCB_LF) return false;
+    if (IsGraphemeControl(previousValue) || IsGraphemeControl(currentValue)) return true;
+    if (previousValue == U_GCB_L &&
+        (currentValue == U_GCB_L || currentValue == U_GCB_V || currentValue == U_GCB_LV || currentValue == U_GCB_LVT))
+        return false;
+    if ((previousValue == U_GCB_LV || previousValue == U_GCB_V) &&
+        (currentValue == U_GCB_V || currentValue == U_GCB_T))
+        return false;
+    if ((previousValue == U_GCB_LVT || previousValue == U_GCB_T) && currentValue == U_GCB_T) return false;
+    if (currentValue == U_GCB_EXTEND || currentValue == U_GCB_ZWJ || currentValue == U_GCB_SPACING_MARK) return false;
+    if (previousValue == U_GCB_PREPEND) return false;
+    if (current.indicConjunctBreak == U_INCB_CONSONANT && state.indicConsonantSuffix && state.indicLinkerSuffix)
+        return false;
+    if (current.extendedPictographic && previousValue == U_GCB_ZWJ && state.previousZwjFollowsPictographic)
+        return false;
+    if (previousValue == U_GCB_REGIONAL_INDICATOR && currentValue == U_GCB_REGIONAL_INDICATOR) {
+        if (state.regionalIndicatorCount % 2) return false;
+    }
+    return true;
+}
+
+unsigned CountGraphemeClusters(const StringView& string) {
+    if (!string.length) return 0;
+    unsigned clusters = 1;
+    unsigned previousLength;
+    GraphemeProperties previous = Properties(CodePointAt(string, 0, previousLength));
+    GraphemeState state;
+    state.Add(previous);
+    for (unsigned offset = previousLength; offset < string.length;) {
+        unsigned length;
+        const GraphemeProperties current = Properties(CodePointAt(string, offset, length));
+        if (ShouldBreak(previous, current, state)) ++clusters;
+        previous = current;
+        state.Add(current);
+        offset += length;
+    }
+    return clusters;
+}
+
+unsigned CodeUnitsInGraphemeClusters(const StringView& string, unsigned clusters) {
+    if (!clusters) return 0;
+    unsigned count = 1;
+    unsigned previousLength;
+    GraphemeProperties previous = Properties(CodePointAt(string, 0, previousLength));
+    GraphemeState state;
+    state.Add(previous);
+    for (unsigned offset = previousLength; offset < string.length;) {
+        unsigned length;
+        const GraphemeProperties current = Properties(CodePointAt(string, offset, length));
+        if (ShouldBreak(previous, current, state)) {
+            if (count == clusters) return offset;
+            ++count;
+        }
+        previous = current;
+        state.Add(current);
+        offset += length;
+    }
+    return string.length;
 }
 
 }
@@ -60,12 +184,7 @@ unsigned APS5_VABI _ZN3WTF19numGraphemeClustersENS_10StringViewE(StringView stri
             numCRLF += Latin1Unit(string, i - 1) == '\r' && Latin1Unit(string, i) == '\n';
         return stringLength - numCRLF;
     }
-    icu::UnicodeString text(static_cast<const char16_t*>(string.data), string.length);
-    std::unique_ptr<icu::BreakIterator> iterator(CharacterBreakIterator(text));
-    unsigned clusters = 0;
-    for (int32_t boundary = iterator->first(); boundary != icu::BreakIterator::DONE; boundary = iterator->next())
-        ++clusters;
-    return clusters ? clusters - 1 : 0;
+    return CountGraphemeClusters(string);
 }
 
 unsigned APS5_VABI _ZN3WTF30numCodeUnitsInGraphemeClustersENS_10StringViewEj(StringView string, unsigned numGraphemeClusters) {
@@ -78,13 +197,7 @@ unsigned APS5_VABI _ZN3WTF30numCodeUnitsInGraphemeClustersENS_10StringViewEj(Str
             j += Latin1Unit(string, j) == '\r' && Latin1Unit(string, j + 1) == '\n';
         return j + (i < numGraphemeClusters);
     }
-    icu::UnicodeString text(static_cast<const char16_t*>(string.data), string.length);
-    std::unique_ptr<icu::BreakIterator> iterator(CharacterBreakIterator(text));
-    int32_t boundary = iterator->first();
-    for (unsigned i = 0; i < numGraphemeClusters && boundary != icu::BreakIterator::DONE; ++i)
-        boundary = iterator->next();
-    if (boundary == icu::BreakIterator::DONE) return stringLength;
-    return static_cast<unsigned>(boundary);
+    return CodeUnitsInGraphemeClusters(string, numGraphemeClusters);
 }
 
 }

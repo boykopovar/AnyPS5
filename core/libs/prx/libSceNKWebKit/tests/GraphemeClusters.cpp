@@ -45,6 +45,12 @@ void BothUnits(std::string_view text, unsigned clusters, unsigned units) {
     Require(CodeUnits(wide, clusters) == units);
 }
 
+void Wide(std::u16string_view text, unsigned clusters, unsigned units) {
+    const StringView string {text.data(), static_cast<unsigned>(text.size()), false};
+    Require(Clusters(string) == clusters);
+    Require(CodeUnits(string, clusters) == units);
+}
+
 template<typename Function> bool Throws(Function function, std::string_view message) {
     try {
         function();
@@ -102,6 +108,18 @@ void Run() {
     const StringView surrogateView {surrogate.data(), static_cast<unsigned>(surrogate.size()), false};
     Require(Clusters(surrogateView) == 2);
     Require(CodeUnits(surrogateView, 1) == 1);
+
+    Wide(u"\u1100\u1161\u11a8", 1, 3);
+    Wide(u"\u0600a", 1, 2);
+    Wide(u"\u0915\u093e", 1, 2);
+    Wide(u"\u0915\u094d\u0937", 1, 3);
+    Wide(u"\U0001f469\u200d\U0001f469", 1, 5);
+
+    const std::u16string regional = u"\U0001f1fa\U0001f1f8\U0001f1e8";
+    const StringView regionalView {regional.data(), static_cast<unsigned>(regional.size()), false};
+    Require(Clusters(regionalView) == 2);
+    Require(CodeUnits(regionalView, 1) == 4);
+    Require(CodeUnits(regionalView, 2) == 6);
 }
 
 }
