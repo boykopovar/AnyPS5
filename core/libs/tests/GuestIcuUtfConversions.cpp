@@ -54,9 +54,10 @@ void ScalarRun(const std::string& bytes, const std::u16string& units) {
     Require(error == 0 && length == unitCount && std::memcmp(wide.data(), units.data(), units.size() * 2) == 0 && wide[units.size()] == 0 && wide[units.size() + 1] == 0x5555, "scalar run UTF-8 decode");
     Require(u_strToUTF8_nid_postfix(narrow.data(), byteCount + 1, &length, units.data(), unitCount, &error) == narrow.data(), "scalar run UTF-16 return");
     Require(error == 0 && length == byteCount && std::memcmp(narrow.data(), bytes.data(), bytes.size()) == 0 && narrow[bytes.size()] == 0 && narrow[bytes.size() + 1] == 'X', "scalar run UTF-16 encode");
-    std::vector<char16_t> lenient(bytes.size() + 1, 0x5555);
+    std::vector<char16_t> lenient(bytes.size() + 2, 0x5555);
     Require(u_strFromUTF8Lenient_nid_postfix(lenient.data(), byteCount + 1, &length, bytes.data(), byteCount, &error) == lenient.data(), "scalar run lenient return");
     Require(error == 0 && length == unitCount && std::memcmp(lenient.data(), units.data(), units.size() * 2) == 0 && lenient[units.size()] == 0, "scalar run lenient decode");
+    for (auto index = units.size() + 1; index < lenient.size(); ++index) Require(lenient[index] == 0x5555, "scalar run lenient tail");
 }
 
 void Scalars() {
