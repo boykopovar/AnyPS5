@@ -114,6 +114,33 @@ static void TestPadHapticBuffer() {
             Require(block[i * 2 + 1] == -32);
         }
     }
+
+    {
+        PadHapticBuffer buf;
+        std::array<float, 16> leftA{};
+        std::array<float, 16> rightA{};
+        leftA.fill(0.5f);
+        rightA.fill(-0.25f);
+        buf.Push(leftA.data(), rightA.data(), 1, 8, 1500);
+        Require(buf.Frames() == 16);
+
+        std::array<float, 16> leftB{};
+        std::array<float, 16> rightB{};
+        leftB.fill(-0.5f);
+        rightB.fill(0.25f);
+        buf.Push(leftB.data(), rightB.data(), 1, 16, 3000);
+        Require(buf.Frames() == 32);
+
+        std::array<std::int8_t, PadHapticBuffer::BlockFrames * 2> block{};
+        Require(buf.Take(block));
+        Require(buf.Frames() == 0);
+        for (std::size_t i = 0; i < 16; ++i) {
+            Require(block[i * 2] == 64 && block[i * 2 + 1] == -32);
+        }
+        for (std::size_t i = 16; i < 32; ++i) {
+            Require(block[i * 2] == -64 && block[i * 2 + 1] == 32);
+        }
+    }
 }
 
 int main() {
