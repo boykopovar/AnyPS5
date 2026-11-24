@@ -352,6 +352,37 @@ test('a late clipboard failure leaves focus on a newer import report', async t =
     assert.equal(app.get('status').textContent, status);
 });
 
+for (const [failure, detail, size, read] of [
+    ['size', 'INI file must be smaller than 1 MiB.', 1024 * 1024 + 1, () => assert.fail('Unexpected file read')],
+    ['read', 'The file could not be read.', 1, () => { throw new Error('The file could not be read.'); }],
+    ['encoding', 'The file must be valid UTF-8 text.', 1, () => Uint8Array.of(0xff).buffer]
+]) {
+    for (const result of ['success', 'failure']) {
+        test(`a late clipboard ${result} preserves an import ${failure} error`, async t => {
+            const app = await setup(t, `late-copy-import-${failure}-${result}`);
+            const clipboard = Promise.withResolvers();
+            navigator.clipboard.writeText = () => clipboard.promise;
+            const preview = app.get('preview');
+            preview.select = () => {};
+            await app.importFile('first.ini', 'Cross = KEY:F\n');
+            app.get('copy').click();
+            const input = app.get('file');
+            input.files = [{name: 'second.ini', size, arrayBuffer: read}];
+            input.dispatchEvent(new Event('change'));
+            await setImmediate();
+            assert.equal(app.get('status').textContent, `Import failed: ${detail}`);
+
+            if (result === 'success') clipboard.resolve();
+            else clipboard.reject(new Error('Clipboard unavailable'));
+            await setImmediate();
+
+            assert.equal(app.get('status').textContent, `Import failed: ${detail}`);
+            assert.equal(preview.focused, false);
+            assert.equal(preview.value, 'Cross = KEY:F\n');
+        });
+    }
+}
+
 test('a chord search result stays visible while changing its buttons in the open picker', async t => {
     const app = await setup(t, 'search-edit-chord');
     await app.importFile('input.ini', 'Screenshot = PAD:L1+R1\n');

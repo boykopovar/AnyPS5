@@ -491,6 +491,7 @@ byId('file').addEventListener('change', async event => {
         setStatus('imported', {name: file.name});
     } catch (error) {
         if (request !== replacementRequest) return;
+        saveRequest++;
         setStatus('importFailed', {message: error instanceof TypeError ? t('invalidUtf8') : diagnostic(locale, error.message)});
     }
 });
