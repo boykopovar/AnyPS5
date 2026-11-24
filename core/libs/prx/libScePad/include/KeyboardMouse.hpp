@@ -97,9 +97,11 @@ private:
     bool advanceAxes(Clock::time_point now);
     bool isToggleBinding(const InputBinding& binding) const;
     bool bindingHeld(std::size_t index) const;
+    bool turboOn(std::size_t index) const;
 
     InputConfiguration configuration;
     std::vector<bool> pressed;
+    std::vector<Clock::time_point> pressedAt;
     std::vector<Clock::time_point> wheelReleaseTimes;
     ToggleLatch toggles;
     MouseStick mouse;

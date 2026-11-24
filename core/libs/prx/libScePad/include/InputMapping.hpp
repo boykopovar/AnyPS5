@@ -24,6 +24,7 @@ inline constexpr int WheelPressDurationMs = 80;
 inline constexpr double DefaultMouseSensitivity = 1.0;
 inline constexpr double MaxMouseSensitivity = 10.0;
 inline constexpr int MaxStickDeadzonePercent = 90;
+inline constexpr int MaxTurboRateHz = 30;
 inline constexpr std::size_t MaxTitleIdLength = 32;
 
 struct InputSettings {
@@ -39,6 +40,7 @@ struct InputSettings {
     double stickModifierScale = 0.5;
     double keyboardRampMs = 0.0;
     double triggerRampMs = 0.0;
+    int turboRateHz = 10;
     bool mouseControlsRightStick = true;
 };
 
