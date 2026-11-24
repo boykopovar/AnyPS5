@@ -43,6 +43,7 @@ struct HostImport {
     bool settleOnDemand = false;
     bool dmaBuf = false;
     bool joined = false;
+    bool label = false;
     std::shared_ptr<void> chunk;
     mutable std::uint64_t lastUse = 0;
     std::uint64_t lead = 0;

@@ -394,6 +394,7 @@ struct HostImports {
     std::map<std::uint64_t, HostImport> imports;
     std::map<VkDevice, std::vector<std::shared_ptr<RetiredImport>>> parked;
     std::uint64_t liveBytes = 0;
+    std::uint64_t labelBytes = 0;
     std::map<std::uint64_t, ImportFailure> failed;
     std::map<std::uint64_t, ImportFailure> failedJoins;
     std::map<std::uint64_t, std::uint64_t> sparseRunEnds;
@@ -661,6 +662,7 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     bumpEpoch(state);
     retiredImports.fetch_add(1, std::memory_order_release);
     state.liveBytes -= it->second.pinnedBytes;
+    if (it->second.label) state.labelBytes -= std::min(state.labelBytes, it->second.pinnedBytes);
     auto holder = std::make_shared<RetiredImport>(state.device, state.destroyBuffer, state.freeMemory, state.imports.extract(it));
 #ifdef _WIN32
     if (reading != nullptr) {
@@ -2177,6 +2179,7 @@ std::string budgetSource(const Context& context, const HostImports& state, std::
 }
 
 constexpr std::uint64_t LabelImportWindow = 64ull << 10u;
+constexpr std::uint64_t LabelImportLimit = 16ull << 20u;
 std::atomic<std::uint64_t> rangeImportWindow{64ull << 20u};
 std::atomic<std::uint64_t> importMaxBytes{0};
 
@@ -2438,6 +2441,27 @@ const HostImport* importJoined(const Context& context, HostImports& state, std::
     return entry;
 }
 
+bool reserveLabelImport(const Context& context, HostImports& state, const GuestAllocations::Lease& lease, std::uint64_t base, std::uint64_t bytes) {
+    if (bytes > LabelImportLimit) return false;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> unwatched;
+    bool reserved = true;
+    while (state.labelBytes + bytes > LabelImportLimit) {
+        auto oldest = state.imports.end();
+        for (auto it = state.imports.begin(); it != state.imports.end(); ++it) {
+            if (!it->second.label || !evictable(state, it->second) || (it->second.base < base + bytes && base < it->second.base + it->second.bytes)) continue;
+            if (oldest == state.imports.end() || effectiveUse(state, it->second) < effectiveUse(state, oldest->second)) oldest = it;
+        }
+        if (oldest == state.imports.end()) {
+            reserved = false;
+            break;
+        }
+        noteRetiredUnwatched(unwatched, oldest->second, lease);
+        retireImport(context.device, state, oldest, lease);
+    }
+    rewatchRetired(state, std::move(unwatched));
+    return reserved;
+}
+
 const HostImport* importRunAt(const Context& context, HostImports& state, ImportRun run, bool joined, std::uint64_t address, const GuestAllocations::Lease& lease, std::uint64_t end, bool evict, ImportRequester requester) {
     auto& counts = state.counts[static_cast<std::size_t>(requester)];
     const auto base = run.base;
@@ -2461,7 +2485,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }
     const auto budget = effectiveBudget(context, state);
     const auto containing = std::find_if(run.ranges.begin(), run.ranges.end(), [address](const auto& range) { return address >= range->address && address < range->address + range->bytes; });
-    if (const auto remembered = state.evictingRefusals.find({base, bytes}); evict && !state.mirrorsYield && remembered != state.evictingRefusals.end()) {
+    if (const auto remembered = state.evictingRefusals.find({base, bytes}); evict && requester != ImportRequester::Label && !state.mirrorsYield && remembered != state.evictingRefusals.end()) {
         if (remembered->second.joined == joined && evictingRefusalCurrent(state, remembered->second, budget) && sameRun(remembered->second, run)) {
             ++counts.refused;
             counts.refusedBytes += bytes;
@@ -2515,8 +2539,14 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     const auto live = pinned - (immediate ? replaced : 0) + reserved;
     auto ready = std::numeric_limits<std::uint64_t>::max();
     auto readyHeld = std::numeric_limits<std::uint64_t>::max();
-    const auto evictable = evict && live + bytes > budget ? std::min(evictableBytes(state, base, base + bytes, ready, readyHeld), freed ? std::numeric_limits<std::uint64_t>::max() : immediate ? allowance - retired - replaced : 0) : 0;
-    if (live + bytes > budget + evictable) {
+    const bool label = requester == ImportRequester::Label;
+    if (label && !reserveLabelImport(context, state, lease, base, bytes)) {
+        ++counts.refused;
+        counts.refusedBytes += bytes;
+        return nullptr;
+    }
+    const auto evictable = !label && evict && live + bytes > budget ? std::min(evictableBytes(state, base, base + bytes, ready, readyHeld), freed ? std::numeric_limits<std::uint64_t>::max() : immediate ? allowance - retired - replaced : 0) : 0;
+    if (!label && live + bytes > budget + evictable) {
         if (state.heapRetrying && !immediate && !joined && state.heapOwedBytes == 0) {
             auto idleReady = std::numeric_limits<std::uint64_t>::max();
             auto idleReadyHeld = std::numeric_limits<std::uint64_t>::max();
@@ -2558,7 +2588,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }
     const UntrappedImport untrapped(base, bytes);
     if (!untrapped.Held()) return nullptr;
-    if (live + bytes > budget) retireLeastRecent(context, state, lease, live + bytes - budget, base, base + bytes);
+    if (!label && live + bytes > budget) retireLeastRecent(context, state, lease, live + bytes - budget, base, base + bytes);
     ImportConstruction owner(context, base, bytes);
     auto& entry = owner.entry;
     entry.range = run.ranges.front();
@@ -2745,11 +2775,15 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         retireImport(context.device, state, it, lease);
         it = next;
     }
-    if (const auto held = !freed && immediate ? state.liveBytes : pinnedTotal(state); held + bytes > budget) retireLeastRecent(context, state, lease, held + bytes - budget, base, base + bytes);
+    if (const auto held = !freed && immediate ? state.liveBytes : pinnedTotal(state); !label && held + bytes > budget) retireLeastRecent(context, state, lease, held + bytes - budget, base, base + bytes);
     static std::uint64_t importedBytes = 0;
     importedBytes += bytes;
     static const bool trace = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;
     state.liveBytes += bytes;
+    if (label) {
+        entry.label = true;
+        state.labelBytes += bytes;
+    }
     state.allocationFailures = 0;
     ++counts.made;
     counts.madeBytes += bytes;
@@ -2848,6 +2882,7 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
 #endif
         }
         state.liveBytes = 0;
+        state.labelBytes = 0;
         state.failed.clear();
         state.failedJoins.clear();
         state.failedBlocks.clear();
@@ -4624,6 +4659,7 @@ void ClearHostImports(VkDevice device) {
     state.growthFloor = std::numeric_limits<std::uint64_t>::max();
     state.growthDue = false;
     state.liveBytes = 0;
+    state.labelBytes = 0;
     state.failed.clear();
     state.failedJoins.clear();
     state.failedBlocks.clear();
