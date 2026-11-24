@@ -198,7 +198,12 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
     const auto sliceGroups = static_cast<std::uint32_t>(std::min<std::uint64_t>(std::max<std::uint64_t>(indirectArguments != 0 ? indirectGroups : totalGroups, 1u), groupsPerSlice));
     const auto slices = ((indirectArguments != 0 ? indirectGroups : totalGroups) + sliceGroups - 1u) / sliceGroups;
     if (slices * sliceGroups > std::numeric_limits<std::uint32_t>::max()) throw fail("its slices start past 2^32 workgroups");
-    const VulkanDevice::SplitSlice base{sliceGroups * lanesPerGroup, 0u, sliceGroups, stateSlots};
+    VulkanDevice::SplitSlice base{sliceGroups * lanesPerGroup, 0u, sliceGroups, stateSlots};
+    static const bool cpuRounds = std::getenv("APS5_SPLIT_CPU_ROUNDS") != nullptr;
+    const std::uint64_t listWords = static_cast<std::uint64_t>(stateSlots) * base.capacity + ShaderRecompiler::SplitStateAbi::HeaderDwords;
+    const std::uint64_t rangeWords = localDevice->StorageBufferRangeLimit() / sizeof(std::uint32_t);
+    if (!cpuRounds && rangeWords > listWords && (rangeWords - listWords) / sliceGroups > VulkanDevice::SplitSelectMaxTargets) base.listTargets = VulkanDevice::SplitSelectMaxTargets;
+    base.lanesPerGroup = lanesPerGroup;
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : totalGroups * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
     using GroupRuns = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
     std::map<std::uint64_t, GroupRuns> targetRuns;
@@ -207,7 +212,7 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
         if (!runs.empty() && runs.back().first + runs.back().second == group) runs.back().second++;
         else if (runs.empty() || runs.back().first + runs.back().second < group) runs.emplace_back(group, 1u);
     };
-    const auto run = [&](std::size_t part, std::uint64_t slice, bool readTargets, const GroupRuns* runs = nullptr) {
+    const auto run = [&](std::size_t part, std::uint64_t slice, bool readTargets, const GroupRuns* runs = nullptr, std::int32_t listed = -1, const std::vector<std::uint64_t>* select = nullptr, bool selectBegin = false) {
         const auto& compiled = *parts[part].result;
         const auto* views = &parts[part].capture->snapshot.registeredImages;
         try {
@@ -220,6 +225,9 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
             current.readTargets = readTargets;
             current.targetSlot = SplitTableCallTargetSlot(split);
             if (runs != nullptr) current.runs = *runs;
+            current.listed = listed;
+            if (select != nullptr) current.selectTargets = *select;
+            current.selectBegin = selectBegin;
             localDevice->SetSplitSlice(current);
             try {
                 if (indirectArguments != 0) {
@@ -267,11 +275,16 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
             throw fail(error.what());
         }
     };
-    constexpr std::uint32_t continuationRounds = 1u << 12u;
+    static const std::uint32_t continuationRounds = [] {
+        const char* text = std::getenv("APS5_SPLIT_MAX_ROUNDS");
+        const auto rounds = text != nullptr ? std::strtoul(text, nullptr, 0) : 0ul;
+        return rounds != 0ul ? static_cast<std::uint32_t>(rounds) : 1u << 12u;
+    }();
     for (std::uint64_t slice = 0; slice < slices; ++slice) {
         auto targets = run(0, slice, true);
+        std::uint32_t gpuBatch = 4u;
         for (std::uint32_t round = 0; !targets.empty(); ++round) {
-            if (round == continuationRounds) throw fail("its lanes still call after " + std::to_string(continuationRounds) + " rounds");
+            if (round >= continuationRounds) throw fail("its lanes still call after " + std::to_string(continuationRounds) + " rounds");
             std::vector<std::size_t> served;
             for (const auto target : targets) {
                 const auto part = SplitTableCallPartOf(split, target);
@@ -292,6 +305,28 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
             for (std::size_t index = 0; index < targets.size(); ++index) static_cast<void>(run(served[index], slice, false, &servedRuns.at(targets[index])));
             if (!continues) break;
             targets = run(partCount - 1u, slice, true, &resumeRuns);
+            const bool selectable = base.listTargets != 0u && !targets.empty() && targets.size() <= base.listTargets && std::ranges::all_of(targets, [&](const auto target) {
+                const auto part = SplitTableCallPartOf(split, target);
+                return part && parts[*part].result != nullptr;
+            });
+            if (!selectable || round + 1u >= continuationRounds) continue;
+            const auto rounds = std::min(gpuBatch, continuationRounds - round - 1u);
+            const auto selected = targets;
+            for (std::uint32_t gpuRound = 0; gpuRound < rounds; ++gpuRound) {
+                for (std::size_t index = 0; index < selected.size(); ++index) static_cast<void>(run(*SplitTableCallPartOf(split, selected[index]), slice, false, nullptr, static_cast<std::int32_t>(index), index == 0u ? &selected : nullptr, index == 0u && gpuRound == 0u));
+                const bool last = gpuRound + 1u == rounds;
+                auto read = run(partCount - 1u, slice, last, nullptr, static_cast<std::int32_t>(selected.size()));
+                if (last) targets = std::move(read);
+            }
+            const auto ran = std::min(localDevice->SplitTargets()[ShaderRecompiler::SplitStateAbi::RoundDword], rounds);
+            static std::mutex gpuBatchMutex;
+            static std::set<std::pair<std::uint32_t, std::uint32_t>> gpuBatchesReported;
+            {
+                std::lock_guard gpuBatchLock(gpuBatchMutex);
+                if (gpuBatchesReported.emplace(rounds, ran).second) std::fprintf(stderr, "[gpu] split table call rounds selected on the GPU: a batch of %u rounds ran %u\n", rounds, ran);
+            }
+            round += ran;
+            gpuBatch = ran == rounds ? std::min(gpuBatch * 2u, 256u) : 4u;
         }
         if (!continues) static_cast<void>(run(partCount - 1u, slice, false));
     }
