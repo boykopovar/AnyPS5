@@ -48,6 +48,7 @@
 #include <cerrno>
 #include <stdexcept>
 #include <string>
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
@@ -64,8 +65,8 @@ void Check(int result, const char* call) {
 void RequireWritable(WebRtcSequenceCheckerImpl* checker) {
     if (!checker)
         throw std::invalid_argument("SequenceCheckerImpl::SequenceCheckerImpl requires a checker");
-    ErrnoGuard guard;
-    if (!GuestWritable_nid_no_patch(checker, sizeof(*checker)))
+    GuestArena::HostWrite write(checker, sizeof(*checker));
+    if (!write.Open() || !GuestWritable_nid_no_patch(checker, sizeof(*checker)))
         throw std::invalid_argument("SequenceCheckerImpl::SequenceCheckerImpl requires a checker");
 }
 
