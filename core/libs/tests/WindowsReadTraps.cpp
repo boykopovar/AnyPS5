@@ -102,6 +102,21 @@ void CheckHostWrite() {
     GuestWriteWatchReleaseReads_nid_postfix(region.Address(), Page);
 }
 
+void CheckArenaHostWrite() {
+    Region region(Block);
+    Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(), Page), "a read-write page was not trapped");
+    {
+        const GuestArena::HostWrite write(region.base, 16);
+        Require(write.Open(), "a host write over read-write guest memory was refused");
+        Require(resolved.load() == 1 && Protection(region.base) == PAGE_READWRITE, "an arena host write over a trapped page did not resolve it first");
+        Require(!GuestWriteWatchTrapReads_nid_postfix(region.Address(), Page), "a page under an arena host write was trapped");
+        region.base[0] = 0x44;
+    }
+    Require(region.base[0] == 0x44, "the arena host write was lost");
+    Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(), Page), "a page was not trapped after its arena host write ended");
+    GuestWriteWatchReleaseReads_nid_postfix(region.Address(), Page);
+}
+
 void CheckUnknown() {
     Region region(Block, PAGE_READONLY);
     Require(!GuestWriteWatchTrapReads_nid_postfix(region.Address(), Page), "a read-only page was trapped");
@@ -245,7 +260,7 @@ void CheckThreads() {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected trap, release, host, unknown, reset, alias, trapped, generation, untrapped, holder or threads");
+        Require(argc == 2, "expected trap, release, host, arenahost, unknown, reset, alias, trapped, generation, untrapped, holder or threads");
         const std::string mode = argv[1];
         if (mode == "holder") {
             CheckHolder();
@@ -259,6 +274,7 @@ int main(int argc, char** argv) {
         if (mode == "trap") CheckTrap();
         else if (mode == "release") CheckRelease();
         else if (mode == "host") CheckHostWrite();
+        else if (mode == "arenahost") CheckArenaHostWrite();
         else if (mode == "unknown") CheckUnknown();
         else if (mode == "reset") CheckReset();
         else if (mode == "alias") CheckAlias();
