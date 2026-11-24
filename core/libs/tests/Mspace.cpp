@@ -192,12 +192,41 @@ static void CheckUnwritableResult() {
 #endif
 }
 
+static void CheckReallocalignInPlace() {
+    alignas(64) unsigned char backing[1088]{};
+    void* handle = sceLibcMspaceCreate_nid_postfix("reallocalign", backing, sizeof(backing), 0);
+    Require(handle == backing);
+    void* ptr = sceLibcMspaceMemalign_nid_postfix(handle, 64, 512);
+    Require(ptr != nullptr);
+    Require((reinterpret_cast<std::uintptr_t>(ptr) & 63) == 0);
+    auto* bytes = static_cast<unsigned char*>(ptr);
+    for (std::size_t i = 0; i < 512; ++i) bytes[i] = static_cast<unsigned char>((i * 7 + 13) & 0xff);
+    void* grown = sceLibcMspaceReallocalign_nid_postfix(handle, ptr, 64, 768);
+    Require(grown == ptr);
+    for (std::size_t i = 0; i < 512; ++i) {
+        Require(static_cast<const unsigned char*>(grown)[i] == static_cast<unsigned char>((i * 7 + 13) & 0xff));
+    }
+    Require(sceLibcMspaceMallocUsableSize_nid_postfix(grown) == 768);
+    MallocManagedSize stats{};
+    std::memset(&stats, 0x5a, sizeof(stats));
+    stats.size = sizeof(stats);
+    stats.version = 1;
+    Require(sceLibcMspaceMallocStats_nid_postfix(handle, &stats) == 0);
+    Require(stats.maxSystemSize == sizeof(backing));
+    Require(stats.currentSystemSize == sizeof(backing));
+    Require(stats.currentInuseSize == 768);
+    Require(stats.maxInuseSize == 768);
+    sceLibcMspaceFree_nid_postfix(handle, grown);
+    Require(sceLibcMspaceDestroy_nid_postfix(handle) == 0);
+}
+
 int main() {
     CheckUnwritableResult();
     CheckPaf();
     CheckAlignment();
     CheckAdjacentBlocks();
     CheckMovedBlockKeepsUsableBytes();
+    CheckReallocalignInPlace();
     alignas(16) std::array<unsigned char, 65536> storage{};
     void* arena = sceLibcMspaceCreate_nid_postfix("test", storage.data(), storage.size(), 0);
     Require(arena != nullptr);

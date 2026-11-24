@@ -98,6 +98,25 @@ bool FindUsed(Arena* arena, const void* pointer, std::map<std::uintptr_t, Chunk>
     return false;
 }
 
+bool ExpandInPlace(Arena& arena, std::map<std::uintptr_t, Chunk>::iterator chunk, std::size_t needed) {
+    const auto start = chunk->first;
+    const auto capacity = chunk->second.end - start;
+    const auto next = std::next(chunk);
+    if (next == arena.chunks.end() || next->second.used || next->first != chunk->second.end ||
+        next->second.end - start < needed) {
+        return false;
+    }
+    const auto nextEnd = next->second.end;
+    RemoveFree(arena, next);
+    arena.chunks.erase(next);
+    const auto finish = start + needed;
+    if (finish < nextEnd) AddFree(arena, finish, nextEnd);
+    arena.inUse += needed - capacity;
+    arena.peakInUse = std::max(arena.peakInUse, arena.inUse);
+    arena.chunks[start] = {finish, true};
+    return true;
+}
+
 void Release(Arena& arena, std::map<std::uintptr_t, Chunk>::iterator chunk) {
     auto start = chunk->first;
     auto end = chunk->second.end;
@@ -212,18 +231,7 @@ void* APS5_VABI sceLibcMspaceRealloc_nid_postfix(void* handle, void* pointer, st
     const auto start = chunk->first;
     const auto capacity = chunk->second.end - start;
     if (needed <= capacity) return pointer;
-    const auto next = std::next(chunk);
-    if (next != arena->chunks.end() && !next->second.used && next->first == chunk->second.end && next->second.end - start >= needed) {
-        const auto nextEnd = next->second.end;
-        RemoveFree(*arena, next);
-        arena->chunks.erase(next);
-        const auto finish = start + needed;
-        if (finish < nextEnd) AddFree(*arena, finish, nextEnd);
-        arena->inUse += needed - capacity;
-        arena->peakInUse = std::max(arena->peakInUse, arena->inUse);
-        arena->chunks[start] = {finish, true};
-        return pointer;
-    }
+    if (ExpandInPlace(*arena, chunk, needed)) return pointer;
     void* result = Allocate(arena, size, Granule);
     if (result) {
         std::memcpy(result, pointer, std::min<std::size_t>(capacity, size));
@@ -275,7 +283,9 @@ void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void* handle, void* pointe
     if (needed < size) { Error(12); return nullptr; }
     const auto start = chunk->first;
     const auto capacity = chunk->second.end - start;
-    if (needed <= capacity && (start & (effective - 1)) == 0) return pointer;
+    if ((start & (effective - 1)) == 0 && (needed <= capacity || ExpandInPlace(*arena, chunk, needed))) {
+        return pointer;
+    }
     void* result = Allocate(arena, size, effective);
     if (result) {
         std::memcpy(result, pointer, std::min<std::size_t>(capacity, size));
