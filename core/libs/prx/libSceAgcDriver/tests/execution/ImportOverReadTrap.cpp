@@ -105,7 +105,7 @@ int main() {
         return 1;
     }
 #else
-    std::puts("skipped: read traps exist only on macOS");
+    std::puts("skipped, read traps exist only on macOS");
     return VulkanTestSkipped;
 #endif
 }
