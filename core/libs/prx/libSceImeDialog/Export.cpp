@@ -1,7 +1,6 @@
 #include "prx/libSceImeDialog/include/Api.hpp"
 #include "prx/libSceImeDialog/include/PadKeyboard.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
@@ -16,20 +15,6 @@
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
 
 namespace {
-
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return copied;
-}
-
-bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return copied;
-}
 
 constexpr int StatusNone = 0;
 constexpr int StatusRunning = 1;
@@ -136,7 +121,7 @@ void Apply(Dialog& dialog, ImeHostInputKind kind, const char16_t* units, std::si
         case ImeHostInputKind::Enter: {
             std::u16string output = dialog.text;
             output.push_back(u'\0');
-            const bool written = CopyOutPreservingErrno(dialog.buffer, output.data(), output.size() * sizeof(char16_t));
+            const bool written = GuestCopyOut_nid_no_patch(dialog.buffer, output.data(), output.size() * sizeof(char16_t));
             Finish(written ? EndStatusOk : EndStatusAborted);
             return;
         }
@@ -254,12 +239,12 @@ int OpenDialog(const Param* param, const ExtendedParam* extended, bool withSubIn
     if (g_dialog.status != StatusNone) return ErrorBusy;
     if (param == nullptr) return ErrorInvalidAddress;
     Param localParam{};
-    if (!CopyInPreservingErrno(&localParam, param, sizeof(localParam))) return ErrorInvalidAddress;
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return ErrorInvalidAddress;
     ExtendedParam localExtended{};
-    if (extended != nullptr && !CopyInPreservingErrno(&localExtended, extended, sizeof(localExtended))) return ErrorInvalidAddress;
+    if (extended != nullptr && !GuestCopyIn_nid_no_patch(&localExtended, extended, sizeof(localExtended))) return ErrorInvalidAddress;
     if (withSubInfo) {
         std::uint32_t subInfoWord = 0;
-        if (subInfo == nullptr || !CopyInPreservingErrno(&subInfoWord, static_cast<const std::uint8_t*>(subInfo) + SubInfoWordOffset, sizeof(subInfoWord))) {
+        if (subInfo == nullptr || !GuestCopyIn_nid_no_patch(&subInfoWord, static_cast<const std::uint8_t*>(subInfo) + SubInfoWordOffset, sizeof(subInfoWord))) {
             throw std::runtime_error("sceImeDialogInitInternalWithSubInfo: the console faults reading +0x10 of this sub-info");
         }
     }
@@ -268,7 +253,7 @@ int OpenDialog(const Param* param, const ExtendedParam* extended, bool withSubIn
     std::u16string initialText;
     for (std::uint32_t i = 0; i < localParam.max_text_length; ++i) {
         char16_t unit = u'\0';
-        if (!CopyInPreservingErrno(&unit, localParam.input_text_buffer + i, sizeof(unit))) return ErrorInvalidInputTextBuffer;
+        if (!GuestCopyIn_nid_no_patch(&unit, localParam.input_text_buffer + i, sizeof(unit))) return ErrorInvalidInputTextBuffer;
         if (unit == u'\0') break;
         initialText.push_back(unit);
     }
@@ -305,10 +290,7 @@ int APS5_VABI sceImeDialogGetPanelPositionAndForm(PositionAndForm* form) {
     PositionAndForm localForm{};
     localForm.width = 1920;
     localForm.height = 1080;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(form, &localForm, sizeof(localForm));
-    errno = savedErrno;
-    if (!copied) return ErrorInvalidAddress;
+    if (!GuestCopyOut_nid_no_patch(form, &localForm, sizeof(localForm))) return ErrorInvalidAddress;
     return 0;
 }
 
@@ -319,33 +301,23 @@ int APS5_VABI sceImeDialogGetPanelSize(const Param* param, uint32_t* width, uint
     if (width == nullptr || height == nullptr) return ErrorInvalidAddress;
     uint32_t savedWidth{};
     uint32_t heightProbe{};
-    const int savedErrno = errno;
     const bool readWidth = GuestCopyIn_nid_no_patch(&savedWidth, width, sizeof(savedWidth));
     const bool readHeight = readWidth && GuestCopyIn_nid_no_patch(&heightProbe, height, sizeof(heightProbe));
     (void)heightProbe;
-    if (!readHeight) {
-        errno = savedErrno;
-        return ErrorInvalidAddress;
-    }
+    if (!readHeight) return ErrorInvalidAddress;
     const GuestArena::HostWrite widthGuard(width, sizeof(defaultWidth));
     const GuestArena::HostWrite heightGuard(height, sizeof(defaultHeight));
     if (!widthGuard.Open() || !heightGuard.Open() ||
         !GuestWritable_nid_no_patch(width, sizeof(defaultWidth)) ||
         !GuestWritable_nid_no_patch(height, sizeof(defaultHeight))) {
-        errno = savedErrno;
         return ErrorInvalidAddress;
     }
     const bool wroteWidth = GuestCopyOut_nid_no_patch(width, &defaultWidth, sizeof(defaultWidth));
-    if (!wroteWidth) {
-        errno = savedErrno;
-        return ErrorInvalidAddress;
-    }
+    if (!wroteWidth) return ErrorInvalidAddress;
     if (!GuestCopyOut_nid_no_patch(height, &defaultHeight, sizeof(defaultHeight))) {
         GuestCopyOut_nid_no_patch(width, &savedWidth, sizeof(savedWidth));
-        errno = savedErrno;
         return ErrorInvalidAddress;
     }
-    errno = savedErrno;
     return 0;
 }
 
@@ -362,7 +334,7 @@ int APS5_VABI sceImeDialogGetResult(Result* result) {
         if (result == nullptr || g_dialog.status != StatusFinished) return ErrorNotOpened;
         res.endstatus = g_dialog.endStatus;
     }
-    if (!CopyOutPreservingErrno(result, &res, sizeof(res))) return ErrorNotOpened;
+    if (!GuestCopyOut_nid_no_patch(result, &res, sizeof(res))) return ErrorNotOpened;
     return 0;
 }
 
