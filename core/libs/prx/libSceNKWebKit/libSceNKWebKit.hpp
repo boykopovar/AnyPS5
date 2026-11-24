@@ -62,6 +62,7 @@
 #include "prx/libSceNKWebKit/include/StorageMapExports.hpp"
 #include "prx/libSceNKWebKit/include/SQLiteDatabaseTrackerExports.hpp"
 #include "prx/libSceNKWebKit/include/InternalErrorExports.hpp"
+#include "prx/libSceNKWebKit/include/StylesheetSourceMapExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 #include "prx/libSceNKWebKit/include/ColorSpaceExports.hpp"
 #include "prx/libSceNKWebKit/include/SecurityOriginFromStringExports.hpp"
