@@ -223,6 +223,10 @@ constexpr int GuestProtGpuWrite = 0x20;
 constexpr int GuestProtGpuReadWrite = 0x30;
 constexpr int GuestProtCpuExecute = 0x4;
 
+bool RegistersGpu(int prot, bool zero) {
+    return !zero && (prot & GuestProtGpuReadWrite) != 0;
+}
+
 #if defined(__linux__)
 void* MapAtOrAbove(std::uintptr_t start, size_t len, int prot, size_t alignment) {
     constexpr std::uintptr_t UserLimit = 0x7fff00000000ull;
@@ -1027,7 +1031,7 @@ void RequireAliasesUnpinned(GuestAllocations::Mutation& mutation, std::uint64_t 
 #endif
 }
 
-bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t len, int prot, int flags, int64_t physStart = -1, [[maybe_unused]] bool zero = false) {
+bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t len, int prot, int flags, int64_t physStart = -1, bool zero = false) {
     constexpr int GuestMapFixed = 0x10;
     constexpr int GuestMapNoOverwrite = 0x80;
     if (addr == nullptr || (flags & GuestMapFixed) == 0 || (flags & GuestMapNoOverwrite) != 0 || !mutation.Covers(addr, len)) return false;
@@ -1036,7 +1040,8 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
     if (physStart >= 0) RequireAliasesUnpinned(mutation, static_cast<std::uint64_t>(physStart), len);
     Trace("remap fixed %p+0x%zx prot=0x%x phys=0x%llx", addr, len, prot, static_cast<long long>(physStart));
     const auto nativeProtection = LinuxProtFromSce(prot);
-    mutation.Protect(addr, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, (prot & GuestProtGpuWrite) != 0, [&] {
+    const bool gpu = RegistersGpu(prot, zero);
+    mutation.Protect(addr, len, (prot & 3) != 0, (prot & 2) != 0, gpu, gpu && (prot & GuestProtGpuWrite) != 0, [&] {
         const auto address = reinterpret_cast<std::uintptr_t>(addr);
 #if defined(__linux__)
         ForgetFlexibleFiles(address, address + len);
@@ -1070,7 +1075,7 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
 #endif
         }
     });
-    if ((prot & GuestProtGpuReadWrite) != 0) mutation.NoteGpuMapping(addr, len);
+    if (gpu) mutation.NoteGpuMapping(addr, len);
     return true;
 }
 
@@ -1391,7 +1396,11 @@ static int MapAnonymous(void** addr, size_t len, int prot, int flags, size_t ali
         return 0;
     }
     ReplaceFixedOverlap(mutation, *addr, len, flags);
+#ifdef _WIN32
     void* mapped = MapAligned(*addr, len, zero ? PROT_NONE : LinuxProtFromSce(prot), flags, alignment);
+#else
+    void* mapped = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, alignment);
+#endif
     try {
 #ifdef _WIN32
         if (zero) GuestArena::GuestArenaMapZero_nid_postfix(mapped, len);
@@ -1399,8 +1408,9 @@ static int MapAnonymous(void** addr, size_t len, int prot, int flags, size_t ali
 #if defined(__linux__)
         if (t_mapFlexible && !zero) BackFlexibleMapping(mapped, len, prot);
 #endif
-        mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, (prot & GuestProtGpuWrite) != 0);
-        if ((prot & GuestProtGpuReadWrite) != 0) mutation.NoteGpuMapping(mapped, len);
+        const bool gpu = RegistersGpu(prot, zero);
+        mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, gpu, gpu && (prot & GuestProtGpuWrite) != 0);
+        if (gpu) mutation.NoteGpuMapping(mapped, len);
     } catch (...) {
         Unmap(mapped, len);
         throw;
@@ -1482,14 +1492,12 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment, bo
 }
 
 int DoMapZero(void** addr, size_t len, int prot, int flags) {
-#ifdef _WIN32
     ValidateOutput(addr);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+#ifdef _WIN32
     if (LinuxProtFromSce(prot) != PROT_READ) throw std::invalid_argument("Zero pages are only readable: " + std::to_string(prot));
-    return MapAnonymous(addr, len, prot, flags, PS5_PAGE_SIZE, false, true);
-#else
-    return DoMapAnon(addr, len, prot, flags);
 #endif
+    return MapAnonymous(addr, len, prot, flags, PS5_PAGE_SIZE, false, true);
 }
 
 int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, int descriptor, std::uint64_t offset, size_t alignment) {
@@ -1727,14 +1735,19 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
         const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(insidePointer, insideBytes, nativeProtection);
         if (error != 0) errno = error;
         const bool protectedPages = error == 0;
-#else
-        bool protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
-#if defined(__linux__)
+#elif defined(__linux__)
+        const auto protect = [&] {
+            const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(insidePointer, insideBytes, nativeProtection);
+            if (error != 0) errno = error;
+            return error == 0;
+        };
+        bool protectedPages = protect();
         if (!protectedPages && errno == ENOMEM) {
             MapUnmappedPages(insidePointer, static_cast<std::size_t>((stackEnd & ~hostPageMask) - inside));
-            protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
+            protectedPages = protect();
         }
-#endif
+#else
+        const bool protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
 #endif
         if (!protectedPages) throw std::system_error(errno, std::generic_category(), "mprotect failed");
         if (inside != requested) RecordProtection(requestedPointer, static_cast<std::size_t>(inside - requested), prot);
@@ -1773,7 +1786,7 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
     for (const auto& [span, spanBytes] : spans) mutation.RequireUnpinned(span, spanBytes);
     for (const auto& [span, spanBytes] : spans) {
         mutation.Protect(span, spanBytes, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, (prot & GuestProtGpuWrite) != 0, [&] {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
             if (const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(const_cast<void*>(span), spanBytes, nativeProtection); error != 0)
                 throw std::system_error(error, std::generic_category(), "mprotect failed");
 #else

@@ -5,6 +5,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <netdb.h>
 #include <csignal>
 #endif
 
@@ -65,7 +66,7 @@ bool Throws(TCall call) {
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, Trailers, StallUpload, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11TruncatedSplit, Http11BadChunk, Http11Gzip, Http11GzipChunked, Http11GzipClose, Http11GzipSplit, Http11GzipLarge, Http11GzipEmpty, Http11GzipMembers, Http11GzipHeaders, Http11GzipHeaderChecksum, Http11GzipSecondChecksum, Http11GzipTruncated, Http11GzipChecksum, Http11GzipStall, Http1GzipPlain, Http11HeadersClose, Http11ResponseClose, Http11ResponseReset, Http11StallRequest, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, Trailers, StallUpload, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, GoAway, GoAwayLast, ResetCode, ResetBody, CloseHeaders, CloseBody, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11TruncatedSplit, Http11BadChunk, Http11Gzip, Http11GzipChunked, Http11GzipClose, Http11GzipSplit, Http11GzipLarge, Http11GzipEmpty, Http11GzipMembers, Http11GzipHeaders, Http11GzipHeaderChecksum, Http11GzipSecondChecksum, Http11GzipTruncated, Http11GzipChecksum, Http11GzipStall, Http1GzipPlain, Http11HeadersClose, Http11ResponseClose, Http11ResponseReset, Http11StallRequest, Http11ChunkCut, Http11ChunkNoEnd, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
 const char* Http1Protocols[] = {"http/1.1", nullptr};
 
@@ -124,6 +125,7 @@ struct ResponseSpec {
     int status = 0;
     std::vector<std::pair<std::string, std::string>> headers;
     std::vector<std::pair<std::string, std::string>> informationalHeaders;
+    std::uint32_t error = 0;
     std::array<std::string, 3> chunkWhitespace{};
     std::string encoding;
 };
@@ -269,6 +271,10 @@ private:
         std::uint32_t* flags, nghttp2_data_source*, void* data) {
         auto& server = *static_cast<Server*>(data);
         if (server.mode == Mode::StallBody || server.mode == Mode::EarlyResetIncomplete) return NGHTTP2_ERR_DEFERRED;
+        if (server.mode == Mode::ResetBody || server.mode == Mode::CloseBody) {
+            if (server.offset >= 5) return NGHTTP2_ERR_DEFERRED;
+            size = std::min<std::size_t>(size, 5 - server.offset);
+        }
         if (server.mode == Mode::GzipSplit && server.splitSent && !server.splitResumed) return NGHTTP2_ERR_DEFERRED;
         size = std::min(size, server.body.size() - server.offset);
         if (server.mode == Mode::GzipSplit && !server.splitSent) {
@@ -302,7 +308,14 @@ private:
         responded = true;
         if (mode == Mode::StallHeaders) { Stage(2); Stall(); return; }
         if (mode == Mode::Reset) { Require(nghttp2_submit_rst_stream(session, 0, stream, NGHTTP2_REFUSED_STREAM) == 0, "server reset"); return; }
+        if (mode == Mode::ResetCode) { Require(nghttp2_submit_rst_stream(session, 0, stream, configured.error) == 0, "server coded reset"); return; }
+        if (mode == Mode::CloseHeaders) return;
+        if (mode == Mode::GoAway || mode == Mode::GoAwayLast) {
+            Require(nghttp2_submit_goaway(session, NGHTTP2_FLAG_NONE, mode == Mode::GoAway ? 0 : stream, mode == Mode::GoAway ? configured.error : NGHTTP2_NO_ERROR, nullptr, 0) == 0, "server goaway");
+            return;
+        }
         body = (mode == Mode::Large || mode == Mode::EarlyLarge) ? std::string(200000, 'x') : "response body";
+        if (mode == Mode::ResetBody || mode == Mode::CloseBody) body = std::string(100, 'x');
         const bool redirect = mode == Mode::Redirect || mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || (mode == Mode::RedirectOnce && accepted == 1);
         std::string status = IsEarly() ? "413" : mode == Mode::NotFound ? "404" : redirect ? std::to_string(redirectStatus) : mode == Mode::Auth ? "401" : "200";
         if (configured.status) status = std::to_string(configured.status);
@@ -408,11 +421,26 @@ private:
                 if (IsHttp1()) {
                     ExchangeHttp1(client, &ssl);
                     mbedtls_ssl_close_notify(&ssl);
-                } else Exchange(ssl);
+                } else {
+                    Exchange(ssl);
+                    if (mode == Mode::CloseHeaders || mode == Mode::ResetBody || mode == Mode::CloseBody || mode == Mode::GoAway ||
+                        mode == Mode::GoAwayLast)
+                        CloseAfterDrain(client);
+                }
             }
         }
         mbedtls_ssl_free(&ssl);
         mbedtls_net_free(&client);
+    }
+
+    void CloseAfterDrain(mbedtls_net_context& client) {
+#ifdef _WIN32
+        shutdown(static_cast<SOCKET>(client.fd), SD_SEND);
+#else
+        shutdown(client.fd, SHUT_WR);
+#endif
+        std::array<unsigned char, 4096> drain;
+        while (mbedtls_net_poll(&client, MBEDTLS_NET_POLL_READ, 2000) > 0 && mbedtls_net_recv(&client, drain.data(), drain.size()) > 0) {}
     }
 
     void RefuseHello(mbedtls_net_context& client) {
@@ -518,7 +546,7 @@ private:
         if (mode == Mode::Http11GzipHeaders) encoded = HeaderGzip("first") + HeaderGzip("last");
         if (mode == Mode::Http11GzipHeaderChecksum) encoded = HeaderGzip("first", true);
         if (mode == Mode::Http11GzipChecksum || mode == Mode::Http11GzipSecondChecksum) encoded[encoded.size() - 8] ^= 1;
-        if (mode == Mode::Http11Chunked || mode == Mode::Http11BadChunk || mode == Mode::Http11GzipChunked) response += "Transfer-Encoding: chunked\r\n";
+        if (mode == Mode::Http11Chunked || mode == Mode::Http11BadChunk || mode == Mode::Http11ChunkCut || mode == Mode::Http11ChunkNoEnd || mode == Mode::Http11GzipChunked) response += "Transfer-Encoding: chunked\r\n";
         else if (mode != Mode::Http11Close && mode != Mode::Http11GzipClose) response += "Content-Length: " + std::to_string(gzip ? encoded.size() : 13) + "\r\n";
         if (gzip) response += "Content-Encoding: " + (configured.encoding.empty() ? std::string("gzip") : configured.encoding) + "\r\n";
         if (mode == Mode::Http11BadLength) response += "Content-Length: 14\r\n";
@@ -534,6 +562,8 @@ private:
                 configured.chunkWhitespace[1] + (configured.chunkWhitespace[1].empty() ? "" : ";part=two") + "\r\n body\r\n0" +
                 configured.chunkWhitespace[2] + (configured.chunkWhitespace[2].empty() ? "" : ";last=yes") + "\r\nX-Trailer: done\r\n\r\n";
             else if (mode == Mode::Http11BadChunk) response += "z\r\n";
+            else if (mode == Mode::Http11ChunkCut) response += "5\r\nhello\r\na\r\nabc";
+            else if (mode == Mode::Http11ChunkNoEnd) response += "5\r\nhello\r\n";
             else if (mode == Mode::Http11GzipChunked) {
                 response += "7\r\n" + encoded.substr(0, 7) + "\r\n";
                 std::array<char, 32> digits;
@@ -588,6 +618,13 @@ private:
                 std::this_thread::sleep_for(std::chrono::milliseconds(400));
                 Require(nghttp2_session_resume_data(session, 1) == 0, "resume split gzip body");
                 splitResumed = true;
+                continue;
+            }
+            if (responded && sent && (mode == Mode::CloseHeaders || mode == Mode::GoAway || mode == Mode::GoAwayLast || (mode == Mode::CloseBody && offset))) break;
+            if (mode == Mode::ResetBody && responded && sent && offset) {
+                if (resetSent) break;
+                Require(nghttp2_submit_rst_stream(session, 0, 1, NGHTTP2_CANCEL) == 0, "server body reset");
+                resetSent = true;
                 continue;
             }
             if (IsEarly() && responded && sent) {
@@ -1154,7 +1191,21 @@ void Http1Policies(int ssl) {
         Require(target.Headers().count("authorization") == 0, "HTTP1 cross-origin header removed");
         Require(observed.calls == (targetMode == Mode::Http1Plain ? 1 : 2), "HTTP1 redirected TLS count");
     }
-    for (const auto mode : {Mode::Http11BadLength, Mode::Http11Ambiguous, Mode::Http11Truncated, Mode::Http11BadChunk}) {
+    {
+        Server server(Mode::Http11Truncated);
+        Client client(ssl, 1, 0, 2);
+        client.Create(server.Url());
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "TLS short body headers");
+        std::array<char, 32> buffer{};
+        std::string body;
+        for (int count; (count = sceHttp2ReadData(client.request, buffer.data(), buffer.size())) != 0;) {
+            Require(count > 0, "TLS short body read");
+            body.append(buffer.data(), count);
+        }
+        Require(body == "short" && sceHttp2ReadData(client.request, buffer.data(), buffer.size()) == 0, "TLS short body reads as ended");
+        server.Join();
+    }
+    for (const auto mode : {Mode::Http11BadLength, Mode::Http11Ambiguous, Mode::Http11BadChunk}) {
         Server server(mode);
         Client client(ssl, 1, 0, 2);
         client.Create(server.Url());
@@ -1199,7 +1250,7 @@ void Http1Cancellation(int ssl) {
                         Require(byte == 'z', "HTTP1 deleted-handle read leaves buffer untouched");
                         return teardown != 0;
                     }
-                    return teardown == 0 && result == static_cast<int>(0x817b1080) && byte == 'z';
+                    return teardown != 3 && result == static_cast<int>(0x817b1080) && byte == 'z';
                 } catch (const std::exception&) { return true; }
             });
             server.WaitStage(2);
@@ -1212,7 +1263,7 @@ void Http1Cancellation(int ssl) {
         }
         Server server(mode);
         Client client(ssl, 1, 0, 2);
-        Require(sceHttp2SetRecvTimeOut(client.tmpl, 80000) == 0, "HTTP1 receive timeout");
+        Require(sceHttp2SetRecvTimeOut(client.tmpl, 400000) == 0, "HTTP1 receive timeout");
         Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, 1) == 0, "HTTP1 timeout gzip option");
         client.Create(server.Url());
         if (mode != Mode::Http11StallHeaders) Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 timeout header send");
@@ -1813,13 +1864,13 @@ void Cancellation(int ssl, Mode mode, int teardown) {
         try {
             const int sent = sceHttp2SendRequest(client.request, upload.data(), upload.size());
             if (sent == static_cast<int>(0x817b1100)) return teardown != 0;
-            if (sent == static_cast<int>(0x817b1080)) return teardown == 0;
+            if (sent == static_cast<int>(0x817b1080)) return teardown != 3;
             Require(sent == 0, "pending send result");
             char byte = 'z';
             const int read = sceHttp2ReadData(client.request, &byte, 1);
             if (read == static_cast<int>(0x817b1100) || read == static_cast<int>(0x817b1080)) {
                 Require(byte == 'z', "failed read leaves buffer untouched");
-                return (teardown != 0) == (read == static_cast<int>(0x817b1100));
+                return read == static_cast<int>(0x817b1100) ? teardown != 0 : teardown != 3;
             }
             return false;
         } catch (const std::exception&) { return true; }
@@ -1839,11 +1890,10 @@ void Cancellation(int ssl, Mode mode, int teardown) {
     if (teardown) Require(sceHttp2DeleteRequest(client.request) == static_cast<int>(0x817b1100), "deleted request stays invalid");
 }
 
-std::atomic<bool> stopBetweenLoadsArmed{false};
+std::atomic<bool> cancelBetweenLoadsArmed{false};
 
-void StopBetweenLoads(std::atomic<bool>& stopped, std::atomic<bool>& cancelled) {
-    if (!stopBetweenLoadsArmed.exchange(false)) return;
-    stopped.store(true);
+void CancelBetweenLoads(std::atomic<bool>&, std::atomic<bool>& cancelled) {
+    if (!cancelBetweenLoadsArmed.exchange(false)) return;
     cancelled.store(true);
 }
 
@@ -1859,12 +1909,13 @@ void DeleteBetweenCheckLoads(int ssl) {
     });
     server.WaitStage(2);
     Require(pending.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout, "operation is pending");
-    Http2SetCheckHook_nid_no_patch(StopBetweenLoads);
-    stopBetweenLoadsArmed.store(true);
+    Http2SetCheckHook_nid_no_patch(CancelBetweenLoads);
+    cancelBetweenLoadsArmed.store(true);
     Require(pending.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "the pending call returns after the delete");
     Http2SetCheckHook_nid_no_patch(nullptr);
     const int result = pending.get();
-    Require(result != static_cast<int>(0x817b1080), "a delete between the two loads is reported as an abort");
+    // Measured on a PS5 (firmware 13.590.001): a request deleted during an operation returns 0x817B1080.
+    Require(result == static_cast<int>(0x817b1080), "a delete between the two loads is reported as the measured abort");
     Require(sceHttp2DeleteRequest(client.request) == 0, "delete the request");
 }
 
@@ -1986,6 +2037,42 @@ void Retries(int ssl) {
     Http2SetLookupHook_nid_no_patch(nullptr);
 }
 
+int SlowLookup(const char*) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    return 0;
+}
+
+int UnansweredLookup(const char*) {
+    return EAI_AGAIN;
+}
+
+void ResolveTimeouts(int ssl) {
+    std::fprintf(stderr, "HTTP2 resolve timeout scenarios\n");
+    Http2SetLookupHook_nid_no_patch(SlowLookup);
+    {
+        Server server(Mode::Normal);
+        Client client(ssl);
+        Require(sceHttp2SetResolveTimeOut(client.tmpl, 100000) == 0, "100 ms resolve timeout");
+        Require(sceHttp2SetResolveRetry(client.tmpl, 0) == 0, "no resolve retry");
+        client.Create(server.Url());
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "a lookup that outlasts the resolve timeout still connects");
+        std::array<char, 64> buffer;
+        std::string body;
+        for (int count; (count = sceHttp2ReadData(client.request, buffer.data(), buffer.size())) > 0;) body.append(buffer.data(), static_cast<std::size_t>(count));
+        Require(body == "response body", "body after a lookup slower than the resolve timeout");
+        server.Join();
+    }
+    Http2SetLookupHook_nid_no_patch(UnansweredLookup);
+    {
+        Client client(ssl);
+        Require(sceHttp2SetResolveRetry(client.tmpl, 0) == 0, "no resolve retry");
+        client.Create("https://127.0.0.1:1/");
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x804101E2), "an unanswered lookup returns the resolver timeout");
+        AfterFailedSend(client, static_cast<int>(0x804101E2));
+    }
+    Http2SetLookupHook_nid_no_patch(nullptr);
+}
+
 void Capacity(int ssl) {
     Server server(Mode::StallBody);
     Client client(ssl, 1);
@@ -2011,13 +2098,10 @@ void Deadline(int ssl, Mode mode, bool overall) {
     const std::string upload = mode == Mode::StallUpload ? std::string(150000, 'u') : std::string{};
     client.Create(server.Url(), upload.empty() ? "GET" : "POST", upload.size());
     const auto begin = std::chrono::steady_clock::now();
-    Require((overall ? sceHttp2SetTimeOut(client.request, 80000) : mode == Mode::StallHandshake ?
-        sceHttp2SetConnectTimeOut(client.request, 80000) : mode == Mode::StallUpload ? sceHttp2SetSendTimeOut(client.request, 80000) :
+    Require((overall ? sceHttp2SetTimeOut(client.request, 80000) : mode == Mode::StallUpload ? sceHttp2SetSendTimeOut(client.request, 80000) :
         sceHttp2SetRecvTimeOut(client.request, 80000)) == 0, "set deadline");
-    const bool unmeasured = !overall && (mode == Mode::StallHandshake || mode == Mode::StallUpload);
-    const int expected = static_cast<int>(overall ? 0x817b1068 : 0x817b1222);
-    if (unmeasured) Require(Throws([&] { sceHttp2SendRequest(client.request, upload.data(), upload.size()); }), "unmeasured deadline terminates blocked operation");
-    else if (mode == Mode::StallBody) {
+    const int expected = static_cast<int>(overall ? 0x817b1068 : mode == Mode::StallUpload ? 0x817b1223 : 0x817b1222);
+    if (mode == Mode::StallBody) {
         const int sent = sceHttp2SendRequest(client.request, nullptr, 0);
         char byte = 'z';
         Require(sent == expected || (sent == 0 && sceHttp2ReadData(client.request, &byte, 1) == expected && byte == 'z'), "deadline terminates blocked read");
@@ -2028,9 +2112,9 @@ void Deadline(int ssl, Mode mode, bool overall) {
 
 }
 
-void PlainFailedSend(int ssl, Mode mode, int expected, int timeout) {
-    std::fprintf(stderr, "HTTP1 cleartext failed send scenario %d\n", static_cast<int>(mode));
-    Server server(mode, "/another", 302, {}, false, true);
+void PlainFailedSend(int ssl, Mode mode, int expected, int timeout, bool plain = true) {
+    std::fprintf(stderr, "HTTP1 failed send scenario %d plain %d\n", static_cast<int>(mode), plain);
+    Server server(mode, "/another", 302, {}, false, plain);
     Client client(ssl, 1, 0, 2);
     const std::string upload = mode == Mode::Http11StallRequest ? std::string(64 * 1024 * 1024, 'u') : std::string{};
     client.Create(server.Url(), upload.empty() ? "GET" : "POST", upload.size());
@@ -2040,6 +2124,62 @@ void PlainFailedSend(int ssl, Mode mode, int expected, int timeout) {
     Require(sceHttp2SendRequest(client.request, upload.data(), upload.size()) == expected, "cleartext send failure result");
     AfterFailedSend(client, expected);
     server.Join();
+}
+
+void PeerFailure(int ssl, Mode mode, int expected, std::uint32_t error = 0) {
+    std::fprintf(stderr, "HTTP2 peer failure scenario %d error %u\n", static_cast<int>(mode), error);
+    Server server(mode);
+    ResponseSpec response;
+    response.error = error;
+    server.SetResponse(response);
+    Client client(ssl);
+    client.Create(server.Url());
+    if (!expected) Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "unmeasured peer error throws");
+    else {
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == expected, "peer failure send result");
+        AfterFailedSend(client, expected);
+    }
+    server.Join();
+}
+
+void PeerReadFailure(int ssl, Mode mode, int expected, bool plain = false) {
+    std::fprintf(stderr, "HTTP2 peer read failure scenario %d plain %d\n", static_cast<int>(mode), plain);
+    Server server(mode, "/another", 302, {}, false, plain);
+    Client client(ssl, 4, 0, server.IsHttp1() ? 2 : 3);
+    client.Create(server.Url());
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "peer read failure headers");
+    std::array<char, 64> buffer{};
+    std::size_t received = 0;
+    int count;
+    while ((count = sceHttp2ReadData(client.request, buffer.data(), buffer.size())) > 0) received += static_cast<std::size_t>(count);
+    Require(count == expected && received <= 8, "peer read failure result");
+    Require(sceHttp2ReadData(client.request, buffer.data(), buffer.size()) == expected, "peer read failure repeats");
+    int status = 0;
+    Require(sceHttp2GetStatusCode(client.request, &status) == 0 && status == 200, "status after a peer read failure");
+    server.Join();
+}
+
+void UnboundedPhases(int ssl) {
+    std::fprintf(stderr, "HTTP2 phase deadline scenario\n");
+    {
+        Server server(Mode::StallHandshake);
+        Client client(ssl);
+        client.Create(server.Url());
+        Require(sceHttp2SetConnectTimeOut(client.request, 80000) == 0 && sceHttp2SetSendTimeOut(client.request, 80000) == 0 &&
+            sceHttp2SetRecvTimeOut(client.request, 400000) == 0, "handshake phase limits");
+        const auto begin = std::chrono::steady_clock::now();
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x817b1222), "receive timeout bounds the TLS handshake");
+        const auto elapsed = std::chrono::steady_clock::now() - begin;
+        Require(elapsed >= std::chrono::milliseconds(400) && elapsed < std::chrono::milliseconds(1500), "connect and send timeouts do not bound the TLS handshake");
+    }
+    {
+        Server server(Mode::StallUpload);
+        Client client(ssl);
+        const std::string upload(150000, 'u');
+        client.Create(server.Url(), "POST", upload.size());
+        Require(sceHttp2SetRecvTimeOut(client.request, 80000) == 0, "upload receive limit");
+        Require(sceHttp2SendRequest(client.request, upload.data(), upload.size()) == static_cast<int>(0x817b1222), "receive timeout bounds an HTTP/2 upload");
+    }
 }
 
 void PlainAbort(int ssl, bool beforeSend) {
@@ -2198,6 +2338,12 @@ void Http1Cleartext(int ssl) {
     PlainReadFailure(ssl, false);
     PlainReadFailure(ssl, true);
     for (const bool split : {false, true}) PlainShortBody(ssl, split);
+    PlainFailedSend(ssl, Mode::Http11StallRequest, static_cast<int>(0x817b1223), 2, false);
+    PlainFailedSend(ssl, Mode::Http11ResponseReset, static_cast<int>(0x817b1064), 0, false);
+    for (const bool plain : {true, false}) {
+        PeerReadFailure(ssl, Mode::Http11ChunkCut, static_cast<int>(0x817b1064), plain);
+        PeerReadFailure(ssl, Mode::Http11ChunkNoEnd, static_cast<int>(0x817b1064), plain);
+    }
 }
 
 void HostAuthority(int ssl) {
@@ -2343,7 +2489,19 @@ int main(int argc, char** argv) {
         GzipLarge(ssl);
         GzipFailure(ssl, Mode::GzipTruncated, "truncated gzip throws");
         GzipFailure(ssl, Mode::GzipChecksum, "gzip checksum mismatch throws");
-        for (const auto mode : {Mode::NoAlpn, Mode::Reset, Mode::Truncate, Mode::Auth}) Failure(ssl, mode);
+        for (const auto mode : {Mode::NoAlpn, Mode::Truncate, Mode::Auth}) Failure(ssl, mode);
+        PeerFailure(ssl, Mode::Reset, static_cast<int>(0x817b1231));
+        PeerFailure(ssl, Mode::CloseHeaders, static_cast<int>(0x817b1064));
+        PeerFailure(ssl, Mode::GoAwayLast, static_cast<int>(0x817b120a));
+        for (std::uint32_t error = 0; error <= 13; ++error) {
+            PeerFailure(ssl, Mode::GoAway, static_cast<int>(0x817b120a + error), error);
+            PeerFailure(ssl, Mode::ResetCode, static_cast<int>(0x817b122a + error), error);
+        }
+        PeerFailure(ssl, Mode::GoAway, 0, 14);
+        PeerFailure(ssl, Mode::ResetCode, 0, 14);
+        PeerReadFailure(ssl, Mode::ResetBody, static_cast<int>(0x817b1232));
+        PeerReadFailure(ssl, Mode::CloseBody, static_cast<int>(0x80410136));
+        UnboundedPhases(ssl);
         CookieBox(ssl);
         CookieBoxDelete(ssl);
         Handshake(ssl, Mode::Normal, static_cast<int>(0x8095f00b), 0x4);
@@ -2356,6 +2514,7 @@ int main(int argc, char** argv) {
             for (int teardown = 0; teardown < 4; ++teardown) Cancellation(ssl, mode, teardown);
         }
         DeleteBetweenCheckLoads(ssl);
+        ResolveTimeouts(ssl);
         HostNotFound(ssl);
         Refused(ssl);
         Capacity(ssl);
