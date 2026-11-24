@@ -1,6 +1,7 @@
 #if defined(__linux__) && defined(__x86_64__)
 #include "prx/libc/include/CallTrace.hpp"
 #include "prx/libc/include/CrashText.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/LogFile.hpp"
 #include "prx/libc/include/specifics/linux/GuestFaultCopy.hpp"
 
@@ -283,6 +284,10 @@ void ReportCallTrace() {
 
 void OnFatalSignal(int signal, siginfo_t* info, void* context) {
     if (GuestFaultCopy::Resume(info, context)) return;
+    if (signal == SIGSEGV && info->si_code > 0 && context != nullptr) {
+        const auto* state = static_cast<const ucontext_t*>(context);
+        if ((state->uc_mcontext.gregs[REG_ERR] & 2) != 0 && GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(reinterpret_cast<std::uintptr_t>(info->si_addr))) return;
+    }
     const int savedErrno = errno;
     if (!g_reporting.exchange(true, std::memory_order_acq_rel)) {
         Report(signal, info, static_cast<const ucontext_t*>(context));

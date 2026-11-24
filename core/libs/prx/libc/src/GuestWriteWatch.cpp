@@ -1,4 +1,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#if defined(__linux__)
+#include "prx/libc/include/specifics/linux/HostMapping.hpp"
+#endif
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -9,6 +12,7 @@
 #include <map>
 #include <mutex>
 #include <shared_mutex>
+#include <span>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -18,6 +22,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <linux/fs.h>
 #include <linux/userfaultfd.h>
@@ -64,6 +69,13 @@ char g_unavailableReason[192];
 thread_local char t_registrationFailure[192];
 
 class Watch {
+    struct PublicationRun {
+        std::uintptr_t begin;
+        std::uintptr_t end;
+        int protection;
+    };
+    static constexpr std::size_t PublicationRunCapacity = 1024;
+
 public:
     static Watch& Get() {
         static auto* watch = new Watch;
@@ -72,6 +84,130 @@ public:
 
     bool Available() const {
         return _pagemap >= 0;
+    }
+
+    bool BeginPublication(std::uintptr_t address, std::size_t bytes) {
+        if (!Available() || bytes == 0 || address + bytes < address) return false;
+        const auto first = address & ~(PageBytes - 1);
+        const auto last = (address + bytes + PageBytes - 1) & ~(PageBytes - 1);
+        if (last <= first) return false;
+        std::vector<PublicationRun> runs;
+        try {
+            HostMapping::Walk(first, last, "write watch publication", [&](const HostMapping::Mapping& mapping) {
+                const auto begin = std::max<std::uintptr_t>(mapping.start, first);
+                const auto end = std::min<std::uintptr_t>(mapping.end, last);
+                if (begin >= end) return;
+                const int protection = (mapping.readable ? PROT_READ : 0) | (mapping.writable ? PROT_WRITE : 0) | (mapping.executable ? PROT_EXEC : 0);
+                runs.push_back({begin, end, protection});
+            });
+        } catch (...) {
+            return false;
+        }
+        if (runs.empty()) return false;
+        {
+            std::shared_lock lock(_lock);
+            if (!covers(first, last)) return false;
+        }
+        if (runs.size() > PublicationRunCapacity) return false;
+        std::vector<PublicationRun> opened;
+        try {
+            opened.reserve(runs.size());
+        } catch (...) {
+            return false;
+        }
+        while (_publicationRecovery.load(std::memory_order_acquire)) {
+            if (RecoverPublication()) break;
+            sched_yield();
+        }
+        bool expected = false;
+        while (!_publication.compare_exchange_weak(expected, true, std::memory_order_acq_rel)) {
+            expected = false;
+            while (_publicationRecovery.load(std::memory_order_acquire)) {
+                if (RecoverPublication()) break;
+                sched_yield();
+            }
+            sched_yield();
+        }
+        _publicationRecovery.store(false, std::memory_order_release);
+        _publicationBegin.store(first, std::memory_order_relaxed);
+        _publicationEnd.store(last, std::memory_order_relaxed);
+        std::copy(runs.begin(), runs.end(), _publicationRuns.begin());
+        _publicationRunCount.store(runs.size(), std::memory_order_release);
+        try {
+            for (const auto& run : runs) {
+                if ((run.protection & PROT_WRITE) == 0) continue;
+                if (::mprotect(reinterpret_cast<void*>(run.begin), run.end - run.begin, run.protection & ~PROT_WRITE) != 0) {
+                    for (const auto& restored : opened) ::mprotect(reinterpret_cast<void*>(restored.begin), restored.end - restored.begin, restored.protection);
+                    _publicationRunCount.store(0, std::memory_order_release);
+                    _publication.store(false, std::memory_order_release);
+                    return false;
+                }
+                opened.push_back(run);
+            }
+        } catch (...) {
+            for (const auto& restored : opened) ::mprotect(reinterpret_cast<void*>(restored.begin), restored.end - restored.begin, restored.protection);
+            _publicationRunCount.store(0, std::memory_order_release);
+            _publication.store(false, std::memory_order_release);
+            return false;
+        }
+        return true;
+    }
+
+    void EndPublication() noexcept {
+        if (!_publication.load(std::memory_order_acquire)) return;
+        const auto count = _publicationRunCount.load(std::memory_order_acquire);
+        if (count == 0) {
+            _publication.store(false, std::memory_order_release);
+            return;
+        }
+        const std::span<const PublicationRun> runs(_publicationRuns.data(), count);
+        if (!restorePublicationRuns(runs)) {
+            _publicationRecovery.store(true, std::memory_order_release);
+            return;
+        }
+        armPublicationRuns(runs);
+        _publicationRunCount.store(0, std::memory_order_release);
+        _publication.store(false, std::memory_order_release);
+    }
+
+    bool HandleFault(std::uintptr_t address) {
+        if (address < _publicationBegin.load(std::memory_order_relaxed) || address >= _publicationEnd.load(std::memory_order_relaxed)) return false;
+        timespec started{};
+        static_cast<void>(clock_gettime(CLOCK_MONOTONIC, &started));
+        unsigned spins = 0;
+        for (;;) {
+            if (_publicationRecovery.load(std::memory_order_acquire)) {
+                if (!RecoverPublication()) return false;
+                return publicationPageWritable(address);
+            }
+            if (_publication.load(std::memory_order_acquire)) {
+                const auto count = _publicationRunCount.load(std::memory_order_acquire);
+                if (count != 0) {
+                    bool opened = false;
+                    for (std::size_t index = 0; index < count; ++index) {
+                        const auto& run = _publicationRuns[index];
+                        if (address >= run.begin && address < run.end && (run.protection & PROT_WRITE) != 0) {
+                            opened = true;
+                            break;
+                        }
+                    }
+                    if (!opened) return false;
+                }
+            } else {
+                if (publicationPageWritable(address)) return true;
+                if (_publication.load(std::memory_order_acquire) || _publicationRecovery.load(std::memory_order_acquire)) continue;
+                return false;
+            }
+            if ((++spins & 0x3ffu) == 0) {
+                timespec now{};
+                if (clock_gettime(CLOCK_MONOTONIC, &now) == 0 && now.tv_sec - started.tv_sec >= 2) return false;
+            }
+#if defined(__x86_64__)
+            __builtin_ia32_pause();
+#else
+            sched_yield();
+#endif
+        }
     }
 
     void Register(std::uintptr_t begin, std::uintptr_t end) {
@@ -403,7 +539,121 @@ private:
         }
     }
 
+    bool restorePublicationRun(const PublicationRun& run) const noexcept {
+        if (::mprotect(reinterpret_cast<void*>(run.begin), run.end - run.begin, run.protection) == 0) return true;
+        for (auto page = run.begin; page < run.end; page += PageBytes) {
+            if (::mprotect(reinterpret_cast<void*>(page), PageBytes, run.protection) == 0) continue;
+            bool ours = true;
+            try {
+                const auto mapping = HostMapping::Find(static_cast<std::uint64_t>(page), "write watch publication restore");
+                if (!mapping) {
+                    ours = false;
+                } else {
+                    const int protection = (mapping->readable ? PROT_READ : 0) | (mapping->writable ? PROT_WRITE : 0) | (mapping->executable ? PROT_EXEC : 0);
+                    if ((protection & PROT_WRITE) != 0 || protection != (run.protection & ~PROT_WRITE)) ours = false;
+                }
+            } catch (...) {
+                return false;
+            }
+            if (!ours) continue;
+            if (::mprotect(reinterpret_cast<void*>(page), PageBytes, PROT_READ | PROT_WRITE) == 0) continue;
+            return false;
+        }
+        return true;
+    }
+
+    bool restorePublicationRuns(std::span<const PublicationRun> runs) const noexcept {
+        for (const auto& run : runs) {
+            if ((run.protection & PROT_WRITE) == 0) continue;
+            if (!restorePublicationRun(run)) return false;
+        }
+        return true;
+    }
+
+    bool publicationPageWritable(std::uintptr_t address) const noexcept {
+        try {
+            const auto mapping = HostMapping::Find(static_cast<std::uint64_t>(address), "write watch publication verify");
+            return mapping && mapping->writable;
+        } catch (...) {
+            return false;
+        }
+    }
+
+    bool verifyPublicationRuns(std::span<const PublicationRun> runs) const noexcept {
+        for (const auto& run : runs) {
+            if ((run.protection & PROT_WRITE) == 0) continue;
+            for (auto page = run.begin; page < run.end; page += PageBytes) {
+                try {
+                    const auto mapping = HostMapping::Find(static_cast<std::uint64_t>(page), "write watch publication verify");
+                    if (mapping && !mapping->writable) return false;
+                } catch (...) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    void armPublicationRuns(std::span<const PublicationRun> runs) noexcept {
+        std::unique_lock lock(_lock);
+        for (const auto& run : runs) {
+            if ((run.protection & PROT_WRITE) == 0) continue;
+            std::uintptr_t armedBegin = 0;
+            std::uintptr_t armedEnd = 0;
+            const auto flush = [&] {
+                if (armedBegin == armedEnd) return;
+                if (!arm(armedBegin, armedEnd)) {
+                    for (auto page = armedBegin; page < armedEnd; page += PageBytes) {
+                        try {
+                            insert(_fresh, page, page + PageBytes);
+                        } catch (...) {
+                        }
+                    }
+                }
+                armedBegin = armedEnd = 0;
+            };
+            for (auto page = run.begin; page < run.end; page += PageBytes) {
+                if (fresh(page)) {
+                    flush();
+                    continue;
+                }
+                if (armedBegin == 0) {
+                    armedBegin = page;
+                    armedEnd = page + PageBytes;
+                } else if (page == armedEnd) {
+                    armedEnd = page + PageBytes;
+                } else {
+                    flush();
+                    armedBegin = page;
+                    armedEnd = page + PageBytes;
+                }
+            }
+            flush();
+        }
+    }
+
+    bool RecoverPublication() noexcept {
+        const auto count = _publicationRunCount.load(std::memory_order_acquire);
+        if (count == 0) {
+            _publicationRecovery.store(false, std::memory_order_release);
+            _publication.store(false, std::memory_order_release);
+            return true;
+        }
+        const std::span<const PublicationRun> runs(_publicationRuns.data(), count);
+        if (!restorePublicationRuns(runs) || !verifyPublicationRuns(runs)) return false;
+        armPublicationRuns(runs);
+        _publicationRunCount.store(0, std::memory_order_release);
+        _publicationRecovery.store(false, std::memory_order_release);
+        _publication.store(false, std::memory_order_release);
+        return true;
+    }
+
     bool protect(std::uintptr_t begin, std::uintptr_t end) const {
+        if (_publication.load(std::memory_order_acquire) && begin >= _publicationBegin.load(std::memory_order_relaxed) && end <= _publicationEnd.load(std::memory_order_relaxed)) return true;
+        return arm(begin, end);
+    }
+
+    bool arm(std::uintptr_t begin, std::uintptr_t end) const {
         uffdio_writeprotect protection{};
         protection.range.start = begin;
         protection.range.len = end - begin;
@@ -456,6 +706,11 @@ private:
         return std::prev(next)->second >= end;
     }
 
+    bool fresh(std::uintptr_t page) const {
+        auto next = _fresh.upper_bound(page);
+        return next != _fresh.begin() && std::prev(next)->second > page;
+    }
+
     static void insert(std::map<std::uintptr_t, std::uintptr_t>& ranges, std::uintptr_t begin, std::uintptr_t end) {
         auto next = ranges.upper_bound(begin);
         if (next != ranges.begin() && std::prev(next)->second == begin) {
@@ -495,6 +750,12 @@ private:
     std::map<std::uintptr_t, std::uintptr_t> _fresh;
     std::multimap<std::uintptr_t, Link> _links;
     std::uintptr_t _linkBytes = 0;
+    std::atomic<bool> _publication{false};
+    std::atomic<bool> _publicationRecovery{false};
+    std::atomic<std::uintptr_t> _publicationBegin{0};
+    std::atomic<std::uintptr_t> _publicationEnd{0};
+    std::array<PublicationRun, PublicationRunCapacity> _publicationRuns{};
+    std::atomic<std::size_t> _publicationRunCount{0};
 };
 
 const bool g_opened = (Watch::Get(), true);
@@ -1833,8 +2094,24 @@ bool GuestWriteWatchOverlaps_nid_postfix(std::uintptr_t address, std::size_t byt
 #endif
 }
 
+bool GuestWriteWatchBeginPublication_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
+    return Watch::Get().BeginPublication(address, bytes);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    return false;
+#endif
+}
+
+void GuestWriteWatchEndPublication_nid_no_patch() {
+#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
+    Watch::Get().EndPublication();
+#endif
+}
+
 bool GuestWriteWatchHandleFault_nid_postfix(std::uintptr_t address) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(APS5_GUEST_WRITE_WATCH)
     return Watch::Get().HandleFault(address);
 #elif defined(APS5_LINUX_READ_TRAPS)
     return ReadTraps::Get().HandleFault(address);

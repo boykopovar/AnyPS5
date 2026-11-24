@@ -15,6 +15,8 @@ bool GuestWriteWatchUnregister_nid_postfix(const void* pointer, std::size_t byte
 bool GuestWriteWatchAlias_nid_postfix(const void* first, const void* second, std::size_t bytes);
 bool GuestWriteWatchCovers_nid_postfix(std::uintptr_t address, std::size_t bytes);
 bool GuestWriteWatchOverlaps_nid_postfix(std::uintptr_t address, std::size_t bytes);
+bool GuestWriteWatchBeginPublication_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+void GuestWriteWatchEndPublication_nid_no_patch();
 bool GuestWriteWatchHandleFault_nid_postfix(std::uintptr_t address);
 bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context);
 void GuestWriteWatchBeginHostWrite_nid_postfix(const void* pointer, std::size_t bytes);

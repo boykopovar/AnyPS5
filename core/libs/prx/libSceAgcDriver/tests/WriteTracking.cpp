@@ -2,6 +2,9 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#if defined(__linux__)
+#include "prx/libc/include/specifics/linux/HostMapping.hpp"
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -578,6 +581,83 @@ void CheckWriteChangedIfHeldSameValue() {
     Require(sameValuePhase.load() == 3, "the same-value guest store did not finish");
     Require(*reinterpret_cast<const std::uint8_t*>(memory) == 0x11u, "a guarded publication overwrote a same-value guest store made during its commit");
 }
+
+#if defined(__linux__)
+void CheckPublicationKeepsPageProtection() {
+    constexpr std::size_t Page = 4096;
+    constexpr std::size_t Pages = 3;
+    void* memory = AllocateWatched(Pages * Page);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, Pages * Page);
+    Require(CollectWrites(base, Pages * Page) != 0, "the protected publication block is not collected");
+    auto* const readOnly = reinterpret_cast<void*>(base + Page);
+    auto* const executable = reinterpret_cast<void*>(base + 2 * Page);
+    Require(::mprotect(readOnly, Page, PROT_READ) == 0, "cannot make a watched page read-only");
+    Require(::mprotect(executable, Page, PROT_READ | PROT_WRITE | PROT_EXEC) == 0, "cannot make a watched page executable");
+    Require(GuestWriteWatch::GuestWriteWatchBeginPublication_nid_no_patch(base, Pages * Page), "cannot begin a publication over pages with different protections");
+    GuestWriteWatch::GuestWriteWatchEndPublication_nid_no_patch();
+    const auto readonly = HostMapping::Find(base + Page, "write tracking protection test");
+    Require(readonly && readonly->readable && !readonly->writable, "a guarded publication made a read-only page writable");
+    const auto executableMapping = HostMapping::Find(base + 2 * Page, "write tracking protection test");
+    Require(executableMapping && executableMapping->writable && executableMapping->executable, "a guarded publication lost the execute permission of a page");
+    const auto writable = HostMapping::Find(base, "write tracking protection test");
+    Require(writable && writable->writable, "a guarded publication left a writable page read-only");
+    *reinterpret_cast<volatile std::uint8_t*>(memory) = 0x22;
+    Require(CollectWrites(base, Page) != 0, "a guarded publication stopped the write watch from seeing a later store");
+    Require(::mprotect(readOnly, Page, PROT_READ | PROT_WRITE) == 0, "cannot restore the read-only test page");
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, Pages * Page);
+    Require(::munmap(memory, Pages * Page) == 0, "cannot release the protected publication block");
+}
+
+void IgnorePublicationWrite(void*, std::uintptr_t, std::uintptr_t) {}
+
+void CheckPublicationBench() {
+    constexpr std::size_t Bytes = 64 * 1024;
+    constexpr int Iterations = 10000;
+    void* memory = AllocateWatched(Bytes);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, Bytes);
+    Require(CollectWrites(base, Bytes) != 0, "the publication benchmark block is not collected");
+    const auto run = [&](bool collect) {
+        const auto started = std::chrono::steady_clock::now();
+        for (int iteration = 0; iteration < Iterations; ++iteration) {
+            Require(GuestWriteWatch::GuestWriteWatchBeginPublication_nid_no_patch(base, Bytes), "cannot begin a benchmark publication");
+            if (collect) GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(base, Bytes, &IgnorePublicationWrite, nullptr);
+            GuestWriteWatch::GuestWriteWatchEndPublication_nid_no_patch();
+        }
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count() / Iterations;
+    };
+    std::cout << "publication guard: " << run(false) << " ns per 64 KiB part\n";
+    std::cout << "publication guard and collect: " << run(true) << " ns per 64 KiB part (" << Iterations << " iterations)\n";
+
+    constexpr int StoreThreads = 4;
+    constexpr int ContendedIterations = 2000;
+    std::atomic<bool> running{true};
+    std::vector<std::thread> threads;
+    for (int thread = 0; thread < StoreThreads; ++thread) {
+        threads.emplace_back([&, thread] {
+            auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+            std::size_t offset = static_cast<std::size_t>(thread) * 4096;
+            while (running.load(std::memory_order_acquire)) {
+                bytes[offset] = static_cast<std::uint8_t>(offset);
+                offset = (offset + 4096) % Bytes;
+            }
+        });
+    }
+    const auto contendedStarted = std::chrono::steady_clock::now();
+    for (int iteration = 0; iteration < ContendedIterations; ++iteration) {
+        Require(GuestWriteWatch::GuestWriteWatchBeginPublication_nid_no_patch(base, Bytes), "cannot begin a contended benchmark publication");
+        GuestWriteWatch::GuestWriteWatchEndPublication_nid_no_patch();
+    }
+    const auto contended = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - contendedStarted).count() / ContendedIterations;
+    running.store(false, std::memory_order_release);
+    for (auto& thread : threads) thread.join();
+    std::cout << "publication guard with " << StoreThreads << " store threads: " << contended << " ns per 64 KiB part (" << ContendedIterations << " iterations)\n";
+
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, Bytes);
+    Require(::munmap(memory, Bytes) == 0, "cannot release the publication benchmark block");
+}
+#endif
 #endif
 
 void CheckGpuWriteNotListed() {
@@ -2744,6 +2824,12 @@ int main(int argc, char** argv) {
             std::cout << "generation wrap test passed\n";
             return 0;
         }
+#if defined(__linux__)
+        if (argc == 2 && std::string_view(argv[1]) == "--publication-bench") {
+            CheckPublicationBench();
+            return 0;
+        }
+#endif
 #if defined(__APPLE__) || defined(__linux__)
         if (argc == 2 && std::string_view(argv[1]) == "--import-over-read-traps") {
             CheckImportOverReadTraps();
@@ -2859,8 +2945,11 @@ int main(int argc, char** argv) {
 #endif
 #if defined(__linux__)
         CheckWriteChangedIfHeldSameValue();
+        CheckPublicationKeepsPageProtection();
+#elif defined(_WIN32)
+        std::cout << "same-value publication regression skipped: the ordering fix needs an alias for a host write to a read-only guest page, which this platform does not provide (docs/dev/debt/changes/agc-same-value-publication-windows.md)\n";
 #else
-        std::cout << "same-value publication regression skipped: the ordering fix needs an alias for a host write to a read-only guest page, which this platform does not provide (docs/dev/debt/libSceAgcDriver.md, same-value store during a guarded publication)\n";
+        std::cout << "same-value publication regression skipped: this change orders the store on Linux only\n";
 #endif
     } catch (const std::exception& error) {
         std::cerr << "write tracking test failed: " << error.what() << "\n";
