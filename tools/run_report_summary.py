@@ -80,12 +80,13 @@ def render(report):
 
     frames = run.get("framesPresented")
     if coverage.get("milestones"):
-        frame_summary = count_text(frames, "frame") if isinstance(frames, int) and not isinstance(frames, bool) else "unknown frame count"
+        frames_valid = type(frames) is int and frames >= 0
+        frame_summary = count_text(frames, "frame") if frames_valid else "unknown frame count"
         fps = run.get("averageFps")
-        if is_finite_number(fps):
+        if frames_valid and frames > 1 and is_finite_number(fps) and fps >= 0:
             fps_text = f"{fps}.00" if type(fps) is int else f"{fps:.2f}"
             frame_summary += f", {fps_text} average FPS"
-        elif isinstance(frames, int) and not isinstance(frames, bool) and frames > 1:
+        elif frames_valid and frames > 1:
             frame_summary += ", average FPS unavailable"
         lines.append(f"Rendering: {frame_summary}")
     else:
