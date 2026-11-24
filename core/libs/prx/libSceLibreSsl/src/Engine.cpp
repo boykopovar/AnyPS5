@@ -1,5 +1,4 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
