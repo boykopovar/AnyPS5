@@ -283,6 +283,7 @@ public:
     bool hasComposition = false;
     Retained<Object> topOverhangImage;
     Retained<Object> bottomOverhangImage;
+    std::uint64_t paintedObjectsCounterThreshold = 0;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
