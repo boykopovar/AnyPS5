@@ -300,6 +300,21 @@ std::uint32_t DrefValueF32(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
     return AddressF32(ctx, access, layout.dref);
 }
 
+std::uint32_t CompareReferenceF32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t reference) {
+    auto& state = ctx.state;
+    const auto u32 = TypeU32(state);
+    const auto format = state.registrationModules
+        ? Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, RuntimeImageDword(state, access.mem.resource, offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t) + 1u), ConstantU32(state, 20u)), ConstantU32(state, 0x1ffu))
+        : state.module.SpecializationConstant(u32, PipelineSpecialization::CompareReferenceFormatBase + access.mem.resource, 0u);
+    const auto f32 = TypeF32(state);
+    const auto scaled = Binary(state, spv::OpFMul, f32, reference, ConstantF32Value(state, 65535.0f));
+    const auto roundedCode = EmitGlsl<GLSLstd450FClamp, IrType::F32>(state, EmitGlsl<GLSLstd450RoundEven, IrType::F32>(state, scaled), ConstantF32Value(state, 0.0f), ConstantF32Value(state, 65535.0f));
+    const auto normalized = Binary(state, spv::OpFDiv, f32, roundedCode, ConstantF32Value(state, 65535.0f));
+    const auto inRange = Binary(state, spv::OpLogicalAnd, TypeBool(state), Binary(state, spv::OpFOrdGreaterThanEqual, TypeBool(state), reference, ConstantF32Value(state, 0.0f)), Binary(state, spv::OpFOrdLessThanEqual, TypeBool(state), reference, ConstantF32Value(state, 1.0f)));
+    const auto selected = Select(state, f32, inRange, normalized, reference);
+    return Select(state, f32, Binary(state, spv::OpIEqual, TypeBool(state), format, ConstantU32(state, static_cast<std::uint32_t>(IrBufferFormat::Format16UNorm))), selected, reference);
+}
+
 std::uint32_t SampledComponentBits(SpirvValueEmitContext& ctx, std::uint32_t value, IrTextureNumericClass numericClass) {
     if (numericClass == IrTextureNumericClass::Uint) {
         return value;
@@ -2136,7 +2151,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     std::uint32_t drefValue = 0;
     if (setup.dref) {
         resultType = TypeF32(state);
-        drefValue = DrefValueF32(ctx, access, setup.layout);
+        drefValue = CompareReferenceF32(ctx, access, DrefValueF32(ctx, access, setup.layout));
     }
     std::uint32_t operandMask = 0;
     std::vector<std::uint32_t> operands;
