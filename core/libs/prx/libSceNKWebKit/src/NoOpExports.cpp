@@ -50,9 +50,6 @@ void APS5_VABI WKBundlePageClickMenuItem() {
 void APS5_VABI WKBundlePageSetContextMenuClient() {
 }
 
-void APS5_VABI WKBundlePageSetPaintedObjectsCounterThreshold() {
-}
-
 void APS5_VABI WKContextAddSupportedPlugin() {
 }
 
