@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <atomic>
 #include <cstdio>
-#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -33,10 +32,7 @@ extern "C" {
 int APS5_VABI sceCoredumpRegisterCoredumpHandler(uint64_t handler, size_t stack_size, uint64_t context) {
     if (g_coredumpHandler.load(std::memory_order_relaxed)) return static_cast<int>(0x81180002u);
     if (!handler || stack_size < 0x4000 || stack_size >= 0x20000000) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
-    const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, parameters + 16, sizeof(sdkVersion));
-    coredumpSdkVersion.store(sdkVersion, std::memory_order_relaxed);
+    coredumpSdkVersion.store(ApplicationCompiledSdkVersion(), std::memory_order_relaxed);
     g_coredumpHandler.store(handler, std::memory_order_relaxed);
     g_coredumpContext.store(context, std::memory_order_relaxed);
     return 0;

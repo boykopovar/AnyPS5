@@ -357,6 +357,7 @@ VideoOutDriver::VideoOutDriver() {
 #ifdef __linux__
         SDL_SetHint(SDL_HINT_VIDEODRIVER, "wayland,x11");
 #endif
+        if (const char* keepAwake = std::getenv("ANYPS5_KEEP_AWAKE"); keepAwake != nullptr && std::strcmp(keepAwake, "0") == 0) SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1");
         if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) {
             throw std::runtime_error(std::string("SDL_InitSubSystem(VIDEO | GAMECONTROLLER) failed: ") + SDL_GetError());
         }
