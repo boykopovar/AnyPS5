@@ -2,6 +2,17 @@ target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/Bio.cpp ${CM
 target_link_libraries(libSceLibreSsl PRIVATE libc libSceNet)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_libressl_socket_bio_retry_tests ${CMAKE_CURRENT_LIST_DIR}/tests/SocketBioRetry.cpp)
+    target_include_directories(guest_libressl_socket_bio_retry_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_socket_bio_retry_tests PRIVATE libSceLibreSsl libSceNet libc)
+    configure_windows_unwind(guest_libressl_socket_bio_retry_tests)
+    add_test(NAME guest_libressl_socket_bio_retry COMMAND guest_libressl_socket_bio_retry_tests)
+    set_tests_properties(guest_libressl_socket_bio_retry PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_socket_bio_retry PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
     add_test_executable(guest_libressl_pem_read_bio_x509_aux_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslPemReadBioX509Aux.cpp)
     target_include_directories(guest_libressl_pem_read_bio_x509_aux_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl_pem_read_bio_x509_aux_tests PRIVATE libSceLibreSsl libc)

@@ -5,6 +5,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <netdb.h>
 #include <csignal>
 #endif
 
@@ -2060,6 +2061,42 @@ void Retries(int ssl) {
     Http2SetLookupHook_nid_no_patch(nullptr);
 }
 
+int SlowLookup(const char*) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    return 0;
+}
+
+int UnansweredLookup(const char*) {
+    return EAI_AGAIN;
+}
+
+void ResolveTimeouts(int ssl) {
+    std::fprintf(stderr, "HTTP2 resolve timeout scenarios\n");
+    Http2SetLookupHook_nid_no_patch(SlowLookup);
+    {
+        Server server(Mode::Normal);
+        Client client(ssl);
+        Require(sceHttp2SetResolveTimeOut(client.tmpl, 100000) == 0, "100 ms resolve timeout");
+        Require(sceHttp2SetResolveRetry(client.tmpl, 0) == 0, "no resolve retry");
+        client.Create(server.Url());
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "a lookup that outlasts the resolve timeout still connects");
+        std::array<char, 64> buffer;
+        std::string body;
+        for (int count; (count = sceHttp2ReadData(client.request, buffer.data(), buffer.size())) > 0;) body.append(buffer.data(), static_cast<std::size_t>(count));
+        Require(body == "response body", "body after a lookup slower than the resolve timeout");
+        server.Join();
+    }
+    Http2SetLookupHook_nid_no_patch(UnansweredLookup);
+    {
+        Client client(ssl);
+        Require(sceHttp2SetResolveRetry(client.tmpl, 0) == 0, "no resolve retry");
+        client.Create("https://127.0.0.1:1/");
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x804101E2), "an unanswered lookup returns the resolver timeout");
+        AfterFailedSend(client, static_cast<int>(0x804101E2));
+    }
+    Http2SetLookupHook_nid_no_patch(nullptr);
+}
+
 void Capacity(int ssl) {
     Server server(Mode::StallBody);
     Client client(ssl, 1);
@@ -2501,6 +2538,7 @@ int main(int argc, char** argv) {
             for (int teardown = 0; teardown < 4; ++teardown) Cancellation(ssl, mode, teardown);
         }
         DeleteBetweenCheckLoads(ssl);
+        ResolveTimeouts(ssl);
         HostNotFound(ssl);
         Refused(ssl);
         Capacity(ssl);

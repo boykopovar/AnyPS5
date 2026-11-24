@@ -869,6 +869,24 @@ void TestConnectionChecks() {
     Require(sceNpWebApiTerminate(context) == 0, "terminate the connection checks library context");
 }
 
+void TestErrorCode() {
+    constexpr char topLevel[] = R"({"code":7})";
+    constexpr char nested[] = R"({"error":{"code":8}})";
+    SetSdkVersion(0x024fffff);
+    Require(sceNpWebApiGetErrorCode(404, topLevel, sizeof(topLevel) - 1) == static_cast<int>(0x82F00194u),
+        "the old error parser needs error.code");
+    Require(sceNpWebApiGetErrorCode(404, nested, sizeof(nested) - 1) == static_cast<int>(0x82000008u),
+        "the old error parser reads error.code");
+    SetSdkVersion(0x02500000);
+    Require(sceNpWebApiGetErrorCode(404, topLevel, sizeof(topLevel) - 1) == static_cast<int>(0x82000007u),
+        "the new error parser reads a top-level code");
+    Require(sceNpWebApiGetErrorCode(404, nested, sizeof(nested) - 1) == static_cast<int>(0x82000008u),
+        "the new error parser reads error.code");
+    Require(sceNpWebApiGetErrorCode(503, nullptr, 1) == static_cast<int>(0x82F001F7u),
+        "an absent body falls back to the HTTP status");
+    SetSdkVersion(0x04508001);
+}
+
 }
 
 void TestEmptyExports() {
@@ -901,6 +919,7 @@ int main() {
     TestInternalServicePushEventFilter();
     TestMultipartSendOnPlainRequest();
     TestConnectionChecks();
+    TestErrorCode();
     {
         errno = 71;
         Require(sceNpWebApiIntInitialize(reinterpret_cast<const NpWebApiIntInitializeArgs*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument && errno == 71,

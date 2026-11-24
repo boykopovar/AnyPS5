@@ -744,7 +744,7 @@ def is_debt_fragment(path):
 def link_bases(path, source):
     bases = {}
     base = f"{DEBT_DIR}fragment.md" if is_debt_fragment(path) else path
-    for number, line in enumerate(source.split("\n"), 1):
+    for number, line in enumerate(source.removeprefix("﻿").split("\n"), 1):
         if is_debt_fragment(path) and line.startswith("# "):
             library = line[2:].strip()
             base = DEBT if library == PurePosixPath(DEBT).stem else f"{DEBT_DIR}{library}.md"

@@ -198,6 +198,11 @@ def noise(values, phases):
 
 
 def split_report(lines, programs, classes):
+    programs, classes = tuple(programs), tuple(classes)
+    reserved = {"gputime", *programs}
+    for name in classes:
+        if name in reserved:
+            raise ValueError(f"--class {name} would overwrite the {name} ms/present metric")
     config, phases = read_log(lines)
     if not phases:
         raise ValueError("no [ab] phase lines (was APS5_AB set?)")
@@ -260,8 +265,11 @@ def program_key(value):
 
 def open_log(path):
     with Path(path).open("rb") as raw:
-        bom = raw.read(2)
-    if bom in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE):
+        bom = raw.read(4)
+    if bom in (codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE):
+        raise ValueError(f"{path} is UTF-32; "
+                         'capture the run with cmd /d /c "<command> 2> run.log" instead')
+    if bom[:2] in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE):
         raise ValueError(f"{path} is UTF-16, as Windows PowerShell 5.1 writes a redirected 2>, which also wraps long lines; "
                          'capture the run with cmd /d /c "<command> 2> run.log" instead')
     return Path(path).open(encoding="utf-8-sig", errors="replace")

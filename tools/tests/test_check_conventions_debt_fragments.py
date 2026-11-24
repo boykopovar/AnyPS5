@@ -95,6 +95,10 @@ class DebtFragmentTests(unittest.TestCase):
         self.assertEqual(self.check(f"# TechnicalDebt\n\n## change does not handle every input\n\n"
                                     f"- [Example tool]({TOOL}) rejects empty input\n"), [])
 
+    def test_a_technical_debt_fragment_with_a_byte_order_mark_resolves_links_from_the_index(self):
+        self.assertEqual(self.check(f"﻿# TechnicalDebt\n\n## change does not handle every input\n\n"
+                                    f"- [Example tool]({TOOL}) rejects empty input\n"), [])
+
     def test_a_technical_debt_fragment_link_relative_to_the_library_files_is_reported(self):
         findings = self.check("# TechnicalDebt\n\n## change does not handle every input\n\n"
                               "- [Example tool](../../../tools/example.py) rejects empty input\n")

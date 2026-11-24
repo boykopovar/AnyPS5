@@ -148,6 +148,10 @@ Events start relative to when the application first observes the new command. Bu
 
 The runtime evaluates scheduled events at each controller read, including their automatic releases. A new pulse or timeline replaces the remaining sequence. Physical controller buttons still add to injected buttons. Existing commands at the application's first controller read are ignored. This schedules wall-time input: events can be missed while the application is not reading its controller, and it does not reproduce frame timing or game state. Use gaps and holds long enough for the title's input loop.
 
+### Automated title runs
+
+`tools/title_run.py` queues a title timeline only after both the `after_s` minimum delay and a fresh recording sample from controller port 0. This keeps a timeline queued during startup from being discarded as an old command at the first controller read. For scripted input, an absent or empty `APS5_PAD_RECORD` defaults to `pad-record.txt` in the run trace directory. Nonempty overrides are preserved; relative paths resolve in the title work directory. Warmup and capture each wait for a new sample, and `pad_queued_s` stays null if the process ends before readiness.
+
 ## Recording and replaying controller input
 
 Set `APS5_PAD_RECORD` to a file path to record what a title reads from controller port 0 while you play: every change of its buttons, sticks and analog triggers, whatever device produced it, timed in milliseconds from the title's first controller read. Set `APS5_PAD_REPLAY` to that file on a later run to feed the same states back at the same times from that run's first read, without any device. A replay replaces port 0's buttons, sticks and analog triggers at every read; after the last recorded change it keeps the last state. A recording path that cannot be written, or a replay file that cannot be read or is not in the format below, stops the title at its first controller read with an error naming the variable.
