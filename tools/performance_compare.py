@@ -203,7 +203,8 @@ def compare(baseline, candidate):
         totals_full = any(thread.get("totals_full", False) for thread in threads.values())
         if totals_full:
             notes.append(f"{label}: phase totals are incomplete because a thread's totals table overflowed.")
-        if summary["trace_dropped"] and (not threads or any(thread.get("events_lost", 0) for thread in threads.values())):
+        events_lost = any(thread.get("events_lost", 0) for thread in threads.values())
+        if events_lost or (summary["trace_dropped"] and not threads):
             if totals_full:
                 notes.append(f"{label}: trace events were dropped; the event trace is incomplete.")
             else:
