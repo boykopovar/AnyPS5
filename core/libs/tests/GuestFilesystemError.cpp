@@ -435,13 +435,30 @@ static void CheckSymbolicLinkPrefixErrors() {
     const auto directory = std::filesystem::current_path() / directoryName;
     Require(std::filesystem::create_directory(directory), "create symlink prefix test directory");
     const auto regularFile = directory / "regular.txt";
+    std::vector<std::filesystem::path> createdLinks;
+    struct CleanupGuard {
+        const std::filesystem::path& directory;
+        const std::filesystem::path& regularFile;
+        const std::vector<std::filesystem::path>& links;
+        ~CleanupGuard() {
+            for (auto it = links.rbegin(); it != links.rend(); ++it) {
+#ifdef _WIN32
+                DeleteFileW(it->c_str());
+#else
+                std::error_code removeError;
+                std::filesystem::remove(*it, removeError);
+#endif
+            }
+            std::error_code cleanupError;
+            std::filesystem::remove(regularFile, cleanupError);
+            std::filesystem::remove(directory, cleanupError);
+        }
+    } cleanup{directory, regularFile, createdLinks};
     {
         std::ofstream output(regularFile);
         output << "x";
     }
     Require(std::filesystem::exists(regularFile), "create regular file");
-
-    std::vector<std::filesystem::path> createdLinks;
     bool linksAvailable = true;
     auto createLink = [&](const std::string& name, const std::string& target) {
         if (!linksAvailable) return false;
@@ -513,17 +530,6 @@ static void CheckSymbolicLinkPrefixErrors() {
         std::fprintf(stderr, "symbolic links unavailable: symlink prefix error checks skipped\n");
     }
 
-    for (auto it = createdLinks.rbegin(); it != createdLinks.rend(); ++it) {
-#ifdef _WIN32
-        DeleteFileW(it->c_str());
-#else
-        std::error_code removeError;
-        std::filesystem::remove(*it, removeError);
-#endif
-    }
-    std::error_code cleanupError;
-    std::filesystem::remove(regularFile, cleanupError);
-    std::filesystem::remove(directory, cleanupError);
 }
 
 int main() {
