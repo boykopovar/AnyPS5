@@ -1,7 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/Api.hpp"
 
-#include <cerrno>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
