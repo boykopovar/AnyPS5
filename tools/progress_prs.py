@@ -99,9 +99,23 @@ def dependency_order(pull_requests, root, base_sha, repo):
     while pending:
         ready = sorted(number for number in pending if dependencies[number] <= (set(order) | excluded.keys()))
         if not ready:
-            for number in pending:
+            cycles = set()
+            for start in pending:
+                reachable = list(dependencies[start] & pending)
+                visited = set()
+                while reachable:
+                    number = reachable.pop()
+                    if number == start:
+                        cycles.add(start)
+                        break
+                    if number in visited:
+                        continue
+                    visited.add(number)
+                    reachable.extend(dependencies[number] & pending)
+            for number in cycles:
                 excluded[number] = "dependency_cycle"
-            break
+            pending -= cycles
+            continue
         number = ready[0]
         pending.remove(number)
         order.append(number)

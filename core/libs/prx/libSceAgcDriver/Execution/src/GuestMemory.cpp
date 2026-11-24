@@ -1345,7 +1345,7 @@ std::vector<std::uint64_t> PagesOf(std::span<const std::pair<std::uint64_t, std:
 
 std::vector<std::uint8_t> TrappedPages(std::span<const std::uint64_t> pages) {
     std::vector<std::uint8_t> trapped(pages.size(), 0);
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
     for (std::size_t from = 0; from < pages.size();) {
         auto to = from + 1;
@@ -2684,12 +2684,11 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     const auto stop = (address + bytes + page - 1) & ~(page - 1);
     const bool covered = tracker.covers(first, static_cast<std::size_t>(stop - first));
     const auto runImport = [&] {
-#ifdef __APPLE__
+#if defined(__APPLE__)
         const OwnHostWrite own;
         std::optional<GuestArena::HostWrite> open;
         if (importMayWriteGuest) open.emplace(reinterpret_cast<void*>(first), static_cast<std::size_t>(stop - first));
-#endif
-#ifndef __APPLE__
+#else
         static_cast<void>(importMayWriteGuest);
 #endif
         return import();
@@ -3970,10 +3969,16 @@ bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> b
 namespace {
 
 thread_local void (*compareMappedHook)(std::uint64_t, std::size_t) = nullptr;
+std::atomic<bool> compareMappedHookInstalled{false};
+
+bool compareMappedHookArmed() {
+    return compareMappedHookInstalled.load(std::memory_order_relaxed) && compareMappedHook != nullptr;
+}
 
 }
 
 void SetCompareMappedHook(void (*hook)(std::uint64_t address, std::size_t bytes)) {
+    if (hook != nullptr) compareMappedHookInstalled.store(true, std::memory_order_relaxed);
     compareMappedHook = hook;
 }
 
@@ -3985,13 +3990,13 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
     std::size_t arenaBytes = 0;
     GuestArena::GuestArenaRange_nid_postfix(&arenaBase, &arenaBytes);
     if (address >= arenaBase && bytes.size() <= arenaBytes && address - arenaBase <= arenaBytes - bytes.size() && !GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(static_cast<std::uintptr_t>(address), bytes.size())) {
-        if (compareMappedHook != nullptr) compareMappedHook(address, bytes.size());
+        if (compareMappedHookArmed()) compareMappedHook(address, bytes.size());
         bool same = false;
         if (!GuestArena::GuestArenaCompareOwned_nid_no_patch(address, bytes.data(), bytes.size(), &same)) return Compare::Unmapped;
         return same ? Compare::Equal : Compare::Differs;
     }
 #elif defined(__linux__) || defined(__APPLE__)
-    if (compareMappedHook != nullptr) compareMappedHook(address, bytes.size());
+    if (compareMappedHookArmed()) compareMappedHook(address, bytes.size());
     constexpr std::size_t ChunkBytes = 64 * PageBytes;
     struct CompareMappedChunk {};
     auto& chunk = HostThreadLocal<std::vector<std::byte>, CompareMappedChunk>();
@@ -4020,7 +4025,7 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
     const bool queried = describePages(static_cast<std::uintptr_t>(address), bytes.size(), [&](const PageRun& run) {
         if (!run.readable) outcome = Compare::Unmapped;
         else {
-            if (compareMappedHook != nullptr) compareMappedHook(run.begin, static_cast<std::size_t>(run.end - run.begin));
+            if (compareMappedHookArmed()) compareMappedHook(run.begin, static_cast<std::size_t>(run.end - run.begin));
             if (std::memcmp(reinterpret_cast<const void*>(run.begin), bytes.data() + (run.begin - address), static_cast<std::size_t>(run.end - run.begin)) != 0) outcome = Compare::Differs;
         }
         return outcome == Compare::Equal;

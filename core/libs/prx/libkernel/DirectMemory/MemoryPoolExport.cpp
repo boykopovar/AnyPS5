@@ -97,9 +97,7 @@ int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries
   if (ret != 0) break;
  }
  if (num_entries_out != nullptr) {
-  const int savedErrno = errno;
   const bool copied = GuestCopyOut_nid_no_patch(num_entries_out, &done, sizeof(done));
-  errno = savedErrno;
   if (!copied) return SCE_KERNEL_ERROR_EFAULT;
  }
  return ret;
@@ -151,16 +149,12 @@ int APS5_VABI sceKernelMemoryPoolReserve(void* addr_in, size_t len, size_t align
  if (!addr_out || len == 0 || !PageAligned(len) || (alignment != 0 && !PageAligned(alignment))) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
- const int savedErrno = errno;
  const bool writable = GuestCopyOut_nid_no_patch(addr_out, &addr_in, sizeof(addr_in));
- errno = savedErrno;
  if (!writable) return SCE_KERNEL_ERROR_EFAULT;
  void* reserved = addr_in;
  const int ret = Guarded([&] { return DoReserveVirtual(&reserved, len, flags, alignment); });
  if (ret != 0) return ret;
- const int savedErrnoAfter = errno;
  const bool copied = GuestCopyOut_nid_no_patch(addr_out, &reserved, sizeof(reserved));
- errno = savedErrnoAfter;
  if (!copied) {
   munmap_nid_postfix(reserved, len);
   return SCE_KERNEL_ERROR_EFAULT;

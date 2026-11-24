@@ -36,9 +36,7 @@ int RefuseSet(std::int32_t handle, std::uint32_t channel, bool valid) {
 bool ValidTarget(const CameraAutoExposureGainTarget* option) {
     if (!option) return true;
     CameraAutoExposureGainTarget local{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&local, option, sizeof(local));
-    errno = savedErrno;
     if (!copied || local.sizeThis != sizeof(CameraAutoExposureGainTarget)) return false;
     switch (local.target) {
     case 0x0: case 0x2: case 0x4: case 0x6: case 0x8:
@@ -54,18 +52,13 @@ template <typename T>
 bool ValidGuestInput(const T* pointer) {
     if (!pointer) return false;
     T local{};
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&local, pointer, sizeof(local));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(&local, pointer, sizeof(local));
 }
 
 template <typename TValue>
 int Report(std::int32_t handle, std::uint32_t channel, TValue* out, const void* option, TValue value) {
     if (const int error = CheckGet(handle, channel, out, option)) return error;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(out, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
@@ -161,9 +154,7 @@ int APS5_VABI sceCameraGetExposureGain(std::int32_t handle, std::uint32_t channe
 int APS5_VABI sceCameraGetWhiteBalance(std::int32_t handle, std::uint32_t channel, CameraWhiteBalance* whiteBalance, void* option) {
     if (const int error = CheckGet(handle, channel, whiteBalance, option)) return error;
     const CameraWhiteBalance value = DEFAULT_WHITE_BALANCE;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(whiteBalance, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
@@ -177,9 +168,7 @@ int APS5_VABI sceCameraGetGamma(std::int32_t handle, std::uint32_t channel, Came
 int APS5_VABI sceCameraSetAttribute(std::int32_t handle, const CameraAttribute* attribute) {
     if (!attribute) return SCE_CAMERA_ERROR_PARAM;
     CameraAttribute localAttr{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localAttr, attribute, sizeof(localAttr));
-    errno = savedErrno;
     if (!copied || localAttr.sizeThis != sizeof(CameraAttribute)) return SCE_CAMERA_ERROR_PARAM;
     return RefuseSet(handle, localAttr.channel, true);
 }

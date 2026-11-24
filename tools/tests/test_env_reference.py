@@ -138,6 +138,27 @@ class ComputedEnvironmentTests(unittest.TestCase):
 
 
 class EnvReferenceTests(unittest.TestCase):
+    def test_python_comments_do_not_create_reads(self):
+        root = self.fixture()
+        (root / "core" / "Sample.cpp").unlink()
+        source = root / "core" / "settings.py"
+        source.write_text('import os\n'
+                          'message = "hash # is part of a string\u2028also here"\n'
+                          '# getenv("APS5_COMMENT")\n'
+                          'value = os.getenv("APS5_REAL")  # getenv("APS5_INLINE")\n'
+                          'generated = \'\'\'\nstd::getenv("APS5_GENERATED");\n\'\'\'\n', encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(set(found), {"APS5_REAL", "APS5_GENERATED"})
+        self.assertEqual(found["APS5_REAL"][0][1], 4)
+        self.assertEqual(found["APS5_GENERATED"][0][1], 6)
+
+    def test_invalid_python_tokens_report_the_source(self):
+        root = self.fixture()
+        source = root / "core" / "broken.py"
+        source.write_text('value = getenv("APS5_REAL"\n', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "cannot tokenize .*broken.py"):
+            env_reference.reads([root / "core"])
+
     def test_reader_identifiers_require_a_token_boundary(self):
         root = self.fixture()
         source = root / "core" / "Sample.cpp"
