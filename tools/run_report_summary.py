@@ -4,6 +4,10 @@ import math
 import sys
 from pathlib import Path
 
+from performance_compare import unique_json_object
+
+
+DIAGNOSTIC_PREVIEW_LIMIT = 5
 
 def text(value):
     if not isinstance(value, str) or not value:
@@ -110,9 +114,12 @@ def render(report):
         functions = diagnostic_entries(report, "missing", "functions")
         calls = total_count(functions, "calls")
         lines.append(f"Missing functions: {count_text(calls, 'call')} across {count_text(len(functions), 'function')}")
-        for item in functions[:5]:
+        for item in functions[:DIAGNOSTIC_PREVIEW_LIMIT]:
             library = text(item.get("library"))
             lines.append(f"  - {library}::{text(item.get('name'))} ({count_text(item.get('calls', 0), 'call')})")
+        if len(functions) > DIAGNOSTIC_PREVIEW_LIMIT:
+            remaining = len(functions) - DIAGNOSTIC_PREVIEW_LIMIT
+            lines.append(f"  - {remaining} more function{'' if remaining == 1 else 's'} in the full report")
         if truncated.get("functions", 0):
             lines.append(f"  - {count_text(truncated['functions'], 'additional function')} omitted")
     else:
@@ -126,10 +133,13 @@ def render(report):
         unsupported = diagnostic_entries(report, "shaders", "unsupported")
         total = total_count(unsupported, "count")
         lines.append(f"Unsupported shader instructions: {count_text(total, 'occurrence')} across {count_text(len(unsupported), 'instruction')}")
-        for item in unsupported[:5]:
+        for item in unsupported[:DIAGNOSTIC_PREVIEW_LIMIT]:
             opcode_value = item.get("opcodeValue")
             instruction = item.get("opcode") or (opcode_value if opcode_value is not None else "unknown instruction")
             lines.append(f"  - {text(item.get('encoding'))}: {text(str(instruction))} ({count_text(item.get('count', 0), 'occurrence')})")
+        if len(unsupported) > DIAGNOSTIC_PREVIEW_LIMIT:
+            remaining = len(unsupported) - DIAGNOSTIC_PREVIEW_LIMIT
+            lines.append(f"  - {remaining} more instruction{'' if remaining == 1 else 's'} in the full report")
         if truncated.get("unsupported", 0):
             lines.append(f"  - {count_text(truncated['unsupported'], 'additional instruction')} omitted")
     else:
@@ -153,11 +163,11 @@ def main():
     parser.add_argument("report", type=Path, help="path to anyps5-report.json")
     args = parser.parse_args()
     try:
-        report = json.loads(args.report.read_text(encoding="utf-8-sig"))
+        report = json.loads(args.report.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_object)
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8")
         print(render(report))
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError, KeyError) as error:
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError, KeyError, RecursionError) as error:
         print(f"run_report_summary: {error}", file=sys.stderr)
         return 2
     return 0

@@ -100,14 +100,11 @@ int APS5_VABI libScePadUnknown_oARLr0ca9N8_nid_no_patch(int handle, std::uint8_t
         return PAD_ERROR_INVALID_ARG;
     }
     if (!scePadIsValidHandle(handle, PAD_PORT_TYPE_STANDARD) &&
-        !scePadIsValidHandle(handle, PAD_PORT_TYPE_SPECIAL) &&
-        !scePadIsValidHandle(handle, PAD_PORT_TYPE_REMOTE)) {
+        !scePadIsValidHandle(handle, PAD_PORT_TYPE_SPECIAL)) {
         return PAD_ERROR_INVALID_HANDLE;
     }
     const std::uint8_t value = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(out, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) {
         return PAD_ERROR_INVALID_ARG;
     }

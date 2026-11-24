@@ -1,6 +1,9 @@
 #include "prx/libSceJsc/include/ApiBridgeExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/Jsc.hpp"
 #include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
+
+#include <utility>
 
 namespace NKWebKit {
 
@@ -45,7 +48,26 @@ void ResizeStringBuilder(Jsc::WtfAbi::StringBuilder* builder, unsigned newSize) 
     WtfAbi::Resize(*reinterpret_cast<WtfAbi::StringBuilder*>(builder), newSize);
 }
 
-constexpr Jsc::ApiBridge bridge{&MakeString, &HasPropertyForKey, &ResizeStringBuilder};
+static_assert(sizeof(Jsc::WtfAbi::URL) == sizeof(WtfAbi::URL));
+
+void RemoveUrlFragmentIdentifier(Jsc::WtfAbi::URL* guestUrl) {
+    auto& url = *reinterpret_cast<WtfAbi::URL*>(guestUrl);
+    if (!(url.bits & 1) || !url.impl) return;
+    WtfAbi::String left = _ZN3WTF10StringImpl9substringEjj(url.impl, 0, url.queryEnd);
+    WtfAbi::Release(std::exchange(url.impl, std::exchange(left.impl, nullptr)));
+}
+
+void WriteTextStreamIndent(Jsc::WtfAbi::TextStream* stream, int indent) {
+    auto* text = reinterpret_cast<WtfAbi::TextStream*>(stream);
+    for (int i = 0; i < indent; ++i) _ZN3WTF10TextStreamlsEPKc(text, "  ");
+}
+
+void AppendNumberRespectingIntegers(Jsc::WtfAbi::TextStream* stream, double value) {
+    WtfAbi::AppendRespectingIntegers(*reinterpret_cast<WtfAbi::TextStream*>(stream), value);
+}
+
+constexpr Jsc::ApiBridge bridge{&MakeString, &HasPropertyForKey, &ResizeStringBuilder, &RemoveUrlFragmentIdentifier,
+    &WriteTextStreamIndent, &AppendNumberRespectingIntegers};
 const bool bridgeRegistered = (RegisterApiBridge_nid_no_patch(&bridge), true);
 
 }

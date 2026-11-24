@@ -1,5 +1,5 @@
 import { abortAndDiscardOutput, OutputDirectoryTransaction } from "./output-directory.mjs";
-import { batchMemoryEstimate } from "./batch.mjs";
+import { batchMemoryEstimate, MEMORY_LIMIT, memoryEstimate } from "./batch.mjs";
 import { failureReport } from "./failure-report.mjs";
 import { apply, current, locales, set as setLocale, translate } from "./i18n.mjs";
 
@@ -18,6 +18,7 @@ let sink;
 let outputDirectory;
 let outputTransaction;
 let downloadUrl;
+let completedResult;
 let logs = [];
 let release;
 const canSaveZip = typeof window.showSaveFilePicker === "function" && window.isSecureContext;
@@ -78,14 +79,18 @@ function update() {
   const conversionBlocked = conversionTooLarge || iconTooLarge;
   let estimate = null;
   let estimateOverflow = false;
-  if (inspected && libraryBytes !== undefined) {
-    try { estimate = batchMemoryEstimate(summaries, target, libraryBytes, locale); }
+  if (libraryBytes !== undefined) {
+    try {
+      estimate = inspected
+        ? batchMemoryEstimate(summaries, target, libraryBytes, locale)
+        : memoryEstimate(0, 0, libraryBytes, 0, locale);
+    }
     catch (error) {
       if (!(error instanceof Error) || error.message !== translate(locale, "unsupportedFileSize")) throw error;
       estimateOverflow = true;
     }
   }
-  const tooLarge = estimateOverflow || (estimate !== null && estimate > 256 * 1024 * 1024);
+  const tooLarge = estimateOverflow || (estimate !== null && estimate > MEMORY_LIMIT);
   $("save").querySelector('[value="memory"]').disabled = Boolean(tooLarge);
   const memoryBlocked = $("save").value === "memory" && tooLarge;
   if (inspected) {
@@ -109,7 +114,7 @@ function update() {
     : iconTooLarge ? translate(locale, "iconTooLargeHint")
     : conversionTooLarge ? translate(locale, "conversionTooLargeHint", { target })
     : estimateOverflow ? translate(locale, "estimateOverflow")
-    : memoryBlocked ? translate(locale, "memoryBlockedHint")
+    : tooLarge ? translate(locale, "memoryBlockedHint")
     : translate(locale, "browserDefault");
   const hasWarnings = inspected && summaries.some(summary => summary.warnings.length > 0);
   $("convert").disabled = !supported || working || !inspected || !release || conversionBlocked || memoryBlocked || folderBlocked || (hasWarnings && !$("acknowledge").checked);
@@ -202,6 +207,7 @@ async function fail(value, { keepInspection = false } = {}) {
   errorState.appended = await abortAndDiscardOutput(transaction, activeSink, locale);
   $("error").hidden = false;
   $("status").hidden = true;
+  const restoreFocus = document.activeElement === $("cancel");
   $("cancel").hidden = true;
   $("drop").hidden = false;
   $("selection").hidden = true;
@@ -212,6 +218,7 @@ async function fail(value, { keepInspection = false } = {}) {
   failing = false;
   lock(false);
   update();
+  if (restoreFocus) $("choose").focus();
 }
 
 async function onMessage({ data }, currentWorker) {
@@ -219,8 +226,8 @@ async function onMessage({ data }, currentWorker) {
   try {
     if (data.type === "progress") {
       if (data.message) {
-        logs.push(`${data.appName ? `${data.appName}: ` : ""}${data.message.trim()}`);
-        logs = logs.slice(-150);
+        const entry = `${data.appName ? `${data.appName}: ` : ""}${data.message.trim()}`;
+        logs = logs.concat(entry.split(/\r\n|[\r\n]/u)).slice(-150);
         $("log").textContent = logs.join("\n");
         return;
       }
@@ -303,23 +310,19 @@ async function onMessage({ data }, currentWorker) {
       working = false;
       $("done").hidden = false;
       $("status").hidden = true;
-      const unit = data.mode === "disk" ? translate(locale, "resultUnitFiles") : "ZIP";
-      $("result-info").textContent = data.apps > 1
-        ? translate(locale, "resultInfoBatch", { apps: data.apps, size: bytes(data.size), unit, release: data.release })
-        : translate(locale, "resultInfoSingle", { size: bytes(data.size), unit, release: data.release, outputName: data.outputName });
+      const { apps, mode, size, release: tag, outputName } = data;
+      completedResult = {
+        apps, mode, size, tag, outputName,
+        folderName: mode === "disk" ? outputTransaction.name : null,
+        target: document.querySelector('input[name="target"]:checked').value
+      };
+      renderResult();
       if (data.blob) {
         downloadUrl = URL.createObjectURL(data.blob);
         $("download").href = downloadUrl;
-        $("download").download = `${data.outputName}.zip`;
+        $("download").download = outputName + ".zip";
         $("download").hidden = false;
-      } else if (data.mode === "zip") {
-        $("result-info").textContent += translate(locale, "resultZipSavedToDisk");
-      } else {
-        $("result-info").textContent += translate(locale, "resultSavedIn", { name: outputTransaction.name });
-        if (document.querySelector('input[name="target"]:checked').value === "linux") $("result-info").textContent += translate(locale, "resultLinuxChmod", { name: data.outputName });
       }
-      $("result-note").textContent = data.apps > 1 ? translate(locale, "resultNoteBatch") : translate(locale, "resultNoteSingle");
-      $("result-note").hidden = data.mode === "disk";
       outputDirectory = null;
       outputTransaction?.commit();
       outputTransaction = null;
@@ -335,6 +338,23 @@ async function onMessage({ data }, currentWorker) {
   } catch (error) {
     if (currentWorker === worker) await fail(error);
   }
+}
+
+function renderResult() {
+  if (!completedResult || $("done").hidden) return;
+  const { apps, mode, size, tag, outputName, folderName, target } = completedResult;
+  const unit = mode === "disk" ? translate(locale, "resultUnitFiles") : "ZIP";
+  const values = { apps, size: bytes(size), unit, release: tag, outputName };
+  let info = translate(locale, apps > 1 ? "resultInfoBatch" : "resultInfoSingle", values);
+  if (mode === "zip") {
+    info += translate(locale, "resultZipSavedToDisk");
+  } else if (mode === "disk") {
+    info += translate(locale, "resultSavedIn", { name: folderName });
+    if (target === "linux") info += translate(locale, "resultLinuxChmod", { name: outputName });
+  }
+  $("result-info").textContent = info;
+  $("result-note").textContent = translate(locale, apps > 1 ? "resultNoteBatch" : "resultNoteSingle");
+  $("result-note").hidden = mode === "disk";
 }
 
 async function selectInputs(inputs) {
@@ -449,10 +469,12 @@ $("convert").onclick = async () => {
       if (writable === null) return;
       sink = writable;
     } else if ($("save").value === "disk") {
+      $("cancel").hidden = false;
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
       const parent = await window.showDirectoryPicker({ mode: "readwrite" });
       if (currentWorker !== worker) return;
-      const transaction = await OutputDirectoryTransaction.create(parent, name, folderLocks, locale);
+      const transaction = await OutputDirectoryTransaction.create(parent, name, folderLocks, locale, () => currentWorker === worker);
+      if (!transaction) return;
       if (currentWorker !== worker) {
         await transaction.discard();
         return;
@@ -489,13 +511,15 @@ $("locale").onclick = () => {
   setLocale(locale);
   updateLocaleButton();
   if (inspectionComplete && selectedInputs.length > 1) renderSelection();
+  renderResult();
   update();
 };
 updateLocaleButton();
 update();
 lock(false);
 function loadReleaseInfo() {
-  if (release || releaseRequest) return;
+  if (releaseRequest) return;
+  release = undefined;
   const version = ++releaseVersion;
   releaseRequest = fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw localizedError(() => translate(locale, "cannotLoadReleaseInfo", { status: response.status, hint: response.status === 404 ? translate(locale, "cannotLoadReleaseInfoHint") : "" })); return response.json(); }).then(value => {
     if (version !== releaseVersion) return;

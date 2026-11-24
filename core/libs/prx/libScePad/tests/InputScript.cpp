@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -88,6 +89,34 @@ int main() {
         Check(looping.Sample(500000).buttons == 0, "loop idle");
         Pad::InputScript::Report second;
         Check(looping.Sample(1010000, &second).buttons == Cross && second.fired.size() == 1, "loop second cycle");
+
+        const auto maxTime = std::numeric_limits<std::uint64_t>::max();
+        for (const auto loopMs : {maxTime, maxTime / 1000}) {
+            for (const bool scriptFirst : {false, true}) {
+                Pad::InputScript overflow;
+                bool refused = false;
+                try {
+                    if (scriptFirst) overflow.SetScript(Pad::InputScript::ParseText("0 cross 1\n"));
+                    overflow.SetLoopMs(loopMs);
+                    if (!scriptFirst) overflow.SetScript(Pad::InputScript::ParseText("0 cross 1\n"));
+                } catch (const std::runtime_error& error) {
+                    refused = std::string(error.what()).find("APS5_PAD_SCRIPT_LOOP_MS") != std::string::npos;
+                }
+                Check(refused, "an unrepresentable loop period was accepted");
+            }
+        }
+
+        for (const bool scriptFirst : {false, true}) {
+            Pad::InputScript boundary;
+            if (scriptFirst) boundary.SetScript(Pad::InputScript::ParseText("0 cross 1\n"));
+            boundary.SetLoopMs((maxTime - 1000) / 1000);
+            if (!scriptFirst) boundary.SetScript(Pad::InputScript::ParseText("0 cross 1\n"));
+            boundary.Start(0);
+            Check(boundary.Sample(0).buttons == Cross, "the largest representable loop starts");
+            Check(boundary.Sample(1000).buttons == 0, "the largest representable loop has an idle gap");
+            const auto boundaryPeriod = ((maxTime - 1000) / 1000) * 1000 + 1000;
+            Check(boundary.Sample(boundaryPeriod).buttons == Cross, "the largest representable loop repeats");
+        }
 
         const auto path = std::filesystem::temp_directory_path() /
             ("anyps5-pad-script-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

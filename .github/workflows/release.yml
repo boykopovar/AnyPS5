@@ -151,6 +151,7 @@ jobs:
       contents: write
     env:
       GH_REPO: ${{ github.repository }}
+      RELEASE_MARKER: '<!-- anyps5-release-workflow:${{ github.sha }} -->'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -178,14 +179,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api --method POST "repos/$GH_REPO/releases/generate-notes" -f tag_name="$RELEASE_TAG" > "$RUNNER_TEMP/release-notes.json"
-          python tools/prepare_release_notes.py --input "$RUNNER_TEMP/release-notes.json" --body "$RUNNER_TEMP/release-body.md" --full dist/release-notes.md
+          python tools/prepare_release_notes.py --input "$RUNNER_TEMP/release-notes.json" --body "$RUNNER_TEMP/release-body.md" --full dist/release-notes.md --marker "$RELEASE_MARKER"
       - name: Create or refresh draft and upload files
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          release_marker="<!-- anyps5-release-workflow:$GITHUB_SHA -->"
-          printf '\n%s\n' "$release_marker" >> "$RUNNER_TEMP/release-body.md"
           release_state="$(
             gh release list --limit 10000 --json tagName,isDraft |
               python -c 'import json, os, sys; matches = [release for release in json.load(sys.stdin) if release["tagName"] == os.environ["RELEASE_TAG"]]; print("missing" if not matches else ("draft" if matches[0]["isDraft"] else "published"))'
@@ -196,7 +195,7 @@ jobs:
               ;;
             draft)
               release_body="$(gh release view "$RELEASE_TAG" --json body --jq .body)"
-              if [[ "$release_body" != *"$release_marker"* ]]; then
+              if [[ "$release_body" != *"$RELEASE_MARKER"* ]]; then
                 echo "::error::Draft release $RELEASE_TAG was not created by this workflow for $GITHUB_SHA"
                 exit 1
               fi
