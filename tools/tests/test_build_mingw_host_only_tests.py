@@ -1,4 +1,6 @@
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -110,6 +112,52 @@ class ObjectShapeTests(unittest.TestCase):
         for value in ({}, "text", [1], [{}, None]):
             with self.assertRaisesRegex(ValueError, r"p\.json: invalid items \(expected a list of objects\)"):
                 build_mingw_host_only_tests.object_entries(value, "p.json", "items")
+
+
+class CmakeReplyTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.reply = self.root / ".cmake/api/v1/reply"
+        self.reply.mkdir(parents=True)
+        self.index = self.reply / "index-001.json"
+        self.index.write_text('{"reply":{"codemodel-v2":{"jsonFile":"model.json"}}}', encoding="utf-8")
+
+    def write_model(self, configurations):
+        model = {"paths": {"source": str(self.root)}, "configurations": configurations}
+        (self.reply / "model.json").write_text(json.dumps(model), encoding="utf-8")
+
+    def test_duplicate_index_fields_are_rejected(self):
+        self.index.write_text('{"reply":{},"reply":{}}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, r"index-001\.json: duplicate JSON field"):
+            build_mingw_host_only_tests.read_reply(self.root)
+
+    def test_deeply_nested_index_has_a_controlled_diagnostic(self):
+        self.index.write_text("[" * 20000 + "]" * 20000, encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, r"index-001\.json: CMake reply is nested too deeply"):
+            build_mingw_host_only_tests.read_reply(self.root)
+
+    def test_error_reply_with_the_same_timestamp_takes_precedence(self):
+        (self.reply / "error-001.json").write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "latest CMake generation failed"):
+            build_mingw_host_only_tests.read_reply(self.root)
+
+    def test_malformed_configurations_and_target_lists_are_diagnosed(self):
+        for value, label in (({}, "configurations"), ([{"targets": {}}], "target references")):
+            with self.subTest(value=value):
+                self.write_model(value)
+                with self.assertRaisesRegex(ValueError, f"invalid CMake {label}"):
+                    build_mingw_host_only_tests.read_reply(self.root)
+
+    def test_target_ids_must_be_distinct_nonempty_strings(self):
+        (self.reply / "target.json").write_text("{}", encoding="utf-8")
+        valid = {"id": "test", "jsonFile": "target.json"}
+        for target, message in ((valid, "duplicate CMake target id"), (dict(valid, id=1), "invalid CMake target id")):
+            with self.subTest(target=target):
+                self.write_model([{"targets": [valid, target]}])
+                with self.assertRaisesRegex(ValueError, message):
+                    build_mingw_host_only_tests.read_reply(self.root)
 
 
 if __name__ == "__main__":
