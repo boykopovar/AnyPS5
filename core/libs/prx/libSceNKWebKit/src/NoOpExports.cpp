@@ -473,9 +473,6 @@ void APS5_VABI _ZN9Inspector40ApplicationCacheBackendDispatcherHandlerD1Ev() {
 void APS5_VABI _ZN9Inspector40ApplicationCacheBackendDispatcherHandlerD2Ev() {
 }
 
-void APS5_VABI WKBundleBackForwardListClear() {
-}
-
 void APS5_VABI WKBundlePageCopyRenderLayerTree() {
 }
 

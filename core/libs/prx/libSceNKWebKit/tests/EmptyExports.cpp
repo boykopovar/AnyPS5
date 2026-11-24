@@ -4,7 +4,6 @@
 #include "prx/libSceNKWebKit/include/NoOpExports.hpp"
 
 int main() {
-    WKBundleBackForwardListClear();
     WKBundlePageCopyRenderLayerTree();
     WKBundlePageCopyRenderTree();
     WKBundlePageSetDefersLoading();
