@@ -16,6 +16,7 @@ XSAVEOPT = bytes.fromhex("480fae37")
 XSAVE = bytes.fromhex("480fae27")
 SITES = RDSEED + CLWB + XSAVEOPT + b"\xc3"
 LOWERED = RDRAND + NOP4 + XSAVE + b"\xc3"
+INTEL = RDSEED + NOP4 + XSAVEOPT + b"\xc3"
 
 
 def executable(code=SITES):
@@ -36,22 +37,22 @@ def relink(relinker, directory, name, *options, code=SITES):
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-rosetta-") as directory:
-        for options in ((), ("--to-intel",)):
+        for options, expected in (((), SITES), (("--to-intel",), INTEL)):
             result, output = relink(relinker, directory, "keep" + "".join(options), *options)
             assert result.returncode == 0, (options, result.stdout, result.stderr)
             data = output.read_bytes()
-            assert SITES in data and LOWERED not in data, f"{options or 'a plain relink'} changed RDSEED, CLWB or XSAVEOPT"
+            assert expected in data and LOWERED not in data and (expected == SITES or SITES not in data), f"{options or 'a plain relink'} did not leave exactly {'CLWB' if expected == SITES else 'CLWB replaced by a NOP'}, RDSEED and XSAVEOPT"
         for options in (("--to-rosetta",), ("--to-rosetta", "--to-intel")):
             result, output = relink(relinker, directory, "lower" + "".join(options), *options)
             assert result.returncode == 0, (options, result.stdout, result.stderr)
             data = output.read_bytes()
             assert LOWERED in data and SITES not in data, f"{options} did not lower RDSEED, CLWB and XSAVEOPT"
-        for options, lowered in ((("--macos",), False), (("--macos", "--to-intel"), False), (("--macos", "--to-rosetta"), True)):
+        for options, expected in ((("--macos",), SITES), (("--macos", "--to-intel"), INTEL), (("--macos", "--to-rosetta"), LOWERED)):
             result, output = relink(relinker, directory, "macos" + "".join(options), *options)
             assert result.returncode == 0, (options, result.stdout, result.stderr)
             data = output.read_bytes()
             assert data[:4] == bytes.fromhex("cffaedfe"), f"{options} did not write a Mach-O"
-            assert (LOWERED in data and SITES not in data) if lowered else (SITES in data and LOWERED not in data), f"{options} {'did not lower' if lowered else 'changed'} RDSEED, CLWB and XSAVEOPT"
+            assert expected in data and (expected == SITES or SITES not in data) and (expected == LOWERED or LOWERED not in data), f"{options} did not produce the expected RDSEED, CLWB and XSAVEOPT bytes"
         result, _ = relink(relinker, directory, "windows", "--to-rosetta", "--windows")
         assert result.returncode != 0 and "--to-rosetta conflicts with --windows" in result.stdout + result.stderr, "--to-rosetta together with --windows was accepted"
         andn = bytes.fromhex("c4e2f0f2c6c3")
