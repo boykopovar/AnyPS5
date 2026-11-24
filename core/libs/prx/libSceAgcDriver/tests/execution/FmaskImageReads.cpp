@@ -166,7 +166,7 @@ constexpr std::array<NarrowFmask, 12> NarrowFormats{{
     {156u, 5u, 1u, 2u, 1u, 1u, 0x02u, 0x80808080u},
     {157u, 5u, 1u, 4u, 1u, 1u, 0x0eu, 0x88808880u},
     {158u, 5u, 1u, 8u, 1u, 1u, 0xfeu, 0x88888880u},
-    {159u, 5u, 1u, 2u, 2u, 1u, 0x02u, 0x10101010u},
+    {159u, 5u, 1u, 2u, 2u, 1u, 0x02u, 0x10u},
     {160u, 5u, 1u, 4u, 2u, 2u, 0xa4u, 0x88108810u},
     {161u, 5u, 1u, 4u, 4u, 2u, 0xe4u, 0x32103210u},
     {163u, 11u, 2u, 8u, 2u, 2u, 0xaaa4u, 0x88888810u},
@@ -197,7 +197,7 @@ std::uint64_t Expanded(const NarrowFmask& fmask, FmaskWord stored) {
     }
     auto low = static_cast<std::uint32_t>(expanded);
     const auto high = static_cast<std::uint32_t>(expanded >> 32u);
-    if (fmask.samples < 8u) {
+    if (fmask.samples < 8u && fmask.format != 159u) {
         low |= low << ((fmask.samples * 4u) & 31u);
         low |= low << ((fmask.samples * 8u) & 31u);
     }
