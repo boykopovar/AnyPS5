@@ -351,7 +351,21 @@ void RunGuestSamplerResourceTests() {
     result = DecodeSamplerResource(pack(nearest));
     Require(result.magFilter == VK_FILTER_NEAREST && result.minFilter == VK_FILTER_NEAREST, "filter 0 must decode to nearest");
     Require(result.mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST, "mip filter 0 must decode to nearest mipmap mode");
-    Require(result.minLod == 0.0f && result.maxLod == 0.0f, "disabled mip filtering must clear LOD range");
+    Require(result.minLod == 0.0f && result.maxLod == 1.0f / 256.0f, "disabled mip filtering must hold the level at the base while its LOD range still reaches minification");
+    Fields nearestHeld = nearest;
+    nearestHeld.maxLodRaw = 0;
+    result = DecodeSamplerResource(pack(nearestHeld));
+    Require(result.minLod == 0.0f && result.maxLod == 0.0f, "disabled mip filtering with a zero MAX_LOD must keep a zero LOD range");
+    Fields nearestMinified = nearest;
+    nearestMinified.xyMinFilter = 1;
+    nearestMinified.minLodRaw = 0x200;
+    result = DecodeSamplerResource(pack(nearestMinified));
+    Require(result.magFilter == VK_FILTER_NEAREST && result.minFilter == VK_FILTER_LINEAR && result.mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST && result.minLod == 1.0f / 256.0f && result.maxLod == 1.0f / 256.0f, "disabled mip filtering with a MIN_LOD above 0 must stay minified at the base level");
+    Fields nearestInverted = nearest;
+    nearestInverted.minLodRaw = 0x200;
+    nearestInverted.maxLodRaw = 0x100;
+    result = DecodeSamplerResource(pack(nearestInverted));
+    Require(result.minLod == 0.0f && result.maxLod == 0.0f, "disabled mip filtering with MIN_LOD past MAX_LOD must keep a zero LOD range");
 
     Fields addressModes = base;
     addressModes.clampX = 0;

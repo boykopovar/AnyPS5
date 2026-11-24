@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <algorithm>
 #include <array>
 #include <stdexcept>
 #include <string>
@@ -126,6 +127,9 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
         Require(minLodRaw <= maxLodRaw, "guest sampler descriptor has a minimum LOD past its maximum LOD");
         minLod = static_cast<float>(minLodRaw) / 256.0f;
         maxLod = static_cast<float>(maxLodRaw) / 256.0f;
+    } else if (minLodRaw <= maxLodRaw) {
+        minLod = static_cast<float>(std::min(minLodRaw, 1u)) / 256.0f;
+        maxLod = static_cast<float>(std::min(maxLodRaw, 1u)) / 256.0f;
     }
 
     VkBorderColor border;
