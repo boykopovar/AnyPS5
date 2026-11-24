@@ -90,6 +90,12 @@ public:
     Retained<Object> websitePolicies;
     std::uint32_t layoutMilestones = 0;
     std::uint32_t mockCameraOrientation = 0;
+    Page() {
+        mainFrame = Make<Frame>();
+        mainFrame->isMainFrame = true;
+        mainFrame->frameID = 1;
+        frames.push_back(mainFrame);
+    }
     float mediaVolume = 1.0f;
     std::uint32_t mutedState = 0;
     bool mayStartMediaWhenInWindow = true;
@@ -97,6 +103,8 @@ public:
     bool allowsRemoteInspection = false;
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
+    Retained<Frame> mainFrame;
+    std::vector<Retained<Frame>> frames;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};

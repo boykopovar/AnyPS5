@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -506,6 +507,8 @@ public:
     Retained<String> mimeType;
     Retained<URL> provisionalURL;
     Retained<URL> unreachableURL;
+    std::optional<std::u16string> source;
+    std::unordered_map<std::string, std::vector<std::uint8_t>> resourceData;
 };
 
 class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {

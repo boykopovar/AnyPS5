@@ -74,3 +74,19 @@ std::uint32_t APS5_VABI WKFrameGetFrameLoadState(const void* frame) {
     const auto* f = NKWebKit::Cast<NKWebKit::Frame>(frame, __func__);
     return f->loadState;
 }
+
+void APS5_VABI WKFrameGetResourceData(const void* frameRef, const void* urlRef, void* context, void (APS5_VABI *callback)(const void*, const void*, void*)) {
+    const auto* f = NKWebKit::Cast<NKWebKit::Frame>(frameRef, __func__);
+    const auto* url = NKWebKit::Cast<NKWebKit::URL>(urlRef, __func__);
+    if (!callback) {
+        return;
+    }
+    auto it = f->resourceData.find(url->text);
+    if (it != f->resourceData.end()) {
+        const auto* data = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::Data>(it->second));
+        callback(data, nullptr, context);
+        WKRelease(data);
+    } else {
+        callback(nullptr, nullptr, context);
+    }
+}
