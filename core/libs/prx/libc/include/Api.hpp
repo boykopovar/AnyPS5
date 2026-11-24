@@ -1236,6 +1236,7 @@ int APS5_VABI _Toupper_nid_postfix(int c, const void*);
 int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dsoHandle);
 int APS5_VABI cxa_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dsoHandle);
 void APS5_VABI cxa_finalize_nid_postfix(void* dsoHandle);
+[[noreturn]] void APS5_VABI __stack_chk_fail_nid_postfix(void);
 void APS5_VABI _Vacopy_nid_postfix(unsigned char* destination, const unsigned char* source);
 unsigned int APS5_VABI _Atomic_fetch_add_4_nid_postfix(volatile unsigned int* target, unsigned int value, int memoryOrder);
 unsigned int APS5_VABI _Atomic_fetch_sub_4_nid_postfix(volatile unsigned int* target, unsigned int value, int memoryOrder);
