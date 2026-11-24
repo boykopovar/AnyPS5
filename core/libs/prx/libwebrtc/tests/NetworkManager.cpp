@@ -26,7 +26,7 @@ WebRtcIpAddress Ipv4(std::uint8_t a, std::uint8_t b, std::uint8_t c, std::uint8_
 }
 
 WebRtcInterfaceAddress Ipv6(std::uint8_t first, std::uint8_t second, std::uint8_t last, std::int32_t flags = 0) {
-    WebRtcInterfaceAddress ip{&ipVTable, WebRtcAfInet6, {}, flags};
+    WebRtcInterfaceAddress ip{&ipVTable, WebRtcAfInet6, {.ip6 = {}}, flags};
     ip.address.ip6.bytes[0] = first;
     ip.address.ip6.bytes[1] = second;
     ip.address.ip6.bytes[15] = last;
