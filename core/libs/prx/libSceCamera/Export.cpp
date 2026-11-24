@@ -21,7 +21,7 @@ int CheckAudioDataBuffer(const void* data) {
 extern "C" {
 
 int APS5_VABI sceCameraIsAttached(int32_t index) {
-    if (index != 0) return SCE_CAMERA_ERROR_PARAM;
+    if (index < 0 || index > 1) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
 
