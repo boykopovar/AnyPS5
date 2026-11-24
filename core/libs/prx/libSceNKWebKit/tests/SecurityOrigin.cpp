@@ -285,6 +285,38 @@ static void TestOpaqueOrigins() {
     Require(Equal(copy, data));
 }
 
+static void TestCreateUnique() {
+    auto unique = _ZN7WebCore14SecurityOrigin12createUniqueEv();
+    Require(unique->refCount.load() == 1);
+    Require(IsOpaque(unique));
+    Require(unique->data.storage.opaque.object != 0);
+    Require(unique->data.storage.opaque.processIdentifier == _ZN7WebCore7Process10identifierEv());
+    Require(Is(unique->domain, ""));
+    Require(!unique->filePath.impl);
+    Require(!unique->universalAccess && !unique->domainWasSetInDOM && !unique->canLoadLocalResources);
+    Require(!unique->enforcesFilePathSeparation && !unique->needsStorageAccessFromFileURLsQuirk && !unique->isLocal);
+    Require(unique->isPotentiallyTrustworthy.hasValue && !unique->isPotentiallyTrustworthy.value);
+    Require(Is(ToString(unique), "null"));
+    Require(!ToRawString(unique).impl);
+    Require(Is(_ZNK7WebCore14SecurityOrigin23domainForCachePartitionEv(unique.get()), ""));
+    Require(SameOrigin(unique, unique));
+    Require(Equal(unique, unique));
+
+    auto other = _ZN7WebCore14SecurityOrigin12createUniqueEv();
+    Require(other.get() != unique.get());
+    Require(other->data.storage.opaque.object != unique->data.storage.opaque.object);
+    Require(!SameOrigin(unique, other));
+    Require(!Equal(unique, other));
+    Require(!SameOrigin(unique, Create(MakeURL("data", "", "", "text/plain,x", false))));
+    Require(!SameOrigin(unique, Create("https", "example.com")));
+
+    auto copy = _ZNK7WebCore14SecurityOrigin12isolatedCopyEv(unique.get());
+    Require(copy.get() != unique.get());
+    Require(IsOpaque(copy));
+    Require(SameOrigin(unique, copy));
+    Require(Equal(copy, unique));
+}
+
 static void TestFileOrigins() {
     auto file = Create("file", "", "", "/tmp/a%20b");
     Require(!IsOpaque(file));
@@ -518,6 +550,7 @@ int main() {
     TestLoopback();
     TestTupleOrigins();
     TestOpaqueOrigins();
+    TestCreateUnique();
     TestFileOrigins();
     TestComparisons();
     TestIsolatedCopy();

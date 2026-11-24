@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +25,7 @@
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
 extern std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix;
+void APS5_VABI sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(void* self, const void* info, std::size_t refs);
 }
 
 namespace {
@@ -173,6 +175,32 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
     }
 
     {
+        auto* heapCharGet = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+        std::memset(heapCharGet, 0, sizeof(*heapCharGet));
+        const std::size_t freesBefore = g_freeCount;
+        g_lastFreed = nullptr;
+        libSceLibcInternalInventory_183_nid_no_patch(heapCharGet);
+        Require(g_freeCount == freesBefore + 1 && g_lastFreed == heapCharGet, "char time_get D0 frees object");
+
+        GuestLocale::Facet charFacet{};
+        charFacet.references = 3;
+        const std::size_t freesBeforeD1 = g_freeCount;
+        libSceLibcInternalInventory_184_nid_no_patch(&charFacet);
+        Require(charFacet.vtable == nullptr && charFacet.references == 3 && charFacet.reserved == 0 && g_freeCount == freesBeforeD1, "char time_get D1 leaves the facet and frees nothing");
+
+        WideTimeGetStorage wideStorage{};
+        wideStorage.untouchedSuffix.fill(std::byte{0x6b});
+        const auto expectedSuffix = wideStorage.untouchedSuffix;
+        _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix(&wideStorage.base, 4);
+        const void* const wideVtable = wideStorage.base.vtable;
+        const char16_t* const wideDays = wideStorage.days;
+        libSceLibcInternalInventory_192_nid_no_patch(&wideStorage.base);
+        Require(wideStorage.base.vtable == wideVtable && wideStorage.base.references == 4 && wideStorage.days == wideDays && wideStorage.untouchedSuffix == expectedSuffix
+                && g_freeCount == freesBeforeD1,
+            "wide time_get D1 leaves the facet and frees nothing");
+    }
+
+    {
         GuestLocale::Implementation classicLoc{{nullptr, 1, 0}, nullptr, 0, 5, false, "C"};
         GuestLocale::Implementation* classicPtr = &classicLoc;
         GuestLocale::Facet* catFacet = nullptr;
@@ -222,6 +250,9 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
     Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1ERKSt8_Locinfom_nid_postfix(&tmpWide.base, nullptr, 0); }), "wide time_get C1Locinfo null locinfo throws");
     Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(&tmpWide.base, nullptr, 0); }), "wide time_get C2Locinfo null locinfo throws");
     Require(Throws([] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEED0Ev_nid_postfix(nullptr); }), "wide time_get D0 null throws");
+    Require(Throws([] { libSceLibcInternalInventory_183_nid_no_patch(nullptr); }), "char time_get D0 null throws");
+    Require(Throws([] { libSceLibcInternalInventory_184_nid_no_patch(nullptr); }), "char time_get D1 null throws");
+    Require(Throws([] { libSceLibcInternalInventory_192_nid_no_patch(nullptr); }), "wide time_get D1 null throws");
     GuestLocale::Facet* nullCat = nullptr;
     Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&nullCat, nullptr); }), "wide time_get _Getcat null locale throws");
     Require(Throws([] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1Em_nid_postfix(nullptr, 0); }), "char time_put C1Em null throws");
@@ -231,7 +262,6 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
     Require(Throws([] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED0Ev_nid_postfix(nullptr); }), "char time_put D0 null throws");
     Require(Throws([] { libSceLibcInternalInventory_197_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
     Require(Throws([] { libSceLibcInternalInventory_198_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
-    Require(Throws([] { libSceLibcInternalInventory_199_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
     Require(NotImplementedCalls_nid_no_patch() > before, "B2 error paths reported");
 
     if (hasLibrary) {
@@ -335,6 +365,14 @@ void CheckGroup1ConstructionAndLifetime() {
     _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC2Em_nid_postfix(&putDefault.base, 1);
     Require(putDefault.base.vtable != nullptr && putDefault.base.references == 1, "time_put<char> C2 default ctor");
     Require(std::memcmp(&putDefault.names, expectedTimes, sizeof(*expectedTimes)) == 0, "time_put<char> C2 populates TimeInfo");
+
+    TimePutCharStorage putBaseFromLocinfo{};
+    sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(&putBaseFromLocinfo.base, &info, 4);
+    Require(putBaseFromLocinfo.base.vtable == putFromLocinfo.base.vtable && putBaseFromLocinfo.base.references == 4 && putBaseFromLocinfo.base.reserved == 0,
+        "time_put<char> C2 locinfo ctor sets the facet header as C1 does");
+    Require(std::memcmp(&putBaseFromLocinfo.names, expectedTimes, sizeof(*expectedTimes)) == 0, "time_put<char> C2 locinfo ctor populates TimeInfo");
+    Require(Throws([&] { sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(nullptr, &info, 0); }), "time_put<char> C2 locinfo ctor null self throws");
+    Require(Throws([&] { sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(&putBaseFromLocinfo.base, nullptr, 0); }), "time_put<char> C2 locinfo ctor null locinfo throws");
 
     GuestTm tm{};
     tm.tm_year = 126;
@@ -1504,7 +1542,7 @@ int main(int argc, char** argv) {
     bool hasLibrary = false;
     if (argc >= 2) {
 #ifdef _WIN32
-        g_library = LoadLibraryA(argv[1]);
+        g_library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
 #else
         g_library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 #endif

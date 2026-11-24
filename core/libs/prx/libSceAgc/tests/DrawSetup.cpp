@@ -54,7 +54,8 @@ void testIndexSize() {
     const auto* objectId = sceAgcDcbSetIndexSize_0600(&storage.buffer, 2, 3, 1);
     check(objectId == storage.words.data() + 3 && objectId[0] == 0xc0017a00u && objectId[1] == 0x20000243u && objectId[2] == (0x4c2u | 0x4000u), "index size packet with a per-instance object id mismatch");
     expectFailure(storage, [&] { sceAgcDcbSetIndexSize(&storage.buffer, 3, 0); }, "an index size above 2 was accepted");
-    expectFailure(storage, [&] { sceAgcDcbSetIndexSize(&storage.buffer, 0, 4); }, "a cache policy above 3 was accepted");
+    const auto* masked = sceAgcDcbSetIndexSize(&storage.buffer, 0x22, 0x44);
+    check(masked == storage.words.data() + 6 && masked[0] == 0xc0017a00u && masked[1] == 0x20000243u && masked[2] == 0x402u, "index size packet differs from the console's for bits above its fields");
     expectFailure(storage, [&] { sceAgcDcbSetIndexSize_0600(&storage.buffer, 0, 0, 2); }, "a per-instance object id above 1 was accepted");
 }
 
@@ -70,7 +71,8 @@ void testDrawIndirect() {
     Storage storage;
     const auto* packet = sceAgcDcbDrawIndirect(&storage.buffer, 0x40, 0);
     expectPacket(storage, packet, storage.words.data(), std::array<std::uint32_t, 5>{0xc0032400u, 0x40, 0x280, 0x280, 2}, sceAgcDcbDrawIndirectGetSize(), "DRAW_INDIRECT packet mismatch");
-    expectFailure(storage, [&] { sceAgcDcbDrawIndirect(&storage.buffer, 2, 0); }, "a misaligned indirect argument offset was accepted");
+    const auto* unaligned = sceAgcDcbDrawIndirect(&storage.buffer, 2, 0);
+    check(unaligned == packet + 5 && unaligned[1] == 2, "an unaligned indirect argument offset was not encoded as the console does");
 }
 
 }

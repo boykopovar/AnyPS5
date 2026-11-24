@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl3/include/Pkcs7.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -131,9 +132,7 @@ template <typename T>
 T ReadGuest(const T* source, const char* function) {
     T value{};
     if (!source) throw std::invalid_argument(std::string(function) + ": null guest pointer");
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(value));
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return value;
 }
@@ -141,9 +140,7 @@ T ReadGuest(const T* source, const char* function) {
 void ReadGuestBytes(void* destination, const void* source, std::size_t size, const char* function) {
     if (size == 0) return;
     if (!source) throw std::invalid_argument(std::string(function) + ": null guest buffer");
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
@@ -380,6 +377,7 @@ void FreePubkey(LibreSsl3X509Pubkey* pubkey) {
     if (!pubkey) return;
     FreeAlgor(pubkey->algor);
     FreeString(reinterpret_cast<Asn1String*>(pubkey->publicKey));
+    EVP_PKEY_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3EvpPkey*>(pubkey->pkey));
     free_nid_postfix(pubkey);
 }
 
@@ -1401,9 +1399,7 @@ int APS5_VABI DirectoryBySubject(LibreSslX509Lookup* lookup, int type, LibreSslX
         }
         LibreSslX509Object found{};
         if (FindStoredCertificate(lookup->storeContext, subject, found)) {
-            const int savedErrno = errno;
             const bool copied = GuestCopyOut_nid_no_patch(result, &found, sizeof(found));
-            errno = savedErrno;
             if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
             return 1;
         }
@@ -1415,6 +1411,35 @@ LibreSslX509LookupMethod directoryLookupMethod{"Load certs from files in a direc
     reinterpret_cast<void*>(NewDirectoryLookup), reinterpret_cast<void*>(FreeDirectoryLookup), nullptr, nullptr,
     reinterpret_cast<void*>(DirectoryControl), reinterpret_cast<void*>(DirectoryBySubject), nullptr, nullptr, nullptr};
 
+}
+
+LibreSsl3Certificate* DecodeCertificate_nid_no_patch(std::span<const unsigned char>& input) {
+    return reinterpret_cast<LibreSsl3Certificate*>(DecodeCertificate(input));
+}
+
+void FreeCertificate_nid_no_patch(LibreSsl3Certificate* certificate) {
+    FreeCertificate(reinterpret_cast<CertificateObject*>(certificate));
+}
+
+LibreSsl3X509Algor* DecodeAlgor_nid_no_patch(std::span<const unsigned char>& input) {
+    return DecodeAlgor(input);
+}
+
+void FreeAlgor_nid_no_patch(LibreSsl3X509Algor* algor) {
+    FreeAlgor(algor);
+}
+
+LibreSslX509Name* DecodeName_nid_no_patch(std::span<const unsigned char> content) {
+    LibreSslX509Name* name = DecodeName(content);
+    if (name && !StoreCanonicalName(name, __func__)) {
+        FreeName(name);
+        return nullptr;
+    }
+    return name;
+}
+
+void FreeName_nid_no_patch(LibreSslX509Name* name) {
+    FreeName(name);
 }
 
 extern "C" {

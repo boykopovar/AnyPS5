@@ -1,16 +1,16 @@
 import argparse
+from collections import defaultdict
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_mingw_host_only_tests as host_only
 from check_test_registration import testfile_commands
-from select_tests import chunks
+from select_tests import chunks, ctest_index_file, paths
 
 BROAD_CHANGES = {
     "CMakeLists.txt",
@@ -52,11 +52,15 @@ def script_test_patterns(changed):
     return [pattern for check, pattern in ((checks_public_headers, PUBLIC_HEADER_TESTS), (checks_nid, NID_TESTS)) if check(changed)]
 
 
-def script_test_indices(build_dir, patterns):
+def ctest_tests(build_dir, *arguments):
     result = subprocess.run(
-        ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
-        capture_output=True, text=True, check=True)
-    names = [test["name"] for test in json.loads(result.stdout).get("tests", [])]
+        ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1", *arguments],
+        capture_output=True, text=True, encoding="utf-8", check=True)
+    return json.loads(result.stdout).get("tests", [])
+
+
+def script_test_indices(build_dir, patterns):
+    names = [test["name"] for test in ctest_tests(build_dir)]
     indices = set()
     for pattern in patterns:
         matched = {index for index, name in enumerate(names, 1) if pattern.match(name)}
@@ -75,21 +79,19 @@ def registered_test_commands(build_dir):
     return commands
 
 
-def script_test_owners(build_dir, targets_by_name, patterns):
-    listing = subprocess.run(
-        ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
-        capture_output=True, text=True, check=True)
+def scheduled_test_owners(build_dir, selection, targets_by_name):
+    tests = ctest_tests(build_dir, "-I", selection)
     registered = registered_test_commands(build_dir)
     owners = set()
-    for test in json.loads(listing.stdout).get("tests", []):
-        if not any(pattern.match(test["name"]) for pattern in patterns):
-            continue
-        for command in ([str(part) for part in test.get("command", [])], registered.get(test["name"], [])):
+    for test in tests:
+        for command in (test.get("command", []), registered.get(test["name"], [])):
             owner = test_owner(command, targets_by_name)
+            if owner is None:
+                owner = test_owner(list(paths(command[1:])), targets_by_name)
             if owner is not None:
                 owners.add(owner)
                 break
-    return sorted(owners, key=str.casefold)
+    return owners
 
 
 def guest_test_targets(source_root, targets, changed_paths=None):
@@ -147,8 +149,12 @@ def target_artifact_names(target):
 def test_owner(command, targets_by_name):
     candidates = [command[0]] if command else []
     if "--" in command:
-        owner_index = command.index("--") + 1
-        candidates += command[owner_index:owner_index + 1]
+        separator = command.index("--")
+        if command[1:3] == ["-E", "env"] and Path(command[0]).stem.casefold() == "cmake":
+            program = next((part for part in command[3:separator] if not part.startswith("-") and "=" not in part), None)
+            if program:
+                candidates.append(program)
+        candidates += command[separator + 1:separator + 2]
     else:
         candidates += [part for part in command[1:] if not part.startswith("-")
                        and (Path(part).suffix.casefold() == ".exe" or "/" in part or "\\" in part)]
@@ -161,13 +167,29 @@ def test_owner(command, targets_by_name):
     return None
 
 
+def fixture_consumers(tests, selected):
+    setups = {}
+    consumers = defaultdict(list)
+    for index, test in enumerate(tests, 1):
+        properties = {item["name"]: item["value"] for item in test.get("properties", [])}
+        setups[index] = properties.get("FIXTURES_SETUP", [])
+        for fixture in properties.get("FIXTURES_REQUIRED", []):
+            consumers[fixture].append(index)
+    added = set()
+    pending = list(selected)
+    while pending:
+        for fixture in setups[pending.pop()]:
+            for consumer in consumers[fixture]:
+                if consumer not in selected and consumer not in added:
+                    added.add(consumer)
+                    pending.append(consumer)
+    return sorted(added)
+
+
 def ctest_resolutions(build_dir, targets_by_name, selected=None):
-    result = subprocess.run(
-        ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
-        capture_output=True, text=True, check=True)
-    document = json.loads(result.stdout)
+    tests = ctest_tests(build_dir)
     resolutions = {}
-    for index, test in enumerate(document.get("tests", []), 1):
+    for index, test in enumerate(tests, 1):
         command = [str(part) for part in test.get("command", [])]
         owner = test_owner(command, targets_by_name)
         references = {
@@ -176,40 +198,34 @@ def ctest_resolutions(build_dir, targets_by_name, selected=None):
         }
         if owner is not None and (selected is None or owner in selected or references & selected):
             resolutions[test["name"]] = (owner, index)
+
+    for index in fixture_consumers(tests, {index for _, index in resolutions.values()}):
+        resolutions[tests[index - 1]["name"]] = (None, index)
     return resolutions
-
-
-def run_ctest(build_dir, indices, output_log):
-    with tempfile.TemporaryDirectory(prefix="anyps5-guest-ctest-") as directory:
-        selection = Path(directory) / "selected-tests.txt"
-        selection.write_text("0,0,0," + ",".join(str(index) for index in indices) + "\n", encoding="ascii")
-        subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
-                        "--parallel", "4", "--no-tests=error", "-I", str(selection),
-                        *(["--output-log", str(output_log)] if output_log else [])], check=True)
 
 
 def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None):
     subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
-    scripts = script_test_indices(build_dir, script_tests) if script_tests else []
-    script_owners = script_test_owners(build_dir, targets_by_name, script_tests) if script_tests else []
+    indices = set(script_test_indices(build_dir, script_tests)) if script_tests else set()
+    selected_names = set(selected)
     if selected:
         for batch in chunks(selected):
             subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
-        selected_names = set(selected)
         resolutions = ctest_resolutions(build_dir, targets_by_name, selected_names)
-        additional = sorted(({owner for owner, _ in resolutions.values()} | set(script_owners)) - selected_names, key=str.casefold)
-        for batch in chunks(additional):
-            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
         missing = sorted(selected_names - {owner for owner, _ in resolutions.values()})
         if missing:
             raise ValueError("no ctest registration resolved for: " + ", ".join(missing))
-        run_ctest(build_dir, sorted({index for _, index in resolutions.values()} | set(scripts)), output_log)
-    elif scripts:
-        for batch in chunks(script_owners):
-            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
-        run_ctest(build_dir, scripts, output_log)
-    else:
+        indices.update(index for _, index in resolutions.values())
+    if not indices:
         print("No core/libs test sources changed; the libs build still ran")
+        return
+    with ctest_index_file("0,0,0," + ",".join(map(str, sorted(indices)))) as selection:
+        additional = scheduled_test_owners(build_dir, selection, targets_by_name) - selected_names
+        for batch in chunks(sorted(additional, key=str.casefold)):
+            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
+        subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
+                        "--parallel", "4", "--no-tests=error", "-I", selection,
+                        *(["--output-log", str(output_log)] if output_log else [])], check=True)
 
 
 def main(argv=None):

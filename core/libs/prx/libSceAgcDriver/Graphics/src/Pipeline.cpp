@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/InlineList.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -942,8 +943,6 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     for (const auto& owner : owners) resident = resident && owner != nullptr;
     const auto depthReleases = attachments > colorAttachments ? DepthSurfacesReleased() : 0u;
     if (resident) {
-        // Entries whose views are gone can never match again and go as soon as no recorded draw holds
-        // them (Kept keeps its framebuffer until the batch completes).
         std::erase_if(framebuffers, [&](const CachedFramebuffer& entry) {
             if (entry.framebuffer.use_count() != 1) return false;
             if (entry.depthReleases != depthReleases) return true;
@@ -957,7 +956,7 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
             // View handles are recycled once a StorageTexture is destroyed, so the owners must be the
             // very objects the views were made for.
             bool same = true;
-            for (std::size_t i = 0; i < owners.size() && same; ++i) same = it->owned[i] == (owners[i] != nullptr) && it->owners[i].lock().get() == owners[i].get();
+            for (std::size_t i = 0; i < owners.size() && same; ++i) same = it->owned[i] == (owners[i] != nullptr) && it->ownerPointers[i] == owners[i].get() && !it->owners[i].owner_before(owners[i]) && !owners[i].owner_before(it->owners[i]);
             if (!same) continue;
             std::rotate(it, std::next(it), framebuffers.end());
             return framebuffers.back().framebuffer;
@@ -979,7 +978,10 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     CachedFramebuffer entry;
     entry.views.assign(targets.begin(), targets.end());
     entry.owners.assign(owners.begin(), owners.end());
-    for (const auto& owner : owners) entry.owned.push_back(owner != nullptr);
+    for (const auto& owner : owners) {
+        entry.owned.push_back(owner != nullptr);
+        entry.ownerPointers.push_back(owner.get());
+    }
     entry.extent = extent;
     entry.layers = layers;
     entry.depthReleases = depthReleases;
@@ -993,7 +995,9 @@ void Pipeline::Begin(CommandState& recording, const Framebuffer& framebuffer, Vk
     if (dynamicRendering) {
         const auto views = framebuffer.Views();
         Require(views.size() == attachments, "render targets do not match the pipeline's attachments");
-        std::vector<VkRenderingAttachmentInfoKHR> colors(colorSlots.size(), VkRenderingAttachmentInfoKHR{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR});
+        InlineList<VkRenderingAttachmentInfoKHR, 8> colorStorage;
+        for (std::size_t slot = 0; slot < colorSlots.size(); ++slot) colorStorage.EmplaceBack(VkRenderingAttachmentInfoKHR{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR});
+        auto colors = colorStorage.Span();
         for (std::size_t slot = 0; slot < colorSlots.size(); ++slot) {
             if (colorSlots[slot] == ~0u) continue;
             colors[slot].imageView = views[colorSlots[slot]];
@@ -1100,6 +1104,28 @@ void Pipeline::ContinueSecondChannel(CommandState& recording, const State& state
     Require(secondChannel != VK_NULL_HANDLE, "the pipeline blends every channel in one pass");
     recording.BindPipeline(context, secondChannel, dynamicSlots);
     setColorWriteMasks(recording, state, masked, true);
+}
+
+bool Pipeline::MasksStencilReplayPasses(const State& state) const {
+    return libraries && (dynamicColorWriteMask || std::ranges::all_of(state.blends, [](const VkPipelineColorBlendAttachmentState& blend) { return blend.colorWriteMask == 0u; }));
+}
+
+void Pipeline::SetStencilReplayMasks(CommandState& recording, const State& state, const State* masked, bool colorAndDepth, std::uint32_t stencilBits) const {
+    Require(MasksStencilReplayPasses(state) && state.depth.has_value(), "stencil replay passes need dynamic depth, stencil and color write masks");
+    recording.SetDepthWriteEnable(context, colorAndDepth && state.depthWrite);
+    if (colorAndDepth) setColorWriteMasks(recording, state, masked, false);
+    else if (dynamicColorWriteMask && !state.blends.empty()) {
+        const std::vector<VkColorComponentFlags> none(state.blends.size(), 0u);
+        recording.SetColorWriteMasks(context, none);
+    }
+    const auto front = state.stencilFront.writeMask & stencilBits;
+    const auto back = state.stencilBack.writeMask & stencilBits;
+    if (front == back) {
+        recording.SetStencilWriteMask(context, VK_STENCIL_FACE_FRONT_AND_BACK, front);
+        return;
+    }
+    recording.SetStencilWriteMask(context, VK_STENCIL_FACE_FRONT_BIT, front);
+    recording.SetStencilWriteMask(context, VK_STENCIL_FACE_BACK_BIT, back);
 }
 
 void Pipeline::setColorWriteMasks(CommandState& recording, const State& state, const State* masked, bool secondChannel) const {
@@ -1508,7 +1534,6 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
             store.index[hash] = std::prev(store.entries.end());
         }
         while (store.entries.size() > storeBound(store)) {
-            // Only an entry no recorded draw still holds may go (Kept keeps its shared_ptr until the fence).
             const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
             if (victim == store.entries.end()) break;
             const auto evictedHash = victim->hash;

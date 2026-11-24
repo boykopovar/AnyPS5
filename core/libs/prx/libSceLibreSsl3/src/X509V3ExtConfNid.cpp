@@ -48,6 +48,7 @@ constexpr int InvalidNullName = 108;
 constexpr int InvalidNullValue = 109;
 constexpr int ExtensionNameError = 115;
 constexpr int ExtensionValueError = 116;
+constexpr int ExtensionSettingNotSupported = 103;
 constexpr int IllegalHexDigit = 113;
 constexpr int InvalidBooleanString = 104;
 constexpr int InvalidExtensionString = 105;
@@ -247,6 +248,7 @@ const LibreSslAsn1Object* ObjectByName(std::string_view text) {
     if (text.empty()) return nullptr;
     for (int nid = 0; nid < LibreSslObjectCount; ++nid) {
         const LibreSslAsn1Object& object = LibreSslObjects_nid_no_patch[nid];
+        if (object.nid == 0) continue;
         if (object.shortName && text == object.shortName) return &object;
         if (object.longName && text == object.longName) return &object;
     }
@@ -361,21 +363,24 @@ bool ParseBitList(std::string_view text, std::vector<unsigned char>& bytes) {
         bool overflow = false;
         for (const char digit : element) {
             if (digit < '0' || digit > '9') return false;
+            if (overflow) continue;
             const unsigned long long value = static_cast<unsigned long long>(digit - '0');
-            if (bit > (std::numeric_limits<unsigned long long>::max() - value) / 10) overflow = true;
+            if (bit > (std::numeric_limits<unsigned long long>::max() - value) / 10) {
+                overflow = true;
+                continue;
+            }
             bit = bit * 10 + value;
         }
-        const unsigned long long converted =
-            overflow ? std::numeric_limits<unsigned long long>::max() : negative ? 0ULL - bit : bit;
-        if (static_cast<std::int64_t>(converted) < 0) {
+        constexpr unsigned long long signedMax = static_cast<unsigned long long>(std::numeric_limits<std::int64_t>::max());
+        const unsigned long long converted = negative ? 0ULL - bit : bit;
+        if (overflow || converted > signedMax) {
             PutAsn1Error(InvalidNumber);
             return false;
         }
-        if (negative && bit != 0) return false;
-        if (bit > static_cast<unsigned long long>(std::numeric_limits<int>::max())) NotImplemented_nid_no_patch(__func__);
-        const std::size_t index = static_cast<std::size_t>(bit) / 8;
+        if (converted > static_cast<unsigned long long>(std::numeric_limits<int>::max())) NotImplemented_nid_no_patch(__func__);
+        const std::size_t index = static_cast<std::size_t>(converted) / 8;
         if (bytes.size() <= index) bytes.resize(index + 1, 0);
-        bytes[index] |= static_cast<unsigned char>(0x80 >> (static_cast<std::size_t>(bit) % 8));
+        bytes[index] |= static_cast<unsigned char>(0x80 >> (static_cast<std::size_t>(converted) % 8));
         if (comma == std::string_view::npos) return true;
         start = comma + 1;
     }
@@ -417,11 +422,11 @@ struct ListEntry {
 
 bool StripSpaces(std::string_view text, std::string& result) {
     std::size_t begin = 0;
-    std::size_t end = text.size();
-    while (begin < end && IsSpace(text[begin])) ++begin;
-    while (end > begin && IsSpace(text[end - 1])) --end;
-    if (begin == end) return false;
-    result.assign(text.substr(begin, end - begin));
+    while (begin < text.size() && IsSpace(text[begin])) ++begin;
+    if (begin == text.size()) return false;
+    std::size_t last = text.size() - 1;
+    while (last != begin && IsSpace(text[last])) --last;
+    result.assign(text.substr(begin, last == begin ? std::string_view::npos : last + 1 - begin));
     return true;
 }
 
@@ -925,8 +930,8 @@ LibreSsl3X509Extension* BuildExtension(int nid, bool critical, const std::vector
 bool IsStandardExtension(int nid) {
     constexpr std::array<int, 42> Nids = {
         71, 72, 73, 74, 75, 76, 77, 78, 82, 83, 84, 85, 86, 87, 88, 89, 90, 103, 126, 140, 141,
-        142, 143, 177, 290, 291, 366, 367, 368, 369, 370, 371, 398, 401, 430, 663, 666, 747, 748,
-        770, 771, 857,
+        142, 177, 290, 291, 366, 367, 368, 370, 371, 398, 401, 430, 666, 747, 748, 770, 771, 857,
+        1018, 1019, 1021,
     };
     for (const int candidate : Nids) {
         if (candidate == nid) return true;
@@ -953,6 +958,13 @@ LibreSsl3X509Extension* PlainExtension(void* conf, int nid, bool critical, std::
         break;
     case 126:
         if (!EncodeExtendedKeyUsage(conf, text, der)) return nullptr;
+        break;
+    case 1018:
+    case 1021:
+        PutError(ExtensionSettingNotSupported);
+        return nullptr;
+    case 1019:
+        der = {NullTag, 0x00};
         break;
     default:
         NotImplemented_nid_no_patch(__func__);

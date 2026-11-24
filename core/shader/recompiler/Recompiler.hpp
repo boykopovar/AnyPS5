@@ -3,6 +3,7 @@
 
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
+#include "ImageOverwrite.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include <algorithm>
 #include <array>
@@ -138,7 +139,9 @@ enum class ColorExportPacking : std::uint8_t {
     UintClamp8,
     UintClamp16,
     UintMask8,
-    UintMask16
+    UintMask16,
+    UintClamp10_10_10_2,
+    UintMask10_10_10_2
 };
 
 enum class RasterPrimitive : std::uint8_t {
@@ -395,6 +398,7 @@ struct SpirvTarget {
     bool float16NarrowNans = false;
     bool float16HostNans = false;
     bool meshInlineFunctions = false;
+    bool spannedShuffleThroughMemory = false;
 };
 
 struct BindingLayout {
@@ -731,6 +735,7 @@ struct DescriptorBinding {
     std::vector<std::uint64_t> imageSamplers;
     ElementFlags bufferRead;
     std::vector<std::uint32_t> bufferExtent;
+    std::vector<ImageOverwrite> imageOverwrites;
 };
 
 struct ImageTableEntryPoison {

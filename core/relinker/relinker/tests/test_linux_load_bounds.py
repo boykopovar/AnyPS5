@@ -1,4 +1,4 @@
-"""Check that a Linux relink rejects an entry point, relocation offset or DT_PLTGOT outside PT_LOAD memory."""
+"""Check that a Linux relink rejects an entry point, relocation offset or DT_PLTGOT outside PT_LOAD memory, and a relocation into a non-writable PT_LOAD."""
 
 from pathlib import Path
 import struct
@@ -25,8 +25,8 @@ ENTRY = 0x200
 FIXED_BASE = 0x400000
 
 
-def with_bss(image):
-    struct.pack_into("<IIQQQQQQ", image, SPARE_HEADER, PT_LOAD, PF_R | PF_W, 0x1000, 0x1000, 0x1000, 0, 0x1000, 0x1000)
+def with_bss(image, flags=PF_R | PF_W):
+    struct.pack_into("<IIQQQQQQ", image, SPARE_HEADER, PT_LOAD, flags, 0x1000, 0x1000, 0x1000, 0, 0x1000, 0x1000)
     return image
 
 
@@ -45,8 +45,8 @@ def with_pltgot(image, value):
     return image
 
 
-def without_load_flags(image):
-    struct.pack_into("<I", image, FIRST_LOAD_FLAGS, 0)
+def with_load_flags(image, flags):
+    struct.pack_into("<I", image, FIRST_LOAD_FLAGS, flags)
     return image
 
 
@@ -88,13 +88,13 @@ def main():
         ("entry-not-executable", with_entry(with_bss(fixture(linux=True)), 0x1000),
          "e_entry 0x1000 is not inside an executable PT_LOAD segment"),
         ("rela-outside", fixture(linux=True, data_relocations=True, target=OUTSIDE),
-         "RELA r_offset 0x2000 (8 bytes) does not fit inside a PT_LOAD segment"),
+         "RELA r_offset 0x2000 (8 bytes) does not fit inside a writable PT_LOAD segment"),
         ("rela-past-load-end", fixture(linux=True, data_relocations=True, target=0xFFC),
-         "RELA r_offset 0xffc (8 bytes) does not fit inside a PT_LOAD segment"),
+         "RELA r_offset 0xffc (8 bytes) does not fit inside a writable PT_LOAD segment"),
         ("abs32-past-load-end", fixture(linux=True, data_relocations=True, relocation_type=R_X86_64_32, target=0xFFE),
-         "RELA r_offset 0xffe (4 bytes) does not fit inside a PT_LOAD segment"),
+         "RELA r_offset 0xffe (4 bytes) does not fit inside a writable PT_LOAD segment"),
         ("jmprel-outside", fixture(linux=True, target=OUTSIDE),
-         "JMPREL r_offset 0x2000 (8 bytes) does not fit inside a PT_LOAD segment"),
+         "JMPREL r_offset 0x2000 (8 bytes) does not fit inside a writable PT_LOAD segment"),
     ]
     with tempfile.TemporaryDirectory(prefix="anyps5-linux-load-bounds-") as directory:
         work = Path(directory)
@@ -102,19 +102,38 @@ def main():
             for options in ([], ["--lazy-binding"]):
                 relink(relinker, work, name, image, options, error)
         for options, base in (([], FIXED_BASE), (["--lazy-binding"], 0)):
-            elf = relink(relinker, work, "entry-in-flagless-load", without_load_flags(fixture(linux=True)), options, None)
+            elf = relink(relinker, work, "entry-in-flagless-load", with_load_flags(fixture(linux=True), 0), options, None)
             flags = load_flags_at(elf, base + ENTRY)
             assert flags == [PF_R | PF_W | PF_X], ("entry-in-flagless-load", options, flags)
         pltgot_cases = [
             ("pltgot-outside", OUTSIDE, "DT_PLTGOT 0x2000 (8 bytes) does not fit inside a PT_LOAD segment",
-             "DT_PLTGOT 0x2000 (24 bytes) does not fit inside a PT_LOAD segment"),
-            ("pltgot-load-tail", 0xFF0, None, "DT_PLTGOT 0xff0 (24 bytes) does not fit inside a PT_LOAD segment"),
+             "DT_PLTGOT 0x2000 (24 bytes) does not fit inside a writable PT_LOAD segment"),
+            ("pltgot-load-tail", 0xFF0, None, "DT_PLTGOT 0xff0 (24 bytes) does not fit inside a writable PT_LOAD segment"),
             ("pltgot-lazy-fits", 0xFE8, None, None),
         ]
         for name, pltgot, eager_error, lazy_error in pltgot_cases:
             image = with_pltgot(fixture(linux=True), pltgot)
             relink(relinker, work, name, image, [], eager_error)
             relink(relinker, work, name, image, ["--lazy-binding"], lazy_error)
+        image = with_pltgot(with_load_flags(with_bss(fixture(linux=True, target=0x1FF8)), PF_R | PF_X), 0x300)
+        relink(relinker, work, "pltgot-in-code", image, [], None)
+        relink(relinker, work, "pltgot-in-code", image, ["--lazy-binding"],
+               "DT_PLTGOT 0x300 (24 bytes) does not fit inside a writable PT_LOAD segment")
+        writable_cases = [
+            ("relative-in-code", with_load_flags(fixture(linux=True, data_relocations=True, relocation_type=8), PF_R | PF_X),
+             "RELA r_offset 0x300 (8 bytes) does not fit inside a writable PT_LOAD segment"),
+            ("abs32-in-code", with_load_flags(fixture(linux=True, data_relocations=True, relocation_type=R_X86_64_32), PF_R | PF_X),
+             "RELA r_offset 0x300 (4 bytes) does not fit inside a writable PT_LOAD segment"),
+            ("rela-in-readonly-bss", with_bss(fixture(linux=True, data_relocations=True, target=0x1ff8), PF_R),
+             "RELA r_offset 0x1ff8 (8 bytes) does not fit inside a writable PT_LOAD segment"),
+            ("jmprel-in-code", with_load_flags(fixture(linux=True), PF_R | PF_X),
+             "JMPREL r_offset 0x300 (8 bytes) does not fit inside a writable PT_LOAD segment"),
+            ("relative-in-rwx", fixture(linux=True, data_relocations=True, relocation_type=8), None),
+            ("relative-in-flagless", with_load_flags(fixture(linux=True, data_relocations=True, relocation_type=8), 0), None),
+        ]
+        for name, image, error in writable_cases:
+            for options in ([], ["--linux-fixed-base", "0x800000"], ["--lazy-binding"]):
+                relink(relinker, work, name, image, options, error)
     print("Linux load bounds tests passed")
 
 

@@ -12,6 +12,7 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 
@@ -47,6 +48,19 @@ bool GuestBufferReadable(const void* address, std::size_t size) {
         offset += step;
     }
     return true;
+}
+
+void ZeroGuestObject(void* self, std::size_t size, const char* function) {
+    const std::array<unsigned char, 32> zeros{};
+    if (!GuestCopyOut_nid_no_patch(self, zeros.data(), size)) throw std::invalid_argument(std::string(function) + ": unwritable object");
+}
+
+std::uint64_t ScriptValueJSValue(const void* self, const char* function) {
+    const std::uint64_t* slot = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&slot, self, sizeof(slot))) throw std::invalid_argument(std::string(function) + ": unreadable ScriptValue");
+    std::uint64_t value = 0;
+    if (slot && !GuestCopyIn_nid_no_patch(&value, slot, sizeof(value))) throw std::invalid_argument(std::string(function) + ": unreadable ScriptValue slot");
+    return value;
 }
 
 std::unique_ptr<GuestJSString> NullString() {
@@ -338,10 +352,6 @@ int APS5_VABI _ZN3JSC7Options24ensureOptionsAreCoherentEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector14InspectorAgentnaEm() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -359,10 +369,6 @@ int APS5_VABI _ZN3JSC14setNeverInlineENS_7JSValueE() {
 }
 
 int APS5_VABI _ZN3JSC16getFunctionRealmERNS_2VMEPNS_8JSObjectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10TextStreamlsERKNS0_30FormatNumberRespectingIntegersE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -419,7 +425,7 @@ int APS5_VABI _ZN9Inspector14ConsoleMessageC2EN3JSC13MessageSourceENS1_11Message
 }
 
 void APS5_VABI _ZN9Inspector13AgentRegistryC1Ev(void* self) {
-    std::memset(self, 0, 16);
+    ZeroGuestObject(self, 16, __func__);
 }
 
 int APS5_VABI _ZN3JSC2VM16weakSetSpaceSlowEv() {
@@ -527,7 +533,7 @@ int APS5_VABI _ZN3JSC6JSLock12DropAllLocksC2EPNS_14JSGlobalObjectE() {
 }
 
 void APS5_VABI _ZN7bmalloc8FreeListC2Ev(void* self) {
-    std::memset(self, 0, 32);
+    ZeroGuestObject(self, 32, __func__);
 }
 
 int APS5_VABI _ZN9Inspector15RemoteInspector9setClientEPNS0_6ClientE() {
@@ -558,10 +564,6 @@ int APS5_VABI _ZN9Inspector21CSSFrontendDispatcher15styleSheetAddedEN3WTF6RefPtr
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC18sanitizeStackForVMERNS_2VME() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC6Config23enableRestrictedOptionsEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -574,15 +576,7 @@ int APS5_VABI _ZN3JSC2VM22boundFunctionSpaceSlowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF3URL24removeFragmentIdentifierEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector15RemoteInspector9singletonEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF11writeIndentERNS_10TextStreamEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -700,10 +694,6 @@ int APS5_VABI _ZN3JSC12JSLockHolderC1ERNS_2VME() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3JSC4Yarr17RegularExpression7isValidEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN10Deprecated18ScriptFunctionCallC2ERKNS_12ScriptObjectERKN3WTF6StringEPFN3JSC7JSValueEPNS8_14JSGlobalObjectES9_RKNS8_8CallDataES9_RKNS8_7ArgListERNS4_8NakedPtrINS8_9ExceptionEEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -763,7 +753,7 @@ int APS5_VABI _ZN10Deprecated11ScriptValueC1ERN3JSC2VMENS1_7JSValueE() {
 }
 
 void APS5_VABI _ZN10Deprecated11ScriptValueC1Ev(void* self) {
-    std::memset(self, 0, 8);
+    ZeroGuestObject(self, 8, __func__);
 }
 
 int APS5_VABI _ZN10Deprecated11ScriptValueC2ERN3JSC2VMENS1_7JSValueE() {
@@ -771,7 +761,7 @@ int APS5_VABI _ZN10Deprecated11ScriptValueC2ERN3JSC2VMENS1_7JSValueE() {
 }
 
 void APS5_VABI _ZN10Deprecated11ScriptValueC2Ev(void* self) {
-    std::memset(self, 0, 8);
+    ZeroGuestObject(self, 8, __func__);
 }
 
 int APS5_VABI _ZN10Deprecated12ScriptObjectC1EPN3JSC14JSGlobalObjectEPNS1_8JSObjectE() {
@@ -1138,14 +1128,6 @@ int APS5_VABI _ZN3JSC4Yarr11byteCompileERNS0_11YarrPatternEPN3WTF20BumpPointerAl
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC4Yarr17RegularExpressionC1ERKN3WTF6StringENS0_19TextCaseSensitivityENS0_13MultilineModeENS0_11UnicodeModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC4Yarr17RegularExpressionC2ERKN3WTF6StringENS0_19TextCaseSensitivityENS0_13MultilineModeENS0_11UnicodeModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC4Yarr20unicodeMatchPropertyEN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1454,14 +1436,6 @@ int APS5_VABI _ZN3WTF11Persistence5CoderINS_10AtomStringEE6decodeERNS0_7DecoderE
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF11Persistence5CoderINS_6StringEE6decodeERNS0_7DecoderE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF11Persistence5CoderINS_7CStringEE6decodeERNS0_7DecoderE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF11emptyStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1491,10 +1465,6 @@ int APS5_VABI _ZN3WTF17TextBreakIteratorC1ENS_10StringViewENS0_4ModeERKNS_10Atom
 }
 
 int APS5_VABI _ZN3WTF17TextBreakIteratorC2ENS_10StringViewENS0_4ModeERKNS_10AtomStringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF19initializeThreadingEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1591,11 +1561,11 @@ int APS5_VABI _ZN3WTF8JSONImpl5Value12escapeStringERNS_13StringBuilderENS_10Stri
 }
 
 void APS5_VABI _ZN7bmalloc11AllIsoHeapsC1ERKSt11scoped_lockIJNS_5MutexEEE(void* self, const void*) {
-    std::memset(self, 0, 8);
+    ZeroGuestObject(self, 8, __func__);
 }
 
 void APS5_VABI _ZN7bmalloc11AllIsoHeapsC2ERKSt11scoped_lockIJNS_5MutexEEE(void* self, const void*) {
-    std::memset(self, 0, 8);
+    ZeroGuestObject(self, 8, __func__);
 }
 
 int APS5_VABI _ZN7bmalloc11EnvironmentC1ERKSt11scoped_lockIJNS_5MutexEEE() {
@@ -1607,11 +1577,11 @@ int APS5_VABI _ZN7bmalloc11EnvironmentC2ERKSt11scoped_lockIJNS_5MutexEEE() {
 }
 
 void APS5_VABI _ZN7bmalloc12IsoTLSLayoutC1ERKSt11scoped_lockIJNS_5MutexEEE(void* self, const void*) {
-    std::memset(self, 0, 16);
+    ZeroGuestObject(self, 16, __func__);
 }
 
 void APS5_VABI _ZN7bmalloc12IsoTLSLayoutC2ERKSt11scoped_lockIJNS_5MutexEEE(void* self, const void*) {
-    std::memset(self, 0, 16);
+    ZeroGuestObject(self, 16, __func__);
 }
 
 int APS5_VABI _ZN7bmalloc9ScavengerC1ERKSt11scoped_lockIJNS_5MutexEEE() {
@@ -1735,15 +1705,11 @@ int APS5_VABI _ZN9Inspector25ConsoleFrontendDispatcher25messageRepeatCountUpdate
 }
 
 bool APS5_VABI _ZNK10Deprecated11ScriptValue10hasNoValueEv(const void* self) {
-    const std::uint64_t* slot = nullptr;
-    std::memcpy(&slot, self, sizeof(slot));
-    return slot == nullptr || *slot == 0;
+    return ScriptValueJSValue(self, __func__) == 0;
 }
 
 std::uint64_t APS5_VABI _ZNK10Deprecated11ScriptValue7jsValueEv(const void* self) {
-    const std::uint64_t* slot = nullptr;
-    std::memcpy(&slot, self, sizeof(slot));
-    return slot == nullptr ? 0 : *slot;
+    return ScriptValueJSValue(self, __func__);
 }
 
 int APS5_VABI _ZNK3JSC11RegisterSet4dumpERN3WTF11PrintStreamE() {
@@ -1763,14 +1729,6 @@ int APS5_VABI _ZNK3JSC17DebuggerCallFrame29deprecatedVMEntryGlobalObjectEv() {
 }
 
 int APS5_VABI _ZNK3JSC17DebuggerCallFrame4typeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3JSC4Yarr17RegularExpression5matchERKN3WTF6StringEiPi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3JSC4Yarr17RegularExpression9searchRevERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

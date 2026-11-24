@@ -13,7 +13,9 @@ BASES = base_ref.CANDIDATES
 
 
 def git(repo, *args, check=True):
-    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+    result.stdout = result.stdout.decode("utf-8", errors="replace")
+    result.stderr = result.stderr.decode("utf-8", errors="replace")
     if check and result.returncode:
         raise RuntimeError(f"git {' '.join(args[:2])} failed: {result.stderr.strip()}")
     return result

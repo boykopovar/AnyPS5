@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/InlineList.hpp"
 #include <cstdio>
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
@@ -519,6 +520,8 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
         depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
     }
     Require(!gcn || (maxMip == 0 && viewMip == 0), "PS4 depth targets with mip levels are not implemented");
+    std::uint64_t htileSliceBytes = 0;
+    std::uint64_t htileMipOffset = 0;
     if (maxMip != 0) {
         char message[320];
         std::snprintf(message, sizeof(message), "depth view mip %u of %u at %ux%u (DB_Z_INFO 0x%08x, DB_DEPTH_VIEW 0x%08x)", viewMip, maxMip + 1u, depth.extent.width, depth.extent.height, read(cx, 0x010), view);
@@ -530,7 +533,24 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
         const auto stencilMips = ComputeElementMipLayout(TextureTileMode::kZ64KBX, 1u, depth.extent.width, depth.extent.height, maxMip + 1u);
         Require(zFormat == 0 || !depthMips.at(viewMip).tail, "rendering the " + where + " into the packed mip tail is unsupported");
         Require(!stencil || !stencilMips.at(viewMip).tail, "rendering the stencil of the " + where + " into the packed mip tail is unsupported");
-        Require((read(cx, 0x010) & (1u << 29u)) == 0, "HTILE for the " + where + " is unsupported");
+        if (zFormat != 0 && (read(cx, 0x010) & (1u << 29u)) != 0) {
+            std::uint32_t firstTail = maxMip + 1u;
+            for (std::uint32_t mip = 0; mip <= maxMip; ++mip) {
+                if (depthMips.at(mip).tail) {
+                    firstTail = mip;
+                    break;
+                }
+            }
+            htileSliceBytes = firstTail == maxMip + 1u ? 0u : HtileMetadataBytes({1u, 1u});
+            for (auto mip = firstTail; mip-- > 0u;) {
+                const auto mipBytes = HtileMetadataBytes({std::max((depth.extent.width + (1u << mip) - 1u) >> mip, 1u), std::max((depth.extent.height + (1u << mip) - 1u) >> mip, 1u)});
+                if (mip == viewMip) {
+                    htileMipOffset = htileSliceBytes;
+                    Require(mipBytes == HtileMetadataBytes({depthMips.at(mip).width, depthMips.at(mip).height}), "the " + where + " needs more HTILE than its extent covers, which is unsupported");
+                }
+                htileSliceBytes += mipBytes;
+            }
+        }
         if (const auto slice = view & 0x1fffu; slice != 0) {
             if (depth.address != 0) depth.address += static_cast<std::uint64_t>(slice) * ComputeSurfaceSize(depthMips, 1u);
             if (depth.stencilAddress != 0) depth.stencilAddress += static_cast<std::uint64_t>(slice) * ComputeSurfaceSize(stencilMips, 1u);
@@ -547,7 +567,8 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     depth.depthPartiallyResident = zFormat != 0 && (read(cx, 0x010) & 0x1000u) != 0;
     depth.stencilPartiallyResident = stencil && (stencilInfo & 0x1000u) != 0;
     if (const auto htile = find(cx, 0x005); zFormat != 0 && htile != cx.end() && htile->second != 0 && (read(cx, 0x010) & (1u << 29u)) != 0) {
-        depth.htileAddress = base(0x005, 0x01e) + static_cast<std::uint64_t>(view & 0x1fffu) * HtileMetadataBytes(depth.extent);
+        const auto sliceBytes = htileSliceBytes != 0u ? htileSliceBytes : HtileMetadataBytes(depth.extent);
+        depth.htileAddress = base(0x005, 0x01e) + static_cast<std::uint64_t>(view & 0x1fffu) * sliceBytes + htileMipOffset;
         depth.htileStencil = stencil && !depth.htileDepthOnly;
     }
     return depth;
@@ -1039,7 +1060,7 @@ struct DecodedColorFormat {
 };
 
 bool UintPacked(ShaderRecompiler::ColorExportPacking packing) {
-    return packing == ShaderRecompiler::ColorExportPacking::Uint || packing == ShaderRecompiler::ColorExportPacking::UintClamp8 || packing == ShaderRecompiler::ColorExportPacking::UintClamp16 || packing == ShaderRecompiler::ColorExportPacking::UintMask8 || packing == ShaderRecompiler::ColorExportPacking::UintMask16;
+    return packing == ShaderRecompiler::ColorExportPacking::Uint || packing == ShaderRecompiler::ColorExportPacking::UintClamp8 || packing == ShaderRecompiler::ColorExportPacking::UintClamp16 || packing == ShaderRecompiler::ColorExportPacking::UintMask8 || packing == ShaderRecompiler::ColorExportPacking::UintMask16 || packing == ShaderRecompiler::ColorExportPacking::UintClamp10_10_10_2 || packing == ShaderRecompiler::ColorExportPacking::UintMask10_10_10_2;
 }
 
 const char* PackedColorTargetName(ShaderRecompiler::ColorExportPacking packing) {
@@ -1048,9 +1069,10 @@ const char* PackedColorTargetName(ShaderRecompiler::ColorExportPacking packing) 
     return packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "11_11_10 float" : "10_11_11 unorm";
 }
 
-ShaderRecompiler::ColorExportPacking NarrowUintPacking(VkFormat format, ShaderRecompiler::ColorExportPacking eight, ShaderRecompiler::ColorExportPacking sixteen) {
+ShaderRecompiler::ColorExportPacking NarrowUintPacking(VkFormat format, ShaderRecompiler::ColorExportPacking eight, ShaderRecompiler::ColorExportPacking sixteen, ShaderRecompiler::ColorExportPacking ten) {
     if (format == VK_FORMAT_R8_UINT || format == VK_FORMAT_R8G8_UINT || format == VK_FORMAT_R8G8B8A8_UINT) return eight;
     if (format == VK_FORMAT_R16_UINT || format == VK_FORMAT_R16G16_UINT || format == VK_FORMAT_R16G16B16A16_UINT) return sixteen;
+    if (format == VK_FORMAT_A2B10G10R10_UINT_PACK32) return ten;
     return ShaderRecompiler::ColorExportPacking::Uint;
 }
 
@@ -1114,6 +1136,7 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
             return {VK_FORMAT_R32_UINT, 4, static_cast<std::uint8_t>(swap == 2 ? 0xc6u : 0xe4u), ShaderRecompiler::ColorExportPacking::Float11_11_10};
         case 9:
             // COLOR_2_10_10_10 keeps red in the low bits, the Vulkan A2B10G10R10 packing.
+            if (number == uint && !alternate) return {VK_FORMAT_A2B10G10R10_UINT_PACK32, 4};
             if (number != unorm) return fail();
             return {alternate ? VK_FORMAT_A2R10G10B10_UNORM_PACK32 : VK_FORMAT_A2B10G10R10_UNORM_PACK32, 4};
         case 10: {
@@ -1678,15 +1701,15 @@ static std::uint32_t NormalizedChannelMask(VkFormat format) {
 
 namespace {
 
-std::vector<std::uint32_t> ColorExportSlots(std::uint32_t shaderMask) {
-    std::vector<std::uint32_t> slots;
+InlineList<std::uint32_t, 8> ColorExportSlots(std::uint32_t shaderMask) {
+    InlineList<std::uint32_t, 8> slots;
     for (std::uint32_t slot = 0; slot < 8; ++slot) {
-        if (((shaderMask >> (4u * slot)) & 0xfu) != 0) slots.push_back(slot);
+        if (((shaderMask >> (4u * slot)) & 0xfu) != 0) slots.EmplaceBack(slot);
     }
     return slots;
 }
 
-std::uint32_t ColorExportCount(const Registers& context, std::uint32_t written, const std::vector<std::uint32_t>& slots) {
+std::uint32_t ColorExportCount(const Registers& context, std::uint32_t written, std::span<const std::uint32_t> slots) {
     const auto formatEntry = find(context, 0x1c5);
     const auto format = formatEntry == context.end() ? 0u : formatEntry->second;
     std::uint32_t count = 0;
@@ -1863,7 +1886,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     APS5_LOG_OUT_DEBUG("CB_TARGET_MASK=0x%x CB_SHADER_MASK=0x%x", targetMask, shaderMask);
     const auto exportFormatEntry = find(cx, 0x1c5);
     const auto exportFormat = exportFormatEntry == cx.end() ? 0u : exportFormatEntry->second;
-    const auto exportSlots = ColorExportSlots(shaderMask);
+    const auto exportStorage = ColorExportSlots(shaderMask);
+    const auto exportSlots = exportStorage.Span();
     const auto exportCount = ColorExportCount(cx, targetMask, exportSlots);
     result.hasColorTarget = exportCount != 0;
     APS5_LOG_OUT_DEBUG("hasColorTarget=%u exports=%u", result.hasColorTarget ? 1u : 0u, exportCount);
@@ -2154,8 +2178,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         }
         if (color.packing == ShaderRecompiler::ColorExportPacking::Uint) {
             const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
-            if (slotExport == 2 || slotExport == 4 || slotExport == 9) color.packing = NarrowUintPacking(color.format, ShaderRecompiler::ColorExportPacking::UintClamp8, ShaderRecompiler::ColorExportPacking::UintClamp16);
-            else if (slotExport == 1) color.packing = NarrowUintPacking(color.format, ShaderRecompiler::ColorExportPacking::UintMask8, ShaderRecompiler::ColorExportPacking::UintMask16);
+            if (slotExport == 2 || slotExport == 4 || slotExport == 9) color.packing = NarrowUintPacking(color.format, ShaderRecompiler::ColorExportPacking::UintClamp8, ShaderRecompiler::ColorExportPacking::UintClamp16, ShaderRecompiler::ColorExportPacking::UintClamp10_10_10_2);
+            else if (slotExport == 1) color.packing = NarrowUintPacking(color.format, ShaderRecompiler::ColorExportPacking::UintMask8, ShaderRecompiler::ColorExportPacking::UintMask16, ShaderRecompiler::ColorExportPacking::UintMask10_10_10_2);
             else if (slotExport != 3) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into an unsigned integer target is unsupported");
         }
         if (state.blendEnable && !reversed && (secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor))) {
@@ -2454,7 +2478,10 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
     const auto view = read(cx, 0x31b + stride);
     const auto slice = view & 0x7ffu;
-    Require(((view >> 13u) & 0x7ffu) == slice, "GCN color views of several array slices are not implemented");
+    const auto lastSlice = (view >> 13u) & 0x7ffu;
+    Require(lastSlice >= slice, "the color view ends before its first slice");
+    const auto exports = find(cx, 0x207);
+    Require(lastSlice == slice || exports == cx.end() || (exports->second & (1u << 18u)) == 0, "GCN layered rendering into several array slices through the vertex render target index is not implemented");
     const auto pitch = ((read(cx, 0x319 + stride) & 0x7ffu) + 1u) * 8u;
     const auto sliceElements = ((read(cx, 0x31a + stride) & 0x3fffffu) + 1u) * 64u;
     color.extent = {pitch, sliceElements / pitch};
@@ -2830,8 +2857,9 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
         if (fmaskDecompress) {
             Require(target.samples > 1, "CB metadata pass over a single-sample target");
             Require(target.cmaskAddress != 0, "FMASK decompress of a target without a CMASK address");
-        } else {
-            Require(target.samples == 1, "CB metadata pass over a multisampled color target, whose texels are on the host, is unsupported (only a CB resolve is modeled)");
+        } else if (target.samples != 1) {
+            Require(pass.mode == ColorMetadataPass::Mode::EliminateFastClear, "CB DCC decompress over a multisampled color target, whose texels are on the host, is unsupported");
+            Require(target.cmaskAddress != 0, "fast-clear eliminate of a multisampled target without a CMASK address");
         }
         Require((read(cx, 0x31c + slot * 0xfu) & 0x10000000u) == 0 || target.dccAddress != 0, "CB metadata pass over a mipmapped DCC color target, whose keys are not modeled");
         if (target.dccAddress != 0 || (target.cmaskAddress != 0 && pass.mode != ColorMetadataPass::Mode::EliminateFastClear)) requireCovered(target);
@@ -2974,7 +3002,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     std::uint32_t targetMask = 0, shaderMask = 0;
     if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word)) {
         const auto slots = ColorExportSlots(shaderMask);
-        if (!colorControlSupported(word, ColorExportCount(cx, ColorWriteMask(cx), slots) != 0)) return colorControlMessage(word);
+        if (!colorControlSupported(word, ColorExportCount(cx, ColorWriteMask(cx), slots.Span()) != 0)) return colorControlMessage(word);
     }
     if (auto reason = nonzero(cx, 0x1c4, zFormatSupported(zFormat) ? 0u : ~0u, "depth or sample-mask export"); !reason.empty()) return reason;
     if (PixelProgramSkipped(queue)) return NullPixelProgramRejection(queue);

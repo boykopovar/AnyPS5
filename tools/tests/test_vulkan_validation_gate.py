@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import io
 import json
@@ -12,6 +13,7 @@ import unittest
 import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import vulkan_validation_gate as gate
 from test_check_compile import spawnable_python
 
@@ -27,6 +29,39 @@ PYTHON = probe_command()
 
 
 class ReportTests(unittest.TestCase):
+    def test_oversized_ctest_listing_retains_incomplete_report(self):
+        for value in (10 ** 400, -(10 ** 400)):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                source, output = root / "source", root / "evidence"
+                source.mkdir()
+                arguments = ["--baseline", str(source), "a" * 40, "--candidate", str(source), "a" * 40,
+                             "--output", str(output), "--target", "fixture", "--tests", ".*", "--gpu", "fixture"]
+
+                def run(command, log, environment, timeout):
+                    if command[0] == "ctest":
+                        log.write_text(json.dumps({"tests": [{"name": "probe", "properties": [
+                            {"name": "TIMEOUT", "value": value}]}]}), encoding="utf-8")
+                    return 0
+
+                with unittest.mock.patch.object(gate, "identity", return_value={}), \
+                        unittest.mock.patch.object(gate, "cache_values", return_value={"CMAKE_HOME_DIRECTORY": str(source)}), \
+                        unittest.mock.patch.object(gate, "run", side_effect=run) as execute, \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(gate.main(arguments), 2)
+                saved = json.loads((output / "report.json").read_text(encoding="utf-8"))
+                self.assertEqual(saved["status"], "incomplete")
+                self.assertEqual(saved["exit_code"], 2)
+                self.assertIn("probe: TIMEOUT", saved["error"])
+                self.assertEqual(saved["iterations"], [])
+                self.assertEqual(execute.call_count, 3)
+                self.assertEqual(execute.call_args.args[0][-1], "--show-only=json-v1")
+
+    def test_oversized_timeouts_are_configuration_errors(self):
+        for value in (10 ** 400, -(10 ** 400)):
+            with self.subTest(value=value), self.assertRaisesRegex(gate.GateError, "probe: TIMEOUT"):
+                gate.check_timeouts([{"name": "probe", "properties": [{"name": "TIMEOUT", "value": value}]}], 1)
+
     def test_effective_timeouts_cannot_override_the_requested_limit(self):
         for value in (0, 2, -1, float("inf"), float("nan"), "1", True):
             with self.subTest(value=value), self.assertRaisesRegex(gate.GateError, "probe: TIMEOUT"):
@@ -81,6 +116,7 @@ class ReportTests(unittest.TestCase):
         inserted = 'Insert instance layer "VK_LAYER_KHRONOS_validation"'
         text = ('<testsuite><testcase name="probe"><system-err>' + inserted + '\n'
                 'Validation Error: [ Undefined-Value-ShaderFragmentOutputMismatch ] pStages[1] writes to location 2\n'
+                'Validation Performance Warning: [ BestPractices-vkBindBufferMemory-small-dedicated-allocation ] | MessageID = 0x10b59d4b\n'
                 'Validation Warning: [ WARNING-Shader-OutputNotConsumed ] vertex output [ 3 ] is not consumed\n'
                 'Validation Error: [ SubmitValidation-WaitEvents-WrongQueue ] wrong queue\n'
                 'Validation Error: [ SubmitValidation-WaitEvents-WrongQueue ] wrong queue\n'
@@ -89,6 +125,7 @@ class ReportTests(unittest.TestCase):
                 '</system-err></testcase></testsuite>')
         tests, problems = self.report(text)
         self.assertEqual(tests["probe"]["diagnostics"], {
+            "BestPractices-vkBindBufferMemory-small-dedicated-allocation": 1,
             "Undefined-Value-ShaderFragmentOutputMismatch": 1,
             "WARNING-Shader-OutputNotConsumed": 1,
             "SubmitValidation-WaitEvents-WrongQueue": 2,
@@ -101,7 +138,7 @@ class ReportTests(unittest.TestCase):
             {"side": "candidate", "iteration": 1, "returncode": 0, "problems": [], "tests": tests},
         ])
         self.assertEqual(report["new_diagnostics"], {
-            "probe": ["SubmitValidation-WaitEvents-WrongQueue", "Undefined-Value-ShaderFragmentOutputMismatch", "WARNING-Shader-OutputNotConsumed"]})
+            "probe": ["BestPractices-vkBindBufferMemory-small-dedicated-allocation", "SubmitValidation-WaitEvents-WrongQueue", "Undefined-Value-ShaderFragmentOutputMismatch", "WARNING-Shader-OutputNotConsumed"]})
         self.assertEqual(report["exit_code"], 1)
 
     def test_a_test_without_the_layer_insertion_line_is_not_a_success(self):
@@ -210,6 +247,19 @@ class EncodingTests(unittest.TestCase):
             self.assertIn(f"validation gate: {source}: must be a source worktree root",
                           stderr.buffer.getvalue().decode("utf-8"))
             self.assertFalse(output.exists())
+
+    def test_a_source_root_outside_the_ansi_code_page_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary).resolve() / "исходники"
+            source.mkdir()
+            subprocess.run(["git", "init", "-q", str(source)], check=True)
+            (source / "file").write_text("fixture\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(source), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                            "commit", "-qm", "fixture"], check=True)
+            commit = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True,
+                                    check=True).stdout.decode("ascii").strip()
+            self.assertEqual(gate.identity(source, commit), {"source": str(source), "commit": commit})
 
 
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja") and shutil.which("ctest"), "requires CMake, Ninja and CTest")
@@ -474,16 +524,17 @@ class CommandTests(FixtureTests):
             with self.subTest(timeout=timeout):
                 marker = self.root / ("timeout-marker" if timeout else "exit-marker")
                 ready = marker.with_suffix(".ready")
-                child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(1); Path({str(marker)!r}).touch()"
+                deadline = time.time() + 4
+                child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(max(0, {deadline!r} - time.time())); Path({str(marker)!r}).touch()"
                 parent = f"import subprocess,sys,time; from pathlib import Path; subprocess.Popen([sys.executable,'-c',{child!r}])\nwhile not Path({str(ready)!r}).exists(): time.sleep(.01)\n"
                 if timeout:
                     parent += "time.sleep(30)\n"
                     with self.assertRaises(subprocess.TimeoutExpired):
-                        gate.run([sys.executable, "-c", parent], self.root / "timeout.log", os.environ, .5)
+                        gate.run([sys.executable, "-c", parent], self.root / "timeout.log", os.environ, 3)
                 else:
                     self.assertEqual(gate.run([sys.executable, "-c", parent], self.root / "exit.log", os.environ, 5), 0)
                 self.assertTrue(ready.exists())
-                time.sleep(1.1)
+                time.sleep(max(0, deadline - time.time()) + .1)
                 self.assertFalse(marker.exists())
 
     def test_symlink_loops_are_setup_errors(self):
@@ -742,6 +793,29 @@ class ContainmentTests(unittest.TestCase):
                     self.kill(child)
                     self.assertTrue(self.is_dead(child, 2.0))
 
+    def test_replay_comparison_guard_kills_child_before_trial_containment(self):
+        tools_dir = str(Path(__file__).resolve().parents[1])
+        script = self.root / "replay_guard_probe.py"
+        script.write_text(
+            "import os, sys, time\nfrom pathlib import Path\n"
+            f"sys.path.insert(0, {tools_dir!r})\nimport frame_replay_compare as replay\n"
+            "def stop_before_job(pid):\n"
+            "    Path(sys.argv[1]).write_text(f'{pid}\\n', encoding='utf-8')\n"
+            "    deadline = time.monotonic() + 15\n"
+            "    while time.monotonic() < deadline and not Path(sys.argv[2]).exists():\n"
+            "        time.sleep(.01)\n"
+            "    os._exit(19)\n"
+            "replay.processes.contain = stop_before_job\n"
+            "replay.execute_replay_trial([sys.executable, '-c', 'pass'], Path(sys.argv[3]), os.environ.copy(), 5, 1024)\n",
+            encoding="utf-8")
+        pid_file, release = self.root / "replay.pid", self.root / "replay.release"
+        probe = subprocess.Popen([sys.executable, str(script), str(pid_file), str(release), str(self.root / "trial")])
+        self.watch(probe.pid)
+        child = self.watch(self.read_pid(pid_file))
+        release.touch()
+        self.assertEqual(probe.wait(timeout=10), 19)
+        self.assertTrue(self.is_dead(child, 2.0), "suspended replay survived comparison runner exit")
+
     def test_unexpected_resume_suspend_count_fails_and_kills_child(self):
         spawned = []
         real_popen = subprocess.Popen
@@ -837,6 +911,114 @@ class NestedContainmentTests(FixtureTests):
         self.assertTrue(ready.exists())
         self.unlink_once_released(ctest_marker)
         self.assertFalse(ctest_marker.exists())
+
+
+
+class ArgumentTests(unittest.TestCase):
+    def test_positive_accepts_finite_positive_numbers(self):
+        self.assertEqual(gate.positive("2.5"), 2.5)
+
+    def test_positive_refuses_zero_negative_and_non_finite_values(self):
+        for value in ("0", "-1", "nan", "inf"):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                gate.positive(value)
+
+
+
+class IdentityTests(unittest.TestCase):
+    def make_repo(self, directory):
+        root = Path(directory).resolve()
+        subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+        head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+        return root, head
+
+    def test_identity_refuses_an_abbreviated_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, _ = self.make_repo(directory)
+            with self.assertRaisesRegex(gate.GateError, "full lowercase"):
+                gate.identity(root, "abc123")
+
+    def test_identity_refuses_a_head_that_differs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, _ = self.make_repo(directory)
+            with self.assertRaisesRegex(gate.GateError, "HEAD differs"):
+                gate.identity(root, "0" * 40)
+
+    def test_identity_accepts_the_expected_clean_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, head = self.make_repo(directory)
+            self.assertEqual(gate.identity(root, head), {"source": str(root), "commit": head})
+
+
+
+class CacheTests(unittest.TestCase):
+    def test_cache_values_reads_typed_entries_and_skips_comments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "CMakeCache.txt").write_text(
+                "\ufeff# comment: ignored\n"
+                "CMAKE_BUILD_TYPE:STRING=Release\n"
+                "ANYPS5_GPU:BOOL=ON\n"
+                "//doc:STRING=skipped\n", encoding="utf-8")
+            self.assertEqual(gate.cache_values(build),
+                             {"CMAKE_BUILD_TYPE": "Release", "ANYPS5_GPU": "ON"})
+
+
+
+class SaveTests(unittest.TestCase):
+    def test_save_writes_a_newline_terminated_json_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gate.save(Path(directory), {"exit_code": 0})
+            text = (Path(directory) / "report.json").read_text(encoding="utf-8")
+            self.assertTrue(text.endswith("\n"))
+            self.assertEqual(json.loads(text), {"exit_code": 0})
+class WaitTests(unittest.TestCase):
+    class FinishingProcess:
+        def __init__(self):
+            self.calls = 0
+            self.args = ["cmd"]
+
+        def wait(self, timeout):
+            self.calls += 1
+            if self.calls == 1:
+                raise subprocess.TimeoutExpired(self.args, timeout)
+            return 3
+
+    class StuckProcess(FinishingProcess):
+        def wait(self, timeout):
+            raise subprocess.TimeoutExpired(self.args, timeout)
+
+    def test_wait_in_slices_returns_the_exit_code_after_a_slice_times_out(self):
+        process = self.FinishingProcess()
+        self.assertEqual(gate.wait_in_slices(process, 5), 3)
+        self.assertEqual(process.calls, 2)
+
+    def test_wait_in_slices_raises_once_the_deadline_passes(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            gate.wait_in_slices(self.StuckProcess(), 0.05)
+
+class ParseReportTests(unittest.TestCase):
+    def report(self, text):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "report.xml"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_parse_report_flags_expected_tests_that_did_not_run(self):
+        path = self.report('<testsuite><testcase name="a"><system-out>'
+                           'Insert instance layer "VK_LAYER_KHRONOS_validation"</system-out></testcase></testsuite>')
+        results, problems = gate.parse_report(path, ["a", "b"])
+        self.assertEqual(sorted(results), ["a"])
+        self.assertTrue(any("missing=['b']" in problem for problem in problems))
+
+    def test_parse_report_refuses_a_duplicate_test_name(self):
+        path = self.report('<testsuite><testcase name="a"/><testcase name="a"/></testsuite>')
+        with self.assertRaisesRegex(gate.GateError, "duplicate testcase name"):
+            gate.parse_report(path, ["a"])
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -12,9 +13,11 @@ import pr_ready
 PASSING = [("conventions", "completed", "success"), ("relinker", "completed", "success")]
 
 
-def run(name, status="completed", conclusion="success", id=1):
+def run(name, status="completed", conclusion="success", id=1, app="github-actions", workflow=None):
     return {"__typename": "CheckRun", "databaseId": id, "name": name, "status": status.upper(),
-            "conclusion": conclusion.upper() if conclusion else None}
+            "conclusion": conclusion.upper() if conclusion else None,
+            "checkSuite": {"app": {"slug": app},
+                           "workflowRun": {"workflow": {"databaseId": workflow}} if workflow is not None else None}}
 
 
 def node(number=7, labels=(), draft=False, mergeable="MERGEABLE", checks=None, changes=(), requested=(),
@@ -36,6 +39,11 @@ def make(**kwargs):
 
 
 class BlockerTests(unittest.TestCase):
+    def with_contexts(self, *additional, checks=None):
+        data = node(checks=checks)
+        data["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"].extend(additional)
+        return pr_ready.blockers(pr_ready.pull(data))
+
     def test_a_pull_request_with_passing_checks_has_no_blocker(self):
         self.assertEqual(pr_ready.blockers(make()), [])
 
@@ -68,6 +76,24 @@ class BlockerTests(unittest.TestCase):
         checks = PASSING + [("intake", "completed", "failure"), ("labels", "in_progress", None), ("eligibility", "queued", None)]
         self.assertEqual(pr_ready.blockers(make(checks=checks)), [])
 
+    def test_the_conflict_label_job_does_not_block(self):
+        for state, conclusion in (("in_progress", None), ("completed", "cancelled"), ("completed", "failure")):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(pr_ready.blockers(make(checks=PASSING + [("pr", state, conclusion)])), [])
+
+    def test_each_bot_check_name_is_a_job_of_its_bot_workflow_only(self):
+        owners = {name: set() for name in pr_ready.BOT_CHECKS}
+        for workflow in (Path(__file__).resolve().parents[2] / ".github/workflows").glob("*.yml"):
+            text = workflow.read_text(encoding="utf-8")
+            if "\njobs:\n" not in text:
+                continue
+            for line in text.split("\njobs:\n", 1)[1].split("\n"):
+                name = line[2:].split(":", 1)[0]
+                if line.startswith("  ") and not line.startswith("   ") and line.rstrip().endswith(":") and name in owners:
+                    owners[name].add(workflow.name)
+        self.assertEqual(owners, {"intake": {"pr-intake.yml"}, "labels": {"pr-labels.yml"}, "eligibility": {"build.yml"},
+                                  "report": {"progress-report.yml"}, "pr": {"conflict-label-pr.yml"}})
+
     def test_a_failing_progress_report_does_not_block(self):
         self.assertEqual(pr_ready.blockers(make(checks=PASSING + [("report", "completed", "failure")])), [])
 
@@ -85,6 +111,16 @@ class BlockerTests(unittest.TestCase):
                                                     ("relinker (ubuntu-latest, g++)", "completed", "success")])))
         self.assertFalse(pr_ready.built(make(checks=[("conventions", "completed", "success"), ("linux", "completed", "skipped")])))
 
+    def test_every_build_workflow_job_counts_as_a_build(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/build.yml").read_text(encoding="utf-8")
+        jobs = workflow.split("\njobs:\n", 1)[1]
+        names = {line[2:].split(":", 1)[0] for line in jobs.split("\n") if line.startswith("  ") and not line.startswith("   ")
+                 and line.rstrip().endswith(":")}
+        self.assertEqual(names - pr_ready.BOT_CHECKS, pr_ready.BUILD_CHECKS)
+        for name in ("pipe-write (macos-15)", "edge-watch (macos-15-intel)"):
+            with self.subTest(name=name):
+                self.assertTrue(pr_ready.built(make(checks=[("conventions", "completed", "success"), (name, "completed", "success")])))
+
     def test_the_newest_run_of_a_check_wins(self):
         data = node(checks=[("conventions", "completed", "success")])
         data["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"] += [
@@ -92,6 +128,29 @@ class BlockerTests(unittest.TestCase):
         self.assertEqual(pr_ready.blockers(pr_ready.pull(data)), [])
         data["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"][-1]["databaseId"] = 2
         self.assertEqual(pr_ready.blockers(pr_ready.pull(data)), ["failing: relinker"])
+
+    def test_same_job_name_keeps_a_failed_workflow_until_its_own_rerun(self):
+        failed = run("windows", "completed", "failure", id=4, workflow=11)
+        other = run("windows", id=5, workflow=22)
+        self.assertEqual(self.with_contexts(failed, other), ["failing: windows"])
+        self.assertEqual(self.with_contexts(failed, other, run("windows", id=6, workflow=11)), [])
+
+    def test_same_check_name_keeps_another_app_or_commit_status(self):
+        passing = run("windows", id=5, app="github-actions")
+        for failing in (run("windows", "completed", "failure", id=4, app="example-ci"),
+                        {"__typename": "StatusContext", "context": "windows", "state": "FAILURE"}):
+            with self.subTest(failing=failing):
+                self.assertEqual(self.with_contexts(failing, passing), ["failing: windows"])
+
+    def test_conventions_require_success_without_hiding_another_workflow_failure(self):
+        success = run("conventions", id=4, workflow=11)
+        for conclusion in ("skipped", "neutral"):
+            with self.subTest(conclusion=conclusion):
+                alternate = run("conventions", "completed", conclusion, id=5, workflow=22)
+                self.assertEqual(self.with_contexts(success, alternate, checks=[]), [])
+                self.assertEqual(self.with_contexts(alternate, checks=[]), ["conventions did not pass"])
+        failed = run("conventions", "completed", "failure", id=3, workflow=22)
+        self.assertEqual(self.with_contexts(failed, success, checks=[]), ["failing: conventions"])
 
     def test_commit_statuses_are_read(self):
         data = node()
@@ -190,10 +249,26 @@ class MainTests(unittest.TestCase):
 
         def fake(*args):
             if args[:2] == ("api", "graphql"):
+                if "--explain" in argv:
+                    number = int(argv[argv.index("--explain") + 1])
+                    self.assertIn("resource(url: $url)", args[3])
+                    self.assertEqual(args[-1], f"url=https://github.com/o/r/pull/{number}")
+                    match = next((pr for pr in prs if pr["number"] == number), None)
+                    resource = {"state": "OPEN", "baseRefName": "main", **match} if match else None
+                    return json.dumps({"data": {"resource": resource}})
                 if any("CLOSED" in arg for arg in args):
                     return json.dumps({"data": {"repository": {"pullRequests": {
                         "pageInfo": {"hasNextPage": False, "endCursor": None},
                         "nodes": [{"number": n} for n in closed]}}}})
+                if "--author" in argv:
+                    author = argv[argv.index("--author") + 1]
+                    self.assertIn("user(login: $login)", args[3])
+                    self.assertIn('baseRefName: "main"', args[3])
+                    self.assertIn(f"login={author}", args)
+                    nodes = [{"repository": {"nameWithOwner": "O/R"}, **pr} for pr in prs]
+                    nodes.append({"repository": {"nameWithOwner": "elsewhere/elsewhere"}, **node(number=3, author=author)})
+                    return json.dumps({"data": {"user": {"pullRequests": {
+                        "pageInfo": {"hasNextPage": False}, "nodes": nodes}}}})
                 return json.dumps(pages.pop(0))
             if args[:2] == ("issue", "view"):
                 return current
@@ -285,10 +360,27 @@ class MainTests(unittest.TestCase):
         self.assertEqual(out.strip(), "draft")
         self.assertEqual(calls, [])
 
+    def test_explain_reports_only_the_selected_pr_and_leaves_the_queue_alone(self):
+        calls = []
+        prs = [node(number=1, draft=True), node(number=7, checks=[("conventions", "completed", "failure")],
+                                                changes=["bob"])]
+        code, out, _ = self.run_main(["--explain", "7", "--issue", "3"], prs, calls, closed=[2])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines(), ["failing: conventions", "change request not answered by a re-request: bob"])
+        self.assertEqual(calls, [])
+
     def test_explain_an_unknown_pull_request_fails(self):
         code, _, err = self.run_main(["--explain", "9"], [node(number=7)], [])
         self.assertEqual(code, 2)
         self.assertIn("#9 is not an open pull request", err)
+
+    def test_explain_rejects_a_closed_or_retargeted_pull_request(self):
+        for fields in ({"state": "MERGED"}, {"state": "CLOSED"}, {"baseRefName": "release"}):
+            with self.subTest(fields=fields):
+                calls = []
+                code, _, err = self.run_main(["--explain", "7"], [{**node(), **fields}], calls)
+                self.assertEqual((code, calls), (2, []))
+                self.assertIn("#7 is not an open pull request to main", err)
 
     def test_a_malformed_response_is_an_error(self):
         code, _, err = self.run_main([], [{"number": 7}], [])
@@ -374,6 +466,44 @@ class MainTests(unittest.TestCase):
             pr_ready.closed_with_label("o/r")
 
 
+class AuthorFetchTests(unittest.TestCase):
+    def test_author_lookup_follows_pages_and_keeps_only_the_requested_repository(self):
+        matching = {"repository": {"nameWithOwner": "Owner/Repo"}, **node(number=3)}
+        another = {"repository": {"nameWithOwner": "owner/other"}, **node(number=4)}
+        pages = [
+            {"pageInfo": {"hasNextPage": True, "endCursor": "next"}, "nodes": [another]},
+            {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [matching]},
+        ]
+        replies = [json.dumps({"data": {"user": {"pullRequests": page}}}) for page in pages]
+        with patch("pr_ready.pr_labels.gh", side_effect=replies) as gh, patch("pr_ready.fetch") as fetch:
+            self.assertEqual(pr_ready.fetch_author("owner/repo", "alice"), [make(number=3)])
+        self.assertEqual(gh.call_count, 2)
+        self.assertEqual(gh.call_args.args[-2:], ("-f", "after=next"))
+        fetch.assert_not_called()
+
+    def test_author_without_a_user_node_falls_back_to_the_repository(self):
+        missing = {"errors": [{"type": "NOT_FOUND", "path": ["user"]}]}
+        error = subprocess.CalledProcessError(1, ["gh"], output=json.dumps(missing))
+        with patch("pr_ready.pr_labels.gh", side_effect=error), patch("pr_ready.fetch", return_value=[]) as fetch:
+            self.assertEqual(pr_ready.fetch_author("owner/repo", "example[bot]"), [])
+        fetch.assert_called_once_with("owner/repo")
+
+    def test_deleted_authors_can_still_be_reported_as_ghost(self):
+        ghost = make(author=None)
+        with patch("pr_ready.pr_labels.gh") as gh, patch("pr_ready.fetch", return_value=[ghost]) as fetch:
+            self.assertEqual(pr_ready.fetch_author("owner/repo", "Ghost"), [ghost])
+        gh.assert_not_called()
+        fetch.assert_called_once_with("owner/repo")
+
+    def test_other_query_errors_do_not_start_a_repository_scan(self):
+        denied = {"errors": [{"type": "FORBIDDEN", "path": ["user"]}]}
+        error = subprocess.CalledProcessError(1, ["gh"], output=json.dumps(denied))
+        with patch("pr_ready.pr_labels.gh", side_effect=error), patch("pr_ready.fetch") as fetch:
+            with self.assertRaises(subprocess.CalledProcessError):
+                pr_ready.fetch_author("owner/repo", "alice")
+        fetch.assert_not_called()
+
+
 class PaginationTests(unittest.TestCase):
     def test_pagination_cursor_returns_each_new_cursor_once(self):
         seen = set()
@@ -390,19 +520,19 @@ class PaginationTests(unittest.TestCase):
 class CheckMappingTests(unittest.TestCase):
     def test_check_of_maps_commit_status_states(self):
         pending = pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'PENDING'})
-        self.assertEqual(pending, {'id': 0, 'name': 'ci', 'done': False, 'conclusion': None})
+        self.assertEqual(pending, {'id': 0, 'name': 'ci', 'source': ('status',), 'done': False, 'conclusion': None})
         self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'SUCCESS'})['conclusion'], 'success')
         self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'ERROR'})['conclusion'], 'failure')
 
     def test_check_of_maps_check_runs_and_refuses_non_objects(self):
         run = pr_ready.check_of({'databaseId': 7, 'name': 'build', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'})
-        self.assertEqual(run, {'id': 7, 'name': 'build', 'done': True, 'conclusion': 'success'})
+        self.assertEqual(run, {'id': 7, 'name': 'build', 'source': ('run', None, None), 'done': True, 'conclusion': 'success'})
         with self.assertRaisesRegex(ValueError, 'check is not an object'):
             pr_ready.check_of([])
 class LatestCheckTests(unittest.TestCase):
     def test_latest_checks_keeps_the_newest_run_and_drops_bot_checks(self):
-        checks = [{'name': 'a', 'id': 1}, {'name': 'a', 'id': 3}, {'name': 'b', 'id': 2}, {'name': 'labels', 'id': 9}]
-        self.assertEqual(pr_ready.latest_checks(checks), [{'name': 'a', 'id': 3}, {'name': 'b', 'id': 2}])
+        checks = [pr_ready.check_of(run(name, id=id)) for name, id in [('a', 1), ('a', 3), ('b', 2), ('labels', 9)]]
+        self.assertEqual(pr_ready.latest_checks(checks), checks[1:3])
 class LabelApplyTests(unittest.TestCase):
     def test_apply_dry_run_reports_queue_label_changes_without_writing(self):
         import contextlib, io

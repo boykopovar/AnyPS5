@@ -172,6 +172,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/BoundsChecking.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Multibyte.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RuneLocale.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/CLocaleHelpers.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GetSubOpt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
@@ -181,6 +182,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/J0f.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/J1f.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/TrueGamma.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Jnf.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Random.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedMultiprecision.cpp
@@ -194,6 +196,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxSort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Getwd.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Mergesort.cpp
@@ -245,6 +248,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Queue.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxStringErase.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxPlainMutex.cpp
 )
 
@@ -741,7 +745,10 @@ if(BUILD_TESTING)
         if(Python3_Interpreter_FOUND)
             add_test(NAME windows_guest_main_stack_entry COMMAND ${Python3_EXECUTABLE}
                 ${LIBS_INCLUDE_DIR}/tests/test_windows_guest_main_stack.py $<TARGET_FILE:relinker> $<TARGET_FILE_DIR:libc>)
-            set_tests_properties(windows_guest_main_stack_entry PROPERTIES TIMEOUT 20)
+            set(relinkerTestTemp ${CMAKE_BINARY_DIR}/core/relinker/test-temp)
+            file(MAKE_DIRECTORY ${relinkerTestTemp})
+            set_tests_properties(windows_guest_main_stack_entry PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+                "TMPDIR=set:${relinkerTestTemp};TEMP=set:${relinkerTestTemp};TMP=set:${relinkerTestTemp};PYTHONUTF8=set:1")
         endif()
     endif()
     add_test_executable(guest_time_conversion_tests ${LIBS_INCLUDE_DIR}/tests/GuestTimeConversion.cpp)
@@ -1098,6 +1105,15 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_set_env PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_lgamma_poles_tests ${LIBS_INCLUDE_DIR}/tests/GuestLgammaPoles.cpp)
+    target_include_directories(guest_lgamma_poles_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_lgamma_poles_tests PRIVATE libc)
+    configure_windows_unwind(guest_lgamma_poles_tests)
+    add_test(NAME guest_lgamma_poles COMMAND guest_lgamma_poles_tests)
+    set_tests_properties(guest_lgamma_poles PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_lgamma_poles PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_math_tests ${LIBS_INCLUDE_DIR}/tests/GuestMath.cpp)
     target_include_directories(guest_math_tests PRIVATE ${LIBS_INCLUDE_DIR})
