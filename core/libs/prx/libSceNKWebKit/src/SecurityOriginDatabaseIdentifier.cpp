@@ -2,11 +2,25 @@
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+#include <cstddef>
+#include <cstring>
 #include <optional>
 #include <string>
 #include <utility>
 
 namespace {
+
+bool EqualLettersIgnoringAsciiCase(const std::u16string& str, const char* expected) {
+    if (str.size() != std::strlen(expected)) return false;
+    for (std::size_t i = 0; i < str.size(); ++i) {
+        char16_t c = str[i];
+        unsigned char e = static_cast<unsigned char>(expected[i]);
+        char16_t lowerC = (c >= u'A' && c <= u'Z') ? static_cast<char16_t>(c + 32) : c;
+        char16_t lowerE = (e >= 'A' && e <= 'Z') ? static_cast<char16_t>(e + 32) : static_cast<char16_t>(e);
+        if (lowerC != lowerE) return false;
+    }
+    return true;
+}
 
 std::u16string EncodeHost(const std::u16string& host) {
     if (host.empty()) return {};
@@ -14,20 +28,6 @@ std::u16string EncodeHost(const std::u16string& host) {
     const auto encoded = _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE(&raw);
     if (!encoded.impl) return {};
     const auto view = NKWebKit::WtfAbi::ViewOf(encoded.impl);
-    std::u16string result;
-    result.reserve(view.length);
-    for (unsigned index = 0; index < view.length; ++index) {
-        result.push_back(NKWebKit::WtfAbi::CodeUnitAt(view, index));
-    }
-    return result;
-}
-
-std::u16string DecodeHost(const std::u16string& host) {
-    if (host.empty()) return {};
-    const auto raw = _ZN3WTF10StringImpl6createEPKDsj(host.data(), static_cast<unsigned>(host.size()));
-    const auto decoded = _ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE(&raw);
-    if (!decoded.impl) return {};
-    const auto view = NKWebKit::WtfAbi::ViewOf(decoded.impl);
     std::u16string result;
     result.reserve(view.length);
     for (unsigned index = 0; index < view.length; ++index) {
@@ -47,7 +47,7 @@ extern "C" {
 
 const void* APS5_VABI WKSecurityOriginCopyDatabaseIdentifier(const void* origin) {
     const auto* value = NKWebKit::Cast<NKWebKit::SecurityOrigin>(origin, __func__);
-    if (value->protocol == u"file") {
+    if (!value->protocolNull && EqualLettersIgnoringAsciiCase(value->protocol, "file")) {
         return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(std::u16string(u"file__0")));
     }
     const auto protocol = value->protocolNull ? std::u16string() : value->protocol;
@@ -71,24 +71,28 @@ const void* APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier(const void* d
     const auto last = text.rfind(u'_');
     if (last == std::u16string::npos || first == last) return nullptr;
     const auto protocol = text.substr(0, first);
-    const auto encodedHost = text.substr(first + 1, last - first - 1);
+    const auto host = text.substr(first + 1, last - first - 1);
     const auto portString = text.substr(last + 1);
-    if (portString.empty()) return nullptr;
-    for (char16_t unit : portString) {
-        if (unit < u'0' || unit > u'9') return nullptr;
-    }
-    unsigned long long parsedPort = 0;
-    try {
-        parsedPort = std::stoull(std::string(portString.begin(), portString.end()));
-    } catch (...) {
-        return nullptr;
-    }
-    if (parsedPort > 65535) return nullptr;
+
     std::optional<std::uint16_t> port;
-    if (parsedPort != 0) port = static_cast<std::uint16_t>(parsedPort);
-    const auto decodedHost = DecodeHost(encodedHost);
+    if (!portString.empty()) {
+        std::size_t idx = 0;
+        while (idx < portString.size() && (portString[idx] == u' ' || portString[idx] == u'\t' || portString[idx] == u'\r' || portString[idx] == u'\n')) {
+            ++idx;
+        }
+        if (idx < portString.size() && portString[idx] == u'+') ++idx;
+        if (idx == portString.size() || portString[idx] < u'0' || portString[idx] > u'9') return nullptr;
+        std::uint32_t val = 0;
+        while (idx < portString.size() && portString[idx] >= u'0' && portString[idx] <= u'9') {
+            val = val * 10 + (portString[idx] - u'0');
+            if (val > 65535) return nullptr;
+            ++idx;
+        }
+        if (val != 0) port = static_cast<std::uint16_t>(val);
+    }
+
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::SecurityOrigin>(
-        NKWebKit::String(protocol), NKWebKit::String(decodedHost), port));
+        NKWebKit::String(protocol), NKWebKit::String(host), port));
 }
 
 }

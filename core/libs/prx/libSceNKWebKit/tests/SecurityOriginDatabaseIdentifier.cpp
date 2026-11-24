@@ -30,6 +30,7 @@ int main() {
     const void* httpProto = WKStringCreateWithUTF8CString("http");
     const void* httpsProto = WKStringCreateWithUTF8CString("https");
     const void* fileProto = WKStringCreateWithUTF8CString("file");
+    const void* upperFileProto = WKStringCreateWithUTF8CString("FILE");
     const void* emptyHost = WKStringCreateWithUTF8CString("");
     const void* exampleHost = WKStringCreateWithUTF8CString("example.com");
     const void* encodedHost = WKStringCreateWithUTF8CString("a:b/c");
@@ -76,6 +77,12 @@ int main() {
     Require(WKStringIsEmpty(recHostFile));
     Require(WKSecurityOriginGetPort(recreatedFile) == 0);
 
+    const void* originUpperFile = WKSecurityOriginCreate(upperFileProto, emptyHost, 0);
+    Require(originUpperFile != nullptr);
+    const void* idUpperFile = WKSecurityOriginCopyDatabaseIdentifier(originUpperFile);
+    Require(idUpperFile != nullptr);
+    Require(WKStringIsEqualToUTF8CString(idUpperFile, "file__0"));
+
     const void* originEncoded = WKSecurityOriginCreate(httpProto, encodedHost, 0);
     Require(originEncoded != nullptr);
     const void* idEncoded = WKSecurityOriginCopyDatabaseIdentifier(originEncoded);
@@ -87,14 +94,18 @@ int main() {
     const void* recProtoEncoded = WKSecurityOriginCopyProtocol(recreatedEncoded);
     const void* recHostEncoded = WKSecurityOriginCopyHost(recreatedEncoded);
     Require(WKStringIsEqualToUTF8CString(recProtoEncoded, "http"));
-    Require(WKStringIsEqualToUTF8CString(recHostEncoded, "a:b/c"));
+    Require(WKStringIsEqualToUTF8CString(recHostEncoded, "a%3Ab%2Fc"));
     Require(WKSecurityOriginGetPort(recreatedEncoded) == 0);
+
+    const void* emptyPortId = WKStringCreateWithUTF8CString("https_example.com_");
+    const void* emptyPortOrigin = WKSecurityOriginCreateFromDatabaseIdentifier(emptyPortId);
+    Require(emptyPortOrigin != nullptr);
+    Require(WKSecurityOriginGetPort(emptyPortOrigin) == 0);
 
     const char* malformedCases[] = {
         "",
         "https",
         "https_example.com",
-        "https_example.com_",
         "https_example.com_abc",
         "https_example.com_65536",
         "https_example.com_9999999999999999999999999999999"
