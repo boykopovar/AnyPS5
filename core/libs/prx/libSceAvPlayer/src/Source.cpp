@@ -30,6 +30,8 @@ namespace AvPlayer {
 
 namespace {
 
+std::atomic<void (*)(std::uint64_t, std::uint64_t)> bufferWaitObserver = nullptr;
+
 constexpr std::uint32_t VideoPitchAlignment = 256;
 constexpr std::uint32_t VideoHeightAlignment = 16;
 constexpr std::uint32_t VideoBufferAlignment = 0x100;
@@ -1003,8 +1005,15 @@ private:
         };
         while (!ready()) {
             const auto period = decoder.video && followsClockLocked() ? frameDuration() : 0;
-            if (period != 0) condition.WaitUntil(lock, TimedWait::DeadlineNanos(period * 1000));
-            else condition.Wait(lock);
+            if (period != 0) {
+                const auto observer = bufferWaitObserver.load(std::memory_order_acquire);
+                const auto start = observer != nullptr ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                const bool notified = condition.WaitUntil(lock, TimedWait::DeadlineNanos(period * 1000));
+                if (observer != nullptr && !notified) {
+                    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
+                    observer(period, static_cast<std::uint64_t>(elapsed));
+                }
+            } else condition.Wait(lock);
         }
         if (stopping) return Acquire::Stopping;
         if (epoch < minEpoch) return Acquire::Stale;
@@ -1207,6 +1216,10 @@ private:
     std::vector<std::int16_t> sampleBuffer;
 };
 
+}
+
+void SetAvPlayerBufferWaitObserverForTest_nid_no_patch(void (*observer)(std::uint64_t, std::uint64_t)) {
+    bufferWaitObserver.store(observer, std::memory_order_release);
 }
 
 std::unique_ptr<ISource> OpenSource(const SourceSettings& settings, const std::string& path, ISourceEvents& events) {
