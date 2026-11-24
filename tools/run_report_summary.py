@@ -4,6 +4,8 @@ import math
 import sys
 from pathlib import Path
 
+from performance_compare import unique_json_object
+
 
 DIAGNOSTIC_PREVIEW_LIMIT = 5
 
@@ -161,11 +163,11 @@ def main():
     parser.add_argument("report", type=Path, help="path to anyps5-report.json")
     args = parser.parse_args()
     try:
-        report = json.loads(args.report.read_text(encoding="utf-8-sig"))
+        report = json.loads(args.report.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_object)
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8")
         print(render(report))
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError, KeyError) as error:
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError, KeyError, RecursionError) as error:
         print(f"run_report_summary: {error}", file=sys.stderr)
         return 2
     return 0
