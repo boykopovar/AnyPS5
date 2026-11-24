@@ -9,6 +9,8 @@
 #include <initializer_list>
 #endif
 #include <cstring>
+#include <string>
+#include <vector>
 #include <stdexcept>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -310,6 +312,12 @@ int main() {
     Require(sceNpWebApi2AddHttpRequestHeader(realRequest, "Accept", reinterpret_cast<const char*>(0x10)) == invalidArgument);
     Require(errno == 71);
     Require(sceNpWebApi2AddHttpRequestHeader(realRequest, "Accept", "application/json") == 0);
+    const std::string maxHeader(4095, 'a');
+    const std::string tooLongHeader(4096, 'a');
+    Require(sceNpWebApi2AddHttpRequestHeader(realRequest, maxHeader.c_str(), "v") == 0);
+    Require(sceNpWebApi2AddHttpRequestHeader(realRequest, "k", maxHeader.c_str()) == 0);
+    Require(sceNpWebApi2AddHttpRequestHeader(realRequest, tooLongHeader.c_str(), "v") == invalidArgument);
+    Require(sceNpWebApi2AddHttpRequestHeader(realRequest, "k", tooLongHeader.c_str()) == invalidArgument);
     std::int32_t nonMultipartIndex = 0x5a5a5a5a;
     Require(sceNpWebApi2AddMultipartPart(realRequest, partParameter, &nonMultipartIndex) == notMultipartRequest);
     Require(nonMultipartIndex == 0x5a5a5a5a);
@@ -351,6 +359,22 @@ int main() {
     Require(errno == 71);
     Require(sceNpWebApi2IntInitialize2(reinterpret_cast<const NpWebApi2IntInitialize2Args*>(std::uintptr_t{0x10})) == static_cast<int>(0x80553402));
     Require(errno == 71);
+    {
+        std::vector<int> liveLibraries;
+        liveLibraries.reserve(0x7FFF);
+        for (int i = 0; i < 0x7FFF; ++i) {
+            const int id = sceNpWebApi2Initialize(0, 0x10000);
+            Require(id >= 1 && id <= 0x7FFF);
+            liveLibraries.push_back(id);
+        }
+        Require(sceNpWebApi2Initialize(0, 0x10000) == invalidContext);
+        for (const int id : liveLibraries) {
+            Require(sceNpWebApi2Terminate(id) == 0);
+        }
+        const int reused = sceNpWebApi2Initialize(0, 0x10000);
+        Require(reused >= 1 && reused <= 0x7FFF);
+        Require(sceNpWebApi2Terminate(reused) == 0);
+    }
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
