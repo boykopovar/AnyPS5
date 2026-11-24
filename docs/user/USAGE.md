@@ -110,7 +110,7 @@ The executable and the module libraries carry an ad-hoc code signature, so they 
 
 Add `--to-intel` for Intel hosts, or `--to-rosetta` for Rosetta. A title that runs under Rosetta on Apple silicon is relinked with `--macos --to-rosetta`.
 
-- `--to-intel` rewrites AMD-specific instructions found in the executable and bundled modules. It cannot translate AMD-specific instructions that a title generates at runtime, so such titles need an AMD host. Without it, the first such instruction on a CPU that lacks it ends the run, and the crash report names the instruction on Linux and Windows.
+- `--to-intel` rewrites AMD-specific instructions found in the executable and bundled modules, and replaces the cache flushes CLFLUSH, CLFLUSHOPT and CLWB with NOPs of the same length. It cannot translate AMD-specific instructions that a title generates at runtime, so such titles need an AMD host. Without it, the first such instruction on a CPU that lacks it ends the run, and the crash report names the instruction on Linux and Windows.
 - The output format defaults to Linux ELF whatever the filename is. `.exe` alone does not select Windows.
 
 ### Security warning

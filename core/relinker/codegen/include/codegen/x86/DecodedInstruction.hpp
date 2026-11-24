@@ -27,6 +27,8 @@ struct DecodedInstruction {
     [[nodiscard]] bool IsRdpid() const;
     [[nodiscard]] bool IsRdtscp() const;
     [[nodiscard]] bool IsClwb() const;
+    [[nodiscard]] bool IsClflush() const;
+    [[nodiscard]] bool IsClflushopt() const;
     [[nodiscard]] bool IsXsaveopt() const;
 
 private:

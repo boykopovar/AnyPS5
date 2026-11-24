@@ -775,8 +775,8 @@ void rosettaSubstitutions() {
     const auto intel = Codegen::MakeAmd64OnlyInstructionMatcher();
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const auto match = [](const auto& matcher, const Bytes& bytes) { return matcher->Match(bytes.data(), bytes.size()); };
-    for (const auto& bytes : {Bytes{0x0F, 0xC7, 0xF8}, Bytes{0xF3, 0x0F, 0xC7, 0xF8}, Bytes{0x66, 0x0F, 0xAE, 0x30}, Bytes{0x0F, 0x01, 0xF9}, Bytes{0x0F, 0xAE, 0x37}})
-        require(!match(intel, bytes).has_value(), "RDSEED, RDPID, CLWB, RDTSCP or XSAVEOPT was converted for an Intel host");
+    for (const auto& bytes : {Bytes{0x0F, 0xC7, 0xF8}, Bytes{0xF3, 0x0F, 0xC7, 0xF8}, Bytes{0x0F, 0x01, 0xF9}, Bytes{0x0F, 0xAE, 0x37}})
+        require(!match(intel, bytes).has_value(), "RDSEED, RDPID, RDTSCP or XSAVEOPT was converted for an Intel host");
     const auto rdseed = match(rosetta, {0x48, 0x0F, 0xC7, 0xF9});
     require(rdseed && rdseed->Lowering == Amd64OnlyLowering::InPlace && rdseed->ReplacementBytes == Bytes{0x48, 0x0F, 0xC7, 0xF1} && rdseed->InstructionName == "RDSEED", "RDSEED was not rewritten to RDRAND");
     const auto rdseed16 = match(rosetta, {0x66, 0x41, 0x0F, 0xC7, 0xFA});
@@ -785,7 +785,8 @@ void rosettaSubstitutions() {
     const auto clwb = match(rosetta, {0x66, 0x0F, 0xAE, 0x74, 0x24, 0x08});
     require(clwb && clwb->Lowering == Amd64OnlyLowering::InPlace && clwb->ReplacementBytes == Bytes{0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00} && clwb->InstructionName == "CLWB", "CLWB was not replaced by a NOP");
     require(!match(rosetta, {0x66, 0x0F, 0xAE, 0xF1}).has_value(), "TPAUSE (the register form of 66 0F AE /6) was taken for CLWB");
-    require(!match(rosetta, {0x66, 0x0F, 0xAE, 0x38}).has_value(), "CLFLUSHOPT was taken for CLWB");
+    const auto clflushopt = match(rosetta, {0x66, 0x0F, 0xAE, 0x38});
+    require(clflushopt && clflushopt->InstructionName == "CLFLUSHOPT", "CLFLUSHOPT was taken for CLWB");
     const auto xsaveopt = match(rosetta, {0x0F, 0xAE, 0x37});
     require(xsaveopt && xsaveopt->Lowering == Amd64OnlyLowering::InPlace && xsaveopt->ReplacementBytes == Bytes{0x0F, 0xAE, 0x27} && xsaveopt->InstructionName == "XSAVEOPT", "XSAVEOPT was not rewritten to XSAVE");
     const auto xsaveopt64 = match(rosetta, {0x48, 0x0F, 0xAE, 0x74, 0x24, 0x40});
@@ -796,8 +797,10 @@ void rosettaSubstitutions() {
     require(xsaveoptRip && xsaveoptRip->ReplacementBytes == Bytes{0x0F, 0xAE, 0x25, 0x00, 0x01, 0x00, 0x00}, "RIP-relative XSAVEOPT was not rewritten to XSAVE with the same displacement");
     const auto xsaveoptFs = match(rosetta, {0x64, 0x0F, 0xAE, 0x34, 0x25, 0x40, 0x00, 0x00, 0x00});
     require(xsaveoptFs && xsaveoptFs->ReplacementBytes == Bytes{0x64, 0x0F, 0xAE, 0x24, 0x25, 0x40, 0x00, 0x00, 0x00}, "FS-relative XSAVEOPT was not rewritten to XSAVE");
-    for (const auto& other : {Bytes{0x0F, 0xAE, 0x27}, Bytes{0x0F, 0xAE, 0x2F}, Bytes{0x0F, 0xAE, 0x3F}, Bytes{0x0F, 0xAE, 0xF0}, Bytes{0xF3, 0x0F, 0xAE, 0xF0}, Bytes{0xF2, 0x0F, 0xAE, 0xF1}, Bytes{0xF3, 0x0F, 0xAE, 0x37}})
-        require(!match(rosetta, other).has_value(), "XSAVE, XRSTOR, CLFLUSH, MFENCE, UMONITOR, UMWAIT or a prefixed 0F AE /6 was taken for XSAVEOPT");
+    for (const auto& other : {Bytes{0x0F, 0xAE, 0x27}, Bytes{0x0F, 0xAE, 0x2F}, Bytes{0x0F, 0xAE, 0xF0}, Bytes{0xF3, 0x0F, 0xAE, 0xF0}, Bytes{0xF2, 0x0F, 0xAE, 0xF1}, Bytes{0xF3, 0x0F, 0xAE, 0x37}})
+        require(!match(rosetta, other).has_value(), "XSAVE, XRSTOR, MFENCE, UMONITOR, UMWAIT or a prefixed 0F AE /6 was taken for XSAVEOPT");
+    const auto clflush = match(rosetta, {0x0F, 0xAE, 0x3F});
+    require(clflush && clflush->InstructionName == std::string("CLFLUSH"), "CLFLUSH was taken for XSAVEOPT");
     const auto rdpid = match(rosetta, {0xF3, 0x41, 0x0F, 0xC7, 0xFB});
     require(rdpid && rdpid->Lowering == Amd64OnlyLowering::Trampoline && rdpid->Optional && rdpid->InstructionName == "RDPID", "RDPID was not lowered through an optional stub");
     require(rdpid->ReturnBranchOffset == 6 && Bytes(rdpid->StubBody.begin(), rdpid->StubBody.begin() + 7) == Bytes{0x41, 0xBB, 0, 0, 0, 0, 0xE9}, "RDPID r11 stub does not load 0 before returning");
@@ -1366,7 +1369,30 @@ void converterRosetta() {
     const auto kept = converter->Convert(beforeReturn, {segmentHeader(text.size())});
     require(kept.KeptCount == 1 && kept.Trampolines.empty() && kept.ReplacedCount == 2, "RDPID without room for a jump was not kept");
     const auto intel = Codegen::MakeAmd64OnlyConverter()->Convert(file, {segmentHeader(text.size())});
-    require(intel.Reports.empty() && intel.Bytes == file, "The Intel target converted RDSEED, RDPID or CLWB");
+    auto clwbOnly = file;
+    std::copy(nop.begin(), nop.end(), clwbOnly.begin() + 0x20B);
+    require(intel.Reports.size() == 1 && intel.Reports[0].InstructionName == "CLWB" && intel.Bytes == clwbOnly, "The Intel target converted RDSEED or RDPID, or left CLWB");
+}
+
+void cacheFlushSubstitutions() {
+    using Codegen::Amd64OnlyLowering;
+    const auto match = [](const auto& matcher, const Bytes& bytes) { return matcher->Match(bytes.data(), bytes.size()); };
+    for (const auto target : {Codegen::Amd64OnlyTarget::Intel, Codegen::Amd64OnlyTarget::Rosetta, Codegen::Amd64OnlyTarget::Avx}) {
+        const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(target);
+        const auto expect = [&](const Bytes& bytes, const char* name, const Bytes& replacement) {
+            const auto found = match(matcher, bytes);
+            require(found && found->Lowering == Amd64OnlyLowering::InPlace && found->InstructionName == std::string(name) && found->ReplacementBytes == replacement, (std::string(name) + " was not replaced by a NOP of the same length").c_str());
+        };
+        expect({0x0F, 0xAE, 0x38}, "CLFLUSH", {0x0F, 0x1F, 0x00});
+        expect({0x0F, 0xAE, 0x7C, 0x24, 0x08}, "CLFLUSH", {0x0F, 0x1F, 0x44, 0x00, 0x00});
+        expect({0x66, 0x0F, 0xAE, 0x38}, "CLFLUSHOPT", {0x0F, 0x1F, 0x40, 0x00});
+        expect({0x66, 0x41, 0x0F, 0xAE, 0xBC, 0x24, 0x00, 0x01, 0x00, 0x00}, "CLFLUSHOPT", {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00, 0x0F, 0x1F, 0x00});
+        expect({0x66, 0x0F, 0xAE, 0x30}, "CLWB", {0x0F, 0x1F, 0x40, 0x00});
+        require(!match(matcher, {0x0F, 0xAE, 0xF8}).has_value(), "SFENCE (the register form of 0F AE /7) was taken for CLFLUSH");
+        require(!match(matcher, {0x66, 0x0F, 0xAE, 0xF8}).has_value(), "the register form of 66 0F AE /7 was taken for CLFLUSHOPT");
+        const auto xsaveopt = match(matcher, {0x0F, 0xAE, 0x37});
+        require(!xsaveopt || xsaveopt->InstructionName == std::string("XSAVEOPT"), "XSAVEOPT was taken for CLFLUSH");
+    }
 }
 
 void rosettaScalarCompares() {
@@ -2654,6 +2680,7 @@ int main() {
         rosettaSubstitutions();
         xsaveoptExecution();
         converterRosetta();
+        cacheFlushSubstitutions();
         converterAvxShortSites();
         rosettaScalarCompares();
         converterRosettaScalarCompare();
