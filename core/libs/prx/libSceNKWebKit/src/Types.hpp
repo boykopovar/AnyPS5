@@ -245,8 +245,19 @@ public:
     bool htmlTextAreaElementLastChangeWasUserEdit = false;
 };
 
+class Image final : public ObjectOf<ObjectType::Image> {
+public:
+    explicit Image(int width = 0, int height = 0) : width(width), height(height) {}
+
+    int width = 0;
+    int height = 0;
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
+    Retained<BundleFrame> frame;
+    Retained<BundleFrame> targetFrame;
+    Retained<Image> image;
     Retained<URL> absoluteImageURL;
     Retained<URL> absoluteLinkURL;
     Retained<URL> absoluteMediaURL;
@@ -281,6 +292,9 @@ public:
     std::uint64_t renderTreeSize = 0;
     bool isFullScreen = false;
     bool hasComposition = false;
+    Retained<Object> topOverhangImage;
+    Retained<Object> bottomOverhangImage;
+    std::uint64_t paintedObjectsCounterThreshold = 0;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
@@ -410,6 +424,17 @@ public:
     }
 };
 
+class IconDatabase final : public ObjectOf<ObjectType::IconDatabase> {
+public:
+    std::map<std::string, std::string> pageURLToIconURL;
+    std::map<std::string, std::vector<std::uint8_t>> iconURLToData;
+    std::map<std::string, std::uint32_t> iconRetainCounts;
+    bool checkIntegrityBeforeOpening = false;
+    bool closed = false;
+    bool cleanupEnabled = false;
+    const void* client = nullptr;
+};
+
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
 public:
     bool decided = false;
@@ -456,14 +481,6 @@ public:
     Retained<URL> unreachableURL;
 };
 
-class Image final : public ObjectOf<ObjectType::Image> {
-public:
-    explicit Image(int width, int height) : width(width), height(height) {}
-
-    int width = 0;
-    int height = 0;
-};
-
 class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {
 public:
     NavigationAction() = default;
@@ -491,11 +508,11 @@ public:
 
 class AuthenticationChallenge final : public ObjectOf<ObjectType::AuthenticationChallenge> {
 public:
-    std::string requestURL;
-    Retained<AuthenticationDecisionListener> decisionListener;
+    std::optional<std::string> requestURL;
+    Retained<AuthenticationDecisionListener> decisionListener = Make<AuthenticationDecisionListener>();
     int previousFailureCount = 0;
-    Retained<Object> proposedCredential;
-    Retained<Object> protectionSpace;
+    mutable Retained<Object> proposedCredential;
+    mutable Retained<Object> protectionSpace;
     bool isForMainResource = false;
     bool isInMainFrame = false;
 };

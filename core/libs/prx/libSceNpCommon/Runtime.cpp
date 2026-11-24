@@ -796,7 +796,8 @@ void APS5_VABI sceNpHeapDestroy(NpHeap* heap) {
 }
 
 void APS5_VABI sceNpHeapGetAllocator(NpHeap* heap, NpAllocator* allocator) {
-    *allocator = {HeapAllocate, HeapReallocate, HeapRelease, heap};
+    const NpAllocator value{HeapAllocate, HeapReallocate, HeapRelease, heap};
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 int APS5_VABI sceNpHeapGetStat(const NpHeap* heap, NpHeapStat* stat) {
@@ -838,19 +839,27 @@ void APS5_VABI sceNpMemoryHeapDestroy(NpMemoryHeap* heap) {
 }
 
 void APS5_VABI sceNpMemoryHeapGetAllocator(NpMemoryHeap* heap, NpAllocator* allocator) {
-    *allocator = MemoryHeapAllocator(heap);
+    const NpAllocator value = MemoryHeapAllocator(heap);
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 void APS5_VABI sceNpMemoryHeapGetAllocatorEx(NpMemoryHeap* heap, int outOfMemoryError, NpAllocatorEx* allocator) {
-    *allocator = {MemoryHeapAllocator(heap), outOfMemoryError};
+    NpAllocatorEx value{};
+    value.allocator = MemoryHeapAllocator(heap);
+    value.outOfMemoryError = outOfMemoryError;
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 void APS5_VABI sceNpGlobalHeapGetAllocator(NpAllocator* allocator) {
-    *allocator = MemoryHeapAllocator(&g_globalHeap);
+    const NpAllocator value = MemoryHeapAllocator(&g_globalHeap);
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 void APS5_VABI sceNpGlobalHeapGetAllocatorEx(NpAllocatorEx* allocator) {
-    *allocator = {MemoryHeapAllocator(&g_globalHeap), NP_ERROR_OUT_OF_MEMORY};
+    NpAllocatorEx value{};
+    value.allocator = MemoryHeapAllocator(&g_globalHeap);
+    value.outOfMemoryError = NP_ERROR_OUT_OF_MEMORY;
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 NpAllocator* APS5_VABI sceNpGlobalHeapGetAllocatorPtr(void) {
@@ -1390,9 +1399,14 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     for (std::size_t line = 0; line < size; line += NP_DUMP_LINE_BYTES) {
         const std::size_t count = std::min(NP_DUMP_LINE_BYTES, size - line);
+        std::uint8_t copied[NP_DUMP_LINE_BYTES];
+        const int savedErrno = errno;
+        const bool readable = GuestCopyIn_nid_no_patch(copied, bytes + line, count);
+        errno = savedErrno;
+        if (!readable) break;
         for (std::size_t i = 0; i < NP_DUMP_LINE_BYTES; ++i) {
             if (i < count) {
-                std::printf("%02x", bytes[line + i]);
+                std::printf("%02x", copied[i]);
             } else {
                 std::printf("  ");
             }
@@ -1400,7 +1414,7 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
         }
         std::putchar(' ');
         for (std::size_t i = 0; i < count; ++i) {
-            const std::uint8_t c = bytes[line + i];
+            const std::uint8_t c = copied[i];
             std::putchar(c >= 0x20 && c <= 0x7E ? c : '.');
         }
         std::putchar('\n');

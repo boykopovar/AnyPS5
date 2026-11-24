@@ -2,10 +2,12 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -13,6 +15,27 @@ import build_mingw_host_only_tests
 
 
 class HostOnlyTargets(unittest.TestCase):
+    def test_large_host_target_set_is_built_in_bounded_batches(self):
+        selected = [f"host_test_{i:05d}_" + "x" * 40 for i in range(1000)]
+        with mock.patch.object(build_mingw_host_only_tests, "read_reply", return_value=(Path("."), {})), \
+                mock.patch.object(build_mingw_host_only_tests, "host_only_test_targets", return_value=selected), \
+                mock.patch.object(build_mingw_host_only_tests.subprocess, "run") as run, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(build_mingw_host_only_tests.main(["build"]), 0)
+        batches = [call.args[0][6:] for call in run.call_args_list]
+        self.assertGreater(len(batches), 1)
+        self.assertEqual([target for batch in batches for target in batch], selected)
+        self.assertTrue(all(len(subprocess.list2cmdline(call.args[0])) < 30000 for call in run.call_args_list))
+
+    def test_failed_host_target_batch_stops_later_builds(self):
+        selected = [f"host_test_{i:05d}_" + "x" * 40 for i in range(1000)]
+        with mock.patch.object(build_mingw_host_only_tests, "read_reply", return_value=(Path("."), {})), \
+                mock.patch.object(build_mingw_host_only_tests, "host_only_test_targets", return_value=selected), \
+                mock.patch.object(build_mingw_host_only_tests.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "cmake")) as run, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(build_mingw_host_only_tests.main(["build"]), 1)
+        self.assertEqual(run.call_count, 1)
+
     def target(self, name, target_type="EXECUTABLE", source="core/libs/tests/HostOnly.cpp", dependencies=(), fragment=""):
         return {
             "artifacts": [{"path": f"tests/{name}.exe"}],
