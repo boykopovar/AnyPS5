@@ -82,6 +82,7 @@
 #include <functional>
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <atomic>
 #include <deque>
 #include <cctype>
@@ -17443,6 +17444,35 @@ bool discardPendingCoveredTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+std::uint16_t storageClearHalfBits(float value) {
+    const auto bits = std::bit_cast<std::uint32_t>(value);
+    const std::uint32_t sign = (bits >> 16u) & 0x8000u;
+    const std::uint32_t exponent = (bits >> 23u) & 0xffu;
+    std::uint32_t mantissa = bits & 0x7fffffu;
+    if (exponent == 0xffu) {
+        if (mantissa == 0u) return static_cast<std::uint16_t>(sign | 0x7c00u);
+        auto payload = mantissa >> 13u;
+        if (payload == 0u) payload = 1u;
+        return static_cast<std::uint16_t>(sign | 0x7c00u | payload);
+    }
+    const auto halfExponent = static_cast<std::int32_t>(exponent) - 127 + 15;
+    if (halfExponent >= 31) return static_cast<std::uint16_t>(sign | 0x7c00u);
+    if (halfExponent <= 0) {
+        if (halfExponent < -10) return static_cast<std::uint16_t>(sign);
+        mantissa |= 0x800000u;
+        const auto shift = static_cast<std::uint32_t>(14 - halfExponent);
+        auto halfMantissa = mantissa >> shift;
+        const auto remainder = mantissa & ((1u << shift) - 1u);
+        const auto halfway = 1u << (shift - 1u);
+        if (remainder > halfway || (remainder == halfway && (halfMantissa & 1u) != 0u)) ++halfMantissa;
+        return static_cast<std::uint16_t>(sign | halfMantissa);
+    }
+    auto half = sign | (static_cast<std::uint32_t>(halfExponent) << 10u) | (mantissa >> 13u);
+    const auto remainder = mantissa & 0x1fffu;
+    if (remainder > 0x1000u || (remainder == 0x1000u && (half & 1u) != 0u)) ++half;
+    return static_cast<std::uint16_t>(half);
+}
+
 bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     const std::string what = watched ? "clear-key hand-over (watched)" : "clear-key hand-over";
@@ -17536,6 +17566,27 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
     Require(DescribeSurface(resourceA).guestBytes == surfaceA && DescribeSurface(resourceB).guestBytes == surfaceB, "the clear-key hand-over surfaces have unexpected sizes");
     const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     const auto draw = [&](const std::shared_ptr<StorageTexture>& image, VkClearColorValue value) {
+        const auto format = StorageFormatForGuest(context, image->Descriptor().format);
+        if (image->ImageFormat() != format) {
+            std::uint32_t components = 0;
+            switch (format) {
+                case VK_FORMAT_R16_SFLOAT:
+                    Require(image->ImageFormat() == VK_FORMAT_R16_UINT, "unexpected R16 clear-test backing format");
+                    components = 1;
+                    break;
+                case VK_FORMAT_R16G16_SFLOAT:
+                    Require(image->ImageFormat() == VK_FORMAT_R16G16_UINT, "unexpected RG16 clear-test backing format");
+                    components = 2;
+                    break;
+                case VK_FORMAT_R16G16B16A16_SFLOAT:
+                    Require(image->ImageFormat() == VK_FORMAT_R16G16B16A16_UINT, "unexpected RGBA16 clear-test backing format");
+                    components = 4;
+                    break;
+                default: Require(false, "unsupported clear-test backing format");
+            }
+            const auto color = value;
+            for (std::uint32_t component = 0; component < components; ++component) value.uint32[component] = storageClearHalfBits(color.float32[component]);
+        }
         const auto commands = recorder.Commands();
         recorder.Keep(image);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
