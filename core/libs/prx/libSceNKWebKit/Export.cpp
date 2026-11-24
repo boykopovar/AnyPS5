@@ -8375,10 +8375,6 @@ int APS5_VABI WKBundlePageCopyRenderTreeExternalRepresentation() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageCopyTrackedRepaintRects() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageCreateScaledSnapshotInDocumentCoordinates() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8455,10 +8451,6 @@ int APS5_VABI WKBundlePageIsEditingCommandEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageIsTrackingRepaints() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageListenForLayoutMilestones() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8512,10 +8504,6 @@ int APS5_VABI WKBundlePageReplaceStringMatches() {
 }
 
 int APS5_VABI WKBundlePageResetApplicationCacheOriginQuota() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageResetTrackedRepaints() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8576,10 +8564,6 @@ int APS5_VABI WKBundlePageSetScaleAtOrigin() {
 }
 
 int APS5_VABI WKBundlePageSetTextZoomFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageSetTracksRepaints() {
     NotImplemented_nid_no_patch(__func__);
 }
 

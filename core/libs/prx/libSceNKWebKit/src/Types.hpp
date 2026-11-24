@@ -295,6 +295,8 @@ public:
     Retained<Object> topOverhangImage;
     Retained<Object> bottomOverhangImage;
     std::uint64_t paintedObjectsCounterThreshold = 0;
+    bool isTrackingRepaints = false;
+    Retained<Array> trackedRepaintRects;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
