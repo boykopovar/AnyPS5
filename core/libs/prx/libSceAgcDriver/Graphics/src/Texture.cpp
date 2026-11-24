@@ -4938,7 +4938,7 @@ void StorageTexture::noteGpuWrite(std::uint32_t first, std::uint32_t count) {
     const auto last = std::min<std::uint32_t>(first + count, trackedLayers);
     bool starts = false;
     for (auto layer = first; layer < last; ++layer) starts = starts || !layerPending[layer];
-    bool snapshot = starts && guestBytes <= GenerationBaselineBytes && GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+    bool snapshot = starts && guestBytes <= GenerationBaselineBytes && GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) && !MultisampleColorTargetOverlaps(descriptor.baseAddress, guestBytes);
     for (std::uint32_t unit = 0; snapshot && unit < trackedLayers; ++unit) snapshot = unitSettled(unit);
     if (snapshot && pendingSnapshot.size() != guestBytes) pendingSnapshot.assign(static_cast<std::size_t>(guestBytes), std::byte{0});
     const auto stamp = GuestMemory::WriteWatched() ? GuestMemory::TrackerGeneration() : 0u;
