@@ -36,17 +36,12 @@ char16_t Latin1Unit(const StringView& string, unsigned index) {
     return string.is8Bit ? static_cast<const unsigned char*>(string.data)[index] : static_cast<const char16_t*>(string.data)[index];
 }
 
-std::unique_ptr<icu::BreakIterator> CharacterBreakIterator(const StringView& string) {
+std::unique_ptr<icu::BreakIterator> CharacterBreakIterator(const icu::UnicodeString& text) {
     UErrorCode status = U_ZERO_ERROR;
     std::unique_ptr<icu::BreakIterator> iterator(
         icu::BreakIterator::createCharacterInstance(icu::Locale::getRoot(), status));
     if (U_FAILURE(status) || !iterator)
         throw std::runtime_error("failed to create grapheme break iterator");
-    if (string.is8Bit)
-        throw std::invalid_argument("unexpected 8-bit grapheme input");
-    if (!string.data)
-        throw std::invalid_argument("null WTF character buffer");
-    icu::UnicodeString text(static_cast<const char16_t*>(string.data), string.length);
     iterator->setText(text);
     return iterator;
 }
@@ -65,7 +60,8 @@ unsigned APS5_VABI _ZN3WTF19numGraphemeClustersENS_10StringViewE(StringView stri
             numCRLF += Latin1Unit(string, i - 1) == '\r' && Latin1Unit(string, i) == '\n';
         return stringLength - numCRLF;
     }
-    std::unique_ptr<icu::BreakIterator> iterator(CharacterBreakIterator(string));
+    icu::UnicodeString text(static_cast<const char16_t*>(string.data), string.length);
+    std::unique_ptr<icu::BreakIterator> iterator(CharacterBreakIterator(text));
     unsigned clusters = 0;
     for (int32_t boundary = iterator->first(); boundary != icu::BreakIterator::DONE; boundary = iterator->next())
         ++clusters;
@@ -82,7 +78,8 @@ unsigned APS5_VABI _ZN3WTF30numCodeUnitsInGraphemeClustersENS_10StringViewEj(Str
             j += Latin1Unit(string, j) == '\r' && Latin1Unit(string, j + 1) == '\n';
         return j + (i < numGraphemeClusters);
     }
-    std::unique_ptr<icu::BreakIterator> iterator(CharacterBreakIterator(string));
+    icu::UnicodeString text(static_cast<const char16_t*>(string.data), string.length);
+    std::unique_ptr<icu::BreakIterator> iterator(CharacterBreakIterator(text));
     int32_t boundary = iterator->first();
     for (unsigned i = 0; i < numGraphemeClusters && boundary != icu::BreakIterator::DONE; ++i)
         boundary = iterator->next();
