@@ -7053,11 +7053,11 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
     return moved;
 }
 
-bool ShaderResources::movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry) const {
+bool ShaderResources::movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry, bool counted) const {
     static const bool enabled = std::getenv("APS5_NO_MOVED_BUFFERS_IN_PLACE") == nullptr;
     auto& counters = MovedInPlace();
     const auto refuse = [&] {
-        counters.refused.fetch_add(1, std::memory_order_relaxed);
+        if (counted) counters.refused.fetch_add(1, std::memory_order_relaxed);
         return false;
     };
     if (!enabled || context.hostImportAlignment == 0) return false;
@@ -7083,7 +7083,7 @@ bool ShaderResources::movedInPlace(Recorder& recorder, const Allocation& item, s
     entry.inPlace = import->buffer;
     entry.inPlaceOffset = offset - adjustment;
     entry.adjustment = adjustment;
-    counters.taken.fetch_add(1, std::memory_order_relaxed);
+    if (counted) counters.taken.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -7130,9 +7130,16 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
             const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
             if (written || empty || item.written) return refuse(MoveRefusal::Written);
             if (size > context.limits.maxStorageBufferRange) return refuse(MoveRefusal::Limit);
-            VkDescriptorBufferInfo view{};
-            std::uint64_t serial = 0;
-            const bool inPlace = item.adjustment == 0 && HostImportView(context, address, static_cast<std::size_t>(size), view, serial);
+            MovedBuffer entry{kept->allocations[element], address, static_cast<std::size_t>(size)};
+            bool inPlace = false;
+            if (item.adjustment == 0 && recorder == nullptr) {
+                VkDescriptorBufferInfo view{};
+                std::uint64_t serial = 0;
+                inPlace = HostImportView(context, address, static_cast<std::size_t>(size), view, serial);
+            } else if (item.adjustment == 0) {
+                inPlace = movedInPlace(*recorder, item, address, size, entry, false) && entry.adjustment == 0;
+                if (!inPlace) entry = MovedBuffer{kept->allocations[element], address, static_cast<std::size_t>(size)};
+            }
             const auto begin = address - item.adjustment;
             const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
             if (!inPlace && maxBytes != 0 && proof.bytes + bytes > maxBytes) return refuse(MoveRefusal::Limit);
@@ -7140,8 +7147,6 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
             const bool pending = recorder != nullptr ? recorder->PendingWriteOverlaps(begin, bytes) : Recorder::SnapshotWriteOverlaps(begin, bytes);
             const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{begin, begin + bytes}}};
             if (guestMemory.WritesOverlap(begin, bytes) || pending || StorageTexture::AnyPendingOverlaps(range) || AnyShadowedOverlaps(begin, bytes)) return refuse(MoveRefusal::Overlap);
-            MovedBuffer entry{kept->allocations[element], address, static_cast<std::size_t>(size)};
-            entry.dispatchInPlace = inPlace;
             moved.push_back(entry);
             ++proof.buffers;
             if (inPlace) ++proof.inPlace;
@@ -7226,16 +7231,6 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
             keep({begin, nullptr, override->inPlaceOffset, bytes, override->inPlace});
             continue;
         }
-        if (override != moved.end() && override->dispatchInPlace) {
-            VkDescriptorBufferInfo view{};
-            std::uint64_t serial = 0;
-            if (!HostImportView(context, override->address, override->size, view, serial)) return {};
-            const auto begin = override->address - item.adjustment;
-            if (result == nullptr) result = std::make_shared<DrawBindings>();
-            result->inPlace.push_back({index, view.buffer, view.offset, static_cast<std::size_t>(view.range)});
-            result->inPlaceReads.push_back({begin, begin + GuestBufferMemory::ViewBytes(override->size, item.adjustment)});
-            continue;
-        }
         std::uint64_t address = item.address;
         std::size_t size = item.size;
         if (override != moved.end()) {
@@ -7297,7 +7292,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         totalSnapshotBytes += bytes;
         CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
     }
-    if (selected.empty() && (result == nullptr || result->inPlace.empty()) && !rebound) return {};
+    if (selected.empty() && !rebound) return {};
     if (result == nullptr) result = std::make_shared<DrawBindings>();
     writeDrawSets(*result, selected, faultRecord);
     recorder.Keep(result);
@@ -7350,10 +7345,6 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
     auto& snapshotIndices = ShaderRecompiler::ThreadOwned(indicesSlot);
     snapshotIndices.assign(allocations.size(), selected.size());
     for (std::size_t index = 0; index < selected.size(); ++index) snapshotIndices[selected[index]] = index;
-    thread_local std::vector<std::size_t>* inPlaceSlot = nullptr;
-    auto& inPlaceIndices = ShaderRecompiler::ThreadOwned(inPlaceSlot);
-    inPlaceIndices.assign(allocations.size(), result.inPlace.size());
-    for (std::size_t index = 0; index < result.inPlace.size(); ++index) inPlaceIndices[result.inPlace[index].allocation] = index;
     auto nextWrite = writes.begin();
     for (const auto& binding : bindings) {
         const auto original = setOf(binding) == 0 ? _set : fragment.set;
@@ -7364,12 +7355,6 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
             const auto offset = static_cast<std::size_t>(write.pBufferInfo - descriptorBuffers.data());
             write.pBufferInfo = buffers.data() + offset;
             for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
-                const auto boundIndex = inPlaceIndices[binding.allocations[element]];
-                if (boundIndex != result.inPlace.size()) {
-                    const auto& bound = result.inPlace[boundIndex];
-                    buffers[offset + element] = wholeDwordRange({bound.buffer, bound.offset, bound.bytes});
-                    continue;
-                }
                 const auto snapshotIndex = snapshotIndices[binding.allocations[element]];
                 if (snapshotIndex == selected.size()) continue;
                 const auto& snapshot = result.snapshots[snapshotIndex];
@@ -7479,18 +7464,14 @@ void ShaderResources::WriteBack() {
     if (unaligned) std::rethrow_exception(unaligned);
 }
 
-void ShaderResources::MarkGpuWrites(Recorder& recorder, const DrawBindings* bindings) {
+void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     if (bda != nullptr && recorder.Device() == context.device) bda->NoteUse(recorder.OpenSerial());
     // The ranges this use reads in place through their host imports (read-only and written elements
     // alike, and an address-based build's whole leased heaps), before the writes: a CPU store into
     // one of them (the copy HLE) must not land before the recorded work read it.
     static const bool readOnlyLeaseSkip = std::getenv("APS5_NO_READ_ONLY_LEASE_SKIP") == nullptr;
     const auto kind = !guestMemory.HoldsLease() ? Recorder::ReadKind::DispatchElement : readOnlyLeaseSkip && usesBda && bdaReadOnly ? Recorder::ReadKind::AddressBasedReadOnly : Recorder::ReadKind::AddressBased;
-    if (bindings != nullptr && !bindings->inPlaceReads.empty()) {
-        auto reads = guestMemory.InPlaceReads();
-        reads.insert(reads.end(), bindings->inPlaceReads.begin(), bindings->inPlaceReads.end());
-        recorder.NotePendingReads(reads, kind);
-    } else if (auto split = guestMemory.SplitInPlaceReads()) {
+    if (auto split = guestMemory.SplitInPlaceReads()) {
         recorder.NotePendingReadList(std::move(split->space), kind);
         recorder.NotePendingReads(split->own, kind);
     } else {
