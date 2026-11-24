@@ -7077,6 +7077,8 @@ void drawInputMirrorTests(const Device& device) {
         return;
     }
     Require(firstMirror != nullptr && firstMirror != firstHost && !firstMirror->Mapped(), "a reused draw input came back without its device-local mirror");
+    const auto firstSized = CopyDrawInput(context, &cache, first, held, 1, Use::Vertex, 0, false, 0, held);
+    Require(firstSized.reused && firstSized.buffer == firstMirror, "a draw input mirror could not be reused for its binding range");
     Require(drawInputHolds(context, cache, firstMirror, first, held), "a draw input mirror does not hold the bytes of its snapshot");
     Require(reuse(first) == firstMirror, "a draw input mirror was made again");
     Require(use(3 * half + 8192, half + 4096), "a draw input mirror is not counted in the draw input budget");

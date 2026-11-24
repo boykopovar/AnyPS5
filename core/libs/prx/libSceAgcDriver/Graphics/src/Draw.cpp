@@ -1539,7 +1539,7 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
         constexpr bool owned = false;
 #endif
         if (owned && recorder->OwnedDrawInputEntries() != 0) copy.buffer = recorder->ReusableOwnedDrawInput(address, bytes, use, &copy.derived, from, &copy.lowest);
-        if (copy.buffer != nullptr && copy.buffer->Bytes().size() < bindingBytes) copy.buffer.reset();
+        if (copy.buffer != nullptr && copy.buffer->Size() < bindingBytes) copy.buffer.reset();
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;
@@ -1548,7 +1548,7 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
         copy.generation = GuestMemory::CollectWrites(address, bytes);
         if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived, 0, nullptr, from, &copy.lowest, !hostOnly);
         else if (owned) copy.owned = recorder->ArmOwnedDrawInput(address, bytes);
-        if (copy.buffer != nullptr && copy.buffer->Bytes().size() < bindingBytes) copy.buffer.reset();
+        if (copy.buffer != nullptr && copy.buffer->Size() < bindingBytes) copy.buffer.reset();
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;

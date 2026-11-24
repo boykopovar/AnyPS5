@@ -18,6 +18,7 @@ public:
     // Host-visible buffers only: a device-local one (properties without HOST_VISIBLE, the staging
     // shadows of GuestBufferMemory) has no mapping and its bytes move by GPU copies alone.
     std::span<std::byte> Bytes();
+    std::size_t Size() const { return size; }
     bool Mapped() const { return mapping != nullptr; }
     void Invalidate();
 
