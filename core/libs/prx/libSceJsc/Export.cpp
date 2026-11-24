@@ -467,10 +467,6 @@ int APS5_VABI _ZN3WTF6StringC2ENS_12ASCIILiteralE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF3URLC1ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector14InjectedScript14callFunctionOnERN3WTF6StringERKS2_S5_S5_bbRNS1_6RefPtrINS_8Protocol7Runtime12RemoteObjectENS1_13DumbPtrTraitsIS9_EEEERNS1_8OptionalIbEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -690,10 +686,6 @@ int APS5_VABI _ZN3JSC16callCustomSetterEPNS_14JSGlobalObjectENS_7JSValueEbPNS_8J
 }
 
 int APS5_VABI _ZNK3WTF8JSONImpl5Value8asStringERNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF3URL11setPasswordENS_10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
