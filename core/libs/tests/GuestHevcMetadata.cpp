@@ -898,6 +898,40 @@ void InvalidSeiAndSliceSyntax() {
         const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
         Require(metadata.unsupported.empty() && metadata.info.alternativeTransferPresent == 1 && metadata.info.preferredTransfer == 16, "valid prefix 147 and suffix 132 SEI positive control");
     }
+    for (const std::uint8_t payloadType : {std::uint8_t{4}, std::uint8_t{5}}) {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        const auto slice = findSlice(bytes);
+        std::vector<std::uint8_t> secondSlice(bytes.begin() + static_cast<std::ptrdiff_t>(slice.header), bytes.begin() + static_cast<std::ptrdiff_t>(slice.end));
+        Require(secondSlice.size() >= 3, "second slice payload");
+        secondSlice[2] &= 0x7fu;
+        bytes.insert(bytes.end(), {0, 0, 1, 0x4e, 1, payloadType, 1, 0, 0x80});
+        bytes.insert(bytes.end(), {0, 0, 1});
+        bytes.insert(bytes.end(), secondSlice.begin(), secondSlice.end());
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(metadata.unsupported.empty(), "prefix user-data SEI between two slices was rejected");
+    }
+    {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        const auto slice = findSlice(bytes);
+        std::vector<std::uint8_t> secondSlice(bytes.begin() + static_cast<std::ptrdiff_t>(slice.header), bytes.begin() + static_cast<std::ptrdiff_t>(slice.end));
+        Require(secondSlice.size() >= 3, "second slice payload for suffix check");
+        secondSlice[2] &= 0x7fu;
+        bytes.insert(bytes.end(), {0, 0, 1, 0x50, 1, 4, 1, 0, 0x80});
+        bytes.insert(bytes.end(), {0, 0, 1});
+        bytes.insert(bytes.end(), secondSlice.begin(), secondSlice.end());
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(!metadata.unsupported.empty(), "suffix SEI between two slices was accepted");
+    }
+    for (const std::uint8_t reservedType : {std::uint8_t{10}, std::uint8_t{22}}) {
+        Videodec2Hevc::State state;
+        const auto firstPicture = Videodec2Hevc::Parse_nid_no_patch(state, HevcMetadataFixture::Rich);
+        Require(firstPicture.unsupported.empty(), "rich fixture baseline picture failed");
+        const std::array<std::uint8_t, 6> reservedUnit{0, 0, 1, static_cast<std::uint8_t>(reservedType << 1), 1, 0xe0};
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, reservedUnit);
+        Require(metadata.unsupported.find("reserved") != std::string::npos, "reserved VCL NAL type after a picture was not rejected as reserved");
+    }
 }
 
 }
