@@ -213,10 +213,25 @@ def built(build):
 def compiled(build):
     sources = set()
     for database in ninja_outputs(build, "compdb"):
-        for entry in json.loads(database):
-            command = entry.get("command") or " ".join(entry.get("arguments", []))
+        records = json.loads(database)
+        if not isinstance(records, list):
+            raise ValueError("ninja -t compdb: expected an array of command objects")
+        for index, entry in enumerate(records):
+            context = f"ninja -t compdb: entry {index}"
+            if not isinstance(entry, dict):
+                raise ValueError(f"{context}: expected a command object")
+            command = entry.get("command")
+            if not command and "arguments" in entry:
+                arguments = entry["arguments"]
+                if not isinstance(arguments, list) or not all(isinstance(argument, str) for argument in arguments):
+                    raise ValueError(f"{context}: arguments must be a list of strings")
+                command = " ".join(arguments)
+            if not isinstance(command, str):
+                raise ValueError(f"{context}: expected a command string or arguments list")
             if not COMPILE_FLAG.search(command):
                 continue
+            if not all(isinstance(entry.get(key), str) and entry[key] for key in ("file", "directory")):
+                raise ValueError(f"{context}: file and directory must be nonempty strings")
             file = Path(entry["file"])
             if not file.is_absolute():
                 file = Path(entry["directory"]) / file

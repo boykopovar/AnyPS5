@@ -19,6 +19,12 @@ CXX_BUILD_TOOLS = shutil.which("cmake") and shutil.which("ninja") and (
 
 
 class RegistrationJsonTests(unittest.TestCase):
+    def test_compiled_reports_which_ninja_entry_is_malformed(self):
+        database = json.dumps([{"directory": ".", "file": "main.cpp", "arguments": 1}])
+        with patch.object(check_test_registration, "ninja_outputs", return_value=[database]):
+            with self.assertRaisesRegex(ValueError, "ninja -t compdb: entry 0: arguments"):
+                check_test_registration.compiled(Path("."))
+
     @unittest.skipUnless(CXX_BUILD_TOOLS, "CMake, Ninja and a C++ compiler are required")
     def test_multi_config_report_checks_release_executables_and_sources(self):
         with tempfile.TemporaryDirectory() as directory:
