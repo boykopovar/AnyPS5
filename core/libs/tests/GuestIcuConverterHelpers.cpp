@@ -138,6 +138,45 @@ void DefaultConverterNames() {
     u_flushDefaultConverter_nid_postfix();
 }
 
+void DefaultEncodingCopies() {
+    ucnv_setDefaultName_nid_postfix("UTF-8");
+    std::array<char, 12> bytes;
+    bytes.fill('@');
+    Require(u_austrcpy_nid_postfix(bytes.data(), u"\u00e9\U0001f600") == bytes.data(), "unbounded copy returns the destination");
+    Require(std::string_view(bytes.data(), 7) == std::string_view("\xc3\xa9\xf0\x9f\x98\x80", 7) && bytes[7] == '@',
+            "UTF-8 copy writes multibyte characters and one terminator");
+
+    for (std::int32_t count : {1, 2, 3, 10}) {
+        bytes.fill('@');
+        Require(u_austrncpy_nid_postfix(bytes.data(), u"\u00e9", count) == bytes.data(), "bounded copy returns the destination");
+        const auto payload = std::min<std::int32_t>(count, 2);
+        Require(std::memcmp(bytes.data(), "\xc3\xa9", payload) == 0, "bounded copy retains the converted bytes that fit");
+        if (count > payload) Require(bytes[payload] == '\0', "bounded copy terminates when there is space");
+        Require(bytes[std::min<std::int32_t>(count, 3)] == '@', "bounded copy leaves the rest of the destination intact");
+    }
+
+    const std::array<char16_t, 1> noTerminator{u'\u00e9'};
+    bytes.fill('@');
+    u_austrncpy_nid_postfix(bytes.data(), noTerminator.data(), 1);
+    Require(static_cast<unsigned char>(bytes[0]) == 0xc3 && bytes[1] == '@', "UTF-16 input may end at the count");
+
+    const std::u16string longText(3000, u'\u00e9');
+    std::string longResult(6002, '@');
+    u_austrcpy_nid_postfix(longResult.data(), longText.c_str());
+    for (std::size_t offset = 0; offset < 6000; offset += 2)
+        Require(std::memcmp(longResult.data() + offset, "\xc3\xa9", 2) == 0, "multiple chunks retain every character");
+    Require(longResult[6000] == '\0' && longResult[6001] == '@', "multiple chunks end with one terminator");
+
+    if constexpr (!U_CHARSET_IS_UTF8) {
+        ucnv_setDefaultName_nid_postfix("ISO-8859-1");
+        bytes.fill('@');
+        u_austrncpy_nid_postfix(bytes.data(), u"\u00e9", 3);
+        Require(static_cast<unsigned char>(bytes[0]) == 0xe9 && bytes[1] == '\0' && bytes[2] == '@',
+                "the copy follows a newly selected default encoding");
+    }
+    ucnv_setDefaultName_nid_postfix(nullptr);
+}
+
 char Ebcdic(unsigned char value) {
     if (value >= 'a' && value <= 'i') return static_cast<char>(0x81 + value - 'a');
     if (value >= 'j' && value <= 'r') return static_cast<char>(0x91 + value - 'j');
@@ -356,6 +395,7 @@ void SignatureGuestPointers() {
 int main() {
     DefaultConverterLifecycle();
     DefaultConverterNames();
+    DefaultEncodingCopies();
     NameMatching();
     Signatures();
     SignatureGuestPointers();

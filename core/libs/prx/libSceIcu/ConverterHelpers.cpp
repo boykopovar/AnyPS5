@@ -2,13 +2,16 @@
 #include "prx/libc/include/General.hpp"
 #include "unicode/ucnv.h"
 #include "ustr_cnv.h"
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_set>
 
@@ -38,6 +41,53 @@ std::string CopyConverterName(const char* source, const char* caller) {
         if (error != GuestNameTooLong) break;
     }
     NotImplemented_nid_no_patch(caller);
+}
+
+std::u16string CopyConverterInput(const char16_t* source, std::size_t maxUnits, const char* caller) {
+    constexpr std::size_t pageBytes = 4096;
+    std::array<char16_t, pageBytes / sizeof(char16_t)> chunk;
+    std::u16string input;
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    while (input.size() < maxUnits) {
+        if (input.size() > (std::numeric_limits<std::uintptr_t>::max() - base) / sizeof(char16_t))
+            NotImplemented_nid_no_patch(caller);
+        const auto address = base + input.size() * sizeof(char16_t);
+        const auto pageUnits = std::max<std::size_t>(1, (pageBytes - address % pageBytes) / sizeof(char16_t));
+        const auto units = std::min(maxUnits - input.size(), pageUnits);
+        CopyIn(chunk.data(), reinterpret_cast<const void*>(address), units * sizeof(char16_t), caller);
+        const auto end = std::find(chunk.begin(), chunk.begin() + units, char16_t{});
+        input.append(chunk.data(), static_cast<std::size_t>(end - chunk.begin()));
+        if (end != chunk.begin() + units) break;
+    }
+    return input;
+}
+
+std::string EncodeDefault(const std::u16string& input, std::optional<std::size_t> count, const char* caller) {
+    if (input.empty()) return std::string(1, '\0');
+    const auto capacity = count.value_or(0x0fffffff);
+
+    const std::lock_guard lock(DefaultConverterMutex);
+    UErrorCode status = U_ZERO_ERROR;
+    std::unique_ptr<UConverter, decltype(&u_releaseDefaultConverter)> converter(
+        u_getDefaultConverter(&status), u_releaseDefaultConverter);
+    if (U_FAILURE(status) || !converter) return std::string(1, '\0');
+    ucnv_resetFromUnicode(converter.get());
+
+    std::string output;
+    std::array<char, 4096> chunk;
+    const char16_t* current = input.data();
+    const char16_t* end = current + input.size();
+    do {
+        status = U_ZERO_ERROR;
+        auto* next = chunk.data();
+        const auto available = std::min(chunk.size(), capacity - output.size());
+        ucnv_fromUnicode(converter.get(), &next, chunk.data() + available, &current, end, nullptr, true, &status);
+        output.append(chunk.data(), static_cast<std::size_t>(next - chunk.data()));
+    } while (status == U_BUFFER_OVERFLOW_ERROR && output.size() < capacity);
+    if (!count && output.size() == capacity) NotImplemented_nid_no_patch(caller);
+    if (output.size() < capacity) output.push_back('\0');
+    if (count && U_FAILURE(status) && status != U_BUFFER_OVERFLOW_ERROR) output.front() = '\0';
+    return output;
 }
 
 bool IsDigit(unsigned char value, bool ebcdic) {
@@ -152,6 +202,30 @@ void APS5_VABI ucnv_setDefaultName_nid_postfix(const char* name) {
     const std::lock_guard lock(DefaultConverterMutex);
     ucnv_setDefaultName(name ? copied.c_str() : nullptr);
     if (!name) u_flushDefaultConverter();
+}
+
+char* APS5_VABI u_austrcpy_nid_postfix(char* destination, const char16_t* source) {
+    if (!destination || !source) APS5_INVALID_ARG_EX;
+    constexpr auto maxUnits = static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+    const auto input = CopyConverterInput(source, maxUnits, __func__);
+    if (input.size() == maxUnits) NotImplemented_nid_no_patch(__func__);
+    const auto output = EncodeDefault(input, std::nullopt, __func__);
+    CopyOut(destination, output.data(), output.size(), __func__);
+    return destination;
+}
+
+char* APS5_VABI u_austrncpy_nid_postfix(char* destination, const char16_t* source, std::int32_t count) {
+    if (count == 0) return destination;
+    if (!destination || (count > 0 && !source)) APS5_INVALID_ARG_EX;
+    if (count < 0) {
+        const char terminator = '\0';
+        CopyOut(destination, &terminator, sizeof(terminator), __func__);
+        return destination;
+    }
+    const auto units = static_cast<std::size_t>(count);
+    const auto output = EncodeDefault(CopyConverterInput(source, units, __func__), units, __func__);
+    CopyOut(destination, output.data(), output.size(), __func__);
+    return destination;
 }
 
 int APS5_VABI ucnv_compareNames_nid_postfix(const char* left, const char* right) {
