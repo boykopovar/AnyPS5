@@ -125,6 +125,10 @@ void Run(AgcDriver::VulkanDevice& device, const Case& test) {
     }
 }
 
+bool StorageReadable(const ShaderRecompiler::SpirvTarget& target, std::uint32_t format) {
+    return TargetHasCapability(target, spv::CapabilityStorageImageReadWithoutFormat) && ((target.storageReadFormats[format / 64u] >> (format % 64u)) & 1u) != 0u;
+}
+
 }
 
 int main() {
@@ -139,7 +143,17 @@ int main() {
             {"16_16_16_16_FLOAT", Format16x4Float, 4u, Data::Half, Zero},
             {"2_10_10_10_UINT", Format2_10_10_10UInt, 4u, Data::Small, Zero},
         }};
-        for (const auto& test : cases) Run(*device, test);
+        const auto target = device->Target();
+        std::size_t ran = 0;
+        for (const auto& test : cases) {
+            if (!StorageReadable(target, test.format)) {
+                std::printf("skipped %s, the device does not read it through a storage image without a format\n", test.name);
+                continue;
+            }
+            Run(*device, test);
+            ++ran;
+        }
+        if (ran == 0) return VulkanTestSkipped;
         std::puts("image load after store tests passed");
         return 0;
     } catch (const std::exception& error) {
