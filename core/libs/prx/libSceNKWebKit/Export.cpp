@@ -2403,10 +2403,6 @@ int APS5_VABI _ZN7WebCore14DocumentLoader31fromTemporaryDocumentIdentifierEN3WTF
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore12SettingsBase20setCursiveFontFamilyERKN3WTF10AtomStringE11UScriptCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore4Page16setActivityStateEN3WTF9OptionSetINS_13ActivityState4FlagEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2914,10 +2910,6 @@ int APS5_VABI _ZN7WebCore24FrameDestructionObserver12observeFrameEPNS_5FrameE() 
 }
 
 int APS5_VABI _ZN7WebCore12ISOWebVTTCueC2EON3WTF9MediaTimeES3_ONS1_6StringES5_S5_S5_S5_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore12SettingsBase21setStandardFontFamilyERKN3WTF10AtomStringE11UScriptCode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -3726,10 +3718,6 @@ int APS5_VABI _ZN7WebCore11DisplayList16DrawLinesForTextC2ERKNS_10FloatPointERKN
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore12SettingsBase22setSansSerifFontFamilyERKN3WTF10AtomStringE11UScriptCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore12SharedBuffer5clearEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4243,10 +4231,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_V5NAmXVlwlQ_nid_no_patch() {
 APS5_EXPORT("V5NAmXVlwlQ", libSceNKWebKitLegacyUnknown_V5NAmXVlwlQ_nid_no_patch);
 
 int APS5_VABI _ZN7WebCore9DOMWindowD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore12SettingsBase18setFixedFontFamilyERKN3WTF10AtomStringE11UScriptCode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -4766,10 +4750,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_ZDMkZOif_plus_yo_nid_no_patch() {
 APS5_EXPORT("ZDMkZOif+yo", libSceNKWebKitLegacyUnknown_ZDMkZOif_plus_yo_nid_no_patch);
 
 int APS5_VABI _ZThn64_NK7WebCore9FrameView21minimumScrollPositionEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore12SettingsBase18setSerifFontFamilyERKN3WTF10AtomStringE11UScriptCode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -5376,10 +5356,6 @@ int APS5_VABI _ZNK7WebCore24RotateTransformOperation5applyERNS_20TransformationM
 }
 
 int APS5_VABI _ZNK7WebCore18TextureMapperLayer13textureMapperEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore12SettingsBase23setPictographFontFamilyERKN3WTF10AtomStringE11UScriptCode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6203,10 +6179,6 @@ int APS5_VABI _ZNK7WebCore24CoordinatedGraphicsLayer24dumpAdditionalPropertiesER
 }
 
 int APS5_VABI _ZN7WebCore14FrameSelection7setBaseERKNS_8PositionENS_9EAffinityENS_14EUserTriggeredE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore12SettingsBase20setFantasyFontFamilyERKN3WTF10AtomStringE11UScriptCode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -14473,18 +14445,6 @@ int APS5_VABI _ZN7WebCore12PrintContextD2Ev() {
 }
 
 int APS5_VABI _ZN7WebCore12RenderObject16paintingRootRectERNS_10LayoutRectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore12SettingsBase26setMinimumDOMTimerIntervalEN3WTF7SecondsE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -25252,34 +25212,6 @@ int APS5_VABI _ZNK7WebCore12RenderObject7childAtEj() {
 }
 
 int APS5_VABI _ZNK7WebCore12RenderWidget14windowClipRectEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore12SettingsBase15fixedFontFamilyE11UScriptCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore12SettingsBase15serifFontFamilyE11UScriptCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore12SettingsBase17cursiveFontFamilyE11UScriptCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore12SettingsBase17fantasyFontFamilyE11UScriptCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore12SettingsBase18standardFontFamilyE11UScriptCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore12SettingsBase19sansSerifFontFamilyE11UScriptCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore12SettingsBase20pictographFontFamilyE11UScriptCode() {
     NotImplemented_nid_no_patch(__func__);
 }
 

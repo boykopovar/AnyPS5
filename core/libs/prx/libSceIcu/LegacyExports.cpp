@@ -1114,10 +1114,6 @@ int APS5_VABI _ZN6icu_6813SimpleFactoryC1EPNS_7UObjectERKNS_13UnicodeStringEa_ni
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_getDisplayScript_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6817CanonicalIterator4nextEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
