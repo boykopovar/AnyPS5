@@ -829,6 +829,17 @@ class CTestIndexFileTests(unittest.TestCase):
             self.assertIn("No tests were found", result.stderr)
             self.assertNotEqual(result.returncode, 0)
 
+    def test_ctest_fails_if_saved_indices_match_no_registered_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text(
+                f'add_test(available "{Path(sys.executable).as_posix()}" --version)\n', encoding="utf-8")
+            (root / "select.tests").write_text("0,0,0,2\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
+                                    capture_output=True, text=True)
+            self.assertIn("No tests were found", result.stderr)
+            self.assertNotEqual(result.returncode, 0)
+
     def test_empty_selection_can_succeed_with_registered_tests(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -889,6 +900,23 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(leaves, [])
         self.assertEqual(count, 1)
         build.tests.assert_called_once_with()
+
+    def test_selection_of_only_disabled_tests_runs_nothing_and_succeeds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text(
+                f'add_test(off "{Path(sys.executable).as_posix()}" --version)\n'
+                'set_tests_properties(off PROPERTIES DISABLED TRUE)\n', encoding="utf-8")
+            build = object.__new__(select_tests.Build)
+            build.path = str(root)
+            build.source = str(root)
+            with mock.patch.object(build, "leaves", return_value=[]):
+                run, targets, total = select_tests.plan(build, {"tests": {"off": {}}}, {"off"})
+            self.assertEqual((run, targets, total), ([], [], 1))
+            (root / "select.tests").write_text(select_tests.CTEST_INDEX_PREFIX + "\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 class MissingCommandTests(unittest.TestCase):

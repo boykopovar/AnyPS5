@@ -19,6 +19,7 @@ FULL = re.compile(r"^CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/work
                   r"|^3rdparty/|^cmake/|^\.gitmodules$|^tools/select_tests\.py$")
 LOCAL = re.compile(r"(^|/)CMakeLists\.txt$|\.cmake$")
 BATCH = 20000
+CTEST_INDEX_PREFIX = "0,0,0,"
 
 
 class Build:
@@ -341,13 +342,18 @@ def ctest_index_file(indices):
         yield str(path)
 
 
+def disabled(test):
+    return any(p.get("name") == "DISABLED" and p.get("value") is True for p in test.get("properties") or [])
+
+
 def plan(build, graph, picked):
     _, listed = build.tests()
-    run = [i for i, t in enumerate(listed, 1) if t["name"] in picked or t["name"] not in graph["tests"]]
+    run = [i for i, t in enumerate(listed, 1)
+           if not disabled(t) and (t["name"] in picked or t["name"] not in graph["tests"])]
     if not run:
         skip = {build.target(t) for t in listed} - {None}
         return [], [t for t in build.leaves() if t not in skip], len(listed)
-    with ctest_index_file("0,0,0," + ",".join(map(str, run))) as index_file:
+    with ctest_index_file(CTEST_INDEX_PREFIX + ",".join(map(str, run))) as index_file:
         _, selected = build.tests("-I", index_file)
     names = {t["name"] for t in selected}
     run = [i for i, t in enumerate(listed, 1) if t["name"] in names]
@@ -395,6 +401,8 @@ def main(argv=None):
             return subprocess.run([*command, "--no-tests=error", *args.arguments]).returncode
         except (OSError, UnicodeDecodeError) as error:
             parser.error(f"{selected}: {error}")
+        if indices != CTEST_INDEX_PREFIX:
+            command.append("--no-tests=error")
         with ctest_index_file(indices) as index_file:
             return subprocess.run([*command, *args.arguments, "-I", index_file]).returncode
     if args.command == "explain":
@@ -441,7 +449,7 @@ def main(argv=None):
     run, targets, total = plan(build, graph, picked)
     Path(build.path, "select.ninja").write_text("include build.ninja\nbuild selected: phony "
                                                 + " ".join(escape(t) for t in targets) + "\n", encoding=build.encoding)
-    Path(build.path, "select.tests").write_text("0,0,0," + ",".join(map(str, run)) + "\n", encoding="utf-8")
+    Path(build.path, "select.tests").write_text(CTEST_INDEX_PREFIX + ",".join(map(str, run)) + "\n", encoding="utf-8")
     print(f"selected {len(run)}/{total} tests, {len(targets)} build targets")
     return 0
 
