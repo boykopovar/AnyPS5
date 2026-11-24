@@ -5,7 +5,6 @@
 #include "prx/libSceNpMatching2/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 
