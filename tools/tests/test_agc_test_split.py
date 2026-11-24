@@ -401,5 +401,28 @@ class SubjectNameTests(unittest.TestCase):
         self.assertEqual(facts.test_patterns, {'t${Y}'})
 
 
+class CommandAndUnitTests(unittest.TestCase):
+    def test_command_refactor_rewrites_the_lists_file_once(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / LISTS).parent.mkdir(parents=True)
+            (root / LISTS).write_text(original(), encoding="utf-8")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                agc_test_split.command_refactor(root)
+            self.assertEqual(output.getvalue().strip(), LISTS)
+            self.assertIn("function(agc_add_default_test ", (root / LISTS).read_text(encoding="utf-8"))
+            with self.assertRaises(SystemExit):
+                agc_test_split.command_refactor(root)
+
+    def test_unit_of_test_name_finds_the_unit_a_test_belongs_to(self):
+        plan = agc_test_split.Plan(original(blocks=(ALPHA, BETA)), EXECUTION)
+        self.assertEqual(plan.unit_of_test_name("agc_alpha"), "agc_alpha_tests")
+        self.assertEqual(plan.unit_of_test_name("agc_beta_one"), "agc_beta_tests")
+        self.assertIsNone(plan.unit_of_test_name("agc_unknown_case"))
+
+
 if __name__ == "__main__":
     unittest.main()
