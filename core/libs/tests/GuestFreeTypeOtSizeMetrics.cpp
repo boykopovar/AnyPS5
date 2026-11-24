@@ -134,6 +134,9 @@ void RequestMetrics() {
     Require(Equals(Request(0, -16 * 64, 8 * 64, 0, 0), 65520, 8, -32768, 16384, 512, -128, 576, -1280), "negative widths keep their sign and truncate the ppem");
     const auto resolvedNegative = Request(0, -12 * 64, 12 * 64, 96, 96);
     Require(resolvedNegative.x_scale == -32736 && resolvedNegative.y_scale == 32768, "negative resolved sizes truncate before scaling");
+    if constexpr (sizeof(FT_Long) == sizeof(std::int32_t)) {
+        Require(Invalid([] { Request(0, std::int64_t{1} << 30, std::int64_t{1} << 30, 300, 300); }), "resolved sizes outside FT_Long throw");
+    }
     Require(Equals(Request(0, 0, 0, 0, 0), 0, 0, 0, 0, 0, 0, 0, 0), "zero dimensions clear scalable metrics");
 
     for (const std::uint32_t type : {std::uint32_t{5}, std::numeric_limits<std::uint32_t>::max()}) {
