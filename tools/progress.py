@@ -7,6 +7,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 import textwrap
+from concurrent.futures import ProcessPoolExecutor
 from fractions import Fraction
 from html import escape
 from pathlib import Path
@@ -853,7 +854,12 @@ def summarize(groups):
 
 
 def collect_libraries():
-    return summarize([scan_library(p) for p in sorted(PRX.iterdir()) if p.is_dir()])
+    dirs = [p for p in sorted(PRX.iterdir()) if p.is_dir()]
+    workers = min(os.cpu_count() or 1, len(dirs))
+    if workers > 1 and len(dirs) > 2:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            return summarize(list(executor.map(scan_library, dirs)))
+    return summarize([scan_library(p) for p in dirs])
 
 
 def select_libraries(libraries, modules):

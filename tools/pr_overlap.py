@@ -350,16 +350,32 @@ def base_commit(base):
     return git("ls-remote", "--exit-code", f"https://github.com/{REPO}.git", f"refs/heads/{base}").split()[0]
 
 
-def fetch_heads(base_sha, prs):
+def missing_commits(commits):
+    try:
+        out = subprocess.run(
+            ["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+            cwd=_repository_root(), input="\n".join(commits) + "\n",
+            capture_output=True, text=True, check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return list(commits)
+    present = {line.split()[0] for line in out.splitlines() if line.endswith(" commit")}
+    return [commit for commit in commits if commit not in present]
+
+
+def fetch_heads(base_sha, prs, check_existing=False):
     remote = f"https://github.com/{REPO}.git"
     commits = [base_sha] + [pr["sha"] for pr in prs.values()]
+    if check_existing:
+        commits = missing_commits(commits)
     for start in range(0, len(commits), FETCH_REFS):
         batch = commits[start:start + FETCH_REFS]
         try:
             git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *batch)
         except subprocess.CalledProcessError:
             fetch_each(remote, batch, base_sha, prs)
-        progress(f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
+        progress(f"fetched {min(start + FETCH_REFS, len(commits))}/{len(commits)} missing commits" if check_existing
+                 else f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
     for pr in prs.values():
         pr["ref"] = pr["sha"]
     return base_sha
@@ -1091,7 +1107,7 @@ def main(argv=None):
         prs = open_prs(args.base)
         BASE_REF = base_commit(args.base)
         branch_sha = resolve_branch(args.branch) if args.branch else None
-        fetch_heads(BASE_REF, prs)
+        fetch_heads(BASE_REF, prs, check_existing=bool(args.names))
         if args.names:
             found = pull_requests_with(args.names, prs, args.jobs)
             status = main_status(args.names, BASE_REF)
