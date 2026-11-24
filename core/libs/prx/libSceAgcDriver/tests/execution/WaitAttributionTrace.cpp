@@ -19,6 +19,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <iostream>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -39,7 +40,7 @@ constexpr std::string_view ComputeQueue = "queue worker 0x20";
 
 alignas(256) std::array<std::uint32_t, 15> SpinCode{0xf4080200u, 0xfa000000u, 0xbe840381u, 0x9304ff04u, 0x0019660du, 0x8004ff04u, 0x3c6ef35fu, 0x80828102u, 0xbf078002u, 0xbf85fff9u, 0xbf8cc07fu, 0x7e000204u, 0xe0700000u, 0x80020000u, 0xbf810000u};
 
-constexpr std::array<std::string_view, 15> DispatchDrainSites{"msaa_clear", "htile_patch", "not_candidate", "memory_value_fill", "cache_miss", "cache_unchecked", "verify_data", "reads_queued", "writes_unbounded", "no_recipe", "not_plain", "item_not_plain", "item_reads_queued", "item_writes_unbounded", "fill_inputs"};
+constexpr std::string_view DrainScopePrefix = "DrawPipeline.Drain.";
 
 struct Slot {
     alignas(256) std::array<std::uint32_t, 4> spinOutput{};
@@ -160,33 +161,74 @@ std::uint64_t Exits(std::string_view thread, std::string_view stage) {
     return Totals(thread, [&](std::string_view scope, std::string_view name) { return scope == BlockedScope && name == stage; });
 }
 
-std::uint64_t DispatchDrains() {
-    return Totals(QueueZero, [](std::string_view scope, std::string_view name) {
-        return scope == "DrawPipeline.Drain.packet" && std::find(DispatchDrainSites.begin(), DispatchDrainSites.end(), name) != DispatchDrainSites.end();
-    });
+std::map<std::string, std::uint64_t> WorkerDrains() {
+    for (std::uint32_t tries = 0; tries < 1000; ++tries) {
+        const auto threads = AgcDriver::PerformanceTrace::ThreadTotals();
+        if (!threads) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+        std::map<std::string, std::uint64_t> drains;
+        for (const auto& entry : *threads) {
+            if (entry.name != QueueZero) continue;
+            for (const auto& total : entry.totals) {
+                if (!std::string_view(total.scope).starts_with(DrainScopePrefix)) continue;
+                drains[std::string(total.scope) + (total.stage != nullptr ? std::string(".") + total.stage : std::string())] += total.count;
+            }
+        }
+        return drains;
+    }
+    throw std::runtime_error("wait attribution: the trace totals stayed locked");
 }
 
-bool DispatchDrainAttempt(Slot& slot, std::uint32_t attempt) {
+std::uint64_t Sum(const std::map<std::string, std::uint64_t>& drains) {
+    std::uint64_t sum = 0;
+    for (const auto& [name, count] : drains) sum += count;
+    return sum;
+}
+
+void DispatchDrainAttempt(Slot& slot, std::uint32_t attempt) {
     using AgcDriver::DriverDetail::DrawPipeline;
-    const auto before = DispatchDrains();
+    auto& pipeline = DrawPipeline::Queue0();
+    const auto before = WorkerDrains();
+    const auto waitsBefore = pipeline.DrainWaits();
     std::atomic<bool> release{false};
-    DrawPipeline::Queue0().Enqueue([&release] {
-        const auto start = std::chrono::steady_clock::now();
-        while (!release.load(std::memory_order_acquire) && std::chrono::steady_clock::now() - start < std::chrono::seconds(2)) std::this_thread::sleep_for(std::chrono::microseconds(100));
-    }, {});
     slot.spinDescriptor = {Low(slot.spinOutput.data()), High(slot.spinOutput.data()) & 0xffffu, sizeof(slot.spinOutput), 0x31016facu};
+    pipeline.Enqueue([&release] {
+        const auto start = std::chrono::steady_clock::now();
+        while (!release.load(std::memory_order_acquire) && std::chrono::steady_clock::now() - start < std::chrono::seconds(5)) std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }, {});
     std::vector<std::uint32_t> graphics;
     Dispatch(graphics, SpinCode.data(), {Low(slot.spinDescriptor.data()), High(slot.spinDescriptor.data()), 64});
     WriteData(graphics, &slot.graphicsDone, 2000 + attempt);
     SubmitGraphics(graphics);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const auto submitted = std::chrono::steady_clock::now();
+    while (pipeline.DrainWaits() == waitsBefore && std::chrono::steady_clock::now() - submitted < std::chrono::seconds(1)) std::this_thread::sleep_for(std::chrono::microseconds(100));
+    const bool waited = pipeline.DrainWaits() != waitsBefore;
+    const auto queuedBehind = pipeline.Outstanding();
     release.store(true, std::memory_order_release);
     AwaitValue(slot.graphicsDone, 2000 + attempt, "the queue 0 dispatch behind a queued item");
     AgcDriverWaitIdle_nid_postfix();
-    DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Submission);
-    const bool attributed = DispatchDrains() > before;
-    std::cout << "dispatch drain attempt " << attempt << ": attributed to a dispatch site " << attributed << '\n';
-    return attributed;
+    if (!waited) {
+        std::cout << "dispatch drain attempt " << attempt << ": queue 0 took no drain; " << queuedBehind << " items were queued at the release\n";
+        Require(queuedBehind >= 2, "queue 0 neither drained for a queued item nor queued its dispatch submission behind it");
+        return;
+    }
+    auto after = WorkerDrains();
+    for (std::uint32_t tries = 0; tries < 2000 && Sum(after) == Sum(before); ++tries) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        after = WorkerDrains();
+    }
+    std::string recorded;
+    for (const auto& [name, count] : after) {
+        const auto old = before.find(name);
+        const auto added = count - (old != before.end() ? old->second : 0);
+        if (added == 0) continue;
+        recorded += " " + name + " x" + std::to_string(added);
+        Require(name.find('.', DrainScopePrefix.size()) != std::string::npos, "a drain on queue worker 0x0 was recorded without a site: " + name);
+    }
+    std::cout << "dispatch drain attempt " << attempt << ": drains recorded on queue worker 0x0:" << (recorded.empty() ? std::string(" none") : recorded) << '\n';
+    Require(!recorded.empty(), "a drain on queue worker 0x0 waited for a queued item and recorded no DrawPipeline.Drain slice");
 }
 
 std::uint64_t ExitsByComputeQueue() {
@@ -251,9 +293,7 @@ int main() {
         if (AgcDriver::DriverDetail::DrawPipeline::Depth() == 0) {
             std::cout << "pipelined draws off: drains inside a dispatch not tested\n";
         } else {
-            bool drained = false;
-            for (std::uint32_t attempt = 0; attempt < Attempts && !drained; ++attempt) drained = DispatchDrainAttempt(slot, attempt);
-            Require(drained, "no drain that queue 0 took inside a dispatch behind a queued item was reported as DrawPipeline.Drain.packet.<dispatch site>");
+            for (std::uint32_t attempt = 0; attempt < Attempts; ++attempt) DispatchDrainAttempt(slot, attempt);
         }
         AgcDriverShutdown_nid_postfix();
         std::cout << "wait attribution trace test passed\n";
