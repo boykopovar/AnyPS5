@@ -192,15 +192,22 @@ std::size_t APS5_VABI JSStringGetUTF8CString_nid_postfix(const GuestJSString* st
         return true;
     };
     const auto count = string->characters.size() - 1;
+    bool failed = false;
     for (std::size_t index = 0; index < count; ++index) {
         std::uint32_t codepoint = string->characters[index];
         if (codepoint >= 0xD800 && codepoint <= 0xDBFF) {
-            if (index + 1 == count) break;
+            const bool paired = index + 1 < count && string->characters[index + 1] >= 0xDC00 && string->characters[index + 1] <= 0xDFFF;
+            if (!paired) {
+                failed = true;
+                break;
+            }
             const auto low = string->characters[index + 1];
-            if (low < 0xDC00 || low > 0xDFFF) break;
             codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + low - 0xDC00;
             ++index;
-        } else if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) break;
+        } else if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) {
+            failed = true;
+            break;
+        }
         const std::size_t bytes = codepoint < 0x80 ? 1 : codepoint < 0x800 ? 2 : codepoint < 0x10000 ? 3 : 4;
         if (bytes > bufferSize - 1 - written - pending) break;
         if (bytes > staging.size() - pending && !flush()) return 0;
@@ -215,7 +222,7 @@ std::size_t APS5_VABI JSStringGetUTF8CString_nid_postfix(const GuestJSString* st
     }
     if (pending == staging.size() && !flush()) return 0;
     staging[pending++] = '\0';
-    return flush() ? written : 0;
+    return flush() && !failed ? written : 0;
 }
 
 bool APS5_VABI JSStringIsEqual(const GuestJSString* first, const GuestJSString* second) {
