@@ -190,7 +190,7 @@ int APS5_VABI libwebrtcUnknown14(void);
 int APS5_VABI _ZNK6webrtc19I420BufferInterface11ChromaWidthEv_nid_postfix(const void* buffer);
 int APS5_VABI _ZNK6webrtc19I420BufferInterface12ChromaHeightEv_nid_postfix(const void* buffer);
 const void* APS5_VABI _ZNK6webrtc16VideoFrameBuffer7GetI420Ev_nid_postfix(const void*);
-int APS5_VABI _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(void);
+WebRtcVideoFrame* APS5_VABI _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(WebRtcVideoFrame* result, WebRtcVideoFrameBuilder* builder);
 WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder22set_video_frame_bufferERKNS_13scoped_refptrINS_16VideoFrameBufferEEE_nid_postfix(WebRtcVideoFrameBuilder* builder, void* const* buffer);
 int APS5_VABI _ZNK6webrtc10VideoFrame5widthEv_nid_postfix(const WebRtcVideoFrameDimensions* frame);
 int APS5_VABI _ZNK6webrtc10VideoFrame6heightEv_nid_postfix(const WebRtcVideoFrameDimensions* frame);

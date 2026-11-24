@@ -1,6 +1,8 @@
 import csv
 import hashlib
 import json
+import os
+from unittest.mock import patch
 import subprocess
 import sys
 import tempfile
@@ -76,6 +78,31 @@ class PresentMonCompareTests(unittest.TestCase):
 
     def compare(self, data):
         return presentmon_compare.compare_presentmon_series(*self.write_series(data))
+
+    def test_pinned_capture_rejects_changes_during_a_read(self):
+        path = self.root / "capture.csv"
+        path.write_bytes(b"snapshot")
+        digest = sha256(path)
+        initial = path.stat()
+        os.utime(path, ns=(initial.st_atime_ns, initial.st_mtime_ns - 2_000_000_000))
+        updated = path.stat()
+        with patch.object(presentmon_compare.os, "fstat", side_effect=[initial, updated]):
+            with self.assertRaisesRegex(ValueError, "changed while reading"):
+                presentmon_compare.read_pinned(path, digest, 100)
+
+    def test_plan_rejects_a_capture_path_with_an_embedded_nul(self):
+        plan = self.series(self.captured_pair())
+        plan["runs"][0]["capture"] = "A\0.csv"
+        with self.assertRaisesRegex(ValueError, r"runs\[0\]\.capture contains a NUL"):
+            presentmon_compare.read_presentmon_plan(json.dumps(plan).encode("utf-8"))
+
+    def test_csv_accepts_blank_lines_before_the_header(self):
+        run = self.captured_pair()[0]
+        raw = (self.root / run["capture"]).read_bytes()
+        bom, csv_data = raw[:3], raw[3:]
+        baseline = list(presentmon_compare.presentmon_stream(raw, run))
+        self.assertTrue(baseline)
+        self.assertEqual(list(presentmon_compare.presentmon_stream(bom + b"\r\n" + csv_data, run)), baseline)
 
     def test_exact_window_and_intervals_from_selected_process_and_swapchain(self):
         runs = self.captured_pair()
