@@ -2,6 +2,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceAudioIn/AudioInCapture.hpp"
 #include "prx/libSceAudioIn/AudioInDeviceSelection.hpp"
+#include "prx/libSceAudioIn/AudioInOpenWithin.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cerrno>
@@ -65,7 +66,9 @@ struct Port {
 std::mutex g_mutex;
 std::array<Port, 8> g_ports{};
 bool g_sdlAudio = false;
+bool g_openStalled = false;
 std::int32_t g_mode = 0;
+constexpr std::chrono::milliseconds OPEN_LIMIT{3000};
 
 audioin::detail::CaptureMuteGenerations g_captureMuteGenerations;
 
@@ -88,7 +91,6 @@ SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Fo
     desired.format = format.format;
     desired.channels = format.channels;
     desired.samples = static_cast<Uint16>(samples);
-    SDL_AudioSpec obtained{};
     auto selection = audioin::detail::selectCaptureDevice(requestedName, 0,
         [](int index) { return SDL_GetAudioDeviceName(index, 1); });
     if (selection.kind != audioin::detail::CaptureDeviceMatchKind::Default) {
@@ -98,16 +100,23 @@ SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Fo
     if (selection.kind == audioin::detail::CaptureDeviceMatchKind::Missing ||
         selection.kind == audioin::detail::CaptureDeviceMatchKind::Ambiguous) return 0;
     std::string selectedName;
-    const char* deviceName = nullptr;
-    if (selection.kind == audioin::detail::CaptureDeviceMatchKind::Found) {
+    const bool named = selection.kind == audioin::detail::CaptureDeviceMatchKind::Found;
+    if (named) {
         const char* name = SDL_GetAudioDeviceName(selection.index, 1);
         if (!name) return 0;
         selectedName = name;
-        deviceName = selectedName.c_str();
     }
-    const SDL_AudioDeviceID device = SDL_OpenAudioDevice(deviceName, 1, &desired, &obtained, 0);
-    if (device != 0) SDL_PauseAudioDevice(device, 0);
-    return device;
+    if (g_openStalled) return 0;
+    const auto opened = audioin::detail::openWithin(OPEN_LIMIT,
+        [selectedName, named, desired]() mutable {
+            SDL_AudioSpec obtained{};
+            const SDL_AudioDeviceID device = SDL_OpenAudioDevice(named ? selectedName.c_str() : nullptr, 1, &desired, &obtained, 0);
+            if (device != 0) SDL_PauseAudioDevice(device, 0);
+            return static_cast<std::uint32_t>(device);
+        },
+        [](std::uint32_t device) { SDL_CloseAudioDevice(device); });
+    if (opened.timedOut) g_openStalled = true;
+    return opened.device;
 }
 
 int findPort(int handle, Port** port) {

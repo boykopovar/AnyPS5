@@ -1,6 +1,7 @@
 #include "prx/libSceAudioIn/include/AudioIn.hpp"
 #include "prx/libSceAudioIn/AudioInCapture.hpp"
 #include "prx/libSceAudioIn/AudioInDeviceSelection.hpp"
+#include "prx/libSceAudioIn/AudioInOpenWithin.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -11,6 +12,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
+#include <memory>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -233,6 +236,27 @@ void TestQueuedAudioDiscard() {
     Require(calls == 1);
 }
 
+void TestOpenWithin() {
+    using namespace std::chrono_literals;
+    const auto fast = audioin::detail::openWithin(1000ms, [] { return std::uint32_t{7}; }, [](std::uint32_t) { std::abort(); });
+    Require(fast.device == 7 && !fast.timedOut);
+    const auto failed = audioin::detail::openWithin(1000ms, [] { return std::uint32_t{0}; }, [](std::uint32_t) { std::abort(); });
+    Require(failed.device == 0 && !failed.timedOut);
+    auto release = std::make_shared<std::promise<void>>();
+    auto closed = std::make_shared<std::promise<std::uint32_t>>();
+    const auto start = std::chrono::steady_clock::now();
+    const auto stalled = audioin::detail::openWithin(50ms,
+        [gate = release->get_future().share()] { gate.wait(); return std::uint32_t{9}; },
+        [closed](std::uint32_t device) { closed->set_value(device); });
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    Require(stalled.device == 0 && stalled.timedOut);
+    Require(elapsed >= 50ms && elapsed < 1000ms);
+    auto closedDevice = closed->get_future();
+    Require(closedDevice.wait_for(0ms) == std::future_status::timeout);
+    release->set_value();
+    Require(closedDevice.wait_for(5s) == std::future_status::ready && closedDevice.get() == 9);
+}
+
 void TestCapture() {
     TestQueuedAudioDiscard();
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_in_capture-" + std::to_string(std::random_device{}()) + ".raw");
@@ -347,6 +371,7 @@ int main(int argc, char** argv) {
     Require(argc == 2);
     Require(sceAudioInInit() == 0);
     if (std::strcmp(argv[1], "capture") == 0) TestCapture();
+    else if (std::strcmp(argv[1], "open-within") == 0) TestOpenWithin();
     else if (std::strcmp(argv[1], "selection") == 0) {
         TestConfiguredDeviceUnavailable();
         TestCaptureDeviceSelection();
