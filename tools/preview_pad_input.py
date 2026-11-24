@@ -30,6 +30,9 @@ def main(argv=None):
             parser.error("invalid touch coordinates, ID or active flag")
         touch = " touch(" + ",".join(map(str, args.touch)) + ")"
     try:
+        parent = args.path.parent
+        if not parent.is_dir():
+            parser.error(f"directory does not exist: {parent}")
         sequence = next_sequence(args.path)
     except (OSError, ValueError) as error:
         parser.error(str(error))
