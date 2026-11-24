@@ -1287,6 +1287,7 @@ long long APS5_VABI strtonum_nid_postfix(const char* text, long long minimum, lo
 char* APS5_VABI basename_r_nid_postfix(const char* path, char* buffer);
 char* APS5_VABI basename_nid_postfix(const char* path);
 char* APS5_VABI __inet_ntoa_nid_postfix(unsigned int address);
+char* APS5_VABI dirname_r_nid_postfix(const char* path, char* buffer);
 char* APS5_VABI dirname_nid_postfix(const char* path);
 std::size_t APS5_VABI strnlen_nid_postfix(const char* text, std::size_t limit);
 std::size_t APS5_VABI strnlen_s_nid_postfix(const char* text, std::size_t limit);

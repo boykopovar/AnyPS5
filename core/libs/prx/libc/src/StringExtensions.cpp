@@ -77,36 +77,53 @@ char* APS5_VABI __inet_ntoa_nid_postfix(unsigned int address) {
     return buffer;
 }
 
-char* APS5_VABI dirname_nid_postfix(const char* path) {
-    thread_local char buffer[1024];
+char* APS5_VABI dirname_r_nid_postfix(const char* path, char* buffer) {
+    if (buffer == nullptr) throw std::invalid_argument("dirname_r: null buffer");
     if (path == nullptr || *path == '\0') {
-        buffer[0] = '.';
-        buffer[1] = '\0';
+        const char dot[] = ".";
+        if (!GuestCopyOut_nid_no_patch(buffer, dot, sizeof(dot))) {
+            errno = 14;
+            return nullptr;
+        }
         return buffer;
     }
 
     auto length = std::strlen(path);
     while (length > 0 && path[length - 1] == '/') --length;
     if (length == 0) {
-        buffer[0] = '/';
-        buffer[1] = '\0';
+        const char root[] = "/";
+        if (!GuestCopyOut_nid_no_patch(buffer, root, sizeof(root))) {
+            errno = 14;
+            return nullptr;
+        }
         return buffer;
     }
     auto separator = length;
     while (separator > 0 && path[separator - 1] != '/') --separator;
     if (separator == 0) {
-        buffer[0] = '.';
-        buffer[1] = '\0';
+        const char dot[] = ".";
+        if (!GuestCopyOut_nid_no_patch(buffer, dot, sizeof(dot))) {
+            errno = 14;
+            return nullptr;
+        }
         return buffer;
     }
     while (separator > 1 && path[separator - 1] == '/') --separator;
-    if (separator >= sizeof(buffer)) {
+    if (separator >= 1024) {
         errno = 63;
         return nullptr;
     }
-    std::memcpy(buffer, path, separator);
-    buffer[separator] = '\0';
+    const std::string text(path, separator);
+    if (!GuestCopyOut_nid_no_patch(buffer, text.c_str(), text.size() + 1)) {
+        errno = 14;
+        return nullptr;
+    }
     return buffer;
+}
+
+char* APS5_VABI dirname_nid_postfix(const char* path) {
+    thread_local char buffer[1024];
+    return dirname_r_nid_postfix(path, buffer);
 }
 
 std::size_t APS5_VABI strnlen_nid_postfix(const char* text, std::size_t limit) {

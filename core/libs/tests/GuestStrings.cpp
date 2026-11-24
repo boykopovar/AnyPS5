@@ -468,6 +468,18 @@ int main() {
     Require(std::strcmp(dirname_nid_postfix(rootChild), "/") == 0);
     char onlySlashes[] = "////";
     Require(std::strcmp(dirname_nid_postfix(onlySlashes), "/") == 0);
+    char dirBuffer[1024];
+    Require(dirname_r_nid_postfix(nested, dirBuffer) == dirBuffer && std::strcmp(dirBuffer, "one") == 0);
+    Require(dirname_r_nid_postfix(nullptr, dirBuffer) == dirBuffer && std::strcmp(dirBuffer, ".") == 0);
+    Require(dirname_r_nid_postfix("///", dirBuffer) == dirBuffer && std::strcmp(dirBuffer, "/") == 0);
+    Require(dirname_r_nid_postfix("plain", dirBuffer) == dirBuffer && std::strcmp(dirBuffer, ".") == 0);
+    const std::string longestDirParent(1023, 'p');
+    Require(dirname_r_nid_postfix(("/" + longestDirParent + "/leaf").c_str(), dirBuffer) == dirBuffer && std::strlen(dirBuffer) == 1023);
+    const std::string tooLongDirParent(1024, 'q');
+    *__error_nid_postfix() = 0;
+    Require(dirname_r_nid_postfix((tooLongDirParent + "/leaf").c_str(), dirBuffer) == nullptr && *__error_nid_postfix() == 63);
+    *__error_nid_postfix() = 0;
+    Require(dirname_r_nid_postfix("/one/plain", reinterpret_cast<char*>(0x10)) == nullptr && *__error_nid_postfix() == 14);
     Require(std::strcmp(basename_nid_postfix(nullptr), ".") == 0);
     Require(std::strcmp(basename_nid_postfix(""), ".") == 0);
     Require(std::strcmp(basename_nid_postfix("////"), "/") == 0);
