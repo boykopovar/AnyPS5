@@ -1354,6 +1354,10 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         std::array<std::byte, 1> probe;
         AgcDriver::GuestMemory::Read(target.address, probe);
         Require(DepthSurfaceAt(target.address) && DepthSurfaceView(context, target) == view, "a published native D32S8 owner was retired by its own publication");
+        auto bareWords = DepthSampleWords(target);
+        bareWords[6] &= ~((0xffu << 24u) | (1u << 21u) | (1u << 19u));
+        bareWords[7] = 0u;
+        Require(CachedSampledTexture(context, bareWords) != nullptr, "a native D32S8 owner published whole with expanded HTILE was not sampled without metadata");
         const auto sampledSamples = [&](float base) {
             const auto words = DepthSampleWords(target);
             const auto texture = CachedSampledTexture(context, words);

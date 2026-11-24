@@ -233,13 +233,32 @@ void CopyRunningTitleId(const std::string& caller, bool running, char* destinati
     if (!copied) throw std::runtime_error(caller + ": unwritable title ID buffer");
 }
 
-bool WellFormedTitleId(const char* titleId) {
-    return titleId != nullptr && std::strlen(titleId) == SYSTEM_SERVICE_TITLE_ID_LENGTH;
+bool ReadTitleId(const char* titleId, std::string* value) {
+    if (titleId == nullptr) return false;
+    const int savedErrno = errno;
+    std::string local;
+    bool terminated = false;
+    for (std::size_t index = 0; index < TitleIdBufferSize; ++index) {
+        char byte = 0;
+        if (!GuestCopyIn_nid_no_patch(&byte, titleId + index, sizeof(byte))) {
+            errno = savedErrno;
+            return false;
+        }
+        if (byte == '\0') {
+            terminated = true;
+            break;
+        }
+        local.push_back(byte);
+    }
+    errno = savedErrno;
+    *value = local;
+    return terminated && local.size() == SYSTEM_SERVICE_TITLE_ID_LENGTH;
 }
 
 int RunningAppId(const std::string& caller, const char* titleId) {
-    if (!WellFormedTitleId(titleId)) return SYSTEM_SERVICE_INVALID_TITLE_APP_ID;
-    if (RunningTitleId() != titleId) NotImplemented_nid_no_patch((caller + ": title other than the running title").c_str());
+    std::string localTitle;
+    if (!ReadTitleId(titleId, &localTitle)) return SYSTEM_SERVICE_INVALID_TITLE_APP_ID;
+    if (RunningTitleId() != localTitle) NotImplemented_nid_no_patch((caller + ": title other than the running title").c_str());
     return SYSTEM_SERVICE_RUNNING_APP_ID;
 }
 
@@ -760,7 +779,8 @@ int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
 }
 
 int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
- if (!WellFormedTitleId(titleId) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string localTitle;
+    if (!ReadTitleId(titleId, &localTitle) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
  static_cast<void>(sceSystemServiceGetAppId(titleId));
  const bool localLaunched = true;
  const bool copied = GuestCopyOut_nid_no_patch(launched, &localLaunched, sizeof(localLaunched));

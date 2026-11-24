@@ -143,11 +143,6 @@ int APS5_VABI _ZN6webrtc23PeerConnectionInterface16RTCConfigurationD1Ev_nid_post
     return 0;
 }
 
-int APS5_VABI _ZN7cricket5CodecD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("RVMa2ePsZR8", libwebrtcUnknown04);
 int APS5_VABI libwebrtcUnknown04(void) {
     NotImplemented_nid_no_patch("RVMa2ePsZR8");
@@ -386,11 +381,6 @@ void* APS5_VABI _ZN3rtc6Thread12socketserverEv_nid_postfix(void* thread) {
     return ReadRtcThreadSocketServer(thread);
 }
 
-int APS5_VABI _ZN3rtc6Thread4QuitEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 bool APS5_VABI _ZN3rtc6Thread10IsQuittingEv_nid_postfix(const void* thread) {
     return ReadRtcThreadState(thread) != 0;
 }
@@ -513,11 +503,6 @@ int APS5_VABI libwebrtcUnknown39(void) {
 APS5_EXPORT("OnkJ4kSZYkk", libwebrtcUnknown40);
 int APS5_VABI libwebrtcUnknown40(void) {
     NotImplemented_nid_no_patch("OnkJ4kSZYkk");
-    return 0;
-}
-
-int APS5_VABI _ZN7cricket16CreateVideoCodecERKN6webrtc14SdpVideoFormatE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

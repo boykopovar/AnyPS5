@@ -8281,21 +8281,7 @@ int APS5_VABI WKBundleGetApplicationConnection() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleHitTestResultCopyImage() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-
-
-int APS5_VABI WKBundleHitTestResultGetFrame() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
-
-int APS5_VABI WKBundleHitTestResultGetTargetFrame() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKBundleNodeHandleCopySnapshotWithOptions() {
     NotImplemented_nid_no_patch(__func__);

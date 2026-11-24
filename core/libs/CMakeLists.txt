@@ -516,6 +516,13 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME nid_buffer_validation COMMAND nid_buffer_validation_tests)
     set_tests_properties(nid_buffer_validation PROPERTIES TIMEOUT 10)
+    add_test_executable(nid_compute_tests nid/tests/NidComputeTests.cpp
+        nid/src/NidCompute.cpp nid/src/Sha1.cpp)
+    target_include_directories(nid_compute_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
+    target_compile_features(nid_compute_tests PRIVATE cxx_std_20)
+    configure_host_test_executable(nid_compute_tests)
+    add_test(NAME nid_compute COMMAND nid_compute_tests)
+    set_tests_properties(nid_compute PROPERTIES TIMEOUT 10)
 
     add_test_executable(guest_dinkumware_fetch_tests NO_RUNTIME_DLL_STAGING
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestDinkumwareFetch.cpp

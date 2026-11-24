@@ -3330,15 +3330,21 @@ bool DepthSurface::PublishToGuest(DepthReadCause cause) {
         if (const auto hook = depthPublicationHook.load(std::memory_order_acquire)) hook(DepthPublicationStage::PlaneCommitted);
     }
     publicationFailed = false;
+    bool publishedExpanded = htile;
     for (std::size_t index = 0u; index < publication.size(); ++index) {
         const auto& range = sampling.initial[index];
         const bool whole = live[index].size() == 1u && live[index][0].address == range.address && live[index][0].bytes == range.bytes;
-        if (tookGuest[index] || !whole) continue;
+        if (tookGuest[index] || !whole) {
+            publishedExpanded = false;
+            continue;
+        }
         const auto generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
         std::vector<std::byte> committed(range.bytes);
         GuestMemory::CopyGuestBytes(committed.data(), reinterpret_cast<const void*>(range.address), range.bytes);
         if (committed == result[index]) sampling.initial[index].generation = generation;
+        else publishedExpanded = false;
     }
+    if (publishedExpanded) expanded = true;
     hostWritten->store(false, std::memory_order_release);
     publication.clear();
     if (superseded[0]) RetireMultisampleColorTarget(sampling.depthAlias->active);

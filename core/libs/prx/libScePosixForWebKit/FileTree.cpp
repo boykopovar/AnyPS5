@@ -86,11 +86,11 @@ int Visit(Walk& walk, const std::string& path, int base, int level) {
         const int before = Invoke(walk, path, status, FtwD, base, level);
         if (before != 0) return before;
     }
-    void* handle = opendir_nid_postfix(path.c_str());
+    void* handle = OpenDirectory_nid_no_patch(path.c_str());
     if (handle == nullptr) return Invoke(walk, path, status, FtwDnr, base, level);
     std::vector<std::string> names;
-    while (GuestDirectoryEntry* entry = readdir_nid_postfix(handle)) names.emplace_back(entry->name, entry->nameLength);
-    closedir_nid_postfix(handle);
+    while (GuestDirectoryEntry* entry = ReadDirectory_nid_no_patch(handle)) names.emplace_back(entry->name, entry->nameLength);
+    CloseDirectory_nid_no_patch(handle);
     walk.ancestors.push_back(Identity{status.st_dev, status.st_ino});
     int result = 0;
     for (const std::string& name : names) {

@@ -245,8 +245,19 @@ public:
     bool htmlTextAreaElementLastChangeWasUserEdit = false;
 };
 
+class Image final : public ObjectOf<ObjectType::Image> {
+public:
+    explicit Image(int width = 0, int height = 0) : width(width), height(height) {}
+
+    int width = 0;
+    int height = 0;
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
+    Retained<BundleFrame> frame;
+    Retained<BundleFrame> targetFrame;
+    Retained<Image> image;
     Retained<URL> absoluteImageURL;
     Retained<URL> absoluteLinkURL;
     Retained<URL> absoluteMediaURL;
@@ -457,14 +468,6 @@ public:
     Retained<String> mimeType;
     Retained<URL> provisionalURL;
     Retained<URL> unreachableURL;
-};
-
-class Image final : public ObjectOf<ObjectType::Image> {
-public:
-    explicit Image(int width, int height) : width(width), height(height) {}
-
-    int width = 0;
-    int height = 0;
 };
 
 class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {

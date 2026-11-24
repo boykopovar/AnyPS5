@@ -119,6 +119,9 @@ bool APS5_VABI WKBundleHitTestResultMediaIsInFullscreen(const void* hitTestResul
 const void* APS5_VABI WKBundleHitTestResultCopyNodeHandle(const void* hitTestResultRef);
 const void* APS5_VABI WKBundleHitTestResultCopyURLElementHandle(const void* hitTestResultRef);
 NKWebKit::RectValue APS5_VABI WKBundleHitTestResultGetImageRect(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultCopyImage(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultGetFrame(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultGetTargetFrame(const void* hitTestResultRef);
 std::uint32_t APS5_VABI WKBundleInspectorGetTypeID();
 void APS5_VABI WKBundleInspectorClose(const void* inspectorRef);
 void APS5_VABI WKBundleInspectorEvaluateScriptForTest(const void* inspectorRef, const void* scriptRef);
@@ -658,5 +661,20 @@ void APS5_VABI WKContextTerminateNetworkProcess(const void* contextRef);
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, WKResultErrorFunction callback);
+
+const void* APS5_VABI WKPlugInInformationReplacementObscuredKey();
+const void* APS5_VABI WKPluginInformationBundleIdentifierKey();
+const void* APS5_VABI WKPluginInformationBundleShortVersionKey();
+const void* APS5_VABI WKPluginInformationBundleVersionKey();
+const void* APS5_VABI WKPluginInformationDefaultLoadPolicyKey();
+const void* APS5_VABI WKPluginInformationDisplayNameKey();
+const void* APS5_VABI WKPluginInformationFrameURLKey();
+const void* APS5_VABI WKPluginInformationHasSandboxProfileKey();
+const void* APS5_VABI WKPluginInformationMIMETypeKey();
+const void* APS5_VABI WKPluginInformationPageURLKey();
+const void* APS5_VABI WKPluginInformationPathKey();
+const void* APS5_VABI WKPluginInformationPluginURLKey();
+const void* APS5_VABI WKPluginInformationPluginspageAttributeURLKey();
+const void* APS5_VABI WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey();
 
 }

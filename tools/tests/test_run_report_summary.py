@@ -114,6 +114,29 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("Shaders: compilation data was not collected", summary)
         self.assertIn("Unsupported shader instructions: not collected", summary)
 
+    def test_negative_average_fps_is_reported_as_unavailable(self):
+        report = self.report("stop-none.json")
+        report["run"]["averageFps"] = -1.5
+        summary = render(report)
+        self.assertIn("Rendering: 12580 frames, average FPS unavailable", summary)
+        self.assertNotIn("-1.50 average FPS", summary)
+
+    def test_negative_frame_count_is_not_rendered_as_a_measurement(self):
+        report = self.report("stop-none.json")
+        report["run"]["framesPresented"] = -5
+        report["run"]["averageFps"] = 60
+        summary = render(report)
+        self.assertIn("Rendering: unknown frame count", summary)
+        self.assertNotIn("60.00 average FPS", summary)
+
+    def test_fps_is_not_reported_with_fewer_than_two_frames(self):
+        report = self.report("stop-none.json")
+        report["run"]["framesPresented"] = 1
+        report["run"]["averageFps"] = 60
+        summary = render(report)
+        self.assertIn("Rendering: 1 frame", summary)
+        self.assertNotIn("average FPS", summary)
+
     def test_cli_rejects_malformed_collected_diagnostic_lists(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "report.json"

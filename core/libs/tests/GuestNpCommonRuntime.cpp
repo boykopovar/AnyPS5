@@ -2283,6 +2283,73 @@ void TestCommIdGuestPointers() {
         "a counted communication id that ends at the last mapped byte is parsed");
 }
 
+void TestGetNthCharGuestPointers() {
+    const auto* unmapped = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    const char* const sentinel = "sentinel";
+    const char* character = sentinel;
+    errno = 71;
+    Require(sceNpUtilGetNthChar(1, unmapped, &character) == NpUtilInvalid && character == sentinel && errno == 71,
+        "an unmapped source text with non-zero index is refused without touching output or errno");
+    errno = 71;
+    Require(sceNpUtilGetNthChar(0, "a", reinterpret_cast<const char**>(std::uintptr_t{0x10})) == NpUtilInvalid && errno == 71,
+        "an unmapped character destination is refused and keeps errno");
+
+    GuardedPage page;
+    page.End()[-1] = 'a';
+    character = sentinel;
+    errno = 71;
+    Require(sceNpUtilGetNthChar(1, page.End() - 1, &character) == 0 && character == page.End() && errno == 71,
+        "advancing past the last mapped byte stops before touching the guard page");
+
+    character = sentinel;
+    errno = 71;
+    Require(sceNpUtilGetNthChar(2, page.End() - 1, &character) == NpUtilInvalid && character == sentinel && errno == 71,
+        "an unterminated string reaching into the guard page is refused");
+
+    std::memcpy(page.End() - 2, "\xE6\x97", 2);
+    character = sentinel;
+    errno = 71;
+    Require(sceNpUtilGetNthChar(1, page.End() - 2, &character) == NpUtilInvalid && character == sentinel && errno == 71,
+        "a multi-byte UTF-8 character split by a guard page reports invalid argument");
+
+    std::memcpy(page.End() - 2, "\xE6\x41", 2);
+    character = sentinel;
+    errno = 71;
+    Require(sceNpUtilGetNthChar(1, page.End() - 2, &character) == NpUtilInvalidCharacter && character == sentinel,
+        "an invalid UTF-8 continuation before a guard page reports invalid character");
+
+    page.End()[-1] = '\x01';
+    character = sentinel;
+    Require(sceNpUtilGetNthChar(1, page.End() - 1, &character) == NpUtilInvalidCharacter && character == sentinel,
+        "a control character at the last mapped byte reports invalid character");
+
+    const std::array<std::uint8_t, 4> partial {0x11, 0x22, 0x33, 0x44};
+    std::memcpy(page.End() - 4, partial.data(), partial.size());
+    errno = 71;
+    Require(sceNpUtilGetNthChar(0, "a", reinterpret_cast<const char**>(page.End() - 4)) == NpUtilInvalid && errno == 71
+            && std::memcmp(page.End() - 4, partial.data(), partial.size()) == 0,
+        "a destination crossing into a guard page is refused without partial write");
+
+    GuardedPage readOnly;
+    std::memset(readOnly.End() - sizeof(const char*), 0x5A, sizeof(const char*));
+    std::array<std::uint8_t, sizeof(const char*)> expectedReadOnly {};
+    expectedReadOnly.fill(0x5A);
+    readOnly.ReadOnly();
+    errno = 71;
+    Require(sceNpUtilGetNthChar(0, "a", reinterpret_cast<const char**>(readOnly.End() - sizeof(const char*))) == NpUtilInvalid
+            && errno == 71 && std::memcmp(readOnly.End() - sizeof(const char*), expectedReadOnly.data(), sizeof(const char*)) == 0,
+        "a read-only destination is refused and keeps errno");
+
+    alignas(4096) std::array<char, 8192> crossed {};
+    std::memcpy(crossed.data() + 4094, "\xE6\x97\xA5" "a", 5);
+    Require(sceNpUtilGetNthChar(1, crossed.data() + 4094, &character) == 0 && character == crossed.data() + 4097,
+        "a valid UTF-8 sequence crossing a chunk boundary is counted cleanly");
+
+    const std::string longText = std::string(4200, 'a') + "Z";
+    Require(sceNpUtilGetNthChar(4200, longText.c_str(), &character) == 0 && character == longText.c_str() + 4200 && *character == 'Z',
+        "long text spanning multiple chunks locates the target character");
+}
+
 int main() {
     TestAtomics();
     TestSemaphoresAndFlags();
@@ -2306,6 +2373,7 @@ int main() {
     TestRefObjects();
     TestCommIdObjects();
     TestCommIdGuestPointers();
+    TestGetNthCharGuestPointers();
     TestBase64();
     TestNumbers();
     TestHexAndCopies();

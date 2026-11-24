@@ -4978,7 +4978,7 @@ static long double SinhlMsun(long double x) {
     if (exponent >= 0x7fff) return x + x;
     const double sign = signExponent < 0 ? -1 : 1;
     if (exponent < 0x4005) {
-        if (exponent < ExplBias - 32 && SinhlHuge + x > 1) return x;
+        if (exponent < ExplBias - 32) return x;
         if (exponent < 0x3fff) return SinhlSmall(x);
         const ExplReduced half = ExplHalfKernel(std::fabs(x));
         return sign * (half.lo - 0.25 / (half.hi + half.lo) + half.hi);

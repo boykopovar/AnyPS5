@@ -4866,6 +4866,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
         for (std::uint32_t layer = first; layer < first + count && layer < layerUnmapped.size(); ++layer) layerUnmapped[layer] = false;
         anyUnmapped.store(std::find(layerUnmapped.begin(), layerUnmapped.end(), true) != layerUnmapped.end(), std::memory_order_release);
     }
+    if (count != 0 && !anyLayerPending()) holdsClearFill = false;
     if (count != 0) {
         const auto begin = layerBegin(first);
         const auto end = layerBegin(first + count - 1) + layerBytes(first + count - 1);
@@ -5279,6 +5280,7 @@ void StorageTexture::appendStoredLayers(std::uint64_t address, std::size_t bytes
 bool StorageTexture::storesWhole() const {
     if (descriptor.dccAddress == 0) return false;
     if (uploadedKeys != DccKeys::Uncompressed) return true;
+    if (holdsClearFill && anyLayerPending()) return true;
     if (descriptor.mipCount <= 1) return false;
     auto& live = Live();
     std::lock_guard lock(live.mutex);
@@ -7404,6 +7406,108 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
     refreshGeneration();
     forgetBorrowed(0, trackedLayers);
     MarkDirty();
+    return true;
+}
+
+bool StorageTexture::ClearMip(const std::array<std::byte, 16>& texel, std::uint32_t level, bool verifiedCodeClear, const char*& refusal) {
+    if (level >= descriptor.mipCount || descriptor.mipCount <= 1) { refusal = "level"; return false; }
+    if (geometry.thick || geometry.imageDepth != 1 || geometry.layers != 1) { refusal = "geometry"; return false; }
+    const auto& mip = geometry.mips[level];
+    if (mip.tail) { refusal = "tail"; return false; }
+    const auto begin = descriptor.baseAddress + geometry.GuestOffset(0, mip);
+    const auto bytes = static_cast<std::size_t>(mip.tiledSize);
+    if (bytes == 0 || begin + bytes > descriptor.baseAddress + guestBytes) { refusal = "range"; return false; }
+    const auto elementBytes = BytesPerElement(descriptor.format);
+    std::array<std::byte, 16> repeated{};
+    for (std::size_t offset = 0; offset + elementBytes <= repeated.size(); offset += elementBytes) std::memcpy(repeated.data() + offset, texel.data(), elementBytes);
+    std::array<std::uint32_t, 4> pattern{};
+    std::memcpy(pattern.data(), repeated.data(), repeated.size());
+    VkClearColorValue clearValue{};
+    if (!FillClearColor(storageFormat, elementBytes, pattern, clearValue) && !(ClearKeepsDenormals(context, storageFormat) && FillClearColor(storageFormat, elementBytes, pattern, clearValue, true))) {
+        refusal = "pattern";
+        return false;
+    }
+    if (descriptor.dccAddress != 0 && !verifiedCodeClear) {
+        if (Recorder::SnapshotWriteOverlaps(descriptor.dccAddress, static_cast<std::size_t>(guestBytes / 256)) || TextureClearKeys(descriptor, guestBytes) != DccKeys::Uncompressed) {
+            refusal = "keys";
+            return false;
+        }
+    }
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr) {
+        refusal = "no recorder";
+        return false;
+    }
+    bool aliasedKeys = false;
+    {
+        auto& live = Live();
+        std::lock_guard lock(live.mutex);
+        for (auto* texture : live.textures) {
+            if (texture == this || texture->released || !texture->overlaps(begin, bytes)) continue;
+            texture->forgetSavedOver(begin, bytes);
+            if (texture->descriptor.dccAddress != 0) aliasedKeys = true;
+        }
+    }
+    static const bool trace = std::getenv("APS5_TRACE_FILL_COVER") != nullptr;
+    static std::atomic<int> traced{0};
+    if (trace && (descriptor.dccAddress != 0 || aliasedKeys) && traced.fetch_add(1) < 16) std::fprintf(stderr, "[fill-cover] clear of mip %u of 0x%llx+0x%llx (format %u, keys 0x%llx%s): pattern %08x %08x %08x %08x\n", level, static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), descriptor.format, static_cast<unsigned long long>(descriptor.dccAddress), aliasedKeys ? " aliased" : "", pattern[0], pattern[1], pattern[2], pattern[3]);
+    PublishShadow(begin, bytes, PublishScope::PartialUnits, PublishReason::FillClear);
+    GuestMemory::MarkWritten(begin, bytes);
+    const auto commands = recorder->Commands();
+    const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::FillClear);
+    Recorder::CountBarriers(Recorder::CommandClass::FillClear, 2);
+    if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
+    if (Recorder::BarrierValidate()) {
+        const std::pair<VkImage, bool> cleared{image, true};
+        recorder->NoteAccess(Recorder::CommandClass::FillClear, Recorder::Access{{}, {}, std::span(&cleared, 1), VK_PIPELINE_STAGE_TRANSFER_BIT});
+    }
+    VkImageSubresourceRange subresource{VK_IMAGE_ASPECT_COLOR_BIT, level, 1u, 0u, 1u};
+    VkImageMemoryBarrier toClear{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    toClear.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    toClear.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toClear.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    toClear.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toClear.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toClear.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toClear.image = image;
+    toClear.subresourceRange = subresource;
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toClear);
+    clearImage(commands, clearValue, subresource);
+    VkImageMemoryBarrier toGeneral = toClear;
+    toGeneral.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toGeneral.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    toGeneral.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
+    recorder->EndGpuTiming(timing, bytes);
+    const bool watched = GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+    if (watched) {
+        layerOriginal.assign(trackedLayers, false);
+        cancelStoredSaves();
+        releaseUnheldOriginal();
+    }
+    if (blockUnits) {
+        const auto first = static_cast<std::uint32_t>((begin - descriptor.baseAddress) / trackedLayerBytes);
+        const auto count = static_cast<std::uint32_t>((bytes + trackedLayerBytes - 1) / trackedLayerBytes);
+        if (!watched) {
+            std::vector<bool> filled(trackedLayers, false);
+            std::fill_n(filled.begin() + first, count, true);
+            captureGuestBytes(&filled);
+        }
+        const auto now = GuestMemory::CollectWritesUncached(begin, bytes);
+        for (auto unit = first; unit < first + count; ++unit) layerGeneration[unit] = now;
+        refreshGeneration();
+        forgetBorrowed(first, count);
+        markLayersPending(first, count);
+    } else {
+        if (!watched) captureGuestBytes(nullptr);
+        const auto now = GuestMemory::CollectWritesUncached(begin, bytes);
+        for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) layerGeneration[layer] = collectedLayerGeneration(layer, now, true);
+        refreshGeneration();
+        forgetBorrowed(0, trackedLayers);
+        markLayersPending(0, trackedLayers);
+    }
+    holdsClearFill = true;
     return true;
 }
 
