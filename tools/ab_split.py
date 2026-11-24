@@ -1,5 +1,6 @@
 import argparse
 import codecs
+import io
 import json
 import math
 import re
@@ -264,15 +265,20 @@ def program_key(value):
 
 
 def open_log(path):
-    with Path(path).open("rb") as raw:
-        bom = raw.read(4)
-    if bom in (codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE):
-        raise ValueError(f"{path} is UTF-32; "
-                         'capture the run with cmd /d /c "<command> 2> run.log" instead')
-    if bom[:2] in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE):
-        raise ValueError(f"{path} is UTF-16, as Windows PowerShell 5.1 writes a redirected 2>, which also wraps long lines; "
-                         'capture the run with cmd /d /c "<command> 2> run.log" instead')
-    return Path(path).open(encoding="utf-8-sig", errors="replace")
+    raw = Path(path).open("rb")
+    try:
+        bom = raw.peek(4)[:4]
+        if bom in (codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE):
+            raise ValueError(f"{path} is UTF-32; "
+                             'capture the run with cmd /d /c "<command> 2> run.log" instead')
+        if bom[:2] in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE):
+            raise ValueError(f"{path} is UTF-16, as Windows PowerShell 5.1 writes a redirected 2>, which also wraps long lines; "
+                             'capture the run with cmd /d /c "<command> 2> run.log" instead')
+        return io.TextIOWrapper(raw, encoding="utf-8-sig", errors="replace")
+    except BaseException:
+        raw.close()
+        raise
+
 
 
 def main(arguments=None):

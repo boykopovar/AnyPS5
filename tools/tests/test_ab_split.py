@@ -1,4 +1,5 @@
 import argparse
+import io
 import json
 import os
 import subprocess
@@ -6,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import ab_split
@@ -520,6 +522,14 @@ class TextReportTests(unittest.TestCase):
         self.assertTrue(text.startswith("[ab] configuration line missing"))
         self.assertIn("unfinished", text)
 class ReadLogRefusalTests(unittest.TestCase):
+    def test_encoding_check_and_log_read_use_the_same_open_stream(self):
+        first = io.BufferedReader(io.BytesIO(b"\xef\xbb\xbf[ab] original\n"))
+        with patch.object(Path, "open", side_effect=[first, io.StringIO("[ab] replacement\n")]) as opened:
+            with ab_split.open_log("run.log") as stream:
+                self.assertEqual(stream.read(), "[ab] original\n")
+        opened.assert_called_once_with("rb")
+        self.assertTrue(first.closed)
+
     def test_read_log_refuses_two_runs_in_one_log(self):
         with self.assertRaisesRegex(ValueError, 'multiple A/B runs in one log'):
             ab_split.read_log(['[ab] in-run A/B: first', '[ab] in-run A/B: second'])
