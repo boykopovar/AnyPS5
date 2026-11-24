@@ -258,7 +258,7 @@ def text_report(result):
 
 
 def program_key(value):
-    if not re.fullmatch(r"0x[0-9a-fA-F]+", value):
+    if not re.fullmatch(r"0[xX][0-9a-fA-F]+", value):
         raise argparse.ArgumentTypeError("must be a hexadecimal program key such as 0x1000")
     return "0x" + value[2:].lower().lstrip("0").rjust(1, "0")
 
