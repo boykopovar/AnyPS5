@@ -93,8 +93,8 @@ ImportWatch PrepareImportWatch(const Context& context);
 void SetImportWatch(const Context& context, ImportWatch watch);
 bool DmaBufImportSelected(const Context& context);
 
-enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment, ColorTarget };
-inline constexpr std::size_t ImportRequesterCount = 6;
+enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment, ColorTarget, Label };
+inline constexpr std::size_t ImportRequesterCount = 7;
 
 struct HostImportRequesterCounts {
     std::uint64_t made = 0;

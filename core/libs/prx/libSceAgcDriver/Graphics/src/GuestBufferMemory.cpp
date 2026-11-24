@@ -5021,6 +5021,7 @@ const char* ImportRequesterName(ImportRequester requester) {
         case ImportRequester::Join: return "join";
         case ImportRequester::Segment: return "segment";
         case ImportRequester::ColorTarget: return "color target";
+        case ImportRequester::Label: return "label";
     }
     return "unknown";
 }
