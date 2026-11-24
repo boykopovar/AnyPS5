@@ -28,6 +28,7 @@
 #include "Properties.hpp"
 #include "CodePointTrie.hpp"
 #include "Script.hpp"
+#include "SupplementalRegion.hpp"
 #include "ScriptCode.hpp"
 #include "CaseMapping.hpp"
 #include "Bidi.hpp"

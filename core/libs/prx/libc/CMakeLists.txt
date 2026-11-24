@@ -761,6 +761,11 @@ if(BUILD_TESTING)
         set_tests_properties(guest_time_conversion PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME guest_time_startup_errno COMMAND guest_time_conversion_tests --startup-errno)
+        set_tests_properties(guest_time_startup_errno PROPERTIES TIMEOUT 20 ENVIRONMENT
+            "TZ=:${CMAKE_CURRENT_BINARY_DIR}/anyps5-missing-startup-time-zone;APS5_NO_WRITE_WATCH=1;APS5_REPORT=0")
+    endif()
     add_test_executable(guest_timespec_get_tests ${LIBS_INCLUDE_DIR}/tests/GuestTimespecGet.cpp)
     target_include_directories(guest_timespec_get_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_timespec_get_tests PRIVATE libc)
