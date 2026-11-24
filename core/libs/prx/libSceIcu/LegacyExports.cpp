@@ -27,6 +27,21 @@ void APS5_VABI SetOpenStandardNamesStatusForTest_nid_no_patch(std::int32_t statu
     openStandardNamesStatusForTest.store(status, std::memory_order_release);
 }
 
+static bool SetUnsupportedStatus(std::int32_t* status, const char* caller) {
+    if (!status) throw std::invalid_argument(std::string(caller) + ": null status");
+    const int savedErrno = errno;
+    std::int32_t incoming = 0;
+    const bool statusReadable = GuestCopyIn_nid_no_patch(&incoming, status, sizeof(incoming));
+    errno = savedErrno;
+    if (!statusReadable) throw std::invalid_argument(std::string(caller) + ": unreadable status");
+    if (incoming > 0) return false;
+    const std::int32_t outgoing = U_UNSUPPORTED_ERROR;
+    const bool statusWritable = GuestCopyOut_nid_no_patch(status, &outgoing, sizeof(outgoing));
+    errno = savedErrno;
+    if (!statusWritable) throw std::invalid_argument(std::string(caller) + ": unwritable status");
+    return true;
+}
+
 int APS5_VABI sceIcuLegacyUnknown__plus__plus_DD8eRY6mw_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7108,8 +7123,10 @@ int APS5_VABI sceIcuLegacyUnknown_jCEAhlQoJXY_nid_no_patch() {
 }
 APS5_EXPORT("jCEAhlQoJXY", sceIcuLegacyUnknown_jCEAhlQoJXY_nid_no_patch);
 
-int APS5_VABI uprv_dl_open_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void* APS5_VABI uprv_dl_open_nid_postfix(const char* libName, std::int32_t* status) {
+    (void)libName;
+    SetUnsupportedStatus(status, __func__);
+    return nullptr;
 }
 
 int APS5_VABI sceIcuLegacyUnknown_jERsFgmcFp8_nid_no_patch() {
@@ -8487,8 +8504,9 @@ int APS5_VABI _ZN6icu_6812ByteSinkUtil12appendChangeEiPKDsiRNS_8ByteSinkEPNS_5Ed
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uprv_dl_close_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI uprv_dl_close_nid_postfix(void* libHandle, std::int32_t* status) {
+    (void)libHandle;
+    SetUnsupportedStatus(status, __func__);
 }
 
 int APS5_VABI _ZN6icu_6818Normalizer2Factory11getNFKCImplER10UErrorCode_nid_postfix() {
@@ -8990,8 +9008,11 @@ int APS5_VABI _ZN6icu_687UVector9removeAllERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uprv_dlsym_func_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+APS5_VABI UVoidFunction* uprv_dlsym_func_nid_postfix(void* libHandle, const char* symbolName, std::int32_t* status) {
+    (void)libHandle;
+    (void)symbolName;
+    SetUnsupportedStatus(status, __func__);
+    return nullptr;
 }
 
 int APS5_VABI _ZN6icu_6815MaybeStackArrayIcLi40EED2Ev_nid_postfix() {
