@@ -3,7 +3,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
