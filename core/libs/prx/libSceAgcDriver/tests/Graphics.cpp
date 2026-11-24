@@ -1329,7 +1329,7 @@ void ShaderStageTests() {
         lines.context[0x2ce] = 5;
         for (const auto output : {3u, 0x80000001u, 0x101u}) {
             lines.context[0x29b] = output;
-            expectFailure([&] { AgcDriver::Graphics::DecodeState(lines); }, "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, or a point list or line strip from a geometry program, is unsupported");
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(lines); }, "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, a line strip from a geometry program or a line list, or a point list from a geometry program, is unsupported");
         }
         lines.userConfig[0x242] = 4;
         lines.context[0x205] = 0x2a40;
@@ -1515,9 +1515,18 @@ void NggVertexWorkgroupTests() {
     }
     queue.context[0x2d5] = 0x12010;
     queue.context[0x29b] = 1;
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue, true); }, "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, or a point list or line strip from a geometry program, is unsupported");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue, true); }, "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, a line strip from a geometry program or a line list, or a point list from a geometry program, is unsupported");
+    queue.userConfig[0x242] = 2;
+    mesh = *AgcDriver::Graphics::DecodeState(queue, true).stages.mesh;
+    Require(mesh.inputPrimitive == 2 && mesh.outputPrimitiveSize == 2 && mesh.primitivesPerGroup == 64 && mesh.verticesPerGroup == 128 && mesh.maxVertices == 128 && mesh.maxPrimitives == 128 && mesh.threadsPerGroup == 128 && mesh.provokingVertex == 0, "the NGG vertex subgroup of a line list changed");
+    const auto raster = queue.context[0x205];
+    queue.context[0x205] = raster | (1u << 19u);
+    Require(AgcDriver::Graphics::DecodeState(queue, true).stages.mesh->provokingVertex == 1, "the NGG vertex subgroup of a line list does not take the last provoking vertex");
+    queue.context[0x205] = raster;
     queue.context[0x29b] = 0;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue, true); }, "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, or a point list or line strip from a geometry program, is unsupported");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue, true); }, "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, a line strip from a geometry program or a line list, or a point list from a geometry program, is unsupported");
+    queue.userConfig[0x242] = 1;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue, true); }, "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, a line strip from a geometry program or a line list, or a point list from a geometry program, is unsupported");
 }
 
 constexpr std::array<std::uint8_t, 8> IdentityExports{0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u};
