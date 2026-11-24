@@ -1018,6 +1018,20 @@ void RetireShadow(VkDevice device, const HostImport& import, const std::function
     liveChanged();
 }
 
+bool RetireShadowReadsRegistered(const HostImport& import) {
+    if (!UnitShadowEnabled()) return false;
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
+    const auto shadow = find(registry, import);
+    if (shadow == nullptr || shadow->liveUnits == 0) return false;
+    for (std::uint64_t unit = 0; unit < shadow->Units(); ++unit) {
+        if (!shadow->Live(unit)) continue;
+        const auto [begin, end] = shadow->UnitRange(unit);
+        if (end > begin) return true;
+    }
+    return false;
+}
+
 void PublishAllShadows(const Context& context, PublishReason reason) {
     if (!UnitShadowEnabled()) return;
     std::vector<std::shared_ptr<UnitShadow>> shadows;

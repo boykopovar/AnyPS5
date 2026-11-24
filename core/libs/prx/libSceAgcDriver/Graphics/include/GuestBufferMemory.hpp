@@ -283,6 +283,8 @@ struct LeaseStats {
     std::uint64_t contentionDrains = 0;
     std::uint64_t cacheDrops = 0;
     double contentionMs = 0;
+    std::uint64_t retireSnapshots = 0;
+    std::uint64_t retireSnapshotsSkipped = 0;
 };
 LeaseStats LeaseCounters();
 
