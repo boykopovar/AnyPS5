@@ -1,5 +1,6 @@
 #include <relinker/guest/GuestImage.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
+#include <relinker/analysis/ReplacedPltStubs.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
@@ -472,7 +473,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     if (!windows) for (std::size_t begin = 0; begin <= runPath.size();) {
         const auto end = std::min(runPath.find(':', begin), runPath.size());
         const auto component = std::string_view(runPath).substr(begin, end - begin);
-        if (component != "$ORIGIN" && !component.starts_with("$ORIGIN/") && !component.starts_with('/')) throw Domain::RelinkerException("Guest Linux run path must be absolute or begin with $ORIGIN");
+        if (component != "$ORIGIN" && !component.starts_with("$ORIGIN/") && !component.starts_with('/')) throw Domain::RelinkerException("Guest run path must be absolute or begin with $ORIGIN");
         begin = end + 1;
     }
     const auto outputDirectory = outputPath.parent_path().lexically_normal();
@@ -483,7 +484,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         std::vector<Domain::ProgramHeader> codeHeaders;
         for (const auto& header : image.Headers) if (header.Type == 1 && (header.Flags & 1) != 0) codeHeaders.push_back(header);
         if (toIntel) {
-            auto converted = Codegen::MakeAmd64OnlyConverter(target, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); })->Convert(std::move(image.Bytes), image.Headers);
+            auto converted = Codegen::MakeAmd64OnlyConverter(target, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); }, macos)->Convert(std::move(image.Bytes), image.Headers);
             image.Trampolines = std::move(converted.Trampolines);
             image.Bytes = std::move(converted.Bytes);
             if (!image.PatchedRanges.empty()) GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.Reports = converted.Reports, .Trampolines = image.Trampolines});
@@ -500,6 +501,15 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (sceImage)
                 if (const auto end = FindSceCodeEnd(code, header.MappedAddress, unwindFunctions, image.Got, image.Dynamic.RelaPltData.size()))
                     code.resize(*end - header.MappedAddress);
+            const auto replacedStubs = FindReplacedPltStubs(code, header.MappedAddress, image.Got, image.Dynamic.RelaPltData.size());
+            for (const auto& stub : replacedStubs) {
+                std::string import;
+                for (std::size_t position = 0; position < image.Dynamic.RelaPltData.size(); position += 24)
+                    if (Io::ReadU64(image.Dynamic.RelaPltData, position) == stub.GotEntry) import = image.Symbols[Io::ReadU64(image.Dynamic.RelaPltData, position + 8) >> 32].Name;
+                auto target = Io::Utf8Path(image.SourcePath.lexically_relative(root));
+                std::replace(target.begin(), target.end(), '\\', '/');
+                progress.Message(DescribeReplacedPltStub(stub, target, import));
+            }
             auto scanCode = code;
             for (const auto& table : FindRelativeJumpTables(code, header.MappedAddress, unwindRanges)) {
                 if (table.Begin >= header.MappedAddress && table.End >= table.Begin) {
@@ -509,7 +519,17 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 }
             }
             const auto scanUnwindRanges = sceImage ? SceUnwindRanges(code, header.MappedAddress, unwindFunctions) : std::vector<CodeRange>{};
-            for (const auto offset : syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges)) {
+            std::vector<std::size_t> syscallTraps;
+            try {
+                syscallTraps = syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges);
+            } catch (const Domain::RelinkerException& error) {
+                const auto cause = DescribeReplacedPltStubReaching(replacedStubs, code, header.MappedAddress, error.FailureOffset);
+                if (cause.empty()) throw;
+                Domain::RelinkerException explained(error.what() + cause, error.FailureOffset);
+                explained.InputPath = error.InputPath;
+                throw explained;
+            }
+            for (const auto offset : syscallTraps) {
                 if (offset > code.size() || code.size() - offset < 2u)
                     throw Domain::RelinkerException("Syscall trap patch exceeds guest executable segment", header.MappedAddress + offset);
                 if (!image.PatchedRanges.empty()) {
@@ -579,14 +599,27 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
 }
 
 
-std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, const bool functionSymbolRoots) {
-    std::map<std::size_t, std::string> sonames;
-    const auto soname = [&](std::size_t index) -> const std::string& {
-        const auto [found, inserted] = sonames.try_emplace(index);
-        if (inserted) found->second = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true, functionSymbolRoots).Soname;
+std::vector<BackupCopy> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, const bool functionSymbolRoots) {
+    struct Identity {
+        std::string Soname;
+        std::vector<std::string> ModuleNames;
+    };
+    std::map<std::size_t, Identity> identities;
+    const auto identity = [&](std::size_t index) -> const Identity& {
+        const auto [found, inserted] = identities.try_emplace(index);
+        if (inserted) {
+            auto image = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true, functionSymbolRoots);
+            found->second = {std::move(image.Soname), std::move(image.ModuleNames)};
+        }
         return found->second;
     };
-    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> skipped;
+    const auto match = [&](std::size_t copy, std::size_t original) -> const char* {
+        const auto& left = identity(copy);
+        const auto& right = identity(original);
+        if (!left.Soname.empty() || !right.Soname.empty()) return left.Soname == right.Soname ? "same SONAME" : nullptr;
+        return !left.ModuleNames.empty() && left.ModuleNames == right.ModuleNames ? "same module names" : nullptr;
+    };
+    std::vector<BackupCopy> skipped;
     std::vector<bool> copies(modules.size());
     for (std::size_t copy = 0; copy < modules.size(); ++copy) {
         const auto& path = modules[copy].Path;
@@ -595,9 +628,10 @@ std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBacku
             const auto& kept = modules[original].Path;
             const auto prefix = Io::Utf8Path(kept.filename());
             if (kept.parent_path() != path.parent_path() || prefix.size() >= name.size() || !name.starts_with(prefix)) continue;
-            if (soname(copy).empty() || soname(copy) != soname(original)) continue;
+            const auto* matched = match(copy, original);
+            if (matched == nullptr) continue;
             copies[copy] = true;
-            skipped.emplace_back(path, kept);
+            skipped.push_back({path, kept, matched});
             break;
         }
     }

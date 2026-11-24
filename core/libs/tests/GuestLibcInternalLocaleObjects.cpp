@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
@@ -91,6 +92,40 @@ void CheckLocimpCopy() {
     Require(Throws([&] { sceLibcInternalLocimpBaseCopyConstructor_nid_no_patch(&emptyCopy, nullptr); }), "a null source is rejected");
 }
 
+
+GuestLocale::Facet* deletedFacet = nullptr;
+int deleteCalls = 0;
+
+void APS5_VABI CountingDestroy(GuestLocale::Facet*) {}
+void APS5_VABI CountingDelete(GuestLocale::Facet* self) {
+    deletedFacet = self;
+    ++deleteCalls;
+}
+void APS5_VABI CountingRetain(GuestLocale::Facet* self) { ++self->references; }
+GuestLocale::Facet* APS5_VABI CountingRelease(GuestLocale::Facet* self) { return --self->references == 0 ? self : nullptr; }
+
+const GuestLocale::FacetVtable countingVtable{CountingDestroy, CountingDelete, CountingRetain, CountingRelease};
+
+void CheckDeletegloballocale() {
+    GuestLocale::Implementation locale{};
+    locale.base.vtable = &countingVtable;
+    locale.base.references = 2;
+    GuestLocale::Implementation* reference = &locale;
+
+    _Deletegloballocale_nid_postfix(&reference);
+    Require(locale.base.references == 1 && deleteCalls == 0, "a shared locale loses one reference and is kept");
+    Require(reference == &locale, "the reference is left as it was");
+
+    _Deletegloballocale_nid_postfix(&reference);
+    Require(locale.base.references == 0 && deleteCalls == 1 && deletedFacet == &locale.base, "the last reference deletes the locale");
+
+    GuestLocale::Implementation* none = nullptr;
+    _Deletegloballocale_nid_postfix(&none);
+    Require(deleteCalls == 1, "a null locale reference is ignored");
+
+    Require(Throws([] { _Deletegloballocale_nid_postfix(nullptr); }), "a null pointer to the reference is rejected");
+}
+
 }
 
 int main() {
@@ -103,7 +138,8 @@ int main() {
 
     CheckLocinfo();
     CheckLocimpCopy();
+    CheckDeletegloballocale();
 
-    std::puts("libc internal _Locinfo and _Locimp base-object checks passed");
+    std::puts("libc internal _Locinfo, _Locimp base-object and _Deletegloballocale checks passed");
     return 0;
 }

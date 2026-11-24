@@ -838,6 +838,14 @@ bool APS5_VABI WKPreferencesGetAcceleratedDrawingEnabled(const void* preferences
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"AcceleratedDrawingEnabled");
 }
 
+void APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled(const void* preferencesRef, bool flag) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"CanvasUsesAcceleratedDrawing", flag);
+}
+
+bool APS5_VABI WKPreferencesGetAccelerated2DCanvasEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"CanvasUsesAcceleratedDrawing");
+}
+
 void APS5_VABI WKPreferencesSetCanvasUsesAcceleratedDrawing(const void* preferencesRef, bool flag) {
     PreferencesFromRef(preferencesRef, __func__)->Set(u"CanvasUsesAcceleratedDrawing", flag);
 }
@@ -2313,6 +2321,10 @@ void APS5_VABI WKPreferencesSetUseLegacyTextAlignPositionedElementBehavior(const
 
 void APS5_VABI WKPreferencesSetApplicationChromeModeEnabled(const void* preferencesRef, bool enabled) {
     PreferencesFromRef(preferencesRef, __func__)->Set(u"ApplicationChromeModeEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetApplicationChromeModeEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"ApplicationChromeModeEnabled");
 }
 
 }

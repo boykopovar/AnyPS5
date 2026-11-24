@@ -3,10 +3,12 @@
 #include "prx/libSceIme/include/Api.hpp"
 #include <atomic>
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -124,10 +126,29 @@ bool ValidText(const char16_t* text, std::size_t length, bool multiline) {
     return true;
 }
 
-std::size_t TextLength(const char16_t* text, std::size_t limit) {
-    std::size_t length = 0;
-    while (length < limit && text[length] != u'\0') ++length;
-    return length;
+bool ReadGuestText(const char16_t* source, std::size_t limit, std::u16string* outText) {
+    outText->clear();
+    if (limit == 0) return true;
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    if (base == 0) return false;
+    const std::uintptr_t maxAddress = std::numeric_limits<std::uintptr_t>::max();
+    const int savedErrno = errno;
+    for (std::size_t i = 0; i < limit; ++i) {
+        if (i > (maxAddress - base) / sizeof(char16_t)) {
+            errno = savedErrno;
+            return false;
+        }
+        char16_t unit = u'\0';
+        const bool copied = GuestCopyIn_nid_no_patch(&unit, reinterpret_cast<const char16_t*>(base + i * sizeof(char16_t)), sizeof(unit));
+        if (!copied) {
+            errno = savedErrno;
+            return false;
+        }
+        if (unit == u'\0') break;
+        outText->push_back(unit);
+    }
+    errno = savedErrno;
+    return true;
 }
 
 std::u16string DecodeUtf8(const char* text, std::size_t size) {
@@ -329,34 +350,123 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
     throw std::invalid_argument("IME host input: unknown input kind");
 }
 
-int ValidateOpen(const Param* param, const ExtendedParam* extended) {
+int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outParam = nullptr, ExtendedParam* outExt = nullptr, std::u16string* outText = nullptr) {
     if (!param) return ErrorInvalidAddress;
-    if (param->user_id == UserIdInvalid) return ErrorInvalidUserId;
-    if (param->type > TypeNumber) return ErrorInvalidType;
-    if (param->enter_label > EnterLabelLast) return ErrorInvalidEnterLabel;
-    if (param->input_method != 0) return ErrorInvalidInputMethod;
-    if ((param->option & ~ValidOptions) != 0) return ErrorInvalidOption;
-    if (param->max_text_length == 0 || param->max_text_length > MaxTextLength) return ErrorInvalidMaxTextLength;
-    if (!param->input_text_buffer) return ErrorInvalidInputTextBuffer;
-    const float maxX = (param->option & OptionUseOver2K) != 0 ? 3840.0f : 1920.0f;
-    const float maxY = (param->option & OptionUseOver2K) != 0 ? 2160.0f : 1080.0f;
-    if (!(param->posx >= 0.0f && param->posx < maxX)) return ErrorInvalidPosX;
-    if (!(param->posy >= 0.0f && param->posy < maxY)) return ErrorInvalidPosY;
-    if (param->horizontal_alignment > AlignmentLast) return ErrorInvalidHorizontalAlignment;
-    if (param->vertical_alignment > AlignmentLast) return ErrorInvalidVerticalAlignment;
+    Param localParam{};
+    const int savedErrno = errno;
+    const bool copiedParam = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copiedParam) return ErrorInvalidAddress;
+    if (localParam.user_id == UserIdInvalid) return ErrorInvalidUserId;
+    if (localParam.type > TypeNumber) return ErrorInvalidType;
+    if (localParam.enter_label > EnterLabelLast) return ErrorInvalidEnterLabel;
+    if (localParam.input_method != 0) return ErrorInvalidInputMethod;
+    if ((localParam.option & ~ValidOptions) != 0) return ErrorInvalidOption;
+    if (localParam.max_text_length == 0 || localParam.max_text_length > MaxTextLength) return ErrorInvalidMaxTextLength;
+    if (!localParam.input_text_buffer) return ErrorInvalidInputTextBuffer;
+    const float maxX = (localParam.option & OptionUseOver2K) != 0 ? 3840.0f : 1920.0f;
+    const float maxY = (localParam.option & OptionUseOver2K) != 0 ? 2160.0f : 1080.0f;
+    if (!(localParam.posx >= 0.0f && localParam.posx < maxX)) return ErrorInvalidPosX;
+    if (!(localParam.posy >= 0.0f && localParam.posy < maxY)) return ErrorInvalidPosY;
+    if (localParam.horizontal_alignment > AlignmentLast) return ErrorInvalidHorizontalAlignment;
+    if (localParam.vertical_alignment > AlignmentLast) return ErrorInvalidVerticalAlignment;
+    ExtendedParam localExt{};
     if (extended) {
-        if (extended->priority > PanelPriorityLast) return ErrorInvalidExtended;
-        for (const std::int8_t byte : extended->reserved) {
+        const int extErrno = errno;
+        const bool copiedExt = GuestCopyIn_nid_no_patch(&localExt, extended, sizeof(localExt));
+        errno = extErrno;
+        if (!copiedExt) return ErrorInvalidAddress;
+        if (localExt.priority > PanelPriorityLast) return ErrorInvalidExtended;
+        for (const std::int8_t byte : localExt.reserved) {
             if (byte != 0) return ErrorInvalidExtended;
         }
     }
-    if (!param->work || (reinterpret_cast<std::uintptr_t>(param->work) & 3u) != 0) return ErrorInvalidWork;
-    if (!param->handler) return ErrorInvalidHandler;
-    for (const std::int8_t byte : param->reserved) {
+    if (!localParam.work || (reinterpret_cast<std::uintptr_t>(localParam.work) & 3u) != 0) return ErrorInvalidWork;
+    if (!localParam.handler) return ErrorInvalidHandler;
+    for (const std::int8_t byte : localParam.reserved) {
         if (byte != 0) return ErrorInvalidReserved;
     }
-    const std::size_t length = TextLength(param->input_text_buffer, param->max_text_length);
-    if (!ValidText(param->input_text_buffer, length, (param->option & OptionMultiline) != 0)) return ErrorInvalidText;
+    std::u16string localText;
+    if (!ReadGuestText(localParam.input_text_buffer, localParam.max_text_length, &localText)) return ErrorInvalidAddress;
+    if (!ValidText(localText.data(), localText.size(), (localParam.option & OptionMultiline) != 0)) return ErrorInvalidText;
+    if (outParam) *outParam = localParam;
+    if (outExt) *outExt = localExt;
+    if (outText) *outText = std::move(localText);
+    return 0;
+}
+
+constexpr std::uint32_t ImeCheckTextLengthLimit = 0x800;
+
+bool ReadImeTextLength(const char16_t* text, std::uint32_t& length) {
+    if (text == nullptr) {
+        length = 0;
+        return true;
+    }
+    const auto base = reinterpret_cast<std::uintptr_t>(text);
+    for (std::uint32_t index = 0; index < ImeCheckTextLengthLimit; ++index) {
+        const auto offset = static_cast<std::uintptr_t>(index) * sizeof(char16_t);
+        if (base > UINTPTR_MAX - offset) return false;
+        char16_t unit = u'\0';
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&unit, reinterpret_cast<const void*>(base + offset), sizeof(unit));
+        errno = savedErrno;
+        if (!copied) return false;
+        if (unit == u'\0') {
+            length = index;
+            return true;
+        }
+    }
+    length = ImeCheckTextLengthLimit;
+    return true;
+}
+
+int CheckEditTextInfo(const ImeEditText* info, std::uint8_t repair, const char* function) {
+    if (info == nullptr) NotImplemented_nid_no_patch(function);
+    ImeEditText localInfo{};
+    const int savedErrno = errno;
+    const bool copiedInfo = GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copiedInfo) NotImplemented_nid_no_patch(function);
+
+    std::uint32_t textLength = 0;
+    if (!ReadImeTextLength(localInfo.str, textLength)) NotImplemented_nid_no_patch(function);
+
+    const std::uint32_t areaCount = std::min(localInfo.area_num, 4u);
+    localInfo.area_num = areaCount;
+    bool changed = false;
+    for (std::uint32_t index = 0; index < areaCount; ++index) {
+        ImeTextAreaProperty& area = localInfo.text_area[index];
+        const auto mode = static_cast<std::uint32_t>(area.mode);
+        if (mode < 2 || mode > 4) continue;
+        bool invalid = area.index > textLength;
+        if (!invalid) {
+            invalid = area.length < 0 || static_cast<std::uint32_t>(area.length) > textLength ||
+                      area.index + static_cast<std::uint32_t>(area.length) > textLength;
+        }
+        if (!invalid) continue;
+        if (repair == 0) return -3;
+        area.index = 0;
+        changed = true;
+    }
+
+    if (localInfo.caret_index > textLength) {
+        if (repair == 0) return -3;
+        localInfo.caret_index = textLength;
+        changed = true;
+    }
+
+    if (changed && (repair & 1u) != 0) {
+        const auto destination = reinterpret_cast<std::uintptr_t>(info);
+        if (destination > UINTPTR_MAX - 32u) NotImplemented_nid_no_patch(function);
+        const auto* source = reinterpret_cast<const unsigned char*>(&localInfo);
+        const int copyErrno = errno;
+        const bool copiedTail = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(destination + 32u), source + 32u, 32u);
+        errno = copyErrno;
+        if (!copiedTail) NotImplemented_nid_no_patch(function);
+        const bool copiedHead = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(destination), source, 32u);
+        errno = copyErrno;
+        if (!copiedHead) NotImplemented_nid_no_patch(function);
+    }
     return 0;
 }
 
@@ -449,19 +559,22 @@ bool ImeReadKeyboardView_nid_postfix(ImeKeyboardView& view) {
 int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* extended) {
     std::lock_guard lock(g_imeMutex);
     if (g_session) return ErrorBusy;
-    if (const int error = ValidateOpen(param, extended)) return error;
+    Param localParam{};
+    ExtendedParam localExt{};
+    std::u16string localText;
+    if (const int error = ValidateOpen(param, extended, &localParam, &localExt, &localText)) return error;
     Session session;
     session.id = ++g_nextSessionId;
-    session.param = *param;
-    session.extKeyboardFilter = extended ? extended->ext_keyboard_filter : nullptr;
-    session.text.assign(param->input_text_buffer, TextLength(param->input_text_buffer, param->max_text_length));
+    session.param = localParam;
+    session.extKeyboardFilter = extended ? localExt.ext_keyboard_filter : nullptr;
+    session.text = std::move(localText);
     session.caret = static_cast<uint32_t>(session.text.size());
     SyncBuffers(session);
     ImeEvent open{};
     open.id = EventOpen;
-    open.param.rect.x = param->posx;
-    open.param.rect.y = param->posy;
-    PanelSize(*param, &open.param.rect.width, &open.param.rect.height);
+    open.param.rect.x = localParam.posx;
+    open.param.rect.y = localParam.posy;
+    PanelSize(localParam, &open.param.rect.width, &open.param.rect.height);
     session.events.push_back(open);
     g_session = std::move(session);
     return 0;
@@ -549,9 +662,24 @@ int APS5_VABI sceImeFilterText(char16_t* dst, int32_t* out_length, uint32_t capa
     return static_cast<int>(ime_filter::FilterText(dst, out_length, capacity, param, src, src_length));
 }
 
-int APS5_VABI sceImeCheckFilterText(const void* param) {
-    (void)param;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceImeCheckFilterText(char16_t* text, std::uint8_t repair) {
+    if (!text) return -3;
+    constexpr std::size_t maxLength = 0x98;
+    for (std::size_t index = 0; index < maxLength; ++index) {
+        char16_t character = 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&character, text + index, sizeof(character));
+        errno = savedErrno;
+        if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (character == 0) return 0;
+    }
+    if (!repair) return -2;
+    constexpr char16_t terminator = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(text + maxLength, &terminator, sizeof(terminator));
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return 0;
 }
 
 void APS5_VABI sceImeParamInit(Param* param) {
@@ -565,8 +693,13 @@ int APS5_VABI sceImeSetCaret(const Caret* caret) {
     std::lock_guard lock(g_imeMutex);
     if (!g_session) return ErrorNotOpened;
     if (!caret) return ErrorInvalidAddress;
-    if (caret->index > g_session->text.size()) return ErrorInvalidParam;
-    g_session->caret = caret->index;
+    Caret localCaret{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localCaret, caret, sizeof(localCaret));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidAddress;
+    if (localCaret.index > g_session->text.size()) return ErrorInvalidParam;
+    g_session->caret = localCaret.index;
     NormalizeCaret(*g_session);
     ++g_session->revision;
     return 0;
@@ -582,9 +715,14 @@ int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length) {
     if (!g_session) return ErrorNotOpened;
     if (!text) return ErrorInvalidAddress;
     Session& session = *g_session;
-    const std::size_t count = TextLength(text, std::min(length, session.param.max_text_length));
-    if (!ValidText(text, count, (session.param.option & OptionMultiline) != 0)) return ErrorInvalidText;
-    session.text.assign(text, count);
+    std::u16string localText;
+    if (!ReadGuestText(text, std::min<std::size_t>(length, session.param.max_text_length), &localText)) {
+        return ErrorInvalidAddress;
+    }
+    if (!ValidText(localText.data(), localText.size(), (session.param.option & OptionMultiline) != 0)) {
+        return ErrorInvalidText;
+    }
+    session.text = std::move(localText);
     ++session.revision;
     NormalizeCaret(session);
     SyncBuffers(session);
@@ -773,13 +911,20 @@ int APS5_VABI sceImeVshSetSelectionText(ImeVshContext* context, const char16_t* 
 }
 
 int APS5_VABI sceImeCheckUpdateTextInfo(ImeEditText* info, std::uint8_t repair) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return CheckEditTextInfo(info, repair, __func__);
 }
 
 int APS5_VABI sceImeCheckRemoteEventParam(ImeEvent* event, std::uint8_t repair) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (event == nullptr) NotImplemented_nid_no_patch(__func__);
+    std::uint32_t eventId = 0;
+    const int savedErrno = errno;
+    const bool copiedId = GuestCopyIn_nid_no_patch(&eventId, event, sizeof(eventId));
+    errno = savedErrno;
+    if (!copiedId) NotImplemented_nid_no_patch(__func__);
+    if (eventId != EventUpdateText) return 0;
+    const auto address = reinterpret_cast<std::uintptr_t>(event);
+    if (address > UINTPTR_MAX - offsetof(ImeEvent, param)) NotImplemented_nid_no_patch(__func__);
+    return CheckEditTextInfo(reinterpret_cast<const ImeEditText*>(address + offsetof(ImeEvent, param)), repair, __func__);
 }
 
 int APS5_VABI sceImeKeyboardOpenInternal(std::int32_t userId, EventHandler handler, const KeyboardParam* param) {

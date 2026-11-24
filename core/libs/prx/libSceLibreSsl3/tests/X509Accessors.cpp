@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
 
+#include <cerrno>
 #include <climits>
 #include <cstdint>
 #include <cstdio>
@@ -10,6 +11,7 @@
 #include <exception>
 #include <initializer_list>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -234,6 +236,23 @@ void CheckSignatureNidInputs() {
     RequireThrows([&] { SignatureNid(&hugeNegative); });
 }
 
+void CheckSignatureNidGuestPointers() {
+    const auto rejects = [](const LibreSsl3Certificate* certificate, std::source_location location = std::source_location::current()) {
+        errno = EINVAL;
+        bool rejected = false;
+        try {
+            X509_get_signature_nid_nid_postfix(certificate);
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        Require(rejected && errno == EINVAL, location);
+    };
+    rejects(reinterpret_cast<const LibreSsl3Certificate*>(std::uintptr_t{0x10}));
+    LibreSsl3Certificate certificate {};
+    certificate.sigAlg = reinterpret_cast<const LibreSsl3X509Algor*>(std::uintptr_t{0x10});
+    rejects(&certificate);
+}
+
 void CheckEveryBuiltInObject() {
     int found = 0;
     for (int nid = 1; nid < LibreSslObjectCount; ++nid) {
@@ -421,6 +440,7 @@ void CheckRepeatable() {
 int main() {
     CheckPubkey();
     CheckSignatureNidInputs();
+    CheckSignatureNidGuestPointers();
     CheckEveryBuiltInObject();
     CheckUnknownObjects();
     CheckAddedObjects();

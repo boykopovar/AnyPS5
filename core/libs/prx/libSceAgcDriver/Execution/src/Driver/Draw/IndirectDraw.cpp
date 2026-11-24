@@ -33,7 +33,7 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
     else if (drawParameters.indexed && !GuestMemory::Accessible(reinterpret_cast<const void*>(drawParameters.indexAddress), static_cast<std::size_t>(drawParameters.indexCount) * drawParameters.indexSize)) fail(Path::IndexRange);
     constexpr std::uint32_t NoLocation = 0x280u;
     const bool meshPath = graphics.stages.mesh.has_value() && !graphics.stages.tessellation && !graphics.rectList;
-    const bool meshGpuSide = meshPath && drawParameters.indexed && indirect.count == 1 && !indirect.countIndirect && indirect.baseVertexLocation == NoLocation && indirect.startInstanceLocation == NoLocation && (!indirect.drawIndexEnabled || indirect.drawIndexLocation == NoLocation);
+    const bool meshGpuSide = meshPath && indirect.count == 1 && !indirect.countIndirect && indirect.baseVertexLocation == NoLocation && indirect.startInstanceLocation == NoLocation && (!indirect.drawIndexEnabled || indirect.drawIndexLocation == NoLocation);
     static const bool rectListOnGpu = std::getenv("APS5_NO_RECT_INDIRECT") == nullptr;
     const bool rectListGpuSide = rectListOnGpu && graphics.rectList && !graphics.stages.mesh && !graphics.stages.tessellation;
     if ((graphics.stages.path != Graphics::ShaderPath::Vertex || (graphics.rectList && !rectListGpuSide)) && !meshGpuSide) fail(Path::NonVertexPath);

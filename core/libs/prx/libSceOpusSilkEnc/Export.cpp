@@ -152,7 +152,7 @@ int APS5_VABI sceOpusSilkEncCancel(OpusSilkEncoder* state, std::uint32_t batchId
 
 int APS5_VABI sceOpusSilkEncEncodeWithPriority(OpusSilkEncoder* state, const std::int16_t* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
     if (const int result = priorityEncodeError(state, samples, frameSize, data, maxDataBytes, priority); result != 0) return result;
-    NotImplemented_nid_no_patch(__func__);
+    return library.Encode(state, samples, frameSize, data, maxDataBytes);
 }
 
 int APS5_VABI sceOpusSilkEncEncodeFloatWithPriority(OpusSilkEncoder* state, const float* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {

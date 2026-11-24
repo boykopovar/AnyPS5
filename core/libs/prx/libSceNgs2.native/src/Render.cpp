@@ -393,16 +393,14 @@ static float CompressorCoefficient(float seconds, std::uint32_t sampleRate) {
 static bool CompressorKnee(float knee) {
     if (knee == 0.0f) return false;
     if (!PS4_LIBRARY) return true;
-    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, processParameters + 0x10, sizeof(sdkVersion));
-    return sdkVersion >= 0x1700000;
+    return ApplicationCompiledSdkVersion() >= 0x1700000;
 }
 
 static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate) {
     auto& compressor = voice.compressor;
     if (!compressor.configured) return;
     const auto& param = compressor.param;
+    const bool mastering = voice.rack->rackId == SCE_NGS2_RACK_ID_MASTERING;
     if ((param.flags & 1u) != 0) {
         compressor.gain.fill(1.0f);
         return;
@@ -445,7 +443,7 @@ static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32
                 const float d = x - kneeStart;
                 target = (kneeStart + d * (1.0f + 0.5f * (d / kneeWidth) * (param.ratio - 1.0f))) / x;
             } else if (x > kneeStart) {
-                target = (param.threshold + (x - param.threshold) * param.ratio) / x;
+                target = mastering ? param.threshold / x : (param.threshold + (x - param.threshold) * param.ratio) / x;
             }
             float& gain = compressor.gain[channel];
             const float coefficient = gain <= target ? release : attack;
@@ -454,7 +452,7 @@ static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32
                 gain = coefficient * gain + (1.0f - coefficient) * target;
                 samples[i] *= gain * param.level;
             }
-            if (std::abs(target - gain) <= 0.01f && coefficient * gain + (1.0f - coefficient) * target == gain) gain = target;
+            if (std::abs(target - gain) <= 0.01f && (mastering || coefficient * gain + (1.0f - coefficient) * target == gain)) gain = target;
         }
     }
 }
@@ -523,7 +521,11 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
             else if (voice.outputTransition != Ngs2VoiceTransition::Kill) RenderSampler(voice, grain, systemRate);
         } else {
             MixInputs(voice, voices, grain, systemRate);
-            if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER) ProcessCompressor(voice, grain, systemRate);
+            if (voice.masteringLfe.enabled) Ngs2ApplyMasteringLfe(voice, grain, systemRate);
+            if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER ||
+                (!PS4_LIBRARY && voice.rack->rackId == SCE_NGS2_RACK_ID_MASTERING)) {
+                ProcessCompressor(voice, grain, systemRate);
+            }
         }
         if (voice.rack->rackId == SCE_NGS2_RACK_ID_REVERB && voice.reverb) voice.hasSamples = Ngs2ProcessReverb(voice, grain, systemRate);
         Ngs2ProcessLegacyUserFx(voice, grain, systemRate);
@@ -744,6 +746,21 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
             if ((voice->rack->rackId != SCE_NGS2_RACK_ID_MASTERING && voice->rack->rackId != SCE_NGS2_RACK_ID_CUSTOM_MASTERING) || !voice->hasSamples || voice->KilledForRender()) continue;
             auto& mix = OutputMix(mixes, bufferInfo, numBufferInfo, *voice, grain);
             const std::uint32_t outputChannels = bufferInfo[voice->outputId].num_channels;
+            if (!PS4_LIBRARY && voice->rack->rackId == SCE_NGS2_RACK_ID_MASTERING) {
+                std::vector<float> mapped(grain);
+                for (std::uint32_t dest = 0; dest < outputChannels; dest++) {
+                    std::fill(mapped.begin(), mapped.end(), 0.0f);
+                    for (std::uint32_t channel = 0; channel < voice->channels; channel++) {
+                        const float map = MasteringOutputLevel(voice->channels, channel, outputChannels, dest, false);
+                        if (map == 0.0f) continue;
+                        for (std::uint32_t i = 0; i < grain; i++) mapped[i] += voice->samples[channel * grain + i] * map;
+                    }
+                    const bool lfe = dest == 3 && voice->channels >= 4 && outputChannels >= 4;
+                    const float level = lfe ? voice->lfeLevel : voice->fbwLevel;
+                    for (std::uint32_t i = 0; i < grain; i++) mix[i * outputChannels + dest] += mapped[i] * level;
+                }
+                continue;
+            }
             for (std::uint32_t channel = 0; channel < voice->channels; channel++) {
                 const bool lfe = channel == 3 && (voice->channels == 6 || voice->channels == 8);
                 const float level = lfe ? voice->lfeLevel : voice->fbwLevel;

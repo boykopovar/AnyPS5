@@ -37,4 +37,13 @@ int APS5_VABI libSceNKWebKitRequirementsUnknown_uiTgPO1VRaA_nid_no_patch();
 int APS5_VABI libSceNKWebKitRequirementsUnknown_x2xMh95HEb4_nid_no_patch();
 int APS5_VABI libSceNKWebKitRequirementsUnknown_z5L7zirdMWM_nid_no_patch();
 
+int APS5_VABI wpe_loader_get_loaded_implementation_library_name();
+int APS5_VABI wpe_loader_init();
+int APS5_VABI wpe_pasteboard_get_singleton();
+int APS5_VABI wpe_pasteboard_get_string();
+int APS5_VABI wpe_pasteboard_get_types();
+int APS5_VABI wpe_pasteboard_string_free();
+int APS5_VABI wpe_pasteboard_string_initialize();
+int APS5_VABI wpe_pasteboard_string_vector_free();
+int APS5_VABI wpe_pasteboard_write();
 }

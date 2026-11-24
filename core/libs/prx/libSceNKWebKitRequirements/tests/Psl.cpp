@@ -82,6 +82,20 @@ void TestSuffixAndRegistrableDomain() {
     AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "www.example.com", "example.com") == 1, "cookie domain example.com should be acceptable");
     AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "www.example.com", "com") == 0, "cookie domain com should not be acceptable");
     AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "www.example.com", "other.com") == 0, "cookie domain other.com should not be acceptable");
+
+    AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "192.168.0.1", "192.168.0.1") == 1, "an IPv4 host should accept its own address");
+    AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "192.168.0.1", "0.1") == 0, "an IPv4 host should reject a cookie domain that only ends it");
+    AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "1.2.3", "2.3") == 1, "1.2.3 is a host name for inet_pton");
+    AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "0x7f.0.0.1", "0.0.1") == 1, "0x7f.0.0.1 is a host name for inet_pton");
+
+    const char* const names[][2]{{"WWW.Example.COM", "example.com"}, {"www.example.com", "EXAMPLE.COM"},
+        {"www.example.com", "..example.com"}, {"remember.his.name", "his.name"}, {"forgot.his.name", "his.name"},
+        {"sub.domain.co.uk", "domain.co.uk"}, {"example.com", "www.example.com"}, {"wwwexample.com", "example.com"}};
+    for (const auto& name : names) {
+        AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, name[0], name[1]) == psl_is_cookie_domain_acceptable(psl_builtin(), name[0], name[1]),
+            "psl_is_cookie_domain_acceptable should answer as libpsl for host names");
+    }
+    AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "WWW.Example.COM", "example.com") == 0, "libpsl compares names case-sensitively, as it expects lowercase input");
 }
 
 void TestStringConversionAndFileLoading() {
