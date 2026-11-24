@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/PrimedSharedMutex.hpp"
@@ -3160,6 +3161,31 @@ DepthSurface* drawnDepth = nullptr;
 
 std::atomic<std::uint64_t> surfacesSerial{0};
 std::atomic<std::uint64_t> surfacesReleased{0};
+std::atomic<std::uint64_t> storageScans{0};
+
+struct UnclaimedAddressesTag {};
+
+struct UnclaimedAddresses {
+    struct Entry {
+        VkDevice device = VK_NULL_HANDLE;
+        std::uint64_t address = 0;
+        std::uint64_t serial = 0;
+    };
+    std::array<Entry, 32> entries{};
+
+    Entry& Slot(std::uint64_t address) {
+        return entries[static_cast<std::size_t>((address >> 8u) * 0x9E3779B97F4A7C15ull >> 59u)];
+    }
+
+    bool Holds(VkDevice device, std::uint64_t address, std::uint64_t serial) {
+        const auto& entry = Slot(address);
+        return entry.device == device && entry.address == address && entry.serial == serial;
+    }
+
+    void Remember(VkDevice device, std::uint64_t address, std::uint64_t serial) {
+        Slot(address) = {device, address, serial};
+    }
+};
 
 void retire(DepthSurface& surface);
 
@@ -3803,6 +3829,10 @@ void retireStoringStale(DepthSurface& surface) {
 
 std::uint64_t DepthSurfacesSerial() {
     return surfacesSerial.load(std::memory_order_acquire);
+}
+
+std::uint64_t DepthSurfaceStorageScans() {
+    return storageScans.load(std::memory_order_relaxed);
 }
 
 std::uint64_t DepthSurfacesReleased() {
@@ -5124,12 +5154,19 @@ std::shared_ptr<StorageTexture> layeredDepthStorage(const Context& context, Dept
 
 std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip) {
     if (mip != 0 || resource.baseLevel != 0) return nullptr;
+    auto& unclaimed = ThreadScratch<UnclaimedAddresses, UnclaimedAddressesTag>();
+    if (unclaimed.Holds(context.device, resource.baseAddress, surfacesSerial.load(std::memory_order_acquire))) return nullptr;
+    storageScans.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(surfacesMutex());
+    const auto serial = surfacesSerial.load(std::memory_order_acquire);
     const auto& list = surfaces();
     const auto found = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) {
         return surface->active->load(std::memory_order_acquire) && surface->context.device == context.device && !surface->retired && (surface->target.address == resource.baseAddress || (surface->target.stencilAddress != 0 && surface->target.stencilAddress == resource.baseAddress));
     });
-    if (found == list.rend()) return nullptr;
+    if (found == list.rend()) {
+        unclaimed.Remember(context.device, resource.baseAddress, serial);
+        return nullptr;
+    }
     auto& surface = **found;
     const bool stencil = surface.target.stencilAddress != 0 && surface.target.stencilAddress == resource.baseAddress;
     if (stencil || resource.dimension != TextureDimension::k2DArray || (resource.baseArray == 0 && resource.depthOrLastArray == 0)) return surface.Storage(words, resource, mip);
