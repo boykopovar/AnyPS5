@@ -348,6 +348,7 @@ int main() {
         const std::string longPattern = "*" + longString;
         Require(fnmatch_nid_postfix(longPattern.c_str(), longString.c_str(), 0) == 0);
         Require(fnmatch_nid_postfix(longPattern.c_str(), "other", 0) == 1);
+        Require(fnmatch_nid_postfix(longString.c_str(), longString.c_str(), 0) == 0);
     }
     return 0;
 }
