@@ -44,13 +44,6 @@ int checkHandle(int32_t handle, bool validArguments = true) {
     return MOVE_OK;
 }
 
-uint32_t compiledSdkVersion() {
-    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    uint32_t version;
-    std::memcpy(&version, processParameters + 0x10, sizeof(version));
-    return version;
-}
-
 }
 
 extern "C" {
@@ -107,7 +100,7 @@ int APS5_VABI sceMoveReadStateLatest(int32_t handle, void* data) {
 }
 
 int APS5_VABI sceMoveReadStateRecent(int32_t handle, int64_t timestamp, void* data, int32_t* outCount) {
-    const bool dataAccepted = data != nullptr || compiledSdkVersion() <= MOVE_LAST_SDK_ALLOWING_NULL_DATA;
+    const bool dataAccepted = data != nullptr || ApplicationCompiledSdkVersion() <= MOVE_LAST_SDK_ALLOWING_NULL_DATA;
     const bool countValid = outCount != nullptr && GuestWritable_nid_no_patch(outCount, sizeof(*outCount));
     const int result = checkHandle(handle, timestamp >= 0 && dataAccepted && countValid);
     if (result == MOVE_ERROR_INVALID_HANDLE) {

@@ -261,9 +261,88 @@ static void TestURL() {
     Require(WKStringIsEqualToUTF8CString(aboutPath, "blank"));
     WKRelease(aboutPath);
     auto* aboutLast = WKURLCopyLastPathComponent(aboutUrl);
-    Require(WKStringIsEqualToUTF8CString(aboutLast, "blank"));
+    Require(WKStringIsEqualToUTF8CString(aboutLast, "about:blank"));
     WKRelease(aboutLast);
     WKRelease(aboutUrl);
+
+    struct ParsedCase {
+        const char* url;
+        const char* scheme;
+        const char* host;
+        const char* path;
+        const char* last;
+    };
+    for (const ParsedCase& item : {
+             ParsedCase{"https://example.com/a/../b/./c", "https", "example.com", "/b/c", "c"},
+             ParsedCase{"https://example.com/a b/x y", "https", "example.com", "/a%20b/x%20y", "x%20y"},
+             ParsedCase{"HTTP://EXAMPLE.com:80/x", "http", "example.com", "/x", "x"},
+             ParsedCase{"http:/a/b", "http", "a", "/b", "b"},
+             ParsedCase{"custom://Host.Example/a", "custom", "Host.Example", "/a", "a"},
+             ParsedCase{"blob:https://example.com/2f3c", "blob", "", "https://example.com/2f3c", "2f3c"},
+             ParsedCase{"data:text/plain,http://example.com/x", "data", "", "text/plain,http://example.com/x", "x"},
+             ParsedCase{"mailto:someone@example.com?subject=http://x/y", "mailto", "", "someone@example.com", nullptr},
+             ParsedCase{"http://example.com:80x/y", "", "", "", ""},
+             ParsedCase{"not a url", "", "", "", ""},
+         }) {
+        auto* parsedUrl = WKURLCreateWithUTF8CString(item.url);
+        auto* parsedText = WKURLCopyString(parsedUrl);
+        Require(WKStringIsEqualToUTF8CString(parsedText, item.url));
+        WKRelease(parsedText);
+        auto* parsedScheme = WKURLCopyScheme(parsedUrl);
+        Require(WKStringIsEqualToUTF8CString(parsedScheme, item.scheme));
+        WKRelease(parsedScheme);
+        auto* parsedHost = WKURLCopyHostName(parsedUrl);
+        Require(WKStringIsEqualToUTF8CString(parsedHost, item.host));
+        WKRelease(parsedHost);
+        auto* parsedPath = WKURLCopyPath(parsedUrl);
+        Require(WKStringIsEqualToUTF8CString(parsedPath, item.path));
+        WKRelease(parsedPath);
+        auto* parsedLast = WKURLCopyLastPathComponent(parsedUrl);
+        Require(!item.last || WKStringIsEqualToUTF8CString(parsedLast, item.last));
+        WKRelease(parsedLast);
+        WKRelease(parsedUrl);
+    }
+    struct EqualCase {
+        const char* first;
+        const char* second;
+        bool equal;
+    };
+    for (const EqualCase& item : {
+             EqualCase{"https://example.com:443/a", "https://example.com/a", true},
+             EqualCase{"HTTPS://EXAMPLE.com/a", "https://example.com/a", true},
+             EqualCase{"https://example.com/a/../b", "https://example.com/b", true},
+             EqualCase{"https://example.com/a b", "https://example.com/a%20b", true},
+             EqualCase{"https://example.com:8443/a", "https://example.com/a", false},
+             EqualCase{"http://example.com:80x/", "http://example.com:80x/", true},
+             EqualCase{"http://example.com:80x/", "http://example.com:80y/", false},
+         }) {
+        auto* firstUrl = WKURLCreateWithUTF8CString(item.first);
+        auto* secondUrl = WKURLCreateWithUTF8CString(item.second);
+        Require(WKURLIsEqual(firstUrl, secondUrl) == item.equal);
+        WKRelease(secondUrl);
+        WKRelease(firstUrl);
+    }
+    struct ResolveCase {
+        const char* base;
+        const char* relative;
+        const char* expected;
+    };
+    for (const ResolveCase& item : {
+             ResolveCase{"https://example.com/dir/page.html", "a b.html", "https://example.com/dir/a%20b.html"},
+             ResolveCase{"https://example.com/dir/page.html", "../x/./y", "https://example.com/x/y"},
+             ResolveCase{"https://example.com/dir/page.html", "//other.example:443/z", "https://other.example/z"},
+             ResolveCase{"https://example.com/dir/page.html?q#frag", "", "https://example.com/dir/page.html?q"},
+             ResolveCase{"https://example.com/dir/page.html?q#frag", nullptr, "https://example.com/dir/page.html?q"},
+             ResolveCase{"https://example.com/dir/", "blob:https://example.com/2f3c", "blob:https://example.com/2f3c"},
+         }) {
+        auto* baseUrl = WKURLCreateWithUTF8CString(item.base);
+        auto* resolvedUrl = WKURLCreateWithBaseURL(baseUrl, item.relative);
+        auto* resolvedText = WKURLCopyString(resolvedUrl);
+        Require(WKStringIsEqualToUTF8CString(resolvedText, item.expected));
+        WKRelease(resolvedText);
+        WKRelease(resolvedUrl);
+        WKRelease(baseUrl);
+    }
 
     auto* rootUrl = WKURLCreateWithUTF8CString("https://example.com/");
     auto* rootPath = WKURLCopyPath(rootUrl);
@@ -1559,6 +1638,55 @@ static void TestBundleFrameForms() {
     threw = false;
     try {
         WKBundleFrameContainsAnyFormControls(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestBundleFrameActions() {
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    const void* ref = frame.Get();
+
+    Require(!frame->isFocused);
+    Require(!frame->hasOpener);
+
+    frame->hasOpener = true;
+    WKBundleFrameClearOpener(ref);
+    Require(!frame->hasOpener);
+
+    WKBundleFrameFocus(ref);
+    Require(frame->isFocused);
+
+    bool threw = false;
+    try {
+        WKBundleFrameClearOpener(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleFrameFocus(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        auto wrongObj = NKWebKit::Make<NKWebKit::String>();
+        WKBundleFrameClearOpener(wrongObj.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        auto wrongObj = NKWebKit::Make<NKWebKit::String>();
+        WKBundleFrameFocus(wrongObj.Get());
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -3056,6 +3184,69 @@ static void TestAuthentication() {
     Require(WKAuthenticationChallengeGetTypeID() == 2);
     Require(WKAuthenticationDecisionListenerGetTypeID() == 3);
 
+    {
+        auto fresh = NKWebKit::Make<NKWebKit::AuthenticationChallenge>();
+        const void* freshRef = fresh.Get();
+        Require(WKAuthenticationChallengCopyRequestURL(freshRef) == nullptr);
+        Require(WKAuthenticationChallengeGetPreviousFailureCount(freshRef) == 0);
+        Require(!WKAuthenticationChallengeIsForMainResource(freshRef));
+        Require(!WKAuthenticationChallengeIsInMainFrame(freshRef));
+
+        const void* freshListener = WKAuthenticationChallengeGetDecisionListener(freshRef);
+        Require(freshListener != nullptr);
+        Require(WKGetTypeID(freshListener) == WKAuthenticationDecisionListenerGetTypeID());
+        Require(WKAuthenticationChallengeGetDecisionListener(freshRef) == freshListener);
+        Require(fresh->decisionListener.Get() == freshListener);
+        Require(fresh->decisionListener->decision == NKWebKit::AuthenticationDecisionListener::Decision::None);
+        WKAuthenticationDecisionListenerCancel(freshListener);
+        Require(fresh->decisionListener->decision == NKWebKit::AuthenticationDecisionListener::Decision::Cancel);
+
+        const void* freshCredential = WKAuthenticationChallengeGetProposedCredential(freshRef);
+        Require(freshCredential != nullptr);
+        Require(WKGetTypeID(freshCredential) == WKCredentialGetTypeID());
+        Require(WKAuthenticationChallengeGetProposedCredential(freshRef) == freshCredential);
+        Require(fresh->proposedCredential.Get() == freshCredential);
+        auto* freshUser = WKCredentialCopyUser(freshCredential);
+        Require(WKStringIsEmpty(freshUser));
+        WKRelease(freshUser);
+
+        const void* freshSpace = WKAuthenticationChallengeGetProtectionSpace(freshRef);
+        Require(freshSpace != nullptr);
+        Require(WKGetTypeID(freshSpace) == WKProtectionSpaceGetTypeID());
+        Require(WKAuthenticationChallengeGetProtectionSpace(freshRef) == freshSpace);
+        Require(fresh->protectionSpace.Get() == freshSpace);
+        auto* freshHost = WKProtectionSpaceCopyHost(freshSpace);
+        Require(WKStringIsEmpty(freshHost));
+        WKRelease(freshHost);
+        auto* freshRealm = WKProtectionSpaceCopyRealm(freshSpace);
+        Require(WKStringIsEmpty(freshRealm));
+        WKRelease(freshRealm);
+        Require(WKProtectionSpaceGetPort(freshSpace) == 0);
+        Require(WKProtectionSpaceGetServerType(freshSpace) == 1);
+        Require(WKProtectionSpaceGetAuthenticationScheme(freshSpace) == 1);
+        Require(!WKProtectionSpaceGetIsProxy(freshSpace));
+        Require(!WKProtectionSpaceGetReceivesCredentialSecurely(freshSpace));
+
+        auto other = NKWebKit::Make<NKWebKit::AuthenticationChallenge>();
+        const void* otherRef = other.Get();
+        Require(WKAuthenticationChallengeGetDecisionListener(otherRef) != nullptr);
+        Require(WKAuthenticationChallengeGetDecisionListener(otherRef) != freshListener);
+        Require(WKAuthenticationChallengeGetProposedCredential(otherRef) != nullptr);
+        Require(WKAuthenticationChallengeGetProposedCredential(otherRef) != freshCredential);
+        Require(WKAuthenticationChallengeGetProtectionSpace(otherRef) != nullptr);
+        Require(WKAuthenticationChallengeGetProtectionSpace(otherRef) != freshSpace);
+
+        fresh->requestURL = std::string();
+        auto* emptyUrl = WKAuthenticationChallengCopyRequestURL(freshRef);
+        Require(emptyUrl != nullptr);
+        Require(WKGetTypeID(emptyUrl) == WKURLGetTypeID());
+        auto* emptyText = WKURLCopyString(emptyUrl);
+        Require(WKStringIsEmpty(emptyText));
+        WKRelease(emptyText);
+        WKRelease(emptyUrl);
+        Require(WKAuthenticationChallengCopyRequestURL(otherRef) == nullptr);
+    }
+
     auto challenge = NKWebKit::Make<NKWebKit::AuthenticationChallenge>();
     challenge->requestURL = "https://auth.example.com/login";
     challenge->previousFailureCount = 2;
@@ -3074,6 +3265,14 @@ static void TestAuthentication() {
     const void* challengeRef = challenge.Get();
     auto* reqUrl = WKAuthenticationChallengCopyRequestURL(challengeRef);
     Require(reqUrl != nullptr);
+    Require(WKGetTypeID(reqUrl) == WKURLGetTypeID());
+    auto* reqText = WKURLCopyString(reqUrl);
+    Require(WKStringIsEqualToUTF8CString(reqText, "https://auth.example.com/login"));
+    WKRelease(reqText);
+    auto* reqUrlAgain = WKAuthenticationChallengCopyRequestURL(challengeRef);
+    Require(reqUrlAgain != nullptr);
+    Require(reqUrlAgain != reqUrl);
+    WKRelease(reqUrlAgain);
     WKRelease(reqUrl);
 
     Require(WKAuthenticationChallengeGetDecisionListener(challengeRef) == listener.Get());
@@ -3719,6 +3918,7 @@ int main() {
     TestBundleFrameScroll();
     TestBundlePagination();
     TestBundleFrameForms();
+    TestBundleFrameActions();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();

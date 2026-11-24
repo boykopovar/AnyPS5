@@ -333,6 +333,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
+    add_test_executable(guest_libressl_wycheproof_cbc_cmac_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/WycheproofCbcCmac.cpp)
+    target_include_directories(guest_libressl_wycheproof_cbc_cmac_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_wycheproof_cbc_cmac_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_wycheproof_cbc_cmac_tests)
+    add_test(NAME guest_libressl_wycheproof_cbc_cmac COMMAND guest_libressl_wycheproof_cbc_cmac_tests)
+    set_tests_properties(guest_libressl_wycheproof_cbc_cmac PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(guest_libressl_wycheproof_cbc_cmac PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
     add_test_executable(guest_libressl_evp_aes_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslEvpAes.cpp)
     target_include_directories(guest_libressl_evp_aes_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl_evp_aes_tests PRIVATE libSceLibreSsl libc)
@@ -484,6 +495,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl_ec_point_mul PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_libressl_ec_point_mul PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
+    add_test_executable(guest_libressl_ec_error_queue_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslEcErrorQueue.cpp)
+    target_include_directories(guest_libressl_ec_error_queue_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_ec_error_queue_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_ec_error_queue_tests)
+    add_test(NAME guest_libressl_ec_error_queue COMMAND guest_libressl_ec_error_queue_tests)
+    set_tests_properties(guest_libressl_ec_error_queue PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_ec_error_queue PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
