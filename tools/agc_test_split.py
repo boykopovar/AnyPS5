@@ -919,12 +919,17 @@ def main(argv=None):
                              f"resolve: during a rebase or merge stopped on {LISTS}, apply the change's registrations to the "
                              "fragments and stage them")
     args = parser.parse_args(argv)
-    root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
-    if os.name == "nt" and not root.is_dir():
-        root = (Path.cwd() / git(Path.cwd(), "rev-parse", "--show-cdup").strip()).resolve()
+    try:
+        root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+        if os.name == "nt" and not root.is_dir():
+            root = (Path.cwd() / git(Path.cwd(), "rev-parse", "--show-cdup").strip()).resolve()
+    except (OSError, subprocess.CalledProcessError) as error:
+        sys.exit(f"not a git repository: {error}")
     try:
         {"refactor": command_refactor, "split": command_split, "resolve": command_resolve}[args.command](root)
     except SplitError as error:
+        sys.exit(f"{LISTS}: {error}")
+    except OSError as error:
         sys.exit(f"{LISTS}: {error}")
 
 
