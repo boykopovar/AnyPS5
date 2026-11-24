@@ -84,6 +84,7 @@ void arms() {
     Require(Refusal("60:A|X=APS5_NO_BARRIER_BATCH|X=APS5_NO_OWNED_DRAW_INPUTS").find("defined twice") != std::string::npos, "a group defined twice was not refused");
     Require(Refusal("60:A|").find("empty arm") != std::string::npos, "an empty arm was not refused");
     Require(Refusal("60:A=APS5_NO_BARRIER_BATCH|A").find("needs a name other than A") != std::string::npos, "an arm without a name before = was not refused");
+    Require(Refusal("60:A|X-Y=APS5_NO_BARRIER_BATCH").find("may only contain letters, digits and _") != std::string::npos, "an arm name with punctuation was not refused");
     Require(Refusal("60:A|X=").find("empty switch name") != std::string::npos, "a group without switches was not refused");
     Require(Refusal("60:A|X=APS5_NO_BARRIER_BATCH+APS5_NO_BARRIER_BATCH").find("listed twice") != std::string::npos, "a group listing a switch twice was not refused");
 }

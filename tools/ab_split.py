@@ -22,9 +22,9 @@ A requested program's phase metric is omitted if a report lists 12 programs
 without it: the list may be truncated, so the program's time is unknown.
 A counted present report with missing batch completion records also refuses the comparison."""
 
-PHASE = re.compile(r"\[ab\] phase ([A-Za-z0-9_]+) ([0-9]+) (begins|settled) at present ([0-9]+) \(t ([0-9]+(?:\.[0-9]+)?) s\)(:.*)?")
+PHASE = re.compile(r"\[ab\] phase ([A-Za-z0-9_+]+) ([0-9]+) (begins|settled) at present ([0-9]+) \(t ([0-9]+(?:\.[0-9]+)?) s\)(:.*)?")
 ROTATION = re.compile(r", the arm order rotates by one at every cycle of (\d+) phases")
-ARM_ENTRY = re.compile(r"; ([^;:]+): ")
+ARM_ENTRY = re.compile(r"; ([A-Za-z0-9_+]+): ")
 KINDS = (("present", re.compile(r"\[present\] \d+ presents")), ("gputime", re.compile(r"\[gputime\] [\d.]+ ms of GPU time")),
          ("draw", re.compile(r"\[draw\] pipelined \(")), ("syncwait", re.compile(r"\[syncwait\] unlocked hook waits")))
 

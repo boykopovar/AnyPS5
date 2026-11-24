@@ -557,6 +557,15 @@ class AbRotationTests(unittest.TestCase):
         self.assertEqual(ab_split.cycle_length(plan_log(["A", "X", "Y"], True, 1, {})[1]), 3)
         self.assertEqual(ab_split.cycle_length(plan_log(["A", "X", "A", "Y", "X"], False, 1, {})[1]), 5)
 
+    def test_arm_names_the_driver_prints_are_readable_and_others_are_refused(self):
+        names = ["A", "APS5_NO_GUARD_SPANS+APS5_NO_OWNED_DRAW_INPUTS", "X_1"]
+        self.assertEqual(ab_split.cycle_length(plan_log(names, False, 1, {})[1]), 3)
+        result = ab_split.split(plan_log(names, False, 2, {}))
+        self.assertEqual([phase["kind"] for phase in result["phases"]][:3], names)
+        lines = [line.replace("phase B ", "phase X-Y ") for line in plan_log(["A", "B"], False, 1, {})]
+        with self.assertRaisesRegex(ValueError, "invalid A/B phase marker"):
+            ab_split.read_log(lines)
+
     def test_two_arms_without_rotation_pair_each_b_with_both_neighbours(self):
         result, rows = busy_rows(["A", "B"], False, 3, {"B": 10.0})
         self.assertEqual([phase["kind"] for phase in result["phases"]], ["A", "B", "A", "B", "A", "B"])

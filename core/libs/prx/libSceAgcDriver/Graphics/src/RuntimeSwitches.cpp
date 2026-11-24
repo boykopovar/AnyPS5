@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -118,6 +119,7 @@ AbSchedule::Arm ParseArm(std::string_view token, std::string_view ab, const std:
     if (equal != std::string_view::npos) {
         const auto name = Trim(token.substr(0, equal));
         if (name.empty() || name == "A") throw std::invalid_argument("APS5_AB: an arm defined with '=' needs a name other than A in '" + std::string(ab) + "'");
+        if (std::any_of(name.begin(), name.end(), [](char c) { return !std::isalnum(static_cast<unsigned char>(c)) && c != '_'; })) throw std::invalid_argument("APS5_AB: the arm name '" + std::string(name) + "' may only contain letters, digits and _ in '" + std::string(ab) + "'");
         for (const auto& arm : defined) {
             if (arm.name == name) throw std::invalid_argument("APS5_AB: arm " + std::string(name) + " is defined twice");
         }
