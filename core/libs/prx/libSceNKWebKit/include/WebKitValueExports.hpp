@@ -662,4 +662,19 @@ void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* manager
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, WKResultErrorFunction callback);
 
+const void* APS5_VABI WKPlugInInformationReplacementObscuredKey();
+const void* APS5_VABI WKPluginInformationBundleIdentifierKey();
+const void* APS5_VABI WKPluginInformationBundleShortVersionKey();
+const void* APS5_VABI WKPluginInformationBundleVersionKey();
+const void* APS5_VABI WKPluginInformationDefaultLoadPolicyKey();
+const void* APS5_VABI WKPluginInformationDisplayNameKey();
+const void* APS5_VABI WKPluginInformationFrameURLKey();
+const void* APS5_VABI WKPluginInformationHasSandboxProfileKey();
+const void* APS5_VABI WKPluginInformationMIMETypeKey();
+const void* APS5_VABI WKPluginInformationPageURLKey();
+const void* APS5_VABI WKPluginInformationPathKey();
+const void* APS5_VABI WKPluginInformationPluginURLKey();
+const void* APS5_VABI WKPluginInformationPluginspageAttributeURLKey();
+const void* APS5_VABI WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey();
+
 }
