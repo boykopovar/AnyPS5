@@ -329,13 +329,8 @@ int main(int argc, char** argv) {
     Require(createCaught, "CreateDecoderEx reaches service");
 
     std::memset(lock, 0, 16);
-    bool regCaught = false;
-    try {
-        sceAudiodecRegisterCodec(context, 1);
-    } catch (const std::runtime_error&) {
-        regCaught = true;
-    }
-    Require(regCaught, "RegisterCodec reaches service");
+    Require(sceAudiodecRegisterCodec(context, 1) == 0, "RegisterCodec succeeds");
+    Require(sceAudiodecUnregisterCodec(context, 1) == 0, "UnregisterCodec succeeds");
 
     std::puts("libSceAudiodec.native tests passed");
     return 0;

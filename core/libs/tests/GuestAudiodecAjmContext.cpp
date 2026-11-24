@@ -20,6 +20,7 @@ constexpr int NotRegistered = static_cast<int>(0x8093000Au);
 constexpr std::uint32_t Untouched = 0x5a5a5a5au;
 
 using GetAjmContextFn = int (APS5_VABI*)(const void*, std::uint32_t*, std::uint32_t*);
+using RegisterCodecFn = int (APS5_VABI*)(void*, std::uint32_t);
 using UnregisterCodecFn = int (APS5_VABI*)(const void*, std::uint32_t);
 
 template <typename Function>
@@ -46,6 +47,7 @@ void Require(bool condition, const char* message) {
 
 int main() {
     const auto getAjmContext = Resolve<GetAjmContextFn>("sceAudiodecGetAjmContext");
+    const auto registerCodec = Resolve<RegisterCodecFn>("sceAudiodecRegisterCodec");
     const auto unregisterCodec = Resolve<UnregisterCodecFn>("sceAudiodecUnregisterCodec");
     alignas(8) unsigned char context[0x40];
     std::memset(context, 0xee, sizeof(context));
@@ -85,6 +87,37 @@ int main() {
     Require(unregisterCodec(idle, 12) == NotRegistered, "codec type 12 with a clear flag was not rejected");
     Require(std::memcmp(idleBefore, idle, sizeof(idle)) == 0, "the clear-flag calls wrote the context");
 
+    Require(registerCodec(nullptr, 0) == InvalidArgument, "register null context rejected");
+    Require(registerCodec(nullptr, 1) == InvalidArgument, "register null context with valid type rejected");
+    Require(registerCodec(context, 0) == InvalidType, "register codec type 0 rejected");
+    Require(registerCodec(context, 5) == InvalidType, "register codec type 5 rejected");
+    Require(registerCodec(context, 13) == InvalidType, "register codec type 13 rejected");
+    for (const auto invalid : {7u, 8u, 9u, 14u, 100u, 0xFFFFFFFFu}) {
+        Require(registerCodec(context, invalid) == InvalidType, "register invalid codec type rejected");
+    }
+
+    for (const auto codec : {1u, 2u, 3u, 4u, 6u, 10u}) {
+        Require(registerCodec(context, codec) == 0, "register backend codec succeeds");
+        Require(unregisterCodec(context, codec) == 0, "unregister backend codec succeeds");
+    }
+
+    Require(registerCodec(idle, 11) == 0, "register first opus codec 11");
+    Require(registerCodec(idle, 11) == static_cast<int>(0x80930009u), "repeat register opus codec 11 rejected");
+    Require(registerCodec(idle, 12) == 0, "register second opus codec 12 when 11 is set");
+    Require(registerCodec(idle, 12) == static_cast<int>(0x80930009u), "repeat register opus codec 12 rejected");
+    Require(unregisterCodec(idle, 11) == 0, "unregister opus codec 11 when 12 is still set");
+    Require(unregisterCodec(idle, 11) == NotRegistered, "unregister already cleared opus codec 11");
+    Require(unregisterCodec(idle, 12) == 0, "unregister remaining opus codec 12");
+    Require(unregisterCodec(idle, 12) == NotRegistered, "unregister already cleared opus codec 12");
+
+    Require(registerCodec(idle, 12) == 0, "register first opus codec 12");
+    Require(registerCodec(idle, 12) == static_cast<int>(0x80930009u), "repeat register opus codec 12 rejected");
+    Require(registerCodec(idle, 11) == 0, "register second opus codec 11 when 12 is set");
+    Require(registerCodec(idle, 11) == static_cast<int>(0x80930009u), "repeat register opus codec 11 rejected");
+    Require(unregisterCodec(idle, 12) == 0, "unregister opus codec 12 when 11 is still set");
+    Require(unregisterCodec(idle, 12) == NotRegistered, "unregister already cleared opus codec 12");
+    Require(unregisterCodec(idle, 11) == 0, "unregister remaining opus codec 11");
+    Require(unregisterCodec(idle, 11) == NotRegistered, "unregister already cleared opus codec 11");
 
     std::puts("Audiodec GetAjmContext tests passed");
     return 0;
