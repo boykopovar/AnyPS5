@@ -254,7 +254,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                             }
                             if (val && val->alive) {
                                 if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
-                                desc->flags = JS_PROP_WRITABLE | JS_PROP_ENUMERABLE;
+                                desc->flags = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE;
                                 desc->value = JS_DupValue(qctx, val->qval);
                                 desc->getter = JS_UNDEFINED;
                                 desc->setter = JS_UNDEFINED;
@@ -277,7 +277,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                 if (val && val->alive) {
                     if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
                     if (desc) {
-                        desc->flags = JS_PROP_WRITABLE | JS_PROP_ENUMERABLE;
+                        desc->flags = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE;
                         desc->value = JS_DupValue(qctx, val->qval);
                         desc->getter = JS_UNDEFINED;
                         desc->setter = JS_UNDEFINED;
@@ -300,7 +300,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                             if (val && val->alive) {
                                 if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
                                 if (desc) {
-                                    desc->flags = ToQuickJsPropFlags(sv->attributes);
+                                    desc->flags = JS_PROP_CONFIGURABLE | (ToQuickJsPropFlags(sv->attributes) & JS_PROP_ENUMERABLE);
                                     desc->value = JS_DupValue(qctx, val->qval);
                                     desc->getter = JS_UNDEFINED;
                                     desc->setter = JS_UNDEFINED;

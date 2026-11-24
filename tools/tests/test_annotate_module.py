@@ -474,6 +474,33 @@ class AnnotateModuleTests(unittest.TestCase):
         for mnemonic in ("call", "jmp"):
             self.assertTrue(instruction(listing, mnemonic).endswith("; -> " + names), listing)
 
+    def test_lea_names_exported_callback_and_zero_filled_data_aliases(self):
+        data = DATA_ADDRESS + 0x910
+        symbols = [(EXPORT_NAME, 1, 0x12, CODE_ADDRESS), (SECOND_IMPORT_NAME, 2, 0x11, data),
+                   (IMPORT_NAME, 2, 0x21, data), (TLS_NAME, 2, 0x16, data)]
+        code = bytearray()
+        for opcode, target in ((b"\x48\x8d\x05", CODE_ADDRESS), (b"\x48\x8d\x0d", data),
+                               (b"\x48\x8b\x05", data), (b"\x66\x8d\x05", data), (b"\x48\x8d\x05", data + 1)):
+            code += opcode
+            code += struct.pack("<i", target - (CODE_ADDRESS + len(code) + 4))
+        image = bytearray(build_module(code=code + b"\xc3", symbols=symbols, relocations=()))
+        struct.pack_into("<Q", image, 64 + 56 + 40, 0x920)
+        self.annotate(image)
+        notes = [line.split("; address of ")[1] for line in self.read(".asm").splitlines() if "; address of " in line]
+        self.assertEqual(notes, [EXPORT_NAME, ", ".join(sorted((IMPORT_NAME, SECOND_IMPORT_NAME)))])
+
+    def test_lea_ignores_non_address_exports_and_preserves_import_slots(self):
+        for section, kind, target in ((0xfff1, 0x11, DATA_ADDRESS), (0xfff2, 0x11, DATA_ADDRESS),
+                                      (1, 0x16, DATA_ADDRESS), (0, 0x11, DATA_ADDRESS), (1, 0x11, 0x9000),
+                                      (1, 0x12, DATA_ADDRESS), (1, 0x11, SLOT)):
+            with self.subTest(section=section, kind=kind, target=target):
+                code = b"\x48\x8d\x05" + struct.pack("<i", target - CODE_ADDRESS - 7) + b"\xc3"
+                symbols = [(IMPORT_NAME, 0, 0x12, 0), (EXPORT_NAME, section, kind, target)]
+                self.annotate(build_module(code=code, symbols=symbols))
+                line = instruction(self.read(".asm").splitlines(), "lea")
+                self.assertNotIn("; address of", line)
+                self.assertEqual("; GOT " + IMPORT_NAME in line, target == SLOT)
+
     def test_direct_branch_target_requires_a_defined_function_in_executable_code(self):
         for section, kind, target in ((1, 0x11, EXPORT_ADDRESS), (1, 0x16, EXPORT_ADDRESS),
                                       (0, 0x12, EXPORT_ADDRESS), (0xfff2, 0x12, EXPORT_ADDRESS),
