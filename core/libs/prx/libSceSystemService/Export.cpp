@@ -632,13 +632,6 @@ int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event) {
  return SYSTEM_SERVICE_ERROR_NO_EVENT;
 }
 
-int APS5_VABI sceAppMessagingTryReceiveMsg(AppMessagingMessage* message) {
- if (message == nullptr) {
-  return APP_MESSAGING_ERROR_NULL_POINTER;
- }
- return APP_MESSAGING_ERROR_NO_MESSAGE;
-}
-
 int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info) {
  (void)info;
  return SYSTEM_SERVICE_OK;
