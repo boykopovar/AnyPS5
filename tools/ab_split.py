@@ -1,4 +1,5 @@
 import argparse
+import codecs
 import json
 import math
 import re
@@ -18,7 +19,7 @@ A requested program's phase metric is omitted if a report lists 12 programs
 without it: the list may be truncated, so the program's time is unknown.
 A counted present report with missing batch completion records also refuses the comparison."""
 
-PHASE = re.compile(r"^\[ab\] phase ([AB]) (\d+) (begins|settled) at present (\d+) \(t ([\d.]+) s\)")
+PHASE = re.compile(r"\[ab\] phase ([AB]) ([0-9]+) (begins|settled) at present ([0-9]+) \(t ([0-9]+(?:\.[0-9]+)?) s\)(:.*)?")
 KINDS = (("present", re.compile(r"\[present\] \d+ presents")), ("gputime", re.compile(r"\[gputime\] [\d.]+ ms of GPU time")),
          ("draw", re.compile(r"\[draw\] pipelined \(")), ("syncwait", re.compile(r"\[syncwait\] unlocked hook waits")))
 
@@ -89,16 +90,19 @@ def read_log(lines):
     config, phases, current = None, [], None
     previous = {kind: None for kind, _ in KINDS}
     unmatched_settlement = None
-    for line in lines:
+    for line_number, line in enumerate(lines, 1):
         text = line.rstrip("\r\n")
         if text.startswith("[ab] in-run A/B:"):
             if config is not None or phases:
                 raise ValueError("multiple A/B runs in one log; split the captures before comparing phases")
             config = text
             continue
-        match = PHASE.match(text)
-        if match:
-            kind, index, event, present, seconds = match.group(1), int(match.group(2)), match.group(3), int(match.group(4)), finite(float(match.group(5)))
+        if text.startswith("[ab] phase "):
+            marker = PHASE.fullmatch(text.rstrip())
+            if marker is None or (marker[3] == "settled" and marker[6] is not None):
+                raise ValueError(f"line {line_number}: invalid A/B phase marker")
+            kind, raw_index, event, raw_present, raw_seconds, _ = marker.groups()
+            index, present, seconds = int(raw_index), int(raw_present), finite(float(raw_seconds))
             point = (present, seconds)
 
             if event == "begins":
@@ -194,6 +198,11 @@ def noise(values, phases):
 
 
 def split_report(lines, programs, classes):
+    programs, classes = tuple(programs), tuple(classes)
+    reserved = {"gputime", *programs}
+    for name in classes:
+        if name in reserved:
+            raise ValueError(f"--class {name} would overwrite the {name} ms/present metric")
     config, phases = read_log(lines)
     if not phases:
         raise ValueError("no [ab] phase lines (was APS5_AB set?)")
@@ -254,6 +263,18 @@ def program_key(value):
     return "0x" + value[2:].lower().lstrip("0").rjust(1, "0")
 
 
+def open_log(path):
+    with Path(path).open("rb") as raw:
+        bom = raw.read(4)
+    if bom in (codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE):
+        raise ValueError(f"{path} is UTF-32; "
+                         'capture the run with cmd /d /c "<command> 2> run.log" instead')
+    if bom[:2] in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE):
+        raise ValueError(f"{path} is UTF-16, as Windows PowerShell 5.1 writes a redirected 2>, which also wraps long lines; "
+                         'capture the run with cmd /d /c "<command> 2> run.log" instead')
+    return Path(path).open(encoding="utf-8-sig", errors="replace")
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("log", help="the run's standard error log with the [ab] lines")
@@ -261,7 +282,7 @@ def main(arguments=None):
     parser.add_argument("--class", dest="classes", action="append", default=[], help="also report this [gputime] command class per present (repeatable)")
     parser.add_argument("--json", action="store_true", help="print the phases and metrics as JSON")
     options = parser.parse_args(arguments)
-    with Path(options.log).open(encoding="utf-8-sig", errors="replace") as source:
+    with open_log(options.log) as source:
         result = split(source, options.program, options.classes)
     sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else text_report(result))
     return 0

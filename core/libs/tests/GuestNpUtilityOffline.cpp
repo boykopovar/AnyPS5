@@ -416,8 +416,14 @@ void CheckLookupNet() {
     Require(secondRequest == 2, "sceNpLookupNetCreateRequest", "the second request is not id 2");
     Require(sceNpLookupNetSetTimeout(999, 1, 0, 0, 0, 0) == InvalidIdNet, "sceNpLookupNetSetTimeout", "an unknown id was taken");
     Require(sceNpLookupNetSetTimeout(firstContext, -1, 0, 0, 0, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative retry count was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 0, -1, 0, 0, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative resolve timeout was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 0, 0, -1, 0, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative connect timeout was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 0, 0, 0, -1, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative send timeout was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 0, 0, 0, 0, -1) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative receive timeout was taken");
     Require(sceNpLookupNetSetTimeout(firstContext, 1, 0, 0, 0, 0) == 0, "sceNpLookupNetSetTimeout", "a valid timeout was refused");
     Require(sceNpLookupNetNpId(999, selfNpId, npId, nullptr) == InvalidIdNet, "sceNpLookupNetNpId", "an unknown request was taken");
+    Require(sceNpLookupNetNpId(firstRequest, selfNpId, npId, selfNpId) == InvalidArgument, "sceNpLookupNetNpId", "a non-null option was taken");
+    Require(sceNpLookupNetNpId(firstRequest, nullptr, nullptr, selfNpId) == InvalidArgument, "sceNpLookupNetNpId", "a non-null option was not refused before the null arguments");
     Require(sceNpLookupNetNpId(firstRequest, nullptr, npId, nullptr) == InsufficientArgumentNet, "sceNpLookupNetNpId", "a null online ID was taken");
     Require(sceNpLookupNetNpId(firstRequest, selfNpId, nullptr, nullptr) == InsufficientArgumentNet, "sceNpLookupNetNpId", "a null NpId output was taken");
     Require(sceNpLookupNetNpId(firstRequest, selfNpId, npId, nullptr) == SignedOut, "sceNpLookupNetNpId", "the lookup did not return SIGNED_OUT");

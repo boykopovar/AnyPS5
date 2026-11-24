@@ -291,14 +291,12 @@ void TestOcspNonce() {
 
 struct AuthorityKeyId {
     Asn1String* keyId;
-    void* issuer;
+    LibreSslStack* issuer;
     Asn1String* serial;
 };
 
 void FreeAuthorityKeyId(AuthorityKeyId* id) {
-    FreeOctetString(id->keyId);
-    FreeInteger(id->serial);
-    free_nid_postfix(id);
+    AUTHORITY_KEYID_free_nid_postfix(id);
 }
 
 void TestAuthorityKeyId() {
@@ -324,7 +322,7 @@ void TestAuthorityKeyId() {
     FreeAuthorityKeyId(id);
     RequireQueue({});
     for (const auto bytes : std::initializer_list<std::initializer_list<unsigned char>>{
-             {0x30, 0x0c, 0x80, 0x01, 0x01, 0xa1, 0x04, 0x82, 0x02, 'a', 'b', 0x82, 0x01, 0x01},
+             {0x30, 0x08, 0xa1, 0x06, 0x82, 0x02, 'a', 'b', 0xa0, 0x00},
              {0x30, 0x80, 0x80, 0x01, 0x01, 0x00, 0x00},
              {0x30, 0x05, 0xa0, 0x03, 0x04, 0x01, 0x01}}) {
         Fixture unsupported(90, bytes);
@@ -332,6 +330,76 @@ void TestAuthorityKeyId() {
         Require(allocations.empty());
     }
     DrainErrors();
+}
+
+void TestAuthorityKeyIssuer() {
+    Fixture mixed(90, {
+        0x30, 0x2d, 0x80, 0x01, 0x01, 0xa1, 0x25,
+        0x82, 0x02, 'a', 'b',
+        0xa4, 0x0f, 0x30, 0x0d, 0x31, 0x0b, 0x30, 0x09, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x02, 'C', 'A',
+        0x87, 0x04, 192, 0, 2, 1, 0x88, 0x02, 0x2a, 0x03, 0x81, 0x01, 'x', 0x86, 0x01, 'y',
+        0x82, 0x01, 0x2a,
+    });
+    auto* id = static_cast<AuthorityKeyId*>(X509V3_EXT_d2i_nid_postfix(&mixed.extension));
+    Require(id && id->keyId && id->serial && id->issuer);
+    Require(ASN1_INTEGER_get_nid_postfix(id->serial) == 42);
+    Require(sk_num_nid_postfix(id->issuer) == 6);
+    const auto issuerName = [id](int index, int type) {
+        auto* name = static_cast<LibreSslGeneralName*>(sk_value_nid_postfix(id->issuer, index));
+        Require(name && name->type == type && name->value);
+        return name->value;
+    };
+    const auto* dns = static_cast<const Asn1String*>(issuerName(0, 2));
+    Require(dns->type == 22 && dns->length == 2 && std::memcmp(dns->data, "ab", 2) == 0);
+    const auto* directory = static_cast<const LibreSslX509Name*>(issuerName(1, 4));
+    Require(!directory->modified && directory->canonEnc && directory->canonEnclen > 0);
+    Require(sk_num_nid_postfix(directory->entries) == 1);
+    const auto* commonName = static_cast<const LibreSslX509NameEntry*>(sk_value_nid_postfix(directory->entries, 0));
+    Require(commonName && commonName->value);
+    const auto* value = static_cast<const Asn1String*>(commonName->value);
+    Require(value->type == 12 && value->length == 2 && std::memcmp(value->data, "CA", 2) == 0);
+    const auto* ip = static_cast<const Asn1String*>(issuerName(2, 7));
+    const unsigned char ipBytes[] = {192, 0, 2, 1};
+    Require(ip->type == 4 && ip->length == 4 && std::memcmp(ip->data, ipBytes, sizeof(ipBytes)) == 0);
+    const auto* oid = static_cast<const LibreSslAsn1Object*>(issuerName(3, 8));
+    Require(oid->length == 2 && oid->data[0] == 0x2a && oid->data[1] == 0x03);
+    const auto* email = static_cast<const Asn1String*>(issuerName(4, 1));
+    const auto* uri = static_cast<const Asn1String*>(issuerName(5, 6));
+    Require(email->type == 22 && email->length == 1 && email->data[0] == 'x');
+    Require(uri->type == 22 && uri->length == 1 && uri->data[0] == 'y');
+    FreeAuthorityKeyId(id);
+    Require(allocations.empty());
+    RequireQueue({});
+
+    for (const auto bytes : std::initializer_list<std::initializer_list<unsigned char>>{
+             {0x30, 0x02, 0x81, 0x00},
+             {0x30, 0x06, 0xa1, 0x04, 0x82, 0x03, 'a', 'b'},
+             {0x30, 0x04, 0xa1, 0x02, 0x84, 0x00},
+             {0x30, 0x08, 0xa1, 0x06, 0xa4, 0x04, 0x30, 0x00, 0x05, 0x00},
+             {0x30, 0x04, 0xa1, 0x02, 0x89, 0x00},
+             {0x30, 0x04, 0xa1, 0x02, 0x88, 0x00},
+             {0x30, 0x04, 0xa1, 0x00, 0xa1, 0x00}}) {
+        Fixture malformed(90, bytes);
+        Require(X509V3_EXT_d2i_nid_postfix(&malformed.extension) == nullptr);
+        Require(allocations.empty());
+        Require(ERR_get_error_nid_postfix() != 0);
+        DrainErrors();
+    }
+    for (int allocation = 0; allocation < 64; ++allocation) {
+        allocationsUntilFailure = allocation;
+        id = static_cast<AuthorityKeyId*>(X509V3_EXT_d2i_nid_postfix(&mixed.extension));
+        if (id) {
+            Require(allocationsUntilFailure == 0);
+            allocationsUntilFailure = -1;
+            FreeAuthorityKeyId(id);
+            Require(allocations.empty());
+            return;
+        }
+        Require(allocationsUntilFailure == -1);
+        Require(allocations.empty());
+        DrainErrors();
+    }
+    Require(false);
 }
 
 void TestMalformedAuthorityKeyId() {
@@ -380,8 +448,8 @@ void TestUnsupported() {
     RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&basicConstraints.extension); });
     Fixture subjectAltName(85, {0x30, 0x00});
     RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&subjectAltName.extension); });
-    Fixture ocspNoCheck(369, {0x05, 0x00});
-    RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&ocspNoCheck.extension); });
+    Fixture serviceLocator(371, {0x30, 0x00});
+    RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&serviceLocator.extension); });
 }
 
 void TestUnknownExtensions() {
@@ -391,6 +459,70 @@ void TestUnknownExtensions() {
     Fixture nullObject(0, {0x03, 0x02, 0x05, 0xa0});
     nullObject.extension.object = nullptr;
     Require(X509V3_EXT_d2i_nid_postfix(&nullObject.extension) == nullptr);
+    RequireQueue({});
+}
+
+void TestMethodTable() {
+    for (const int nid : {143, 369, 663}) {
+        Fixture removed(nid, {0x05, 0x00});
+        Require(X509V3_EXT_d2i_nid_postfix(&removed.extension) == nullptr);
+        RequireQueue({});
+        Fixture malformed(nid, {0xff});
+        Require(X509V3_EXT_d2i_nid_postfix(&malformed.extension) == nullptr);
+        RequireQueue({});
+    }
+    for (const int nid : {1018, 1021}) {
+        Fixture list(nid, {0x04, 0x02, 0x00, 0x00});
+        RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&list.extension); });
+        Fixture empty(nid, {});
+        RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&empty.extension); });
+    }
+    RequireQueue({});
+    void* const present = reinterpret_cast<void*>(std::uintptr_t{1});
+    Fixture poison(1019, {0x05, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&poison.extension) == present);
+    Fixture trailing(1019, {0x05, 0x00, 0x5a});
+    Require(X509V3_EXT_d2i_nid_postfix(&trailing.extension) == present);
+    Fixture longForm(1019, {0x05, 0x81, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&longForm.extension) == present);
+    RequireQueue({});
+    Fixture content(1019, {0x05, 0x01, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&content.extension) == nullptr);
+    RequireQueue({144});
+    Fixture empty(1019, {});
+    Require(X509V3_EXT_d2i_nid_postfix(&empty.extension) == nullptr);
+    RequireQueue({102, 58});
+    Fixture wrongTag(1019, {0x04, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&wrongTag.extension) == nullptr);
+    RequireQueue({168, 58});
+    Fixture contextTag(1019, {0x85, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&contextTag.extension) == nullptr);
+    RequireQueue({168, 58});
+    Fixture truncated(1019, {0x05, 0x02, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&truncated.extension) == nullptr);
+    RequireQueue({155, 58});
+    Fixture constructed(1019, {0x25, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&constructed.extension) == nullptr);
+    RequireQueue({231});
+    Fixture constructedIndefinite(1019, {0x25, 0x80, 0x00, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&constructedIndefinite.extension) == nullptr);
+    RequireQueue({231});
+    Fixture indefinite(1019, {0x05, 0x80});
+    Require(X509V3_EXT_d2i_nid_postfix(&indefinite.extension) == nullptr);
+    RequireQueue({102, 58});
+    Fixture badLength(1019, {0x05, 0xff});
+    Require(X509V3_EXT_d2i_nid_postfix(&badLength.extension) == nullptr);
+    RequireQueue({102, 58});
+    Fixture negativeLength(1019, {0x05, 0x00});
+    negativeLength.encoded.length = -1;
+    Require(X509V3_EXT_d2i_nid_postfix(&negativeLength.extension) == nullptr);
+    RequireQueue({});
+    Fixture keyUsage(83, {0x03, 0x02, 0x05, 0xa0});
+    CheckKeyUsage(keyUsage, 1, 0x0d, 0xa0);
+    Fixture crlNumber(88, {0x02, 0x01, 0x05});
+    auto* number = static_cast<Asn1String*>(X509V3_EXT_d2i_nid_postfix(&crlNumber.extension));
+    Require(number != nullptr && number->length == 1 && number->data[0] == 0x05);
+    FreeInteger(number);
     RequireQueue({});
 }
 
@@ -502,10 +634,12 @@ int main() {
     TestObjects();
     TestOcspNonce();
     TestAuthorityKeyId();
+    TestAuthorityKeyIssuer();
     TestMalformedAuthorityKeyId();
     TestNidResolution();
     TestUnsupported();
     TestUnknownExtensions();
+    TestMethodTable();
     TestFaultingArguments();
     TestMalformed();
     TestAllocationFailures();

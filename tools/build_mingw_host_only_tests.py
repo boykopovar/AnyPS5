@@ -207,7 +207,7 @@ def host_only_test_targets(source_root, targets, changed_paths=None):
         except ValueError:
             continue
         sources = [source_root / source["path"] for source in target.get("sources", []) if not source.get("isGenerated")]
-        if not any("tests" in source.parts and source.is_relative_to(source_root / "core" / "libs") for source in sources):
+        if not any(is_core_libs_test_source(source, source_root / "core" / "libs") for source in sources):
             continue
         if links_guest_libc(target) or links_product_library(target, targets, source_root):
             continue
@@ -250,7 +250,9 @@ def main(argv=None):
         print("Host-only core/libs test executables:")
         print("\n".join(selected))
         if not args.list_only:
-            subprocess.run(["cmake", "--build", str(args.build_dir), "--parallel", "3", "--target", *selected], check=True)
+            from select_tests import chunks
+            for batch in chunks(selected):
+                subprocess.run(["cmake", "--build", str(args.build_dir), "--parallel", "3", "--target", *batch], check=True)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)
         return 1

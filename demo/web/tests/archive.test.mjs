@@ -47,7 +47,21 @@ const folder = [
   { path: "title/shaders/example.frag", file: new Blob([executable]) },
   { path: "title/content/resource.bin", file: new Blob([resource]) }
 ];
-for (const [kind, selected] of [["ZIP", source], ["folder", folder]]) {
+const dosDirectoryOptions = { versionMadeBy: 20, externalFileAttributes: 0x10 };
+const dosEntries = await Promise.all(folder.map(async ({ path, file }) => [path, new Uint8Array(await file.arrayBuffer())]));
+const dosSource = await zip([["title", new Uint8Array(), dosDirectoryOptions], ...dosEntries]);
+const dosReader = new ZipReader(new BlobReader(dosSource));
+const [dosRoot] = await dosReader.getEntries();
+assert.equal(dosRoot.filename, "title");
+assert.equal(dosRoot.directory, true);
+await dosReader.close();
+const duplicateDosDirectory = new Archive(await zip([
+  ["title", new Uint8Array(), dosDirectoryOptions], ["title/", null, { directory: true }], ["title/program.dat", executable]
+]));
+try { await assert.rejects(duplicateDosDirectory.inspect(() => {}), /Duplicate ZIP path/u); }
+finally { await duplicateDosDirectory.close(); }
+
+for (const [kind, selected] of [["ZIP", source], ["DOS-directory ZIP", dosSource], ["folder", folder]]) {
 for (const target of ["windows", "linux"]) {
   const archive = new Archive(selected);
   const summary = await archive.inspect(() => {});
@@ -208,6 +222,34 @@ console.log("Oversized Windows-only icons do not block Linux conversion");
 const workerMessages = [];
 globalThis.self = { postMessage: message => workerMessages.push(message) };
 const worker = await import(site("worker.mjs"));
+const appMetadata = new TextEncoder().encode("{}");
+const wrappedApp = await zip([
+  ["prx/program.dat", executable],
+  ["prx/sce_sys/param.json", appMetadata],
+  ["prx/sce_module/runtime.prx", module],
+  ["prx/content/resource.bin", resource]
+]);
+const unwrappedApp = await zip([["program.dat", executable], ["prx/runtime.prx", module]]);
+for (const entries of [
+  [["prx/runtime.prx", module]],
+  [["prx/readme.txt", appMetadata], ["prx/sce_sys/param.json", appMetadata], ["prx/sce_module/runtime.prx", module]],
+  [["prx/first.elf", executable], ["prx/second.elf", executable], ["prx/sce_sys/param.json", appMetadata]]
+]) {
+  const file = await zip(entries);
+  await self.onmessage({ data: { type: "inspect", inputs: [{ name: "no-app-root.zip", file }] } });
+  assert.match(workerMessages.find(message => message.type === "error")?.message, /doesn't look like a PS5 app/u);
+  assert.equal(workerMessages.some(message => message.type === "inspection-complete"), false);
+  workerMessages.length = 0;
+}
+for (const [files, roots] of [[[unwrappedApp], [""]], [[wrappedApp], ["prx/"]], [[source, wrappedApp], ["title/", "prx/"]]]) {
+  const inputs = files.map((file, index) => ({ name: "app-" + index + ".zip", file }));
+  await self.onmessage({ data: { type: "inspect", inputs } });
+  assert.equal(workerMessages.find(message => message.type === "error")?.message, undefined);
+  assert.deepEqual(workerMessages.filter(message => message.type === "inspected").map(message => [message.summary.root, message.summary.modules]),
+    roots.map(root => [root, 1]));
+  assert(workerMessages.some(message => message.type === "inspection-complete" && message.count === inputs.length));
+  workerMessages.length = 0;
+}
 const libraryArchive = await zip([["libs/system.prx", new Uint8Array([1, 2, 3])]]);
 const libraryBytes = new Uint8Array(await libraryArchive.arrayBuffer());
 const librarySha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", libraryBytes))]
@@ -251,7 +293,7 @@ try {
   latestResponse = new Response(null, { status: 429 });
   await self.onmessage({ data: { type: "inspect", inputs: [
     { name: "First App.zip", file: source },
-    { name: "First App.zip", file: source }
+    { name: "First App.zip", file: wrappedApp }
   ] } });
   assert.equal(workerMessages.filter(message => message.type === "inspected").length, 2);
   assert(workerMessages.some(message => message.type === "inspection-complete" && message.count === 2));

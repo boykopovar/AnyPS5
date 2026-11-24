@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -17,6 +18,7 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -2276,6 +2278,79 @@ void RunSharedSamplerTests(AgcDriver::VulkanDevice& device, const std::string& m
     std::printf("shared sampler %s %s: integer=%u float_bits=%u passed\n", draw ? "draw" : "dispatch", mode.c_str(), integer, filtered);
 }
 
+void RunIndirectThreadDimensionTests(AgcDriver::VulkanDevice& device) {
+    constexpr std::size_t ArgumentBytes = 1u << 20u;
+#ifdef _WIN32
+    auto* arguments = static_cast<std::uint32_t*>(VirtualAlloc(nullptr, ArgumentBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+    auto* arguments = static_cast<std::uint32_t*>(std::aligned_alloc(ArgumentBytes, ArgumentBytes));
+#endif
+    Require(arguments != nullptr, "image table thread dimensions: cannot allocate the argument block");
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() {
+            GuestAllocations::Mutation().Remove(data);
+#ifdef _WIN32
+            VirtualFree(data, 0, MEM_RELEASE);
+#else
+            std::free(data);
+#endif
+        }
+    } registered(arguments, ArgumentBytes);
+    SetClassRecords();
+    Keys = {};
+    Keys[1] = 1u;
+    constexpr std::uint32_t Threads = Lanes + 10u;
+    const auto control = Run(device, ReadTableCode, 2, Lanes, 64);
+    Require(!Faulted(control), "image table thread dimensions: the direct dispatch faulted:\n" + control.log);
+    const std::span<const std::uint32_t> span(ReadTableCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 4> memory{{
+        {reinterpret_cast<std::uintptr_t>(span.data()), std::as_bytes(span)},
+        {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+        {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+        {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+    }};
+    const auto rootAddress = reinterpret_cast<std::uintptr_t>(Srt.data());
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(rootAddress), static_cast<std::uint32_t>(rootAddress >> 32u)};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1, {~0u, ~0u, ~0u}};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(span.data()), span, 0, {}},
+        {64, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 0}
+    };
+    const auto result = ShaderRecompiler::Recompile(request);
+    const auto position = [&](auto matches) { return std::ranges::find_if(result.bindings, matches) - result.bindings.begin(); };
+    const auto table = position([](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable; });
+    const auto data = position([](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData; });
+    Require(table < data && data < static_cast<std::ptrdiff_t>(result.bindings.size()), "image table thread dimensions: the shader does not bind its image table before its shader data");
+    arguments[0] = Threads;
+    arguments[1] = 1u;
+    arguments[2] = 1u;
+    std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
+    StderrCapture capture;
+    AgcDriver::VulkanDevice::IndirectOutcome outcome{};
+    try {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        outcome = device.DispatchIndirect(result, reinterpret_cast<std::uintptr_t>(arguments), {}, reinterpret_cast<std::uintptr_t>(span.data()), nullptr, nullptr, {Lanes, 1u, 1u});
+    } catch (...) {
+        static_cast<void>(capture.Finish());
+        throw;
+    }
+    device.WaitIdle();
+    const auto log = capture.Finish();
+    Require(outcome.cpuReason == 0, "image table thread dimensions: the dispatch left the GPU argument path (reason " + std::to_string(outcome.cpuReason) + ")");
+    Require(log.find("image table:") == std::string::npos, "image table thread dimensions: the dispatch faulted:\n" + log);
+    for (std::uint32_t thread = 0; thread < 2u * Lanes; ++thread) {
+        for (std::uint32_t word = 0; word < 4u; ++word) {
+            const auto index = thread * 4u + word;
+            const auto expected = thread < Threads ? control.words[index] : 0xdeadbeefu;
+            Require(Output[index] == expected, "image table thread dimensions: thread " + std::to_string(thread) + " word " + std::to_string(word) + " is " + Hex(Output[index]) + ", expected " + Hex(expected));
+        }
+    }
+}
+
 void RunGraphicsTests(AgcDriver::VulkanDevice& device) {
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
     const auto uintImage = Image(UintTexels.data(), Format32UInt);
@@ -2339,6 +2414,7 @@ int main(int argc, char** argv) {
         RunBorderSwizzleTests(*device);
         RunAnisoOverrideTests(*device);
         RunReadTests(*device);
+        RunIndirectThreadDimensionTests(*device);
         RunLoopKeyTests(*device);
         RunGuardedTableTests(*device);
         RunSelectedRecordTests(*device);
