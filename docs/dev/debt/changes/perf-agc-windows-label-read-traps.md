@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [Label read traps on Windows](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp) (libSceAgcDriver, Windows): a trap is set over a host pointer import only on NVIDIA's proprietary driver (`ReadTrapsOverHostPointerImportsUsable`), as on Linux. On an RTX 5060 Ti (621.24) submissions kept working with a `PAGE_NOACCESS` page in a host pointer import (`agc_read_trap_import_submit`); other Windows drivers are not measured and store every image at the label. Windows stores large storage images through the CPU, and a 64 KiB block shared by a trapped image and another stored in the same batch was left to neither, so a trap is set only on an image sharing no 64 KiB block with another pending image; other images are stored at the label. A small image inside a large image already stored through the CPU keeps the large image's bytes after its own store, with or without a trap; `agc_small_tiled_shadow_label` only checks there that a read resolves the trap.

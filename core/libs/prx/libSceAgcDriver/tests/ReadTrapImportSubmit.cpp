@@ -1,11 +1,18 @@
 #include "prx/libSceAgcDriver/Execution/include/ReadTrapsOverHostPointerImports.hpp"
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <linux/udmabuf.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <cstdint>
@@ -28,6 +35,72 @@ struct Skip : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
+#ifdef _WIN32
+constexpr const char* VulkanLibrary = "vulkan-1.dll";
+
+void* OpenVulkan() {
+    return reinterpret_cast<void*>(LoadLibraryA(VulkanLibrary));
+}
+
+void* VulkanSymbol(void* library, const char* name) {
+    return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(library), name));
+}
+
+void CloseVulkan(void* library) {
+    FreeLibrary(static_cast<HMODULE>(library));
+}
+
+std::size_t PageBytes() {
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    return system.dwPageSize;
+}
+
+void* MapPrivate(std::size_t bytes) {
+    return VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+}
+
+void UnmapPrivate(void* mapping, std::size_t) {
+    VirtualFree(mapping, 0, MEM_RELEASE);
+}
+
+bool SetAccessible(void* pointer, std::size_t bytes, bool accessible) {
+    DWORD previous = 0;
+    return VirtualProtect(pointer, bytes, accessible ? PAGE_READWRITE : PAGE_NOACCESS, &previous) != 0;
+}
+#else
+constexpr const char* VulkanLibrary = "libvulkan.so.1";
+
+void* OpenVulkan() {
+    return ::dlopen(VulkanLibrary, RTLD_NOW | RTLD_LOCAL);
+}
+
+void* VulkanSymbol(void* library, const char* name) {
+    return ::dlsym(library, name);
+}
+
+void CloseVulkan(void* library) {
+    ::dlclose(library);
+}
+
+std::size_t PageBytes() {
+    return static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
+}
+
+void* MapPrivate(std::size_t bytes) {
+    void* mapping = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return mapping == MAP_FAILED ? nullptr : mapping;
+}
+
+void UnmapPrivate(void* mapping, std::size_t bytes) {
+    ::munmap(mapping, bytes);
+}
+
+bool SetAccessible(void* pointer, std::size_t bytes, bool accessible) {
+    return ::mprotect(pointer, bytes, accessible ? PROT_READ | PROT_WRITE : PROT_NONE) == 0;
+}
+#endif
+
 void Check(VkResult result, const char* what) {
     if (result != VK_SUCCESS) throw std::runtime_error(std::string(what) + " returned " + std::to_string(static_cast<int>(result)));
 }
@@ -35,10 +108,10 @@ void Check(VkResult result, const char* what) {
 class Gpu {
 public:
     Gpu() {
-        library = ::dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
-        if (library == nullptr) throw Skip("cannot load libvulkan.so.1");
-        instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(::dlsym(library, "vkGetInstanceProcAddr"));
-        if (instanceProc == nullptr) throw Skip("libvulkan.so.1 has no vkGetInstanceProcAddr");
+        library = OpenVulkan();
+        if (library == nullptr) throw Skip(std::string("cannot load ") + VulkanLibrary);
+        instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(VulkanSymbol(library, "vkGetInstanceProcAddr"));
+        if (instanceProc == nullptr) throw Skip(std::string(VulkanLibrary) + " has no vkGetInstanceProcAddr");
         VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
         application.apiVersion = VK_API_VERSION_1_2;
         VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
@@ -115,7 +188,7 @@ public:
         if (pool != VK_NULL_HANDLE) deviceFunction<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(device, pool, nullptr);
         if (device != VK_NULL_HANDLE) instanceFunction<PFN_vkDestroyDevice>("vkDestroyDevice")(device, nullptr);
         if (instance != VK_NULL_HANDLE) instanceFunction<PFN_vkDestroyInstance>("vkDestroyInstance")(instance, nullptr);
-        if (library != nullptr) ::dlclose(library);
+        if (library != nullptr) CloseVulkan(library);
     }
 
     Gpu(const Gpu&) = delete;
@@ -237,10 +310,10 @@ void HeldTrapKeepsSubmitting(const Gpu& gpu, std::uint8_t* bytes, std::size_t pa
     allocate.allocationSize = requirements.size;
     allocate.memoryTypeIndex = gpu.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     other.Bind(allocate);
-    Require(::mprotect(bytes + TrappedPage * page, page, PROT_NONE) == 0, std::string(kind) + ": cannot make a page of the import inaccessible");
+    Require(SetAccessible(bytes + TrappedPage * page, page, false), std::string(kind) + ": cannot make a page of the import inaccessible");
     const VkResult unrelated = gpu.Fill(other.buffer, 0, page, 0x77777777u);
     const VkResult inside = unrelated == VK_SUCCESS ? gpu.Fill(imported.buffer, WrittenPage * page, page, 0x88888888u) : unrelated;
-    Require(::mprotect(bytes + TrappedPage * page, page, PROT_READ | PROT_WRITE) == 0, std::string(kind) + ": cannot restore the inaccessible page");
+    Require(SetAccessible(bytes + TrappedPage * page, page, true), std::string(kind) + ": cannot restore the inaccessible page");
     Require(unrelated == VK_SUCCESS, std::string(kind) + ": a submission that does not touch the import failed with " + std::to_string(static_cast<int>(unrelated)) + " while a page of the import was inaccessible");
     Require(inside == VK_SUCCESS, std::string(kind) + ": a fill of another page of the import failed with " + std::to_string(static_cast<int>(inside)) + " while a page of the import was inaccessible");
     Require(bytes[WrittenPage * page] == 0x88 && bytes[TrappedPage * page] == 0x22, std::string(kind) + ": the fill while a page was inaccessible did not land where it was sent");
@@ -248,13 +321,13 @@ void HeldTrapKeepsSubmitting(const Gpu& gpu, std::uint8_t* bytes, std::size_t pa
 }
 
 bool HostPointerImport(const Gpu& gpu) {
-    const auto page = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
+    const auto page = PageBytes();
     const auto alignment = std::max<std::size_t>(page, static_cast<std::size_t>(gpu.hostAlignment));
     const auto bytes = Pages * page;
     if (bytes % alignment != 0) return false;
     const auto reserved = bytes + alignment;
-    void* mapping = ::mmap(nullptr, reserved, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    Require(mapping != MAP_FAILED, "cannot map memory for the host pointer import");
+    void* mapping = MapPrivate(reserved);
+    Require(mapping != nullptr, "cannot map memory for the host pointer import");
     auto* base = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(mapping) + alignment - 1) & ~(static_cast<std::uintptr_t>(alignment) - 1));
     try {
         std::memset(base, 0x11, bytes);
@@ -274,13 +347,14 @@ bool HostPointerImport(const Gpu& gpu) {
         imported.Bind(allocate);
         HeldTrapKeepsSubmitting(gpu, base, page, imported, "host pointer import");
     } catch (...) {
-        ::munmap(mapping, reserved);
+        UnmapPrivate(mapping, reserved);
         throw;
     }
-    ::munmap(mapping, reserved);
+    UnmapPrivate(mapping, reserved);
     return true;
 }
 
+#ifndef _WIN32
 class Descriptor {
 public:
     explicit Descriptor(int value) : file(value) {}
@@ -352,6 +426,7 @@ bool DmaBufImport(const Gpu& gpu) {
     ::munmap(mapping, bytes);
     return true;
 }
+#endif
 
 }
 
@@ -368,11 +443,15 @@ int main() {
         } else {
             std::printf("host pointer import: not run, the device reports a host pointer import alignment larger than the test range\n");
         }
+#ifdef _WIN32
+        std::printf("dma-buf import: not run, Windows has no dma-buf imports\n");
+#else
         if (gpu.dmaBuf && DmaBufImport(gpu)) {
             ++ran;
         } else {
             std::printf("dma-buf import: not run, no dma-buf import support, no access to /dev/udmabuf, or the device cannot import a udmabuf\n");
         }
+#endif
         if (ran == 0) {
             std::printf("skipped, the device lacks an import kind that label read traps are set over\n");
             return 77;

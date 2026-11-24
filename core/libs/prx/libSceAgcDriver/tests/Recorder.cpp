@@ -8443,6 +8443,12 @@ bool PageInaccessible(const void* page) {
     Require(false, "cannot read the protection of a page");
     return false;
 }
+#elif defined(_WIN32)
+bool PageInaccessible(const void* page) {
+    MEMORY_BASIC_INFORMATION memory{};
+    Require(VirtualQuery(page, &memory, sizeof(memory)) == sizeof(memory), "cannot read the protection of a page");
+    return memory.State == MEM_COMMIT && (memory.Protect & 0xff) == PAGE_NOACCESS;
+}
 #endif
 
 bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
@@ -8568,8 +8574,13 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
     settle();
     const auto held = static_cast<std::size_t>(std::count(memory + offset, memory + offset + layout.guestBytes, std::uint8_t{0x3c}));
     Require(held == 32u * 32u * 4u, "the label readback did not publish the small tiled image");
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__) || defined(__linux__) || defined(_WIN32)
+#ifdef _WIN32
+    if (!base.readTrapsOverHostPointerImports) std::cout << "small tiled label read traps skipped, this driver keeps label read traps off host pointer imports\n";
+    if (std::getenv("APS5_NO_LABEL_READ_TRAP") == nullptr && base.readTrapsOverHostPointerImports) {
+#else
     if (std::getenv("APS5_NO_LABEL_READ_TRAP") == nullptr) {
+#endif
         const auto rewriteImage = [&](const std::shared_ptr<StorageTexture>& target, std::uint32_t extent, std::uint8_t value) {
             auto source = std::make_shared<Buffer>(context, extent * extent * 4u, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             std::fill(source->Bytes().begin(), source->Bytes().end(), std::byte{value});
@@ -8624,7 +8635,11 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
         GpuMutex().lock();
         Require(fresh, "a read while a trapped image waited for its store did not see the stored results");
 
+#ifdef _WIN32
+        const std::uint64_t page = 4096;
+#else
         const auto page = static_cast<std::uint64_t>(::getpagesize());
+#endif
         auto linearA = resource;
         linearA.baseAddress = address + 0xd0000;
         linearA.width = 8;
@@ -8685,6 +8700,15 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
         rewriteImage(outerImage, 256u, 0x70);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
         settle();
+#ifdef _WIN32
+        rewriteImage(outerImage, 256u, 0x71);
+        rewriteImage(innerImage, 8u, 0x72);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(!PageInaccessible(innerBytes) && StorageTexture::FindPending(inner.baseAddress, static_cast<std::size_t>(innerLayout.guestBytes)) == nullptr, "a label trapped a small image that shares a write-back block with a pending large tiled one");
+        settle();
+        outerImage->Flush();
+        settle();
+#else
         rewriteImage(outerImage, 256u, 0x71);
         rewriteImage(innerImage, 8u, 0x72);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
@@ -8706,10 +8730,16 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
         outerImage->Flush();
         settle();
         Require(!PageInaccessible(innerBytes) && innerHolds(0x77), "evicting a large image did not store the trapped image inside it first");
+#endif
         rewriteImage(innerImage, 8u, 0x78);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
         Require(PageInaccessible(innerBytes), "a label did not trap the small image after the large one was evicted");
+#ifdef _WIN32
+        static_cast<void>(readUnlocked([&] { return innerHolds(0x78); }));
+        Require(!PageInaccessible(innerBytes) && StorageTexture::FindPending(inner.baseAddress, static_cast<std::size_t>(innerLayout.guestBytes)) == nullptr, "a read of a trapped image inside an evicted large one did not resolve its trap");
+#else
         Require(readUnlocked([&] { return innerHolds(0x78); }), "a read of a trapped image inside an evicted large one did not see its results");
+#endif
     }
 #endif
     auto large = resource;

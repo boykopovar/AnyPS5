@@ -5294,13 +5294,31 @@ bool LabelTrapResolveWaits(std::uint64_t address, std::size_t bytes) {
 
 namespace {
 
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__) || defined(__linux__) || defined(_WIN32)
 std::atomic<bool> labelTrapsSet{false};
 
 std::uint64_t TrapPage() {
+#ifdef _WIN32
+    return 4096;
+#else
     static const auto page = static_cast<std::uint64_t>(::getpagesize());
     return page;
+#endif
 }
+
+#ifdef _WIN32
+constexpr std::uint64_t TrapShareBytes = 65536;
+
+bool SharesTrapBlocks(const StorageTexture*) {
+    return true;
+}
+#else
+const std::uint64_t TrapShareBytes = TrapPage();
+
+bool SharesTrapBlocks(const StorageTexture* other) {
+    return other->descriptor.tileMode == TextureTileMode::kLinear || other->guestBytes <= StorageTexture::SmallStoreBytes;
+}
+#endif
 
 void ResolveLabelTrap(std::uintptr_t begin, std::uintptr_t end) {
     const auto bytes = static_cast<std::size_t>(end - begin);
@@ -5410,7 +5428,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
                 ++it;
             }
         }
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__) || defined(__linux__) || defined(_WIN32)
         if (!flush.empty() && labelTrapsSet.load(std::memory_order_relaxed)) {
             const auto selected = flush.size();
             for (auto it = pending.textures.begin(); it != pending.textures.end();) {
@@ -6005,14 +6023,14 @@ std::size_t StorageTexture::StoreSmallPending(const char* reason) {
     return stored;
 }
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
 bool StorageTexture::trapReadsAtLabel(const StorageTexture* texture) {
     auto& pending = Pending();
-    const auto page = TrapPage();
+    const auto page = TrapShareBytes;
     const auto first = texture->descriptor.baseAddress & ~(page - 1);
     const auto span = static_cast<std::size_t>(((texture->descriptor.baseAddress + texture->guestBytes + page - 1) & ~(page - 1)) - first);
     const auto shares = [&](const StorageTexture* other) { return other != texture && other->overlaps(first, span); };
-    const auto sharesStored = [&](const StorageTexture* other) { return shares(other) && (other->descriptor.tileMode == TextureTileMode::kLinear || other->guestBytes <= SmallStoreBytes); };
+    const auto sharesStored = [&](const StorageTexture* other) { return shares(other) && SharesTrapBlocks(other); };
     if (std::any_of(pending.textures.begin(), pending.textures.end(), sharesStored) || std::any_of(pending.flushing.begin(), pending.flushing.end(), shares)) return false;
     const auto address = static_cast<std::uintptr_t>(texture->descriptor.baseAddress);
     const auto bytes = static_cast<std::size_t>(texture->guestBytes);
@@ -6034,7 +6052,7 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
     } ordered{gpuOrdered};
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
     std::vector<std::pair<std::uint64_t, std::size_t>> occasional;
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
     std::vector<std::shared_ptr<StorageTexture>> imported;
     if (LabelTrapsEnabled()) {
         {
@@ -6058,10 +6076,9 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__) || defined(__linux__) || defined(_WIN32)
         const bool trap = LabelTrapsEnabled();
         if (trap) labelTrapsSet.store(true, std::memory_order_relaxed);
-        const auto page = TrapPage();
         const auto generation = trap ? GuestWriteWatch::GuestWriteWatchReadTrapGeneration_nid_postfix() : 0;
         auto& spans = pending.labelSpans;
         auto& reach = pending.labelReach;
@@ -6076,7 +6093,7 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
                     if (other->guestBytes != 0) spans.emplace_back(other->descriptor.baseAddress, other->descriptor.baseAddress + other->guestBytes);
                 };
                 for (const auto* other : pending.textures) {
-                    if (other->descriptor.tileMode == TextureTileMode::kLinear || other->guestBytes <= SmallStoreBytes) add(other);
+                    if (SharesTrapBlocks(other)) add(other);
                 }
                 for (const auto* other : pending.flushing) add(other);
                 std::sort(spans.begin(), spans.end());
@@ -6085,8 +6102,8 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
                 pending.labelFlushing = pending.flushingChanges;
                 spansCurrent = true;
             }
-            const auto first = texture->descriptor.baseAddress & ~(page - 1);
-            const auto last = (texture->descriptor.baseAddress + texture->guestBytes + page - 1) & ~(page - 1);
+            const auto first = texture->descriptor.baseAddress & ~(TrapShareBytes - 1);
+            const auto last = (texture->descriptor.baseAddress + texture->guestBytes + TrapShareBytes - 1) & ~(TrapShareBytes - 1);
             if (last == first) return false;
             const auto from = [](const std::pair<std::uint64_t, std::uint64_t>& span, std::uint64_t address) { return span.first < address; };
             const auto inside = std::lower_bound(spans.begin(), spans.end(), first, from);
@@ -6097,7 +6114,7 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
 #endif
         for (const auto* texture : pending.textures) {
             if (texture->descriptor.tileMode != TextureTileMode::kLinear && texture->guestBytes > SmallStoreBytes) continue;
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__) || defined(__linux__) || defined(_WIN32)
             if (trap) {
                 const bool trapped = texture->readTrapped.load(std::memory_order_acquire);
                 if (trapped && pending.labelSettled && texture->readTrapGeneration == generation) continue;
@@ -6111,13 +6128,13 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
 #endif
             ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
         }
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__) || defined(__linux__) || defined(_WIN32)
         if (trap) pending.labelSettled = settled;
 #endif
         for (auto* texture : pending.textures) {
             if (texture->descriptor.tileMode == TextureTileMode::kLinear || texture->guestBytes <= SmallStoreBytes || texture->guestBytes > OccasionalStoreBytes) continue;
             if (device != VK_NULL_HANDLE && texture->context.device != device) continue;
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
             const auto coversTrapped = [&](const StorageTexture* other) { return other != texture && other->readTrapped.load(std::memory_order_acquire) && other->overlaps(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)); };
             if (trap && std::any_of(pending.textures.begin(), pending.textures.end(), coversTrapped)) continue;
 #endif
@@ -6136,7 +6153,7 @@ std::size_t StorageTexture::StoreDrawnLinear(const char* reason) {
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
     std::lock_guard gpu(GuestMemory::GpuMutex());
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
     const bool trap = (std::strcmp(reason, "label") == 0 || std::strcmp(reason, "interrupt") == 0) && LabelTrapsEnabled();
     if (trap) labelTrapsSet.store(true, std::memory_order_relaxed);
     std::vector<std::shared_ptr<StorageTexture>> linear;
@@ -6146,7 +6163,7 @@ std::size_t StorageTexture::StoreDrawnLinear(const char* reason) {
         for (const auto& entry : pending.drawn) {
             auto* texture = entry.texture;
             if (!texture->dirty) continue;
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
             if (trap && texture->descriptor.tileMode == TextureTileMode::kLinear) {
                 if (auto alive = texture->weak_from_this().lock()) {
                     linear.push_back(std::move(alive));
@@ -6157,9 +6174,13 @@ std::size_t StorageTexture::StoreDrawnLinear(const char* reason) {
             ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
         }
     }
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
     std::erase_if(linear, [&](const std::shared_ptr<StorageTexture>& texture) {
+#if defined(__APPLE__)
         if (HostImportCovers(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes))) return false;
+#else
+        if (ReadTrappableHostImportCovers(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes), TrapPage())) return false;
+#endif
         ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
         return true;
     });
@@ -8020,7 +8041,7 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
 }
 
 void StorageTexture::releaseReadTraps(bool sharingPages) {
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__) || defined(__linux__) || defined(_WIN32)
     if (!labelTrapsSet.load(std::memory_order_relaxed)) return;
     const auto release = [](const StorageTexture* texture) {
         if (texture->readTrapped.exchange(false, std::memory_order_acq_rel)) GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes));
@@ -8044,7 +8065,7 @@ void StorageTexture::releaseReadTraps(bool sharingPages) {
 }
 
 void StorageTexture::storeTrappedOverlaps(const char* reason) {
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__) || defined(__linux__) || defined(_WIN32)
     if (!labelTrapsSet.load(std::memory_order_relaxed)) return;
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
     {

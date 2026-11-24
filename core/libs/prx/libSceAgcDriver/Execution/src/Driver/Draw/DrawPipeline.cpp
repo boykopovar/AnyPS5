@@ -22,6 +22,11 @@
 #if defined(__linux__)
 #include <sys/syscall.h>
 #include <unistd.h>
+#elif defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #endif
 
 namespace AgcDriver::DriverDetail {
@@ -71,6 +76,8 @@ thread_local DrawPipeline* committerPipeline = nullptr;
 std::uint64_t CurrentThreadId() {
 #if defined(__linux__)
     return static_cast<std::uint64_t>(::syscall(SYS_gettid));
+#elif defined(_WIN32)
+    return static_cast<std::uint64_t>(GetCurrentThreadId());
 #else
     return 0;
 #endif

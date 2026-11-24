@@ -229,7 +229,7 @@ bool Label(AgcDriver::VulkanDevice& device, const Block& block, std::uint32_t va
     const auto* recorder = AgcDriver::Graphics::Recorder::Active();
     Require(!watched || (recorder != nullptr && recorder->Submissions() == submissions), std::string(what) + ": storing the drawn linear target before the label waited for recorded work (" + std::to_string(recorder != nullptr ? recorder->Submissions() - submissions : 0) + " submissions)");
     bool trapped = false;
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
     if (std::getenv("APS5_NO_LABEL_READ_TRAP") == nullptr && StorageTexture::FindPending(block.Address(), TargetBytes) != nullptr) {
         trapped = true;
         Require(watched, std::string(what) + ": the drawn linear target outside the write watch was left pending after a label the GPU writes");
