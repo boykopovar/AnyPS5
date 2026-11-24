@@ -26,5 +26,17 @@ int main() {
     char* const hugeEnvironment[] = {const_cast<char*>(hugeEntry.c_str()), nullptr};
     *__error_nid_postfix() = 0;
     Require(execle_nid_postfix(name, name, "one", nullptr, hugeEnvironment) == -1 && *__error_nid_postfix() == 7);
+
+    char small[] = "s";
+    *__error_nid_postfix() = 0;
+    Require(execl_nid_postfix(name, name, small, small, small, small, small, small, nullptr) == -1 && *__error_nid_postfix() == 2);
+    *__error_nid_postfix() = 0;
+    Require(execl_nid_postfix(name, name, small, small, small, hugeArgument.c_str(), nullptr) == -1 && *__error_nid_postfix() == 7);
+    *__error_nid_postfix() = 0;
+    Require(execl_nid_postfix(name, name, small, small, small, small, hugeArgument.c_str(), nullptr) == -1 && *__error_nid_postfix() == 7);
+    *__error_nid_postfix() = 0;
+    Require(execl_nid_postfix(name, name, small, small, small, small, small, hugeArgument.c_str(), nullptr) == -1 && *__error_nid_postfix() == 7);
+    *__error_nid_postfix() = 0;
+    Require(execle_nid_postfix(name, name, small, small, small, small, nullptr, hugeEnvironment) == -1 && *__error_nid_postfix() == 7);
     return 0;
 }
