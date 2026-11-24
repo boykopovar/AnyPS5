@@ -540,13 +540,13 @@ void Run(AgcDriver::VulkanDevice& device, const Mode& mode, bool hardwareFlush) 
     device.WaitIdle();
 }
 
-std::uint32_t Check(std::uint32_t mode, bool hardwareFlush, bool skipDenormals) {
+std::uint32_t Check(std::uint32_t mode, bool hardwareFlush, bool skipDenormals, bool skipTinySources) {
     std::uint32_t skipped = 0u;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         for (std::uint32_t index = 0; index < Results; ++index) {
             if (LeftOutOfDirectedRounding(mode, tid, index)) continue;
             const std::uint32_t expected = Expected[mode][tid][index];
-            if (skipDenormals && (IsDenormal32(expected) || (TinyAsF32(Sources[tid]) && (expected & 0x7fffffffu) != 0u))) {
+            if ((skipDenormals && IsDenormal32(expected)) || (skipTinySources && TinyAsF32(Sources[tid]) && (expected & 0x7fffffffu) != 0u)) {
                 ++skipped;
                 continue;
             }
@@ -566,6 +566,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const bool keepsDenormals = device->Target().float32DenormPreserve;
+        const bool nativeFloat64 = TargetHasCapability(device->Target(), spv::CapabilityFloat64);
         std::uint32_t passes = 0u;
         std::uint32_t skipped = 0u;
         for (const bool hardwareFlush : {false, true}) {
@@ -573,7 +574,7 @@ int main() {
             ++passes;
             for (std::uint32_t mode = 0; mode < ModeCount; ++mode) {
                 Run(*device, Modes[mode], hardwareFlush);
-                skipped += Check(mode, hardwareFlush, !keepsDenormals);
+                skipped += Check(mode, hardwareFlush, !keepsDenormals, !keepsDenormals && nativeFloat64);
             }
         }
         std::printf("v_cvt_f32_f64 denormal result tests passed (%u of 2 flush passes run; %u values with an f32 denormal result or an f64 source below 2^-126 not checked; they need DenormPreserve 32)\n", passes, skipped);
