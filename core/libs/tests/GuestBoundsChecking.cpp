@@ -357,7 +357,7 @@ void CheckMultibyteToWide() {
 void CheckGets(const char* path) {
     {
         std::ofstream input(path, std::ios::binary | std::ios::trunc);
-        input << "short\nunmapped\nx\nexactly8\nrest";
+        input << "short\nfits\nunmapped\nx\nexactly8\nrest";
         Require(input.good(), "could not write the gets_s input");
     }
     FileStream* const saved = __stdinp_nid_postfix;
@@ -367,6 +367,9 @@ void CheckGets(const char* path) {
     char buffer[8];
     Require(gets_s_nid_postfix(buffer, sizeof(buffer)) == buffer && std::strcmp(buffer, "short") == 0, "gets_s did not read a line");
     int before = constraintCalls;
+    Require(gets_s_nid_postfix(reinterpret_cast<char*>(0x10), sizeof(buffer)) == nullptr, "gets_s accepted an unwritable buffer for a line that fits");
+    RequireViolation(before, "gets_s: bad argument", 22);
+    before = constraintCalls;
     Require(gets_s_nid_postfix(reinterpret_cast<char*>(0x10), sizeof(buffer)) == nullptr, "gets_s accepted an unwritable buffer");
     RequireViolation(before, "gets_s: bad argument", 22);
     before = constraintCalls;
