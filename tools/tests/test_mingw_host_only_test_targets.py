@@ -84,6 +84,13 @@ class HostOnlyTargets(unittest.TestCase):
         source_root = Path(self.temporary.name).resolve()
         self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, {guest["id"]: guest}), [])
 
+    def test_tests_folder_above_the_checkout_does_not_select_a_non_test_executable(self):
+        source_root = (Path(self.temporary.name) / "tests" / "repo").resolve()
+        utility = self.target("not_a_test", source="core/libs/nid/src/main.cpp")
+        host = self.target("host_tests")
+        targets = {item["id"]: item for item in (utility, host)}
+        self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, targets), ["host_tests"])
+
     def test_libc_link_does_not_accept_similarly_named_libraries(self):
         for fragment in ("/build/notliblibc.dll.a", "/build/liblibc.dll.a.extra", "/build/liblibc.prx"):
             with self.subTest(fragment=fragment):

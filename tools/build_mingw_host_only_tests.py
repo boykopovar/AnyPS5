@@ -207,7 +207,7 @@ def host_only_test_targets(source_root, targets, changed_paths=None):
         except ValueError:
             continue
         sources = [source_root / source["path"] for source in target.get("sources", []) if not source.get("isGenerated")]
-        if not any("tests" in source.parts and source.is_relative_to(source_root / "core" / "libs") for source in sources):
+        if not any(is_core_libs_test_source(source, source_root / "core" / "libs") for source in sources):
             continue
         if links_guest_libc(target) or links_product_library(target, targets, source_root):
             continue

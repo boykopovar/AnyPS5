@@ -7,6 +7,7 @@
 #include "prx/libSceJsc/include/ArrayBufferContentsExports.hpp"
 #include "prx/libSceJsc/include/InspectorAccessorsExports.hpp"
 #include "prx/libSceJsc/include/Api.hpp"
+#include "prx/libSceJsc/include/ContentSearchUtilitiesExports.hpp"
 #include "prx/libSceJsc/include/WtfBase64Exports.hpp"
 #include "prx/libSceJsc/include/WtfSha1Exports.hpp"
 #include "prx/libSceJsc/include/InventoryExports.hpp"
@@ -26,4 +27,5 @@
 #include "prx/libSceJsc/include/WtfThreadingExports.hpp"
 #include "prx/libSceJsc/include/WtfUnicodeExports.hpp"
 #include "prx/libSceJsc/include/WtfUrlExports.hpp"
+#include "prx/libSceJsc/include/YarrRegularExpressionExports.hpp"
 #include "prx/libSceJsc/include/YarrFlagsExports.hpp"

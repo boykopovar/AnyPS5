@@ -45,8 +45,6 @@ int main() {
     Require(WKBundleNodeHandleCopyVisibleRange() == 0);
     Require(WKBundleNodeHandleGetHTMLInputElementAutoFillAvailable() == 0);
     Require(WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled() == 0);
-    Require(WKBundleNodeHandleGetHTMLInputElementAutoFilled() == 0);
-    Require(WKBundleNodeHandleGetHTMLInputElementAutofilled() == 0);
     Require(WKBundlePageCopyContextMenuAtPointInWindow() == 0);
     Require(WKBundlePageCopyContextMenuItems() == 0);
     Require(WKBundlePageGetBackForwardList() == 0);
@@ -54,7 +52,6 @@ int main() {
     Require(WKContextCopyPlugInAutoStartOriginHashes() == 0);
     Require(WKContextDownloadURLRequest() == 0);
     Require(WKContextGetIconDatabase() == 0);
-    Require(WKContextGetMaximumNumberOfProcesses() == static_cast<int>(0xffffffffu));
     Require(WKContextMenuCopySubmenuItems() == 0);
     Require(WKContextMenuItemCopyTitle() == 0);
     Require(WKContextMenuItemCreateAsAction() == 0);
@@ -67,9 +64,7 @@ int main() {
     Require(WKContextMenuItemGetUserData() == 0);
     Require(WKContextMenuItemSeparatorItem() == 0);
     Require(WKContextResumeDownload() == 0);
-    Require(WKFrameCanShowMIMEType() == 0);
     Require(WKFrameCreateFrameInfo() == 0);
-    Require(WKFrameIsFrameSet() == 0);
     Require(WKIconDatabaseCopyIconDataForPageURL() == 0);
     Require(WKIconDatabaseCopyIconURLForPageURL() == 0);
     Require(WKKeyValueStorageManagerDeleteAllEntries() == 0);
@@ -97,7 +92,6 @@ int main() {
     Require(WKPluginInformationPluginURLKey() == 0);
     Require(WKPluginInformationPluginspageAttributeURLKey() == 0);
     Require(WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey() == 0);
-    Require(WKPreferencesGetAccelerated2DCanvasEnabled() == 0);
     Require(WKPreferencesGetQTKitEnabled() == 0);
     Require(_ZN3JSC12isFromJSCodeEPv() == 0);
     Require(_ZN3JSC22optimizeNextInvocationENS_7JSValueE() == static_cast<int>(0x0000000au));

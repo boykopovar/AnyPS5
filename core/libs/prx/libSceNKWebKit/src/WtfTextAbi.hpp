@@ -42,6 +42,7 @@ std::string NumberToString(float number);
 std::string NumberToString(double number);
 std::string NumberToFixedWidthString(double number, unsigned decimalPlaces);
 std::string NumberToFixedPrecisionString(double number, unsigned significantFigures);
+void AppendRespectingIntegers(TextStream& stream, double value);
 void Resize(StringBuilder& builder, unsigned newSize);
 
 static_assert(sizeof(StringBuilder) == 40);
