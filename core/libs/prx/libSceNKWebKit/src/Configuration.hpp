@@ -97,6 +97,18 @@ public:
     bool allowsRemoteInspection = false;
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
+    struct FindStringState {
+        std::u16string target;
+        std::uint32_t options = 0;
+        unsigned maxMatchCount = 0;
+        unsigned matchCount = 0;
+    };
+    std::optional<FindStringState> activeFindString;
+    std::optional<FindStringState> activeFindMatches;
+    std::optional<FindStringState> activeCountMatches;
+    std::optional<std::uint32_t> selectedFindMatch;
+    std::optional<std::uint32_t> lastImageFindMatch;
+    bool findUIHidden = false;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
