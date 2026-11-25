@@ -126,6 +126,51 @@ static bool CheckGlobalVisibility(const char* path, bool globalFirst) {
     return visible;
 }
 #endif
+static void RegisterModuleImage(const void* code) {
+#ifdef _WIN32
+    HMODULE image = nullptr;
+    Require(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCWSTR>(code), &image) != 0);
+    GuestAllocations::Mutation mutation;
+    mutation.RegisterImage(image);
+    Require(mutation.Overlaps(code, 1));
+#elif defined(__linux__)
+    Dl_info info{};
+    link_map* map = nullptr;
+    Require(::dladdr1(code, &info, reinterpret_cast<void**>(&map), RTLD_DL_LINKMAP) != 0 && map != nullptr);
+    GuestAllocations::Mutation mutation;
+    mutation.RegisterImage(reinterpret_cast<const void*>(map->l_addr));
+    Require(mutation.Overlaps(code, 1));
+#endif
+}
+static void CheckNoLoadAndNoDelete(const char* path) {
+    using Add = int (APS5_VABI *)(int, int);
+    void* loaded = dlopen_nid_postfix(path, 2);
+    Require(loaded != nullptr);
+    auto add = reinterpret_cast<Add>(dlsym_nid_postfix(loaded, "GuestModuleAdd"));
+    Require(add && add(19, 23) == 42);
+    void* found = dlopen_nid_postfix(path, 0x2000 | 0x100 | 2);
+    Require(found != nullptr && found != loaded);
+    Require(dlsym_nid_postfix(found, "GuestModuleAdd") == reinterpret_cast<void*>(add));
+    Require(dlsym_nid_postfix(nullptr, "GuestModuleAdd") == reinterpret_cast<void*>(add));
+    Require(dlclose_nid_postfix(loaded) == 0);
+    Require(dlsym_nid_postfix(found, "GuestModuleAdd") == reinterpret_cast<void*>(add));
+    Require(add(20, 22) == 42);
+    Require(dlclose_nid_postfix(found) == 0);
+    void* resident = dlopen_nid_postfix(path, 0x1000 | 1);
+    Require(resident != nullptr);
+    add = reinterpret_cast<Add>(dlsym_nid_postfix(resident, "GuestModuleAdd"));
+    Require(add && add(21, 21) == 42);
+    RegisterModuleImage(reinterpret_cast<const void*>(add));
+    const bool registered = GuestAllocations::Mutation().Overlaps(reinterpret_cast<const void*>(add), 1);
+    void* plain = dlopen_nid_postfix(path, 2);
+    Require(plain != nullptr && dlclose_nid_postfix(resident) == 0 && dlclose_nid_postfix(plain) == 0);
+    Require(add(30, 12) == 42);
+    Require(GuestAllocations::Mutation().Overlaps(reinterpret_cast<const void*>(add), 1) == registered);
+    void* again = dlopen_nid_postfix(path, 0x2000 | 2);
+    Require(again != nullptr && dlsym_nid_postfix(again, "GuestModuleAdd") == reinterpret_cast<void*>(add));
+    Require(dlclose_nid_postfix(again) == 0);
+    Require(add(40, 2) == 42);
+}
 #ifdef __linux__
 static int FirstLoadedImage(dl_phdr_info* info, std::size_t, void* data) {
     *static_cast<std::uintptr_t*>(data) = info->dlpi_addr;
@@ -157,6 +202,17 @@ int main(int argc, char** argv) {
     Require(dlopen_nid_postfix(argv[1], 0x2000) == nullptr);
     Require(dlerror_nid_postfix() != nullptr);
     Require(dlerror_nid_postfix() == nullptr);
+    for (const int flags : {0x2000 | 2, 0x2000 | 0x1000 | 1, 0x2000 | 2}) {
+        Require(dlopen_nid_postfix(argv[1], flags) == nullptr);
+        Require(dlerror_nid_postfix() == nullptr);
+    }
+    Require(dlopen_nid_postfix("anyps5-missing-module-for-test.prx", 0x2000 | 2) == nullptr);
+    const char* notFound = dlerror_nid_postfix();
+    Require(notFound != nullptr && std::strstr(notFound, "was not found") != nullptr);
+    for (const int flags : {0x2000 | 3, 0x200 | 2, 0x4000 | 2}) {
+        Require(dlopen_nid_postfix(argv[1], flags) == nullptr);
+        Require(dlerror_nid_postfix() != nullptr);
+    }
     Require(dlopen_nid_postfix("anyps5-missing-module-for-test.prx", 2) == nullptr);
     const char* missing = dlerror_nid_postfix();
     Require(missing != nullptr && std::strstr(missing, "--module-dir") == nullptr);
@@ -376,5 +432,6 @@ int main(int argc, char** argv) {
     Require(dlsym_nid_postfix(nullptr, "malloc") == nullptr);
     Require(::dlclose(host) == 0);
 #endif
+    CheckNoLoadAndNoDelete(argv[1]);
     std::puts("guest_dynamic_loader: all checks passed");
 }
