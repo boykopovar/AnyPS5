@@ -50,6 +50,9 @@
 #include "Configuration.hpp"
 #include "DataInfo.hpp"
 
+#include "BreakIterator.hpp"
+#include "Currency.hpp"
+
 #include "ConverterHelpers.hpp"
 #include "Utf16Search.hpp"
 #include "RecoveredSignatures.hpp"
