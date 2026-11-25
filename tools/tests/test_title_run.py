@@ -152,6 +152,11 @@ class TitlesTests(unittest.TestCase):
     def test_default_entry(self):
         self.assertEqual(title_run.relink_args({}, "windows"), ["--windows"])
         self.assertEqual(title_run.relink_args({}, "linux"), [])
+        self.assertEqual(title_run.relink_args({}, "macos"), ["--macos"])
+
+    def test_macos_entry_keeps_its_relink_flags_and_executables(self):
+        entry = {"relink": ["--trap-sdk-syscall-stubs"], "executables": ["picker/picker.bin"]}
+        self.assertEqual(title_run.relink_args(entry, "macos"), ["--macos", "--trap-sdk-syscall-stubs", "--executable", "picker/picker.bin"])
 
     def test_entry_on_windows_and_linux(self):
         entry = {"relink": ["--registry"], "fixed_base": "0x400000", "executables": ["picker/picker.bin"]}
@@ -173,8 +178,22 @@ class TitlesTests(unittest.TestCase):
 
     def test_an_explicit_conversion_is_not_duplicated(self):
         self.assertEqual(title_run.relink_args({"relink": ["--to-intel"]}, "linux", intel_host=True), ["--to-intel"])
-        self.assertEqual(title_run.relink_args({"relink": ["--to-rosetta"]}, "macos", intel_host=True), ["--to-rosetta"])
-        self.assertEqual(title_run.relink_args({"relink": ["--to-avx"]}, "macos", intel_host=True), ["--to-avx"])
+        self.assertEqual(title_run.relink_args({"relink": ["--to-rosetta"]}, "macos", intel_host=True), ["--macos", "--to-rosetta"])
+        self.assertEqual(title_run.relink_args({"relink": ["--to-avx"]}, "macos", intel_host=True), ["--macos", "--to-avx"])
+        for flag in title_run.CONVERSION_FLAGS:
+            with self.subTest(flag=flag):
+                self.assertEqual(title_run.relink_args({"relink": [flag]}, "macos", rosetta_host=True), ["--macos", flag])
+
+    def test_apple_silicon_gets_to_rosetta(self):
+        self.assertEqual(title_run.relink_args({}, "macos", rosetta_host=True), ["--macos", "--to-rosetta"])
+        self.assertEqual(title_run.relink_args({}, "macos", intel_host=True, rosetta_host=True), ["--macos", "--to-rosetta"])
+
+    def test_intel_mac_gets_to_intel(self):
+        self.assertEqual(title_run.relink_args({}, "macos", intel_host=True), ["--macos", "--to-intel"])
+
+    def test_rosetta_only_applies_on_macos(self):
+        self.assertEqual(title_run.relink_args({}, "linux", rosetta_host=True), [])
+        self.assertEqual(title_run.relink_args({}, "windows", rosetta_host=True), ["--windows"])
 
 
 def bmp(path, width, height, color):
@@ -2300,6 +2319,39 @@ class DiffEntriesTests(unittest.TestCase):
 
     def test_empty_inputs_give_empty_lists(self):
         self.assertEqual(title_run.diff_entries([], [], ["a"], "n"), {"onlyBefore": [], "onlyNow": [], "both": []})
+
+
+class HostIsRosettaTests(unittest.TestCase):
+    def check(self, platform, machine, translated=None, error=None):
+        system = SimpleNamespace(uname=lambda: SimpleNamespace(machine=machine))
+        result = subprocess.CompletedProcess([], 0, translated or "", "")
+        with patch.object(title_run, "os", system), patch.object(title_run, "sys", SimpleNamespace(platform=platform)), \
+                patch.object(title_run.subprocess, "run", side_effect=error, return_value=result) as run:
+            return title_run.host_is_rosetta(), run
+
+    def test_native_apple_silicon_python_is_rosetta(self):
+        found, run = self.check("darwin", "arm64")
+        self.assertIs(found, True)
+        run.assert_not_called()
+
+    def test_translated_python_on_apple_silicon_is_rosetta(self):
+        found, run = self.check("darwin", "x86_64", "1\n")
+        self.assertIs(found, True)
+        self.assertEqual(run.call_args.args[0], ["sysctl", "-in", "sysctl.proc_translated"])
+
+    def test_intel_mac_is_not_rosetta(self):
+        for translated in ("0\n", "", None):
+            with self.subTest(translated=translated):
+                self.assertIs(self.check("darwin", "x86_64", translated)[0], False)
+        self.assertIs(self.check("darwin", "x86_64", error=OSError("no sysctl"))[0], False)
+        self.assertIs(self.check("darwin", "x86_64", error=subprocess.TimeoutExpired("sysctl", 10))[0], False)
+
+    def test_other_hosts_are_not_rosetta(self):
+        for platform in ("linux", "win32"):
+            with self.subTest(platform=platform):
+                found, run = self.check(platform, "arm64")
+                self.assertIs(found, False)
+                run.assert_not_called()
 
 
 class HostIsIntelTests(unittest.TestCase):

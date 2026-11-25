@@ -30,6 +30,8 @@ TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
 TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict, "smoke": bool}
 FILE_ROOTS = ("app0", "data", "download0")
 FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base"}
+PLATFORM_FLAGS = {"windows": ["--windows"], "macos": ["--macos"]}
+CONVERSION_FLAGS = ("--to-intel", "--to-rosetta", "--to-avx")
 PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
 PAD_AFTER_SECONDS = 5
 REPORT_FILE = "anyps5-report.json"
@@ -199,11 +201,26 @@ def host_is_intel():
         return False
 
 
-def relink_args(entry, platform, intel_host=False):
-    args = ["--windows"] if platform == "windows" else []
+def host_is_rosetta():
+    if sys.platform != "darwin":
+        return False
+    if os.uname().machine == "arm64":
+        return True
+    try:
+        translated = subprocess.run(["sysctl", "-in", "sysctl.proc_translated"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return translated.stdout.strip() == "1"
+
+
+def relink_args(entry, platform, intel_host=False, rosetta_host=False):
+    args = list(PLATFORM_FLAGS.get(platform, []))
     args += entry.get("relink", [])
-    if intel_host and not any(flag in args for flag in ("--to-intel", "--to-rosetta", "--to-avx")):
-        args.append("--to-intel")
+    if not any(flag in args for flag in CONVERSION_FLAGS):
+        if platform == "macos" and rosetta_host:
+            args.append("--to-rosetta")
+        elif intel_host:
+            args.append("--to-intel")
     if "fixed_base" in entry:
         if platform not in FIXED_BASE_FLAGS:
             raise ValueError(f"fixed_base is not supported on {platform}")
@@ -961,7 +978,7 @@ def prepare(title_id, found, entry, platform, build, work):
     executable = work / (title_id + (".exe" if platform == "windows" else ""))
     relinker = build / "core/relinker" / ("relinker.exe" if platform == "windows" else "relinker")
     with (work / "relink.log").open("w", encoding="utf-8") as log:
-        relinked = subprocess.run([str(relinker), *relink_args(entry, platform, host_is_intel()), str(source / "eboot.elf"), str(executable)],
+        relinked = subprocess.run([str(relinker), *relink_args(entry, platform, host_is_intel(), host_is_rosetta()), str(source / "eboot.elf"), str(executable)],
                                   stdout=log, stderr=subprocess.STDOUT)
     if relinked.returncode != 0:
         return None
