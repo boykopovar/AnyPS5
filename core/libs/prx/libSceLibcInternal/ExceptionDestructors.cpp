@@ -60,6 +60,10 @@ void APS5_VABI _ZNSt18bad_variant_accessD0Ev_nid_postfix(void* self) {
     _ZdlPv_nid_postfix(self);
 }
 
+void APS5_VABI _ZNSt13bad_exceptionD0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
+}
+
 [[noreturn]] void APS5_VABI sceLibcInternalXoverflowError_nid_no_patch(const char* message) {
     LibcThrowOverflowError_nid_no_patch(message);
 }

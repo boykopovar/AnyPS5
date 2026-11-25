@@ -125,6 +125,21 @@ int CopyPicture(const SceVideodec2::OutputInfo& output, const Geometry& geometry
     return 0;
 }
 
+int PublishPicture(std::uint64_t handle, const SceVideodec2::OutputInfo& output, const FrameBuffer& frameBuffer, PictureInfo* picture, PictureInfo& localPicture) {
+    SceVideodec2::Internal::PictureHeader header{};
+    if (output.isValid) Videodec2PictureHeader_nid_no_patch(handle, output.frameBuffer, &header);
+    const auto geometry = Measure(output, header);
+    if (output.isValid) {
+        const auto copyError = CopyPicture(output, geometry, &frameBuffer);
+        if (copyError != 0) return copyError;
+    }
+    FillPictureInfo(geometry, output, &localPicture);
+    localPicture.ptsData = header.pts;
+    localPicture.attachedData = header.attached;
+    if (!GuestCopyOut_nid_no_patch(picture, &localPicture, sizeof(localPicture))) return VideodecErrorArgumentPointer;
+    return 0;
+}
+
 }
 
 extern "C" {
@@ -220,15 +235,7 @@ int APS5_VABI sceVideodecDecode(Ctrl* ctrl, const SceVideodec2::InputData* input
     } catch (const std::exception&) {
         return VideodecErrorDecodeAu;
     }
-    SceVideodec2::Internal::PictureHeader header{};
-    if (output.isValid) Videodec2PictureHeader_nid_no_patch(decoder->handle, output.frameBuffer, &header);
-    const auto geometry = Measure(output, header);
-    FillPictureInfo(geometry, output, &localPicture);
-    localPicture.ptsData = header.pts;
-    localPicture.attachedData = header.attached;
-    if (!GuestCopyOut_nid_no_patch(picture, &localPicture, sizeof(localPicture))) return VideodecErrorArgumentPointer;
-    if (!output.isValid) return 0;
-    return CopyPicture(output, geometry, &localFrameBuffer);
+    return PublishPicture(decoder->handle, output, localFrameBuffer, picture, localPicture);
 }
 
 int APS5_VABI sceVideodecDeleteDecoder(Ctrl* ctrl) {
@@ -289,15 +296,7 @@ int APS5_VABI sceVideodecFlush(Ctrl* ctrl, FrameBuffer* frameBuffer, PictureInfo
     } catch (const std::exception&) {
         return VideodecErrorDecodeAu;
     }
-    SceVideodec2::Internal::PictureHeader header{};
-    if (output.isValid) Videodec2PictureHeader_nid_no_patch(decoder->handle, output.frameBuffer, &header);
-    const auto geometry = Measure(output, header);
-    FillPictureInfo(geometry, output, &localPicture);
-    localPicture.ptsData = header.pts;
-    localPicture.attachedData = header.attached;
-    if (!GuestCopyOut_nid_no_patch(picture, &localPicture, sizeof(localPicture))) return VideodecErrorArgumentPointer;
-    if (!output.isValid) return 0;
-    return CopyPicture(output, geometry, &localFrameBuffer);
+    return PublishPicture(decoder->handle, output, localFrameBuffer, picture, localPicture);
 }
 
 int APS5_VABI sceVideodecReset(Ctrl* ctrl) {
@@ -317,7 +316,26 @@ int APS5_VABI sceVideodecReset(Ctrl* ctrl) {
     }
     return 0;
 }
-int APS5_VABI sceVideodecMapMemory(void) {
+int APS5_VABI sceVideodecMapMemory(Ctrl* ctrl, const void* memory) {
+    if (ctrl == nullptr || memory == nullptr) return VideodecErrorArgumentPointer;
+    std::uint64_t ctrlSize = 0;
+    if (GuestCopyIn_nid_no_patch(&ctrlSize, ctrl, sizeof(ctrlSize))) {
+        if (ctrlSize != sizeof(Ctrl)) return VideodecErrorStructSize;
+        std::uint64_t memorySize = 0;
+        if (GuestCopyIn_nid_no_patch(&memorySize, memory, sizeof(memorySize))) {
+            if (memorySize != 0x20 && memorySize != 0x28 && memorySize != 0x48) return VideodecErrorStructSize;
+            void* handle = nullptr;
+            if (GuestCopyIn_nid_no_patch(&handle, &ctrl->handle, sizeof(handle))) {
+                if (handle == nullptr) return VideodecErrorHandle;
+                unsigned char fields[0x1c]{};
+                if (memorySize != 0x20 && GuestCopyIn_nid_no_patch(fields, static_cast<const unsigned char*>(memory) + 0x8, sizeof(fields))) {
+                    std::uint32_t flags = 0;
+                    std::memcpy(&flags, fields + 0x18, sizeof(flags));
+                    if (flags != 0) return VideodecErrorApiFail;
+                }
+            }
+        }
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

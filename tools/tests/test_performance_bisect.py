@@ -1,6 +1,8 @@
 from pathlib import Path
+import errno
 import json
 import math
+import os
 import subprocess
 import sys
 import tempfile
@@ -25,6 +27,13 @@ class RecipeTests(unittest.TestCase):
         return {"title_id": "PPSA00000", "build_commands": [["cmake", "--build", "{build_dir}"]],
                 "build_dir": "build", "games": [str(game)], "titles": str(titles), "seconds": 20,
                 "repetitions": 3, "regression_pct": 5, "max_spread_pct": 3}
+
+    def test_loads_bom_prefixed_utf8_recipe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "recipe.json"
+            path.write_text(json.dumps(self.make_recipe(root)), encoding="utf-8-sig")
+            self.assertEqual(performance_bisect.load_recipe(path)["title_id"], "PPSA00000")
 
     def test_loads_valid_recipe_and_normalizes_external_paths(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -52,6 +61,37 @@ class RecipeTests(unittest.TestCase):
                     path.write_text(json.dumps(bad), encoding="utf-8")
                     with self.assertRaises(ValueError):
                         performance_bisect.load_recipe(path)
+
+    def test_rejects_oversized_percentage_integers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            recipe = self.make_recipe(root)
+            path = root / "recipe.json"
+            for name in ("regression_pct", "max_spread_pct"):
+                for value in (10 ** 400, -(10 ** 400), math.inf, -math.inf, math.nan):
+                    with self.subTest(name=name, value=value):
+                        path.write_text(json.dumps(dict(recipe, **{name: value})), encoding="utf-8")
+                        with self.assertRaisesRegex(ValueError, "recipe." + name):
+                            performance_bisect.load_recipe(path)
+
+    def test_cli_reports_oversized_percentages_before_bisection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            recipe = self.make_recipe(root)
+            path = root / "recipe.json"
+            output = root / "report.json"
+            for name in ("regression_pct", "max_spread_pct"):
+                with self.subTest(name=name):
+                    path.write_text(json.dumps(dict(recipe, **{name: 10 ** 400})), encoding="utf-8")
+                    result = subprocess.run([sys.executable, performance_bisect.__file__, "--recipe", str(path),
+                                             "--repo", str(root / "not-a-repository"), "--good", "good", "--bad", "bad",
+                                             "--output", str(output)], capture_output=True, timeout=10)
+                    error = result.stderr.decode("utf-8")
+                    self.assertEqual(result.returncode, 2, error)
+                    self.assertIn("recipe." + name, error)
+                    self.assertNotIn("Traceback", error)
+                    self.assertEqual(result.stdout, b"")
+                    self.assertFalse(output.exists())
 
     def test_resolves_relative_paths_from_the_recipe_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -103,6 +143,16 @@ class RecipeTests(unittest.TestCase):
 
 
 class SummaryValidationTests(unittest.TestCase):
+    def test_sample_rejects_a_non_object_title_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.json"
+            summary = {"build": {"commit": GOOD[:7], "dirty": False}, "machine": IDENTITY}
+            for catalog in (None, [], "PPSA00000", 1):
+                with self.subTest(catalog=catalog):
+                    path.write_text(json.dumps(dict(summary, titles=catalog)), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "missing machine or title data"):
+                        performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
     def test_sample_requires_clean_expected_commit_and_rendering_result(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "summary.json"
@@ -126,7 +176,7 @@ class SummaryValidationTests(unittest.TestCase):
             summary = {"build": {"commit": GOOD[:7], "dirty": False}, "machine": IDENTITY,
                        "titles": {"PPSA00000": {"name": "Example", "version": "01.00",
                                                    "runs": [{"outcome": "stalled", "fps": 60}]}}}
-            for outcome, fps in (("stalled", 60), ("rendering", math.inf), ("rendering", 0)):
+            for outcome, fps in (("stalled", 60), ("rendering", math.inf), ("rendering", 0), ("rendering", 10**309)):
                 summary["titles"]["PPSA00000"]["runs"] = [{"outcome": outcome, "fps": fps}]
                 path.write_text(json.dumps(summary), encoding="utf-8")
                 with self.subTest(outcome=outcome, fps=fps), self.assertRaisesRegex(ValueError, "did not render"):
@@ -150,22 +200,31 @@ class MeasurementStabilityTests(unittest.TestCase):
         self.assertFalse(performance_bisect.is_regression(58, 60, 5))
         self.assertTrue(performance_bisect.is_regression(57, 60, 5))
 
+    def test_regression_counts_a_decimal_value_at_the_threshold(self):
+        self.assertTrue(performance_bisect.is_regression(43.7, 46.0, 5.0))
+        self.assertFalse(performance_bisect.is_regression(43.7000000001, 46.0, 5.0))
+
     def test_candidate_identity_must_match_baseline(self):
         with self.assertRaisesRegex(ValueError, "identity changed"):
             performance_bisect.require_same_identity({"identity": IDENTITY}, {"identity": dict(IDENTITY, driver="Other")})
 
-class GitHistoryTests(unittest.TestCase):
+class GitHistoryCase(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.repo = Path(self.directory.name) / "repo"
         self.repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True)
         subprocess.run(["git", "-C", str(self.repo), "config", "user.name", "Test"], check=True)
         subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "test@example.invalid"], check=True)
-        self.commit("zero")
-        self.good = performance_bisect.git(self.repo, "rev-parse", "HEAD")
-        self.commits = [self.commit(f"step-{index}") for index in range(1, 8)]
+        stream = ""
+        for text in ["zero", *(f"step-{index}" for index in range(1, 8))]:
+            message = f"test: {text}"
+            stream += (f"commit refs/heads/main\ncommitter Test <test@example.invalid> 1700000000 +0000\n"
+                       f"data {len(message)}\n{message}\nM 100644 inline state\ndata {len(text)}\n{text}\n")
+        subprocess.run(["git", "-C", str(self.repo), "fast-import", "--quiet"], input=stream.encode(), check=True)
+        subprocess.run(["git", "-C", str(self.repo), "reset", "-q", "--hard"], check=True)
+        self.good, *self.commits = performance_bisect.git(self.repo, "rev-list", "--reverse", "HEAD").split()
 
     def commit(self, text):
         (self.repo / "state").write_text(text, encoding="utf-8")
@@ -173,6 +232,8 @@ class GitHistoryTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", f"test: {text}"], check=True)
         return performance_bisect.git(self.repo, "rev-parse", "HEAD")
 
+
+class GitHistoryTests(GitHistoryCase):
     def test_resolves_first_parent_range_and_checks_ancestry(self):
         good, bad, commits = performance_bisect.first_parent_commits(self.repo, self.good, self.commits[-1])
         self.assertEqual(good, self.good)
@@ -194,7 +255,7 @@ class CommandTests(unittest.TestCase):
     def test_build_commands_expand_paths_without_a_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source"
+            source = root / "source {commit}"
             source.mkdir()
             subprocess.run(["git", "init", "-q", str(source)], check=True)
             subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
@@ -202,9 +263,9 @@ class CommandTests(unittest.TestCase):
             (source / "source.cpp").write_text("source", encoding="utf-8")
             subprocess.run(["git", "-C", str(source), "add", "source.cpp"], check=True)
             subprocess.run(["git", "-C", str(source), "commit", "-qm", "test: source"], check=True)
-            build_dir = root / "source" / "build"
+            build_dir = source / "build"
             recipe = {"build_dir": "build", "build_commands": [[sys.executable, "-c",
-                       "from pathlib import Path; Path(r'{build_dir}').mkdir(parents=True)"]]}
+                       "from pathlib import Path; import sys; Path(sys.argv[1]).mkdir(parents=True)", "{build_dir}"]]}
             actual = performance_bisect.run_build_commands(source, recipe, GOOD, root / "results")
             self.assertEqual(actual, build_dir)
             self.assertTrue(build_dir.is_dir())
@@ -281,6 +342,28 @@ class ReportTests(unittest.TestCase):
                 performance_bisect.write_report(path, {"result": "overwrite"})
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "first bad"})
 
+    def test_report_falls_back_to_replace_when_hardlinks_are_unavailable(self):
+        for failure in (PermissionError(errno.EACCES, "denied"), NotImplementedError(), OSError(errno.ENOTSUP, "unsupported")):
+            with self.subTest(failure=type(failure).__name__):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "nested" / "report.json"
+                    with patch("os.link", side_effect=failure):
+                        performance_bisect.write_report(path, {"result": "first bad"})
+                    self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "first bad"})
+                    self.assertEqual([item.name for item in path.parent.iterdir()], ["report.json"])
+                    with self.assertRaisesRegex(ValueError, "already exists"):
+                        performance_bisect.write_report(path, {"result": "overwrite"})
+                    self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "first bad"})
+
+    def test_report_reraises_unexpected_link_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nested" / "report.json"
+            with patch("os.link", side_effect=OSError(errno.ENOSPC, "no space")):
+                with self.assertRaises(OSError):
+                    performance_bisect.write_report(path, {"result": "first bad"})
+            self.assertFalse(path.exists())
+            self.assertEqual(list(path.parent.iterdir()), [])
+
 
 class EndpointValidationTests(unittest.TestCase):
     def test_requires_slow_endpoint_and_matching_measurement_identity(self):
@@ -331,7 +414,46 @@ class BisectReportTests(unittest.TestCase):
         self.assertEqual(report["first_bad"]["median_fps"], 54.0)
 
 
-class EndToEndBisectTests(GitHistoryTests):
+class EndToEndBisectTests(GitHistoryCase):
+    def test_bisects_with_real_measurement_directories_and_build_commands(self):
+        root = Path(self.directory.name)
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "title_run.py").write_text("""import json, pathlib, sys
+args = sys.argv[1:]
+out = pathlib.Path(args[args.index('--out') + 1])
+build = pathlib.Path(args[args.index('--build') + 1])
+commit = (build / 'commit').read_text(encoding='utf-8')
+state = (build.parent / 'state').read_text(encoding='utf-8')
+fps = 54.0 if state in ('step-5', 'step-6', 'step-7') else 60.0
+target = out / 'run' / 'summary.json'
+target.parent.mkdir(parents=True)
+target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'machine': {'os': 'Linux', 'gpu': 'GPU', 'driver': 'Driver', 'cpu': 'CPU'}, 'titles': {'PPSA00000': {'name': 'Example', 'version': '01.00', 'runs': [{'outcome': 'rendering', 'fps': fps}]}}}), encoding='utf-8')
+""", encoding="utf-8")
+        recipe = {"title_id": "PPSA00000", "games": [], "titles": str(root / "titles.json"),
+                  "seconds": 20, "content": None, "build_dir": "build", "repetitions": 3,
+                  "regression_pct": 5.0, "max_spread_pct": 3.0,
+                  "build_commands": [[sys.executable, "-c",
+                      "from pathlib import Path; import sys; "
+                      "build = Path(sys.argv[1]); build.mkdir(); "
+                      "(build / 'commit').write_text(sys.argv[3], encoding='utf-8'); "
+                      "(Path(sys.argv[2]) / 'built').write_text(sys.argv[3], encoding='utf-8')",
+                      "{build_dir}", "{result_dir}", "{commit}"]]}
+        output = root / "report.json"
+        original_worktrees = performance_bisect.git(self.repo, "worktree", "list", "--porcelain")
+        self.addCleanup(os.chdir, Path.cwd())
+        os.chdir(root)
+        with patch.object(performance_bisect, "TOOLS_DIR", tools):
+            report = performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, output, Path("."))
+        self.assertEqual(report["first_bad"]["commit"], self.commits[4])
+        self.assertEqual(report["previous_good"]["commit"], self.commits[3])
+        self.assertEqual(report["tested_commits"], 5)
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), report)
+        for endpoint in ("good", "bad", "first_bad", "previous_good"):
+            self.assertEqual(len(report[endpoint]["samples"]), recipe["repetitions"])
+        self.assertEqual(performance_bisect.git(self.repo, "worktree", "list", "--porcelain"), original_worktrees)
+        self.assertEqual(list(root.glob("anyps5-performance-bisect-*")), [])
+
     def test_bisects_to_first_commit_over_threshold_and_removes_worktree(self):
         values = {commit: 60.0 for commit in [self.good, *self.commits]}
         values.update({commit: 54.0 for commit in self.commits[4:]})
@@ -461,7 +583,10 @@ class BuildSymlinkSafetyTests(unittest.TestCase):
             external.mkdir()
             marker = external / "keep.txt"
             marker.write_text("outside data", encoding="utf-8")
-            (repo / "build").symlink_to(external, target_is_directory=True)
+            try:
+                (repo / "build").symlink_to(external, target_is_directory=True)
+            except (OSError, NotImplementedError) as error:
+                self.skipTest(f"symlinks unavailable: {error}")
             with self.assertRaisesRegex(ValueError, "resolves outside the worktree"):
                 performance_bisect.reset_build_dir(repo, repo / "build")
             self.assertEqual(marker.read_text(encoding="utf-8"), "outside data")
@@ -477,7 +602,7 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertIn("known-bad commit", result.stdout)
 
 
-class FirstParentMergeTests(GitHistoryTests):
+class FirstParentMergeTests(GitHistoryCase):
     def test_excludes_side_branch_commits_and_keeps_the_merge_commit(self):
         default_branch = performance_bisect.git(self.repo, "symbolic-ref", "--short", "HEAD")
         performance_bisect.git(self.repo, "switch", "-c", "bisect-side")
@@ -504,7 +629,7 @@ class FirstParentMergeTests(GitHistoryTests):
         self.assertEqual(len(commits), len(set(commits)))
 
 
-class BisectCleanupTests(GitHistoryTests):
+class BisectCleanupTests(GitHistoryCase):
     def test_removes_temporary_worktree_when_a_measurement_fails(self):
         valid = {"median_fps": 60.0, "identity": IDENTITY}
         bad = {"median_fps": 54.0, "identity": IDENTITY}
@@ -517,6 +642,24 @@ class BisectCleanupTests(GitHistoryTests):
 
 
 class AtomicReportRaceTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "rename refuses an existing destination on Windows")
+    def test_windows_fallback_preserves_report_created_before_rename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            rename, replace = os.rename, os.replace
+
+            def create_racing_report(publish, source, destination):
+                Path(destination).write_text('{"result": "other run"}', encoding="utf-8")
+                return publish(source, destination)
+
+            with patch.object(os, "link", side_effect=OSError(errno.ENOTSUP, "unsupported")), \
+                    patch.object(os, "rename", side_effect=lambda *args: create_racing_report(rename, *args)), \
+                    patch.object(os, "replace", side_effect=lambda *args: create_racing_report(replace, *args)), \
+                    self.assertRaises(FileExistsError):
+                performance_bisect.write_report(path, {"result": "bisect report"})
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "other run"})
+            self.assertEqual(list(Path(directory).iterdir()), [path])
+
     def test_does_not_overwrite_a_report_created_during_write(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "report.json"
@@ -533,7 +676,7 @@ class AtomicReportRaceTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
 
-class FirstParentEndpointTests(GitHistoryTests):
+class FirstParentEndpointTests(GitHistoryCase):
     def test_rejects_good_endpoint_reachable_only_through_a_merge_parent(self):
         default_branch = performance_bisect.git(self.repo, "symbolic-ref", "--short", "HEAD")
         performance_bisect.git(self.repo, "switch", "-c", "endpoint-side")
@@ -596,7 +739,7 @@ class FocusedInputEdgeTests(unittest.TestCase):
 
     def test_recipe_rejects_absolute_build_directories(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = self.recipe_path(Path(directory), build_dir="/tmp/unsafe-build")
+            path = self.recipe_path(Path(directory), build_dir=str(Path(directory) / "unsafe-build"))
             with self.assertRaisesRegex(ValueError, "relative path"):
                 performance_bisect.load_recipe(path)
 
@@ -639,9 +782,9 @@ class FocusedInputEdgeTests(unittest.TestCase):
 
     def test_recipe_requires_regression_threshold_inside_open_interval(self):
         with tempfile.TemporaryDirectory() as directory:
-            for value in (0, 100):
+            for index, value in enumerate((0, 100, 10**309)):
                 with self.subTest(value=value):
-                    case = Path(directory) / str(value)
+                    case = Path(directory) / str(index)
                     case.mkdir()
                     path = self.recipe_path(case, regression_pct=value)
                     with self.assertRaisesRegex(ValueError, "between 0 and 100"):
@@ -650,9 +793,9 @@ class FocusedInputEdgeTests(unittest.TestCase):
 
     def test_recipe_requires_spread_limit_inside_open_interval(self):
         with tempfile.TemporaryDirectory() as directory:
-            for value in (0, 100):
+            for index, value in enumerate((0, 100, 10**309)):
                 with self.subTest(value=value):
-                    case = Path(directory) / str(value)
+                    case = Path(directory) / str(index)
                     case.mkdir()
                     path = self.recipe_path(case, max_spread_pct=value)
                     with self.assertRaisesRegex(ValueError, "between 0 and 100"):
@@ -691,6 +834,52 @@ class FocusedInputEdgeTests(unittest.TestCase):
             path = self.write_summary(Path(directory), summary)
             with self.assertRaisesRegex(ValueError, "missing machine"):
                 performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
+    def test_sample_requires_cpu_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for value in (None, "", " \t"):
+                with self.subTest(value=value):
+                    summary = self.sample_fixture()
+                    if value is None:
+                        del summary["machine"]["cpu"]
+                    else:
+                        summary["machine"]["cpu"] = value
+                    path = self.write_summary(root, summary)
+                    with self.assertRaisesRegex(ValueError, "identity.*cpu"):
+                        performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
+    def test_sample_requires_text_for_machine_and_title_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for field in ("os", "gpu", "driver", "cpu", "title"):
+                for value in (True, 1, ["Example"], " \t"):
+                    with self.subTest(field=field, value=value):
+                        summary = self.sample_fixture()
+                        if field == "title":
+                            summary["titles"]["PPSA00000"]["name"] = value
+                        else:
+                            summary["machine"][field] = value
+                        path = self.write_summary(root, summary)
+                        with self.assertRaisesRegex(ValueError, f"identity.*{field}"):
+                            performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
+    def test_sample_requires_content_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            summary = self.sample_fixture()
+            title = summary["titles"]["PPSA00000"]
+            path = self.write_summary(root, summary)
+            sample = performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+            self.assertEqual(sample["identity"]["content_version"], "01.00")
+
+            del title["version"]
+            for fields in ({}, {"version": ""}, {"version": " \t"}, {"version": None}, {"version": 1}):
+                with self.subTest(fields=fields):
+                    summary["titles"]["PPSA00000"] = dict(title, **fields)
+                    path = self.write_summary(root, summary)
+                    with self.assertRaisesRegex(ValueError, "missing a valid content version"):
+                        performance_bisect.sample_summary(path, "PPSA00000", GOOD)
 
 
     def test_summary_uses_middle_pair_for_even_sample_count(self):
@@ -802,3 +991,56 @@ class FocusedInputEdgeTests(unittest.TestCase):
                     performance_bisect.bisect(directory, "good", "bad", {}, output)
             history.assert_not_called()
             self.assertEqual(output.read_text(encoding="utf-8"), "owned")
+
+
+class GitFailureAndExitTests(unittest.TestCase):
+    def test_git_failure_raises_with_stderr_or_command_fallback(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LC_ALL": "C", "GIT_CEILING_DIRECTORIES": str(Path(directory).parent)}):
+            with self.assertRaisesRegex(RuntimeError, "not a git repository"):
+                performance_bisect.git(directory, "status")
+            failed = subprocess.CompletedProcess([], 1, stdout="", stderr="")
+            with patch.object(performance_bisect.subprocess, "run", return_value=failed):
+                with self.assertRaisesRegex(RuntimeError, "git log -1 failed"):
+                    performance_bisect.git(directory, "log", "-1")
+
+    def test_regression_is_inclusive_at_the_exact_threshold(self):
+        self.assertTrue(performance_bisect.is_regression(54, 60, 10))
+        self.assertFalse(performance_bisect.is_regression(54.01, 60, 10))
+
+    def test_main_exits_with_status_2_for_a_missing_recipe_file(self):
+        from contextlib import redirect_stderr
+        from io import StringIO
+        with tempfile.TemporaryDirectory() as directory:
+            stderr = StringIO()
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                performance_bisect.main(["--good", "good", "--bad", "bad",
+                                         "--recipe", str(Path(directory) / "missing.json")])
+        self.assertEqual(error.exception.code, 2)
+        self.assertTrue(stderr.getvalue().strip())
+
+
+class UniqueRecipeFieldsTests(unittest.TestCase):
+    def test_pairs_become_a_dict_in_order(self):
+        fields = performance_bisect.unique_recipe_fields([("b", 1), ("a", [2])])
+        self.assertEqual(list(fields.items()), [("b", 1), ("a", [2])])
+
+    def test_duplicate_field_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "recipe has a duplicate field: a"):
+            performance_bisect.unique_recipe_fields([("a", 1), ("b", 2), ("a", 3)])
+
+    def test_works_as_a_json_object_hook(self):
+        self.assertEqual(json.loads('{"a": 1}', object_pairs_hook=performance_bisect.unique_recipe_fields), {"a": 1})
+        with self.assertRaises(ValueError):
+            json.loads('{"a": 1, "a": 2}', object_pairs_hook=performance_bisect.unique_recipe_fields)
+
+class RecipeFieldTests(unittest.TestCase):
+    def test_unique_recipe_fields_keeps_distinct_names(self):
+        self.assertEqual(performance_bisect.unique_recipe_fields([('a', 1), ('b', 2)]), {'a': 1, 'b': 2})
+
+    def test_unique_recipe_fields_refuses_a_duplicate_name(self):
+        with self.assertRaisesRegex(ValueError, 'has a duplicate field'):
+            performance_bisect.unique_recipe_fields([('a', 1), ('a', 2)])
+
+
+if __name__ == "__main__":
+    unittest.main()

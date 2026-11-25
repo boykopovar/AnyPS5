@@ -38,6 +38,14 @@ alignas(256) constexpr std::array<std::uint32_t, 6> VertexValuePixelCode{
     0xc80a0000, 0xc80e0001, 0xc8120002, 0xf800180f, 0x04040302, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 6> VertexValueYPixelCode{
+    0xc80a0100, 0xc80e0101, 0xc8120102, 0xf800180f, 0x04040302, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 10> AffineVertexValuePixelCode{
+    0xc80a0000, 0xc80e0001, 0xc8120002, 0x080a0902, 0x080c0903, 0x56080b00, 0x56080d01, 0xf800180f, 0x04040404, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 4> FlatBarycentricPixelCode{
     0xc8120002, 0xf800180f, 0x04040100, 0xbf810000,
 };
@@ -259,10 +267,10 @@ std::uint32_t CheckBarycentrics(Emulation emulation, const std::string& what, bo
     return checked;
 }
 
-void CheckVertexValues(Emulation emulation) {
+void CheckVertexValues(Emulation emulation, bool raw = false, std::size_t component = 0) {
     const auto positions = ClipPositions(emulation);
-    const auto p0 = positions[0][0];
-    const std::array<float, 3> expected{positions[1][0] - p0, positions[2][0] - p0, p0};
+    const auto p0 = positions[0][component];
+    const std::array<float, 3> expected = raw ? std::array<float, 3>{positions[1][component], positions[2][component], p0} : std::array<float, 3>{positions[1][component] - p0, positions[2][component] - p0, p0};
     std::uint32_t checked = 0;
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
@@ -425,6 +433,40 @@ void CheckFirstVertex(AgcDriver::VulkanDevice& device) {
     std::printf("a pass-through input read only at P0 is a flat input of the first vertex: %u pixels, %u and %u of a strip's even and odd triangle\n", checked, stripChecked[0], stripChecked[1]);
 }
 
+void CheckRectListPassThrough(AgcDriver::VulkanDevice& device) {
+    const auto perspective = PixelInputBit(PixelInput::PerspectiveCenter);
+    PassThrough = true;
+    for (const std::size_t component : {0u, 1u}) {
+        const auto result = Draw(device, Emulation::RectList, component == 0u ? std::span<const std::uint32_t>(VertexValuePixelCode) : std::span<const std::uint32_t>(VertexValueYPixelCode), perspective);
+        Require(result.barycentricEmulation.active && result.fragmentParameters.size() == 1 && result.fragmentParameters[0].custom && result.fragmentParameters[0].perVertex, "a rect-list pass-through input read at P10, P20 and P0 was not read per vertex");
+        CheckVertexValues(Emulation::RectList, true, component);
+    }
+    const auto first = Draw(device, Emulation::RectList, FirstVertexXYPixelCode, perspective);
+    Require(first.fragmentParameters.size() == 1 && first.fragmentParameters[0].custom && first.fragmentParameters[0].flat && !first.fragmentParameters[0].perVertex, "a rect-list pass-through input read only at P0 was not passed as a flat input");
+    const auto positions = ClipPositions(Emulation::RectList);
+    std::uint32_t checked = 0;
+    for (std::uint32_t y = 0; y < Height; ++y) {
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            if (!BarycentricsUnsnapped(Emulation::RectList, x, y).inside) continue;
+            for (std::uint32_t channel = 0; channel < 4; ++channel) {
+                Require(Pixel(x, y, channel) == positions[0][channel & 1u], "rect-list pass-through P0: pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") channel " + std::to_string(channel) + " is " + std::to_string(Pixel(x, y, channel)) + ", not the first vertex's " + std::to_string(positions[0][channel & 1u]));
+            }
+            ++checked;
+        }
+    }
+    Require(checked > 200u, "rect-list pass-through P0: too few interior pixels were checked");
+    const bool native = device.Target().fragmentShaderBarycentricEnabled;
+    if (native) {
+        NativePerVertex = true;
+        const auto affine = Draw(device, Emulation::RectList, AffineVertexValuePixelCode, perspective, VK_CULL_MODE_NONE, false, VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT, false, device.Target().fragmentBarycentricBuiltins);
+        NativePerVertex = false;
+        Require(!affine.barycentricEmulation.active && affine.fragmentParameters.size() == 1 && affine.fragmentParameters[0].custom && affine.fragmentParameters[0].perVertex, "a rect-list pass-through input read natively at P10, P20 and P0 was not read per vertex");
+        CheckInterpolated(Emulation::RectList);
+    }
+    PassThrough = false;
+    std::printf("rect-list pass-through inputs passed: the three vertices' raw values and the first vertex's value across the whole rectangle, %u pixels%s\n", checked, native ? ", and P0 + I(P1 - P0) + J(P2 - P0) from native per-vertex inputs" : "");
+}
+
 void CheckStrip(AgcDriver::VulkanDevice& device, Emulation emulation, const std::string& name, bool restart = false) {
     const std::string strip = restart ? " triangle strip with primitive restart" : " triangle strip";
     Draw(device, emulation, BarycentricPixelCode, PixelInputBit(PixelInput::LinearCenter), VK_CULL_MODE_NONE, false, VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT, true, false, restart);
@@ -554,6 +596,7 @@ int main() {
         if (tessellation) {
             RunEmulation(*device, Emulation::Tessellation);
             RunEmulation(*device, Emulation::RectList);
+            CheckRectListPassThrough(*device);
         } else {
             std::puts("tessellation and rect-list stages skipped, the device lacks tessellationShader");
         }

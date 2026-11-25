@@ -5,6 +5,12 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int ErrorInvalidArgument = static_cast<int>(0x80a80003u);
+
+} // namespace
+
 extern "C" {
 
 APS5_DUMMY_FUN
@@ -25,47 +31,58 @@ int APS5_VABI sceVideoRecordingEnableScanInEncode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingFinalizeByAppId() {
+int APS5_VABI sceVideoRecordingFinalizeByAppId(std::int32_t appId, std::uint32_t argument2) {
+    if (appId == -1 || argument2 >= 3) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingFinalizeByHandle() {
+int APS5_VABI sceVideoRecordingFinalizeByHandle(const void* handle, std::uint32_t argument2) {
+    if (handle == nullptr || argument2 >= 3) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingGetCountScanInAction() {
+int APS5_VABI sceVideoRecordingGetCountScanInAction(void* count) {
+    if (count == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingGetFinalizeActiveInfo() {
+int APS5_VABI sceVideoRecordingGetFinalizeActiveInfo(void* info) {
+    if (info == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingGetFormatByAppId() {
+int APS5_VABI sceVideoRecordingGetFormatByAppId(std::int32_t appId) {
+    if (appId == -1) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingGetFormatExtensionByAppId() {
+int APS5_VABI sceVideoRecordingGetFormatExtensionByAppId(std::int32_t appId, char* extension, std::size_t size) {
+    if (appId == -1 || extension == nullptr || size < 5) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingGetRecordedDurationByAppId() {
+int APS5_VABI sceVideoRecordingGetRecordedDurationByAppId(std::int32_t appId) {
+    if (appId == -1) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingGetRecordedDurationByHandle() {
+int APS5_VABI sceVideoRecordingGetRecordedDurationByHandle(const void* handle) {
+    if (handle == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingGetStatusByAppId() {
+int APS5_VABI sceVideoRecordingGetStatusByAppId(std::int32_t appId) {
+    if (appId == -1) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingGetStatusByHandle() {
+int APS5_VABI sceVideoRecordingGetStatusByHandle(const void* handle) {
+    if (handle == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingIsProfileChangeSupported() {
+int APS5_VABI sceVideoRecordingIsProfileChangeSupported(void* supported) {
+    if (supported == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -85,27 +102,33 @@ int APS5_VABI sceVideoRecordingSetCopyrightImage() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingSetInfoByHandle() {
+int APS5_VABI sceVideoRecordingSetInfoByHandle(const void* handle) {
+    if (handle == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingSetPrivacyImage() {
+int APS5_VABI sceVideoRecordingSetPrivacyImage(const void*, const void*, std::uint32_t mode) {
+    if (mode > 2) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingSetProfileLimit() {
+int APS5_VABI sceVideoRecordingSetProfileLimit(std::uint32_t limit) {
+    if (limit > 1) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingSetResourceStateByHandle() {
+int APS5_VABI sceVideoRecordingSetResourceStateByHandle(const void* handle, std::uint32_t state) {
+    if (handle == nullptr || state >= 2) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingStartByHandle() {
+int APS5_VABI sceVideoRecordingStartByHandle(const void* handle) {
+    if (handle == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoRecordingStopByHandle() {
+int APS5_VABI sceVideoRecordingStopByHandle(const void* handle) {
+    if (handle == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 

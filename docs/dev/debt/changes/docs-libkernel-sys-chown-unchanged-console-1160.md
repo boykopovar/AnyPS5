@@ -1,0 +1,5 @@
+# libkernel_sys
+
+## change [chown, lchown and fchownat]
+
+- [chown, lchown and fchownat](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) - ownership is not modelled, as for `fchown`: owner and group 0 and the unchanged value (-1) are accepted, and any other owner or group throws, naming it. The path is looked up first, as in FreeBSD 11's `kern_fchownat`, with `stat`, with `lstat` for `lchown`, and with `fstatat` for `fchownat`, so a lookup error is returned before the owner is checked and nothing is changed on the host. `fchownat` flags other than `AT_SYMLINK_NOFOLLOW` (0x200) return `EINVAL`, as in FreeBSD 11. On a PS5 payload process (firmware 11.60) all three accepted -1 and the file's own owner and group (0) and changed nothing; a missing path, a path through a file and one of 1100 characters gave `ENOENT`, `ENOTDIR` and `ENAMETOOLONG`; `fchownat` flags 0x1, 0x100 and 0x400 gave `EINVAL`, also for a missing path; a null path gave `EFAULT`. An actual owner change and a title process were not measured.
