@@ -75,8 +75,14 @@ void CheckFlushSize(const std::string& name, const std::vector<std::uint32_t>& w
     const std::unordered_set<const IrValue*> instructions(block.Instructions().begin(), block.Instructions().end());
     for (const auto* value : block.Instructions()) {
         if (value->Opcode() != IrOpcode::SelectF32) continue;
-        const IrOpcode product = value->Argument(2)->Opcode();
-        if (product != IrOpcode::FPMul32 && product != IrOpcode::FPFma32) continue;
+        const IrValue* arm = value->Argument(2);
+        const IrOpcode product = arm->Opcode();
+        bool directed = product == IrOpcode::FPInterpolateF32;
+        if (!directed && product == IrOpcode::BitCastF32U32) {
+            const auto repair = Cone(arm, instructions);
+            directed = std::any_of(repair.begin(), repair.end(), [](const IrValue* kept) { return kept->Opcode() == IrOpcode::FPInterpolateF32; });
+        }
+        if (!directed && product != IrOpcode::FPMul32 && product != IrOpcode::FPFma32) continue;
         const auto flush = Cone(value, instructions);
         const auto kept = Cone(value->Argument(2), instructions);
         const auto size = static_cast<std::size_t>(std::count_if(flush.begin(), flush.end(), [&](const IrValue* instruction) { return !kept.contains(instruction); }));
