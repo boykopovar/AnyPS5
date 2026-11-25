@@ -799,6 +799,14 @@ int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest);
 int APS5_VABI sigaltstack_nid_postfix(const GuestStack* stack, GuestStack* previous);
 int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet);
 int APS5_VABI SetSignalMaskCatching_nid_no_patch(const GuestSignalSet* set, GuestSignalSet* previousSet);
+constexpr int SignalSendDone = 0;
+constexpr int SignalSendNoThread = 1;
+constexpr int SignalSendUnblocked = 2;
+int KqueueAddAio_nid_no_patch(int descriptor, std::uintptr_t ident, std::uint16_t flags, void* udata, std::uint64_t token);
+void KqueueAioDone_nid_no_patch(std::uintptr_t ident, std::uint64_t token, std::int64_t error);
+void KqueueAioFree_nid_no_patch(std::uintptr_t ident, std::uint64_t token);
+int SendValueSignal_nid_no_patch(int guest, std::int32_t code, std::int64_t value, std::int64_t thread, bool directed, std::uint64_t* ticket);
+void TakeValueSignal_nid_no_patch(int guest, std::uint64_t ticket);
 int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet);
 int APS5_VABI pthread_sigmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet);
 int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet* set, void* info, const KernelTimespec* timeout);
@@ -891,6 +899,7 @@ int APS5_VABI sceKernelAllocateToolMemory(std::int32_t partition, std::int64_t s
 int APS5_VABI sceKernelAvailableToolMemorySize(std::int64_t searchStart, std::int64_t searchEnd, size_t alignment, std::int64_t* physAddrOut, size_t* sizeOut);
 int APS5_VABI sceKernelMapToolMemory(void** addr, size_t len, int prot, int flags, std::int64_t start, size_t alignment);
 int APS5_VABI sceKernelReleaseToolMemory(std::int64_t start, size_t len);
-int APS5_VABI sceKernelSetProcessProperty(void);
+int APS5_VABI sceKernelSetProcessProperty(const void* name, std::int64_t value1, std::int64_t value2, std::int64_t value3, std::int64_t value4);
+int KernelSetProcessProperty_nid_no_patch(const void* name, std::int64_t value1, std::int64_t value2, std::int64_t value3, std::int64_t value4);
 
 }
