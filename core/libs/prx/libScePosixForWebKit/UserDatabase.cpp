@@ -1,6 +1,7 @@
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstddef>
+#include <stdexcept>
 #include <string>
 #include <atomic>
 
@@ -78,6 +79,12 @@ int APS5_VABI getpwnam_r_nid_postfix(const char* name, PosixForWebKitPasswd* pwd
     return StoreResult(result, pwd);
 }
 
+PosixForWebKitPasswd* APS5_VABI getpwnam_nid_postfix(const char* name) {
+    if (name == nullptr) throw std::invalid_argument("getpwnam: null name");
+    std::string copy;
+    if (CopyGuestString_nid_no_patch(name, 256, copy) != 0 || copy != "root") return nullptr;
+    return getpwuid_nid_postfix(0);
+}
 PosixForWebKitPasswd* APS5_VABI getpwent_nid_postfix() {
     if (rootEnumerated.exchange(true)) return nullptr;
     return getpwuid_nid_postfix(0);
