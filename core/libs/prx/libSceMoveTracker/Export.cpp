@@ -1,5 +1,4 @@
 #include "prx/libSceMoveTracker/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -11,9 +10,7 @@ constexpr int MoveTrackerNotInitialized = static_cast<int>(0x80ef0001);
 
 bool IsValidGuestWrite(void* pointer, std::size_t size) {
     if (pointer == nullptr) return false;
-    const int savedErrno = errno;
     const bool writable = GuestWritable_nid_no_patch(pointer, size != 0 ? size : 1);
-    errno = savedErrno;
     return writable;
 }
 
@@ -58,7 +55,6 @@ int APS5_VABI sceMoveTrackerGetVersion() {
 int APS5_VABI sceMoveTrackerGetWorkingMemorySize(std::uint32_t* totalSize, std::uint32_t* processingSize) {
     if (totalSize == nullptr || processingSize == nullptr) return static_cast<int>(0x80ef0003);
     std::uint32_t originalTotal = 0;
-    const int savedErrno = errno;
     const bool readableTotal = GuestCopyIn_nid_no_patch(&originalTotal, totalSize, sizeof(originalTotal));
     const std::uint32_t total = 0xa00000;
     const std::uint32_t processing = 0x800000;
@@ -67,7 +63,6 @@ int APS5_VABI sceMoveTrackerGetWorkingMemorySize(std::uint32_t* totalSize, std::
     if (copiedTotal && !copiedProcessing && readableTotal) {
         GuestCopyOut_nid_no_patch(totalSize, &originalTotal, sizeof(originalTotal));
     }
-    errno = savedErrno;
     if (!copiedTotal || !copiedProcessing) return static_cast<int>(0x80ef0003);
     return 0;
 }
