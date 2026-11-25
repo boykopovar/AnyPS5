@@ -1,5 +1,4 @@
 #include "prx/libSceHttp/include/Http.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #ifdef _WIN32
@@ -607,10 +606,8 @@ int APS5_VABI sceHttpsGetSslError(int id, int* err_num, uint32_t* detail) {
     }
     const int zeroErr = 0;
     const uint32_t zeroDetail = 0;
-    const int savedErrno = errno;
     const bool copiedErr = GuestCopyOut_nid_no_patch(err_num, &zeroErr, sizeof(zeroErr));
     const bool copiedDetail = GuestCopyOut_nid_no_patch(detail, &zeroDetail, sizeof(zeroDetail));
-    errno = savedErrno;
     if (!copiedErr || !copiedDetail) {
         return ERROR_INVALID_VALUE;
     }
