@@ -1,0 +1,11 @@
+if(BUILD_TESTING AND (MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux") AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    enable_language(ASM)
+    add_test_executable(agc_pipeline_binary_key_abi_synthetic_tests
+        tests/PipelineKeyAbiSynthetic.cpp tests/PipelineKeyAbi.cpp tests/PipelineKeyAbi.S)
+    target_include_directories(agc_pipeline_binary_key_abi_synthetic_tests PRIVATE ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+    configure_host_test_executable(agc_pipeline_binary_key_abi_synthetic_tests)
+    foreach(case conforming clobbering)
+        add_test(NAME agc_pipeline_binary_key_abi_synthetic_${case} COMMAND agc_pipeline_binary_key_abi_synthetic_tests ${case})
+        set_tests_properties(agc_pipeline_binary_key_abi_synthetic_${case} PROPERTIES TIMEOUT 10)
+    endforeach()
+endif()

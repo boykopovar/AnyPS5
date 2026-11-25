@@ -7,7 +7,7 @@ configure_windows_unwind(agc_pipeline_cache_allocation_tests)
 
 if(BUILD_TESTING)
     set_target_properties(agc_pipeline_cache_allocation_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
-    foreach(mode startup now busy destructor worker)
+    foreach(mode startup now busy destructor worker same-size incomplete periodic)
         add_test(NAME agc_pipeline_cache_allocation_${mode} COMMAND agc_pipeline_cache_allocation_tests ${mode})
         set_tests_properties(agc_pipeline_cache_allocation_${mode} PROPERTIES TIMEOUT 25)
         if(WIN32)
