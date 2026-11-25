@@ -49,38 +49,26 @@ int main() {
     _Unlockfilelock_nid_postfix(streamA);
     _Unlockfilelock_nid_postfix(streamA);
 
-    std::atomic<bool> ready{false};
-    std::atomic<bool> enteredAttempt{false};
-    std::atomic<bool> workerAcquired{false};
-
     _Lockfilelock_nid_postfix(streamA);
     _Lockfilelock_nid_postfix(streamA);
-    ready.store(true, std::memory_order_release);
+    _Unlockfilelock_nid_postfix(streamA);
 
-    std::thread worker([&] {
-        while (!ready.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
+    int tryLockResult = 0;
+    std::thread probe([&] {
+        tryLockResult = ftrylockfile_nid_postfix(streamA);
+        if (tryLockResult == 0) {
+            _Unlockfilelock_nid_postfix(streamA);
         }
-        enteredAttempt.store(true, std::memory_order_release);
+    });
+    probe.join();
+    Require(tryLockResult == -1, "Worker acquired lock while owner still held one recursive lock");
+
+    std::atomic<bool> workerAcquired{false};
+    std::thread worker([&] {
         _Lockfilelock_nid_postfix(streamA);
         workerAcquired.store(true, std::memory_order_release);
         _Unlockfilelock_nid_postfix(streamA);
     });
-
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (!enteredAttempt.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::yield();
-    }
-    Require(enteredAttempt.load(std::memory_order_acquire), "Worker did not reach _Lockfilelock");
-
-    _Unlockfilelock_nid_postfix(streamA);
-
-    std::size_t spin = 0;
-    while (!workerAcquired.load(std::memory_order_acquire) && spin < 200000 && std::chrono::steady_clock::now() < deadline) {
-        ++spin;
-        std::this_thread::yield();
-    }
-    Require(!workerAcquired.load(std::memory_order_acquire), "Worker acquired lock while owner still held one recursive lock");
 
     std::atomic<bool> streamBResult{false};
     std::thread streamBThread([&] {
