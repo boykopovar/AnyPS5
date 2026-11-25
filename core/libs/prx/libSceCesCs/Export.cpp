@@ -1,8 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
-#include <cerrno>
 #include <algorithm>
 #include <bit>
 #include <charconv>
@@ -2360,9 +2358,7 @@ int APS5_VABI sceCesGbUcsProfileSetSbcs(void* p, const void* sbcs) {
 }
 
 int APS5_VABI sceCesIso2022JpUcsProfileSetSbcs(void* p, const void* sbcs) {
-    const int savedErrno = errno;
     if (!p || !sbcs || !isIso2022(p)) {
-        errno = savedErrno;
         return CES_ERROR_INVALID_PROFILE;
     }
     const std::initializer_list<const uint8_t*> accepted = {
@@ -2371,16 +2367,13 @@ int APS5_VABI sceCesIso2022JpUcsProfileSetSbcs(void* p, const void* sbcs) {
         singleByteProfile(SingleByte::JisX0201)
     };
     if (std::find(accepted.begin(), accepted.end(), static_cast<const uint8_t*>(sbcs)) == accepted.end()) {
-        errno = savedErrno;
         return CES_ERROR_INVALID_PROFILE;
     }
     const uint8_t index = sbcProfileIndex(sbcs);
     if (index == 0) {
-        errno = savedErrno;
         return CES_ERROR_INVALID_PROFILE;
     }
     static_cast<uint8_t*>(p)[8] = index;
-    errno = savedErrno;
     return 0;
 }
 
@@ -2950,13 +2943,10 @@ void* APS5_VABI sceCesUcsProfileInitGb18030_2005(void* sheet) {
 }
 
 void* APS5_VABI sceCesUcsProfileInitGb18030_2022(void* sheet) {
-    const int savedErrno = errno;
     if (!sheet) {
-        errno = savedErrno;
         return nullptr;
     }
     initGbSheet(sheet, GB18030_2022_TAG, GB18030_2022.defaultRange, 1);
-    errno = savedErrno;
     return sheet;
 }
 
@@ -3301,9 +3291,7 @@ int APS5_VABI sceCesJiscsToUcs(const void* profile, uint32_t jiscs, uint32_t* uc
     if (!isMeasuredJiscs(jiscs)) throw std::runtime_error("sceCesJiscsToUcs: code " + hexCode(jiscs) + " is neither a single byte, a native JIS sequence, nor a row and cell 0x21-0x7E of planes 0-2; its form is not implemented");
     if (ucs) {
         const uint32_t zero = 0;
-        const int savedErrno = errno;
         if (!GuestCopyOut_nid_no_patch(ucs, &zero, sizeof(zero))) {
-            errno = savedErrno;
             return CES_ERROR_INVALID_DST_BUFFER;
         }
     }
@@ -3313,9 +3301,7 @@ int APS5_VABI sceCesJiscsToUcs(const void* profile, uint32_t jiscs, uint32_t* uc
     const int result = jiscsToUnicode(profile, jiscs, code);
     if (result != 0) return result;
     if (!ucs) return CES_ERROR_INVALID_DST_BUFFER;
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(ucs, &code, sizeof(code))) {
-        errno = savedErrno;
         return CES_ERROR_INVALID_DST_BUFFER;
     }
     return 0;
@@ -3324,9 +3310,7 @@ int APS5_VABI sceCesJiscsToUcs(const void* profile, uint32_t jiscs, uint32_t* uc
 int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jiscs) {
     if (jiscs) {
         const uint32_t zero = 0;
-        const int savedErrno = errno;
         if (!GuestCopyOut_nid_no_patch(jiscs, &zero, sizeof(zero))) {
-            errno = savedErrno;
             return CES_ERROR_INVALID_DST_BUFFER;
         }
     }
@@ -3339,9 +3323,7 @@ int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jisc
     const int result = unicodeToJiscs(profile, ucs, code);
     if (result != 0) return result;
     if (!jiscs) return CES_ERROR_INVALID_DST_BUFFER;
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(jiscs, &code, sizeof(code))) {
-        errno = savedErrno;
         return CES_ERROR_INVALID_DST_BUFFER;
     }
     return 0;
