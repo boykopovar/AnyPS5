@@ -32,6 +32,9 @@ the last 40 matches. Raise `--limit` to inspect earlier events, such as the mapp
 records, not confirmation that each attempted operation succeeded; no matching event does not prove the address was
 unmapped.
 
+The address query reads UTF-8 logs and logs with a UTF-16 or UTF-32 byte-order mark. It prints source line numbers
+from the saved log.
+
 ## GPU and memory
 
 | Switch | Output |
@@ -80,6 +83,10 @@ See [Build](BUILD.md#performance-trace) for the trace format, summary fields and
 | `APS5_AB=<seconds>:<switch>[+<switch>...]` | Alternates phase A (the environment's settings) and phase B (the listed switches toggled) at flip packets within one run, each phase at least `<seconds>` long. Every phase change prints `[ab] phase A\|B <k> begins at present <n> (t <s> s)` and, `APS5_AB_SETTLE` seconds (default 2) later, `[ab] phase A\|B <k> settled at present <n> (t <s> s)`; `t` counts from the first flip. `APS5_AB_START=<n>` starts at flip `<n>`, `APS5_AB_START=<n>s` `<n>` seconds after the first flip. Only runtime switches (`RuntimeSwitch` in `core/libs/prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp`; their rows in `docs/dev/ENVIRONMENT.md` say that `APS5_AB` can toggle them) can be listed; any other name fails the first flip. `python tools/ab_split.py <log>` prints the mean of each periodic report (`[present]`, `[gputime]`, `[draw] pipelined`, `[syncwait]`) per phase, counting only reports that lie wholly inside a settled phase, and each B phase against its neighbouring A phases. |
 | `APS5_VIDEOOUT_TELEMETRY_DIR=<path>` | Writes the presents and the pad changes of a run to `<path>/videoout.jsonl`; see [Usage](../user/USAGE.md#video-out-and-pad-telemetry). |
 
+For an event trace, repeat `--thread <name>` with exact track names to focus the digest on selected threads.
+Quote a name that contains spaces. This option applies to `aps5-trace-*.json.gz` and uncompressed event traces.
+Use the interval digest without a thread filter for `aps5-summary.jsonl`.
+
 ## Shader registers
 
 `APS5_TRACE_SHADER_REGS=all` prints register snapshots for every shader. Set it to a shader code address in hexadecimal to print one shader's registers.
@@ -96,6 +103,10 @@ A title's `files` in `tools/titles.json` adds files to its prepared folders befo
 
 ## CSV exports
 
-- `tools/performance_csv.py <baseline> <candidate>` exports a performance comparison as CSV. Empty metric cells mean the value was not reported; `--require-matching-context` fails when the two captures differ in machine or scene, and `--spreadsheet-safe` escapes cells that spreadsheets would evaluate.
+- `tools/performance_csv.py <baseline> <candidate>` exports a performance comparison as CSV. Empty metric cells mean the value was not reported. `--require-matching-context` rejects differences in recorded configuration and machine or title metadata. Verify scene and input separately. `--spreadsheet-safe` modifies formula-like text cells for spreadsheet import.
 - `tools/trace_intervals_csv.py <summary>` exports the trace interval summaries as CSV. `--require-complete` requires at least one interval, a consistent capture identity, no dropped events, and contiguous interval times and present numbers.
+  Without this option, a file with no interval rows produces only the CSV header. Use `--require-complete` in scripts
+  that need a usable capture. It requires an explicit `trace_dropped: false` in each interval.
 - `tools/ab_split_csv.py <log> [--program P] [--class C]` exports the existing in-run A/B comparison of a log as CSV.
+  On Windows PowerShell 5.1, capture the log through `cmd /d /c "<command> 2> run.log"`. PowerShell's own
+  `2>` can write UTF-16 and wrap long report lines, which the A/B tools cannot use.

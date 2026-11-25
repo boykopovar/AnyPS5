@@ -46,6 +46,8 @@ public:
 
 constexpr std::uint16_t RegisterBit(const unsigned index) { return static_cast<std::uint16_t>(1u << index); }
 
+constexpr std::size_t MaxZeroPaddingAfterTransfer = 64;
+
 bool UsedAsCodeAddress(const std::uint8_t* code, const std::size_t available, const std::size_t begin, const unsigned computed) {
     constexpr std::uint16_t arguments = RegisterBit(7) | RegisterBit(6) | RegisterBit(2) | RegisterBit(1) | RegisterBit(8) | RegisterBit(9);
     constexpr std::uint16_t preserved = RegisterBit(3) | RegisterBit(5) | RegisterBit(12) | RegisterBit(13) | RegisterBit(14) | RegisterBit(15);
@@ -355,7 +357,8 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     const auto addAddressTakenRoot = [&](std::uint64_t address, const std::uint8_t* code, const Codegen::DecodedInstructionInfo& info) {
         if (!info.HasRipRelativeDisp || code[info.OpcodeOffset] != 0x8d || !(info.RexPrefix & 8)) return;
         const auto displacement = std::bit_cast<std::int32_t>(Io::ReadU32(bytes, fileOffset(address, info.Length) + info.RipRelativeDispOffset));
-        const auto target = address + info.Length + static_cast<std::int64_t>(displacement);
+        auto target = address + info.Length + static_cast<std::int64_t>(displacement);
+        if (info.AddressSize32) target = static_cast<std::uint32_t>(target);
         if (!sceFunctions.empty() || functions.empty() || !isCode(target) || inTable(target) || inFunction(target)) {
             addPointerRoot(target);
             return;
@@ -633,11 +636,16 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         bool afterTransfer = false;
         for (std::size_t position = nextPaddedStart(0); position < size;) {
             if (progress && position % 65536 < 16) report(3500 + 2500 * (scannedBytes + position) / scanBytes);
-            const auto aligned = (position + 15) & ~std::size_t{15};
-            const bool zeroPadding = afterTransfer && aligned != position && aligned <= size && std::all_of(text + position, text + aligned, [](const std::uint8_t value) { return value == 0; });
+            std::size_t paddingEnd = position;
+            if (afterTransfer) {
+                const auto limit = std::min(size, position + MaxZeroPaddingAfterTransfer);
+                while (paddingEnd < limit && text[paddingEnd] == 0) ++paddingEnd;
+                if (paddingEnd % 16 != 0 && paddingEnd < limit) paddingEnd = position;
+                while (paddingEnd > position && paddingEnd % 16 != 0) --paddingEnd;
+            }
             afterTransfer = false;
-            if (zeroPadding) {
-                position = aligned;
+            if (paddingEnd != position) {
+                position = paddingEnd;
                 continue;
             }
             if (position + 1 < size && text[position] == 0 && text[position + 1] == 0) {

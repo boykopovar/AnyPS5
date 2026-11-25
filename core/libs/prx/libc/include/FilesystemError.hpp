@@ -27,8 +27,9 @@ inline int FilesystemError(const std::error_code& error) {
     return 5;
 }
 
-enum class LinkPrefix_nid_no_patch { Resolves, Missing, BlockedByFile };
+enum class LinkPrefix_nid_no_patch { Resolves, Missing, BlockedByFile, TooManyLinks };
 
+inline int PrefixError_nid_no_patch(const std::filesystem::path& native);
 inline bool HasNonDirectoryPrefix_nid_no_patch(const std::filesystem::path& native);
 
 #ifdef _WIN32
@@ -55,7 +56,6 @@ inline LinkPrefix_nid_no_patch LinkPrefixState_nid_no_patch(const std::filesyste
 #ifdef _WIN32
     constexpr unsigned MaxDepth = 32;
     thread_local unsigned depth = 0;
-    if (depth >= MaxDepth) return LinkPrefix_nid_no_patch::Resolves;
     const DWORD attributes = GetFileAttributesW(prefix.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return LinkPrefix_nid_no_patch::Resolves;
     const HANDLE handle = CreateFileW(prefix.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
@@ -65,6 +65,7 @@ inline LinkPrefix_nid_no_patch LinkPrefixState_nid_no_patch(const std::filesyste
         return LinkPrefix_nid_no_patch::Resolves;
     }
     const DWORD code = GetLastError();
+    if (code == ERROR_CANT_RESOLVE_FILENAME) return LinkPrefix_nid_no_patch::TooManyLinks;
     if (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND && code != ERROR_DIRECTORY) return LinkPrefix_nid_no_patch::Resolves;
     std::string text;
     try {
@@ -72,34 +73,45 @@ inline LinkPrefix_nid_no_patch LinkPrefixState_nid_no_patch(const std::filesyste
     } catch (const std::system_error&) {
         return LinkPrefix_nid_no_patch::Resolves;
     }
+    if (depth >= MaxDepth) return LinkPrefix_nid_no_patch::TooManyLinks;
     const std::filesystem::path target(text);
     struct DepthGuard {
         explicit DepthGuard(unsigned& value) : value(value) { ++value; }
         ~DepthGuard() { --value; }
         unsigned& value;
     } guard(depth);
-    const bool blocked = HasNonDirectoryPrefix_nid_no_patch((target.is_absolute() ? target : FinalDirectory_nid_no_patch(prefix.parent_path()) / target) / ".");
-    return blocked ? LinkPrefix_nid_no_patch::BlockedByFile : LinkPrefix_nid_no_patch::Missing;
+    const int nested = PrefixError_nid_no_patch((target.is_absolute() ? target : FinalDirectory_nid_no_patch(prefix.parent_path()) / target) / ".");
+    if (nested == 62) return LinkPrefix_nid_no_patch::TooManyLinks;
+    return nested == 20 ? LinkPrefix_nid_no_patch::BlockedByFile : LinkPrefix_nid_no_patch::Missing;
 #else
     (void)prefix;
     return LinkPrefix_nid_no_patch::Resolves;
 #endif
 }
 
-inline bool HasNonDirectoryPrefix_nid_no_patch(const std::filesystem::path& native) {
+inline int PrefixError_nid_no_patch(const std::filesystem::path& native) {
     std::error_code error;
     const auto trimmed = native.has_filename() ? native : native.parent_path();
     for (auto prefix = trimmed.parent_path(); prefix.has_relative_path(); prefix = prefix.parent_path()) {
         const auto link = LinkPrefixState_nid_no_patch(prefix);
-        if (link != LinkPrefix_nid_no_patch::Resolves) return link == LinkPrefix_nid_no_patch::BlockedByFile;
+        if (link == LinkPrefix_nid_no_patch::TooManyLinks) return 62;
+        if (link == LinkPrefix_nid_no_patch::BlockedByFile) return 20;
+        if (link == LinkPrefix_nid_no_patch::Missing) return 2;
+        error.clear();
         const auto status = std::filesystem::status(prefix, error);
-        if (std::filesystem::exists(status)) return !std::filesystem::is_directory(status);
+        if (error == std::errc::too_many_symbolic_link_levels) return 62;
+        if (std::filesystem::exists(status)) return std::filesystem::is_directory(status) ? 0 : 20;
     }
-    return false;
+    return 0;
+}
+
+inline bool HasNonDirectoryPrefix_nid_no_patch(const std::filesystem::path& native) {
+    return PrefixError_nid_no_patch(native) == 20;
 }
 
 inline int NotFoundError_nid_no_patch(const std::filesystem::path& native) {
-    return HasNonDirectoryPrefix_nid_no_patch(native) ? 20 : 2;
+    const int error = PrefixError_nid_no_patch(native);
+    return error != 0 ? error : 2;
 }
 
 std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination, bool replacesExisting);
