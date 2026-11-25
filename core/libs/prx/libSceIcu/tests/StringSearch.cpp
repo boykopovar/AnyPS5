@@ -383,6 +383,12 @@ void Run() {
     NullStatus(search, words);
     Require(Unchanged(storage));
     GuestPointers(search, words);
+
+    std::int32_t status = 0;
+    auto* opened = usearch_open_nid_postfix(u"ana", -1, u"bananas", -1, "en", nullptr, &status);
+    Require(opened != nullptr);
+    Require(status <= 0);
+    Require(usearch_getMatchedLength_nid_postfix(opened) == 0);
 }
 
 } // namespace UsearchObject

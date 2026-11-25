@@ -111,6 +111,14 @@ void Register(const std::shared_ptr<SearchState>& state) {
     registry.searches.emplace(state->search, state);
 }
 
+std::shared_ptr<SearchState> Find(const UStringSearch* search, const char* caller) {
+    auto& registry = Searches();
+    const std::lock_guard lock(registry.mutex);
+    const auto found = registry.searches.find(search);
+    if (found == registry.searches.end()) NotImplemented_nid_no_patch(caller);
+    return found->second;
+}
+
 bool Succeeded(const std::int32_t* status, const char* caller) {
     Icu::RequireStatus(status);
     return CopyIn<std::int32_t>(status, caller) <= 0;
@@ -141,7 +149,9 @@ UCollator* APS5_VABI usearch_getCollator_nid_postfix(const UStringSearch* search
 
 std::int32_t APS5_VABI usearch_getMatchedLength_nid_postfix(const UStringSearch* search) {
     if (search == nullptr) return Done;
-    NotImplemented_nid_no_patch(__func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    return Icu::StringSearchHost::GetMatchedLength(state->search);
 }
 
 std::int32_t APS5_VABI usearch_next_nid_postfix(UStringSearch* search, std::int32_t* status) {

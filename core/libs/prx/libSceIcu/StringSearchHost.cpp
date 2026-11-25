@@ -26,4 +26,8 @@ void Close(void* search) {
     usearch_close(static_cast<UStringSearch*>(search));
 }
 
+std::int32_t GetMatchedLength(const void* search) {
+    return usearch_getMatchedLength(static_cast<const UStringSearch*>(search));
+}
+
 }
