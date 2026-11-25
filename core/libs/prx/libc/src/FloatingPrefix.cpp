@@ -1,6 +1,5 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
-#include <cerrno>
 
 namespace {
 
@@ -20,10 +19,8 @@ template<> struct CharacterRules<char16_t> {
 
 template<typename TChar>
 TChar ReadGuestChar(const TChar* address) {
-    const int savedErrno = errno;
     TChar value{};
     const bool ok = GuestCopyIn_nid_no_patch(&value, address, sizeof(value));
-    errno = savedErrno;
     if (!ok) APS5_INVALID_ARG_EX;
     return value;
 }
@@ -44,11 +41,9 @@ int ParsePrefix(const TChar** cursor, TChar** end) {
     if (cursor == nullptr) APS5_INVALID_ARG_EX;
     const TChar* original = nullptr;
     {
-        const int savedErrno = errno;
         const bool readable = GuestCopyIn_nid_no_patch(&original, cursor, sizeof(original));
         const bool writableCursor = readable && original != nullptr && GuestWritable_nid_no_patch(const_cast<TChar**>(cursor), sizeof(*cursor));
         const bool writableEnd = end == nullptr || GuestWritable_nid_no_patch(end, sizeof(*end));
-        errno = savedErrno;
         if (!readable || original == nullptr || !writableCursor || !writableEnd) APS5_INVALID_ARG_EX;
     }
     const TChar* current = original;
@@ -95,19 +90,15 @@ int ParsePrefix(const TChar** cursor, TChar** end) {
         }
     }
     {
-        const int savedErrno = errno;
         if (writeEnd && end != nullptr) {
             auto* endValue = const_cast<TChar*>(current);
             if (!GuestCopyOut_nid_no_patch(end, &endValue, sizeof(endValue))) {
-                errno = savedErrno;
                 APS5_INVALID_ARG_EX;
             }
         }
         if (!GuestCopyOut_nid_no_patch(const_cast<TChar**>(cursor), &current, sizeof(current))) {
-            errno = savedErrno;
             APS5_INVALID_ARG_EX;
         }
-        errno = savedErrno;
     }
     return result;
 }
