@@ -1,13 +1,16 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -37,12 +40,21 @@ std::string RepeatedComponents(std::size_t length) {
     return path;
 }
 
-void WriteFile(const char* name, const char* content, std::streamsize bytes, std::filesystem::perms mode) {
-    std::ofstream file(name, std::ios::binary);
+std::filesystem::path VerbatimPath(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    Require(!error, "failed to build verbatim path");
+    return verbatim;
+}
+
+void WriteFile(const std::filesystem::path& name, const char* content, std::streamsize bytes, std::filesystem::perms mode) {
+    const auto verbatim = VerbatimPath(name);
+    std::ofstream file(verbatim, std::ios::binary);
     file.write(content, bytes);
     file.close();
+    Require(file.good(), "failed to write test file");
 #ifndef _WIN32
-    std::filesystem::permissions(name, mode);
+    std::filesystem::permissions(verbatim, mode);
 #else
     (void)mode;
 #endif
@@ -84,6 +96,51 @@ int main() {
     RequireFailure(_execve_nid_postfix("kernel_execve_short.bin", argv, nullptr), GuestEnoexec, "execve of a two byte file did not fail with ENOEXEC");
     WriteFile("kernel_execve_plain.bin", "just data", 9, std::filesystem::perms::owner_all | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec);
     RequireFailure(_execve_nid_postfix("kernel_execve_plain.bin", argv, nullptr), GuestEnoexec, "execve of a plain file did not fail with ENOEXEC");
+    std::error_code cleanupError;
+    std::filesystem::remove(VerbatimPath("nul"), cleanupError);
+    std::filesystem::remove(VerbatimPath("nul.bin"), cleanupError);
+    RequireFailure(_execve_nid_postfix("nul", argv, environment), GuestEnoent, "execve of a missing reserved device name did not fail with ENOENT");
+    RequireFailure(_execve_nid_postfix("nul.bin", argv, environment), GuestEnoent, "execve of a missing reserved device stem did not fail with ENOENT");
+    WriteFile("nul.bin", "#!/b", 4, std::filesystem::perms::owner_all | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec);
+    bool shebangThrew = false;
+    try {
+        _execve_nid_postfix("nul.bin", argv, nullptr);
+    } catch (const std::runtime_error&) {
+        shebangThrew = true;
+    }
+    Require(shebangThrew, "execve of an existing reserved device stem script did not read its header");
+    RequireFailure(_execve_nid_postfix("nul.bin/inside", argv, nullptr), GuestEnotdir, "execve through a reserved device stem file prefix did not fail with ENOTDIR");
+    std::filesystem::remove(VerbatimPath("nul.bin"), cleanupError);
+    std::vector<std::filesystem::path> deepDirectories;
+    std::filesystem::path deepHost = std::filesystem::current_path();
+    std::string deepGuest = "kernel_execve_deep";
+    deepHost /= "kernel_execve_deep";
+    std::filesystem::create_directory(VerbatimPath(deepHost), cleanupError);
+    deepDirectories.push_back(deepHost);
+    for (int index = 0; deepHost.native().size() < 260; ++index) {
+        const std::string segment = "seg_" + std::to_string(index) + "_0123456789abcdef0123456789abcdef";
+        deepGuest += "/" + segment;
+        deepHost /= segment;
+        std::filesystem::create_directory(VerbatimPath(deepHost), cleanupError);
+        Require(!cleanupError, "failed to create deep test directory");
+        deepDirectories.push_back(deepHost);
+    }
+    const auto deepPlainHost = deepHost / "plain.bin";
+    const std::string deepPlainGuest = deepGuest + "/plain.bin";
+    WriteFile(deepPlainHost, "just data", 9, std::filesystem::perms::owner_all | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec);
+    RequireFailure(_execve_nid_postfix(deepPlainGuest.c_str(), argv, nullptr), GuestEnoexec, "execve of a deep plain file did not fail with ENOEXEC");
+    RequireFailure(_execve_nid_postfix((deepPlainGuest + "/inside").c_str(), argv, nullptr), GuestEnotdir, "execve through a deep file prefix did not fail with ENOTDIR");
+    RequireFailure(_execve_nid_postfix((deepPlainGuest + "/").c_str(), argv, nullptr), GuestEnotdir, "execve of a deep file with a trailing slash did not fail with ENOTDIR");
+    const auto deepSubdirHost = deepHost / "subdir";
+    const std::string deepSubdirGuest = deepGuest + "/subdir";
+    std::filesystem::create_directory(VerbatimPath(deepSubdirHost), cleanupError);
+    Require(!cleanupError, "failed to create deep subdirectory");
+    RequireFailure(_execve_nid_postfix(deepSubdirGuest.c_str(), argv, nullptr), GuestEacces, "execve of a deep directory did not fail with EACCES");
+    std::filesystem::remove(VerbatimPath(deepPlainHost), cleanupError);
+    std::filesystem::remove(VerbatimPath(deepSubdirHost), cleanupError);
+    for (auto it = deepDirectories.rbegin(); it != deepDirectories.rend(); ++it) {
+        std::filesystem::remove(VerbatimPath(*it), cleanupError);
+    }
 #ifndef _WIN32
     WriteFile("kernel_execve_unexec.bin", "just data", 9, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write | std::filesystem::perms::group_read | std::filesystem::perms::others_read);
     RequireFailure(_execve_nid_postfix("kernel_execve_unexec.bin", argv, nullptr), GuestEacces, "execve without execute bits did not fail with EACCES");

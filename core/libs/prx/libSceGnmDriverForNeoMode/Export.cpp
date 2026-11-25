@@ -57,13 +57,6 @@ int WriteContextState(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t p
 
 constexpr std::uint32_t ContextState400SdkVersion = 0x04000000;
 
-std::uint32_t CompiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, process + 0x10, sizeof(version));
-    return version;
-}
-
 constexpr std::uint32_t OpSetContextReg = 0x69;
 constexpr std::uint32_t OpSetShReg = 0x76;
 
@@ -415,12 +408,12 @@ int APS5_VABI sceGnmDrawInitToDefaultContextState400(std::uint32_t* cmdbuf, std:
 }
 
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalCommand(std::uint32_t* cmdbuf, std::uint32_t size) {
-    if (CompiledSdkVersion() < ContextState400SdkVersion) return sceGnmDrawInitToDefaultContextState(cmdbuf, size);
+    if (ApplicationCompiledSdkVersion() < ContextState400SdkVersion) return sceGnmDrawInitToDefaultContextState(cmdbuf, size);
     return sceGnmDrawInitToDefaultContextState400(cmdbuf, size);
 }
 
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalSize(void) {
-    if (CompiledSdkVersion() < ContextState400SdkVersion) return 0x20;
+    if (ApplicationCompiledSdkVersion() < ContextState400SdkVersion) return 0x20;
     return 0x100;
 }
 

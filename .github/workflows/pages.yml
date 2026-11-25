@@ -10,6 +10,7 @@ on:
       - core/relinker/**
       - demo/web/**
       - tools/build_web.py
+      - tools/input-mapper/**
       - tools/package_release.py
       - tools/nid_names.py
       - tools/progress.py
@@ -74,6 +75,11 @@ jobs:
         continue-on-error: true
         run: python3 tools/progress_prs.py --output "$RUNNER_TEMP/open-pr-progress.json"
       - run: python3 tools/progress.py --require-shader-source --open-pr-estimate "$RUNNER_TEMP/open-pr-progress.json" build-wasm/web
+      - name: Stage the input mapper
+        run: |
+          install -d build-wasm/web/input-mapper
+          install -m 0644 -t build-wasm/web/input-mapper \
+            tools/input-mapper/{index.html,styles.css,app.js,mapping.js,keys.js,capture.js,validation.js,i18n.js,dropdown.js}
       - run: python3 tools/progress_history.py build-wasm/web
       - uses: actions/upload-pages-artifact@v5
         with:
