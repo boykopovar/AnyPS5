@@ -1,5 +1,4 @@
 #include "prx/libSceNetCtlAp/include/Api.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -73,9 +72,7 @@ int APS5_VABI sceNetCtlApRegisterCallback(NetCtlApCallback func, void* arg, int*
     if (!func || !cid) return NET_CTL_AP_ERROR_INVALID_ADDR;
     for (int index = 0; index < MAX_CALLBACKS; ++index) {
         if (!g_callbacks[index].func) {
-            const int savedErrno = errno;
             const bool copied = GuestCopyOut_nid_no_patch(cid, &index, sizeof(index));
-            errno = savedErrno;
             if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
             g_callbacks[index] = {func, arg};
             return 0;
@@ -141,9 +138,7 @@ int APS5_VABI sceNetCtlApGetConnectInfo(const char* optStr, void* connectInfo) {
         for (std::size_t length = 0; length < 9; ++length) {
             if (address > std::numeric_limits<std::uintptr_t>::max() - length) return NET_CTL_AP_ERROR_INVALID_ADDR;
             char value = 0;
-            const int savedErrno = errno;
             const bool copied = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address + length), sizeof(value));
-            errno = savedErrno;
             if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
             if (value == 0) break;
             if (length == 8) return NET_CTL_AP_ERROR_INVALID_OPT_STR;
