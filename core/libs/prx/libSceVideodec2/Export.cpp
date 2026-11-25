@@ -208,6 +208,14 @@ std::vector<Vp9Unit> ParseVp9Packet(std::span<const std::uint8_t> bytes, std::ar
     return result;
 }
 
+Crop FrameCrop(const AVFrame& frame) {
+    const auto* descriptor = av_pix_fmt_desc_get(static_cast<AVPixelFormat>(frame.format));
+    if (!descriptor) throw std::runtime_error("Videodec2: unknown decoded pixel format");
+    return {static_cast<std::uint32_t>(frame.crop_left), static_cast<std::uint32_t>(frame.crop_right),
+            static_cast<std::uint32_t>(frame.crop_top), static_cast<std::uint32_t>(frame.crop_bottom),
+            descriptor->log2_chroma_w, descriptor->log2_chroma_h};
+}
+
 struct Picture {
     std::uint64_t pts = 0;
     std::uint64_t dts = 0;
@@ -479,7 +487,7 @@ void EmitDecoded(std::uint64_t handle, Decoder& decoder, FrameBuffer* frame, Out
     auto timestamps = found->second;
     decoder.inputs.erase(found);
     timestamps.idr = (picture->flags & AV_FRAME_FLAG_KEY) != 0;
-    timestamps.crop = {static_cast<std::uint32_t>(picture->crop_left), static_cast<std::uint32_t>(picture->crop_right), static_cast<std::uint32_t>(picture->crop_top), static_cast<std::uint32_t>(picture->crop_bottom)};
+    timestamps.crop = FrameCrop(*picture);
     decoder.width = static_cast<std::uint32_t>(picture->width);
     decoder.height = static_cast<std::uint32_t>(picture->height);
     if (decoder.context->profile > 0) decoder.profile = static_cast<std::uint32_t>(decoder.context->profile) & 0xffu;
@@ -818,6 +826,23 @@ int APS5_VABI sceVideodec2GetHevcPictureInfo_nid_postfix(const OutputInfo* outpu
 int APS5_VABI sceVideodec2GetVp9PictureInfo_nid_postfix(const OutputInfo* output, Vp9PictureInfo* info) {
     try { return GetPictureInfo(output, info, nullptr); }
     catch (const UnsupportedPictureInfo& error) { NotImplemented_nid_no_patch((std::string(__func__) + " (" + error.reason + ")").c_str()); }
+}
+
+bool Videodec2CopyParsedPictureInfo_nid_no_patch(std::uint64_t handle, const void* frameBuffer, void* info, std::size_t size) {
+    const auto decoder = FindDecoder(handle);
+    if (!decoder) throw std::runtime_error("Videodec2: invalid decoder handle");
+    std::lock_guard guard(decoder->mutex);
+    const auto picture = decoder->pictures.find(frameBuffer);
+    if (picture == decoder->pictures.end()) throw std::runtime_error("Videodec2: unknown frame buffer");
+    const auto copy = [&](const auto& metadata) {
+        if (size != sizeof(metadata.info)) throw std::runtime_error("Videodec2: invalid picture info size");
+        if (!metadata.unsupported.empty() || !metadata.info.isValid) return false;
+        if (!CopyOutGuest(static_cast<decltype(metadata.info)*>(info), metadata.info)) throw std::runtime_error("Videodec2: invalid argument pointer");
+        return true;
+    };
+    if (decoder->codec == CodecAvc) return copy(picture->second.avc);
+    if (decoder->codec == CodecHevc) return copy(picture->second.hevc);
+    throw std::runtime_error("Videodec2: expected an AVC or HEVC picture");
 }
 
 void Videodec2PictureHeader_nid_no_patch(std::uint64_t handle, const void* frameBuffer, PictureHeader* header) {

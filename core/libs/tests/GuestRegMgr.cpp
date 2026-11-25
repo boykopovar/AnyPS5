@@ -384,6 +384,7 @@ int main() {
     Require(ReportsNotImplemented("sceRegMgrGetStrInitVal", [&] { sceRegMgrGetStrInitVal(); }));
     Require(ReportsNotImplemented("sceRegMgrGetBinInitVal", [&] { sceRegMgrGetBinInitVal(); }));
     Require(ReportsNotImplemented("sceRegMgrSrvGetQAFforReg", [&] { sceRegMgrSrvGetQAFforReg(); }));
+    Require(sceRegMgrGetVersion() == static_cast<int>(0x01140001));
 
     char fill[16];
     std::memset(fill, 0x5A, sizeof(fill));

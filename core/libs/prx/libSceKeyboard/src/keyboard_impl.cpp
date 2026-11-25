@@ -258,10 +258,10 @@ int GetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint32_t ledStat
         std::lock_guard lock(keyboardMutex);
         if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
         if (keyCode < 4 || keyCode > 231) return KEYBOARD_ERROR_INVALID_ARG;
+        if (arrange != KEYBOARD_ARRANGEMENT_101 && arrange != KEYBOARD_ARRANGEMENT_106) return KEYBOARD_ERROR_INVALID_ARG;
+        if (charData == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
         if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
     }
-    if (charData == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
-    if (arrange != KEYBOARD_ARRANGEMENT_101 && arrange != KEYBOARD_ARRANGEMENT_106) return KEYBOARD_ERROR_INVALID_ARG;
     KeyboardCharData localData{};
     const std::uint16_t converted = character(arrange == KEYBOARD_ARRANGEMENT_106, ledState, modifierKey, keyCode);
     localData.char_code = converted != 0 ? converted : keyCode;
