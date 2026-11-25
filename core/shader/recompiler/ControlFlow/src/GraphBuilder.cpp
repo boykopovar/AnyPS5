@@ -1555,19 +1555,59 @@ std::vector<UserDataCall> FindUserDataCalls(const RdnaProgram& program, const Sw
     return calls;
 }
 
+namespace {
+
+std::optional<std::size_t> userDataTailIndex(const RdnaProgram& program) {
+    std::size_t end = program.instructions.size();
+    while (end > 0u && program.instructions[end - 1u].op == RdnaOpcode::SCodeEnd) --end;
+    if (end == 0u) return std::nullopt;
+    if (end < program.instructions.size() && program.instructions[end - 1u].op == RdnaOpcode::SSetpcB64) return end - 1u;
+    if (program.instructions[end - 1u].op != RdnaOpcode::SEndpgm) return std::nullopt;
+    for (std::size_t index = end - 1u; index-- > 0u;) {
+        const auto op = program.instructions[index].op;
+        if (op == RdnaOpcode::SSetpcB64) return index;
+        if (IsDirectBranchOpcode(op) || op == RdnaOpcode::SCallB64 || op == RdnaOpcode::SSwappcB64 || op == RdnaOpcode::SGetpcB64 ||
+            op == RdnaOpcode::SEndpgm || op == RdnaOpcode::SCodeEnd) return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+std::uint32_t userDataTailEnd(const RdnaProgram& program) {
+    std::size_t end = program.instructions.size();
+    while (end > 0u && program.instructions[end - 1u].op == RdnaOpcode::SCodeEnd) --end;
+    return instructionEndProgramCounter(program.instructions[end - 1u]);
+}
+
+}
+
 std::optional<UserDataTail> FindUserDataTail(const RdnaProgram& program, std::uint32_t userDataBase, std::uint32_t userDataCount) {
-    if (program.instructions.size() < 2u || program.instructions.back().op != RdnaOpcode::SCodeEnd) return std::nullopt;
-    const auto& tail = program.instructions[program.instructions.size() - 2u];
-    if (tail.op != RdnaOpcode::SSetpcB64 || tail.source0.kind != RdnaOperandKind::ScalarRegister) return std::nullopt;
+    const auto tailIndex = userDataTailIndex(program);
+    if (!tailIndex) return std::nullopt;
+    const auto& tail = program.instructions[*tailIndex];
+    if (tail.source0.kind != RdnaOperandKind::ScalarRegister) return std::nullopt;
+    const auto trailingBegin = instructionEndProgramCounter(tail);
+    const auto trailingEnd = userDataTailEnd(program);
     const auto reg = tail.source0.reg;
-    if (reg % 2u != 0u || reg < userDataBase || reg - userDataBase >= userDataCount) return std::nullopt;
+    const auto userData = [&](std::uint32_t candidate) { return candidate >= userDataBase && candidate - userDataBase < userDataCount; };
+    if (reg % 2u != 0u) return std::nullopt;
     bool highUnchanged = true;
     std::optional<std::uint32_t> constantHigh;
+    std::optional<std::uint32_t> copiedLow;
+    bool trailingReached = false;
     for (const auto& instruction : program.instructions) {
         if (instruction.programCounter >= tail.programCounter) break;
-        if (IsDirectBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SCallB64 || instruction.op == RdnaOpcode::SSwappcB64 ||
-            instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd ||
-            writesScalar(instruction, reg)) return std::nullopt;
+        if (IsDirectBranchOpcode(instruction.op)) {
+            if (trailingBegin == trailingEnd || instruction.branchTarget < trailingBegin || instruction.branchTarget >= trailingEnd) return std::nullopt;
+            trailingReached = true;
+        }
+        if (instruction.op == RdnaOpcode::SCallB64 || instruction.op == RdnaOpcode::SSwappcB64 ||
+            instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd) return std::nullopt;
+        if (writesScalar(instruction, reg)) {
+            const auto source = scalarIndex(instruction.source0);
+            if (copiedLow.has_value() || instruction.op != RdnaOpcode::SMovB32 || !isScalar(instruction.destination, reg) || source == NoScalarRegister || !userData(source) ||
+                !unchangedUntil(program, source, static_cast<std::uint32_t>(&instruction - program.instructions.data()), 64u)) return std::nullopt;
+            copiedLow = source;
+        }
         if (writesScalar(instruction, reg + 1u)) {
             highUnchanged = false;
             std::uint32_t value;
@@ -1575,6 +1615,12 @@ std::optional<UserDataTail> FindUserDataTail(const RdnaProgram& program, std::ui
             else constantHigh.reset();
         }
     }
+    if (trailingBegin != trailingEnd && !trailingReached) return std::nullopt;
+    if (copiedLow) {
+        if (!constantHigh) return std::nullopt;
+        return UserDataTail{tail.programCounter, *copiedLow, constantHigh};
+    }
+    if (!userData(reg)) return std::nullopt;
     if (!constantHigh && (!highUnchanged || reg - userDataBase + 1u >= userDataCount)) return std::nullopt;
     return UserDataTail{tail.programCounter, reg, constantHigh};
 }
@@ -1586,8 +1632,13 @@ std::vector<std::uint32_t> LinkUserDataTail(const RdnaProgram& program, const Us
         if (instruction.op == RdnaOpcode::SGetpcB64) throw std::invalid_argument("user-data tail continuation reads its program counter, which a linked copy does not keep");
     }
     const auto words = tail.programCounter / 4u;
+    const auto trailingBegin = words + 1u;
+    const auto trailingEnd = userDataTailEnd(program) / 4u;
+    const auto trailingWords = trailingEnd - trailingBegin;
+    if (trailingWords > 0x7fffu) throw std::invalid_argument("user-data tail's trailing code is too long to branch over");
     std::vector<std::uint32_t> linked(program.code.begin(), program.code.begin() + words);
-    linked.push_back(0xbf820000u);
+    linked.push_back(0xbf820000u | trailingWords);
+    linked.insert(linked.end(), program.code.begin() + trailingBegin, program.code.begin() + trailingEnd);
     linked.insert(linked.end(), continuation.code.begin(), continuation.code.end());
     return linked;
 }

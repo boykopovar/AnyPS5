@@ -93,6 +93,22 @@ void CopyRangeOut(const char* function, T* destination, const T* values, std::si
         throw std::invalid_argument(std::string(function) + ": unwritable destination");
 }
 
+const char16_t* Scan(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last,
+                     bool match, const char* function) {
+    const char16_t* result = last;
+    VisitRange(function, first, last, [&](const char16_t* characters, std::size_t count, std::size_t done) {
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto doIs = LoadVtableFunction<DoIsFunction>(self, DoIsSlot);
+            if (doIs(self, mask, characters[index]) == match) {
+                result = first + done + index;
+                return false;
+            }
+        }
+        return true;
+    });
+    return result;
+}
+
 }
 
 extern "C" {
@@ -118,19 +134,13 @@ const char16_t* APS5_VABI sceLibcInternalWideCtypeDoIsRange_nid_no_patch(const G
 }
 APS5_EXPORT("D0lUMKU+ELI", sceLibcInternalWideCtypeDoIsRange_nid_no_patch);
 
+const char16_t* APS5_VABI sceLibcInternalWideCtypeDoScanIs_nid_no_patch(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last) {
+    return Scan(self, mask, first, last, true, __func__);
+}
+APS5_EXPORT("pSQz254t3ug", sceLibcInternalWideCtypeDoScanIs_nid_no_patch);
+
 const char16_t* APS5_VABI sceLibcInternalWideCtypeDoScanNot_nid_no_patch(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last) {
-    const char16_t* result = last;
-    VisitRange(__func__, first, last, [&](const char16_t* characters, std::size_t count, std::size_t done) {
-        for (std::size_t index = 0; index < count; ++index) {
-            const auto doIs = LoadVtableFunction<DoIsFunction>(self, DoIsSlot);
-            if (!doIs(self, mask, characters[index])) {
-                result = first + done + index;
-                return false;
-            }
-        }
-        return true;
-    });
-    return result;
+    return Scan(self, mask, first, last, false, __func__);
 }
 APS5_EXPORT("Kbe+LHOer9o", sceLibcInternalWideCtypeDoScanNot_nid_no_patch);
 

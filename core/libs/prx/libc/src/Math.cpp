@@ -1586,14 +1586,6 @@ long double APS5_VABI lgammal_nid_postfix(long double x) {
 }
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
 float APS5_VABI tgammaf_nid_postfix(float x) { return GuestTgammaf(x); }
-double APS5_VABI tgamma_nid_postfix(double x) {
-    const int savedErrno = errno;
-    const double result = std::tgamma(x);
-    errno = std::isfinite(x) && x < 0.0 && std::trunc(x) == x ? EDOM : savedErrno;
-    if (result != 0.0 || !std::isfinite(x) || x >= 0.0 || std::trunc(x) == x) return result;
-    const bool negative = std::fmod(std::floor(-x), 2.0) == 0.0;
-    return std::copysign(0.0, negative ? -1.0 : 1.0);
-}
 long double APS5_VABI hypotl_nid_postfix(long double x, long double y) {
     constexpr int Scale = 0x2058;
     constexpr std::uint64_t IntegerBit = 0x8000000000000000ull;
@@ -2247,7 +2239,6 @@ double APS5_VABI erf_nid_postfix(double x) {
     const double erx = 8.45062911510467529297e-01;
     const double efx = 1.28379167095512586316e-01;
     const double efx8 = 1.02703333676410069053e+00;
-    static volatile double tiny = 1e-300;
     const std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
     const std::int32_t ix = hx & 0x7fffffff;
     if (ix >= 0x7ff00000) {
@@ -2267,7 +2258,7 @@ double APS5_VABI erf_nid_postfix(double x) {
         return hx >= 0 ? erx + ratio : -erx - ratio;
     }
     if (ix >= 0x40180000) {
-        return hx >= 0 ? 1.0 - tiny : tiny - 1.0;
+        return hx >= 0 ? 1.0 : -1.0;
     }
     const double magnitude = std::fabs(x);
     const double r = ErfTail(magnitude, ix < 0x4006db6e);
@@ -2276,7 +2267,6 @@ double APS5_VABI erf_nid_postfix(double x) {
 
 double APS5_VABI erfc_nid_postfix(double x) {
     const double erx = 8.45062911510467529297e-01;
-    static volatile double tiny = 1e-300;
     const std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
     const std::int32_t ix = hx & 0x7fffffff;
     if (ix >= 0x7ff00000) {
@@ -2302,10 +2292,12 @@ double APS5_VABI erfc_nid_postfix(double x) {
         return 1.0 + (erx + ratio);
     }
     if (ix >= 0x403c0000) {
-        return hx > 0 ? 0.0 : 2.0 - tiny;
+        if (hx > 0) return 0.0;
+        return 2.0;
     }
     if (hx < 0 && ix >= 0x40180000) {
-        return 2.0 - tiny;
+        std::feraiseexcept(FE_INEXACT);
+        return 2.0;
     }
     const double magnitude = std::fabs(x);
     const double r = ErfTail(magnitude, ix < 0x4006db6d);
@@ -4985,7 +4977,7 @@ static long double SinhlMsun(long double x) {
     if (exponent >= 0x7fff) return x + x;
     const double sign = signExponent < 0 ? -1 : 1;
     if (exponent < 0x4005) {
-        if (exponent < ExplBias - 32 && SinhlHuge + x > 1) return x;
+        if (exponent < ExplBias - 32) return x;
         if (exponent < 0x3fff) return SinhlSmall(x);
         const ExplReduced half = ExplHalfKernel(std::fabs(x));
         return sign * (half.lo - 0.25 / (half.hi + half.lo) + half.hi);

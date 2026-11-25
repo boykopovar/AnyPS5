@@ -18,6 +18,11 @@ const void* APS5_VABI WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(const 
     return handle->htmlIFrameElementContentFrame ? NKWebKit::ToRef(handle->htmlIFrameElementContentFrame) : nullptr;
 }
 
+void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable(const void* nodeHandleRef, bool autoFillAvailable) {
+    auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
+    handle->htmlInputElementAutoFillAvailable = autoFillAvailable;
+}
+
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFilled(const void* nodeHandleRef, bool autoFilled) {
     auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
     handle->htmlInputElementAutoFilled = autoFilled;
