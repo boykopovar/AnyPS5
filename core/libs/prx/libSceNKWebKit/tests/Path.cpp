@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <vector>
@@ -206,6 +207,37 @@ void TestAssignEmpty() {
     Require(_ZNK7WebCore4Path12elementCountEv(&destination.path) == 1);
 }
 
+void TestAssignFailureKeepsDestination() {
+    OwnedPath destination;
+    const WebCore::FloatPoint move{1.0f, 2.0f};
+    const WebCore::FloatPoint line{3.0f, 4.0f};
+    _ZN7WebCore4Path6moveToERKNS_10FloatPointE(&destination.path, &move);
+    _ZN7WebCore4Path9addLineToERKNS_10FloatPointE(&destination.path, &line);
+
+    Path source{};
+    _ZN7WebCore4PathC1Ev(&source);
+    _ZN7WebCore4Path6moveToERKNS_10FloatPointE(&source, &move);
+    source.m_elements.size = std::numeric_limits<std::uint32_t>::max();
+    source.m_elements.capacity = source.m_elements.size;
+    source.m_elements.buffer = reinterpret_cast<PathElement*>(1);
+    source.m_elementsEngaged = true;
+    bool threw = false;
+    try {
+        _ZN7WebCore4PathaSERKS0_(&destination.path, &source);
+    } catch (const std::length_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(destination.path.m_path != nullptr);
+    Require(_ZNK7WebCore4Path12elementCountEv(&destination.path) == 2);
+    const auto elements = ElementsOf(destination.path);
+    Require(elements.size() == 2);
+    Require(elements[1].type == PathElement::Type::AddLineToPoint);
+    source.m_elements = {nullptr, 0, 0};
+    source.m_elementsEngaged = false;
+    _ZN7WebCore4PathD1Ev(&source);
+}
+
 void TestClear() {
     OwnedPath path;
     const WebCore::FloatPoint move{1.0f, 2.0f};
@@ -296,6 +328,7 @@ int main() {
         TestSegments();
         TestCopyAndMove();
         TestAssignEmpty();
+        TestAssignFailureKeepsDestination();
         TestClear();
         TestEmptyCopyAndClear();
         TestApplyException();

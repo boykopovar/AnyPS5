@@ -140,12 +140,18 @@ void Destroy(Path& path) {
     path.m_elementsEngaged = false;
 }
 
-void CopyPath(Path& to, const Path& from) {
+void CopyPath(Path& to, const Path& from, const char* function) {
     Initialize(to);
     if (!from.m_path) return;
-    CopyCairo(to, from, "WebCore::Path::Path");
+    CopyCairo(to, from, function);
     to.m_elementsEngaged = from.m_elementsEngaged;
-    if (from.m_elementsEngaged) CopyElements(to, from, "WebCore::Path::Path");
+    if (from.m_elementsEngaged) CopyElements(to, from, function);
+}
+
+void MovePath(Path& to, Path& from) {
+    to.m_path = std::exchange(from.m_path, nullptr);
+    to.m_elements = std::exchange(from.m_elements, {nullptr, 0, 0});
+    to.m_elementsEngaged = from.m_elementsEngaged;
 }
 
 Path& AssignPath(Path& to, const Path& from) {
@@ -157,21 +163,17 @@ Path& AssignPath(Path& to, const Path& from) {
         to.m_elementsEngaged = true;
         return to;
     }
-    if (to.m_path) {
-        CairoIdentityMatrix_nid_no_patch(static_cast<CairoContext*>(to.m_path));
-        CairoNewPath_nid_no_patch(static_cast<CairoContext*>(to.m_path));
+    Path copy;
+    try {
+        CopyPath(copy, from, "WebCore::Path::operator=");
+    } catch (...) {
+        Destroy(copy);
+        throw;
     }
-    CopyCairo(to, from, "WebCore::Path::operator=");
+    if (to.m_path) CairoDestroy_nid_no_patch(static_cast<CairoContext*>(to.m_path));
     FreeElements(to);
-    to.m_elementsEngaged = from.m_elementsEngaged;
-    if (from.m_elementsEngaged) CopyElements(to, from, "WebCore::Path::operator=");
+    MovePath(to, copy);
     return to;
-}
-
-void MovePath(Path& to, Path& from) {
-    to.m_path = std::exchange(from.m_path, nullptr);
-    to.m_elements = std::exchange(from.m_elements, {nullptr, 0, 0});
-    to.m_elementsEngaged = from.m_elementsEngaged;
 }
 
 Path& MoveAssignPath(Path& to, Path& from) {
@@ -336,11 +338,11 @@ void APS5_VABI _ZN7WebCore4PathC2EOS0_(Path* self, Path* other) {
 }
 
 void APS5_VABI _ZN7WebCore4PathC1ERKS0_(Path* self, const Path* other) {
-    CopyPath(Checked(self, "WebCore::Path::Path"), Checked(other, "WebCore::Path::Path"));
+    CopyPath(Checked(self, "WebCore::Path::Path"), Checked(other, "WebCore::Path::Path"), "WebCore::Path::Path");
 }
 
 void APS5_VABI _ZN7WebCore4PathC2ERKS0_(Path* self, const Path* other) {
-    CopyPath(Checked(self, "WebCore::Path::Path"), Checked(other, "WebCore::Path::Path"));
+    CopyPath(Checked(self, "WebCore::Path::Path"), Checked(other, "WebCore::Path::Path"), "WebCore::Path::Path");
 }
 
 void APS5_VABI _ZN7WebCore4PathD1Ev(Path* self) {
