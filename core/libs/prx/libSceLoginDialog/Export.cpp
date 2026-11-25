@@ -1,7 +1,6 @@
 #include "prx/libSceLoginDialog/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -33,9 +32,7 @@ int APS5_VABI sceLoginDialogInitialize(void) {
 int APS5_VABI sceLoginDialogOpen(const LoginDialogParam* param) {
  if (param == nullptr) return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
  LoginDialogParam localParam{};
- const int savedErrno = errno;
  const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
- errno = savedErrno;
  if (!copied) return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
  if (localParam.size != sizeof(localParam) || localParam.mode > 1 || !std::all_of(std::begin(localParam.reserved), std::end(localParam.reserved), [](std::uint32_t value) { return value == 0; })) return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
  for (const auto userId : localParam.userIds) {
@@ -62,9 +59,7 @@ int APS5_VABI sceLoginDialogGetResult(LoginDialogResult* result) {
  const int status = g_status.load();
  if (status == COMMON_DIALOG_STATUS_NONE) return LOGIN_DIALOG_ERROR_NOT_INITIALIZED;
  const std::int32_t fields[2] = {COMMON_DIALOG_RESULT_USER_CANCELED, LOGIN_DIALOG_ERROR_INVALID_USER};
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(result, fields, sizeof(fields));
- errno = savedErrno;
  if (!copied) return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
  if (status != COMMON_DIALOG_STATUS_FINISHED) return LOGIN_DIALOG_ERROR_BUSY;
  return 0;
