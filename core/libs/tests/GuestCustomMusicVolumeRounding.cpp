@@ -24,7 +24,7 @@ void CheckVolume(double actual, double expected, double input, const char* opera
 }
 
 int main() {
-    if (!CheckStatus(sceCustomMusicAudioOutInitialize(0, 0, 1), "initialize")) {
+    if (!CheckStatus(sceCustomMusicAudioOutInitialize(256, 0, 1), "initialize")) {
         return 1;
     }
 
