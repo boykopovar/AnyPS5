@@ -241,34 +241,35 @@ void InvalidArguments() {
 
 class GuardedPage {
 public:
-    GuardedPage() {
+    explicit GuardedPage(std::size_t count = 1) : pages(count) {
 #ifdef _WIN32
         SYSTEM_INFO info {};
         GetSystemInfo(&info);
         size = info.dwPageSize;
-        base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, size * 3, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, size * (pages + 2), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
         Require(base != nullptr);
 #else
         size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-        void* mapped = mmap(nullptr, size * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, size * (pages + 2), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         Require(mapped != MAP_FAILED);
         base = static_cast<std::uint8_t*>(mapped);
 #endif
         Protect(base, false, false);
-        Protect(base + size * 2, false, false);
+        Protect(End(), false, false);
     }
     ~GuardedPage() {
 #ifdef _WIN32
         VirtualFree(base, 0, MEM_RELEASE);
 #else
-        munmap(base, size * 3);
+        munmap(base, size * (pages + 2));
 #endif
     }
     GuardedPage(const GuardedPage&) = delete;
     GuardedPage& operator=(const GuardedPage&) = delete;
 
     std::uint8_t* Begin() const { return base + size; }
-    std::uint8_t* End() const { return base + size * 2; }
+    std::uint8_t* SecondPage() const { return base + size * 2; }
+    std::uint8_t* End() const { return base + size * (pages + 1); }
     void ReadOnly() const { Protect(Begin(), true, false); }
 
 private:
@@ -281,6 +282,7 @@ private:
 #endif
     }
 
+    std::size_t pages;
     std::uint8_t* base = nullptr;
     std::size_t size = 0;
 };
@@ -339,6 +341,43 @@ void GuestPointers() {
     Rejects([&] { utf8_nextCharSafeBody_nid_postfix(begin + 16, stored, 3, 0xe2, -1); });
     Rejects([&] { utf8_prevCharSafeBody_nid_postfix(begin + 16, 0, stored, 0x82, -1); });
     Require(*stored == 1);
+}
+
+void PageBoundaries() {
+    constexpr std::array<std::uint32_t, 3> scalars{0xe9, 0x20ac, 0x1f600};
+    GuardedPage accessible(2);
+    GuardedPage guarded;
+    for (const auto scalar : scalars) {
+        std::array<std::uint8_t, 6> encoded{};
+        const int width = Encode(scalar, encoded.data());
+        for (int split = 1; split < width; ++split) {
+            auto* text = accessible.SecondPage() - split;
+            std::copy_n(encoded.data(), width, text);
+            text[width] = 0;
+            for (const int length : {width, -1}) {
+                std::int32_t index = 1;
+                Require(utf8_nextCharSafeBody_nid_postfix(text, &index, length, text[0], -1) == static_cast<std::int32_t>(scalar) && index == width);
+            }
+            std::int32_t index = width - 1;
+            Require(utf8_prevCharSafeBody_nid_postfix(text, 0, &index, text[width - 1], -1) == static_cast<std::int32_t>(scalar) && index == 0);
+            Require(utf8_back1SafeBody_nid_postfix(text, 0, width - 1) == 0);
+
+            auto* tail = guarded.End() - split;
+            std::copy_n(encoded.data(), split, tail);
+            std::array<std::uint8_t, 6> host{};
+            std::copy_n(encoded.data(), split, host.data());
+            for (const int strict : {-1, 0}) {
+                std::int32_t expectedIndex = 1;
+                const auto expected = utf8_nextCharSafeBody(host.data(), &expectedIndex, split, host[0], static_cast<std::int8_t>(strict));
+                index = 1;
+                Require(utf8_nextCharSafeBody_nid_postfix(tail, &index, split, tail[0], static_cast<std::int8_t>(strict)) == expected && index == expectedIndex);
+            }
+            index = 1;
+            Rejects([&] { utf8_nextCharSafeBody_nid_postfix(tail, &index, width, tail[0], -1); });
+            Rejects([&] { utf8_nextCharSafeBody_nid_postfix(tail, &index, -1, tail[0], -1); });
+            Require(index == 1);
+        }
+    }
 }
 
 struct NativeChecks {
@@ -435,5 +474,6 @@ int main() {
     TerminatedAndBounded();
     InvalidArguments();
     GuestPointers();
+    PageBoundaries();
     NativeMalformedSequences();
 }

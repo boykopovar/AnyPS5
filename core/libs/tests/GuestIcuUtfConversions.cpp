@@ -245,34 +245,35 @@ bool Throws(TCall call) {
 
 class GuardedPage {
 public:
-    GuardedPage() {
+    explicit GuardedPage(std::size_t count = 1) : pages(count) {
 #ifdef _WIN32
         SYSTEM_INFO info {};
         GetSystemInfo(&info);
         size = info.dwPageSize;
-        base = static_cast<char*>(VirtualAlloc(nullptr, size * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        base = static_cast<char*>(VirtualAlloc(nullptr, size * (pages + 1), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
         Require(base != nullptr, "guard page allocation");
         DWORD previous {};
-        Require(VirtualProtect(base + size, size, PAGE_NOACCESS, &previous) != 0, "guard page protection");
+        Require(VirtualProtect(End(), size, PAGE_NOACCESS, &previous) != 0, "guard page protection");
 #else
         size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-        void* mapped = mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, size * (pages + 1), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         Require(mapped != MAP_FAILED, "guard page allocation");
         base = static_cast<char*>(mapped);
-        Require(mprotect(base + size, size, PROT_NONE) == 0, "guard page protection");
+        Require(mprotect(End(), size, PROT_NONE) == 0, "guard page protection");
 #endif
     }
     ~GuardedPage() {
 #ifdef _WIN32
         VirtualFree(base, 0, MEM_RELEASE);
 #else
-        munmap(base, size * 2);
+        munmap(base, size * (pages + 1));
 #endif
     }
     GuardedPage(const GuardedPage&) = delete;
     GuardedPage& operator=(const GuardedPage&) = delete;
 
-    char* End() const { return base + size; }
+    char* SecondPage() const { return base + size; }
+    char* End() const { return base + size * pages; }
     void ReadOnly() const {
 #ifdef _WIN32
         DWORD previous {};
@@ -283,6 +284,7 @@ public:
     }
 
 private:
+    std::size_t pages;
     char* base = nullptr;
     std::size_t size = 0;
 };
@@ -339,6 +341,50 @@ void LenientGuestPointers() {
     Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 0, frozenLength, "a", 1, &error); }), "lenient read-only preflight length");
 }
 
+void LenientPageBoundaries() {
+    constexpr std::array<std::uint32_t, 3> scalars{0xe9, 0x20ac, 0x1f600};
+    GuardedPage accessible(2);
+    GuardedPage guarded;
+    for (const auto scalar : scalars) {
+        const auto encoded = Utf8(scalar);
+        const auto expected = Utf16(scalar);
+        const auto width = static_cast<std::int32_t>(encoded.size());
+        const auto units = static_cast<std::int32_t>(expected.size());
+        for (std::int32_t split = 1; split < width; ++split) {
+            auto* source = accessible.SecondPage() - split;
+            std::memcpy(source, encoded.data(), encoded.size());
+            source[width] = 'A';
+            source[width + 1] = 0;
+            for (const std::int32_t sourceLength : {width + 1, -1}) {
+                std::array<char16_t, 8> wide;
+                wide.fill(0x5555);
+                std::int32_t length = 77, error = 0;
+                Require(u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, source, sourceLength, &error) == wide.data() && error == 0 &&
+                    length == units + 1 && std::memcmp(wide.data(), expected.data(), expected.size() * 2) == 0 && wide[units] == u'A' &&
+                    wide[units + 1] == 0 && wide[units + 2] == 0x5555, "lenient sequence crossing an accessible page boundary");
+            }
+
+            auto* tail = guarded.End() - split;
+            std::memcpy(tail, encoded.data(), static_cast<std::size_t>(split));
+            std::array<char16_t, 8> wide;
+            wide.fill(0x5555);
+            std::int32_t length = 77, error = 0;
+            Require(u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, tail, split, &error) == wide.data() && error == 0 && length == 1 &&
+                wide[0] == 0xfffd && wide[1] == 0 && wide[2] == 0x5555, "lenient truncated sequence ending at a guard page");
+            wide.fill(0x5555);
+            length = 77;
+            Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, tail, width, &error); }), "lenient counted sequence crossing into a guard page");
+            Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, tail, -1, &error); }), "lenient unterminated sequence crossing into a guard page");
+            Require(length == 77 && error == 0 && wide[0] == 0x5555, "lenient guard page sequence failures leave outputs unchanged");
+            auto* terminated = guarded.End() - split - 1;
+            std::memcpy(terminated, encoded.data(), static_cast<std::size_t>(split));
+            terminated[split] = 0;
+            Require(u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, terminated, -1, &error) == wide.data() && error == 0 && length == 1 &&
+                wide[0] == 0xfffd && wide[1] == 0 && wide[2] == 0x5555, "lenient terminated truncated sequence before a guard page");
+        }
+    }
+}
+
 void LenientChunks() {
     std::string bytes;
     std::u16string units;
@@ -376,5 +422,6 @@ int main() {
     Empty();
     LongStrings();
     LenientGuestPointers();
+    LenientPageBoundaries();
     LenientChunks();
 }
