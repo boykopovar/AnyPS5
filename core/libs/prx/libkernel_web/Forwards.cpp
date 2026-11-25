@@ -1347,263 +1347,263 @@ int APS5_VABI rtprio_thread_nid_disambig1_nid_postfix(int function, int lwpid, G
 }
 
 int APS5_VABI sceCoredumpAttachMemoryRegion_nid_disambig1_nid_postfix(std::uint32_t userValue, const void* mem, std::int32_t size) {
-    return sceCoredumpAttachMemoryRegion(userValue, mem, size);
+    return sceCoredumpAttachMemoryRegion_nid_no_patch(userValue, mem, size);
 }
 
 int APS5_VABI sceCoredumpAttachMemoryRegionAsUserFile_nid_disambig1_nid_postfix(std::uint32_t userValue, const void* mem, std::int32_t size, const char* name) {
-    return sceCoredumpAttachMemoryRegionAsUserFile(userValue, mem, size, name);
+    return sceCoredumpAttachMemoryRegionAsUserFile_nid_no_patch(userValue, mem, size, name);
 }
 
 int APS5_VABI sceCoredumpAttachUserFile_nid_disambig1_nid_postfix(std::uint32_t userValue, const char* path) {
-    return sceCoredumpAttachUserFile(userValue, path);
+    return sceCoredumpAttachUserFile_nid_no_patch(userValue, path);
 }
 
 int APS5_VABI sceCoredumpAttachUserMemoryFile_nid_disambig1_nid_postfix(std::uint32_t userValue, const void* mem, std::int32_t size) {
-    return sceCoredumpAttachUserMemoryFile(userValue, mem, size);
+    return sceCoredumpAttachUserMemoryFile_nid_no_patch(userValue, mem, size);
 }
 
 int APS5_VABI sceCoredumpConfigDumpMode_nid_disambig1_nid_postfix(int mode) {
-    return sceCoredumpConfigDumpMode(mode);
+    return sceCoredumpConfigDumpMode_nid_no_patch(mode);
 }
 
 int APS5_VABI sceCoredumpDebugForceCoredumpOnAppClose_nid_disambig1_nid_postfix(void) {
-    return sceCoredumpDebugForceCoredumpOnAppClose();
+    return sceCoredumpDebugForceCoredumpOnAppClose_nid_no_patch();
 }
 
 void APS5_VABI sceCoredumpDebugTextOut_nid_disambig1_nid_postfix(const char* str, int len) {
-    sceCoredumpDebugTextOut(str, len);
+    sceCoredumpDebugTextOut_nid_no_patch(str, len);
 }
 
 int APS5_VABI sceCoredumpDebugTriggerCoredump_nid_disambig1_nid_postfix(void) {
-    return sceCoredumpDebugTriggerCoredump();
+    return sceCoredumpDebugTriggerCoredump_nid_no_patch();
 }
 
 int APS5_VABI sceCoredumpGetStopInfoCpu_nid_disambig1_nid_postfix(void* info, size_t size) {
-    return sceCoredumpGetStopInfoCpu(info, size);
+    return sceCoredumpGetStopInfoCpu_nid_no_patch(info, size);
 }
 
 int APS5_VABI sceCoredumpGetStopInfoGpu_nid_disambig1_nid_postfix(void) {
-    return sceCoredumpGetStopInfoGpu();
+    return sceCoredumpGetStopInfoGpu_nid_no_patch();
 }
 
 int APS5_VABI sceCoredumpGetThreadContextInfo_nid_disambig1_nid_postfix(void* threadContextInfo, size_t threadContextInfoSize) {
-    return sceCoredumpGetThreadContextInfo(threadContextInfo, threadContextInfoSize);
+    return sceCoredumpGetThreadContextInfo_nid_no_patch(threadContextInfo, threadContextInfoSize);
 }
 
 int APS5_VABI sceCoredumpInternalGetThreadContextInfo_nid_disambig1_nid_postfix(void) {
-    return sceCoredumpInternalGetThreadContextInfo();
+    return sceCoredumpInternalGetThreadContextInfo_nid_no_patch();
 }
 
 int APS5_VABI sceCoredumpRegisterCoredumpHandler_nid_disambig1_nid_postfix(uint64_t handler, size_t stack_size, uint64_t context) {
-    return sceCoredumpRegisterCoredumpHandler(handler, stack_size, context);
+    return sceCoredumpRegisterCoredumpHandler_nid_no_patch(handler, stack_size, context);
 }
 
 int APS5_VABI sceCoredumpSetUserDataType_nid_disambig1_nid_postfix(std::int32_t type) {
-    return sceCoredumpSetUserDataType(type);
+    return sceCoredumpSetUserDataType_nid_no_patch(type);
 }
 
 int APS5_VABI sceCoredumpUnregisterCoredumpHandler_nid_disambig1_nid_postfix(void) {
-    return sceCoredumpUnregisterCoredumpHandler();
+    return sceCoredumpUnregisterCoredumpHandler_nid_no_patch();
 }
 
 int64_t APS5_VABI sceCoredumpWriteUserData_nid_disambig1_nid_postfix(const void* data, size_t size) {
-    return sceCoredumpWriteUserData(data, size);
+    return sceCoredumpWriteUserData_nid_no_patch(data, size);
 }
 
 int APS5_VABI sceKernelAddAmprEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int id, void* udata) {
-    return sceKernelAddAmprEvent(eq, id, udata);
+    return sceKernelAddAmprEvent_nid_no_patch(eq, id, udata);
 }
 
 int APS5_VABI sceKernelAddAmprSystemEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int id, void* udata) {
-    return sceKernelAddAmprSystemEvent(eq, id, udata);
+    return sceKernelAddAmprSystemEvent_nid_no_patch(eq, id, udata);
 }
 
 int APS5_VABI sceKernelAddCpumodeEvent_nid_disambig1_nid_postfix(void) {
-    return sceKernelAddCpumodeEvent();
+    return sceKernelAddCpumodeEvent_nid_no_patch();
 }
 
 int APS5_VABI sceKernelAddExternalTriggerEvent_nid_disambig1_nid_postfix(void) {
-    return sceKernelAddExternalTriggerEvent();
+    return sceKernelAddExternalTriggerEvent_nid_no_patch();
 }
 
 int APS5_VABI sceKernelAddFileEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int fd, int watch, void* udata) {
-    return sceKernelAddFileEvent(eq, fd, watch, udata);
+    return sceKernelAddFileEvent_nid_no_patch(eq, fd, watch, udata);
 }
 
 int APS5_VABI sceKernelAddGpuExceptionEvent_nid_disambig1_nid_postfix(void) {
-    return sceKernelAddGpuExceptionEvent();
+    return sceKernelAddGpuExceptionEvent_nid_no_patch();
 }
 
 int APS5_VABI sceKernelAddHRTimerEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int id, const KernelTimespec* ts, void* udata) {
-    return sceKernelAddHRTimerEvent(eq, id, ts, udata);
+    return sceKernelAddHRTimerEvent_nid_no_patch(eq, id, ts, udata);
 }
 
 int APS5_VABI sceKernelAddProcessToCanvasMap_nid_disambig1_nid_postfix(void) {
-    return sceKernelAddProcessToCanvasMap();
+    return sceKernelAddProcessToCanvasMap_nid_no_patch();
 }
 
 int APS5_VABI sceKernelAddReadEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int fd, std::size_t size, void* udata) {
-    return sceKernelAddReadEvent(eq, fd, size, udata);
+    return sceKernelAddReadEvent_nid_no_patch(eq, fd, size, udata);
 }
 
 int APS5_VABI sceKernelAddTimerEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int id, KernelUseconds usec, void* udata) {
-    return sceKernelAddTimerEvent(eq, id, usec, udata);
+    return sceKernelAddTimerEvent_nid_no_patch(eq, id, usec, udata);
 }
 
 int APS5_VABI sceKernelAddUserEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int id) {
-    return sceKernelAddUserEvent(eq, id);
+    return sceKernelAddUserEvent_nid_no_patch(eq, id);
 }
 
 int APS5_VABI sceKernelAddUserEventEdge_nid_disambig1_nid_postfix(KernelEqueue eq, int id) {
-    return sceKernelAddUserEventEdge(eq, id);
+    return sceKernelAddUserEventEdge_nid_no_patch(eq, id);
 }
 
 int APS5_VABI sceKernelAddWriteEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int fd, std::size_t size, void* udata) {
-    return sceKernelAddWriteEvent(eq, fd, size, udata);
+    return sceKernelAddWriteEvent_nid_no_patch(eq, fd, size, udata);
 }
 
 int APS5_VABI sceKernelAioCancelRequest_nid_disambig1_nid_postfix(int32_t id, int32_t* state) {
-    return sceKernelAioCancelRequest(id, state);
+    return sceKernelAioCancelRequest_nid_no_patch(id, state);
 }
 
 int APS5_VABI sceKernelAioCancelRequests_nid_disambig1_nid_postfix(int32_t* id, int32_t num, int32_t* state) {
-    return sceKernelAioCancelRequests(id, num, state);
+    return sceKernelAioCancelRequests_nid_no_patch(id, num, state);
 }
 
 int APS5_VABI sceKernelAioDeleteRequest_nid_disambig1_nid_postfix(int32_t id, int32_t* ret) {
-    return sceKernelAioDeleteRequest(id, ret);
+    return sceKernelAioDeleteRequest_nid_no_patch(id, ret);
 }
 
 int APS5_VABI sceKernelAioDeleteRequests_nid_disambig1_nid_postfix(int32_t* id, int32_t num, int32_t* ret) {
-    return sceKernelAioDeleteRequests(id, num, ret);
+    return sceKernelAioDeleteRequests_nid_no_patch(id, num, ret);
 }
 
 int APS5_VABI sceKernelAioInitializeImpl_nid_disambig1_nid_postfix(void* param, int32_t size) {
-    return sceKernelAioInitializeImpl(param, size);
+    return sceKernelAioInitializeImpl_nid_no_patch(param, size);
 }
 
 void APS5_VABI sceKernelAioInitializeParam_nid_disambig1_nid_postfix(void* param) {
-    sceKernelAioInitializeParam(param);
+    sceKernelAioInitializeParam_nid_no_patch(param);
 }
 
 int APS5_VABI sceKernelAioPollRequest_nid_disambig1_nid_postfix(int32_t id, int32_t* state) {
-    return sceKernelAioPollRequest(id, state);
+    return sceKernelAioPollRequest_nid_no_patch(id, state);
 }
 
 int APS5_VABI sceKernelAioPollRequests_nid_disambig1_nid_postfix(int32_t* id, int32_t num, int32_t* state) {
-    return sceKernelAioPollRequests(id, num, state);
+    return sceKernelAioPollRequests_nid_no_patch(id, num, state);
 }
 
 int APS5_VABI sceKernelAioSetParam_nid_disambig1_nid_postfix(KernelAioSchedulingParam* param, int32_t schedulingWindowSize, int32_t delayedCountLimit, uint32_t enableSplit, uint32_t splitSize, uint32_t splitChunkSize) {
-    return sceKernelAioSetParam(param, schedulingWindowSize, delayedCountLimit, enableSplit, splitSize, splitChunkSize);
+    return sceKernelAioSetParam_nid_no_patch(param, schedulingWindowSize, delayedCountLimit, enableSplit, splitSize, splitChunkSize);
 }
 
 int APS5_VABI sceKernelAioSubmitReadCommands_nid_disambig1_nid_postfix(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
-    return sceKernelAioSubmitReadCommands(req, size, prio, id);
+    return sceKernelAioSubmitReadCommands_nid_no_patch(req, size, prio, id);
 }
 
 int APS5_VABI sceKernelAioSubmitReadCommandsMultiple_nid_disambig1_nid_postfix(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
-    return sceKernelAioSubmitReadCommandsMultiple(req, size, prio, id);
+    return sceKernelAioSubmitReadCommandsMultiple_nid_no_patch(req, size, prio, id);
 }
 
 int APS5_VABI sceKernelAioSubmitWriteCommands_nid_disambig1_nid_postfix(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
-    return sceKernelAioSubmitWriteCommands(req, size, prio, id);
+    return sceKernelAioSubmitWriteCommands_nid_no_patch(req, size, prio, id);
 }
 
 int APS5_VABI sceKernelAioSubmitWriteCommandsMultiple_nid_disambig1_nid_postfix(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
-    return sceKernelAioSubmitWriteCommandsMultiple(req, size, prio, id);
+    return sceKernelAioSubmitWriteCommandsMultiple_nid_no_patch(req, size, prio, id);
 }
 
 int APS5_VABI sceKernelAioWaitRequest_nid_disambig1_nid_postfix(int32_t id, int32_t* state, uint32_t* usec) {
-    return sceKernelAioWaitRequest(id, state, usec);
+    return sceKernelAioWaitRequest_nid_no_patch(id, state, usec);
 }
 
 int APS5_VABI sceKernelAioWaitRequests_nid_disambig1_nid_postfix(int32_t* id, int32_t num, int32_t* state, uint32_t mode, uint32_t* usec) {
-    return sceKernelAioWaitRequests(id, num, state, mode, usec);
+    return sceKernelAioWaitRequests_nid_no_patch(id, num, state, mode, usec);
 }
 
 int APS5_VABI sceKernelAllocateDirectMemory_nid_disambig1_nid_postfix(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
-    return sceKernelAllocateDirectMemory(search_start, search_end, len, alignment, memory_type, phys_addr_out);
+    return sceKernelAllocateDirectMemory_nid_no_patch(search_start, search_end, len, alignment, memory_type, phys_addr_out);
 }
 
 int APS5_VABI sceKernelAllocateDirectMemory2_nid_disambig1_nid_postfix(void) {
-    return sceKernelAllocateDirectMemory2();
+    return sceKernelAllocateDirectMemory2_nid_no_patch();
 }
 
 int APS5_VABI sceKernelAllocateDirectMemoryForApp_nid_disambig1_nid_postfix(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
-    return sceKernelAllocateDirectMemoryForApp(search_start, search_end, len, alignment, memory_type, phys_addr_out);
+    return sceKernelAllocateDirectMemoryForApp_nid_no_patch(search_start, search_end, len, alignment, memory_type, phys_addr_out);
 }
 
 int APS5_VABI sceKernelAllocateDirectMemoryForMiniApp_nid_disambig1_nid_postfix(void) {
-    return sceKernelAllocateDirectMemoryForMiniApp();
+    return sceKernelAllocateDirectMemoryForMiniApp_nid_no_patch();
 }
 
 int APS5_VABI sceKernelAllocateMainDirectMemory_nid_disambig1_nid_postfix(size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
-    return sceKernelAllocateMainDirectMemory(len, alignment, memory_type, phys_addr_out);
+    return sceKernelAllocateMainDirectMemory_nid_no_patch(len, alignment, memory_type, phys_addr_out);
 }
 
 int APS5_VABI sceKernelAllocateToolMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelAllocateToolMemory();
+    return sceKernelAllocateToolMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelAllocateTraceDirectMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelAllocateTraceDirectMemory();
+    return sceKernelAllocateTraceDirectMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelAvailableDirectMemorySize_nid_disambig1_nid_postfix(int64_t search_start, int64_t search_end, size_t alignment, int64_t* phys_addr_out, size_t* size_out) {
-    return sceKernelAvailableDirectMemorySize(search_start, search_end, alignment, phys_addr_out, size_out);
+    return sceKernelAvailableDirectMemorySize_nid_no_patch(search_start, search_end, alignment, phys_addr_out, size_out);
 }
 
 int APS5_VABI sceKernelAvailableFlexibleMemorySize_nid_disambig1_nid_postfix(size_t* size) {
-    return sceKernelAvailableFlexibleMemorySize(size);
+    return sceKernelAvailableFlexibleMemorySize_nid_no_patch(size);
 }
 
 int APS5_VABI sceKernelAvailableToolMemorySize_nid_disambig1_nid_postfix(void) {
-    return sceKernelAvailableToolMemorySize();
+    return sceKernelAvailableToolMemorySize_nid_no_patch();
 }
 
 int APS5_VABI sceKernelBacktraceSelf_nid_disambig1_nid_postfix(void) {
-    return sceKernelBacktraceSelf();
+    return sceKernelBacktraceSelf_nid_no_patch();
 }
 
 int APS5_VABI sceKernelBatchMap_nid_disambig1_nid_postfix(KernelBatchMapEntry* entries, int num_entries, int* num_entries_out) {
-    return sceKernelBatchMap(entries, num_entries, num_entries_out);
+    return sceKernelBatchMap_nid_no_patch(entries, num_entries, num_entries_out);
 }
 
 int APS5_VABI sceKernelBatchMap2_nid_disambig1_nid_postfix(KernelBatchMapEntry* entries, int num_entries, int* num_entries_out, int flags) {
-    return sceKernelBatchMap2(entries, num_entries, num_entries_out, flags);
+    return sceKernelBatchMap2_nid_no_patch(entries, num_entries, num_entries_out, flags);
 }
 
 int APS5_VABI sceKernelCallIndirectBuffer_nid_disambig1_nid_postfix(std::uint32_t priority, void* base, std::uint64_t bytes) {
-    return sceKernelCallIndirectBuffer(priority, base, bytes);
+    return sceKernelCallIndirectBuffer_nid_no_patch(priority, base, bytes);
 }
 
 int APS5_VABI sceKernelCallIndirectBuffer2_nid_disambig1_nid_postfix(std::uint32_t priority, void* base, std::uint64_t bytes, KernelMapperSubmitResult* result, std::uint32_t* id) {
-    return sceKernelCallIndirectBuffer2(priority, base, bytes, result, id);
+    return sceKernelCallIndirectBuffer2_nid_no_patch(priority, base, bytes, result, id);
 }
 
 int APS5_VABI sceKernelCallIndirectBuffer3_nid_disambig1_nid_postfix(std::uint32_t priority, void* base, std::uint64_t bytes, std::uint32_t* id) {
-    return sceKernelCallIndirectBuffer3(priority, base, bytes, id);
+    return sceKernelCallIndirectBuffer3_nid_no_patch(priority, base, bytes, id);
 }
 
 int APS5_VABI sceKernelCancelEventFlag_nid_disambig1_nid_postfix(KernelEventFlag ef, uint64_t set_pattern, int* num_wait_threads) {
-    return sceKernelCancelEventFlag(ef, set_pattern, num_wait_threads);
+    return sceKernelCancelEventFlag_nid_no_patch(ef, set_pattern, num_wait_threads);
 }
 
 int APS5_VABI sceKernelCancelSema_nid_disambig1_nid_postfix(KernelSema sem, int count, int* threads) {
-    return sceKernelCancelSema(sem, count, threads);
+    return sceKernelCancelSema_nid_no_patch(sem, count, threads);
 }
 
 int APS5_VABI sceKernelCheckProsperoSdkVersion_nid_disambig1_nid_postfix(void) {
-    return sceKernelCheckProsperoSdkVersion();
+    return sceKernelCheckProsperoSdkVersion_nid_no_patch();
 }
 
 int APS5_VABI sceKernelCheckReachability_nid_disambig1_nid_postfix(const char* path) {
-    return sceKernelCheckReachability(path);
+    return sceKernelCheckReachability_nid_no_patch(path);
 }
 
 int APS5_VABI sceKernelCheckedReleaseDirectMemory_nid_disambig1_nid_postfix(int64_t start, size_t len) {
-    return sceKernelCheckedReleaseDirectMemory(start, len);
+    return sceKernelCheckedReleaseDirectMemory_nid_no_patch(start, len);
 }
 
 int APS5_VABI sceKernelChmod_nid_disambig1_nid_postfix(const char* path, std::uint16_t mode) {
@@ -1611,259 +1611,259 @@ int APS5_VABI sceKernelChmod_nid_disambig1_nid_postfix(const char* path, std::ui
 }
 
 int APS5_VABI sceKernelClearBootReqNotifyCount_nid_disambig1_nid_postfix(void) {
-    return sceKernelClearBootReqNotifyCount();
+    return sceKernelClearBootReqNotifyCount_nid_no_patch();
 }
 
 int APS5_VABI sceKernelClearEventFlag_nid_disambig1_nid_postfix(KernelEventFlag ef, uint64_t bit_pattern) {
-    return sceKernelClearEventFlag(ef, bit_pattern);
+    return sceKernelClearEventFlag_nid_no_patch(ef, bit_pattern);
 }
 
 int APS5_VABI sceKernelClearGameDirectMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelClearGameDirectMemory();
+    return sceKernelClearGameDirectMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelClockGetres_nid_disambig1_nid_postfix(KernelClockid clock_id, KernelTimespec* tp) {
-    return sceKernelClockGetres(clock_id, tp);
+    return sceKernelClockGetres_nid_no_patch(clock_id, tp);
 }
 
 int APS5_VABI sceKernelClockGettime_nid_disambig1_nid_postfix(KernelClockid clock_id, KernelTimespec* tp) {
-    return sceKernelClockGettime(clock_id, tp);
+    return sceKernelClockGettime_nid_no_patch(clock_id, tp);
 }
 
 int APS5_VABI sceKernelClose_nid_disambig1_nid_postfix(int d) {
-    return sceKernelClose(d);
+    return sceKernelClose_nid_no_patch(d);
 }
 
 int APS5_VABI sceKernelCloseEport_nid_disambig1_nid_postfix(void) {
-    return sceKernelCloseEport();
+    return sceKernelCloseEport_nid_no_patch();
 }
 
 int APS5_VABI sceKernelCloseEventFlag_nid_disambig1_nid_postfix(KernelEventFlag ef) {
-    return sceKernelCloseEventFlag(ef);
+    return sceKernelCloseEventFlag_nid_no_patch(ef);
 }
 
 int APS5_VABI sceKernelCloseSema_nid_disambig1_nid_postfix(void) {
-    return sceKernelCloseSema();
+    return sceKernelCloseSema_nid_no_patch();
 }
 
 int APS5_VABI sceKernelConfiguredFlexibleMemorySize_nid_disambig1_nid_postfix(size_t* size) {
-    return sceKernelConfiguredFlexibleMemorySize(size);
+    return sceKernelConfiguredFlexibleMemorySize_nid_no_patch(size);
 }
 
 int APS5_VABI sceKernelConvertLocaltimeToUtc_nid_disambig1_nid_postfix(int64_t local_time, int64_t reserved, int64_t* utc_time, KernelTimesec* timezone, int32_t* dst_seconds) {
-    return sceKernelConvertLocaltimeToUtc(local_time, reserved, utc_time, timezone, dst_seconds);
+    return sceKernelConvertLocaltimeToUtc_nid_no_patch(local_time, reserved, utc_time, timezone, dst_seconds);
 }
 
 int APS5_VABI sceKernelConvertUtcToLocaltime_nid_disambig1_nid_postfix(int64_t utc_time, int64_t* local_time, KernelTimesec* st, int32_t* dst_sec) {
-    return sceKernelConvertUtcToLocaltime(utc_time, local_time, st, dst_sec);
+    return sceKernelConvertUtcToLocaltime_nid_no_patch(utc_time, local_time, st, dst_sec);
 }
 
 int APS5_VABI sceKernelCreateEport_nid_disambig1_nid_postfix(void) {
-    return sceKernelCreateEport();
+    return sceKernelCreateEport_nid_no_patch();
 }
 
 int APS5_VABI sceKernelCreateEqueue_nid_disambig1_nid_postfix(KernelEqueue* eq, const char* name) {
-    return sceKernelCreateEqueue(eq, name);
+    return sceKernelCreateEqueue_nid_no_patch(eq, name);
 }
 
 int APS5_VABI sceKernelCreateEventFlag_nid_disambig1_nid_postfix(KernelEventFlag* ef, const char* name, uint32_t attr, uint64_t init_pattern, const void* param) {
-    return sceKernelCreateEventFlag(ef, name, attr, init_pattern, param);
+    return sceKernelCreateEventFlag_nid_no_patch(ef, name, attr, init_pattern, param);
 }
 
 int APS5_VABI sceKernelCreateSema_nid_disambig1_nid_postfix(KernelSema* sem, const char* name, uint32_t attr, int init, int max, void* opt) {
-    return sceKernelCreateSema(sem, name, attr, init, max, opt);
+    return sceKernelCreateSema_nid_no_patch(sem, name, attr, init, max, opt);
 }
 
 int APS5_VABI sceKernelDebugAcquireAndUpdateDebugRegister_nid_disambig1_nid_postfix(void) {
-    return sceKernelDebugAcquireAndUpdateDebugRegister();
+    return sceKernelDebugAcquireAndUpdateDebugRegister_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDebugGetAppStatus_nid_disambig1_nid_postfix(void) {
-    return sceKernelDebugGetAppStatus();
+    return sceKernelDebugGetAppStatus_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDebugGetPauseCount_nid_disambig1_nid_postfix(void) {
-    return sceKernelDebugGetPauseCount();
+    return sceKernelDebugGetPauseCount_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDebugGpuPaDebugIsInProgress_nid_disambig1_nid_postfix(void) {
-    return sceKernelDebugGpuPaDebugIsInProgress();
+    return sceKernelDebugGpuPaDebugIsInProgress_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDebugOutText_nid_disambig1_nid_postfix(int channel, const char* text) {
-    return sceKernelDebugOutText(channel, text);
+    return sceKernelDebugOutText_nid_no_patch(channel, text);
 }
 
 int APS5_VABI sceKernelDebugPauseWithDebugContext_nid_disambig1_nid_postfix(void) {
-    return sceKernelDebugPauseWithDebugContext();
+    return sceKernelDebugPauseWithDebugContext_nid_no_patch();
 }
 
 void APS5_VABI sceKernelDebugRaiseException_nid_disambig1_nid_postfix(int c1, int c2) {
-    sceKernelDebugRaiseException(c1, c2);
+    sceKernelDebugRaiseException_nid_no_patch(c1, c2);
 }
 
 void APS5_VABI sceKernelDebugRaiseExceptionOnReleaseMode_nid_disambig1_nid_postfix(int c1, int c2) {
-    sceKernelDebugRaiseExceptionOnReleaseMode(c1, c2);
+    sceKernelDebugRaiseExceptionOnReleaseMode_nid_no_patch(c1, c2);
 }
 
 int APS5_VABI sceKernelDebugRaiseExceptionWithContext_nid_disambig1_nid_postfix(void) {
-    return sceKernelDebugRaiseExceptionWithContext();
+    return sceKernelDebugRaiseExceptionWithContext_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDebugRaiseExceptionWithInfo_nid_disambig1_nid_postfix(void) {
-    return sceKernelDebugRaiseExceptionWithInfo();
+    return sceKernelDebugRaiseExceptionWithInfo_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDebugReleaseDebugContext_nid_disambig1_nid_postfix(void) {
-    return sceKernelDebugReleaseDebugContext();
+    return sceKernelDebugReleaseDebugContext_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDebugWriteCppExceptionInfo_nid_disambig1_nid_postfix(const void* exception, uint64_t unknown, const char* typeName, const char* what) {
-    return sceKernelDebugWriteCppExceptionInfo(exception, unknown, typeName, what);
+    return sceKernelDebugWriteCppExceptionInfo_nid_no_patch(exception, unknown, typeName, what);
 }
 
 int APS5_VABI sceKernelDeleteAmprEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int id) {
-    return sceKernelDeleteAmprEvent(eq, id);
+    return sceKernelDeleteAmprEvent_nid_no_patch(eq, id);
 }
 
 int APS5_VABI sceKernelDeleteAmprSystemEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int id) {
-    return sceKernelDeleteAmprSystemEvent(eq, id);
+    return sceKernelDeleteAmprSystemEvent_nid_no_patch(eq, id);
 }
 
 int APS5_VABI sceKernelDeleteCpumodeEvent_nid_disambig1_nid_postfix(void) {
-    return sceKernelDeleteCpumodeEvent();
+    return sceKernelDeleteCpumodeEvent_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDeleteEport_nid_disambig1_nid_postfix(void) {
-    return sceKernelDeleteEport();
+    return sceKernelDeleteEport_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDeleteEqueue_nid_disambig1_nid_postfix(KernelEqueue eq) {
-    return sceKernelDeleteEqueue(eq);
+    return sceKernelDeleteEqueue_nid_no_patch(eq);
 }
 
 int APS5_VABI sceKernelDeleteEventFlag_nid_disambig1_nid_postfix(KernelEventFlag ef) {
-    return sceKernelDeleteEventFlag(ef);
+    return sceKernelDeleteEventFlag_nid_no_patch(ef);
 }
 
 int APS5_VABI sceKernelDeleteExternalTriggerEvent_nid_disambig1_nid_postfix(void) {
-    return sceKernelDeleteExternalTriggerEvent();
+    return sceKernelDeleteExternalTriggerEvent_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDeleteFileEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int fd) {
-    return sceKernelDeleteFileEvent(eq, fd);
+    return sceKernelDeleteFileEvent_nid_no_patch(eq, fd);
 }
 
 int APS5_VABI sceKernelDeleteGpuExceptionEvent_nid_disambig1_nid_postfix(void) {
-    return sceKernelDeleteGpuExceptionEvent();
+    return sceKernelDeleteGpuExceptionEvent_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDeleteHRTimerEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int id) {
-    return sceKernelDeleteHRTimerEvent(eq, id);
+    return sceKernelDeleteHRTimerEvent_nid_no_patch(eq, id);
 }
 
 int APS5_VABI sceKernelDeleteProcessFromCanvasMap_nid_disambig1_nid_postfix(void) {
-    return sceKernelDeleteProcessFromCanvasMap();
+    return sceKernelDeleteProcessFromCanvasMap_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDeleteReadEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int fd) {
-    return sceKernelDeleteReadEvent(eq, fd);
+    return sceKernelDeleteReadEvent_nid_no_patch(eq, fd);
 }
 
 int APS5_VABI sceKernelDeleteSema_nid_disambig1_nid_postfix(KernelSema sem) {
-    return sceKernelDeleteSema(sem);
+    return sceKernelDeleteSema_nid_no_patch(sem);
 }
 
 int APS5_VABI sceKernelDeleteTimerEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int id) {
-    return sceKernelDeleteTimerEvent(eq, id);
+    return sceKernelDeleteTimerEvent_nid_no_patch(eq, id);
 }
 
 int APS5_VABI sceKernelDeleteUserEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int id) {
-    return sceKernelDeleteUserEvent(eq, id);
+    return sceKernelDeleteUserEvent_nid_no_patch(eq, id);
 }
 
 int APS5_VABI sceKernelDeleteWriteEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int fd) {
-    return sceKernelDeleteWriteEvent(eq, fd);
+    return sceKernelDeleteWriteEvent_nid_no_patch(eq, fd);
 }
 
 int APS5_VABI sceKernelDirectMemoryQuery_nid_disambig1_nid_postfix(int64_t offset, int flags, void* info, size_t info_size) {
-    return sceKernelDirectMemoryQuery(offset, flags, info, info_size);
+    return sceKernelDirectMemoryQuery_nid_no_patch(offset, flags, info, info_size);
 }
 
 int APS5_VABI sceKernelDirectMemoryQueryForId_nid_disambig1_nid_postfix(void) {
-    return sceKernelDirectMemoryQueryForId();
+    return sceKernelDirectMemoryQueryForId_nid_no_patch();
 }
 
 int APS5_VABI sceKernelDlsym_nid_disambig1_nid_postfix(KernelModule handle, const char* symbol, void** addr) {
-    return sceKernelDlsym(handle, symbol, addr);
+    return sceKernelDlsym_nid_no_patch(handle, symbol, addr);
 }
 
 int APS5_VABI sceKernelEnableDmemAliasing_nid_disambig1_nid_postfix(void) {
-    return sceKernelEnableDmemAliasing();
+    return sceKernelEnableDmemAliasing_nid_no_patch();
 }
 
 int APS5_VABI sceKernelEnableDmemAliasing2_nid_disambig1_nid_postfix(void) {
-    return sceKernelEnableDmemAliasing2();
+    return sceKernelEnableDmemAliasing2_nid_no_patch();
 }
 
 int APS5_VABI sceKernelEnablePthreadObjectCheck_nid_disambig1_nid_postfix(void) {
-    return sceKernelEnablePthreadObjectCheck();
+    return sceKernelEnablePthreadObjectCheck_nid_no_patch();
 }
 
 std::int32_t APS5_VABI sceKernelError_nid_disambig1_nid_postfix(std::int32_t posixError) {
-    return sceKernelError(posixError);
+    return sceKernelError_nid_no_patch(posixError);
 }
 
 int APS5_VABI sceKernelEventLogInit_nid_disambig1_nid_postfix(void) {
-    return sceKernelEventLogInit();
+    return sceKernelEventLogInit_nid_no_patch();
 }
 
 int APS5_VABI sceKernelEventLogPread_nid_disambig1_nid_postfix(void) {
-    return sceKernelEventLogPread();
+    return sceKernelEventLogPread_nid_no_patch();
 }
 
 int APS5_VABI sceKernelEventLogRead_nid_disambig1_nid_postfix(void) {
-    return sceKernelEventLogRead();
+    return sceKernelEventLogRead_nid_no_patch();
 }
 
 int APS5_VABI sceKernelEventLogWrite_nid_disambig1_nid_postfix(void) {
-    return sceKernelEventLogWrite();
+    return sceKernelEventLogWrite_nid_no_patch();
 }
 
 int APS5_VABI sceKernelExtendMaximumModuleNumber_nid_disambig1_nid_postfix(void) {
-    return sceKernelExtendMaximumModuleNumber();
+    return sceKernelExtendMaximumModuleNumber_nid_no_patch();
 }
 
 int APS5_VABI sceKernelFchmod_nid_disambig1_nid_postfix(int d, std::uint16_t mode) {
-    return sceKernelFchmod(d, mode);
+    return sceKernelFchmod_nid_no_patch(d, mode);
 }
 
 int APS5_VABI sceKernelFcntl_nid_disambig1_nid_postfix(int d, int command, std::uint64_t v0, std::uint64_t v1) {
-    return sceKernelFcntl(d, command, v0, v1);
+    return sceKernelFcntl_nid_no_patch(d, command, v0, v1);
 }
 
 int APS5_VABI sceKernelFdatasync_nid_disambig1_nid_postfix(int fd) {
-    return sceKernelFdatasync(fd);
+    return sceKernelFdatasync_nid_no_patch(fd);
 }
 
 int APS5_VABI sceKernelFlock_nid_disambig1_nid_postfix(void) {
-    return sceKernelFlock();
+    return sceKernelFlock_nid_no_patch();
 }
 
 int APS5_VABI sceKernelFstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
-    return sceKernelFstat(d, sb);
+    return sceKernelFstat_nid_no_patch(d, sb);
 }
 
 int APS5_VABI sceKernelFsync_nid_disambig1_nid_postfix(int fd) {
-    return sceKernelFsync(fd);
+    return sceKernelFsync_nid_no_patch(fd);
 }
 
 int APS5_VABI sceKernelFtruncate_nid_disambig1_nid_postfix(int d, int64_t length) {
-    return sceKernelFtruncate(d, length);
+    return sceKernelFtruncate_nid_no_patch(d, length);
 }
 
 int APS5_VABI sceKernelFutimes_nid_disambig1_nid_postfix(int d, const KernelTimeval* times) {
-    return sceKernelFutimes(d, times);
+    return sceKernelFutimes_nid_no_patch(d, times);
 }
 
 int APS5_VABI sceKernelGetAllowedSdkVersionOnSystem_nid_disambig1_nid_postfix(std::uint32_t* version) {
@@ -1871,231 +1871,231 @@ int APS5_VABI sceKernelGetAllowedSdkVersionOnSystem_nid_disambig1_nid_postfix(st
 }
 
 int APS5_VABI sceKernelGetAmprCounter_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetAmprCounter();
+    return sceKernelGetAmprCounter_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetAppCategoryType_nid_disambig1_nid_postfix(int pid, std::uint32_t* category) {
-    return sceKernelGetAppCategoryType(pid, category);
+    return sceKernelGetAppCategoryType_nid_no_patch(pid, category);
 }
 
 int APS5_VABI sceKernelGetAppInfo_nid_disambig1_nid_postfix(int pid, void* info) {
-    return sceKernelGetAppInfo(pid, info);
+    return sceKernelGetAppInfo_nid_no_patch(pid, info);
 }
 
 int APS5_VABI sceKernelGetAppLibcData_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetAppLibcData();
+    return sceKernelGetAppLibcData_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetAslrStatus_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetAslrStatus();
+    return sceKernelGetAslrStatus_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetAutoUpdateVersion_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetAutoUpdateVersion();
+    return sceKernelGetAutoUpdateVersion_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetBackupRestoreMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetBackupRestoreMode();
+    return sceKernelGetBackupRestoreMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetBackupRestoreModeOfNextBoot_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetBackupRestoreModeOfNextBoot();
+    return sceKernelGetBackupRestoreModeOfNextBoot_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetBasicProductShape_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetBasicProductShape();
+    return sceKernelGetBasicProductShape_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetBetaUpdateTestForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetBetaUpdateTestForRcmgr();
+    return sceKernelGetBetaUpdateTestForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetBioUsageAll_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetBioUsageAll();
+    return sceKernelGetBioUsageAll_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetBootReqNotifyCount_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetBootReqNotifyCount();
+    return sceKernelGetBootReqNotifyCount_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetBuildNumber_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetBuildNumber();
+    return sceKernelGetBuildNumber_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetCallRecord_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetCallRecord();
+    return sceKernelGetCallRecord_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetCanvasHandle_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetCanvasHandle();
+    return sceKernelGetCanvasHandle_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetCanvasHandleByPid_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetCanvasHandleByPid();
+    return sceKernelGetCanvasHandleByPid_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetCompiledSdkVersion_nid_disambig1_nid_postfix(std::int32_t* version) {
-    return sceKernelGetCompiledSdkVersion(version);
+    return sceKernelGetCompiledSdkVersion_nid_no_patch(version);
 }
 
 int APS5_VABI sceKernelGetCompiledSdkVersionByPath_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetCompiledSdkVersionByPath();
+    return sceKernelGetCompiledSdkVersionByPath_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetCompiledSdkVersionByPid_nid_disambig1_nid_postfix(int pid, std::int32_t* version) {
-    return sceKernelGetCompiledSdkVersionByPid(pid, version);
+    return sceKernelGetCompiledSdkVersionByPid_nid_no_patch(pid, version);
 }
 
 int APS5_VABI sceKernelGetCpuCoreClock_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetCpuCoreClock();
+    return sceKernelGetCpuCoreClock_nid_no_patch();
 }
 
 std::int64_t APS5_VABI sceKernelGetCpuFrequency_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetCpuFrequency();
+    return sceKernelGetCpuFrequency_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetCpuTemperature_nid_disambig1_nid_postfix(int* outCelsius) {
-    return sceKernelGetCpuTemperature(outCelsius);
+    return sceKernelGetCpuTemperature_nid_no_patch(outCelsius);
 }
 
 int APS5_VABI sceKernelGetCpuUsage_nid_disambig1_nid_postfix(void* stats, int32_t* size) {
-    return sceKernelGetCpuUsage(stats, size);
+    return sceKernelGetCpuUsage_nid_no_patch(stats, size);
 }
 
 int APS5_VABI sceKernelGetCpuUsageAll_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetCpuUsageAll();
+    return sceKernelGetCpuUsageAll_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetCpuUsageProc_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetCpuUsageProc();
+    return sceKernelGetCpuUsageProc_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetCpuUsageProc2_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetCpuUsageProc2();
+    return sceKernelGetCpuUsageProc2_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetCpuUsageThread_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetCpuUsageThread();
+    return sceKernelGetCpuUsageThread_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetCpumode_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetCpumode();
+    return sceKernelGetCpumode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetCpumodeGame_nid_disambig1_nid_postfix(int* mode) {
-    return sceKernelGetCpumodeGame(mode);
+    return sceKernelGetCpumodeGame_nid_no_patch(mode);
 }
 
 int APS5_VABI sceKernelGetCurrentCpu_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetCurrentCpu();
+    return sceKernelGetCurrentCpu_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetDataTransferMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetDataTransferMode();
+    return sceKernelGetDataTransferMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetDebugMenuMiniModeForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetDebugMenuMiniModeForRcmgr();
+    return sceKernelGetDebugMenuMiniModeForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetDebugMenuModeForPsmForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetDebugMenuModeForPsmForRcmgr();
+    return sceKernelGetDebugMenuModeForPsmForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetDebugMenuModeForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetDebugMenuModeForRcmgr();
+    return sceKernelGetDebugMenuModeForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetDefaultToolMemorySize_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetDefaultToolMemorySize();
+    return sceKernelGetDefaultToolMemorySize_nid_no_patch();
 }
 
 size_t APS5_VABI sceKernelGetDirectMemorySize_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetDirectMemorySize();
+    return sceKernelGetDirectMemorySize_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetDirectMemoryType_nid_disambig1_nid_postfix(int64_t offset, int* memory_type, int64_t* start, int64_t* end) {
-    return sceKernelGetDirectMemoryType(offset, memory_type, start, end);
+    return sceKernelGetDirectMemoryType_nid_no_patch(offset, memory_type, start, end);
 }
 
 intptr_t APS5_VABI sceKernelGetEventData_nid_disambig1_nid_postfix(const KernelEvent* ev) {
-    return sceKernelGetEventData(ev);
+    return sceKernelGetEventData_nid_no_patch(ev);
 }
 
 int APS5_VABI sceKernelGetEventError_nid_disambig1_nid_postfix(const KernelEvent* ev) {
-    return sceKernelGetEventError(ev);
+    return sceKernelGetEventError_nid_no_patch(ev);
 }
 
 intptr_t APS5_VABI sceKernelGetEventFflags_nid_disambig1_nid_postfix(const KernelEvent* ev) {
-    return sceKernelGetEventFflags(ev);
+    return sceKernelGetEventFflags_nid_no_patch(ev);
 }
 
 int APS5_VABI sceKernelGetEventFilter_nid_disambig1_nid_postfix(const KernelEvent* ev) {
-    return sceKernelGetEventFilter(ev);
+    return sceKernelGetEventFilter_nid_no_patch(ev);
 }
 
 uintptr_t APS5_VABI sceKernelGetEventId_nid_disambig1_nid_postfix(const KernelEvent* ev) {
-    return sceKernelGetEventId(ev);
+    return sceKernelGetEventId_nid_no_patch(ev);
 }
 
 void* APS5_VABI sceKernelGetEventUserData_nid_disambig1_nid_postfix(const KernelEvent* ev) {
-    return sceKernelGetEventUserData(ev);
+    return sceKernelGetEventUserData_nid_no_patch(ev);
 }
 
 KernelModule APS5_VABI sceKernelGetExecutableModuleHandle_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetExecutableModuleHandle();
+    return sceKernelGetExecutableModuleHandle_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetExtLibcHandle_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetExtLibcHandle();
+    return sceKernelGetExtLibcHandle_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetFakeFinalizeMenuForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetFakeFinalizeMenuForRcmgr();
+    return sceKernelGetFakeFinalizeMenuForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetFlagedUpdaterForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetFlagedUpdaterForRcmgr();
+    return sceKernelGetFlagedUpdaterForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetForceUpdateModeForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetForceUpdateModeForRcmgr();
+    return sceKernelGetForceUpdateModeForRcmgr_nid_no_patch();
 }
 
 const char* APS5_VABI sceKernelGetFsSandboxRandomWord_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetFsSandboxRandomWord();
+    return sceKernelGetFsSandboxRandomWord_nid_no_patch();
 }
 
 std::uint64_t APS5_VABI sceKernelGetGPI_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetGPI();
+    return sceKernelGetGPI_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetGPO_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetGPO();
+    return sceKernelGetGPO_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetGenuineProsperoSystemSwVersion();
+    return sceKernelGetGenuineProsperoSystemSwVersion_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetHwFeatureInfoForDecid_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetHwFeatureInfoForDecid();
+    return sceKernelGetHwFeatureInfoForDecid_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetIdPs_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetIdPs();
+    return sceKernelGetIdPs_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetIdTableCurrentCount_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetIdTableCurrentCount();
+    return sceKernelGetIdTableCurrentCount_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetIpcPath_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetIpcPath();
+    return sceKernelGetIpcPath_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetKnobs_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetKnobs();
+    return sceKernelGetKnobs_nid_no_patch();
 }
 
 std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_disambig1_nid_postfix(void** address, std::size_t* size) {
@@ -2103,107 +2103,107 @@ std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_disambig1_nid_postf
 }
 
 int APS5_VABI sceKernelGetMainSocId_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetMainSocId();
+    return sceKernelGetMainSocId_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetModuleInfo_nid_disambig1_nid_postfix(KernelModule handle, ModuleInfo* info) {
-    return sceKernelGetModuleInfo(handle, info);
+    return sceKernelGetModuleInfo_nid_no_patch(handle, info);
 }
 
 int APS5_VABI sceKernelGetModuleInfo2_nid_disambig1_nid_postfix(KernelModule handle, ModuleInfo* info) {
-    return sceKernelGetModuleInfo2(handle, info);
+    return sceKernelGetModuleInfo2_nid_no_patch(handle, info);
 }
 
 int APS5_VABI sceKernelGetModuleInfoForUnwind_nid_disambig1_nid_postfix(uint64_t addr, int flags, ModuleInfoForUnwind* info) {
-    return sceKernelGetModuleInfoForUnwind(addr, flags, info);
+    return sceKernelGetModuleInfoForUnwind_nid_no_patch(addr, flags, info);
 }
 
 int APS5_VABI sceKernelGetModuleInfoFromAddr_nid_disambig1_nid_postfix(std::uint64_t address, int flags, ModuleInfoEx* info) {
-    return sceKernelGetModuleInfoFromAddr(address, flags, info);
+    return sceKernelGetModuleInfoFromAddr_nid_no_patch(address, flags, info);
 }
 
 int APS5_VABI sceKernelGetModuleInfoInternal_nid_disambig1_nid_postfix(KernelModule handle, ModuleInfoEx* info) {
-    return sceKernelGetModuleInfoInternal(handle, info);
+    return sceKernelGetModuleInfoInternal_nid_no_patch(handle, info);
 }
 
 int APS5_VABI sceKernelGetModuleList_nid_disambig1_nid_postfix(KernelModule* handles, std::size_t count, std::size_t* actual) {
-    return sceKernelGetModuleList(handles, count, actual);
+    return sceKernelGetModuleList_nid_no_patch(handles, count, actual);
 }
 
 int APS5_VABI sceKernelGetModuleList2_nid_disambig1_nid_postfix(KernelModule* handles, std::size_t count, std::size_t* actual) {
-    return sceKernelGetModuleList2(handles, count, actual);
+    return sceKernelGetModuleList2_nid_no_patch(handles, count, actual);
 }
 
 int APS5_VABI sceKernelGetModuleListInternal_nid_disambig1_nid_postfix(KernelModule* handles, std::size_t count, std::size_t* actual) {
-    return sceKernelGetModuleListInternal(handles, count, actual);
+    return sceKernelGetModuleListInternal_nid_no_patch(handles, count, actual);
 }
 
 int APS5_VABI sceKernelGetOpenPsId_nid_disambig1_nid_postfix(void* openPsIdOutput) {
-    return sceKernelGetOpenPsId(openPsIdOutput);
+    return sceKernelGetOpenPsId_nid_no_patch(openPsIdOutput);
 }
 
 int APS5_VABI sceKernelGetOpenPsIdForSystem_nid_disambig1_nid_postfix(void* id) {
-    return sceKernelGetOpenPsIdForSystem(id);
+    return sceKernelGetOpenPsIdForSystem_nid_no_patch(id);
 }
 
 int APS5_VABI sceKernelGetPageTableStats_nid_disambig1_nid_postfix(int* cpu_total, int* cpu_available, int* gpu_total, int* gpu_available) {
-    return sceKernelGetPageTableStats(cpu_total, cpu_available, gpu_total, gpu_available);
+    return sceKernelGetPageTableStats_nid_no_patch(cpu_total, cpu_available, gpu_total, gpu_available);
 }
 
 int APS5_VABI sceKernelGetPagingStatsOfAllObjects_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetPagingStatsOfAllObjects();
+    return sceKernelGetPagingStatsOfAllObjects_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetPagingStatsOfAllThreads_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetPagingStatsOfAllThreads();
+    return sceKernelGetPagingStatsOfAllThreads_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetPhysPageSize_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetPhysPageSize();
+    return sceKernelGetPhysPageSize_nid_no_patch();
 }
 
 void* APS5_VABI sceKernelGetProcParam_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetProcParam();
+    return sceKernelGetProcParam_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetProcessAbiType_nid_disambig1_nid_postfix(int pid) {
-    return sceKernelGetProcessAbiType(pid);
+    return sceKernelGetProcessAbiType_nid_no_patch(pid);
 }
 
 int APS5_VABI sceKernelGetProcessName_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetProcessName();
+    return sceKernelGetProcessName_nid_no_patch();
 }
 
 std::uint64_t APS5_VABI sceKernelGetProcessTime_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetProcessTime();
+    return sceKernelGetProcessTime_nid_no_patch();
 }
 
 std::uint64_t APS5_VABI sceKernelGetProcessTimeCounter_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetProcessTimeCounter();
+    return sceKernelGetProcessTimeCounter_nid_no_patch();
 }
 
 std::uint64_t APS5_VABI sceKernelGetProcessTimeCounterFrequency_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetProcessTimeCounterFrequency();
+    return sceKernelGetProcessTimeCounterFrequency_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetProcessType_nid_disambig1_nid_postfix(int pid) {
-    return sceKernelGetProcessType(pid);
+    return sceKernelGetProcessType_nid_no_patch(pid);
 }
 
 int APS5_VABI sceKernelGetProductCode_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetProductCode();
+    return sceKernelGetProductCode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetProductStr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetProductStr();
+    return sceKernelGetProductStr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetProsperoCompiledSdkVersion_nid_disambig1_nid_postfix(std::int32_t* version) {
-    return sceKernelGetProsperoCompiledSdkVersion(version);
+    return sceKernelGetProsperoCompiledSdkVersion_nid_no_patch(version);
 }
 
 int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid_nid_disambig1_nid_postfix(int pid, std::int32_t* version) {
-    return sceKernelGetProsperoCompiledSdkVersionByPid(pid, version);
+    return sceKernelGetProsperoCompiledSdkVersionByPid_nid_no_patch(pid, version);
 }
 
 int APS5_VABI sceKernelGetProsperoSystemSwVersion_nid_disambig1_nid_postfix(SceKernelProsperoSystemSwVersion* version) {
@@ -2211,111 +2211,111 @@ int APS5_VABI sceKernelGetProsperoSystemSwVersion_nid_disambig1_nid_postfix(SceK
 }
 
 int APS5_VABI sceKernelGetPrtAperture_nid_disambig1_nid_postfix(int index, void** addr, size_t* len) {
-    return sceKernelGetPrtAperture(index, addr, len);
+    return sceKernelGetPrtAperture_nid_no_patch(index, addr, len);
 }
 
 int APS5_VABI sceKernelGetPs4CompiledSdkVersion_nid_disambig1_nid_postfix(std::int32_t* version) {
-    return sceKernelGetPs4CompiledSdkVersion(version);
+    return sceKernelGetPs4CompiledSdkVersion_nid_no_patch(version);
 }
 
 int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid_nid_disambig1_nid_postfix(int pid, std::int32_t* version) {
-    return sceKernelGetPs4CompiledSdkVersionByPid(pid, version);
+    return sceKernelGetPs4CompiledSdkVersionByPid_nid_no_patch(pid, version);
 }
 
 int APS5_VABI sceKernelGetPs4SystemSwVersion_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetPs4SystemSwVersion();
+    return sceKernelGetPs4SystemSwVersion_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetPsmIntdevModeForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetPsmIntdevModeForRcmgr();
+    return sceKernelGetPsmIntdevModeForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetPsnAccessTraceLogForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetPsnAccessTraceLogForRcmgr();
+    return sceKernelGetPsnAccessTraceLogForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetQafExpirationTimeNotafterForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetQafExpirationTimeNotafterForRcmgr();
+    return sceKernelGetQafExpirationTimeNotafterForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetQafExpirationTimeNotbeforeForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetQafExpirationTimeNotbeforeForRcmgr();
+    return sceKernelGetQafExpirationTimeNotbeforeForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetQafGenerationForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetQafGenerationForRcmgr();
+    return sceKernelGetQafGenerationForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetQafNameForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetQafNameForRcmgr();
+    return sceKernelGetQafNameForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetRenderingMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetRenderingMode();
+    return sceKernelGetRenderingMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetResidentCount_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetResidentCount();
+    return sceKernelGetResidentCount_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetResidentFmemCount_nid_disambig1_nid_postfix(int pid, uint64_t* resident, uint64_t* mapped) {
-    return sceKernelGetResidentFmemCount(pid, resident, mapped);
+    return sceKernelGetResidentFmemCount_nid_no_patch(pid, resident, mapped);
 }
 
 int APS5_VABI sceKernelGetSafemode_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetSafemode();
+    return sceKernelGetSafemode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetSanitizerMallocReplace_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetSanitizerMallocReplace();
+    return sceKernelGetSanitizerMallocReplace_nid_no_patch();
 }
 
 MallocReplace* APS5_VABI sceKernelGetSanitizerMallocReplaceExternal_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetSanitizerMallocReplaceExternal();
+    return sceKernelGetSanitizerMallocReplaceExternal_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetSanitizerNewReplace_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetSanitizerNewReplace();
+    return sceKernelGetSanitizerNewReplace_nid_no_patch();
 }
 
 NewReplace* APS5_VABI sceKernelGetSanitizerNewReplaceExternal_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetSanitizerNewReplaceExternal();
+    return sceKernelGetSanitizerNewReplaceExternal_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetSocClock_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetSocClock();
+    return sceKernelGetSocClock_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetSocPowerConsumption_nid_disambig1_nid_postfix(void* consumption) {
-    return sceKernelGetSocPowerConsumption(consumption);
+    return sceKernelGetSocPowerConsumption_nid_no_patch(consumption);
 }
 
 int APS5_VABI sceKernelGetSocSensorTemperature_nid_disambig1_nid_postfix(int sensorId, int* outCelsius) {
-    return sceKernelGetSocSensorTemperature(sensorId, outCelsius);
+    return sceKernelGetSocSensorTemperature_nid_no_patch(sensorId, outCelsius);
 }
 
 int APS5_VABI sceKernelGetSpecialIForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetSpecialIForRcmgr();
+    return sceKernelGetSpecialIForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetSubsysId_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetSubsysId();
+    return sceKernelGetSubsysId_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetSubsysSubId_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetSubsysSubId();
+    return sceKernelGetSubsysSubId_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetSystemExVersion_nid_disambig1_nid_postfix(char* first, char* second) {
-    return sceKernelGetSystemExVersion(first, second);
+    return sceKernelGetSystemExVersion_nid_no_patch(first, second);
 }
 
 int APS5_VABI sceKernelGetSystemLevelDebuggerModeForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetSystemLevelDebuggerModeForRcmgr();
+    return sceKernelGetSystemLevelDebuggerModeForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetSystemSwBeta_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetSystemSwBeta();
+    return sceKernelGetSystemSwBeta_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetSystemSwVersion_nid_disambig1_nid_postfix(SceKernelSystemSwVersion* version) {
@@ -2323,255 +2323,255 @@ int APS5_VABI sceKernelGetSystemSwVersion_nid_disambig1_nid_postfix(SceKernelSys
 }
 
 int APS5_VABI sceKernelGetThreadName_nid_disambig1_nid_postfix(uint32_t id, char* name) {
-    return sceKernelGetThreadName(id, name);
+    return sceKernelGetThreadName_nid_no_patch(id, name);
 }
 
 int APS5_VABI sceKernelGetToolMemoryRange_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetToolMemoryRange();
+    return sceKernelGetToolMemoryRange_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetTraceMemoryStats_nid_disambig1_nid_postfix(std::uint64_t* first, std::uint64_t* second) {
-    return sceKernelGetTraceMemoryStats(first, second);
+    return sceKernelGetTraceMemoryStats_nid_no_patch(first, second);
 }
 
 uint64_t APS5_VABI sceKernelGetTscFrequency_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetTscFrequency();
+    return sceKernelGetTscFrequency_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetUniversalMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetUniversalMode();
+    return sceKernelGetUniversalMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetUpdVersion_nid_disambig1_nid_postfix(std::uint32_t* version) {
-    return sceKernelGetUpdVersion(version);
+    return sceKernelGetUpdVersion_nid_no_patch(version);
 }
 
 int APS5_VABI sceKernelGetUtokenDataExecutionForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetUtokenDataExecutionForRcmgr();
+    return sceKernelGetUtokenDataExecutionForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetUtokenExpirationTimeNotafterForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetUtokenExpirationTimeNotafterForRcmgr();
+    return sceKernelGetUtokenExpirationTimeNotafterForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetUtokenExpirationTimeNotbeforeForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetUtokenExpirationTimeNotbeforeForRcmgr();
+    return sceKernelGetUtokenExpirationTimeNotbeforeForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetUtokenFakeSharefactoryForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetUtokenFakeSharefactoryForRcmgr();
+    return sceKernelGetUtokenFakeSharefactoryForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetUtokenFlagedUpdaterForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetUtokenFlagedUpdaterForRcmgr();
+    return sceKernelGetUtokenFlagedUpdaterForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetUtokenNpEnvSwitchingForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetUtokenNpEnvSwitchingForRcmgr();
+    return sceKernelGetUtokenNpEnvSwitchingForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetUtokenSaveDataRepairForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetUtokenSaveDataRepairForRcmgr();
+    return sceKernelGetUtokenSaveDataRepairForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetUtokenStoreModeForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetUtokenStoreModeForRcmgr();
+    return sceKernelGetUtokenStoreModeForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetUtokenUseSoftwagnerForAcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetUtokenUseSoftwagnerForAcmgr();
+    return sceKernelGetUtokenUseSoftwagnerForAcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetUtokenUseSoftwagnerForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetUtokenUseSoftwagnerForRcmgr();
+    return sceKernelGetUtokenUseSoftwagnerForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetUtokenWeakenedPortRestrictionForRcmgr_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetUtokenWeakenedPortRestrictionForRcmgr();
+    return sceKernelGetUtokenWeakenedPortRestrictionForRcmgr_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetVrCaptureSize_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetVrCaptureSize();
+    return sceKernelGetVrCaptureSize_nid_no_patch();
 }
 
 int APS5_VABI sceKernelGetdents_nid_disambig1_nid_postfix(int fd, char* buf, int nbytes) {
-    return sceKernelGetdents(fd, buf, nbytes);
+    return sceKernelGetdents_nid_no_patch(fd, buf, nbytes);
 }
 
 int APS5_VABI sceKernelGetdirentries_nid_disambig1_nid_postfix(int fd, char* buf, int nbytes, int64_t* basep) {
-    return sceKernelGetdirentries(fd, buf, nbytes, basep);
+    return sceKernelGetdirentries_nid_no_patch(fd, buf, nbytes, basep);
 }
 
 int APS5_VABI sceKernelGettimeofday_nid_disambig1_nid_postfix(KernelTimeval* tp) {
-    return sceKernelGettimeofday(tp);
+    return sceKernelGettimeofday_nid_no_patch(tp);
 }
 
 int APS5_VABI sceKernelGettimezone_nid_disambig1_nid_postfix(KernelTimezone* tz) {
-    return sceKernelGettimezone(tz);
+    return sceKernelGettimezone_nid_no_patch(tz);
 }
 
 int APS5_VABI sceKernelGiveDirectMemoryToMapper_nid_disambig1_nid_postfix(std::int64_t searchStart, std::int64_t searchEnd, std::size_t size, std::size_t alignment, int usage, std::int64_t* offset) {
-    return sceKernelGiveDirectMemoryToMapper(searchStart, searchEnd, size, alignment, usage, offset);
+    return sceKernelGiveDirectMemoryToMapper_nid_no_patch(searchStart, searchEnd, size, alignment, usage, offset);
 }
 
 int APS5_VABI sceKernelHasNeoMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelHasNeoMode();
+    return sceKernelHasNeoMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelHwGetBdDriveInfo_nid_disambig1_nid_postfix(void) {
-    return sceKernelHwGetBdDriveInfo();
+    return sceKernelHwGetBdDriveInfo_nid_no_patch();
 }
 
 int APS5_VABI sceKernelHwHasOpticalOut_nid_disambig1_nid_postfix(void) {
-    return sceKernelHwHasOpticalOut();
+    return sceKernelHwHasOpticalOut_nid_no_patch();
 }
 
 int APS5_VABI sceKernelHwHasWlanBt_nid_disambig1_nid_postfix(void) {
-    return sceKernelHwHasWlanBt();
+    return sceKernelHwHasWlanBt_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccControlBDPowerState_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccControlBDPowerState();
+    return sceKernelIccControlBDPowerState_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccControlUSBPowerState_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccControlUSBPowerState();
+    return sceKernelIccControlUSBPowerState_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccGetBDDriveChuckingState_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccGetBDDriveChuckingState();
+    return sceKernelIccGetBDDriveChuckingState_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccGetBDPowerState_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccGetBDPowerState();
+    return sceKernelIccGetBDPowerState_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccGetCPMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccGetCPMode();
+    return sceKernelIccGetCPMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccGetCountTime_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccGetCountTime();
+    return sceKernelIccGetCountTime_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccGetCpuInfoBit_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccGetCpuInfoBit();
+    return sceKernelIccGetCpuInfoBit_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccGetErrLog_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccGetErrLog();
+    return sceKernelIccGetErrLog_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccGetHwInfo_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccGetHwInfo();
+    return sceKernelIccGetHwInfo_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccGetPowerNumberOfBootShutdown_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccGetPowerNumberOfBootShutdown();
+    return sceKernelIccGetPowerNumberOfBootShutdown_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccGetPowerOperatingTime_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccGetPowerOperatingTime();
+    return sceKernelIccGetPowerOperatingTime_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccGetPowerUpCause_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccGetPowerUpCause();
+    return sceKernelIccGetPowerUpCause_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccGetSysEventLog_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccGetSysEventLog();
+    return sceKernelIccGetSysEventLog_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccGetUSBPowerState_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccGetUSBPowerState();
+    return sceKernelIccGetUSBPowerState_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccIndicatorBootDone_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccIndicatorBootDone();
+    return sceKernelIccIndicatorBootDone_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccIndicatorShutdown_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccIndicatorShutdown();
+    return sceKernelIccIndicatorShutdown_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccIndicatorStandby_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccIndicatorStandby();
+    return sceKernelIccIndicatorStandby_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccIndicatorStandbyBoot_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccIndicatorStandbyBoot();
+    return sceKernelIccIndicatorStandbyBoot_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccIndicatorStandbyShutdown_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccIndicatorStandbyShutdown();
+    return sceKernelIccIndicatorStandbyShutdown_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccNotifyBootStatus_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccNotifyBootStatus();
+    return sceKernelIccNotifyBootStatus_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccNvsFlush_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccNvsFlush();
+    return sceKernelIccNvsFlush_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccReadPowerBootMessage_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccReadPowerBootMessage();
+    return sceKernelIccReadPowerBootMessage_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccSetBuzzer_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccSetBuzzer();
+    return sceKernelIccSetBuzzer_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccSetCPMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccSetCPMode();
+    return sceKernelIccSetCPMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccSetCpuInfoBit_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccSetCpuInfoBit();
+    return sceKernelIccSetCpuInfoBit_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccSetDownloadMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccSetDownloadMode();
+    return sceKernelIccSetDownloadMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIccSetPriorityBuzzer_nid_disambig1_nid_postfix(void) {
-    return sceKernelIccSetPriorityBuzzer();
+    return sceKernelIccSetPriorityBuzzer_nid_no_patch();
 }
 
 int APS5_VABI sceKernelInstallExceptionHandler_nid_disambig1_nid_postfix(int signum, void* handler) {
-    return sceKernelInstallExceptionHandler(signum, handler);
+    return sceKernelInstallExceptionHandler_nid_no_patch(signum, handler);
 }
 
 int APS5_VABI sceKernelInternalCreateMapperSharedMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelInternalCreateMapperSharedMemory();
+    return sceKernelInternalCreateMapperSharedMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelInternalGetKmemStatistics_nid_disambig1_nid_postfix(void) {
-    return sceKernelInternalGetKmemStatistics();
+    return sceKernelInternalGetKmemStatistics_nid_no_patch();
 }
 
 int APS5_VABI sceKernelInternalGetMapStatistics_nid_disambig1_nid_postfix(void) {
-    return sceKernelInternalGetMapStatistics();
+    return sceKernelInternalGetMapStatistics_nid_no_patch();
 }
 
 int APS5_VABI sceKernelInternalHeapPrintBacktraceWithModuleInfo_nid_disambig1_nid_postfix(void) {
-    return sceKernelInternalHeapPrintBacktraceWithModuleInfo();
+    return sceKernelInternalHeapPrintBacktraceWithModuleInfo_nid_no_patch();
 }
 
 int APS5_VABI sceKernelInternalLockMapperMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelInternalLockMapperMemory();
+    return sceKernelInternalLockMapperMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelInternalMapDirectMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelInternalMapDirectMemory();
+    return sceKernelInternalMapDirectMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelInternalMapNamedDirectMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelInternalMapNamedDirectMemory();
+    return sceKernelInternalMapNamedDirectMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelInternalMemoryGetAvailableSize_nid_disambig1_nid_postfix(std::size_t* size) {
-    return sceKernelInternalMemoryGetAvailableSize(size);
+    return sceKernelInternalMemoryGetAvailableSize_nid_no_patch(size);
 }
 
 std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_disambig1_nid_postfix(InternalSegmentInfo* result) {
@@ -2579,255 +2579,255 @@ std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_disambig1
 }
 
 int APS5_VABI sceKernelInternalResumeDirectMemoryRelease_nid_disambig1_nid_postfix(void) {
-    return sceKernelInternalResumeDirectMemoryRelease();
+    return sceKernelInternalResumeDirectMemoryRelease_nid_no_patch();
 }
 
 int APS5_VABI sceKernelInternalSuspendDirectMemoryRelease_nid_disambig1_nid_postfix(void) {
-    return sceKernelInternalSuspendDirectMemoryRelease();
+    return sceKernelInternalSuspendDirectMemoryRelease_nid_no_patch();
 }
 
 int APS5_VABI sceKernelInternalUnlockMapperMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelInternalUnlockMapperMemory();
+    return sceKernelInternalUnlockMapperMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelInternalUnmapMapperSharedMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelInternalUnmapMapperSharedMemory();
+    return sceKernelInternalUnmapMapperSharedMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsAddressSanitizerEnabled_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsAddressSanitizerEnabled();
+    return sceKernelIsAddressSanitizerEnabled_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsAllowedToSelectDvdRegion_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsAllowedToSelectDvdRegion();
+    return sceKernelIsAllowedToSelectDvdRegion_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsAuthenticNeo_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsAuthenticNeo();
+    return sceKernelIsAuthenticNeo_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsCEX_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsCEX();
+    return sceKernelIsCEX_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsCronos_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsCronos();
+    return sceKernelIsCronos_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsDebuggerAttached_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsDebuggerAttached();
+    return sceKernelIsDebuggerAttached_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsDevKit_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsDevKit();
+    return sceKernelIsDevKit_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsExperimentalBeta_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsExperimentalBeta();
+    return sceKernelIsExperimentalBeta_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsGenuineCEX_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsGenuineCEX();
+    return sceKernelIsGenuineCEX_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsGenuineCronosCex_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsGenuineCronosCex();
+    return sceKernelIsGenuineCronosCex_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsGenuineDevKit_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsGenuineDevKit();
+    return sceKernelIsGenuineDevKit_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsGenuineKratosCex_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsGenuineKratosCex();
+    return sceKernelIsGenuineKratosCex_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsGenuineN_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsGenuineN();
+    return sceKernelIsGenuineN_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsGenuineTestKit_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsGenuineTestKit();
+    return sceKernelIsGenuineTestKit_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsInSandbox_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsInSandbox();
+    return sceKernelIsInSandbox_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsKratos_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsKratos();
+    return sceKernelIsKratos_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsMainOnStanbyMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsMainOnStanbyMode();
+    return sceKernelIsMainOnStanbyMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsMainOnStandbyMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsMainOnStandbyMode();
+    return sceKernelIsMainOnStandbyMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsModuleLoaded_nid_disambig1_nid_postfix(const char* name) {
-    return sceKernelIsModuleLoaded(name);
+    return sceKernelIsModuleLoaded_nid_no_patch(name);
 }
 
 int APS5_VABI sceKernelIsNeoMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsNeoMode();
+    return sceKernelIsNeoMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsProspero_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsProspero();
+    return sceKernelIsProspero_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsPs4Process_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsPs4Process();
+    return sceKernelIsPs4Process_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsStack_nid_disambig1_nid_postfix(void* addr, void** start, void** end) {
-    return sceKernelIsStack(addr, start, end);
+    return sceKernelIsStack_nid_no_patch(addr, start, end);
 }
 
 int APS5_VABI sceKernelIsTestKit_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsTestKit();
+    return sceKernelIsTestKit_nid_no_patch();
 }
 
 int APS5_VABI sceKernelIsThreadSanitizerEnabled_nid_disambig1_nid_postfix(void) {
-    return sceKernelIsThreadSanitizerEnabled();
+    return sceKernelIsThreadSanitizerEnabled_nid_no_patch();
 }
 
 int APS5_VABI sceKernelJitCreateAliasOfSharedMemory_nid_disambig1_nid_postfix(int fd, int maxProt, int* fdOut) {
-    return sceKernelJitCreateAliasOfSharedMemory(fd, maxProt, fdOut);
+    return sceKernelJitCreateAliasOfSharedMemory_nid_no_patch(fd, maxProt, fdOut);
 }
 
 int APS5_VABI sceKernelJitCreateSharedMemory_nid_disambig1_nid_postfix(const char* name, std::size_t len, int maxProt, int* fdOut) {
-    return sceKernelJitCreateSharedMemory(name, len, maxProt, fdOut);
+    return sceKernelJitCreateSharedMemory_nid_no_patch(name, len, maxProt, fdOut);
 }
 
 int APS5_VABI sceKernelJitGetSharedMemoryInfo_nid_disambig1_nid_postfix(void) {
-    return sceKernelJitGetSharedMemoryInfo();
+    return sceKernelJitGetSharedMemoryInfo_nid_no_patch();
 }
 
 int APS5_VABI sceKernelJitMapSharedMemory_nid_disambig1_nid_postfix(int fd, int prot, void** startOut) {
-    return sceKernelJitMapSharedMemory(fd, prot, startOut);
+    return sceKernelJitMapSharedMemory_nid_no_patch(fd, prot, startOut);
 }
 
 int APS5_VABI sceKernelKernelHeapUsage_nid_disambig1_nid_postfix(void) {
-    return sceKernelKernelHeapUsage();
+    return sceKernelKernelHeapUsage_nid_no_patch();
 }
 
 KernelModule APS5_VABI sceKernelLoadStartModule_nid_disambig1_nid_postfix(const char* module_file_name, size_t args, const void* argp, uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
-    return sceKernelLoadStartModule(module_file_name, args, argp, flags, opt, res);
+    return sceKernelLoadStartModule_nid_no_patch(module_file_name, args, argp, flags, opt, res);
 }
 
 KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule_nid_disambig1_nid_postfix(const char* moduleFileName, std::size_t args, const void* argp, std::uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
-    return sceKernelLoadStartModuleForSysmodule(moduleFileName, args, argp, flags, opt, res);
+    return sceKernelLoadStartModuleForSysmodule_nid_no_patch(moduleFileName, args, argp, flags, opt, res);
 }
 
 std::int64_t APS5_VABI sceKernelLseek_nid_disambig1_nid_postfix(int d, std::int64_t offset, int whence) {
-    return sceKernelLseek(d, offset, whence);
+    return sceKernelLseek_nid_no_patch(d, offset, whence);
 }
 
 int APS5_VABI sceKernelLwfsAllocateBlock_nid_disambig1_nid_postfix(int32_t fd, int64_t size) {
-    return sceKernelLwfsAllocateBlock(fd, size);
+    return sceKernelLwfsAllocateBlock_nid_no_patch(fd, size);
 }
 
 int64_t APS5_VABI sceKernelLwfsLseek_nid_disambig1_nid_postfix(int32_t fd, int64_t offset, int32_t whence) {
-    return sceKernelLwfsLseek(fd, offset, whence);
+    return sceKernelLwfsLseek_nid_no_patch(fd, offset, whence);
 }
 
 int APS5_VABI sceKernelLwfsSetAttribute_nid_disambig1_nid_postfix(int32_t fd, int32_t attribute) {
-    return sceKernelLwfsSetAttribute(fd, attribute);
+    return sceKernelLwfsSetAttribute_nid_no_patch(fd, attribute);
 }
 
 int APS5_VABI sceKernelLwfsTrimBlock_nid_disambig1_nid_postfix(void) {
-    return sceKernelLwfsTrimBlock();
+    return sceKernelLwfsTrimBlock_nid_no_patch();
 }
 
 int64_t APS5_VABI sceKernelLwfsWrite_nid_disambig1_nid_postfix(int32_t fd, const void* data, std::size_t size) {
-    return sceKernelLwfsWrite(fd, data, size);
+    return sceKernelLwfsWrite_nid_no_patch(fd, data, size);
 }
 
 int APS5_VABI sceKernelMapDirectMemory_nid_disambig1_nid_postfix(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
-    return sceKernelMapDirectMemory(addr, len, prot, flags, direct_memory_start, alignment);
+    return sceKernelMapDirectMemory_nid_no_patch(addr, len, prot, flags, direct_memory_start, alignment);
 }
 
 int APS5_VABI sceKernelMapDirectMemory2_nid_disambig1_nid_postfix(void** addr, size_t len, int type, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
-    return sceKernelMapDirectMemory2(addr, len, type, prot, flags, direct_memory_start, alignment);
+    return sceKernelMapDirectMemory2_nid_no_patch(addr, len, type, prot, flags, direct_memory_start, alignment);
 }
 
 int APS5_VABI sceKernelMapFlexibleMemory_nid_disambig1_nid_postfix(void** addr_in_out, size_t len, int prot, int flags) {
-    return sceKernelMapFlexibleMemory(addr_in_out, len, prot, flags);
+    return sceKernelMapFlexibleMemory_nid_no_patch(addr_in_out, len, prot, flags);
 }
 
 int APS5_VABI sceKernelMapNamedDirectMemory_nid_disambig1_nid_postfix(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment, const char* name) {
-    return sceKernelMapNamedDirectMemory(addr, len, prot, flags, direct_memory_start, alignment, name);
+    return sceKernelMapNamedDirectMemory_nid_no_patch(addr, len, prot, flags, direct_memory_start, alignment, name);
 }
 
 int32_t APS5_VABI sceKernelMapNamedFlexibleMemory_nid_disambig1_nid_postfix(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
-    return sceKernelMapNamedFlexibleMemory(addr_in_out, len, prot, flags, name);
+    return sceKernelMapNamedFlexibleMemory_nid_no_patch(addr_in_out, len, prot, flags, name);
 }
 
 int32_t APS5_VABI sceKernelMapNamedSystemFlexibleMemory_nid_disambig1_nid_postfix(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
-    return sceKernelMapNamedSystemFlexibleMemory(addr_in_out, len, prot, flags, name);
+    return sceKernelMapNamedSystemFlexibleMemory_nid_no_patch(addr_in_out, len, prot, flags, name);
 }
 
 int APS5_VABI sceKernelMapSanitizerShadowMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelMapSanitizerShadowMemory();
+    return sceKernelMapSanitizerShadowMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelMapToolMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelMapToolMemory();
+    return sceKernelMapToolMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelMapTraceMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelMapTraceMemory();
+    return sceKernelMapTraceMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelMapperGetIndirectBufferInfo_nid_disambig1_nid_postfix(void) {
-    return sceKernelMapperGetIndirectBufferInfo();
+    return sceKernelMapperGetIndirectBufferInfo_nid_no_patch();
 }
 
 int APS5_VABI sceKernelMapperGetParam_nid_disambig1_nid_postfix(std::uint64_t* param) {
-    return sceKernelMapperGetParam(param);
+    return sceKernelMapperGetParam_nid_no_patch(param);
 }
 
 int APS5_VABI sceKernelMapperGetUsageStatsData_nid_disambig1_nid_postfix(void) {
-    return sceKernelMapperGetUsageStatsData();
+    return sceKernelMapperGetUsageStatsData_nid_no_patch();
 }
 
 int APS5_VABI sceKernelMapperSetPageTablePoolOccupancyNotificationThreshold_nid_disambig1_nid_postfix(void) {
-    return sceKernelMapperSetPageTablePoolOccupancyNotificationThreshold();
+    return sceKernelMapperSetPageTablePoolOccupancyNotificationThreshold_nid_no_patch();
 }
 
 int APS5_VABI sceKernelMemoryPoolBatch_nid_disambig1_nid_postfix(const KernelMemoryPoolBatchEntry* entries, int num_entries, int* num_entries_out, int flags) {
-    return sceKernelMemoryPoolBatch(entries, num_entries, num_entries_out, flags);
+    return sceKernelMemoryPoolBatch_nid_no_patch(entries, num_entries, num_entries_out, flags);
 }
 
 int APS5_VABI sceKernelMemoryPoolCommit_nid_disambig1_nid_postfix(void* addr, size_t len, int type, int prot, int flags) {
-    return sceKernelMemoryPoolCommit(addr, len, type, prot, flags);
+    return sceKernelMemoryPoolCommit_nid_no_patch(addr, len, type, prot, flags);
 }
 
 int APS5_VABI sceKernelMemoryPoolDecommit_nid_disambig1_nid_postfix(void* addr, size_t len, int flags) {
-    return sceKernelMemoryPoolDecommit(addr, len, flags);
+    return sceKernelMemoryPoolDecommit_nid_no_patch(addr, len, flags);
 }
 
 int APS5_VABI sceKernelMemoryPoolExpand_nid_disambig1_nid_postfix(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int64_t* phys_addr_out) {
-    return sceKernelMemoryPoolExpand(search_start, search_end, len, alignment, phys_addr_out);
+    return sceKernelMemoryPoolExpand_nid_no_patch(search_start, search_end, len, alignment, phys_addr_out);
 }
 
 int APS5_VABI sceKernelMemoryPoolGetBlockStats_nid_disambig1_nid_postfix(KernelMemoryPoolBlockStats* output, size_t output_size) {
-    return sceKernelMemoryPoolGetBlockStats(output, output_size);
+    return sceKernelMemoryPoolGetBlockStats_nid_no_patch(output, output_size);
 }
 
 int APS5_VABI sceKernelMemoryPoolMove_nid_disambig1_nid_postfix(void) {
-    return sceKernelMemoryPoolMove();
+    return sceKernelMemoryPoolMove_nid_no_patch();
 }
 
 int APS5_VABI sceKernelMemoryPoolReserve_nid_disambig1_nid_postfix(void* addr_in, size_t len, size_t alignment, int flags, void** addr_out) {
-    return sceKernelMemoryPoolReserve(addr_in, len, alignment, flags, addr_out);
+    return sceKernelMemoryPoolReserve_nid_no_patch(addr_in, len, alignment, flags, addr_out);
 }
 
 int APS5_VABI sceKernelMkdir_nid_disambig1_nid_postfix(const char* path, uint16_t mode) {
-    return sceKernelMkdir(path, mode);
+    return sceKernelMkdir_nid_no_patch(path, mode);
 }
 
 int APS5_VABI sceKernelMlock_nid_disambig1_nid_postfix(void* address, std::uint64_t length) {
@@ -2835,23 +2835,23 @@ int APS5_VABI sceKernelMlock_nid_disambig1_nid_postfix(void* address, std::uint6
 }
 
 int APS5_VABI sceKernelMlockall_nid_disambig1_nid_postfix(void) {
-    return sceKernelMlockall();
+    return sceKernelMlockall_nid_no_patch();
 }
 
 int APS5_VABI sceKernelMmap_nid_disambig1_nid_postfix(void* addr, size_t len, int prot, int flags, int fd, int64_t offset, void** res) {
-    return sceKernelMmap(addr, len, prot, flags, fd, offset, res);
+    return sceKernelMmap_nid_no_patch(addr, len, prot, flags, fd, offset, res);
 }
 
 int APS5_VABI sceKernelMprotect_nid_disambig1_nid_postfix(const void* addr, size_t len, int prot) {
-    return sceKernelMprotect(addr, len, prot);
+    return sceKernelMprotect_nid_no_patch(addr, len, prot);
 }
 
 int APS5_VABI sceKernelMsync_nid_disambig1_nid_postfix(void* address, std::size_t length, int flags) {
-    return sceKernelMsync(address, length, flags);
+    return sceKernelMsync_nid_no_patch(address, length, flags);
 }
 
 int APS5_VABI sceKernelMtypeprotect_nid_disambig1_nid_postfix(const void* addr, size_t len, int type, int prot) {
-    return sceKernelMtypeprotect(addr, len, type, prot);
+    return sceKernelMtypeprotect_nid_no_patch(addr, len, type, prot);
 }
 
 int APS5_VABI sceKernelMunlock_nid_disambig1_nid_postfix(void* address, std::uint64_t length) {
@@ -2863,351 +2863,351 @@ int APS5_VABI sceKernelMunlockall_nid_disambig1_nid_postfix(void) {
 }
 
 int APS5_VABI sceKernelMunmap_nid_disambig1_nid_postfix(uint64_t vaddr, size_t len) {
-    return sceKernelMunmap(vaddr, len);
+    return sceKernelMunmap_nid_no_patch(vaddr, len);
 }
 
 int APS5_VABI sceKernelNanosleep_nid_disambig1_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
-    return sceKernelNanosleep(rqtp, rmtp);
+    return sceKernelNanosleep_nid_no_patch(rqtp, rmtp);
 }
 
 int APS5_VABI sceKernelNormalizePath_nid_disambig1_nid_postfix(void) {
-    return sceKernelNormalizePath();
+    return sceKernelNormalizePath_nid_no_patch();
 }
 
 int APS5_VABI sceKernelNotifyAppStateChanged_nid_disambig1_nid_postfix(void) {
-    return sceKernelNotifyAppStateChanged();
+    return sceKernelNotifyAppStateChanged_nid_no_patch();
 }
 
 int APS5_VABI sceKernelNotifySystemSuspendResumeProgress_nid_disambig1_nid_postfix(void) {
-    return sceKernelNotifySystemSuspendResumeProgress();
+    return sceKernelNotifySystemSuspendResumeProgress_nid_no_patch();
 }
 
 int APS5_VABI sceKernelNotifySystemSuspendStart_nid_disambig1_nid_postfix(void) {
-    return sceKernelNotifySystemSuspendStart();
+    return sceKernelNotifySystemSuspendStart_nid_no_patch();
 }
 
 int APS5_VABI sceKernelOpen_nid_disambig1_nid_postfix(const char* path, int flags, std::uint16_t mode) {
-    return sceKernelOpen(path, flags, mode);
+    return sceKernelOpen_nid_no_patch(path, flags, mode);
 }
 
 int APS5_VABI sceKernelOpenEport_nid_disambig1_nid_postfix(void) {
-    return sceKernelOpenEport();
+    return sceKernelOpenEport_nid_no_patch();
 }
 
 int APS5_VABI sceKernelOpenEventFlag_nid_disambig1_nid_postfix(KernelEventFlag* ef, const char* name) {
-    return sceKernelOpenEventFlag(ef, name);
+    return sceKernelOpenEventFlag_nid_no_patch(ef, name);
 }
 
 int APS5_VABI sceKernelOpenInternal_nid_disambig1_nid_postfix(void) {
-    return sceKernelOpenInternal();
+    return sceKernelOpenInternal_nid_no_patch();
 }
 
 int APS5_VABI sceKernelOpenSema_nid_disambig1_nid_postfix(void) {
-    return sceKernelOpenSema();
+    return sceKernelOpenSema_nid_no_patch();
 }
 
 int APS5_VABI sceKernelPltTrap_nid_disambig1_nid_postfix(void) {
-    return sceKernelPltTrap();
+    return sceKernelPltTrap_nid_no_patch();
 }
 
 int APS5_VABI sceKernelPollEventFlag_nid_disambig1_nid_postfix(KernelEventFlag ef, uint64_t bit_pattern, uint32_t wait_mode, uint64_t* result_pat) {
-    return sceKernelPollEventFlag(ef, bit_pattern, wait_mode, result_pat);
+    return sceKernelPollEventFlag_nid_no_patch(ef, bit_pattern, wait_mode, result_pat);
 }
 
 int APS5_VABI sceKernelPollSema_nid_disambig1_nid_postfix(KernelSema sem, int need) {
-    return sceKernelPollSema(sem, need);
+    return sceKernelPollSema_nid_no_patch(sem, need);
 }
 
 int64_t APS5_VABI sceKernelPread_nid_disambig1_nid_postfix(int d, void* buf, size_t nbytes, int64_t offset) {
-    return sceKernelPread(d, buf, nbytes, offset);
+    return sceKernelPread_nid_no_patch(d, buf, nbytes, offset);
 }
 
 int APS5_VABI sceKernelPrintBacktraceWithModuleInfo_nid_disambig1_nid_postfix(void) {
-    return sceKernelPrintBacktraceWithModuleInfo();
+    return sceKernelPrintBacktraceWithModuleInfo_nid_no_patch();
 }
 
 int APS5_VABI sceKernelProtectDirectMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelProtectDirectMemory();
+    return sceKernelProtectDirectMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelProtectDirectMemoryForPID_nid_disambig1_nid_postfix(int64_t offset, size_t len, int prot, int pid) {
-    return sceKernelProtectDirectMemoryForPID(offset, len, prot, pid);
+    return sceKernelProtectDirectMemoryForPID_nid_no_patch(offset, len, prot, pid);
 }
 
 int64_t APS5_VABI sceKernelPwrite_nid_disambig1_nid_postfix(int d, const void* buf, size_t nbytes, int64_t offset) {
-    return sceKernelPwrite(d, buf, nbytes, offset);
+    return sceKernelPwrite_nid_no_patch(d, buf, nbytes, offset);
 }
 
 int APS5_VABI sceKernelQueryMemoryProtection_nid_disambig1_nid_postfix(void* addr, void** start, void** end, int* prot) {
-    return sceKernelQueryMemoryProtection(addr, start, end, prot);
+    return sceKernelQueryMemoryProtection_nid_no_patch(addr, start, end, prot);
 }
 
 int APS5_VABI sceKernelQueryToolMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelQueryToolMemory();
+    return sceKernelQueryToolMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelQueryTraceMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelQueryTraceMemory();
+    return sceKernelQueryTraceMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelRaiseException_nid_disambig1_nid_postfix(Pthread thread, int signum) {
-    return sceKernelRaiseException(thread, signum);
+    return sceKernelRaiseException_nid_no_patch(thread, signum);
 }
 
 int APS5_VABI sceKernelRandomizedPath_nid_disambig1_nid_postfix(void) {
-    return sceKernelRandomizedPath();
+    return sceKernelRandomizedPath_nid_no_patch();
 }
 
 int APS5_VABI sceKernelRdup_nid_disambig1_nid_postfix(int pid, int fd) {
-    return sceKernelRdup(pid, fd);
+    return sceKernelRdup_nid_no_patch(pid, fd);
 }
 
 std::int64_t APS5_VABI sceKernelRead_nid_disambig1_nid_postfix(int d, void* buf, std::size_t nbytes) {
-    return sceKernelRead(d, buf, nbytes);
+    return sceKernelRead_nid_no_patch(d, buf, nbytes);
 }
 
 uint64_t APS5_VABI sceKernelReadTsc_nid_disambig1_nid_postfix(void) {
-    return sceKernelReadTsc();
+    return sceKernelReadTsc_nid_no_patch();
 }
 
 int64_t APS5_VABI sceKernelReadv_nid_disambig1_nid_postfix(int d, const KernelIovec* iov, int iovcnt) {
-    return sceKernelReadv(d, iov, iovcnt);
+    return sceKernelReadv_nid_no_patch(d, iov, iovcnt);
 }
 
 int APS5_VABI sceKernelReboot_nid_disambig1_nid_postfix(void) {
-    return sceKernelReboot();
+    return sceKernelReboot_nid_no_patch();
 }
 
 int APS5_VABI sceKernelReleaseDirectMemory_nid_disambig1_nid_postfix(int64_t start, size_t len) {
-    return sceKernelReleaseDirectMemory(start, len);
+    return sceKernelReleaseDirectMemory_nid_no_patch(start, len);
 }
 
 int APS5_VABI sceKernelReleaseFlexibleMemory_nid_disambig1_nid_postfix(void* addr, size_t len) {
-    return sceKernelReleaseFlexibleMemory(addr, len);
+    return sceKernelReleaseFlexibleMemory_nid_no_patch(addr, len);
 }
 
 int APS5_VABI sceKernelReleaseToolMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelReleaseToolMemory();
+    return sceKernelReleaseToolMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelReleaseTraceDirectMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelReleaseTraceDirectMemory();
+    return sceKernelReleaseTraceDirectMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelRemoveExceptionHandler_nid_disambig1_nid_postfix(int signum) {
-    return sceKernelRemoveExceptionHandler(signum);
+    return sceKernelRemoveExceptionHandler_nid_no_patch(signum);
 }
 
 int APS5_VABI sceKernelRename_nid_disambig1_nid_postfix(const char* from, const char* to) {
-    return sceKernelRename(from, to);
+    return sceKernelRename_nid_no_patch(from, to);
 }
 
 int APS5_VABI sceKernelReportUnpatchedFunctionCall_nid_disambig1_nid_postfix(void) {
-    return sceKernelReportUnpatchedFunctionCall();
+    return sceKernelReportUnpatchedFunctionCall_nid_no_patch();
 }
 
 int APS5_VABI sceKernelReserve2mbPage_nid_disambig1_nid_postfix(void) {
-    return sceKernelReserve2mbPage();
+    return sceKernelReserve2mbPage_nid_no_patch();
 }
 
 int APS5_VABI sceKernelReserveSystemDirectMemory_nid_disambig1_nid_postfix(void) {
-    return sceKernelReserveSystemDirectMemory();
+    return sceKernelReserveSystemDirectMemory_nid_no_patch();
 }
 
 int APS5_VABI sceKernelReserveVirtualRange_nid_disambig1_nid_postfix(void** addr, size_t len, int flags, size_t alignment) {
-    return sceKernelReserveVirtualRange(addr, len, flags, alignment);
+    return sceKernelReserveVirtualRange_nid_no_patch(addr, len, flags, alignment);
 }
 
 int APS5_VABI sceKernelResumeDirectMemoryRelease_nid_disambig1_nid_postfix(void) {
-    return sceKernelResumeDirectMemoryRelease();
+    return sceKernelResumeDirectMemoryRelease_nid_no_patch();
 }
 
 int APS5_VABI sceKernelRmdir_nid_disambig1_nid_postfix(const char* path) {
-    return sceKernelRmdir(path);
+    return sceKernelRmdir_nid_no_patch(path);
 }
 
 int APS5_VABI sceKernelRtldControl_nid_disambig1_nid_postfix(void) {
-    return sceKernelRtldControl();
+    return sceKernelRtldControl_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSandboxPath_nid_disambig1_nid_postfix(void) {
-    return sceKernelSandboxPath();
+    return sceKernelSandboxPath_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSendNotificationRequest_nid_disambig1_nid_postfix(int device, const void* request, std::size_t size, int flags) {
-    return sceKernelSendNotificationRequest(device, request, size, flags);
+    return sceKernelSendNotificationRequest_nid_no_patch(device, request, size, flags);
 }
 
 int APS5_VABI sceKernelSetAppInfo_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetAppInfo();
+    return sceKernelSetAppInfo_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetAppLibcData_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetAppLibcData();
+    return sceKernelSetAppLibcData_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetBackupRestoreMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetBackupRestoreMode();
+    return sceKernelSetBackupRestoreMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetBaseModeClock_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetBaseModeClock();
+    return sceKernelSetBaseModeClock_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetBesteffort_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetBesteffort();
+    return sceKernelSetBesteffort_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetBootReqNotify_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetBootReqNotify();
+    return sceKernelSetBootReqNotify_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetCallRecord_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetCallRecord();
+    return sceKernelSetCallRecord_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetCanvasHandle_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetCanvasHandle();
+    return sceKernelSetCanvasHandle_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetCompressionAttribute_nid_disambig1_nid_postfix(int32_t fd, int32_t attribute) {
-    return sceKernelSetCompressionAttribute(fd, attribute);
+    return sceKernelSetCompressionAttribute_nid_no_patch(fd, attribute);
 }
 
 int APS5_VABI sceKernelSetCpumodeGame_nid_disambig1_nid_postfix(int mode) {
-    return sceKernelSetCpumodeGame(mode);
+    return sceKernelSetCpumodeGame_nid_no_patch(mode);
 }
 
 int APS5_VABI sceKernelSetDataTransferMode_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetDataTransferMode();
+    return sceKernelSetDataTransferMode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetEventFlag_nid_disambig1_nid_postfix(KernelEventFlag ef, uint64_t bit_pattern) {
-    return sceKernelSetEventFlag(ef, bit_pattern);
+    return sceKernelSetEventFlag_nid_no_patch(ef, bit_pattern);
 }
 
 int APS5_VABI sceKernelSetFsstParam_nid_disambig1_nid_postfix(int32_t fd, void* param) {
-    return sceKernelSetFsstParam(fd, param);
+    return sceKernelSetFsstParam_nid_no_patch(fd, param);
 }
 
 int APS5_VABI sceKernelSetGPI_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetGPI();
+    return sceKernelSetGPI_nid_no_patch();
 }
 
 void APS5_VABI sceKernelSetGPO_nid_disambig1_nid_postfix(std::uint32_t bits) {
-    sceKernelSetGPO(bits);
+    sceKernelSetGPO_nid_no_patch(bits);
 }
 
 int APS5_VABI sceKernelSetGameDirectMemoryLimit_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetGameDirectMemoryLimit();
+    return sceKernelSetGameDirectMemoryLimit_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetGpuCu_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetGpuCu();
+    return sceKernelSetGpuCu_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetKnobs_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetKnobs();
+    return sceKernelSetKnobs_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetMemoryPstate_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetMemoryPstate();
+    return sceKernelSetMemoryPstate_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetNeoModeClock_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetNeoModeClock();
+    return sceKernelSetNeoModeClock_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetPhysFmemLimit_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetPhysFmemLimit();
+    return sceKernelSetPhysFmemLimit_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetProcessName_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetProcessName();
+    return sceKernelSetProcessName_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetProcessProperty_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetProcessProperty();
+    return sceKernelSetProcessProperty_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetProcessPropertyString_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetProcessPropertyString();
+    return sceKernelSetProcessPropertyString_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetPrtAperture_nid_disambig1_nid_postfix(int index, void* addr, size_t len) {
-    return sceKernelSetPrtAperture(index, addr, len);
+    return sceKernelSetPrtAperture_nid_no_patch(index, addr, len);
 }
 
 int APS5_VABI sceKernelSetSafemode_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetSafemode();
+    return sceKernelSetSafemode_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetTimezoneInfo_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetTimezoneInfo();
+    return sceKernelSetTimezoneInfo_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSetVirtualRangeName_nid_disambig1_nid_postfix(const void* addr, uint64_t len, const char* name) {
-    return sceKernelSetVirtualRangeName(addr, len, name);
+    return sceKernelSetVirtualRangeName_nid_no_patch(addr, len, name);
 }
 
 int APS5_VABI sceKernelSetVmContainer_nid_disambig1_nid_postfix(void) {
-    return sceKernelSetVmContainer();
+    return sceKernelSetVmContainer_nid_no_patch();
 }
 
 int APS5_VABI sceKernelSettimeofday_nid_disambig1_nid_postfix(const KernelTimeval* tv, const KernelTimezone* tz) {
-    return sceKernelSettimeofday(tv, tz);
+    return sceKernelSettimeofday_nid_no_patch(tv, tz);
 }
 
 int APS5_VABI sceKernelSignalSema_nid_disambig1_nid_postfix(KernelSema sem, int count) {
-    return sceKernelSignalSema(sem, count);
+    return sceKernelSignalSema_nid_no_patch(sem, count);
 }
 
 unsigned int APS5_VABI sceKernelSleep_nid_disambig1_nid_postfix(unsigned int seconds) {
-    return sceKernelSleep(seconds);
+    return sceKernelSleep_nid_no_patch(seconds);
 }
 
 int APS5_VABI sceKernelSlvNotifyError_nid_disambig1_nid_postfix(void) {
-    return sceKernelSlvNotifyError();
+    return sceKernelSlvNotifyError_nid_no_patch();
 }
 
 int APS5_VABI sceKernelStat_nid_disambig1_nid_postfix(const char* path, FileStat* sb) {
-    return sceKernelStat(path, sb);
+    return sceKernelStat_nid_no_patch(path, sb);
 }
 
 int APS5_VABI sceKernelStopUnloadModule_nid_disambig1_nid_postfix(KernelModule handle, size_t args, const void* argp, uint32_t flags, const KernelUnloadModuleOpt* opt, int* res) {
-    return sceKernelStopUnloadModule(handle, args, argp, flags, opt, res);
+    return sceKernelStopUnloadModule_nid_no_patch(handle, args, argp, flags, opt, res);
 }
 
 int APS5_VABI sceKernelSuspendDirectMemoryRelease_nid_disambig1_nid_postfix(void) {
-    return sceKernelSuspendDirectMemoryRelease();
+    return sceKernelSuspendDirectMemoryRelease_nid_no_patch();
 }
 
 void APS5_VABI sceKernelSync_nid_disambig1_nid_postfix(void) {
-    sceKernelSync();
+    sceKernelSync_nid_no_patch();
 }
 
 int APS5_VABI sceKernelTerminateSysCore_nid_disambig1_nid_postfix(void) {
-    return sceKernelTerminateSysCore();
+    return sceKernelTerminateSysCore_nid_no_patch();
 }
 
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled_nid_disambig1_nid_postfix(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
-    return sceKernelTitleWorkaroundIsEnabled(workaround, bit, enabled);
+    return sceKernelTitleWorkaroundIsEnabled_nid_no_patch(workaround, bit, enabled);
 }
 
 int APS5_VABI sceKernelTitleWorkdaroundIsEnabled_nid_disambig1_nid_postfix(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
-    return sceKernelTitleWorkdaroundIsEnabled(workaround, bit, enabled);
+    return sceKernelTitleWorkdaroundIsEnabled_nid_no_patch(workaround, bit, enabled);
 }
 
 int APS5_VABI sceKernelTraceMemoryTypeProtect_nid_disambig1_nid_postfix(void) {
-    return sceKernelTraceMemoryTypeProtect();
+    return sceKernelTraceMemoryTypeProtect_nid_no_patch();
 }
 
 int APS5_VABI sceKernelTriggerEport_nid_disambig1_nid_postfix(void) {
-    return sceKernelTriggerEport();
+    return sceKernelTriggerEport_nid_no_patch();
 }
 
 int APS5_VABI sceKernelTriggerUserEvent_nid_disambig1_nid_postfix(KernelEqueue eq, int id, void* udata) {
-    return sceKernelTriggerUserEvent(eq, id, udata);
+    return sceKernelTriggerUserEvent_nid_no_patch(eq, id, udata);
 }
 
 int APS5_VABI sceKernelTruncate_nid_disambig1_nid_postfix(const char* path, std::int64_t length) {
@@ -3215,15 +3215,15 @@ int APS5_VABI sceKernelTruncate_nid_disambig1_nid_postfix(const char* path, std:
 }
 
 int APS5_VABI sceKernelUnlink_nid_disambig1_nid_postfix(const char* path) {
-    return sceKernelUnlink(path);
+    return sceKernelUnlink_nid_no_patch(path);
 }
 
 int APS5_VABI sceKernelUseCronosKura_nid_disambig1_nid_postfix(void) {
-    return sceKernelUseCronosKura();
+    return sceKernelUseCronosKura_nid_no_patch();
 }
 
 int APS5_VABI sceKernelUseCronosStreaming_nid_disambig1_nid_postfix(void) {
-    return sceKernelUseCronosStreaming();
+    return sceKernelUseCronosStreaming_nid_no_patch();
 }
 
 int APS5_VABI sceKernelUsleep_nid_disambig1_nid_postfix(KernelUseconds microseconds) {
@@ -3235,683 +3235,683 @@ int APS5_VABI sceKernelUtimes_nid_disambig1_nid_postfix(const char* path, const 
 }
 
 int APS5_VABI sceKernelUuidCreate_nid_disambig1_nid_postfix(std::uint32_t* uuid) {
-    return sceKernelUuidCreate(uuid);
+    return sceKernelUuidCreate_nid_no_patch(uuid);
 }
 
 int APS5_VABI sceKernelVirtualQuery_nid_disambig1_nid_postfix(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size) {
-    return sceKernelVirtualQuery(addr, flags, info, info_size);
+    return sceKernelVirtualQuery_nid_no_patch(addr, flags, info, info_size);
 }
 
 int APS5_VABI sceKernelVirtualQueryAll_nid_disambig1_nid_postfix(void) {
-    return sceKernelVirtualQueryAll();
+    return sceKernelVirtualQueryAll_nid_no_patch();
 }
 
 int APS5_VABI sceKernelWaitCommandBufferCompletion_nid_disambig1_nid_postfix(std::uint32_t id) {
-    return sceKernelWaitCommandBufferCompletion(id);
+    return sceKernelWaitCommandBufferCompletion_nid_no_patch(id);
 }
 
 int APS5_VABI sceKernelWaitEqueue_nid_disambig1_nid_postfix(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo) {
-    return sceKernelWaitEqueue(eq, ev, num, out, timo);
+    return sceKernelWaitEqueue_nid_no_patch(eq, ev, num, out, timo);
 }
 
 int APS5_VABI sceKernelWaitEventFlag_nid_disambig1_nid_postfix(KernelEventFlag ef, uint64_t bit_pattern, uint32_t wait_mode, uint64_t* result_pat, KernelUseconds* timeout) {
-    return sceKernelWaitEventFlag(ef, bit_pattern, wait_mode, result_pat, timeout);
+    return sceKernelWaitEventFlag_nid_no_patch(ef, bit_pattern, wait_mode, result_pat, timeout);
 }
 
 int APS5_VABI sceKernelWaitSema_nid_disambig1_nid_postfix(KernelSema sem, int need, KernelUseconds* time) {
-    return sceKernelWaitSema(sem, need, time);
+    return sceKernelWaitSema_nid_no_patch(sem, need, time);
 }
 
 std::int64_t APS5_VABI sceKernelWrite_nid_disambig1_nid_postfix(int d, const void* buf, std::size_t nbytes) {
-    return sceKernelWrite(d, buf, nbytes);
+    return sceKernelWrite_nid_no_patch(d, buf, nbytes);
 }
 
 int APS5_VABI sceKernelWriteEventQueueOnCompletionCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t equeue, std::int32_t ident, std::uint64_t data, std::uint64_t* outSize) {
-    return sceKernelWriteEventQueueOnCompletionCommand(dst, equeue, ident, data, outSize);
+    return sceKernelWriteEventQueueOnCompletionCommand_nid_no_patch(dst, equeue, ident, data, outSize);
 }
 
 int APS5_VABI sceKernelWriteMapCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t* outSize) {
-    return sceKernelWriteMapCommand(dst, address, size, type, protection, outSize);
+    return sceKernelWriteMapCommand_nid_no_patch(dst, address, size, type, protection, outSize);
 }
 
 int APS5_VABI sceKernelWriteMapCommand2_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection, std::int32_t prt, std::uint64_t* outSize) {
-    return sceKernelWriteMapCommand2(dst, address, size, type, protection, prt, outSize);
+    return sceKernelWriteMapCommand2_nid_no_patch(dst, address, size, type, protection, prt, outSize);
 }
 
 int APS5_VABI sceKernelWriteMapDirectCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t* outSize) {
-    return sceKernelWriteMapDirectCommand(dst, address, directOffset, size, type, protection, outSize);
+    return sceKernelWriteMapDirectCommand_nid_no_patch(dst, address, directOffset, size, type, protection, outSize);
 }
 
 int APS5_VABI sceKernelWriteMapDirectWithGpuMaskIdCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
-    return sceKernelWriteMapDirectWithGpuMaskIdCommand(dst, address, directOffset, size, type, protection, gpuMaskId, outSize);
+    return sceKernelWriteMapDirectWithGpuMaskIdCommand_nid_no_patch(dst, address, directOffset, size, type, protection, gpuMaskId, outSize);
 }
 
 int APS5_VABI sceKernelWriteMapWithGpuMaskIdCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
-    return sceKernelWriteMapWithGpuMaskIdCommand(dst, address, size, type, protection, gpuMaskId, outSize);
+    return sceKernelWriteMapWithGpuMaskIdCommand_nid_no_patch(dst, address, size, type, protection, gpuMaskId, outSize);
 }
 
 int APS5_VABI sceKernelWriteModifyMtypeProtectCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t mask, std::uint64_t* outSize) {
-    return sceKernelWriteModifyMtypeProtectCommand(dst, address, size, type, protection, mask, outSize);
+    return sceKernelWriteModifyMtypeProtectCommand_nid_no_patch(dst, address, size, type, protection, mask, outSize);
 }
 
 int APS5_VABI sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t mask, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
-    return sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand(dst, address, size, type, protection, mask, gpuMaskId, outSize);
+    return sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand_nid_no_patch(dst, address, size, type, protection, mask, gpuMaskId, outSize);
 }
 
 int APS5_VABI sceKernelWriteModifyProtectCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t protection, std::uint64_t mask, std::uint64_t* outSize) {
-    return sceKernelWriteModifyProtectCommand(dst, address, size, protection, mask, outSize);
+    return sceKernelWriteModifyProtectCommand_nid_no_patch(dst, address, size, protection, mask, outSize);
 }
 
 int APS5_VABI sceKernelWriteModifyProtectWithGpuMaskIdCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t protection, std::uint64_t mask, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
-    return sceKernelWriteModifyProtectWithGpuMaskIdCommand(dst, address, size, protection, mask, gpuMaskId, outSize);
+    return sceKernelWriteModifyProtectWithGpuMaskIdCommand_nid_no_patch(dst, address, size, protection, mask, gpuMaskId, outSize);
 }
 
 int APS5_VABI sceKernelWriteMultiMapCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t alias, std::uint64_t size, std::uint64_t protection, std::uint64_t* outSize) {
-    return sceKernelWriteMultiMapCommand(dst, address, alias, size, protection, outSize);
+    return sceKernelWriteMultiMapCommand_nid_no_patch(dst, address, alias, size, protection, outSize);
 }
 
 int APS5_VABI sceKernelWriteMultiMapWithGpuMaskIdCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t alias, std::uint64_t size, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
-    return sceKernelWriteMultiMapWithGpuMaskIdCommand(dst, address, alias, size, protection, gpuMaskId, outSize);
+    return sceKernelWriteMultiMapWithGpuMaskIdCommand_nid_no_patch(dst, address, alias, size, protection, gpuMaskId, outSize);
 }
 
 int APS5_VABI sceKernelWriteRemapCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::uint64_t protection, std::uint64_t* outSize) {
-    return sceKernelWriteRemapCommand(dst, address, source, size, protection, outSize);
+    return sceKernelWriteRemapCommand_nid_no_patch(dst, address, source, size, protection, outSize);
 }
 
 int APS5_VABI sceKernelWriteRemapIntoPrtCommand_nid_disambig1_nid_postfix(std::uint32_t* dst, std::uint64_t address, std::uint64_t source, std::uint64_t size, int protection, int opcode, std::uint64_t* outSize) {
-    return sceKernelWriteRemapIntoPrtCommand(dst, address, source, size, protection, opcode, outSize);
+    return sceKernelWriteRemapIntoPrtCommand_nid_no_patch(dst, address, source, size, protection, opcode, outSize);
 }
 
 int APS5_VABI sceKernelWriteRemapWithGpuMaskIdCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
-    return sceKernelWriteRemapWithGpuMaskIdCommand(dst, address, source, size, protection, gpuMaskId, outSize);
+    return sceKernelWriteRemapWithGpuMaskIdCommand_nid_no_patch(dst, address, source, size, protection, gpuMaskId, outSize);
 }
 
 int APS5_VABI sceKernelWriteSdkEventLog_nid_disambig1_nid_postfix(void) {
-    return sceKernelWriteSdkEventLog();
+    return sceKernelWriteSdkEventLog_nid_no_patch();
 }
 
 int APS5_VABI sceKernelWriteSdkEventLogV_nid_disambig1_nid_postfix(void) {
-    return sceKernelWriteSdkEventLogV();
+    return sceKernelWriteSdkEventLogV_nid_no_patch();
 }
 
 int APS5_VABI sceKernelWriteUnmapCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t* outSize) {
-    return sceKernelWriteUnmapCommand(dst, address, size, outSize);
+    return sceKernelWriteUnmapCommand_nid_no_patch(dst, address, size, outSize);
 }
 
 int APS5_VABI sceKernelWriteWaitOnAddressCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t reference, std::int32_t compare, std::int32_t flush, std::uint64_t* outSize) {
-    return sceKernelWriteWaitOnAddressCommand(dst, address, reference, compare, flush, outSize);
+    return sceKernelWriteWaitOnAddressCommand_nid_no_patch(dst, address, reference, compare, flush, outSize);
 }
 
 int APS5_VABI sceKernelWriteWaitOnCounterCommand_nid_disambig1_nid_postfix(void* dst, std::uint8_t counter, std::uint32_t reference, std::int32_t compare, std::int32_t flush, std::uint64_t* outSize) {
-    return sceKernelWriteWaitOnCounterCommand(dst, counter, reference, compare, flush, outSize);
+    return sceKernelWriteWaitOnCounterCommand_nid_no_patch(dst, counter, reference, compare, flush, outSize);
 }
 
 int APS5_VABI sceKernelWriteWriteAddressCommand_nid_disambig1_nid_postfix(void* dst, std::uint64_t address, std::uint64_t value, std::uint64_t* outSize) {
-    return sceKernelWriteWriteAddressCommand(dst, address, value, outSize);
+    return sceKernelWriteWriteAddressCommand_nid_no_patch(dst, address, value, outSize);
 }
 
 int APS5_VABI sceKernelWriteWriteCounterCommand_nid_disambig1_nid_postfix(void* dst, std::uint8_t counter, std::uint32_t value, std::uint64_t* outSize) {
-    return sceKernelWriteWriteCounterCommand(dst, counter, value, outSize);
+    return sceKernelWriteWriteCounterCommand_nid_no_patch(dst, counter, value, outSize);
 }
 
 int APS5_VABI sceKernelYieldCpumode_nid_disambig1_nid_postfix(void) {
-    return sceKernelYieldCpumode();
+    return sceKernelYieldCpumode_nid_no_patch();
 }
 
 int APS5_VABI sceLibcMspaceCreateForMonoMutex_nid_disambig1_nid_postfix(void) {
-    return sceLibcMspaceCreateForMonoMutex();
+    return sceLibcMspaceCreateForMonoMutex_nid_no_patch();
 }
 
 int APS5_VABI scePthreadAtfork_nid_disambig1_nid_postfix(void (APS5_VABI* prepare)(), void (APS5_VABI* parent)(), void (APS5_VABI* child)()) {
-    return scePthreadAtfork(prepare, parent, child);
+    return scePthreadAtfork_nid_no_patch(prepare, parent, child);
 }
 
 int APS5_VABI scePthreadAttrDestroy_nid_disambig1_nid_postfix(PthreadAttr* attr) {
-    return scePthreadAttrDestroy(attr);
+    return scePthreadAttrDestroy_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadAttrGet_nid_disambig1_nid_postfix(Pthread thread, PthreadAttr* attr) {
-    return scePthreadAttrGet(thread, attr);
+    return scePthreadAttrGet_nid_no_patch(thread, attr);
 }
 
 int APS5_VABI scePthreadAttrGetaffinity_nid_disambig1_nid_postfix(const PthreadAttr* attr, KernelCpumask* mask) {
-    return scePthreadAttrGetaffinity(attr, mask);
+    return scePthreadAttrGetaffinity_nid_no_patch(attr, mask);
 }
 
 int APS5_VABI scePthreadAttrGetdetachstate_nid_disambig1_nid_postfix(const PthreadAttr* attr, int* state) {
-    return scePthreadAttrGetdetachstate(attr, state);
+    return scePthreadAttrGetdetachstate_nid_no_patch(attr, state);
 }
 
 int APS5_VABI scePthreadAttrGetguardsize_nid_disambig1_nid_postfix(const PthreadAttr* attr, size_t* guard_size) {
-    return scePthreadAttrGetguardsize(attr, guard_size);
+    return scePthreadAttrGetguardsize_nid_no_patch(attr, guard_size);
 }
 
 int APS5_VABI scePthreadAttrGetinheritsched_nid_disambig1_nid_postfix(const PthreadAttr* attr, int* inheritSched) {
-    return scePthreadAttrGetinheritsched(attr, inheritSched);
+    return scePthreadAttrGetinheritsched_nid_no_patch(attr, inheritSched);
 }
 
 int APS5_VABI scePthreadAttrGetschedparam_nid_disambig1_nid_postfix(const PthreadAttr* attr, KernelSchedParam* param) {
-    return scePthreadAttrGetschedparam(attr, param);
+    return scePthreadAttrGetschedparam_nid_no_patch(attr, param);
 }
 
 int APS5_VABI scePthreadAttrGetschedpolicy_nid_disambig1_nid_postfix(const PthreadAttr* attr, int* policy) {
-    return scePthreadAttrGetschedpolicy(attr, policy);
+    return scePthreadAttrGetschedpolicy_nid_no_patch(attr, policy);
 }
 
 int APS5_VABI scePthreadAttrGetscope_nid_disambig1_nid_postfix(const PthreadAttr* attr, int* scope) {
-    return scePthreadAttrGetscope(attr, scope);
+    return scePthreadAttrGetscope_nid_no_patch(attr, scope);
 }
 
 int APS5_VABI scePthreadAttrGetsolosched_nid_disambig1_nid_postfix(const PthreadAttr* attr, int* solosched) {
-    return scePthreadAttrGetsolosched(attr, solosched);
+    return scePthreadAttrGetsolosched_nid_no_patch(attr, solosched);
 }
 
 int APS5_VABI scePthreadAttrGetstack_nid_disambig1_nid_postfix(const PthreadAttr* attr, void** stackaddr, std::size_t* stacksize) {
-    return scePthreadAttrGetstack(attr, stackaddr, stacksize);
+    return scePthreadAttrGetstack_nid_no_patch(attr, stackaddr, stacksize);
 }
 
 int APS5_VABI scePthreadAttrGetstackaddr_nid_disambig1_nid_postfix(const PthreadAttr* attr, void** stack_addr) {
-    return scePthreadAttrGetstackaddr(attr, stack_addr);
+    return scePthreadAttrGetstackaddr_nid_no_patch(attr, stack_addr);
 }
 
 int APS5_VABI scePthreadAttrGetstacksize_nid_disambig1_nid_postfix(const PthreadAttr* attr, size_t* stack_size) {
-    return scePthreadAttrGetstacksize(attr, stack_size);
+    return scePthreadAttrGetstacksize_nid_no_patch(attr, stack_size);
 }
 
 int APS5_VABI scePthreadAttrInit_nid_disambig1_nid_postfix(PthreadAttr* attr) {
-    return scePthreadAttrInit(attr);
+    return scePthreadAttrInit_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadAttrSetaffinity_nid_disambig1_nid_postfix(PthreadAttr* attr, KernelCpumask mask) {
-    return scePthreadAttrSetaffinity(attr, mask);
+    return scePthreadAttrSetaffinity_nid_no_patch(attr, mask);
 }
 
 int APS5_VABI scePthreadAttrSetcreatesuspend_nid_disambig1_nid_postfix(PthreadAttr* attr) {
-    return scePthreadAttrSetcreatesuspend(attr);
+    return scePthreadAttrSetcreatesuspend_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadAttrSetdetachstate_nid_disambig1_nid_postfix(PthreadAttr* attr, int detachstate) {
-    return scePthreadAttrSetdetachstate(attr, detachstate);
+    return scePthreadAttrSetdetachstate_nid_no_patch(attr, detachstate);
 }
 
 int APS5_VABI scePthreadAttrSetguardsize_nid_disambig1_nid_postfix(PthreadAttr* attr, size_t guard_size) {
-    return scePthreadAttrSetguardsize(attr, guard_size);
+    return scePthreadAttrSetguardsize_nid_no_patch(attr, guard_size);
 }
 
 int APS5_VABI scePthreadAttrSetinheritsched_nid_disambig1_nid_postfix(PthreadAttr* attr, int inherit_sched) {
-    return scePthreadAttrSetinheritsched(attr, inherit_sched);
+    return scePthreadAttrSetinheritsched_nid_no_patch(attr, inherit_sched);
 }
 
 int APS5_VABI scePthreadAttrSetschedparam_nid_disambig1_nid_postfix(PthreadAttr* attr, const KernelSchedParam* param) {
-    return scePthreadAttrSetschedparam(attr, param);
+    return scePthreadAttrSetschedparam_nid_no_patch(attr, param);
 }
 
 int APS5_VABI scePthreadAttrSetschedpolicy_nid_disambig1_nid_postfix(PthreadAttr* attr, int policy) {
-    return scePthreadAttrSetschedpolicy(attr, policy);
+    return scePthreadAttrSetschedpolicy_nid_no_patch(attr, policy);
 }
 
 int APS5_VABI scePthreadAttrSetscope_nid_disambig1_nid_postfix(PthreadAttr* attr, int scope) {
-    return scePthreadAttrSetscope(attr, scope);
+    return scePthreadAttrSetscope_nid_no_patch(attr, scope);
 }
 
 int APS5_VABI scePthreadAttrSetsolosched_nid_disambig1_nid_postfix(PthreadAttr* attr, int solosched) {
-    return scePthreadAttrSetsolosched(attr, solosched);
+    return scePthreadAttrSetsolosched_nid_no_patch(attr, solosched);
 }
 
 int APS5_VABI scePthreadAttrSetstack_nid_disambig1_nid_postfix(PthreadAttr* attr, void* addr, size_t size) {
-    return scePthreadAttrSetstack(attr, addr, size);
+    return scePthreadAttrSetstack_nid_no_patch(attr, addr, size);
 }
 
 int APS5_VABI scePthreadAttrSetstackaddr_nid_disambig1_nid_postfix(PthreadAttr* attr, void* addr) {
-    return scePthreadAttrSetstackaddr(attr, addr);
+    return scePthreadAttrSetstackaddr_nid_no_patch(attr, addr);
 }
 
 int APS5_VABI scePthreadAttrSetstacksize_nid_disambig1_nid_postfix(PthreadAttr* attr, std::size_t stacksize) {
-    return scePthreadAttrSetstacksize(attr, stacksize);
+    return scePthreadAttrSetstacksize_nid_no_patch(attr, stacksize);
 }
 
 int APS5_VABI scePthreadBarrierDestroy_nid_disambig1_nid_postfix(PthreadBarrierPrivate** barrier) {
-    return scePthreadBarrierDestroy(barrier);
+    return scePthreadBarrierDestroy_nid_no_patch(barrier);
 }
 
 int APS5_VABI scePthreadBarrierInit_nid_disambig1_nid_postfix(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count, const char* name) {
-    return scePthreadBarrierInit(barrier, attr, count, name);
+    return scePthreadBarrierInit_nid_no_patch(barrier, attr, count, name);
 }
 
 int APS5_VABI scePthreadBarrierWait_nid_disambig1_nid_postfix(PthreadBarrierPrivate** barrier) {
-    return scePthreadBarrierWait(barrier);
+    return scePthreadBarrierWait_nid_no_patch(barrier);
 }
 
 int APS5_VABI scePthreadBarrierattrDestroy_nid_disambig1_nid_postfix(PthreadBarrierattrPrivate** attr) {
-    return scePthreadBarrierattrDestroy(attr);
+    return scePthreadBarrierattrDestroy_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadBarrierattrGetpshared_nid_disambig1_nid_postfix(PthreadBarrierattrPrivate* const* attr, int* pshared) {
-    return scePthreadBarrierattrGetpshared(attr, pshared);
+    return scePthreadBarrierattrGetpshared_nid_no_patch(attr, pshared);
 }
 
 int APS5_VABI scePthreadBarrierattrInit_nid_disambig1_nid_postfix(PthreadBarrierattrPrivate** attr) {
-    return scePthreadBarrierattrInit(attr);
+    return scePthreadBarrierattrInit_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadBarrierattrSetpshared_nid_disambig1_nid_postfix(PthreadBarrierattrPrivate** attr, int pshared) {
-    return scePthreadBarrierattrSetpshared(attr, pshared);
+    return scePthreadBarrierattrSetpshared_nid_no_patch(attr, pshared);
 }
 
 int APS5_VABI scePthreadCancel_nid_disambig1_nid_postfix(Pthread thread) {
-    return scePthreadCancel(thread);
+    return scePthreadCancel_nid_no_patch(thread);
 }
 
 int APS5_VABI scePthreadCondBroadcast_nid_disambig1_nid_postfix(PthreadCond* cond) {
-    return scePthreadCondBroadcast(cond);
+    return scePthreadCondBroadcast_nid_no_patch(cond);
 }
 
 int APS5_VABI scePthreadCondDestroy_nid_disambig1_nid_postfix(PthreadCond* cond) {
-    return scePthreadCondDestroy(cond);
+    return scePthreadCondDestroy_nid_no_patch(cond);
 }
 
 int APS5_VABI scePthreadCondInit_nid_disambig1_nid_postfix(PthreadCond* cond, const PthreadCondattr* attr, const char* a2) {
-    return scePthreadCondInit(cond, attr, a2);
+    return scePthreadCondInit_nid_no_patch(cond, attr, a2);
 }
 
 int APS5_VABI scePthreadCondSignal_nid_disambig1_nid_postfix(PthreadCond* cond) {
-    return scePthreadCondSignal(cond);
+    return scePthreadCondSignal_nid_no_patch(cond);
 }
 
 int APS5_VABI scePthreadCondSignalto_nid_disambig1_nid_postfix(PthreadCond* cond, Pthread thread) {
-    return scePthreadCondSignalto(cond, thread);
+    return scePthreadCondSignalto_nid_no_patch(cond, thread);
 }
 
 int APS5_VABI scePthreadCondTimedwait_nid_disambig1_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec) {
-    return scePthreadCondTimedwait(cond, mutex, usec);
+    return scePthreadCondTimedwait_nid_no_patch(cond, mutex, usec);
 }
 
 int APS5_VABI scePthreadCondWait_nid_disambig1_nid_postfix(PthreadCond* cond, PthreadMutex* mutex) {
-    return scePthreadCondWait(cond, mutex);
+    return scePthreadCondWait_nid_no_patch(cond, mutex);
 }
 
 int APS5_VABI scePthreadCondattrDestroy_nid_disambig1_nid_postfix(PthreadCondattr* attr) {
-    return scePthreadCondattrDestroy(attr);
+    return scePthreadCondattrDestroy_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadCondattrGetclock_nid_disambig1_nid_postfix(const PthreadCondattr* attr, KernelClockid* clockId) {
-    return scePthreadCondattrGetclock(attr, clockId);
+    return scePthreadCondattrGetclock_nid_no_patch(attr, clockId);
 }
 
 int APS5_VABI scePthreadCondattrGetpshared_nid_disambig1_nid_postfix(const PthreadCondattr* attr, int* pshared) {
-    return scePthreadCondattrGetpshared(attr, pshared);
+    return scePthreadCondattrGetpshared_nid_no_patch(attr, pshared);
 }
 
 int APS5_VABI scePthreadCondattrInit_nid_disambig1_nid_postfix(PthreadCondattr* attr) {
-    return scePthreadCondattrInit(attr);
+    return scePthreadCondattrInit_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadCondattrSetclock_nid_disambig1_nid_postfix(PthreadCondattr* attr, KernelClockid clockId) {
-    return scePthreadCondattrSetclock(attr, clockId);
+    return scePthreadCondattrSetclock_nid_no_patch(attr, clockId);
 }
 
 int APS5_VABI scePthreadCondattrSetpshared_nid_disambig1_nid_postfix(PthreadCondattr* attr, int pshared) {
-    return scePthreadCondattrSetpshared(attr, pshared);
+    return scePthreadCondattrSetpshared_nid_no_patch(attr, pshared);
 }
 
 int APS5_VABI scePthreadCreate_nid_disambig1_nid_postfix(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name) {
-    return scePthreadCreate(thread, attr, entry, arg, name);
+    return scePthreadCreate_nid_no_patch(thread, attr, entry, arg, name);
 }
 
 int APS5_VABI scePthreadDetach_nid_disambig1_nid_postfix(Pthread thread) {
-    return scePthreadDetach(thread);
+    return scePthreadDetach_nid_no_patch(thread);
 }
 
 int APS5_VABI scePthreadEqual_nid_disambig1_nid_postfix(Pthread thread1, Pthread thread2) {
-    return scePthreadEqual(thread1, thread2);
+    return scePthreadEqual_nid_no_patch(thread1, thread2);
 }
 
 void APS5_VABI scePthreadExit_nid_disambig1_nid_postfix(void* retval) {
-    scePthreadExit(retval);
+    scePthreadExit_nid_no_patch(retval);
 }
 
 int APS5_VABI scePthreadGetaffinity_nid_disambig1_nid_postfix(Pthread thread, KernelCpumask* mask) {
-    return scePthreadGetaffinity(thread, mask);
+    return scePthreadGetaffinity_nid_no_patch(thread, mask);
 }
 
 int APS5_VABI scePthreadGetconcurrency_nid_disambig1_nid_postfix(void) {
-    return scePthreadGetconcurrency();
+    return scePthreadGetconcurrency_nid_no_patch();
 }
 
 int APS5_VABI scePthreadGetcpuclockid_nid_disambig1_nid_postfix(Pthread thread, int* clockId) {
-    return scePthreadGetcpuclockid(thread, clockId);
+    return scePthreadGetcpuclockid_nid_no_patch(thread, clockId);
 }
 
 int APS5_VABI scePthreadGetname_nid_disambig1_nid_postfix(Pthread thread, char* name) {
-    return scePthreadGetname(thread, name);
+    return scePthreadGetname_nid_no_patch(thread, name);
 }
 
 int APS5_VABI scePthreadGetprio_nid_disambig1_nid_postfix(Pthread thread, int* prio) {
-    return scePthreadGetprio(thread, prio);
+    return scePthreadGetprio_nid_no_patch(thread, prio);
 }
 
 int APS5_VABI scePthreadGetschedparam_nid_disambig1_nid_postfix(Pthread thread, int* policy, KernelSchedParam* param) {
-    return scePthreadGetschedparam(thread, policy, param);
+    return scePthreadGetschedparam_nid_no_patch(thread, policy, param);
 }
 
 void* APS5_VABI scePthreadGetspecific_nid_disambig1_nid_postfix(PthreadKey key) {
-    return scePthreadGetspecific(key);
+    return scePthreadGetspecific_nid_no_patch(key);
 }
 
 int APS5_VABI scePthreadGetthreadid_nid_disambig1_nid_postfix(void) {
-    return scePthreadGetthreadid();
+    return scePthreadGetthreadid_nid_no_patch();
 }
 
 int APS5_VABI scePthreadJoin_nid_disambig1_nid_postfix(Pthread thread, void** retval) {
-    return scePthreadJoin(thread, retval);
+    return scePthreadJoin_nid_no_patch(thread, retval);
 }
 
 int APS5_VABI scePthreadKeyCreate_nid_disambig1_nid_postfix(PthreadKey* key, pthread_key_destructor_func_t destructor) {
-    return scePthreadKeyCreate(key, destructor);
+    return scePthreadKeyCreate_nid_no_patch(key, destructor);
 }
 
 int APS5_VABI scePthreadKeyDelete_nid_disambig1_nid_postfix(PthreadKey key) {
-    return scePthreadKeyDelete(key);
+    return scePthreadKeyDelete_nid_no_patch(key);
 }
 
 int APS5_VABI scePthreadMain_nid_disambig1_nid_postfix(void) {
-    return scePthreadMain();
+    return scePthreadMain_nid_no_patch();
 }
 
 int APS5_VABI scePthreadMulti_nid_disambig1_nid_postfix(void) {
-    return scePthreadMulti();
+    return scePthreadMulti_nid_no_patch();
 }
 
 int APS5_VABI scePthreadMutexDestroy_nid_disambig1_nid_postfix(PthreadMutex* mutex) {
-    return scePthreadMutexDestroy(mutex);
+    return scePthreadMutexDestroy_nid_no_patch(mutex);
 }
 
 int APS5_VABI scePthreadMutexGetprioceiling_nid_disambig1_nid_postfix(PthreadMutex* mutex, int* prioceiling) {
-    return scePthreadMutexGetprioceiling(mutex, prioceiling);
+    return scePthreadMutexGetprioceiling_nid_no_patch(mutex, prioceiling);
 }
 
 int APS5_VABI scePthreadMutexGetspinloops_nid_disambig1_nid_postfix(PthreadMutex* mutex, int* count) {
-    return scePthreadMutexGetspinloops(mutex, count);
+    return scePthreadMutexGetspinloops_nid_no_patch(mutex, count);
 }
 
 int APS5_VABI scePthreadMutexGetyieldloops_nid_disambig1_nid_postfix(PthreadMutex* mutex, int* count) {
-    return scePthreadMutexGetyieldloops(mutex, count);
+    return scePthreadMutexGetyieldloops_nid_no_patch(mutex, count);
 }
 
 int APS5_VABI scePthreadMutexInit_nid_disambig1_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* a2) {
-    return scePthreadMutexInit(mutex, attr, a2);
+    return scePthreadMutexInit_nid_no_patch(mutex, attr, a2);
 }
 
 int APS5_VABI scePthreadMutexInitForInternalLibc_nid_disambig1_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr) {
-    return scePthreadMutexInitForInternalLibc(mutex, attr);
+    return scePthreadMutexInitForInternalLibc_nid_no_patch(mutex, attr);
 }
 
 int APS5_VABI scePthreadMutexIsowned_nid_disambig1_nid_postfix(PthreadMutex* mutex) {
-    return scePthreadMutexIsowned(mutex);
+    return scePthreadMutexIsowned_nid_no_patch(mutex);
 }
 
 int APS5_VABI scePthreadMutexLock_nid_disambig1_nid_postfix(PthreadMutex* mutex) {
-    return scePthreadMutexLock(mutex);
+    return scePthreadMutexLock_nid_no_patch(mutex);
 }
 
 int APS5_VABI scePthreadMutexSetprioceiling_nid_disambig1_nid_postfix(PthreadMutex* mutex, int ceiling, int* oldCeiling) {
-    return scePthreadMutexSetprioceiling(mutex, ceiling, oldCeiling);
+    return scePthreadMutexSetprioceiling_nid_no_patch(mutex, ceiling, oldCeiling);
 }
 
 int APS5_VABI scePthreadMutexSetspinloops_nid_disambig1_nid_postfix(PthreadMutex* mutex, int count) {
-    return scePthreadMutexSetspinloops(mutex, count);
+    return scePthreadMutexSetspinloops_nid_no_patch(mutex, count);
 }
 
 int APS5_VABI scePthreadMutexSetyieldloops_nid_disambig1_nid_postfix(PthreadMutex* mutex, int count) {
-    return scePthreadMutexSetyieldloops(mutex, count);
+    return scePthreadMutexSetyieldloops_nid_no_patch(mutex, count);
 }
 
 int APS5_VABI scePthreadMutexTimedlock_nid_disambig1_nid_postfix(PthreadMutex* mutex, KernelUseconds usec) {
-    return scePthreadMutexTimedlock(mutex, usec);
+    return scePthreadMutexTimedlock_nid_no_patch(mutex, usec);
 }
 
 int APS5_VABI scePthreadMutexTrylock_nid_disambig1_nid_postfix(PthreadMutex* mutex) {
-    return scePthreadMutexTrylock(mutex);
+    return scePthreadMutexTrylock_nid_no_patch(mutex);
 }
 
 int APS5_VABI scePthreadMutexUnlock_nid_disambig1_nid_postfix(PthreadMutex* mutex) {
-    return scePthreadMutexUnlock(mutex);
+    return scePthreadMutexUnlock_nid_no_patch(mutex);
 }
 
 int APS5_VABI scePthreadMutexattrDestroy_nid_disambig1_nid_postfix(PthreadMutexattr* attr) {
-    return scePthreadMutexattrDestroy(attr);
+    return scePthreadMutexattrDestroy_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadMutexattrGetgen_nid_disambig1_nid_postfix(const PthreadMutexattr* attr, int* generation) {
-    return scePthreadMutexattrGetgen(attr, generation);
+    return scePthreadMutexattrGetgen_nid_no_patch(attr, generation);
 }
 
 int APS5_VABI scePthreadMutexattrGetkind_nid_disambig1_nid_postfix(PthreadMutexattr attr) {
-    return scePthreadMutexattrGetkind(attr);
+    return scePthreadMutexattrGetkind_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadMutexattrGetprioceiling_nid_disambig1_nid_postfix(const PthreadMutexattr* attr, int* prioceiling) {
-    return scePthreadMutexattrGetprioceiling(attr, prioceiling);
+    return scePthreadMutexattrGetprioceiling_nid_no_patch(attr, prioceiling);
 }
 
 int APS5_VABI scePthreadMutexattrGetprotocol_nid_disambig1_nid_postfix(const PthreadMutexattr* attr, int* protocol) {
-    return scePthreadMutexattrGetprotocol(attr, protocol);
+    return scePthreadMutexattrGetprotocol_nid_no_patch(attr, protocol);
 }
 
 int APS5_VABI scePthreadMutexattrGetpshared_nid_disambig1_nid_postfix(const PthreadMutexattr* attr, int* pshared) {
-    return scePthreadMutexattrGetpshared(attr, pshared);
+    return scePthreadMutexattrGetpshared_nid_no_patch(attr, pshared);
 }
 
 int APS5_VABI scePthreadMutexattrGettype_nid_disambig1_nid_postfix(const PthreadMutexattr* attr, int* type) {
-    return scePthreadMutexattrGettype(attr, type);
+    return scePthreadMutexattrGettype_nid_no_patch(attr, type);
 }
 
 int APS5_VABI scePthreadMutexattrInit_nid_disambig1_nid_postfix(PthreadMutexattr* attr) {
-    return scePthreadMutexattrInit(attr);
+    return scePthreadMutexattrInit_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadMutexattrInitForInternalLibc_nid_disambig1_nid_postfix(PthreadMutexattr* attr) {
-    return scePthreadMutexattrInitForInternalLibc(attr);
+    return scePthreadMutexattrInitForInternalLibc_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadMutexattrSetgen_nid_disambig1_nid_postfix(PthreadMutexattr* attr, int generation) {
-    return scePthreadMutexattrSetgen(attr, generation);
+    return scePthreadMutexattrSetgen_nid_no_patch(attr, generation);
 }
 
 int APS5_VABI scePthreadMutexattrSetkind_nid_disambig1_nid_postfix(PthreadMutexattr* attr, int kind) {
-    return scePthreadMutexattrSetkind(attr, kind);
+    return scePthreadMutexattrSetkind_nid_no_patch(attr, kind);
 }
 
 int APS5_VABI scePthreadMutexattrSetprioceiling_nid_disambig1_nid_postfix(PthreadMutexattr* attr, int prioceiling) {
-    return scePthreadMutexattrSetprioceiling(attr, prioceiling);
+    return scePthreadMutexattrSetprioceiling_nid_no_patch(attr, prioceiling);
 }
 
 int APS5_VABI scePthreadMutexattrSetprotocol_nid_disambig1_nid_postfix(PthreadMutexattr* attr, int protocol) {
-    return scePthreadMutexattrSetprotocol(attr, protocol);
+    return scePthreadMutexattrSetprotocol_nid_no_patch(attr, protocol);
 }
 
 int APS5_VABI scePthreadMutexattrSetpshared_nid_disambig1_nid_postfix(PthreadMutexattr* attr, int pshared) {
-    return scePthreadMutexattrSetpshared(attr, pshared);
+    return scePthreadMutexattrSetpshared_nid_no_patch(attr, pshared);
 }
 
 int APS5_VABI scePthreadMutexattrSettype_nid_disambig1_nid_postfix(PthreadMutexattr* attr, int type) {
-    return scePthreadMutexattrSettype(attr, type);
+    return scePthreadMutexattrSettype_nid_no_patch(attr, type);
 }
 
 int APS5_VABI scePthreadOnce_nid_disambig1_nid_postfix(int32_t* once, void (APS5_VABI* init)(void)) {
-    return scePthreadOnce(once, init);
+    return scePthreadOnce_nid_no_patch(once, init);
 }
 
 int APS5_VABI scePthreadRegisterThreadDeathHook_nid_disambig1_nid_postfix(void) {
-    return scePthreadRegisterThreadDeathHook();
+    return scePthreadRegisterThreadDeathHook_nid_no_patch();
 }
 
 int APS5_VABI scePthreadRename_nid_disambig1_nid_postfix(Pthread thread, const char* name) {
-    return scePthreadRename(thread, name);
+    return scePthreadRename_nid_no_patch(thread, name);
 }
 
 int APS5_VABI scePthreadResume_nid_disambig1_nid_postfix(Pthread thread) {
-    return scePthreadResume(thread);
+    return scePthreadResume_nid_no_patch(thread);
 }
 
 void APS5_VABI scePthreadResumeAll_nid_disambig1_nid_postfix(void) {
-    scePthreadResumeAll();
+    scePthreadResumeAll_nid_no_patch();
 }
 
 int APS5_VABI scePthreadRwlockDestroy_nid_disambig1_nid_postfix(PthreadRwlock* rwlock) {
-    return scePthreadRwlockDestroy(rwlock);
+    return scePthreadRwlockDestroy_nid_no_patch(rwlock);
 }
 
 int APS5_VABI scePthreadRwlockInit_nid_disambig1_nid_postfix(PthreadRwlock* rwlock, const PthreadRwlockattr* attr, const char* name) {
-    return scePthreadRwlockInit(rwlock, attr, name);
+    return scePthreadRwlockInit_nid_no_patch(rwlock, attr, name);
 }
 
 int APS5_VABI scePthreadRwlockRdlock_nid_disambig1_nid_postfix(PthreadRwlock* rwlock) {
-    return scePthreadRwlockRdlock(rwlock);
+    return scePthreadRwlockRdlock_nid_no_patch(rwlock);
 }
 
 int APS5_VABI scePthreadRwlockTimedrdlock_nid_disambig1_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec) {
-    return scePthreadRwlockTimedrdlock(rwlock, usec);
+    return scePthreadRwlockTimedrdlock_nid_no_patch(rwlock, usec);
 }
 
 int APS5_VABI scePthreadRwlockTimedwrlock_nid_disambig1_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec) {
-    return scePthreadRwlockTimedwrlock(rwlock, usec);
+    return scePthreadRwlockTimedwrlock_nid_no_patch(rwlock, usec);
 }
 
 int APS5_VABI scePthreadRwlockTryrdlock_nid_disambig1_nid_postfix(PthreadRwlock* rwlock) {
-    return scePthreadRwlockTryrdlock(rwlock);
+    return scePthreadRwlockTryrdlock_nid_no_patch(rwlock);
 }
 
 int APS5_VABI scePthreadRwlockTrywrlock_nid_disambig1_nid_postfix(PthreadRwlock* rwlock) {
-    return scePthreadRwlockTrywrlock(rwlock);
+    return scePthreadRwlockTrywrlock_nid_no_patch(rwlock);
 }
 
 int APS5_VABI scePthreadRwlockUnlock_nid_disambig1_nid_postfix(PthreadRwlock* rwlock) {
-    return scePthreadRwlockUnlock(rwlock);
+    return scePthreadRwlockUnlock_nid_no_patch(rwlock);
 }
 
 int APS5_VABI scePthreadRwlockWrlock_nid_disambig1_nid_postfix(PthreadRwlock* rwlock) {
-    return scePthreadRwlockWrlock(rwlock);
+    return scePthreadRwlockWrlock_nid_no_patch(rwlock);
 }
 
 int APS5_VABI scePthreadRwlockattrDestroy_nid_disambig1_nid_postfix(PthreadRwlockattr* attr) {
-    return scePthreadRwlockattrDestroy(attr);
+    return scePthreadRwlockattrDestroy_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadRwlockattrGetpshared_nid_disambig1_nid_postfix(const PthreadRwlockattr* attr, int* pshared) {
-    return scePthreadRwlockattrGetpshared(attr, pshared);
+    return scePthreadRwlockattrGetpshared_nid_no_patch(attr, pshared);
 }
 
 int APS5_VABI scePthreadRwlockattrGettype_nid_disambig1_nid_postfix(const PthreadRwlockattr* attr, int* type) {
-    return scePthreadRwlockattrGettype(attr, type);
+    return scePthreadRwlockattrGettype_nid_no_patch(attr, type);
 }
 
 int APS5_VABI scePthreadRwlockattrInit_nid_disambig1_nid_postfix(PthreadRwlockattr* attr) {
-    return scePthreadRwlockattrInit(attr);
+    return scePthreadRwlockattrInit_nid_no_patch(attr);
 }
 
 int APS5_VABI scePthreadRwlockattrSetpshared_nid_disambig1_nid_postfix(PthreadRwlockattr* attr, int pshared) {
-    return scePthreadRwlockattrSetpshared(attr, pshared);
+    return scePthreadRwlockattrSetpshared_nid_no_patch(attr, pshared);
 }
 
 int APS5_VABI scePthreadRwlockattrSettype_nid_disambig1_nid_postfix(PthreadRwlockattr* attr, int type) {
-    return scePthreadRwlockattrSettype(attr, type);
+    return scePthreadRwlockattrSettype_nid_no_patch(attr, type);
 }
 
 Pthread APS5_VABI scePthreadSelf_nid_disambig1_nid_postfix(void) {
-    return scePthreadSelf();
+    return scePthreadSelf_nid_no_patch();
 }
 
 int APS5_VABI scePthreadSemDestroy_nid_disambig1_nid_postfix(PthreadSem* sem) {
-    return scePthreadSemDestroy(sem);
+    return scePthreadSemDestroy_nid_no_patch(sem);
 }
 
 int APS5_VABI scePthreadSemGetvalue_nid_disambig1_nid_postfix(PthreadSem* sem, int* value) {
-    return scePthreadSemGetvalue(sem, value);
+    return scePthreadSemGetvalue_nid_no_patch(sem, value);
 }
 
 int APS5_VABI scePthreadSemInit_nid_disambig1_nid_postfix(PthreadSem* sem, int flag, unsigned int value, const char* name) {
-    return scePthreadSemInit(sem, flag, value, name);
+    return scePthreadSemInit_nid_no_patch(sem, flag, value, name);
 }
 
 int APS5_VABI scePthreadSemPost_nid_disambig1_nid_postfix(PthreadSem* sem) {
-    return scePthreadSemPost(sem);
+    return scePthreadSemPost_nid_no_patch(sem);
 }
 
 int APS5_VABI scePthreadSemTimedwait_nid_disambig1_nid_postfix(PthreadSem* sem, KernelUseconds usec) {
-    return scePthreadSemTimedwait(sem, usec);
+    return scePthreadSemTimedwait_nid_no_patch(sem, usec);
 }
 
 int APS5_VABI scePthreadSemTrywait_nid_disambig1_nid_postfix(PthreadSem* sem) {
-    return scePthreadSemTrywait(sem);
+    return scePthreadSemTrywait_nid_no_patch(sem);
 }
 
 int APS5_VABI scePthreadSemWait_nid_disambig1_nid_postfix(PthreadSem* sem) {
-    return scePthreadSemWait(sem);
+    return scePthreadSemWait_nid_no_patch(sem);
 }
 
 int APS5_VABI scePthreadSetBesteffort_nid_disambig1_nid_postfix(void) {
-    return scePthreadSetBesteffort();
+    return scePthreadSetBesteffort_nid_no_patch();
 }
 
 int APS5_VABI scePthreadSetDefaultstacksize_nid_disambig1_nid_postfix(std::size_t size) {
-    return scePthreadSetDefaultstacksize(size);
+    return scePthreadSetDefaultstacksize_nid_no_patch(size);
 }
 
 void APS5_VABI scePthreadSetName_nid_disambig1_nid_postfix(Pthread thread, const char* name) {
-    scePthreadSetName(thread, name);
+    scePthreadSetName_nid_no_patch(thread, name);
 }
 
 int APS5_VABI scePthreadSetaffinity_nid_disambig1_nid_postfix(Pthread thread, KernelCpumask mask) {
-    return scePthreadSetaffinity(thread, mask);
+    return scePthreadSetaffinity_nid_no_patch(thread, mask);
 }
 
 int APS5_VABI scePthreadSetcancelstate_nid_disambig1_nid_postfix(int state, int* old_state) {
-    return scePthreadSetcancelstate(state, old_state);
+    return scePthreadSetcancelstate_nid_no_patch(state, old_state);
 }
 
 int APS5_VABI scePthreadSetcanceltype_nid_disambig1_nid_postfix(int type, int* old_type) {
-    return scePthreadSetcanceltype(type, old_type);
+    return scePthreadSetcanceltype_nid_no_patch(type, old_type);
 }
 
 int APS5_VABI scePthreadSetconcurrency_nid_disambig1_nid_postfix(int level) {
-    return scePthreadSetconcurrency(level);
+    return scePthreadSetconcurrency_nid_no_patch(level);
 }
 
 int APS5_VABI scePthreadSetprio_nid_disambig1_nid_postfix(Pthread thread, int prio) {
-    return scePthreadSetprio(thread, prio);
+    return scePthreadSetprio_nid_no_patch(thread, prio);
 }
 
 int APS5_VABI scePthreadSetschedparam_nid_disambig1_nid_postfix(Pthread thread, int policy, const KernelSchedParam* param) {
-    return scePthreadSetschedparam(thread, policy, param);
+    return scePthreadSetschedparam_nid_no_patch(thread, policy, param);
 }
 
 int APS5_VABI scePthreadSetspecific_nid_disambig1_nid_postfix(PthreadKey key, void* value) {
-    return scePthreadSetspecific(key, value);
+    return scePthreadSetspecific_nid_no_patch(key, value);
 }
 
 int APS5_VABI scePthreadSingle_nid_disambig1_nid_postfix(void) {
-    return scePthreadSingle();
+    return scePthreadSingle_nid_no_patch();
 }
 
 int APS5_VABI scePthreadSuspend_nid_disambig1_nid_postfix(void) {
-    return scePthreadSuspend();
+    return scePthreadSuspend_nid_no_patch();
 }
 
 int APS5_VABI scePthreadSuspendAll_nid_disambig1_nid_postfix(void) {
-    return scePthreadSuspendAll();
+    return scePthreadSuspendAll_nid_no_patch();
 }
 
 void APS5_VABI scePthreadTestcancel_nid_disambig1_nid_postfix(void) {
-    scePthreadTestcancel();
+    scePthreadTestcancel_nid_no_patch();
 }
 
 int APS5_VABI scePthreadTimedjoin_nid_disambig1_nid_postfix(Pthread thread, void** value, KernelUseconds usec) {
-    return scePthreadTimedjoin(thread, value, usec);
+    return scePthreadTimedjoin_nid_no_patch(thread, value, usec);
 }
 
 void APS5_VABI scePthreadYield_nid_disambig1_nid_postfix(void) {
-    scePthreadYield();
+    scePthreadYield_nid_no_patch();
 }
 
 int APS5_VABI sched_get_priority_max_nid_disambig1_nid_postfix(int policy) {
@@ -4431,7 +4431,7 @@ int APS5_VABI libkernel_webUnknown_Ishr1Sdu024_nid_no_patch() {
 APS5_EXPORT("Ishr1Sdu024", libkernel_webUnknown_Ishr1Sdu024_nid_no_patch);
 
 int APS5_VABI sceCoredumpGetStopInfoGpu_Agc_nid_disambig1_nid_postfix(void* info, size_t size) {
-    return sceCoredumpGetStopInfoGpu_Agc(info, size);
+    return sceCoredumpGetStopInfoGpu_Agc_nid_no_patch(info, size);
 }
 
 int APS5_VABI libkernel_webUnknown_KoDy4Jazz40_nid_no_patch() {
@@ -4590,7 +4590,7 @@ int APS5_VABI libkernel_webUnknown_k_plus_J3KBjfkNk_nid_no_patch() {
 APS5_EXPORT("k+J3KBjfkNk", libkernel_webUnknown_k_plus_J3KBjfkNk_nid_no_patch);
 
 int64_t APS5_VABI sceKernelWritev_nid_disambig1_nid_postfix(int d, const KernelIovec* guestIov, int iovcnt) {
-    return sceKernelWritev(d, guestIov, iovcnt);
+    return sceKernelWritev_nid_no_patch(d, guestIov, iovcnt);
 }
 
 int APS5_VABI libkernel_webUnknown_km8Fr2Jn4Gg_nid_no_patch() {
@@ -4599,7 +4599,7 @@ int APS5_VABI libkernel_webUnknown_km8Fr2Jn4Gg_nid_no_patch() {
 APS5_EXPORT("km8Fr2Jn4Gg", libkernel_webUnknown_km8Fr2Jn4Gg_nid_no_patch);
 
 int64_t APS5_VABI sceKernelPwritev_nid_disambig1_nid_postfix(int d, const KernelIovec* guestIov, int iovcnt, int64_t offset) {
-    return sceKernelPwritev(d, guestIov, iovcnt, offset);
+    return sceKernelPwritev_nid_no_patch(d, guestIov, iovcnt, offset);
 }
 
 int APS5_VABI libkernel_webUnknown_mIkJUpP5vKo_nid_no_patch() {
@@ -4677,7 +4677,7 @@ int APS5_VABI libkernel_webUnknown_xpB6yv8NhhE_nid_no_patch() {
 APS5_EXPORT("xpB6yv8NhhE", libkernel_webUnknown_xpB6yv8NhhE_nid_no_patch);
 
 int64_t APS5_VABI sceKernelPreadv_nid_disambig1_nid_postfix(int d, const KernelIovec* guestIov, int iovcnt, int64_t offset) {
-    return sceKernelPreadv(d, guestIov, iovcnt, offset);
+    return sceKernelPreadv_nid_no_patch(d, guestIov, iovcnt, offset);
 }
 
 int APS5_VABI pthread_setschedother_np_nid_disambig1_nid_postfix(void) {
