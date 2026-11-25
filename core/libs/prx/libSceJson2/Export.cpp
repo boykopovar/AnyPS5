@@ -343,9 +343,12 @@ bool SearchEqual(const char* left, const char* right, std::size_t count) {
 }
 
 bool GuestBufferReadable(const void* address, std::size_t size) {
+    if (!address) return false;
+    const auto raw = reinterpret_cast<std::uintptr_t>(address);
+    if (raw > UINTPTR_MAX - size) return false;
     char chunk[4096];
     for (std::size_t offset = 0; offset < size;) {
-        const auto current = reinterpret_cast<std::uintptr_t>(address) + offset;
+        const auto current = raw + offset;
         const std::size_t step = std::min(sizeof(chunk) - current % sizeof(chunk), size - offset);
         const int savedErrno = errno;
         const bool read = GuestCopyIn_nid_no_patch(chunk, static_cast<const char*>(address) + offset, step);
@@ -357,10 +360,14 @@ bool GuestBufferReadable(const void* address, std::size_t size) {
 }
 
 bool GuestTextLength(const char* text, std::size_t& length) {
+    if (!text) return false;
+    const auto raw = reinterpret_cast<std::uintptr_t>(text);
     char chunk[4096];
     for (std::size_t offset = 0;;) {
-        const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
+        if (raw > UINTPTR_MAX - offset) return false;
+        const auto address = raw + offset;
         const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
+        if (address > UINTPTR_MAX - count) return false;
         const int savedErrno = errno;
         const bool read = GuestCopyIn_nid_no_patch(chunk, text + offset, count);
         errno = savedErrno;
@@ -375,11 +382,12 @@ bool GuestTextLength(const char* text, std::size_t& length) {
 
 std::size_t FindText(const String& string, const char* needle, std::size_t position, std::size_t count) {
     constexpr auto missing = std::numeric_limits<std::size_t>::max();
+    if (!needle) { NotImplemented_nid_no_patch(__func__); return missing; }
+    if (!GuestBufferReadable(needle, count)) return missing;
     if (!string.text) return missing;
     const std::size_t length = string.text->length;
     if (!count) return position <= length ? position : missing;
     if (position >= length || count > length - position) return missing;
-    if (!needle || !GuestBufferReadable(needle, count)) { NotImplemented_nid_no_patch(__func__); return missing; }
     const char* begin = string.text->characters;
     const char* cursor = begin + position;
     while (cursor < begin + length) {
@@ -393,11 +401,12 @@ std::size_t FindText(const String& string, const char* needle, std::size_t posit
 
 std::size_t ReverseFindText(const String& string, const char* needle, std::size_t position, std::size_t count) {
     constexpr auto missing = std::numeric_limits<std::size_t>::max();
+    if (!needle) { NotImplemented_nid_no_patch(__func__); return missing; }
+    if (!GuestBufferReadable(needle, count)) return missing;
     if (!string.text) return missing;
     const std::size_t length = string.text->length;
     if (!count) return std::min(position, length);
     if (count > length) return missing;
-    if (!needle || !GuestBufferReadable(needle, count)) { NotImplemented_nid_no_patch(__func__); return missing; }
     std::size_t index = std::min(position, length - count);
     for (;;) {
         const char* candidate = string.text->characters + index;
