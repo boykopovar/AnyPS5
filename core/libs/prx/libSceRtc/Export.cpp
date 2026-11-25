@@ -1,5 +1,4 @@
 #include "prx/libSceRtc/include/Rtc.hpp"
-#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
@@ -146,9 +145,7 @@ std::uint64_t currentTick(std::size_t clock = 0) {
 int setCurrentTick(std::size_t clock, const RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
     RtcTick source{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&source, tick, sizeof(source));
-    errno = savedErrno;
     if (!copied) return SCE_RTC_ERROR_INVALID_POINTER;
     if (source.tick < UNIX_EPOCH_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
     std::lock_guard lock(clockMutex);
@@ -157,13 +154,11 @@ int setCurrentTick(std::size_t clock, const RtcTick* tick) {
 }
 
 bool hostLocalTime(std::time_t seconds, std::tm& local) {
-    const int savedErrno = errno;
 #ifdef _WIN32
     const bool converted = localtime_s(&local, &seconds) == 0;
 #else
     const bool converted = localtime_r(&seconds, &local) != nullptr;
 #endif
-    errno = savedErrno;
     return converted;
 }
 
@@ -195,21 +190,16 @@ int localOffsetMinutes(const RtcTick& utc) {
 
 template <typename T>
 bool readGuest(const T* source, T& destination) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
-    errno = savedErrno;
     return copied;
 }
 
 bool writeGuest(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
 int readGuestString(const char* source, std::string& destination) {
-    const int savedErrno = errno;
     const auto limit = destination.max_size();
     std::size_t maximum = 64;
     int result;
@@ -218,7 +208,6 @@ int readGuestString(const char* source, std::string& destination) {
         if (result != 63 || maximum == limit) break;
         maximum = maximum > limit / 2 ? limit : maximum * 2;
     }
-    errno = savedErrno;
     if (result == 0) return 0;
     return result == 14 ? SCE_RTC_ERROR_INVALID_POINTER : SCE_RTC_ERROR_BAD_PARSE;
 }
@@ -244,22 +233,17 @@ int addTicks(RtcTick* dst, const RtcTick* src, std::int64_t count, std::int64_t 
 int addTicksWrapping(RtcTick* dst, const RtcTick* src, std::int64_t count, std::int64_t unit) {
     if (!dst || !src) return SCE_RTC_ERROR_INVALID_POINTER;
     RtcTick source{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&source, src, sizeof(source));
-    errno = savedErrno;
     if (!copied) return SCE_RTC_ERROR_INVALID_POINTER;
     const RtcTick result{source.tick + static_cast<std::uint64_t>(count) * static_cast<std::uint64_t>(unit)};
     const bool written = GuestCopyOut_nid_no_patch(dst, &result, sizeof(result));
-    errno = savedErrno;
     return written ? 0 : SCE_RTC_ERROR_INVALID_POINTER;
 }
 
 int addMonths(RtcTick* dst, const RtcTick* src, std::int32_t months) {
     if (!dst || !src) return SCE_RTC_ERROR_INVALID_POINTER;
     RtcTick source{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&source, src, sizeof(source));
-    errno = savedErrno;
     if (!copied) return SCE_RTC_ERROR_INVALID_POINTER;
     RtcDateTime time = fromTick(source.tick);
     const auto index = static_cast<std::int32_t>(static_cast<std::uint32_t>(time.year) * 12u + time.month + static_cast<std::uint32_t>(months) - 1u);
@@ -272,7 +256,6 @@ int addMonths(RtcTick* dst, const RtcTick* src, std::int32_t months) {
     if (time.day > lastDay) time.day = static_cast<std::uint16_t>(lastDay);
     const RtcTick result{toTick(time)};
     const bool written = GuestCopyOut_nid_no_patch(dst, &result, sizeof(result));
-    errno = savedErrno;
     return written ? 0 : SCE_RTC_ERROR_INVALID_POINTER;
 }
 
