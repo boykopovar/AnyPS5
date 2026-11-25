@@ -542,9 +542,6 @@ bool MemoryProfiled() {
     return profile;
 }
 
-// The caller and read-site samples are printed only on the [guestmem] line, which needs
-// APS5_PROFILE_DRAW (TimedAccess). Without it nothing reads them, and a sample costs a dladdr and
-// a mutex on the reading thread, so they are not taken.
 void CountReadCaller(const void* returnAddress) {
     if (!MemoryProfiled()) return;
     thread_local std::uint32_t sampled = 0;
