@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -258,6 +259,12 @@ class TimelineTests(unittest.TestCase):
         text = trace_timeline.svg(laid)
         self.assertIn("&lt;script&gt;", text)
         self.assertNotIn("<script>", text)
+
+    def test_svg_replaces_invalid_xml_characters_in_present_labels(self):
+        laid = trace_timeline.layout([], 0, 2000, 1000, presents=[(1000, "frame\x00\ufffe<&")])
+        root = ET.fromstring(trace_timeline.svg(laid))
+        titles = [element.text for element in root.iter("{http://www.w3.org/2000/svg}title")]
+        self.assertEqual(titles, ["Present frame\ufffd\ufffd<& at 1.000 ms"])
 
     def test_the_cli_writes_html_and_rejects_a_missing_file(self):
         path = Path(self.tmp.name) / "a.json.gz"

@@ -78,7 +78,7 @@ def svg(laid):
         parts.append('<text x="2" y="13" font-size="11">Presents</text>')
     for x, ts, number in laid["presents"]:
         name = "Present" if number is None else f"Present {number}"
-        title = html.escape(f"{name} at {ts / 1000.0:.3f} ms")
+        title = escape_text(f"{name} at {ts / 1000.0:.3f} ms")
         parts.append(f'<line x1="{x:.2f}" x2="{x:.2f}" y1="2" y2="{ROW_HEIGHT - 2}" stroke="#a34425" stroke-width="2"><title>{title}</title></line>')
     for name, y in laid["threads"]:
         parts.append(f'<text x="2" y="{y + 13}" font-size="11">{escape_text(name)}</text>')
