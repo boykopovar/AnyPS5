@@ -909,7 +909,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE: ${{ needs.eligibility.outputs.sha }}
-        run: git diff --name-only "$BASE" HEAD > changed.txt
+        run: git diff --name-only -z "$BASE" HEAD -- > changed.txt
       - name: Link changed host-only core/libs test executables
         if: github.event_name == 'pull_request'
         shell: cmd
@@ -972,6 +972,9 @@ jobs:
         with:
           path: test-graph.json
           key: test-graph-${{ runner.os }}-${{ github.sha }}
+      - name: Report compiler cache statistics
+        if: ${{ !cancelled() }}
+        run: ccache --show-stats
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}
         shell: bash

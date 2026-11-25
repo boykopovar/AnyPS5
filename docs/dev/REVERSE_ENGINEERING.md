@@ -101,6 +101,10 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    `--no-names` prints the NIDs instead. Disassembly requires GNU binutils `objdump` with x86-64 support. On ARM Linux,
    put `x86_64-linux-gnu-objdump` on `PATH` if the host `objdump` cannot disassemble x86-64.
 
+   In the assembly listing, `LEA` instructions that compute the exact address of an exported function or data
+   object relative to the instruction pointer show `; address of <name>`. This also covers zero-initialized
+   objects in the module's memory image.
+
    On stripped modules, look for `unwind_<address>` in the assembly listing. These labels mark unnamed code ranges
    from the ELF unwind index when the listing has an instruction at that address. Direct calls and jumps to a
    labeled range start carry the same label. One function can have several ranges.
@@ -116,13 +120,15 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    from Ghidra's Jython extension with this map. Function exports inside executable file-backed segments get `f`;
    aliases at the same address get `l`, keeping one function name. Unnamed `DT_INIT` and `DT_FINI` functions inside
    executable file-backed segments get `elf_init` and `elf_fini`; an existing function export keeps its name.
-   Import slots are `imp_` labels and other exports are labels too. TLS exports and
-   unallocated common symbols are omitted because their values are not addresses. Names use ASCII letters, digits and
+   Import slots are `imp_` labels. The Ghidra map and assembly listing omit labels for absolute symbols (including
+   linker constants and ELF version names), TLS offsets and unallocated common symbols. The text and JSON export
+   inventories retain these symbols. Names use ASCII letters, digits and
    underscores: other characters become underscores, a leading digit gets an underscore prefix, and names are limited
    to Ghidra's 2000 characters. Collisions get `_2`, `_3`, and so on within that limit.
    Initialization and cleanup arrays add `elf_init_array_<index>`, `elf_fini_array_<index>` and, for executables,
    `elf_preinit_array_<index>` function entries. The tool reads stored pointers and resolves `R_X86_64_RELATIVE`
-   and defined, non-TLS, non-IFUNC `R_X86_64_64` targets. Entries requiring runtime resolution, conflicting or
+   and defined, non-TLS, non-IFUNC `R_X86_64_64` targets. An absolute relocation target can identify an image address
+   in a fixed-address executable. Entries requiring runtime resolution, conflicting or
    overlapping relocations, and targets without executable file backing are omitted. Existing function exports
    keep their names. This static map does not execute initializers or apply runtime symbol interposition.
 

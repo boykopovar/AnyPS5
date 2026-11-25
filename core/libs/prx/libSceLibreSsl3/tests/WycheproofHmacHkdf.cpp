@@ -134,7 +134,7 @@ void CheckHkdfVectors() {
 
         if (sizeBytes > limit) {
             Require(result == 0);
-            Require(out.size() == 0 || std::memcmp(out.data(), okm.data(), std::min(out.size(), okm.size())) == 0);
+            Require(out.size() == 0 || okm.empty() || std::memcmp(out.data(), okm.data(), std::min(out.size(), okm.size())) == 0);
         }
     }
 }
