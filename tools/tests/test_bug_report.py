@@ -92,6 +92,12 @@ class SettingsTests(unittest.TestCase):
 
 
 class BundleTests(unittest.TestCase):
+    def test_host_section_is_redacted_like_the_other_bundle_sections(self):
+        with patch.object(bug_report, "host_text", return_value="os: serverfestivo build for ana\n"):
+            out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(bundle.read("host.txt"), b"os: <host> build for <user>\n")
+
     identity = {"home": "/home/ana", "user": "ana", "host": "serverfestivo"}
 
     def setUp(self):
@@ -227,6 +233,16 @@ class BundleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.bundle()
         self.assertFalse((self.root / "bundle.zip").exists())
+
+    def test_failed_bundle_write_can_be_retried(self):
+        out = self.root / "bundle.zip"
+        with patch.object(zipfile.ZipFile, "writestr", side_effect=OSError("injected write failure")):
+            with self.assertRaisesRegex(OSError, "injected write failure"):
+                self.bundle()
+        self.assertFalse(out.exists())
+        _, names = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(sorted(bundle.namelist()), names)
 
     def test_existing_bundle_is_not_overwritten(self):
         (self.root / "bundle.zip").write_bytes(b"keep")

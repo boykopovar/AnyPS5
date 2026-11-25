@@ -638,6 +638,7 @@ public:
     void setHost(StringView);
     void setHostAndPort(StringView);
     void setUser(StringView);
+    void setPassword(StringView);
     void removeCredentials();
     void setFragmentIdentifier(StringView);
     void setQuery(StringView);
@@ -3730,6 +3731,26 @@ void URL::setUser(StringView newUser)
     }
 }
 
+void URL::setPassword(StringView newPassword)
+{
+    if (!m_isValid)
+        return;
+
+    if (!newPassword.isEmpty()) {
+        bool needLeadingSlashes = m_userEnd == m_schemeEnd + 1U;
+        parse(makeString(
+            StringView(m_string).left(m_userEnd),
+            needLeadingSlashes ? "//:" : ":",
+            percentEncodeCharacters(newPassword.toStringWithoutCopying(), URLParser::isInUserInfoEncodeSet),
+            '@',
+            StringView(m_string).substring(credentialsEnd())
+        ));
+    } else {
+        unsigned end = m_userStart == m_userEnd ? credentialsEnd() : m_passwordEnd;
+        remove(m_userEnd, end - m_userEnd);
+    }
+}
+
 void URL::removeCredentials()
 {
     if (!m_isValid)
@@ -3868,6 +3889,16 @@ NKWebKit::WtfAbi::URL ToAbiResult(const Port::URL& url)
     NKWebKit::WtfAbi::URL result {};
     ToAbi(url, &result);
     return result;
+}
+
+}
+
+namespace NKWebKit::WtfAbi {
+
+void SetUrlPassword(URL* self, StringView password)
+{
+    auto view = ViewFromAbi(password, "setPassword");
+    Mutate(self, "setPassword", [&](Port::URL& url) { url.setPassword(view); });
 }
 
 }

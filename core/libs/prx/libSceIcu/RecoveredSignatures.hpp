@@ -211,7 +211,10 @@ void APS5_VABI unumf_resultGetAllFieldPositions_nid_postfix(const UFormattedNumb
 std::int32_t APS5_VABI unumf_resultToString_nid_postfix(const UFormattedNumber* result, char16_t* buffer, std::int32_t bufferCapacity, std::int32_t* status);
 
 void APS5_VABI unumsys_close_nid_postfix(UNumberingSystem* unumsys);
+const char* APS5_VABI unumsys_getName_nid_postfix(const UNumberingSystem* unumsys);
+std::int8_t APS5_VABI unumsys_isAlgorithmic_nid_postfix(const UNumberingSystem* unumsys);
 UNumberingSystem* APS5_VABI unumsys_open_nid_postfix(const char* locale, std::int32_t* status);
+UEnumeration* APS5_VABI unumsys_openAvailableNames_nid_postfix(std::int32_t* status);
 UNumberingSystem* APS5_VABI unumsys_openByName_nid_postfix(const char* name, std::int32_t* status);
 const char* APS5_VABI unumsys_getName_nid_postfix(const UNumberingSystem*);
 std::int8_t APS5_VABI unumsys_isAlgorithmic_nid_postfix(const UNumberingSystem*);

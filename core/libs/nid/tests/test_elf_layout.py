@@ -31,6 +31,24 @@ class ElfLayoutTests(unittest.TestCase):
                 struct.pack_into("<" + kind, image, offset, value)
                 self.reject(image)
 
+    def test_dynamic_section_layout_is_checked(self):
+        for size, entry_size in ((16, 0), (16, 8), (16, 24), (17, 16)):
+            with self.subTest(size=size, entry_size=entry_size):
+                image = build_image(symbols(False), False)
+                struct.pack_into("<H", image, 0x3c, 5)
+                struct.pack_into("<IIQQQQIIQQ", image, SHOFF + 4 * 64,
+                                 0, 6, 2, 0, 0x680, size, 2, 0, 8, entry_size)
+                self.reject(image)
+
+    def test_valid_dynamic_section_layout_still_patches(self):
+        image = build_image(symbols(False), False)
+        struct.pack_into("<H", image, 0x3c, 5)
+        struct.pack_into("<IIQQQQIIQQ", image, SHOFF + 4 * 64,
+                         0, 6, 2, 0, 0x680, 16, 2, 0, 8, 16)
+        result, after = patch(PATCHER, bytes(image), "dynamic-layout.so")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(after, image)
+
     def reject(self, image):
         result, after = patch(PATCHER, bytes(image), "layout.so")
         self.assertEqual(result.returncode, 2, (result.returncode, result.stderr))

@@ -1,9 +1,11 @@
 import argparse
 import bisect
 import functools
+import io
 import posixpath
 import re
 import sys
+import tokenize
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -109,8 +111,8 @@ def default_of(match, window):
     default = match.groupdict().get("default")
     if default:
         return default
-    found = re.search(r"\?[\s\S]*?:\s*(" + INTEGER + ")", window)
-    return found.group(1) if found else ""
+    found = re.search(r"\?[\s\S]*?:\s*([+-]?)\s*(" + INTEGER + ")", window)
+    return "".join(found.groups()) if found else ""
 
 
 def expression_window(text, code, matches, match, start, end):
@@ -159,6 +161,17 @@ def cpp_reads(text):
         return text
     return CPP_TOKEN.sub(lambda match: NON_NEWLINE.sub(" ", match.group())
                          if match.lastgroup in ("comment", "raw", "char") else match.group(), text)
+
+
+def python_reads(text):
+    offsets = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
+    result = list(text)
+    for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        if token.type == tokenize.COMMENT:
+            start = offsets[token.start[0] - 1] + token.start[1]
+            end = offsets[token.end[0] - 1] + token.end[1]
+            result[start:end] = " " * (end - start)
+    return "".join(result)
 
 
 def _blank_non_code(text):
@@ -255,13 +268,13 @@ def computed_reads(text, prefixes=PREFIXES):
                      default=None)
         bound = _loop_bound(expand[3], text) if expand else None
         ident = match.group("ident")
-        if bound is not None and bound > 0:
+        if bound is not None:
             start = _integer(expand[2])
             offset = _integer(match.group("offset")) if match.group("offset") else 0
             if match.group("sign") == "-":
                 offset = -offset
             names.setdefault(ident, set()).update(match.group("prefix") + str(value) + match.group("suffix")
-                                                  for value in range(start + offset, start + offset + bound))
+                                                  for value in range(start + offset, bound + offset))
         else:
             wildcards.setdefault(ident, set()).add(match.group("prefix") + "*" + match.group("suffix"))
     found = []
@@ -381,14 +394,17 @@ def reads(roots, prefixes=PREFIXES):
         text = cleaned.get(path)
         if text is None:
             raw = raw_by_path[path]
-            text = cpp_reads(raw) if path.suffix != ".py" else raw
+            try:
+                text = python_reads(raw) if path.suffix == ".py" else cpp_reads(raw)
+            except (tokenize.TokenError, IndentationError, SyntaxError) as error:
+                raise ValueError(f"cannot tokenize {path.as_posix()}: {error}") from error
             cleaned[path] = text
         return text
 
     def commentless_of(path):
         text = uncommented_cache.get(path)
         if text is None:
-            text = text_of(path) if path.suffix != ".py" else uncommented(raw_by_path[path])
+            text = text_of(path) if path.suffix != ".py" else uncommented(text_of(path))
             uncommented_cache[path] = text
         return text
 
