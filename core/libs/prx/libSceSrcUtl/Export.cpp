@@ -1,6 +1,5 @@
 #include "prx/libSceSrcUtl/include/Api.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <iterator>
@@ -37,12 +36,9 @@ bool IsRate(const std::uint32_t (&rates)[N], std::uint32_t rate) {
 bool HandleIsInitialized(const void* handle) {
     if (handle == nullptr) return false;
     std::uint64_t magic = 0;
-    const int savedErrno = errno;
     if (!GuestCopyIn_nid_no_patch(&magic, static_cast<const std::byte*>(handle) + SRC_UTILITY_MAGIC_OFFSET, sizeof(magic))) {
-        errno = savedErrno;
         return false;
     }
-    errno = savedErrno;
     return magic == SRC_UTILITY_MAGIC;
 }
 
@@ -55,9 +51,7 @@ int CheckParameters(std::uint32_t channels, std::uint32_t mode, std::uint32_t in
 }
 
 bool ReadHandleWord(const void* handle, std::size_t offset, std::uint32_t& value) {
-    const int savedErrno = errno;
     const bool read = GuestCopyIn_nid_no_patch(&value, static_cast<const std::byte*>(handle) + offset, sizeof(value));
-    errno = savedErrno;
     return read;
 }
 
@@ -99,12 +93,9 @@ int APS5_VABI sceSrcUtilityGetAjmContext(const void* handle, std::uint32_t* cont
     if (context == nullptr) return 0;
     std::uint32_t value = 0;
     if (!ReadHandleWord(handle, SRC_UTILITY_AJM_CONTEXT_OFFSET, value)) return SRC_UTILITY_ERROR_INVALID_HANDLE;
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(context, &value, sizeof(value))) {
-        errno = savedErrno;
         return SRC_UTILITY_ERROR_INVALID_POINTER;
     }
-    errno = savedErrno;
     return 0;
 }
 
@@ -123,12 +114,9 @@ int APS5_VABI sceSrcUtilityGetPriority(const void* handle, std::uint32_t* priori
     if (priority == nullptr) return SRC_UTILITY_ERROR_INVALID_POINTER;
     std::uint32_t value = 0;
     if (!ReadHandleWord(handle, SRC_UTILITY_PRIORITY_OFFSET, value)) return SRC_UTILITY_ERROR_INVALID_HANDLE;
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(priority, &value, sizeof(value))) {
-        errno = savedErrno;
         return SRC_UTILITY_ERROR_INVALID_POINTER;
     }
-    errno = savedErrno;
     return 0;
 }
 
@@ -155,12 +143,9 @@ int APS5_VABI sceSrcUtilityResample(void* handle, std::int32_t argument1) {
 
 int APS5_VABI sceSrcUtilitySetPriority(void* handle, std::uint32_t priority) {
     if (handle == nullptr || !HandleIsInitialized(handle)) return SRC_UTILITY_ERROR_INVALID_HANDLE;
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(static_cast<std::byte*>(handle) + SRC_UTILITY_PRIORITY_OFFSET, &priority, sizeof(priority))) {
-        errno = savedErrno;
         return SRC_UTILITY_ERROR_INVALID_HANDLE;
     }
-    errno = savedErrno;
     return 0;
 }
 int APS5_VABI sceSrcUtilityTerminateEx() {
