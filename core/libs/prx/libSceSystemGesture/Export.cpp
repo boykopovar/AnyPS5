@@ -2,7 +2,6 @@
 #include "prx/libSceSystemGesture/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
-#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
@@ -175,16 +174,13 @@ int APS5_VABI sceSystemGestureCreateTouchRecognizer(int32_t gestureHandle, Syste
     state.magic = RECOGNIZER_STATE_MAGIC;
     state.gestureType = type;
     state.hasRectangle = rectangle ? 1 : 0;
-    const int savedErrno = errno;
     if (rectangle) {
         SystemGestureRectangle localRectangle{};
         const bool readRectangle = GuestCopyIn_nid_no_patch(&localRectangle, rectangle, sizeof(localRectangle));
-        errno = savedErrno;
         if (!readRectangle) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
         state.rectangle = localRectangle;
     }
     const bool written = GuestCopyOut_nid_no_patch(recognizer, &state, sizeof(state));
-    errno = savedErrno;
     if (!written) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     return 0;
 }
@@ -228,24 +224,19 @@ int APS5_VABI sceSystemGestureGetPrimitiveTouchEvents(int32_t gestureHandle, Sys
     if (!findGestureContext(gestureHandle)) return SCE_SYSTEM_GESTURE_ERROR_INVALID_HANDLE;
     const std::uint32_t reported = static_cast<std::uint32_t>(std::min<std::size_t>(findGestureContext(gestureHandle)->touches.size(), capacityOfBuffer));
     std::uint32_t originalNumberOfEvent = 0;
-    const int savedErrno = errno;
     if (!GuestCopyIn_nid_no_patch(&originalNumberOfEvent, numberOfEvent, sizeof(originalNumberOfEvent))) {
-        errno = savedErrno;
         return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     }
     if (reported > 0) {
         std::vector<SystemGesturePrimitiveTouchEvent> events(reported);
         for (std::uint32_t i = 0; i < reported; ++i) events[i] = buildPrimitiveTouchEvent(findGestureContext(gestureHandle)->touches[i]);
         if (!GuestCopyOut_nid_no_patch(eventBuffer, events.data(), sizeof(SystemGesturePrimitiveTouchEvent) * reported)) {
-            errno = savedErrno;
             return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
         }
     }
     if (!GuestCopyOut_nid_no_patch(numberOfEvent, &reported, sizeof(reported))) {
-        errno = savedErrno;
         return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     }
-    errno = savedErrno;
     return 0;
 }
 
@@ -309,19 +300,15 @@ int APS5_VABI sceSystemGestureGetTouchRecognizerInformation(int32_t gestureHandl
     if (!state.hasRectangle)
         throw std::runtime_error(std::string(__func__) + ": recognizer was created without a rectangle");
     SystemGestureTouchRecognizerInformation info{};
-    const int savedErrno = errno;
     if (!GuestCopyIn_nid_no_patch(&info, information, sizeof(info))) {
-        errno = savedErrno;
         return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     }
     info.gesture_type = state.gestureType;
     info.rectangle = state.rectangle;
     info.updated_time = 0;
     if (!GuestCopyOut_nid_no_patch(information, &info, sizeof(info))) {
-        errno = savedErrno;
         return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     }
-    errno = savedErrno;
     return 0;
 }
 
@@ -385,9 +372,7 @@ int APS5_VABI sceSystemGestureUpdatePrimitiveTouchRecognizer(int32_t gestureHand
     if (!gestureInitialized) return static_cast<int>(0x80890003);
     if (!input) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     SystemGestureTouchPadData localInput{};
-    const int savedErrno = errno;
     const bool readInput = GuestCopyIn_nid_no_patch(&localInput, input, sizeof(localInput));
-    errno = savedErrno;
     if (!readInput || !localInput.pad_data_buffer) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     auto* context = findGestureContext(gestureHandle);
     if (!context) return SCE_SYSTEM_GESTURE_ERROR_INVALID_HANDLE;
@@ -395,7 +380,6 @@ int APS5_VABI sceSystemGestureUpdatePrimitiveTouchRecognizer(int32_t gestureHand
     if (localInput.report_number == 1) {
         PadData report{};
         const bool readReport = GuestCopyIn_nid_no_patch(&report, localInput.pad_data_buffer, sizeof(report));
-        errno = savedErrno;
         if (!readReport) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
         sampleReport(context->touches, report);
     }
@@ -417,19 +401,15 @@ int APS5_VABI sceSystemGestureUpdateTouchRecognizerRectangle(int32_t gestureHand
     if (!recognizer) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     if (!rectangle) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     RecognizerState state{};
-    const int savedErrno = errno;
     const bool readState = GuestCopyIn_nid_no_patch(&state, recognizer, sizeof(state));
-    errno = savedErrno;
     if (!readState) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     if (state.magic == RECOGNIZER_STATE_MAGIC) {
         SystemGestureRectangle localRectangle{};
         const bool readRectangle = GuestCopyIn_nid_no_patch(&localRectangle, rectangle, sizeof(localRectangle));
-        errno = savedErrno;
         if (!readRectangle) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
         state.hasRectangle = 1;
         state.rectangle = localRectangle;
         const bool written = GuestCopyOut_nid_no_patch(recognizer, &state, sizeof(state));
-        errno = savedErrno;
         if (!written) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     }
     return 0;
