@@ -1,0 +1,5 @@
+# libSceGameLiveStreaming
+
+## add Functional
+
+- [Separate screen mode, guard areas and broadcast controls](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - implement the 18 initialized paths for `ScreenInitialize`/`ScreenTerminate`/`ScreenConfigureSeparateMode`/`ScreenOpenSeparateMode`/`ScreenCloseSeparateMode`/`ScreenSetMode`, `SetGuardAreas` (0..8 float4 rects clamped to `[0.0f, 1.0f]`), `SetServiceProviderPermission`/`SetDefaultServiceProviderPermission`, `StartGenerateStandbyScreenResource`/`StopGenerateStandbyScreenResource`, `CheckCallback`, `GetCurrentBroadcastScreenLayout` (zeroed 32-byte layout), `StartSocialFeedbackMessageFiltering`/`StopSocialFeedbackMessageFiltering`, `SetLinkCommentPreset`, and `StartDebugBroadcast`/`StopDebugBroadcast` per firmware 13.60 `libSceGameLiveStreaming.sprx` disassembly (`0xca0..0x1150`, `0x26f0..0x2bd0`, `0x3510`, `0x40c0..0x48a0`, `0x4ce0`, `0x4d10`, not measured on a console), assuming offline no-op service replies and host-safety error returns on unreadable pointers.

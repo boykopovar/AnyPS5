@@ -1,5 +1,6 @@
 #include "prx/libSceGameLiveStreaming/include/Api.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -12,18 +13,27 @@
 
 static std::mutex g_mutex;
 static bool g_initialized = false;
+static bool g_screenInitialized = false;
+static bool g_separateModeOpen = false;
+static std::uint32_t g_screenMode = 1;
+static std::array<std::uint8_t, 0x44> g_separateModeConfig{};
+static std::size_t g_guardAreaCount = 0;
+static std::array<float, 32> g_guardAreas{};
 static void* g_callback = nullptr;
 static void* g_callbackUserData = nullptr;
 static constexpr int ErrorInvalidArgument = static_cast<int>(0x80A00002);
 static constexpr int ErrorAlreadyInitialized = static_cast<int>(0x80A00003);
 static constexpr int ErrorNotInitialized = static_cast<int>(0x80A00004);
+static constexpr int ErrorScreenNotInitialized = static_cast<int>(0x80A0000A);
 static constexpr std::size_t ProgramInfoSize = 0x134C;
 static constexpr std::size_t MaxMetadataLength = 240;
+static constexpr std::size_t MaxLinkCommentPresetLength = 120;
 static constexpr std::size_t MaxPresetDescriptionLength = 720;
 static constexpr std::size_t MaxInvitationSessionIdLength = 45;
 static constexpr std::size_t MaxSocialMessageLength = 360;
 static constexpr std::size_t MaxSpoilerTags = 16;
 static constexpr std::size_t MaxPresetCommands = 5;
+static constexpr std::size_t MaxGuardAreas = 8;
 
 static bool ValidFeedbackType(int type) {
     return type >= 1 && type <= 3;
@@ -31,7 +41,9 @@ static bool ValidFeedbackType(int type) {
 
 static bool ValidString(const char* text, std::size_t maxLength) {
     std::string value;
+    const int savedErrno = errno;
     const int result = CopyGuestString_nid_no_patch(text, maxLength + 1, value);
+    errno = savedErrno;
     return result == 0;
 }
 
@@ -39,7 +51,9 @@ template<class T>
 static bool ReservedZero(const T* entry) {
     std::array<std::uint8_t, sizeof(T::reserved)> bytes{};
     const auto* reserved = reinterpret_cast<const std::uint8_t*>(entry) + offsetof(T, reserved);
+    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(bytes.data(), reserved, bytes.size());
+    errno = savedErrno;
     if (!copied) return false;
     for (const auto byte : bytes) {
         if (byte != 0) return false;
@@ -47,8 +61,36 @@ static bool ReservedZero(const T* entry) {
     return true;
 }
 
+static bool BytesAllZero(const std::uint8_t* data, std::size_t begin, std::size_t end) {
+    for (std::size_t i = begin; i < end; ++i) {
+        if (data[i] != 0) return false;
+    }
+    return true;
+}
+
+static bool ValidSeparateModeParam(const std::array<std::uint8_t, 0x44>& cfg) {
+    if (!BytesAllZero(cfg.data(), 0x08, 0x24) || !BytesAllZero(cfg.data(), 0x28, 0x44)) {
+        return false;
+    }
+    std::uint32_t field0 = 0;
+    std::uint32_t field4 = 0;
+    std::uint32_t field24 = 0;
+    std::memcpy(&field0, cfg.data() + 0x00, sizeof(field0));
+    std::memcpy(&field4, cfg.data() + 0x04, sizeof(field4));
+    std::memcpy(&field24, cfg.data() + 0x24, sizeof(field24));
+    return (field0 & 0xFFFFFFF6u) == 6u && field4 <= 1u && field24 < 2u;
+}
+
+static float ClampUnitFloat(float value) {
+    if (!(value >= 0.0f)) return 0.0f;
+    if (value > 1.0f) return 1.0f;
+    return value;
+}
+
 static int WriteGuestOutput(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
     return copied ? 0 : ErrorInvalidArgument;
 }
 
@@ -68,6 +110,12 @@ int APS5_VABI sceGameLiveStreamingTerminate(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     g_initialized = false;
+    g_screenInitialized = false;
+    g_separateModeOpen = false;
+    g_screenMode = 1;
+    g_separateModeConfig.fill(0);
+    g_guardAreaCount = 0;
+    g_guardAreas.fill(0.0f);
     return 0;
 }
 
@@ -91,7 +139,11 @@ int APS5_VABI sceGameLiveStreamingGetProgramInfo(GameLiveStreamingProgramInfo* i
 int APS5_VABI sceGameLiveStreamingScreenInitialize(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
+    if (g_screenInitialized) return ErrorAlreadyInitialized;
+    g_screenInitialized = true;
+    g_separateModeOpen = false;
+    g_screenMode = 1;
+    g_separateModeConfig.fill(0);
     return 0;
 }
 
@@ -104,47 +156,78 @@ int APS5_VABI sceGameLiveStreamingScreenInitializeSeparateModeParameter(void* pa
 int APS5_VABI sceGameLiveStreamingScreenTerminate(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_screenInitialized) return ErrorScreenNotInitialized;
+    g_screenInitialized = false;
+    g_separateModeOpen = false;
+    g_screenMode = 1;
+    g_separateModeConfig.fill(0);
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingScreenCloseSeparateMode(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_screenInitialized) return ErrorScreenNotInitialized;
+    if (!g_separateModeOpen) return ErrorAlreadyInitialized;
+    g_separateModeOpen = false;
+    g_screenMode = 1;
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingScreenConfigureSeparateMode(void) {
+int APS5_VABI sceGameLiveStreamingScreenConfigureSeparateMode(const void* parameter) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_screenInitialized) return ErrorScreenNotInitialized;
+    if (parameter == nullptr) return ErrorInvalidArgument;
+    std::array<std::uint8_t, 0x44> localCfg{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(localCfg.data(), parameter, localCfg.size());
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidArgument;
+    std::uint32_t field4 = 0;
+    std::memcpy(&field4, localCfg.data() + 0x04, sizeof(field4));
+    if (field4 == 0) {
+        const std::uint32_t defField0 = 0xFu;
+        std::memcpy(localCfg.data(), &defField0, sizeof(defField0));
+    }
+    if (!ValidSeparateModeParam(localCfg)) return ErrorInvalidArgument;
+    if (g_separateModeOpen) return ErrorAlreadyInitialized;
+    g_separateModeConfig = localCfg;
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingScreenOpenSeparateMode(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_screenInitialized) return ErrorScreenNotInitialized;
+    if (g_separateModeOpen) return ErrorAlreadyInitialized;
+    if (!ValidSeparateModeParam(g_separateModeConfig)) return ErrorInvalidArgument;
+    g_separateModeOpen = true;
+    g_screenMode = 1;
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingScreenSetMode(void) {
+int APS5_VABI sceGameLiveStreamingScreenSetMode(std::uint32_t mode) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_screenInitialized) return ErrorScreenNotInitialized;
+    if (!g_separateModeOpen) return ErrorAlreadyInitialized;
+    if (mode < 1 || mode > 2) return ErrorInvalidArgument;
+    g_screenMode = mode;
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingPermitLiveStreaming(bool permit) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
+    (void)permit;
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingSetMaxBitrate(std::uint32_t bitrate) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
+    (void)bitrate;
     return 0;
 }
 
@@ -159,6 +242,7 @@ int APS5_VABI sceGameLiveStreamingGetCurrentStatus(GameLiveStreamingStatus* stat
 int APS5_VABI sceGameLiveStreamingEnableSocialFeedback(bool enable) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
+    (void)enable;
     return 0;
 }
 
@@ -176,6 +260,7 @@ int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessages(int type, size_t cap
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (messages == nullptr || acquired == nullptr || !ValidFeedbackType(type)) return ErrorInvalidArgument;
+    (void)capacity;
     const size_t zero = 0;
     const bool copied = GuestCopyOut_nid_no_patch(acquired, &zero, sizeof(zero));
     if (!copied) return ErrorInvalidArgument;
@@ -185,6 +270,7 @@ int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessages(int type, size_t cap
 int APS5_VABI sceGameLiveStreamingPermitServerSideRecording(bool permit) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
+    (void)permit;
     return 0;
 }
 
@@ -255,17 +341,18 @@ int APS5_VABI sceGameLiveStreamingSetCameraFrameSetting(const GameLiveStreamingC
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingSetServiceProviderPermission(void) {
+int APS5_VABI sceGameLiveStreamingSetServiceProviderPermission(std::uint32_t provider, bool permit) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
+    if (provider < 1 || provider > 5) return ErrorInvalidArgument;
+    (void)permit;
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingSetDefaultServiceProviderPermission(void) {
+int APS5_VABI sceGameLiveStreamingSetDefaultServiceProviderPermission(bool permit) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
+    (void)permit;
     return 0;
 }
 
@@ -276,17 +363,20 @@ int APS5_VABI sceGameLiveStreamingSetInvitationSessionId(const char* sessionId) 
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingStartGenerateStandbyScreenResource(void) {
+int APS5_VABI sceGameLiveStreamingStartGenerateStandbyScreenResource(const void* parameter) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (parameter == nullptr) return ErrorInvalidArgument;
+    std::array<std::uint8_t, 0x80> localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(localParam.data(), parameter, localParam.size());
+    errno = savedErrno;
+    return copied ? 0 : ErrorInvalidArgument;
 }
 
 int APS5_VABI sceGameLiveStreamingStopGenerateStandbyScreenResource(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -309,7 +399,6 @@ int APS5_VABI sceGameLiveStreamingUnregisterCallback(void) {
 int APS5_VABI sceGameLiveStreamingCheckCallback(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -320,11 +409,12 @@ int APS5_VABI sceGameLiveStreamingSetStandbyScreenResource(void) {
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingGetCurrentBroadcastScreenLayout(void) {
+int APS5_VABI sceGameLiveStreamingGetCurrentBroadcastScreenLayout(void* layout) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (layout == nullptr) return ErrorInvalidArgument;
+    const std::array<std::uint8_t, 0x20> result{};
+    return WriteGuestOutput(layout, result.data(), result.size());
 }
 
 int APS5_VABI sceGameLiveStreamingLaunchLiveViewer(void) {
@@ -337,24 +427,36 @@ int APS5_VABI sceGameLiveStreamingLaunchLiveViewerA(void) {
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingSetGuardAreas(void) {
+int APS5_VABI sceGameLiveStreamingSetGuardAreas(std::size_t count, const void* areas) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
+    if (count > MaxGuardAreas || (count != 0 && areas == nullptr)) return ErrorInvalidArgument;
+    std::array<float, 32> clamped{};
+    if (count > 0) {
+        std::array<float, 32> input{};
+        const std::size_t bytes = count * 4 * sizeof(float);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(input.data(), areas, bytes);
+        errno = savedErrno;
+        if (!copied) return ErrorInvalidArgument;
+        for (std::size_t i = 0; i < count * 4; ++i) {
+            clamped[i] = ClampUnitFloat(input[i]);
+        }
+    }
+    g_guardAreas = clamped;
+    g_guardAreaCount = count;
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingStartSocialFeedbackMessageFiltering(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingStopSocialFeedbackMessageFiltering(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -365,24 +467,33 @@ int APS5_VABI sceGameLiveStreamingApplySocialFeedbackMessageFilter(void) {
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingSetLinkCommentPreset(void) {
+int APS5_VABI sceGameLiveStreamingSetLinkCommentPreset(const char* preset) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
+    if (preset == nullptr || !ValidString(preset, MaxLinkCommentPresetLength)) return ErrorInvalidArgument;
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingStartDebugBroadcast(void) {
+int APS5_VABI sceGameLiveStreamingStartDebugBroadcast(const void* parameter) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
+    if (parameter == nullptr) return ErrorInvalidArgument;
+    std::array<std::uint8_t, 0x424> localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(localParam.data(), parameter, localParam.size());
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidArgument;
+    const void* nulPos = std::memchr(localParam.data() + 4, '\0', 0x401);
+    if (nulPos == nullptr) return ErrorInvalidArgument;
+    if (!BytesAllZero(localParam.data(), 0x406, 0x408) || !BytesAllZero(localParam.data(), 0x410, 0x424)) {
+        return ErrorInvalidArgument;
+    }
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingStopDebugBroadcast(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

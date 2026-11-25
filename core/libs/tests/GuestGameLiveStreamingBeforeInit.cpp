@@ -14,22 +14,22 @@ void CheckNotInitializedCalls() {
     Require(sceGameLiveStreamingScreenInitialize() == notInitialized);
     Require(sceGameLiveStreamingScreenTerminate() == notInitialized);
     Require(sceGameLiveStreamingScreenCloseSeparateMode() == notInitialized);
-    Require(sceGameLiveStreamingScreenConfigureSeparateMode() == notInitialized);
+    Require(sceGameLiveStreamingScreenConfigureSeparateMode(nullptr) == notInitialized);
     Require(sceGameLiveStreamingScreenOpenSeparateMode() == notInitialized);
-    Require(sceGameLiveStreamingScreenSetMode() == notInitialized);
-    Require(sceGameLiveStreamingSetServiceProviderPermission() == notInitialized);
-    Require(sceGameLiveStreamingSetDefaultServiceProviderPermission() == notInitialized);
-    Require(sceGameLiveStreamingStartGenerateStandbyScreenResource() == notInitialized);
+    Require(sceGameLiveStreamingScreenSetMode(1) == notInitialized);
+    Require(sceGameLiveStreamingSetServiceProviderPermission(1, true) == notInitialized);
+    Require(sceGameLiveStreamingSetDefaultServiceProviderPermission(true) == notInitialized);
+    Require(sceGameLiveStreamingStartGenerateStandbyScreenResource(nullptr) == notInitialized);
     Require(sceGameLiveStreamingStopGenerateStandbyScreenResource() == notInitialized);
     Require(sceGameLiveStreamingCheckCallback() == notInitialized);
     Require(sceGameLiveStreamingSetStandbyScreenResource() == notInitialized);
-    Require(sceGameLiveStreamingGetCurrentBroadcastScreenLayout() == notInitialized);
-    Require(sceGameLiveStreamingSetGuardAreas() == notInitialized);
+    Require(sceGameLiveStreamingGetCurrentBroadcastScreenLayout(nullptr) == notInitialized);
+    Require(sceGameLiveStreamingSetGuardAreas(0, nullptr) == notInitialized);
     Require(sceGameLiveStreamingStartSocialFeedbackMessageFiltering() == notInitialized);
     Require(sceGameLiveStreamingStopSocialFeedbackMessageFiltering() == notInitialized);
     Require(sceGameLiveStreamingApplySocialFeedbackMessageFilter() == notInitialized);
-    Require(sceGameLiveStreamingSetLinkCommentPreset() == notInitialized);
-    Require(sceGameLiveStreamingStartDebugBroadcast() == notInitialized);
+    Require(sceGameLiveStreamingSetLinkCommentPreset(nullptr) == notInitialized);
+    Require(sceGameLiveStreamingStartDebugBroadcast(nullptr) == notInitialized);
     Require(sceGameLiveStreamingStopDebugBroadcast() == notInitialized);
 }
 

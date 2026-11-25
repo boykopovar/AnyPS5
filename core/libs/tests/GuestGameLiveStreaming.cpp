@@ -87,6 +87,7 @@ void CheckStrings() {
     CheckString(sceGameLiveStreamingSetPresetSocialFeedbackCommandsDescription, 720);
     CheckString(sceGameLiveStreamingSetInvitationSessionId, 45);
     CheckString(sceGameLiveStreamingPostSocialMessage, 360);
+    CheckString(sceGameLiveStreamingSetLinkCommentPreset, 120);
 }
 
 void CheckFeedbackTypes() {
@@ -229,6 +230,107 @@ void CheckInvalidOutputPointers() {
     Require(errno == 71);
 }
 
+void CheckScreenSeparateMode() {
+    constexpr int alreadyInitialized = static_cast<int>(0x80A00003);
+    constexpr int screenNotInitialized = static_cast<int>(0x80A0000A);
+
+    Require(sceGameLiveStreamingScreenTerminate() == screenNotInitialized);
+    Require(sceGameLiveStreamingScreenConfigureSeparateMode(nullptr) == screenNotInitialized);
+    Require(sceGameLiveStreamingScreenOpenSeparateMode() == screenNotInitialized);
+    Require(sceGameLiveStreamingScreenCloseSeparateMode() == screenNotInitialized);
+    Require(sceGameLiveStreamingScreenSetMode(1) == screenNotInitialized);
+
+    Require(sceGameLiveStreamingScreenInitialize() == 0);
+    Require(sceGameLiveStreamingScreenInitialize() == alreadyInitialized);
+    Require(sceGameLiveStreamingScreenOpenSeparateMode() == kInvalidArgument);
+    Require(sceGameLiveStreamingScreenCloseSeparateMode() == alreadyInitialized);
+    Require(sceGameLiveStreamingScreenSetMode(1) == alreadyInitialized);
+
+    std::array<std::uint8_t, 0x44> separateParam{};
+    Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(separateParam.data()) == 0);
+    Require(sceGameLiveStreamingScreenConfigureSeparateMode(nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(sceGameLiveStreamingScreenConfigureSeparateMode(reinterpret_cast<const void*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+
+    Require(sceGameLiveStreamingScreenConfigureSeparateMode(separateParam.data()) == 0);
+    separateParam[8] = 1;
+    Require(sceGameLiveStreamingScreenConfigureSeparateMode(separateParam.data()) == kInvalidArgument);
+    separateParam[8] = 0;
+
+    Require(sceGameLiveStreamingScreenOpenSeparateMode() == 0);
+    Require(sceGameLiveStreamingScreenOpenSeparateMode() == alreadyInitialized);
+    Require(sceGameLiveStreamingScreenSetMode(0) == kInvalidArgument);
+    Require(sceGameLiveStreamingScreenSetMode(3) == kInvalidArgument);
+    Require(sceGameLiveStreamingScreenSetMode(1) == 0);
+    Require(sceGameLiveStreamingScreenSetMode(2) == 0);
+    Require(sceGameLiveStreamingScreenConfigureSeparateMode(separateParam.data()) == alreadyInitialized);
+    Require(sceGameLiveStreamingScreenCloseSeparateMode() == 0);
+    Require(sceGameLiveStreamingScreenCloseSeparateMode() == alreadyInitialized);
+    Require(sceGameLiveStreamingScreenTerminate() == 0);
+    Require(sceGameLiveStreamingScreenTerminate() == screenNotInitialized);
+}
+
+void CheckBroadcastControls() {
+    Require(sceGameLiveStreamingSetServiceProviderPermission(0, true) == kInvalidArgument);
+    Require(sceGameLiveStreamingSetServiceProviderPermission(6, true) == kInvalidArgument);
+    for (const std::uint32_t provider : {1u, 2u, 3u, 4u, 5u}) {
+        Require(sceGameLiveStreamingSetServiceProviderPermission(provider, true) == 0);
+        Require(sceGameLiveStreamingSetServiceProviderPermission(provider, false) == 0);
+    }
+    Require(sceGameLiveStreamingSetDefaultServiceProviderPermission(true) == 0);
+    Require(sceGameLiveStreamingSetDefaultServiceProviderPermission(false) == 0);
+
+    Require(sceGameLiveStreamingStartGenerateStandbyScreenResource(nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(sceGameLiveStreamingStartGenerateStandbyScreenResource(reinterpret_cast<const void*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    std::array<std::uint8_t, 0x80> standby{};
+    Require(sceGameLiveStreamingStartGenerateStandbyScreenResource(standby.data()) == 0);
+    Require(sceGameLiveStreamingStopGenerateStandbyScreenResource() == 0);
+    Require(sceGameLiveStreamingCheckCallback() == 0);
+
+    Require(sceGameLiveStreamingGetCurrentBroadcastScreenLayout(nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(sceGameLiveStreamingGetCurrentBroadcastScreenLayout(reinterpret_cast<void*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    std::array<std::uint8_t, 0x20> layout{};
+    layout.fill(0x5a);
+    Require(sceGameLiveStreamingGetCurrentBroadcastScreenLayout(layout.data()) == 0);
+    for (const std::uint8_t byte : layout) Require(byte == 0);
+
+    std::array<float, 32> areas{};
+    areas.fill(0.5f);
+    Require(sceGameLiveStreamingSetGuardAreas(1, nullptr) == kInvalidArgument);
+    Require(sceGameLiveStreamingSetGuardAreas(9, areas.data()) == kInvalidArgument);
+    Require(sceGameLiveStreamingSetGuardAreas(0, nullptr) == 0);
+    errno = 71;
+    Require(sceGameLiveStreamingSetGuardAreas(1, reinterpret_cast<const void*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    areas[0] = -0.5f;
+    areas[1] = 2.0f;
+    Require(sceGameLiveStreamingSetGuardAreas(8, areas.data()) == 0);
+
+    Require(sceGameLiveStreamingStartSocialFeedbackMessageFiltering() == 0);
+    Require(sceGameLiveStreamingStopSocialFeedbackMessageFiltering() == 0);
+
+    Require(sceGameLiveStreamingStartDebugBroadcast(nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(sceGameLiveStreamingStartDebugBroadcast(reinterpret_cast<const void*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    std::array<std::uint8_t, 0x424> debugParam{};
+    Require(sceGameLiveStreamingStartDebugBroadcast(debugParam.data()) == 0);
+    debugParam[0x406] = 1;
+    Require(sceGameLiveStreamingStartDebugBroadcast(debugParam.data()) == kInvalidArgument);
+    debugParam[0x406] = 0;
+    debugParam[0x410] = 1;
+    Require(sceGameLiveStreamingStartDebugBroadcast(debugParam.data()) == kInvalidArgument);
+    debugParam[0x410] = 0;
+    std::memset(debugParam.data() + 4, 'x', 0x401);
+    Require(sceGameLiveStreamingStartDebugBroadcast(debugParam.data()) == kInvalidArgument);
+    Require(sceGameLiveStreamingStopDebugBroadcast() == 0);
+}
+
 }
 
 int main() {
@@ -297,6 +399,8 @@ int main() {
     CheckStrings();
     CheckFeedbackTypes();
     CheckArrays();
+    CheckScreenSeparateMode();
+    CheckBroadcastControls();
 
     Require(sceGameLiveStreamingEnableLiveStreaming(false) == 0);
     Require(sceGameLiveStreamingTerminate() == 0);
