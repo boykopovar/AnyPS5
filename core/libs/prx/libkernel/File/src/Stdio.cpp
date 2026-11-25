@@ -1343,6 +1343,23 @@ int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
     return 0;
 }
 
+int APS5_VABI mkfifo_nid_postfix(const char* path, uint16_t mode) {
+#ifdef _WIN32
+    (void)path;
+    (void)mode;
+    NotImplemented_nid_no_patch(__func__);
+#else
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
+    std::filesystem::path native;
+    if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
+    if (::mkfifo(native.c_str(), static_cast<mode_t>(mode)) != 0) return PosixResult(SceErrorFromErrno(errno));
+    RecordWrittenPath_nid_no_patch(native);
+    return 0;
+#endif
+}
+
 int APS5_VABI open_nid_postfix(const char* path, int flags, int mode) {
     if (File::InvalidOpenFlags(flags)) return PosixFailure(GUEST_EINVAL);
     std::string copy;
