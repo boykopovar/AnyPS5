@@ -31,7 +31,6 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -49,7 +48,6 @@ bool IsSpace(unsigned char c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
 bool IsLower(unsigned char c) { return c >= 'a' && c <= 'z'; }
 
 std::string CopyGuestText(const char* text, const char* caller) {
-    const int savedErrno = errno;
     std::string copied;
     constexpr std::size_t maxChunk = 64;
     std::size_t offset = 0;
@@ -65,12 +63,10 @@ std::string CopyGuestText(const char* text, const char* caller) {
             chunkSize /= 2;
         }
         if (!readOk) {
-            errno = savedErrno;
             NotImplemented_nid_no_patch(caller);
         }
         for (std::size_t i = 0; i < chunkSize; ++i) {
             if (chunk[i] == '\0') {
-                errno = savedErrno;
                 return copied;
             }
             copied.push_back(chunk[i]);
@@ -147,9 +143,7 @@ int APS5_VABI inet_aton_nid_postfix(const char* text, std::uint32_t* address) {
     if (address != nullptr) {
         const auto host = static_cast<std::uint32_t>(value);
         const std::uint8_t network[4] = {static_cast<std::uint8_t>(host >> 24), static_cast<std::uint8_t>(host >> 16), static_cast<std::uint8_t>(host >> 8), static_cast<std::uint8_t>(host)};
-        const int savedErrno = errno;
         const bool ok = GuestCopyOut_nid_no_patch(address, network, sizeof(network));
-        errno = savedErrno;
         if (!ok) return 0;
     }
     return 1;
