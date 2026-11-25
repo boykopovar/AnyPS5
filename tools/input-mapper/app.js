@@ -1,7 +1,7 @@
 import {actions, actionsForInput, chordButtons, defaults, groups, inputFilename, inputTitleId, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {exportableKeys} from './keys.js';
 import {captureKey} from './capture.js';
-import {parseIni, serialize, validate} from './validation.js';
+import {controllerDestinations, parseIni, sdlControllerButtons, serialize, validate} from './validation.js';
 import {diagnostic, initialLocale, locales, translate} from './i18n.js';
 import {createDropdown} from './dropdown.js';
 
@@ -21,6 +21,7 @@ let languageControl;
 const bindingControls = new WeakMap();
 let activeView = ['controls', 'configuration', 'help'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'controls';
 let currentStatus;
+let saveRequest = 0;
 let importReport;
 const dialog = byId('capture-dialog');
 try {
@@ -103,6 +104,7 @@ function applyLocale() {
     byId('categories').replaceChildren();
     renderCategories();
     renderHelp();
+    renderControllerRemaps();
     render();
     renderImportReport();
     if (currentStatus) setStatus(currentStatus.key, currentStatus.values);
@@ -272,6 +274,31 @@ function renderBinding(entry, position) {
     return row;
 }
 
+function renderControllerRemaps() {
+    byId('controller-remaps').replaceChildren(...sdlControllerButtons.map(button => {
+        const row = element('label');
+        const source = element('span', `SDLButton:${button}`);
+        source.dir = 'ltr';
+        const select = element('select');
+        for (const destination of ['', ...controllerDestinations]) {
+            const option = element('option', destination || t('noOverride'));
+            option.value = destination;
+            select.append(option);
+        }
+        select.value = controllerRemaps.find(remap => remap.button === button)?.destination || '';
+        select.addEventListener('change', () => {
+            const destination = select.value;
+            const remap = controllerRemaps.find(item => item.button === button);
+            if (!destination) controllerRemaps = controllerRemaps.filter(item => item.button !== button);
+            else if (remap) remap.destination = destination;
+            else controllerRemaps.push({button, destination});
+            updateOutput();
+        });
+        row.append(source, select);
+        return row;
+    }));
+}
+
 function render(focusEntry) {
     const container = byId('mappings');
     container.replaceChildren();
@@ -422,8 +449,10 @@ byId('reset').addEventListener('click', async () => {
     controllerRemaps = [];
     savedConfiguration = snapshot();
     importReport = undefined;
+    saveRequest++;
     byId('import-report').hidden = true;
     byId('profile-title-id').value = '';
+    renderControllerRemaps();
     render();
     setStatus('resetDone');
 });
@@ -442,12 +471,14 @@ byId('file').addEventListener('change', async event => {
         const report = byId('import-report');
         if (result.errors.length) {
             importReport = result;
+            saveRequest++;
             renderImportReport();
             report.focus();
             return;
         }
         if (!await confirmReplacement() || request !== replacementRequest) return;
         importReport = result;
+        saveRequest++;
         renderImportReport();
         const titleId = inputTitleId(file.name);
         if (titleId !== undefined) byId('profile-title-id').value = titleId;
@@ -455,10 +486,12 @@ byId('file').addEventListener('change', async event => {
         settings = result.settings;
         controllerRemaps = result.controllerRemaps;
         savedConfiguration = snapshot();
+        renderControllerRemaps();
         render();
         setStatus('imported', {name: file.name});
     } catch (error) {
         if (request !== replacementRequest) return;
+        saveRequest++;
         setStatus('importFailed', {message: error instanceof TypeError ? t('invalidUtf8') : diagnostic(locale, error.message)});
     }
 });
@@ -478,16 +511,20 @@ byId('download').addEventListener('click', () => {
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     savedConfiguration = snapshot();
+    saveRequest++;
     setStatus('downloaded');
 });
 byId('copy').addEventListener('click', async () => {
+    const request = ++saveRequest;
     try {
         const content = configurationText();
         const copiedConfiguration = snapshot();
         await navigator.clipboard.writeText(content);
+        if (request !== saveRequest) return;
         savedConfiguration = copiedConfiguration;
         setStatus('copied');
     } catch {
+        if (request !== saveRequest) return;
         byId('preview').focus();
         byId('preview').select();
         setStatus('clipboardFailed');

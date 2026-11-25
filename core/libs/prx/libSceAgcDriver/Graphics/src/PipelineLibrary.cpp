@@ -2,6 +2,7 @@
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -269,6 +270,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             }
         }
         ++device.counters.built[part];
+        if (GuestMemory::GpuMutex().HeldByThisThread()) ++device.counters.builtLocked[part];
         libraries.push_back(handle);
     }
     if (partsOnly) return VK_NULL_HANDLE;
@@ -302,6 +304,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     }
     lock.lock();
     ++device.counters.linked;
+    if (GuestMemory::GpuMutex().HeldByThisThread()) ++device.counters.linkedLocked;
     if (optimize && optimized != nullptr) {
         auto slot = std::make_shared<OptimizedPipeline>();
         slot->device = context.device;
@@ -408,6 +411,17 @@ PipelineLibraryCounters PipelineLibraryCountersOf(VkDevice device) {
     std::lock_guard lock(store.mutex);
     const auto found = store.devices.find(device);
     return found == store.devices.end() ? PipelineLibraryCounters{} : found->second.counters;
+}
+
+std::array<std::uint64_t, 5> GraphicsPipelineLibraryLockedTotals() {
+    auto& store = Libraries();
+    std::lock_guard lock(store.mutex);
+    std::array<std::uint64_t, 5> totals{};
+    for (const auto& entry : store.devices) {
+        for (std::size_t part = 0; part < 4; ++part) totals[part] += entry.second.counters.builtLocked[part];
+        totals[4] += entry.second.counters.linkedLocked;
+    }
+    return totals;
 }
 
 }

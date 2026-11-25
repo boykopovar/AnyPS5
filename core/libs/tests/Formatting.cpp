@@ -1077,6 +1077,55 @@ static void CheckHexFloat() {
 #endif
 }
 
+static void CheckLargeWidths() {
+    std::vector<char> big(8192);
+    const auto format = [&](const char* text, auto... values) {
+        std::fill(big.begin(), big.end(), 'Z');
+        return snprintf_nid_postfix(big.data(), big.size(), text, values...);
+    };
+    Require(format("%5000d", 7) == 5000 && big[4998] == ' ' && big[4999] == '7' && big[5000] == 0);
+    Require(format("%-5000d|", 7) == 5001 && big[0] == '7' && big[1] == ' ' && big[4999] == ' ' && big[5000] == '|');
+    Require(format("%05000d", -7) == 5000 && big[0] == '-' && big[1] == '0' && big[4998] == '0' && big[4999] == '7');
+    Require(format("%.4500d", 7) == 4500 && big[0] == '0' && big[4498] == '0' && big[4499] == '7');
+    Require(format("%5000.4500d", -7) == 5000 && big[498] == ' ' && big[499] == '-' && big[500] == '0' && big[4999] == '7');
+    Require(format("%#05000x", 255u) == 5000 && big[0] == '0' && big[1] == 'x' && big[2] == '0' && big[4998] == 'f' && big[4999] == 'f');
+    Require(format("%5000s", "ab") == 5000 && big[4997] == ' ' && big[4998] == 'a' && big[4999] == 'b');
+    std::string longText(5000, 'x');
+    Require(format("%.4999s|", longText.c_str()) == 5000 && big[4998] == 'x' && big[4999] == '|');
+    Require(format("%-5100.5000s|", longText.c_str()) == 5101 && big[4999] == 'x' && big[5000] == ' ' && big[5100] == '|');
+    char mutableText[100];
+    std::memset(mutableText, 'a', 99);
+    mutableText[99] = 0;
+    Require(format("%.5000s", mutableText) == 99 && big[98] == 'a' && big[99] == 0);
+    Require(format("%.2147483647s|", "ab") == 3 && std::strcmp(big.data(), "ab|") == 0);
+    char small[16];
+    for (const std::size_t capacity : {std::size_t{0}, std::size_t{1}, sizeof(small)}) {
+        std::memset(small, 'Z', sizeof(small));
+        errno = EDOM;
+        const int length = capacity == sizeof(small) ? FormatList(small, capacity, "X%*d", INT_MAX - 1, 1)
+                                                    : snprintf_nid_postfix(capacity ? small : nullptr, capacity, "%2147483647d", 1);
+        Require(length == INT_MAX && errno == EDOM);
+        if (capacity == 1) Require(small[0] == 0 && small[1] == 'Z');
+        if (capacity > 1) Require(small[0] == 'X' && small[capacity - 2] == ' ' && small[capacity - 1] == 0);
+    }
+    Require(snprintf_nid_postfix(nullptr, 0, "%.2147483646d", 1) == 2147483646);
+#ifndef _WIN32
+    errno = 0;
+    Require(FormatList(nullptr, 0, "%*dX", INT_MAX, 1) == -1 && errno == EOVERFLOW);
+#endif
+#ifdef _WIN32
+    for (const char* text : {"%2147483648d", "%99999999999d", "%.99999999999d", "%4294967296s", "%.4294967296s", "%-9999999999d"}) {
+        bool rejected = false;
+        try {
+            snprintf_nid_postfix(small, sizeof(small), text, 1);
+        } catch (const std::overflow_error&) {
+            rejected = true;
+        }
+        Require(rejected);
+    }
+#endif
+}
+
 static void CheckDecimalFloat() {
     RequireFloat("[%.0f]", 0.5, "[1]");
     RequireFloat("[%.0f]", 2.5, "[3]");
@@ -1160,6 +1209,7 @@ int main(int argc, char** argv) {
     CheckFloatingScanRange();
     CheckPlainScanResults();
     CheckSizeLimits();
+    CheckLargeWidths();
     CheckIgnoredLengths();
     CheckCountInWritableFormat();
     RunChecks();

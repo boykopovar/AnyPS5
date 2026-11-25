@@ -92,6 +92,15 @@ class FoldTests(unittest.TestCase):
         self.run_fold()
         self.assertTrue(self.debt().endswith(f"### Pending exports\n\n- [sceExampleF]({LINK}) (libSceExample) - throws\n"))
 
+    def test_a_fragment_saved_with_a_byte_order_mark_folds_without_it(self):
+        path = self.root / "docs/dev/debt/changes/a.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"﻿# libSceExample\r\n\r\n## add Silent stubs\r\n\r\n- [sceExampleD]({LINK}) (libSceExample) - returns 0\r\n".encode("utf-8"))
+        self.assertEqual(self.run_fold("--check")[0], 0)
+        self.assertEqual(self.run_fold()[0], 0)
+        self.assertIn(f"- [sceExampleD]({LINK}) (libSceExample) - returns 0\n", self.debt())
+        self.assertNotIn("﻿", self.debt())
+
     def test_change_and_remove_by_a_unique_piece_of_text(self):
         self.fragment("a", f"# libSceExample\n\n## change [sceExampleA]\n\n- [sceExampleA]({LINK}) (libSceExample) - clears the pool, as the 4.03 module does\n\n"
                            "## remove On Windows the [example worker]\n")

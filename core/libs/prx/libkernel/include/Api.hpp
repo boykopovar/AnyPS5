@@ -17,6 +17,11 @@ struct KernelIovec {
     std::size_t length;
 };
 
+struct KernelMapperSubmitResult {
+    std::int32_t result;
+    std::uint32_t errorOffset;
+};
+
 struct KernelTlsIndex {
     std::uint64_t module;
     std::uint64_t offset;
@@ -202,6 +207,31 @@ int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIdsForEach(const char* pre
 int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizesForEach(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, int* results);
 int APS5_VABI sceKernelWriteModifyMtypeProtectCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t mask, std::uint64_t* outSize);
 int APS5_VABI sceKernelWriteRemapIntoPrtCommand(std::uint32_t* dst, std::uint64_t address, std::uint64_t source, std::uint64_t size, int protection, int opcode, std::uint64_t* outSize);
+int APS5_VABI sceKernelCallIndirectBuffer(std::uint32_t priority, void* base, std::uint64_t bytes);
+int APS5_VABI sceKernelCallIndirectBuffer2(std::uint32_t priority, void* base, std::uint64_t bytes, KernelMapperSubmitResult* result, std::uint32_t* id);
+int APS5_VABI sceKernelCallIndirectBuffer3(std::uint32_t priority, void* base, std::uint64_t bytes, std::uint32_t* id);
+int APS5_VABI sceKernelGiveDirectMemoryToMapper(std::int64_t searchStart, std::int64_t searchEnd, std::size_t size, std::size_t alignment, int usage, std::int64_t* offset);
+int APS5_VABI sceKernelMapperGetParam(std::uint64_t* param);
+int APS5_VABI sceKernelWaitCommandBufferCompletion(std::uint32_t id);
+int APS5_VABI sceKernelWriteEventQueueOnCompletionCommand(void* dst, std::uint64_t equeue, std::int32_t ident, std::uint64_t data, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteMapCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteMapCommand2(void* dst, std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection, std::int32_t prt, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteMapDirectCommand(void* dst, std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteMapDirectWithGpuMaskIdCommand(void* dst, std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteMapWithGpuMaskIdCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t mask, std::uint64_t gpuMaskId, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteModifyProtectCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t protection, std::uint64_t mask, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteModifyProtectWithGpuMaskIdCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t protection, std::uint64_t mask, std::uint64_t gpuMaskId, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteMultiMapCommand(void* dst, std::uint64_t address, std::uint64_t alias, std::uint64_t size, std::uint64_t protection, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteMultiMapWithGpuMaskIdCommand(void* dst, std::uint64_t address, std::uint64_t alias, std::uint64_t size, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteRemapCommand(void* dst, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::uint64_t protection, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteRemapWithGpuMaskIdCommand(void* dst, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteUnmapCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteUnmapToPrtCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteWaitOnAddressCommand(void* dst, std::uint64_t address, std::uint64_t reference, std::int32_t compare, std::int32_t flush, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteWaitOnCounterCommand(void* dst, std::uint8_t counter, std::uint32_t reference, std::int32_t compare, std::int32_t flush, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteWriteAddressCommand(void* dst, std::uint64_t address, std::uint64_t value, std::uint64_t* outSize);
+int APS5_VABI sceKernelWriteWriteCounterCommand(void* dst, std::uint8_t counter, std::uint32_t value, std::uint64_t* outSize);
 int APS5_VABI sceKernelAllocateDirectMemory(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physAddrOut);
 int APS5_VABI sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memoryType, int64_t* physAddrOut);
 int APS5_VABI sceKernelAllocateDirectMemoryForApp(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physAddrOut);
@@ -318,6 +348,7 @@ int APS5_VABI ftruncate_nid_postfix(int d, int64_t length);
 int APS5_VABI sceKernelFtruncate(int d, int64_t length);
 int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence);
 int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode);
+int APS5_VABI mkfifo_nid_postfix(const char* path, uint16_t mode);
 int APS5_VABI open_nid_postfix(const char* path, int flags, int mode);
 int APS5_VABI creat_nid_postfix(const char* path, int mode);
 int APS5_VABI _open_nid_postfix(const char* path, int flags, ...);
@@ -757,6 +788,8 @@ NewReplace* APS5_VABI sceKernelGetSanitizerNewReplaceExternal(void);
 int APS5_VABI getitimer_nid_postfix(int which, GuestItimerval* output);
 int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* value, GuestItimerval* previous);
 GuestHandler APS5_VABI signal_nid_postfix(int guest, GuestHandler handler);
+GuestHandler APS5_VABI sigset_nid_postfix(int guest, GuestHandler disposition);
+int APS5_VABI sigpause_nid_postfix(int mask);
 int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous);
 int APS5_VABI _sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous);
 int APS5_VABI raise_nid_postfix(int guest);
@@ -853,11 +886,11 @@ int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version);
 int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* category);
 int APS5_VABI sceKernelIsNeoMode(void);
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled);
-int APS5_VABI sceKernelAllocateToolMemory(void);
-int APS5_VABI sceKernelAvailableToolMemorySize(void);
-int APS5_VABI sceKernelMapToolMemory(void);
-int APS5_VABI sceKernelReleaseToolMemory(void);
-int APS5_VABI sceKernelGetToolMemoryRange(void);
+int APS5_VABI sceKernelGetToolMemoryRange(std::int32_t partition, std::int64_t* start, std::int64_t* end);
+int APS5_VABI sceKernelAllocateToolMemory(std::int32_t partition, std::int64_t searchStart, std::int64_t searchEnd, size_t len, size_t alignment, int memoryType, std::int64_t* physAddrOut);
+int APS5_VABI sceKernelAvailableToolMemorySize(std::int64_t searchStart, std::int64_t searchEnd, size_t alignment, std::int64_t* physAddrOut, size_t* sizeOut);
+int APS5_VABI sceKernelMapToolMemory(void** addr, size_t len, int prot, int flags, std::int64_t start, size_t alignment);
+int APS5_VABI sceKernelReleaseToolMemory(std::int64_t start, size_t len);
 int APS5_VABI sceKernelSetProcessProperty(void);
 
 }
