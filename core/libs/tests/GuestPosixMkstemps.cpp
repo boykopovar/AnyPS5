@@ -30,6 +30,7 @@ static void CheckCreated(const std::filesystem::path& root, const char* pattern,
     Require(name.compare(0, prefixLength, prefix) == 0);
     Require(name.compare(name.size() - suffixLength, suffixLength, suffix) == 0);
     for (std::size_t index = prefixLength; index < prefixLength + 6; ++index) Require(IsTemporaryCharacter(name[index]));
+    Require(name.substr(prefixLength, 6) != "XXXXXX");
     Require(std::filesystem::is_regular_file(root / name));
 }
 
