@@ -2,7 +2,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/NodeTraversalExports.hpp"
 
-#include <cerrno>
 #include <stdexcept>
 #include <string>
 
@@ -16,9 +15,7 @@ template<typename T>
 T ReadGuest(const T* pointer, const char* function) {
     if (!pointer) throw std::invalid_argument(std::string(function) + ": null node");
     T value{};
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T));
-    errno = savedErrno;
     if (!ok) throw std::invalid_argument(std::string(function) + ": unreadable node");
     return value;
 }
