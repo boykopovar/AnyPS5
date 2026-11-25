@@ -527,6 +527,20 @@ void MultiMaster(decltype(&FT_Get_Multi_Master_nid_postfix) query) {
     Require(forwarded.finish(guestLibrary) == 0 && FT_Done_FreeType(nativeLibrary) == 0, "release multi-master libraries");
 }
 
+void CharVariants(decltype(&FT_Face_GetCharVariantIndex_nid_postfix) getIndex,
+                  decltype(&FT_Face_GetCharVariantIsDefault_nid_postfix) isDefault) {
+    Require(getIndex(nullptr, 'A', 0xFE0F) == 0, "null face char variant index");
+    Require(isDefault(nullptr, 'A', 0xFE0F) == -1, "null face char variant is default");
+    FreeType::GuestLibrary* library = nullptr;
+    FreeType::GuestFaceRec* face = nullptr;
+    Require(forwarded.init(&library) == 0, "init char variant library");
+    const auto font = SquareGlyphFont('A', 800);
+    Require(forwarded.newMemoryFace(library, font.data(), font.size(), 0, &face) == 0, "open font for char variant");
+    Require(getIndex(face, 'A', 0xFE0F) == 0, "font char variant index");
+    Require(isDefault(face, 'A', 0xFE0F) == -1, "font char variant is default");
+    Require(forwarded.doneFace(face) == 0 && forwarded.finish(library) == 0, "release char variant face and library");
+}
+
 void Outlines() {
     std::vector<GuestVector> points{{0, 0}, {640, 0}, {640, 640}, {0, 640}, {64, 64}, {320, 576}, {576, 64}, {320, 32}, {200, 100}};
     std::vector<unsigned char> tags{FT_CURVE_TAG_ON, FT_CURVE_TAG_ON, FT_CURVE_TAG_CONIC, FT_CURVE_TAG_ON,
@@ -716,6 +730,16 @@ int main(int argc, char** argv) {
     Resolve(multiMaster, library, patched, "pORpGtdlfqQ", "FT_Get_Multi_Master_nid_postfix");
 #endif
     MultiMaster(multiMaster);
+    decltype(&FT_Face_GetCharVariantIndex_nid_postfix) charVariantIndex = nullptr;
+    decltype(&FT_Face_GetCharVariantIsDefault_nid_postfix) charVariantIsDefault = nullptr;
+#ifdef _WIN32
+    Resolve(charVariantIndex, library, patched, "dPcZ76eZb64", "FT_Face_GetCharVariantIndexForward_nid_no_patch");
+    Resolve(charVariantIsDefault, library, patched, "Vrab2WK1mgk", "FT_Face_GetCharVariantIsDefaultForward_nid_no_patch");
+#else
+    Resolve(charVariantIndex, library, patched, "dPcZ76eZb64", "FT_Face_GetCharVariantIndex_nid_postfix");
+    Resolve(charVariantIsDefault, library, patched, "Vrab2WK1mgk", "FT_Face_GetCharVariantIsDefault_nid_postfix");
+#endif
+    CharVariants(charVariantIndex, charVariantIsDefault);
     Resolve(ot.decompose, library, patched, "++lgV9pRsO4", "FT_Outline_Decompose_nid_postfix");
     if (forwards) {
         Resolve(strokers.init, library, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");
