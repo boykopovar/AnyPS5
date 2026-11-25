@@ -1,7 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAcm/include/InventoryExports.hpp"
 #include "prx/libSceAcm/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -510,9 +509,7 @@ void* APS5_VABI libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(void* ring) {
     const auto address = reinterpret_cast<std::uintptr_t>(ring);
     if (address > std::numeric_limits<std::uintptr_t>::max() - ringBytes) return nullptr;
     std::array<std::byte, ringBytes> fields{};
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(fields.data(), ring, fields.size());
-    errno = savedErrno;
     if (!readable) return nullptr;
     std::uint64_t base = 0;
     std::uint32_t capacity = 0;
@@ -530,7 +527,6 @@ void* APS5_VABI libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(void* ring) {
     if (next == capacity) next = 0;
     const std::array<std::uint32_t, 2> updated{nextCount, next};
     const bool writable = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address + 0xc), updated.data(), sizeof(updated));
-    errno = savedErrno;
     if (!writable) return nullptr;
     return reinterpret_cast<void*>(base + (static_cast<std::uint64_t>(next << 8) << 2));
 }
