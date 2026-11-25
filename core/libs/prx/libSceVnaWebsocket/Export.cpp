@@ -1,12 +1,49 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVnaWebsocket/include/InventoryExports.hpp"
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+void InitWebsocketConfig(void* object, const char* nid) {
+    if (object == nullptr) throw std::invalid_argument(std::string(nid) + ": null object");
+    auto* base = static_cast<unsigned char*>(object);
+    constexpr std::array<unsigned char, 9> head{};
+    constexpr std::array<unsigned char, 28> tail = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+        0xb8, 0x0b, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0xb8, 0x0b, 0x00, 0x00,
+    };
+    const int savedErrno = errno;
+    const bool wroteHead = GuestCopyOut_nid_no_patch(base, head.data(), head.size());
+    errno = savedErrno;
+    if (!wroteHead) throw std::invalid_argument(std::string(nid) + ": unmapped object");
+    const bool wroteTail = GuestCopyOut_nid_no_patch(base + 0x10, tail.data(), tail.size());
+    errno = savedErrno;
+    if (!wroteTail) throw std::invalid_argument(std::string(nid) + ": unmapped object");
+}
+
+void ClearCallbackSlots(void* object, const char* nid) {
+    if (object == nullptr) throw std::invalid_argument(std::string(nid) + ": null object");
+    auto* base = static_cast<unsigned char*>(object);
+    constexpr std::uint64_t zero = 0;
+    const int savedErrno = errno;
+    for (std::size_t offset = 0x38; offset <= 0x1b8; offset += 0x40) {
+        const bool wrote = GuestCopyOut_nid_no_patch(base + offset, &zero, sizeof(zero));
+        errno = savedErrno;
+        if (!wrote) throw std::invalid_argument(std::string(nid) + ": unmapped object");
+    }
+}
+
+}
 
 extern "C" {
 
@@ -72,8 +109,8 @@ int APS5_VABI libSceVnaWebsocketUnknown_JiBSw3cBh2g_nid_no_patch() {
 }
 APS5_EXPORT("JiBSw3cBh2g", libSceVnaWebsocketUnknown_JiBSw3cBh2g_nid_no_patch);
 
-int APS5_VABI libSceVnaWebsocketUnknown_K_minus_logS9LtFw_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceVnaWebsocketUnknown_K_minus_logS9LtFw_nid_no_patch(void* object) {
+    InitWebsocketConfig(object, "K-logS9LtFw");
 }
 APS5_EXPORT("K-logS9LtFw", libSceVnaWebsocketUnknown_K_minus_logS9LtFw_nid_no_patch);
 
@@ -82,8 +119,8 @@ int APS5_VABI libSceVnaWebsocketUnknown_KGPZ_plus_BZgXn0_nid_no_patch() {
 }
 APS5_EXPORT("KGPZ+BZgXn0", libSceVnaWebsocketUnknown_KGPZ_plus_BZgXn0_nid_no_patch);
 
-int APS5_VABI libSceVnaWebsocketUnknown_MI6xIf_minus_bHXs_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceVnaWebsocketUnknown_MI6xIf_minus_bHXs_nid_no_patch(void* object) {
+    InitWebsocketConfig(object, "MI6xIf-bHXs");
 }
 APS5_EXPORT("MI6xIf-bHXs", libSceVnaWebsocketUnknown_MI6xIf_minus_bHXs_nid_no_patch);
 
@@ -92,8 +129,8 @@ int APS5_VABI libSceVnaWebsocketUnknown_NS_plus_C_plus_w391Aw_nid_no_patch() {
 }
 APS5_EXPORT("NS+C+w391Aw", libSceVnaWebsocketUnknown_NS_plus_C_plus_w391Aw_nid_no_patch);
 
-int APS5_VABI libSceVnaWebsocketUnknown_OUogBgTPp6E_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceVnaWebsocketUnknown_OUogBgTPp6E_nid_no_patch(void* object) {
+    ClearCallbackSlots(object, "OUogBgTPp6E");
 }
 APS5_EXPORT("OUogBgTPp6E", libSceVnaWebsocketUnknown_OUogBgTPp6E_nid_no_patch);
 
@@ -141,8 +178,8 @@ int APS5_VABI libSceVnaWebsocketUnknown_obO4IYwAPtg_nid_no_patch() {
 }
 APS5_EXPORT("obO4IYwAPtg", libSceVnaWebsocketUnknown_obO4IYwAPtg_nid_no_patch);
 
-int APS5_VABI libSceVnaWebsocketUnknown_qUkQKyPORE8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceVnaWebsocketUnknown_qUkQKyPORE8_nid_no_patch(void* object) {
+    ClearCallbackSlots(object, "qUkQKyPORE8");
 }
 APS5_EXPORT("qUkQKyPORE8", libSceVnaWebsocketUnknown_qUkQKyPORE8_nid_no_patch);
 
