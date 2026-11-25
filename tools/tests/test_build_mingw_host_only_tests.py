@@ -1,4 +1,6 @@
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -41,6 +43,40 @@ class BuildMingwHostOnlyTestsTests(unittest.TestCase):
         self.assertFalse(build_mingw_host_only_tests.link_command_mentions_target("a.o -lfoobar", target))
         self.assertFalse(build_mingw_host_only_tests.link_command_mentions_target("a.o -lbar", target))
 
+class IsProductLibraryTests(unittest.TestCase):
+    ROOT = Path("root")
+
+    def target(self, source_dir, sources, kind="STATIC_LIBRARY"):
+        return {"type": kind, "paths": {"source": source_dir}, "sources": sources}
+
+    def test_non_library_targets_are_not_products(self):
+        target = self.target("core/libs/prx/libX", [{"path": "core/libs/prx/libX/a.cpp"}], kind="EXECUTABLE")
+        self.assertFalse(build_mingw_host_only_tests.is_product_library(target, self.ROOT))
+
+    def test_libraries_outside_core_libs_are_not_products(self):
+        target = self.target("tools/x", [{"path": "tools/x/a.cpp"}])
+        self.assertFalse(build_mingw_host_only_tests.is_product_library(target, self.ROOT))
+
+    def test_library_with_a_non_test_source_is_a_product(self):
+        sources = [{"path": "core/libs/prx/libX/tests/t.cpp"}, {"path": "core/libs/prx/libX/a.cpp"}]
+        for kind in ("STATIC_LIBRARY", "SHARED_LIBRARY", "MODULE_LIBRARY"):
+            self.assertTrue(build_mingw_host_only_tests.is_product_library(self.target("core/libs/prx/libX", sources, kind), self.ROOT))
+
+    def test_library_with_only_test_sources_is_not_a_product(self):
+        target = self.target("core/libs/prx/libX", [{"path": "core/libs/prx/libX/tests/t.cpp"}])
+        self.assertFalse(build_mingw_host_only_tests.is_product_library(target, self.ROOT))
+
+    def test_library_with_only_generated_sources_depends_on_its_directory(self):
+        generated = [{"path": "build/g.cpp", "isGenerated": True}]
+        self.assertTrue(build_mingw_host_only_tests.is_product_library(self.target("core/libs/prx/libX", generated), self.ROOT))
+        self.assertFalse(build_mingw_host_only_tests.is_product_library(self.target("core/libs/tests/helpers", generated), self.ROOT))
+
+    def test_malformed_sources_are_refused(self):
+        for sources in ("a.cpp", ["a.cpp"]):
+            with self.assertRaisesRegex(ValueError, "invalid library sources"):
+                build_mingw_host_only_tests.is_product_library(self.target("core/libs/prx/libX", sources), self.ROOT)
+
+
 class TargetDocumentTests(unittest.TestCase):
     def test_minimal_and_full_targets_are_accepted(self):
         full = {"name": "t", "link": {"commandFragments": [{}]}, "artifacts": [{}], "sources": [{}]}
@@ -76,6 +112,53 @@ class ObjectShapeTests(unittest.TestCase):
         for value in ({}, "text", [1], [{}, None]):
             with self.assertRaisesRegex(ValueError, r"p\.json: invalid items \(expected a list of objects\)"):
                 build_mingw_host_only_tests.object_entries(value, "p.json", "items")
+
+
+class CmakeReplyTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.reply = self.root / ".cmake/api/v1/reply"
+        self.reply.mkdir(parents=True)
+        self.index = self.reply / "index-001.json"
+        self.index.write_text('{"reply":{"codemodel-v2":{"jsonFile":"model.json"}}}', encoding="utf-8")
+
+    def write_model(self, configurations):
+        model = {"paths": {"source": str(self.root)}, "configurations": configurations}
+        (self.reply / "model.json").write_text(json.dumps(model), encoding="utf-8")
+
+    def test_duplicate_index_fields_are_rejected(self):
+        self.index.write_text('{"reply":{},"reply":{}}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, r"index-001\.json: duplicate JSON field"):
+            build_mingw_host_only_tests.read_reply(self.root)
+
+    def test_deeply_nested_index_has_a_controlled_diagnostic(self):
+        depth = 1_000_000
+        self.index.write_text("[" * depth + "]" * depth, encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, r"index-001\.json: CMake reply is nested too deeply"):
+            build_mingw_host_only_tests.read_reply(self.root)
+
+    def test_error_reply_with_the_same_timestamp_takes_precedence(self):
+        (self.reply / "error-001.json").write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "latest CMake generation failed"):
+            build_mingw_host_only_tests.read_reply(self.root)
+
+    def test_malformed_configurations_and_target_lists_are_diagnosed(self):
+        for value, label in (({}, "configurations"), ([{"targets": {}}], "target references")):
+            with self.subTest(value=value):
+                self.write_model(value)
+                with self.assertRaisesRegex(ValueError, f"invalid CMake {label}"):
+                    build_mingw_host_only_tests.read_reply(self.root)
+
+    def test_target_ids_must_be_distinct_nonempty_strings(self):
+        (self.reply / "target.json").write_text("{}", encoding="utf-8")
+        valid = {"id": "test", "jsonFile": "target.json"}
+        for target, message in ((valid, "duplicate CMake target id"), (dict(valid, id=1), "invalid CMake target id")):
+            with self.subTest(target=target):
+                self.write_model([{"targets": [valid, target]}])
+                with self.assertRaisesRegex(ValueError, message):
+                    build_mingw_host_only_tests.read_reply(self.root)
 
 
 if __name__ == "__main__":

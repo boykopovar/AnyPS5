@@ -3,6 +3,7 @@
 #include "prx/libSceLibreSsl/include/Bio.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -13,6 +14,15 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -341,6 +351,135 @@ void ScratchCleanup() {
     }
 }
 
+struct ProtectedPages {
+    std::byte* bytes;
+    std::size_t pageSize;
+
+    ProtectedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        bytes = static_cast<std::byte*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(bytes != nullptr, "VirtualAlloc failed");
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0, "sysconf page size failed");
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "mmap failed");
+        bytes = static_cast<std::byte*>(mapped);
+#endif
+    }
+
+    void ProtectSecond(bool readable) {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(bytes + pageSize, pageSize, readable ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0, "VirtualProtect failed");
+#else
+        Require(mprotect(bytes + pageSize, pageSize, readable ? PROT_READ : PROT_NONE) == 0, "mprotect failed");
+#endif
+    }
+
+    ~ProtectedPages() {
+#ifdef _WIN32
+        VirtualFree(bytes, 0, MEM_RELEASE);
+#else
+        munmap(bytes, pageSize * 2);
+#endif
+    }
+};
+
+void CheckPairBoundary(ProtectedPages& pages, std::size_t offset, void (APS5_VABI* setter)(LibreSslCtx*, void*, void*), const char* label) {
+    void* const initialCallback = reinterpret_cast<void*>(std::uintptr_t{0x5a5a5a5a5a5a5a5aULL});
+    void* const newCallback = reinterpret_cast<void*>(std::uintptr_t{0x123456789abcdef0ULL});
+    void* const newArg = reinterpret_cast<void*>(std::uintptr_t{0x0fedcba987654321ULL});
+    std::byte* const base = pages.bytes + pages.pageSize - (offset + sizeof(void*));
+    std::memcpy(base + offset, &initialCallback, sizeof(initialCallback));
+    LibreSslCtx ctx{};
+    ctx.internal = reinterpret_cast<LibreSslCtxInternal*>(base);
+    errno = 42;
+    RequireThrows([&] { setter(&ctx, newCallback, newArg); }, label);
+    Require(errno == 42, "boundary failure preserves errno");
+    void* afterCallback = nullptr;
+    std::memcpy(&afterCallback, base + offset, sizeof(afterCallback));
+    Require(afterCallback == initialCallback, "boundary failure does not mutate callback");
+    void* afterArg = nullptr;
+    std::memcpy(&afterArg, base + offset + sizeof(void*), sizeof(afterArg));
+    Require(afterArg == nullptr, "boundary failure does not mutate arg");
+}
+
+void SslCtxCallbacks() {
+    LibreSslCtxInternal internal{};
+    LibreSslCtx ctx{};
+    ctx.internal = &internal;
+
+    void* const infoCb = reinterpret_cast<void*>(std::uintptr_t{0x1001});
+    void* const newSessCb = reinterpret_cast<void*>(std::uintptr_t{0x1002});
+    void* const verifyCb = reinterpret_cast<void*>(std::uintptr_t{0x1003});
+    void* const verifyArg = reinterpret_cast<void*>(std::uintptr_t{0x1004});
+    void* const clientCb = reinterpret_cast<void*>(std::uintptr_t{0x1005});
+    void* const nextCb = reinterpret_cast<void*>(std::uintptr_t{0x1006});
+    void* const nextArg = reinterpret_cast<void*>(std::uintptr_t{0x1007});
+    void* const alpnCb = reinterpret_cast<void*>(std::uintptr_t{0x1008});
+    void* const alpnArg = reinterpret_cast<void*>(std::uintptr_t{0x1009});
+
+    errno = 37;
+    SSL_CTX_set_info_callback_nid_postfix(&ctx, infoCb);
+    SSL_CTX_sess_set_new_cb_nid_postfix(&ctx, newSessCb);
+    SSL_CTX_set_cert_verify_callback_nid_postfix(&ctx, verifyCb, verifyArg);
+    SSL_CTX_set_client_cert_cb_nid_postfix(&ctx, clientCb);
+    SSL_CTX_set_next_proto_select_cb_nid_postfix(&ctx, nextCb, nextArg);
+    SSL_CTX_set_alpn_select_cb_nid_postfix(&ctx, alpnCb, alpnArg);
+    Require(errno == 37, "valid callback writes preserve errno");
+
+    Require(internal.infoCallback == infoCb, "infoCallback updated");
+    Require(internal.newSessionCb == newSessCb, "newSessionCb updated");
+    Require(internal.appVerifyCallback == verifyCb && internal.appVerifyArg == verifyArg, "appVerify pair updated");
+    Require(internal.clientCertCb == clientCb, "clientCertCb updated");
+    Require(internal.nextProtoSelectCb == nextCb && internal.nextProtoSelectCbArg == nextArg, "nextProtoSelect pair updated");
+    Require(internal.alpnSelectCb == alpnCb && internal.alpnSelectCbArg == alpnArg, "alpnSelect pair updated");
+
+    LibreSslCtx nullInternalCtx{};
+    RequireThrows([&] { SSL_CTX_set_info_callback_nid_postfix(nullptr, infoCb); }, "null ctx info");
+    RequireThrows([&] { SSL_CTX_sess_set_new_cb_nid_postfix(nullptr, newSessCb); }, "null ctx new session");
+    RequireThrows([&] { SSL_CTX_set_cert_verify_callback_nid_postfix(nullptr, verifyCb, verifyArg); }, "null ctx cert verify");
+    RequireThrows([&] { SSL_CTX_set_client_cert_cb_nid_postfix(nullptr, clientCb); }, "null ctx client cert");
+    RequireThrows([&] { SSL_CTX_set_next_proto_select_cb_nid_postfix(nullptr, nextCb, nextArg); }, "null ctx next proto");
+    RequireThrows([&] { SSL_CTX_set_alpn_select_cb_nid_postfix(nullptr, alpnCb, alpnArg); }, "null ctx alpn");
+    RequireThrows([&] { SSL_CTX_set_info_callback_nid_postfix(&nullInternalCtx, infoCb); }, "null internal info");
+    RequireThrows([&] { SSL_CTX_set_cert_verify_callback_nid_postfix(&nullInternalCtx, verifyCb, verifyArg); }, "null internal cert verify");
+
+    ProtectedPages noAccessPages;
+    noAccessPages.ProtectSecond(false);
+    auto* const unreadableCtx = reinterpret_cast<LibreSslCtx*>(noAccessPages.bytes + noAccessPages.pageSize);
+    RequireThrows([&] { SSL_CTX_set_info_callback_nid_postfix(unreadableCtx, infoCb); }, "unreadable ctx info");
+    RequireThrows([&] { SSL_CTX_sess_set_new_cb_nid_postfix(unreadableCtx, newSessCb); }, "unreadable ctx new session");
+    RequireThrows([&] { SSL_CTX_set_cert_verify_callback_nid_postfix(unreadableCtx, verifyCb, verifyArg); }, "unreadable ctx cert verify");
+    RequireThrows([&] { SSL_CTX_set_client_cert_cb_nid_postfix(unreadableCtx, clientCb); }, "unreadable ctx client cert");
+    RequireThrows([&] { SSL_CTX_set_next_proto_select_cb_nid_postfix(unreadableCtx, nextCb, nextArg); }, "unreadable ctx next proto");
+    RequireThrows([&] { SSL_CTX_set_alpn_select_cb_nid_postfix(unreadableCtx, alpnCb, alpnArg); }, "unreadable ctx alpn");
+
+    ProtectedPages readOnlyPages;
+    std::memset(readOnlyPages.bytes + readOnlyPages.pageSize, 0, sizeof(LibreSslCtxInternal));
+    readOnlyPages.ProtectSecond(true);
+    LibreSslCtx readOnlyCtx{};
+    readOnlyCtx.internal = reinterpret_cast<LibreSslCtxInternal*>(readOnlyPages.bytes + readOnlyPages.pageSize);
+    RequireThrows([&] { SSL_CTX_set_info_callback_nid_postfix(&readOnlyCtx, infoCb); }, "read-only internal info");
+    RequireThrows([&] { SSL_CTX_sess_set_new_cb_nid_postfix(&readOnlyCtx, newSessCb); }, "read-only internal new session");
+    RequireThrows([&] { SSL_CTX_set_cert_verify_callback_nid_postfix(&readOnlyCtx, verifyCb, verifyArg); }, "read-only internal cert verify");
+    RequireThrows([&] { SSL_CTX_set_client_cert_cb_nid_postfix(&readOnlyCtx, clientCb); }, "read-only internal client cert");
+    RequireThrows([&] { SSL_CTX_set_next_proto_select_cb_nid_postfix(&readOnlyCtx, nextCb, nextArg); }, "read-only internal next proto");
+    RequireThrows([&] { SSL_CTX_set_alpn_select_cb_nid_postfix(&readOnlyCtx, alpnCb, alpnArg); }, "read-only internal alpn");
+
+    ProtectedPages boundaryPages;
+    std::memset(boundaryPages.bytes, 0, boundaryPages.pageSize * 2);
+    boundaryPages.ProtectSecond(true);
+    CheckPairBoundary(boundaryPages, offsetof(LibreSslCtxInternal, appVerifyCallback), SSL_CTX_set_cert_verify_callback_nid_postfix, "boundary cert verify");
+    CheckPairBoundary(boundaryPages, offsetof(LibreSslCtxInternal, nextProtoSelectCb), SSL_CTX_set_next_proto_select_cb_nid_postfix, "boundary next proto");
+    CheckPairBoundary(boundaryPages, offsetof(LibreSslCtxInternal, alpnSelectCb), SSL_CTX_set_alpn_select_cb_nid_postfix, "boundary alpn");
+}
+
 } // namespace
 
 int main() {
@@ -357,4 +496,5 @@ int main() {
     Created();
     Printed();
     ScratchCleanup();
+    SslCtxCallbacks();
 }

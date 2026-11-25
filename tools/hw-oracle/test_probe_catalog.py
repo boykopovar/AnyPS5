@@ -1,5 +1,6 @@
 import copy
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -40,6 +41,19 @@ class CatalogLoadingTests(unittest.TestCase):
         probe = self.catalog["probes"][0]
         self.assertEqual(probe["rows"][0]["input"], [0, 0, 0, 0])
         self.assertEqual(probe["rows"][3]["input"], [0x7f7fffff, 0x7f7fffff, 0, 0])
+
+    def test_extra_words_are_validated_and_normalized_for_the_digest(self):
+        original = self.catalog["probes"][0]
+        empty = probe_catalog.validate_probe({**original, "extra_words": []}, 1)
+        self.assertEqual(probe_catalog.probe_digest(empty), probe_catalog.probe_digest(original))
+        hexadecimal = probe_catalog.validate_probe({**original, "extra_words": ["0x12345678", "9"]}, 1)
+        integers = probe_catalog.validate_probe({**original, "extra_words": [0x12345678, 9]}, 1)
+        self.assertEqual(hexadecimal["extra_words"], [0x12345678, 9])
+        self.assertEqual(probe_catalog.probe_digest(hexadecimal), probe_catalog.probe_digest(integers))
+        self.assertNotEqual(probe_catalog.probe_digest(integers), probe_catalog.probe_digest(original))
+        for invalid in ("9", None, [True], [-1], [0x100000000]):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "extra_words"):
+                probe_catalog.validate_probe({**original, "extra_words": invalid}, 1)
 
     def test_catalog_reader_reports_invalid_json_and_missing_files(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -199,6 +213,16 @@ class ProbeGenerationTests(unittest.TestCase):
             self.assertEqual(metadata["catalog_sha256"], self.digest)
             self.assertEqual(metadata["probe_sha256"], probe_catalog.probe_digest(probe))
             self.assertEqual(metadata["rows"], probe["rows"])
+            self.assertNotIn("extra_words", metadata)
+            self.assertFalse((case / "extra.bin").exists())
+
+    def test_generation_writes_little_endian_extra_words(self):
+        probe = {**self.catalog["probes"][0], "extra_words": [0x12345678, 0, 0xffffffff]}
+        with tempfile.TemporaryDirectory() as temporary:
+            case = probe_catalog.generate([probe], self.digest, temporary)[0]
+            metadata = json.loads((case / "probe.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["extra_words"], probe["extra_words"])
+            self.assertEqual((case / "extra.bin").read_bytes(), bytes.fromhex("78563412 00000000 ffffffff"))
 
     def test_every_curated_input_bundle_passes_the_existing_oracle_validator(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -214,12 +238,16 @@ class ProbeGenerationTests(unittest.TestCase):
                     if probe["memory"] == "coarse":
                         argv.append("--coarse")
                     argv.extend(("--lds", str(probe["lds_bytes"])))
+                    payload = case / "extra.bin"
+                    if payload.exists():
+                        argv.extend(("--extra", str(payload)))
                     output = io.StringIO()
                     with patch.object(sys, "argv", argv), contextlib.redirect_stdout(output):
                         self.assertEqual(probe_catalog.hw_oracle.main(), 0)
                     report = json.loads(output.getvalue())
                     self.assertEqual(report["rows"], len(probe["rows"]))
                     self.assertEqual(report["wave_size"], probe["wave_size"])
+                    self.assertEqual(report["extra_bytes"], 4 * len(probe.get("extra_words", [])))
 
     def test_selection_rejects_unknown_and_repeated_probe_ids(self):
         with self.assertRaisesRegex(ValueError, "unknown probe id"):
@@ -268,6 +296,58 @@ class ProbeGenerationTests(unittest.TestCase):
             self.assertEqual(generated, destinations)
             self.assertTrue(all((path / "probe.json").is_file() for path in destinations))
 
+    def locked_replace(self, failures):
+        original_replace = os.replace
+        calls = []
+
+        def replace(source, destination):
+            calls.append(destination)
+            if len(calls) <= failures:
+                raise PermissionError(13, "Access is denied", str(source))
+            return original_replace(source, destination)
+
+        return replace, calls
+
+    def test_promotion_retries_a_directory_held_open_on_windows(self):
+        probe = self.catalog["probes"][0]
+        replace, calls = self.locked_replace(2)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "generated"
+            with patch.object(probe_catalog, "RETRY_LOCKED_REPLACE", True), \
+                    patch.object(probe_catalog.os, "replace", replace), \
+                    patch.object(probe_catalog.time, "sleep") as sleep:
+                generated = probe_catalog.generate([probe], self.digest, output)
+            self.assertEqual(generated, [output / probe["id"]])
+            self.assertTrue((output / probe["id"] / "probe.json").is_file())
+            self.assertEqual(len(calls), 3)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], list(probe_catalog.LOCKED_REPLACE_DELAYS[:2]))
+
+    def test_promotion_gives_up_on_a_directory_that_stays_locked(self):
+        probe = self.catalog["probes"][0]
+        replace, calls = self.locked_replace(len(probe_catalog.LOCKED_REPLACE_DELAYS) + 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "generated"
+            with patch.object(probe_catalog, "RETRY_LOCKED_REPLACE", True), \
+                    patch.object(probe_catalog.os, "replace", replace), \
+                    patch.object(probe_catalog.time, "sleep"), \
+                    self.assertRaises(PermissionError):
+                probe_catalog.generate([probe], self.digest, output)
+            self.assertEqual(len(calls), len(probe_catalog.LOCKED_REPLACE_DELAYS) + 1)
+            self.assertEqual(list(output.iterdir()), [])
+
+    def test_locked_replace_is_not_retried_off_windows(self):
+        replace, calls = self.locked_replace(1)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.json"
+            with patch.object(probe_catalog, "RETRY_LOCKED_REPLACE", False), \
+                    patch.object(probe_catalog.os, "replace", replace), \
+                    patch.object(probe_catalog.time, "sleep") as sleep, \
+                    self.assertRaises(PermissionError):
+                probe_catalog.write_atomic(path, "{}\n")
+            self.assertEqual(len(calls), 1)
+            sleep.assert_not_called()
+            self.assertEqual(list(Path(temporary).iterdir()), [])
+
 
 class ProbeRunTests(unittest.TestCase):
     def setUp(self):
@@ -284,13 +364,34 @@ class ProbeRunTests(unittest.TestCase):
                 paths = probe_catalog.run_probes([probe], self.digest, temporary, "rx-6750-xt")
             run.assert_called_once_with(
                 probe["body"], [tuple(row["input"]) for row in probe["rows"]],
-                wave64=False, coarse=False, **probe["floating_point_modes"], lds=4096,
+                extra=b"", wave64=False, coarse=False, **probe["floating_point_modes"], lds=4096,
             )
             report = probe_catalog.compare_results.read_report(paths[0])
             self.assertEqual(report["probe_id"], probe["id"])
             self.assertEqual(report["device_label"], "rx-6750-xt")
             self.assertEqual(report["assembly_target"], "gfx1036")
             self.assertEqual(report["rows"][0]["output"], [0])
+
+    def test_run_and_coverage_track_the_dispatched_extra_payload(self):
+        probe = {**self.catalog["probes"][0], "extra_words": [0x12345678, 9]}
+        payload = bytes.fromhex("78563412 09000000")
+        outputs = [(0,) * 16 for _ in probe["rows"]]
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(probe_catalog.hw_oracle, "run", return_value=outputs) as run:
+            path, = probe_catalog.run_probes([probe], self.digest, temporary, "gpu",
+                                            runtime_name="hip", assembly_target="gfx1010")
+            self.assertEqual(run.call_args.kwargs["extra"], payload)
+            report = probe_catalog.compare_results.read_report(path)
+            self.assertEqual(report["extra_bytes"], len(payload))
+            self.assertEqual(report["extra_sha256"], hashlib.sha256(payload).hexdigest())
+            self.assertEqual(probe_catalog.read_measurement(path, probe, "gpu"), ("measured", ""))
+            changed = {**probe, "extra_words": [0x12345678, 10]}
+            self.assertEqual(probe_catalog.read_measurement(path, changed, "gpu")[0], "stale")
+            for field, value in (("extra_bytes", 4), ("extra_sha256", "0" * 64)):
+                with self.subTest(field=field):
+                    path.write_text(json.dumps({**report, field: value}), encoding="utf-8")
+                    self.assertEqual(probe_catalog.read_measurement(path, probe, "gpu"),
+                                     ("invalid", f"{field} differs from the curated probe"))
 
     def test_run_rejects_existing_measurements_instead_of_overwriting(self):
         probe = self.catalog["probes"][0]
@@ -341,6 +442,7 @@ class ProbeRunTests(unittest.TestCase):
                 probe_catalog.run_probes(self.catalog["probes"][:1], self.digest, temporary, "../gpu")
             self.assertEqual(list(Path(temporary).iterdir()), [])
 
+    @patch.dict(os.environ, {"HSA_OVERRIDE_GFX_VERSION": ""})
     def test_ps5_run_rejects_other_hardware_before_dispatch(self):
         identity = {
             "name": "gfx1013",
@@ -383,6 +485,7 @@ class ProbeRunTests(unittest.TestCase):
             run.assert_not_called()
             self.assertEqual(list(Path(temporary).iterdir()), [])
 
+    @patch.dict(os.environ, {"HSA_OVERRIDE_GFX_VERSION": ""})
     def test_ps5_run_records_verified_identity(self):
         probe = self.catalog["probes"][0]
         identity = {

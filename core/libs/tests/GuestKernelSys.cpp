@@ -48,9 +48,19 @@
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+std::vector<std::filesystem::path> longTree;
+#endif
+
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
         std::fprintf(stderr, "Kernel sys check failed at line %u (guest errno %d)\n", location.line(), *__error_nid_postfix());
+#ifdef _WIN32
+        for (auto entry = longTree.rbegin(); entry != longTree.rend(); ++entry) {
+            const auto path = LR"(\\?\)" + std::filesystem::absolute(*entry).wstring();
+            if (::RemoveDirectoryW(path.c_str()) == FALSE) ::DeleteFileW(path.c_str());
+        }
+#endif
         std::abort();
     }
 }
@@ -162,6 +172,28 @@ void LinkPermissionErrorTests(const std::filesystem::path& root, const std::stri
     Require(nofollowResult == -1 && nofollowError == 13);
     Require(std::filesystem::remove(symbolic) && std::filesystem::remove(denied));
 }
+
+void SymlinkPermissionErrorTests(const std::filesystem::path& root) {
+    if (geteuid() == 0) return;
+    const auto denied = root / "symlink-denied";
+    Require(std::filesystem::create_directory(denied));
+    const auto originalPermissions = std::filesystem::status(denied).permissions();
+    std::filesystem::permissions(denied, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+    if (::access(denied.c_str(), W_OK) == 0) {
+        std::filesystem::permissions(denied, originalPermissions);
+        Require(std::filesystem::remove(denied));
+        return;
+    }
+    const auto created = (denied / "new.link").string();
+    const int result = symlink_nid_postfix("owned.txt", created.c_str());
+    const int error = Error();
+    const int atResult = symlinkat_nid_postfix("owned.txt", -100, created.c_str());
+    const int atError = Error();
+    std::filesystem::permissions(denied, originalPermissions);
+    Require(result == -1 && error == 13);
+    Require(atResult == -1 && atError == 13);
+    Require(std::filesystem::remove(denied));
+}
 #endif
 
 void OwnershipAndLinkTests(const std::filesystem::path& root) {
@@ -170,6 +202,7 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
     std::ofstream(file).put('x');
 #ifndef _WIN32
     LinkPermissionErrorTests(root, file);
+    SymlinkPermissionErrorTests(root);
 #endif
     const auto missing = (root / "missing.txt").string();
     const auto throughFile = file + "/inner";
@@ -530,6 +563,42 @@ volatile std::uint32_t sigreturnMxcsr = 0;
 std::uint32_t RoundingAndMasks(std::uint32_t mxcsr) {
     return mxcsr & ~0x3fu;
 }
+
+#ifndef _WIN32
+void CheckLinkPreflightPermissions(const std::filesystem::path& root) {
+    if (::geteuid() == 0) return;
+    const auto sourceDirectory = root / "link-source-no-search";
+    Require(std::filesystem::create_directory(sourceDirectory));
+    const auto source = sourceDirectory / "source.txt";
+    std::ofstream(source).put('x');
+    const auto originalPermissions = std::filesystem::status(sourceDirectory).permissions();
+    std::filesystem::permissions(sourceDirectory, std::filesystem::perms::none);
+    if (::access(sourceDirectory.c_str(), X_OK) == 0) {
+        std::filesystem::permissions(sourceDirectory, originalPermissions);
+        Require(std::filesystem::remove(source) && std::filesystem::remove(sourceDirectory));
+        return;
+    }
+    const auto nativeSourceDestination = root / "link-source-native.txt";
+    const auto guestSourceDestination = root / "link-source-guest.txt";
+    Require(::link(source.c_str(), nativeSourceDestination.c_str()) == -1 && errno == EACCES);
+    Require(link_nid_postfix(source.string().c_str(), guestSourceDestination.string().c_str()) == -1 && Error() == 13);
+    std::filesystem::permissions(sourceDirectory, originalPermissions);
+    Require(std::filesystem::remove(source) && std::filesystem::remove(sourceDirectory));
+
+    const auto destinationDirectory = root / "link-destination-no-search";
+    Require(std::filesystem::create_directory(destinationDirectory));
+    const auto accessible = root / "link-accessible.txt";
+    std::ofstream(accessible).put('x');
+    const auto destinationPermissions = std::filesystem::status(destinationDirectory).permissions();
+    std::filesystem::permissions(destinationDirectory, std::filesystem::perms::none);
+    const auto nativeDestination = destinationDirectory / "native.txt";
+    const auto guestDestination = destinationDirectory / "guest.txt";
+    Require(::link(accessible.c_str(), nativeDestination.c_str()) == -1 && errno == EACCES);
+    Require(linkat_nid_postfix(-100, accessible.string().c_str(), -100, guestDestination.string().c_str(), 0) == -1 && Error() == 13);
+    std::filesystem::permissions(destinationDirectory, destinationPermissions);
+    Require(std::filesystem::remove(accessible) && std::filesystem::remove(destinationDirectory));
+}
+#endif
 
 void SetContextMxcsr(UserUcontext& context, std::uint32_t mxcsr) {
     std::memcpy(reinterpret_cast<std::uint8_t*>(context.mcontext.fpstate) + 24, &mxcsr, sizeof(mxcsr));
@@ -1111,6 +1180,34 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
     Require(std::filesystem::remove(original / "marker") && std::filesystem::remove(original / "new-only"));
     Require(std::filesystem::remove(moved / "different"));
     Require(std::filesystem::remove(original) && std::filesystem::remove(moved) && std::filesystem::remove(fixture));
+#ifndef _WIN32
+    if (::geteuid() != 0) {
+        const auto nativeSource = parent / "native-rename-source";
+        const auto nativeTarget = parent / "native-rename-target";
+        Require(std::filesystem::create_directory(nativeSource));
+        Require(std::filesystem::create_directory(nativeTarget));
+        std::filesystem::permissions(nativeTarget, std::filesystem::perms::none);
+        Require(::rename(nativeSource.c_str(), nativeTarget.c_str()) == 0);
+        Require(!std::filesystem::exists(nativeSource) && std::filesystem::is_directory(nativeTarget));
+        const auto guestSource = parent / "guest-rename-source";
+        const auto guestTarget = parent / "guest-rename-target";
+        Require(std::filesystem::create_directory(guestSource));
+        Require(std::filesystem::create_directory(guestTarget));
+        std::filesystem::permissions(guestTarget, std::filesystem::perms::none);
+        const int base = sceKernelOpen(parent.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+        Require(base >= 0);
+        Require(renameat_nid_postfix(base, "guest-rename-source", base, "guest-rename-target") == 0);
+        Require(!std::filesystem::exists(guestSource) && std::filesystem::is_directory(guestTarget));
+        Require(sceKernelClose(base) == 0);
+        const auto directSource = parent / "direct-rename-source";
+        const auto directTarget = parent / "direct-rename-target";
+        Require(std::filesystem::create_directory(directSource));
+        Require(std::filesystem::create_directory(directTarget));
+        std::filesystem::permissions(directTarget, std::filesystem::perms::none);
+        Require(rename_nid_postfix(directSource.string().c_str(), directTarget.string().c_str()) == 0);
+        Require(!std::filesystem::exists(directSource) && std::filesystem::is_directory(directTarget));
+    }
+#endif
 }
 
 static void SceKernelFlock() {
@@ -1269,6 +1366,11 @@ void CheckKernelEnvironment() {
     Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
     Require(Kenv(get, longestName.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 2);
     Require(Kenv(get, longName.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 63);
+    GuardedPaths guards;
+    char* const unterminated = guards.Unreadable() - longName.size();
+    std::memcpy(unterminated, longName.data(), longName.size());
+    Require(Kenv(get, unterminated, buffer, sizeof(buffer)) == -1 && Error() == 63);
+    Require(Kenv(get, unterminated + 1, buffer, sizeof(buffer)) == -1 && Error() == 14);
     Require(Kenv(get, nullptr, buffer, sizeof(buffer)) == -1 && Error() == 14);
     Require(Kenv(get, reinterpret_cast<const char*>(0x10), buffer, sizeof(buffer)) == -1 && Error() == 14);
     Require(Kenv(4, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 22);
@@ -1328,7 +1430,6 @@ void CheckRawGetcwdErrors() {
     Require(unlinkat_nid_postfix(-100, directory.c_str(), 0x800) == 0);
 }
 
-#ifndef _WIN32
 void CheckRawGetcwdPathLimit() {
     std::array<char, 4096> previous{};
     Require(getcwd_nid_postfix(previous.data(), previous.size()) == previous.data());
@@ -1374,7 +1475,6 @@ void CheckRawGetcwdPathLimit() {
     Require(chdir_nid_postfix(previous.data()) == 0);
     Require(unlinkat_nid_postfix(-100, root.c_str(), 0x800) == 0);
 }
-#endif
 
 void CheckRawGetcwd() {
     std::array<char, 4096> expected{};
@@ -1433,6 +1533,80 @@ static void CheckGetfsstat() {
     }
 }
 
+#ifdef _WIN32
+static void LongDirectoryAtCalls(const std::filesystem::path& root) {
+    std::vector<std::filesystem::path> levels{root / "long-at"};
+    for (int level = 0; level < 5; ++level) levels.push_back(levels.back() / std::string(60, 'd'));
+    longTree = levels;
+    for (const char* name : {"file.txt", "moved.txt", "made"}) longTree.push_back(levels.back() / name);
+    const auto verbatim = [](const std::filesystem::path& path) { return LR"(\\?\)" + std::filesystem::absolute(path).wstring(); };
+    for (const auto& level : levels) Require(::CreateDirectoryW(verbatim(level).c_str(), nullptr) != FALSE);
+    const auto& path = levels.back();
+    Require(std::filesystem::absolute(path).native().size() > MAX_PATH);
+    const auto exists = [&](const char* name) { return ::GetFileAttributesW(verbatim(path / name).c_str()) != INVALID_FILE_ATTRIBUTES; };
+    const HANDLE file = ::CreateFileW(verbatim(path / "file.txt").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
+    Require(file != INVALID_HANDLE_VALUE && ::CloseHandle(file) != FALSE);
+    const int directory = sceKernelOpen(path.generic_string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    Require(mkdirat_nid_postfix(directory, "made", 0755) == 0 && exists("made"));
+    Require(mkdirat_nid_postfix(directory, "made", 0755) == -1 && Error() == 17);
+    char link[16];
+    Require(readlinkat_nid_postfix(directory, "file.txt", link, sizeof(link)) == -1 && Error() == 22);
+    Require(readlinkat_nid_postfix(directory, "missing", link, sizeof(link)) == -1 && Error() == 2);
+    Require(renameat_nid_postfix(directory, "file.txt", directory, "moved.txt") == 0 && !exists("file.txt") && exists("moved.txt"));
+    Require(renameat_nid_postfix(directory, "missing", directory, "other.txt") == -1 && Error() == 2);
+    Require(unlinkat_nid_postfix(directory, "moved.txt", 0) == 0 && !exists("moved.txt"));
+    Require(unlinkat_nid_postfix(directory, "missing", 0) == -1 && Error() == 2);
+    Require(unlinkat_nid_postfix(directory, "made", 0x800) == 0 && !exists("made"));
+    Require(sceKernelClose(directory) == 0);
+    for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(verbatim(*level).c_str()) != FALSE);
+    longTree.clear();
+}
+
+static void LongDirectoryFchdir(const std::filesystem::path& root) {
+    std::vector<std::filesystem::path> levels{root / "long"};
+    for (int level = 0; level < 5; ++level) levels.push_back(levels.back() / std::string(60, 'd'));
+    longTree = levels;
+    const auto verbatim = [](const std::filesystem::path& path) { return LR"(\\?\)" + std::filesystem::absolute(path).wstring(); };
+    for (const auto& level : levels) Require(::CreateDirectoryW(verbatim(level).c_str(), nullptr) != FALSE);
+    const auto& path = levels.back();
+    Require(std::filesystem::absolute(path).native().size() > MAX_PATH);
+    const int directory = sceKernelOpen(path.generic_string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    char previous[4096];
+    Require(getcwd_nid_postfix(previous, sizeof(previous)) == previous);
+    const std::string expected = (std::strcmp(previous, "/") == 0 ? std::string() : std::string(previous)) + "/" + path.generic_string();
+    Require(fchdir_nid_postfix(directory) == 0);
+    char current[4096];
+    Require(getcwd_nid_postfix(current, sizeof(current)) == current && expected == current);
+    Require(chdir_nid_postfix(previous) == 0);
+    Require(sceKernelClose(directory) == 0);
+    for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(verbatim(*level).c_str()) != FALSE);
+    longTree.clear();
+}
+#else
+static void CheckUnreadableEmptyRmdir(const std::filesystem::path& root) {
+    if (::geteuid() == 0) return;
+    const auto native = root / "native-unreadable-empty";
+    Require(std::filesystem::create_directory(native));
+    std::filesystem::permissions(native, std::filesystem::perms::none);
+    Require(::rmdir(native.c_str()) == 0);
+    const auto direct = root / "direct-unreadable-empty";
+    Require(std::filesystem::create_directory(direct));
+    std::filesystem::permissions(direct, std::filesystem::perms::none);
+    Require(rmdir_nid_postfix(direct.string().c_str()) == 0);
+    Require(!std::filesystem::exists(direct));
+    const auto guest = root / "guest-unreadable-empty";
+    Require(std::filesystem::create_directory(guest));
+    std::filesystem::permissions(guest, std::filesystem::perms::none);
+    const int base = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(base >= 0);
+    Require(unlinkat_nid_postfix(base, "guest-unreadable-empty", 0x800) == 0);
+    Require(!std::filesystem::exists(guest));
+    Require(sceKernelClose(base) == 0);
+}
+#endif
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
@@ -1442,9 +1616,7 @@ int main() {
     Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
     CheckRawGetcwdErrors();
-#ifndef _WIN32
     CheckRawGetcwdPathLimit();
-#endif
     CheckRawGetcwd();
     CheckKqueueFromEqueue();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
@@ -1472,9 +1644,18 @@ int main() {
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
+#ifdef _WIN32
+    LongDirectoryAtCalls(root);
+    LongDirectoryFchdir(root);
+#else
+    CheckUnreadableEmptyRmdir(root);
+#endif
     DirectoryRenameTests(root);
     OwnershipAndLinkTests(root);
     CheckLinkSymbolicLinkLimit(root);
+#ifndef _WIN32
+    CheckLinkPreflightPermissions(root);
+#endif
     const auto file = (root / "file.txt").string();
     std::ofstream(file).put('x');
     CheckPathconf(root, file);
@@ -1506,6 +1687,12 @@ int main() {
     CheckUnsupportedPathconf(fpathconf_nid_postfix, kqueueDescriptor);
     CheckUnsupportedPathconf(_fpathconf_nid_postfix, kqueueDescriptor);
     Require(close_nid_postfix(kqueueDescriptor) == 0);
+    std::intptr_t semaphore = -1;
+    Require(ksem_init_nid_postfix(&semaphore, 0) == 0 && semaphore >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, static_cast<int>(semaphore));
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, static_cast<int>(semaphore));
+    Require(fchdir_nid_postfix(static_cast<int>(semaphore)) == -1 && Error() == 22);
+    Require(ksem_destroy_nid_postfix(semaphore) == 0);
     const std::string namedSharedMemory = "/anyps5-kernel-sys-pathconf-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const int sharedMemoryDescriptor = shm_open_nid_postfix(namedSharedMemory.c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0600);
@@ -1918,6 +2105,8 @@ int main() {
     Require(openat_nid_postfix(base, "missing.bin", SCE_KERNEL_O_RDONLY) == -1 && Error() == 2);
     Require(openat_nid_postfix(base, "file.txt", SCE_KERNEL_O_ACCMODE) == -1 && Error() == 22);
     Require(openat_nid_postfix(base, "absent.bin", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL | SCE_KERNEL_O_DIRECTORY, 0644) == -1 && Error() == 22);
+    Require(openat_nid_postfix(base, "absent.bin", SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_DIRECTORY, 0644) == -1 && Error() == 2);
+    Require(!std::filesystem::exists(root / "absent.bin"));
     Require(openat_nid_postfix(base, nullptr, SCE_KERNEL_O_ACCMODE) == -1 && Error() == 22);
     Require(openat_nid_postfix(base, "", SCE_KERNEL_O_ACCMODE) == -1 && Error() == 22);
     Require(openat_nid_postfix(9999, "", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL | SCE_KERNEL_O_DIRECTORY, 0644) == -1 && Error() == 22);
@@ -2281,6 +2470,7 @@ int main() {
     Require(fstatat_nid_postfix(base, "", &stat, 0) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0x0200) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "missing.bin", nullptr, 0x0200) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0x0200) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", &stat, 0x4000) == -1 && Error() == 22);
