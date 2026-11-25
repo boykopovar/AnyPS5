@@ -8,7 +8,6 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libSceNpEntitlementAccess/EntitlementsIni.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <atomic>
 #include <cstring>
 #include <filesystem>
@@ -231,7 +230,6 @@ int APS5_VABI sceAppContentGetAddcontInfoList(uint32_t serviceLabel, AppContentA
     std::lock_guard lock(addcontMutex);
     const auto& entries = AddonEntries();
     std::uint32_t hits = static_cast<std::uint32_t>(entries.size());
-    const int savedErrno = errno;
     if (list && listNum > 0) {
         const auto count = std::min<std::size_t>(listNum, entries.size());
         if (count > 0) {
@@ -239,14 +237,12 @@ int APS5_VABI sceAppContentGetAddcontInfoList(uint32_t serviceLabel, AppContentA
             infos.reserve(count);
             for (std::size_t i = 0; i < count; ++i) infos.push_back(entries[i].info);
             if (!GuestCopyOut_nid_no_patch(list, infos.data(), infos.size() * sizeof(AppContentAddcontInfo))) {
-                errno = savedErrno;
                 return SCE_APP_CONTENT_ERROR_PARAMETER;
             }
         }
         hits = static_cast<std::uint32_t>(count);
     }
     const bool copied = GuestCopyOut_nid_no_patch(hitNum, &hits, sizeof(hits));
-    errno = savedErrno;
     return copied ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
 }
 
@@ -286,7 +282,6 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
     const auto mount = CopyMountPoint(mountPoint);
     if (!mount) return SCE_APP_CONTENT_ERROR_PARAMETER;
     if (!IsDownloadMountPoint(*mount)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    const int savedErrno = errno;
     std::uint64_t quotaKb = 0;
     if (std::strncmp(mount->data, DOWNLOAD_MOUNT_POINT, sizeof(mount->data)) == 0) {
         const std::uint64_t quotaMiB = std::max(GetAppDownloadDataSizeMiB_nid_postfix(), download0ExpandedMiB.load());
@@ -299,7 +294,6 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
     }
     const auto writeOut = [&](std::size_t value) {
         const bool copied = GuestCopyOut_nid_no_patch(availableSpaceKb, &value, sizeof(value));
-        errno = savedErrno;
         return copied;
     };
     if (quotaKb == 0) {
