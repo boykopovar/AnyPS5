@@ -8454,10 +8454,6 @@ std::int32_t APS5_VABI ures_getFunctionalEquivalent_nid_postfix(char* result, st
     return ures_getFunctionalEquivalent(target, resultCapacity, path, resName, keyword, locid, isAvailable, omitDefault, reinterpret_cast<UErrorCode*>(status));
 }
 
-int APS5_VABI uloc_getTableStringWithFallback_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_t1kRYepQFw0_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

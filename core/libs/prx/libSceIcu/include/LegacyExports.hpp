@@ -1965,7 +1965,7 @@ int APS5_VABI _ZNK6icu_6810UnicodeSet17matchesIndexValueEh_nid_postfix();
 int APS5_VABI _ZN6icu_6811StringPieceC2EPKc_nid_postfix();
 int APS5_VABI utrace_exit_nid_postfix();
 std::int32_t APS5_VABI ures_getFunctionalEquivalent_nid_postfix(char* result, std::int32_t resultCapacity, const char* path, const char* resName, const char* keyword, const char* locid, std::int8_t* isAvailable, std::int8_t omitDefault, std::int32_t* status);
-int APS5_VABI uloc_getTableStringWithFallback_nid_postfix();
+const char16_t* APS5_VABI uloc_getTableStringWithFallback_nid_postfix(const char* path, const char* locale, const char* tableKey, const char* subTableKey, const char* itemKey, std::int32_t* pLength, std::int32_t* pErrorCode);
 int APS5_VABI sceIcuLegacyUnknown_t1kRYepQFw0_nid_no_patch();
 int APS5_VABI _ZN6icu_6817CanonicalIterator11cleanPiecesEv_nid_postfix();
 int APS5_VABI _ZNK6icu_6813EventListener17getDynamicClassIDEv_nid_postfix();
