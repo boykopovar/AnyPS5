@@ -4,9 +4,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
-#include <cerrno>
 #include <algorithm>
-#include <cerrno>
 #include <cstdint>
 #include <iterator>
 #include <mutex>
@@ -42,9 +40,7 @@ int OpenDialog(const char* function, const Param* param) {
     }
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     Param localParam{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
-    errno = savedErrno;
     if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (localParam.size != sizeof(Param)) {
         Unsettled(function, "param size " + std::to_string(localParam.size) + " is not the " + std::to_string(sizeof(Param)) + "-byte layout this library reads");
@@ -66,9 +62,7 @@ int GetDialogResult(const char* function, Result* result, WriteRecipients writeR
     if (dialog.status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     Result localResult{};
-    const int savedErrnoIn = errno;
     const bool inCopied = GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult));
-    errno = savedErrnoIn;
     if (!inCopied) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (std::any_of(std::begin(localResult.reserved), std::end(localResult.reserved), [](std::uint8_t value) { return value != 0; })) {
         Unsettled(function, "the error for a non-zero reserved byte at 0x18..0x37 of the result is unsettled");
@@ -77,9 +71,7 @@ int GetDialogResult(const char* function, Result* result, WriteRecipients writeR
     localResult.errorCode = COMMON_DIALOG_OK;
     localResult.result = COMMON_DIALOG_RESULT_USER_CANCELED;
     if (!writeRecipients(localResult)) return COMMON_DIALOG_ERROR_ARG_NULL;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
-    errno = savedErrno;
     if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     return COMMON_DIALOG_OK;
 }
@@ -130,14 +122,10 @@ int APS5_VABI sceInvitationDialogGetResult(InvitationDialogResult* result) {
     return GetDialogResult(__func__, result, [](const InvitationDialogResult& localResult) {
         if (localResult.recipients == nullptr) return true;
         InvitationDialogRecipients recipients{};
-        const int savedErrnoIn = errno;
         const bool inCopied = GuestCopyIn_nid_no_patch(&recipients, localResult.recipients, sizeof(recipients));
-        errno = savedErrnoIn;
         if (!inCopied) return false;
         recipients.count = 0;
-        const int savedErrnoOut = errno;
         const bool outCopied = GuestCopyOut_nid_no_patch(localResult.recipients, &recipients, sizeof(recipients));
-        errno = savedErrnoOut;
         if (!outCopied) return false;
         return true;
     });
@@ -157,9 +145,7 @@ int APS5_VABI sceInvitationDialogGetResultA_nid_postfix(InvitationDialogResultA*
     return GetDialogResult(__func__, result, [](const InvitationDialogResultA& localResult) {
         if (localResult.sentUsers == nullptr) return true;
         const std::uint32_t count = 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(localResult.sentUsers, &count, sizeof(count));
-        errno = savedErrno;
         return copied;
     });
 }
