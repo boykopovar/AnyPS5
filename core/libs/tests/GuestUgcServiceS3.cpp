@@ -26,6 +26,15 @@ struct PartInfo {
     std::uint32_t pad = 0;
 };
 
+void RequireProgressZero(int reqId) {
+    float observedProgress = 0.5f;
+    std::uint64_t observedSize = 123;
+    Require(sceUgcServiceS3Unknown05(reqId, &observedProgress) == 0);
+    Require(observedProgress == 0.0f);
+    Require(sceUgcServiceS3Unknown06(reqId, &observedSize) == 0);
+    Require(observedSize == 0);
+}
+
 void TestUninitializedBehavior() {
     float progress = 0.5f;
     std::uint64_t progressSize = 123;
@@ -96,9 +105,12 @@ void TestClientLifecycleAndRequests() {
     Require(sceUgcServiceS3UploadFileWithGmsResponse(req1, 1, reinterpret_cast<const char*>(0x10), "{}") == kErrInvalidArg);
     Require(sceUgcServiceS3UploadFileWithGmsResponse(9999, 1, "/tmp/a", "{}") == kErrNotFoundRequest);
     Require(sceUgcServiceS3UploadFileWithGmsResponse(req1, 5, "/tmp/a", "{}") == kErrUnsupportedFileType);
+    RequireProgressZero(req1);
     Require(sceUgcServiceS3UploadFileWithGmsResponse(req1, 0, "/tmp/a", "{}") == kErrUnsupportedFileType);
     Require(sceUgcServiceS3UploadFileWithGmsResponse(req1, 1, "/tmp/a", nullptr) == kErrInvalidArg);
+    RequireProgressZero(req1);
     Require(sceUgcServiceS3UploadFileWithGmsResponse(req1, 1, "/tmp/a", reinterpret_cast<const char*>(0x10)) == kErrInvalidArg);
+    RequireProgressZero(req1);
 
     PartInfo part{};
     PartInfo badPart{};
@@ -109,20 +121,26 @@ void TestClientLifecycleAndRequests() {
     Require(sceUgcServiceS3Unknown07(req1, 1, "/tmp/a", "{}", &badPart, nullptr) == kErrInvalidArg);
     Require(sceUgcServiceS3Unknown07(9999, 1, "/tmp/a", "{}", &part, nullptr) == kErrNotFoundRequest);
     Require(sceUgcServiceS3Unknown07(req1, 5, "/tmp/a", "{}", &part, nullptr) == kErrUnsupportedFileType);
+    RequireProgressZero(req1);
     Require(sceUgcServiceS3Unknown07(req1, 1, "/tmp/a", nullptr, &part, nullptr) == kErrInvalidArg);
+    RequireProgressZero(req1);
 
     Require(sceUgcServiceS3Unknown08(req1, 1, nullptr, "{}", &part, nullptr) == kErrInvalidArg);
     Require(sceUgcServiceS3Unknown08(req1, 1, "/tmp/a", "{}", &badPart, nullptr) == kErrInvalidArg);
     Require(sceUgcServiceS3Unknown08(9999, 1, "/tmp/a", "{}", &part, nullptr) == kErrNotFoundRequest);
     Require(sceUgcServiceS3Unknown08(req1, 5, "/tmp/a", "{}", &part, nullptr) == kErrUnsupportedFileType);
+    RequireProgressZero(req1);
     Require(sceUgcServiceS3Unknown08(req1, 1, "/tmp/a", nullptr, &part, nullptr) == kErrInvalidArg);
+    RequireProgressZero(req1);
 
     Require(sceUgcServiceS3DownloadFileWithGmsResponse(req1, 1, nullptr, &outSize, "{}") == kErrInvalidArg);
     Require(sceUgcServiceS3DownloadFileWithGmsResponse(req1, 1, reinterpret_cast<const char*>(0x10), &outSize, "{}") == kErrInvalidArg);
     Require(sceUgcServiceS3DownloadFileWithGmsResponse(9999, 1, "/tmp/a", &outSize, "{}") == kErrNotFoundRequest);
     Require(sceUgcServiceS3DownloadFileWithGmsResponse(req1, 0, "/tmp/a", &outSize, "{}") == kErrUnsupportedFileType);
+    RequireProgressZero(req1);
     Require(sceUgcServiceS3DownloadFileWithGmsResponse(req1, 6, "/tmp/a", &outSize, "{}") == kErrUnsupportedFileType);
     Require(sceUgcServiceS3DownloadFileWithGmsResponse(req1, 5, "/tmp/a", &outSize, nullptr) == kErrInvalidArg);
+    RequireProgressZero(req1);
 
     Require(sceUgcServiceS3CancelRequest(9999) == kErrNotFoundRequest);
     Require(sceUgcServiceS3CancelRequest(req1) == 0);

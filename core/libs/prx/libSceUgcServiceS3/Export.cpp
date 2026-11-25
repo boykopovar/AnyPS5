@@ -79,6 +79,20 @@ bool IsValidFileType(int fileType, bool allowVideo) {
     return allowVideo && fileType == 5;
 }
 
+bool RequestExists(const std::shared_ptr<ClientState>& client, int requestId) {
+    std::lock_guard<std::mutex> lock(client->mutex);
+    return client->requests.find(requestId) != client->requests.end();
+}
+
+int ResetRequestProgress(const std::shared_ptr<ClientState>& client, int requestId) {
+    std::lock_guard<std::mutex> lock(client->mutex);
+    const auto it = client->requests.find(requestId);
+    if (it == client->requests.end()) return kErrNotFoundRequest;
+    it->second.progress = 0.0f;
+    it->second.progressSize = 0;
+    return 0;
+}
+
 }
 
 extern "C" {
@@ -213,15 +227,11 @@ int APS5_VABI sceUgcServiceS3UploadFileWithGmsResponse(int requestId, int fileTy
     const std::shared_ptr<ClientState> client = GetClient();
     if (client == nullptr) return kErrNoClient;
     if (!ProbeGuestCString(filePath, nullptr)) return kErrInvalidArg;
-    {
-        std::lock_guard<std::mutex> lock(client->mutex);
-        const auto it = client->requests.find(requestId);
-        if (it == client->requests.end()) return kErrNotFoundRequest;
-        it->second.progress = 0.0f;
-        it->second.progressSize = 0;
-    }
+    if (!RequestExists(client, requestId)) return kErrNotFoundRequest;
     if (!IsValidFileType(fileType, false)) return kErrUnsupportedFileType;
     if (!ProbeGuestCString(gmsResponse, nullptr)) return kErrInvalidArg;
+    const int resetRet = ResetRequestProgress(client, requestId);
+    if (resetRet != 0) return resetRet;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -233,15 +243,11 @@ int APS5_VABI sceUgcServiceS3Unknown07(int requestId, int fileType, const char* 
     if (client == nullptr) return kErrNoClient;
     if (!ProbeGuestCString(filePath, nullptr)) return kErrInvalidArg;
     if (!ValidatePartInfo(partInfo)) return kErrInvalidArg;
-    {
-        std::lock_guard<std::mutex> lock(client->mutex);
-        const auto it = client->requests.find(requestId);
-        if (it == client->requests.end()) return kErrNotFoundRequest;
-        it->second.progress = 0.0f;
-        it->second.progressSize = 0;
-    }
+    if (!RequestExists(client, requestId)) return kErrNotFoundRequest;
     if (!IsValidFileType(fileType, false)) return kErrUnsupportedFileType;
     if (!ProbeGuestCString(gmsResponse, nullptr)) return kErrInvalidArg;
+    const int resetRet = ResetRequestProgress(client, requestId);
+    if (resetRet != 0) return resetRet;
     NotImplemented_nid_no_patch("QOhoeuKdo7E");
     return 0;
 }
@@ -253,15 +259,11 @@ int APS5_VABI sceUgcServiceS3Unknown08(int requestId, int fileType, const char* 
     if (client == nullptr) return kErrNoClient;
     if (!ProbeGuestCString(filePath, nullptr)) return kErrInvalidArg;
     if (!ValidatePartInfo(partInfo)) return kErrInvalidArg;
-    {
-        std::lock_guard<std::mutex> lock(client->mutex);
-        const auto it = client->requests.find(requestId);
-        if (it == client->requests.end()) return kErrNotFoundRequest;
-        it->second.progress = 0.0f;
-        it->second.progressSize = 0;
-    }
+    if (!RequestExists(client, requestId)) return kErrNotFoundRequest;
     if (!IsValidFileType(fileType, false)) return kErrUnsupportedFileType;
     if (!ProbeGuestCString(gmsResponse, nullptr)) return kErrInvalidArg;
+    const int resetRet = ResetRequestProgress(client, requestId);
+    if (resetRet != 0) return resetRet;
     NotImplemented_nid_no_patch("9967FcQ+zos");
     return 0;
 }
@@ -271,15 +273,11 @@ int APS5_VABI sceUgcServiceS3DownloadFileWithGmsResponse(int requestId, int file
     const std::shared_ptr<ClientState> client = GetClient();
     if (client == nullptr) return kErrNoClient;
     if (!ProbeGuestCString(filePath, nullptr)) return kErrInvalidArg;
-    {
-        std::lock_guard<std::mutex> lock(client->mutex);
-        const auto it = client->requests.find(requestId);
-        if (it == client->requests.end()) return kErrNotFoundRequest;
-        it->second.progress = 0.0f;
-        it->second.progressSize = 0;
-    }
+    if (!RequestExists(client, requestId)) return kErrNotFoundRequest;
     if (!IsValidFileType(fileType, true)) return kErrUnsupportedFileType;
     if (!ProbeGuestCString(gmsResponse, nullptr)) return kErrInvalidArg;
+    const int resetRet = ResetRequestProgress(client, requestId);
+    if (resetRet != 0) return resetRet;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
