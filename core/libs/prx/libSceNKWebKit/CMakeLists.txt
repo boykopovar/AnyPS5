@@ -75,6 +75,16 @@ if(BUILD_TESTING)
             set_tests_properties(nkwebkit_${testName} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKit>")
         endif()
+        if(testName STREQUAL "jscdateparsing")
+            add_test(NAME nkwebkit_${testName}_us_zone COMMAND nkwebkit_${testName}_tests)
+            set_tests_properties(nkwebkit_${testName}_us_zone PROPERTIES ENVIRONMENT "TZ=EST5EDT")
+            add_test(NAME nkwebkit_${testName}_eu_zone COMMAND nkwebkit_${testName}_tests)
+            set_tests_properties(nkwebkit_${testName}_eu_zone PROPERTIES ENVIRONMENT "TZ=CET-1CEST,M3.5.0,M10.5.0/3")
+            if(WIN32)
+                set_tests_properties(nkwebkit_${testName}_us_zone nkwebkit_${testName}_eu_zone PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKit>")
+            endif()
+        endif()
     endforeach()
 
     add_test_executable(nkwebkit_wtftext_allocation_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/allocation/WtfTextAllocation.cpp

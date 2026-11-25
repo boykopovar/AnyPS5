@@ -1,5 +1,6 @@
 #include "prx/libSceJxr/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -254,7 +255,7 @@ int main(int argc, char** argv) {
         Require(argc == 3 || argc == 4, "expected library, export mode and optional padding direction");
         const char* name = std::strcmp(argv[2], "patched") == 0 ? "5Gjz1nLOKvo" : "PixelFormatLookup_nid_postfix";
 #ifdef _WIN32
-        const auto library = LoadLibraryA(argv[1]);
+        const auto library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
         Require(library != nullptr, "load requested library");
         const auto query = reinterpret_cast<Query>(GetProcAddress(library, name));
 #else

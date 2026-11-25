@@ -1586,18 +1586,6 @@ long double APS5_VABI lgammal_nid_postfix(long double x) {
 }
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
 float APS5_VABI tgammaf_nid_postfix(float x) { return GuestTgammaf(x); }
-double APS5_VABI tgamma_nid_postfix(double x) {
-    if (std::isgreater(x, 171.63)) {
-        static volatile double zero = 0.0;
-        return x / zero;
-    }
-    const int savedErrno = errno;
-    const double result = std::tgamma(x);
-    errno = std::isfinite(x) && x < 0.0 && std::trunc(x) == x ? EDOM : savedErrno;
-    if (result != 0.0 || !std::isfinite(x) || x >= 0.0 || std::trunc(x) == x) return result;
-    const bool negative = std::fmod(std::floor(-x), 2.0) == 0.0;
-    return std::copysign(0.0, negative ? -1.0 : 1.0);
-}
 long double APS5_VABI hypotl_nid_postfix(long double x, long double y) {
     constexpr int Scale = 0x2058;
     constexpr std::uint64_t IntegerBit = 0x8000000000000000ull;
@@ -2305,7 +2293,6 @@ double APS5_VABI erfc_nid_postfix(double x) {
     }
     if (ix >= 0x403c0000) {
         if (hx > 0) return 0.0;
-        std::feraiseexcept(FE_INEXACT);
         return 2.0;
     }
     if (hx < 0 && ix >= 0x40180000) {
@@ -4990,7 +4977,7 @@ static long double SinhlMsun(long double x) {
     if (exponent >= 0x7fff) return x + x;
     const double sign = signExponent < 0 ? -1 : 1;
     if (exponent < 0x4005) {
-        if (exponent < ExplBias - 32 && SinhlHuge + x > 1) return x;
+        if (exponent < ExplBias - 32) return x;
         if (exponent < 0x3fff) return SinhlSmall(x);
         const ExplReduced half = ExplHalfKernel(std::fabs(x));
         return sign * (half.lo - 0.25 / (half.hi + half.lo) + half.hi);

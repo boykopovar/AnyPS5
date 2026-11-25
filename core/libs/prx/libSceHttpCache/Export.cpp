@@ -691,7 +691,7 @@ bool MergedHeader(std::string_view name) {
         if (lower == excluded) return false;
     }
     for (const auto excluded : UnmergedHeaderNames) {
-        if (lower == excluded) return false;
+        if (lower.starts_with(excluded)) return false;
     }
     return true;
 }

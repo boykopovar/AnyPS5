@@ -1096,7 +1096,7 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         exact = {provider for provider, names in guest_names.items() if filename in names.files}
         return exact or {provider for provider, names in guest_names.items() if name in names}
 
-    host_libc_follows = "libSceLibcInternal.prx" in {needed_name(name) for name in needed_libraries}
+    host_libc_follows = "libSceLibcInternal.prx" in {needed_name(name) for name in needed_libraries} and "libSceLibcInternal.prx" not in modules
 
     def resolve(symbol, record):
         library = record["library"]

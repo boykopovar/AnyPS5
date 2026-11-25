@@ -47,16 +47,7 @@ void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled() {
 void APS5_VABI WKBundlePageClickMenuItem() {
 }
 
-void APS5_VABI WKBundlePageSetBottomOverhangImage() {
-}
-
 void APS5_VABI WKBundlePageSetContextMenuClient() {
-}
-
-void APS5_VABI WKBundlePageSetPaintedObjectsCounterThreshold() {
-}
-
-void APS5_VABI WKBundlePageSetTopOverhangImage() {
 }
 
 void APS5_VABI WKContextAddSupportedPlugin() {
@@ -86,9 +77,6 @@ void APS5_VABI WKContextRefreshPlugIns() {
 void APS5_VABI WKContextSetAdditionalPluginsDirectory() {
 }
 
-void APS5_VABI WKContextSetIconDatabasePath() {
-}
-
 void APS5_VABI WKContextSetPlugInAutoStartOriginHashes() {
 }
 
@@ -105,33 +93,6 @@ void APS5_VABI WKCookieManagerDeleteAllCookies() {
 }
 
 void APS5_VABI WKCookieManagerSetHTTPCookieAcceptPolicy() {
-}
-
-void APS5_VABI WKIconDatabaseCheckIntegrityBeforeOpening() {
-}
-
-void APS5_VABI WKIconDatabaseClose() {
-}
-
-void APS5_VABI WKIconDatabaseEnableDatabaseCleanup() {
-}
-
-void APS5_VABI WKIconDatabaseReleaseIconForURL() {
-}
-
-void APS5_VABI WKIconDatabaseRemoveAllIcons() {
-}
-
-void APS5_VABI WKIconDatabaseRetainIconForURL() {
-}
-
-void APS5_VABI WKIconDatabaseSetIconDataForIconURL() {
-}
-
-void APS5_VABI WKIconDatabaseSetIconDatabaseClient() {
-}
-
-void APS5_VABI WKIconDatabaseSetIconURLForPageURL() {
 }
 
 void APS5_VABI WKPreferencesSetQTKitEnabled() {

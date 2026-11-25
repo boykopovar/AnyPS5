@@ -755,7 +755,12 @@ int APS5_VABI fclose_nid_postfix(FileStream* stream) {
     }
     GetStreamHandle(stream);
     std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
-    return stream->Close();
+    const int previousError = errno;
+    errno = 0;
+    const int result = stream->Close();
+    const int nativeError = errno;
+    errno = result != 0 && nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
+    return result;
 }
 
 FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const char* filename, int mode, int protection) {
@@ -1204,8 +1209,8 @@ void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* cou
     const bool readable = GuestCopyIn_nid_no_patch(&elements, count, sizeof(elements));
     errno = savedErrno;
     if (!readable) throw std::invalid_argument("lfind: unreadable element count");
-    if (elements == 0) return nullptr;
-    if (!key || !base || !compare || size == 0)
+    if (elements == 0 || size == 0) return nullptr;
+    if (!key || !base || !compare)
         throw std::invalid_argument("lfind: invalid arguments");
     if (elements > std::numeric_limits<size_t>::max() / size)
         throw std::overflow_error("lfind: array size overflow");
@@ -1220,27 +1225,30 @@ void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* cou
 void* APS5_VABI lsearch_nid_postfix(const void* key, void* base, size_t* count,
     size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
     if (!count) throw std::invalid_argument("lsearch: null element count");
-    if (!key || !base || !compare || size == 0)
+    if (size != 0 && (!key || !base || !compare))
         throw std::invalid_argument("lsearch: invalid arguments");
     size_t elements = 0;
     const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&elements, count, sizeof(elements));
     errno = savedErrno;
     if (!readable) throw std::invalid_argument("lsearch: unreadable element count");
-    if (elements > std::numeric_limits<size_t>::max() / size)
-        throw std::overflow_error("lsearch: array size overflow");
     auto* bytes = static_cast<unsigned char*>(base);
-    for (size_t index = 0; index < elements; ++index) {
-        auto* element = bytes + index * size;
-        if (compare(key, element) == 0) return element;
+    if (size != 0) {
+        if (elements > std::numeric_limits<size_t>::max() / size)
+            throw std::overflow_error("lsearch: array size overflow");
+        for (size_t index = 0; index < elements; ++index) {
+            auto* element = bytes + index * size;
+            if (compare(key, element) == 0) return element;
+        }
+        if (elements >= std::numeric_limits<size_t>::max() / size)
+            throw std::overflow_error("lsearch: append capacity overflow");
     }
-    if (elements >= std::numeric_limits<size_t>::max() / size)
-        throw std::overflow_error("lsearch: append capacity overflow");
     const size_t appended = elements + 1;
     const int appendErrno = errno;
     const bool writable = GuestCopyOut_nid_no_patch(count, &appended, sizeof(appended));
     errno = appendErrno;
     if (!writable) throw std::invalid_argument("lsearch: unwritable element count");
+    if (size == 0) return base;
     auto* tail = bytes + elements * size;
     std::memcpy(tail, key, size);
     return tail;

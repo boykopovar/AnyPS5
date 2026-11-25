@@ -1792,6 +1792,8 @@ void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAcc
     ctx.Define(access.inst, result);
 }
 
+void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup, bool converted, bool gather);
+
 void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup) {
     auto& state = ctx.state;
     const auto& mem = access.mem;
@@ -1800,7 +1802,9 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         ctx.Fail(access.inst, "is a gather with an LOD clamp, which is not implemented");
     }
     if (setup.dref && (access.image.emulatedCompare & EmulatedCompare::Enabled) != 0u) {
-        ctx.Fail(access.inst, "is a comparison gather of a color texture, which is not implemented");
+        if (HasFlag(mem, RdnaImageSampleFlagGatherHorizontal)) ctx.Fail(access.inst, "is a horizontal comparison gather of a color texture, which is not implemented");
+        EmitEmulatedSample(ctx, access, setup, false, true);
+        return;
     }
     if (dimension == RdnaImageDimension::Dim1D || dimension == RdnaImageDimension::Dim1DArray || access.image.remappedDepth1D) {
         if (setup.dref || !HasFlag(mem, RdnaImageSampleFlagLevelZero) || HasFlag(mem, RdnaImageSampleFlagGatherHorizontal) || access.image.remappedDepth1D) {
@@ -1872,7 +1876,7 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, gathered), resultNumericClass, false, true));
 }
 
-void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup, bool converted) {
+void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup, bool converted, bool gather) {
     auto& state = ctx.state;
     const auto& mem = access.mem;
     const auto& image = access.image;
@@ -1988,6 +1992,17 @@ void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& acces
     const auto mix = [&](std::uint32_t first, std::uint32_t second, std::uint32_t weight) {
         return ext(filteredType, GLSLstd450FMix, {first, second, vector({weight, weight, weight, weight})});
     };
+    if (gather) {
+        const auto half = f32Constant(0.5f);
+        const auto x0 = Binary(state, spv::OpIAdd, i32, Unary(state, spv::OpConvertFToS, i32, ext(f32, GLSLstd450Floor, {Binary(state, spv::OpFSub, f32, scaledU, half)})), offsetX);
+        const auto y0 = Binary(state, spv::OpIAdd, i32, Unary(state, spv::OpConvertFToS, i32, ext(f32, GLSLstd450Floor, {Binary(state, spv::OpFSub, f32, scaledV, half)})), offsetY);
+        const auto x1 = Binary(state, spv::OpIAdd, i32, x0, ConstantI32(state, 1));
+        const auto y1 = Binary(state, spv::OpIAdd, i32, y0, ConstantI32(state, 1));
+        const auto gathered = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 4), gathered, compareTexel(x0, y1)[0], compareTexel(x1, y1)[0], compareTexel(x1, y0)[0], compareTexel(x0, y0)[0]);
+        ctx.Define(access.inst, ResultVector(ctx, access, gathered, IrTextureNumericClass::Float, false, true));
+        return;
+    }
     const auto filtered = EmitValueIfElse(state, equal(parameter(1u), 0u), filteredType, [&] {
         return vector(compareTexel(texelIndex(scaledU, offsetX), texelIndex(scaledV, offsetY)));
     }, [&] {
@@ -2037,11 +2052,11 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     const auto& mem = access.mem;
     const auto& image = access.image;
     if (setup.dref && (image.emulatedCompare & EmulatedCompare::Enabled) != 0u) {
-        EmitEmulatedSample(ctx, access, setup, false);
+        EmitEmulatedSample(ctx, access, setup, false, false);
         return;
     }
     if (!setup.dref && IsConvertedUnormTextureFormat(image.conversionFormat)) {
-        EmitEmulatedSample(ctx, access, setup, true);
+        EmitEmulatedSample(ctx, access, setup, true, false);
         return;
     }
     const bool explicitLod = ImageSampleExplicitLod(mem.imageSampleFlags, state.program.Resources().stage);
