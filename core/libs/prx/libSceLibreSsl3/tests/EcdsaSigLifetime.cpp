@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl3/include/Pkcs7.hpp"
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -115,26 +116,58 @@ String* OwnedString(unsigned char byte) {
 void SignatureNew() {
     LibreSsl3EcdsaSig* signature = ECDSA_SIG_new_nid_postfix();
     Require(signature != nullptr);
-    Require(signature->r == nullptr && signature->s == nullptr);
-    Require(allocations.size() == 1);
+    Require(allocations.size() == 3 && allocations.at(signature) == sizeof(LibreSsl3EcdsaSig));
+    const void* r = nullptr;
+    const void* s = nullptr;
+    ECDSA_SIG_get0_nid_postfix(signature, &r, &s);
+    Require(r != nullptr && s != nullptr && r != s && r == signature->r && s == signature->s);
+    for (const void* component : {r, s}) {
+        const auto* value = static_cast<const Bignum*>(component);
+        Require(allocations.at(const_cast<void*>(component)) == sizeof(Bignum));
+        Require(value->d == nullptr && value->top == 0 && value->dmax == 0 && value->neg == 0 && value->flags == 1);
+        Require(BN_num_bits_nid_postfix(value) == 0);
+    }
+    Require(ERR_get_error_nid_postfix() == 0);
 
+    const unsigned char bytes[] = {0x01, 0x02};
+    Require(BN_bin2bn_nid_postfix(bytes, 2, static_cast<Bignum*>(signature->r)) == signature->r);
+    Require(BN_num_bits_nid_postfix(static_cast<const Bignum*>(signature->r)) == 9);
+    Require(BN_set_word_nid_postfix(static_cast<Bignum*>(signature->s), 7) == 1);
+    Require(BN_num_bits_nid_postfix(static_cast<const Bignum*>(signature->s)) == 3);
+
+    const std::size_t before = allocations.size();
     allocationsUntilFailure = 0;
     Require(ECDSA_SIG_new_nid_postfix() == nullptr);
-    Require(allocations.size() == 1);
+    Require(allocations.size() == before);
     ExpectError(Asn1Error(65));
-    free_nid_postfix(signature);
+
+    for (int failing = 1; failing <= 2; ++failing) {
+        allocationsUntilFailure = failing;
+        Require(ECDSA_SIG_new_nid_postfix() == nullptr);
+        Require(allocationsUntilFailure == -1);
+        Require(allocations.size() == before);
+        Require(ERR_get_error_nid_postfix() == Asn1Error(65));
+        ExpectError(Asn1Error(65));
+    }
+
+    ECDSA_SIG_free_nid_postfix(signature);
+    Require(allocations.empty());
 }
 
 void SignatureSet() {
     LibreSsl3EcdsaSig* signature = ECDSA_SIG_new_nid_postfix();
     Require(signature != nullptr);
+    void* const initialR = signature->r;
+    void* const initialS = signature->s;
+    Require(initialR != nullptr && initialS != nullptr);
     Require(ECDSA_SIG_set0_nid_postfix(signature, nullptr, nullptr) == 0);
-    Require(signature->r == nullptr && signature->s == nullptr);
+    Require(signature->r == initialR && signature->s == initialS && allocations.size() == 3);
 
     Bignum* r = OwnedBignum();
     Bignum* s = OwnedBignum();
     Require(ECDSA_SIG_set0_nid_postfix(signature, r, s) == 1);
     Require(signature->r == r && signature->s == s);
+    Require(allocations.size() == 1 + 2 + 2 && !allocations.contains(initialR) && !allocations.contains(initialS));
 
     Require(ECDSA_SIG_set0_nid_postfix(signature, nullptr, s) == 0);
     Require(signature->r == r && signature->s == s);
@@ -217,10 +250,71 @@ void TypeFree() {
     ASN1_TYPE_free_nid_postfix(nullptr);
 }
 
+void Pkcs7ObjectFree() {
+    auto* shortName = static_cast<char*>(Allocate_nid_no_patch(3));
+    std::memcpy(shortName, "sn", 3);
+    auto* longName = static_cast<char*>(Allocate_nid_no_patch(3));
+    std::memcpy(longName, "ln", 3);
+    auto* oidData = static_cast<unsigned char*>(Allocate_nid_no_patch(2));
+    oidData[0] = 0x2a;
+    oidData[1] = 0x86;
+    zeroed.emplace(oidData, 2);
+    auto* pkcs7Type = static_cast<Asn1Object_nid_no_patch*>(Allocate_nid_no_patch(sizeof(Asn1Object_nid_no_patch)));
+    *pkcs7Type = {shortName, longName, 0, 2, oidData, 0x01 | 0x04 | 0x08};
+
+    auto* innerShortName = static_cast<char*>(Allocate_nid_no_patch(3));
+    std::memcpy(innerShortName, "is", 3);
+    auto* innerLongName = static_cast<char*>(Allocate_nid_no_patch(3));
+    std::memcpy(innerLongName, "il", 3);
+    auto* innerOidData = static_cast<unsigned char*>(Allocate_nid_no_patch(2));
+    innerOidData[0] = 0x2b;
+    innerOidData[1] = 0x0e;
+    zeroed.emplace(innerOidData, 2);
+    auto* innerObject = static_cast<Asn1Object_nid_no_patch*>(Allocate_nid_no_patch(sizeof(Asn1Object_nid_no_patch)));
+    *innerObject = {innerShortName, innerLongName, 0, 2, innerOidData, 0x01 | 0x04 | 0x08};
+
+    auto* asn1Value = static_cast<LibreSsl3Asn1Type*>(Allocate_nid_no_patch(sizeof(LibreSsl3Asn1Type)));
+    *asn1Value = {6, innerObject};
+
+    auto* pkcs7 = static_cast<LibreSsl3Pkcs7*>(Allocate_nid_no_patch(sizeof(LibreSsl3Pkcs7)));
+    *pkcs7 = {};
+    pkcs7->type = pkcs7Type;
+    pkcs7->d = asn1Value;
+
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty() && zeroed.empty());
+
+    auto* stackOidData = static_cast<unsigned char*>(Allocate_nid_no_patch(2));
+    stackOidData[0] = 0x55;
+    stackOidData[1] = 0x04;
+    zeroed.emplace(stackOidData, 2);
+    Asn1Object_nid_no_patch stackObj{nullptr, nullptr, 0, 2, stackOidData, 0x08};
+    auto* stackPkcs7 = static_cast<LibreSsl3Pkcs7*>(Allocate_nid_no_patch(sizeof(LibreSsl3Pkcs7)));
+    *stackPkcs7 = {};
+    stackPkcs7->type = &stackObj;
+
+    PKCS7_free_nid_postfix(stackPkcs7);
+    Require(stackObj.data == nullptr && stackObj.length == 0);
+    Require(allocations.empty() && zeroed.empty());
+
+    auto* stackShortName = static_cast<char*>(Allocate_nid_no_patch(3));
+    std::memcpy(stackShortName, "ss", 3);
+    auto* stackLongName = static_cast<char*>(Allocate_nid_no_patch(3));
+    std::memcpy(stackLongName, "sl", 3);
+    Asn1Object_nid_no_patch stackNamesObj{stackShortName, stackLongName, 0, 0, nullptr, 0x04};
+    auto* stackNamesPkcs7 = static_cast<LibreSsl3Pkcs7*>(Allocate_nid_no_patch(sizeof(LibreSsl3Pkcs7)));
+    *stackNamesPkcs7 = {};
+    stackNamesPkcs7->type = &stackNamesObj;
+
+    PKCS7_free_nid_postfix(stackNamesPkcs7);
+    Require(stackNamesObj.shortName == nullptr && stackNamesObj.longName == nullptr);
+    Require(allocations.empty() && zeroed.empty());
+}
+
 }
 
 int main() {
-    std::array<void*, 7> api{
+    std::array<void*, 10> api{
         reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch),
         reinterpret_cast<void*>(Callocate_nid_no_patch), reinterpret_cast<void*>(Reallocate_nid_no_patch),
         reinterpret_cast<void*>(UnexpectedAlign_nid_no_patch), reinterpret_cast<void*>(UnexpectedRealign_nid_no_patch),
@@ -229,6 +323,7 @@ int main() {
     SignatureNew();
     SignatureSet();
     TypeFree();
-    Require(allocations.empty());
+    Pkcs7ObjectFree();
+    Require(allocations.empty() && zeroed.empty());
     std::puts("libSceLibreSsl3 ECDSA and ASN.1 type tests passed");
 }

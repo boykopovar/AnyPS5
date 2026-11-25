@@ -13,9 +13,13 @@ static double D(std::uint64_t bits) { return std::bit_cast<double>(bits); }
 static float F(std::uint32_t bits) { return std::bit_cast<float>(bits); }
 
 static long double X(std::uint16_t signExponent, std::uint64_t mantissa) {
+    volatile std::uint64_t runtimeMantissa = mantissa;
+    volatile std::uint16_t runtimeSignExponent = signExponent;
+    const std::uint64_t storedMantissa = runtimeMantissa;
+    const std::uint16_t storedSignExponent = runtimeSignExponent;
     long double value = 0;
-    std::memcpy(&value, &mantissa, sizeof(mantissa));
-    std::memcpy(reinterpret_cast<unsigned char*>(&value) + 8, &signExponent, sizeof(signExponent));
+    std::memcpy(&value, &storedMantissa, sizeof(storedMantissa));
+    std::memcpy(reinterpret_cast<unsigned char*>(&value) + 8, &storedSignExponent, sizeof(storedSignExponent));
     return value;
 }
 
@@ -54,7 +58,54 @@ static void CheckNorm(short (APS5_VABI* function)(std::uint16_t*), T input, shor
     Require(function(reinterpret_cast<std::uint16_t*>(&value)) == code && SameBits(value, expected));
 }
 
+template <typename Checks>
+static void AtX87Control(std::uint16_t control, Checks checks) {
+    std::uint16_t saved = 0;
+    std::uint16_t status = 0;
+    std::uint16_t after = 0;
+    asm volatile("fnstcw %0" : "=m"(saved));
+    asm volatile("fnclex\n\tfldcw %0" : : "m"(control));
+    checks();
+    asm volatile("fnstsw %0" : "=m"(status));
+    asm volatile("fnstcw %0" : "=m"(after));
+    asm volatile("fnclex\n\tfldcw %0" : : "m"(saved));
+    Require((status & 0x3f) == 0 && after == control);
+}
+
+static void CheckExtendedScalingKeepsBitsAndFlags() {
+    for (const std::uint16_t control : {std::uint16_t{0x27f}, std::uint16_t{0x7f}}) {
+        AtX87Control(control, [] {
+            CheckScale(_LDscale_nid_postfix, X(0x3ffe, 0xc90fdaa22168c235ull), std::int64_t{5}, -1, X(0x4003, 0xc90fdaa22168c235ull));
+            CheckUnscale(_LDunscale_nid_postfix, X(0x4002, 0xc90fdaa22168c235ull), -1, 4, X(0x3ffe, 0xc90fdaa22168c235ull));
+        });
+    }
+    AtX87Control(0x37f, [] {
+        CheckScale(_LDscale_nid_postfix, X(0x7f94, 0xae9204275937a4c1ull), std::int64_t{200}, 1, X(0x7fff, 0x8000000000000000ull));
+        CheckScale(_LDscale_nid_postfix, X(0x0001, 0x8000000000000001ull), std::int64_t{-1}, -1, X(0x0000, 0x4000000000000000ull));
+        CheckScale(_LDscale_nid_postfix, X(0x0001, 0x8000000000000003ull), std::int64_t{-1}, -1, X(0x0000, 0x4000000000000002ull));
+        CheckScale(_LDscale_nid_postfix, X(0x0001, 0xffffffffffffffffull), std::int64_t{-1}, -1, X(0x0001, 0x8000000000000000ull));
+        CheckScale(_LDscale_nid_postfix, X(0x3fff, 0xffffffffffffffffull), std::int64_t{-16446}, -1, X(0x0000, 0x0000000000000001ull));
+        CheckScale(_LDscale_nid_postfix, X(0xbfff, 0xffffffffffffffffull), std::int64_t{-16446}, -1, X(0x8000, 0x0000000000000001ull));
+        CheckScale(_LDscale_nid_postfix, X(0x3fff, 0xffffffffffffffffull), std::int64_t{-16447}, 0, X(0x0000, 0x0000000000000000ull));
+        CheckUnscale(_LDunscale_nid_postfix, X(0x0000, 0x0000000000000001ull), -1, -16444, X(0x3ffe, 0x8000000000000000ull));
+        CheckUnscale(_LDunscale_nid_postfix, X(0x8000, 0x00c90fdaa22168c2ull), -1, -16389, X(0xbffe, 0xc90fdaa22168c200ull));
+    });
+    AtX87Control(0x77f, [] {
+        CheckScale(_LDscale_nid_postfix, X(0x0001, 0x8000000000000001ull), std::int64_t{-1}, -1, X(0x0000, 0x4000000000000000ull));
+        CheckScale(_LDscale_nid_postfix, X(0x8001, 0x8000000000000001ull), std::int64_t{-1}, -1, X(0x8000, 0x4000000000000001ull));
+    });
+    AtX87Control(0xb7f, [] {
+        CheckScale(_LDscale_nid_postfix, X(0x0001, 0x8000000000000001ull), std::int64_t{-1}, -1, X(0x0000, 0x4000000000000001ull));
+        CheckScale(_LDscale_nid_postfix, X(0x8001, 0x8000000000000001ull), std::int64_t{-1}, -1, X(0x8000, 0x4000000000000000ull));
+    });
+    AtX87Control(0xf7f, [] {
+        CheckScale(_LDscale_nid_postfix, X(0x0001, 0x8000000000000001ull), std::int64_t{-1}, -1, X(0x0000, 0x4000000000000000ull));
+        CheckScale(_LDscale_nid_postfix, X(0x8001, 0x8000000000000001ull), std::int64_t{-1}, -1, X(0x8000, 0x4000000000000000ull));
+    });
+}
+
 int main() {
+    CheckExtendedScalingKeepsBitsAndFlags();
     CheckInt(_Dint_nid_postfix, D(0x4006000000000000ull), 0, -1, D(0x4000000000000000ull));
     CheckInt(_Dint_nid_postfix, D(0xc006000000000000ull), 1, -1, D(0xc004000000000000ull));
     CheckInt(_Dint_nid_postfix, D(0x4008000000000000ull), 0, 0, D(0x4008000000000000ull));

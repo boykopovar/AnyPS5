@@ -41,21 +41,71 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <new>
 #include <stdexcept>
 
+namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+bool* AliveField(WebRtcPendingTaskSafetyFlag* flag) {
+    return reinterpret_cast<bool*>(reinterpret_cast<std::uintptr_t>(flag) + offsetof(WebRtcPendingTaskSafetyFlag, alive));
+}
+
+const bool* AliveField(const WebRtcPendingTaskSafetyFlag* flag) {
+    return reinterpret_cast<const bool*>(reinterpret_cast<std::uintptr_t>(flag) + offsetof(WebRtcPendingTaskSafetyFlag, alive));
+}
+
+}
+
 extern "C" {
+
+WebRtcPendingTaskSafetyFlag** APS5_VABI _ZN6webrtc21PendingTaskSafetyFlag6CreateEv_nid_postfix(WebRtcPendingTaskSafetyFlag** result) {
+    if (!result)
+        throw std::invalid_argument("PendingTaskSafetyFlag::Create requires a result");
+    {
+        if (!GuestWritable_nid_no_patch(result, sizeof(*result)))
+            throw std::invalid_argument("PendingTaskSafetyFlag::Create requires a result");
+    }
+    auto* flag = static_cast<WebRtcPendingTaskSafetyFlag*>(_Znwm_nid_postfix(sizeof(WebRtcPendingTaskSafetyFlag)));
+    const WebRtcPendingTaskSafetyFlag hostFlag{1, true};
+    {
+        ErrnoGuard guard;
+        if (!GuestPtr<WebRtcPendingTaskSafetyFlag>(flag).CopyOut(hostFlag) ||
+            !GuestPtr<WebRtcPendingTaskSafetyFlag*>(result).CopyOut(flag)) {
+            _ZdlPv_nid_postfix(flag);
+            throw std::invalid_argument("PendingTaskSafetyFlag::Create requires a result");
+        }
+    }
+    return result;
+}
 
 void APS5_VABI _ZN6webrtc21PendingTaskSafetyFlag11SetNotAliveEv_nid_postfix(WebRtcPendingTaskSafetyFlag* flag) {
     if (!flag)
         throw std::invalid_argument("PendingTaskSafetyFlag::SetNotAlive requires a flag");
-    flag->alive = false;
+    const bool notAlive = false;
+    ErrnoGuard guard;
+    if (!GuestPtr<bool>(AliveField(flag)).CopyOut(notAlive))
+        throw std::invalid_argument("PendingTaskSafetyFlag::SetNotAlive requires a flag");
 }
 
 bool APS5_VABI _ZNK6webrtc21PendingTaskSafetyFlag5aliveEv_nid_postfix(const WebRtcPendingTaskSafetyFlag* flag) {
     if (!flag)
         throw std::invalid_argument("PendingTaskSafetyFlag::alive requires a flag");
-    return flag->alive;
+    bool value = false;
+    ErrnoGuard guard;
+    if (!GuestPtr<const bool>(AliveField(flag)).CopyIn(value))
+        throw std::invalid_argument("PendingTaskSafetyFlag::alive requires a flag");
+    return value;
 }
 
 }

@@ -1,5 +1,5 @@
-#include "Translation/ControlFlowInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -7,10 +7,6 @@
 #include <string>
 
 namespace ShaderRecompiler {
-
-void TranslateControlFlowInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg) {
-    throw std::runtime_error("TranslateControlFlowInstruction not implemented");
-}
 
 void TranslationContext::sSubvectorLoop(const RdnaInstruction& inst, bool begin) {
     if (program.WaveSize() != 64u) {
@@ -65,12 +61,18 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
     else if (operation == IrOpcode::LogicalXor) operation = IrOpcode::BitwiseXor32;
     const bool writeFirst = SaveexecWritesDestinationFirst() && !writeResult;
     const bool execSource = sourceAt(inst, 0u).kind == RdnaOperandKind::ExecLo;
+    const bool pixel = program.Resources().stage == IrShaderStage::Pixel;
     if (write64) {
         const std::array<IrU32, 2> oldExec{IrU32(ir.GetExecLo()), IrU32(ir.GetExecHi())};
+        const IrU1 oldLane(ir.GetExec());
         const std::array<IrU32, 2> savedExec{hostExecWord(0u), hostExecWord(1u)};
-        if (writeFirst) writeU32Pair(inst.destination, savedExec);
+        const auto writeSaved = [&](const std::array<IrU32, 2>& words, IrU1 lane) {
+            writeU32Pair(inst.destination, words);
+            if (pixel) writeMaskLanes(inst.destination, lane, IrU1(ir.ConstantBool(true)));
+        };
+        if (writeFirst) writeSaved(savedExec, oldLane);
         const std::array<IrU32, 2> source = execSource ? oldExec : readU32Pair(sourceAt(inst, 0u));
-        if (!writeFirst && !writeResult) writeU32Pair(inst.destination, savedExec);
+        if (!writeFirst && !writeResult) writeSaved(savedExec, oldLane);
         IrValue& lowExecOperand = negateExec ? ir.BitwiseNot(oldExec[0].Value()) : oldExec[0].Value();
         IrValue& lowSourceOperand = negateSource ? ir.BitwiseNot(source[0].Value()) : source[0].Value();
         IrValue& highExecOperand = negateExec ? ir.BitwiseNot(oldExec[1].Value()) : oldExec[1].Value();
@@ -81,10 +83,11 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
         const IrU32 newExecHi(negateResult ? ir.BitwiseNot(highCombined) : highCombined);
         ir.SetExecLo(newExecLo.Value());
         ir.SetExecHi(newExecHi.Value());
-        if (writeResult) writeU32Pair(inst.destination, {hostExecWord(0u), hostExecWord(1u)});
+        const IrU1 newLane = threadBit({newExecLo, newExecHi});
+        if (writeResult) writeSaved({hostExecWord(0u), hostExecWord(1u)}, newLane);
         const IrU1 nonZero(ir.LogicalOr(ir.INotEqual(newExecLo.Value(), ir.Constant(0u)), ir.INotEqual(newExecHi.Value(), ir.Constant(0u))));
         ir.SetScc(nonZero.Value());
-        ir.SetExec(threadBit({newExecLo, newExecHi}).Value());
+        ir.SetExec(newLane.Value());
         return;
     }
     const IrU32 oldExec(ir.GetExecLo());
@@ -93,11 +96,7 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
     const bool lanes = program.WaveSize() == 32u && (execSource || maskLanesExact(sourceAt(inst, 0u)));
     const auto writeSaved = [&](IrU32 word, IrU1 lane) {
         writeRawU32(inst.destination, word);
-        if (lanes && inst.destination.kind == RdnaOperandKind::ScalarRegister) {
-            const auto reg = static_cast<ScalarReg>(inst.destination.reg);
-            ir.SetThreadBitScalarReg(reg, lane.Value());
-            ir.SetScalarMaskTag(reg, ir.ConstantBool(true));
-        }
+        if (pixel || (lanes && inst.destination.kind == RdnaOperandKind::ScalarRegister)) writeMaskLanes(inst.destination, lane, IrU1(ir.ConstantBool(true)));
     };
     if (writeFirst) writeSaved(savedExec, oldLane);
     const IrU32 source = execSource ? oldExec : readU32(sourceAt(inst, 0u));
@@ -161,7 +160,7 @@ void TranslationContext::subU32(const RdnaInstruction& inst, bool vector, bool r
     const IrU32& rhs = reverse ? first : second;
     const IrU32 result(ir.ISub(lhs.Value(), rhs.Value()));
     const IrU1 borrow(ir.ULessThan(lhs.Value(), rhs.Value()));
-    writeRawU32(inst.destination, result);
+    writeRawU32(inst.destination, inst.destination.clamp ? IrU32(ir.Select(borrow.Value(), ir.Constant(0u), result.Value())) : result);
     if (vector) {
         writeMask(inst.destination2, borrow);
         return;
@@ -332,8 +331,16 @@ void TranslationContext::movB32(const RdnaInstruction& inst, bool applyFloatModi
 }
 
 void TranslationContext::sMovB64(const RdnaInstruction& inst) {
-    const std::array<IrU32, 2> value = readU32Pair(sourceAt(inst, 0u));
+    const RdnaOperand& source = sourceAt(inst, 0u);
+    const std::array<IrU32, 2> value = readU32Pair(source);
+    if (program.Resources().stage != IrShaderStage::Pixel || !maskLanesExact(source)) {
+        writeU32Pair(inst.destination, value);
+        return;
+    }
+    const IrU1 lane = readMask(source);
+    const IrU1 valid = readMaskValid(source);
     writeU32Pair(inst.destination, value);
+    writeMaskLanes(inst.destination, lane, valid);
 }
 
 void TranslationContext::sWqm(const RdnaInstruction& inst, bool wide) {
@@ -491,8 +498,113 @@ void TranslationContext::vPermlane16B32(const RdnaInstruction& inst, bool x16) {
     writeRawU32(inst.destination, result);
 }
 
-void TranslateControlFlowInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateControlFlowInstruction not implemented");
+void TranslationContext::TranslateSplitState(const SplitStateAbi::Plan& plan, const SplitStateAbi::Point& point) {
+    using namespace SplitStateAbi;
+    const auto base = AreaBase(point.area, plan.vectorCount);
+    const auto target = TargetSlot(plan.vectorCount);
+    IrValue& always = ir.ConstantBool(true);
+    const auto store = [&](std::uint32_t slot, IrValue& value, IrValue& enabled) { (void)ir.Emit(IrOpcode::StoreSplitState, IrType::Void, {&ir.Constant(slot), &value, &enabled}); };
+    const auto load = [&](std::uint32_t slot) -> IrValue& { return ir.Emit(IrOpcode::LoadSplitState, IrType::U32, {&ir.Constant(slot)}); };
+    const auto saveVectors = [&](IrValue& enabled) {
+        for (std::uint32_t slot = 0; slot < plan.vectorCount; ++slot) store(base + slot, ir.GetVectorReg(static_cast<VectorReg>(plan.registers[slot])), enabled);
+    };
+    switch (point.action) {
+    case Action::ClearTarget:
+        store(target, ir.Constant(0u), always);
+        store(target + 1u, ir.Constant(0u), always);
+        return;
+    case Action::StoreTarget:
+        store(target, ir.GetScalarReg(static_cast<ScalarReg>(plan.targetRegister)), always);
+        store(target + 1u, ir.GetScalarReg(static_cast<ScalarReg>(plan.targetRegister + 1u)), always);
+        return;
+    case Action::SaveTarget: {
+        IrValue& exec = ir.GetExec();
+        store(target, ir.GetScalarReg(static_cast<ScalarReg>(plan.targetRegister)), exec);
+        store(target + 1u, ir.GetScalarReg(static_cast<ScalarReg>(plan.targetRegister + 1u)), exec);
+        return;
+    }
+    case Action::SaveSelected: {
+        IrValue& low = ir.IEqual(load(target), ir.Constant(static_cast<std::uint32_t>(plan.selectedTarget)));
+        IrValue& high = ir.IEqual(load(target + 1u), ir.Constant(static_cast<std::uint32_t>(plan.selectedTarget >> 32u)));
+        saveVectors(ir.LogicalAnd(low, high));
+        return;
+    }
+    case Action::Save:
+        saveVectors(always);
+        return;
+    case Action::Load:
+        for (std::uint32_t slot = 0; slot < plan.vectorCount; ++slot) ir.SetVectorReg(static_cast<VectorReg>(plan.registers[slot]), load(base + slot));
+        return;
+    case Action::SaveState: {
+        store(target, ir.GetScalarReg(static_cast<ScalarReg>(plan.targetRegister)), always);
+        store(target + 1u, ir.GetScalarReg(static_cast<ScalarReg>(plan.targetRegister + 1u)), always);
+        const auto bit = [&](IrValue& value) -> IrValue& { return ir.Select(value, ir.Constant(1u), ir.Constant(0u)); };
+        auto slot = base;
+        for (const auto reg : plan.registers) {
+            if (reg < VectorRegisters) {
+                store(slot, ir.GetVectorReg(static_cast<VectorReg>(reg)), always);
+            } else if (reg < ExecRegister) {
+                const auto scalar = static_cast<ScalarReg>(reg - ScalarBase);
+                store(slot, ir.GetScalarReg(scalar), always);
+                store(slot + 1u, ir.BitwiseOr(bit(ir.GetThreadBitScalarReg(scalar)), ir.ShiftLeftLogical(bit(ir.GetScalarMaskTag(scalar)), ir.Constant(1u))), always);
+            } else if (reg == ExecRegister) {
+                store(slot, bit(ir.GetExec()), always);
+                store(slot + 1u, ir.GetExecLo(), always);
+                store(slot + 2u, ir.GetExecHi(), always);
+            } else if (reg == VccRegister) {
+                store(slot, bit(ir.GetVcc()), always);
+                store(slot + 1u, ir.GetVccLo(), always);
+                store(slot + 2u, ir.GetVccHi(), always);
+            } else if (reg == SccRegister) {
+                store(slot, bit(ir.GetScc()), always);
+            } else {
+                store(slot, ir.GetM0(), always);
+            }
+            slot += RegisterSlots(reg);
+        }
+        return;
+    }
+    case Action::LoadTarget:
+        ir.SetScalarReg(static_cast<ScalarReg>(plan.targetRegister), load(target));
+        ir.SetScalarReg(static_cast<ScalarReg>(plan.targetRegister + 1u), load(target + 1u));
+        return;
+    case Action::LoadState: {
+        const auto set = [&](std::uint32_t slot, std::uint32_t mask) -> IrValue& { return ir.INotEqual(ir.BitwiseAnd(load(slot), ir.Constant(mask)), ir.Constant(0u)); };
+        auto slot = base;
+        for (const auto reg : plan.registers) {
+            if (reg < VectorRegisters) {
+                ir.SetVectorReg(static_cast<VectorReg>(reg), load(slot));
+            } else if (reg < ExecRegister) {
+                const auto scalar = static_cast<ScalarReg>(reg - ScalarBase);
+                if (std::ranges::find(plan.assumed, reg) != plan.assumed.end()) {
+                    IrValue& saved = load(slot);
+                    IrValue& current = ir.GetScalarReg(scalar);
+                    (void)ir.Emit(IrOpcode::SplitStateGuard, IrType::Void, {&ir.INotEqual(saved, current), &saved, &current, &ir.Constant(reg - ScalarBase)});
+                    slot += RegisterSlots(reg);
+                    continue;
+                }
+                ir.SetScalarReg(scalar, load(slot));
+                ir.SetThreadBitScalarReg(scalar, set(slot + 1u, 1u));
+                ir.SetScalarMaskTag(scalar, set(slot + 1u, 2u));
+            } else if (reg == ExecRegister) {
+                ir.SetExec(set(slot, 1u));
+                ir.SetExecLo(load(slot + 1u));
+                ir.SetExecHi(load(slot + 2u));
+            } else if (reg == VccRegister) {
+                ir.SetVcc(set(slot, 1u));
+                ir.SetVccLo(load(slot + 1u));
+                ir.SetVccHi(load(slot + 2u));
+            } else if (reg == SccRegister) {
+                ir.SetScc(set(slot, 1u));
+            } else {
+                ir.SetM0(load(slot));
+            }
+            slot += RegisterSlots(reg);
+        }
+        return;
+    }
+    }
+    throw std::invalid_argument("unknown split state action");
 }
 
 }

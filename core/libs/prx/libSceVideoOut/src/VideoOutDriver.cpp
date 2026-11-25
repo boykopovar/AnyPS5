@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdio>
 #include <exception>
+#include <memory>
 #include <thread>
 #include <limits>
 #include <optional>
@@ -13,6 +14,7 @@
 
 #include "SDL.h"
 #include "SDL_vulkan.h"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceVideoOut/include/MainThread.hpp"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
@@ -20,12 +22,15 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameLimit.hpp"
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
+#include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceVideoOut/include/DialogInput.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
+#include "prx/libSceVideoOut/include/Telemetry.hpp"
 #if APS5_ENABLE_TIMING_LOG
 #include "prx/libSceVideoOut/include/FrameTimingLog.hpp"
 #endif
@@ -101,6 +106,13 @@ bool readHostClipboard(std::string& text) {
     text.assign(raw);
     SDL_free(raw);
     return true;
+}
+
+void copyHostClipboard(const char* text, std::size_t size) {
+    const std::string utf8(text, size);
+    OnMainThread([&] {
+        if (SDL_SetClipboardText(utf8.c_str()) < 0) std::fprintf(stderr, "[videoout] IME clipboard copy failed: %s\n", SDL_GetError());
+    });
 }
 
 std::vector<const char*> windowExtensions(SDL_Window* window) {
@@ -339,6 +351,7 @@ VideoOutDriver& VideoOutDriver::Get() {
 VideoOutDriver::VideoOutDriver() {
     OnMainThread([] {
         SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+        SDL_SetHint(SDL_HINT_IME_SUPPORT_EXTENDED_TEXT, "1");
 #ifdef _WIN32
         SDL_SetHintWithPriority(SDL_HINT_DIRECTINPUT_ENABLED, "0", SDL_HINT_DEFAULT);
         if (std::getenv("APS5_NO_WGI") != nullptr) SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_WGI, "0", SDL_HINT_DEFAULT);
@@ -346,6 +359,7 @@ VideoOutDriver::VideoOutDriver() {
 #ifdef __linux__
         SDL_SetHint(SDL_HINT_VIDEODRIVER, "wayland,x11");
 #endif
+        if (const char* keepAwake = std::getenv("ANYPS5_KEEP_AWAKE"); keepAwake != nullptr && std::strcmp(keepAwake, "0") == 0) SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1");
         if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) {
             throw std::runtime_error(std::string("SDL_InitSubSystem(VIDEO | GAMECONTROLLER) failed: ") + SDL_GetError());
         }
@@ -354,7 +368,7 @@ VideoOutDriver::VideoOutDriver() {
         AgcDriverWaitIdle_nid_postfix();
         std::promise<void> started;
         auto attached = started.get_future();
-        presentThread = std::jthread([this, &started](std::stop_token token) {
+        presentThread = Libc::StartHostJThread([this, &started](std::stop_token token) {
             try {
                 AgcDriverRaiseWorkerThreadPriority_nid_postfix("presenter");
             } catch (...) {
@@ -364,7 +378,7 @@ VideoOutDriver::VideoOutDriver() {
             presentLoop(token, started);
         });
         attached.get();
-        vblankThread = std::jthread([this](std::stop_token token) { vblankLoop(token); });
+        vblankThread = Libc::StartHostJThread([this](std::stop_token token) { vblankLoop(token); });
         LibcRegisterShutdown_nid_postfix([] { VideoOutDriver::Get().Shutdown(); });
     } catch (...) {
         if (vblankThread.joinable()) {
@@ -517,11 +531,28 @@ bool VideoOutDriver::HasConfig(int handle) {
     return cfg->opened && !cfg->closing;
 }
 
+int VideoOutDriver::GetBusType(int handle) {
+    std::shared_ptr<VideoOutConfig> cfg;
+    {
+        std::lock_guard lock(mutex);
+        if (handle <= 0 || handle >= VIDEO_OUT_NUM_MAX || contexts[handle] == nullptr) return -1;
+        cfg = contexts[handle];
+    }
+    std::lock_guard cfgLock(cfg->mutex);
+    return cfg->opened && !cfg->closing ? cfg->busType : -1;
+}
+
 int VideoOutDriver::SubmitFlip(int handle, int index, int flipMode, int64_t flipArg) {
     if (LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
-    // A title that does not pace on flipPendingNum can run ahead of the presenter now that the queue
-    // worker no longer waits per flip; a full queue is the documented error, not a failure.
-    if (flipQueue->reservations.load() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) return VIDEO_OUT_ERROR_FLIP_QUEUE_FULL;
+    if (flipQueue->reservations.load() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) {
+        std::unique_lock lock(flipQueue->mutex);
+        const bool room = flipQueue->changed.WaitUntil(lock, TimedWait::DeadlineNanos(FLIP_ROOM_WAIT_MICROS), [&] {
+            return flipQueue->failure || flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested() || flipQueue->reservations.load() < VIDEO_OUT_FLIP_QUEUE_CAPACITY;
+        });
+        if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
+        if (flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
+        if (!room) return VIDEO_OUT_ERROR_FLIP_QUEUE_FULL;
+    }
     AgcDriverSubmitFlip_nid_postfix(AgcDriver::FlipInfo{static_cast<std::uint32_t>(handle), index, static_cast<std::uint32_t>(flipMode), flipArg});
     return 0;
 }
@@ -575,13 +606,28 @@ std::uint32_t VideoOutDriver::GetDisplayResolution() {
     return displayResolution.load();
 }
 
+HostDisplayMode KeepHostDisplayMode(const std::optional<HostDisplayMode>& known, const std::optional<HostDisplayMode>& measured, const std::string& failure) {
+    if (measured) return *measured;
+    if (known) return *known;
+    throw std::runtime_error(failure);
+}
+
 void VideoOutDriver::updateDisplayRefreshRate() {
+    std::optional<HostDisplayMode> measured;
+    std::string failure;
     const int display = SDL_GetWindowDisplayIndex(window.Handle());
-    if (display < 0) throw std::runtime_error(std::string("SDL_GetWindowDisplayIndex failed: ") + SDL_GetError());
     SDL_DisplayMode mode{};
-    if (SDL_GetCurrentDisplayMode(display, &mode) != 0) throw std::runtime_error(std::string("SDL_GetCurrentDisplayMode failed: ") + SDL_GetError());
-    displayRefreshRate.store(mode.refresh_rate);
-    displayResolution.store(resolutionIndex(mode.w, mode.h));
+    if (display < 0) {
+        failure = std::string("SDL_GetWindowDisplayIndex failed: ") + SDL_GetError();
+    } else if (SDL_GetCurrentDisplayMode(display, &mode) != 0) {
+        failure = std::string("SDL_GetCurrentDisplayMode failed: ") + SDL_GetError();
+    } else {
+        measured = HostDisplayMode{mode.refresh_rate, resolutionIndex(mode.w, mode.h)};
+    }
+    const auto kept = KeepHostDisplayMode(knownDisplayMode, measured, failure);
+    knownDisplayMode = kept;
+    displayRefreshRate.store(kept.refreshRate);
+    displayResolution.store(kept.resolution);
 }
 
 void VideoOutDriver::pollHostHdr() {
@@ -613,6 +659,7 @@ void VideoOutDriver::vblankEnd(std::uint64_t tick) {
         ++cfg->vblankStatus.count;
         cfg->vblankStatus.processTime = sceKernelGetProcessTime();
         cfg->vblankStatus.processTimeCounter = sceKernelGetProcessTimeCounter();
+        cfg->vblankStatus.reserved = sceKernelReadTsc();
         triggerEvents(*cfg, VIDEO_OUT_EVENT_VBLANK, reinterpret_cast<void*>(cfg->vblankStatus.count));
         cfg->vblankCond.notify_all();
     }
@@ -690,7 +737,7 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
         OnMainThread([&] { window.UpdateTitle(); });
         timing.Mark("window_title");
     }
-    std::lock_guard lock(req.cfg->mutex);
+    std::unique_lock lock(req.cfg->mutex);
     timing.Mark("completion_mutex_wait");
     req.cfg->CheckAlive();
     if (req.cfg->Closed()) {
@@ -702,7 +749,9 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
     require(req.cfg->flipStatus.count != std::numeric_limits<uint64_t>::max(), "flip counter overflow");
     triggerEvents(*req.cfg, VIDEO_OUT_EVENT_FLIP, reinterpret_cast<void*>(req.flipArg));
     ++req.cfg->flipStatus.count;
-    req.cfg->flipStatus.processTime = sceKernelGetProcessTime();
+    const auto sequence = req.cfg->flipStatus.count;
+    const auto processTimeUs = sceKernelGetProcessTime();
+    req.cfg->flipStatus.processTime = processTimeUs;
     req.cfg->flipStatus.processTimeCounter = sceKernelGetProcessTimeCounter();
     req.cfg->flipStatus.flipArg = req.flipArg;
     const auto previous = req.cfg->flipStatus.currentBuffer;
@@ -723,6 +772,13 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
     req.cfg->vblankCond.notify_all();
     KernelWakeSleepers_nid_no_patch();
     timing.Mark("notify_game");
+    const bool mainOutput = req.cfg->busType == VIDEO_OUT_BUS_TYPE_MAIN;
+    lock.unlock();
+    if (mainOutput) {
+        if (auto* telemetry = VideoOutTelemetry::Instance()) {
+            telemetry->EmitCompletedFlip(req.generation, sequence, processTimeUs);
+        }
+    }
 }
 
 std::optional<AgcDriver::DisplayBuffer> VideoOutDriver::overlayPlane() {
@@ -759,6 +815,9 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
     struct DialogPresenter {
         ~DialogPresenter() { ModalDialogSetPresenter_nid_postfix(false); }
     } dialogPresenter;
+    struct ClipboardSink {
+        ~ClipboardSink() { ImeSetHostClipboardSink_nid_no_patch(nullptr); }
+    } clipboardSink;
     std::shared_ptr<FlipRequest> current;
     std::optional<PadInput> padInput;
     std::optional<MouseInput> mouseInput;
@@ -779,7 +838,9 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             imeTextInput.emplace();
             dialogInput.emplace();
             imeTextInput->SetClipboardProvider(&readHostClipboard);
+            ImeSetHostClipboardSink_nid_no_patch(&copyHostClipboard);
         });
+        bool windowCloseSeen = false;
         while (!token.stop_requested()) {
             {
                 std::unique_lock lock(flipQueue->mutex);
@@ -795,10 +856,15 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             const bool quit = OnMainThread([&] {
                 SDL_Event event;
                 while (SDL_PollEvent(&event)) {
+                    const std::unique_ptr<char, decltype(&SDL_free)> extendedText(event.type == SDL_TEXTEDITING_EXT ? event.editExt.text : nullptr, SDL_free);
+                    if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE) windowCloseSeen = true;
                     if (event.type == SDL_QUIT) return true;
+                    const bool padOwnedMouse = padInput->MouseModeEnabled();
                     padInput->HandleEvent(event, window);
                     if (window.Handle() != nullptr) {
+                        mouseInput->SetPadOwnsMouse(padOwnedMouse || padInput->MouseModeEnabled());
                         mouseInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
+                        mouseInput->SetPadOwnsMouse(padInput->MouseModeEnabled());
                         keyboardInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         imeTextInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         dialogInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
@@ -809,7 +875,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 return false;
             });
             if (quit) {
-                LibcRunReportQuitRequested_nid_no_patch();
+                LibcRunReportQuitRequested_nid_no_patch(windowCloseSeen);
                 LibcRequestExit_nid_postfix(0);
                 throw ProcessShutdown{};
             }

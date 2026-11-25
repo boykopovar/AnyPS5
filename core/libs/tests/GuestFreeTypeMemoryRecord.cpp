@@ -58,6 +58,18 @@ int main(int count, char** arguments) {
     for (int index = 0; index < 64; ++index) Check(block[index] == static_cast<unsigned char>(index));
     memory->free(memory, block);
 
+    unsigned char* odd = static_cast<unsigned char*>(memory->realloc(memory, 0, 37, nullptr));
+    Check(odd != nullptr);
+    for (int index = 0; index < 37; ++index) odd[index] = static_cast<unsigned char>(index + 1);
+    odd = static_cast<unsigned char*>(memory->realloc(memory, 37, 91, odd));
+    Check(odd != nullptr);
+    for (int index = 0; index < 37; ++index) Check(odd[index] == static_cast<unsigned char>(index + 1));
+    for (int index = 37; index < 91; ++index) odd[index] = static_cast<unsigned char>(index + 1);
+    odd = static_cast<unsigned char*>(memory->realloc(memory, 91, 23, odd));
+    Check(odd != nullptr);
+    for (int index = 0; index < 23; ++index) Check(odd[index] == static_cast<unsigned char>(index + 1));
+    memory->free(memory, odd);
+
     destroy(memory);
     destroy(nullptr);
 

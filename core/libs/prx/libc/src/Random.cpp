@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include <array>
@@ -98,7 +99,7 @@ bool SeedDefaultState() {
 
 [[maybe_unused]] const bool g_defaultStateSeeded = SeedDefaultState();
 
-std::uint16_t g_rand48Seed[3]{0x330e, 0xabcd, 0x1234};
+std::uint16_t g_rand48Seed[3]{0x330e, 0, 0};
 constexpr std::uint64_t DefaultRand48Multiplier = 0x5deece66dull;
 constexpr std::uint16_t DefaultRand48Addend = 0xb;
 std::uint64_t g_rand48Multiplier = DefaultRand48Multiplier;
@@ -158,8 +159,10 @@ void APS5_VABI srand48_nid_postfix(std::int64_t seedval) {
 
 std::uint16_t* APS5_VABI seed48_nid_postfix(const std::uint16_t* seed) {
     if (seed == nullptr) throw std::invalid_argument("seed48: null seed");
+    std::array<std::uint16_t, 3> words{};
+    if (!GuestCopyIn_nid_no_patch(words.data(), seed, sizeof(words))) throw std::invalid_argument("seed48: unreadable seed");
     std::lock_guard lock(g_randomLock);
-    for (int index = 0; index < 3; ++index) g_rand48Seed[index] = g_seed48Result[index] = seed[index];
+    for (int index = 0; index < 3; ++index) g_rand48Seed[index] = g_seed48Result[index] = words[index];
     g_rand48Multiplier = DefaultRand48Multiplier;
     g_rand48Addend = DefaultRand48Addend;
     return g_seed48Result;
@@ -167,10 +170,12 @@ std::uint16_t* APS5_VABI seed48_nid_postfix(const std::uint16_t* seed) {
 
 void APS5_VABI lcong48_nid_postfix(const std::uint16_t* parameters) {
     if (parameters == nullptr) throw std::invalid_argument("lcong48: null parameters");
+    std::array<std::uint16_t, 7> words{};
+    if (!GuestCopyIn_nid_no_patch(words.data(), parameters, sizeof(words))) throw std::invalid_argument("lcong48: unreadable parameters");
     std::lock_guard lock(g_randomLock);
-    for (int index = 0; index < 3; ++index) g_rand48Seed[index] = parameters[index];
-    g_rand48Multiplier = parameters[3] | (static_cast<std::uint64_t>(parameters[4]) << 16) | (static_cast<std::uint64_t>(parameters[5]) << 32);
-    g_rand48Addend = parameters[6];
+    for (int index = 0; index < 3; ++index) g_rand48Seed[index] = words[index];
+    g_rand48Multiplier = words[3] | (static_cast<std::uint64_t>(words[4]) << 16) | (static_cast<std::uint64_t>(words[5]) << 32);
+    g_rand48Addend = words[6];
 }
 
 std::int64_t APS5_VABI random_nid_postfix() {
@@ -226,6 +231,16 @@ char* APS5_VABI setstate_nid_postfix(char* state) {
         g_random.front = (static_cast<int>(rear) + separation) % degree;
     }
     return previous;
+}
+
+void APS5_VABI _ZNSt3__113random_deviceC2ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEE_nid_postfix(void*, const void*) {}
+
+void APS5_VABI _ZNSt3__113random_deviceD1Ev_nid_postfix(void*) {}
+
+std::uint32_t APS5_VABI _ZNSt3__113random_deviceclEv_nid_postfix(void*) {
+    std::uint32_t value = 0;
+    HostEntropy_nid_no_patch(&value, sizeof(value));
+    return value;
 }
 
 }

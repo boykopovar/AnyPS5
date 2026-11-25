@@ -1,20 +1,21 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
-int APS5_VABI ScePsmMonoArrayAddrWithSize(void);
-int APS5_VABI ScePsmMonoArrayLength(void);
+char* APS5_VABI ScePsmMonoArrayAddrWithSize(void* array, int size, std::uintptr_t index);
+std::uintptr_t APS5_VABI ScePsmMonoArrayLength(const void* array);
 int APS5_VABI ScePsmMonoDomainGet(void);
-int APS5_VABI ScePsmMonoFree(void);
-int APS5_VABI ScePsmMonoGcWbarrierGenericStore(void);
-int APS5_VABI ScePsmMonoStringChars(void);
+void APS5_VABI ScePsmMonoFree(void* memory);
+void APS5_VABI ScePsmMonoGcWbarrierGenericStore(void* slot, void* value);
+std::uint16_t* APS5_VABI ScePsmMonoStringChars(void* string);
 int APS5_VABI ScePsmMonoStringFromUtf16(void);
-int APS5_VABI ScePsmMonoStringLength(void);
+int APS5_VABI ScePsmMonoStringLength(const void* string);
 int APS5_VABI ScePsmMonoStringNew(void);
 int APS5_VABI ScePsmMonoStringNewWrapper(void);
-int APS5_VABI ScePsmMonoStringToUtf8(void);
+char* APS5_VABI ScePsmMonoStringToUtf8(void* string);
 int APS5_VABI _ZN3sce3pss4core14IntHandleTable13NextIntHandleEv(void);
 int APS5_VABI _ZN3sce3pss4core8graphics14NativeGraphics18ReleaseVideoMemoryEPv(void);
 int APS5_VABI _ZN3sce3pss4core8graphics14NativeGraphics19AllocateVideoMemoryEjj(void);

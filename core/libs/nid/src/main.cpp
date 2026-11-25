@@ -1,13 +1,20 @@
 #include <nid/BinaryPatcherFactory.hpp>
 #include <nid/ExportExclusions.hpp>
 #include <nid/NativePath.hpp>
+#include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
+#include <thread>
 #include <vector>
 
 namespace {
+
+constexpr int kReplaceAttempts = 20;
+constexpr std::chrono::milliseconds kReplaceDelay{250};
 
 std::vector<std::uint8_t> _readFile(const std::string& path) {
     std::ifstream f(Nid::Internal::NativePath(path), std::ios::binary);
@@ -16,11 +23,37 @@ std::vector<std::uint8_t> _readFile(const std::string& path) {
 }
 
 void _writeFile(const std::string& path, const std::vector<std::uint8_t>& data) {
-    std::ofstream f(Nid::Internal::NativePath(path), std::ios::binary);
-    if (!f) throw std::runtime_error("cannot write: " + path);
-    f.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
-    f.close();
-    if (!f) throw std::runtime_error("cannot write: " + path);
+    const std::filesystem::path target = Nid::Internal::NativePath(path);
+    const auto permissions = std::filesystem::status(target).permissions();
+    std::filesystem::path pending = target;
+    pending += ".patching";
+    std::error_code discarded;
+    {
+        std::ofstream f(pending, std::ios::binary);
+        if (!f) throw std::runtime_error("cannot write: " + path);
+        f.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        f.close();
+        if (!f) {
+            std::filesystem::remove(pending, discarded);
+            throw std::runtime_error("cannot write: " + path);
+        }
+    }
+    std::error_code permissionError;
+    std::filesystem::permissions(pending, permissions, permissionError);
+    if (permissionError) {
+        std::filesystem::remove(pending, discarded);
+        throw std::runtime_error("cannot preserve permissions: " + path + ": " + permissionError.message());
+    }
+    std::error_code renamed;
+    for (int attempt = 1; attempt <= kReplaceAttempts; ++attempt) {
+        std::filesystem::rename(pending, target, renamed);
+        if (!renamed || attempt == kReplaceAttempts) break;
+        std::this_thread::sleep_for(kReplaceDelay);
+    }
+    if (renamed) {
+        std::filesystem::remove(pending, discarded);
+        throw std::runtime_error("cannot write: " + path + ": " + renamed.message());
+    }
 }
 
 }

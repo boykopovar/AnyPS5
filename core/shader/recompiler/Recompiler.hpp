@@ -3,6 +3,7 @@
 
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
+#include "ImageOverwrite.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include <algorithm>
 #include <array>
@@ -136,7 +137,11 @@ enum class ColorExportPacking : std::uint8_t {
     Unorm4_4_4_4,
     Uint,
     UintClamp8,
-    UintClamp16
+    UintClamp16,
+    UintMask8,
+    UintMask16,
+    UintClamp10_10_10_2,
+    UintMask10_10_10_2
 };
 
 enum class RasterPrimitive : std::uint8_t {
@@ -205,6 +210,12 @@ struct TargetMerge {
     bool operator==(const TargetMerge&) const = default;
 };
 
+enum class SingleSampleDither : std::uint8_t {
+    None,
+    E701,
+    Rounded18701
+};
+
 struct ShaderPixelStageInfo {
     std::uint32_t interpolatorCount;
     std::array<std::uint32_t, 32> interpolatorSettings;
@@ -242,6 +253,7 @@ struct ShaderPixelStageInfo {
     bool layerExported = false;
     bool ditheredAlphaToCoverage = false;
     std::uint8_t ditheredAlphaSamples = 8;
+    SingleSampleDither singleSampleDither = SingleSampleDither::None;
     std::uint8_t quadPixelMask = 0xf;
     std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
     std::uint32_t reversedBlend = 0;
@@ -303,6 +315,7 @@ struct GuestContext {
     MemoryRegionView memory;
     std::optional<ShaderFloatMode> floatMode;
     std::span<const std::uint32_t> linkedCallFallbacks;
+    std::span<const std::uint32_t> splitState;
     bool convertedSamples = false;
     bool layerRowSamples = false;
 };
@@ -364,6 +377,7 @@ struct SpirvTarget {
     bool tessellationEvaluationSubgroups = true;
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
+    bool spannedAnySubgroup = false;
     bool robustBufferAccess2 = false;
     bool exactRobustLoads = false;
     bool depthRangeRemap = false;
@@ -375,12 +389,16 @@ struct SpirvTarget {
     std::uint32_t pixelFunctionStorageDwords = 4096u;
     bool deviceScopeLdsMemoryBarriers = false;
     bool ldsLockFences = false;
+    bool deviceAtomicWorkgroupMemoryBarriers = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
     bool hostInterpolationFirst = false;
     bool shaderImageMinLod = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
+    bool float16HostNans = false;
+    bool meshInlineFunctions = false;
+    bool spannedShuffleThroughMemory = false;
 };
 
 struct BindingLayout {
@@ -498,6 +516,7 @@ struct GraphicsCompileContext {
     std::optional<TessellationConfiguration> tessellation;
     GraphicsDrawParameters draw;
     std::optional<MeshBarycentricLayout> meshBarycentrics;
+    bool emulateBarycentrics = false;
 };
 
 struct RecompileRequest {
@@ -596,11 +615,15 @@ public:
     };
 
     ElementFlags() = default;
+    explicit ElementFlags(std::size_t size) : count(size), spill(size > InlineFlags ? size : 0u, false) {}
     ElementFlags(std::initializer_list<bool> flags) {
         for (const bool flag : flags) push_back(flag);
     }
     std::size_t size() const { return count; }
     bool empty() const { return count == 0; }
+    void reserve(std::size_t size) {
+        if (size > InlineFlags) spill.reserve(size);
+    }
     bool operator[](std::size_t index) const { return count <= InlineFlags ? ((bits >> index) & 1u) != 0 : spill[index]; }
     reference operator[](std::size_t index) { return {*this, index}; }
     bool back() const { return (*this)[count - 1]; }
@@ -643,10 +666,7 @@ public:
     const_iterator end() const { return {this, count}; }
     bool operator==(const ElementFlags& other) const {
         if (count != other.count) return false;
-        for (std::size_t index = 0; index < count; ++index) {
-            if ((*this)[index] != other[index]) return false;
-        }
-        return true;
+        return count <= InlineFlags ? bits == other.bits : spill == other.spill;
     }
     bool operator==(const std::vector<bool>& other) const {
         if (count != other.size()) return false;
@@ -695,6 +715,7 @@ struct DescriptorBinding {
     ElementFlags imageDepthCompare;
     ElementFlags imageAtomic;
     ElementFlags imageAtomic64;
+    ElementFlags imageUintStorage;
     std::vector<DescriptorImageShape> imageShapes;
     // Guest buffer elements the shader updates atomically (one entry per element of a GuestBuffers
     // binding, empty otherwise). An atomic on a host-imported range is a serialized PCIe round trip
@@ -714,6 +735,7 @@ struct DescriptorBinding {
     std::vector<std::uint64_t> imageSamplers;
     ElementFlags bufferRead;
     std::vector<std::uint32_t> bufferExtent;
+    std::vector<ImageOverwrite> imageOverwrites;
 };
 
 struct ImageTableEntryPoison {
@@ -807,6 +829,7 @@ public:
     }
 
     [[nodiscard]] std::span<const std::uint32_t> Words() const { return holder ? holder->Words() : std::span<const std::uint32_t>{}; }
+    [[nodiscard]] bool Mapped() const { return holder != nullptr && holder->owner != nullptr; }
     [[nodiscard]] SpirvContentHash ContentHash() const {
         if (holder == nullptr) return {};
         if (holder->hashed.load(std::memory_order_acquire)) return {holder->hashLow.load(std::memory_order_relaxed), holder->hashHigh.load(std::memory_order_relaxed)};
@@ -919,6 +942,8 @@ struct CompiledShaderArtifact {
     bool fullSubgroups = false;
     bool functionLdsBuffer = false;
     bool meshWindowBuffer = false;
+    bool dispatchThreadLimit = false;
+    std::uint32_t splitStateLanes = 0;
     std::uint32_t scratchPoolSlotDwords = 0;
     std::vector<std::uint32_t> parameterExports;
     std::vector<FragmentParameter> fragmentParameters;
@@ -990,7 +1015,7 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
         };
         mix(specialization.size());
         for (const auto& constant : specialization) mix(constant.id | (static_cast<std::uint64_t>(constant.value) << 32u));
-        mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (functionLdsBuffer ? 0x20000u : 0u) | (meshWindowBuffer ? 0x40000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
+        mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (functionLdsBuffer ? 0x20000u : 0u) | (meshWindowBuffer ? 0x40000u : 0u) | (splitStateLanes != 0u ? 0x80000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
         mix(bindings.size());
         for (const auto& binding : bindings) mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
         if (identity.Empty()) identity.low = 1;
@@ -1025,6 +1050,20 @@ struct ResourceCapture;
 void SetResultMemoBudget(std::uint64_t bytes);
 [[nodiscard]] std::uint64_t ResultMemoBytes();
 void SetResultMemoTrimHook(std::function<void()> hook);
+struct ResourcePlanCounters {
+    std::uint64_t heldBytes = 0;
+    std::uint64_t heldPlans = 0;
+    std::uint64_t evictions = 0;
+    std::uint64_t reloads = 0;
+};
+void SetResourcePlanBudget(std::uint64_t bytes);
+[[nodiscard]] ResourcePlanCounters ResourcePlanTotals();
+struct ResourcePlanInterval {
+    std::uint64_t reloads = 0;
+    std::uint64_t evictions = 0;
+};
+[[nodiscard]] ResourcePlanInterval TakeResourcePlanInterval();
+void SetResourcePlanReportHook(std::function<void()> hook);
 
 // Debug aid (see DebugProbe in Translation/TranslationContext.hpp): the APS5_PROBE register probe is
 // only applied while a driver has it active, so it can be limited to one dispatch; the recompile

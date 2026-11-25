@@ -64,6 +64,13 @@ class StubgenTests(unittest.TestCase):
             with self.subTest(spelling=spelling):
                 self.assertEqual(stubgen.generate(spelling, nids, {}), expected)
 
+    def test_strip_nid_token_drops_bom_comments_and_trailing_fields(self):
+        self.assertEqual(stubgen.strip_nid_token("\ufeffAAAAAAAAAAA\n"), "AAAAAAAAAAA")
+        self.assertEqual(stubgen.strip_nid_token("  BBBBBBBBBBB  # note"), "BBBBBBBBBBB")
+        self.assertEqual(stubgen.strip_nid_token("CCCCCCCCCCC name extra"), "CCCCCCCCCCC")
+        for blank in ("", "   ", "# whole line", "  # indented", "\ufeff"):
+            self.assertEqual(stubgen.strip_nid_token(blank), "")
+
 
 class StubGeneratorTests(unittest.TestCase):
     def test_long_output_names(self):
@@ -199,6 +206,17 @@ class StubGeneratorTests(unittest.TestCase):
             self.assertEqual(stubgen.parse_db(path),
                              {"AAAAAAAAAAA": "sceGood", "BBBBBBBBBBB": "sceOther", "+CCCCCCCCCC": "scePlus"})
 
+    def test_duplicate_database_rows_prefer_the_hash_verified_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "names.txt"
+            for rows in (("AqXeRqGAdKE badAlias", "AqXeRqGAdKE sceExample"),
+                         ("AqXeRqGAdKE sceExample", "AqXeRqGAdKE badAlias")):
+                with self.subTest(rows=rows):
+                    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+                    self.assertEqual(stubgen.parse_db(path), {"AqXeRqGAdKE": "sceExample"})
+            path.write_text("AAAAAAAAAAA sceFirst\nAAAAAAAAAAA sceSecond\n", encoding="utf-8")
+            self.assertEqual(stubgen.parse_db(path), {"AAAAAAAAAAA": "sceFirst"})
+
     def test_malformed_database_reaches_the_cli_as_an_error(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -253,6 +271,137 @@ class StubGeneratorTests(unittest.TestCase):
 
 
 class ReadOnlyOutputTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows sharing locks prevent replacing open files")
+    def test_windows_second_output_sharing_lock_restores_first(self):
+        import ctypes
+        from ctypes import wintypes
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nids, code, debt = root / "nids.txt", root / "Export.cpp", root / "debt.md"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            code.write_text("original code\n", encoding="utf-8")
+            debt.write_text("original debt\n", encoding="utf-8")
+            replace = os.replace
+            debt_target = debt.resolve()
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateFileW.argtypes = (
+                wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+            )
+            kernel32.CreateFileW.restype = wintypes.HANDLE
+            kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+            kernel32.CloseHandle.restype = wintypes.BOOL
+            file_read_attributes = 0x80
+            file_share_read_write = 0x01 | 0x02
+            open_existing = 3
+            file_attribute_normal = 0x80
+
+            def lock_debt(source, destination):
+                if Path(destination).resolve() == debt_target:
+                    handle = kernel32.CreateFileW(
+                        str(debt), file_read_attributes, file_share_read_write, None,
+                        open_existing, file_attribute_normal, None,
+                    )
+                    if handle == ctypes.c_void_p(-1).value:
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    try:
+                        return replace(source, destination)
+                    finally:
+                        if not kernel32.CloseHandle(handle):
+                            raise ctypes.WinError(ctypes.get_last_error())
+                return replace(source, destination)
+
+            with patch.object(os, "replace", lock_debt), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as caught:
+                    stubgen.main(["--module", "libSceExample", "--nids", str(nids),
+                                  "--out", str(code), "--td-out", str(debt)])
+            self.assertEqual(caught.exception.code, 2)
+            self.assertEqual(code.read_text(encoding="utf-8"), "original code\n")
+            self.assertEqual(debt.read_text(encoding="utf-8"), "original debt\n")
+            self.assertEqual(set(root.iterdir()), {nids, code, debt})
+
+    def test_second_replace_failure_restores_original_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nids, code, debt = root / "nids.txt", root / "Export.cpp", root / "debt.md"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            code.write_text("original code\n", encoding="utf-8")
+            debt.write_text("original debt\n", encoding="utf-8")
+            code.chmod(0o600)
+            modes = (code.stat().st_mode & 0o777, debt.stat().st_mode & 0o777)
+            replace = os.replace
+            debt_target = debt.resolve()
+
+            def locked_debt(source, destination):
+                if Path(destination).resolve() == debt_target:
+                    raise PermissionError("debt output became locked")
+                return replace(source, destination)
+
+            errors = io.StringIO()
+            with patch.object(os, "replace", locked_debt), contextlib.redirect_stderr(errors):
+                with self.assertRaises(SystemExit) as caught:
+                    stubgen.main(["--module", "libSceExample", "--nids", str(nids),
+                                  "--out", str(code), "--td-out", str(debt)])
+            self.assertEqual(caught.exception.code, 2)
+            self.assertIn("debt output became locked", errors.getvalue())
+            self.assertEqual(code.read_text(encoding="utf-8"), "original code\n")
+            self.assertEqual(debt.read_text(encoding="utf-8"), "original debt\n")
+            self.assertEqual((code.stat().st_mode & 0o777, debt.stat().st_mode & 0o777), modes)
+            self.assertEqual(set(root.iterdir()), {nids, code, debt})
+
+    def test_second_replace_failure_removes_new_first_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nids, code, debt = root / "nids.txt", root / "Export.cpp", root / "debt.md"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            debt.write_text("original debt\n", encoding="utf-8")
+            replace = os.replace
+            debt_target = debt.resolve()
+
+            def locked_debt(source, destination):
+                if Path(destination).resolve() == debt_target:
+                    raise PermissionError("debt output became locked")
+                return replace(source, destination)
+
+            with patch.object(os, "replace", locked_debt), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as caught:
+                    stubgen.main(["--module", "libSceExample", "--nids", str(nids),
+                                  "--out", str(code), "--td-out", str(debt)])
+            self.assertEqual(caught.exception.code, 2)
+            self.assertFalse(code.exists())
+            self.assertEqual(debt.read_text(encoding="utf-8"), "original debt\n")
+            self.assertEqual(set(root.iterdir()), {nids, debt})
+
+    def test_failed_rollback_keeps_the_original_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nids, code, debt = root / "nids.txt", root / "Export.cpp", root / "debt.md"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            code.write_text("original code\n", encoding="utf-8")
+            debt.write_text("original debt\n", encoding="utf-8")
+            replace = os.replace
+            debt_target = debt.resolve()
+            code_target = code.resolve()
+
+            def locked_outputs(source, destination):
+                target = Path(destination).resolve()
+                if target == debt_target or (target == code_target and Path(source).name.startswith(".stubgen-backup-")):
+                    raise PermissionError("output became locked")
+                return replace(source, destination)
+
+            errors = io.StringIO()
+            with patch.object(os, "replace", locked_outputs), contextlib.redirect_stderr(errors):
+                with self.assertRaises(SystemExit) as caught:
+                    stubgen.main(["--module", "libSceExample", "--nids", str(nids),
+                                  "--out", str(code), "--td-out", str(debt)])
+            self.assertEqual(caught.exception.code, 2)
+            backups = list(root.glob(".stubgen-backup-*.tmp"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(encoding="utf-8"), "original code\n")
+            self.assertIn(str(backups[0].resolve()), errors.getvalue())
+            self.assertEqual(debt.read_text(encoding="utf-8"), "original debt\n")
+
     def test_later_staging_failure_preserves_original_error_and_cleans_readonly_temporary(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

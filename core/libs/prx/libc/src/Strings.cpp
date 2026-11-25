@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
+#include <cfenv>
 #include <cmath>
 #include <cwchar>
 #include <cstdio>
@@ -16,6 +17,9 @@
 #include <type_traits>
 #if defined(__SSE2__)
 #include <emmintrin.h>
+#endif
+#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
+#include <xmmintrin.h>
 #endif
 
 #include "prx/libc/include/General.hpp"
@@ -33,7 +37,7 @@ size_t BlocksInPage(const char16_t* s) {
 }
 
 template<bool StopAtZero>
-[[gnu::no_sanitize("address")]] unsigned MismatchedUnits(const char16_t* s1, const char16_t* s2) {
+[[gnu::no_sanitize_address]] unsigned MismatchedUnits(const char16_t* s1, const char16_t* s2) {
     const __m128i left = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s1));
     const __m128i right = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s2));
     unsigned mask = ~static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(left, right))) & 0xffff;
@@ -66,6 +70,18 @@ size_t EqualUnits(const char16_t* s1, const char16_t* s2, size_t n) {
 int ByteDifference(const void* s1, const void* s2, size_t n, bool stopAtNul) {
     const auto* left = static_cast<const unsigned char*>(s1);
     const auto* right = static_cast<const unsigned char*>(s2);
+    if (!stopAtNul) {
+        while (n >= sizeof(std::uint64_t)) {
+            std::uint64_t leftWord;
+            std::uint64_t rightWord;
+            std::memcpy(&leftWord, left, sizeof(leftWord));
+            std::memcpy(&rightWord, right, sizeof(rightWord));
+            if (leftWord != rightWord) break;
+            left += sizeof(leftWord);
+            right += sizeof(rightWord);
+            n -= sizeof(leftWord);
+        }
+    }
     for (size_t index = 0; index < n; ++index) {
         if (left[index] != right[index]) return left[index] - right[index];
         if (stopAtNul && left[index] == 0) return 0;
@@ -124,7 +140,79 @@ auto ScanWideSet(const char16_t* units, TScan scan) {
     return scan([units](char16_t character) { return Contains(units, character); });
 }
 
+#if defined(__SSE2__)
+bool UnitAligned(const char16_t* s) {
+    return (reinterpret_cast<uintptr_t>(s) & 1) == 0;
+}
+
+const char16_t* UnitAt(uintptr_t block, unsigned mask) {
+    return reinterpret_cast<const char16_t*>(block + std::countr_zero(mask));
+}
+
+[[gnu::no_sanitize_address]] unsigned MatchUnits(uintptr_t block, __m128i target) {
+    const __m128i units = _mm_load_si128(reinterpret_cast<const __m128i*>(block));
+    return static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(units, target)));
+}
+
+[[gnu::no_sanitize_address]] unsigned MatchUnitsOrZero(uintptr_t block, __m128i target) {
+    const __m128i units = _mm_load_si128(reinterpret_cast<const __m128i*>(block));
+    const __m128i matches = _mm_or_si128(_mm_cmpeq_epi16(units, target), _mm_cmpeq_epi16(units, _mm_setzero_si128()));
+    return static_cast<unsigned>(_mm_movemask_epi8(matches));
+}
+
+const char16_t* FindUnitOrZero(const char16_t* s, char16_t c) {
+    const __m128i target = _mm_set1_epi16(static_cast<short>(c));
+    const auto address = reinterpret_cast<uintptr_t>(s);
+    uintptr_t block = address & ~uintptr_t{15};
+    unsigned mask = MatchUnitsOrZero(block, target) & (~0u << (address - block));
+    while (mask == 0) {
+        block += 16;
+        mask = MatchUnitsOrZero(block, target);
+    }
+    return UnitAt(block, mask);
+}
+
+const char16_t* FindUnit(const char16_t* s, char16_t c, size_t n) {
+    const __m128i target = _mm_set1_epi16(static_cast<short>(c));
+    const auto address = reinterpret_cast<uintptr_t>(s);
+    n = (std::min)(n, (UINTPTR_MAX - address) / sizeof(char16_t));
+    const uintptr_t end = address + n * sizeof(char16_t);
+    uintptr_t block = address & ~uintptr_t{15};
+    unsigned mask = MatchUnits(block, target) & (~0u << (address - block));
+    for (;;) {
+        const uintptr_t remaining = end - block;
+        if (remaining <= 16) {
+            mask &= (1u << remaining) - 1;
+            return mask == 0 ? nullptr : UnitAt(block, mask);
+        }
+        if (mask != 0) return UnitAt(block, mask);
+        block += 16;
+        mask = MatchUnits(block, target);
+    }
+}
+
+[[gnu::no_sanitize_address]] const char16_t* FindLastUnit(const char16_t* s, char16_t c) {
+    const __m128i target = _mm_set1_epi16(static_cast<short>(c));
+    const __m128i zero = _mm_setzero_si128();
+    const auto address = reinterpret_cast<uintptr_t>(s);
+    uintptr_t block = address & ~uintptr_t{15};
+    unsigned skip = ~0u << (address - block);
+    const char16_t* found = nullptr;
+    for (;; block += 16, skip = ~0u) {
+        const __m128i units = _mm_load_si128(reinterpret_cast<const __m128i*>(block));
+        unsigned matches = static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(units, target))) & skip;
+        const unsigned zeros = static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(units, zero))) & skip;
+        if (zeros != 0) matches &= ((zeros & (0u - zeros)) << 2) - 1;
+        if (matches != 0) found = reinterpret_cast<const char16_t*>(block + 30 - std::countl_zero(matches));
+        if (zeros != 0) return found;
+    }
+}
+#endif
+
 size_t Length(const char16_t* s) {
+#if defined(__SSE2__)
+    if (UnitAligned(s)) return static_cast<size_t>(FindUnitOrZero(s, 0) - s);
+#endif
     size_t length = 0;
     while (s[length] != 0) ++length;
     return length;
@@ -216,6 +304,30 @@ const TUnit* TwoWaySearch(const TUnit* haystack, const TUnit* needle, size_t len
     }
     return nullptr;
 }
+
+#if defined(__SSE2__)
+[[gnu::no_sanitize("address")]] unsigned MatchBytes(uintptr_t block, __m128i target) {
+    const __m128i bytes = _mm_load_si128(reinterpret_cast<const __m128i*>(block));
+    return static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi8(bytes, target)));
+}
+
+const unsigned char* FindLastByte(const unsigned char* s, unsigned char value, size_t n) {
+    const __m128i target = _mm_set1_epi8(static_cast<char>(value));
+    const auto start = reinterpret_cast<uintptr_t>(s);
+    const uintptr_t last = start + n - 1;
+    uintptr_t block = last & ~uintptr_t{15};
+    unsigned mask = MatchBytes(block, target) & ((2u << (last - block)) - 1);
+    for (;;) {
+        if (block <= start) {
+            mask &= ~0u << (start - block);
+            return mask == 0 ? nullptr : reinterpret_cast<const unsigned char*>(block + 31 - std::countl_zero(mask));
+        }
+        if (mask != 0) return reinterpret_cast<const unsigned char*>(block + 31 - std::countl_zero(mask));
+        block -= 16;
+        mask = MatchBytes(block, target);
+    }
+}
+#endif
 
 std::string AsciiPrefix(const char16_t* text) {
     std::string prefix;
@@ -399,6 +511,20 @@ HexadecimalSubject ReadHexadecimalSubject(const char* digits, const char* parsed
     return {(significand << shift) | (sticky ? 1u : 0u), exponent - shift};
 }
 
+double RoundHexadecimalSubnormal(const HexadecimalSubject& exact, bool negative) {
+    const int shift = static_cast<int>(-1074 - exact.exponent);
+    const std::uint64_t remainder = exact.significand & ((1ull << shift) - 1);
+    const std::uint64_t half = 1ull << (shift - 1);
+    std::uint64_t bits = exact.significand >> shift;
+    switch (std::fegetround()) {
+    case FE_UPWARD: bits += remainder != 0 && !negative; break;
+    case FE_DOWNWARD: bits += remainder != 0 && negative; break;
+    case FE_TOWARDZERO: break;
+    default: bits += remainder > half || (remainder == half && (bits & 1) != 0); break;
+    }
+    return std::bit_cast<double>(bits | (negative ? 0x8000000000000000ull : 0));
+}
+
 template<typename TParse>
 auto ParseAsciiPrefix(const char16_t* text, char16_t** end, TParse parse) {
     const std::string prefix = AsciiPrefix(text);
@@ -406,6 +532,14 @@ auto ParseAsciiPrefix(const char16_t* text, char16_t** end, TParse parse) {
     const auto value = parse(prefix.c_str(), &parsedEnd);
     if (end != nullptr) *end = const_cast<char16_t*>(text) + (parsedEnd - prefix.c_str());
     return value;
+}
+
+bool FlushToZeroEnabled() {
+#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
+    return (_mm_getcsr() & 0x8000) != 0;
+#else
+    return false;
+#endif
 }
 
 template<typename TFloat>
@@ -440,13 +574,23 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
         }
         return value;
     }
-    if (!hexadecimal) return value;
+    if (!hexadecimal) {
+        if constexpr (std::is_same_v<TFloat, double>) {
+            const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
+            if (FlushToZeroEnabled() && (bits & 0x7fffffffffffffffull) != 0 && (bits & 0x7ff0000000000000ull) == 0) {
+                errno = ERANGE;
+                return std::signbit(value) ? -TFloat{0} : TFloat{0};
+            }
+        }
+        return value;
+    }
     if constexpr (std::is_same_v<TFloat, double>) {
         const HexadecimalSubject exact = ReadHexadecimalSubject(subject + 2, parsedEnd);
         const long long leadingExponent = exact.exponent + 63;
         if (exact.significand == 0 || leadingExponent > -1075) {
             if (std::isfinite(value)) errno = saved;
-            return value;
+            if (exact.significand == 0 || leadingExponent > -1023) return value;
+            return RoundHexadecimalSubnormal(exact, std::signbit(value));
         }
         errno = ERANGE;
         const bool smallest = leadingExponent == -1075 && (exact.significand & 0x7fffffffffffffffull) >= (1ull << 11);
@@ -512,6 +656,11 @@ const void* APS5_VABI memchr_nid_postfix(const void* s, int c, size_t n) {
 void* APS5_VABI memrchr_nid_postfix(const void* s, int c, size_t n) {
     const auto* bytes = static_cast<const unsigned char*>(s);
     const auto value = static_cast<unsigned char>(c);
+#if defined(__SSE2__)
+    if (n != 0 && n <= UINTPTR_MAX - reinterpret_cast<uintptr_t>(bytes)) {
+        return const_cast<unsigned char*>(FindLastByte(bytes, value, n));
+    }
+#endif
     while (n != 0) {
         --n;
         if (bytes[n] == value) return const_cast<unsigned char*>(bytes + n);
@@ -522,12 +671,11 @@ void* APS5_VABI memrchr_nid_postfix(const void* s, int c, size_t n) {
 void* APS5_VABI memccpy_nid_postfix(void* dest, const void* src, int c, size_t n) {
     auto* d = static_cast<unsigned char*>(dest);
     const auto* s = static_cast<const unsigned char*>(src);
-    const auto target = static_cast<unsigned char>(c);
-    for (size_t i = 0; i < n; ++i) {
-        d[i] = s[i];
-        if (s[i] == target) return d + i + 1;
-    }
-    return nullptr;
+    if (n == 0) return nullptr;
+    const auto* found = static_cast<const unsigned char*>(std::memchr(s, static_cast<unsigned char>(c), n));
+    const size_t count = found == nullptr ? n : static_cast<size_t>(found - s) + 1;
+    std::memmove(d, s, count);
+    return found == nullptr ? nullptr : d + count;
 }
 
 void* APS5_VABI memmem_nid_postfix(const void* haystack, size_t haystacklen, const void* needle, size_t needlelen) {
@@ -717,6 +865,9 @@ std::div_t APS5_VABI div_nid_postfix(int numerator, int denominator) {
 }
 
 const char16_t* APS5_VABI wmemchr_nid_postfix(const char16_t* s, char16_t c, size_t n) {
+#if defined(__SSE2__)
+    if (n != 0 && UnitAligned(s)) return FindUnit(s, c, n);
+#endif
     for (; n != 0; ++s, --n) {
         if (*s == c) return s;
     }
@@ -737,11 +888,13 @@ int APS5_VABI wmemcmp_nid_postfix(const char16_t* s1, const char16_t* s2, size_t
 }
 
 char16_t* APS5_VABI wmemcpy_nid_postfix(char16_t* dest, const char16_t* src, size_t n) {
+    if (n > SIZE_MAX / sizeof(char16_t)) throw std::invalid_argument(std::string(__func__) + ": count overflows the byte size");
     if (n != 0) std::memcpy(dest, src, n * sizeof(char16_t));
     return dest;
 }
 
 char16_t* APS5_VABI wmemmove_nid_postfix(char16_t* dest, const char16_t* src, size_t n) {
+    if (n > SIZE_MAX / sizeof(char16_t)) throw std::invalid_argument(std::string(__func__) + ": count overflows the byte size");
     if (n != 0) std::memmove(dest, src, n * sizeof(char16_t));
     return dest;
 }
@@ -817,13 +970,15 @@ int APS5_VABI memmove_s_nid_postfix(void* dest, size_t destsz, const void* src, 
 }
 
 int APS5_VABI memset_s_nid_postfix(void* dest, size_t destsz, int value, size_t count) {
-    constexpr int GuestEinval = 22;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
-    if (!dest || destsz > RsizeMax || count > RsizeMax) return GuestEinval;
-    const auto length = count > destsz ? destsz : count;
+    constexpr int GuestErange = 34;
+    constexpr size_t RsizeMax = SIZE_MAX >> 3;
+    if (!dest || destsz > RsizeMax || count > destsz) {
+        SonyInvokeConstraintHandler("memset_s: bad destination argument", nullptr, GuestErange);
+        return GuestErange;
+    }
     auto* bytes = static_cast<volatile unsigned char*>(dest);
-    for (size_t index = 0; index < length; ++index) bytes[index] = static_cast<unsigned char>(value);
-    return count > destsz ? GuestEinval : 0;
+    for (size_t index = 0; index < count; ++index) bytes[index] = static_cast<unsigned char>(value);
+    return 0;
 }
 
 char* APS5_VABI strnstr_nid_postfix(const char* haystack, const char* needle, size_t length) {
@@ -864,6 +1019,12 @@ size_t APS5_VABI wcslen_nid_postfix(const char16_t* s) {
 
 size_t APS5_VABI wcsnlen_s_nid_postfix(const char16_t* s, size_t maxlen) {
     if (!s) return 0;
+#if defined(__SSE2__)
+    if (maxlen != 0 && UnitAligned(s)) {
+        const char16_t* end = FindUnit(s, 0, maxlen);
+        return end == nullptr ? maxlen : static_cast<size_t>(end - s);
+    }
+#endif
     size_t length = 0;
     while (length < maxlen && s[length] != 0) ++length;
     return length;
@@ -913,6 +1074,12 @@ char16_t* APS5_VABI wcsncpy_nid_postfix(char16_t* dest, const char16_t* src, siz
 }
 
 const char16_t* APS5_VABI wcschr_nid_postfix(const char16_t* s, char16_t c) {
+#if defined(__SSE2__)
+    if (UnitAligned(s)) {
+        const char16_t* found = FindUnitOrZero(s, c);
+        return *found == c ? found : nullptr;
+    }
+#endif
     for (;; ++s) {
         if (*s == c) return s;
         if (*s == 0) return nullptr;
@@ -920,6 +1087,9 @@ const char16_t* APS5_VABI wcschr_nid_postfix(const char16_t* s, char16_t c) {
 }
 
 const char16_t* APS5_VABI wcsrchr_nid_postfix(const char16_t* s, char16_t c) {
+#if defined(__SSE2__)
+    if (UnitAligned(s)) return FindLastUnit(s, c);
+#endif
     const char16_t* found = nullptr;
     for (;; ++s) {
         if (*s == c) found = s;

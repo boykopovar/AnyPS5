@@ -1,4 +1,7 @@
+import contextlib
 import importlib.util
+import hashlib
+import io
 import json
 import re
 import sys
@@ -26,7 +29,9 @@ KEYS = {"VOP3:VOP1": "Vop3EncodedVop1", "MIMG": "Image", "VOP3P": "Vop3p"}
 ENTRIES = {"SOP1": {3: "SMovB32"}, "VOP2": {0: "VFirstF32", 3: "VAddF32", 5: "VMacF32", 0x3F: "VLastF32", 0x40: "VPastF32"}, "VOP1": {5: "VCvtF32I32"},
            "VOP3:VOP1": {0: "VMovB32", 2: "VCvtF32I32"}, "VOPC": {0xC0: "VCmpEqF32", 0x100: "VCmpNew"}}
 
-ISA_XML = """<Spec><ISA><Instructions>
+ISA_XML = """<Spec><Document><Copyright>Copyright (c) 2026 Advanced Micro Devices, Inc.</Copyright>
+<License>MIT</License><ReleaseDate>2026-02-20</ReleaseDate></Document>
+<ISA><Architecture><ArchitectureName>AMD RDNA 2</ArchitectureName></Architecture><Instructions>
 <Instruction><InstructionName>S_MOV_B32</InstructionName><InstructionEncodings>
   <InstructionEncoding><EncodingName>ENC_SOP1</EncodingName><Opcode Radix="10">3</Opcode></InstructionEncoding>
 </InstructionEncodings></Instruction>
@@ -146,18 +151,108 @@ class IsaTests(unittest.TestCase):
             xml = Path(directory) / "isa.xml"
             xml.write_text(ISA_XML, encoding="utf-8")
             table = Path(directory) / "forms.txt"
-            table.write_text("# header\n", encoding="utf-8")
+            table.write_text(progress.ISA_FORMS.read_text(encoding="utf-8"), encoding="utf-8")
             old = progress.ISA_FORMS
             progress.ISA_FORMS = table
+            out = io.StringIO()
             try:
-                self.assertEqual(progress.regenerate_isa_forms(xml), 0)
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(progress.regenerate_isa_forms(xml), 0)
             finally:
                 progress.ISA_FORMS = old
+            self.assertIn(f"{table}: ", out.getvalue())
             self.assertEqual(shader_scan.load_isa_forms(table), shader_scan.parse_isa_xml(ISA_XML))
-            self.assertTrue(table.read_text(encoding="utf-8").startswith("# header\n"))
+            regenerated = table.read_text(encoding="utf-8")
+            self.assertIn(hashlib.sha256(xml.read_bytes()).hexdigest(), regenerated)
+            self.assertIn("release 2026-02-20", regenerated)
+            self.assertIn("Permission is hereby granted", regenerated)
+
+    def test_wrong_architecture_and_missing_metadata_preserve_the_inventory(self):
+        variants = [ISA_XML.replace("AMD RDNA 2", "AMD RDNA 1"), ISA_XML.replace("<License>MIT</License>", ""),
+                    ISA_XML.replace("<ReleaseDate>2026-02-20</ReleaseDate>", ""), "<Spec>"]
+        with tempfile.TemporaryDirectory() as directory:
+            xml, table = Path(directory) / "isa.xml", Path(directory) / "forms.txt"
+            table.write_bytes(progress.ISA_FORMS.read_bytes())
+            before = table.read_bytes()
+            for text in variants:
+                with self.subTest(text=text[:70]), patch.object(progress, "ISA_FORMS", table):
+                    xml.write_text(text, encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        progress.regenerate_isa_forms(xml)
+                    self.assertEqual(table.read_bytes(), before)
+
+
+class Gfx1013ProfileTests(unittest.TestCase):
+    def test_pinned_inventory_covers_missing_and_supported_target_forms(self):
+        forms = progress.isa_profiles.load_gfx1013_forms()
+        rows = set(forms)
+        self.assertEqual(len(forms), len(rows))
+        self.assertIn(("S_STORE_DWORD", "SMEM", "base", 0x10), rows)
+        self.assertIn(("S_BUFFER_ATOMIC_CMPSWAP_X2", "SMEM", "base", 0x61), rows)
+        self.assertIn(("DS_ADD_SRC2_U64", "DS", "base", 0xc0), rows)
+        self.assertIn(("DS_MIN_SRC2_F32", "DS", "base", 0x92), rows)
+        self.assertIn(("S_SETREG_IMM32_B32", "SOPK", "base", 0x15), rows)
+        self.assertIn(("V_MADMK_F32", "VOP2", "base", 0x20), rows)
+        self.assertIn(("V_FMAMK_F32", "VOP2", "base", 0x2c), rows)
+        self.assertIn(("IMAGE_BVH_INTERSECT_RAY", "MIMG", "base", 230), rows)
+        self.assertIn(("V_MAC_LEGACY_F32", "VOP2", "base", 6), rows)
+        self.assertIn(("V_MAD_LEGACY_F32", "VOP3", "base", 0x140), rows)
+        for excluded in ("BUFFER_ATOMIC_CSUB", "GLOBAL_LOAD_DWORD_ADDTID", "V_DOT2_F32_F16", "V_FMAC_LEGACY_F32"):
+            self.assertNotIn(excluded, {name for name, _, _, _ in forms})
+        self.assertEqual(sum(form in ("base", "vop3") for _, _, form, _ in forms), 1560)
+
+    def test_canonical_literal_forms_collapse_operand_positions(self):
+        import xml.etree.ElementTree as ET
+        xml = """<Spec><ISA><Instructions><Instruction><InstructionName>V_FMAMK_F32</InstructionName>
+        <InstructionEncodings><InstructionEncoding><EncodingName>VOP2_INST_LITERAL</EncodingName><Opcode>44</Opcode></InstructionEncoding>
+        <InstructionEncoding><EncodingName>VOP2_INST_LITERAL</EncodingName><Opcode>44</Opcode></InstructionEncoding>
+        </InstructionEncodings></Instruction></Instructions></ISA></Spec>"""
+        self.assertEqual(progress.isa_profiles.canonical_xml_forms(ET.fromstring(xml)), {("V_FMAMK_F32", "VOP2", "base", 44)})
+
+    def test_conflicting_meanings_cannot_share_a_physical_opcode(self):
+        with self.assertRaisesRegex(ValueError, "duplicate ISA encoding"):
+            progress.isa_profiles.validate_forms([("V_MAC_LEGACY_F32", "VOP2", "vop3", 0x106),
+                                                 ("V_FMAC_LEGACY_F32", "VOP3", "base", 0x106)])
+
+    def test_profile_generation_validates_architecture_and_source_hash(self):
+        rdna1 = ISA_XML.replace("AMD RDNA 2", "AMD RDNA 1")
+        with self.assertRaisesRegex(ValueError, "expected AMD RDNA 1"):
+            progress.isa_profiles.generate_gfx1013_forms(ISA_XML, ISA_XML)
+        with self.assertRaisesRegex(ValueError, "hash differs"):
+            progress.isa_profiles.generate_gfx1013_forms(rdna1, ISA_XML)
+        hashes = {key: hashlib.sha256(text.encode("utf-8")).hexdigest() for key, text in (("rdna1", rdna1), ("rdna2", ISA_XML))}
+        with patch.dict(progress.isa_profiles.ISA_HASHES, hashes):
+            generated = progress.isa_profiles.generate_gfx1013_forms(rdna1, ISA_XML)
+        self.assertIn(("V_ADD_F32", "VOP2", "base", 3), generated)
+        self.assertIn(("S_ATOMIC_ADD", "SMEM", "base", 0x82), generated)
+
+    def test_profiles_keep_reference_counts_separate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            write_tree(directory)
+            reference = shader_scan.measure(directory, ISA)
+            result = shader_scan.measure(directory, ISA, {"gfx1013": ("LLVM gfx1013 reference", [("S_NEW", "SOP1", "base", 9)])})
+        self.assertEqual(result["instructions"], reference["instructions"])
+        self.assertEqual(result["profiles"]["gfx1013"]["instructions"], {"total": 1, "decoded": 0, "translated": 0})
 
 
 class ScanTests(unittest.TestCase):
+    def test_raw_literals_keep_braces_and_comment_markers_inside_the_string(self):
+        body = 'auto text = u8R"tag(" } // inside\n/* inside */ { \\ )tag"; return 7;'
+        source = f'int first() {{ {body} }} // removed\nint second() {{ return 2; }}'
+        stripped = shader_scan.strip_comments(source)
+        self.assertEqual(len(stripped), len(source))
+        self.assertEqual(shader_scan.function_body(stripped, "first").strip(), body)
+        self.assertEqual(shader_scan.function_body(stripped, "second").strip(), "return 2;")
+        self.assertNotIn("removed", stripped)
+
+    def test_digit_separators_keep_following_braces_and_comments_visible(self):
+        source = "int first() { return 0xDEAD'BEEF'CAFE'0001; } // removed\nint second() { return 1'000; }"
+        stripped = shader_scan.strip_comments(source)
+        self.assertNotIn("removed", stripped)
+        self.assertEqual(shader_scan.function_body(stripped, "first").strip(), "return 0xDEAD'BEEF'CAFE'0001;")
+        self.assertEqual(shader_scan.function_body(stripped, "second").strip(), "return 1'000;")
+        self.assertEqual(shader_scan.function_body("int letter() { return u8'}'; }", "letter").strip(), "return u8'}';")
+
     def test_known_answers_on_a_small_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             write_tree(directory)
@@ -228,6 +323,39 @@ class ReportTests(unittest.TestCase):
                         {"encoding": "VOP2", "form": "vop3", "total": 3, "decoded": 2, "translated": 0, "missing": ["V_X"], "untranslated": ["V_A", "V_B"]},
                         {"encoding": "VOP2", "form": "dpp16", "total": 2, "decoded": 1, "translated": 0, "missing": ["V_Y"], "untranslated": ["V_Z"]}]}
     GROUP = {"percent": 100.0, "groups": [], "done": 0, "total": 0, "extra": []}
+
+    def test_gfx1013_reports_badges_and_missing_names_separately(self):
+        profile = {key: self.SOURCE[key] for key in ("instructions", "dpp", "forms", "untranslated")}
+        source = {**self.SOURCE, "profiles": {"gfx1013": {"isa": "LLVM gfx1013 reference", **profile}}}
+        with tempfile.TemporaryDirectory() as directory:
+            progress.write_site(Path(directory), dict(self.GROUP), dict(self.GROUP), source)
+            html = (Path(directory) / "progress.html").read_text(encoding="utf-8")
+            badge = (Path(directory) / "badge-shaders-gfx1013.svg").read_text(encoding="utf-8")
+            data = json.loads((Path(directory) / "progress.json").read_text(encoding="utf-8"))
+        self.assertIn("gfx1013 reference shader coverage", html)
+        self.assertIn("RDNA2 reference: counted from the code", html)
+        self.assertIn("not a complete console ISA", html)
+        self.assertIn("S_NEW", html)
+        self.assertIn("gfx1013 reference", badge)
+        self.assertIn("3/5", badge)
+        self.assertEqual(data["shader_source"]["profiles"]["gfx1013"]["instructions"], self.SOURCE["instructions"])
+
+    def test_unavailable_profile_does_not_leave_a_stale_badge(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / "badge-shaders-gfx1013.svg").write_text("old count", encoding="utf-8")
+            progress.write_site(output, dict(self.GROUP), dict(self.GROUP))
+            self.assertIn("unavailable", (output / "badge-shaders-gfx1013.svg").read_text(encoding="utf-8"))
+
+    def test_profile_comparisons_show_introduction_and_skip_unchanged_counts(self):
+        before = {"libraries": self.GROUP, "shaders": self.GROUP}
+        profile = {"instructions": self.SOURCE["instructions"], "dpp": self.SOURCE["dpp"]}
+        after = {**before, "shader_source": {"profiles": {"gfx1013": profile}}}
+        self.assertIn("Not measured | 3/5 (60.0%)", progress.report(before, after))
+        self.assertNotIn("gfx1013 reference", progress.report(after, after))
+        invalid = {**before, "shader_source": {"profiles": {"gfx1013": {**profile, "dpp": {"total": 1, "decoded": 2}}}}}
+        with self.assertRaisesRegex(ValueError, "count exceeds"):
+            progress.validate_snapshot(invalid)
 
     def test_badge_shows_decoded_over_total_and_says_what_it_measures(self):
         svg = progress.shader_source_badge(self.SOURCE)
@@ -390,6 +518,67 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertEqual(out, "")
             self.assertIn("no SOP1 opcode table", err)
+
+
+class StripCommentsTests(unittest.TestCase):
+    def test_strip_comments_blanks_comments_and_keeps_strings(self):
+        source = 'int a; // gone\n/* gone too */ int b; const char* s = "// kept";\n'
+        cleaned = shader_scan.strip_comments(source)
+        self.assertIn("int a;", cleaned)
+        self.assertIn("int b;", cleaned)
+        self.assertNotIn("gone", cleaned)
+        self.assertIn('"// kept"', cleaned)
+        self.assertEqual(cleaned.count("\n"), source.count("\n"))
+
+
+class SkipLiteralTests(unittest.TestCase):
+    def test_skip_literal_honours_escapes(self):
+        source = 'x"ab\\"c"y'
+        self.assertEqual(source[shader_scan.skip_literal(source, 1)], '"')
+        self.assertEqual(shader_scan.skip_literal(source, 1), len(source) - 2)
+
+
+class FunctionBodyTests(unittest.TestCase):
+    def test_function_body_returns_text_between_braces(self):
+        source = "int f(int x) { return 1; }\nint g() { }\n"
+        self.assertEqual(shader_scan.function_body(source, "f"), " return 1; ")
+        self.assertIsNone(shader_scan.function_body(source, "missing"))
+
+
+class ArrayAndCaseTests(unittest.TestCase):
+    def test_array_body_and_case_names(self):
+        source = "static const int arr[] = { 1, 2 };"
+        self.assertEqual(shader_scan.array_body(source, "arr"), " 1, 2 ")
+        body = "case Kind::A: case Kind::B: case Other::C:"
+        self.assertEqual(shader_scan.case_names(body, "Kind"), {"A", "B"})
+class ValueHelperTests(unittest.TestCase):
+    def test_need_returns_a_value_and_refuses_none(self):
+        self.assertEqual(shader_scan.need(3, "count"), 3)
+        with self.assertRaisesRegex(shader_scan.ScanError, "no count"):
+            shader_scan.need(None, "count")
+
+    def test_throw_areas_counts_sites_by_first_path_part_most_first(self):
+        sites = [{"file": "a/x.cpp"}, {"file": "a/y.cpp"}, {"file": "b.cpp"}]
+        self.assertEqual(shader_scan.throw_areas(sites),
+                         [{"name": "a", "count": 2}, {"name": "Recompiler", "count": 1}])
+
+    def test_classify_maps_flat_and_own_encoding_tags(self):
+        self.assertEqual(shader_scan.classify("ENC_FLAT_GLBL", "x"), ("GLOBAL", "base"))
+        self.assertEqual(shader_scan.classify("ENC_FLAT_SCRATCH", "x"), ("SCRATCH", "base"))
+        self.assertEqual(shader_scan.classify("ENC_SMEM", "x"), ("SMEM", "base"))
+        self.assertIsNone(shader_scan.classify("OTHER", "x"))
+
+    def test_classify_reads_dpp_forms_of_vector_encodings(self):
+        self.assertEqual(shader_scan.classify("VOP2_VOP_DPP16", "x"), ("VOP2", "dpp16"))
+        self.assertEqual(shader_scan.classify("VOPC_VOP_DPP8", "x"), ("VOPC", "dpp8"))
+class BodyAfterTests(unittest.TestCase):
+    def test_body_after_returns_the_text_between_the_matching_braces(self):
+        self.assertEqual(shader_scan.body_after('int f() { return 1; }', re.compile(r'int f\(\)')), ' return 1; ')
+        self.assertEqual(shader_scan.body_after('int f() { if (a) { b(); } }', re.compile(r'int f\(\)')), ' if (a) { b(); } ')
+
+    def test_body_after_is_none_without_a_header_or_a_body(self):
+        self.assertIsNone(shader_scan.body_after('int g();', re.compile(r'int g\(\)')))
+        self.assertIsNone(shader_scan.body_after('x', re.compile(r'int h\(')))
 
 
 if __name__ == "__main__":

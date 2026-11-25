@@ -5,7 +5,7 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/Outline.cpp
         src/Charmap.cpp
         src/FaceInfo.cpp
-        src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp src/TrackKerning.cpp src/LcdFilter.cpp src/ModuleManagement.cpp src/OutlineTransform.cpp src/VectorPolar.cpp src/PsFontValue.cpp src/OutlineRender.cpp
+        src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp src/TrackKerning.cpp src/LcdFilter.cpp src/ModuleManagement.cpp src/OutlineTransform.cpp src/VectorPolar.cpp src/PsFontValue.cpp src/OutlineRender.cpp src/RendererSelection.cpp
         src/OutlineBitmap.cpp
         src/SfntTable.cpp
         src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp src/TrackKerning.cpp src/Variations.cpp
@@ -73,6 +73,8 @@ endif()
 target_sources(libSceFreeType PRIVATE src/List.cpp)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libSceFreeType PRIVATE LINKER:--exclude-libs,ALL)
+elseif(APPLE)
+    target_link_options(libSceFreeType PRIVATE LINKER:-load_hidden,$<TARGET_FILE:freetype>)
 endif()
 if(BUILD_TESTING)
     add_test_executable(guest_freetype_subglyph_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeSubGlyph.cpp)
@@ -86,6 +88,21 @@ if(BUILD_TESTING)
     endif()
 endif()
 configure_windows_unwind(libSceFreeType)
+target_sources(libSceFreeType PRIVATE src/Arithmetic.cpp)
+
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test_executable(guest_freetype_arithmetic_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeArithmetic.cpp)
+    target_include_directories(guest_freetype_arithmetic_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_arithmetic_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_arithmetic_tests)
+    add_test(NAME guest_freetype_arithmetic COMMAND ${Python3_EXECUTABLE}
+        ${LIBS_INCLUDE_DIR}/tests/test_guest_freetype_arithmetic.py $<TARGET_FILE:guest_freetype_arithmetic_tests>)
+    set_tests_properties(guest_freetype_arithmetic PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_freetype_arithmetic PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+endif()
 
 target_sources(libSceFreeType PRIVATE src/Sfnt.cpp)
 if(BUILD_TESTING)
@@ -329,6 +346,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_freetype_variations COMMAND guest_freetype_variations_tests)
     if(WIN32)
         set_tests_properties(guest_freetype_variations PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_set_renderer_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeSetRenderer.cpp)
+    target_include_directories(guest_freetype_set_renderer_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_set_renderer_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_set_renderer_tests)
+    add_test(NAME guest_freetype_set_renderer COMMAND guest_freetype_set_renderer_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_set_renderer PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
     endif()
     add_test_executable(guest_freetype_charmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeCharmap.cpp)

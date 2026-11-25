@@ -570,6 +570,40 @@ static void TestWindowsVerbatimPathLive() {
     RemovePathAlias_nid_no_patch("/verbatim-test");
     ::RemoveDirectoryW(root.c_str());
 }
+
+static void TestWindowsVerbatimUncPath() {
+    std::error_code error;
+    const auto absolute = WindowsAbsolutePath_nid_no_patch(LR"(\\server\share\data\..\levels)", error);
+    Require(!error);
+    Require(absolute.native() == LR"(\\server\share\levels)");
+    const auto clamped = WindowsAbsolutePath_nid_no_patch(LR"(\\server\share\..\..\levels)", error);
+    Require(!error);
+    Require(clamped.native() == LR"(\\server\share\levels)");
+    const auto share = WindowsAbsolutePath_nid_no_patch(L"//server/share", error);
+    Require(!error);
+    Require(share.native() == LR"(\\server\share)");
+    const auto clampedVerbatim = NativeVerbatimPath_nid_no_patch(LR"(\\server\share\..\levels\intro)", error);
+    Require(!error);
+    Require(clampedVerbatim.native() == LR"(\\server\share\levels\intro)");
+    const auto driveRelative = WindowsAbsolutePath_nid_no_patch(L"C:levels", error);
+    Require(!error);
+    Require(driveRelative.is_absolute() && driveRelative.filename() == L"levels");
+    Require(WindowsAbsolutePath_nid_no_patch(L"", error).empty() && error);
+    error.clear();
+    const auto plain = NativeVerbatimPath_nid_no_patch(LR"(\\server\share\data\..\levels\intro)", error);
+    Require(!error);
+    Require(plain.native() == LR"(\\server\share\levels\intro)");
+    const auto forward = NativeVerbatimPath_nid_no_patch(L"//server/share/levels/intro", error);
+    Require(!error);
+    Require(forward.native() == LR"(\\server\share\levels\intro)");
+    const auto device = NativeVerbatimPath_nid_no_patch(LR"(\\server\share\nul.txt)", error);
+    Require(!error);
+    Require(device.native() == LR"(\\?\UNC\server\share\nul.txt)");
+    const std::wstring component(120, L'a');
+    const auto longPath = NativeVerbatimPath_nid_no_patch(LR"(\\server\share\)" + component + L"\\" + component, error);
+    Require(!error);
+    Require(longPath.native() == LR"(\\?\UNC\server\share\)" + component + L"\\" + component);
+}
 #endif
 
 static void TestWindowsVerbatimPath() {
@@ -800,6 +834,7 @@ int main() {
     TestRelinkedModuleNameCase();
     TestWindowsVerbatimPath();
 #ifdef _WIN32
+    TestWindowsVerbatimUncPath();
     TestCaseSensitiveHostDirectory();
     TestLongHostPathStat();
 #endif
@@ -817,7 +852,7 @@ int main() {
     std::uint64_t throttling[4] = {1, 2, 3, 4};
     Require(sceKernelWriteThrottlingStatus(throttling) == 0);
     Require(throttling[0] == 0xffffffffu && throttling[1] == 0 && throttling[2] == 0 && throttling[3] == 0);
-    Require(sceKernelWriteThrottlingStatus(nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelWriteThrottlingStatus(nullptr) == static_cast<int>(0x80020016u));
     Require(sceKernelWriteThrottlingStatus(reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<int>(0x8002000eu));
     Require(sceKernelDebugOutText(0, nullptr) == static_cast<int>(0x8002000eu));
     auto* captured = TemporaryFile::Open();
@@ -988,6 +1023,10 @@ int main() {
             Require(fscanf_nid_postfix(directoryStream, "%d", &scanned) == -1 && *__error_nid_postfix() == 21 && ferror_nid_postfix(directoryStream) != 0);
             clearerr_nid_postfix(directoryStream);
 
+            *__error_nid_postfix() = 0;
+            Require(fscanf_s_nid_postfix(directoryStream, "%d", &scanned) == -1 && *__error_nid_postfix() == 21 && ferror_nid_postfix(directoryStream) != 0);
+            clearerr_nid_postfix(directoryStream);
+
             Require(fseek_nid_postfix(directoryStream, 0, 0) == 0 && ftell_nid_postfix(directoryStream) == 0);
             *__error_nid_postfix() = 0;
             Require(fputc_nid_postfix('x', directoryStream) == -1 && *__error_nid_postfix() == 9 && ferror_nid_postfix(directoryStream) != 0);
@@ -1040,6 +1079,9 @@ int main() {
     Require(chflags_nid_postfix(file.string().c_str(), 1ULL << 32) == -1 && *__error_nid_postfix() == 45);
     Require(chflags_nid_postfix(file.string().c_str(), ~0ULL) == -1 && *__error_nid_postfix() == 45);
     Require(chflags_nid_postfix(file.string().c_str(), 0x200000) == -1 && *__error_nid_postfix() == 1);
+    Require(chflags_nid_postfix(file.string().c_str(), 0x1) == -1 && *__error_nid_postfix() == 45);
+    Require(chflags_nid_postfix(file.string().c_str(), 0x8) == -1 && *__error_nid_postfix() == 45);
+    Require(ChflagsThrows(file, 0x9, "UF_NODUMP|UF_OPAQUE"));
     Require(ChflagsThrows(file, 0x2, "UF_IMMUTABLE"));
     for (const std::uint64_t system : {0x10000ULL, 0x20000ULL, 0x40000ULL, 0x100000ULL, 0x200000ULL, 0x370000ULL, 0x1000ULL | 0x40000ULL, 0x2ULL | 0x20000ULL})
         Require(chflags_nid_postfix(file.string().c_str(), system) == -1 && *__error_nid_postfix() == 1);
@@ -1073,6 +1115,8 @@ int main() {
     Require(fchflags_nid_postfix(flagged, 1ULL << 32) == -1 && *__error_nid_postfix() == 45);
     Require(fchflags_nid_postfix(flagged, ~0ULL) == -1 && *__error_nid_postfix() == 45);
     Require(fchflags_nid_postfix(flagged, 0x200000) == -1 && *__error_nid_postfix() == 1);
+    Require(fchflags_nid_postfix(flagged, 0x1) == -1 && *__error_nid_postfix() == 45);
+    Require(fchflags_nid_postfix(flagged, 0x8) == -1 && *__error_nid_postfix() == 45);
     Require(FchflagsThrows(flagged, 0x2, "UF_IMMUTABLE"));
     for (const std::uint64_t system : {0x10000ULL, 0x20000ULL, 0x40000ULL, 0x100000ULL, 0x200000ULL, 0x1000ULL | 0x40000ULL, 0x2ULL | 0x20000ULL})
         Require(fchflags_nid_postfix(flagged, system) == -1 && *__error_nid_postfix() == 1);
@@ -1432,6 +1476,9 @@ int main() {
     Require(futimes_nid_postfix(descriptor, negative) == -1 && *__error_nid_postfix() == 22);
     Require(std::fclose(native) == 0);
     Require(std::filesystem::file_size(sized) == 3);
+#ifdef _WIN32
+    const auto fileParameterHandler = _set_invalid_parameter_handler(RecordInvalidParameter);
+#endif
     Require(sceKernelFchmod(descriptor, 0600) == static_cast<int>(0x80020009u));
     Require(fchmod_nid_postfix(descriptor, 0600) == -1 && *__error_nid_postfix() == 9);
     Require(sceKernelFutimes(descriptor, nullptr) == static_cast<int>(0x80020009u));
@@ -1440,6 +1487,12 @@ int main() {
     Require(sceKernelFdatasync(descriptor) == static_cast<int>(0x80020009u));
     Require(fsync_nid_postfix(descriptor) == -1 && *__error_nid_postfix() == 9);
     Require(sceKernelFsync(descriptor) == static_cast<int>(0x80020009u));
+    Require(sceKernelFchmod(0x7fffffff, 0600) == static_cast<int>(0x80020009u));
+    Require(sceKernelFutimes(0x7fffffff, nullptr) == static_cast<int>(0x80020009u));
+#ifdef _WIN32
+    _set_invalid_parameter_handler(fileParameterHandler);
+    Require(!g_invalidParameter);
+#endif
     const int socket = socket_nid_postfix(2, 2, 0);
     Require(socket >= 0);
     Require(sceKernelFchmod(socket, 0600) == static_cast<int>(0x80020016u));
@@ -1460,6 +1513,9 @@ int main() {
     }
     Require(close_nid_postfix(syncPipe[0]) == 0 && close_nid_postfix(syncPipe[1]) == 0);
     Require(close_nid_postfix(socket) == 0);
+#ifdef _WIN32
+    const auto previousParameterHandler = _set_invalid_parameter_handler(RecordInvalidParameter);
+#endif
     Require(fchmod_nid_postfix(socket, 0600) == -1 && *__error_nid_postfix() == 9);
     Require(futimes_nid_postfix(socket, nullptr) == -1 && *__error_nid_postfix() == 9);
     Require(fdatasync_nid_postfix(socket) == -1 && *__error_nid_postfix() == 9);
@@ -1468,9 +1524,6 @@ int main() {
     Require(sceKernelFsync(socket) == static_cast<int>(0x80020009u));
     Require(sceKernelFdatasync(0x7fffffff) == static_cast<int>(0x80020009u));
     Require(sceKernelFsync(0x7fffffff) == static_cast<int>(0x80020009u));
-#ifdef _WIN32
-    const auto previousParameterHandler = _set_invalid_parameter_handler(RecordInvalidParameter);
-#endif
     FileStat closedStatus{};
     Require(sceKernelFstat(descriptor, &closedStatus) == static_cast<int>(0x80020009u));
     Require(sceKernelFstat(socket, &closedStatus) == static_cast<int>(0x80020009u));
@@ -1528,6 +1581,7 @@ int main() {
     Require(stat_nid_postfix(viaParent.c_str(), &status) == 0 && status.st_size == 5);
     Require(stat_nid_postfix(nullptr, &status) == -1 && *__error_nid_postfix() == 14);
     Require(stat_nid_postfix(presentName.c_str(), nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(stat_nid_postfix(missingName.c_str(), nullptr) == -1 && *__error_nid_postfix() == 2);
     FileStat linkStatus{};
     Require(lstat_nid_postfix(presentName.c_str(), &linkStatus) == 0 && linkStatus.st_size == 5);
     Require((linkStatus.st_mode & 0170000) == 0100000 && linkStatus.st_ino == status.st_ino);
@@ -1536,6 +1590,7 @@ int main() {
     Require(lstat_nid_postfix("", &linkStatus) == -1 && *__error_nid_postfix() == 2);
     Require(lstat_nid_postfix(nullptr, &linkStatus) == -1 && *__error_nid_postfix() == 14);
     Require(lstat_nid_postfix(presentName.c_str(), nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(lstat_nid_postfix(missingName.c_str(), nullptr) == -1 && *__error_nid_postfix() == 2);
 #ifndef _WIN32
     const auto link = root / "link";
     std::filesystem::create_symlink("present.txt", link);
@@ -1933,6 +1988,13 @@ int main() {
     Require(sceKernelOpen(invalidFlagsName.c_str(), 0x20a02, 0600) == static_cast<int>(0x80020016u));
     Require(open_nid_postfix(invalidFlagsName.c_str(), 0x20a00, 0600) == -1 && *__error_nid_postfix() == 22);
     Require(!std::filesystem::exists(invalidFlagsName));
+    Require(sceKernelOpen(missingName.c_str(), 0x20200, 0600) == static_cast<int>(0x80020002u));
+    Require(!std::filesystem::exists(missing));
+    Require(sceKernelOpen(presentName.c_str(), 0x20200, 0600) == static_cast<int>(0x80020014u));
+    Require(open_nid_postfix(presentName.c_str(), 0x20200, 0600) == -1 && *__error_nid_postfix() == 20);
+    const int lookedUpDirectory = sceKernelOpen(rootName.c_str(), 0x20200, 0);
+    Require(lookedUpDirectory >= 0 && sceKernelClose(lookedUpDirectory) == 0);
+    Require(sceKernelOpen(rootName.c_str(), 0x20202, 0) == static_cast<int>(0x80020015u));
     Require(open_nid_postfix(nullptr, 3, 0) == -1 && *__error_nid_postfix() == 22);
     Require(open_nid_postfix("", 0x20a00, 0600) == -1 && *__error_nid_postfix() == 22);
     Require(_open_nid_postfix(nullptr, 0x403) == -1 && *__error_nid_postfix() == 22);

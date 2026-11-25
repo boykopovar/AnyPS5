@@ -4,15 +4,30 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 
 static_assert(sizeof(Param) == 96);
 static_assert(offsetof(Param, option) == 32);
 static_assert(offsetof(Param, reserved) == 88);
 
+static constexpr int NotOpened = static_cast<int>(0x80bc0002u);
+
 static void Require(bool value, const char* message) {
     if (value) return;
     std::fprintf(stderr, "%s\n", message);
     std::abort();
+}
+
+template <typename TCall>
+static void RequireNotImplemented(TCall call, const std::string& name) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == name + " not implemented", "a pending ime function threw another error");
+        return;
+    }
+    Require(false, "a pending ime function returned");
 }
 
 static void CheckInitialization() {
@@ -120,6 +135,7 @@ static void CheckClosedPanel() {
     Require(sceImeSetTextGeometry(TextAreaMode::Edit, &geometry) == notOpened, "geometry needs an open panel");
     Require(sceImeSetTextGeometry(TextAreaMode::Edit, nullptr) == notOpened, "null geometry checks open panel first");
     Require(sceImeClose_nid_postfix() == notOpened, "closing needs an open panel");
+    Require(sceImeDisableController() == notOpened, "disabling the controller needs an open panel");
     PositionAndForm form;
     std::memset(&form, 0xa5, sizeof(form));
     Require(sceImeGetPanelPositionAndForm(&form) == notOpened, "panel position needs an open panel");
@@ -148,35 +164,40 @@ static void CheckOpenPanel() {
             "unwritable panel position and form");
     PositionAndForm form{};
     Require(sceImeGetPanelPositionAndForm(&form) == 0, "valid panel position and form");
+    RequireNotImplemented([] { sceImeDisableController(); }, "sceImeDisableController");
+    RequireNotImplemented([] { sceImeDisableController(); }, "sceImeDisableController");
+    Require(sceImeGetPanelPositionAndForm(&form) == 0, "panel still open after the controller release threw");
     Require(sceImeClose_nid_postfix() == 0, "close ime panel");
+    Require(sceImeDisableController() == NotOpened, "disabling the controller needs an open panel after close");
 }
 
 static void CheckKeyboardResourceIds() {
-    constexpr int NotOpened = static_cast<int>(0x80bc0002u);
     constexpr int ConnectionFailed = static_cast<int>(0x80bc0004u);
-    constexpr int InvalidUserId = static_cast<int>(0x80bc0010u);
     constexpr int InvalidAddress = static_cast<int>(0x80bc0031u);
     KeyboardResourceIdArray ids;
-    std::memset(&ids, 0xa5, sizeof(ids));
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&ids);
+    for (const int32_t user : {1, -1, 0, 0x12345678}) {
+        std::memset(&ids, 0xa5, sizeof(ids));
+        Require(sceImeKeyboardGetResourceId(user, &ids) == NotOpened, "keyboard not opened");
+        for (size_t i = 0; i < sizeof(ids); ++i) Require(bytes[i] == 0xa5, "outputs changed without an open keyboard");
+    }
+    Require(sceImeKeyboardGetResourceId(1, nullptr) == NotOpened, "null resource id array without an open keyboard");
+    KeyboardParam param{};
+    Require(sceImeKeyboardOpen(1, &param) == 0, "keyboard open failed");
     Require(sceImeKeyboardGetResourceId(1, nullptr) == InvalidAddress, "null resource id array");
     Require(sceImeKeyboardGetResourceId(1, reinterpret_cast<KeyboardResourceIdArray*>(0x10)) == InvalidAddress,
             "unwritable resource id array");
-    Require(sceImeKeyboardGetResourceId(-1, &ids) == InvalidUserId, "invalid user");
-    const auto* bytes = reinterpret_cast<const unsigned char*>(&ids);
-    for (size_t i = 0; i < sizeof(ids); ++i) Require(bytes[i] == 0xa5, "outputs changed on argument error");
-    Require(sceImeKeyboardGetResourceId(1, &ids) == NotOpened, "keyboard not opened");
-    Require(ids.user_id == 1, "user not reported for an unopened keyboard");
-    for (uint32_t id : ids.resource_id) Require(id == 0, "resource id reported for an unopened keyboard");
-    KeyboardParam param{};
-    Require(sceImeKeyboardOpen(1, &param) == 0, "keyboard open failed");
     std::memset(&ids, 0xa5, sizeof(ids));
     Require(sceImeKeyboardGetResourceId(1, &ids) == ConnectionFailed, "a keyboard was reported as connected");
     Require(ids.user_id == 1, "user not reported");
     for (uint32_t id : ids.resource_id) Require(id == 0, "resource id reported without a keyboard");
+    std::memset(&ids, 0xa5, sizeof(ids));
     Require(sceImeKeyboardGetResourceId(2, &ids) == NotOpened, "keyboard of another user reported as opened");
-    Require(ids.user_id == 2, "other user not reported");
+    for (size_t i = 0; i < sizeof(ids); ++i) Require(bytes[i] == 0xa5, "outputs changed for another user");
     Require(sceImeKeyboardClose(1) == 0, "keyboard close failed");
+    std::memset(&ids, 0xa5, sizeof(ids));
     Require(sceImeKeyboardGetResourceId(1, &ids) == NotOpened, "closed keyboard reported as opened");
+    for (size_t i = 0; i < sizeof(ids); ++i) Require(bytes[i] == 0xa5, "outputs changed after the close");
 }
 
 static void CheckConsecutiveClauseConversion() {
@@ -184,6 +205,42 @@ static void CheckConsecutiveClauseConversion() {
     for (const std::uint8_t value : values) {
         Require(sceImeSetConsecutiveClauseConversionEnabled(value) == 0, "any value must succeed");
     }
+}
+
+static void CheckTextInfo() {
+    constexpr int InvalidRange = -3;
+    char16_t text[] = u"abcd";
+    ImeEditText info{};
+    info.str = text;
+    info.caret_index = 4;
+    info.area_num = 1;
+    info.text_area[0] = {TextAreaMode::Preedit, 1, 2};
+    Require(sceImeCheckUpdateTextInfo(&info, 0) == 0, "valid text range");
+
+    info.text_area[0].index = 3;
+    info.text_area[0].length = 2;
+    const ImeEditText invalid = info;
+    Require(sceImeCheckUpdateTextInfo(&info, 0) == InvalidRange, "invalid range must be reported");
+    Require(std::memcmp(&info, &invalid, sizeof(info)) == 0, "check-only mode changed text info");
+
+    info.caret_index = 8;
+    Require(sceImeCheckUpdateTextInfo(&info, 1) == 0, "repair mode");
+    Require(info.caret_index == 4 && info.text_area[0].index == 0, "repair did not reset invalid positions");
+
+    info.text_area[0] = {TextAreaMode::Edit, 5, 8};
+    info.caret_index = 4;
+    Require(sceImeCheckUpdateTextInfo(&info, 0) == 0, "disabled edit range must not be checked");
+
+    ImeEvent event{};
+    event.id = 1;
+    event.param.text = info;
+    event.param.text.text_area[0].mode = TextAreaMode::Preedit;
+    Require(sceImeCheckRemoteEventParam(&event, 0) == InvalidRange, "update-text event must validate its range");
+    event.id = 2;
+    Require(sceImeCheckRemoteEventParam(&event, 1) == 0, "unrelated event must be ignored");
+
+    RequireNotImplemented([] { sceImeCheckUpdateTextInfo(nullptr, 0); }, "sceImeCheckUpdateTextInfo");
+    RequireNotImplemented([] { sceImeCheckRemoteEventParam(nullptr, 0); }, "sceImeCheckRemoteEventParam");
 }
 
 int main() {
@@ -194,4 +251,5 @@ int main() {
     CheckOpenPanel();
     CheckKeyboardResourceIds();
     CheckConsecutiveClauseConversion();
+    CheckTextInfo();
 }

@@ -19,6 +19,32 @@ one settles, and how to cite it.
 
 When sources disagree, say so in the pull request and in the debt entry.
 
+[prosper](https://github.com/mattias800/prosper)'s console oracle has published such measurements for libSceRtc, libc, libSceHttp, libSceNet, libSceUserService, libkernel and libSceAgc's packet builders. `python3 tools/library-oracle/library_oracle.py` replays them against the built modules, after `cmake --build build --target library_oracle_replay libs`, which builds the replay executable and the unpatched modules it loads from `build/core/libs/libs/unpatched`: it downloads the measurements from a pinned commit, checks their digest and fails on a result that is not in [known.tsv](../../tools/library-oracle/known.tsv). A pull request that fixes a listed case removes its line, and one that adds a difference explains it there.
+
+## Public source baselines
+
+Some libraries are builds of public projects. The library's debt file records which release its entries follow,
+and an entry cites the file at that release. This can differ from the submodule the repository bundles, which some
+adapters call into.
+
+| Library | Project | Entries follow | Bundled submodule |
+| --- | --- | --- | --- |
+| [libwebrtc](debt/libwebrtc.md) | WebRTC | code that is the same at M127 and M134 (its Source revision entry) | none |
+| [libSceLibreSsl](debt/libSceLibreSsl.md) | LibreSSL | 2.5.4 | `3rdparty/libressl-openbsd` (OpenBSD 7.0) |
+| [libSceLibreSsl3](debt/libSceLibreSsl3.md) | LibreSSL | 4.0.0 | `3rdparty/libressl-openbsd` (OpenBSD 7.0) |
+| [libSceFreeType](debt/libSceFreeType.md), [libSceFreeTypeOt](debt/libSceFreeTypeOt.md) | FreeType | 2.13.3 | `3rdparty/freetype` (2.15.0) |
+| [libfreetype](debt/libfreetype.md) | FreeType | 2.15.0 | `3rdparty/freetype` (2.15.0) |
+| [libSceIcu](debt/libSceIcu.md) | ICU | 68 for names (`icu_68`), 78.1 for behaviour | `3rdparty/icu` (78.1) |
+| [libharfbuzz](debt/libharfbuzz.md) | HarfBuzz | 10.0.1 | `3rdparty/harfbuzz` (10.0.1) |
+| [libfontconfig](debt/libfontconfig.md) | Fontconfig | 2.15.0 | `3rdparty/fontconfig` (2.15.0) |
+| [libSceJxr](debt/libSceJxr.md) | jxrlib | v2019.10.9 | `3rdparty/jxrlib` (v2019.10.9) |
+| [libSceNKWebKit](debt/libSceNKWebKit.md) | WebKit | the PS5 firmware 11.x WebKit source | none |
+| [libc](debt/libc.md), [libkernel](debt/libkernel.md), [libkernel_sys](debt/libkernel_sys.md), [libSceNet](debt/libSceNet.md), [libScePosixForWebKit](debt/libScePosixForWebKit.md), [libSceUsbd](debt/libSceUsbd.md) | FreeBSD | 11.4 | none |
+| [libSceLibcInternal](debt/libSceLibcInternal.md) | FreeBSD, Microsoft STL (Dinkumware) | FreeBSD 11.4 for C functions, the Microsoft STL for C++ helpers | none |
+
+The guest `std::string` is the 0x28-byte object in [GuestLocale.hpp](../../core/libs/prx/libc/include/GuestLocale.hpp),
+not libc++'s 24-byte one. The layouts of the other standard containers are not settled yet (#18830).
+
 ## What a call site settles
 
 The PS5 uses the System V AMD64 calling convention: integer and pointer arguments in `rdi`, `rsi`, `rdx`, `rcx`, `r8`,
@@ -72,9 +98,48 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    disassembly for every executable segment and writes `<prefix>.asm`, `<prefix>.imports.txt` and
    `<prefix>.exports.txt`. It names each import call, PLT stub, GOT reference and export entry from the module's NIDs
    through the database of `tools/nid_names.py`, which is downloaded on first use unless `--db` names a CSV or
-   `--no-names` prints the NIDs instead. It needs binutils `objdump`.
+   `--no-names` prints the NIDs instead. Disassembly requires GNU binutils `objdump` with x86-64 support. On ARM Linux,
+   put `x86_64-linux-gnu-objdump` on `PATH` if the host `objdump` cannot disassemble x86-64.
 
-   A disassembler that loads the program headers (Ghidra, IDA) does the same.
+   In the assembly listing, `LEA` instructions that compute the exact address of an exported function or data
+   object relative to the instruction pointer show `; address of <name>`. This also covers zero-initialized
+   objects in the module's memory image.
+
+   On stripped modules, look for `unwind_<address>` in the assembly listing. These labels mark unnamed code ranges
+   from the ELF unwind index when the listing has an instruction at that address. Direct calls and jumps to a
+   labeled range start carry the same label. One function can have several ranges.
+
+   To name symbols in Ghidra without disassembling or downloading a database:
+
+   ```sh
+   python3 tools/annotate_module.py module.guest.prx --symbols-ghidra --db aerolib.csv > module.symbols
+   ```
+
+   Save the ASCII output without a BOM. Load the same relinked ELF at its ELF virtual addresses and run
+   [ImportSymbolsScript.py](https://github.com/NationalSecurityAgency/ghidra/blob/ac245cfdbd035c14180bb7a470e39348511b4ba2/Ghidra/Extensions/Jython/ghidra_scripts/ImportSymbolsScript.py)
+   from Ghidra's Jython extension with this map. Function exports inside executable file-backed segments get `f`;
+   aliases at the same address get `l`, keeping one function name. Unnamed `DT_INIT` and `DT_FINI` functions inside
+   executable file-backed segments get `elf_init` and `elf_fini`; an existing function export keeps its name.
+   Import slots are `imp_` labels. The Ghidra map and assembly listing omit labels for absolute symbols (including
+   linker constants and ELF version names), TLS offsets and unallocated common symbols. The text and JSON export
+   inventories retain these symbols. Names use ASCII letters, digits and
+   underscores: other characters become underscores, a leading digit gets an underscore prefix, and names are limited
+   to Ghidra's 2000 characters. Collisions get `_2`, `_3`, and so on within that limit.
+   Initialization and cleanup arrays add `elf_init_array_<index>`, `elf_fini_array_<index>` and, for executables,
+   `elf_preinit_array_<index>` function entries. The tool reads stored pointers and resolves `R_X86_64_RELATIVE`
+   and defined, non-TLS, non-IFUNC `R_X86_64_64` targets. An absolute relocation target can identify an image address
+   in a fixed-address executable. Entries requiring runtime resolution, conflicting or
+   overlapping relocations, and targets without executable file backing are omitted. Existing function exports
+   keep their names. This static map does not execute initializers or apply runtime symbol interposition.
+
+   This mode reads only a local NID database or cache, prints to stdout and cannot be combined with `--symbols-json`
+   or `--out`. Without a local database it uses NIDs; `--no-names` skips the database entirely.
+
+   Local `R_X86_64_IRELATIVE` resolver addresses inside executable file-backed segments get
+   `irelative_resolver_<address>` function names unless a function export already names that address.
+   These are the resolver functions, not the implementations they return. The tool does not execute them.
+
+   A disassembler that loads the program headers (Ghidra, IDA) does the same segment loading.
 4. Log strings near the call confirm which import it is: `strings -t x eboot.elf`, then the `lea` that loads that address.
 
 The same steps work on a module: the code of a firmware module or of one in `sce_module/` gives the library's side of
@@ -102,3 +167,12 @@ debt entry, never in code or test names.
   exists ([libSceIme](debt/libSceIme.md) rebuilds its codepage checks from Unicode's tables).
 - The goal is interoperability: what a title needs from a system library to run. Nothing here is for bypassing
   licence, entitlement or online checks.
+
+## Export and NID tools
+
+- `tools/export_gap.py --module <name> --nids <file> --db <nid-db>` lists the console exports an AnyPS5 library does not provide. To read a genstub export table, replace `--nids <file>` with `--export-table <dir>`, where `<dir>` contains `<name>.c`.
+- With the console module in ELF format, use `--elf <module.prx>` in place of `--nids <file>`. This compares one module at a time. It reads NID-shaped names from the dynamic exports, including sectionless SCE symbol tables, and ignores imports and other names. An ELF without any matching exports produces an error.
+- `tools/stubgen.py --module <name> --nids <file> --db <nid-db> --out <file>` writes an `Export.cpp` skeleton to the named file and prints the matching technical-debt lines. Pass `--td-out <file>` to save those lines separately.
+- `tools/audit_nid_names.py <database>` audits the hash consistency of a local NID/name database with the stub generator's first-record policy.
+- `tools/pe_symbol_inventory.py <module>` inventories the code symbols and identity metadata of a PE module without reading samples.
+- `tools/inspect_self.py <input>` prints the SELF record and inner ELF header metadata as JSON. It does not validate a conversion or decrypt segments.

@@ -5,17 +5,30 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cstdlib>
+#include <cstring>
+#include <new>
+#include <string>
+
+namespace {
+
+constexpr std::size_t kMonoStringLengthOffset = 0x10;
+constexpr std::size_t kMonoStringCharsOffset = 0x14;
+constexpr std::size_t kMonoArrayLengthOffset = 0x18;
+constexpr std::size_t kMonoArrayVectorOffset = 0x20;
+
+} // namespace
 
 extern "C" {
 
-int APS5_VABI ScePsmMonoArrayAddrWithSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+char* APS5_VABI ScePsmMonoArrayAddrWithSize(void* array, int size, std::uintptr_t index) {
+    return static_cast<char*>(array) + kMonoArrayVectorOffset + static_cast<std::intptr_t>(size) * index;
 }
 
-int APS5_VABI ScePsmMonoArrayLength() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI ScePsmMonoArrayLength(const void* array) {
+    std::uint32_t length;
+    std::memcpy(&length, static_cast<const char*>(array) + kMonoArrayLengthOffset, sizeof(length));
+    return length;
 }
 
 int APS5_VABI ScePsmMonoDomainGet() {
@@ -23,19 +36,16 @@ int APS5_VABI ScePsmMonoDomainGet() {
     return 0;
 }
 
-int APS5_VABI ScePsmMonoFree() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI ScePsmMonoFree(void* memory) {
+    std::free(memory);
 }
 
-int APS5_VABI ScePsmMonoGcWbarrierGenericStore() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI ScePsmMonoGcWbarrierGenericStore(void* slot, void* value) {
+    std::memcpy(slot, &value, sizeof(value));
 }
 
-int APS5_VABI ScePsmMonoStringChars() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint16_t* APS5_VABI ScePsmMonoStringChars(void* string) {
+    return reinterpret_cast<std::uint16_t*>(static_cast<char*>(string) + kMonoStringCharsOffset);
 }
 
 int APS5_VABI ScePsmMonoStringFromUtf16() {
@@ -43,9 +53,10 @@ int APS5_VABI ScePsmMonoStringFromUtf16() {
     return 0;
 }
 
-int APS5_VABI ScePsmMonoStringLength() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI ScePsmMonoStringLength(const void* string) {
+    std::int32_t length;
+    std::memcpy(&length, static_cast<const char*>(string) + kMonoStringLengthOffset, sizeof(length));
+    return length;
 }
 
 int APS5_VABI ScePsmMonoStringNew() {
@@ -58,9 +69,39 @@ int APS5_VABI ScePsmMonoStringNewWrapper() {
     return 0;
 }
 
-int APS5_VABI ScePsmMonoStringToUtf8() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+char* APS5_VABI ScePsmMonoStringToUtf8(void* string) {
+    if (string == nullptr) return nullptr;
+    const int length = ScePsmMonoStringLength(string);
+    const std::uint16_t* chars = ScePsmMonoStringChars(string);
+    std::string utf8;
+    for (int i = 0; i < length; ++i) {
+        std::uint32_t c = chars[i];
+        if (c == 0) break;
+        if (c >= 0xDC00 && c <= 0xDFFF) return nullptr;
+        if (c >= 0xD800 && c <= 0xDBFF) {
+            if (i + 1 >= length || chars[i + 1] < 0xDC00 || chars[i + 1] > 0xDFFF) return nullptr;
+            c = 0x10000 + ((c - 0xD800) << 10) + (chars[++i] - 0xDC00);
+        }
+        if (c < 0x80) {
+            utf8 += static_cast<char>(c);
+        } else if (c < 0x800) {
+            utf8 += static_cast<char>(0xC0 | (c >> 6));
+            utf8 += static_cast<char>(0x80 | (c & 0x3F));
+        } else if (c < 0x10000) {
+            utf8 += static_cast<char>(0xE0 | (c >> 12));
+            utf8 += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+            utf8 += static_cast<char>(0x80 | (c & 0x3F));
+        } else {
+            utf8 += static_cast<char>(0xF0 | (c >> 18));
+            utf8 += static_cast<char>(0x80 | ((c >> 12) & 0x3F));
+            utf8 += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+            utf8 += static_cast<char>(0x80 | (c & 0x3F));
+        }
+    }
+    char* result = static_cast<char*>(std::malloc(utf8.size() + 1));
+    if (result == nullptr) throw std::bad_alloc();
+    std::memcpy(result, utf8.c_str(), utf8.size() + 1);
+    return result;
 }
 
 int APS5_VABI _ZN3sce3pss4core14IntHandleTable13NextIntHandleEv() {
@@ -343,7 +384,7 @@ int APS5_VABI libScePsmUnknown__minus_ndbidpphoc_nid_no_patch() {
 APS5_EXPORT("-ndbidpphoc", libScePsmUnknown__minus_ndbidpphoc_nid_no_patch);
 
 int APS5_VABI libScePsmUnknown_0PIOM2UIUpQ_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("0PIOM2UIUpQ", libScePsmUnknown_0PIOM2UIUpQ_nid_no_patch);
 
@@ -448,7 +489,7 @@ int APS5_VABI libScePsmUnknown_PGLOWFhZTtM_nid_no_patch() {
 APS5_EXPORT("PGLOWFhZTtM", libScePsmUnknown_PGLOWFhZTtM_nid_no_patch);
 
 int APS5_VABI libScePsmUnknown_PN1KQl3wnoU_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(0x80B30006);
 }
 APS5_EXPORT("PN1KQl3wnoU", libScePsmUnknown_PN1KQl3wnoU_nid_no_patch);
 
@@ -473,7 +514,7 @@ int APS5_VABI libScePsmUnknown_UFkg2lqxKPQ_nid_no_patch() {
 APS5_EXPORT("UFkg2lqxKPQ", libScePsmUnknown_UFkg2lqxKPQ_nid_no_patch);
 
 int APS5_VABI libScePsmUnknown_W8PzsJgkCGU_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("W8PzsJgkCGU", libScePsmUnknown_W8PzsJgkCGU_nid_no_patch);
 

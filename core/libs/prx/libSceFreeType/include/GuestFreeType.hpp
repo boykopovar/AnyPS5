@@ -8,7 +8,34 @@
 
 namespace FreeType {
 
+inline constexpr std::int32_t NormalizeAngle_nid_no_patch(std::int64_t angle) {
+    return static_cast<std::int32_t>(angle % (360ll << 16));
+}
+
 struct GuestLibrary;
+struct GuestMemoryRec;
+
+struct GuestStreamRec;
+
+using GuestStreamIoFunc = std::uint64_t (APS5_VABI *)(GuestStreamRec*, std::uint64_t, std::uint8_t*, std::uint64_t);
+using GuestStreamCloseFunc = void (APS5_VABI *)(GuestStreamRec*);
+
+struct GuestStreamRec {
+    std::uint8_t* base;
+    std::uint64_t size;
+    std::uint64_t pos;
+    void* descriptor;
+    void* pathname;
+    GuestStreamIoFunc read;
+    GuestStreamCloseFunc close;
+    GuestMemoryRec* memory;
+    std::uint8_t* cursor;
+    std::uint8_t* limit;
+};
+
+static_assert(sizeof(GuestStreamRec) == 80 && offsetof(GuestStreamRec, size) == 8 && offsetof(GuestStreamRec, pos) == 16);
+static_assert(offsetof(GuestStreamRec, read) == 40 && offsetof(GuestStreamRec, close) == 48 && offsetof(GuestStreamRec, memory) == 56);
+static_assert(offsetof(GuestStreamRec, cursor) == 64 && offsetof(GuestStreamRec, limit) == 72);
 
 struct GuestGeneric {
     void* data;
@@ -48,6 +75,28 @@ struct GuestCharMapRec {
     std::uint16_t platform_id;
     std::uint16_t encoding_id;
 };
+
+struct GuestCMap;
+struct GuestCMapClass {
+    std::uint64_t size;
+    int (APS5_VABI *init)(GuestCMap*, void*);
+    void (APS5_VABI *done)(GuestCMap*);
+    std::uint32_t (APS5_VABI *index)(GuestCMap*, std::uint32_t);
+    std::uint32_t (APS5_VABI *next)(GuestCMap*, std::uint32_t*);
+    std::uint32_t (APS5_VABI *variantIndex)(GuestCMap*, GuestCMap*, std::uint32_t, std::uint32_t);
+    int (APS5_VABI *variantDefault)(GuestCMap*, std::uint32_t, std::uint32_t);
+    std::uint32_t* (APS5_VABI *variants)(GuestCMap*, GuestMemoryRec*);
+    std::uint32_t* (APS5_VABI *charVariants)(GuestCMap*, GuestMemoryRec*, std::uint32_t);
+    std::uint32_t* (APS5_VABI *variantChars)(GuestCMap*, GuestMemoryRec*, std::uint32_t);
+};
+
+struct GuestCMap {
+    GuestCharMapRec charmap;
+    const GuestCMapClass* clazz;
+};
+
+static_assert(sizeof(GuestCMap) == 24 && offsetof(GuestCMap, clazz) == 16);
+static_assert(sizeof(GuestCMapClass) == 80 && offsetof(GuestCMapClass, next) == 32);
 
 struct GuestSfntName {
     std::uint16_t platform_id;
@@ -198,6 +247,11 @@ struct GuestRasterParams {
     GuestBBox clipBox;
 };
 
+struct GuestParameter {
+    std::uint64_t tag;
+    void* data;
+};
+
 struct GuestFaceRec {
     std::int64_t num_faces;
     std::int64_t face_index;
@@ -241,6 +295,7 @@ struct GuestPropIncreaseXHeight {
 static_assert(sizeof(GuestMatrix) == 32 && offsetof(GuestMatrix, xy) == 8 && offsetof(GuestMatrix, yx) == 16 && offsetof(GuestMatrix, yy) == 24);
 static_assert(sizeof(GuestOpenArgs) == 64 && offsetof(GuestOpenArgs, memory_base) == 8 && offsetof(GuestOpenArgs, memory_size) == 16 && offsetof(GuestOpenArgs, pathname) == 24 && offsetof(GuestOpenArgs, stream) == 32 && offsetof(GuestOpenArgs, driver) == 40 && offsetof(GuestOpenArgs, num_params) == 48 && offsetof(GuestOpenArgs, params) == 56);
 static_assert(sizeof(GuestRasterParams) == 96 && offsetof(GuestRasterParams, flags) == 16 && offsetof(GuestRasterParams, graySpans) == 24 && offsetof(GuestRasterParams, user) == 56 && offsetof(GuestRasterParams, clipBox) == 64);
+static_assert(sizeof(GuestParameter) == 16 && offsetof(GuestParameter, data) == 8);
 static_assert(sizeof(GuestGeneric) == 16 && offsetof(GuestGeneric, finalizer) == 8);
 static_assert(sizeof(GuestBitmapSize) == 32 && offsetof(GuestBitmapSize, size) == 8);
 static_assert(sizeof(GuestCharMapRec) == 16 && offsetof(GuestCharMapRec, platform_id) == 12);

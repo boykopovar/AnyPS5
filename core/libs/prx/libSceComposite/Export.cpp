@@ -393,23 +393,23 @@ int APS5_VABI sceCompsoitorGetRenderingTime() {
 }
 
 int APS5_VABI sceCompositorGetMemoryPoolAddress() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceCompositorGetMemoryPoolSize() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceCompositorGetNullCanvasHandle() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceCompositorGetSecondaryMemoryAddress() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceCompositorGetSecondaryMemorySize() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceCompositorGetTFRing() {

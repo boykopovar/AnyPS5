@@ -158,8 +158,9 @@ int main() {
     Require(pthread_kill_nid_postfix(scePthreadSelf(), 0) == 0 && received == 0);
     Require(pthread_kill_nid_postfix(scePthreadSelf(), 200) == 22);
     Require(pthread_kill_nid_postfix(scePthreadSelf(), -1) == 22);
-    Require(pthread_kill_nid_postfix(nullptr, 15) == 3);
-    Require(pthread_kill_nid_postfix(nullptr, 128) == 3);
+    Require(pthread_kill_nid_postfix(nullptr, 15) == 22);
+    Require(pthread_kill_nid_postfix(nullptr, 128) == 22);
+    Require(pthread_kill_nid_postfix(nullptr, 0) == 22);
     Require(pthread_kill_nid_postfix(nullptr, 129) == 22);
     Require(pthread_kill_nid_postfix(reinterpret_cast<Pthread>(std::uintptr_t{0x10}), 15) == 3);
     Require(pthread_kill_nid_postfix(reinterpret_cast<Pthread>(std::uintptr_t{0x10}), 0) == 3);

@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
 #include <cmath>
@@ -6,7 +7,42 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
+
+
+extern "C" {
+int APS5_VABI CallMediaTimeTaggedPlacement(void* storage);
+int APS5_VABI CallPlatformTimeRangesTaggedPlacement(void* storage);
+}
+
+asm(".text\n"
+    APS5_ASM_FUNCTION("CallMediaTimeTaggedPlacement")
+    "    push %rbx\n"
+    "    mov %rdi, %rbx\n"
+    "    mov %rdi, %rdx\n"
+    "    mov $64, %edi\n"
+    "    xor %esi, %esi\n"
+    "    call " APS5_ASM_SYMBOL("_ZN3WTF9MediaTimenwEm10NotNullTagPv") "\n"
+    "    cmp %rbx, %rax\n"
+    "    sete %al\n"
+    "    movzbl %al, %eax\n"
+    "    pop %rbx\n"
+    "    ret\n");
+
+asm(".text\n"
+    APS5_ASM_FUNCTION("CallPlatformTimeRangesTaggedPlacement")
+    "    push %rbx\n"
+    "    mov %rdi, %rbx\n"
+    "    mov %rdi, %rdx\n"
+    "    mov $64, %edi\n"
+    "    xor %esi, %esi\n"
+    "    call " APS5_ASM_SYMBOL("_ZN7WebCore18PlatformTimeRangesnwEm10NotNullTagPv") "\n"
+    "    cmp %rbx, %rax\n"
+    "    sete %al\n"
+    "    movzbl %al, %eax\n"
+    "    pop %rbx\n"
+    "    ret\n");
 
 namespace {
 
@@ -404,8 +440,51 @@ void TestPlatformTimeRanges() {
     WTF::MediaTime fiveTime = _ZN3WTF9MediaTime16createWithDoubleEd(5.0);
     WTF::MediaTime zeroTime = _ZN3WTF9MediaTime8zeroTimeEv();
     _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&invalidAddRanges, fiveTime, zeroTime);
-    Require(_ZNK7WebCore18PlatformTimeRanges6lengthEv(&invalidAddRanges) == 0);
+    Require(_ZNK7WebCore18PlatformTimeRanges6lengthEv(&invalidAddRanges) == 1);
+    WTF::MediaTime invalidAddStart = _ZNK7WebCore18PlatformTimeRanges5startEj(&invalidAddRanges, 0);
+    Require(_ZNK3WTF9MediaTime8toDoubleEv(&invalidAddStart) == 5.0);
+    WTF::MediaTime invalidAddEnd = _ZNK7WebCore18PlatformTimeRanges3endEj(&invalidAddRanges, 0);
+    Require(_ZNK3WTF9MediaTime8toDoubleEv(&invalidAddEnd) == 0.0);
     _ZN7WebCore18PlatformTimeRangesD1Ev(&invalidAddRanges);
+
+    WebCore::PlatformTimeRanges tieRanges;
+    _ZN7WebCore18PlatformTimeRangesC1Ev(&tieRanges);
+    WTF::MediaTime tieStart;
+    WTF::MediaTime tieEnd;
+    _ZN3WTF9MediaTimeC1Eljh(&tieStart, 0, 1000, WTF::MediaTime::Valid);
+    _ZN3WTF9MediaTimeC1Eljh(&tieEnd, 5000, 1000, WTF::MediaTime::Valid);
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&tieRanges, tieStart, tieEnd);
+    WTF::MediaTime sameStart;
+    WTF::MediaTime sameEnd;
+    _ZN3WTF9MediaTimeC1Eljh(&sameStart, 0, 90000, WTF::MediaTime::Valid);
+    _ZN3WTF9MediaTimeC1Eljh(&sameEnd, 450000, 90000, WTF::MediaTime::Valid);
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&tieRanges, sameStart, sameEnd);
+    Require(_ZNK7WebCore18PlatformTimeRanges6lengthEv(&tieRanges) == 1);
+    bool tieValid = false;
+    WTF::MediaTime mergedStart = _ZNK7WebCore18PlatformTimeRanges5startEjRb(&tieRanges, 0, tieValid);
+    Require(tieValid && mergedStart.m_timeValue == 0 && mergedStart.m_timeScale == 90000);
+    WTF::MediaTime mergedEnd = _ZNK7WebCore18PlatformTimeRanges3endEjRb(&tieRanges, 0, tieValid);
+    Require(tieValid && mergedEnd.m_timeValue == 450000 && mergedEnd.m_timeScale == 90000);
+    WTF::MediaTime shortStart;
+    WTF::MediaTime shortEnd;
+    _ZN3WTF9MediaTimeC1Eljh(&shortStart, 0, 30000, WTF::MediaTime::Valid);
+    _ZN3WTF9MediaTimeC1Eljh(&shortEnd, 60000, 30000, WTF::MediaTime::Valid);
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&tieRanges, shortStart, shortEnd);
+    Require(_ZNK7WebCore18PlatformTimeRanges6lengthEv(&tieRanges) == 1);
+    mergedStart = _ZNK7WebCore18PlatformTimeRanges5startEjRb(&tieRanges, 0, tieValid);
+    Require(tieValid && mergedStart.m_timeValue == 0 && mergedStart.m_timeScale == 30000);
+    mergedEnd = _ZNK7WebCore18PlatformTimeRanges3endEjRb(&tieRanges, 0, tieValid);
+    Require(tieValid && mergedEnd.m_timeValue == 450000 && mergedEnd.m_timeScale == 90000);
+    WTF::MediaTime doubleStart = _ZN3WTF9MediaTime16createWithDoubleEd(0.0);
+    WTF::MediaTime doubleEnd = _ZN3WTF9MediaTime16createWithDoubleEd(5.0);
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&tieRanges, doubleStart, doubleEnd);
+    Require(_ZNK7WebCore18PlatformTimeRanges6lengthEv(&tieRanges) == 1);
+    mergedStart = _ZNK7WebCore18PlatformTimeRanges5startEjRb(&tieRanges, 0, tieValid);
+    Require(tieValid && (mergedStart.m_timeFlags & WTF::MediaTime::DoubleValue) != 0);
+    mergedEnd = _ZNK7WebCore18PlatformTimeRanges3endEjRb(&tieRanges, 0, tieValid);
+    Require(tieValid && (mergedEnd.m_timeFlags & WTF::MediaTime::DoubleValue) != 0);
+    Require(_ZNK3WTF9MediaTime8toDoubleEv(&mergedEnd) == 5.0);
+    _ZN7WebCore18PlatformTimeRangesD1Ev(&tieRanges);
 
     WebCore::PlatformTimeRanges ranges;
     _ZN7WebCore18PlatformTimeRangesC1Ev(&ranges);
@@ -553,6 +632,132 @@ void TestPlatformTimeRanges() {
     _ZN7WebCore18PlatformTimeRangesD1Ev(&emptyRanges);
 }
 
+struct ExpectedRange {
+    double start;
+    double end;
+};
+
+bool SameTime(const WTF::MediaTime& time, double expected) {
+    if (std::isnan(expected)) return _ZNK3WTF9MediaTime9isInvalidEv(&time);
+    return _ZNK3WTF9MediaTime7isValidEv(&time) && _ZNK3WTF9MediaTime8toDoubleEv(&time) == expected;
+}
+
+bool RangesAre(const WebCore::PlatformTimeRanges* ranges, std::initializer_list<ExpectedRange> expected) {
+    if (_ZNK7WebCore18PlatformTimeRanges6lengthEv(ranges) != expected.size()) return false;
+    unsigned index = 0;
+    for (const ExpectedRange& range : expected) {
+        bool valid = false;
+        WTF::MediaTime start = _ZNK7WebCore18PlatformTimeRanges5startEjRb(ranges, index, valid);
+        if (!valid || !SameTime(start, range.start)) return false;
+        valid = false;
+        WTF::MediaTime end = _ZNK7WebCore18PlatformTimeRanges3endEjRb(ranges, index, valid);
+        if (!valid || !SameTime(end, range.end)) return false;
+        ++index;
+    }
+    return true;
+}
+
+void AddRange(WebCore::PlatformTimeRanges* ranges, double start, double end) {
+    WTF::MediaTime first = _ZN3WTF9MediaTime16createWithDoubleEd(start);
+    WTF::MediaTime last = _ZN3WTF9MediaTime16createWithDoubleEd(end);
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(ranges, first, last);
+}
+
+bool AddGives(std::initializer_list<ExpectedRange> initial, double start, double end, std::initializer_list<ExpectedRange> expected) {
+    WebCore::PlatformTimeRanges ranges;
+    _ZN7WebCore18PlatformTimeRangesC1Ev(&ranges);
+    for (const ExpectedRange& range : initial) AddRange(&ranges, range.start, range.end);
+    bool same = RangesAre(&ranges, initial);
+    AddRange(&ranges, start, end);
+    same = same && RangesAre(&ranges, expected);
+    _ZN7WebCore18PlatformTimeRangesD1Ev(&ranges);
+    return same;
+}
+
+bool TimeRangesAre(const WebCore::TimeRanges* ranges, std::initializer_list<ExpectedRange> expected) {
+    if (_ZNK7WebCore10TimeRanges6lengthEv(ranges) != expected.size()) return false;
+    unsigned index = 0;
+    for (const ExpectedRange& range : expected) {
+        auto start = _ZNK7WebCore10TimeRanges5startEj(ranges, index);
+        auto end = _ZNK7WebCore10TimeRanges3endEj(ranges, index);
+        if (start.hasException() || end.hasException()) return false;
+        const double first = start.returnValue();
+        const double last = end.returnValue();
+        if (std::isnan(range.start) ? !std::isnan(first) : first != range.start) return false;
+        if (std::isnan(range.end) ? !std::isnan(last) : last != range.end) return false;
+        ++index;
+    }
+    return _ZNK7WebCore10TimeRanges5startEj(ranges, index).hasException();
+}
+
+void TestRangesAddedOutOfOrder() {
+    const double notANumber = std::numeric_limits<double>::quiet_NaN();
+    Require(AddGives({}, 5.0, 3.0, {{5.0, 3.0}}));
+    Require(AddGives({}, notANumber, 1.0, {{notANumber, 1.0}}));
+    Require(AddGives({}, notANumber, notANumber, {{notANumber, notANumber}}));
+    Require(AddGives({}, 1.0, notANumber, {{1.0, notANumber}}));
+    Require(AddGives({}, 3.0, 5.0, {{3.0, 5.0}}));
+
+    Require(AddGives({{0.0, 1.0}}, 5.0, 3.0, {{0.0, 1.0}, {5.0, 3.0}}));
+    Require(AddGives({{0.0, 1.0}}, -2.0, -3.0, {{-2.0, -3.0}, {0.0, 1.0}}));
+    Require(AddGives({{0.0, 1.0}}, 2.0, 0.5, {{0.0, 1.0}, {2.0, 0.5}}));
+    Require(AddGives({{0.0, 1.0}}, 0.5, -1.0, {{0.0, 1.0}}));
+    Require(AddGives({{0.0, 1.0}}, 1.0, 0.0, {{0.0, 1.0}}));
+
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, -2.0, -3.0, {{-2.0, -3.0}, {0.0, 1.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 5.0, 4.0, {{0.0, 1.0}, {5.0, 4.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 5.0, 0.5, {{0.0, 1.0}, {5.0, 0.5}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 20.0, 15.0, {{0.0, 1.0}, {10.0, 11.0}, {20.0, 15.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 12.0, 10.5, {{0.0, 1.0}, {10.0, 11.0}, {12.0, 10.5}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 10.5, 0.5, {{0.0, 1.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 0.5, -1.0, {{0.0, 1.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 11.0, 10.0, {{0.0, 1.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 10.0, 1.0, {{0.0, 1.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 10.5, 5.0, {{0.0, 1.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, notANumber, 0.5, {{0.0, 1.0}, {notANumber, 0.5}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, notANumber, 20.0, {{0.0, 1.0}, {10.0, 11.0}, {notANumber, 20.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 5.0, notANumber, {{0.0, 1.0}, {5.0, notANumber}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 5.0, 6.0, {{0.0, 1.0}, {5.0, 6.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 0.5, 10.5, {{0.0, 11.0}}));
+
+    WTF::MediaTime five = _ZN3WTF9MediaTime16createWithDoubleEd(5.0);
+    WTF::MediaTime three = _ZN3WTF9MediaTime16createWithDoubleEd(3.0);
+    WebCore::PlatformTimeRanges constructed;
+    _ZN7WebCore18PlatformTimeRangesC1ERKN3WTF9MediaTimeES4_(&constructed, five, three);
+    Require(RangesAre(&constructed, {{5.0, 3.0}}));
+    _ZN7WebCore18PlatformTimeRangesD1Ev(&constructed);
+    WebCore::PlatformTimeRanges constructedBase;
+    _ZN7WebCore18PlatformTimeRangesC2ERKN3WTF9MediaTimeES4_(&constructedBase, five, three);
+    Require(RangesAre(&constructedBase, {{5.0, 3.0}}));
+    _ZN7WebCore18PlatformTimeRangesD2Ev(&constructedBase);
+
+    auto created = _ZN7WebCore10TimeRanges6createEdd(5.0, 3.0);
+    Require(TimeRangesAre(created.get(), {{5.0, 3.0}}));
+    auto createdFromNan = _ZN7WebCore10TimeRanges6createEdd(notANumber, 1.0);
+    Require(TimeRangesAre(createdFromNan.get(), {{notANumber, 1.0}}));
+    auto createdInOrder = _ZN7WebCore10TimeRanges6createEdd(3.0, 5.0);
+    Require(TimeRangesAre(createdInOrder.get(), {{3.0, 5.0}}));
+
+    WebCore::TimeRanges object;
+    _ZN7WebCore10TimeRangesC1Edd(&object, 5.0, 3.0);
+    Require(TimeRangesAre(&object, {{5.0, 3.0}}));
+    _ZN7WebCore18PlatformTimeRangesD1Ev(&object.m_ranges);
+    WebCore::TimeRanges baseObject;
+    _ZN7WebCore10TimeRangesC2Edd(&baseObject, 5.0, 3.0);
+    Require(TimeRangesAre(&baseObject, {{5.0, 3.0}}));
+    _ZN7WebCore18PlatformTimeRangesD1Ev(&baseObject.m_ranges);
+
+    auto added = _ZN7WebCore10TimeRanges6createEv();
+    _ZN7WebCore10TimeRanges3addEdd(added.get(), 10.0, 5.0);
+    Require(TimeRangesAre(added.get(), {{10.0, 5.0}}));
+    _ZN7WebCore10TimeRanges3addEdd(added.get(), 1.0, 4.0);
+    Require(TimeRangesAre(added.get(), {{1.0, 4.0}, {10.0, 5.0}}));
+    _ZN7WebCore10TimeRanges3addEdd(added.get(), 20.0, notANumber);
+    Require(TimeRangesAre(added.get(), {{1.0, 4.0}, {10.0, 5.0}, {20.0, notANumber}}));
+    _ZN7WebCore10TimeRanges3addEdd(added.get(), 3.0, 2.0);
+    Require(TimeRangesAre(added.get(), {{1.0, 4.0}, {10.0, 5.0}, {20.0, notANumber}}));
+}
+
 void TestTimeRanges() {
     WebCore::TimeRanges trObj1;
     _ZN7WebCore10TimeRangesC1Ev(&trObj1);
@@ -571,9 +776,6 @@ void TestTimeRanges() {
     Require(_ZNK7WebCore10TimeRanges6lengthEv(&trObj4) == 1);
 
     auto tr = _ZN7WebCore10TimeRanges6createEv();
-    Require(_ZNK7WebCore10TimeRanges6lengthEv(tr.get()) == 0);
-
-    _ZN7WebCore10TimeRanges3addEdd(tr.get(), 10.0, 5.0);
     Require(_ZNK7WebCore10TimeRanges6lengthEv(tr.get()) == 0);
 
     _ZN7WebCore10TimeRanges3addEdd(tr.get(), 1.0, 4.0);
@@ -610,13 +812,46 @@ void TestTimeRanges() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2) {
+        void* storage = std::malloc(64);
+        Require(storage != nullptr);
+        bool matches = false;
+        if (std::strcmp(argv[1], "media-time-tag-register") == 0) {
+            matches = CallMediaTimeTaggedPlacement(storage);
+        } else if (std::strcmp(argv[1], "time-ranges-tag-register") == 0) {
+            matches = CallPlatformTimeRangesTaggedPlacement(storage);
+        } else {
+            std::fprintf(stderr, "unknown MediaTime ABI case: %s\n", argv[1]);
+            std::free(storage);
+            return 2;
+        }
+        std::free(storage);
+        if (!matches) {
+            std::fprintf(stderr, "tagged placement register ABI mismatch: %s\n", argv[1]);
+            return 1;
+        }
+        return 0;
+    }
+    if (argc != 1) return 2;
+    void* mediaTimeStorage = std::malloc(64);
+    Require(mediaTimeStorage != nullptr);
+    bool mediaTimeMatches = CallMediaTimeTaggedPlacement(mediaTimeStorage);
+    std::free(mediaTimeStorage);
+    void* rangesStorage = std::malloc(64);
+    Require(rangesStorage != nullptr);
+    bool rangesMatch = CallPlatformTimeRangesTaggedPlacement(rangesStorage);
+    std::free(rangesStorage);
+    if (!mediaTimeMatches) std::fprintf(stderr, "tagged placement register ABI mismatch: media-time-tag-register\n");
+    if (!rangesMatch) std::fprintf(stderr, "tagged placement register ABI mismatch: time-ranges-tag-register\n");
+    if (!mediaTimeMatches || !rangesMatch) return 1;
     TestMediaTimeGuestReturnShape();
     TestMediaTimeBasics();
     TestMediaTimeCreationAndConversions();
     TestMediaTimeArithmeticAndComparison();
     TestMediaTimeOverflow();
     TestMediaTimeMemory();
+    TestRangesAddedOutOfOrder();
     TestPlatformTimeRanges();
     TestTimeRanges();
     std::printf("MediaTime and TimeRanges tests passed successfully!\n");

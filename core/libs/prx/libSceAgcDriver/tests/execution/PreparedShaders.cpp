@@ -24,6 +24,8 @@
 #include <cstring>
 #include <chrono>
 #include <iostream>
+#include <map>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -826,6 +828,48 @@ void SharedCodeHeaders() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
+void RegistrationRetry() {
+    alignas(256) std::array<std::uint32_t, 1> code{0xbf810000u};
+    struct Header {
+        Shader shader{};
+        std::array<ShaderRegister, 7> registers{};
+        ShaderSpecialRegs specials{};
+    } header;
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18;
+    header.shader.header_size = sizeof(header);
+    header.shader.shader_size = sizeof(code);
+    header.shader.code = code.data();
+    header.shader.sh_registers = header.registers.data();
+    header.shader.num_sh_registers = header.registers.size();
+    header.shader.specials = &header.specials;
+    header.specials.dispatch_modifier = 0x8000;
+    header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, 1}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 0}}};
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    const auto previous = AgcDriver::DriverDetail::Driver::Get().RegisteredShaders();
+    const auto failed = AgcDriver::DriverDetail::RegisteredHeader(*previous, &header.shader);
+    Require(failed != nullptr, "initial registration published no shader");
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    Require(AgcDriver::DriverDetail::RegisteredHeader(*AgcDriver::DriverDetail::Driver::Get().RegisteredShaders(), &header.shader) == failed, "successful registration was prepared again");
+    {
+        std::lock_guard lock(failed->prepared->mutex);
+        failed->prepared->entries.clear();
+        failed->prepared->registeredAbis.clear();
+        failed->prepared->failure = std::make_exception_ptr(std::bad_alloc{});
+    }
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    const auto retried = AgcDriver::DriverDetail::RegisteredHeader(*AgcDriver::DriverDetail::Driver::Get().RegisteredShaders(), &header.shader);
+    Require(retried != nullptr && retried != failed, "repeated registration retained a failed shader snapshot");
+    {
+        std::lock_guard lock(retried->prepared->mutex);
+        Require(retried->prepared->failure == nullptr && !retried->prepared->entries.empty(), "repeated registration did not prepare the shader again");
+    }
+    Require(AgcDriver::DriverDetail::RegisteredHeader(*previous, &header.shader) == failed && failed->prepared->failure != nullptr, "registration retry modified an earlier snapshot");
+}
+
 void RegistrationWithoutSpecials() {
     alignas(256) std::array<std::uint32_t, 1> code{0xbf810000u};
     struct Header {
@@ -1205,6 +1249,11 @@ std::string Logged(TAction action) {
     return capture.Finish();
 }
 
+void SettleResolvedAbis() {
+    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    while (AgcDriver::DriverDetail::RegistrationPreparationsPending() != std::optional<std::size_t>{0}) std::this_thread::yield();
+}
+
 std::size_t Deferrals(const std::string& log) {
     constexpr std::string_view line = "could not be prepared when the title created its pipeline";
     std::size_t count = 0;
@@ -1272,6 +1321,7 @@ alignas(256) constexpr std::array<std::uint32_t, 64> BarrierFreeWaterfallVertexC
 alignas(256) constexpr std::array<std::uint32_t, 11> FrontCode{0x7e0002ffu, 0, 0x7e0202ffu, 0, 0x7e0402ffu, 0, 0x7e0602ffu, 0x3f800000u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 64> UndecodablePixelCode{0xf1949f05u, 0x00060018u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 64> PassthroughPixelCode{0xc8020002u, 0xf800180fu, 0x00000000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 64> PerVertexPixelCode{0xc80a0000u, 0xc80e0001u, 0xc8120002u, 0xf800180fu, 0x04040302u, 0xbf810000u};
 
 void DescribeWaterfallPixel(AbiHeader& pixel) {
     DescribeAbi(pixel, WaterfallPixelCode, 1, {{0x8, ProgramLow(WaterfallPixelCode.data())}, {0x9, ProgramHigh(WaterfallPixelCode.data())}, {0xa, 0}, {0xb, 2u << 1u}}, {{0x1b6, 1}, {0x1b3, 2}, {0x1b4, 2}, {0x191, 0}, {0x1c5, 4}});
@@ -1320,8 +1370,10 @@ void AbiDeferredCompute() {
     const bool lazy = std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr;
     const auto before = ShaderRecompiler::FrontEndBuilds();
     AgcDriverResolveShaderAbi_nid_postfix(&caller.shader, {}, {});
+    SettleResolvedAbis();
     const auto attempted = ShaderRecompiler::FrontEndBuilds();
     AgcDriverResolveShaderAbi_nid_postfix(&caller.shader, {}, {});
+    SettleResolvedAbis();
     if (lazy) Require(attempted == before && ShaderRecompiler::FrontEndBuilds() == attempted, "a compute static ABI resolved under lazy preparation built its front end before its dispatch");
     else Require(attempted > before && ShaderRecompiler::FrontEndBuilds() == attempted, "a compute static ABI deferred to its dispatch was prepared again for the same state");
     const auto first = reinterpret_cast<std::uintptr_t>(AddFiveCallee.data());
@@ -1342,15 +1394,14 @@ void AbiDeferredCompute() {
     AgcDriverShutdown_nid_postfix();
 }
 
-void AbiDeferredConcurrent() {
+struct NarrowStoreHeader {
+    Shader shader{};
+    std::array<ShaderRegister, 7> registers{};
+    ShaderSpecialRegs specials{};
+};
+
+void RegisterNarrowStore(NarrowStoreHeader& header) {
     using namespace NarrowConstantStoreFixture;
-    Require(std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr, "lazy preparation is not enabled");
-    struct Header {
-        Shader shader{};
-        std::array<ShaderRegister, 7> registers{};
-        ShaderSpecialRegs specials{};
-    };
-    static Header header;
     const auto address = reinterpret_cast<std::uintptr_t>(Code.data());
     header.shader.file_header = 0x34333231u;
     header.shader.version = 0x18;
@@ -1363,32 +1414,72 @@ void AbiDeferredConcurrent() {
     header.specials.dispatch_modifier = 0x8000;
     header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, Threads}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 4}}};
     AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
+std::vector<std::uint32_t> NarrowStoreCommands(const NarrowStoreHeader& header, const std::uint8_t* block) {
+    const auto output = reinterpret_cast<std::uintptr_t>(block);
+    std::vector<std::uint32_t> commands;
+    for (const auto reg : header.registers) commands.insert(commands.end(), {0xc0017600u, reg.offset, reg.value});
+    commands.insert(commands.end(), {0xc0027600u, 0x240, static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u), 0xc0031500u, 1, 1, 1, 0x8041});
+    return commands;
+}
+
+class NarrowStoreOutputs {
+public:
+    static constexpr std::size_t BlockBytes = 65536;
+
+    explicit NarrowStoreOutputs(std::size_t blocks) : bytes(blocks * BlockBytes) {
+#ifdef _WIN32
+        allocation = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+        allocation = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, bytes));
+#endif
+        Require(allocation != nullptr, "cannot allocate the dispatch outputs");
+        GuestAllocations::Mutation().Add(allocation, bytes, true, true, true);
+        std::fill_n(allocation, bytes, NarrowConstantStoreFixture::Fill);
+    }
+
+    NarrowStoreOutputs(const NarrowStoreOutputs&) = delete;
+    NarrowStoreOutputs& operator=(const NarrowStoreOutputs&) = delete;
+
+    ~NarrowStoreOutputs() {
+        GuestAllocations::Mutation().Remove(allocation);
+#ifdef _WIN32
+        VirtualFree(allocation, 0, MEM_RELEASE);
+#else
+        std::free(allocation);
+#endif
+    }
+
+    std::uint8_t* Block(std::size_t index) const {
+        return allocation + index * BlockBytes;
+    }
+
+    void Check(std::size_t index, const std::string& label) const {
+        using namespace NarrowConstantStoreFixture;
+        const auto* output = Block(index);
+        for (std::size_t offset = 0; offset < BlockBytes; ++offset) {
+            const auto expected = offset < Threads * LaneBytes ? ExpectedLane[offset % LaneBytes] : Fill;
+            if (output[offset] != expected) throw std::runtime_error(label + ": byte " + std::to_string(offset) + " is " + std::to_string(output[offset]) + ", expected " + std::to_string(expected));
+        }
+    }
+
+private:
+    std::size_t bytes;
+    std::uint8_t* allocation = nullptr;
+};
+
+void AbiDeferredConcurrent() {
+    Require(std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr, "lazy preparation is not enabled");
+    static NarrowStoreHeader header;
+    RegisterNarrowStore(header);
     AgcDriverResolveShaderAbi_nid_postfix(&header.shader, {}, {});
     constexpr std::size_t Queues = 4;
-    constexpr std::size_t OutputBytes = 65536;
-#ifdef _WIN32
-    auto* allocation = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, Queues * OutputBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-#else
-    auto* allocation = static_cast<std::uint8_t*>(std::aligned_alloc(OutputBytes, Queues * OutputBytes));
-#endif
-    Require(allocation != nullptr, "cannot allocate the concurrent first use outputs");
-    const auto release = [](std::uint8_t* block) {
-        GuestAllocations::Mutation().Remove(block);
-#ifdef _WIN32
-        VirtualFree(block, 0, MEM_RELEASE);
-#else
-        std::free(block);
-#endif
-    };
-    const std::unique_ptr<std::uint8_t, decltype(release)> ownedOutputs(allocation, release);
-    GuestAllocations::Mutation().Add(allocation, Queues * OutputBytes, true, true, true);
-    std::fill_n(allocation, Queues * OutputBytes, Fill);
-    std::vector<std::vector<std::uint32_t>> commands(Queues);
+    const NarrowStoreOutputs outputs(Queues);
+    std::vector<std::vector<std::uint32_t>> commands;
     std::vector<Packet> packets;
     for (std::size_t queue = 0; queue < Queues; ++queue) {
-        const auto output = reinterpret_cast<std::uintptr_t>(allocation + queue * OutputBytes);
-        for (const auto reg : header.registers) commands[queue].insert(commands[queue].end(), {0xc0017600u, reg.offset, reg.value});
-        commands[queue].insert(commands[queue].end(), {0xc0027600u, 0x240, static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u), 0xc0031500u, 1, 1, 1, 0x8041});
+        commands.push_back(NarrowStoreCommands(header, outputs.Block(queue)));
         packets.push_back({commands[queue].data(), static_cast<std::uint32_t>(commands[queue].size()), 0, {}});
     }
     const auto builds = ShaderRecompiler::FrontEndBuilds();
@@ -1405,13 +1496,7 @@ void AbiDeferredConcurrent() {
     AgcDriverWaitIdle_nid_postfix();
     AgcDriverSuspendPoint_nid_postfix();
     AgcDriverWaitIdle_nid_postfix();
-    for (std::size_t queue = 0; queue < Queues; ++queue) {
-        const auto* output = allocation + queue * OutputBytes;
-        for (std::size_t offset = 0; offset < OutputBytes; ++offset) {
-            const auto expected = offset < Threads * LaneBytes ? ExpectedLane[offset % LaneBytes] : Fill;
-            if (output[offset] != expected) throw std::runtime_error("concurrent first use: queue " + std::to_string(queue) + " byte " + std::to_string(offset) + " is " + std::to_string(output[offset]) + ", expected " + std::to_string(expected));
-        }
-    }
+    for (std::size_t queue = 0; queue < Queues; ++queue) outputs.Check(queue, "concurrent first use: queue " + std::to_string(queue));
     const auto after = AgcDriver::DriverDetail::Driver::DeferredAbiUses();
     const auto built = ShaderRecompiler::FrontEndBuilds() - builds;
     const auto entries = AgcDriver::DriverDetail::Driver::Get().PreparedEntries(&header.shader);
@@ -1469,15 +1554,24 @@ void AbiDeferredPixel() {
     DescribeWaterfallPixel(pixel);
     AgcDriverRegisterShader_nid_postfix(&pixel.shader);
     const auto before = ShaderRecompiler::FrontEndBuilds();
-    auto log = Logged([&] { AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {}); });
+    auto log = Logged([&] {
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {});
+        SettleResolvedAbis();
+    });
     const auto attempted = ShaderRecompiler::FrontEndBuilds();
-    log += Logged([&] { AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {}); });
+    log += Logged([&] {
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {});
+        SettleResolvedAbis();
+    });
     Require(attempted > before && ShaderRecompiler::FrontEndBuilds() == attempted, "a pixel static ABI deferred to its draw was prepared again for the same state");
     Require(Deferrals(log) == 1 && log.find("is not a valid runtime value") != std::string::npos, "a pixel shader its static ABI cannot prepare was not logged once with its reason");
     {
         AgcDriver::ShaderPreparationScope scope({&pixel.shader});
         const std::array<ShaderRegister, 1> interpolant{{{0x191, 0x20}}};
-        log = Logged([&] { AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, interpolant, {}); });
+        log = Logged([&] {
+            AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, interpolant, {});
+            SettleResolvedAbis();
+        });
         scope.Commit();
     }
     Require(ShaderRecompiler::FrontEndBuilds() > attempted && Deferrals(log) == 0, "a deferred pixel shader was not prepared once more for another state, or was logged again");
@@ -1489,7 +1583,7 @@ void AbiDeferredPixel() {
         for (std::size_t index = 0; index < header->shader.num_sh_registers; ++index) commands.insert(commands.end(), {0xc0017600u, header->registers[index].offset, header->registers[index].value});
         for (std::size_t index = 0; index < header->shader.num_cx_registers; ++index) commands.insert(commands.end(), {0xc0016900u, header->context[index].offset, header->context[index].value});
     }
-    commands.insert(commands.end(), {0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 4, 0xc0012d00u, 3, 2});
+    commands.insert(commands.end(), {0xc0016900u, 0x203, 0x400u, 0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 4, 0xc0012d00u, 3, 2});
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw of a deferred pixel shader was not submitted");
     ExpectFailure([] { AgcDriverWaitIdle_nid_postfix(); }, "is not a valid runtime value");
@@ -1602,25 +1696,36 @@ void AbiDeferredVertexInputs() {
 }
 
 void AbiDeferredRectanglePairs() {
+#ifdef _WIN32
+    Require(_putenv_s("APS5_NO_FRAGMENT_SHADER_BARYCENTRIC", "1") == 0, "cannot emulate per-vertex inputs");
+#else
+    Require(setenv("APS5_NO_FRAGMENT_SHADER_BARYCENTRIC", "1", 1) == 0, "cannot emulate per-vertex inputs");
+#endif
     static AbiHeader front;
     DescribeFront(front);
     static AbiHeader pixel;
-    DescribeAbi(pixel, PassthroughPixelCode, 1, {{0x8, ProgramLow(PassthroughPixelCode.data())}, {0x9, ProgramHigh(PassthroughPixelCode.data())}, {0xa, 0}, {0xb, 0}}, {{0x1b6, 1}, {0x1b3, 2}, {0x1b4, 2}, {0x191, 0x420}, {0x1c5, 4}});
+    DescribeAbi(pixel, PerVertexPixelCode, 1, {{0x8, ProgramLow(PerVertexPixelCode.data())}, {0x9, ProgramHigh(PerVertexPixelCode.data())}, {0xa, 0}, {0xb, 0}}, {{0x1b6, 1}, {0x1b3, 2}, {0x1b4, 2}, {0x191, 0}, {0x1c5, 4}});
     static AbiHeader unresolved;
     DescribeWaterfallPixel(unresolved);
     for (auto* header : {&front, &pixel, &unresolved}) AgcDriverRegisterShader_nid_postfix(&header->shader);
-    const std::array<ShaderRegister, 1> passthrough{pixel.context[3]};
+    const std::array<ShaderRegister, 1> inputControl{pixel.context[3]};
     const auto resolve = [&] {
         AgcDriver::ShaderPreparationScope scope({&front.shader, &pixel.shader});
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, nullptr, 17);
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &pixel.shader, 17);
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &unresolved.shader, 17);
-        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, passthrough, {});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, inputControl, {});
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &pixel.shader, 17);
         scope.Commit();
     };
+    {
+        AgcDriver::ShaderPreparationScope scope({&pixel.shader});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, inputControl, {});
+        scope.Commit();
+    }
+    SettleResolvedAbis();
     auto log = Logged(resolve);
-    Require(Deferrals(log) == 1 && log.find("custom per-vertex interpolation is unsupported") != std::string::npos, "a rectangle pair its pipeline ABI cannot build was not deferred once with the builder's reason");
+    Require(Deferrals(log) == 1 && log.find("an emulated per-vertex parameter is not exported by the vertex shader") != std::string::npos, "a rectangle pair its pipeline ABI cannot build was not deferred once with the builder's reason");
     log = Logged(resolve);
     Require(Deferrals(log) == 0, "a rectangle pair deferred at its pipeline ABI was logged again");
     const auto draw = [&](bool withPixel) {
@@ -1631,14 +1736,14 @@ void AbiDeferredRectanglePairs() {
             for (std::size_t index = 0; index < header->shader.num_cx_registers; ++index) commands.insert(commands.end(), {0xc0016900u, header->context[index].offset, header->context[index].value});
         }
         if (!withPixel) commands.insert(commands.end(), {0xc0017600u, 0x8, 0});
-        commands.insert(commands.end(), {0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 17, 0xc0012d00u, 3, 2});
+        commands.insert(commands.end(), {0xc0016900u, 0x203, withPixel ? 0x400u : 0u, 0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 17, 0xc0012d00u, 3, 2});
         Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
         Require(sceAgcDriverSubmitDcb(&packet) == 0, "a rect-list draw was not submitted");
         AgcDriverWaitIdle_nid_postfix();
     };
     draw(false);
-    ExpectFailure([&] { draw(true); }, "custom per-vertex interpolation is unsupported");
-    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "custom per-vertex interpolation is unsupported");
+    ExpectFailure([&] { draw(true); }, "an emulated per-vertex parameter is not exported by the vertex shader");
+    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "an emulated per-vertex parameter is not exported by the vertex shader");
 }
 
 void CommittedAbis() {
@@ -1671,7 +1776,7 @@ void CommittedAbis() {
         std::lock_guard lock(pixelSnapshot->prepared->mutex);
         return pixelSnapshot->prepared->registeredAbis.size();
     };
-    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    SettleResolvedAbis();
     const auto before = ShaderRecompiler::FrontEndBuilds();
     const auto abisBefore = committedAbis();
     bool unblocked = false;
@@ -1696,6 +1801,175 @@ void CommittedAbis() {
     other.get();
     Require(unblocked && repeatedBuilds == 0, "resolving ABIs the shaders already had waited for another thread's shader preparation, or prepared them again");
     Require(excluded, "a new ABI was published beside a shader preparation that had read prepared state");
+    if (std::getenv("APS5_SYNC_SHADER_PREPARE") != nullptr || std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr) return;
+    SettleResolvedAbis();
+    std::promise<void> release;
+    const auto released = release.get_future().share();
+    for (unsigned worker = 0; worker < std::max(1u, AgcDriver::DriverDetail::RegistrationPreparationThreads()); ++worker) AgcDriver::DriverDetail::SubmitRegistrationPreparation([released] { released.wait(); });
+    const auto queued = ShaderRecompiler::FrontEndBuilds();
+    const std::array<ShaderRegister, 1> flat{{{0x191, 0x420}}};
+    {
+        AgcDriver::ShaderPreparationScope scope({&pixel.shader});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, flat, {});
+        scope.Commit();
+    }
+    const bool returned = ShaderRecompiler::FrontEndBuilds() == queued;
+    release.set_value();
+    SettleResolvedAbis();
+    Require(returned && ShaderRecompiler::FrontEndBuilds() > queued, "a new static ABI was prepared on the resolving thread instead of the registration pool");
+}
+
+class PoolGate {
+public:
+    PoolGate() {
+        const auto workers = std::max(1u, AgcDriver::DriverDetail::RegistrationPreparationThreads());
+        auto* counter = &entered;
+        for (unsigned worker = 0; worker < workers; ++worker) {
+            AgcDriver::DriverDetail::SubmitRegistrationPreparation([counter, released = released] {
+                counter->fetch_add(1);
+                released.wait();
+            });
+        }
+        unsigned seen = 0;
+        auto changed = std::chrono::steady_clock::now();
+        while (entered.load() != workers) {
+            const auto now = std::chrono::steady_clock::now();
+            if (entered.load() != seen) {
+                seen = entered.load();
+                changed = now;
+            } else if (seen != 0 && now - changed > std::chrono::milliseconds(300)) {
+                break;
+            }
+            std::this_thread::yield();
+        }
+    }
+
+    PoolGate(const PoolGate&) = delete;
+    PoolGate& operator=(const PoolGate&) = delete;
+
+    ~PoolGate() {
+        Release();
+    }
+
+    void Release() {
+        if (open) return;
+        open = true;
+        release.set_value();
+    }
+
+private:
+    std::promise<void> release;
+    std::shared_future<void> released = release.get_future().share();
+    std::atomic<unsigned> entered{0};
+    bool open = false;
+};
+
+std::shared_ptr<const AgcDriver::DriverDetail::ShaderSnapshot> RegisteredSnapshot(const Shader* shader) {
+    const auto registry = AgcDriver::DriverDetail::Driver::Get().RegisteredShaders();
+    Require(registry != nullptr, "no shader registry was published");
+    auto snapshot = AgcDriver::DriverDetail::RegisteredHeader(*registry, shader);
+    Require(snapshot != nullptr, "no snapshot was published for the shader");
+    return snapshot;
+}
+
+std::size_t ResolvingAbis(const AgcDriver::DriverDetail::ShaderSnapshot& snapshot) {
+    std::lock_guard lock(snapshot.prepared->mutex);
+    return snapshot.prepared->resolving;
+}
+
+void RequireAsyncResolution() {
+    Require(std::getenv("APS5_LAZY_SHADER_PREPARE") == nullptr && std::getenv("APS5_SYNC_SHADER_PREPARE") == nullptr, "background ABI resolution tests need the default preparation mode");
+}
+
+void AbiBackgroundDraw() {
+    RequireAsyncResolution();
+    static NarrowStoreHeader header;
+    RegisterNarrowStore(header);
+    SettleResolvedAbis();
+    const auto snapshot = RegisteredSnapshot(&header.shader);
+    const NarrowStoreOutputs outputs(1);
+    auto commands = NarrowStoreCommands(header, outputs.Block(0));
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    const std::array<ShaderRegister, 1> context{{{0x191, 0x20}}};
+    PoolGate gate;
+    AgcDriverResolveShaderAbi_nid_postfix(&header.shader, context, {});
+    Require(ResolvingAbis(*snapshot) == 1, "a resolved static ABI was not queued while every pool worker was busy");
+    auto drawn = std::async(std::launch::async, [&] {
+        sceAgcDriverSubmitAcb(0x20, &packet);
+        AgcDriverWaitIdle_nid_postfix();
+    });
+    const bool finished = drawn.wait_for(std::chrono::seconds(30)) == std::future_status::ready;
+    const bool queued = ResolvingAbis(*snapshot) == 1;
+    const auto built = ShaderRecompiler::FrontEndBuilds();
+    gate.Release();
+    drawn.get();
+    Require(finished, "a dispatch waited for the resolved ABI of its shader queued behind other registration work");
+    Require(queued, "the resolved ABI of a shader was prepared by the pool while every worker was busy");
+    outputs.Check(0, "dispatch beside a queued resolved ABI");
+    SettleResolvedAbis();
+    Require(ResolvingAbis(*snapshot) == 0, "a resolved ABI stayed pending after the pool ran its job");
+    Require(ShaderRecompiler::FrontEndBuilds() == built, "the resolved ABI of a shader its dispatch had already prepared was compiled again");
+    AgcDriverShutdown_nid_postfix();
+}
+
+void AbiBackgroundProgress() {
+    RequireAsyncResolution();
+    static NarrowStoreHeader header;
+    RegisterNarrowStore(header);
+    SettleResolvedAbis();
+    const auto snapshot = RegisteredSnapshot(&header.shader);
+    constexpr unsigned Foreground = 400;
+    std::atomic<unsigned> done{0};
+    {
+        PoolGate gate;
+        const std::array<ShaderRegister, 1> context{{{0x191, 0x20}}};
+        AgcDriverResolveShaderAbi_nid_postfix(&header.shader, context, {});
+        Require(ResolvingAbis(*snapshot) == 1, "a resolved static ABI was not queued while every pool worker was busy");
+        for (unsigned task = 0; task < Foreground; ++task) {
+            AgcDriver::DriverDetail::SubmitRegistrationPreparation([&done] {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                done.fetch_add(1);
+            });
+        }
+        gate.Release();
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (ResolvingAbis(*snapshot) != 0 && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const auto finished = done.load();
+    SettleResolvedAbis();
+    Require(ResolvingAbis(*snapshot) == 0, "a resolved ABI was never prepared");
+    Require(finished < Foreground / 2, "a resolved ABI was prepared only after most of the registration work queued behind it had run");
+    AgcDriverShutdown_nid_postfix();
+}
+
+void AbiBackgroundClose() {
+    RequireAsyncResolution();
+    static NarrowStoreHeader header;
+    RegisterNarrowStore(header);
+    SettleResolvedAbis();
+    const auto snapshot = RegisteredSnapshot(&header.shader);
+    std::future<void> closing;
+    std::uint64_t queued = 0;
+    {
+        PoolGate gate;
+        const std::array<ShaderRegister, 1> queuedContext{{{0x191, 0x20}}};
+        AgcDriverResolveShaderAbi_nid_postfix(&header.shader, queuedContext, {});
+        Require(ResolvingAbis(*snapshot) == 1, "a resolved static ABI was not queued while every pool worker was busy");
+        queued = ShaderRecompiler::FrontEndBuilds();
+        const auto pending = AgcDriver::DriverDetail::RegistrationPreparationsPending();
+        Require(pending.has_value(), "the pool counters were busy");
+        closing = std::async(std::launch::async, [] { AgcDriver::DriverDetail::CloseRegistrationPreparation(); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (AgcDriver::DriverDetail::RegistrationPreparationsPending() == pending && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+        Require(AgcDriver::DriverDetail::RegistrationPreparationsPending() != pending, "closing the pool did not drop the queued ABI");
+    }
+    closing.get();
+    Require(ResolvingAbis(*snapshot) == 0, "a resolved ABI the pool dropped stayed pending");
+    Require(ShaderRecompiler::FrontEndBuilds() == queued, "closing the pool ran the ABI it dropped");
+    const std::array<ShaderRegister, 1> context{{{0x191, 0x40}}};
+    AgcDriverResolveShaderAbi_nid_postfix(&header.shader, context, {});
+    Require(ResolvingAbis(*snapshot) == 0, "a static ABI resolved after the pool closed stayed pending");
+    AgcDriverShutdown_nid_postfix();
 }
 
 void RelocatedHeaders() {
@@ -1839,7 +2113,7 @@ int main(int argc, char** argv) {
         Require(SetStdHandle(STD_ERROR_HANDLE, diagnosticError) != 0, "cannot retain native diagnostics during stderr capture");
 #endif
         const std::string_view abiMode = argc == 2 ? argv[1] : "";
-        const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-concurrent" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs";
+        const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-concurrent" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs" || abiMode == "--abi-deferred-background-draw" || abiMode == "--abi-deferred-background-progress" || abiMode == "--abi-deferred-background-close";
         Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--dispatch-ahead-prewarm" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");
         if (abiDeferred) {
             if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
@@ -1851,6 +2125,9 @@ int main(int argc, char** argv) {
             else if (abiMode == "--abi-deferred-registration-failure") AbiDeferredRegistrationFailure();
             else if (abiMode == "--abi-deferred-vertex-inputs") AbiDeferredVertexInputs();
             else if (abiMode == "--abi-deferred-rectangle-pairs") AbiDeferredRectanglePairs();
+            else if (abiMode == "--abi-deferred-background-draw") AbiBackgroundDraw();
+            else if (abiMode == "--abi-deferred-background-progress") AbiBackgroundProgress();
+            else if (abiMode == "--abi-deferred-background-close") AbiBackgroundClose();
             else AbiDeferredRectangle();
             std::cout << "shader ABI deferral tests passed: " << abiMode << '\n';
             return 0;
@@ -1903,6 +2180,7 @@ int main(int argc, char** argv) {
         RelocatedHeaders();
         CommittedAbis();
         UnprovenProgramsAtSubmit();
+        RegistrationRetry();
         RegistrationWithoutSpecials();
         Registration(argc == 2);
         std::cout << "prepared shader and transactional registration tests passed\n";

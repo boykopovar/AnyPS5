@@ -1,5 +1,6 @@
-#include "prx/libSceBgft/include/Api.hpp"
+#include "prx/libSceBgft/libSceBgft.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -14,6 +15,12 @@ public:
     }
     const BgftStorageTaskParam* AsParams() const {
         return reinterpret_cast<const BgftStorageTaskParam*>(bytes);
+    }
+    void SetU32(std::size_t offset, std::uint32_t value) {
+        std::memcpy(bytes + offset, &value, sizeof(value));
+    }
+    void SetU64(std::size_t offset, std::uint64_t value) {
+        std::memcpy(bytes + offset, &value, sizeof(value));
     }
 private:
     std::byte bytes[sizeof(BgftStorageTaskParam)]{};
@@ -50,11 +57,101 @@ int main() {
     RawParams valid;
     valid.SetPointer(0x8, "UP0001-CUSA00000_00-AAAAAAAAAAAAAAAA");
     std::int32_t taskId = 0x5a5a5a5a;
+    std::byte progressBytes[88];
+    std::memset(progressBytes, 0x5a, sizeof(progressBytes));
+    std::byte untouched[88];
+    std::memset(untouched, 0x5a, sizeof(untouched));
+    BgftProgress* const progress = reinterpret_cast<BgftProgress*>(progressBytes);
+
+    Require(sceBgftServiceDownloadStartTask(0) == notInitialized);
+    Require(sceBgftServiceDownloadStartTaskAll() == notInitialized);
+    Require(sceBgftServiceDownloadStopTask(0) == notInitialized);
+    Require(sceBgftServiceDownloadStopTaskAll() == notInitialized);
+    Require(sceBgftServiceDownloadGetProgress(0, progress) == notInitialized);
+    Require(sceBgftServiceDownloadFindTaskByContentId(nullptr, 0, &taskId) == notInitialized);
+    Require(sceBgftServiceDownloadFindActivePupTask(&taskId) == notInitialized);
+    Require(sceBgftServiceDownloadFindActivePatchTask(nullptr, &taskId) == notInitialized);
+    Require(sceBgftServiceDownloadPauseTask(0) == notInitialized);
+    Require(sceBgftServiceDownloadResumeTask(0) == notInitialized);
+    Require(sceBgftServiceDownloadPauseTaskAll() == notInitialized);
+    Require(sceBgftServiceDownloadResumeTaskAll() == notInitialized);
+    Require(sceBgftServiceDownloadQueryTask() == notInitialized);
+    Require(sceBgftServiceIntGetTaskInfoValueInt() == notInitialized);
+    Require(sceBgftServiceIntGetTaskInfoValueString() == notInitialized);
+    Require(sceBgftServiceIntGetTaskInfoValueStringIndex() == notInitialized);
+    Require(libSceBgftUnknown_fJnnIc5sHOU_nid_no_patch() == notInitialized);
+    Require(sceBgftServiceIntDownloadUnregisterTask(0) == notInitialized);
+    Require(sceBgftServiceIntDownloadUnregisterCompleteTask() == notInitialized);
+    Require(sceBgftServiceIntDownloadUnregisterTaskAll() == notInitialized);
+    Require(sceBgftServiceIntDownloadClearAllInstalled() == notInitialized);
+    Require(sceBgftServiceIntDownloadClearInstalled() == notInitialized);
+    Require(sceBgftServiceIntDownloadStartTask(0) == notInitialized);
+    Require(sceBgftServiceIntDownloadRestartTask() == notInitialized);
+    Require(sceBgftServiceIntDownloadStartTaskAll() == notInitialized);
+    Require(sceBgftServiceIntDownloadStopTask(0) == notInitialized);
+    Require(sceBgftServiceIntDownloadStopTaskAll() == notInitialized);
+    Require(sceBgftServiceIntDownloadPauseTask(0) == notInitialized);
+    Require(sceBgftServiceIntDownloadPauseTaskAll() == notInitialized);
+    Require(sceBgftServiceIntDownloadResumeTask(0) == notInitialized);
+    Require(sceBgftServiceIntDownloadResumeTaskAll() == notInitialized);
+    Require(sceBgftServiceIntDownloadGetProgress(0, progress) == notInitialized);
+    Require(sceBgftServiceIntDownloadStartGroupTasks() == notInitialized);
+    Require(sceBgftServiceIntDownloadPauseGroupTasks() == notInitialized);
+    Require(sceBgftServiceIntDownloadResumeGroupTasks() == notInitialized);
+    Require(libSceBgftUnknown_85axuUkg9eE_nid_no_patch() == notInitialized);
+    Require(sceBgftServiceIntDownloadGetGameAndGameAcProgress(nullptr, progress) == notInitialized);
+    Require(sceBgftServiceIntDownloadGetPlayGoProgress(nullptr, progress) == notInitialized);
+    Require(sceBgftServiceIntDownloadQueryTask() == notInitialized);
+    Require(sceBgftServiceIntDownloadGetUserStorageSize() == notInitialized);
+    Require(sceBgftServiceIntDownloadGetExtUsbUserStorageSize() == notInitialized);
+    Require(libSceBgftUnknown_tBOVSvi9EjY_nid_no_patch() == notInitialized);
+    Require(sceBgftServiceIntDownloadFindActiveTask(nullptr, 0, &taskId) == notInitialized);
+    Require(sceBgftServiceIntDownloadFindActiveGameAndGameAcTask(nullptr, &taskId) == notInitialized);
+    Require(sceBgftServiceIntPlayGoFindTaskId() == notInitialized);
+    Require(sceBgftServiceIntPlayGoResume() == notInitialized);
+    Require(sceBgftServiceIntPlayGoIsPaused() == notInitialized);
+    Require(sceBgftServiceIntPlayGoGetDiscIniChunksInstallProgress() == notInitialized);
+    Require(sceBgftServiceIntExtUsbCheckActiveDownloadTasks() == notInitialized);
+    Require(sceBgftServiceIntUploadRegisterTask() == notInitialized);
+    Require(sceBgftServiceIntUploadUnregisterTask() == notInitialized);
+    Require(sceBgftServiceIntUploadUnregisterCompleteTask() == notInitialized);
+    Require(sceBgftServiceIntUploadUnregisterTaskAll() == notInitialized);
+    Require(sceBgftServiceIntUploadStartTask() == notInitialized);
+    Require(sceBgftServiceIntUploadRestartTask() == notInitialized);
+    Require(sceBgftServiceIntUploadStartTaskAll() == notInitialized);
+    Require(sceBgftServiceIntUploadStopTask() == notInitialized);
+    Require(sceBgftServiceIntUploadStopTaskAll() == notInitialized);
+    Require(sceBgftServiceIntUploadGetProgress() == notInitialized);
+    Require(sceBgftServiceIntUploadQueryTask() == notInitialized);
+    Require(sceBgftServiceIntDebugDownloadRequest() == notInitialized);
+    Require(sceBgftServiceIntDebugDownloadCorruptPkg() == notInitialized);
+    Require(sceBgftServiceIntDebugPlayGoRevertToInitialState() == notInitialized);
+    Require(sceBgftServiceIntDebugPlayGoRevertToSnapshot() == notInitialized);
+    Require(sceBgftServiceIntDebugPlayGoSuspend() == notInitialized);
+    Require(sceBgftServiceIntDebugPlayGoResume() == notInitialized);
+    Require(sceBgftServiceIntDebugPlayGoIsPaused() == notInitialized);
+    Require(sceBgftServiceIntDebugPlayGoSnapshotByTitleId() == notInitialized);
+    Require(sceBgftServiceIntDebugPlayGoRevertToFullState() == notInitialized);
+    Require(sceBgftServiceIntDebugPlayGoGetPlayGoStatusString() == notInitialized);
+    Require(libSceBgftUnknown_3cvL6QTobNg_nid_no_patch() == notInitialized);
+    Require(libSceBgftUnknown_4JQKNtsVDpg_nid_no_patch() == notInitialized);
+    Require(sceBgftServiceIntDownloadDebugGetBgftEnvInfoString() == notInitialized);
+    Require(sceBgftServiceIntDownloadDebugDownloadBgftEnvFile() == notInitialized);
+    Require(sceBgftServiceIntDownloadDebugDeleteBgftEnvFile() == notInitialized);
+    Require(sceBgftServiceIntDownloadDebugGetStat() == notInitialized);
+    Require(sceBgftServiceTerm() == notInitialized);
+    Require(sceBgftServiceIntTerm() == notInitialized);
+    Require(taskId == 0x5a5a5a5a);
+    Require(std::memcmp(progressBytes, untouched, sizeof(untouched)) == 0);
+
 
     Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(valid.AsParams(), &taskId) == notInitialized);
     Require(sceBgftServiceIntDownloadRegisterTaskByStorage(valid.AsParams(), &taskId) == notInitialized);
     Require(sceBgftServiceIntDownloadRegisterTaskByStorage(nullptr, &taskId) == invalidArgument);
     Require(sceBgftServiceIntInit(nullptr) == invalidArgument);
+    errno = 71;
+    Require(sceBgftServiceIntInit(reinterpret_cast<const BgftInitParam*>(0x10)) == invalidArgument);
+    Require(errno == 71);
 
     std::byte heap[1024]{};
     const BgftInitParam initialized{heap, sizeof(heap)};
@@ -65,6 +162,34 @@ int main() {
 
     Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(nullptr, nullptr) == invalidArgument);
     Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(valid.AsParams(), nullptr) == invalidArgument);
+
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(reinterpret_cast<const BgftStorageTaskParam*>(0x10), &taskId) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorage(reinterpret_cast<const BgftStorageTaskParam*>(0x10), &taskId) == invalidArgument);
+    Require(errno == 71);
+
+    RawParams badId = valid;
+    badId.SetPointer(0x8, reinterpret_cast<const char*>(0x10));
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(badId.AsParams(), &taskId) == invalidArgument);
+    Require(errno == 71);
+    RawParams badText16 = valid;
+    badText16.SetPointer(0x10, reinterpret_cast<const char*>(0x10));
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(badText16.AsParams(), &taskId) == invalidArgument);
+    Require(errno == 71);
+    RawParams badText32 = valid;
+    badText32.SetPointer(0x20, reinterpret_cast<const char*>(0x10));
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(badText32.AsParams(), &taskId) == invalidArgument);
+    Require(errno == 71);
+    RawParams badText40 = valid;
+    badText40.SetPointer(0x28, reinterpret_cast<const char*>(0x10));
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(badText40.AsParams(), &taskId) == invalidArgument);
+    Require(errno == 71);
 
     RawParams missingId;
     Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(missingId.AsParams(), &taskId) == invalidArgument);
@@ -93,6 +218,60 @@ int main() {
     Require(sceBgftServiceIntDownloadRegisterTaskByStorage(nullptr, &taskId) == invalidArgument);
     Require(taskId == 0x5a5a5a5a);
 
+    Require(sceBgftServiceIntTerm() == 0);
+    Require(sceBgftServiceIntTerm() == notInitialized);
+    Require(sceBgftServiceTerm() == notInitialized);
+    Require(sceBgftServiceIntDownloadStartTask(0) == notInitialized);
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(valid.AsParams(), &taskId) == notInitialized);
+
+    Require(sceBgftServiceInit(nullptr) == invalidArgument);
+    Require(sceBgftServiceInit(&initialized) == 0);
+    Require(sceBgftServiceInit(&initialized) == alreadyInitialized);
+    Require(sceBgftServiceIntInit(&initialized) == alreadyInitialized);
+    Require(sceBgftServiceTerm() == 0);
+    Require(sceBgftServiceIntInit(&initialized) == 0);
+    Require(sceBgftServiceInit(nullptr) == alreadyInitialized);
+    Require(sceBgftServiceTerm() == 0);
+    Require(sceBgftServiceIntTerm() == notInitialized);
+    Require(taskId == 0x5a5a5a5a);
+
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorage(nullptr, &taskId) == invalidArgument);
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorage(reinterpret_cast<const BgftStorageTaskParam*>(0x10), &taskId) == notInitialized);
+    Require(errno == 71);
+    Require(taskId == 0x5a5a5a5a);
+
+    RawParams uncheckedStrings;
+    uncheckedStrings.SetPointer(0x8, "UP0001-CUSA00000_00-AAAAAAAAAAAAAAAA");
+    uncheckedStrings.SetPointer(0x30, reinterpret_cast<const char*>(0x10));
+    uncheckedStrings.SetPointer(0x40, reinterpret_cast<const char*>(0x10));
+    uncheckedStrings.SetPointer(0x48, reinterpret_cast<const char*>(0x10));
+    uncheckedStrings.SetPointer(0x50, reinterpret_cast<const char*>(0x10));
+    uncheckedStrings.SetPointer(0x58, reinterpret_cast<const char*>(0x10));
+    uncheckedStrings.SetU32(0x00, 0xffffffffu);
+    uncheckedStrings.SetU32(0x04, 0u);
+    uncheckedStrings.SetU32(0x38, 0x12345678u);
+    uncheckedStrings.SetU64(0x60, 0x0123456789abcdefull);
+    uncheckedStrings.SetU32(0x68, 0x0badf00du);
+
+    Require(sceBgftServiceIntInit(&initialized) == 0);
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(uncheckedStrings.AsParams(), &taskId) == notSupported);
+    Require(errno == 71);
+    Require(taskId == 0x5a5a5a5a);
+    errno = 71;
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorage(uncheckedStrings.AsParams(), &taskId) == notSupported);
+    Require(errno == 71);
+    Require(taskId == 0x5a5a5a5a);
+
+    RawParams aliasText32 = valid;
+    aliasText32.SetPointer(0x20, reinterpret_cast<const char*>(0x10));
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorageEx(aliasText32.AsParams(), &taskId) == invalidArgument);
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorage(aliasText32.AsParams(), &taskId) == invalidArgument);
+    Require(taskId == 0x5a5a5a5a);
+
+    Require(sceBgftServiceIntDownloadRegisterTaskByStorage(valid.AsParams(), nullptr) == invalidArgument);
+    Require(taskId == 0x5a5a5a5a);
     Require(sceBgftServiceIntTerm() == 0);
     return 0;
 }

@@ -1,5 +1,53 @@
+// Derived from Source/WebCore/platform/graphics/GeometryUtilities.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+/*
+ * Copyright (C) 2014-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2013 Google Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+// Derived from Source/WebCore/platform/graphics/texmap/TextureMapperBackingStore.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+/*
+ Copyright (C) 2012 Nokia Corporation and/or its subsidiary(-ies)
+
+ This library is free software; you can redistribute it and/or
+ modify it under the terms of the GNU Library General Public
+ License as published by the Free Software Foundation; either
+ version 2 of the License, or (at your option) any later version.
+
+ This library is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ Library General Public License for more details.
+
+ You should have received a copy of the GNU Library General Public License
+ along with this library; see the file COPYING.LIB.  If not, write to
+ the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ Boston, MA 02110-1301, USA.
+ */
+
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/src/WebCoreLayoutUnit.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -11,28 +59,8 @@ namespace WebCore {
 
 namespace {
 
-int ClampToInteger(float value) {
-    if (value >= static_cast<float>(std::numeric_limits<int>::max())) {
-        return std::numeric_limits<int>::max();
-    }
-    if (!(value > static_cast<float>(std::numeric_limits<int>::min()))) {
-        return std::numeric_limits<int>::min();
-    }
-    return static_cast<int>(value);
-}
-
 int TruncateToIntegerOrMin(float value) {
     if (!(value >= -2147483648.0f && value < 2147483648.0f)) {
-        return std::numeric_limits<int>::min();
-    }
-    return static_cast<int>(value);
-}
-
-int ClampToInteger(double value) {
-    if (value >= static_cast<double>(std::numeric_limits<int>::max())) {
-        return std::numeric_limits<int>::max();
-    }
-    if (!(value > static_cast<double>(std::numeric_limits<int>::min()))) {
         return std::numeric_limits<int>::min();
     }
     return static_cast<int>(value);
@@ -114,6 +142,25 @@ bool IsRoundedRectRenderable(const RoundedRect& rr) {
         && saturatedSum(tlh, blh) <= h && saturatedSum(trh, brh) <= h;
 }
 
+int LayoutMaxX(const LayoutRect& rect) {
+    return SaturatedSum(rect.m_location.m_x.m_value, rect.m_size.m_width.m_value);
+}
+
+int LayoutMaxY(const LayoutRect& rect) {
+    return SaturatedSum(rect.m_location.m_y.m_value, rect.m_size.m_height.m_value);
+}
+
+bool LayoutRectContains(const LayoutRect& rect, const LayoutRect& other) {
+    return rect.m_location.m_x.m_value <= other.m_location.m_x.m_value
+        && LayoutMaxX(rect) >= LayoutMaxX(other)
+        && rect.m_location.m_y.m_value <= other.m_location.m_y.m_value
+        && LayoutMaxY(rect) >= LayoutMaxY(other);
+}
+
+float LayoutToFloat(int value) {
+    return static_cast<float>(value) / 64.0f;
+}
+
 }  // namespace
 }  // namespace WebCore
 
@@ -180,7 +227,8 @@ WebCore::FloatSize APS5_VABI _ZNK7WebCore9FloatSize18constrainedBetweenERKS0_S2_
 }
 
 bool APS5_VABI _ZNK7WebCore9FloatSize6isZeroEv(const WebCore::FloatSize* self) {
-    return self->m_width == 0.0f && self->m_height == 0.0f;
+    return std::abs(self->m_width) < std::numeric_limits<float>::epsilon()
+        && std::abs(self->m_height) < std::numeric_limits<float>::epsilon();
 }
 
 void APS5_VABI _ZN7WebCore9FloatRect5scaleEff(WebCore::FloatRect* self, float sx, float sy) {
@@ -280,14 +328,6 @@ bool APS5_VABI _ZNK7WebCore9FloatRect8containsERKS0_(const WebCore::FloatRect* s
         && self->m_location.m_x + self->m_size.m_width >= other.m_location.m_x + other.m_size.m_width
         && self->m_location.m_y <= other.m_location.m_y
         && self->m_location.m_y + self->m_size.m_height >= other.m_location.m_y + other.m_size.m_height;
-}
-
-WebCore::FloatRect APS5_VABI _ZNK7WebCore9FloatQuad11boundingBoxEv(const WebCore::FloatQuad* self) {
-    float left = std::min({self->m_p1.m_x, self->m_p2.m_x, self->m_p3.m_x, self->m_p4.m_x});
-    float top = std::min({self->m_p1.m_y, self->m_p2.m_y, self->m_p3.m_y, self->m_p4.m_y});
-    float right = std::max({self->m_p1.m_x, self->m_p2.m_x, self->m_p3.m_x, self->m_p4.m_x});
-    float bottom = std::max({self->m_p1.m_y, self->m_p2.m_y, self->m_p3.m_y, self->m_p4.m_y});
-    return WebCore::FloatRect{{left, top}, {right - left, bottom - top}};
 }
 
 bool APS5_VABI _ZNK7WebCore9FloatQuad12containsQuadERKS0_(const WebCore::FloatQuad* self, const WebCore::FloatQuad& other) {
@@ -444,7 +484,7 @@ bool APS5_VABI _ZNK7WebCore7IntRect8containsERKS0_(const WebCore::IntRect* self,
 }
 
 void APS5_VABI _ZN7WebCore10LayoutRect5scaleEf(WebCore::LayoutRect* self, float s) {
-    constexpr int minVal = std::numeric_limits<int>::min() / 2;
+    constexpr int minVal = (std::numeric_limits<int>::min() + 64 / 2) / 2;
     constexpr int maxVal = std::numeric_limits<int>::max() - 64 / 2;
     if (self->m_location.m_x.m_value == minVal && self->m_location.m_y.m_value == minVal
         && self->m_size.m_width.m_value == maxVal && self->m_size.m_height.m_value == maxVal) {
@@ -466,14 +506,12 @@ void APS5_VABI _ZN7WebCore10LayoutRect5uniteERKS0_(WebCore::LayoutRect* self, co
     }
     int minX = std::min(self->m_location.m_x.m_value, other.m_location.m_x.m_value);
     int minY = std::min(self->m_location.m_y.m_value, other.m_location.m_y.m_value);
-    int maxX = std::max(self->m_location.m_x.m_value + self->m_size.m_width.m_value,
-                        other.m_location.m_x.m_value + other.m_size.m_width.m_value);
-    int maxY = std::max(self->m_location.m_y.m_value + self->m_size.m_height.m_value,
-                        other.m_location.m_y.m_value + other.m_size.m_height.m_value);
+    int maxX = std::max(WebCore::LayoutMaxX(*self), WebCore::LayoutMaxX(other));
+    int maxY = std::max(WebCore::LayoutMaxY(*self), WebCore::LayoutMaxY(other));
     self->m_location.m_x.m_value = minX;
     self->m_location.m_y.m_value = minY;
-    self->m_size.m_width.m_value = maxX - minX;
-    self->m_size.m_height.m_value = maxY - minY;
+    self->m_size.m_width.m_value = WebCore::SaturatedDifference(maxX, minX);
+    self->m_size.m_height.m_value = WebCore::SaturatedDifference(maxY, minY);
 }
 
 void APS5_VABI _ZN7WebCore10LayoutRectC1ERKNS_9FloatRectE(WebCore::LayoutRect* self, const WebCore::FloatRect& r) {
@@ -491,10 +529,7 @@ void APS5_VABI _ZN7WebCore10LayoutRectC2ERKNS_9FloatRectE(WebCore::LayoutRect* s
 }
 
 bool APS5_VABI _ZNK7WebCore10LayoutRect8containsERKS0_(const WebCore::LayoutRect* self, const WebCore::LayoutRect& other) {
-    return self->m_location.m_x.m_value <= other.m_location.m_x.m_value
-        && self->m_location.m_x.m_value + self->m_size.m_width.m_value >= other.m_location.m_x.m_value + other.m_size.m_width.m_value
-        && self->m_location.m_y.m_value <= other.m_location.m_y.m_value
-        && self->m_location.m_y.m_value + self->m_size.m_height.m_value >= other.m_location.m_y.m_value + other.m_size.m_height.m_value;
+    return WebCore::LayoutRectContains(*self, other);
 }
 
 void APS5_VABI _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(
@@ -521,26 +556,25 @@ void APS5_VABI _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS_10LayoutSizeES6
 
 bool APS5_VABI _ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE(
     const WebCore::RoundedRect* self, const WebCore::LayoutRect& other) {
-    bool rectContains = self->m_rect.m_location.m_x.m_value <= other.m_location.m_x.m_value
-        && self->m_rect.m_location.m_x.m_value + self->m_rect.m_size.m_width.m_value >= other.m_location.m_x.m_value + other.m_size.m_width.m_value
-        && self->m_rect.m_location.m_y.m_value <= other.m_location.m_y.m_value
-        && self->m_rect.m_location.m_y.m_value + self->m_rect.m_size.m_height.m_value >= other.m_location.m_y.m_value + other.m_size.m_height.m_value;
+    bool rectContains = WebCore::LayoutRectContains(self->m_rect, other);
     if (!rectContains || !WebCore::IsRoundedRectRenderable(*self)) {
         return false;
     }
-    float rx = static_cast<float>(self->m_rect.m_location.m_x.m_value) / 64.0f;
-    float ry = static_cast<float>(self->m_rect.m_location.m_y.m_value) / 64.0f;
-    float rw = static_cast<float>(self->m_rect.m_size.m_width.m_value) / 64.0f;
-    float rh = static_cast<float>(self->m_rect.m_size.m_height.m_value) / 64.0f;
-    float ox = static_cast<float>(other.m_location.m_x.m_value) / 64.0f;
-    float oy = static_cast<float>(other.m_location.m_y.m_value) / 64.0f;
-    float ow = static_cast<float>(other.m_size.m_width.m_value) / 64.0f;
-    float oh = static_cast<float>(other.m_size.m_height.m_value) / 64.0f;
+    const int rectX = self->m_rect.m_location.m_x.m_value;
+    const int rectY = self->m_rect.m_location.m_y.m_value;
+    const int rectMaxX = WebCore::LayoutMaxX(self->m_rect);
+    const int rectMaxY = WebCore::LayoutMaxY(self->m_rect);
+    float ox = WebCore::LayoutToFloat(other.m_location.m_x.m_value);
+    float oy = WebCore::LayoutToFloat(other.m_location.m_y.m_value);
+    float omx = WebCore::LayoutToFloat(WebCore::LayoutMaxX(other));
+    float omy = WebCore::LayoutToFloat(WebCore::LayoutMaxY(other));
 
     if (self->m_radii.m_topLeft.m_width.m_value > 0 && self->m_radii.m_topLeft.m_height.m_value > 0) {
         float radW = static_cast<float>(self->m_radii.m_topLeft.m_width.m_value) / 64.0f;
         float radH = static_cast<float>(self->m_radii.m_topLeft.m_height.m_value) / 64.0f;
-        WebCore::FloatPoint center{rx + radW, ry + radH};
+        WebCore::FloatPoint center{
+            WebCore::LayoutToFloat(WebCore::SaturatedSum(rectX, self->m_radii.m_topLeft.m_width.m_value)),
+            WebCore::LayoutToFloat(WebCore::SaturatedSum(rectY, self->m_radii.m_topLeft.m_height.m_value))};
         if (ox <= center.m_x && oy <= center.m_y) {
             if (!WebCore::EllipseContainsPoint(center, radW, radH, WebCore::FloatPoint{ox, oy})) {
                 return false;
@@ -550,9 +584,11 @@ bool APS5_VABI _ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE(
     if (self->m_radii.m_topRight.m_width.m_value > 0 && self->m_radii.m_topRight.m_height.m_value > 0) {
         float radW = static_cast<float>(self->m_radii.m_topRight.m_width.m_value) / 64.0f;
         float radH = static_cast<float>(self->m_radii.m_topRight.m_height.m_value) / 64.0f;
-        WebCore::FloatPoint center{rx + rw - radW, ry + radH};
-        if (ox + ow >= center.m_x && oy <= center.m_y) {
-            if (!WebCore::EllipseContainsPoint(center, radW, radH, WebCore::FloatPoint{ox + ow, oy})) {
+        WebCore::FloatPoint center{
+            WebCore::LayoutToFloat(WebCore::SaturatedDifference(rectMaxX, self->m_radii.m_topRight.m_width.m_value)),
+            WebCore::LayoutToFloat(WebCore::SaturatedSum(rectY, self->m_radii.m_topRight.m_height.m_value))};
+        if (omx >= center.m_x && oy <= center.m_y) {
+            if (!WebCore::EllipseContainsPoint(center, radW, radH, WebCore::FloatPoint{omx, oy})) {
                 return false;
             }
         }
@@ -560,9 +596,11 @@ bool APS5_VABI _ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE(
     if (self->m_radii.m_bottomLeft.m_width.m_value > 0 && self->m_radii.m_bottomLeft.m_height.m_value > 0) {
         float radW = static_cast<float>(self->m_radii.m_bottomLeft.m_width.m_value) / 64.0f;
         float radH = static_cast<float>(self->m_radii.m_bottomLeft.m_height.m_value) / 64.0f;
-        WebCore::FloatPoint center{rx + radW, ry + rh - radH};
-        if (ox <= center.m_x && oy + oh >= center.m_y) {
-            if (!WebCore::EllipseContainsPoint(center, radW, radH, WebCore::FloatPoint{ox, oy + oh})) {
+        WebCore::FloatPoint center{
+            WebCore::LayoutToFloat(WebCore::SaturatedSum(rectX, self->m_radii.m_bottomLeft.m_width.m_value)),
+            WebCore::LayoutToFloat(WebCore::SaturatedDifference(rectMaxY, self->m_radii.m_bottomLeft.m_height.m_value))};
+        if (ox <= center.m_x && omy >= center.m_y) {
+            if (!WebCore::EllipseContainsPoint(center, radW, radH, WebCore::FloatPoint{ox, omy})) {
                 return false;
             }
         }
@@ -570,14 +608,43 @@ bool APS5_VABI _ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE(
     if (self->m_radii.m_bottomRight.m_width.m_value > 0 && self->m_radii.m_bottomRight.m_height.m_value > 0) {
         float radW = static_cast<float>(self->m_radii.m_bottomRight.m_width.m_value) / 64.0f;
         float radH = static_cast<float>(self->m_radii.m_bottomRight.m_height.m_value) / 64.0f;
-        WebCore::FloatPoint center{rx + rw - radW, ry + rh - radH};
-        if (ox + ow >= center.m_x && oy + oh >= center.m_y) {
-            if (!WebCore::EllipseContainsPoint(center, radW, radH, WebCore::FloatPoint{ox + ow, oy + oh})) {
+        WebCore::FloatPoint center{
+            WebCore::LayoutToFloat(WebCore::SaturatedDifference(rectMaxX, self->m_radii.m_bottomRight.m_width.m_value)),
+            WebCore::LayoutToFloat(WebCore::SaturatedDifference(rectMaxY, self->m_radii.m_bottomRight.m_height.m_value))};
+        if (omx >= center.m_x && omy >= center.m_y) {
+            if (!WebCore::EllipseContainsPoint(center, radW, radH, WebCore::FloatPoint{omx, omy})) {
                 return false;
             }
         }
     }
     return true;
+}
+
+WebCore::FloatRect APS5_VABI _ZN7WebCore9unionRectERKN3WTF6VectorINS_9FloatRectELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE(
+    const NKWebKit::WtfAbi::Vector<WebCore::FloatRect>& rects) {
+    WebCore::FloatRect result;
+    for (const auto& rect : rects) {
+        _ZN7WebCore9FloatRect5uniteERKS0_(&result, rect);
+    }
+    return result;
+}
+
+unsigned APS5_VABI _ZN7WebCore25TextureMapperBackingStore25calculateExposedTileEdgesERKNS_9FloatRectES3_(
+    const WebCore::FloatRect& totalRect, const WebCore::FloatRect& tileRect) {
+    unsigned exposedEdges = WebCore::TextureMapper::NoEdges;
+    if (!tileRect.x()) {
+        exposedEdges |= WebCore::TextureMapper::LeftEdge;
+    }
+    if (!tileRect.y()) {
+        exposedEdges |= WebCore::TextureMapper::TopEdge;
+    }
+    if (tileRect.width() + tileRect.x() >= totalRect.width()) {
+        exposedEdges |= WebCore::TextureMapper::RightEdge;
+    }
+    if (tileRect.height() + tileRect.y() >= totalRect.height()) {
+        exposedEdges |= WebCore::TextureMapper::BottomEdge;
+    }
+    return exposedEdges;
 }
 
 }

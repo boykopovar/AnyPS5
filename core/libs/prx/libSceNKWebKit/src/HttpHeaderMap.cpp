@@ -31,6 +31,7 @@
 
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -133,6 +134,12 @@ void Append(HeaderVector<TEntry>& vector, TEntry entry, unsigned minimum) {
     ++vector.size;
 }
 
+template<class TEntry>
+void DestroyCopy(HeaderVector<TEntry>& vector) {
+    for (unsigned i = 0; i < vector.size; ++i) std::destroy_at(vector.buffer + i);
+    _ZN3WTF8fastFreeEPv(vector.buffer);
+}
+
 void Replace(String& destination, const String& source) {
     String retained(source);
     std::swap(destination.impl, retained.impl);
@@ -164,11 +171,10 @@ String Join(const String& first, const String& second) {
 void Update(HTTPHeaderMap& map, const String& name, const String& value, bool add, bool append) {
     HTTPHeaderName known;
     if (FindName(name, known)) {
-        auto& vector = map.common;
-        const auto index = append ? vector.size : Find(vector, [&](const auto& entry) { return entry.key == known; });
-        if (index == vector.size) Append(vector, CommonHeader { known, String(value) }, 6);
-        else if (add) Replace(vector.buffer[index].value, Join(vector.buffer[index].value, value));
-        else Replace(vector.buffer[index].value, value);
+        if (append)
+            Append(map.common, CommonHeader { known, String(value) }, 6);
+        else
+            UpdateCommonHeader_nid_no_patch(map, known, value, add);
         return;
     }
     auto& vector = map.uncommon;
@@ -193,6 +199,15 @@ bool Remove(HeaderVector<TEntry>& vector, TMatch match) {
 
 }
 
+void NKWebKit::HttpAbi::UpdateCommonHeader_nid_no_patch(HTTPHeaderMap& map, HTTPHeaderName name, const String& value, bool add) {
+    if (static_cast<unsigned>(name) >= headerNames.size()) throw std::out_of_range("invalid HTTPHeaderName");
+    auto& vector = map.common;
+    const auto index = Find(vector, [&](const auto& entry) { return entry.key == name; });
+    if (index == vector.size) Append(vector, CommonHeader { name, String(value) }, 6);
+    else if (add) Replace(vector.buffer[index].value, Join(vector.buffer[index].value, value));
+    else Replace(vector.buffer[index].value, value);
+}
+
 extern "C" {
 
 void APS5_VABI _ZN7WebCore13HTTPHeaderMapC1Ev(NKWebKit::HttpAbi::HTTPHeaderMap* self) {
@@ -201,6 +216,28 @@ void APS5_VABI _ZN7WebCore13HTTPHeaderMapC1Ev(NKWebKit::HttpAbi::HTTPHeaderMap* 
 
 void APS5_VABI _ZN7WebCore13HTTPHeaderMapC2Ev(NKWebKit::HttpAbi::HTTPHeaderMap* self) {
     std::construct_at(&Map(self), NKWebKit::HttpAbi::HTTPHeaderMap {});
+}
+
+NKWebKit::HttpAbi::HTTPHeaderMap APS5_VABI _ZNK7WebCore13HTTPHeaderMap12isolatedCopyEv(const NKWebKit::HttpAbi::HTTPHeaderMap* self) {
+    const auto& source = Map(self);
+    Validate(source.common);
+    Validate(source.uncommon);
+    HTTPHeaderMap copy {};
+    try {
+        for (unsigned i = 0; i < source.common.size; ++i) {
+            const auto& entry = source.common.buffer[i];
+            Append(copy.common, CommonHeader { entry.key, _ZNKR3WTF6String12isolatedCopyEv(&entry.value) }, source.common.size);
+        }
+        for (unsigned i = 0; i < source.uncommon.size; ++i) {
+            const auto& entry = source.uncommon.buffer[i];
+            Append(copy.uncommon, UncommonHeader { _ZNKR3WTF6String12isolatedCopyEv(&entry.key), _ZNKR3WTF6String12isolatedCopyEv(&entry.value) }, source.uncommon.size);
+        }
+    } catch (...) {
+        DestroyCopy(copy.common);
+        DestroyCopy(copy.uncommon);
+        throw;
+    }
+    return copy;
 }
 
 void APS5_VABI _ZN7WebCore13HTTPHeaderMap3addERKN3WTF6StringES4_(NKWebKit::HttpAbi::HTTPHeaderMap* self, const NKWebKit::WtfAbi::String& name, const NKWebKit::WtfAbi::String& value) {
@@ -218,6 +255,18 @@ void APS5_VABI _ZN7WebCore13HTTPHeaderMap6appendERKN3WTF6StringES4_(NKWebKit::Ht
 NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHeaderNameE(const NKWebKit::HttpAbi::HTTPHeaderMap* self, NKWebKit::HttpAbi::HTTPHeaderName name) {
     const auto& vector = Map(self).common;
     const auto index = Find(vector, [&](const auto& entry) { return entry.key == name; });
+    return index == vector.size ? String() : String(vector.buffer[index].value);
+}
+
+String APS5_VABI _ZNK7WebCore13HTTPHeaderMap3getERKN3WTF6StringE(const HTTPHeaderMap* self, const String& name) {
+    HTTPHeaderName known;
+    if (FindName(name, known)) return _ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHeaderNameE(self, known);
+    return _ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE(self, name);
+}
+
+String APS5_VABI _ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE(const HTTPHeaderMap* self, const String& name) {
+    const auto& vector = Map(self).uncommon;
+    const auto index = Find(vector, [&](const auto& entry) { return Equal(entry.key, name); });
     return index == vector.size ? String() : String(vector.buffer[index].value);
 }
 

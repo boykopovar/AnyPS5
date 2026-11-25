@@ -123,7 +123,7 @@ NKWebKit::WtfAbi::Encoder& APS5_VABI _ZN3WTF11Persistence7EncoderlsEm(NKWebKit::
 NKWebKit::WtfAbi::Encoder& APS5_VABI _ZN3WTF11Persistence7EncoderlsEf(NKWebKit::WtfAbi::Encoder* self, float value);
 NKWebKit::WtfAbi::Encoder& APS5_VABI _ZN3WTF11Persistence7EncoderlsEd(NKWebKit::WtfAbi::Encoder* self, double value);
 bool APS5_VABI _ZN3WTF11Persistence7Decoder14verifyChecksumEv(NKWebKit::WtfAbi::Decoder* self);
-bool APS5_VABI _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(const NKWebKit::WtfAbi::Decoder* self, unsigned long size);
+bool APS5_VABI _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(const NKWebKit::WtfAbi::Decoder* self, std::size_t size);
 void APS5_VABI _ZN3WTF11Persistence5CoderINS_10AtomStringEE6encodeERNS0_7EncoderERKS2_(NKWebKit::WtfAbi::Encoder& encoder, const NKWebKit::WtfAbi::AtomString& string);
 void APS5_VABI _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(NKWebKit::WtfAbi::Encoder& encoder, const NKWebKit::WtfAbi::String& string);
 void APS5_VABI _ZN3WTF11Persistence5CoderINS_7CStringEE6encodeERNS0_7EncoderERKS2_(NKWebKit::WtfAbi::Encoder& encoder, const NKWebKit::WtfAbi::CString& string);
@@ -138,6 +138,9 @@ NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL19protocolHostAndPortEv(const NKW
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL4userEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL8passwordEv(const NKWebKit::WtfAbi::URL* self);
 
+NKWebKit::WtfAbi::CString APS5_VABI _ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE(const NKWebKit::WtfAbi::String* path);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc(const char* path);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(NKWebKit::WtfAbi::StringView path, const NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::StringView>* components);
 NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZNK3WTF6String25splitAllowingEmptyEntriesEDs(const NKWebKit::WtfAbi::String* self, char16_t separator);
 NKWebKit::WtfAbi::Vector<char16_t> APS5_VABI _ZNK3WTF6String29charactersWithNullTerminationEv(const NKWebKit::WtfAbi::String* self);
 NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZNK3WTF6String5splitEDs(const NKWebKit::WtfAbi::String* self, char16_t separator);

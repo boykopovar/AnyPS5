@@ -84,6 +84,10 @@ VKAPI_ATTR void VKAPI_CALL imageMemoryRequirements(VkDevice, VkImage, VkMemoryRe
     *requirements = {65536, 65536, 1};
 }
 
+VKAPI_ATTR void VKAPI_CALL imageMemoryRequirements2(VkDevice, const VkImageMemoryRequirementsInfo2*, VkMemoryRequirements2* requirements) {
+    requirements->memoryRequirements = {65536, 65536, 1};
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL allocateMemory(VkDevice, const VkMemoryAllocateInfo*, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
     *memory = newHandle<VkDeviceMemory>();
     return VK_SUCCESS;
@@ -218,6 +222,7 @@ PFN_vkVoidFunction VKAPI_CALL deviceProc(VkDevice, const char* name) {
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
         {"vkCreateImage", reinterpret_cast<PFN_vkVoidFunction>(createImage)},
         {"vkGetImageMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(imageMemoryRequirements)},
+        {"vkGetImageMemoryRequirements2", reinterpret_cast<PFN_vkVoidFunction>(imageMemoryRequirements2)},
         {"vkAllocateMemory", reinterpret_cast<PFN_vkVoidFunction>(allocateMemory)},
         {"vkBindImageMemory", reinterpret_cast<PFN_vkVoidFunction>(bindImageMemory)},
         {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(createImageView)},
@@ -318,6 +323,48 @@ void TestStencilUnormView(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+void TestCopiedHtileProvesNoClear(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{1024, 512};
+    const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::vector<std::uint32_t> words(bytes / 4u, 0xffffffffu);
+    const auto htile = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words.data()));
+    DepthTarget target{0xc0000000, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.htileAddress = htile;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    DepthSurfaceView(context, target);
+    const auto image = lastImage;
+    std::fill(words.begin(), words.end(), 0u);
+    NoteCopyDestination(htile, bytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    clearedImages.clear();
+    DepthSurfaceView(context, target);
+    Require(std::ranges::find(clearedImages, image) == clearedImages.end(), "clear words that a copy wrote into an HTILE must not fast-clear its depth surface");
+    NoteHtileDepthClear(htile, bytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    clearedImages.clear();
+    DepthSurfaceView(context, target);
+    Require(std::ranges::find(clearedImages, image) != clearedImages.end(), "an HTILE fill after the copy must fast-clear the depth surface");
+    ClearDepthSurfaces(context.device);
+}
+
+void TestFilledHtileAfterCopyClears(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{1024, 512};
+    const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::vector<std::uint32_t> words(bytes / 4u, 0u);
+    const auto htile = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words.data()));
+    DepthTarget target{0xc0000000, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.htileAddress = htile;
+    NoteCopyDestination(htile, bytes);
+    NoteDepthMetadataFill(htile, bytes, 0u);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    clearedImages.clear();
+    DepthSurfaceView(context, target);
+    Require(std::ranges::find(clearedImages, lastImage) != clearedImages.end(), "a metadata fill after a copy must forget it so a surface bound later fast-clears");
+    ClearDepthSurfaces(context.device);
+}
+
 void TestD16StencilFallback(const Context& context) {
     Require(HostDepthFormat(context, VK_FORMAT_D16_UNORM_S8_UINT) == VK_FORMAT_D16_UNORM_S8_UINT && HostDepthBiasConstant(context, VK_FORMAT_D16_UNORM_S8_UINT, 2.0f) == 2.0f, "a device with D16_UNORM_S8_UINT must keep it and its depth bias");
     static int withoutTag = 0;
@@ -332,6 +379,21 @@ void TestD16StencilFallback(const Context& context) {
     Require(lastImageFormat == VK_FORMAT_D24_UNORM_S8_UINT, "a D16_UNORM_S8_UINT surface was not created as D24_UNORM_S8_UINT on a device without it");
     Require(lookup(without, {d16s8, FormatR16Unorm, 256, 256}) != nullptr, "an R16 view of a D16 surface stored as D24 must still sample its depth plane");
     Require(lookup(without, {d16s8Stencil, FormatR8Uint, 256, 256}) != nullptr, "an 8-bit view of the stencil plane of a D16 surface stored as D24 must sample it");
+    DepthSurfaceView(without, {d16s8 + 0x20000, d16s8Stencil + 0x10000, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    imageReads.clear();
+    imageWrites.clear();
+    Require(lookup(without, {d16s8Stencil, FormatR8Uint, 256, 256, TileDepth64KB, Type2DArray, 1}) != nullptr && lastImageFormat == VK_FORMAT_R8_UINT, "two slices of the stencil plane of a D16 surface stored as D24 must assemble through an R8_UINT plane copy");
+    Require(imageReads.size() == 2 && imageReads[0].second == VK_IMAGE_ASPECT_STENCIL_BIT && imageReads[1].second == VK_IMAGE_ASPECT_STENCIL_BIT, "the layered stencil plane copy must read the stencil aspect of each resident slice");
+    Require(imageWrites.size() == 2 && imageWrites[0].second == VK_IMAGE_ASPECT_COLOR_BIT && imageWrites[1].second == VK_IMAGE_ASPECT_COLOR_BIT, "the layered stencil plane copy must write the color aspect of its R8_UINT array");
+    DepthSurfaceView(without, {d16s8 + 0x40000, d16s8Stencil + 0x10000, {128, 128}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    imageReads.clear();
+    bool displacedFallback = false;
+    try {
+        static_cast<void>(lookup(without, {d16s8Stencil, FormatR8Uint, 256, 256, TileDepth64KB, Type2DArray, 1}));
+    } catch (const std::runtime_error&) {
+        displacedFallback = true;
+    }
+    Require(displacedFallback && imageReads.empty(), "a stencil slice displaced by a newer owner of another extent must not reuse the older surface");
     Require(HostDepthBiasConstant(without, VK_FORMAT_D16_UNORM_S8_UINT, 2.0f) == 512.0f, "a 16-bit depth bias must be scaled by 256 for D24 storage");
     Require(HostDepthBiasConstant(without, VK_FORMAT_D32_SFLOAT_S8_UINT, 2.0f) == 2.0f, "a D32 depth bias must not be scaled");
     const auto refused = [&](const View& view) {
@@ -459,6 +521,23 @@ void TestRetiredSurfaceRelease(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+void TestDisplacedSurfaceRelease(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    const auto destroyed = [](VkImage image) { return std::find(destroyedImages.begin(), destroyedImages.end(), image) != destroyedImages.end(); };
+    constexpr std::uint64_t address = 0xa0000000;
+    std::vector<VkImage> displaced;
+    for (const auto width : {256u, 224u, 192u}) {
+        DepthSurfaceView(context, {address, 0, {width, width}, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+        displaced.push_back(lastImage);
+    }
+    const auto current = displaced.back();
+    displaced.pop_back();
+    DepthSurfaceView(context, {address + 0x1000000u, 0, {256, 256}, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    Require(std::all_of(displaced.begin(), displaced.end(), destroyed), "a depth surface whose address a surface of another extent took over must free its image");
+    Require(!destroyed(current), "the depth surface that owns the address must keep its image");
+    ClearDepthSurfaces(context.device);
+}
+
 std::atomic<std::uint64_t> untrackedHtileBegin{0};
 std::atomic<std::uint64_t> untrackedHtileEnd{0};
 std::atomic<int> untrackedHtileReads{0};
@@ -536,6 +615,96 @@ void TestUntrackedHtileStencilScan(const Context& context) {
     }
     AgcDriver::GuestMemory::SetFlushHook(nullptr);
     ClearDepthSurfaces(context.device);
+}
+
+void TestReplacedInteriorHtilePage(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{1024, 512};
+    const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::vector<std::uint32_t> words(bytes / 4u, 0xffffffffu);
+    const auto htile = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words.data()));
+    Require(bytes >= 3u * 4096u, "the HTILE must span more than two pages");
+    Require(!AgcDriver::GuestMemory::Watched(htile, bytes), "the HTILE must lie outside the write watch");
+    DepthTarget target{0xc4000000, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.htileAddress = htile;
+    untrackedHtileBegin = htile;
+    untrackedHtileEnd = htile + bytes;
+    const auto view = [&] {
+        untrackedHtileReads = 0;
+        DepthSurfaceView(context, target);
+        return untrackedHtileReads.load();
+    };
+    AgcDriver::GuestMemory::SetFlushHook(&CountUntrackedHtileReads);
+    try {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(view() >= 2, "the first check of an HTILE outside the write watch must read it");
+        Require(view() == 1, "an HTILE outside the write watch that held no clear must not be read again before its stamp moves");
+        std::fill(words.begin(), words.end(), 0u);
+        RetireReplacedDepth_nid_no_patch(static_cast<std::uintptr_t>(htile + 4096u), 4096u);
+        clearedImages.clear();
+        Require(view() >= 2, "an HTILE whose interior page was replaced must be read again in the same collect epoch");
+        Require(std::ranges::find(clearedImages, lastImage) != clearedImages.end(), "a clear in an HTILE whose interior page was replaced must be found");
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(nullptr);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    ClearDepthSurfaces(context.device);
+}
+
+void TestReplacedStencilPlane(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr std::uint64_t depth = 0xa0000000;
+    constexpr std::uint64_t stencil = 0xa1000000;
+    DepthSurfaceView(context, {depth, stencil, {320, 180}, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0});
+    Require(ResidentDepthOwnersOver(depth, 4096u, false) == 1, "a single-sample depth/stencil surface is not resident over its depth plane");
+    Require(lookup(context, {stencil, FormatR8Uint, 320, 180}) != nullptr, "an 8-bit view of a resident stencil plane must sample the stencil plane");
+    const auto retired = RetireReplacedDepth_nid_no_patch(static_cast<std::uintptr_t>(stencil + 4096u), 4096u);
+    Require(retired.surfaces == 1, "replacing a page of the stencil plane alone did not retire the single-sample depth/stencil surface");
+    Require(ResidentDepthOwnersOver(depth, 4096u, false) == 0, "a depth/stencil surface whose stencil plane alone was replaced stayed resident over its depth plane");
+    Require(lookup(context, {stencil, FormatR8Uint, 320, 180}) == nullptr, "a view of a replaced stencil plane was served by the retired surface");
+    ClearDepthSurfaces(context.device);
+}
+
+void TestDepthFootprintEnds(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr std::uint64_t depth = 0xa4000000;
+    constexpr std::uint64_t stencil = 0xa5000000;
+    constexpr std::uint64_t htile = 0xa6000000;
+    DepthTarget target{depth, stencil, {1024, 512}, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0};
+    target.htileAddress = htile;
+    DepthSurfaceView(context, target);
+    for (const auto& [begin, bytes] : {std::pair<std::uint64_t, std::uint64_t>{depth, 1024u * 512u * 4u}, {stencil, 1024u * 512u}, {htile, 32768u}}) {
+        Require(ResidentDepthOwnersOver(begin + bytes - 1u, 1u, false) == 1, "a depth surface is not resident over the last byte of one of its planes");
+        Require(ResidentDepthOwnersOver(begin + bytes, 1u, false) == 0, "a depth surface is resident past the end of one of its planes");
+    }
+    ClearDepthSurfaces(context.device);
+}
+
+void TestReplacedDeferredHtileClear(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{1024, 512};
+    const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    DepthTarget first{0x32000000, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    first.htileAddress = 0x33000000;
+    auto second = first;
+    second.htileAddress = 0x33100000;
+    const auto clearedAtRebind = [&](bool recorded, bool replaced) {
+        const auto created = createdImages.size();
+        DepthSurfaceView(context, first);
+        Require(createdImages.size() > created, "a depth surface was not created");
+        const auto owner = createdImages[created];
+        if (recorded) NoteHtileDepthClear(second.htileAddress, bytes);
+        if (replaced) RetireReplacedDepth_nid_no_patch(static_cast<std::uintptr_t>(second.htileAddress + bytes - 4096u), 4096u);
+        clearedImages.clear();
+        DepthSurfaceView(context, second);
+        const bool cleared = std::ranges::find(clearedImages, owner) != clearedImages.end();
+        ClearDepthSurfaces(context.device);
+        return cleared;
+    };
+    Require(!clearedAtRebind(false, false), "a depth surface bound again with another HTILE was cleared without a recorded clear");
+    Require(clearedAtRebind(true, false), "an HTILE clear recorded while no depth surface used that HTILE did not clear the surface bound with it");
+    Require(!clearedAtRebind(true, true), "an HTILE clear recorded while no depth surface used that HTILE cleared the surface bound with it after a page of the HTILE was replaced");
 }
 
 void TestUntrackedHtileDriverStore(const Context& context) {
@@ -616,6 +785,10 @@ void TestUnmappedStalePlaneFlush(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+void ForgetFixturePages(std::uintptr_t address, std::size_t bytes) {
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, bytes);
+}
+
 void TestReadOnlyStalePlaneFlush(const Context& context) {
     ClearDepthSurfaces(context.device);
     constexpr std::size_t bytes = 1024 * 1024;
@@ -629,6 +802,7 @@ void TestReadOnlyStalePlaneFlush(const Context& context) {
     Require(mapping.get() != MAP_FAILED, "cannot map a read-only depth plane");
 #endif
     const auto address = (reinterpret_cast<std::uintptr_t>(mapping.get()) + 65535u) & ~std::uintptr_t{65535u};
+    ForgetFixturePages(reinterpret_cast<std::uintptr_t>(mapping.get()), bytes);
     constexpr VkExtent2D extent{256, 256};
     const auto planeBytes = DepthSliceBytes(extent, 4u);
     Require(!AgcDriver::GuestMemory::CommittedRanges(address, planeBytes).empty(), "a read-only depth plane must remain readable");
@@ -669,12 +843,14 @@ void TestPartiallyResidentPlanes(const Context& context) {
     Require(mapping.get() != MAP_FAILED, "cannot reserve partially resident depth planes");
 #endif
     const auto base = (reinterpret_cast<std::uintptr_t>(mapping.get()) + hole - 1u) & ~std::uintptr_t{hole - 1u};
+    ForgetFixturePages(reinterpret_cast<std::uintptr_t>(mapping.get()), bytes);
     const auto commit = [&](std::uintptr_t address, std::size_t length) {
 #ifdef _WIN32
         Require(VirtualAlloc(reinterpret_cast<void*>(address), length, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot map a partially resident depth page");
 #else
         Require(mprotect(reinterpret_cast<void*>(address), length, PROT_READ | PROT_WRITE) == 0, "cannot map a partially resident depth page");
 #endif
+        ForgetFixturePages(address, length);
     };
     constexpr VkExtent2D extent{256, 256};
     const auto depthBytes = DepthSliceBytes(extent, 4u);
@@ -687,6 +863,7 @@ void TestPartiallyResidentPlanes(const Context& context) {
     Require(end <= reinterpret_cast<std::uintptr_t>(mapping.get()) + bytes, "the partially resident fixture does not fit its reservation");
     commit(depth, depthBytes - hole);
     commit(stencil, stencilBytes);
+    Require(AgcDriver::GuestMemory::CommittedRanges(depth + depthBytes - hole, hole).empty(), "the unmapped page of the partially resident fixture must read as unmapped");
     const auto refused = [&](const DepthTarget& target, std::string_view expected) {
         try {
             static_cast<void>(DepthSurfaceView(context, target));
@@ -828,12 +1005,18 @@ void RunDepthSurfaceReuseTests() {
     context.limits.maxFramebufferHeight = 16384;
     context.limits.maxFramebufferLayers = 1;
     TestD16StencilFallback(context);
+    TestCopiedHtileProvesNoClear(context);
+    TestFilledHtileAfterCopyClears(context);
     TestMultisampleDepthOwnership(context);
     TestMultisampleStencilAliases(context);
     TestStencilUnormView(context);
     TestUntrackedHtileScan(context);
     TestUntrackedHtileStencilScan(context);
     TestUntrackedHtileDriverStore(context);
+    TestReplacedInteriorHtilePage(context);
+    TestReplacedStencilPlane(context);
+    TestDepthFootprintEnds(context);
+    TestReplacedDeferredHtileClear(context);
     TestRepeatedDepthViewAllocations(context);
     TestStencilWriteBeyondPlane(context);
     TestRetireStaleSurfaceWithoutWrittenUnits(context);
@@ -932,6 +1115,7 @@ void RunDepthSurfaceReuseTests() {
         Require(clearsAfter(2u * sliceHtile) == std::vector<VkImage>{firstImage, secondImage}, "an HTILE clear over both slices must clear both");
     }
     TestRetiredSurfaceRelease(context);
+    TestDisplacedSurfaceRelease(context);
 
     ClearDepthSurfaces(context.device);
 }

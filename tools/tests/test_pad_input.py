@@ -62,6 +62,13 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(command[1:], [64, 300])
         self.assertEqual(self.queue(1001, "cross"), [command[0] + 1, 16384, 300])
 
+    def test_previous_command_size_limit_matches_runtime(self):
+        for command in (b"2000 16384 300\n", b"APS5_PAD_TIMELINE 1 2000 1\n0 1 16384\n"):
+            for length, expected in ((65536, 2001), (65537, 1000)):
+                with self.subTest(command=command, length=length):
+                    self.path.write_bytes(command.ljust(length, b" "))
+                    self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+
     def test_timeline_command_is_advanced_after_clock_reset(self):
         self.path.write_text("APS5_PAD_TIMELINE 1 2000 1\n0 100 16384\n", encoding="utf-8")
         self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
@@ -79,12 +86,18 @@ class PadInputTests(unittest.TestCase):
             (1, b"0 100 0x4000\n"), (1, b"3599999 2 16384\n"),
             (1, b"3600000 1 16384\n"), (2, b"0 100 16384\n99 100 64\n"),
             (2, b"100 100 16384\n0 100 64\n"),
+            (1, b" " * 116 + b"0 100 16384\n"),
+            (1, b" " * 116 + b"0 100 16384"),
             (1, b" " * 117 + b"0 100 16384\n"),
             (1, b" " * 117 + b"0 100 16384"),
+            (1, b"0 100 16384\0" + b" " * 115 + b"\n"),
             (1, b"0 100 16384\0" + b" " * 117 + b"\n"),
             (1, b"0 100 16384\n0 100 64\n"),
             (1, b"0 100 16384\ntrailing\n"),
             (1, b"0 100 16384\n" + b" " * 4096 + b"extra"),
+            (1, b"0 100 16384 255\n"), (1, b"0 100 16384 255 128\n"), (1, b"0 100 16384 255 128 128\n"),
+            (1, b"0 100 16384 255 128 128 128 128\n"), (1, b"0 100 16384 256 128 128 128\n"),
+            (1, b"0 100 16384 255 128 128 x\n"),
         ]
         for count, body in cases:
             with self.subTest(count=count, body=body):
@@ -94,19 +107,34 @@ class PadInputTests(unittest.TestCase):
     def test_valid_timeline_boundaries_preserve_sequence(self):
         bodies = [
             b"+0 +5000 +7405566\n5000 1 0\n3599999 1 16384\n \t\r\n\v\f",
-            b" " * 118 + b"0 1 16384\n1 1 0\n2 1 0",
+            b" " * 117 + b"0 1 16384\n1 1 0\n2 1 0",
             b"0+100+16384\n100 100 64\n200 1 0\n",
             b"0 100 16384\x00-1\n100 100 64\n200 1 0\n",
-            b"0 100 16384\n100 100 64\n" + b" " * 120 + b"200 1 0",
+            b"0 100 16384\n100 100 64\n" + b" " * 119 + b"200 1 0",
+            b"0 100 16384 255 0 128 128\n100 100 64\n200 1 0 0 255 +255 +0\n",
+            b"0+100+16384+255+0+128+128\n100 100 64\n200 1 0\n",
         ]
         for body in bodies:
             with self.subTest(body=body):
                 self.path.write_bytes(b"APS5_PAD_TIMELINE +1 +2000 +3\n" + body)
                 self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
 
-    def test_timeline_header_numeric_adjacency_preserves_sequence(self):
-        self.path.write_bytes(b"APS5_PAD_TIMELINE 1+2000+1\n0 100 16384\n")
-        self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
+    def test_timeline_header_requires_whitespace_between_fields(self):
+        maximum = 2**64 - 1
+        for header in (
+            b"APS5_PAD_TIMELINE 1+2000+1\n",
+            b"APS5_PAD_TIMELINE 1 2000+1\n",
+            f"APS5_PAD_TIMELINE 1+{maximum}+1\n".encode(),
+        ):
+            with self.subTest(header=header):
+                self.path.write_bytes(header + b"0 100 16384\n")
+                self.assertEqual(self.queue(1000, "down"), [1000, 64, 300])
+
+    def test_timeline_header_line_limit_matches_runtime(self):
+        for spaces, expected in ((100, 2001), (101, 1000)):
+            with self.subTest(spaces=spaces):
+                self.path.write_bytes(b" " * spaces + b"APS5_PAD_TIMELINE 1 2000 1\n0 100 16384\n")
+                self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
 
     def test_timeline_text_end_marker_matches_host_text_mode(self):
         for body in [b"0 100 16384\n\x1aignored", b"0 100 16384\x1aignored"]:
@@ -120,10 +148,21 @@ class PadInputTests(unittest.TestCase):
         expected = 1000 if os.name == "nt" else 2001
         self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
 
-    def test_timeline_event_crlf_at_runtime_line_capacity_matches_host_text_mode(self):
-        self.path.write_bytes(b"APS5_PAD_TIMELINE 1 2000 1\r\n" + b" " * 116 + b"0 100 16384\r\n")
-        expected = 2001 if os.name == "nt" else 1000
-        self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+    def test_timeline_event_crlf_at_runtime_line_capacity_matches_runtime(self):
+        for spaces, ending, expected in (
+            (115, b"\r\n", 2000),
+            (115, b"\r", 2000),
+            (115, b"\r\r\n", 0),
+            (116, b"\r\n", 0),
+        ):
+            payload = b"APS5_PAD_TIMELINE 1 2000 1\r\n" + b" " * spaces + b"0 100 16384" + ending
+            for host in ("nt", "posix"):
+                with self.subTest(host=host, spaces=spaces, ending=ending):
+                    self.path.write_bytes(payload)
+                    with mock.patch.object(pad_input.os, "name", host):
+                        self.assertEqual(pad_input.previous_sequence(self.path), expected)
+            self.path.write_bytes(payload)
+            self.assertEqual(self.queue(1000, "down"), [2001 if expected else 1000, 64, 300])
 
     def test_timeline_event_count_at_capacity_preserves_sequence(self):
         body = b"".join(f"{index} 1 0\n".encode() for index in range(4096))
@@ -186,9 +225,16 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(self.queue(1000, "cross", "--left-stick", "0", "255", "--touch", "0", "0", "0", "1"),
                          [1003, 16384, 300, 0, 255, 128, 128, "touch(0,0,0,1)"])
 
+    def test_full_dualsense_touch_height_preserves_sequence(self):
+        for y in (942, 943, 1079):
+            with self.subTest(y=y):
+                self.path.write_text(f"2000 0 300 touch(1919,{y},127,1)\n", encoding="utf-8")
+                self.assertEqual(self.queue(1000, "release", "--touch", "1919", str(y), "127", "1"),
+                                 [2001, 0, 300, f"touch(1919,{y},127,1)"])
+
     def test_invalid_touch_arguments_preserve_command(self):
         original = "2000 0 300 touch(100,200,3,1)\n"
-        for coordinates in [(1920, 0, 0, 1), (0, 943, 0, 1), (0, 0, 128, 1), (0, 0, 0, 2), (-1, 0, 0, 1)]:
+        for coordinates in [(1920, 0, 0, 1), (0, 1080, 0, 1), (0, 0, 128, 1), (0, 0, 0, 2), (-1, 0, 0, 1), (0, -1, 0, 1)]:
             with self.subTest(coordinates=coordinates):
                 self.path.write_text(original, encoding="utf-8")
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
@@ -197,7 +243,7 @@ class PadInputTests(unittest.TestCase):
                 self.assertEqual(self.path.read_text(encoding="utf-8"), original)
 
     def test_invalid_touch_file_does_not_preserve_sequence(self):
-        for token in ["touch(1920,0,0,1)", "touch(0,943,0,1)", "touch(0,0,128,1)", "touch(0,0,0,2)",
+        for token in ["touch(1920,0,0,1)", "touch(0,1080,0,1)", "touch(0,0,128,1)", "touch(0,0,0,2)",
                       "touch(-1,0,0,1)", "touch(0,0,0)", "touch(0,0,0,1,1)", "touch(0,,0,1)", "touch(0,0,0,1)x"]:
             with self.subTest(token=token):
                 self.path.write_text(f"2000 0 300 {token}\n", encoding="utf-8")
@@ -208,10 +254,23 @@ class PadInputTests(unittest.TestCase):
         self.path.write_text("+2000 +16384 +300 +0 +255 +128 +128\n", encoding="utf-8")
         self.assertEqual(self.queue(1000, "release"), [2001, 0, 300])
 
-    def test_crlf_at_runtime_line_capacity_matches_host_text_mode(self):
-        self.path.write_bytes(b" " * 113 + b"2000 16384 300\r\n")
-        expected = 2001 if os.name == "nt" else 1000
-        self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+    def test_crlf_and_line_limit_match_runtime(self):
+        for spaces, ending, expected in (
+            (112, b"\n", 2000),
+            (112, b"\r\n", 2000),
+            (112, b"\r", 2000),
+            (112, b"\r\r\n", 0),
+            (113, b"\n", 0),
+            (113, b"\r\n", 0),
+        ):
+            payload = b" " * spaces + b"2000 16384 300" + ending
+            for host in ("nt", "posix"):
+                with self.subTest(host=host, spaces=spaces, ending=ending):
+                    self.path.write_bytes(payload)
+                    with mock.patch.object(pad_input.os, "name", host):
+                        self.assertEqual(pad_input.previous_sequence(self.path), expected)
+            self.path.write_bytes(payload)
+            self.assertEqual(self.queue(1000, "down"), [2001 if expected else 1000, 64, 300])
 
     def test_pulse_nul_termination_preserves_sequence(self):
         for pulse in [b"2000 16384 300", b"2000 0 300 0 255 128 128",
@@ -221,16 +280,27 @@ class PadInputTests(unittest.TestCase):
                 self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
 
     def test_nul_does_not_hide_invalid_or_overlong_pulse(self):
+        self.path.write_bytes(b"2000 16384 300\0" + b" " * 111 + b"\n")
+        self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
         for pulse in [b"2000 16384\0 300\n", b"2000 1 300\0ignored\n",
+                      b"2000 16384 300\0" + b" " * 112 + b"\n",
                       b"2000 16384 300\0" + b" " * 114 + b"\n"]:
             with self.subTest(pulse=pulse):
                 self.path.write_bytes(pulse)
                 self.assertEqual(self.queue(1000, "down"), [1000, 64, 300])
 
     def test_pulse_text_end_marker_matches_host_text_mode(self):
-        self.path.write_bytes(b"2000 16384 300\x1aignored\n")
-        expected = 2001 if os.name == "nt" else 1000
-        self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+        for data in (
+            b"2000 16384 300\x1aignored\n",
+            b" " * 112 + b"2000 16384 300\r\x1a" + b"x" * 200,
+        ):
+            for host, expected in (("nt", 2000), ("posix", 0)):
+                with self.subTest(data=data, host=host):
+                    self.path.write_bytes(data)
+                    with mock.patch.object(pad_input.os, "name", host):
+                        self.assertEqual(pad_input.previous_sequence(self.path), expected)
+            self.path.write_bytes(data)
+            self.assertEqual(self.queue(1000, "down"), [2001 if os.name == "nt" else 1000, 64, 300])
 
     def test_nul_terminated_exhausted_pulse_preserves_command(self):
         original = f"{2**64 - 1} 16384 300".encode() + b"\0ignored\n"
@@ -262,6 +332,40 @@ class PadInputTests(unittest.TestCase):
         self.assertIn("sequence is exhausted", errors.getvalue())
         self.assertEqual(self.path.read_text(encoding="utf-8"), original)
         self.assertEqual(list(self.root.iterdir()), [self.path])
+
+    def test_main_with_explicit_argv(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = pad_input.main([str(self.path), "cross"])
+        self.assertEqual(result, 0)
+        tokens = [int(token) for token in self.path.read_text(encoding="utf-8").split()]
+        self.assertEqual(len(tokens), 3)
+        self.assertEqual(tokens[1], 16384)
+        self.assertEqual(tokens[2], 300)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, s):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with mock.patch.object(pad_input.sys, "stdout", out), mock.patch.object(pad_input.sys, "stderr", err):
+            result = pad_input.main([str(self.path), "cross"])
+        self.assertEqual(result, 0)
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
     def test_output_has_consistent_lf_newlines_and_utf8(self):
         self.queue(1000, "cross")
@@ -295,6 +399,29 @@ class PadInputTests(unittest.TestCase):
             pad_input.main()
         self.assertEqual(error.exception.code, 2)
         self.assertIn("is a directory", errors.getvalue())
+
+
+class ButtonMaskTests(unittest.TestCase):
+    def test_button_mask_ors_joined_button_names(self):
+        self.assertEqual(pad_input.button_mask('l3'), pad_input.BUTTONS['l3'])
+        self.assertEqual(pad_input.button_mask('cross+circle'), pad_input.BUTTONS['cross'] | pad_input.BUTTONS['circle'])
+
+    def test_button_mask_refuses_unknown_release_and_repeated_names(self):
+        import argparse
+        for value in ('bogus', 'release+cross', 'cross+cross'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                pad_input.button_mask(value)
+class TimelineHeaderTests(unittest.TestCase):
+    def test_timeline_sequence_refuses_a_non_timeline_header_and_other_versions(self):
+        import io
+        self.assertEqual(pad_input.timeline_sequence(io.BytesIO(b''), b'junk\n'), 0)
+        self.assertEqual(pad_input.timeline_sequence(io.BytesIO(b''), b'APS5_PAD_TIMELINE 2 5 1\n'), 0)
+class NextSequenceTests(unittest.TestCase):
+    def test_next_sequence_is_positive_and_fits_64_bits_without_a_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = pad_input.next_sequence(Path(directory) / 'missing.cmd')
+        self.assertGreater(value, 0)
+        self.assertLess(value, 2 ** 64)
 
 
 if __name__ == "__main__":

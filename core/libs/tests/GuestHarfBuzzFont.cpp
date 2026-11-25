@@ -1,4 +1,5 @@
-#include "prx/libharfbuzz/include/FontFunctions.hpp"
+#include "prx/libharfbuzz/libharfbuzz.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <hb.h>
 
@@ -52,6 +53,7 @@ struct Api {
     decltype(&hb_font_set_funcs_nid_postfix) setFunctions;
     decltype(&hb_font_set_ppem_nid_postfix) ppem;
     decltype(&hb_font_set_scale_nid_postfix) scale;
+    decltype(&hb_icu_script_to_script_nid_postfix) scriptFromIcu;
 };
 
 struct FontState {
@@ -63,14 +65,16 @@ struct FontState {
 struct CallbackState {
     unsigned identity;
     unsigned destroyed = 0;
+    unsigned calls = 0;
 };
 
 static FontState& State(hb_font_t* font, void* fontData, void* callbackData, unsigned identity, unsigned index) {
     auto* state = static_cast<FontState*>(fontData);
-    const auto* callback = static_cast<CallbackState*>(callbackData);
+    auto* callback = static_cast<CallbackState*>(callbackData);
     Require(state && state->font == font && callback && callback->identity == identity);
     Require(state->destroyed == 0 && callback->destroyed == 0);
     ++state->calls[index];
+    ++callback->calls;
     return *state;
 }
 
@@ -182,6 +186,122 @@ static hb_blob_t* EmptyTable(hb_face_t*, hb_tag_t, void*) {
     return hb_blob_get_empty();
 }
 
+static int APS5_VABI NominalA(hb_font_t* font, void* fontData, std::uint32_t unicode, std::uint32_t* glyph, void* callbackData) {
+    State(font, fontData, callbackData, 10, 0);
+    *glyph = unicode + 100;
+    return unicode != 0x10FFFF;
+}
+
+static int APS5_VABI NominalB(hb_font_t* font, void* fontData, std::uint32_t unicode, std::uint32_t* glyph, void* callbackData) {
+    State(font, fontData, callbackData, 20, 0);
+    *glyph = unicode + 200;
+    return unicode != 0x10FFFF;
+}
+
+static void CheckCallbackSlotReplacement(const Api& api) {
+    auto* functions = api.createFunctions();
+    Require(functions != nullptr);
+    FontState font{api.create(nullptr)};
+    Require(font.font != nullptr);
+    api.setFunctions(font.font, functions, &font, DestroyFont);
+
+    CallbackState cbA{10}, cbB{20};
+    api.nominal(functions, NominalA, &cbA, DestroyCallback);
+    Require(cbA.destroyed == 0 && cbB.destroyed == 0);
+
+    std::uint32_t glyph = 0;
+    Require(hb_font_get_nominal_glyph(font.font, 'A', &glyph) && glyph == 'A' + 100);
+    Require(cbA.calls == 1 && cbB.calls == 0);
+    Require(cbA.destroyed == 0 && cbB.destroyed == 0);
+
+    api.nominal(functions, NominalB, &cbB, DestroyCallback);
+    Require(cbA.destroyed == 1 && cbB.destroyed == 0);
+
+    glyph = 0;
+    Require(hb_font_get_nominal_glyph(font.font, 'B', &glyph) && glyph == 'B' + 200);
+    Require(cbA.calls == 1 && cbB.calls == 1);
+    Require(cbA.destroyed == 1 && cbB.destroyed == 0);
+
+    api.destroy(font.font);
+    Require(font.destroyed == 1 && cbB.destroyed == 0);
+    hb_font_funcs_destroy(functions);
+    Require(cbA.destroyed == 1 && cbB.destroyed == 1);
+}
+
+static void CheckFuncTableReplacement(const Api& api) {
+    auto* funcsA = api.createFunctions();
+    Require(funcsA != nullptr);
+    CallbackState cbA{10};
+    api.nominal(funcsA, NominalA, &cbA, DestroyCallback);
+
+    auto* funcsB = api.createFunctions();
+    Require(funcsB != nullptr);
+    CallbackState cbB{20};
+    api.nominal(funcsB, NominalB, &cbB, DestroyCallback);
+
+    auto* face = hb_face_create_for_tables(EmptyTable, nullptr, nullptr);
+    hb_face_set_glyph_count(face, 0x10000);
+    FontState font1Old{api.create(face)};
+    FontState font2{api.create(face)};
+    hb_face_destroy(face);
+
+    Require(font1Old.font != nullptr && font2.font != nullptr && font1Old.font != font2.font);
+
+    api.setFunctions(font1Old.font, funcsA, &font1Old, DestroyFont);
+    api.setFunctions(font2.font, funcsA, &font2, DestroyFont);
+
+    Require(font1Old.destroyed == 0 && font2.destroyed == 0);
+    Require(cbA.destroyed == 0 && cbB.destroyed == 0);
+
+    std::uint32_t glyph = 0;
+    Require(hb_font_get_nominal_glyph(font1Old.font, 'A', &glyph) && glyph == 'A' + 100);
+    Require(font1Old.calls[0] == 1);
+
+    Require(hb_font_get_nominal_glyph(font2.font, 'A', &glyph) && glyph == 'A' + 100);
+    Require(font2.calls[0] == 1);
+
+    FontState font1New{font1Old.font};
+    api.setFunctions(font1Old.font, funcsB, &font1New, DestroyFont);
+
+    Require(font1Old.destroyed == 1);
+    Require(font1New.destroyed == 0);
+    Require(font2.destroyed == 0);
+    Require(cbA.destroyed == 0);
+    Require(cbB.destroyed == 0);
+
+    glyph = 0;
+    Require(hb_font_get_nominal_glyph(font1Old.font, 'B', &glyph) && glyph == 'B' + 200);
+    Require(font1New.calls[0] == 1);
+    Require(font1Old.calls[0] == 1);
+
+    Require(hb_font_get_nominal_glyph(font2.font, 'B', &glyph) && glyph == 'B' + 100);
+    Require(font2.calls[0] == 2);
+
+    hb_font_funcs_destroy(funcsA);
+    hb_font_funcs_destroy(funcsB);
+
+    Require(cbA.destroyed == 0);
+    Require(cbB.destroyed == 0);
+
+    glyph = 0;
+    Require(hb_font_get_nominal_glyph(font1Old.font, 'C', &glyph) && glyph == 'C' + 200);
+    Require(font1New.calls[0] == 2);
+    Require(hb_font_get_nominal_glyph(font2.font, 'C', &glyph) && glyph == 'C' + 100);
+    Require(font2.calls[0] == 3);
+    Require(cbA.destroyed == 0);
+    Require(cbB.destroyed == 0);
+
+    api.destroy(font2.font);
+    Require(font2.destroyed == 1);
+    Require(cbA.destroyed == 1);
+    Require(cbB.destroyed == 0);
+    Require(font1New.destroyed == 0);
+
+    api.destroy(font1Old.font);
+    Require(font1New.destroyed == 1);
+    Require(cbB.destroyed == 1);
+}
+
 static void CheckCallbacks(const Api& api) {
     auto* functions = api.createFunctions();
     Require(functions != nullptr && !hb_font_funcs_is_immutable(functions));
@@ -277,12 +397,44 @@ static void CheckNullLegacy(const Api& api) {
     }
 }
 
+static void CheckIcuScripts(const Api& api) {
+    for (const std::int32_t code : {std::numeric_limits<std::int32_t>::min(), -2, -1, 193, 194, std::numeric_limits<std::int32_t>::max()}) {
+        Require(api.scriptFromIcu(code) == HB_SCRIPT_INVALID);
+    }
+    Require(api.scriptFromIcu(0) == HB_SCRIPT_COMMON);
+    Require(api.scriptFromIcu(1) == HB_SCRIPT_INHERITED);
+    Require(api.scriptFromIcu(25) == HB_SCRIPT_LATIN);
+    Require(api.scriptFromIcu(68) == HB_SCRIPT_CYRILLIC);
+    Require(api.scriptFromIcu(72) == HB_SCRIPT_GEORGIAN);
+    Require(api.scriptFromIcu(73) == HB_SCRIPT_HAN);
+    Require(api.scriptFromIcu(74) == HB_SCRIPT_HAN);
+    Require(api.scriptFromIcu(80) == HB_SCRIPT_LATIN);
+    Require(api.scriptFromIcu(81) == HB_SCRIPT_LATIN);
+    Require(api.scriptFromIcu(95) == HB_SCRIPT_SYRIAC);
+    Require(api.scriptFromIcu(96) == HB_SCRIPT_SYRIAC);
+    Require(api.scriptFromIcu(97) == HB_SCRIPT_SYRIAC);
+    Require(api.scriptFromIcu(103) == HB_SCRIPT_UNKNOWN);
+    Require(api.scriptFromIcu(105) == HB_TAG('J', 'p', 'a', 'n'));
+    Require(api.scriptFromIcu(173) == HB_SCRIPT_HANGUL);
+    Require(api.scriptFromIcu(192) == HB_SCRIPT_YEZIDI);
+
+    std::uint64_t fingerprint = 0xcbf29ce484222325ull;
+    for (std::int32_t code = 0; code < 193; ++code) {
+        const auto script = api.scriptFromIcu(code);
+        Require(script != HB_SCRIPT_INVALID);
+        for (const unsigned shift : {24u, 16u, 8u, 0u}) {
+            fingerprint = (fingerprint ^ ((script >> shift) & 0xffu)) * 0x100000001b3ull;
+        }
+    }
+    Require(fingerprint == 0x49e8e496309c29fdull);
+}
+
 int main(int argc, char** argv) {
     Require(argc == 3);
     const bool patched = std::strcmp(argv[2], "patched") == 0;
     Require(patched || std::strcmp(argv[2], "unpatched") == 0);
 #ifdef _WIN32
-    auto module = LoadLibraryW(std::filesystem::path(argv[1]).c_str());
+    auto module = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     if (!module) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
     auto module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
@@ -305,8 +457,12 @@ int main(int argc, char** argv) {
     LoadExport(setFunctions, hb_font_set_funcs, "WH6phgWx6TI");
     LoadExport(ppem, hb_font_set_ppem, "ztxZdb1IY+M");
     LoadExport(scale, hb_font_set_scale, "eG5EI3x6twg");
+    LoadExport(scriptFromIcu, hb_icu_script_to_script, "u0E8Xi0easM");
 #undef LoadExport
+    CheckIcuScripts(api);
     CheckCallbacks(api);
+    CheckFuncTableReplacement(api);
+    CheckCallbackSlotReplacement(api);
     CheckLegacyAndReset(api);
     CheckNullLegacy(api);
     api.destroy(nullptr);

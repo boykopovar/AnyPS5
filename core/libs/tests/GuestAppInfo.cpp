@@ -1,5 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/DirectMemory/DirectMemory.hpp"
+#include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <cerrno>
 #include <cstdint>
@@ -99,6 +101,7 @@ int main(int argc, char** argv) {
     std::memset(expected + 0x50, 0xff, 4);
     Require(std::memcmp(wide, expected, sizeof(wide)) == 0);
     Require(sceKernelGetAppInfo(self, nullptr) == 0);
+    Require(sceKernelGetAppInfo(0, nullptr) == 0);
     errno = 71;
     Require(sceKernelGetAppInfo(self, reinterpret_cast<void*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     Require(errno == 71);
@@ -134,4 +137,20 @@ int main(int argc, char** argv) {
     Require(sceKernelCreateUuidV4(third) == 0 && sceKernelCreateUuidV4(fourth) == 0);
     for (const std::uint8_t* uuid : {third, fourth}) Require((uuid[6] >> 4) == 4u && (uuid[8] & 0xc0u) == 0x80u);
     Require(std::memcmp(third, fourth, sizeof(third)) != 0);
+
+    int jitFd = -1;
+    Require(sceKernelJitCreateSharedMemory("", 16384, 0x7, &jitFd) == 0);
+    Require(jitFd >= 0);
+    Require(IsJitSharedMemory(jitFd));
+    DuplicateJitSharedMemory(jitFd, jitFd);
+    Require(IsJitSharedMemory(jitFd));
+    void* mapped = nullptr;
+    Require(sceKernelJitMapSharedMemory(jitFd, 0x3, &mapped) == 0);
+    Require(mapped != nullptr);
+    sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), 16384);
+    Require(dup2_nid_postfix(jitFd, jitFd) == jitFd);
+    Require(IsJitSharedMemory(jitFd));
+    DuplicateJitSharedMemory(-1, jitFd);
+    Require(!IsJitSharedMemory(jitFd));
+    Require(close_nid_postfix(jitFd) == 0);
 }

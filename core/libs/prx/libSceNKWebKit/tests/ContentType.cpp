@@ -11,6 +11,7 @@
 namespace {
 
 using NKWebKit::WebCoreAbi::ContentType;
+using NKWebKit::WtfAbi::Release;
 using NKWebKit::WtfAbi::String;
 
 void Check(bool value, int line) {
@@ -37,7 +38,7 @@ std::string Text(const String& string) {
 }
 
 ContentType Construct(const char* text) {
-    ContentType value{};
+    ContentType value;
     String string = Make(text);
     _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&value, &string);
     return value;
@@ -54,6 +55,44 @@ std::string Container(const char* type) {
     ContentType contentType = Construct(type);
     String result = _ZNK7WebCore11ContentType13containerTypeEv(&contentType);
     return Text(result);
+}
+
+void RequireUnits(const String& value, const char16_t* expected, unsigned length) {
+    Require(value.impl != nullptr);
+    Require(value.impl->length == length);
+    Require(!(value.impl->hashAndFlags & 4));
+    const auto* units = static_cast<const char16_t*>(value.impl->data);
+    for (unsigned i = 0; i < length; ++i) Require(units[i] == expected[i]);
+}
+
+void TestOwnedResultLifetime(bool releaseContainerFirst) {
+    const char16_t wide[] = u"audio/\u00e9x; q=\"\u03c0\u6062\"";
+    const char16_t container[] = u"audio/\u00e9x";
+    const char16_t parameter[] = u"\u03c0\u6062";
+    const char16_t name[] = u"q";
+    const unsigned wideLength = sizeof(wide) / sizeof(wide[0]) - 1;
+    const unsigned containerLength = sizeof(container) / sizeof(container[0]) - 1;
+    const unsigned parameterLength = sizeof(parameter) / sizeof(parameter[0]) - 1;
+
+    String containerResult;
+    String parameterResult;
+    {
+        String source = Make16(wide, wideLength);
+        ContentType contentType;
+        _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&contentType, &source);
+        String parameterName = Make16(name, 1);
+        containerResult = _ZNK7WebCore11ContentType13containerTypeEv(&contentType);
+        parameterResult = _ZNK7WebCore11ContentType9parameterERKN3WTF6StringE(&contentType, &parameterName);
+    }
+    RequireUnits(containerResult, container, containerLength);
+    RequireUnits(parameterResult, parameter, parameterLength);
+    String& first = releaseContainerFirst ? containerResult : parameterResult;
+    String& second = releaseContainerFirst ? parameterResult : containerResult;
+    const char16_t* secondExpected = releaseContainerFirst ? parameter : container;
+    const unsigned secondLength = releaseContainerFirst ? parameterLength : containerLength;
+    Release(std::exchange(first.impl, nullptr));
+    RequireUnits(second, secondExpected, secondLength);
+    Release(std::exchange(second.impl, nullptr));
 }
 
 template<typename Function>
@@ -79,23 +118,23 @@ void TestConstructors() {
     const unsigned before = impl->refCount;
 
     {
-        ContentType copied{};
+        ContentType copied;
         _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&copied, &original);
         Require(copied.type.impl == impl);
         Require(impl->refCount == before + 2);
-        ContentType copiedBase{};
+        ContentType copiedBase;
         _ZN7WebCore11ContentTypeC2ERKN3WTF6StringE(&copiedBase, &original);
         Require(copiedBase.type.impl == impl);
         Require(impl->refCount == before + 4);
 
         String source = original;
-        ContentType moved{};
+        ContentType moved;
         _ZN7WebCore11ContentTypeC1EON3WTF6StringE(&moved, &source);
         Require(source.impl == nullptr);
         Require(moved.type.impl == impl);
         Require(impl->refCount == before + 6);
         String sourceBase = original;
-        ContentType movedBase{};
+        ContentType movedBase;
         _ZN7WebCore11ContentTypeC2EON3WTF6StringE(&movedBase, &sourceBase);
         Require(sourceBase.impl == nullptr);
         Require(movedBase.type.impl == impl);
@@ -104,9 +143,9 @@ void TestConstructors() {
     Require(impl->refCount == before);
 
     RequireThrows([] { String s = Make("a"); _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(nullptr, &s); });
-    RequireThrows([] { ContentType c{}; _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&c, nullptr); });
+    RequireThrows([] { ContentType c; _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&c, nullptr); });
     RequireThrows([] { String s = Make("a"); _ZN7WebCore11ContentTypeC1EON3WTF6StringE(nullptr, &s); });
-    RequireThrows([] { ContentType c{}; _ZN7WebCore11ContentTypeC1EON3WTF6StringE(&c, nullptr); });
+    RequireThrows([] { ContentType c; _ZN7WebCore11ContentTypeC1EON3WTF6StringE(&c, nullptr); });
 }
 
 void TestContainerType() {
@@ -119,13 +158,13 @@ void TestContainerType() {
     Require(Container("") == "");
     Require(Container("a;b;c") == "a");
 
-    ContentType none{};
+    ContentType none;
     String result = _ZNK7WebCore11ContentType13containerTypeEv(&none);
     Require(result.impl == nullptr);
     RequireThrows([] { String r = _ZNK7WebCore11ContentType13containerTypeEv(nullptr); });
 
     const char16_t wide[] = u"audio/éx ; q=1";
-    ContentType type{};
+    ContentType type;
     String string = Make16(wide, sizeof(wide) / sizeof(wide[0]) - 1);
     _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&type, &string);
     String container = _ZNK7WebCore11ContentType13containerTypeEv(&type);
@@ -170,7 +209,7 @@ void TestParameterAbsent() {
     Require(Parameter("codecs=avc1", "codecs") == "<null>");
     Require(Parameter("video/mp4;codecs", "codecs") == "<null>");
 
-    ContentType none{};
+    ContentType none;
     String name = Make("codecs");
     String result = _ZNK7WebCore11ContentType9parameterERKN3WTF6StringE(&none, &name);
     Require(result.impl == nullptr);
@@ -192,6 +231,8 @@ void TestParameterEmptyName() {
 }
 
 int main() {
+    TestOwnedResultLifetime(true);
+    TestOwnedResultLifetime(false);
     TestCodecsParameter();
     TestConstructors();
     TestContainerType();

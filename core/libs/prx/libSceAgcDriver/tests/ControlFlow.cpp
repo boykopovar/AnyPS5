@@ -539,6 +539,41 @@ void verifyScheduledJumpTable() {
     verifyJumpTable("scheduled two-dword table through vcc", vcc, 0x20u, {0xcu, 0x14u, 0x1cu}, {0x3cu, 0x44u, 0x4cu});
     static_cast<void>(recompile("scheduled two-dword table through vcc", vcc, 32u));
     static_cast<void>(recompile("scheduled two-dword table through vcc", vcc, 64u));
+    auto interpolated = code;
+    interpolated.insert(interpolated.begin() + 8u, 0xc8100800u);
+    interpolated.insert(interpolated.begin() + 12u, 0xc8110801u);
+    interpolated[6] += 8u;
+    verifyJumpTable("interpolated two-dword table", interpolated, 0x24u, {0xcu, 0x14u, 0x1cu}, {0x44u, 0x4cu, 0x54u});
+    auto vectorScheduled = patched(interpolated, 8u, {0x7e020280u});
+    vectorScheduled = patched(std::move(vectorScheduled), 12u, {0x7e040280u});
+    verifyJumpTable("vector-scheduled two-dword table", vectorScheduled, 0x24u, {0xcu, 0x14u, 0x1cu}, {0x44u, 0x4cu, 0x54u});
+    static_cast<void>(recompile("vector-scheduled two-dword table", vectorScheduled, 32u));
+    static_cast<void>(recompile("vector-scheduled two-dword table", vectorScheduled, 64u));
+    auto interpolatedVcc = patched(interpolated, 0u, {0x83ea826au});
+    interpolatedVcc = patched(std::move(interpolatedVcc), 2u, {0x8f6a836au});
+    interpolatedVcc = patched(std::move(interpolatedVcc), 10u, {0xd4000000u});
+    verifyJumpTable("interpolated two-dword table through vcc", interpolatedVcc, 0x24u, {0xcu, 0x14u, 0x1cu}, {0x44u, 0x4cu, 0x54u});
+    require(refusal(patched(interpolatedVcc, 8u, {0xbeea0380u})).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted an overwritten VCC index");
+    for (const auto index : {8u, 12u}) {
+        for (const auto word : {0xbe880380u, 0xbe8c0380u, 0xbe8d0380u}) {
+            const auto clobbered = patched(interpolated, index, {word});
+            require(refusal(clobbered).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted a clobbered index or base");
+        }
+    }
+    auto baseFirst = code;
+    std::rotate(baseFirst.begin(), baseFirst.begin() + 4, baseFirst.begin() + 8);
+    baseFirst[2] += 16u;
+    verifyJumpTable("scheduled table with base before bound", baseFirst, 0x20u, {0xcu, 0x14u, 0x1cu}, {0x3cu, 0x44u, 0x4cu});
+    static_cast<void>(recompile("scheduled table with base before bound", baseFirst, 32u));
+    static_cast<void>(recompile("scheduled table with base before bound", baseFirst, 64u));
+    auto entersBase = baseFirst;
+    entersBase.insert(entersBase.begin(), 0xbf820000u);
+    verifyJumpTable("scheduled table entered at base setup", entersBase, 0x24u, {0xcu, 0x14u, 0x1cu}, {0x40u, 0x48u, 0x50u});
+    for (const auto entry : {0xbf820001u, 0xbf820004u, 0xbf820005u}) {
+        auto skipsBase = baseFirst;
+        skipsBase.insert(skipsBase.begin(), entry);
+        require(refusal(skipsBase).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted a branch that skipped its base setup");
+    }
     const std::vector<std::vector<std::uint32_t>> refused{
         patched(code, 1, {0xbe880380u}),
         patched(code, 3, {0xbe880380u}),
@@ -645,6 +680,43 @@ void VerifyConstantHighTail() {
     };
     for (const auto& code : refused) require(!FindUserDataTail(decoder.Decode(code), 0u, 6u), "unknown, overwritten or conditional tail address was accepted");
     require(!FindUserDataTail(decoder.Decode(accepted.front()), 0u, 4u), "tail low half outside user data was accepted");
+}
+
+void VerifyCopiedLowTail() {
+    const RdnaInstructionDecoder decoder;
+    const std::vector<std::uint32_t> code{0xbe800303u, 0xbe810382u, 0xbe802000u, 0xbf9f0000u};
+    const auto program = decoder.Decode(code);
+    const auto tail = FindUserDataTail(program, 2u, 4u);
+    require(tail && tail->programCounter == 8u && tail->userDataRegister == 3u && tail->constantHigh == 2u, "a tail through a copied user-data low half was not recognized");
+    const auto linked = LinkUserDataTail(program, *tail, decoder.Decode(std::vector<std::uint32_t>{0xbf810000u}));
+    require(linked == std::vector<std::uint32_t>({0xbe800303u, 0xbe810382u, 0xbf820000u, 0xbf810000u}), "linking a copied low half changed the preceding code");
+    const std::vector<std::vector<std::uint32_t>> refused{
+        {0xbe800303u, 0xbe802000u, 0xbf9f0000u},
+        {0xbe800308u, 0xbe810382u, 0xbe802000u, 0xbf9f0000u},
+        {0xbe830380u, 0xbe800303u, 0xbe810382u, 0xbe802000u, 0xbf9f0000u},
+        {0xbe800303u, 0xbe800304u, 0xbe810382u, 0xbe802000u, 0xbf9f0000u},
+        {0x80008003u, 0xbe810382u, 0xbe802000u, 0xbf9f0000u},
+    };
+    for (const auto& rejected : refused) require(!FindUserDataTail(decoder.Decode(rejected), 2u, 4u), "an unproven, overwritten or computed low half was accepted");
+}
+
+void VerifyBranchingBodyTail() {
+    const RdnaInstructionDecoder decoder;
+    const std::vector<std::uint32_t> code{0xbf880002u, 0xbe850382u, 0xbe802004u, 0xbf810000u};
+    const auto program = decoder.Decode(code);
+    const auto tail = FindUserDataTail(program, 4u, 2u);
+    require(tail && tail->programCounter == 8u && tail->userDataRegister == 4u && tail->constantHigh == 2u, "a tail whose body branches to its own exit was not recognized");
+    const auto linked = LinkUserDataTail(program, *tail, decoder.Decode(std::vector<std::uint32_t>{0xbf800000u, 0xbf810000u}));
+    require(linked == std::vector<std::uint32_t>({0xbf880002u, 0xbe850382u, 0xbf820001u, 0xbf810000u, 0xbf800000u, 0xbf810000u}), "linking did not keep the exit the body branches to");
+    static_cast<void>(GraphBuilder{}.Build(decoder.Decode(linked)));
+    const std::vector<std::vector<std::uint32_t>> refused{
+        {0xbf880000u, 0xbe850382u, 0xbe802004u, 0xbf810000u},
+        {0xbf880003u, 0xbe850382u, 0xbe802004u, 0xbf810000u, 0xbf9f0000u},
+        {0xbf880002u, 0xbe850382u, 0xbe802004u, 0xbf820000u, 0xbf810000u},
+        {0xbf880002u, 0xbe850382u, 0xbe802004u, 0xbf800000u, 0xbf9f0000u},
+        {0xbe850382u, 0xbe802004u, 0xbf800000u, 0xbf810000u},
+    };
+    for (const auto& rejected : refused) require(!FindUserDataTail(decoder.Decode(rejected), 4u, 2u), "a branch outside the tail's exit or an unended exit was accepted");
 }
 
 int main(int argc, char** argv) {
@@ -1462,6 +1534,8 @@ done:
         verifyScheduledJumpTable();
         VerifyUserDataTail();
         VerifyConstantHighTail();
+        VerifyCopiedLowTail();
+        VerifyBranchingBodyTail();
         verifyCallLinkOverwrittenByWave64Compare();
         verifyCallLinkMaskReadByScalarInstruction();
         verifyLargeLoopExitFallback();

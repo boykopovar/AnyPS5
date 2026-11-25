@@ -23,9 +23,13 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
+#include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
+#include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -384,16 +388,56 @@ bool Region::Shape::compareShapes(const Shape& aShape, const Shape& bShape) {
 template bool Region::Shape::compareShapes<Region::Shape::CompareContainsOperation>(const Region::Shape&, const Region::Shape&);
 template bool Region::Shape::compareShapes<Region::Shape::CompareIntersectsOperation>(const Region::Shape&, const Region::Shape&);
 
-static void SetRegionShape(Region* self, Region::Shape&& shape) {
-    self->m_bounds = shape.bounds();
-    if (shape.isRect()) {
-        self->m_shape = nullptr;
-        return;
-    }
-    if (!self->m_shape)
-        self->m_shape = std::make_unique<Region::Shape>(std::move(shape));
-    else
-        *self->m_shape = std::move(shape);
+struct RegionFields {
+    IntRect bounds;
+    Region::Shape* shape;
+};
+
+static_assert(sizeof(RegionFields) == sizeof(Region));
+static_assert(offsetof(RegionFields, bounds) == offsetof(Region, m_bounds));
+static_assert(offsetof(RegionFields, shape) == offsetof(Region, m_shape));
+
+static bool LoadRegion(RegionFields& fields, const Region* region) {
+    return GuestCopyIn_nid_no_patch(&fields, region, sizeof(fields));
+}
+
+static bool StoreRegion(Region* region, const RegionFields& fields, Region::Shape* previous) {
+    if (!GuestCopyOut_nid_no_patch(region, &fields, sizeof(fields)))
+        return false;
+    if (previous != fields.shape)
+        delete previous;
+    return true;
+}
+
+static bool StoreRegion(Region* region, const IntRect& bounds, std::unique_ptr<Region::Shape> shape, Region::Shape* previous) {
+    if (!StoreRegion(region, RegionFields{bounds, shape.get()}, previous))
+        return false;
+    static_cast<void>(shape.release());
+    return true;
+}
+
+static Region::Shape RegionShape(const RegionFields& region) {
+    return region.shape ? *region.shape : Region::Shape(region.bounds);
+}
+
+static bool RegionContains(const RegionFields& region, const RegionFields& other) {
+    if (!RectContains(region.bounds, other.bounds))
+        return false;
+    if (!region.shape)
+        return true;
+    return Region::Shape::compareShapes<Region::Shape::CompareContainsOperation>(*region.shape, RegionShape(other));
+}
+
+static bool SetRegionShape(Region* self, const RegionFields& region, Region::Shape&& shape) {
+    const IntRect bounds = shape.bounds();
+    if (shape.isRect())
+        return StoreRegion(self, RegionFields{bounds, nullptr}, region.shape);
+    if (!region.shape)
+        return StoreRegion(self, bounds, std::make_unique<Region::Shape>(std::move(shape)), nullptr);
+    if (!GuestWritable_nid_no_patch(self, sizeof(RegionFields)))
+        return false;
+    *region.shape = std::move(shape);
+    return StoreRegion(self, RegionFields{bounds, region.shape}, region.shape);
 }
 
 }  // namespace WebCore
@@ -401,87 +445,112 @@ static void SetRegionShape(Region* self, Region::Shape&& shape) {
 extern "C" {
 
 void APS5_VABI _ZN7WebCore6Region5Shape9translateERKNS_7IntSizeE(WebCore::Region::Shape* self, const WebCore::IntSize& offset) {
+    WebCore::IntSize delta;
+    if (!GuestCopyIn_nid_no_patch(&delta, &offset, sizeof(delta)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     for (std::size_t i = 0; i < self->m_segments.size(); ++i)
-        self->m_segments[i] += offset.m_width;
+        self->m_segments[i] += delta.m_width;
     for (std::size_t i = 0; i < self->m_spans.size(); ++i)
-        self->m_spans[i].y += offset.m_height;
+        self->m_spans[i].y += delta.m_height;
 }
 
 void APS5_VABI _ZN7WebCore6Region5uniteERKS0_(WebCore::Region* self, const WebCore::Region& other) {
-    if (other.isEmpty())
+    WebCore::RegionFields region;
+    WebCore::RegionFields source;
+    if (!WebCore::LoadRegion(region, self) || !WebCore::LoadRegion(source, &other))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::RectIsEmpty(source.bounds))
         return;
-    if (self->isEmpty()) {
-        self->m_bounds = other.m_bounds;
-        self->m_shape = other.m_shape ? std::make_unique<WebCore::Region::Shape>(*other.m_shape) : nullptr;
+    if (WebCore::RectIsEmpty(region.bounds)) {
+        if (!WebCore::StoreRegion(self, source.bounds, source.shape ? std::make_unique<WebCore::Region::Shape>(*source.shape) : nullptr, region.shape))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return;
     }
-    if (other.isRect() && WebCore::RectContains(other.m_bounds, self->m_bounds)) {
-        self->m_bounds = other.m_bounds;
-        self->m_shape = nullptr;
+    if (!source.shape && WebCore::RectContains(source.bounds, region.bounds)) {
+        if (!WebCore::StoreRegion(self, WebCore::RegionFields{source.bounds, nullptr}, region.shape))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return;
     }
-    if (_ZNK7WebCore6Region8containsERKS0_(self, other))
+    if (WebCore::RegionContains(region, source))
         return;
 
-    SetRegionShape(self, WebCore::Region::Shape::unionShapes(
-        self->m_shape ? *self->m_shape : WebCore::Region::Shape(self->m_bounds),
-        other.m_shape ? *other.m_shape : WebCore::Region::Shape(other.m_bounds)));
+    if (!WebCore::SetRegionShape(self, region, WebCore::Region::Shape::unionShapes(WebCore::RegionShape(region), WebCore::RegionShape(source))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore6Region8subtractERKS0_(WebCore::Region* self, const WebCore::Region& other) {
-    if (self->isEmpty() || other.isEmpty())
+    WebCore::RegionFields region;
+    WebCore::RegionFields source;
+    if (!WebCore::LoadRegion(region, self) || !WebCore::LoadRegion(source, &other))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::RectIsEmpty(region.bounds) || WebCore::RectIsEmpty(source.bounds))
         return;
-    if (!WebCore::RectIntersects(self->m_bounds, other.m_bounds))
+    if (!WebCore::RectIntersects(region.bounds, source.bounds))
         return;
 
-    SetRegionShape(self, WebCore::Region::Shape::subtractShapes(
-        self->m_shape ? *self->m_shape : WebCore::Region::Shape(self->m_bounds),
-        other.m_shape ? *other.m_shape : WebCore::Region::Shape(other.m_bounds)));
+    if (!WebCore::SetRegionShape(self, region, WebCore::Region::Shape::subtractShapes(WebCore::RegionShape(region), WebCore::RegionShape(source))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore6Region9intersectERKS0_(WebCore::Region* self, const WebCore::Region& other) {
-    if (self->m_bounds.m_size.m_width <= 0 || self->m_bounds.m_size.m_height <= 0)
+    WebCore::RegionFields region;
+    WebCore::RegionFields source;
+    if (!WebCore::LoadRegion(region, self) || !WebCore::LoadRegion(source, &other))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::RectIsEmpty(region.bounds))
         return;
-    if (!WebCore::RectIntersects(self->m_bounds, other.m_bounds)) {
-        self->m_shape = nullptr;
-        self->m_bounds = WebCore::IntRect{WebCore::IntPoint{0, 0}, WebCore::IntSize{0, 0}};
+    if (!WebCore::RectIntersects(region.bounds, source.bounds)) {
+        if (!WebCore::StoreRegion(self, WebCore::RegionFields{WebCore::IntRect{WebCore::IntPoint{0, 0}, WebCore::IntSize{0, 0}}, nullptr}, region.shape))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return;
     }
-    if (!self->m_shape && !other.m_shape) {
-        self->m_bounds = WebCore::RectIntersection(self->m_bounds, other.m_bounds);
+    if (!region.shape && !source.shape) {
+        if (!WebCore::StoreRegion(self, WebCore::RegionFields{WebCore::RectIntersection(region.bounds, source.bounds), nullptr}, nullptr))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return;
     }
 
-    SetRegionShape(self, WebCore::Region::Shape::intersectShapes(
-        self->m_shape ? *self->m_shape : WebCore::Region::Shape(self->m_bounds),
-        other.m_shape ? *other.m_shape : WebCore::Region::Shape(other.m_bounds)));
+    if (!WebCore::SetRegionShape(self, region, WebCore::Region::Shape::intersectShapes(WebCore::RegionShape(region), WebCore::RegionShape(source))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore6Region9translateERKNS_7IntSizeE(WebCore::Region* self, const WebCore::IntSize& offset) {
-    self->m_bounds.m_location.m_x += offset.m_width;
-    self->m_bounds.m_location.m_y += offset.m_height;
-    if (self->m_shape)
-        _ZN7WebCore6Region5Shape9translateERKNS_7IntSizeE(self->m_shape.get(), offset);
+    WebCore::RegionFields region;
+    WebCore::IntSize delta;
+    if (!WebCore::LoadRegion(region, self) || !GuestCopyIn_nid_no_patch(&delta, &offset, sizeof(delta)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    region.bounds.m_location.m_x += delta.m_width;
+    region.bounds.m_location.m_y += delta.m_height;
+    if (!WebCore::StoreRegion(self, region, region.shape))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (region.shape)
+        _ZN7WebCore6Region5Shape9translateERKNS_7IntSizeE(region.shape, delta);
 }
 
 void APS5_VABI _ZN7WebCore6RegionC1EOS0_(WebCore::Region* self, WebCore::Region&& other) {
-    self->m_bounds = std::move(other.m_bounds);
-    new (&self->m_shape) std::unique_ptr<WebCore::Region::Shape>(std::move(other.m_shape));
+    WebCore::RegionFields source;
+    if (!WebCore::LoadRegion(source, &other) || !GuestWritable_nid_no_patch(&other, sizeof(source)) ||
+        !WebCore::StoreRegion(self, source, nullptr) ||
+        !WebCore::StoreRegion(&other, WebCore::RegionFields{source.bounds, nullptr}, nullptr))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore6RegionC1ERKNS_7IntRectE(WebCore::Region* self, const WebCore::IntRect& rect) {
-    self->m_bounds = rect;
-    new (&self->m_shape) std::unique_ptr<WebCore::Region::Shape>(nullptr);
+    WebCore::IntRect bounds;
+    if (!GuestCopyIn_nid_no_patch(&bounds, &rect, sizeof(bounds)) || !WebCore::StoreRegion(self, WebCore::RegionFields{bounds, nullptr}, nullptr))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore6RegionC1ERKS0_(WebCore::Region* self, const WebCore::Region& other) {
-    self->m_bounds = other.m_bounds;
-    new (&self->m_shape) std::unique_ptr<WebCore::Region::Shape>(other.m_shape ? std::make_unique<WebCore::Region::Shape>(*other.m_shape) : nullptr);
+    WebCore::RegionFields source;
+    if (!WebCore::LoadRegion(source, &other) ||
+        !WebCore::StoreRegion(self, source.bounds, source.shape ? std::make_unique<WebCore::Region::Shape>(*source.shape) : nullptr, nullptr))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore6RegionC1Ev(WebCore::Region* self) {
-    self->m_bounds = WebCore::IntRect{WebCore::IntPoint{0, 0}, WebCore::IntSize{0, 0}};
-    new (&self->m_shape) std::unique_ptr<WebCore::Region::Shape>(nullptr);
+    if (!WebCore::StoreRegion(self, WebCore::RegionFields{WebCore::IntRect{WebCore::IntPoint{0, 0}, WebCore::IntSize{0, 0}}, nullptr}, nullptr))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore6RegionC2EOS0_(WebCore::Region* self, WebCore::Region&& other) {
@@ -501,48 +570,64 @@ void APS5_VABI _ZN7WebCore6RegionC2Ev(WebCore::Region* self) {
 }
 
 void APS5_VABI _ZN7WebCore6RegionD1Ev(WebCore::Region* self) {
-    self->m_shape.~unique_ptr();
+    WebCore::RegionFields region;
+    if (!WebCore::LoadRegion(region, self) || !WebCore::StoreRegion(self, WebCore::RegionFields{region.bounds, nullptr}, region.shape))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore6RegionD2Ev(WebCore::Region* self) {
-    self->m_shape.~unique_ptr();
+    _ZN7WebCore6RegionD1Ev(self);
 }
 
 WebCore::Region& APS5_VABI _ZN7WebCore6RegionaSEOS0_(WebCore::Region* self, WebCore::Region&& other) {
-    self->m_bounds = std::move(other.m_bounds);
-    self->m_shape = std::move(other.m_shape);
+    WebCore::RegionFields region;
+    WebCore::RegionFields source;
+    if (!WebCore::LoadRegion(region, self) || !WebCore::LoadRegion(source, &other) ||
+        !GuestWritable_nid_no_patch(self, sizeof(region)) || !GuestWritable_nid_no_patch(&other, sizeof(source)) ||
+        !WebCore::StoreRegion(&other, WebCore::RegionFields{source.bounds, nullptr}, nullptr) ||
+        !WebCore::StoreRegion(self, source, region.shape))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return *self;
 }
 
 WebCore::Region& APS5_VABI _ZN7WebCore6RegionaSERKS0_(WebCore::Region* self, const WebCore::Region& other) {
-    self->m_bounds = other.m_bounds;
-    self->m_shape = other.m_shape ? std::make_unique<WebCore::Region::Shape>(*other.m_shape) : nullptr;
+    WebCore::RegionFields region;
+    WebCore::RegionFields source;
+    if (!WebCore::LoadRegion(region, self) || !WebCore::LoadRegion(source, &other) ||
+        !WebCore::StoreRegion(self, source.bounds, source.shape ? std::make_unique<WebCore::Region::Shape>(*source.shape) : nullptr, region.shape))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return *self;
 }
 
 bool APS5_VABI _ZNK7WebCore6Region10intersectsERKS0_(const WebCore::Region* self, const WebCore::Region& other) {
-    if (!WebCore::RectIntersects(self->m_bounds, other.m_bounds))
+    WebCore::RegionFields region;
+    WebCore::RegionFields source;
+    if (!WebCore::LoadRegion(region, self) || !WebCore::LoadRegion(source, &other))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!WebCore::RectIntersects(region.bounds, source.bounds))
         return false;
-    if (!self->m_shape && !other.m_shape)
+    if (!region.shape && !source.shape)
         return true;
     return WebCore::Region::Shape::compareShapes<WebCore::Region::Shape::CompareIntersectsOperation>(
-        self->m_shape ? *self->m_shape : WebCore::Region::Shape(self->m_bounds),
-        other.m_shape ? *other.m_shape : WebCore::Region::Shape(other.m_bounds));
+        WebCore::RegionShape(region), WebCore::RegionShape(source));
 }
 
 WTF::Vector<WebCore::IntRect, 1> APS5_VABI _ZNK7WebCore6Region5rectsEv(const WebCore::Region* self) {
+    WebCore::RegionFields region;
+    if (!WebCore::LoadRegion(region, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     WTF::Vector<WebCore::IntRect, 1> rectList;
-    if (!self->m_shape) {
-        if (self->m_bounds.m_size.m_width > 0 && self->m_bounds.m_size.m_height > 0)
-            rectList.uncheckedAppend(self->m_bounds);
+    if (!region.shape) {
+        if (region.bounds.m_size.m_width > 0 && region.bounds.m_size.m_height > 0)
+            rectList.uncheckedAppend(region.bounds);
         return rectList;
     }
 
-    for (WebCore::Region::Shape::SpanIterator span = self->m_shape->spans_begin(), end = self->m_shape->spans_end(); span != end && span + 1 != end; ++span) {
+    for (WebCore::Region::Shape::SpanIterator span = region.shape->spans_begin(), end = region.shape->spans_end(); span != end && span + 1 != end; ++span) {
         int y = span->y;
         int height = (span + 1)->y - y;
 
-        for (WebCore::Region::Shape::SegmentIterator segment = self->m_shape->segments_begin(span), segEnd = self->m_shape->segments_end(span); segment != segEnd && segment + 1 != segEnd; segment += 2) {
+        for (WebCore::Region::Shape::SegmentIterator segment = region.shape->segments_begin(span), segEnd = region.shape->segments_end(span); segment != segEnd && segment + 1 != segEnd; segment += 2) {
             int x = *segment;
             int width = *(segment + 1) - x;
             rectList.append(WebCore::IntRect{WebCore::IntPoint{x, y}, WebCore::IntSize{width, height}});
@@ -551,26 +636,47 @@ WTF::Vector<WebCore::IntRect, 1> APS5_VABI _ZNK7WebCore6Region5rectsEv(const Web
     return rectList;
 }
 
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::Region& region) {
+    _ZN3WTF10TextStreamlsEPKc(&stream, "\n");
+    struct IndentScope {
+        NKWebKit::WtfAbi::TextStream& stream;
+        explicit IndentScope(NKWebKit::WtfAbi::TextStream& target) : stream(target) { ++stream.indent; }
+        ~IndentScope() { --stream.indent; }
+    } indentScope(stream);
+    const WTF::Vector<WebCore::IntRect, 1> rects = _ZNK7WebCore6Region5rectsEv(&region);
+    for (std::size_t i = 0; i < rects.size(); ++i) {
+        _ZN3WTF10TextStream11writeIndentEv(&stream);
+        _ZN3WTF10TextStreamlsEPKc(&stream, "(rect ");
+        _ZN7WebCorelsERN3WTF10TextStreamERKNS_7IntRectE(stream, rects.data()[i]);
+        _ZN3WTF10TextStreamlsEPKc(&stream, ")\n");
+    }
+    return stream;
+}
+
 bool APS5_VABI _ZNK7WebCore6Region8containsERKNS_8IntPointE(const WebCore::Region* self, const WebCore::IntPoint& point) {
-    if (!WebCore::RectContains(self->m_bounds, point))
+    WebCore::RegionFields region;
+    WebCore::IntPoint location;
+    if (!WebCore::LoadRegion(region, self) || !GuestCopyIn_nid_no_patch(&location, &point, sizeof(location)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!WebCore::RectContains(region.bounds, location))
         return false;
-    if (!self->m_shape)
+    if (!region.shape)
         return true;
 
-    for (WebCore::Region::Shape::SpanIterator span = self->m_shape->spans_begin(), end = self->m_shape->spans_end(); span != end && span + 1 != end; ++span) {
+    for (WebCore::Region::Shape::SpanIterator span = region.shape->spans_begin(), end = region.shape->spans_end(); span != end && span + 1 != end; ++span) {
         int y = span->y;
         int maxY = (span + 1)->y;
-        if (y > point.m_y)
+        if (y > location.m_y)
             break;
-        if (maxY <= point.m_y)
+        if (maxY <= location.m_y)
             continue;
 
-        for (WebCore::Region::Shape::SegmentIterator segment = self->m_shape->segments_begin(span), segEnd = self->m_shape->segments_end(span); segment != segEnd && segment + 1 != segEnd; segment += 2) {
+        for (WebCore::Region::Shape::SegmentIterator segment = region.shape->segments_begin(span), segEnd = region.shape->segments_end(span); segment != segEnd && segment + 1 != segEnd; segment += 2) {
             int x = *segment;
             int maxX = *(segment + 1);
-            if (x > point.m_x)
+            if (x > location.m_x)
                 break;
-            if (maxX > point.m_x)
+            if (maxX > location.m_x)
                 return true;
         }
     }
@@ -578,12 +684,11 @@ bool APS5_VABI _ZNK7WebCore6Region8containsERKNS_8IntPointE(const WebCore::Regio
 }
 
 bool APS5_VABI _ZNK7WebCore6Region8containsERKS0_(const WebCore::Region* self, const WebCore::Region& other) {
-    if (!WebCore::RectContains(self->m_bounds, other.m_bounds))
-        return false;
-    if (!self->m_shape)
-        return true;
-    return WebCore::Region::Shape::compareShapes<WebCore::Region::Shape::CompareContainsOperation>(
-        *self->m_shape, other.m_shape ? *other.m_shape : WebCore::Region::Shape(other.m_bounds));
+    WebCore::RegionFields region;
+    WebCore::RegionFields source;
+    if (!WebCore::LoadRegion(region, self) || !WebCore::LoadRegion(source, &other))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return WebCore::RegionContains(region, source);
 }
 
 std::uint64_t APS5_VABI _ZNK7WebCore6Region9totalAreaEv(const WebCore::Region* self) {
