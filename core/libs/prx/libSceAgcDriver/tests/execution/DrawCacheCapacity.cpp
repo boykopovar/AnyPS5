@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -122,6 +123,9 @@ void DefaultEntryCapExceedsThePreviousOne() {
     const auto cap = AgcDriver::DriverDetail::Driver::DrawCacheEntries();
     Require(cap == DefaultEntryCap, "the default draw cache entry cap is " + std::to_string(cap) + ", not " + std::to_string(DefaultEntryCap));
     Require(cap > PreviousEntryCap, "the default draw cache entry cap " + std::to_string(cap) + " does not exceed the previous " + std::to_string(PreviousEntryCap));
+    const auto sightings = AgcDriver::DriverDetail::Driver::DrawKeySightingKeys();
+    const auto previousSightings = PreviousEntryCap * AgcDriver::DriverDetail::DrawKeySightings::Ways;
+    Require(sightings == previousSightings, "the draw key sightings hold " + std::to_string(sightings) + " keys, not the " + std::to_string(previousSightings) + " of the previous entry cap");
 }
 
 }

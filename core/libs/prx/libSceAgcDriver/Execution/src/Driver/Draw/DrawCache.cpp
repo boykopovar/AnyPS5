@@ -66,6 +66,10 @@ std::size_t Driver::DrawCacheEntries() {
     return entries;
 }
 
+std::size_t Driver::DrawKeySightingKeys() {
+    return std::min<std::size_t>(DrawCacheEntries(), 65536) * DrawKeySightings::Ways;
+}
+
 std::uint64_t Driver::DrawCacheBytes() {
     static const std::uint64_t bytes = [] {
         const char* text = std::getenv("APS5_DRAW_CACHE_BYTES");
@@ -167,7 +171,7 @@ bool Driver::drawEntriesThisDraw() {
 bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
     std::lock_guard cacheLock(drawCacheMutex);
     if (drawCache.contains(key)) return true;
-    if (!drawKeySightings) drawKeySightings.emplace(DrawCacheEntries() * DrawKeySightings::Ways);
+    if (!drawKeySightings) drawKeySightings.emplace(DrawKeySightingKeys());
     bool seen = drawKeySightings->SeenBefore(key);
     const auto& pending = drawRelocationPending;
     if (pending.key == key && pending.identity != 0) {
@@ -185,7 +189,7 @@ bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
         }
     }
     if (seen || shape == 0 || drawShapes.contains(shape)) return seen;
-    if (!drawShapeSightings) drawShapeSightings.emplace(DrawCacheEntries() * DrawKeySightings::Ways);
+    if (!drawShapeSightings) drawShapeSightings.emplace(DrawKeySightingKeys());
     return drawShapeSightings->SeenBefore(shape);
 }
 
