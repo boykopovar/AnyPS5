@@ -3259,7 +3259,9 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // against queue 0; its label goes behind a completion instead (reason 5, still no wait).
     // Debug aid: APS5_LABEL_REAP_ALL_QUEUES=1 reaps on every queue as before.
     static const bool reapAllQueues = std::getenv("APS5_LABEL_REAP_ALL_QUEUES") != nullptr;
-    if (reapFirst && (queue == 0 || reapAllQueues) && OpportunisticReap()) recorder.Reap();
+    static const bool gateAll = std::getenv("APS5_LABEL_GATE_ALL") != nullptr;
+    const bool needReap = !recorder.Recording() || !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty() || Graphics::Recorder::PendingCompletionStores() != 0 || (gateAll && recorder.HasCompletions());
+    if (reapFirst && needReap && (queue == 0 || reapAllQueues) && OpportunisticReap()) recorder.Reap();
     if (recorder.Idle()) return 1;
     static const bool drain = std::getenv("APS5_DRAIN_COMPLETION_LABELS") != nullptr;
     const auto context = graphicsContext();
@@ -3277,17 +3279,24 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
         recorder.Sync();
         return 7;
     };
-    const bool syncGuest = syncUnimported && [&] {
-        const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), true);
-        return range != nullptr && range->address < address + bytes.size();
-    }();
-    if (syncGuest && !Graphics::HostImportCovers(context, address, bytes.size()) && Graphics::HostImportFor(context, address, bytes.size(), Graphics::ImportRequester::Label) == nullptr) return unimported();
-    const auto* import = Graphics::HostImportFor(context, address, bytes.size());
-    const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
-    const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0;
-    const auto unregistered = import == nullptr && !listed && !storesPending ? Graphics::UnregisteredHostImport(context, address, bytes.size()) : nullptr;
-    if (unregistered != nullptr) import = unregistered.get();
-    if (import == nullptr) return syncGuest ? unimported() : 3;
+    const auto* import = Graphics::ExistingHostImportFor(context, address, bytes.size());
+    std::shared_ptr<Graphics::HostImport> unregistered;
+    if (import == nullptr) {
+        const bool syncGuest = syncUnimported && [&] {
+            const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), true);
+            return range != nullptr && range->address < address + bytes.size();
+        }();
+        if (syncGuest && !Graphics::HostImportCovers(context, address, bytes.size())) {
+            import = Graphics::HostImportFor(context, address, bytes.size(), Graphics::ImportRequester::Label);
+            if (import == nullptr) return unimported();
+        }
+        if (import == nullptr) import = Graphics::HostImportFor(context, address, bytes.size());
+        const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
+        const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0;
+        unregistered = import == nullptr && !listed && !storesPending ? Graphics::UnregisteredHostImport(context, address, bytes.size()) : nullptr;
+        if (unregistered != nullptr) import = unregistered.get();
+        if (import == nullptr) return syncGuest ? unimported() : 3;
+    }
     // A unit shadow's results in the label's unit reach the import before the store lands over
     // part of it (the store's stamp then makes the unit stale); the deferred label paths call no
     // FlushPending of their own.
@@ -3326,7 +3335,6 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // completions too, below; any other one stores on the GPU. Debug aid: APS5_LABEL_GATE_ALL=1
     // gates on any completion, as before (a completion label there registered its own completion,
     // so every later label followed).
-    static const bool gateAll = std::getenv("APS5_LABEL_GATE_ALL") != nullptr;
     if (gateAll ? recorder.HasCompletions() : state->CopiedWriterOverlaps(address, bytes.size())) {
         // A copied buffer's write-back is still to run: the store must land after it. It is stored
         // by a completion action of the batch (a CPU memcpy when the batch is reaped) instead of
