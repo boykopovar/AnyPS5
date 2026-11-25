@@ -216,6 +216,25 @@ public:
     bool HasCompletions() const;
     void Keep(std::shared_ptr<void> object, std::size_t bytes = 0);
     void KeepThroughHold(std::shared_ptr<void> object);
+    void ReserveRetention(std::size_t additional);
+    template<typename T>
+    void Retain(const std::shared_ptr<T>& object) {
+        if (object == nullptr) return;
+        if (open == nullptr) ensureOpen();
+        prepareRetention();
+        const auto mask = retention.size() - 1;
+        auto index = retentionHash(object.get()) & mask;
+        while (retention[index].epoch == retentionEpoch) {
+            const auto& kept = open->kept[retention[index].index];
+            if (kept.get() == object.get() && !kept.owner_before(object) && !object.owner_before(kept)) return;
+            index = (index + 1) & mask;
+        }
+        const auto keptIndex = open->kept.size();
+        open->kept.push_back(object);
+        retention[index] = {object.get(), retentionEpoch, keptIndex};
+        ++retentionCount;
+    }
+
     void KeepBytes(const void* owner, std::size_t bytes);
     enum class UploadScratch : std::uint8_t { Tiled = 0, Linear, Count };
     std::shared_ptr<DeviceBuffer> UploadScratchBuffer(UploadScratch kind, std::size_t bytes);
@@ -237,6 +256,8 @@ public:
     std::shared_ptr<Buffer> UnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, VkDeviceSize* offset = nullptr);
     void NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, std::shared_ptr<Buffer> buffer, VkDeviceSize offset = 0);
     std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0, VkDeviceSize* offset = nullptr, std::size_t from = 0, std::uint32_t* lowest = nullptr, bool mirrored = false);
+    bool ShorterDrawSnapshotKept(std::uint64_t address, std::size_t bytes, SnapshotUse use) const;
+    bool GuestWritesPendingIn(std::uint64_t address, std::size_t bytes) const;
     struct OwnedDrawInputProof {
         std::vector<std::uint64_t> words;
         std::uint64_t since = 0;
@@ -350,6 +371,7 @@ public:
     // Ends and submits the open batch without waiting.
     void Submit();
     void HoldNextSubmit(VkSemaphore semaphore, std::uint64_t value);
+    bool SubmitHeld() const;
     // Submits the open batch and returns the serial of the newest submitted batch (0 when nothing was
     // ever submitted); WaitSerial(serial) then covers all recorded work.
     std::uint64_t SubmitAndEpoch();
@@ -368,7 +390,7 @@ public:
     void Sync();
     void CountSamples();
     bool CountingSamples() const { return countingSamples; }
-    bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules);
+    bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 8> rules);
     bool RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter = 0);
     struct BoundWords {
         VkBuffer buffer = VK_NULL_HANDLE;
@@ -1044,6 +1066,7 @@ private:
     mutable std::uint64_t reachedSerial = 0;
     VkSemaphore submitHold = VK_NULL_HANDLE;
     std::uint64_t submitHoldValue = 0;
+    std::uint64_t heldSerial = 0;
     struct ProgressWatcher;
     std::unique_ptr<ProgressWatcher> progressWatcher;
     // Identity for a thread that released the mutex around a wait (syncThroughUnlocked): the
@@ -1065,6 +1088,18 @@ private:
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
     std::unique_ptr<Batch> open;
+    struct RetentionSlot {
+        const void* object = nullptr;
+        std::uint64_t epoch = 0;
+        std::size_t index = 0;
+    };
+    std::vector<RetentionSlot> retention;
+    std::size_t retentionCount = 0;
+    std::uint64_t retentionEpoch = 0;
+    void prepareRetention(std::size_t additional = 1);
+    static std::size_t retentionHash(const void* object) {
+        return static_cast<std::size_t>((reinterpret_cast<std::uintptr_t>(object) >> 4u) * 0x9e3779b97f4a7c15ull >> 32u);
+    }
     std::uint64_t passGeneration = 0;
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;

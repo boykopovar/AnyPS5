@@ -384,6 +384,18 @@ int main() {
     Require(ReportsNotImplemented("sceRegMgrGetStrInitVal", [&] { sceRegMgrGetStrInitVal(); }));
     Require(ReportsNotImplemented("sceRegMgrGetBinInitVal", [&] { sceRegMgrGetBinInitVal(); }));
     Require(ReportsNotImplemented("sceRegMgrSrvGetQAFforReg", [&] { sceRegMgrSrvGetQAFforReg(); }));
+    Require(sceRegMgrGetVersion() == static_cast<int>(0x01140001));
+
+    char fill[16];
+    std::memset(fill, 0x5A, sizeof(fill));
+    Require(sceRegMgrMemset(fill, 0xAB, 4) == static_cast<void*>(fill));
+    Require(std::memcmp(fill, "\xAB\xAB\xAB\xAB\x5A", 5) == 0);
+    Require(sceRegMgrMemset(nullptr, 0, 0) == reinterpret_cast<void*>(static_cast<std::uintptr_t>(1)));
+    char copied[8];
+    std::memset(copied, 0x5A, sizeof(copied));
+    Require(sceRegMgrStrncpy(copied, "xyz", 3) == copied);
+    Require(std::memcmp(copied, "xyz", 3) == 0 && copied[3] == 0x5A);
+    Require(sceRegMgrStrncpy(nullptr, "x", 1) == reinterpret_cast<char*>(static_cast<std::uintptr_t>(1)));
 
     CheckBoundedBinaryInput();
     return 0;

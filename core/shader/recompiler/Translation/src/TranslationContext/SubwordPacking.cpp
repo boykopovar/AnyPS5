@@ -128,6 +128,25 @@ IrF32 TranslationContext::readMixF32(const RdnaOperand& operand) {
     return flushF16InputValue(readF16LaneAsF32(operand, operand.opSel, false));
 }
 
+IrF32 TranslationContext::mixNanSourceF32(const RdnaOperand& operand, IrF32 value) {
+    if (!operand.opSelHi) {
+        return value;
+    }
+    const IrU32 source = readF16SourceBits(operand);
+    IrValue& half = ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&source.Value(), &ir.Constant(operand.opSel ? 16u : 0u), &ir.Constant(16u)});
+    IrValue& sign = ir.ShiftLeftLogical(ir.BitwiseAnd(half, ir.Constant(0x8000u)), ir.Constant(16u));
+    IrValue& payload = ir.ShiftLeftLogical(ir.BitwiseAnd(half, ir.Constant(0x3ffu)), ir.Constant(13u));
+    IrValue* bits = &ir.BitwiseOr(sign, ir.BitwiseOr(payload, ir.Constant(0x7f800000u)));
+    if (operand.absolute) {
+        bits = &ir.BitwiseAnd(*bits, ir.Constant(0x7fffffffu));
+    }
+    if (operand.negate) {
+        bits = &ir.BitwiseXor(*bits, ir.Constant(0x80000000u));
+    }
+    IrValue& nan = ir.UGreaterThan(ir.BitwiseAnd(half, ir.Constant(0x7fffu)), ir.Constant(0x7c00u));
+    return IrF32(ir.Select(nan, ir.BitCastF32(*bits), value.Value()));
+}
+
 IrU32 TranslationContext::readF16LaneBits(const RdnaOperand& operand, bool highLane) {
     return readU16LaneRaw(operand, highLane ? operand.opSelHi : operand.opSel);
 }

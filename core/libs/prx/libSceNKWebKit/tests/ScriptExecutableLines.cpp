@@ -95,6 +95,36 @@ static void TestFunctionUnlinked() {
     Require(_ZNK3JSC16ScriptExecutable9endColumnEv(&cell) == 17 + 2 + 1);
 }
 
+static void TestFunctionSourceSwitch() {
+    Cell cell;
+    RareData rare;
+    Unlinked unlinked;
+    Prepare(cell, kFunctionExecutableType, 7, 3);
+
+    const std::uint32_t rareLineCount = 11, rareEndColumn = 61;
+    std::memcpy(rare.bytes + kRareDataLineCountOffset, &rareLineCount, sizeof(rareLineCount));
+    std::memcpy(rare.bytes + kRareDataEndColumnOffset, &rareEndColumn, sizeof(rareEndColumn));
+    unlinked.Set(23, 5, 1);
+
+    cell.Put<const void*>(kFunctionExecutableRareDataOffset, rare.bytes);
+    cell.Put<const void*>(kFunctionExecutableUnlinkedOffset, unlinked.bytes);
+
+    Require(_ZNK3JSC16ScriptExecutable8lastLineEv(&cell) == 7 + 1 + 11);
+    Require(_ZNK3JSC16ScriptExecutable9endColumnEv(&cell) == 61);
+
+    cell.Put<const void*>(kFunctionExecutableRareDataOffset, nullptr);
+    Require(_ZNK3JSC16ScriptExecutable8lastLineEv(&cell) == 7 + 1 + 23);
+    Require(_ZNK3JSC16ScriptExecutable9endColumnEv(&cell) == 5 + 1);
+
+    unlinked.Set(0, 5, 1);
+    Require(_ZNK3JSC16ScriptExecutable8lastLineEv(&cell) == 7 + 1);
+    Require(_ZNK3JSC16ScriptExecutable9endColumnEv(&cell) == 5 + 3 + 1);
+
+    cell.Put<const void*>(kFunctionExecutableRareDataOffset, rare.bytes);
+    Require(_ZNK3JSC16ScriptExecutable8lastLineEv(&cell) == 7 + 1 + 11);
+    Require(_ZNK3JSC16ScriptExecutable9endColumnEv(&cell) == 61);
+}
+
 template <typename F>
 static bool Throws(F function) {
     try {
@@ -119,6 +149,7 @@ int main() {
     TestGlobalTypes();
     TestFunctionRareData();
     TestFunctionUnlinked();
+    TestFunctionSourceSwitch();
     TestNull();
     std::puts("ScriptExecutableLines ok");
     return 0;
