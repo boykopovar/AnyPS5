@@ -482,6 +482,42 @@ def main():
         stub_bytes = elf_bytes_at(image, loads, 0x1040, 13)
         assert stub_bytes[10:12] == b"\x0f\x0b", stub_bytes.hex()
 
+        guest_patch_dir = work / "guest_patch_overlap"
+        guest_patch_dir.mkdir()
+        source = guest_patch_dir / "eboot.bin"
+        source.write_bytes(fixture(STUB_191))
+        (guest_patch_dir / "relinker-patches.toml").write_text(
+            "format = 1\n\n[[patch]]\ntarget = \"eboot.bin\"\nva = 4096\nexpected = \"48\"\nvalue = \"48\"\ndescription = \"keep the routed stub byte\"\n",
+            encoding="utf-8",
+        )
+        output = guest_patch_dir / "output.elf"
+        result = subprocess.run(
+            [str(relinker), "--skip-sce-module", str(source), str(output)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode != 0, "Expected failure when a game patch overlaps the routed stub"
+        assert "overlaps relinker patch" in result.stderr, result.stderr
+
+        clear_patch_dir = work / "guest_patch_clear"
+        clear_patch_dir.mkdir()
+        source = clear_patch_dir / "eboot.bin"
+        source.write_bytes(fixture(STUB_191))
+        (clear_patch_dir / "relinker-patches.toml").write_text(
+            "format = 1\n\n[[patch]]\ntarget = \"eboot.bin\"\nva = 4112\nexpected = \"00\"\nvalue = \"01\"\ndescription = \"flip one bit past the stub\"\n",
+            encoding="utf-8",
+        )
+        output = clear_patch_dir / "output.elf"
+        result = subprocess.run(
+            [str(relinker), "--skip-sce-module", str(source), str(output)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        relinked = output.read_bytes()
+        loads = elf_loads(relinked)
+        code_load = next(header for header in loads if (header[1] & 1))
+        stub_bytes = elf_bytes_at(relinked, loads, code_load[3], 13)
+        assert stub_bytes[0:2] == b"\xff\x25", stub_bytes.hex()
+
     print("Guest syscall route tests passed")
 
 
