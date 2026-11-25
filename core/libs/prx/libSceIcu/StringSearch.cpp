@@ -164,7 +164,13 @@ std::int32_t APS5_VABI usearch_getMatchedLength_nid_postfix(const UStringSearch*
 
 std::int32_t APS5_VABI usearch_next_nid_postfix(UStringSearch* search, std::int32_t* status) {
     if (!Succeeded(status, __func__) || search == nullptr) return Done;
-    NotImplemented_nid_no_patch(__func__);
+    const auto incoming = CopyIn<std::int32_t>(status, __func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    auto outgoing = incoming;
+    const auto result = Icu::StringSearchHost::Next(state->search, outgoing);
+    WriteChangedStatus(status, incoming, outgoing, __func__);
+    return result;
 }
 
 UStringSearch* APS5_VABI usearch_open_nid_postfix(const char16_t* pattern, std::int32_t patternLength, const char16_t* text,

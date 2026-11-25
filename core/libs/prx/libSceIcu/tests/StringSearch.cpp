@@ -437,6 +437,13 @@ void Run() {
     usearch_setText_nid_postfix(opened, u"banana", -1, &status);
     Require(status == 0);
     Require(usearch_getMatchedLength_nid_postfix(opened) == 0);
+    Require(usearch_next_nid_postfix(opened, &status) == 2);
+    Require(status <= 0);
+    Require(usearch_getMatchedLength_nid_postfix(opened) == 3);
+    Require(usearch_next_nid_postfix(opened, &status) == Done);
+    Require(status <= 0);
+    usearch_reset_nid_postfix(opened);
+    Require(usearch_next_nid_postfix(opened, &status) == 2);
 }
 
 } // namespace UsearchObject
