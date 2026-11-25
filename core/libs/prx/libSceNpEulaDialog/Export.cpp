@@ -1,7 +1,6 @@
 #include "prx/libSceNpEulaDialog/include/Api.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <atomic>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -63,9 +62,7 @@ int APS5_VABI sceNpEulaDialogGetResult(void* result) {
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
     const std::int32_t canceled = COMMON_DIALOG_RESULT_USER_CANCELED;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(result, &canceled, sizeof(canceled));
-    errno = savedErrno;
     if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     return 0;
 }
