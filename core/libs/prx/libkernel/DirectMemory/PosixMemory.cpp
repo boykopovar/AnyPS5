@@ -338,12 +338,15 @@ int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protec
         SetError(error);
         return -1;
     };
-    const auto start = reinterpret_cast<std::uintptr_t>(address);
+    constexpr std::uintptr_t lastPage = std::numeric_limits<std::uintptr_t>::max() - (PS5_PAGE_SIZE - 1);
+    const auto first = reinterpret_cast<std::uintptr_t>(address);
     if (length == 0) return 0;
-    if (start == 0 || length > std::numeric_limits<std::uintptr_t>::max() - start)
-        return failed(GuestInvalid);
+    if (first > lastPage || length > lastPage - first) return failed(GuestInvalid);
+    const auto start = std::max(first, GuestUserAddressStart);
+    const auto end = std::min(first + length, GuestUserAddressEnd);
+    if (start >= end) return 0;
     try {
-        if (DoMprotect(address, length, protection & GuestDefinedProtection, false) != 0) return failed(GuestInvalid);
+        if (DoMprotect(reinterpret_cast<void*>(start), end - start, protection & GuestDefinedProtection, false) != 0) return failed(GuestInvalid);
         return 0;
     } catch (const std::bad_alloc&) {
         return failed(GuestNoMemory);

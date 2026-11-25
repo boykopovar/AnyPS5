@@ -1760,7 +1760,10 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
 #ifdef _WIN32
     for (auto cursor = first; cursor < end;) {
         MEMORY_BASIC_INFORMATION view{};
-        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &view, sizeof(view)) != sizeof(view)) throw std::runtime_error("Cannot query guest memory protection range");
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &view, sizeof(view)) != sizeof(view)) {
+            if (GetLastError() == ERROR_INVALID_PARAMETER) break;
+            throw std::runtime_error("Cannot query guest memory protection range");
+        }
         if (view.Type == MEM_IMAGE) {
             if (view.AllocationBase == GetModuleHandleW(nullptr)) mutation.RegisterMainImage();
             else if (IsGuestModuleImage(view.AllocationBase)) mutation.RegisterImage(view.AllocationBase);
