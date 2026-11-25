@@ -42,6 +42,6 @@ int main() {
     Require(MsgDialog::DecodeUtf8("\xED\x9F\xBF") == u"\uD7FF", "maximum pre-surrogate three-byte sequence");
     Require(MsgDialog::DecodeUtf8("\xEE\x80\x80") == u"\uE000", "minimum post-surrogate three-byte sequence");
     Require(MsgDialog::DecodeUtf8("\xEF\xBF\xBF") == u"\uFFFF", "maximum valid three-byte sequence");
-    Require(MsgDialog::DecodeUtf8("\xF0\x90\x80\x80") == u"\uD800\uDC00", "minimum valid four-byte sequence");
-    Require(MsgDialog::DecodeUtf8("\xF4\x8F\xBF\xBF") == u"\uDBFF\uDFFF", "maximum valid Unicode scalar U+10FFFF");
+    Require(MsgDialog::DecodeUtf8("\xF0\x90\x80\x80") == u"\U00010000", "minimum valid four-byte sequence");
+    Require(MsgDialog::DecodeUtf8("\xF4\x8F\xBF\xBF") == u"\U0010FFFF", "maximum valid Unicode scalar U+10FFFF");
 }
