@@ -1,6 +1,5 @@
 #include "prx/libSceRegMgr/include/InventoryExports.hpp"
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -23,9 +22,7 @@ bool SizeInRange(std::uint64_t size) {
 }
 
 bool WriteZeros(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
