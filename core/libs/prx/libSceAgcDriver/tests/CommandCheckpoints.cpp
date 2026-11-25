@@ -190,6 +190,14 @@ void CheckCommand(PFN_vkGetDeviceProcAddr proc, const char* name, CheckpointKind
         Expect(KindOf(events[0]) == kind, std::string(name) + " recorded the kind " + AgcDriver::CheckpointKindName(KindOf(events[0])));
         Expect(events[0].commands == Commands(0x10), std::string(name) + " recorded its checkpoint into another command buffer");
     }
+    events.clear();
+    AgcDriver::Graphics::NoteRecordedCheckpoint(Commands(0x10), 9);
+    call(wrapper, Commands(0x10));
+    if (kind == CheckpointKind::draw || kind == CheckpointKind::dispatch) {
+        Expect(events.size() == 1 && events[0].what == real, std::string(name) + " got a second checkpoint right after a guest token");
+    } else {
+        Expect(events.size() == 2 && KindOf(events[0]) == kind && TokenOf(events[0]) == 9, std::string(name) + " lost its checkpoint after a guest token");
+    }
 }
 
 template<typename TFunction>
@@ -250,22 +258,37 @@ void CheckpointsCarryTheGuestToken(PFN_vkGetDeviceProcAddr proc) {
     const auto barrier = Resolve<PFN_vkCmdPipelineBarrier>(proc, "vkCmdPipelineBarrier");
     const auto dispatch = Resolve<PFN_vkCmdDispatch>(proc, "vkCmdDispatch");
     const auto begin = Resolve<PFN_vkBeginCommandBuffer>(proc, "vkBeginCommandBuffer");
+    const auto draw = Resolve<PFN_vkCmdDraw>(proc, "vkCmdDraw");
     events.clear();
     AgcDriver::Graphics::NoteRecordedCheckpoint(Commands(0x20), 77);
+    dispatch(Commands(0x30), 8, 1, 1);
     dispatch(Commands(0x20), 32, 1, 1);
+    dispatch(Commands(0x20), 16, 1, 1);
     barrier(Commands(0x20), 0, 0, 0, 0, nullptr, 0, nullptr, 0, nullptr);
     barrier(Commands(0x30), 0, 0, 0, 0, nullptr, 0, nullptr, 0, nullptr);
-    Expect(events.size() == 6, "the token checks did not record three checkpoints and three commands");
-    if (events.size() == 6) {
-        Expect(KindOf(events[0]) == CheckpointKind::dispatch && TokenOf(events[0]) == 77, "a dispatch after a guest token does not carry it");
-        Expect(KindOf(events[2]) == CheckpointKind::barrier && TokenOf(events[2]) == 77, "a barrier after a guest token does not carry it");
-        Expect(TokenOf(events[4]) == 0, "a checkpoint on another command buffer carries its guest token");
+    Expect(events.size() == 9, "the token checks did not record four checkpoints and five commands");
+    if (events.size() == 9) {
+        Expect(events[0].what == "checkpoint" && KindOf(events[0]) == CheckpointKind::dispatch && TokenOf(events[0]) == 0, "a dispatch on another command buffer lost its checkpoint after a guest token");
+        Expect(events[2].what == "vkCmdDispatch", "a guest dispatch got a second checkpoint right after its guest token");
+        Expect(KindOf(events[3]) == CheckpointKind::dispatch && TokenOf(events[3]) == 77, "a second dispatch after a guest token does not carry it");
+        Expect(KindOf(events[5]) == CheckpointKind::barrier && TokenOf(events[5]) == 77, "a barrier after a guest token does not carry it");
+        Expect(TokenOf(events[7]) == 0, "a checkpoint on another command buffer carries its guest token");
     }
+    events.clear();
+    AgcDriver::Graphics::NoteRecordedCheckpoint(Commands(0x20), 78);
+    barrier(Commands(0x20), 0, 0, 0, 0, nullptr, 0, nullptr, 0, nullptr);
+    draw(Commands(0x20), 3, 1, 0, 0);
+    Expect(events.size() == 4 && KindOf(events[2]) == CheckpointKind::draw && TokenOf(events[2]) == 78, "a draw after a guest token and a barrier lost its checkpoint");
     const VkCommandBufferBeginInfo info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     static_cast<void>(begin(Commands(0x20), &info));
     events.clear();
     barrier(Commands(0x20), 0, 0, 0, 0, nullptr, 0, nullptr, 0, nullptr);
     Expect(!events.empty() && TokenOf(events[0]) == 0, "a guest token outlived vkBeginCommandBuffer of its command buffer");
+    AgcDriver::Graphics::NoteRecordedCheckpoint(Commands(0x20), 80);
+    static_cast<void>(begin(Commands(0x20), &info));
+    events.clear();
+    dispatch(Commands(0x20), 4, 1, 1);
+    Expect(events.size() == 2 && KindOf(events[0]) == CheckpointKind::dispatch, "a dispatch after vkBeginCommandBuffer lost its checkpoint to an earlier guest token");
 }
 
 void RecorderNotesItsToken(PFN_vkGetDeviceProcAddr proc) {
@@ -278,6 +301,10 @@ void RecorderNotesItsToken(PFN_vkGetDeviceProcAddr proc) {
     Expect(events.size() == 1 && events[0].what == "checkpoint" && TokenOf(events[0]) == 4242 && KindOf(events[0]) == CheckpointKind::none, "the recorder did not write its guest token");
     Resolve<PFN_vkCmdFillBuffer>(proc, "vkCmdFillBuffer")(Commands(0x50), VK_NULL_HANDLE, 0, 4, 0);
     Expect(events.size() == 3 && TokenOf(events[1]) == 4242 && KindOf(events[1]) == CheckpointKind::fill, "a command after the recorder's guest token does not carry it");
+    events.clear();
+    AgcDriver::Graphics::WriteNvCheckpointToken(context, Commands(0x50), 4243, 0);
+    Resolve<PFN_vkCmdDraw>(proc, "vkCmdDraw")(Commands(0x50), 3, 1, 0, 0);
+    Expect(events.size() == 2 && TokenOf(events[0]) == 4243 && events[1].what == "vkCmdDraw", "a guest draw got a second checkpoint right after the recorder's guest token");
 }
 
 void PassesStateThroughAndRejectsUnknownCommands(PFN_vkGetDeviceProcAddr proc) {

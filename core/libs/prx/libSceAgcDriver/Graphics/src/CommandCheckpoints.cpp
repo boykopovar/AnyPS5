@@ -12,6 +12,7 @@ namespace {
 struct RecordedCheckpoint {
     VkCommandBuffer commands = VK_NULL_HANDLE;
     AgcDriver::FaultToken token = 0;
+    bool tokenIsLast = false;
 };
 
 RecordedCheckpoint& lastRecorded() noexcept {
@@ -32,9 +33,19 @@ std::atomic<PFN_vkCmdSetCheckpointNV>& setCheckpointSlot() noexcept {
 void mark(VkCommandBuffer commands, AgcDriver::CheckpointKind kind) noexcept {
     const auto setCheckpoint = setCheckpointSlot().load(std::memory_order_acquire);
     if (setCheckpoint == nullptr || commands == VK_NULL_HANDLE) return;
-    const auto& recorded = lastRecorded();
+    auto& recorded = lastRecorded();
     const AgcDriver::FaultToken token = recorded.commands == commands ? recorded.token : 0;
+    if (recorded.commands == commands) recorded.tokenIsLast = false;
     setCheckpoint(commands, reinterpret_cast<const void*>(AgcDriver::CheckpointMarker(token, kind)));
+}
+
+void markWork(VkCommandBuffer commands, AgcDriver::CheckpointKind kind) noexcept {
+    auto& recorded = lastRecorded();
+    if (recorded.commands == commands && recorded.tokenIsLast) {
+        recorded.tokenIsLast = false;
+        return;
+    }
+    mark(commands, kind);
 }
 
 enum class Slot : std::size_t {
@@ -122,59 +133,59 @@ VKAPI_ATTR VkResult VKAPI_CALL checkpointedEndCommandBuffer(VkCommandBuffer comm
 }
 
 VKAPI_ATTR void VKAPI_CALL checkpointedDraw(VkCommandBuffer commands, std::uint32_t vertexCount, std::uint32_t instanceCount, std::uint32_t firstVertex, std::uint32_t firstInstance) {
-    mark(commands, AgcDriver::CheckpointKind::draw);
+    markWork(commands, AgcDriver::CheckpointKind::draw);
     Real<Slot::CmdDraw, PFN_vkCmdDraw>::Get()(commands, vertexCount, instanceCount, firstVertex, firstInstance);
 }
 
 VKAPI_ATTR void VKAPI_CALL checkpointedDrawIndexed(VkCommandBuffer commands, std::uint32_t indexCount, std::uint32_t instanceCount, std::uint32_t firstIndex, std::int32_t vertexOffset, std::uint32_t firstInstance) {
-    mark(commands, AgcDriver::CheckpointKind::draw);
+    markWork(commands, AgcDriver::CheckpointKind::draw);
     Real<Slot::CmdDrawIndexed, PFN_vkCmdDrawIndexed>::Get()(commands, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }
 
 VKAPI_ATTR void VKAPI_CALL checkpointedDrawIndirect(VkCommandBuffer commands, VkBuffer buffer, VkDeviceSize offset, std::uint32_t drawCount, std::uint32_t stride) {
-    mark(commands, AgcDriver::CheckpointKind::draw);
+    markWork(commands, AgcDriver::CheckpointKind::draw);
     Real<Slot::CmdDrawIndirect, PFN_vkCmdDrawIndirect>::Get()(commands, buffer, offset, drawCount, stride);
 }
 
 VKAPI_ATTR void VKAPI_CALL checkpointedDrawIndexedIndirect(VkCommandBuffer commands, VkBuffer buffer, VkDeviceSize offset, std::uint32_t drawCount, std::uint32_t stride) {
-    mark(commands, AgcDriver::CheckpointKind::draw);
+    markWork(commands, AgcDriver::CheckpointKind::draw);
     Real<Slot::CmdDrawIndexedIndirect, PFN_vkCmdDrawIndexedIndirect>::Get()(commands, buffer, offset, drawCount, stride);
 }
 
 template<Slot TCommand>
 VKAPI_ATTR void VKAPI_CALL checkpointedDrawIndirectCount(VkCommandBuffer commands, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countOffset, std::uint32_t maxDrawCount, std::uint32_t stride) {
-    mark(commands, AgcDriver::CheckpointKind::draw);
+    markWork(commands, AgcDriver::CheckpointKind::draw);
     Real<TCommand, PFN_vkCmdDrawIndirectCountKHR>::Get()(commands, buffer, offset, countBuffer, countOffset, maxDrawCount, stride);
 }
 
 template<Slot TCommand>
 VKAPI_ATTR void VKAPI_CALL checkpointedDrawIndexedIndirectCount(VkCommandBuffer commands, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countOffset, std::uint32_t maxDrawCount, std::uint32_t stride) {
-    mark(commands, AgcDriver::CheckpointKind::draw);
+    markWork(commands, AgcDriver::CheckpointKind::draw);
     Real<TCommand, PFN_vkCmdDrawIndexedIndirectCountKHR>::Get()(commands, buffer, offset, countBuffer, countOffset, maxDrawCount, stride);
 }
 
 VKAPI_ATTR void VKAPI_CALL checkpointedDrawMeshTasks(VkCommandBuffer commands, std::uint32_t x, std::uint32_t y, std::uint32_t z) {
-    mark(commands, AgcDriver::CheckpointKind::draw);
+    markWork(commands, AgcDriver::CheckpointKind::draw);
     Real<Slot::CmdDrawMeshTasks, PFN_vkCmdDrawMeshTasksEXT>::Get()(commands, x, y, z);
 }
 
 VKAPI_ATTR void VKAPI_CALL checkpointedDrawMeshTasksIndirect(VkCommandBuffer commands, VkBuffer buffer, VkDeviceSize offset, std::uint32_t drawCount, std::uint32_t stride) {
-    mark(commands, AgcDriver::CheckpointKind::draw);
+    markWork(commands, AgcDriver::CheckpointKind::draw);
     Real<Slot::CmdDrawMeshTasksIndirect, PFN_vkCmdDrawMeshTasksIndirectEXT>::Get()(commands, buffer, offset, drawCount, stride);
 }
 
 VKAPI_ATTR void VKAPI_CALL checkpointedDispatch(VkCommandBuffer commands, std::uint32_t x, std::uint32_t y, std::uint32_t z) {
-    mark(commands, AgcDriver::CheckpointKind::dispatch);
+    markWork(commands, AgcDriver::CheckpointKind::dispatch);
     Real<Slot::CmdDispatch, PFN_vkCmdDispatch>::Get()(commands, x, y, z);
 }
 
 VKAPI_ATTR void VKAPI_CALL checkpointedDispatchBase(VkCommandBuffer commands, std::uint32_t baseX, std::uint32_t baseY, std::uint32_t baseZ, std::uint32_t x, std::uint32_t y, std::uint32_t z) {
-    mark(commands, AgcDriver::CheckpointKind::dispatch);
+    markWork(commands, AgcDriver::CheckpointKind::dispatch);
     Real<Slot::CmdDispatchBase, PFN_vkCmdDispatchBase>::Get()(commands, baseX, baseY, baseZ, x, y, z);
 }
 
 VKAPI_ATTR void VKAPI_CALL checkpointedDispatchIndirect(VkCommandBuffer commands, VkBuffer buffer, VkDeviceSize offset) {
-    mark(commands, AgcDriver::CheckpointKind::dispatch);
+    markWork(commands, AgcDriver::CheckpointKind::dispatch);
     Real<Slot::CmdDispatchIndirect, PFN_vkCmdDispatchIndirect>::Get()(commands, buffer, offset);
 }
 
@@ -437,6 +448,7 @@ void NoteRecordedCheckpoint(VkCommandBuffer commands, AgcDriver::FaultToken toke
     auto& recorded = lastRecorded();
     recorded.commands = commands;
     recorded.token = token;
+    recorded.tokenIsLast = true;
 }
 
 }
