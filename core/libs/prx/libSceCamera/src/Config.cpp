@@ -1,4 +1,3 @@
-#include <cerrno>
 #include <cstdint>
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceCamera/libSceCamera.hpp"
@@ -15,12 +14,9 @@ constexpr std::uint32_t FRAMERATE_60 = 60;
 int CheckConfig(std::int32_t handle, const CameraConfig* config) {
     if (handle < 1 || !config) return SCE_CAMERA_ERROR_PARAM;
     std::uint32_t size = 0;
-    const int savedErrno = errno;
     if (!GuestCopyIn_nid_no_patch(&size, &config->sizeThis, sizeof(size)) || size != sizeof(CameraConfig)) {
-        errno = savedErrno;
         return SCE_CAMERA_ERROR_PARAM;
     }
-    errno = savedErrno;
     if (!Camera::IsOpen(handle)) return SCE_CAMERA_ERROR_NOT_OPEN;
     return 0;
 }
@@ -31,7 +27,6 @@ extern "C" {
 
 int APS5_VABI sceCameraGetConfig(std::int32_t handle, CameraConfig* config) {
     if (const int error = CheckConfig(handle, config)) return error;
-    const int savedErrno = errno;
     CameraConfig localConfig{};
     localConfig.sizeThis = sizeof(CameraConfig);
     localConfig.configType = CONFIG_TYPE1;
@@ -39,7 +34,6 @@ int APS5_VABI sceCameraGetConfig(std::int32_t handle, CameraConfig* config) {
     localConfig.extension[0] = extension;
     localConfig.extension[1] = extension;
     const bool copied = GuestCopyOut_nid_no_patch(config, &localConfig, sizeof(localConfig));
-    errno = savedErrno;
     if (!copied) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
@@ -65,18 +59,14 @@ int APS5_VABI sceCameraGetDeviceConfig(std::int32_t handle, CameraConfig* config
 int APS5_VABI sceCameraGetDeviceConfigWithoutHandle(CameraConfig* config) {
     if (!config) return SCE_CAMERA_ERROR_PARAM;
     std::uint32_t size = 0;
-    const int savedErrno = errno;
     if (!GuestCopyIn_nid_no_patch(&size, &config->sizeThis, sizeof(size)) || size != sizeof(CameraConfig)) {
-        errno = savedErrno;
         return SCE_CAMERA_ERROR_PARAM;
     }
     if (!Camera::IsOpen()) {
-        errno = savedErrno;
         return SCE_CAMERA_ERROR_NOT_OPEN;
     }
     CameraConfig outConfig{};
     const bool copied = GuestCopyOut_nid_no_patch(config, &outConfig, sizeof(outConfig));
-    errno = savedErrno;
     if (!copied) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
