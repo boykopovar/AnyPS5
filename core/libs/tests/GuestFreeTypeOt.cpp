@@ -704,9 +704,15 @@ int main(int argc, char** argv) {
     for (auto setter : {variations.mmBlend, variations.mmDesign, variations.varBlend, variations.varDesign})
         Require(setter(nullptr, 0, nullptr) == FT_Err_Invalid_Face_Handle, "reject missing variation face");
     if (forwards) Variations();
+#ifdef _WIN32
+    Resolve(ot.sin, library, patched, "L1uHkWTazkI", "FT_SinForward_nid_no_patch");
+    Resolve(ot.tan, library, patched, "dojyaLKzKN0", "FT_TanForward_nid_no_patch");
+    Resolve(ot.vectorUnit, library, patched, "3WpTQrvGUcU", "FT_Vector_UnitForward_nid_no_patch");
+#else
     Resolve(ot.sin, library, patched, "L1uHkWTazkI", "FT_Sin_nid_postfix");
     Resolve(ot.tan, library, patched, "dojyaLKzKN0", "FT_Tan_nid_postfix");
     Resolve(ot.vectorUnit, library, patched, "3WpTQrvGUcU", "FT_Vector_Unit_nid_postfix");
+#endif
     Resolve(ot.orientation, library, patched, "weVsBCT+TTQ", "FT_Outline_Get_Orientation_nid_postfix");
     Resolve(ot.copy, library, patched, "Bhm8Injl0KA", "FT_Outline_Copy_nid_postfix");
     decltype(&FT_Get_Multi_Master_nid_postfix) multiMaster = nullptr;

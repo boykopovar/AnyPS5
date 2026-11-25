@@ -391,6 +391,21 @@ int APS5_VABI FT_Sfnt_Table_InfoForward_nid_no_patch(FreeType::GuestFaceRec* fac
 }
 APS5_EXPORT("oiRP-fp3SN4", FT_Sfnt_Table_InfoForward_nid_no_patch);
 
+std::int64_t APS5_VABI FT_SinForward_nid_no_patch(std::int64_t angle) {
+    return FT_Sin_nid_postfix(angle);
+}
+APS5_EXPORT("L1uHkWTazkI", FT_SinForward_nid_no_patch);
+
+std::int64_t APS5_VABI FT_TanForward_nid_no_patch(std::int64_t angle) {
+    return FT_Tan_nid_postfix(angle);
+}
+APS5_EXPORT("dojyaLKzKN0", FT_TanForward_nid_no_patch);
+
+void APS5_VABI FT_Vector_UnitForward_nid_no_patch(FreeType::GuestVector* vector, std::int64_t angle) {
+    return FT_Vector_Unit_nid_postfix(vector, angle);
+}
+APS5_EXPORT("3WpTQrvGUcU", FT_Vector_UnitForward_nid_no_patch);
+
 int APS5_VABI FT_Outline_Get_BBoxForward_nid_no_patch(FreeType::GuestOutline* outline, FreeType::GuestBBox* boundingBox) {
     return FT_Outline_Get_BBox_nid_postfix(outline, boundingBox);
 }
