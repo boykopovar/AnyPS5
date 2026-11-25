@@ -18,8 +18,8 @@ def compare(a_path, b_path, top=10):
     a = trace_digest.digest(trace_digest.load_trace(a_path), None, None, 0, None)
     b = trace_digest.digest(trace_digest.load_trace(b_path), None, None, 0, None)
 
-    a_threads = {row["thread"]: row for row in a["threads"]}
-    b_threads = {row["thread"]: row for row in b["threads"]}
+    a_threads = thread_timings(a["threads"])
+    b_threads = thread_timings(b["threads"])
     threads = []
     for name in sorted(a_threads.keys() | b_threads.keys()):
         left = a_threads.get(name, {})
@@ -44,6 +44,15 @@ def compare(a_path, b_path, top=10):
 
     return {"a": str(a_path), "b": str(b_path), "frames": {"a": a["frames"], "b": b["frames"]},
             "threads": threads, "slices": slices[:top]}
+
+
+def thread_timings(rows):
+    timings = {}
+    for row in rows:
+        totals = timings.setdefault(row["thread"], {"busy_ms_per_frame": 0.0, "wait_ms_per_frame": 0.0})
+        totals["busy_ms_per_frame"] += row["busy_ms_per_frame"]
+        totals["wait_ms_per_frame"] += row["wait_ms_per_frame"]
+    return timings
 
 
 def markdown(result):
