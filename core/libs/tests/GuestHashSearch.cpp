@@ -48,6 +48,16 @@ int main() {
     Require(hsearch_nid_postfix(HsearchEntry{const_cast<char*>("alpha"), nullptr}, Find) == nullptr && errno == 3);
 
     Require(hcreate_nid_postfix(0) == 1);
+    {
+        int marker = 0;
+        std::array<char[8], 17> minimum{};
+        for (int index = 0; index < 17; ++index) std::snprintf(minimum[index], sizeof(minimum[index]), "m%02d", index);
+        for (int index = 0; index < 16; ++index) Require(hsearch_nid_postfix(HsearchEntry{minimum[index], &marker}, Enter) != nullptr);
+        errno = 0;
+        Require(hsearch_nid_postfix(HsearchEntry{minimum[16], &marker}, Enter) == nullptr && errno == 12);
+        hdestroy_nid_postfix();
+        Require(hcreate_nid_postfix(0) == 1);
+    }
     Require(hcreate_nid_postfix(10) == 0 && errno == 17);
     hdestroy_nid_postfix();
     Require(hcreate_nid_postfix(10) == 1);
