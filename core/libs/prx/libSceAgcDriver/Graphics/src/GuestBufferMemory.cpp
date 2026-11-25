@@ -5483,6 +5483,27 @@ bool ReadTrappableHostImportCovers(const Context& context, std::uint64_t address
     return true;
 }
 
+bool HostImportSegmentsCover(const Context& context, std::uint64_t address, std::size_t bytes) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
+    std::vector<RegisteredPiece> pieces;
+    if (!RegisteredReadableCovers(address, bytes, &pieces) || pieces.size() < 2) return false;
+    if (std::any_of(pieces.begin(), pieces.end(), [&](const RegisteredPiece& piece) { return piece.writable != pieces.front().writable || piece.gpu != pieces.front().gpu; })) return false;
+    const auto end = address + bytes;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != context.device) return false;
+    const HostImport* previous = nullptr;
+    for (const auto& piece : pieces) {
+        const auto from = std::max(piece.address, address);
+        const auto to = std::min(piece.address + piece.bytes, end);
+        const auto* import = peekImport(state, from, to);
+        if (import == nullptr) return false;
+        if (import != previous && previous != nullptr && from % 65536 != 0) return false;
+        previous = import;
+    }
+    return true;
+}
+
 bool HostImportOverlaps(const Context& context, std::uint64_t address, std::size_t bytes) {
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
     auto& state = Imports();

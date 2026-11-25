@@ -1704,6 +1704,22 @@ bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat) {
     }
 }
 
+bool StorageSegmentsServe(const Context& context, const GuestTextureResource& descriptor, std::uint64_t guestBytes) {
+    static const bool disabled = std::getenv("APS5_NO_IMPORT_SEGMENT_VIEWS") != nullptr;
+    if (disabled || guestBytes == 0 || !HostImportSegmentsCover(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) return false;
+    try {
+        const auto geometry = DescribeSurface(descriptor);
+        return geometry.guestBytes == guestBytes && StorageBlockUnits(descriptor, geometry);
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool StorageSegmentsServe(const Context& context, const StorageTexture& image) {
+    static const bool disabled = std::getenv("APS5_NO_IMPORT_SEGMENT_VIEWS") != nullptr;
+    return !disabled && image.BlockUnits() && HostImportSegmentsCover(context, image.Descriptor().baseAddress, static_cast<std::size_t>(image.GuestBytes()));
+}
+
 VkFormat HostStorageFormat(const Context& context, VkFormat format) {
     return StorageFormatOrUndefined(context, format);
 }
