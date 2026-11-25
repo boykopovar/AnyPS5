@@ -335,6 +335,20 @@ static void BlockedReceiveEndsAtShutRead() {
 }
 
 #ifdef __linux__
+extern "C" void GuestSocketConnectStartForTests_nid_no_patch(void (*hook)(int descriptor));
+
+static std::atomic<std::int64_t> sendWhileConnectStarts{0};
+static std::atomic<int> sendErrorWhileConnectStarts{0};
+static std::atomic<int> connectWhileConnectStarts{0};
+
+static void SendWhileConnectStarts(int descriptor) {
+    GuestSocketConnectStartForTests_nid_no_patch(nullptr);
+    sendWhileConnectStarts = send_nid_postfix(descriptor, "x", 1, 0);
+    sendErrorWhileConnectStarts = *__error_nid_postfix();
+    const std::array<std::uint8_t, 16> broadcast{16, 2, 0x1f, 0x90, 255, 255, 255, 255};
+    connectWhileConnectStarts = connect_nid_postfix(descriptor, broadcast.data(), broadcast.size());
+}
+
 static void SendDuringConnectFailsNotConnected() {
     constexpr int InProgress = 36;
     constexpr int NotConnected = 57;
@@ -350,8 +364,16 @@ static void SendDuringConnectFailsNotConnected() {
         const int client = socket_nid_postfix(2, 1 | 0x20000000, 0);
         Require(client >= 0);
         clients.push_back(client);
-        if (connect_nid_postfix(client, address.data(), address.size()) == 0) continue;
-        Require(*__error_nid_postfix() == InProgress);
+        sendWhileConnectStarts = 0;
+        connectWhileConnectStarts = 0;
+        GuestSocketConnectStartForTests_nid_no_patch(SendWhileConnectStarts);
+        const int connected = connect_nid_postfix(client, address.data(), address.size());
+        const int connectError = *__error_nid_postfix();
+        GuestSocketConnectStartForTests_nid_no_patch(nullptr);
+        Require(sendWhileConnectStarts == -1 && sendErrorWhileConnectStarts == NotConnected);
+        Require(connectWhileConnectStarts == -1);
+        if (connected == 0) continue;
+        Require(connectError == InProgress);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         std::array<std::uint8_t, 16> peer{};
         std::uint32_t peerSize = peer.size();

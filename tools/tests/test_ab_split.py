@@ -488,6 +488,7 @@ class ProgramKeyTests(unittest.TestCase):
     def test_program_key_lowercases_and_strips_leading_zeros(self):
         self.assertEqual(ab_split.program_key("0x1000"), "0x1000")
         self.assertEqual(ab_split.program_key("0xABC"), "0xabc")
+        self.assertEqual(ab_split.program_key("0X00ABC"), "0xabc")
         self.assertEqual(ab_split.program_key("0x0000"), "0x0")
 
     def test_program_key_refuses_a_value_without_the_hex_prefix(self):
