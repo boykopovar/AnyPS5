@@ -37,7 +37,6 @@
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
 #include "prx/libc/include/General.hpp"
 #include "zlib.h"
-#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
@@ -232,18 +231,14 @@ int APS5_VABI uncompress_nid_postfix(std::uint8_t* destination, std::uint64_t* d
     std::uint8_t probe = 0;
     std::uint64_t left = 0;
     {
-        const int savedErrno = errno;
         const bool copiedIn = GuestCopyIn_nid_no_patch(&left, destinationLength, sizeof(left));
-        errno = savedErrno;
         if (!copiedIn) throw std::runtime_error("uncompress: unreadable destination length");
     }
     std::uint64_t remaining = sourceLength;
     std::uint8_t* output = destination;
     if (left) {
         const std::uint64_t zero = 0;
-        const int savedErrno = errno;
         const bool copiedOut = GuestCopyOut_nid_no_patch(destinationLength, &zero, sizeof(zero));
-        errno = savedErrno;
         if (!copiedOut) throw std::runtime_error("uncompress: unwritable destination length");
     } else {
         left = 1;
@@ -269,9 +264,7 @@ int APS5_VABI uncompress_nid_postfix(std::uint8_t* destination, std::uint64_t* d
         produced += space - stream.avail_out;
     } while (result == Z_OK);
     if (output != &probe) {
-        const int savedErrno = errno;
         const bool copiedOut = GuestCopyOut_nid_no_patch(destinationLength, &produced, sizeof(produced));
-        errno = savedErrno;
         if (!copiedOut) {
             inflateEnd(&stream);
             throw std::runtime_error("uncompress: unwritable destination length");
