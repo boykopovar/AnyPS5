@@ -570,6 +570,8 @@ public:
     bool isFocused = false;
     bool isVisible = false;
     SizeValue size{ 0.0, 0.0 };
+    Retained<AccessibilityObject> accessibilityRootObject;
+    Retained<AccessibilityObject> accessibilityFocusedObject;
 };
 
 class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {

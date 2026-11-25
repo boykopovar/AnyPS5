@@ -9183,18 +9183,6 @@ int APS5_VABI WKUserMediaPermissionCheckSetUserMediaAccessInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKViewAccessibilityFocusedObject() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKViewAccessibilityHitTest() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKViewAccessibilityRootObject() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKViewCreate() {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -616,6 +616,9 @@ bool APS5_VABI WKUserContentURLPatternMatchesURL(const void* urlPatternRef, cons
 std::uint32_t APS5_VABI WKUserMediaPermissionCheckGetTypeID();
 std::uint32_t APS5_VABI WKUserMediaPermissionRequestGetTypeID();
 std::uint32_t APS5_VABI WKUserScriptGetTypeID();
+const void* APS5_VABI WKViewAccessibilityFocusedObject(const void* viewRef);
+const void* APS5_VABI WKViewAccessibilityHitTest(const void* viewRef, NKWebKit::PointValue point);
+const void* APS5_VABI WKViewAccessibilityRootObject(const void* viewRef);
 void APS5_VABI WKViewDidEnterFullScreen(const void* viewRef);
 void APS5_VABI WKViewDidExitFullScreen(const void* viewRef);
 double APS5_VABI WKViewGetPageScaleFactor(const void* viewRef);
