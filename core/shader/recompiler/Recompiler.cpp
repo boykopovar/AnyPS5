@@ -2,6 +2,8 @@
 #include "Recompiler.hpp"
 #include "RdnaDecoder/DiagnosticSink.hpp"
 #include "StencilReplay.hpp"
+#include <deque>
+#include <limits>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -36,6 +38,7 @@
 #include "Optimization/include/Optimization/DenormalFlushEliminator.hpp"
 #include "Optimization/include/Optimization/DescriptorBindingBuilder.hpp"
 #include "Optimization/include/Optimization/HostInterpolationChecker.hpp"
+#include "Optimization/include/Optimization/ImageOverwriteProof.hpp"
 #include "Optimization/include/Optimization/MaskedSelectEliminator.hpp"
 #include "Optimization/include/Optimization/NanPayloadEliminator.hpp"
 #include "Optimization/include/Optimization/ReadLaneEliminator.hpp"
@@ -409,6 +412,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     resourceTracker.Track(program);
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
+    if (inputInfo.compute != nullptr) ProveImageOverwrites(program, {inputInfo.compute->threadsNum[0], inputInfo.compute->threadsNum[1], inputInfo.compute->threadsNum[2]});
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
     program.Resources().maxImageArrayLayers = request.target.maxImageArrayLayers;
     if (request.context.convertedSamples) {
@@ -450,7 +454,7 @@ struct EmissionFailure {
 };
 
 constexpr std::size_t ResultMemoSets = 64;
-constexpr std::size_t ResultMemoWays = 4;
+constexpr std::size_t ResultMemoWays = 16;
 using ResultMemoTable = std::array<ResultMemoEntry, ResultMemoSets * ResultMemoWays>;
 
 struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
@@ -1121,6 +1125,28 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
     return materialized;
 }
 
+void keepSpecializedWords(const SharedSpirv& spirv) {
+    static const std::uint64_t budget = [] {
+        const char* text = std::getenv("APS5_KEEP_SPECIALIZED_MIB");
+        if (text == nullptr) return std::uint64_t{0};
+        char* end = nullptr;
+        const auto mib = std::strtoull(text, &end, 0);
+        if (end == text || *end != '\0') throw std::runtime_error("ShaderRecompiler: APS5_KEEP_SPECIALIZED_MIB must be a whole number of MiB");
+        return std::min<std::uint64_t>(mib, std::numeric_limits<std::uint64_t>::max() >> 20u) << 20u;
+    }();
+    if (budget == 0u || spirv.empty()) return;
+    static std::mutex mutex;
+    static std::deque<SharedSpirv> kept;
+    static std::uint64_t bytes = 0;
+    std::lock_guard lock(mutex);
+    kept.push_back(spirv);
+    bytes += spirv.size() * sizeof(std::uint32_t);
+    while (bytes > budget && !kept.empty()) {
+        bytes -= kept.front().size() * sizeof(std::uint32_t);
+        kept.pop_front();
+    }
+}
+
 SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
     auto materialized = specializeWords(artifact, classes, constants, target);
     auto module = std::make_shared<SpecializedModule>();
@@ -1149,6 +1175,7 @@ SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, 
     module->hash = spirv.ContentHash();
     module->spirv = spirv.Weaken();
     module->specializationId = constants.empty() ? 0u : nextVariantId();
+    keepSpecializedWords(spirv);
     return {std::move(module), std::move(spirv)};
 }
 
@@ -1158,6 +1185,7 @@ SharedSpirv specializedWords(const SpecializedModule& module, const CompiledShad
     auto spirv = InternSpirv(specializeWords(artifact, classes, constants, target));
     if (spirv.ContentHash() != module.hash) throw std::runtime_error("ShaderRecompiler: a specialized module built again from its key differs from its first build");
     module.spirv = spirv.Weaken();
+    keepSpecializedWords(spirv);
     return spirv;
 }
 
@@ -1367,6 +1395,25 @@ void recordMemoPatch(MemoPatch& patch, const DescriptorBindingPlan& plan, const 
         for (const auto reg : layout.userDataRegisters) patch.userWords.push_back(reg - variant.info.userDataBase);
     }
     patch.valid = layout.userDataRegisters.size() <= layout.DispatchThreadLimitDword() && (patch.userWords.empty() || patch.pushData || patch.shaderData != MemoPatch::NoBinding);
+}
+
+void dumpFinalSpirv(const RecompileRequest& request, const RecompileResult& result) {
+    static const std::string list = [] { const char* text = std::getenv("APS5_DUMP_SPIRV"); return text ? std::string(text) : std::string(); }();
+    const auto words = result.spirv.Words();
+    if (list.empty() || words.empty()) return;
+    char address[32];
+    std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(request.shader.codeAddress));
+    if (list != "all" && list.find(address) == std::string::npos) return;
+    char path[128];
+    std::snprintf(path, sizeof(path), "spirv-%d-%s.spv", static_cast<int>(request.shader.stage), address);
+    static std::mutex mutex;
+    std::lock_guard lock(mutex);
+    auto* file = std::fopen(path, "wb");
+    if (file == nullptr) throw std::runtime_error("cannot open SPIR-V dump " + std::string(path));
+    const auto written = std::fwrite(words.data(), sizeof(std::uint32_t), words.size(), file);
+    const auto closed = std::fclose(file);
+    if (written != words.size() || closed != 0) throw std::runtime_error("cannot write SPIR-V dump " + std::string(path));
+    std::fprintf(stderr, "==== SPIR-V 0x%s written to %s\n", address, path);
 }
 
 bool declaresAtomicLockTable(std::span<const std::uint32_t> words) {
@@ -1607,6 +1654,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         result.imageTableShader = snapshot.tables.shader;
         result.imageTableFaults = tables.faults;
     }
+    dumpFinalSpirv(request, result);
     return result;
 }
 
@@ -1925,7 +1973,7 @@ std::uint64_t vectorBytes(const ElementFlags& values) {
 }
 
 std::uint64_t descriptorBindingBytes(const DescriptorBinding& binding) {
-    return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.imageShapes) + vectorBytes(binding.imageSamplers) + vectorBytes(binding.bufferExtent) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) + vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) + vectorBytes(binding.imageUintStorage) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) + vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) + vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.bufferRead);
+    return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.imageShapes) + vectorBytes(binding.imageSamplers) + vectorBytes(binding.bufferExtent) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) + vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) + vectorBytes(binding.imageUintStorage) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) + vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) + vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.bufferRead) + vectorBytes(binding.imageOverwrites);
 }
 
 std::uint64_t resultBytes(const RecompileResult& result) {
@@ -2507,7 +2555,7 @@ bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& 
     const auto words = prepared.ShaderDataDwords();
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
     const auto dataSize = !handle.artifact->artifact.stencilReferences.empty() && pushSize != 0u ? pushSize - 1u : pushSize;
-    const bool usesPush = prepared.runtimeImageCount == 0u && words != 0u && words <= dataSize;
+    const bool usesPush = words != 0u && words <= dataSize;
     if (prepared.UsesPushData() != usesPush) return false;
     if (!handle.artifact->artifact.stencilReferences.empty() && (prepared.stencilReferenceDword >= layout.pushConstantSizeBytes / 4u || prepared.stencilReferenceDword != (usesPush ? words : 0u))) return false;
     if (!std::ranges::equal(key, handle.staticKey) || handle.source->code.size() != request.shader.code.size()) return false;

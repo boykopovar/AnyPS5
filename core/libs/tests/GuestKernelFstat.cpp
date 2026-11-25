@@ -13,6 +13,16 @@
 #include <fstream>
 #include <string>
 #include <system_error>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <sys/stat.h>
+#endif
 
 namespace {
 
@@ -246,6 +256,99 @@ void AuditPipeAndSocketModes() {
     Require(close_nid_postfix(sock) == 0, "close socket failed");
 }
 
+void AuditNativeFstatModeAttributes() {
+    const auto uniqueSuffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const std::filesystem::path tempDir = std::filesystem::path("anyps5-fstat-mode-" + uniqueSuffix);
+    std::filesystem::remove_all(tempDir);
+    Require(std::filesystem::create_directories(tempDir), "create mode fixture directory failed");
+    const std::filesystem::path tempFile = tempDir / "sample.bin";
+    const std::string tempFileStr = tempFile.string();
+    {
+        std::ofstream output(tempFile, std::ios::binary);
+        Require(output.is_open(), "create mode fixture file failed");
+        output << "abc";
+    }
+#ifdef _WIN32
+    Require(SetFileAttributesW(tempFile.c_str(), FILE_ATTRIBUTE_NORMAL) != 0, "set writable attributes failed");
+    FileStat writablePathStat{};
+    Require(stat_nid_postfix(tempFileStr.c_str(), &writablePathStat) == 0, "stat writable file failed");
+    Require(writablePathStat.st_mode == 0100666, "writable stat mode must be 0100666");
+
+    const int writableFd = open_nid_postfix(tempFileStr.c_str(), 0, 0);
+    Require(writableFd >= 0, "open writable file failed");
+    FileStat writableFdStat{};
+    FileStat writableSceStat{};
+    const int writableFdRes = fstat_nid_disambig1_nid_postfix(writableFd, &writableFdStat);
+    const int writableSceRes = sceKernelFstat(writableFd, &writableSceStat);
+    Require(close_nid_postfix(writableFd) == 0, "close writable file failed");
+    Require(writableFdRes == 0, "fstat writable file failed");
+    Require(writableSceRes == 0, "sceKernelFstat writable file failed");
+    Require(writableFdStat.st_mode == writablePathStat.st_mode, "writable fstat mode must match stat");
+    Require(writableFdStat.st_mode == 0100666, "writable fstat mode must be 0100666");
+    Require(writableSceStat.st_mode == 0100666, "writable sceKernelFstat mode must be 0100666");
+
+    Require(SetFileAttributesW(tempFile.c_str(), FILE_ATTRIBUTE_READONLY) != 0, "set readonly attributes failed");
+    FileStat readonlyPathStat{};
+    Require(stat_nid_postfix(tempFileStr.c_str(), &readonlyPathStat) == 0, "stat readonly file failed");
+    Require(readonlyPathStat.st_mode == 0100444, "readonly stat mode must be 0100444");
+    Require((readonlyPathStat.st_mode & 0222) == 0, "readonly stat mode must clear write bits");
+
+    const int readonlyFd = open_nid_postfix(tempFileStr.c_str(), 0, 0);
+    Require(readonlyFd >= 0, "open readonly file failed");
+    FileStat readonlyFdStat{};
+    FileStat readonlySceStat{};
+    const int readonlyFdRes = fstat_nid_disambig1_nid_postfix(readonlyFd, &readonlyFdStat);
+    const int readonlySceRes = sceKernelFstat(readonlyFd, &readonlySceStat);
+    Require(close_nid_postfix(readonlyFd) == 0, "close readonly file failed");
+    Require(SetFileAttributesW(tempFile.c_str(), FILE_ATTRIBUTE_NORMAL) != 0, "restore writable attributes failed");
+    Require(readonlyFdRes == 0, "fstat readonly file failed");
+    Require(readonlySceRes == 0, "sceKernelFstat readonly file failed");
+    Require(readonlyFdStat.st_mode == readonlyPathStat.st_mode, "readonly fstat mode must match stat");
+    Require(readonlyFdStat.st_mode == 0100444, "readonly fstat mode must be 0100444");
+    Require((readonlyFdStat.st_mode & 0222) == 0, "readonly fstat mode must clear write bits");
+    Require(readonlySceStat.st_mode == 0100444, "readonly sceKernelFstat mode must be 0100444");
+
+    const HANDLE dirHandle = CreateFileW(
+        tempDir.c_str(),
+        FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS,
+        nullptr);
+    Require(dirHandle != INVALID_HANDLE_VALUE, "open native directory handle failed");
+    const int dirFd = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(dirHandle), _O_RDONLY);
+    if (dirFd < 0) {
+        CloseHandle(dirHandle);
+        Require(false, "_open_osfhandle on directory handle failed");
+    }
+    FileStat dirStat{};
+    const int dirRes = sceKernelFstat(dirFd, &dirStat);
+    ::_close(dirFd);
+    Require(dirRes == 0, "sceKernelFstat on native directory descriptor failed");
+    Require((dirStat.st_mode & 0170000) == 0040000, "native directory fstat mode must indicate S_IFDIR");
+    Require(dirStat.st_blksize == 0x10000, "native directory fstat st_blksize must be 0x10000");
+#else
+    Require(::chmod(tempFileStr.c_str(), 0444) == 0, "chmod readonly failed");
+    FileStat readonlyPathStat{};
+    Require(stat_nid_postfix(tempFileStr.c_str(), &readonlyPathStat) == 0, "stat readonly file failed");
+    Require((readonlyPathStat.st_mode & 0222) == 0, "readonly stat mode must clear write bits");
+
+    const int readonlyFd = open_nid_postfix(tempFileStr.c_str(), 0, 0);
+    Require(readonlyFd >= 0, "open readonly file failed");
+    FileStat readonlyFdStat{};
+    const int readonlyRes = fstat_nid_disambig1_nid_postfix(readonlyFd, &readonlyFdStat);
+    Require(close_nid_postfix(readonlyFd) == 0, "close readonly file failed");
+    Require(::chmod(tempFileStr.c_str(), 0644) == 0, "chmod restore failed");
+    Require(readonlyRes == 0, "fstat readonly file failed");
+    Require(readonlyFdStat.st_mode == readonlyPathStat.st_mode, "readonly fstat mode must match stat");
+    Require((readonlyFdStat.st_mode & 0222) == 0, "readonly fstat mode must clear write bits");
+#endif
+    std::error_code removeError;
+    std::filesystem::remove_all(tempDir, removeError);
+    Require(!removeError, "remove mode fixture directory failed");
+}
+
 } // namespace
 
 int main() {
@@ -255,6 +358,7 @@ int main() {
     AuditValidFileDescriptorModeAndSize();
     AuditFileDynamicSizeGrowth();
     AuditPipeAndSocketModes();
+    AuditNativeFstatModeAttributes();
     std::puts("GuestKernelFstat tests passed");
     return 0;
 }

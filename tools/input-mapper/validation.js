@@ -1,4 +1,4 @@
-import {actions, canonicalChord, canonicalValue, chordButtons, defaults, mouseValues, padButtons, typesForAction, wheelValues} from './mapping.js';
+import {actions, asciiTrim, asciiUpper, canonicalChord, canonicalValue, chordButtons, defaults, mouseValues, padButtons, typesForAction, wheelValues} from './mapping.js';
 import {keyNames} from './keys.js';
 
 export const settings = [
@@ -18,15 +18,17 @@ export const settings = [
     {name: 'ToggleActions', kind: 'padButtons'}
 ];
 
+export const mouseStickTargets = ['Left', 'Right'];
+
 const numberPattern = /^-?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/u;
-const sdlControllerButtons = [
+export const sdlControllerButtons = [
     'a', 'b', 'x', 'y', 'back', 'guide', 'start', 'leftstick', 'rightstick', 'leftshoulder', 'rightshoulder',
     'dpup', 'dpdown', 'dpleft', 'dpright', 'misc1', 'paddle1', 'paddle2', 'paddle3', 'paddle4', 'touchpad'
 ];
-const controllerDestinations = [...chordButtons, 'None'];
+export const controllerDestinations = [...chordButtons, 'None'];
 
 function parseControllerRemap(button, value, used) {
-    const name = typeof button === 'string' ? button.trim() : '';
+    const name = typeof button === 'string' ? asciiTrim(button) : '';
     const source = canonicalValue(name, sdlControllerButtons);
     if (!source) throw new Error(`Unknown SDL controller button '${name}'.`);
     if (used.has(source)) throw new Error(`SDLButton:${source} is set more than once.`);
@@ -37,7 +39,7 @@ function parseControllerRemap(button, value, used) {
 }
 
 export function settingValue(setting, value) {
-    const text = typeof value === 'string' ? value.trim() : '';
+    const text = typeof value === 'string' ? asciiTrim(value) : '';
     if (setting.kind === 'percent') {
         if (!/^-?\d+$/u.test(text) || Number(text) < 0 || Number(text) > 90) return `${setting.name} must be a whole percentage from 0 to 90.`;
         return '';
@@ -48,12 +50,12 @@ export function settingValue(setting, value) {
         return '';
     }
     if (setting.kind === 'stickTarget') {
-        if (canonicalValue(text, ['LEFT', 'RIGHT']) === undefined) return `${setting.name} must be LEFT or RIGHT.`;
+        if (canonicalValue(text, mouseStickTargets) === undefined) return `${setting.name} must be LEFT or RIGHT.`;
         return '';
     }
     if (setting.kind === 'padButtons') {
         for (const part of text.split(',')) {
-            const name = part.trim();
+            const name = asciiTrim(part);
             if (!name) return `${setting.name} has an empty action name.`;
             const action = canonicalValue(name, actions);
             if (action === undefined) return `${setting.name}: unknown action '${name}'.`;
@@ -91,7 +93,7 @@ export function validateSettings(configuration) {
             errors.push({index, message: failure});
         } else {
             seen.add(setting.name);
-            accepted.push({name: setting.name, value: item.value.trim()});
+            accepted.push({name: setting.name, value: asciiTrim(item.value)});
         }
     }
     return {errors, settings: accepted};
@@ -179,13 +181,13 @@ export function parseIni(text) {
     const warnings = [];
     const identities = new Set();
     text.replace(/^\uFEFF/u, '').split('\n').forEach((line, index) => {
-        const content = line.split(/[#;]/u, 1)[0].trim();
+        const content = asciiTrim(line.split(/[#;]/u, 1)[0]);
         if (!content) return;
         const separator = content.indexOf('=');
         const source = content.slice(separator + 1);
         const name = content.slice(0, separator);
         const nameColon = name.indexOf(':');
-        if (separator !== -1 && nameColon !== -1 && name.slice(0, nameColon).trim().toUpperCase() === 'SDLBUTTON') {
+        if (separator !== -1 && nameColon !== -1 && asciiUpper(asciiTrim(name.slice(0, nameColon))) === 'SDLBUTTON') {
             try {
                 controllerRemaps.push(parseControllerRemap(name.slice(nameColon + 1), source, controllerButtons));
             } catch (error) {
@@ -200,7 +202,7 @@ export function parseIni(text) {
             } else {
                 const failure = settingValue(setting, source);
                 if (failure) errors.push({line: index + 1, message: failure});
-                else configuration.push({name: setting.name, value: source.trim()});
+                else configuration.push({name: setting.name, value: asciiTrim(source)});
             }
             return;
         }
@@ -209,7 +211,7 @@ export function parseIni(text) {
             errors.push({line: index + 1, message: 'Expected Action = TYPE:VALUE.'});
             return;
         }
-        const entry = {action: name.trim(), type: source.slice(0, colon), value: source.slice(colon + 1)};
+        const entry = {action: asciiTrim(name), type: source.slice(0, colon), value: source.slice(colon + 1)};
         const result = validate([entry]);
         if (result.errors.length) {
             errors.push(...result.errors.map(error => ({line: index + 1, message: error.message})));
