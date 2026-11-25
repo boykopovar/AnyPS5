@@ -1,5 +1,4 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -16,13 +15,10 @@ static AudioOut2UserHandle g_nextUser = 1;
 static std::unordered_set<AudioOut2UserHandle> g_users;
 
 static bool CopyUserOutput_nid_no_patch(void* destination, const void* value, std::size_t size) {
-    const int savedErrno = errno;
     try {
         const bool copied = GuestCopyOut_nid_no_patch(destination, value, size);
-        errno = savedErrno;
         return copied;
     } catch (...) {
-        errno = savedErrno;
         throw;
     }
 }
