@@ -122,6 +122,11 @@ struct ErrorCode { int reserved; int value; const CategoryObject* category; };
 
 struct SystemErrorObject { ExceptionObject base; ErrorCode code; };
 
+struct LibcxxRegexErrorObject {
+    ExceptionObject base;
+    std::int32_t code;
+};
+
 struct FutureErrorObject { const void* vtable; GuestLocale::String message; ErrorCode code; };
 
 }
@@ -1799,6 +1804,8 @@ const char* APS5_VABI _ZNKSt11regex_error4whatEv_nid_postfix(const LibcException
 void APS5_VABI _ZNSt11regex_errorC1ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);
 void APS5_VABI _ZNSt11regex_errorC2ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);
 LibcException::ExceptionObject* APS5_VABI _ZNSt11regex_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);
+void APS5_VABI _ZNSt3__111regex_errorC1ENS_15regex_constants10error_typeE_nid_postfix(LibcException::LibcxxRegexErrorObject* self, std::int32_t code);
+void APS5_VABI _ZNSt3__111regex_errorD1Ev_nid_postfix(LibcException::LibcxxRegexErrorObject* self) noexcept;
 void APS5_VABI _ZNSt11range_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt11range_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt11range_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self);
