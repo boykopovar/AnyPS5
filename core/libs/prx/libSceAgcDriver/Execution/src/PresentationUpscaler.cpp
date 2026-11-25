@@ -32,9 +32,25 @@ static_assert(sizeof(EasuParameters) <= ParameterBytes);
 
 }
 
-PresentationUpscaler::PresentationUpscaler(const Graphics::Context& context, std::size_t slotCount, float sharpness) : context(context), sharpness(sharpness), slots(slotCount) {
+PresentationUpscaler::PresentationUpscaler(const Graphics::Context& context, std::size_t slotCount, float sharpness, bool dlss, VkInstance instance, VkExtent2D inputExtent, VkExtent2D outputExtent, int dlssQuality)
+    : context(context), sharpness(sharpness), isDlss(dlss), instance(instance), dlssQuality(dlssQuality), slots(slotCount) {
     Graphics::Require(slotCount != 0, "presentation upscaler needs at least one slot");
     Graphics::Require(std::isfinite(sharpness) && sharpness >= 0.0f && sharpness <= 2.0f, "FSR sharpness must be from 0.0 to 2.0 stops");
+    if (isDlss) {
+        if (instance == VK_NULL_HANDLE || !DlssUpscaler::SupportsDevice(instance, context.physical, context.device)) {
+            isDlss = false;
+        }
+    }
+    if (isDlss && inputExtent.width != 0 && inputExtent.height != 0 && outputExtent.width != 0 && outputExtent.height != 0) {
+        try {
+            dlssUpscaler = std::make_unique<DlssUpscaler>(context, instance, inputExtent, outputExtent, dlssQuality, sharpness);
+            dlssInputExtent = inputExtent;
+            dlssOutputExtent = outputExtent;
+        } catch (...) {
+            dlssUpscaler.reset();
+            isDlss = false;
+        }
+    }
     try {
         VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         samplerInfo.magFilter = VK_FILTER_NEAREST;
@@ -83,6 +99,10 @@ PresentationUpscaler::PresentationUpscaler(const Graphics::Context& context, std
     }
 }
 
+PresentationUpscaler::PresentationUpscaler(const Graphics::Context& context, std::size_t slotCount, const UpscaleMode& mode, VkInstance instance, VkExtent2D inputExtent, VkExtent2D outputExtent)
+    : PresentationUpscaler(context, slotCount, mode.sharpness, mode.dlss, instance, inputExtent, outputExtent, mode.dlssQuality) {
+}
+
 PresentationUpscaler::~PresentationUpscaler() {
     release();
 }
@@ -92,6 +112,12 @@ void PresentationUpscaler::release() noexcept {
         Release(i);
         releaseSurface(slots[i].stage);
         releaseSurface(slots[i].upscaled);
+    }
+    releaseSurface(fallbackDepth);
+    releaseSurface(fallbackMotionVectors);
+    if (dlssUpscaler) {
+        dlssUpscaler->Release();
+        dlssUpscaler.reset();
     }
     for (const auto& [key, entry] : targets) {
         if (entry.pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.pipeline, nullptr);
@@ -133,6 +159,7 @@ void PresentationUpscaler::Release(std::size_t index) noexcept {
 }
 
 void PresentationUpscaler::releaseSurface(Surface& surface) noexcept {
+    if (surface.storage) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, surface.storage, nullptr);
     if (surface.sampled) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, surface.sampled, nullptr);
     if (surface.image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, surface.image, nullptr);
     if (surface.memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, surface.memory, nullptr);
@@ -140,12 +167,13 @@ void PresentationUpscaler::releaseSurface(Surface& surface) noexcept {
 }
 
 void PresentationUpscaler::ensureSurface(Surface& surface, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage) {
-    if (surface.image != VK_NULL_HANDLE && surface.format == format && surface.extent.width == extent.width && surface.extent.height == extent.height) return;
+    if (surface.image != VK_NULL_HANDLE && surface.format == format && surface.extent.width == extent.width && surface.extent.height == extent.height && (surface.usage & usage) == usage) return;
     releaseSurface(surface);
     VkFormatProperties properties{};
     context.formatProperties(context.physical, format, &properties);
     VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-    if ((usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) != 0) needed |= VK_FORMAT_FEATURE_BLIT_DST_BIT;
+    if ((usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) != 0 && (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) != 0) needed |= VK_FORMAT_FEATURE_BLIT_DST_BIT;
+    if ((usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0) needed |= VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
     Graphics::Require((properties.optimalTilingFeatures & needed) == needed, "presentation upscaler format cannot be rendered, sampled and blitted to");
     try {
         VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -168,15 +196,108 @@ void PresentationUpscaler::ensureSurface(Surface& surface, VkFormat format, VkEx
         Graphics::Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &surface.memory), "vkAllocateMemory presentation upscaler");
         Graphics::Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, surface.image, surface.memory, 0), "vkBindImageMemory presentation upscaler");
         surface.sampled = createView(surface.image, format, VK_IMAGE_USAGE_SAMPLED_BIT);
+        if ((usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0) {
+            surface.storage = createView(surface.image, format, VK_IMAGE_USAGE_STORAGE_BIT);
+        }
         surface.format = format;
         surface.extent = extent;
+        surface.usage = usage;
     } catch (...) {
         releaseSurface(surface);
         throw;
     }
 }
 
-VkImageView PresentationUpscaler::createView(VkImage image, VkFormat format, VkImageUsageFlags usage) const {
+void PresentationUpscaler::ensureDepthSurface(Surface& surface, VkFormat format, VkExtent2D extent) {
+    if (surface.image != VK_NULL_HANDLE && surface.format == format && surface.extent.width == extent.width && surface.extent.height == extent.height) return;
+    releaseSurface(surface);
+    try {
+        const VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.format = format;
+        imageInfo.extent = {extent.width, extent.height, 1u};
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.usage = usage;
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        Graphics::Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &surface.image), "vkCreateImage presentation upscaler depth");
+        VkMemoryRequirements requirements{};
+        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, surface.image, &requirements);
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Graphics::Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &surface.memory), "vkAllocateMemory presentation upscaler depth");
+        Graphics::Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, surface.image, surface.memory, 0), "vkBindImageMemory presentation upscaler depth");
+        surface.sampled = createView(surface.image, format, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        surface.format = format;
+        surface.extent = extent;
+        surface.usage = usage;
+    } catch (...) {
+        releaseSurface(surface);
+        throw;
+    }
+}
+
+void PresentationUpscaler::ensureFallbackSurfaces(VkCommandBuffer commands, VkExtent2D extent) {
+    if (fallbackDepth.image != VK_NULL_HANDLE && fallbackDepth.extent.width == extent.width && fallbackDepth.extent.height == extent.height) return;
+    releaseSurface(fallbackDepth);
+    releaseSurface(fallbackMotionVectors);
+
+    ensureDepthSurface(fallbackDepth, VK_FORMAT_D32_SFLOAT, extent);
+    ensureSurface(fallbackMotionVectors, VK_FORMAT_R16G16_SFLOAT, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+
+    VkImageMemoryBarrier depthBarrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    depthBarrier.srcAccessMask = 0;
+    depthBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    depthBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depthBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    depthBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    depthBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    depthBarrier.image = fallbackDepth.image;
+    depthBarrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &depthBarrier);
+
+    VkClearDepthStencilValue depthClear{0.0f, 0};
+    VkImageSubresourceRange depthRange{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, fallbackDepth.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &depthClear, 1, &depthRange);
+
+    depthBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    depthBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    depthBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    depthBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &depthBarrier);
+
+    VkImageMemoryBarrier mvecBarrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    mvecBarrier.srcAccessMask = 0;
+    mvecBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    mvecBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    mvecBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    mvecBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    mvecBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    mvecBarrier.image = fallbackMotionVectors.image;
+    mvecBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &mvecBarrier);
+
+    VkClearColorValue mvecClear{};
+    mvecClear.float32[0] = 0.0f;
+    mvecClear.float32[1] = 0.0f;
+    mvecClear.float32[2] = 0.0f;
+    mvecClear.float32[3] = 0.0f;
+    VkImageSubresourceRange mvecRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, fallbackMotionVectors.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &mvecClear, 1, &mvecRange);
+
+    mvecBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    mvecBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    mvecBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    mvecBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &mvecBarrier);
+}
+
+VkImageView PresentationUpscaler::createView(VkImage image, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect) const {
     VkImageViewUsageCreateInfo usageInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     usageInfo.usage = usage;
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -185,10 +306,133 @@ VkImageView PresentationUpscaler::createView(VkImage image, VkFormat format, VkI
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = format;
     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
-    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    viewInfo.subresourceRange = {aspect, 0, 1, 0, 1};
     VkImageView view = VK_NULL_HANDLE;
     Graphics::Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView presentation upscaler");
     return view;
+}
+
+void PresentationUpscaler::recordDlss(VkCommandBuffer commands, std::size_t index, VkImage destination, VkExtent2D extent, VkImageLayout finalLayout, const PresentationBuffers* customBuffers) {
+    Graphics::Require(index < slots.size() && slots[index].stage.image != VK_NULL_HANDLE, "presentation upscaler slot has no stage");
+    Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "presentation upscaler destination is unavailable");
+
+    auto& slot = slots[index];
+    const auto inputExtent = slot.stage.extent;
+
+    if (!dlssUpscaler) {
+        if (instance == VK_NULL_HANDLE || !DlssUpscaler::SupportsDevice(instance, context.physical, context.device)) {
+            isDlss = false;
+            RecordUpscale(commands, index, destination, extent, finalLayout);
+            return;
+        }
+        try {
+            dlssUpscaler = std::make_unique<DlssUpscaler>(context, instance, inputExtent, extent, dlssQuality, sharpness);
+            dlssInputExtent = inputExtent;
+            dlssOutputExtent = extent;
+            firstDlssFrame = true;
+        } catch (...) {
+            dlssUpscaler.reset();
+            isDlss = false;
+            RecordUpscale(commands, index, destination, extent, finalLayout);
+            return;
+        }
+    } else if (dlssInputExtent.width != inputExtent.width || dlssInputExtent.height != inputExtent.height ||
+               dlssOutputExtent.width != extent.width || dlssOutputExtent.height != extent.height) {
+        try {
+            dlssUpscaler->ResetExtents(inputExtent, extent);
+            dlssInputExtent = inputExtent;
+            dlssOutputExtent = extent;
+            firstDlssFrame = true;
+        } catch (...) {
+            dlssUpscaler.reset();
+            isDlss = false;
+            RecordUpscale(commands, index, destination, extent, finalLayout);
+            return;
+        }
+    }
+
+    try {
+        ensureFallbackSurfaces(commands, inputExtent);
+
+        const auto sourceLayout = slot.stage.layout;
+        VkImageMemoryBarrier colorBarrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        colorBarrier.srcAccessMask = sourceLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ? VK_ACCESS_TRANSFER_WRITE_BIT : (VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        colorBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        colorBarrier.oldLayout = sourceLayout;
+        colorBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        colorBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        colorBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        colorBarrier.image = slot.stage.image;
+        colorBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        const VkPipelineStageFlags colorSrcStage = sourceLayout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : (VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, colorSrcStage, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &colorBarrier);
+        slot.stage.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkImageMemoryBarrier destBarrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        const auto destLayout = (destination == slot.upscaled.image) ? slot.upscaled.layout : VK_IMAGE_LAYOUT_UNDEFINED;
+        destBarrier.srcAccessMask = destLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : (VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        destBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        destBarrier.oldLayout = destLayout;
+        destBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        destBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        destBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        destBarrier.image = destination;
+        destBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        const VkPipelineStageFlags destSrcStage = destLayout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : (VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, destSrcStage, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &destBarrier);
+        if (destination == slot.upscaled.image) slot.upscaled.layout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkImageView destView = VK_NULL_HANDLE;
+        if (destination == slot.upscaled.image && slot.upscaled.storage != VK_NULL_HANDLE) {
+            destView = slot.upscaled.storage;
+        } else {
+            destView = createView(destination, slot.stage.format, VK_IMAGE_USAGE_STORAGE_BIT);
+            slot.transient.emplace_back(destView, VK_NULL_HANDLE);
+        }
+
+        DlssParameters params;
+        params.color = (customBuffers && customBuffers->color != VK_NULL_HANDLE) ? customBuffers->color : slot.stage.sampled;
+        params.colorImage = (customBuffers && customBuffers->colorImage != VK_NULL_HANDLE) ? customBuffers->colorImage : slot.stage.image;
+        params.colorFormat = (customBuffers && customBuffers->colorFormat != VK_FORMAT_UNDEFINED) ? customBuffers->colorFormat : slot.stage.format;
+
+        params.depth = (customBuffers && customBuffers->depth != VK_NULL_HANDLE) ? customBuffers->depth : fallbackDepth.sampled;
+        params.depthImage = (customBuffers && customBuffers->depthImage != VK_NULL_HANDLE) ? customBuffers->depthImage : fallbackDepth.image;
+        params.depthFormat = (customBuffers && customBuffers->depthFormat != VK_FORMAT_UNDEFINED) ? customBuffers->depthFormat : fallbackDepth.format;
+
+        params.motionVectors = (customBuffers && customBuffers->motionVectors != VK_NULL_HANDLE) ? customBuffers->motionVectors : fallbackMotionVectors.sampled;
+        params.motionVectorsImage = (customBuffers && customBuffers->motionVectorsImage != VK_NULL_HANDLE) ? customBuffers->motionVectorsImage : fallbackMotionVectors.image;
+        params.motionVectorsFormat = (customBuffers && customBuffers->motionVectorsFormat != VK_FORMAT_UNDEFINED) ? customBuffers->motionVectorsFormat : fallbackMotionVectors.format;
+
+        params.destination = destView;
+        params.destinationImage = destination;
+        params.destinationFormat = slot.stage.format;
+
+        params.inputExtent = inputExtent;
+        params.outputExtent = extent;
+        params.jitterX = customBuffers ? customBuffers->jitterX : 0.0f;
+        params.jitterY = customBuffers ? customBuffers->jitterY : 0.0f;
+        params.reset = (customBuffers && customBuffers->reset) || firstDlssFrame;
+        firstDlssFrame = false;
+
+        dlssUpscaler->RecordUpscale(commands, params);
+
+        VkImageMemoryBarrier postBarrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        postBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        postBarrier.dstAccessMask = finalLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_ACCESS_SHADER_READ_BIT : (VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        postBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        postBarrier.newLayout = finalLayout;
+        postBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        postBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        postBarrier.image = destination;
+        postBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VkPipelineStageFlags dstStage = finalLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT;
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dstStage, 0, 0, nullptr, 0, nullptr, 1, &postBarrier);
+        if (destination == slot.upscaled.image) slot.upscaled.layout = finalLayout;
+    } catch (...) {
+        dlssUpscaler.reset();
+        isDlss = false;
+        RecordUpscale(commands, index, destination, extent, finalLayout);
+    }
 }
 
 VkImage PresentationUpscaler::Stage(std::size_t index, VkFormat format, VkExtent2D extent) {
@@ -201,29 +445,35 @@ VkImage PresentationUpscaler::Stage(std::size_t index, VkFormat format, VkExtent
 
 void PresentationUpscaler::RecordStageTransferDestination(VkCommandBuffer commands, std::size_t index) {
     Graphics::Require(index < slots.size() && slots[index].stage.image != VK_NULL_HANDLE, "presentation upscaler slot has no stage");
+    auto& slot = slots[index];
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.srcAccessMask = slot.stage.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_ACCESS_SHADER_READ_BIT : (slot.stage.layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ? VK_ACCESS_TRANSFER_WRITE_BIT : 0);
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.oldLayout = slot.stage.layout;
     barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = slots[index].stage.image;
+    barrier.image = slot.stage.image;
     barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    const VkPipelineStageFlags srcStage = slot.stage.layout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : (VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, srcStage, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    slot.stage.layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 }
 
 void PresentationUpscaler::RecordStageWritten(VkCommandBuffer commands, std::size_t index, VkImageLayout layout, VkPipelineStageFlags stage, VkAccessFlags access) {
     Graphics::Require(index < slots.size() && slots[index].stage.image != VK_NULL_HANDLE, "presentation upscaler slot has no stage");
+    auto& slot = slots[index];
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.srcAccessMask = access;
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    barrier.oldLayout = layout;
+    barrier.oldLayout = slot.stage.layout != VK_IMAGE_LAYOUT_UNDEFINED ? slot.stage.layout : layout;
     barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = slots[index].stage.image;
+    barrier.image = slot.stage.image;
     barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, stage, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, stage, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    slot.stage.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
 
 const PresentationUpscaler::Target& PresentationUpscaler::target(VkFormat format, VkImageLayout finalLayout, Filter filter) {
@@ -345,7 +595,6 @@ void PresentationUpscaler::draw(VkCommandBuffer commands, const Target& entry, V
     begin.framebuffer = framebuffer;
     begin.renderArea = {{0, 0}, extent};
     context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    // Not tracked across passes: suppress = false makes the state emit every command, as before.
     Graphics::CommandState recording;
     recording.Begin(commands, false);
     const VkDynamicState dynamicStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
@@ -361,6 +610,10 @@ void PresentationUpscaler::draw(VkCommandBuffer commands, const Target& entry, V
 }
 
 void PresentationUpscaler::RecordUpscale(VkCommandBuffer commands, std::size_t index, VkImage destination, VkExtent2D extent, VkImageLayout finalLayout) {
+    if (isDlss) {
+        recordDlss(commands, index, destination, extent, finalLayout, nullptr);
+        return;
+    }
     Graphics::Require(index < slots.size() && slots[index].stage.image != VK_NULL_HANDLE, "presentation upscaler slot has no stage");
     Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "presentation upscaler destination is unavailable");
     auto& slot = slots[index];
@@ -369,9 +622,14 @@ void PresentationUpscaler::RecordUpscale(VkCommandBuffer commands, std::size_t i
     bindSource(slot.easuSet, slot.stage.sampled);
     const EasuParameters parameters{static_cast<float>(slot.stage.extent.width), static_cast<float>(slot.stage.extent.height), static_cast<float>(extent.width), static_cast<float>(extent.height)};
     draw(commands, entry, framebuffer, extent, slot.easuSet, &parameters, sizeof(parameters));
+    if (destination == slot.upscaled.image) slot.upscaled.layout = finalLayout;
 }
 
 void PresentationUpscaler::RecordPresent(VkCommandBuffer commands, std::size_t index, std::uint32_t width, std::uint32_t height, VkImage destination, VkExtent2D extent, VkImageLayout finalLayout) {
+    RecordPresent(commands, index, width, height, destination, extent, finalLayout, {});
+}
+
+void PresentationUpscaler::RecordPresent(VkCommandBuffer commands, std::size_t index, std::uint32_t width, std::uint32_t height, VkImage destination, VkExtent2D extent, VkImageLayout finalLayout, const PresentationBuffers& buffers) {
     Graphics::Require(index < slots.size() && slots[index].stage.image != VK_NULL_HANDLE, "presentation upscaler slot has no stage");
     Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "presentation upscaler destination is unavailable");
     auto& slot = slots[index];
@@ -381,8 +639,12 @@ void PresentationUpscaler::RecordPresent(VkCommandBuffer commands, std::size_t i
     VkImageView sharpened = slot.stage.sampled;
     if (Upscales(width, height, extent)) {
         const VkExtent2D upscaled{rect.width, rect.height};
-        ensureSurface(slot.upscaled, slot.stage.format, upscaled, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
-        RecordUpscale(commands, index, slot.upscaled.image, upscaled, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        ensureSurface(slot.upscaled, slot.stage.format, upscaled, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (isDlss ? VK_IMAGE_USAGE_STORAGE_BIT : 0));
+        if (isDlss) {
+            recordDlss(commands, index, slot.upscaled.image, upscaled, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, &buffers);
+        } else {
+            RecordUpscale(commands, index, slot.upscaled.image, upscaled, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
         sharpened = slot.upscaled.sampled;
     }
     const auto& entry = target(slot.stage.format, finalLayout, Filter::Rcas);

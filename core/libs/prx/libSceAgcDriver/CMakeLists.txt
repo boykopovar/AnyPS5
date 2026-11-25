@@ -457,6 +457,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationPass.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationUpscaler.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/DlssUpscaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceOverlay.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/KeyboardOverlay.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PadStatusOverlay.cpp
@@ -1012,6 +1013,8 @@ if(AGC_BUILD_VISUAL_TEST)
             libc
             libkernel
             jpeg_turbo
+            libzstd_static
+            ${CMAKE_DL_LIBS}
     )
     add_dependencies(agc_driver_visual_test agc_trace_revision)
 
