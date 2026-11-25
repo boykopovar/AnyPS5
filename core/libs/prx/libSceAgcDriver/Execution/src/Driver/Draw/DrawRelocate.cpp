@@ -205,8 +205,6 @@ void Driver::learnPendingRelocation() {
     learnRelocation(pending);
 }
 
-// Under drawCacheMutex. The entry of `pending.key` is read as cached: on the worker at the next draw's lookup, or on
-// the draw finisher right after the job that cached it.
 void Driver::learnRelocation(const DrawRelocationPending& pending) {
     if (pending.key == 0) return;
     const auto inserted = drawCache.find(pending.key);

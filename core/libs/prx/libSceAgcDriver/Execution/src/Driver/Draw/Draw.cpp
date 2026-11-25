@@ -133,7 +133,6 @@ struct DrawTail {
     Pm4::DrawParameters drawParameters{};
     Pm4::DrawParameters resolvedParameters{};
     std::vector<DrawUserPatch> userPatches;
-    // The relocation this draw's cache miss leaves to be learned once its entry is cached (see Driver::learnRelocation).
     DrawRelocationPending relocationPending;
     bool pipelined = false;
     bool traceIndirect = false;
@@ -775,7 +774,6 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         tail.packetOffset = static_cast<std::size_t>(packet.data() - submission.commands.data());
         noteFinisherHandOff(true);
         if (tail.relocationPending.key != 0) {
-            // The finisher learns it after its job caches the entry, so the next draw does not drain the finisher for it.
             std::lock_guard cacheLock(drawCacheMutex);
             drawRelocationPending = {};
         }
