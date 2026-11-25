@@ -54,6 +54,17 @@ void JxrWmpReferenceMetadata(void* value, const char* software, uint16_t rating,
     }
 }
 
+void JxrWmpReferenceSetCaption(void* value, uint16_t* caption) {
+    DESCRIPTIVEMETADATA* metadata = (DESCRIPTIVEMETADATA*)value;
+    metadata->pvarCaption.vt = DPKVT_LPWSTR;
+    metadata->pvarCaption.VT.pwszVal = caption;
+}
+
+const uint16_t* JxrWmpReferenceCaption(const void* value) {
+    const DESCRIPTIVEMETADATA* metadata = (const DESCRIPTIVEMETADATA*)value;
+    return metadata->pvarCaption.vt == DPKVT_LPWSTR ? metadata->pvarCaption.VT.pwszVal : NULL;
+}
+
 const char* JxrWmpReferenceSoftware(const void* value) {
     const DESCRIPTIVEMETADATA* metadata = (const DESCRIPTIVEMETADATA*)value;
     return metadata->pvarSoftware.vt == DPKVT_LPSTR ? metadata->pvarSoftware.VT.pszVal : NULL;
