@@ -16,6 +16,17 @@ std::atomic<bool> publishedFocus{true};
 bool muteAudioInOnFocusLoss = false;
 std::atomic<std::uint64_t> publishedAudioInMuteState{0};
 
+HostVolume parseHostVolumeConfig(const char* initialVolume, const char* muteOnFocusLoss) {
+    HostVolume fresh;
+    if (initialVolume != nullptr) fresh.SetVolume(ParseHostVolumeLevel("ANYPS5_VOLUME", initialVolume));
+    if (muteOnFocusLoss != nullptr) fresh.SetMuteOnFocusLoss(ParseHostVolumeFlag("ANYPS5_MUTE_ON_FOCUS_LOSS", muteOnFocusLoss));
+    return fresh;
+}
+
+bool parseHostAudioInConfig(const char* muteOnFocusLoss) {
+    return muteOnFocusLoss != nullptr && ParseHostVolumeFlag("ANYPS5_AUDIO_IN_MUTE_ON_FOCUS_LOSS", muteOnFocusLoss);
+}
+
 void publish() {
     publishedGain.store(state.Gain(), std::memory_order_release);
     publishedFocus.store(state.Focused(), std::memory_order_release);
@@ -49,17 +60,19 @@ bool HostVolumeFocus_nid_no_patch(bool focused, HostVolume* after) {
 }
 
 void HostVolumeConfigure_nid_no_patch(const char* initialVolume, const char* muteOnFocusLoss) {
-    HostVolume fresh;
-    if (initialVolume != nullptr) fresh.SetVolume(ParseHostVolumeLevel("ANYPS5_VOLUME", initialVolume));
-    if (muteOnFocusLoss != nullptr) fresh.SetMuteOnFocusLoss(ParseHostVolumeFlag("ANYPS5_MUTE_ON_FOCUS_LOSS", muteOnFocusLoss));
+    const HostVolume fresh = parseHostVolumeConfig(initialVolume, muteOnFocusLoss);
     std::lock_guard lock(stateMutex);
     state = fresh;
     publish();
 }
 
 void HostVolumeConfigureFromEnvironment_nid_no_patch() {
-    HostVolumeConfigure_nid_no_patch(std::getenv("ANYPS5_VOLUME"), std::getenv("ANYPS5_MUTE_ON_FOCUS_LOSS"));
-    HostAudioInConfigure_nid_no_patch(std::getenv("ANYPS5_AUDIO_IN_MUTE_ON_FOCUS_LOSS"));
+    const HostVolume fresh = parseHostVolumeConfig(std::getenv("ANYPS5_VOLUME"), std::getenv("ANYPS5_MUTE_ON_FOCUS_LOSS"));
+    const bool audioInEnabled = parseHostAudioInConfig(std::getenv("ANYPS5_AUDIO_IN_MUTE_ON_FOCUS_LOSS"));
+    std::lock_guard lock(stateMutex);
+    state = fresh;
+    muteAudioInOnFocusLoss = audioInEnabled;
+    publish();
 }
 
 std::uint32_t HostVolumeGain_nid_no_patch() {
@@ -71,7 +84,7 @@ bool HostVolumeFocused_nid_no_patch() {
 }
 
 void HostAudioInConfigure_nid_no_patch(const char* muteOnFocusLoss) {
-    const bool enabled = muteOnFocusLoss != nullptr && ParseHostVolumeFlag("ANYPS5_AUDIO_IN_MUTE_ON_FOCUS_LOSS", muteOnFocusLoss);
+    const bool enabled = parseHostAudioInConfig(muteOnFocusLoss);
     std::lock_guard lock(stateMutex);
     muteAudioInOnFocusLoss = enabled;
     publish();

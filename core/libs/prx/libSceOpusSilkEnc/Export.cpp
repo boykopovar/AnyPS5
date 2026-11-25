@@ -3,6 +3,7 @@
 #include "prx/libSceOpusCeltEnc/include/OpusEncoder.hpp"
 #include <array>
 #include <cerrno>
+#include <cstdarg>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -141,7 +142,18 @@ int APS5_VABI sceOpusSilkEncCtl(OpusSilkEncoder* state, int request, ...) {
     if (state == nullptr) return encoderError(codes.nullErrorOffset);
     if (!hasStateMarker(state)) return encoderError(codes.destroyStateErrorOffset);
     if (!knownRequest(request)) return encoderError(requestErrorOffset);
-    NotImplemented_nid_no_patch(__func__);
+#ifdef _WIN32
+    __builtin_sysv_va_list list;
+    __builtin_sysv_va_start(list, request);
+    const std::int32_t value = OpusEncoderLibrary::ReadCtlValue(request, [&] { return __builtin_va_arg(list, int); });
+    __builtin_sysv_va_end(list);
+#else
+    std::va_list list;
+    va_start(list, request);
+    const std::int32_t value = OpusEncoderLibrary::ReadCtlValue(request, [&] { return va_arg(list, int); });
+    va_end(list);
+#endif
+    return library.Ctl(state, request, value);
 }
 
 int APS5_VABI sceOpusSilkEncCancel(OpusSilkEncoder* state, std::uint32_t batchId) {
@@ -152,7 +164,7 @@ int APS5_VABI sceOpusSilkEncCancel(OpusSilkEncoder* state, std::uint32_t batchId
 
 int APS5_VABI sceOpusSilkEncEncodeWithPriority(OpusSilkEncoder* state, const std::int16_t* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
     if (const int result = priorityEncodeError(state, samples, frameSize, data, maxDataBytes, priority); result != 0) return result;
-    NotImplemented_nid_no_patch(__func__);
+    return library.Encode(state, samples, frameSize, data, maxDataBytes);
 }
 
 int APS5_VABI sceOpusSilkEncEncodeFloatWithPriority(OpusSilkEncoder* state, const float* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
