@@ -8,7 +8,6 @@
 #include FT_TRUETYPE_TABLES_H
 
 #include <algorithm>
-#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -20,26 +19,20 @@ using namespace FreeType;
 namespace {
 
 bool CopyGuestIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
 bool GuestBufferWritable(void* destination, std::size_t bytes) {
-    const int savedErrno = errno;
     GuestArena::HostWrite write(destination, bytes);
     const bool writable = write.Open() && GuestWritable_nid_no_patch(destination, bytes);
-    errno = savedErrno;
     return writable;
 }
 
 bool CopyGuestOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     GuestArena::HostWrite write(destination, bytes);
     const bool copied = write.Open() && GuestWritable_nid_no_patch(destination, bytes)
         && GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
