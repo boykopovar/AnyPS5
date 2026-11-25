@@ -296,6 +296,19 @@ void Pkcs7ObjectFree() {
     PKCS7_free_nid_postfix(stackPkcs7);
     Require(stackObj.data == nullptr && stackObj.length == 0);
     Require(allocations.empty() && zeroed.empty());
+
+    auto* stackShortName = static_cast<char*>(Allocate_nid_no_patch(3));
+    std::memcpy(stackShortName, "ss", 3);
+    auto* stackLongName = static_cast<char*>(Allocate_nid_no_patch(3));
+    std::memcpy(stackLongName, "sl", 3);
+    Asn1Object_nid_no_patch stackNamesObj{stackShortName, stackLongName, 0, 0, nullptr, 0x04};
+    auto* stackNamesPkcs7 = static_cast<LibreSsl3Pkcs7*>(Allocate_nid_no_patch(sizeof(LibreSsl3Pkcs7)));
+    *stackNamesPkcs7 = {};
+    stackNamesPkcs7->type = &stackNamesObj;
+
+    PKCS7_free_nid_postfix(stackNamesPkcs7);
+    Require(stackNamesObj.shortName == nullptr && stackNamesObj.longName == nullptr);
+    Require(allocations.empty() && zeroed.empty());
 }
 
 }
