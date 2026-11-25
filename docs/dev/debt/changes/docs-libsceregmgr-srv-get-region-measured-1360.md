@@ -1,0 +1,5 @@
+# libSceRegMgr
+
+## change [sceRegMgrSrvGetRegion](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr)
+
+- [sceRegMgrSrvGetRegion](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - known contract: [voldemort](https://github.com/exhaustiblewizard/voldemort/blob/master/src/libs/libRegMgr.cpp) IDA notes record the PS4 export forwarding `__sys_regmgr_call(cmd=18,...)` and returning the console region code, which the PS4 SceShellCore caller accepts as any non-negative value (NID `sywg-RnhZMA`, same NID in the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/cf6eede3f664e01874638f09484324b7/libSceRegMgr.c)). A PS5 Pro payload process (13.60, a board whose `sceRegMgrSrvGetRegionStr` writes `J1`) returned `1` in two calls and wrote nothing to a sentinel-filled buffer, so the code is the return value; the region value is per-console state and the rest of the mapping is unmeasured, so the export retains `NotImplemented_nid_no_patch`. A title process was not measured

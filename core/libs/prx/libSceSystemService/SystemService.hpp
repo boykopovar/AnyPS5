@@ -25,6 +25,8 @@ constexpr std::size_t SYSTEM_SERVICE_TITLE_ID_LENGTH = 9;
 constexpr int LNC_UTIL_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80940005u);
 constexpr int LNC_UTIL_ERROR_GAME_PROCESS = static_cast<int>(0x8094000fu);
 constexpr int SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80e30003u);
+constexpr int APP_MESSAGING_ERROR_NULL_POINTER = static_cast<int>(0x80c50004u);
+constexpr int APP_MESSAGING_ERROR_NO_MESSAGE = static_cast<int>(0x80c50005u);
 
 constexpr int SYSTEM_SERVICE_PARAM_ID_LANG = 1;
 constexpr int SYSTEM_SERVICE_PARAM_ID_DATE_FORMAT = 2;

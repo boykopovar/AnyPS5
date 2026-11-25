@@ -904,7 +904,7 @@ private:
         DescriptorSource heapSource;
         std::uint32_t heapIndex = 0;
         if (!MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) {
-            if (sampler || address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource || !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return false;
+            if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource || !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return false;
             const auto sameHandle = [&](const IrValue* user) {
                 if (user->Opcode() != handle.Opcode() || user->ArgumentCount() != handle.ArgumentCount()) return false;
                 for (std::uint32_t argument = 0; argument < handle.ArgumentCount(); argument++) {
@@ -968,10 +968,25 @@ private:
         return true;
     }
 
-    IrValue* PointerRecordOrigin(IrValue* value) const {
+    static bool LaneMaskWord(const IrValue& value) {
+        return value.Opcode() == IrOpcode::CompositeExtractU32x4 && value.ArgumentCount() == 2u && value.Argument(0)->Resolve()->Opcode() == IrOpcode::Ballot && value.Argument(1)->Resolve()->HasImmediate();
+    }
+
+    bool SameRecordColumn(IrValue& first, IrValue& second) const {
+        IrValue* firstKey = nullptr;
+        IrValue* secondKey = nullptr;
+        std::uint32_t firstStride = 0;
+        std::uint32_t firstAddend = 0;
+        std::uint32_t secondStride = 0;
+        std::uint32_t secondAddend = 0;
+        return EquivalentValue(m_program.Resources(), first.Argument(0), second.Argument(0)) && MatchAffineOffset(first.Argument(1), firstKey, firstStride, firstAddend) && MatchAffineOffset(second.Argument(1), secondKey, secondStride, secondAddend) && firstStride == secondStride && firstAddend == secondAddend;
+    }
+
+    IrValue* PointerRecordOrigin(IrValue* value, bool pointerKeyed) const {
         std::vector<IrValue*> pending{value};
         std::unordered_set<const IrValue*> seen;
         IrValue* origin = nullptr;
+        std::uint32_t originOffset = 0;
         while (!pending.empty()) {
             auto* current = pending.back()->Resolve();
             pending.pop_back();
@@ -981,10 +996,13 @@ private:
                 continue;
             }
             if (current->HasImmediate() && current->Type() == IrType::U32) continue;
+            if (pointerKeyed && LaneMaskWord(*current)) continue;
             std::uint32_t memory = 0;
-            if (ScalarReadMemory(*current, memory) == nullptr || !MemoryIndexBelongsTo(memory, *current)) return nullptr;
-            if (origin != nullptr && !EquivalentValue(m_program.Resources(), origin, current)) return nullptr;
+            const MemoryInfo* info = ScalarReadMemory(*current, memory);
+            if (info == nullptr || !MemoryIndexBelongsTo(memory, *current)) return nullptr;
+            if (origin != nullptr && (pointerKeyed ? info->offset != originOffset || !SameRecordColumn(*origin, *current) : !EquivalentValue(m_program.Resources(), origin, current))) return nullptr;
             origin = current;
+            originOffset = info->offset;
         }
         return origin;
     }
@@ -1087,9 +1105,10 @@ private:
         IrValue* bufferHandle = nullptr;
         IrValue* offset = nullptr;
         const bool buffer = handle.Opcode() == IrOpcode::GetBufferResource;
-        if (buffer && !hops.empty()) return false;
-        const bool merged = buffer && pointer->Argument(0)->Resolve()->IsPhi();
-        auto* low = merged ? PointerRecordOrigin(pointer->Argument(0)) : pointer->Argument(0)->Resolve();
+        const bool merged = pointer->Argument(0)->Resolve()->IsPhi() && UnwrapTableRead(pointer->Argument(0)) == nullptr;
+        const bool pointerKeyed = merged && !buffer;
+        if (!hops.empty() && (buffer || merged)) return false;
+        auto* low = merged ? PointerRecordOrigin(pointer->Argument(0), pointerKeyed) : pointer->Argument(0)->Resolve();
         if (low == nullptr) return false;
         std::uint32_t first = 0;
         for (std::uint32_t dword = 0; dword < 2u; dword++) {
@@ -1106,9 +1125,14 @@ private:
                 first = memory->offset;
                 bufferHandle = read->Argument(0)->Resolve();
                 offset = read->Argument(1)->Resolve();
-            } else if (memory->offset != first + static_cast<std::uint32_t>(sizeof(std::uint32_t)) || read->Argument(0)->Resolve() != bufferHandle || !EquivalentValue(m_program.Resources(), offset, read->Argument(1))) {
+            } else if (memory->offset != first + static_cast<std::uint32_t>(sizeof(std::uint32_t)) || (pointerKeyed ? !SameRecordColumn(*low, *read) : read->Argument(0)->Resolve() != bufferHandle || !EquivalentValue(m_program.Resources(), offset, read->Argument(1)))) {
                 return false;
             }
+        }
+        if (pointerKeyed) {
+            auto* high = UnwrapTableRead(pointer->Argument(1));
+            bufferHandle = high->Argument(0)->Resolve();
+            offset = high->Argument(1)->Resolve();
         }
         if (!AvailableAt(offset, handle.Parent())) {
             return false;
@@ -1136,6 +1160,7 @@ private:
         column.buffer = buffer;
         column.indirectOffset = descriptorOffset;
         column.indirectImmediate = descriptorImmediate;
+        column.pointerKeyed = pointerKeyed;
         column.pointerHops = std::move(hops);
         const auto domain = merged ? std::optional<KeyDomain>{} : MatchKeyDomain(key);
         DescriptorSource columnSource = heapSource;
@@ -1152,7 +1177,7 @@ private:
             shared.keyDomains.push_back(*domain);
         }
         plan.offset = offset;
-        if (buffer) plan.parentPointer = pointer;
+        if (buffer || merged) plan.parentPointer = pointer;
         return true;
     }
 

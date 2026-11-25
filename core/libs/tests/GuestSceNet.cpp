@@ -783,6 +783,54 @@ static void CheckUnboundSocketName() {
     }
 }
 
+static void CheckConnectedDatagramSendto() {
+    for (const int family : {2, 28}) {
+        const std::uint32_t addressSize = family == 2 ? 16 : 28;
+        const int receiver = sceNetSocket("connected-receiver", family, 2, 17);
+        if (receiver < 0 && family == 28 && *sceNetErrnoLoc() == 47) continue;
+        const int other = sceNetSocket("connected-other", family, 2, 17);
+        const int sender = sceNetSocket("connected-sender", family, 2, 17);
+        Require(receiver >= 0 && other >= 0 && sender >= 0);
+        std::array<std::uint8_t, 28> destination{};
+        destination[0] = static_cast<std::uint8_t>(addressSize);
+        destination[1] = static_cast<std::uint8_t>(family);
+        if (family == 2) {
+            destination[4] = 127;
+            destination[7] = 1;
+        } else {
+            destination[23] = 1;
+        }
+        std::array<std::uint8_t, 28> elsewhere = destination;
+        if (sceNetBind_nid_postfix(receiver, destination.data(), addressSize) != 0) {
+            Require(family == 28);
+            for (const int descriptor : {receiver, other, sender}) Require(sceNetSocketClose(descriptor) == 0);
+            continue;
+        }
+        Require(sceNetBind_nid_postfix(other, elsewhere.data(), addressSize) == 0);
+        std::uint32_t size = destination.size();
+        Require(sceNetGetsockname(receiver, destination.data(), &size) == 0 && size == addressSize);
+        size = elsewhere.size();
+        Require(sceNetGetsockname(other, elsewhere.data(), &size) == 0 && size == addressSize);
+        Require(sceNetConnect(sender, destination.data(), addressSize) == 0);
+        const char payload[] = "connected";
+        char received[sizeof(payload)]{};
+        for (const auto* target : {&destination, &elsewhere}) {
+            Require(Failed(sceNetSendto(sender, payload, sizeof(payload), 0, target->data(), addressSize), 56));
+            NetIovec out[] = {{const_cast<char*>(payload), sizeof(payload)}};
+            NetMsghdr message{const_cast<std::uint8_t*>(target->data()), addressSize, out, 1, nullptr, 0, 0};
+            Require(Failed(sceNetSendmsg(sender, &message, 0), 56));
+        }
+        Require(Failed(sceNetSendto(sender, reinterpret_cast<const void*>(0x10), 1, 0, destination.data(), addressSize), 14));
+        Require(sceNetSendto(sender, payload, sizeof(payload), 0, nullptr, 0) == sizeof(payload));
+        Require(sceNetRecvfrom(receiver, received, sizeof(received), 0, nullptr, nullptr) == sizeof(payload));
+        Require(std::memcmp(received, payload, sizeof(payload)) == 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Require(Failed(sceNetRecvfrom(receiver, received, sizeof(received), 0x80, nullptr, nullptr), 35));
+        Require(Failed(sceNetRecvfrom(other, received, sizeof(received), 0x80, nullptr, nullptr), 35));
+        for (const int descriptor : {receiver, other, sender}) Require(sceNetSocketClose(descriptor) == 0);
+    }
+}
+
 static void CheckUnboundDatagramReceive() {
     const int waiting = sceNetSocket("unbound-receive", 2, 2, 17);
     const int peer = sceNetSocket("unbound-peer", 2, 2, 17);
@@ -2864,9 +2912,32 @@ static void CheckSockInfo6() {
     Require(RequireSockInfo6List(0) == earlier);
     Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram}));
 
+    const int kernel = socket_nid_postfix(2, 2, 0);
+    std::array<std::uint8_t, 16> kernelAddress{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(kernel >= 0 && bind_nid_postfix(kernel, kernelAddress.data(), kernelAddress.size()) == 0);
+    size = kernelAddress.size();
+    Require(getsockname_nid_postfix(kernel, kernelAddress.data(), &size) == 0 && size == 16);
+    Require(RequireSockInfo6List(0) == earlier);
+    Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram, kernel}));
+    Require(RequireSockInfo6List(0x1040) == WithSockets(earlierAll, {datagram, kernel}));
+    Require(Failed(sceNetGetSockInfo6(kernel, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0), 47));
+    Require(sceNetGetSockInfo6(kernel, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0x1000) == 1);
+    std::array<std::uint8_t, 0xa0> kernelExpected{};
+    std::memcpy(kernelExpected.data() + 0x24, &kernel, sizeof(kernel));
+    kernelExpected[0x28] = 2;
+    std::memcpy(kernelExpected.data() + 0x34, kernelAddress.data() + 4, 4);
+    std::memcpy(kernelExpected.data() + 0x3c, kernelAddress.data() + 2, 2);
+    kernelExpected[0x48] = 1;
+    std::int32_t kernelBuffers[2] = {};
+    std::memcpy(kernelBuffers, record.data() + 0x64, sizeof(kernelBuffers));
+    Require(kernelBuffers[0] > 0 && kernelBuffers[1] > 0);
+    std::memcpy(kernelExpected.data() + 0x64, record.data() + 0x64, 8);
+    Require(std::equal(kernelExpected.begin(), kernelExpected.end(), record.begin()));
+
     if (ipv6Unavailable) {
         Require(sceNetSocketClose(datagram) == 0);
         Require(Failed(sceNetGetSockInfo6(datagram, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0x1000), 9));
+        Require(close_nid_postfix(kernel) == 0);
         Require(RequireSockInfo6List(0x1000) == earlierAll);
         return;
     }
@@ -2922,13 +2993,15 @@ static void CheckSockInfo6() {
 
     Require(RequireSockInfo6List(0) == WithSockets(earlier, {udp, listener, client, accepted, peer}));
     Require(RequireSockInfo6List(0x40) == WithSockets(earlier, {udp, listener, client, accepted, peer}));
-    Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram, udp, listener, client, accepted, peer}));
+    Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram, kernel, udp, listener, client, accepted, peer}));
     Require(Failed(sceNetGetSockInfo6(datagram, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0), 47));
 
     for (const int descriptor : {peer, accepted, client, listener, udp}) Require(sceNetSocketClose(descriptor) == 0);
     Require(Failed(sceNetGetSockInfo6(udp, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0), 9));
     Require(RequireSockInfo6List(0) == earlier);
     Require(sceNetSocketClose(datagram) == 0);
+    Require(close_nid_postfix(kernel) == 0);
+    Require(Failed(sceNetGetSockInfo6(kernel, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0x1000), 9));
     Require(RequireSockInfo6List(0x1000) == earlierAll);
 }
 
@@ -3144,6 +3217,7 @@ int main(int argc, char** argv) {
     CheckLinkLocalAllNodesIpv6();
     CheckUnboundSocketName();
     CheckUnboundDatagramReceive();
+    CheckConnectedDatagramSendto();
     CheckUnboundDatagramShutdown();
     CheckUnboundDatagramLaterAddress();
     CheckUnboundDatagramTimeoutAfterAddress();

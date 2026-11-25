@@ -200,8 +200,8 @@ bool rangeIsContiguousWithRange(const WebCore::PlatformTimeRanges::Range& a, con
 
 WebCore::PlatformTimeRanges::Range rangeUnionWithOverlappingOrContiguousRange(const WebCore::PlatformTimeRanges::Range& a, const WebCore::PlatformTimeRanges::Range& b) {
     WebCore::PlatformTimeRanges::Range ret;
-    ret.start = _ZNK3WTF9MediaTimeltERKS0_(&a.start, b.start) ? a.start : b.start;
-    ret.end = _ZNK3WTF9MediaTimegtERKS0_(&a.end, b.end) ? a.end : b.end;
+    ret.start = _ZNK3WTF9MediaTimeltERKS0_(&b.start, a.start) ? b.start : a.start;
+    ret.end = _ZNK3WTF9MediaTimeltERKS0_(&a.end, b.end) ? b.end : a.end;
     return ret;
 }
 
@@ -904,10 +904,6 @@ WebCore::PlatformTimeRanges& APS5_VABI _ZN7WebCore18PlatformTimeRangesaSERKS0_(W
 }
 
 void APS5_VABI _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(WebCore::PlatformTimeRanges* self, const WTF::MediaTime& start, const WTF::MediaTime& end) {
-    if (_ZNK3WTF9MediaTimegtERKS0_(&start, end)) {
-        return;
-    }
-
     WebCore::PlatformTimeRanges::Range addedRange{start, end};
     unsigned overlappingArcIndex = 0;
 

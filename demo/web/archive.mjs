@@ -49,6 +49,10 @@ async function headerBytes(entry, size = 4) {
   return filled === size ? header : null;
 }
 
+function isMacMetadata(name) {
+  return /^__macosx\//iu.test(name);
+}
+
 async function isAppleDouble(entry) {
   const header = await headerBytes(entry, 26);
   const view = header && new DataView(header.buffer, header.byteOffset, header.byteLength);
@@ -155,6 +159,7 @@ export class Archive {
       if (mode && mode !== 0x8000 && mode !== 0x4000) throw new Error(translate(locale, "unsupportedSpecialFile", { name: entry.filename }));
       paths.set(key, entry.directory);
       total = safeSize(total + safeSize(entry.uncompressedSize, locale), locale);
+      if (entry.directory && !entry.filename.endsWith("/")) entry.filename += "/";
       this.entries.push(entry);
     }
     if (!this.entries.some(entry => !entry.directory)) throw new Error(translate(locale, "noFilesSelected"));
@@ -164,11 +169,11 @@ export class Archive {
       for (let index = 1; index < parts.length; index++) {
         const parent = parts.slice(0, index).join("/").toLowerCase();
         if (paths.get(parent) === false) throw new Error(translate(locale, "fileUsedAsFolder", { name: entry.filename }));
-        if (!entry.filename.toLowerCase().startsWith("__macosx/")) directories.add(parent);
+        if (!isMacMetadata(entry.filename)) directories.add(parent);
       }
     }
-    const applicationPaths = new Map([...paths].filter(([name]) => name !== "__macosx" && !name.startsWith("__macosx/")));
-    const metadata = this.entries.filter(entry => entry.filename.startsWith("__MACOSX/"));
+    const applicationPaths = new Map([...paths].filter(([name]) => name !== "__macosx" && !isMacMetadata(name)));
+    const metadata = this.entries.filter(entry => isMacMetadata(entry.filename));
     let appleDouble = metadata.some(entry => !entry.directory);
     for (const entry of metadata) {
       if (entry.directory) {
@@ -176,18 +181,29 @@ export class Archive {
         if (companion && applicationPaths.get(companion) !== true && !directories.has(companion)) { appleDouble = false; break; }
         continue;
       }
-      const match = /^__MACOSX\/(.*\/)?\._([^/]+)$/u.exec(entry.filename);
+      const match = /^__macosx\/(.*\/)?\._([^/]+)$/iu.exec(entry.filename);
       const companion = match && ((match[1] ?? "") + match[2]).toLowerCase();
       if (!companion || (!applicationPaths.has(companion) && !directories.has(companion)) || !await isAppleDouble(entry)) { appleDouble = false; break; }
     }
-    if (appleDouble) this.entries = this.entries.filter(entry => !entry.filename.startsWith("__MACOSX/"));
+    if (appleDouble) this.entries = this.entries.filter(entry => !isMacMetadata(entry.filename));
     if (!this.entries.some(entry => !entry.directory)) throw new Error(translate(locale, "noFilesSelected"));
     let prefix = "";
     const files = this.entries.filter(entry => !entry.directory);
     while (files.every(entry => entry.filename.slice(prefix.length).includes("/"))) {
       const first = files[0].filename.slice(prefix.length).split("/")[0];
-      if (["sce_sys", "sce_module", "sce_modules", "prx"].includes(first) || !this.entries.every(entry => (entry.directory && prefix.startsWith(entry.filename)) || entry.filename.startsWith(prefix + first + "/"))) break;
-      prefix += first + "/";
+      const wrapper = prefix + first + "/";
+      if (!files.every(entry => entry.filename.startsWith(wrapper))) break;
+      if (["sce_sys", "sce_module", "sce_modules", "prx"].includes(first)) {
+        if (!files.some(entry => entry.filename.startsWith(wrapper + "sce_sys/"))) break;
+        let executableCount = 0;
+        for (const entry of files) {
+          if (!entry.filename.slice(wrapper.length).includes("/") && isElf(await headerBytes(entry))) {
+            if (++executableCount > 1) break;
+          }
+        }
+        if (executableCount !== 1) break;
+      }
+      prefix = wrapper;
     }
     this.prefix = prefix;
     this.files = this.entries.filter(entry => entry.filename.startsWith(prefix) && entry.filename !== prefix).map(entry => ({ entry, name: entry.filename.slice(prefix.length) }));
@@ -201,7 +217,7 @@ export class Archive {
     const selfModules = [];
     for (let index = 0; index < this.files.length; index++) {
       const item = this.files[index];
-      report({ phase: translate(locale, "inspectingFiles"), input: item.name, completed: index, total: this.files.length });
+      report({ phase: translate(locale, "inspectingFiles"), phaseKey: "inspectingFiles", input: item.name, completed: index, total: this.files.length });
       if (item.entry.directory || item.name.startsWith("sce_sys/")) continue;
       const moduleDir = moduleDirs.find(directory => item.name.startsWith(directory + "/"));
       const unityDir = unityDirs.find(directory => item.name.startsWith(directory + "/")
@@ -254,7 +270,7 @@ export class Archive {
     const selectedBytes = this.selectedBytesForTarget(target);
     if (selectedBytes > CONVERSION_LIMIT) throw new Error(translate(locale, "selectedTooLarge", { target }));
     const read = async item => {
-      report({ phase: translate(locale, "phaseReadingInput"), input: item.name });
+      report({ phase: translate(locale, "phaseReadingInput"), phaseKey: "phaseReadingInput", input: item.name });
       const bytes = await boundedBytes(item.entry, remaining, locale);
       remaining -= bytes.length;
       return bytes;
@@ -289,7 +305,7 @@ async function appendEntry(writer, name, entry, report, locale) {
     entry.getData(stream.writable, { checkSignature: true }),
     writer.add(name, stream.readable.pipeThrough(limit), {
       versionMadeBy: 0x31e, externalFileAttributes: entry.externalFileAttributes >>> 16 ? entry.externalFileAttributes : ((0o100644 << 16) | (entry.externalFileAttributes & 0xffff)) >>> 0,
-      onprogress: completed => report({ phase: writer instanceof DirectoryWriter ? translate(locale, "phaseWritingFiles") : translate(locale, "phaseCompressingZip"), input: name, completed, total: entry.uncompressedSize })
+      onprogress: completed => report({ phase: writer instanceof DirectoryWriter ? translate(locale, "phaseWritingFiles") : translate(locale, "phaseCompressingZip"), phaseKey: writer instanceof DirectoryWriter ? "phaseWritingFiles" : "phaseCompressingZip", input: name, completed, total: entry.uncompressedSize })
     })
   ]);
 }
@@ -304,13 +320,13 @@ export class DirectoryWriter {
       await this.destination.directory(name);
       return;
     }
-    if (!(source instanceof ReadableStream)) await source.init();
-    const output = await this.destination.file(name);
     if (source instanceof ReadableStream) {
       let completed = 0;
       const reader = source.getReader();
-      const writer = output.getWriter();
+      let writer;
       try {
+        const output = await this.destination.file(name);
+        writer = output.getWriter();
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
@@ -323,13 +339,15 @@ export class DirectoryWriter {
         }
         await writer.close();
       } catch (error) {
-        await Promise.allSettled([reader.cancel(error), writer.abort(error)]);
+        await Promise.allSettled([reader.cancel(error), writer?.abort(error)]);
         throw error;
       } finally {
         reader.releaseLock();
-        writer.releaseLock();
+        writer?.releaseLock();
       }
     } else {
+      await source.init();
+      const output = await this.destination.file(name);
       const writer = output.getWriter();
       try {
         for (let offset = 0; offset < source.size; offset += 65536) {

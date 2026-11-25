@@ -5,7 +5,7 @@
 #include <cstdint>
 
 extern "C" {
-std::uint32_t* APS5_VABI sceAgcCbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint32_t operation, std::uint32_t modifier, std::uint32_t value);
+std::uint32_t* APS5_VABI sceAgcCbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint32_t waitForMailbox, std::uint32_t signalType, std::uint32_t operation);
 }
 
 #include "SceShaders.hpp"

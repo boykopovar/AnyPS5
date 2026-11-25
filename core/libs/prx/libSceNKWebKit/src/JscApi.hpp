@@ -5,6 +5,8 @@
 #include "prx/libSceJsc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
+#include <utility>
 
 namespace NKWebKit {
 
@@ -31,6 +33,16 @@ using JSScriptRef = OpaqueJSScript*;
 using JSWeakRef = OpaqueJSWeak*;
 using JSWeakObjectMapRef = OpaqueJSWeakObjectMap*;
 using JSChar = std::uint16_t;
+
+struct OpaqueJSStringPtr {
+    GuestJSString* ptr;
+    explicit OpaqueJSStringPtr(GuestJSString* value) : ptr(value) {}
+    OpaqueJSStringPtr(OpaqueJSStringPtr&& other) noexcept : ptr(std::exchange(other.ptr, nullptr)) {}
+    ~OpaqueJSStringPtr() { if (ptr) JSStringRelease_nid_postfix(ptr); }
+};
+
+static_assert(sizeof(OpaqueJSStringPtr) == 8);
+static_assert(!std::is_trivially_copyable_v<OpaqueJSStringPtr>);
 
 enum JSType : int {
     kJSTypeUndefined = 0,
