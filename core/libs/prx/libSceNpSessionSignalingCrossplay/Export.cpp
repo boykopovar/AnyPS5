@@ -1,6 +1,5 @@
 #include "prx/libSceNpSessionSignalingCrossplay/include/Api.hpp"
 #include "prx/libSceNpCommon/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
@@ -30,13 +29,11 @@ static_assert(offsetof(NpSessionSignalingCrossplayMemoryInfo, currentInuseSize) 
 static_assert(offsetof(NpSessionSignalingCrossplayMemoryInfo, maxInuseSize) == 0x10);
 
 struct ErrnoGuard {
-    int savedErrno = errno;
 
     ErrnoGuard() = default;
     ErrnoGuard(const ErrnoGuard&) = delete;
     ErrnoGuard& operator=(const ErrnoGuard&) = delete;
     ~ErrnoGuard() {
-        errno = savedErrno;
     }
 };
 
