@@ -68,6 +68,30 @@ constexpr std::uintptr_t PageBytes = 4096;
 char g_unavailableReason[192];
 thread_local char t_registrationFailure[192];
 
+class PublicationLock {
+public:
+    bool tryLock() {
+        return !_held.test_and_set(std::memory_order_acquire);
+    }
+
+    void lock() {
+        while (!tryLock()) {
+#if defined(__x86_64__)
+            __builtin_ia32_pause();
+#else
+            sched_yield();
+#endif
+        }
+    }
+
+    void unlock() {
+        _held.clear(std::memory_order_release);
+    }
+
+private:
+    std::atomic_flag _held = ATOMIC_FLAG_INIT;
+};
+
 class Watch {
     struct PublicationRun {
         std::uintptr_t begin;
@@ -115,59 +139,79 @@ public:
         } catch (...) {
             return false;
         }
-        while (_publicationRecovery.load(std::memory_order_acquire)) {
-            if (RecoverPublication()) break;
-            sched_yield();
-        }
-        bool expected = false;
-        while (!_publication.compare_exchange_weak(expected, true, std::memory_order_acq_rel)) {
-            expected = false;
-            while (_publicationRecovery.load(std::memory_order_acquire)) {
-                if (RecoverPublication()) break;
-                sched_yield();
+        _publicationState.lock();
+        if (_publicationRecovery.load(std::memory_order_acquire)) {
+            if (!recoverPublicationLocked()) {
+                _publicationState.unlock();
+                return false;
             }
-            sched_yield();
         }
-        _publicationRecovery.store(false, std::memory_order_release);
+        if (_publication.load(std::memory_order_acquire)) {
+            _publicationState.unlock();
+            return false;
+        }
         _publicationBegin.store(first, std::memory_order_relaxed);
         _publicationEnd.store(last, std::memory_order_relaxed);
         std::copy(runs.begin(), runs.end(), _publicationRuns.begin());
         _publicationRunCount.store(runs.size(), std::memory_order_release);
+        _publication.store(true, std::memory_order_release);
         try {
             for (const auto& run : runs) {
                 if ((run.protection & PROT_WRITE) == 0) continue;
                 if (::mprotect(reinterpret_cast<void*>(run.begin), run.end - run.begin, run.protection & ~PROT_WRITE) != 0) {
-                    for (const auto& restored : opened) ::mprotect(reinterpret_cast<void*>(restored.begin), restored.end - restored.begin, restored.protection);
-                    _publicationRunCount.store(0, std::memory_order_release);
-                    _publication.store(false, std::memory_order_release);
+                    abortPublicationLocked(opened);
+                    _publicationState.unlock();
                     return false;
                 }
                 opened.push_back(run);
             }
         } catch (...) {
-            for (const auto& restored : opened) ::mprotect(reinterpret_cast<void*>(restored.begin), restored.end - restored.begin, restored.protection);
-            _publicationRunCount.store(0, std::memory_order_release);
-            _publication.store(false, std::memory_order_release);
+            abortPublicationLocked(opened);
+            _publicationState.unlock();
             return false;
         }
+        _publicationState.unlock();
         return true;
     }
 
+    void abortPublicationLocked(const std::vector<PublicationRun>& opened) noexcept {
+        bool restored = true;
+        for (const auto& run : opened) {
+            if (::mprotect(reinterpret_cast<void*>(run.begin), run.end - run.begin, run.protection) != 0) restored = false;
+        }
+        if (restored) {
+            _publicationRunCount.store(0, std::memory_order_release);
+            _publicationRecovery.store(false, std::memory_order_release);
+            _publication.store(false, std::memory_order_release);
+        } else {
+            _publicationRecovery.store(true, std::memory_order_release);
+        }
+    }
+
     void EndPublication() noexcept {
-        if (!_publication.load(std::memory_order_acquire)) return;
+        _publicationState.lock();
+        if (!_publication.load(std::memory_order_acquire)) {
+            _publicationState.unlock();
+            return;
+        }
         const auto count = _publicationRunCount.load(std::memory_order_acquire);
         if (count == 0) {
+            _publicationRecovery.store(false, std::memory_order_release);
             _publication.store(false, std::memory_order_release);
+            _publicationState.unlock();
             return;
         }
         const std::span<const PublicationRun> runs(_publicationRuns.data(), count);
-        if (!restorePublicationRuns(runs)) {
+        if (!restorePublicationRuns(runs) || !verifyPublicationRuns(runs)) {
             _publicationRecovery.store(true, std::memory_order_release);
+            _publicationState.unlock();
             return;
         }
         armPublicationRuns(runs);
         _publicationRunCount.store(0, std::memory_order_release);
+        _publicationRecovery.store(false, std::memory_order_release);
         _publication.store(false, std::memory_order_release);
+        _publicationState.unlock();
     }
 
     bool HandleFault(std::uintptr_t address) {
@@ -633,6 +677,24 @@ private:
     }
 
     bool RecoverPublication() noexcept {
+        timespec started{};
+        static_cast<void>(clock_gettime(CLOCK_MONOTONIC, &started));
+        for (;;) {
+            if (_publicationState.tryLock()) break;
+            timespec now{};
+            if (clock_gettime(CLOCK_MONOTONIC, &now) == 0 && now.tv_sec - started.tv_sec >= 2) return false;
+#if defined(__x86_64__)
+            __builtin_ia32_pause();
+#else
+            sched_yield();
+#endif
+        }
+        const bool recovered = recoverPublicationLocked();
+        _publicationState.unlock();
+        return recovered;
+    }
+
+    bool recoverPublicationLocked() noexcept {
         const auto count = _publicationRunCount.load(std::memory_order_acquire);
         if (count == 0) {
             _publicationRecovery.store(false, std::memory_order_release);
@@ -750,6 +812,7 @@ private:
     std::map<std::uintptr_t, std::uintptr_t> _fresh;
     std::multimap<std::uintptr_t, Link> _links;
     std::uintptr_t _linkBytes = 0;
+    PublicationLock _publicationState;
     std::atomic<bool> _publication{false};
     std::atomic<bool> _publicationRecovery{false};
     std::atomic<std::uintptr_t> _publicationBegin{0};
