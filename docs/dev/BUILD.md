@@ -531,6 +531,9 @@ Changed-test selection uses the configured CMake target sources. Windows CI repl
   Use `--list` to inspect reported skip reasons without applying the job's policy. Use `--json` for policy decisions
   and the list of unexpected skips in machine-readable form.
 - `tools/compare_configure_checks.py <baseline> <candidate>` compares the recognized configure checks in two CMake caches without writing anything. It prints a JSON object with `added`, `removed` and `changed` lists. Exit status 0 means the recognized checks match, 1 means they differ, and 2 means the command could not read or compare the inputs.
+- `tools/sanitizer_report.py <junit> --json` writes structured sanitizer triage to stdout. If you also pass
+  `--summary FILE`, it appends Markdown to that file. Exit status 0 means there were no unexpected failures,
+  1 means at least one unexpected failure, and 2 means the input or output could not be processed.
 
 ## Public-header archives
 
