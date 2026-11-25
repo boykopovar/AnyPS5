@@ -1,6 +1,5 @@
 #include "prx/libSceNpRemotePlaySessionSignaling/include/Api.hpp"
 #include "prx/libSceNpSessionSignaling/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -29,9 +28,7 @@ int32_t APS5_VABI sceNpRemotePlaySessionSignalingGetConnectionStatus(std::uint32
     if (result < 0) {
         return result;
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) {
         return ErrorInvalidArgument;
     }
@@ -55,9 +52,7 @@ int32_t APS5_VABI sceNpRemotePlaySessionSignalingGetLocalNetInfo(std::uint32_t c
     localOut.localAddress = local.localAddress;
     localOut.mappedAddress = local.mappedAddress;
     localOut.mappedPort = local.mappedPort;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(info, &localOut, sizeof(localOut));
-    errno = savedErrno;
     if (!copied) {
         return ErrorInvalidArgument;
     }
@@ -73,9 +68,7 @@ int APS5_VABI sceNpRemotePlaySessionSignalingGetMemoryInfo(SessionSignalingMemor
     if (result < 0) {
         return result;
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(memoryInfo, &local, sizeof(local));
-    errno = savedErrno;
     if (!copied) {
         return ErrorInvalidArgument;
     }
@@ -87,9 +80,7 @@ int APS5_VABI sceNpRemotePlaySessionSignalingInitialize(const SessionSignalingIn
         return ErrorInvalidArgument;
     }
     SessionSignalingInitParam localParam{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
-    errno = savedErrno;
     if (!copied) {
         return ErrorInvalidArgument;
     }
