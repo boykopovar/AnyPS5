@@ -2035,8 +2035,6 @@ static int64_t ReceiveMessage(int s, NetMsghdr* msg, int flags) {
         return fail(native_error());
 #endif
     }
-    std::fprintf(stderr, "[recvmsg-diag] name=%p name_length=%u peer_family=%d peer_length=%d received=%lld total=%u family=%d\n", header.name,
-    	header.name_length, static_cast<int>(peer.ss_family), peer_length, static_cast<long long>(received), total, socket.family);
     header.flags = 0;
     if (received > total) {
         received = total;

@@ -370,9 +370,6 @@ int main(int argc, char** argv) {
         *error = 123;
         Require(sceNetRecvmsg(receiver, message, 0) == static_cast<std::int64_t>(sizeof(payload)) && *error == 123,
             "writable receive name succeeds and preserves errno");
-        std::fprintf(stderr, "[hostwrite-diag] stream=%d name_length=%u flags=%d control=%d name=%02x%02x%02x%02x msg_prot=%lx name_prot=%lx\n",
-            stream, message->name_length, message->flags, message->control_length, nameOutput[0], nameOutput[1], nameOutput[2], nameOutput[3],
-            static_cast<unsigned long>(Protection(reinterpret_cast<char*>(message))), static_cast<unsigned long>(Protection(nameOutput)));
         Require(message->name_length == senderAddress.size() && message->flags == 0 && message->control_length == 0,
             "successful receive name updates the message");
         Require(std::memcmp(nameOutput, senderAddress.data(), senderAddress.size()) == 0,
