@@ -3,15 +3,19 @@
 #include "Decoder/Jpeg.hpp"
 
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -38,6 +42,13 @@ struct CallbackState {
     std::int32_t error_code;
 };
 
+struct ReentryState {
+    std::uint32_t calls;
+    int unregister_rc;
+    int register_rc;
+    CallbackState* followup;
+};
+
 void OnImageUtilError(const void* report, void* user_data) {
     auto* state = static_cast<CallbackState*>(user_data);
     ++state->calls;
@@ -45,6 +56,24 @@ void OnImageUtilError(const void* report, void* user_data) {
         std::memcpy(&state->line, report, sizeof(state->line));
         std::memcpy(&state->kind, static_cast<const std::uint8_t*>(report) + 8, sizeof(state->kind));
         std::memcpy(&state->error_code, static_cast<const std::uint8_t*>(report) + 16, sizeof(state->error_code));
+    }
+}
+
+void OnReentryB(const void*, void* user_data);
+
+void OnReentryA(const void*, void* user_data) {
+    auto* state = static_cast<ReentryState*>(user_data);
+    if (state->calls++ == 0) {
+        state->unregister_rc = UnregisterCallback(&OnReentryB);
+        state->register_rc = RegisterCallback(&OnImageUtilError, state->followup);
+    }
+}
+
+void OnReentryB(const void*, void* user_data) {
+    auto* state = static_cast<ReentryState*>(user_data);
+    if (state->calls++ == 0) {
+        state->unregister_rc = UnregisterCallback(&OnReentryA);
+        state->register_rc = RegisterCallback(&OnImageUtilError, state->followup);
     }
 }
 
@@ -121,6 +150,43 @@ void TestCallbacksAndAgentStop() {
     Require(state.calls == 1, "unregistered callback is not invoked");
     Require(RegisterCallback(&OnImageUtilError, &state) == 0, "re-register after unregister");
     Require(UnregisterCallback(&OnImageUtilError) == 0, "cleanup callback");
+
+    CallbackState followup{};
+    ReentryState reentry{0, -1, -1, &followup};
+    Require(RegisterCallback(&OnReentryA, &reentry) == 0, "register first reentry callback");
+    Require(RegisterCallback(&OnReentryB, &reentry) == 0, "register second reentry callback");
+
+    std::mutex done_mutex;
+    std::condition_variable done_cv;
+    bool done = false;
+    int reentry_read_rc = 0;
+    std::thread worker([&] {
+        reentry_read_rc = ReadDimensions(&path, dims.data());
+        {
+            std::lock_guard lock(done_mutex);
+            done = true;
+        }
+        done_cv.notify_one();
+    });
+    {
+        std::unique_lock lock(done_mutex);
+        if (!done_cv.wait_for(lock, std::chrono::seconds(2), [&] { return done; })) {
+            worker.detach();
+            Require(false, "callback re-entry deadlocked");
+        }
+    }
+    worker.join();
+    Require(reentry_read_rc == static_cast<int>(0x809D401Eu), "missing file returns error on re-entry");
+    Require(reentry.calls == 2 && reentry.unregister_rc == 0 && reentry.register_rc == 0,
+            "snapshot invokes both callbacks even after re-entrant unregister and register");
+    Require(followup.calls == 0, "newly registered callback is not invoked in same notification pass");
+
+    Require(ReadDimensions(&path, dims.data()) == static_cast<int>(0x809D401Eu), "missing file invokes followup");
+    Require(reentry.calls == 3 && followup.calls == 1,
+            "remaining reentry callback and newly registered followup run on next notification");
+    Require(UnregisterCallback(&OnReentryA) == 0, "cleanup first reentry callback");
+    Require(UnregisterCallback(&OnReentryB) == 0, "cleanup second reentry callback");
+    Require(UnregisterCallback(&OnImageUtilError) == 0, "cleanup followup callback");
 }
 
 }

@@ -35,12 +35,23 @@ std::map<std::uintptr_t, void*> g_error_callbacks;
 
 void NotifyErrorCallbacks(std::uint32_t line, std::uint64_t kind, std::int32_t error_code) {
     const ErrorReport report{line, 0, kind, error_code, 0};
-    std::lock_guard lock(g_callback_mutex);
-    for (const auto& [fn_addr, user_data] : g_error_callbacks) {
-        auto fn = reinterpret_cast<ErrorCallback>(fn_addr);
-        if (fn) {
-            fn(&report, user_data);
+    struct CallbackEntry {
+        ErrorCallback fn;
+        void* user_data;
+    };
+    std::vector<CallbackEntry> callbacks;
+    {
+        std::lock_guard lock(g_callback_mutex);
+        callbacks.reserve(g_error_callbacks.size());
+        for (const auto& [fn_addr, user_data] : g_error_callbacks) {
+            auto fn = reinterpret_cast<ErrorCallback>(fn_addr);
+            if (fn) {
+                callbacks.push_back({fn, user_data});
+            }
         }
+    }
+    for (const auto& entry : callbacks) {
+        entry.fn(&report, entry.user_data);
     }
 }
 
