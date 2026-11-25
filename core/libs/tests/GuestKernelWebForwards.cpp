@@ -67,6 +67,24 @@ void TestExec() {
                    "_execvpe of a missing program did not fail with ENOENT");
 }
 
+void TestSocketClose() {
+    RequireFailure(__sys_socketclose_nid_disambig1_nid_postfix(-1), GuestEbadf,
+                   "__sys_socketclose(-1) did not fail with EBADF");
+    RequireFailure(__sys_socketclose_nid_postfix(-1), GuestEbadf,
+                   "libkernel_sys __sys_socketclose(-1) did not fail with EBADF");
+
+    int pipeFds[2]{-1, -1};
+    Require(pipe_nid_postfix(pipeFds) == 0, "pipe creation failed");
+    Require(__sys_socketclose_nid_disambig1_nid_postfix(pipeFds[0]) == 0,
+            "__sys_socketclose failed to close descriptor");
+    RequireFailure(__sys_socketclose_nid_disambig1_nid_postfix(pipeFds[0]), GuestEbadf,
+                   "__sys_socketclose closed descriptor twice");
+    Require(__sys_socketclose_nid_postfix(pipeFds[1]) == 0,
+            "libkernel_sys __sys_socketclose failed to close descriptor");
+    RequireFailure(__sys_socketclose_nid_postfix(pipeFds[1]), GuestEbadf,
+                   "libkernel_sys __sys_socketclose closed descriptor twice");
+}
+
 void TestDevelopmentMode() {
     Require(__sys_is_development_mode_nid_disambig1_nid_postfix() == 0, "__sys_is_development_mode did not report development mode off");
     Require(__sys_is_development_mode_nid_disambig1_nid_postfix() == __sys_is_development_mode_nid_postfix(),
@@ -87,7 +105,14 @@ void TestNamedObject() {
                    "a deleted id is still live");
     const int reused = __sys_namedobj_create_nid_postfix("kernel_web_named", &object, MutexType);
     Require(reused == id, "libkernel_sys did not reuse the id released through the shared table");
-    Require(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(reused), MutexType) == 0, "deleting the reused id failed");
+    RequireFailure(__sys_namedobj_delete_nid_disambig1_nid_postfix(static_cast<std::uint32_t>(reused), MutexType + 1), GuestEsrch,
+                   "__sys_namedobj_delete with another type did not fail with ESRCH");
+    Require(__sys_namedobj_delete_nid_disambig1_nid_postfix(static_cast<std::uint32_t>(reused), MutexType) == 0,
+            "libkernel_web did not delete the id created through libkernel_sys");
+    RequireFailure(__sys_namedobj_delete_nid_disambig1_nid_postfix(static_cast<std::uint32_t>(reused), MutexType), GuestEsrch,
+                   "libkernel_web deleted an id twice");
+    RequireFailure(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(reused), MutexType), GuestEsrch,
+                   "libkernel_sys still sees the id deleted through libkernel_web");
 }
 
 void TestWait4() {
@@ -105,6 +130,7 @@ void TestWait4() {
 int main() {
     TestDup2();
     TestExec();
+    TestSocketClose();
     TestDevelopmentMode();
     TestNamedObject();
     TestWait4();

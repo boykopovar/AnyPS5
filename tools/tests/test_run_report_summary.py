@@ -18,6 +18,22 @@ class RunReportSummaryTests(unittest.TestCase):
     def report(self, name):
         return json.loads((ROOT / "docs/run-report-fixtures" / name).read_text(encoding="utf-8"))
 
+    def test_input_audit_cli_rejects_ambiguous_or_deep_json(self):
+        report = json.dumps(self.report("stop-none.json"))
+        cases = (report[:-1] + ', "version": 1}',
+                 "[" * 20000 + "0" + "]" * 20000)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            for index, text in enumerate(cases):
+                with self.subTest(index=index):
+                    path.write_text(text, encoding="utf-8")
+                    result = subprocess.run([sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                                            capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("run_report_summary:", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(result.stdout, "")
+
     def test_cli_prints_unicode_even_with_ascii_default_encoding(self):
         report = self.report("stop-none.json")
         report["game"]["name"] = "Café Game"
@@ -68,6 +84,24 @@ class RunReportSummaryTests(unittest.TestCase):
                 self.assertEqual(report["system"]["os"], name)
                 self.assertIn(expected, render(report))
 
+    def test_counts_entries_beyond_the_summary_preview(self):
+        report = self.report("stop-none.json")
+        report["coverage"]["missing"] = True
+        report["coverage"]["unsupported"] = True
+        report["missing"]["functions"] = [
+            {"library": "fixture", "name": f"function_{i}", "calls": 1} for i in range(7)
+        ]
+        report["shaders"]["unsupported"] = [
+            {"encoding": "fixture", "opcode": f"instruction_{i}", "count": 1} for i in range(6)
+        ]
+        report["truncated"]["functions"] = 3
+        summary = render(report)
+        self.assertIn("2 more functions in the full report", summary)
+        self.assertIn("1 more instruction in the full report", summary)
+        self.assertIn("3 additional functions omitted", summary)
+        self.assertNotIn("fixture::function_5", summary)
+        self.assertNotIn("fixture: instruction_5", summary)
+
     def test_summary_marks_uncollected_sections(self):
         report = self.report("stop-missing-function.json")
         report["coverage"]["milestones"] = False
@@ -80,6 +114,46 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("Shaders: compilation data was not collected", summary)
         self.assertIn("Unsupported shader instructions: not collected", summary)
 
+    def test_negative_average_fps_is_reported_as_unavailable(self):
+        report = self.report("stop-none.json")
+        report["run"]["averageFps"] = -1.5
+        summary = render(report)
+        self.assertIn("Rendering: 12580 frames, average FPS unavailable", summary)
+        self.assertNotIn("-1.50 average FPS", summary)
+
+    def test_negative_frame_count_is_not_rendered_as_a_measurement(self):
+        report = self.report("stop-none.json")
+        report["run"]["framesPresented"] = -5
+        report["run"]["averageFps"] = 60
+        summary = render(report)
+        self.assertIn("Rendering: unknown frame count", summary)
+        self.assertNotIn("60.00 average FPS", summary)
+
+    def test_fps_is_not_reported_with_fewer_than_two_frames(self):
+        report = self.report("stop-none.json")
+        report["run"]["framesPresented"] = 1
+        report["run"]["averageFps"] = 60
+        summary = render(report)
+        self.assertIn("Rendering: 1 frame", summary)
+        self.assertNotIn("average FPS", summary)
+
+    def test_cli_rejects_malformed_collected_diagnostic_lists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            for section, key in (("missing", "functions"), ("shaders", "unsupported")):
+                for value in ("abc", {}, None, [{}] * 5 + [None]):
+                    with self.subTest(field=f"{section}.{key}", value=value):
+                        report = self.report("stop-none.json")
+                        report[section][key] = value
+                        path.write_text(json.dumps(report), encoding="utf-8")
+                        result = subprocess.run(
+                            [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                            capture_output=True, text=True, timeout=15,
+                        )
+                        self.assertEqual(result.returncode, 2)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn(f"{section}.{key}", result.stderr)
+
     def test_summary_reports_recovery_incomplete_data_and_truncation(self):
         report = self.report("killed-recovered.json")
         report["truncated"]["functions"] = 2
@@ -87,6 +161,36 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("Warning: recovered report", summary)
         self.assertIn("Warning: one or more observations were dropped", summary)
         self.assertIn("Warning: one or more diagnostic lists were truncated", summary)
+
+    def test_rejects_non_boolean_run_lifecycle_flags(self):
+        for flag in ("recovered", "incomplete"):
+            for value in ("false", "true", 0, 1, None, [], {}):
+                with self.subTest(flag=flag, value=value):
+                    report = self.report("stop-none.json")
+                    report["run"][flag] = value
+                    with self.assertRaisesRegex(ValueError, f"run\\.{flag}"):
+                        render(report)
+            with self.subTest(flag=flag, value="absent"):
+                report = self.report("stop-none.json")
+                del report["run"][flag]
+                with self.assertRaisesRegex(ValueError, f"run\\.{flag}"):
+                    render(report)
+
+    def test_cli_rejects_non_boolean_run_lifecycle_flags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for flag in ("recovered", "incomplete"):
+                report = self.report("stop-none.json")
+                report["run"][flag] = "false"
+                path = Path(directory) / f"{flag}.json"
+                path.write_text(json.dumps(report), encoding="utf-8")
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                    capture_output=True, text=True, encoding="utf-8", timeout=10,
+                )
+                with self.subTest(flag=flag):
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(f"run.{flag}", result.stderr)
 
     def test_unknown_text_does_not_emit_terminal_control_characters(self):
         report = self.report("stop-none.json")
@@ -117,6 +221,15 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("Missing functions: unknown calls across 2 functions", summary)
         self.assertIn("Unsupported shader instructions: unknown occurrences across 2 instructions", summary)
         self.assertNotIn("\x1b", summary)
+
+    def test_rejects_non_boolean_coverage_flags(self):
+        for flag in ("milestones", "missing", "shaders", "unsupported"):
+            for value in ("false", "true", 0, 1, None, []):
+                with self.subTest(flag=flag, value=value):
+                    report = self.report("stop-none.json")
+                    report["coverage"][flag] = value
+                    with self.assertRaisesRegex(ValueError, f"coverage\\.{flag}"):
+                        render(report)
 
     def test_rejects_other_report_formats(self):
         with self.assertRaisesRegex(ValueError, "AnyPS5 run report"):

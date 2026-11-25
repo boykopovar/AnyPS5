@@ -1,0 +1,5 @@
+# libSceAjm.native
+
+## change [sceAjmDecMp3ParseFrame]
+
+- [sceAjmDecMp3ParseFrame](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - signature, result layout and rate tables taken from the [shadPS4](https://github.com/shadps4-emu/shadPS4) reimplementation; a PS5 probe (firmware 11.60) showed in two runs (21 header cases each): Layer I and II fail with `0x80930005` for any `parse_ofl`, and MPEG-2.5 accepts bitrate index 9 (80 kbps). MPEG-2.5 indices 10 to 14 are not measured and still fail here. The `parse_ofl` layout (Xing/Info + LAME tag after side information, with the standard fixed Xing/Info offset retained for encoders such as [LAME](https://github.com/lameproject/lame/blob/master/libmp3lame/VbrTag.c#L854-L862), VBRI at byte 36 or after side information, Fraunhofer `0xB4` block with its CRC, encoder delay = samples per frame + LAME delay + 529) comes from shadPS4 only, except the Xing/Info frame count and the VBRI type at byte 36, which the probe confirmed; the Fraunhofer block has no other public description.
