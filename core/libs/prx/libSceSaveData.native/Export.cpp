@@ -229,6 +229,66 @@ static void flush_path(const std::string& path, bool directory) {
 #endif
 }
 
+static void require_no_error(const std::error_code& error, const char* what, const std::filesystem::path& path) {
+    if (error) throw std::filesystem::filesystem_error(what, path, error);
+}
+
+static void require_no_error(const std::error_code& error, const char* what, const std::filesystem::path& from, const std::filesystem::path& to) {
+    if (error) throw std::filesystem::filesystem_error(what, from, to, error);
+}
+
+static bool path_exists(const std::filesystem::path& path) {
+    std::error_code error;
+    const bool exists = std::filesystem::exists(path, error);
+    require_no_error(error, "SaveData: cannot read the status of", path);
+    return exists;
+}
+
+static void make_directories(const std::filesystem::path& path) {
+    std::error_code error;
+    std::filesystem::create_directories(path, error);
+    require_no_error(error, "SaveData: cannot create the directories", path);
+}
+
+static void rename_path(const std::filesystem::path& from, const std::filesystem::path& to) {
+    std::error_code error;
+    std::filesystem::rename(from, to, error);
+    require_no_error(error, "SaveData: cannot rename", from, to);
+}
+
+static bool path_is_directory(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto status = std::filesystem::status(path, error);
+    if (status.type() == std::filesystem::file_type::none) throw std::filesystem::filesystem_error("SaveData: cannot check for a directory", path, error);
+    return std::filesystem::is_directory(status);
+}
+
+static bool entry_is_directory(const std::filesystem::directory_entry& entry) {
+    std::error_code error;
+    const bool directory = entry.is_directory(error);
+    return error ? path_is_directory(entry.path()) : directory;
+}
+
+static std::filesystem::path canonical_location(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto absolutePath = std::filesystem::absolute(path, error);
+    require_no_error(error, "SaveData: cannot make absolute", path);
+    const auto canonicalPath = std::filesystem::weakly_canonical(absolutePath, error);
+    require_no_error(error, "SaveData: cannot resolve", absolutePath);
+    return canonicalPath;
+}
+
+template <typename TIterator, typename TVisit>
+static void for_each_entry(const std::filesystem::path& path, TVisit&& visit) {
+    std::error_code error;
+    TIterator entries(path, error);
+    while (!error && entries != TIterator()) {
+        visit(*entries);
+        entries.increment(error);
+    }
+    require_no_error(error, "SaveData: cannot list", path);
+}
+
 namespace {
 
 // Save-data memory: one blob per user and slot, kept next to the save directory (_sd_mem/u<user>/slot<n>.bin),
@@ -415,7 +475,7 @@ std::string param_path(const std::string& real_path) {
 }
 
 bool read_param_file(const std::string& path, SaveDataParam* param) {
-    if (!std::filesystem::exists(path)) {
+    if (!path_exists(path)) {
         return false;
     }
     std::vector<char> bytes;
@@ -635,14 +695,14 @@ static void require_plain_tree(const std::string& path) {
     if (plain_type(path) != std::filesystem::file_type::directory) {
         return;
     }
-    for (const auto& entry : std::filesystem::directory_iterator(path)) {
+    for_each_entry<std::filesystem::directory_iterator>(path, [](const std::filesystem::directory_entry& entry) {
         require_plain_tree(entry.path().string());
-    }
+    });
 }
 
 static void require_inside(const std::string& root, const std::string& path) {
-    const auto base = std::filesystem::weakly_canonical(std::filesystem::absolute(root));
-    const auto target = std::filesystem::weakly_canonical(std::filesystem::absolute(path));
+    const auto base = canonical_location(root);
+    const auto target = canonical_location(path);
     const auto [inBase, inTarget] = std::mismatch(base.begin(), base.end(), target.begin(), target.end());
     if (inBase != base.end() || inTarget == target.end()) {
         throw std::filesystem::filesystem_error("SaveData: a save path leaves its root", path, root, std::make_error_code(std::errc::operation_not_permitted));
@@ -654,13 +714,17 @@ static void copy_file_step(const char* step, const std::string& from, const std:
         throw std::filesystem::filesystem_error("SaveData: not a plain file", from, std::make_error_code(std::errc::operation_not_permitted));
     }
     file_step(step, to);
-    std::filesystem::copy_file(from, to);
+    std::error_code error;
+    std::filesystem::copy_file(from, to, error);
+    require_no_error(error, "SaveData: cannot copy", from, to);
 }
 
 static void copy_tree(const char* step, const std::string& from, const std::string& to) {
     file_step(step, to);
-    std::filesystem::create_directory(to);
-    for (const auto& entry : std::filesystem::directory_iterator(from)) {
+    std::error_code error;
+    std::filesystem::create_directory(to, error);
+    require_no_error(error, "SaveData: cannot create the directory", to);
+    for_each_entry<std::filesystem::directory_iterator>(from, [&](const std::filesystem::directory_entry& entry) {
         const std::string source = entry.path().string();
         const std::string target = to + "/" + entry.path().filename().string();
         if (plain_type(source) == std::filesystem::file_type::directory) {
@@ -668,21 +732,27 @@ static void copy_tree(const char* step, const std::string& from, const std::stri
         } else {
             copy_file_step(step, source, target);
         }
-    }
+    });
 }
 
 static std::map<std::string, std::uintmax_t> tree_sizes(const std::string& root) {
     std::map<std::string, std::uintmax_t> sizes;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
-        sizes[entry.path().lexically_relative(root).generic_string()] = entry.is_directory() ? std::numeric_limits<std::uintmax_t>::max() : entry.file_size();
-    }
+    for_each_entry<std::filesystem::recursive_directory_iterator>(root, [&](const std::filesystem::directory_entry& entry) {
+        std::uintmax_t size = std::numeric_limits<std::uintmax_t>::max();
+        if (!entry_is_directory(entry)) {
+            std::error_code error;
+            size = entry.file_size(error);
+            require_no_error(error, "SaveData: cannot read the size of", entry.path());
+        }
+        sizes[entry.path().lexically_relative(root).generic_string()] = size;
+    });
     return sizes;
 }
 
 static void flush_tree(const std::string& root) {
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
-        flush_path(entry.path().string(), entry.is_directory());
-    }
+    for_each_entry<std::filesystem::recursive_directory_iterator>(root, [](const std::filesystem::directory_entry& entry) {
+        flush_path(entry.path().string(), entry_is_directory(entry));
+    });
     flush_path(root, true);
 }
 
@@ -691,7 +761,7 @@ struct FileSwap {
 
     void move(const char* step, const std::string& from, const std::string& to) {
         file_step(step, to);
-        std::filesystem::rename(from, to);
+        rename_path(from, to);
         moved.emplace_back(from, to);
         flush_path(std::filesystem::path(from).parent_path().string(), true);
         flush_path(std::filesystem::path(to).parent_path().string(), true);
@@ -701,7 +771,7 @@ struct FileSwap {
         while (!moved.empty()) {
             const auto [from, to] = moved.back();
             file_step(step, from);
-            std::filesystem::rename(to, from);
+            rename_path(to, from);
             moved.pop_back();
             flush_path(std::filesystem::path(from).parent_path().string(), true);
             flush_path(std::filesystem::path(to).parent_path().string(), true);
@@ -817,7 +887,7 @@ static void recover_backup(const std::string& dirName) {
         if (read_backup_entry(old, nullptr) != SAVE_DATA_OK) {
             throw std::filesystem::filesystem_error("SaveData: the previous backup is incomplete", old, std::make_error_code(std::errc::io_error));
         }
-        std::filesystem::create_directories(BACKUP_DIR);
+        make_directories(BACKUP_DIR);
         flush_path(".", true);
         move_backup("backup.recover", old, entry);
     }
@@ -841,7 +911,7 @@ static void backupSave(const std::string& dirName) {
     const std::string old = backup_entry(BACKUP_OLD_DIR, dirName);
     require_plain_paths(dirName, {SAVE_DIR, BACKUP_DIR, BACKUP_STAGING_DIR, BACKUP_OLD_DIR});
     recover_backup(dirName);
-    std::filesystem::create_directories(staged);
+    make_directories(staged);
     flush_path(BACKUP_STAGING_DIR, true);
     flush_path(".", true);
     bool displaced = false;
@@ -852,14 +922,14 @@ static void backupSave(const std::string& dirName) {
         if (!store_param(entry_save(staged), load_param(source))) {
             throw std::filesystem::filesystem_error("SaveData: cannot write the backup's param file", param_path(entry_save(staged)), std::make_error_code(std::errc::io_error));
         }
-        if (std::filesystem::exists(blocks_path(source))) {
+        if (path_exists(blocks_path(source))) {
             copy_file_step("backup.copy", blocks_path(source), blocks_path(entry_save(staged)));
         }
         flush_tree(staged);
-        std::filesystem::create_directories(BACKUP_DIR);
+        make_directories(BACKUP_DIR);
         flush_path(".", true);
-        if (std::filesystem::exists(entry)) {
-            std::filesystem::create_directories(BACKUP_OLD_DIR);
+        if (path_exists(entry)) {
+            make_directories(BACKUP_OLD_DIR);
             flush_path(".", true);
             move_backup("backup.aside", entry, old, &displaced);
         }
@@ -888,13 +958,13 @@ static void restoreSave(const std::string& dirName) {
     require_plain_paths(dirName, {SAVE_DIR, BACKUP_DIR, RESTORE_STAGING_DIR, RESTORE_OLD_DIR});
     RemoveTree(stagedEntry);
     RemoveTree(oldEntry);
-    std::filesystem::create_directories(stagedEntry);
-    std::filesystem::create_directories(oldEntry);
+    make_directories(stagedEntry);
+    make_directories(oldEntry);
     FileSwap swap;
     try {
         copy_tree("restore.copy", backup, staged);
         copy_file_step("restore.copy", param_path(backup), param_path(staged));
-        if (std::filesystem::exists(blocks_path(backup))) {
+        if (path_exists(blocks_path(backup))) {
             copy_file_step("restore.copy", blocks_path(backup), blocks_path(staged));
         }
         if (tree_sizes(stagedEntry) != tree_sizes(backupEntry)) {
@@ -903,13 +973,13 @@ static void restoreSave(const std::string& dirName) {
         flush_tree(stagedEntry);
         swap.move("restore.aside", live, old);
         for (const auto& [from, to] : {std::pair{param_path(live), param_path(old)}, std::pair{blocks_path(live), blocks_path(old)}}) {
-            if (std::filesystem::exists(from)) {
+            if (path_exists(from)) {
                 swap.move("restore.aside", from, to);
             }
         }
         swap.move("restore.place", staged, live);
         swap.move("restore.place", param_path(staged), param_path(live));
-        if (std::filesystem::exists(blocks_path(staged))) {
+        if (path_exists(blocks_path(staged))) {
             swap.move("restore.place", blocks_path(staged), blocks_path(live));
         }
     } catch (...) {
@@ -941,7 +1011,7 @@ static int deleteSave(const SaveDataDelete* del, std::string* traceDir) {
     if (error) return SAVE_DATA_ERROR_INTERNAL;
     try {
         require_plain_paths(dirName, {BACKUP_DIR, BACKUP_STAGING_DIR, BACKUP_OLD_DIR});
-        if (std::filesystem::is_directory(path)) {
+        if (path_is_directory(path)) {
             RemoveTree(path);
         }
         std::error_code ec;
@@ -983,10 +1053,13 @@ static FreeSpaceMode free_space_mode() {
 }
 
 static std::uint64_t default_free_space(const std::string& path) {
-    std::filesystem::path probe = std::filesystem::absolute(path);
     std::error_code error;
+    std::filesystem::path probe = std::filesystem::absolute(path, error);
+    require_no_error(error, "SaveData: cannot make absolute", path);
     while (!std::filesystem::exists(probe, error) && probe.has_relative_path()) probe = probe.parent_path();
-    return static_cast<std::uint64_t>(std::filesystem::space(probe).available);
+    const auto space = std::filesystem::space(probe, error);
+    require_no_error(error, "SaveData: cannot read the free space of", probe);
+    return static_cast<std::uint64_t>(space.available);
 }
 
 static SaveDataFreeSpaceSource g_free_space_source = default_free_space;
@@ -1107,7 +1180,7 @@ static int dirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameS
     }
     const char* pattern = (localCond.dir_name != nullptr) ? localName.data : nullptr;
     const std::string root = save_root();
-    if (!std::filesystem::is_directory(root)) {
+    if (!path_is_directory(root)) {
         return SAVE_DATA_OK;
     }
     struct Match {
@@ -1118,20 +1191,20 @@ static int dirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameS
     };
     const bool sortByParam = key == SAVE_DATA_SORT_KEY_USER_PARAM || key == SAVE_DATA_SORT_KEY_MTIME;
     std::vector<Match> matches;
-    for (const auto& entry : std::filesystem::directory_iterator(root)) {
-        if (!entry.is_directory()) {
-            continue;
+    for_each_entry<std::filesystem::directory_iterator>(root, [&](const std::filesystem::directory_entry& entry) {
+        if (!entry_is_directory(entry)) {
+            return;
         }
         const std::string name = entry.path().filename().string();
         if (!dir_name_match(name.c_str(), pattern)) {
-            continue;
+            return;
         }
         Match match{name, entry.path().string(), {}, search_info(entry.path().string())};
         if (sortByParam) {
             match.param = load_param(match.path);
         }
         matches.push_back(std::move(match));
-    }
+    });
     std::sort(matches.begin(), matches.end(), [](const Match& a, const Match& b) { return a.name < b.name; });
     if (key == SAVE_DATA_SORT_KEY_USER_PARAM) {
         std::stable_sort(matches.begin(), matches.end(), [](const Match& a, const Match& b) { return a.param.user_param < b.param.user_param; });
@@ -2033,7 +2106,7 @@ static int convert(const SaveDataConvert* param, std::string* traceDir, int* tra
     }
     if (traceDir != nullptr) *traceDir = dirName;
     if (traceUser != nullptr) *traceUser = localConvert.user_id;
-    if (!std::filesystem::is_directory(save_root() + "/" + dirName)) {
+    if (!path_is_directory(save_root() + "/" + dirName)) {
         return SAVE_DATA_ERROR_NOT_FOUND;
     }
     g_convertProgress = 1.0f;
@@ -2561,10 +2634,10 @@ static int restoreBackupData(const SaveDataRestoreBackupData* restore, std::stri
     if (backup != SAVE_DATA_OK) {
         return backup;
     }
-    if (!std::filesystem::is_directory(target)) {
-        return SAVE_DATA_ERROR_INTERNAL;
-    }
     try {
+        if (!path_is_directory(target)) {
+            return SAVE_DATA_ERROR_INTERNAL;
+        }
         restoreSave(dirName);
     } catch (const std::filesystem::filesystem_error&) {
         return SAVE_DATA_ERROR_INTERNAL;
