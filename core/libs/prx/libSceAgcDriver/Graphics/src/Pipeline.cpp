@@ -894,9 +894,9 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         const bool quantizeDepth16 = QuantizesDepth16(context, state);
         for (std::uint32_t i = 0; i < shaders.size(); ++i) {
             const auto& shader = *shaders[i].program;
-            const auto demoted = (barycentricPatches || state.rectList) && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? DemoteVertexLayerOutput(shader.spirv.Words()) : std::vector<std::uint32_t>{};
+            const auto patched = (barycentricPatches || state.rectList) && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? DemoteVertexLayerOutput(shader.spirv.Words()) : quantizeDepth16 && shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment ? QuantizeFragmentDepth16(shaders[i]) : std::vector<std::uint32_t>{};
             const auto leased = shader.spirv.Words();
-            const std::span<const std::uint32_t> words = demoted.empty() ? std::span<const std::uint32_t>(leased) : std::span<const std::uint32_t>(demoted);
+            const std::span<const std::uint32_t> words = patched.empty() ? std::span<const std::uint32_t>(leased) : std::span<const std::uint32_t>(patched);
             _modules[i] = CreateShaderModule(context, words.data(), words.size() * sizeof(std::uint32_t), "vkCreateShaderModule graphics");
             const auto stage = VulkanStage(shaders[i].stage);
             stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
