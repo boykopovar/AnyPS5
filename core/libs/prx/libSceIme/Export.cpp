@@ -19,6 +19,7 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceIme/include/ImeComposition.hpp"
 #include "prx/libSceIme/include/ImeFilterText.hpp"
 #include "prx/libSceIme/include/ImeHostText.hpp"
@@ -635,6 +636,13 @@ int APS5_VABI sceImeGetPanelSize(const Param* param, uint32_t* width, uint32_t* 
     if (!width || !height) return ErrorInvalidAddress;
     if (localParam.type > TypeNumber) return ErrorInvalidType;
     if ((localParam.option & ~ValidOptions) != 0) return ErrorInvalidOption;
+    if (reinterpret_cast<std::uintptr_t>(width) > UINTPTR_MAX - sizeof(*width) ||
+        reinterpret_cast<std::uintptr_t>(height) > UINTPTR_MAX - sizeof(*height)) return ErrorInvalidAddress;
+    const GuestArena::HostWrite widthGuard(width, sizeof(*width));
+    const GuestArena::HostWrite heightGuard(height, sizeof(*height));
+    if (!widthGuard.Open() || !heightGuard.Open() ||
+        !GuestWritable_nid_no_patch(width, sizeof(*width)) ||
+        !GuestWritable_nid_no_patch(height, sizeof(*height))) return ErrorInvalidAddress;
     uint32_t localWidth = 0;
     uint32_t localHeight = 0;
     PanelSize(localParam, &localWidth, &localHeight);

@@ -99,9 +99,16 @@ static void CheckErrors() {
             "unwritable parameter");
     Require(sceImeGetPanelSize(&param, reinterpret_cast<uint32_t*>(0x10), &height) == InvalidAddress,
             "unwritable width");
-    uint32_t unwritableWidth = width;
-    Require(sceImeGetPanelSize(&param, &unwritableWidth, reinterpret_cast<uint32_t*>(0x10)) == InvalidAddress,
+    Require(height == 0x87654321, "height changed when width was unwritable");
+    Require(sceImeGetPanelSize(&param, &width, reinterpret_cast<uint32_t*>(0x10)) == InvalidAddress,
             "unwritable height");
+    Require(width == 0x12345678, "width changed when height was unwritable");
+    Require(sceImeGetPanelSize(&param, &width, reinterpret_cast<uint32_t*>(UINTPTR_MAX)) == InvalidAddress,
+            "overflowing height range");
+    Require(width == 0x12345678, "width changed when height range overflowed");
+    uint32_t sharedSize = 0;
+    Require(sceImeGetPanelSize(&param, &sharedSize, &sharedSize) == 0 && sharedSize == 408,
+            "aliased outputs did not retain the final height write");
     for (uint32_t type : {5u, 0xffffffffu}) {
         param.type = type;
         Require(sceImeGetPanelSize(&param, &width, &height) == InvalidType, "invalid type");
