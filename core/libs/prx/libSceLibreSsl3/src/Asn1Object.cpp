@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -15,10 +14,8 @@ void APS5_VABI ASN1_OBJECT_free_nid_postfix(Asn1Object_nid_no_patch* object) {
     constexpr int Dynamic = 0x01;
     constexpr int DynamicStrings = 0x04;
     constexpr int DynamicData = 0x08;
-    const int savedErrno = errno;
     Asn1Object_nid_no_patch fields{};
     bool copied = GuestCopyIn_nid_no_patch(&fields, object, sizeof(fields));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(__func__) + ": unreadable object");
     const bool ownsData = (fields.flags & DynamicData) && fields.data;
     if (ownsData && fields.length < 0)
@@ -28,7 +25,6 @@ void APS5_VABI ASN1_OBJECT_free_nid_postfix(Asn1Object_nid_no_patch* object) {
         auto* data = const_cast<unsigned char*>(fields.data);
         for (std::size_t offset = 0, length = static_cast<std::size_t>(fields.length); offset < length; offset += zeros.size()) {
             copied = GuestCopyOut_nid_no_patch(data + offset, zeros.data(), std::min(zeros.size(), length - offset));
-            errno = savedErrno;
             if (!copied) throw std::invalid_argument(std::string(__func__) + ": unwritable data");
         }
     }
@@ -43,7 +39,6 @@ void APS5_VABI ASN1_OBJECT_free_nid_postfix(Asn1Object_nid_no_patch* object) {
     }
     if (!(fields.flags & Dynamic) && (fields.flags & (DynamicStrings | DynamicData))) {
         copied = GuestCopyOut_nid_no_patch(object, &released, sizeof(released));
-        errno = savedErrno;
         if (!copied) throw std::invalid_argument(std::string(__func__) + ": unwritable object");
     }
     if (fields.flags & DynamicStrings) {
