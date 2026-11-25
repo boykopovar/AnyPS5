@@ -1,7 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpUtility/include/InventoryExports.hpp"
 #include "prx/libSceNpUtility/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <condition_variable>
@@ -119,16 +118,12 @@ struct FamilyState {
 };
 
 bool CopyInPreservingErrno(void* dst, const void* src, std::size_t size) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(dst, src, size);
-    errno = savedErrno;
     return copied;
 }
 
 bool CopyOutPreservingErrno(void* dst, const void* src, std::size_t size) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(dst, src, size);
-    errno = savedErrno;
     return copied;
 }
 
@@ -138,9 +133,7 @@ int AppLaunchLinkCreateRequest(FamilyState& state, std::int32_t userId, const vo
     if (!state.initialized) return notInitialized;
     const std::int32_t id = state.nextRequest++;
     state.requests.insert(id);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
-    errno = savedErrno;
     if (!copied) {
         state.requests.erase(id);
         --state.nextRequest;
@@ -267,9 +260,7 @@ int AbortRequest(Service& service, int reqId) {
 }
 
 bool CopyOutInt(int* dst, int value) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(dst, &value, sizeof(value));
-    errno = savedErrno;
     return copied;
 }
 
@@ -314,9 +305,7 @@ int SetTimeout(Service& service, int id, int resolveRetry, std::uint32_t resolve
 
 int CheckComment(const char* comment) {
     std::string copy;
-    const int savedErrno = errno;
     const int status = CopyGuestString_nid_no_patch(comment, WORD_FILTER_COMMENT_MAX_LENGTH + 1, copy);
-    errno = savedErrno;
     return status == 0 ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
 }
 }
@@ -423,9 +412,7 @@ int APS5_VABI sceNpAppInfoIntCreateRequest(std::int32_t* requestId) {
     const std::int32_t id = appInfo.nextRequest++;
     const std::int32_t previousRequest = appInfo.currentRequest;
     appInfo.currentRequest = id;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
-    errno = savedErrno;
     if (!copied) {
         appInfo.currentRequest = previousRequest;
         --appInfo.nextRequest;
@@ -669,9 +656,7 @@ int APS5_VABI sceNpServiceChecker2IntInitialize() {
 int APS5_VABI sceNpServiceChecker2IntIsSetServiceType(const std::uint32_t* serviceTypes, std::uint32_t serviceType) {
     if (!serviceTypes || serviceType > 9) return 0;
     std::uint32_t word = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&word, &serviceTypes[serviceType >> 5], sizeof(word));
-    errno = savedErrno;
     if (!copied) return 0;
     return static_cast<int>((word >> serviceType) & 1);
 }
@@ -687,9 +672,7 @@ int APS5_VABI sceNpServiceCheckerIntCreateRequest(const void* npId, std::int32_t
     if (!serviceChecker1.initialized) return SCE_NP_SERVICE_CHECKER_ERROR_NOT_INITIALIZED;
     const std::int32_t id = serviceChecker1.nextRequest++;
     serviceChecker1.requests.insert(id);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
-    errno = savedErrno;
     if (!copied) {
         serviceChecker1.requests.erase(id);
         --serviceChecker1.nextRequest;
@@ -808,9 +791,7 @@ int APS5_VABI sceNpLookupAbortRequest(int reqId) {
 int APS5_VABI sceNpLookupCreateAsyncRequest(int titleCtxId, const std::uint64_t* param) {
     if (!param) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     std::uint64_t value = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, param, sizeof(value));
-    errno = savedErrno;
     if (!copied || value != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return CreateRequest(lookup, titleCtxId, true);
 }
@@ -863,9 +844,7 @@ int APS5_VABI sceNpWordFilterCensorComment(int reqId, const char* comment, void*
 int APS5_VABI sceNpWordFilterCreateAsyncRequest(int titleCtxId, const std::uint64_t* param) {
     if (!param) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     std::uint64_t value = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, param, sizeof(value));
-    errno = savedErrno;
     if (!copied || value != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return CreateRequest(wordFilter, titleCtxId, true);
 }
