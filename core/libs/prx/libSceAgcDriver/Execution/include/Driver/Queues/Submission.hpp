@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionProgress.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -13,12 +14,47 @@
 #include <memory>
 #include <set>
 #include <span>
+#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver::DriverDetail {
+
+class RegisterLists {
+public:
+    void clear() { entries.clear(); }
+    void append(std::size_t cursor, std::vector<std::uint32_t> pairs) {
+        if (entries.empty()) entries.reserve(16);
+        entries.emplace_back(cursor, std::move(pairs));
+    }
+    const std::vector<std::uint32_t>& at(std::size_t cursor) const {
+        const auto* found = find(cursor);
+        if (found == nullptr) throw std::out_of_range("map::at:  key not found");
+        return *found;
+    }
+    const std::vector<std::uint32_t>* find(std::size_t cursor) const {
+        const auto found = std::lower_bound(entries.begin(), entries.end(), cursor, [](const auto& entry, std::size_t key) { return entry.first < key; });
+        return found == entries.end() || found->first != cursor ? nullptr : &found->second;
+    }
+    void replace(std::size_t start, std::size_t end, std::ptrdiff_t delta, RegisterLists&& inner) {
+        std::vector<std::pair<std::size_t, std::vector<std::uint32_t>>> replaced;
+        replaced.reserve(entries.size() + inner.entries.size());
+        auto entry = entries.begin();
+        for (; entry != entries.end() && entry->first < start; ++entry) replaced.push_back(std::move(*entry));
+        for (auto& listed : inner.entries) replaced.emplace_back(start + listed.first, std::move(listed.second));
+        for (; entry != entries.end(); ++entry) {
+            if (entry->first >= end) replaced.emplace_back(static_cast<std::size_t>(static_cast<std::ptrdiff_t>(entry->first) + delta), std::move(entry->second));
+        }
+        entries = std::move(replaced);
+    }
+    std::size_t size() const { return entries.size(); }
+
+private:
+    std::vector<std::pair<std::size_t, std::vector<std::uint32_t>>> entries;
+};
 
 struct FlipWork {
     bool finished = false;
@@ -37,7 +73,9 @@ struct Submission {
     std::map<std::size_t, std::uint32_t> flipHandles;
     std::map<std::size_t, std::shared_ptr<IRenderingWait>> renderingWaits;
     std::map<std::size_t, std::size_t> conditionalEnds;
-    std::map<std::size_t, std::vector<std::uint32_t>> registerLists;
+    RegisterLists registerLists;
+    std::vector<std::size_t> scanCursors;
+    bool scanAll = true;
     bool suspend = false;
     bool waitFree = false;
     bool holdsFlip = false;
@@ -83,7 +121,7 @@ struct ReferencedProgramScan {
     bool complete = true;
 };
 
-ReferencedProgramScan ReferencedPrograms(std::span<const std::uint32_t> commands, const std::map<std::size_t, std::vector<std::uint32_t>>& registerLists);
+ReferencedProgramScan ReferencedPrograms(std::span<const std::uint32_t> commands, const RegisterLists& registerLists);
 
 }
 
