@@ -32,6 +32,8 @@ enum class RuntimeSwitch : std::size_t {
     WideLibraryKeys,
     NoPipelineDispatch,
     NoWideTableCopyHle,
+    NoDccMipFastClear,
+    PassStaging,
     Count,
 };
 

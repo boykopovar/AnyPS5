@@ -191,8 +191,12 @@ def resolve_summary_path(path):
 
 def load_summary_lines(path, numbered=False, label=None):
     display = label if label is not None else path
+    try:
+        text = Path(path).read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{display}: {error}") from error
     records = []
-    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
+    for number, line in enumerate(text.split("\n"), 1):
         if not line.strip():
             continue
         try:
@@ -671,6 +675,9 @@ def main(arguments=None):
     parser.add_argument("--top", type=nonnegative_integer, default=10, help="entries per list (default 10)")
     parser.add_argument("--json", action="store_true", help="print the digest as JSON")
     options = parser.parse_args(arguments)
+    interval_input = options.trace.endswith(".jsonl")
+    if options.summary and interval_input:
+        parser.error("--summary requires an event trace, not interval summaries")
     if options.summary:
         try:
             summary_path = resolve_summary_path(options.summary)
@@ -678,11 +685,11 @@ def main(arguments=None):
             parser.error(str(error))
         if not summary_path.is_file():
             parser.error(f"summary file not found: {options.summary}")
-    if options.thread and options.trace.endswith(".jsonl"):
+    if options.thread and interval_input:
         parser.error("--thread requires an event trace, not interval summaries")
-    if options.stacks and options.trace.endswith(".jsonl"):
+    if options.stacks and interval_input:
         parser.error("--stacks requires an event trace, not interval summaries")
-    if options.trace.endswith(".jsonl"):
+    if interval_input:
         try:
             intervals_path = resolve_summary_path(options.trace)
         except ValueError as error:
@@ -690,8 +697,6 @@ def main(arguments=None):
         if not intervals_path.is_file():
             parser.error(f"summary file not found: {options.trace}")
         result = digest_intervals(load_intervals(options.trace))
-        if options.summary:
-            parser.error("--summary requires an event trace, not interval summaries")
         sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown_intervals(result))
         return 0
     try:

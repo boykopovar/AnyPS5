@@ -10,6 +10,8 @@ struct Crop {
     std::uint32_t right = 0;
     std::uint32_t top = 0;
     std::uint32_t bottom = 0;
+    std::uint8_t log2ChromaWidth = 0;
+    std::uint8_t log2ChromaHeight = 0;
 };
 
 struct PictureHeader {
@@ -29,6 +31,7 @@ struct PictureHeader {
 
 extern "C" {
 
+bool Videodec2CopyParsedPictureInfo_nid_no_patch(std::uint64_t handle, const void* frameBuffer, void* info, std::size_t size);
 void Videodec2PictureHeader_nid_no_patch(std::uint64_t handle, const void* frameBuffer, SceVideodec2::Internal::PictureHeader* header);
 void Videodec2Vp9PictureInfo_nid_no_patch(std::uint64_t handle, const void* frameBuffer, SceVideodec2::Vp9PictureInfo* info);
 
