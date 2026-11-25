@@ -71,12 +71,16 @@ void Check(void* module) {
     Require(numeric(u"USD") == 840 && available(u"USD", 0, 1700000000000.0, &status));
     Require(count("en_US", 1700000000000.0, &status) == 2);
     Require(historical("en_US", 1700000000000.0, 2, result.data(), 4, &status) == 3 && std::u16string_view(result.data()) == u"USN");
-    auto* enumeration = iso(0x7fffffff, &status);
-    Require(enumeration && enumCount(enumeration, &status) > 200 && next(enumeration, &length, &status));
-    enumeration->reset(enumeration, &status);
-    Require(unext(enumeration, &length, &status) && length == 3);
-    close(enumeration);
-    enumeration = keywords("currency", "en_US", 1, &status);
+    for (const std::int32_t incoming : {0, -127}) {
+        std::int32_t openStatus = incoming;
+        auto* enumeration = iso(0x7fffffff, &openStatus);
+        Require(enumeration && openStatus == incoming);
+        Require(enumCount(enumeration, &status) > 200 && next(enumeration, &length, &status));
+        enumeration->reset(enumeration, &status);
+        Require(unext(enumeration, &length, &status) && length == 3);
+        close(enumeration);
+    }
+    auto* enumeration = keywords("currency", "en_US", 1, &status);
     Require(enumeration && enumCount(enumeration, &status) >= 1);
     Require(next(enumeration, &length, &status) != nullptr);
     close(enumeration);

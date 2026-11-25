@@ -208,7 +208,13 @@ void Historical() {
 }
 
 void Enumeration() {
-    Api(11);
+    for (const std::int32_t incoming : {0, -128, -127}) {
+        const auto expected = CurrencyOracle::Enumeration(AllCurrencies, "en_US", false, incoming);
+        std::int32_t status = incoming;
+        auto* enumeration = ucurr_openISOCurrencies_nid_postfix(AllCurrencies, &status);
+        Require(expected.status == incoming && status == expected.status);
+        Require(Values(enumeration) == expected.values && expected.values.size() > 200);
+    }
     std::int32_t status = 7;
     auto* enumeration = ucurr_openISOCurrencies_nid_postfix(AllCurrencies, &status);
     Require(enumeration && status == 7);
@@ -610,12 +616,13 @@ void APS5_VABI FreeCurrency(const void* context, void* pointer) {
     std::free(pointer);
 }
 
-void AllocationISO(std::size_t failed) {
+void AllocationISO(std::size_t failed, std::int32_t incoming) {
     Memory memory;
     memory.failAt = failed;
     std::int32_t status = 0;
     u_setMemoryFunctions_nid_postfix(&memory, AllocateCurrency, ReallocateCurrency, FreeCurrency, &status);
     Require(status == 0);
+    status = incoming;
     Require(ucurr_openISOCurrencies_nid_postfix(AllCurrencies, &status) == nullptr && status == 7);
     Require(memory.allocations == memory.frees && memory.calls == failed);
     memory.failAt = 0;
@@ -832,8 +839,10 @@ int main(int argc, char** argv) {
         else if (mode == "cold_keyword_allocation") ColdKeywordAllocation();
         else if (mode == "enumeration_write_bounds") EnumerationWriteBounds();
         else if (mode == "allocation_keywords") AllocationKeywords();
-        else if (mode == "allocation_iso_first") AllocationISO(1);
-        else if (mode == "allocation_iso_second") AllocationISO(2);
+        else if (mode == "allocation_iso_first" || mode == "allocation_iso_second") {
+            const std::size_t failed = mode == "allocation_iso_first" ? 1 : 2;
+            for (const std::int32_t incoming : {0, -127}) AllocationISO(failed, incoming);
+        }
         else if (mode == "allocation_registry") AllocationRegistry();
         else if (mode == "allocation_name") AllocationName();
         else if (mode == "default_state") DefaultState();
