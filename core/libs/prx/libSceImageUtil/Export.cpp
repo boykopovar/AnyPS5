@@ -10,12 +10,39 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
+#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
+
+using ErrorCallback = void (*)(const void*, void*);
+
+struct ErrorReport {
+    std::uint32_t line;
+    std::uint32_t reserved;
+    std::uint64_t kind;
+    std::int32_t error_code;
+    std::uint32_t padding;
+};
+static_assert(sizeof(ErrorReport) == 24);
+
+std::mutex g_callback_mutex;
+std::map<std::uintptr_t, void*> g_error_callbacks;
+
+void NotifyErrorCallbacks(std::uint32_t line, std::uint64_t kind, std::int32_t error_code) {
+    const ErrorReport report{line, 0, kind, error_code, 0};
+    std::lock_guard lock(g_callback_mutex);
+    for (const auto& [fn_addr, user_data] : g_error_callbacks) {
+        auto fn = reinterpret_cast<ErrorCallback>(fn_addr);
+        if (fn) {
+            fn(&report, user_data);
+        }
+    }
+}
 
 struct GuestString {
     union {
@@ -87,7 +114,10 @@ int APS5_VABI libSceImageUtilUnknown_pjWv_plus__plus_MzaJY_nid_no_patch(const vo
 
     const auto text = ReadGuestPath(path);
     FileStat stat{};
-    if (sceKernelStat(text.c_str(), &stat) != 0) return static_cast<int>(0x809D401Eu);
+    if (sceKernelStat(text.c_str(), &stat) != 0) {
+        NotifyErrorCallbacks(0x2e7u, 0, 0);
+        return static_cast<int>(0x809D401Eu);
+    }
     if (stat.st_size <= 0 || stat.st_size > UINT32_MAX)
         throw std::length_error("JPEG dimensions: unsupported file size");
 
@@ -119,18 +149,22 @@ APS5_EXPORT("yjU-5r3TDtc", libSceImageUtilUnknown_yjU_minus_5r3TDtc_nid_no_patch
 
 extern "C" {
 
-int APS5_VABI libSceImageUtilUnknown_J805kfu8t4w_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceImageUtilUnknown_J805kfu8t4w_nid_no_patch(void (*callback)(const void*, void*), void* user_data) {
+    std::lock_guard lock(g_callback_mutex);
+    const auto [it, inserted] = g_error_callbacks.emplace(reinterpret_cast<std::uintptr_t>(callback), user_data);
+    return inserted ? 0 : static_cast<int>(0x809D4013u);
 }
 APS5_EXPORT("J805kfu8t4w", libSceImageUtilUnknown_J805kfu8t4w_nid_no_patch);
 
 int APS5_VABI libSceImageUtilUnknown_PaJr2GfStvA_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("PaJr2GfStvA", libSceImageUtilUnknown_PaJr2GfStvA_nid_no_patch);
 
-int APS5_VABI libSceImageUtilUnknown_TBLqZYmwmnU_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceImageUtilUnknown_TBLqZYmwmnU_nid_no_patch(void (*callback)(const void*, void*)) {
+    std::lock_guard lock(g_callback_mutex);
+    g_error_callbacks.erase(reinterpret_cast<std::uintptr_t>(callback));
+    return 0;
 }
 APS5_EXPORT("TBLqZYmwmnU", libSceImageUtilUnknown_TBLqZYmwmnU_nid_no_patch);
 

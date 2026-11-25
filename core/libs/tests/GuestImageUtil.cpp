@@ -27,6 +27,26 @@ struct GuestString {
 static_assert(sizeof(GuestString) == 32);
 
 constexpr auto ReadDimensions = libSceImageUtilUnknown_pjWv_plus__plus_MzaJY_nid_no_patch;
+constexpr auto RegisterCallback = libSceImageUtilUnknown_J805kfu8t4w_nid_no_patch;
+constexpr auto UnregisterCallback = libSceImageUtilUnknown_TBLqZYmwmnU_nid_no_patch;
+constexpr auto StopAgentServer = libSceImageUtilUnknown_PaJr2GfStvA_nid_no_patch;
+
+struct CallbackState {
+    std::uint32_t calls;
+    std::uint32_t line;
+    std::uint64_t kind;
+    std::int32_t error_code;
+};
+
+void OnImageUtilError(const void* report, void* user_data) {
+    auto* state = static_cast<CallbackState*>(user_data);
+    ++state->calls;
+    if (report) {
+        std::memcpy(&state->line, report, sizeof(state->line));
+        std::memcpy(&state->kind, static_cast<const std::uint8_t*>(report) + 8, sizeof(state->kind));
+        std::memcpy(&state->error_code, static_cast<const std::uint8_t*>(report) + 16, sizeof(state->error_code));
+    }
+}
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -75,6 +95,34 @@ void TestDimensions(const char* filename, std::uint32_t width, std::uint32_t hei
     Require(ReadDimensions(&path, nullptr) == static_cast<int>(0x809D4013u), "check null output before stat");
 }
 
+void TestCallbacksAndAgentStop() {
+    Require(StopAgentServer() == 0, "stop agent server when idle");
+
+    CallbackState state{};
+    std::memset(&state, 0xA5, sizeof(state));
+    state.calls = 0;
+
+    Require(RegisterCallback(&OnImageUtilError, &state) == 0, "register error callback");
+    Require(RegisterCallback(&OnImageUtilError, &state) == static_cast<int>(0x809D4013u),
+            "reject duplicate error callback");
+
+    const std::string missing = "/imutil_missing_cb_test.jpg";
+    GuestString path{};
+    path.size = missing.size();
+    path.capacity = missing.capacity();
+    path.pointer = missing.c_str();
+    std::array<std::uint64_t, 2> dims{0, 0};
+    Require(ReadDimensions(&path, dims.data()) == static_cast<int>(0x809D401Eu), "missing file returns error");
+    Require(state.calls == 1 && state.line == 0x2e7u && state.kind == 0 && state.error_code == 0,
+            "missing file invokes registered callback");
+
+    Require(UnregisterCallback(&OnImageUtilError) == 0, "unregister error callback");
+    Require(ReadDimensions(&path, dims.data()) == static_cast<int>(0x809D401Eu), "missing file after unregister");
+    Require(state.calls == 1, "unregistered callback is not invoked");
+    Require(RegisterCallback(&OnImageUtilError, &state) == 0, "re-register after unregister");
+    Require(UnregisterCallback(&OnImageUtilError) == 0, "cleanup callback");
+}
+
 }
 
 int main() {
@@ -95,4 +143,5 @@ int main() {
 
     TestDimensions("imutil.jpg", 19, 7);
     TestDimensions("image_util_dimensions_test.jpg", 41, 13);
+    TestCallbacksAndAgentStop();
 }
