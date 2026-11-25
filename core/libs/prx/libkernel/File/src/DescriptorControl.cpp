@@ -42,6 +42,7 @@
 
 namespace {
 
+constexpr int GuestEperm = 1;
 constexpr int GuestEintr = 4;
 constexpr int GuestEbadf = 9;
 constexpr int GuestEdeadlk = 11;
@@ -565,8 +566,11 @@ int Fcntl(int fd, int command, std::intptr_t argument) {
         case SetLock:
         case SetLockWait:
             return RecordLock(fd, command, argument);
-        case SetLockRemote:
-            throw std::runtime_error("fcntl: F_SETLK_REMOTE needs a privilege whose state on the console is not known, fd=" + std::to_string(fd));
+        case SetLockRemote: {
+            GuestLock lock{};
+            if (!GuestCopyIn_nid_no_patch(&lock, reinterpret_cast<void*>(argument), sizeof(lock))) return Fail(GuestEfault);
+            return Fail(GuestEperm);
+        }
         case ReadAhead:
         case DarwinReadAhead:
             return ReadAheadControl(fd, command, argument);

@@ -39,6 +39,7 @@ static constexpr int Duplicate2Command = 10;
 static constexpr int GetLock = 11;
 static constexpr int SetLock = 12;
 static constexpr int SetLockWait = 13;
+static constexpr int SetLockRemote = 14;
 static constexpr int ReadAhead = 15;
 static constexpr int DarwinReadAhead = 16;
 static constexpr int DuplicateCloseOnExec = 17;
@@ -61,6 +62,7 @@ static constexpr std::int16_t WriteLock = 3;
 static constexpr std::int16_t FromStart = 0;
 static constexpr std::int16_t FromCurrent = 1;
 static constexpr std::int16_t FromEnd = 2;
+static constexpr int GuestEperm = 1;
 static constexpr int GuestEbadf = 9;
 static constexpr int GuestEfault = 14;
 static constexpr int GuestEinval = 22;
@@ -79,7 +81,9 @@ static constexpr std::uint64_t KeepOnExecRequest = 0x20006602;
 static constexpr std::uint64_t MalformedRequests[] = {0, 123, 0x5401, 0x5413, 0x40007468, 0x20087468, 0x00087468};
 static constexpr std::uint64_t IntegerArgumentRequest = 0x20046601;
 static constexpr std::uint64_t EmptyInputRequest = 0x8000667f;
+static constexpr int SceEperm = static_cast<int>(0x80020001u);
 static constexpr int SceEbadf = static_cast<int>(0x80020009u);
+static constexpr int SceEfault = static_cast<int>(0x8002000eu);
 static constexpr int SceEinval = static_cast<int>(0x80020016u);
 static constexpr int SceEnotsup = static_cast<int>(0x8002002du);
 
@@ -705,10 +709,27 @@ static void CharacterDevicesHaveNoDeviceType() {
 #endif
 }
 
+static void RemoteLocksNeedAPrivilege() {
+    const int file = sceKernelOpen("kernel_fcntl_remote.bin", CreateReadWrite, 0644);
+    Require(file >= 0);
+    RequireFailure(fcntl_nid_postfix(file, SetLockRemote, nullptr), GuestEfault);
+    Require(sceKernelFcntl(file, SetLockRemote, nullptr) == SceEfault);
+    GuestLock lock{0, 0, 0, WriteLock, FromStart, 0};
+    RequireFailure(fcntl_nid_postfix(file, SetLockRemote, &lock), GuestEperm);
+    Require(sceKernelFcntl(file, SetLockRemote, &lock) == SceEperm);
+    GuestLock badType{0, 0, 0, 7, 3, 0};
+    RequireFailure(fcntl_nid_postfix(file, SetLockRemote, &badType), GuestEperm);
+    Require(close_nid_postfix(file) == 0);
+    RequireFailure(fcntl_nid_postfix(file, SetLockRemote, &lock), GuestEperm);
+    RequireFailure(fcntl_nid_postfix(file, SetLockRemote, nullptr), GuestEfault);
+    std::remove("kernel_fcntl_remote.bin");
+}
+
 int main() {
     SocketsKeepTheirPath();
     FileFlagsRoundTrip();
     RecordLocksBelongToTheProcess();
+    RemoteLocksNeedAPrivilege();
     PipeFlagsRoundTrip();
     PipeOwnerRoundTrips();
     PipeOwnerIsSharedByDuplicatesMadeBeforeTheFirstCall();
