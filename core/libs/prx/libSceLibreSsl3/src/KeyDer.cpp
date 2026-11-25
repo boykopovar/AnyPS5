@@ -355,7 +355,6 @@
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1376,23 +1375,17 @@ template<typename T> void ReplaceOutput(T** output, T* decoded, void (APS5_VABI*
 }
 
 bool CopyGuestIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
 bool CopyGuestOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
 void FreePreservingErrno(void* pointer) {
-    const int savedErrno = errno;
     free_nid_postfix(pointer);
-    errno = savedErrno;
 }
 
 }
