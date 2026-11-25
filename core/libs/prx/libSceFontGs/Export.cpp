@@ -3,7 +3,6 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include <array>
 #include <bit>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -966,9 +965,7 @@ int GnmSurfaceInit(void* surface, const void* config) {
 template <typename T>
 bool WriteGuestOut(T* pointer, const T& value) {
     if (pointer == nullptr) return true;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(pointer, &value, sizeof(value));
-    errno = savedErrno;
     return copied;
 }
 
@@ -1067,9 +1064,7 @@ int APS5_VABI sceFontGraphicsGnmDrawupFillTextureImage(FontGraphicsFrame* graphi
                                                      float x, float y, float width, float height) {
     if (output == nullptr) return FontGsInvalidParameter;
     void* zero = nullptr;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(output, &zero, sizeof(zero));
-    errno = savedErrno;
     if (!copied) return FontGsInvalidParameter;
     if (graphicsObject == nullptr || surface == nullptr) return FontGsInvalidParameter;
     const auto* const gnm = ReadGnmSurface(surface);
@@ -1082,9 +1077,7 @@ int APS5_VABI sceFontGraphicsGnmDrawupFillTextureImage(FontGraphicsFrame* graphi
     const int error = sceFontGraphicsDrawupFillTextureImageObject(graphicsObject, gnm->fillObject, gnm->mode, &record, x, y, width, height);
     if (error != 0) return error;
     MarkGnmRecord(record);
-    const int savedErrno2 = errno;
     const bool copied2 = GuestCopyOut_nid_no_patch(output, &record, sizeof(record));
-    errno = savedErrno2;
     if (!copied2) return FontGsInvalidParameter;
     return 0;
 }
@@ -1094,9 +1087,7 @@ int APS5_VABI sceFontGraphicsGnmDrawupFillTexturePattern(FontGraphicsFrame* grap
                                                        std::uint32_t option2, std::uint32_t dimension2, void** output) {
     if (output == nullptr) return FontGsInvalidParameter;
     void* zero = nullptr;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(output, &zero, sizeof(zero));
-    errno = savedErrno;
     if (!copied) return FontGsInvalidParameter;
     if (graphicsObject == nullptr || surface == nullptr) return FontGsInvalidParameter;
     const auto* const gnm = ReadGnmSurface(surface);
@@ -1106,9 +1097,7 @@ int APS5_VABI sceFontGraphicsGnmDrawupFillTexturePattern(FontGraphicsFrame* grap
                                                                   dimension1, option1, option2, dimension2, &record);
     if (error != 0) return error;
     MarkGnmRecord(record);
-    const int savedErrno2 = errno;
     const bool copied2 = GuestCopyOut_nid_no_patch(output, &record, sizeof(record));
-    errno = savedErrno2;
     if (!copied2) return FontGsInvalidParameter;
     return 0;
 }
