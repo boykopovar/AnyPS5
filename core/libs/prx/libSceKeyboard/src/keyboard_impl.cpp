@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <mutex>
 
 namespace {
@@ -198,9 +197,7 @@ int ReadState(std::int32_t handle, KeyboardData* data) {
     if (data == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
     KeyboardData current{};
     current.length = 1;
-    const int savedErrno = errno;
     const bool cleared = GuestCopyOut_nid_no_patch(data, &current, sizeof(current));
-    errno = savedErrno;
     if (!cleared) return KEYBOARD_ERROR_INVALID_ARG;
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
     if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
@@ -211,7 +208,6 @@ int ReadState(std::int32_t handle, KeyboardData* data) {
         current = snapshot();
     }
     const bool copied = GuestCopyOut_nid_no_patch(data, &current, sizeof(current));
-    errno = savedErrno;
     if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
     return KEYBOARD_OK;
 }
@@ -233,9 +229,7 @@ int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
     if (deviceId == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
     std::int32_t id = -1;
     if (handle != KEYBOARD_HANDLE || !opened || !connected) {
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(deviceId, &id, sizeof(id));
-        errno = savedErrno;
         if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
         return KEYBOARD_ERROR_INVALID_HANDLE;
     }
