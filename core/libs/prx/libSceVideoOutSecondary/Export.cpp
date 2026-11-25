@@ -83,11 +83,8 @@ int APS5_VABI libSceVideoOutSecondaryUnknown_s_plus_isXKLpwS0_nid_no_patch(const
     if (foundIndex < 0) {
         return VideoOutInvalidHandle;
     }
-    if (targetHandle >= 0 && targetHandle <= 3 && Slots[targetHandle].state != 0) {
+    if (Slots[foundIndex].state != 0) {
         return VideoOutBusy;
-    }
-    if (targetHandle < 0) {
-        return VideoOutInvalidHandle;
     }
     Slots[foundIndex].handle = -1;
     return 0;

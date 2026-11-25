@@ -79,6 +79,11 @@ int main() {
     void* reused = libSceVideoOutSecondaryUnknown_KJWkt9y7YC4_nid_no_patch(50, cfg.data());
     Require(reused == slot0);
 
+    const std::int32_t highHandle = 10;
+    std::memcpy(static_cast<std::uint8_t*>(slot1) + 4, &busy, sizeof(busy));
+    Require(libSceVideoOutSecondaryUnknown_s_plus_isXKLpwS0_nid_no_patch(&highHandle) == VideoOutBusy);
+    std::memcpy(static_cast<std::uint8_t*>(slot1) + 4, &idle, sizeof(idle));
+
     for (const std::int32_t remaining : {50, 10, 20, 30}) {
         Require(libSceVideoOutSecondaryUnknown_s_plus_isXKLpwS0_nid_no_patch(&remaining) == 0);
     }
