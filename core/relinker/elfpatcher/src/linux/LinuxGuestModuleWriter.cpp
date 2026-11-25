@@ -144,16 +144,21 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             needsTlsResolver = true;
         }
     }
+    std::uint64_t zeroAddressThunk = 0;
+    bool hasZeroAddressThunk = false;
     for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
         const auto& symbol = image.Symbols[index];
         if (symbol.Value != 0 || symbol.Section == 0 || symbol.Section >= 0xff00 || (symbol.Info >> 4) == 0 ||
             (symbol.Info & 15) != 2 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
-        const auto thunk = address();
-        if (thunk > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) - 5)
-            throw Domain::RelinkerException("Guest export at address 0 exceeds relative branch range");
-        bytes.push_back(0xe9);
-        Io::AppendU32(bytes, static_cast<std::uint32_t>(-static_cast<std::int32_t>(thunk + 5)));
-        Io::WriteU64(symbols, index * 24 + 8, thunk);
+        if (!hasZeroAddressThunk) {
+            zeroAddressThunk = address();
+            if (zeroAddressThunk > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) - 5)
+                throw Domain::RelinkerException("Guest export at address 0 exceeds relative branch range");
+            bytes.push_back(0xe9);
+            Io::AppendU32(bytes, static_cast<std::uint32_t>(-static_cast<std::int32_t>(zeroAddressThunk + 5)));
+            hasZeroAddressThunk = true;
+        }
+        Io::WriteU64(symbols, index * 24 + 8, zeroAddressThunk);
     }
     if (!image.BindingAliases.empty()) {
         if (symbols.size() % 24 != 0) throw Domain::RelinkerException("Invalid guest symbol table for binding aliases");
