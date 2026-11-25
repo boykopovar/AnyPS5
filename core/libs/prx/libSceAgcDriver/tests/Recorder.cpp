@@ -4791,6 +4791,19 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
             const auto unaligned = movedTo(element + 256 + 4);
             const CompiledShader unalignedShader{ShaderRecompiler::ShaderStage::Compute, &unaligned, 0};
             Require(snapshotContext.limits.minStorageBufferOffsetAlignment <= 4 || !resources.MovedReadOnlyBuffers(std::span<const CompiledShader>(&unalignedShader, 1), snapshotRecorder, nullptr).has_value(), "a moved element whose offset the shader cannot be told was bound in place");
+            if (inPlace) {
+                snapshotRecorder.Sync();
+                ShaderResources::MoveProof proof;
+                const auto unlabelled = resources.MovedDispatchBuffers(alignedShader, &snapshotRecorder, 0, proof);
+                Require(unlabelled.has_value() && unlabelled->size() == 1 && proof.inPlace == 1, "a moved read-only dispatch element was not read in place");
+                const std::array<std::byte, 4> label{std::byte{7}, std::byte{0}, std::byte{0}, std::byte{0}};
+                Recorder::NoteQueuedLabel(element + 256, label, 1, AgcDriver::GuestMemory::GpuLockThreadTag());
+                const auto labelled = resources.MovedDispatchBuffers(alignedShader, &snapshotRecorder, 0, proof);
+                Recorder::ForgetQueuedLabels();
+                Require(labelled.has_value() && labelled->size() == 1 && proof.inPlace == 0 && labelled->front().inPlace == VK_NULL_HANDLE, "a moved dispatch element under a label the queue has not recorded yet was read in place");
+                const auto* dispatchImport = HostImportFor(snapshotContext, element + 256, movedBytes);
+                Require(dispatchImport != nullptr && unlabelled->front().inPlace == dispatchImport->buffer && unlabelled->front().inPlaceOffset == HostImportOffset(*dispatchImport, element + 256), "a moved dispatch element read in place is not bound at its place in the host import");
+            }
         }
         snapshotRecorder.Sync();
     }
