@@ -2133,7 +2133,10 @@ std::size_t ShaderResources::RefreshStorageChangedOutsideWatch() {
 ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots, bool deviceStaging) : context(context), guestMemory(context) {
     drawBuild = true;
     const bool addressTables = std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && std::ranges::any_of(shader.program->bindings, [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; }); });
-    if (deviceStaging && !addressTables) guestMemory.AllowDeviceStaging();
+    if (deviceStaging && !addressTables) {
+        guestMemory.AllowDeviceStaging();
+        guestMemory.AllowPassStaging();
+    }
     prepareAddressBindings(shaders, snapshots);
     build(shaders, &target, colorAttachments, indexAddress, indexBytes);
 }
@@ -7584,6 +7587,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
         recorder.AfterRun([inRun](Recorder& after) { inRun->guestMemory.RecordCopyBacks(after); });
         guestMemory.MarkStagedWrites();
     } else {
+        guestMemory.DeferCopyBacks(recorder);
         guestMemory.RecordCopyBacks(recorder);
     }
     // Only the written elements' ranges (AddWritable): a read-only element is neither noted here
@@ -7596,6 +7600,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     }
     guestMemory.MarkDirectWrites();
     guestMemory.NoteCarriedShadows(recorder);
+    guestMemory.NotePassShadows(recorder);
     if (!BuildProfiled()) return;
     auto& counters = BufferWrites();
     // Recorded uses only (dispatches and recorded draws): a synchronous draw writes back in
