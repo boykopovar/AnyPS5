@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -32,6 +33,17 @@ bool ProbeGuestWritable(T* destination) {
     const bool ok = GuestCopyIn_nid_no_patch(&value, destination, sizeof(value)) &&
         GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
     return ok;
+}
+
+const void* GuestFieldAddress(const void* object, std::size_t offset) {
+    if (object == nullptr) return nullptr;
+    const auto address = reinterpret_cast<std::uintptr_t>(object);
+    if (address > std::numeric_limits<std::uintptr_t>::max() - offset) return nullptr;
+    return reinterpret_cast<const void*>(address + offset);
+}
+
+void* GuestFieldAddress(void* object, std::size_t offset) {
+    return const_cast<void*>(GuestFieldAddress(static_cast<const void*>(object), offset));
 }
 
 bool SameOnlineId(const char* lhs, const char* rhs) {
@@ -108,14 +120,21 @@ void APS5_VABI _ZN3sce2np10NpOnlineId5ClearEv(NpOnlineIdObject* self) {
 }
 
 int APS5_VABI _ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(NpOnlineIdObject* self, const char* text) {
-    if (text == nullptr) return NP_ERROR_INVALID_ARGUMENT;
+    void* const target = GuestFieldAddress(self, offsetof(NpOnlineIdObject, data));
+    if (target == nullptr || text == nullptr) return NP_ERROR_INVALID_ARGUMENT;
     std::string copy;
     const int error = CopyGuestString_nid_no_patch(text, NP_ONLINE_ID_SIZE + 1, copy);
     if (error == 63) return NP_ERROR_ONLINE_ID_TOO_LONG;
     if (error != 0) return NP_ERROR_INVALID_ARGUMENT;
-    std::memset(self->data, 0, sizeof(self->data));
-    self->term = 0;
-    std::memcpy(self->data, copy.data(), copy.size());
+    struct OnlineIdPayload {
+        char data[NP_ONLINE_ID_SIZE];
+        std::uint32_t term;
+    };
+    static_assert(offsetof(NpOnlineIdObject, term) == offsetof(NpOnlineIdObject, data) + sizeof(NpOnlineIdObject::data));
+    static_assert(sizeof(OnlineIdPayload) == sizeof(NpOnlineIdObject::data) + sizeof(NpOnlineIdObject::term));
+    OnlineIdPayload payload{};
+    std::memcpy(payload.data, copy.data(), copy.size());
+    if (!GuestCopyOut_nid_no_patch(target, &payload, sizeof(payload))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -224,7 +243,10 @@ void APS5_VABI _ZN3sce2np4UserC2ERKS1_(UserObject* self, const UserObject* other
 }
 
 void APS5_VABI _ZN3sce2np4User5ClearEv(UserObject* self) {
-    self->userId = USER_SERVICE_USER_ID_INVALID;
+    void* const target = GuestFieldAddress(self, offsetof(UserObject, userId));
+    if (target == nullptr) return;
+    const std::int32_t invalidUserId = USER_SERVICE_USER_ID_INVALID;
+    GuestCopyOut_nid_no_patch(target, &invalidUserId, sizeof(invalidUserId));
 }
 
 bool APS5_VABI _ZNK3sce2np4User7IsEmptyEv(const UserObject* self) {
@@ -323,7 +345,11 @@ void APS5_VABI _ZN3sce2np12NpTitleToken5ClearEv(NpTitleTokenObject* self) {
 }
 
 const char* APS5_VABI _ZNK3sce2np12NpTitleToken6GetStrEv(const NpTitleTokenObject* self) {
-    return self->data;
+    const void* const target = GuestFieldAddress(self, offsetof(NpTitleTokenObject, data));
+    if (target == nullptr) return nullptr;
+    char probe = 0;
+    if (!GuestCopyIn_nid_no_patch(&probe, target, sizeof(probe))) return nullptr;
+    return static_cast<const char*>(target);
 }
 
 void APS5_VABI _ZN3sce2np13NpAccessTokenC1Ev(NpAccessTokenObject* self) {
