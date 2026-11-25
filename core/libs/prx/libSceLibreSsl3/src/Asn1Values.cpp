@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -117,17 +116,14 @@ int APS5_VABI ASN1_OCTET_STRING_cmp_nid_postfix(const Asn1String* first, const A
 
 void APS5_VABI ASN1_OCTET_STRING_free_nid_postfix(Asn1String* string) {
     if (!string) return;
-    const int savedErrno = errno;
     Asn1String fields{};
     bool copied = GuestCopyIn_nid_no_patch(&fields, string, sizeof(fields));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(__func__) + ": unreadable string");
     if (fields.data && !(fields.flags & BorrowedData)) {
         if (fields.length < 0) throw std::invalid_argument(std::string(__func__) + ": negative owned data length");
         static constexpr std::array<unsigned char, 4096> zeros{};
         for (std::size_t offset = 0, length = static_cast<std::size_t>(fields.length); offset < length; offset += zeros.size()) {
             copied = GuestCopyOut_nid_no_patch(fields.data + offset, zeros.data(), std::min(zeros.size(), length - offset));
-            errno = savedErrno;
             if (!copied) throw std::invalid_argument(std::string(__func__) + ": unwritable data");
         }
         free_nid_postfix(fields.data);
