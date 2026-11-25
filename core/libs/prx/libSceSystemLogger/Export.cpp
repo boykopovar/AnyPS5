@@ -1,6 +1,5 @@
 #include "prx/libSceSystemLogger/include/Api.hpp"
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -45,10 +44,8 @@ int APS5_VABI sceSystemLoggerSetLogData(const char* tag, uint32_t count, const S
     std::lock_guard lock(loggerMutex);
     if (!loggerInitialized) return SCE_SYSTEM_LOGGER_ERROR_NOT_INITIALIZED;
     if (!tag) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
-    const int savedErrno = errno;
     std::string localTag;
     const int tagCopyStatus = CopyGuestString_nid_no_patch(tag, MAX_TAG_LENGTH + 1, localTag);
-    errno = savedErrno;
     if (tagCopyStatus != 0) {
         return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
     }
@@ -61,7 +58,6 @@ int APS5_VABI sceSystemLoggerSetLogData(const char* tag, uint32_t count, const S
     if (count != 0 && !data) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
     std::array<SystemLoggerLogData, MAX_ENTRY_COUNT> entries;
     const bool entriesCopied = GuestCopyIn_nid_no_patch(entries.data(), data, static_cast<std::size_t>(count) * sizeof(SystemLoggerLogData));
-    errno = savedErrno;
     if (!entriesCopied) {
         return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
     }
@@ -76,7 +72,6 @@ int APS5_VABI sceSystemLoggerSetLogData(const char* tag, uint32_t count, const S
         std::fwrite(entries[index].data, 1, entries[index].size, stderr);
         std::fputc('\n', stderr);
     }
-    errno = savedErrno;
     return 0;
 }
 
