@@ -420,14 +420,24 @@ void CheckStreamHeaderValidation(const std::vector<std::uint8_t>& rgbPng, const 
 
     std::vector<std::uint8_t> badHeaderCrc = palette;
     badHeaderCrc[32] ^= 1u;
+    badHeaderCrc.insert(badHeaderCrc.end(), 4096, 0);
     Require(parseWith(2, badHeaderCrc, 8, info, source) == invalidData);
+    Require(source.offset <= 64);
 
     std::vector<std::uint8_t> zeroWidthHeader(palette.begin(), palette.begin() + 8);
     std::vector<std::uint8_t> ihdr(palette.begin() + 16, palette.begin() + 29);
     std::fill(ihdr.begin(), ihdr.begin() + 4, 0);
     AppendTestChunk(zeroWidthHeader, "IHDR", ihdr);
     zeroWidthHeader.insert(zeroWidthHeader.end(), palette.begin() + 33, palette.end());
+    zeroWidthHeader.insert(zeroWidthHeader.end(), 4096, 0);
     Require(parseWith(2, zeroWidthHeader, 8, info, source) == invalidData);
+    Require(source.offset <= 64);
+
+    std::vector<std::uint8_t> secondIhdr(palette.begin(), palette.begin() + 33);
+    secondIhdr.insert(secondIhdr.end(), palette.begin() + 8, palette.begin() + 33);
+    secondIhdr.insert(secondIhdr.end(), 4096, 0);
+    Require(parseWith(2, secondIhdr, 8, info, source) == invalidData);
+    Require(source.offset <= 128);
 
     std::vector<std::uint8_t> missingPalette(palette.begin(), palette.begin() + 33);
     missingPalette.insert(missingPalette.end(), palette.begin() + 57, palette.end());
@@ -441,7 +451,9 @@ void CheckStreamHeaderValidation(const std::vector<std::uint8_t>& rgbPng, const 
 
     std::vector<std::uint8_t> badPaletteCrc = palette;
     badPaletteCrc[56] ^= 1u;
+    badPaletteCrc.insert(badPaletteCrc.end(), 4096, 0);
     Require(parseWith(2, badPaletteCrc, 7, info, source) == invalidData);
+    Require(source.offset <= 128);
 
     std::vector<std::uint8_t> duplicatePalette(palette.begin(), palette.begin() + 57);
     duplicatePalette.insert(duplicatePalette.end(), palette.begin() + 33, palette.end());
@@ -449,7 +461,9 @@ void CheckStreamHeaderValidation(const std::vector<std::uint8_t>& rgbPng, const 
 
     std::vector<std::uint8_t> endBeforeIdat(palette.begin(), palette.begin() + 33);
     AppendTestChunk(endBeforeIdat, "IEND", {});
+    endBeforeIdat.insert(endBeforeIdat.end(), 4096, 0);
     Require(parseWith(2, endBeforeIdat, 7, info, source) == invalidData);
+    Require(source.offset <= 128);
 
     std::vector<std::uint8_t> badTrnsCrc = palette;
     badTrnsCrc[72] ^= 1u;
