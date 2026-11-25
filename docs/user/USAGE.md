@@ -12,6 +12,10 @@ Select or drop multiple app ZIP archives to convert them into one ZIP bundle. Th
 
 For **Save ZIP to disk**, Cancel is available until the browser starts committing the completed ZIP.
 
+### Browser conversion receipt
+
+Each exported app includes `anyps5-conversion.json` next to the executable. The receipt records the release `tag` and full commit `revision`, the `target`, and whether the Intel translation option was enabled (`toIntel`). A batch ZIP has one receipt in each numbered app folder. The receipt contains no paths or input filenames. The converter also shows the release tag and revision when it finishes. If the release manifest has no valid revision, the receipt records `null` for `revision`.
+
 ## Verify a release download
 
 Download the file from the [official AnyPS5 releases](https://github.com/boykopovar/AnyPS5/releases). Under **Assets** for that release, copy the `sha256:` digest next to the exact file name. If the file downloaded successfully, calculate its SHA-256 hash before opening it:
