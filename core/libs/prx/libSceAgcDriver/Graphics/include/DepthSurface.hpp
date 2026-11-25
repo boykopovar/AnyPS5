@@ -38,6 +38,7 @@ DepthPlaneStoreStatistics DepthPlaneStoreCounts();
 void NoteDepthSurfaceWrite(const Context& context, const DepthTarget& target);
 bool SampleLocationsCompatibleDepth(const Context& context, VkFormat format, std::uint32_t samples);
 std::uint64_t DepthSurfacesSerial();
+std::uint64_t DepthSurfaceStorageScans();
 std::uint64_t DepthSurfacesReleased();
 std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel);
 bool DirectDepthCopy(const Context& context, VkFormat depthFormat, VkImageAspectFlagBits aspect, VkFormat colorFormat);
@@ -49,7 +50,7 @@ std::uint64_t DirectDepthCopyCount();
 void SetDepthTransferPasses(bool enabled);
 std::uint64_t DepthTransferPassCount();
 std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32_t bytesPerTexel, std::uint32_t samples);
-enum class DepthReadCause { Access, Reuse };
+enum class DepthReadCause { Access, Reuse, Attachment, Write };
 void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt, bool allowPublication = true, DepthReadCause cause = DepthReadCause::Access);
 void AppendHostWrittenDepthRanges(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
 void AppendStaleDepthPlanes(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
@@ -94,6 +95,13 @@ struct HtileMaskClear {
     std::uint32_t value = 0;
 };
 std::optional<HtileMaskClear> MatchHtileBufferMaskClear(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::span<const std::uint32_t> packet, std::uint64_t indirectArguments);
+struct HtileClearedHiZPatch {
+    std::uint64_t address = 0;
+    std::size_t bytes = 0;
+    std::uint32_t value = 0;
+};
+std::optional<HtileClearedHiZPatch> MatchHtileClearedHiZPatch(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::span<const std::uint32_t> packet, std::uint64_t indirectArguments);
+bool SkipNoOpHtileHiZPatch(const HtileClearedHiZPatch& patch);
 void NoteHtileMaskOnGpu(const Context& context, const HtileMaskClear& clear);
 void ForgetHtileMasks_nid_no_patch(std::uint64_t recorderId);
 struct MemoryValueFill {

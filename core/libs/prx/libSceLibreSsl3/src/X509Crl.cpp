@@ -64,6 +64,7 @@ constexpr int BmpStringType = 30;
 constexpr int NegativeType = 0x100;
 
 constexpr int CrlReasonNid = 141;
+constexpr int CertificateIssuerNid = 771;
 constexpr int CrlReasonRemoveFromCrl = 8;
 
 constexpr std::int64_t BitsLeftFlag = 0x08;
@@ -1455,6 +1456,16 @@ bool IssuerMatches(const LibreSslX509Name* crlIssuer, const LibreSslX509Name* ce
     return SameName(certificateIssuer, crlIssuer);
 }
 
+bool NamesCertificateIssuer(const LibreSsl3Revoked* revoked) {
+    const LibreSslAsn1Object* object = LibreSsl3::ObjectByNid(CertificateIssuerNid);
+    if (!object) throw std::logic_error("X509_CRL_get0_by_cert: no certificateIssuer object");
+    return FindExtension(revoked->extensions, object, -1) >= 0;
+}
+
+}
+
+LibreSslX509Name* LibreSsl3DecodeX509Name_nid_no_patch(std::span<const unsigned char>& input) {
+    return DecodeName(input);
 }
 
 extern "C" {
@@ -1465,13 +1476,14 @@ LibreSsl3X509Crl* APS5_VABI d2i_X509_CRL_nid_postfix(
         PutError(BadObjectHeader);
         return nullptr;
     }
+    if (output) {
+        X509_CRL_free_nid_postfix(*output);
+        *output = nullptr;
+    }
     std::span<const unsigned char> remaining(*input, static_cast<std::size_t>(length));
     LibreSsl3X509Crl* crl = DecodeCrl(remaining);
     if (!crl) return nullptr;
-    if (output) {
-        X509_CRL_free_nid_postfix(*output);
-        *output = crl;
-    }
+    if (output) *output = crl;
     *input += static_cast<std::size_t>(length) - remaining.size();
     return crl;
 }
@@ -1501,11 +1513,14 @@ int APS5_VABI X509_CRL_get0_by_cert_nid_postfix(LibreSsl3X509Crl* crl, LibreSsl3
     const LibreSsl3Stack* entries = crl->crl->revoked;
     if (!entries) return 0;
     if (entries->num < 0) throw std::invalid_argument(std::string(__func__) + ": negative revoked count");
+    bool entryIssuers = false;
     for (int index = 0; index < entries->num; ++index) {
         if (!entries->data) throw std::invalid_argument(std::string(__func__) + ": null revoked array");
         auto* entry = static_cast<LibreSsl3Revoked*>(static_cast<void*>(entries->data[index]));
         if (!entry) throw std::invalid_argument(std::string(__func__) + ": null revoked entry");
+        if (NamesCertificateIssuer(entry)) entryIssuers = true;
         if (!SameString(entry->serialNumber, serial)) continue;
+        if (entryIssuers) NotImplemented_nid_no_patch("X509_CRL_get0_by_cert: certificateIssuer entry extension");
         if (!IssuerMatches(crl->crl->issuer, issuer, entry)) continue;
         if (revoked) *revoked = entry;
         return entry->reason == CrlReasonRemoveFromCrl ? 2 : 1;

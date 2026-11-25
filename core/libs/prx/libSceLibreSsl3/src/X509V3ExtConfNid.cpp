@@ -26,6 +26,7 @@ constexpr int AnyFunction = 0xfff;
 constexpr int MallocFailure = 65;
 constexpr int IllegalCharacters = 124;
 constexpr int InvalidUtf8String = 134;
+constexpr int DepthExceeded = 174;
 constexpr int IllegalBitStringFormat = 175;
 constexpr int IllegalBoolean = 176;
 constexpr int IllegalFormat = 177;
@@ -48,6 +49,7 @@ constexpr int InvalidNullName = 108;
 constexpr int InvalidNullValue = 109;
 constexpr int ExtensionNameError = 115;
 constexpr int ExtensionValueError = 116;
+constexpr int ExtensionSettingNotSupported = 103;
 constexpr int IllegalHexDigit = 113;
 constexpr int InvalidBooleanString = 104;
 constexpr int InvalidExtensionString = 105;
@@ -71,6 +73,8 @@ constexpr unsigned char Utf8StringTag = 0x0c;
 constexpr unsigned char Ia5StringTag = 0x16;
 constexpr unsigned char SequenceTag = 0x30;
 constexpr unsigned char SetTag = 0x31;
+
+constexpr std::size_t MaxWraps = 20;
 
 void PutError(int reason) {
     LibreSslPutError_nid_no_patch(X509V3Library, AnyFunction, reason);
@@ -561,10 +565,16 @@ enum class SimpleType {
     Set,
 };
 
+struct Wrap {
+    unsigned char tag;
+    bool pad;
+};
+
 struct Asn1Value {
     SimpleType type = SimpleType::Null;
     Format format = Format::Ascii;
     std::string text;
+    std::vector<Wrap> wraps;
 };
 
 bool LookupSimpleType(std::string_view name, SimpleType& type) {
@@ -590,6 +600,25 @@ bool LookupSimpleType(std::string_view name, SimpleType& type) {
         return false;
     }
     return true;
+}
+
+std::optional<Wrap> LookupWrap(std::string_view name) {
+    if (name == "SEQWRAP") return Wrap{SequenceTag, false};
+    if (name == "SETWRAP") return Wrap{SetTag, false};
+    if (name == "BITWRAP") return Wrap{BitStringTag, true};
+    if (name == "OCTWRAP") return Wrap{OctetStringTag, false};
+    return std::nullopt;
+}
+
+void ApplyWraps(const std::vector<Wrap>& wraps, std::vector<unsigned char>& der) {
+    for (auto wrap = wraps.rbegin(); wrap != wraps.rend(); ++wrap) {
+        std::vector<unsigned char> content;
+        content.reserve(der.size() + 1);
+        if (wrap->pad) content.push_back(0);
+        content.insert(content.end(), der.begin(), der.end());
+        der.clear();
+        AppendTlv(der, wrap->tag, content);
+    }
 }
 
 bool IsUnsupportedTag(std::string_view name) {
@@ -653,10 +682,15 @@ bool ParseAsn1(std::string_view text, LibreSsl3X509V3Context* ctx, Asn1Value& re
                 PutAsn1Error(UnknownFormat);
                 return false;
             }
-        } else if (name == "IMP" || name == "IMPLICIT" || name == "EXP" || name == "EXPLICIT" ||
-                   name == "SEQWRAP" || name == "SETWRAP" || name == "BITWRAP" || name == "OCTWRAP") {
+        } else if (name == "IMP" || name == "IMPLICIT" || name == "EXP" || name == "EXPLICIT") {
             if (colon == std::string_view::npos) return false;
             NotImplemented_nid_no_patch(__func__);
+        } else if (const std::optional<Wrap> wrap = LookupWrap(name)) {
+            if (result.wraps.size() == MaxWraps) {
+                PutAsn1Error(DepthExceeded);
+                return false;
+            }
+            result.wraps.push_back(*wrap);
         } else if (IsUnsupportedTag(name)) {
             if (missingValue) {
                 PutAsn1Error(MissingValue);
@@ -929,8 +963,8 @@ LibreSsl3X509Extension* BuildExtension(int nid, bool critical, const std::vector
 bool IsStandardExtension(int nid) {
     constexpr std::array<int, 42> Nids = {
         71, 72, 73, 74, 75, 76, 77, 78, 82, 83, 84, 85, 86, 87, 88, 89, 90, 103, 126, 140, 141,
-        142, 143, 177, 290, 291, 366, 367, 368, 369, 370, 371, 398, 401, 430, 663, 666, 747, 748,
-        770, 771, 857,
+        142, 177, 290, 291, 366, 367, 368, 370, 371, 398, 401, 430, 666, 747, 748, 770, 771, 857,
+        1018, 1019, 1021,
     };
     for (const int candidate : Nids) {
         if (candidate == nid) return true;
@@ -957,6 +991,13 @@ LibreSsl3X509Extension* PlainExtension(void* conf, int nid, bool critical, std::
         break;
     case 126:
         if (!EncodeExtendedKeyUsage(conf, text, der)) return nullptr;
+        break;
+    case 1018:
+    case 1021:
+        PutError(ExtensionSettingNotSupported);
+        return nullptr;
+    case 1019:
+        der = {NullTag, 0x00};
         break;
     default:
         NotImplemented_nid_no_patch(__func__);
@@ -991,6 +1032,7 @@ extern "C" LibreSsl3X509Extension* APS5_VABI X509V3_EXT_conf_nid_nid_postfix(voi
             PutError(ExtensionValueError);
             return nullptr;
         }
+        ApplyWraps(parsed.wraps, der);
         if (!NidObject(ext_nid)) {
             PutError(ExtensionNameError);
             return nullptr;

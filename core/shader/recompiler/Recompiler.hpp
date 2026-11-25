@@ -3,6 +3,7 @@
 
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
+#include "ImageOverwrite.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include <algorithm>
 #include <array>
@@ -299,6 +300,8 @@ struct ShaderFloatMode {
     bool operator==(const ShaderFloatMode&) const = default;
 };
 
+inline constexpr std::uint32_t InterpolationFlushResult32 = 0x80u;
+inline constexpr std::uint32_t InterpolationFlushResult16 = 0x100u;
 inline constexpr std::uint32_t InterpolationQuiet = 1u;
 inline constexpr std::uint32_t InterpolationFlush32 = 2u;
 inline constexpr std::uint32_t InterpolationFlush16 = 4u;
@@ -734,6 +737,7 @@ struct DescriptorBinding {
     std::vector<std::uint64_t> imageSamplers;
     ElementFlags bufferRead;
     std::vector<std::uint32_t> bufferExtent;
+    std::vector<ImageOverwrite> imageOverwrites;
 };
 
 struct ImageTableEntryPoison {
